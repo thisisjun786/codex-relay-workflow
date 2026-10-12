@@ -149,7 +149,9 @@ func (s *scriptVM) agent(call goja.FunctionCall, plain bool) goja.Value {
 	c.resolve = resolve
 	c.complete = s.e.loop.Begin(s.rt)
 	c.prepare()
-	if p.refusal != nil {
+	if c.prepHold != nil {
+		c.deliverNow(c.terminal(EvHeld, StatusHeld, c.prepHold.Reason, map[string]any{"input_state": "not_delivered", "detail": c.prepHold.Detail}))
+	} else if p.refusal != nil {
 		data := map[string]any{"detail": p.refusal.Detail}
 		if p.refusal.Cause != "" {
 			data["cause"] = p.refusal.Cause
@@ -319,6 +321,21 @@ type callRun struct {
 	replay *CallResult
 	send   int
 
+	// The resume walk (F07). digest is the call's input digest (the context boundary and the joins before it included) and
+	// snapshot its plan-owned input snapshot, both journaled in the prepared row; suffixCall is set once the call ran live or
+	// went on in place, held is a held call that goes on in place, prepHold is the reason a call could not be made ready
+	// (its boundary could not be restored), needEstablish is a call whose worktree was never made, firstK is the turn the
+	// repair rule counts from.
+	digest        string
+	snapshot      string
+	suffixCall    bool
+	held          *heldResume
+	prepHold      *Refusal
+	needEstablish bool
+	firstK        int
+	// preface is the checkpoint packet a continuation that could not be forked starts its new thread with.
+	preface string
+
 	// mu guards what an interrupt from another goroutine reads and writes: the last row, the turn in flight and the
 	// engine's intent to interrupt it.
 	mu         sync.Mutex
@@ -358,15 +375,24 @@ func (c *callRun) journalDown() (CallResult, bool) {
 // prepare writes the call's intent row before anything is sent.
 func (c *callRun) prepare() {
 	p := c.plan
-	if c.e.cfg.Resume != nil && p.refusal == nil && c.resumePrior() {
+	var ctxb map[string]any
+	c.digest, ctxb = c.inputDigest()
+	c.snapshot = c.readSnapshot()
+	if c.e.cfg.Resume != nil && c.resumePrior() {
 		return
+	}
+	if reason, detail := c.restoreBoundary(); reason != "" {
+		c.prepHold = &Refusal{Reason: reason, Detail: detail}
 	}
 	d := map[string]any{
 		"role": p.role, "family": p.spec.Family, "model": p.spec.Pair.Model, "effort": p.spec.Pair.Effort,
 		"requested_model": p.requested.Model, "requested_effort": p.requested.Effort,
 		"node": p.node, "step_decision": p.step, "phase": p.opts.Phase, "head": p.opts.Head, "cwd": p.opts.Cwd,
-		"input_digest": digestJSON([]byte(p.prompt)), "plain": c.plain, "sandbox": p.spec.Sandbox,
+		"input_digest": c.digest, "prompt_digest": digestJSON([]byte(p.prompt)), "context": ctxb, "plain": c.plain, "sandbox": p.spec.Sandbox,
 		"explicit_label": p.explicitLabel, "policy_digest": c.e.cfg.Policy.Digest,
+	}
+	if c.snapshot != "" {
+		d["input_snapshot"] = c.snapshot
 	}
 	if p.schema != nil {
 		d["schema_digest"] = digestJSON(p.schema)
@@ -383,8 +409,9 @@ func (c *callRun) prepare() {
 			c.cwd = p.resume.Cwd
 		}
 	}
-	if placer, ok := c.e.cfg.Backend.(Placer); ok && p.refusal == nil && !c.e.nodeStopped(p.node) {
-		c.placeReq = PlaceRequest{RunID: c.e.runID, CallID: c.id, Role: p.role, Family: p.spec.Family, Node: p.node, Head: p.opts.Head, Continues: p.resume, Journal: c.e.j}
+	if placer, ok := c.e.cfg.Backend.(Placer); ok && p.refusal == nil && c.prepHold == nil && !c.e.nodeStopped(p.node) {
+		c.placeReq = PlaceRequest{RunID: c.e.runID, CallID: c.id, Role: p.role, Family: p.spec.Family, Node: p.node, Head: p.opts.Head, Continues: p.resume, Journal: c.e.j,
+			Fork: c.forksInSuffix()}
 		pl, err := placer.Place(c.placeReq)
 		if err != nil {
 			p.refusal = &Refusal{Reason: ReasonWorktreeFailed, Detail: err.Error()}
@@ -394,6 +421,18 @@ func (c *callRun) prepare() {
 		}
 	}
 	c.startSeq = c.event(EvPrepared, d).Seq
+}
+
+// forksInSuffix is whether a continuation runs on a fork: inside a suffix a continuation of a thread the previous process
+// started never sends a turn to that thread, whose cwd belongs to a worktree that was retired.
+func (c *callRun) forksInSuffix() bool {
+	e, p := c.e, c.plan
+	return e.cfg.Resume != nil && c.suffixCall && p.resume != nil && e.threadIsPrior(p.resume.ThreadID)
+}
+
+// threadIsPrior is whether a thread was started by an earlier process of the run.
+func (e *Engine) threadIsPrior(threadID string) bool {
+	return e.prior != nil && threadID != "" && e.prior.threads[threadID]
 }
 
 // terminal journals the call's last event and returns its result.
@@ -755,7 +794,7 @@ func (c *callRun) pairCheck(info ThreadInfo) (CallResult, bool) {
 // startThread creates the call's thread.
 func (c *callRun) startThread(ctx context.Context) (CallResult, bool) {
 	e, p := c.e, c.plan
-	if c.rec == nil {
+	if c.rec == nil || c.needEstablish {
 		// a creation sent again runs in the directory the first request was made for: it exists, and nothing is made
 		if res, stop := c.establish(ctx); stop {
 			return res, true
@@ -795,19 +834,24 @@ func (c *callRun) forkThread(ctx context.Context) (CallResult, bool) {
 	if !ok {
 		return c.terminal(EvRefused, StatusRefused, ReasonPolicyRefused, map[string]any{"detail": "the backend cannot fork a thread"}), true
 	}
-	if c.rec == nil {
+	if c.rec == nil || c.needEstablish {
 		if res, stop := c.establish(ctx); stop {
 			return res, true
 		}
 	}
 	cwd := c.placement.Path
 	send := max(1, c.send)
-	c.event(EvForkRequested, c.creationIntent(map[string]any{"thread_id": p.resume.ThreadID, "through_turn_id": p.resume.ThroughTurnID, "prefix": threadPrefix(e.j, p.resume.ThreadID, p.resume.ThroughTurnID), "cwd": cwd}, send))
+	prefix := threadPrefix(e.j, p.resume.ThreadID, p.resume.ThroughTurnID)
+	throughOp := ""
+	if len(prefix) > 0 {
+		throughOp = rowStr(prefix[len(prefix)-1], "op")
+	}
+	c.event(EvForkRequested, c.creationIntent(map[string]any{"thread_id": p.resume.ThreadID, "through_turn_id": p.resume.ThroughTurnID, "prefix": prefix, "cwd": cwd}, send))
 	if res, down := c.journalDown(); down {
 		return res, true
 	}
 	info, err := forker.ForkThread(ctx, ForkSpec{CallID: c.id, Role: p.role, Node: p.node, Pair: p.spec.Pair, Sandbox: p.spec.Sandbox, Cwd: cwd,
-		SourceThreadID: p.resume.ThreadID, ThroughTurnID: p.resume.ThroughTurnID, AutoCompactTokenLimit: p.spec.AutoCompactTokenLimit, Send: send})
+		SourceThreadID: p.resume.ThreadID, ThroughTurnID: p.resume.ThroughTurnID, ThroughOp: throughOp, AutoCompactTokenLimit: p.spec.AutoCompactTokenLimit, Send: send})
 	if err != nil {
 		return c.fromError(ctx, err), true
 	}
@@ -822,44 +866,45 @@ func (c *callRun) forkThread(ctx context.Context) (CallResult, bool) {
 // threadPrefix is the turns of a thread through throughTurn, in order, as the journal recorded them: each turn's id and
 // its `<call_id>/t<k>` marker. A fork's prefix is what the forked thread must hold. A thread that was itself forked starts
 // with the turns it inherited (the prefix its fork request recorded, which is the whole history through its boundary), and
-// only then come the turns its own calls ran; a turn an operator replaced is not part of the history.
+// only then come the turns its own calls ran; a turn an operator replaced is not part of the history. The rows are read in
+// order, and a turn belongs to the thread its call was on when the turn started: a call that ran again on another thread
+// (a new attempt, a fork in a suffix) left its earlier turns on the thread it ran them on.
 func threadPrefix(j Journal, threadID, throughTurn string) []map[string]any {
-	owner := map[string]string{}
 	events := j.Events()
 	replaced := replacedTurns(events)
-	var inherited []map[string]any
+	owner := map[string]string{}
 	forkReq := map[string]Event{}
+	var out []map[string]any
+	inherited := false
 	for _, ev := range events {
 		if ev.Kind != KindCall {
 			continue
 		}
 		switch ev.Event {
 		case EvPrepared:
-			if t, _ := ev.Data["thread_id"].(string); t != "" {
-				owner[ev.CallID] = t
-			}
+			// a continuation is on its handle's thread from the start, any other call on none until its thread starts
+			owner[ev.CallID], _ = ev.Data["thread_id"].(string)
 		case EvForkRequested:
 			forkReq[ev.CallID] = ev
-		case EvThreadStarted, EvForkStarted:
+		case EvThreadStarted:
 			owner[ev.CallID], _ = ev.Data["thread_id"].(string)
-			if t, _ := ev.Data["thread_id"].(string); ev.Event == EvForkStarted && t == threadID && inherited == nil {
+		case EvForkStarted:
+			t, _ := ev.Data["thread_id"].(string)
+			owner[ev.CallID] = t
+			if t == threadID && !inherited {
+				inherited = true
 				for _, p := range prefixOf(forkReq[ev.CallID].Data) {
-					inherited = append(inherited, map[string]any{"turn_id": p.TurnID, "op": p.Op})
+					out = append(out, map[string]any{"turn_id": p.TurnID, "op": p.Op})
 				}
 			}
+		case EvTurnStarted:
+			id, _ := ev.Data["turn_id"].(string)
+			if owner[ev.CallID] != threadID || replaced[id] {
+				continue
+			}
+			op, _ := ev.Data["op"].(string)
+			out = append(out, map[string]any{"turn_id": id, "op": op})
 		}
-	}
-	out := inherited
-	for _, ev := range events {
-		if ev.Kind != KindCall || ev.Event != EvTurnStarted || owner[ev.CallID] != threadID {
-			continue
-		}
-		id, _ := ev.Data["turn_id"].(string)
-		if replaced[id] {
-			continue
-		}
-		op, _ := ev.Data["op"].(string)
-		out = append(out, map[string]any{"turn_id": id, "op": op})
 	}
 	for i, p := range out {
 		if p["turn_id"] == throughTurn {
@@ -936,7 +981,13 @@ func (c *callRun) execute(ctx context.Context) CallResult {
 	}
 	k, input := 1, p.prompt
 	var pre *recoveredTurn
-	if c.rec != nil {
+	if c.held != nil {
+		var res CallResult
+		var stop bool
+		if res, stop, k, input, pre = c.resumeHeld(ctx); stop {
+			return res
+		}
+	} else if c.rec != nil {
 		var res CallResult
 		var stop bool
 		if res, stop, k, input, pre = c.recover(ctx); stop {
@@ -952,9 +1003,10 @@ func (c *callRun) execute(ctx context.Context) CallResult {
 				return res
 			}
 		case c.placement != nil && c.placement.Fork:
-			if res, stop := c.forkThread(ctx); stop {
+			if res, stop := c.forkOrCheckpoint(ctx); stop {
 				return res
 			}
+			input = c.preface + input
 		default:
 			c.threadID, c.configured = p.resume.ThreadID, p.resume.Configured
 		}
@@ -970,7 +1022,7 @@ func (c *callRun) recover(ctx context.Context) (res CallResult, stop bool, k int
 	case RecoverThreadReady:
 		c.threadID, c.configured, c.cwd = rec.ThreadID, rec.Pair, rec.Cwd
 		res, stop = c.pairCheck(ThreadInfo{ID: rec.ThreadID, Pair: rec.Pair, Cwd: rec.Cwd})
-		return res, stop, 1, p.prompt, nil
+		return res, stop, 1, c.checkpointPreface() + p.prompt, nil
 	case RecoverResendCreate:
 		c.send = rec.Send
 		if rec.Kind == "fork" {
@@ -978,7 +1030,7 @@ func (c *callRun) recover(ctx context.Context) (res CallResult, stop bool, k int
 		} else {
 			res, stop = c.startThread(ctx)
 		}
-		return res, stop, 1, p.prompt, nil
+		return res, stop, 1, c.checkpointPreface() + p.prompt, nil
 	}
 	info, _ := LookupCall(c.e.j, c.id)
 	c.threadID, c.configured, c.cwd = info.ThreadID, info.Configured, info.Cwd
@@ -995,6 +1047,13 @@ func (c *callRun) recover(ctx context.Context) (res CallResult, stop bool, k int
 			c.delivered = true
 		}
 	}
+	if c.firstK == 0 {
+		// the first ordinary turn of this pass: a repair turn follows an ordinary one
+		c.firstK = max(rec.K, 1)
+		if rec.Repair {
+			c.firstK = max(rec.K-1, 1)
+		}
+	}
 	if rec.Action == RecoverResendTurn {
 		return CallResult{}, false, rec.K, rec.Input, nil
 	}
@@ -1006,13 +1065,15 @@ func (c *callRun) recover(ctx context.Context) (res CallResult, stop bool, k int
 func (c *callRun) turnLoop(ctx context.Context, resolved *jsonschema.Resolved, k int, input string, pre *recoveredTurn) CallResult {
 	e, p := c.e, c.plan
 	resend := c.rec != nil && c.rec.Action == RecoverResendTurn
+	if c.firstK == 0 {
+		c.firstK = 1
+	}
 	for ; ; k++ {
 		var out TurnOutcome
 		var err error
-		repair := k > 1
+		repair := k > c.firstK
 		if pre != nil {
 			// The turn was sent before the process stopped: no request, no gate, no intent row.
-			repair = pre.k > 1
 			c.repairUsed = c.repairUsed || repair
 			if pre.running {
 				host, _ := e.cfg.Backend.(ReconHost)
@@ -1037,7 +1098,7 @@ func (c *callRun) turnLoop(ctx context.Context, resolved *jsonschema.Resolved, k
 				}
 			}
 			op := fmt.Sprintf("%s/t%d", c.id, k)
-			intent := map[string]any{"k": k, "op": op, "input": input}
+			intent := map[string]any{"k": k, "op": op, "input": input, "repair": repair}
 			if resend {
 				intent["resend"] = true
 				resend = false
@@ -1095,7 +1156,11 @@ func (c *callRun) turnLoop(ctx context.Context, resolved *jsonschema.Resolved, k
 			if err := c.pendingTree(ctx, data); err != nil {
 				return c.pendingTreeLost(ctx, err, data)
 			}
-			return c.terminal(EvCompleted, StatusCompleted, "", data)
+			res := c.terminal(EvCompleted, StatusCompleted, "", data)
+			if pt, _ := data["pending_tree"].(string); pt != "" {
+				c.e.noteExecutor(p.node, pt)
+			}
+			return res
 		}
 		if repair {
 			return c.terminal(EvNullModel, StatusNullModel, ReasonSchemaInvalidAfterRepair, map[string]any{"detail": verr.Error(), "repair_used": true})

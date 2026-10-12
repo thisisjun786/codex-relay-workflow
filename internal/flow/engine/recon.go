@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/callstate"
 )
 
 // This file is the reconcile pass of dispatch intents (engine.dispatch.reconcile, F05). A request that was sent and got no
@@ -189,6 +191,9 @@ type Recovery struct {
 	K     int
 	Op    string
 	Input string
+	// Repair is whether the turn is the call's schema repair (its turn_requested row says so; a row from before the member
+	// existed is a repair when it is not the first turn).
+	Repair bool
 	// TurnID is the turn of RecoverTurn; Running is set while it has not ended, Outcome is its end otherwise.
 	TurnID  string
 	Running bool
@@ -288,6 +293,10 @@ type callState struct {
 	terminal string
 	// unknownDetail is the detail of a trailing outcome_unknown.
 	unknownDetail string
+	// rejected is set on the state of a held call whose creation or turn request the host answered with an error: the
+	// answer proves the request finished (no grace is waited for), and a turn that carries its marker is not an adoption but
+	// an outcome nobody can prove.
+	rejected bool
 }
 
 func isTerminal(ev string) bool {
@@ -345,17 +354,20 @@ func (s *callState) intentState() bool {
 // open is a call that stopped between an intent and its outcome: its last row is not terminal.
 func (s *callState) open() bool { return s.terminal == "" && s.intentState() }
 
-// held is a call whose outcome was left unknown and has not been cleared since.
+// held is a call whose outcome was left unknown and has not been cleared since: the call `crw flow recover` accepts. The rows
+// are read by internal/flow/callstate, the reading `dag-restart` shares, so the command a report names is the one that accepts
+// the call; a state that was opened in memory (Recover) is not held.
 func (s *callState) held() bool {
-	if s.terminal != EvOutcomeUnknown || !s.intentState() {
-		return false
+	return s.terminal == EvOutcomeUnknown && callstate.Classify(callstateRows(s.rows)) == callstate.RecoveryHold
+}
+
+// callstateRows are a call's rows as callstate reads them.
+func callstateRows(rows []Event) []callstate.Row {
+	out := make([]callstate.Row, len(rows))
+	for i, ev := range rows {
+		out[i] = callstate.Row{Event: ev.Event, Reason: rowStr(ev.Data, "reason")}
 	}
-	for i := len(s.rows) - 1; i >= 0; i-- {
-		if s.rows[i].Event == EvOutcomeUnknown {
-			return rowStr(s.rows[i].Data, "reason") == ReasonDispatchUnknown
-		}
-	}
-	return false
+	return out
 }
 
 // callStates groups the agent-call rows of a run by call id, in order of first appearance.
@@ -636,7 +648,10 @@ func (r *reconciler) observeCreate(ctx context.Context, st *callState) plan {
 		case len(res.adoptable) > 0:
 			return r.adopt(ctx, st, kind, cwd, res)
 		}
-		// No candidate: the request is absent only if it is proven finished.
+		// No candidate: the request is absent only if it is proven finished. A request the host answered with an error is.
+		if st.rejected {
+			return r.resendCreate(st, kind, cwd, send, map[string]any{"proof": "rejected"})
+		}
 		switch r.cfg.Host.CreationState(owner, st.id, send) {
 		case CreationUnsent:
 			return r.resendCreate(st, kind, cwd, send, map[string]any{"proof": "unsent"})
@@ -729,6 +744,9 @@ func (r *reconciler) observeTurnRequested(ctx context.Context, st *callState) pl
 		return r.unknown(st, "the history of thread %s is not complete: %v", st.thread, err)
 	}
 	for _, t := range turns {
+		if t.Readable && t.Marker == op && st.rejected {
+			return r.unknown(st, "turn %s of thread %s carries %s, the marker of a request the host refused", t.ID, st.thread, op)
+		}
 		if t.Readable && t.Marker == op {
 			adopted := r.callRow(st, EvTurnStarted, map[string]any{"k": rowInt(st.turnReq.Data, "k"), "op": op, "turn_id": t.ID, "recovered": true,
 				"evidence": map[string]any{"listing": "complete", "marker": op, "status": t.Status}})
@@ -748,9 +766,18 @@ func (r *reconciler) observeTurnRequested(ctx context.Context, st *callState) pl
 		return r.unknown(st, "no turn carries %s and thread %s is %s", op, st.thread, th.Status)
 	}
 	rec := r.recoveryOf(st, RecoverResendTurn)
-	rec.K, rec.Op, rec.Input = rowInt(st.turnReq.Data, "k"), op, rowStr(st.turnReq.Data, "input")
+	rec.K, rec.Op, rec.Input, rec.Repair = rowInt(st.turnReq.Data, "k"), op, rowStr(st.turnReq.Data, "input"), turnIsRepair(st.turnReq.Data)
 	evidence := map[string]any{"listing": "complete", "turns": len(turns), "thread_status": th.Status, "marker": op}
 	return plan{rec: rec, evidence: evidence, rows: []Event{r.flowRow(st, EvCreationResendable, map[string]any{"proof": "turn_absent", "op": op, "evidence": evidence})}}
+}
+
+// turnIsRepair is whether a turn_requested row asked for the call's schema repair. A call that goes on after a hold sends an
+// ordinary turn t2 or later, so the ordinal does not say; the row does, and a row from before it did is read by its ordinal.
+func turnIsRepair(data map[string]any) bool {
+	if v, ok := data["repair"].(bool); ok {
+		return v
+	}
+	return rowInt(data, "k") > 1
 }
 
 // turnAdoption is a turn found by its marker that the turn_started row has not recorded yet.
@@ -792,6 +819,7 @@ func (r *reconciler) observeTurnStarted(ctx context.Context, st *callState, adop
 	}
 	rec := r.recoveryOf(st, RecoverTurn)
 	rec.K, rec.Op, rec.TurnID, rec.Input, rec.InterruptReason = k, op, turnID, rowStr(st.turnReq.Data, "input"), st.interrupt
+	rec.Repair = turnIsRepair(st.turnReq.Data)
 	if found.Status == "inProgress" || found.Status == "" {
 		rec.Running = true
 		return plan{rec: rec, rows: rows}

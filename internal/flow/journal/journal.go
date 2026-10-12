@@ -60,6 +60,11 @@ type Journal struct {
 	err     error
 	hasRun  bool
 	context map[string]callContext
+	// nodeExecution is the execution the latest call of a node was associated with: a call of the node that carries none of its
+	// own (one a resumed process reaches for the first time) belongs to the same execution.
+	nodeExecution map[string]string
+	// loading is set while the rows the store already holds are read: they inherit nothing that was not recorded with them.
+	loading bool
 }
 
 // stored is a row that waits for its transaction, with what it inherits from the earlier rows of its call as of the moment it
@@ -88,18 +93,66 @@ func Open(ctx context.Context, st *store.Store, runID string, id Identity, opts 
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
-	j := &Journal{st: st, runID: runID, id: id, opts: opts, ctx: context.WithoutCancel(ctx), context: map[string]callContext{}}
+	j := &Journal{st: st, runID: runID, id: id, opts: opts, ctx: context.WithoutCancel(ctx), context: map[string]callContext{}, nodeExecution: map[string]string{}}
 	events, hasRun, err := Load(ctx, st, runID)
 	if err != nil {
 		return nil, err
 	}
 	j.hasRun = hasRun
+	if hasRun {
+		if err := j.loadIdentity(ctx); err != nil {
+			return nil, err
+		}
+		if err := j.loadNodeExecutions(ctx); err != nil {
+			return nil, err
+		}
+	}
+	j.loading = true
 	for _, e := range events {
 		j.noteContext(e)
 		j.seq = max(j.seq, e.Seq)
 	}
+	j.loading = false
 	j.events = events
 	return j, nil
+}
+
+// loadIdentity fills what the caller left out of the Identity from the run record the first process wrote: a run that is opened
+// again (a resume, a recovery) keeps the plan its rows are associated with, so the rows it appends are found by the same
+// plan and node as the earlier ones.
+func (j *Journal) loadIdentity(ctx context.Context) error {
+	var plan, actor, epoch, from string
+	var revision int64
+	err := j.st.DB.QueryRowContext(ctx, `SELECT COALESCE(plan_id, ''), COALESCE(plan_revision, 0), COALESCE(actor_task_id, ''), COALESCE(epoch_nonce, ''), COALESCE(resume_from, '') FROM flow_runs WHERE run_id = ?`,
+		j.runID).Scan(&plan, &revision, &actor, &epoch, &from)
+	if err != nil {
+		return fmt.Errorf("journal: the run record: %w", err)
+	}
+	j.id.PlanID = orElse(j.id.PlanID, plan)
+	if j.id.PlanRevision == 0 {
+		j.id.PlanRevision = revision
+	}
+	j.id.ActorTaskID = orElse(j.id.ActorTaskID, actor)
+	j.id.EpochNonce = orElse(j.id.EpochNonce, epoch)
+	j.id.ResumeFrom = orElse(j.id.ResumeFrom, from)
+	return nil
+}
+
+// loadNodeExecutions reads the execution each node of the run was last associated with, from the rows already stored.
+func (j *Journal) loadNodeExecutions(ctx context.Context) error {
+	rows, err := j.st.DB.QueryContext(ctx, `SELECT node_id, execution_id FROM flow_calls WHERE run_id = ? AND COALESCE(node_id, '') != '' AND COALESCE(execution_id, '') != '' ORDER BY event_seq`, j.runID)
+	if err != nil {
+		return fmt.Errorf("journal: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var node, execution string
+		if err := rows.Scan(&node, &execution); err != nil {
+			return fmt.Errorf("journal: %w", err)
+		}
+		j.nodeExecution[node] = execution
+	}
+	return rows.Err()
 }
 
 // intents are the events committed before the request they announce is sent.
@@ -129,8 +182,13 @@ func (j *Journal) Append(e engine.Event) engine.Event {
 	if j.err != nil {
 		return e
 	}
-	j.batch = append(j.batch, stored{e: e, cc: j.context[e.CallID]})
+	// a row inherits what its call knew when it was appended; the prepared row of a call also inherits the execution of its node
+	cc := j.context[e.CallID]
 	j.noteContext(e)
+	if e.Kind == engine.KindCall && e.Event == engine.EvPrepared {
+		cc = j.context[e.CallID]
+	}
+	j.batch = append(j.batch, stored{e: e, cc: cc})
 	switch {
 	case IsIntent(e.Kind, e.Event):
 		// the rows before it first, then the intent in a transaction of its own
@@ -206,7 +264,15 @@ func (j *Journal) noteContext(e engine.Event) {
 	cc := j.context[e.CallID]
 	switch e.Event {
 	case engine.EvPrepared:
-		cc = callContext{role: str(e.Data, "role"), node: str(e.Data, "node"), head: str(e.Data, "head"), execution: str(e.Data, "execution_id"), thread: str(e.Data, "thread_id")}
+		node, execution := str(e.Data, "node"), str(e.Data, "execution_id")
+		if execution == "" && node != "" && !j.loading {
+			// a call the resumed process reaches for the first time belongs to the execution its node's earlier calls do
+			execution = j.nodeExecution[node]
+		}
+		if execution != "" && node != "" {
+			j.nodeExecution[node] = execution
+		}
+		cc = callContext{role: str(e.Data, "role"), node: node, head: str(e.Data, "head"), execution: execution, thread: str(e.Data, "thread_id")}
 	case engine.EvThreadStarted, engine.EvForkStarted:
 		cc.thread = str(e.Data, "thread_id")
 	case engine.EvTurnStarted:
@@ -360,7 +426,7 @@ func (j *Journal) insertCall(ctx context.Context, conn *sql.Conn, e engine.Event
  commit_sha, commit_parent, tree_digest, verification_digest, acceptance_id, batch_id, thread_id, turn_id, plan_id, node_id, attempt, execution_id, worktree_kind, worktree_path, start_commit,
  pending_tree, snapshot_digest, input_state, held_tree, tokens, detail_json, recorded_at)
  VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		e.CallID, e.Seq, j.runID, e.Path, e.Position, kindOf, role, str(d, "input_digest"), "", e.Event, str(d, "op"), str(d, "result_digest"), result, "",
+		e.CallID, e.Seq, j.runID, e.Path, e.Position, kindOf, role, str(d, "input_digest"), str(d, "input_snapshot"), e.Event, str(d, "op"), str(d, "result_digest"), result, "",
 		commit, str(d, "parent"), str(d, "tree"), str(d, "digest"), str(d, "acceptance_id"), str(d, "batch_commit"), thread, turn,
 		orElse(str(d, "plan_id"), j.id.PlanID), node, intOf(alloc["attempt"]), orElse(str(d, "execution_id"), cc.execution), worktreeKind, str(alloc, "path"), str(alloc, "start_commit"),
 		pending, str(alloc, "snapshot_digest"), inputState, str(d, "p_held"), tokensOf(d), detailJSON, j.stamp())

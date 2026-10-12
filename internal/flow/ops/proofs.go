@@ -2,8 +2,6 @@ package ops
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"slices"
@@ -176,11 +174,9 @@ func ReviewerFinalProof(events []engine.Event, rng, criteriaDigest string) Verdi
 func IsRecordOp(op string) bool { return slices.Contains(recordOps, op) }
 
 // RequestID is the idempotent request id a recording call sends with: the same for the same call of the same run, so a
-// call that is sent again after a crash is recognised by whoever recorded it the first time.
-func RequestID(runID, callID string) string {
-	s := sha256.Sum256([]byte("crw-flow-record\x00" + runID + "\x00" + callID))
-	return "req_" + hex.EncodeToString(s[:])[:24]
-}
+// call that is sent again after a crash is recognised by whoever recorded it the first time. It is the id the engine gives an
+// op (engine.RequestID).
+func RequestID(runID, callID string) string { return engine.RequestID(runID, callID) }
 
 // Replay is what a resumed run does with a recording call.
 type Replay struct {
@@ -214,6 +210,23 @@ type Prover struct{ Git GitFunc }
 
 // NewProver returns a prover that runs the git binary.
 func NewProver() Prover { return Prover{Git: ExecGit("git")} }
+
+// ProveNode implements engine.Prover: the proof of the node's executor calls against its current worktree. A node with no
+// attempt worktree in the journal proves nothing (its calls are not proven).
+func (p Prover) ProveNode(ctx context.Context, events []engine.Event, node string) (engine.NodeProof, error) {
+	np, err := p.Node(ctx, events, node)
+	if errors.Is(err, ErrNoWorktree) {
+		return noProof{}, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return np, nil
+}
+
+type noProof struct{}
+
+func (noProof) Proven(string) bool { return false }
 
 // ErrNoWorktree is the refusal to prove a node that has no current attempt worktree in the journal.
 var ErrNoWorktree = errors.New("ops: the node has no attempt worktree in the journal")
@@ -297,10 +310,27 @@ func (p Prover) Node(ctx context.Context, events []engine.Event, node string) (*
 		return nil, fmt.Errorf("%w: %s", ErrNoWorktree, node)
 	}
 	np := &NodeProof{Node: node, Worktree: str(current.alloc, "path"), Start: str(current.alloc, "start_commit")}
+	// A restored worktree (a resume's suffix) holds the pending tree P of the build or fix that ended the replayed prefix: the
+	// calls of the prefix ran in another worktree, and are proven by this one while its files are still P (the later call of
+	// the prefix is the one P belongs to; the calls before it are proven with it).
+	prefixEnd := 0
+	if k, _ := current.alloc["kind"].(string); k == engine.PlaceRestore {
+		if want := str(current.alloc, "pending"); want != "" {
+			for i := range calls {
+				if c := &calls[i]; c.prepared < current.prepared && c.termSeq > 0 && c.pending == want {
+					prefixEnd = max(prefixEnd, c.termSeq)
+				}
+			}
+		}
+	}
 	var mine []*attemptCall
 	for i := range calls {
 		c := &calls[i]
-		if c.prepared < current.prepared || c.cwd != np.Worktree || c.termSeq == 0 || c.pending == "" {
+		if c.termSeq == 0 || c.pending == "" {
+			continue
+		}
+		inPrefix := prefixEnd > 0 && c.prepared < current.prepared && c.termSeq <= prefixEnd
+		if !inPrefix && (c.prepared < current.prepared || c.cwd != np.Worktree) {
 			continue
 		}
 		mine = append(mine, c)
@@ -448,7 +478,9 @@ func nodeCalls(events []engine.Event, node string) []attemptCall {
 			c := attemptCall{id: ev.CallID, role: str(ev.Data, "role"), prepared: ev.Seq, cwd: str(ev.Data, "thread_cwd")}
 			if m, isMap := ev.Data["allocation"].(map[string]any); isMap {
 				c.alloc = m
-				if p := str(m, "path"); p != "" && c.cwd == "" {
+				// where the call runs is where its allocation puts it: a continuation that forked into a restored worktree
+				// records the handle's thread cwd too, which is the directory of the attempt it left
+				if p := str(m, "path"); p != "" {
 					c.cwd = p
 				}
 			}

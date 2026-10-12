@@ -26,56 +26,208 @@ func (c *callRun) schemaDigest() string {
 	return digestJSON(c.plan.schema)
 }
 
-// resumePrior looks the call up in the journal of the process that ran before. It returns true when the call needs no
-// prepared row of its own: its result is replayed (c.replay), or it goes on from what reconcile decided (c.rec).
+// resumePrior looks the call up in the journal of the process that ran before, at its own (path, position). It returns true
+// when the call needs no prepared row of its own: its result is replayed (c.replay), it goes on from what reconcile decided
+// (c.rec), or it is a held call that goes on in place (c.held). Every other call runs live and, with it, the rest of its path.
 func (c *callRun) resumePrior() bool {
 	e, p := c.e, c.plan
-	var rows []Event
+	rows := e.prior.rowsOf(c.id, "agent")
 	var prep Event
-	for _, ev := range CallEvents(e.j, c.id) {
-		if ev.Op != "agent" || ev.Seq >= e.startSeq {
-			continue
-		}
-		rows = append(rows, ev)
+	for _, ev := range rows {
 		if ev.Event == EvPrepared {
 			prep = ev
 		}
 	}
 	if len(rows) == 0 || prep.Seq == 0 {
-		return false
+		return c.live()
 	}
-	d := prep.Data
-	same := rowStr(d, "input_digest") == digestJSON([]byte(p.prompt)) && rowStr(d, "schema_digest") == c.schemaDigest() &&
-		rowStr(d, "role") == p.role && rowStr(d, "model") == p.spec.Pair.Model && rowStr(d, "effort") == p.spec.Pair.Effort
-	if !same {
-		return false
+	// A call whose outcome is unknown, and whose hold nobody has cleared, is not run again whatever the walk says: a request of
+	// it may still be at work on the host, so a new attempt of the call would send it twice and lose the hold (a new prepared
+	// row ends the state the hold is read from). Its unknown outcome stays its result, and the node stays in recovery_hold.
+	if stateOf(c.id, rows).held() {
+		if c.path.suffix || rowStr(prep.Data, "input_digest") != c.digest {
+			c.e.markLive(c.path, c.position+1)
+		}
+		return c.replayFrom(rows, prep)
+	}
+	// (c) and (d): the input digest, the context boundary and the joins before the position, and the plan-owned input snapshot.
+	// A node that was accepted is not rebuilt silently when its own spec or packet changed: the call is refused with the route.
+	changed := rowStr(prep.Data, "input_digest") != c.digest || rowStr(prep.Data, "input_snapshot") != c.snapshot
+	if changed && p.refusal == nil && e.nodeAccepted(p.node) {
+		p.refusal = &Refusal{Reason: ReasonAcceptedNodeChanged, Detail: acceptedNodeRoute(p.node)}
+	}
+	// (a) and (b): an earlier position of the path did not replay, or the path was opened by a call after one that did not
+	if c.path.suffix || changed {
+		return c.live()
 	}
 	st := stateOf(c.id, rows)
+	if p.refusal != nil {
+		// a call refused before it opened ends the same way on every run: it replays when the previous process refused it for
+		// the same reason
+		if st.terminal == EvRefused && rowStr(lastTerminal(rows).Data, "reason") == p.refusal.Reason {
+			return c.replayFrom(rows, prep)
+		}
+		return c.live()
+	}
 	switch st.terminal {
 	case EvCompleted, EvNullModel, EvRefused, EvOutcomeUnknown:
-		c.startSeq = prep.Seq
-		res := c.replayResult(rows)
-		c.replay = &res
-		return true
+		// (e): the effect of what the call produced is still there
+		if !c.effectHolds(lastTerminal(rows), false) {
+			return c.live()
+		}
+		return c.replayFrom(rows, prep)
+	case EvHeld:
+		return c.heldInPlace(rows, prep)
 	case "":
 		rec := e.recovery[c.id]
 		if rec == nil || rec.Action == RecoverUnknown {
-			return false
+			return c.live()
 		}
 		if !e.claim(c.id) {
 			// a new attempt of the node ended this call superseded before the script reached its position: the position
 			// runs as a call of its own
-			return false
+			return c.live()
 		}
 		c.startSeq, c.rec = prep.Seq, rec
-		if m, ok := d["allocation"].(map[string]any); ok {
+		c.suffixCall = true
+		if m, ok := prep.Data["allocation"].(map[string]any); ok {
 			pl := placementFromMap(m)
 			c.placement = &pl
 			c.placeReq = PlaceRequest{RunID: e.runID, CallID: c.id, Role: p.role, Family: p.spec.Family, Node: p.node, Head: p.opts.Head, Continues: p.resume, Journal: e.j}
 		}
+		// the call goes on in this process: it is not superseded, but the positions after it are the suffix
+		e.markLive(c.path, c.position+1)
 		return true
 	}
+	return c.live()
+}
+
+// live is the end of the walk for the call's path: the call runs live, and so does every later position of the path.
+func (c *callRun) live() bool {
+	c.suffixCall = true
+	c.e.markLive(c.path, c.position)
 	return false
+}
+
+// replayFrom delivers the result the call's rows restore.
+func (c *callRun) replayFrom(rows []Event, prep Event) bool {
+	c.startSeq = prep.Seq
+	res := c.replayResult(rows)
+	c.replay = &res
+	term := lastTerminal(rows)
+	if term.Event == EvCompleted {
+		c.e.noteExecutor(c.plan.node, rowStr(term.Data, "pending_tree"))
+	}
+	return true
+}
+
+// lastTerminal is the last terminal row of a call's rows.
+func lastTerminal(rows []Event) Event {
+	var term Event
+	for _, ev := range rows {
+		switch {
+		case ev.Event == EvPrepared:
+			term = Event{}
+		case isTerminal(ev.Event):
+			term = ev
+		case reopensCall(ev.Event):
+			term = Event{}
+		}
+	}
+	return term
+}
+
+// nodeAccepted is whether the previous processes recorded an acceptance of the node that nothing has superseded since.
+func (e *Engine) nodeAccepted(node string) bool {
+	if node == "" || e.prior == nil {
+		return false
+	}
+	for _, id := range e.prior.order {
+		rows := e.prior.calls[id]
+		last := rows[len(rows)-1]
+		if last.Op == OpAccept && last.Event == EvCompleted && rowStr(last.Data, "node") == node {
+			return true
+		}
+	}
+	return false
+}
+
+// OpAccept is the op of the rows crw.accept (F08) journals: its completed row names the node.
+const OpAccept = "crw.accept"
+
+// acceptedNodeRoute says what to do when a node that was accepted has another spec or packet now. A stale result is never
+// reused silently.
+func acceptedNodeRoute(node string) string {
+	return fmt.Sprintf("node %s was accepted and its spec or packet changed: record a plan revision with update_node (the acceptance becomes stale) and run again, or correct an oversized child with dag-correct", node)
+}
+
+// effectHolds is (e) of the replay rule for an executor call: the pending tree (or P_held) it recorded is still the state of
+// the node's files, or a recorded commit carries it. A call that is not an executor's, or recorded no state, has no effect to
+// prove. held is whether the row is a held row, whose state is P_held.
+func (c *callRun) effectHolds(term Event, held bool) bool {
+	e := c.e
+	if c.plan.spec.Family != "executor" || c.plan.node == "" {
+		return true
+	}
+	key := "pending_tree"
+	if held {
+		key = "p_held"
+	}
+	state := rowStr(term.Data, key)
+	if state == "" {
+		return true
+	}
+	if !held && e.committedTree(c.plan.node, state) {
+		return true
+	}
+	prover := e.prover()
+	if prover == nil {
+		return true
+	}
+	np, err := e.nodeProof(prover, c.plan.node)
+	return err == nil && np != nil && np.Proven(c.id)
+}
+
+// committedTree is whether a recorded commit of the node carries the tree: the build or fix that produced it is proven by
+// that commit.
+func (e *Engine) committedTree(node, tree string) bool {
+	for _, id := range e.prior.order {
+		for _, ev := range e.prior.calls[id] {
+			if ev.Op == OpCommit && ev.Event == EvCompleted && rowStr(ev.Data, "node") == node && rowStr(ev.Data, "tree") == tree {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (e *Engine) prover() Prover {
+	if e.cfg.Prover != nil {
+		return e.cfg.Prover
+	}
+	p, _ := e.cfg.Backend.(Prover)
+	return p
+}
+
+// nodeProof reads the proof of a node's executor calls once per resume: the rows it reads are the previous processes'.
+func (e *Engine) nodeProof(p Prover, node string) (NodeProof, error) {
+	e.proofM.Lock()
+	defer e.proofM.Unlock()
+	if np, ok := e.proofs[node]; ok {
+		return np, nil
+	}
+	var rows []Event
+	for _, ev := range e.j.Events() {
+		if ev.Seq < e.startSeq {
+			rows = append(rows, ev)
+		}
+	}
+	np, err := p.ProveNode(e.ctx, rows, node)
+	if err != nil {
+		return nil, err
+	}
+	e.proofs[node] = np
+	return np, nil
 }
 
 // replayResult is the CallResult of a call the journal ended: what the rows of its last terminal event say.
@@ -184,8 +336,31 @@ func restoreRows(runID, callID string, rows []Event, omitSeq bool) (restored, bo
 // attempt it replaces. A turn that cannot be confirmed interrupted holds the call.
 func (c *callRun) supersedePrior(ctx context.Context) (CallResult, bool) {
 	e := c.e
-	if e.cfg.Resume == nil {
+	switch f := c.endOpenCalls(ctx); {
+	case f == nil:
 		return CallResult{}, false
+	case f.cancelled:
+		return c.terminal(EvSuperseded, StatusSuperseded, ReasonCancelled, nil), true
+	default:
+		e.stopNode(c.plan.node, ReasonRecoveryHold)
+		return c.terminal(EvHeld, StatusHeld, ReasonRecoveryHold, map[string]any{"input_state": c.inputState(), "detail": f.detail}), true
+	}
+}
+
+// supersedeFailure is why the open calls of the previous process could not be ended: the run was cancelled, or a turn could
+// not be confirmed interrupted.
+type supersedeFailure struct {
+	cancelled bool
+	detail    string
+}
+
+// endOpenCalls ends the open calls of the previous process on the call's node (and the call's own) as superseded, the
+// interruption of a running turn first. The resume's reason is the call's own earlier attempt; a call of the node's earlier
+// attempt is ended by the new attempt.
+func (c *callRun) endOpenCalls(ctx context.Context) *supersedeFailure {
+	e := c.e
+	if e.cfg.Resume == nil {
+		return nil
 	}
 	host, _ := e.cfg.Backend.(ReconHost)
 	for _, st := range callStatesBefore(e.j, e.runID, e.startSeq) {
@@ -201,28 +376,30 @@ func (c *callRun) supersedePrior(ctx context.Context) (CallResult, bool) {
 			select {
 			case <-op.done:
 			case <-ctx.Done():
-				return c.terminal(EvSuperseded, StatusSuperseded, ReasonCancelled, nil), true
+				return &supersedeFailure{cancelled: true}
 			}
 			if op.err != nil {
-				e.stopNode(c.plan.node, ReasonRecoveryHold)
-				return c.terminal(EvHeld, StatusHeld, ReasonRecoveryHold, map[string]any{"input_state": c.inputState(), "detail": op.err.Error()}), true
+				return &supersedeFailure{detail: op.err.Error()}
 			}
 			continue
 		}
 		if host != nil && st.thread != "" && (st.last == EvTurnRequested || st.last == EvTurnStarted) {
 			if err := c.interruptAndConfirm(ctx, host, st); err != nil {
 				e.endSupersede(st.id, op, err)
-				data := map[string]any{"input_state": c.inputState(), "detail": err.Error()}
-				e.stopNode(c.plan.node, ReasonRecoveryHold)
-				return c.terminal(EvHeld, StatusHeld, ReasonRecoveryHold, data), true
+				return &supersedeFailure{detail: err.Error()}
 			}
 		}
 		first := st.rows[0]
-		e.j.Append(Event{RunID: e.runID, Kind: KindCall, CallID: st.id, Path: first.Path, Position: first.Position, Op: "agent", Label: first.Label, Event: EvSuperseded,
-			Data: map[string]any{"reason": ReasonSupersededByAttempt, "by": c.id, "last_event": st.last}})
+		reason, data := ReasonSupersededByAttempt, map[string]any{"by": c.id, "last_event": st.last}
+		if st.id == c.id {
+			reason = ReasonSupersededByResume
+			data["lineage"] = e.lineage
+		}
+		data["reason"] = reason
+		e.j.Append(Event{RunID: e.runID, Kind: KindCall, CallID: st.id, Path: first.Path, Position: first.Position, Op: "agent", Label: first.Label, Event: EvSuperseded, Data: data})
 		e.endSupersede(st.id, op, nil)
 	}
-	return CallResult{}, false
+	return nil
 }
 
 // interruptAndConfirm interrupts the turn the call left running and waits until thread/read shows the thread no longer

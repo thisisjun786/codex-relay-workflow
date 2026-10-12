@@ -21,6 +21,7 @@ import (
 const flowUsage = `usage: crw flow run --backend fake [--args JSON | --args-file FILE] [--pool N] [--token-budget N] [--journal] (<script.js> | --script JS [--plan-only=false])
        crw flow roles [--json]
        crw flow recover [--run RUN] CALL (--adopt THREAD|TURN | --absent)
+       crw flow resume [--state DIR] [--socket PATH] [--repo DIR] [--args JSON | --args-file FILE] RUN SCRIPT
        crw flow lint [--args JSON | --args-file FILE] [--no-dry-run] [--json] <script.js>...`
 
 // lookupEnv reads the environment for the policy file; tests replace it.
@@ -48,10 +49,12 @@ func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return compile.RunCLI(ctx, args[1:], os.Stdin, stdout, stderr)
 	case "recover":
 		return recoverCmd(ctx, args[1:], stdout, stderr)
+	case "resume":
+		return resumeCmd(ctx, args[1:], stdout, stderr)
 	}
 	fmt.Fprintln(stderr, flowUsage)
 	fmt.Fprintln(stderr, compile.Usage)
-	fmt.Fprintf(stderr, "crw flow: error: argument command: invalid choice: %q (choose from 'run', 'roles', 'compile', 'recover')\n", args[0])
+	fmt.Fprintf(stderr, "crw flow: error: argument command: invalid choice: %q (choose from 'run', 'roles', 'compile', 'recover', 'resume')\n", args[0])
 	return 2
 }
 

@@ -274,3 +274,103 @@ func inRegion(region, p string) bool {
 	}
 	return p == region
 }
+
+// Restore rebuilds a boundary: a detached worktree at the commit base (`git worktree add --detach`), and when the boundary
+// ends with a pending tree, that tree on top of it. The files are made equal to the pending tree with a two-tree merge in a
+// temporary index (`read-tree -m -u base pending`); the worktree's own index stays at base, so whatever the pending tree
+// changes shows as an uncommitted change and the commit that follows commits exactly that tree. The working snapshot is
+// compared with the boundary (the tree of base, or the pending tree) before anything runs, and returned: it is the digest the
+// worktree is verified with from then on.
+func Restore(ctx context.Context, git GitFunc, repo, path, base, pending string) (string, error) {
+	if base == "" {
+		return "", errors.New("ops: a restore needs a base commit")
+	}
+	if _, err := os.Lstat(path); err == nil {
+		return "", fmt.Errorf("ops: the worktree path %s already exists: a path belongs to one allocation", path)
+	}
+	want, err := TreeOf(ctx, git, repo, base)
+	if err != nil {
+		return "", err
+	}
+	if pending != "" {
+		if kind, err := git(ctx, repo, nil, "cat-file", "-t", pending); err != nil || kind != "tree" {
+			return "", fmt.Errorf("ops: the pending tree %s is not a tree of the repository", pending)
+		}
+		want = pending
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", err
+	}
+	if _, err := git(ctx, repo, nil, "worktree", "add", "--detach", "--quiet", path, base); err != nil {
+		return "", err
+	}
+	if pending != "" {
+		if err := materialize(ctx, git, path, base, pending); err != nil {
+			return "", err
+		}
+	}
+	got, err := Snapshot(ctx, git, path)
+	if err != nil {
+		return "", err
+	}
+	if got != want {
+		return "", fmt.Errorf("ops: the restored worktree %s holds %s, the boundary is %s", path, got, want)
+	}
+	return got, nil
+}
+
+// materialize makes the files of a worktree that holds the tree of base equal to the tree pending, in a temporary index so
+// that the real index stays at base.
+func materialize(ctx context.Context, git GitFunc, worktree, base, pending string) error {
+	dir, err := os.MkdirTemp("", "crw-restore-")
+	if err != nil {
+		return err
+	}
+	defer os.RemoveAll(dir)
+	env := []string{"GIT_INDEX_FILE=" + filepath.Join(dir, "index")}
+	if _, err := git(ctx, worktree, env, quiet("read-tree", base)...); err != nil {
+		return err
+	}
+	// the temporary index is new: its entries get the stat data of the files they describe, or the merge refuses to touch them
+	if _, err := git(ctx, worktree, env, quiet("update-index", "-q", "--refresh")...); err != nil {
+		return err
+	}
+	_, err = git(ctx, worktree, env, quiet("read-tree", "-m", "-u", base, pending)...)
+	return err
+}
+
+// Preserved is the commit that keeps the state of a worktree.
+type Preserved struct {
+	Commit, Head, Snapshot string
+}
+
+// Preserve keeps a worktree's HEAD and working snapshot as a commit on ref (the snapshot's tree on the HEAD commit), made
+// without touching the worktree: its files, its index and its HEAD are read, never written. A ref that already exists is
+// moved to the new commit.
+func Preserve(ctx context.Context, git GitFunc, repo, worktree, ref, message string) (Preserved, error) {
+	head, err := Head(ctx, git, worktree)
+	if err != nil {
+		return Preserved{}, err
+	}
+	tree, err := Snapshot(ctx, git, worktree)
+	if err != nil {
+		return Preserved{}, err
+	}
+	commit, err := PreserveTree(ctx, git, repo, tree, head, ref, message)
+	if err != nil {
+		return Preserved{}, err
+	}
+	return Preserved{Commit: commit, Head: head, Snapshot: tree}, nil
+}
+
+// PreserveTree keeps a tree as a commit on ref, on the parent commit.
+func PreserveTree(ctx context.Context, git GitFunc, repo, tree, parent, ref, message string) (string, error) {
+	commit, err := git(ctx, repo, identity, "-c", "commit.gpgsign=false", "commit-tree", tree, "-p", parent, "-m", message)
+	if err != nil {
+		return "", err
+	}
+	if _, err := git(ctx, repo, nil, "update-ref", ref, commit); err != nil {
+		return "", err
+	}
+	return commit, nil
+}

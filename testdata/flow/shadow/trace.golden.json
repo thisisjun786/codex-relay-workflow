@@ -59,17 +59,22 @@
           "label": "build-n1",
           "at": "2026-10-12T09:00:04Z",
           "data": {
+            "context": {
+              "kind": "fresh",
+              "packet": "515ef8bf35f26798a54d0432fe8c0eca3c7d83e290ec829f64898a4a5d862e68"
+            },
             "cwd": "",
             "effort": "xhigh",
             "explicit_label": true,
             "family": "executor",
             "head": "",
-            "input_digest": "515ef8bf35f26798a54d0432fe8c0eca3c7d83e290ec829f64898a4a5d862e68",
+            "input_digest": "b9a4cd214fd5ea590e85580b240ee5d33b57a64884dade549bc16860d556e010",
             "model": "claude-fake-haiku",
             "node": "n1",
             "phase": "n1",
             "plain": false,
             "policy_digest": "",
+            "prompt_digest": "515ef8bf35f26798a54d0432fe8c0eca3c7d83e290ec829f64898a4a5d862e68",
             "requested_effort": "xhigh",
             "requested_model": "claude-fake-haiku",
             "role": "executor",
@@ -124,7 +129,8 @@
           "data": {
             "input": "build n1",
             "k": 1,
-            "op": "c_7ea9193cc1c4/t1"
+            "op": "c_7ea9193cc1c4/t1",
+            "repair": false
           }
         },
         {
@@ -176,17 +182,22 @@
           "label": "review-n1",
           "at": "2026-10-12T09:00:11Z",
           "data": {
+            "context": {
+              "kind": "fresh",
+              "packet": "d9ae90f2847e6492c55a3bb229b456fbaaedcf9aa7c4677fc93ba8c3045449c0"
+            },
             "cwd": "",
             "effort": "high",
             "explicit_label": true,
             "family": "reviewer",
             "head": "",
-            "input_digest": "d9ae90f2847e6492c55a3bb229b456fbaaedcf9aa7c4677fc93ba8c3045449c0",
+            "input_digest": "2e842b848fb1b6ba1af3140282ce9aa7b9b2d30f3a007ecdb3fb40abdb0046f8",
             "model": "gpt-fake-sol",
             "node": "n1",
             "phase": "n1",
             "plain": false,
             "policy_digest": "",
+            "prompt_digest": "d9ae90f2847e6492c55a3bb229b456fbaaedcf9aa7c4677fc93ba8c3045449c0",
             "requested_effort": "high",
             "requested_model": "gpt-fake-sol",
             "role": "reviewer",
@@ -241,7 +252,8 @@
           "data": {
             "input": "review n1",
             "k": 1,
-            "op": "c_13eff316c0d1/t1"
+            "op": "c_13eff316c0d1/t1",
+            "repair": false
           }
         },
         {
@@ -303,17 +315,22 @@
           "label": "build-n2",
           "at": "2026-10-12T09:00:19Z",
           "data": {
+            "context": {
+              "kind": "fresh",
+              "packet": "aea80af45fcdda0611902dc19c7e842655232b194ba051c05a2d56c949496126"
+            },
             "cwd": "",
             "effort": "xhigh",
             "explicit_label": true,
             "family": "executor",
             "head": "",
-            "input_digest": "aea80af45fcdda0611902dc19c7e842655232b194ba051c05a2d56c949496126",
+            "input_digest": "b897a498c420a79d9349b4b758468e5ce3bb09358393bbaa8f583fbf961a1abd",
             "model": "claude-fake-haiku",
             "node": "n2",
             "phase": "n2",
             "plain": false,
             "policy_digest": "",
+            "prompt_digest": "aea80af45fcdda0611902dc19c7e842655232b194ba051c05a2d56c949496126",
             "requested_effort": "xhigh",
             "requested_model": "claude-fake-haiku",
             "role": "executor",
@@ -367,7 +384,8 @@
           "data": {
             "input": "build n2",
             "k": 1,
-            "op": "c_c1f8be384e78/t1"
+            "op": "c_c1f8be384e78/t1",
+            "repair": false
           }
         },
         {
@@ -420,6 +438,7 @@
           "at": "2026-10-12T09:00:26Z",
           "data": {
             "evidence_digest": "a00dc6338f11a8532a11a1feefb54b73b3736510b43f298bac2078738133728d",
+            "input_digest": "849693cae556d6323f7495424f3fd682c4e36c64dfeba039a2e31809e630c616",
             "result": "{\"checkpoint\":null,\"id\":\"step_8bb96c4def57\"}",
             "step_decision": "step_8bb96c4def57"
           }
@@ -435,17 +454,22 @@
           "label": "build-n2-t1",
           "at": "2026-10-12T09:00:27Z",
           "data": {
+            "context": {
+              "kind": "fresh",
+              "packet": "d599bfbba9a4a44375013cc96536498b53dede1a2bd3b08bb6b004d7bf1134a0"
+            },
             "cwd": "",
             "effort": "xhigh",
             "explicit_label": true,
             "family": "executor",
             "head": "",
-            "input_digest": "d599bfbba9a4a44375013cc96536498b53dede1a2bd3b08bb6b004d7bf1134a0",
+            "input_digest": "2524c976120492938ce340fe885f3fd71cbea2b89c3602f94c7c5fc25b64fa89",
             "model": "claude-fake-sonnet",
             "node": "n2",
             "phase": "n2",
             "plain": false,
             "policy_digest": "",
+            "prompt_digest": "d599bfbba9a4a44375013cc96536498b53dede1a2bd3b08bb6b004d7bf1134a0",
             "requested_effort": "xhigh",
             "requested_model": "claude-fake-sonnet",
             "role": "executor-t1",
@@ -499,7 +523,8 @@
           "data": {
             "input": "build n2 again",
             "k": 1,
-            "op": "c_66511539b2be/t1"
+            "op": "c_66511539b2be/t1",
+            "repair": false
           }
         },
         {
@@ -561,17 +586,22 @@
           "label": "build-n3",
           "at": "2026-10-12T09:00:35Z",
           "data": {
+            "context": {
+              "kind": "fresh",
+              "packet": "e80f8b7d0c9f4d4d3166e650842cea0c5f2dbc8a09826817cc394707cef41b65"
+            },
             "cwd": "",
             "effort": "xhigh",
             "explicit_label": true,
             "family": "executor",
             "head": "",
-            "input_digest": "e80f8b7d0c9f4d4d3166e650842cea0c5f2dbc8a09826817cc394707cef41b65",
+            "input_digest": "cc4554070655be8e7646b6441d41063774899980d016145b2c0b9997e80b492d",
             "model": "claude-fake-haiku",
             "node": "n3",
             "phase": "n3",
             "plain": false,
             "policy_digest": "",
+            "prompt_digest": "e80f8b7d0c9f4d4d3166e650842cea0c5f2dbc8a09826817cc394707cef41b65",
             "requested_effort": "xhigh",
             "requested_model": "claude-fake-haiku",
             "role": "executor",
@@ -625,7 +655,8 @@
           "data": {
             "input": "build n3",
             "k": 1,
-            "op": "c_65f8ce8a7820/t1"
+            "op": "c_65f8ce8a7820/t1",
+            "repair": false
           }
         },
         {

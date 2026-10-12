@@ -71,6 +71,20 @@ type Config struct {
 	// input is not run again, and a call that reconcile decided goes on from where it stopped. The full replay rule (F07)
 	// is not part of this: only the calls' own journal rows and input digests are compared.
 	Resume *ResumeOptions
+	// Prover proves the effect of executor calls against live state when a run resumes (nil: the Backend, when it is a
+	// Prover; without either every effect holds). Ops are the crw.<name> calls with effects outside the engine, by name.
+	Prover Prover
+	Ops    map[string]Op
+	// InputSnapshot reads the plan-owned facts a call sees (the node's slice of the plan revision, the criteria digest, the
+	// acceptance and integration ids of its dependencies): they are journaled with the call and compared when it resumes,
+	// because only an external act changes them. Git facts are never read here: they are rebuilt from the journal. Nil
+	// records and compares none.
+	InputSnapshot func(ctx context.Context, req SnapshotRequest) (string, error)
+}
+
+// SnapshotRequest is a call as the input snapshot sees it.
+type SnapshotRequest struct {
+	RunID, CallID, Node, Role, Head string
 }
 
 // ResumeOptions are the timings of the reconcile pass of a resumed run; a zero value takes the default.
@@ -156,6 +170,19 @@ type Engine struct {
 	// and every row before it belongs to a process that no longer exists (or to the reconcile pass that read them).
 	recovery map[string]*Recovery
 	startSeq int
+	// prior is what the previous processes journaled (built after the reconcile pass of a resumed run); lineage numbers this
+	// process among the runs of the journal: 0 for the first, one more for each resume.
+	prior   *priorIndex
+	lineage int
+	// proofs are the effect proofs of the nodes' executor calls (read once per resume); boundaries are the files of the
+	// nodes after the positions that held or ran (the last commit and the pending tree after it); restored are the nodes whose
+	// boundary this resume rebuilt.
+	proofM     sync.Mutex
+	proofs     map[string]NodeProof
+	boundaryM  sync.Mutex
+	boundaries map[string]*boundary
+	restoreM   sync.Mutex
+	restored   map[string]bool
 	// claimed are the calls of the previous process that a position of the resumed script took over (resumePrior): they go
 	// on in this process, so a new attempt of their node does not supersede them. superseding are the calls of the previous
 	// process that a new attempt ends (or ended) superseded. Both are decided under claimedM, so a call is either claimed or
@@ -220,10 +247,11 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 	}
 	rctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	e := &Engine{cfg: cfg, j: cfg.Journal, runID: cfg.RunID, ctx: rctx, parent: ctx, cancel: cancel, pool: make(chan struct{}, cfg.Pool), loop: script.NewLoop(), byHandle: map[string]CallResult{}, undelivered: map[string]CallResult{}, turns: map[*callRun]struct{}{}}
+	e := &Engine{cfg: cfg, j: cfg.Journal, runID: cfg.RunID, ctx: rctx, parent: ctx, cancel: cancel, pool: make(chan struct{}, cfg.Pool), loop: script.NewLoop(), byHandle: map[string]CallResult{}, undelivered: map[string]CallResult{}, turns: map[*callRun]struct{}{}, proofs: map[string]NodeProof{}, boundaries: map[string]*boundary{}, restored: map[string]bool{}}
 	// A run that resumes a journal read the policy under another digest before: the change is journaled before any live
 	// call, and only calls that start a thread afterwards take the new pairs.
 	prior, repinned := priorPolicy(e.j, e.runID, cfg.Policy)
+	e.lineage = lineageOf(e.j, e.runID)
 	started := e.j.Append(Event{RunID: e.runID, Kind: KindRun, Event: "started", Data: map[string]any{
 		"workflow": workflow, "script_digest": prog.Digest, "helpers": helperDigests(prog), "args_digest": argsDigest,
 		"meta": json.RawMessage(prog.MetaJSON), "policy_source": cfg.Policy.Source, "policy_digest": cfg.Policy.Digest,
@@ -241,6 +269,7 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 		if rows := e.j.Events(); len(rows) > 0 {
 			e.startSeq = rows[len(rows)-1].Seq + 1
 		}
+		e.prior = newPriorIndex(e.j, e.startSeq)
 	}
 	root := &pathState{id: RootPath}
 	main, err := e.newScriptVM(prog, root, 0, args)
@@ -331,6 +360,17 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 		res.Status, res.ErrorKind, res.Error = RunScriptError, ErrKindEngine, journalError(err).Error()
 	}
 	return res, nil
+}
+
+// lineageOf numbers a process among the runs of a journal: the number of started rows the journal holds already.
+func lineageOf(j Journal, runID string) int {
+	n := 0
+	for _, ev := range j.Events() {
+		if ev.Kind == KindRun && ev.RunID == runID && ev.Event == "started" {
+			n++
+		}
+	}
+	return n
 }
 
 // EvPolicyRepinned is the run event a resumed run writes when the policy file it reads has another digest than the one
@@ -570,22 +610,6 @@ func (e *Engine) resume(ctx context.Context) {
 	for node := range RecoveryHolds(e.j, e.runID) {
 		e.stopNode(node, ReasonRecoveryHold)
 	}
-}
-
-// recorded reports whether the journal of a resumed run already holds the completed row of op, a call that only records a fact
-// (crw.tierStep), at callID: such a call is not recorded again. The row must be the record of op itself: the call id is
-// positional, and a completed call of another operation at the position (an agent call of the earlier script) is not the
-// record of this one. A run that does not resume a journal records every call.
-func (e *Engine) recorded(callID, op string) bool {
-	if e.cfg.Resume == nil {
-		return false
-	}
-	for _, ev := range CallEvents(e.j, callID) {
-		if ev.Seq < e.startSeq && ev.Op == op && ev.Event == EvCompleted {
-			return true
-		}
-	}
-	return false
 }
 
 // journalFailed ends the run because a row could not be stored. It may be called from any goroutine: the calls in flight are

@@ -16,6 +16,13 @@ type pathState struct {
 	id   string
 	next int
 	open *openPosition
+	// The resume walk (F07): suffix is set once a position of the path (or a join it opened) was not replayed, so every
+	// later position of the path runs live; join is the join whose item this path is, which learns that a position of the
+	// path ran live; joins is the chain of the digests of the joins settled on the path so far, which every later position's
+	// input digest carries.
+	suffix bool
+	join   *joinState
+	joins  string
 }
 
 type openPosition struct {
@@ -54,8 +61,15 @@ func (p *pathState) settle(position int) {
 
 // child returns the path of a join's item: the join's position and the item's key name it, so two joins on one path
 // and two items of one join never share a path.
-func (p *pathState) child(position int, key string) *pathState {
-	return &pathState{id: p.id + "/" + strconv.Itoa(position) + ":" + escapeKey(key)}
+func (p *pathState) child(position int, key string, join *joinState) *pathState {
+	// a path a suffix position opens is suffix itself: only the positions of the parent before the call that created the path
+	// decide it, and the call that created it (a join) does not count
+	return &pathState{id: p.childID(position, key), suffix: p.suffix, join: join}
+}
+
+// childID is the id of the path of a join's item.
+func (p *pathState) childID(position int, key string) string {
+	return p.id + "/" + strconv.Itoa(position) + ":" + escapeKey(key)
 }
 
 // keyEscaper makes an item key safe as a path segment: the characters that separate segments and positions are
@@ -70,4 +84,6 @@ type joinState struct {
 	parent   *pathState
 	position int
 	label    string
+	// live is set when a position under the join ran live (or a join under it did not replay): the join does not replay.
+	live bool
 }
