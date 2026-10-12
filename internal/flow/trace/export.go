@@ -124,12 +124,20 @@ func build(ctx context.Context, r reader, opts Options) (*Trace, error) {
 	if t.Aux, err = b.aux(); err != nil {
 		return nil, err
 	}
-	runs, err := b.runs(opts.Run)
+	// every run is loaded and filled, also when one is asked for: Select tells the calls of the other runs from the selected run's
+	// own, and an acceptance that stands on a reviewer call of another run of the same plan is not the selected run's
+	runs, err := b.runs()
 	if err != nil {
 		return nil, err
 	}
-	if opts.Run != "" && len(runs) == 0 {
-		return nil, fmt.Errorf("the store copy holds no run %q", opts.Run)
+	if opts.Run != "" {
+		found := false
+		for i := range runs {
+			found = found || runs[i].RunID == opts.Run
+		}
+		if !found {
+			return nil, fmt.Errorf("the store copy holds no run %q", opts.Run)
+		}
 	}
 	for i := range runs {
 		if err := b.fill(&runs[i], t); err != nil {
@@ -161,12 +169,9 @@ func (b *builder) query(tables []string, q string, args ...any) (*sql.Rows, erro
 	return b.r.QueryContext(b.ctx, q, args...)
 }
 
-func (b *builder) runs(only string) ([]Run, error) {
-	q, args := `SELECT run_id, workflow, script_digest, args_digest, plan_id, plan_revision, resume_from, started_at FROM flow_runs ORDER BY rowid`, []any(nil)
-	if only != "" {
-		q, args = `SELECT run_id, workflow, script_digest, args_digest, plan_id, plan_revision, resume_from, started_at FROM flow_runs WHERE run_id = ? ORDER BY rowid`, []any{only}
-	}
-	rows, err := b.query([]string{"flow_runs"}, q, args...)
+func (b *builder) runs() ([]Run, error) {
+	q := `SELECT run_id, workflow, script_digest, args_digest, plan_id, plan_revision, resume_from, started_at FROM flow_runs ORDER BY rowid`
+	rows, err := b.query([]string{"flow_runs"}, q)
 	if err != nil || rows == nil {
 		return []Run{}, err
 	}

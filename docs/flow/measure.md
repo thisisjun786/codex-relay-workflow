@@ -62,10 +62,11 @@ counts the same). A busy answer is a `delivery_deferred_busy` journal row or a b
 policy sums them. A batch landed when it moved the target (a `ref_moved` stage or a batch row) or marked a member; a batch that
 did neither failed.
 
-`--run RUN` keeps one run, in `export`, `shadow` and `measure` alike (`export --run` gives what `--run` on the reader gives of the
+`--run RUN` keeps one run, in `export`, `shadow` and `measure` alike (`export --run` selects from the whole store, so it gives what `--run` on the reader gives of the
 whole export). The run's own record stays whole; the agent acceptances that stand on one of its reviewer calls, the acceptances of its
 plan and nodes, and the integration batches of its plan (cut to its nodes) stay with it, so the audit of a healthy run is not failed
-by the acceptances of another run. The deliveries, the relay journal rows and `aux` are the store's, not a run's (no row of them
+by the acceptances of another run (an agent acceptance that stands on a reviewer call of another run of the same plan is that
+run's, also when the selected run touches its node). The deliveries, the relay journal rows and `aux` are the store's, not a run's (no row of them
 names a run), and a selection keeps them whole.
 
 ## crw flow shadow

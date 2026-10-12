@@ -209,4 +209,67 @@ func TestRunSelectionKeepsOnlyTheRunsAcceptancesAndBatches(t *testing.T) {
 	if string(a) != string(c) {
 		t.Errorf("Select and Export --run disagree:\n%s\n%s", a, c)
 	}
+	t.Run("runs of one plan", runSelectionOfRunsOfOnePlan)
+}
+
+// runSelectionOfRunsOfOnePlan (a sub-test of TestRunSelectionKeepsOnlyTheRunsAcceptancesAndBatches): two runs of one plan, the acceptances on different nodes standing on different runs'
+// reviewers. run-a calls executor n1, reviewer n1 and executor n2; run-b calls reviewer n2. acc-a (n1) stands on run-a's
+// reviewer and acc-b (n2) stands on run-b's reviewer, though run-a touches n2 too. Selecting run-a, from the whole export or by
+// export --run, keeps acc-a only: acc-b stands on a call of another run, so it is not an unobserved reviewer of run-a.
+func runSelectionOfRunsOfOnePlan(t *testing.T) {
+	b := tracetest.New(t)
+	reviewerOf := func(res *engine.Result) string {
+		for _, c := range res.Calls {
+			if c.Label == "review" {
+				return c.CallID
+			}
+		}
+		t.Fatal("the run has no review call")
+		return ""
+	}
+	const plan = "plan-x"
+	resA := b.Run("run-a", plan, `export const meta = { name: 'f' }
+await agent.call('build', { agentType: 'executor', node: 'n1', label: 'build' })
+await agent.call('review', { agentType: 'reviewer', node: 'n1', label: 'review' })
+await agent.call('build2', { agentType: 'executor', node: 'n2', label: 'build2' })
+return 1
+`, nil, nil)
+	resB := b.Run("run-b", plan, `export const meta = { name: 'f' }
+await agent.call('review', { agentType: 'reviewer', node: 'n2', label: 'review' })
+return 1
+`, nil, nil)
+	b.Execution("x-a", plan, "n1", "initial", "executor", "t0", "run-a", tracetest.At(2))
+	b.Execution("x-b", plan, "n2", "initial", "executor", "t0", "run-b", tracetest.At(3))
+	b.Acceptance("acc-a", plan, "n1", "x-a", reviewerOf(resA), tracetest.At(100))
+	b.Acceptance("acc-b", plan, "n2", "x-b", reviewerOf(resB), tracetest.At(101))
+	path := b.Copy()
+	full, err := trace.Export(tracetest.Context(t), trace.Options{Path: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	selected, err := full.Select("run-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	exported, err := trace.Export(tracetest.Context(t), trace.Options{Path: path, Run: "run-a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, tr := range map[string]*trace.Trace{"Select": selected, "Export --run": exported} {
+		m := shadow.BuildMeasure(tr, shadow.MeasureOptions{})
+		if a := m.FlowAuditResult; a.Acceptances != 1 || a.Observed != 1 || a.Unobserved != 0 || !a.OK {
+			t.Errorf("%s: audit = %+v, want the one acceptance of run-a observed", name, a)
+		}
+		if len(tr.Acceptances) != 1 || tr.Acceptances[0].AcceptanceID != "acc-a" {
+			t.Errorf("%s: acceptances = %+v", name, tr.Acceptances)
+		}
+	}
+	a, _ := json.Marshal(selected)
+	c, _ := json.Marshal(exported)
+	if string(a) != string(c) {
+		t.Errorf("Select and Export --run disagree:\n%s\n%s", a, c)
+	}
+	if _, err := trace.Export(tracetest.Context(t), trace.Options{Path: path, Run: "run-none"}); err == nil {
+		t.Errorf("export --run of a run the store does not hold succeeded")
+	}
 }
