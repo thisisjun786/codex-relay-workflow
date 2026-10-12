@@ -129,12 +129,17 @@ func (w *Writer) Up(ctx context.Context, req UpRequest) (UpResult, error) {
 	if history.report != nil {
 		res.Replayed = true
 		res.Recipient = recipientOf(*history.report)
+		// the delivery goes under the id the report row recorded: a replay never derives another
+		res.LogicalID = firstText(history.report.Str("logical_id"), res.LogicalID)
 	} else {
 		rec, err := w.Resolver.Recipient(ctx, plan, req.Kind)
 		if err != nil {
 			return res, err
 		}
 		res.Recipient = rec
+		if res.LogicalID, err = w.freeLogicalID(ctx, res.LogicalID, id); err != nil {
+			return res, err
+		}
 		path, err := w.writeBody(id, req.Body)
 		if err != nil {
 			return res, err
@@ -182,6 +187,23 @@ func (w *Writer) Up(ctx context.Context, req UpRequest) (UpResult, error) {
 	res.Delivery, res.RequestID, res.Observation, res.Reason = result, sent.RequestID, sent.Observation, sent.Reason
 	res.Standing = result != ResultAccepted
 	return res, nil
+}
+
+// freeLogicalID is the logical id a new report is delivered under. The delivery layer keys a message by its logical id and refuses other
+// text under an id it holds, so a report whose id differs from that of an earlier report on the same logical id (a milestone closed again
+// over a tip that moved on) takes the head of its own id as a suffix. The first report of a milestone keeps <run>:<milestone>:report.
+func (w *Writer) freeLogicalID(ctx context.Context, logicalID, id string) (string, error) {
+	rows, err := ReadRows(ctx, w.Store.DB, "", KindReport)
+	if err != nil {
+		return "", err
+	}
+	for _, r := range rows {
+		if r.Str("logical_id") == logicalID && r.Str("report_id") != id {
+			short := strings.TrimPrefix(id, "rep_")
+			return logicalID + "-" + short[:min(12, len(short))], nil
+		}
+	}
+	return logicalID, nil
 }
 
 func resultOf(class string) string {

@@ -508,3 +508,127 @@ func TestApplyBringsTheSummaryUpToDateEveryTimeItRuns(t *testing.T) {
 		t.Errorf("unknown event: %+v called %v", res, ucalled)
 	}
 }
+
+// An explicit --run is still bound to the event: the run must be an issue-lane run of the child task the event came from. The journal of
+// another child that holds the same head, criteria digest and an independent verdict does not certify this child's receipt.
+// (post-evaluation d2)
+func TestApplyExplicitRunMustBelongToTheEventsChild(t *testing.T) {
+	f := newFx(t)
+	head := f.commit("a.txt", "work of the executor")
+	f.ev.Head = head
+	// another child's finished run with the same head, the same criteria digest, an executor and an independent verdict
+	const other = "run-other"
+	oj, err := journal.Open(ctx, f.st, other, journal.Identity{PlanID: "plan-1", PlanRevision: 1, ActorTaskID: "other-task", EpochNonce: "n"}, journal.Options{Now: func() time.Time { return f.now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pos := 0
+	row := func(call, op, event string, data map[string]any) {
+		pos++
+		oj.Append(engine.Event{RunID: other, Kind: engine.KindCall, CallID: call, Path: "/", Position: pos, Op: op, Event: event, Data: data})
+	}
+	oj.Append(engine.Event{RunID: other, Kind: engine.KindRun, Event: "started", Data: map[string]any{"workflow": IssueLane, "script_digest": "d", "args_digest": "a"}})
+	agent := func(call, role, model string) {
+		row(call, "agent", engine.EvPrepared, map[string]any{"role": role, "family": role, "node": "A", "model": model, "effort": "xhigh", "allocation": map[string]any{"start_commit": f.base, "kind": "fresh", "path": "/w"}})
+		row(call, "agent", engine.EvThreadStarted, map[string]any{"thread_id": "t-" + call, "model": model, "effort": "xhigh"})
+		row(call, "agent", engine.EvCompleted, map[string]any{"thread_id": "t-" + call, "result": "{}"})
+	}
+	agent("ex-o", "executor", "claude-fake-haiku")
+	row("commit-ex-o", "crw.commit", engine.EvCompleted, map[string]any{"node": "A", "commit": head, "parent": f.base, "call": "ex-o", "result": "{}"})
+	agent("rv-o", "reviewer", "gpt-fake-sol")
+	doc, _ := json.Marshal(map[string]any{"state": "verdict", "head": head, "criteria_digest": digestA, "verdict": map[string]any{"verdict": "verified",
+		"criteria": []map[string]any{{"id": "c1", "met": true, "evidence": "e"}}, "defects": []map[string]any{}, "summary": "s"}})
+	row("review-rv-o", "crw.review", engine.EvCompleted, map[string]any{"node": "A", "head": head, "criteria_digest": digestA, "state": "verdict", "verdict": "verified", "call": "rv-o", "reviewer_model": "gpt-fake-sol", "result": string(doc)})
+	if err := oj.Flush(); err != nil {
+		t.Fatal(err)
+	}
+
+	res := f.apply(Request{Run: other})
+	if res.State != StateRefused || res.Reason != ReasonRunMismatch {
+		t.Fatalf("another child's run certified the receipt: %+v", res)
+	}
+	if len(f.receives) != 0 || len(f.flowRows(KindApplied)) != 0 {
+		t.Errorf("the relay was asked (%d) or an applied row was written", len(f.receives))
+	}
+	// the override reaches the independence check only
+	if res := f.apply(Request{Run: other, Override: "I looked"}); res.Reason != ReasonRunMismatch {
+		t.Errorf("override: %+v", res)
+	}
+	// a run of another workflow under the child's own task is no issue-lane run either
+	f.ev.ChildTask = "other-task"
+	if res := f.apply(Request{Run: childRun}); res.Reason != ReasonRunMismatch {
+		t.Errorf("a run of another actor: %+v", res)
+	}
+	// the child's own run, named explicitly, applies as before
+	f.ev.ChildTask = "child-task"
+	f.executor("ex-1", head, "claude-fake-haiku")
+	f.review("rv-1", head, "gpt-fake-sol", "verified", digestA)
+	if res := f.apply(Request{Run: childRun}); res.State != StateApplied {
+		t.Errorf("the child's own run: %+v", res)
+	}
+}
+
+func (f *fx) runRow(event string, data map[string]any) {
+	f.t.Helper()
+	f.j.Append(engine.Event{RunID: childRun, Kind: engine.KindRun, Event: event, Data: data})
+	if err := f.j.Flush(); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
+// A child that spent its rounds without a reviewer verdict for the head (verification_failed: the CI never passed) returns from its run
+// with no verdict row, and none will come. Apply answers that end at once - refused, escalated, nothing claimed - instead of waiting for a
+// row the finished run never writes; a run that is held, or resumed after its finish, still has its verdict to come.
+// (post-evaluation d7)
+func TestApplyRunEndedWithoutVerdictIsRefusedAndEscalated(t *testing.T) {
+	f := newFx(t)
+	head := f.commit("a.txt", "work of the executor")
+	f.ev.Head = head
+	f.executor("ex-1", head, "claude-fake-haiku")
+	f.runRow("finished", map[string]any{"status": "completed"})
+
+	res := f.apply(Request{Wait: 10 * time.Minute})
+	if res.State != StateRefused || res.Reason != ReasonRunEndedUnverified || !res.Escalated || f.sleeps != 0 {
+		t.Fatalf("result %+v (slept %d)", res, f.sleeps)
+	}
+	if len(f.receives) != 0 {
+		t.Errorf("the relay was asked: %+v", f.receives)
+	}
+	if esc := f.flowRows(engine.EvEscalation); len(esc) != 1 || esc[0].Str("reason") != ReasonRunEndedUnverified {
+		t.Fatalf("escalation rows %+v", esc)
+	}
+	if again := f.apply(Request{}); again.Reason != ReasonRunEndedUnverified || len(f.flowRows(engine.EvEscalation)) != 1 || len(f.flowRows(KindRefused)) != 1 {
+		t.Errorf("the second answer: %+v rows %d/%d", again, len(f.flowRows(engine.EvEscalation)), len(f.flowRows(KindRefused)))
+	}
+
+	// the run goes on after a resume: its verdict is still to come
+	g := newFx(t)
+	h := g.commit("a.txt", "work")
+	g.ev.Head = h
+	g.executor("ex-1", h, "claude-fake-haiku")
+	g.runRow("finished", map[string]any{"status": "completed"})
+	g.runRow("started", map[string]any{"workflow": IssueLane})
+	if res := g.apply(Request{}); res.State != StateNextTurn {
+		t.Errorf("a resumed run: %+v", res)
+	}
+	// a run held for the host ended its process too and waits for `crw flow resume`
+	k := newFx(t)
+	kh := k.commit("a.txt", "work")
+	k.ev.Head = kh
+	k.executor("ex-1", kh, "claude-fake-haiku")
+	k.row("hold-1", "crw.hold", engine.EvCompleted, map[string]any{"node": "A", "reason": "verify_unavailable"})
+	k.runRow("finished", map[string]any{"status": "completed"})
+	if res := k.apply(Request{}); res.State != StateNextTurn {
+		t.Errorf("a held run: %+v", res)
+	}
+	// a verdict the finished run wrote still applies
+	m := newFx(t)
+	mh := m.commit("a.txt", "work")
+	m.ev.Head = mh
+	m.executor("ex-1", mh, "claude-fake-haiku")
+	m.review("rv-1", mh, "gpt-fake-sol", "verified", digestA)
+	m.runRow("finished", map[string]any{"status": "completed"})
+	if res := m.apply(Request{}); res.State != StateApplied {
+		t.Errorf("a finished run with its verdict: %+v", res)
+	}
+}

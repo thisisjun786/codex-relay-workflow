@@ -44,6 +44,8 @@ const (
 const (
 	ReasonUnknownEvent           = "unknown_event"
 	ReasonRunNotFound            = "run_not_found"
+	ReasonRunMismatch            = "run_mismatch"
+	ReasonRunEndedUnverified     = "run_ended_unverified"
 	ReasonEmptyRange             = "empty_range"
 	ReasonAuthorUnattributed     = "author_unattributed"
 	ReasonCriteriaDigestMismatch = "criteria_digest_mismatch"
@@ -247,7 +249,7 @@ func Apply(ctx context.Context, d Deps, req Request) (res Result, err error) {
 		if err != nil {
 			return res, err
 		}
-		if view.found || view.refusal != "" {
+		if view.found || view.refusal != "" || view.ended {
 			break
 		}
 		remaining := deadline.Sub(d.now())
@@ -265,6 +267,17 @@ func Apply(ctx context.Context, d Deps, req Request) (res Result, err error) {
 	if view.refusal != "" {
 		return refuse(res, view.refusal, view.detail), nil
 	}
+	if view.ended {
+		// the run is over and wrote no verdict for this head (its rounds ended in verification_failed, or it escalated): waiting cannot
+		// produce one, and the relay is given nothing without a reviewer. The orchestrator is told, and so is the manager through the
+		// escalation row.
+		res = refuse(res, ReasonRunEndedUnverified, "the run "+view.run+" returned without a reviewer verdict for "+ev.Head+": the head was not verified (its checks did not pass in the rounds the lane gives, or the lane escalated); correct the child and apply its next receipt")
+		res.Escalated = true
+		if err := d.writeRefusal(ctx, ev, view, res, true); err != nil {
+			return res, err
+		}
+		return res, nil
+	}
 	return d.judge(ctx, req, ev, view, res)
 }
 
@@ -281,6 +294,9 @@ type runView struct {
 	detail  string
 	events  []engine.Event
 	review  engine.Event
+	// ended is set when the run returned from its process for good (finished as completed, not held, not resumed after) and journaled no
+	// verdict for the head: none will come.
+	ended bool
 }
 
 // findVerdict reads the journal of the child's run for the reviewer verdict of the event's head.
@@ -307,6 +323,16 @@ func (d Deps) findVerdict(ctx context.Context, req Request, ev EventInfo) (runVi
 		}
 		return v, nil
 	}
+	if req.Run != "" {
+		// a run named with --run is bound to the event as the run found by the actor is: the journal of another child that holds the same
+		// head and criteria digest is not the proof of this receipt
+		if why, err := d.runMismatch(ctx, run, ev); err != nil {
+			return v, err
+		} else if why != "" {
+			v.refusal, v.detail = ReasonRunMismatch, why
+			return v, nil
+		}
+	}
 	v.events = events
 	for i := len(events) - 1; i >= 0; i-- {
 		e := events[i]
@@ -319,7 +345,54 @@ func (d Deps) findVerdict(ctx context.Context, req Request, ev EventInfo) (runVi
 		v.found, v.review = true, e
 		break
 	}
+	v.ended = !v.found && runEnded(events)
 	return v, nil
+}
+
+// runEnded says whether the run returned from its last process for good: its newest run row is a finish with status completed and no
+// crw.hold was journaled since the process started. A held run (the host's trouble, an unknown outcome) and a failed one wait for
+// `crw flow resume`, and a resumed run has a new start row after the finish: their verdict may still come.
+func runEnded(events []engine.Event) bool {
+	last := -1
+	for i, e := range events {
+		if e.Kind == engine.KindRun && (e.Event == "started" || e.Event == "finished") {
+			last = i
+		}
+	}
+	if last < 0 || events[last].Event != "finished" || dataStr(events[last].Data, "status") != engine.RunCompleted {
+		return false
+	}
+	started := 0
+	for i := last; i >= 0; i-- {
+		if events[i].Kind == engine.KindRun && events[i].Event == "started" {
+			started = i
+			break
+		}
+	}
+	for _, e := range events[started:last] {
+		if e.Kind == engine.KindCall && e.Op == "crw.hold" && e.Event == engine.EvCompleted {
+			return false
+		}
+	}
+	return true
+}
+
+// runMismatch says why a run named by the operator is not the issue-lane run of the event's child: "" when it is. The run's actor is the
+// child task, its workflow the issue lane and, when both name one, its plan the relationship's plan.
+func (d Deps) runMismatch(ctx context.Context, run string, ev EventInfo) (string, error) {
+	var workflow, actor, plan string
+	if err := d.Store.DB.QueryRowContext(ctx, `SELECT workflow, actor_task_id, plan_id FROM flow_runs WHERE run_id = ?`, run).Scan(&workflow, &actor, &plan); err != nil {
+		return "", err
+	}
+	switch {
+	case workflow != IssueLane:
+		return fmt.Sprintf("run %s is a run of %q, not of the %s of a child", run, workflow, IssueLane), nil
+	case ev.ChildTask != "" && actor != ev.ChildTask:
+		return fmt.Sprintf("run %s belongs to task %q, the event came from the child task %q", run, actor, ev.ChildTask), nil
+	case ev.Plan != "" && plan != "" && plan != ev.Plan:
+		return fmt.Sprintf("run %s pinned plan %q, the relationship executes plan %q", run, plan, ev.Plan), nil
+	}
+	return "", nil
 }
 
 // childRun is the newest issue-lane run whose actor is the child task of the event.
@@ -468,7 +541,7 @@ func (d Deps) appender(run string) report.Appender {
 // writeRefusal records a refusal once for the event, the reason and the head, and for an escalated one the escalation row the pump tells
 // the manager thread about.
 func (d Deps) writeRefusal(ctx context.Context, ev EventInfo, v runView, res Result, escalate bool) error {
-	node := dataStr(v.review.Data, "node")
+	node := firstText(dataStr(v.review.Data, "node"), laneNode(v.events))
 	key := "refused:" + ev.ID + ":" + res.Reason + ":" + ev.Head
 	if _, _, err := d.appender(v.run).AppendOnce(ctx, report.NewRow{Kind: KindRefused, Node: node, Payload: map[string]any{
 		"apply_key": key, "event": ev.ID, "reason": res.Reason, "detail": res.Detail, "head": ev.Head, "unattributed": res.Unattributed, "escalated": escalate,
@@ -483,6 +556,18 @@ func (d Deps) writeRefusal(ctx context.Context, ev EventInfo, v runView, res Res
 		"escalation_id": id, "reason": res.Reason, "class": "integrity", "node": node, "detail": res.Detail, "event": ev.ID, "ask": "oversized_receipt",
 	}}, "escalation_id")
 	return err
+}
+
+// laneNode is the node the run's calls name.
+func laneNode(events []engine.Event) string {
+	for _, e := range events {
+		if e.Kind == engine.KindCall {
+			if n := dataStr(e.Data, "node"); n != "" {
+				return n
+			}
+		}
+	}
+	return ""
 }
 
 // verdictFile writes the verdict file relay receive reads. A needs_changes verdict carries the dag-correct --prepare instruction line as

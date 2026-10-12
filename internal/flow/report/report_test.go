@@ -300,3 +300,60 @@ func TestReportRowsOfARunGoThroughItsJournal(t *testing.T) {
 		t.Errorf("flow rows of the journal: %v", kinds)
 	}
 }
+
+// A milestone that is closed again over a tip that moved on is a new report with another body. The delivery layer keys a message by its
+// logical id and refuses other text under an id it holds, so the revised report goes under an id of its own, and the first report keeps
+// <run>:<milestone>:report (also when it is replayed). (post-evaluation d1)
+func TestRevisedMilestoneReportGoesUnderItsOwnLogicalID(t *testing.T) {
+	w := newWorld(t)
+	w.supervise(testLead)
+	// the delivery layer's rule: one text per logical id
+	texts := map[string]string{}
+	w.sender.replySupervisor = func(s SupervisorSend) (SendResult, error) {
+		if old, ok := texts[s.LogicalID]; ok && old != s.Text {
+			return SendResult{Class: "refused", Reason: "the logical id already belongs to another message"}, nil
+		}
+		texts[s.LogicalID] = s.Text
+		return SendResult{Class: "accepted", RequestID: "req-" + s.LogicalID}, nil
+	}
+	r := Reporter{W: w.writer(), Run: testRun}
+	first := ops.Report{Plan: testPlan, Milestone: "M1", Range: ops.CloseRange{Base: "b1", Tip: "t1"}}
+	moved := ops.Report{Plan: testPlan, Milestone: "M1", Range: ops.CloseRange{Base: "b1", Tip: "t2"}}
+	id1, err := r.ReportUp(ctx, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id2, err := r.ReportUp(ctx, moved)
+	if err != nil || id2 == id1 {
+		t.Fatalf("revised report: %q (first %q) %v", id2, id1, err)
+	}
+	sent := w.sender.supervisorSent()
+	if len(sent) != 2 || sent[0].LogicalID != testRun+":M1:report" || sent[1].LogicalID == sent[0].LogicalID || !strings.HasPrefix(sent[1].LogicalID, testRun+":M1:report") {
+		t.Fatalf("sent %+v", sent)
+	}
+	rows := w.rows(KindReport, KindDelivery)
+	if len(rows) != 4 || rows[3].Str("result") != ResultAccepted || rows[3].Str("report_id") != id2 || rows[3].Str("logical_id") != sent[1].LogicalID {
+		t.Fatalf("rows %+v", rows)
+	}
+	// replays send nothing and change no id
+	if again, err := r.ReportUp(ctx, moved); err != nil || again != id2 || len(w.sender.supervisorSent()) != 2 {
+		t.Errorf("replay of the revised report: %q %v sent %d", again, err, len(w.sender.supervisorSent()))
+	}
+	if again, err := r.ReportUp(ctx, first); err != nil || again != id1 || len(w.sender.supervisorSent()) != 2 {
+		t.Errorf("replay of the first report: %q %v sent %d", again, err, len(w.sender.supervisorSent()))
+	}
+	// a delivery that never ran is retried under the id the report row recorded
+	third := ops.Report{Plan: testPlan, Milestone: "M1", Range: ops.CloseRange{Base: "b1", Tip: "t3"}}
+	w.sender.replySupervisor = func(SupervisorSend) (SendResult, error) { return SendResult{}, errTest }
+	if _, err := r.ReportUp(ctx, third); err == nil {
+		t.Fatal("the failed delivery was not reported")
+	}
+	recorded := w.rows(KindReport)[2].Str("logical_id")
+	w.sender.replySupervisor = nil
+	if _, err := r.ReportUp(ctx, third); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.sender.supervisorSent(); got[len(got)-1].LogicalID != recorded || recorded == sent[0].LogicalID || recorded == sent[1].LogicalID {
+		t.Errorf("retry under %q, the row recorded %q", got[len(got)-1].LogicalID, recorded)
+	}
+}
