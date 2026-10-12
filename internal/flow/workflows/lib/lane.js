@@ -123,24 +123,26 @@ export async function explore(kind, questions, ctx) {
         if (!failed) failed = call ? { callId: call.callId, status: call.status, reason: call.reason } : { callId: null, status: 'failed', reason: 'explorer_thrown' }
         return
       }
-      found[r.digest] = { answer: call.output.answer, evidence: call.output.evidence, call: call.callId }
+      found[r.digest] = { answer: call.output.answer, evidence: call.output.evidence, call: call.callId, findings: call.output }
     })
   }
   const answers = plan.routes.map((r) => {
     let answer = r.answer || ''
     let call = ''
     let ev = []
+    let findings = null
     if (r.route === 'spawn' && found[r.digest]) {
       answer = found[r.digest].answer
       call = found[r.digest].call
       ev = found[r.digest].evidence
+      findings = found[r.digest].findings
     }
     if (r.route === 'reuse' && r.same_as >= 0) {
       const sib = plan.routes[r.same_as]
       if (sib && found[sib.digest]) answer = found[sib.digest].answer
       else if (sib) answer = sib.answer || ''
     }
-    return { digest: r.digest, id: r.id, question: r.question, route: r.route, answer, call, evidence: ev }
+    return { digest: r.digest, id: r.id, question: r.question, route: r.route, answer, call, evidence: ev, findings }
   })
   await crw.exploreRecord(kind, ctx, answers)
   return {

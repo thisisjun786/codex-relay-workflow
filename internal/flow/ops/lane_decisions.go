@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -373,6 +374,8 @@ type Answer struct {
 	Route    string   `json:"route"`
 	Call     string   `json:"call"`
 	Evidence []string `json:"evidence"`
+	// Findings is the explorer's FINDINGS as it answered, when an explorer did: exploreRecord reads it as a consumer of the schema.
+	Findings json.RawMessage `json:"findings"`
 }
 
 // exploreRecordOp is crw.exploreRecord(kind, context, answers): the answers of a round of questions, kept so that a question of
@@ -388,6 +391,11 @@ func (o *exploreRecordOp) Run(_ context.Context, req engine.OpRequest) (engine.O
 	}
 	list := make([]map[string]any, 0, len(answers))
 	for _, a := range answers {
+		if len(a.Findings) > 0 && string(a.Findings) != "null" {
+			if _, err := DecodeFindings(a.Findings); err != nil {
+				return engine.OpResult{}, fmt.Errorf("crw.exploreRecord: the answer to %q is no FINDINGS: %w", a.Question, err)
+			}
+		}
 		list = append(list, map[string]any{"digest": a.Digest, "id": a.ID, "question": a.Question, "answer": a.Answer, "route": a.Route, "call": a.Call})
 	}
 	return engine.OpResult{Result: result(map[string]any{"recorded": len(answers)}), Data: map[string]any{"kind": kind, "node": ec.Node, "milestone": ec.Milestone, "answers": list}}, nil

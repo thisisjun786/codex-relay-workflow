@@ -93,9 +93,20 @@ func (o *commitOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 	}
 	out.Changed, out.OutOfScope = scope.Changed, scope.OutOfScope
 	out.Empty = len(out.Changed) == 0
-	return engine.OpResult{Result: result(out), Data: map[string]any{
-		"node": node, "commit": out.Commit, "parent": out.Parent, "tree": out.Tree, "out_of_scope": out.OutOfScope, "call": ex.CallID, "empty": out.Empty,
-	}}, nil
+	data := map[string]any{"node": node, "commit": out.Commit, "parent": out.Parent, "tree": out.Tree, "out_of_scope": out.OutOfScope, "call": ex.CallID, "empty": out.Empty}
+	// The receipt is the executor's report, not the judgement of its worktree: the commit row keeps what it said beside what the
+	// run committed - its outcome, and the plan mismatch the re-plan signal of the milestone counts (F09).
+	if len(ex.Output) > 0 && string(ex.Output) != "null" {
+		receipt, err := DecodeReceipt(ex.Output)
+		if err != nil {
+			return engine.OpResult{}, fmt.Errorf("crw.commit: the output of call %s is no RECEIPT: %w", ex.CallID, err)
+		}
+		data["outcome"] = receipt.Outcome
+		if receipt.PlanMismatch != nil {
+			data["plan_mismatch"] = *receipt.PlanMismatch
+		}
+	}
+	return engine.OpResult{Result: result(out), Data: data}, nil
 }
 
 func (o *commitOp) Proven(ctx context.Context, ev []engine.Event, row engine.Event) (bool, string, error) {
