@@ -236,7 +236,11 @@ func runsPostHandler(_ *Env, r *http.Request) (Response, error) {
 		}
 		resp := controlResponse(code, stdout, stderr)
 		if reply != nil {
-			resp.Body = map[string]any{"ok": code == 0, "reply": reply}
+			body := map[string]any{"ok": code == 0, "reply": reply}
+			if m, ok := resp.Body.(map[string]any); ok && m["error"] != nil {
+				body["error"], body["message"] = m["error"], m["message"]
+			}
+			resp.Body = body
 		}
 		return resp, nil
 	}
@@ -251,6 +255,10 @@ func controlResponse(code int, stdout, stderr string) Response {
 		message = strings.TrimSpace(stderr)
 	}
 	body := map[string]any{"ok": code == 0, "message": messageText(message)}
+	if code != 0 {
+		// the words of the refusal are the error a client reads
+		body["error"] = messageText(message)
+	}
 	switch code {
 	case 0:
 		return Response{Status: http.StatusOK, Body: body}

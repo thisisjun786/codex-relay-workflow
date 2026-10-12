@@ -13,7 +13,7 @@ import { Icon } from "./icons.tsx";
 
 /* ---- topic content ---- */
 
-export type HelpTopicId = "status" | "policy" | "helper-roles";
+export type HelpTopicId = "status" | "runs" | "policy" | "helper-roles";
 
 export interface HelpEntry {
   title: string;
@@ -35,6 +35,23 @@ export const HELP_CONTENT: Record<HelpTopicId, HelpEntry> = {
           <li>The status bar keeps its three readings separate. A single green dot would hide which of them could not be read.</li>
           <li>A value whose source could not be read shows as unknown. It is never turned into zero, ok or an empty list.</li>
           <li>Relationship, generation, head and merge-lane rows arrive with the issue that implements this screen.</li>
+        </ul>
+      </>
+    ),
+  },
+  runs: {
+    title: "Runs",
+    subtitle: "Flow runs of the relay store",
+    body: (
+      <>
+        <p className="help-lead">
+          Each run is a process that lives for one run; everything it did is a row of its journal in the relay store.
+        </p>
+        <ul className="help-bullets">
+          <li>The tree is phase, then agent. A call whose outcome is unknown shows recovery_hold: <code>crw flow recover</code> settles it.</li>
+          <li>The page follows the run through its event stream and goes on from the last row after a reconnect.</li>
+          <li>Pause and cancel signal the run's process. An answer applies a decision record the manager made to a wait of the run.</li>
+          <li>A store that cannot be read shows its reason, never an empty list.</li>
         </ul>
       </>
     ),

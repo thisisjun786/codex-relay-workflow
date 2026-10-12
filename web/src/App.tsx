@@ -2,7 +2,7 @@
 // the CRW route table, the provider display and the five CXC screens are gone, the
 // sidebar tail carries the run-state bar, #/helper-roles and #/status render their own
 // screens, and every other route still renders a placeholder until the issue that owns
-// that screen lands.
+// that screen lands (#/runs renders the Runs page).
 import { ROUTES, navigate, routeFor, useRoute } from "./router.ts";
 import { ToastHost } from "./ui/toast.tsx";
 import { Icon } from "./ui/icons.tsx";
@@ -12,6 +12,7 @@ import { HelperRolesPage } from "./pages/HelperRoles.tsx";
 import { RunStateBar, useRunState } from "./components/RunStateBar.tsx";
 import { Status } from "./pages/Status.tsx";
 import { PolicyPage } from "./pages/Policy.tsx";
+import { RunsPage } from "./pages/Runs.tsx";
 
 export function App() {
   const route = useRoute();
@@ -72,6 +73,8 @@ export function App() {
             <div className="page-body">
               {active.path === "/status" ? (
                 <Status view={runState} />
+              ) : active.path === "/runs" ? (
+                <RunsPage />
               ) : (
                 <EmptyState icon={active.icon} title="Not available yet">
                   This screen arrives with the issue that implements it.
