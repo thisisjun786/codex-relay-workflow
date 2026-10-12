@@ -537,9 +537,13 @@ func (r *SchedRelay) Integrate(ctx context.Context, req ops.IntegrateRequest) (o
 		return ops.IntegrateResult{}, epochLost(req.Plan, err)
 	}
 	q := r.q(ctx)
-	if cur, found, err := dagsched.CurrentAcceptance(ctx, q, req.Plan, req.Node); err != nil {
+	cur, found, err := dagsched.CurrentAcceptance(ctx, q, req.Plan, req.Node)
+	if err != nil {
 		return ops.IntegrateResult{}, err
-	} else if found && cur.Kind == dagsched.AcceptanceAgent && cur.AcceptanceID == req.AcceptanceID {
+	}
+	// the acceptance the run is integrating is the node's current one: only then can a refusal be the replay of a landing
+	isCurrent := found && cur.Kind == dagsched.AcceptanceAgent && cur.AcceptanceID == req.AcceptanceID
+	if isCurrent {
 		if landed, err := r.Sched.AgentAcceptanceIntegrated(ctx, q, cur.Agent); err != nil {
 			return ops.IntegrateResult{}, err
 		} else if landed {
@@ -561,12 +565,12 @@ func (r *SchedRelay) Integrate(ctx context.Context, req ops.IntegrateRequest) (o
 			return ops.IntegrateResult{}, epochLost(req.Plan, err)
 		}
 		// a node a batch merged before the run recorded it is no candidate any more: the branch holds its head, and only the observation
-		// may be missing
+		// may be missing. Any other refusal stands: the fallback is for the acceptance the run is integrating, the node's current one
 		tip, terr := r.IntegrationTip(ctx, req.Plan)
 		if terr != nil {
 			return ops.IntegrateResult{}, terr
 		}
-		if contained, cerr := isAncestor(ctx, checkout, req.Head, tip); cerr != nil || !contained {
+		if contained, cerr := isAncestor(ctx, checkout, req.Head, tip); !isCurrent || cerr != nil || !contained {
 			return refused(err)
 		}
 		out.Landed, out.Replayed, out.BatchCommit, out.Tip = true, true, tip, tip

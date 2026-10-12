@@ -300,6 +300,13 @@ func (j *labJournal) Append(e engine.Event) engine.Event {
 	return j.Journal.Append(e)
 }
 
+// SetOnCommit forwards the commit notice as runJournal does, so the lab's runs register the engine's upward hook as the shipped binary's do.
+func (j *labJournal) SetOnCommit(notify func()) {
+	if n, ok := j.Journal.(engine.CommitNotifier); ok {
+		n.SetOnCommit(notify)
+	}
+}
+
 func (j *labJournal) Err() error {
 	if f, ok := j.Journal.(engine.FailingJournal); ok {
 		return f.Err()

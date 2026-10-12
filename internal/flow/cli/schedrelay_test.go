@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/compile"
@@ -20,6 +21,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
@@ -515,6 +517,10 @@ func TestSchedRelayAcceptIntegrateCloseOnTempStore(t *testing.T) {
 	if err != nil || !again.Landed || !again.Replayed || again.Tip != l.git(l.repo, "rev-parse", "integration") || again.IntegrationRef != "integration" {
 		t.Errorf("the integration again: %+v %v", again, err)
 	}
+	// an acceptance that is not the node's current one is no replay, even when the branch holds the head: its refusal stands
+	if other, err := r.Integrate(ctx, ops.IntegrateRequest{Plan: l.plan, Node: l.nodeOf["A-2"], Actor: labOwner, RunID: spec.RunID, AcceptanceID: "agent-acceptance-unknown", Head: str(acceptRow.Data, "head")}); err == nil && other.Landed {
+		t.Errorf("the integration of an acceptance that is not the current one landed: %+v", other)
+	}
 	if str(integrateRow.Data, "batch_commit") == "" {
 		t.Error("the integration row names no batch commit")
 	}
@@ -644,5 +650,101 @@ func TestNightBatchStartsFromDecisionOnTempStore(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(RunDir(l.w.state, spec.RunID), HandoffFile)); err != nil {
 		t.Errorf("the run pinned no handoff: %v", err)
+	}
+}
+
+// commitHook is an engine.UpwardHook that counts the batches the engine was told of.
+type commitHook struct {
+	mu      sync.Mutex
+	batches int
+}
+
+func (h *commitHook) RunStarted(context.Context, string) error { return nil }
+func (h *commitHook) BatchCommitted(context.Context, string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.batches++
+	return nil
+}
+func (h *commitHook) RunFinished(context.Context, string, string) error { return nil }
+
+// TestRunJournalForwardsTheCommitNotice (CRW-1277 h): the run's journal under the lane's wrapper still tells the engine when it committed a
+// batch (engine.CommitNotifier), so UpwardHook.BatchCommitted (CRW-1204: the plan summary and the escalations sent while the run lives)
+// is called in a run of the shipped binary as it is without the lane operations; the notice is removed with SetOnCommit(nil).
+func TestRunJournalForwardsTheCommitNotice(t *testing.T) {
+	w := newWorld(t)
+	j, err := journal.Open(context.Background(), w.st, "run-notice", journal.Identity{ActorTaskID: labOwner}, journal.Options{Immediate: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wrapped engine.Journal = runJournal{j}
+	wrapped.Append(engine.Event{RunID: "run-notice", Kind: engine.KindRun, Event: "started", Data: map[string]any{"workflow": "t", "script_digest": "d", "args_digest": "a"}})
+	n, ok := wrapped.(engine.CommitNotifier)
+	if !ok {
+		t.Fatal("runJournal hides engine.CommitNotifier")
+	}
+	fired := 0
+	n.SetOnCommit(func() { fired++ })
+	// an intent row (a prepared call) is committed at once
+	wrapped.Append(engine.Event{RunID: "run-notice", Kind: engine.KindCall, Op: "demo", CallID: "c1", Event: engine.EvPrepared})
+	if fired == 0 {
+		t.Errorf("the commit of a row was not told to the notice installed through the wrapper (journal: %v)", j.Err())
+	}
+	n.SetOnCommit(nil)
+	before := fired
+	wrapped.Append(engine.Event{RunID: "run-notice", Kind: engine.KindCall, Op: "demo", CallID: "c2", Event: engine.EvPrepared})
+	if fired != before {
+		t.Error("the notice fired after SetOnCommit(nil)")
+	}
+}
+
+// TestRunUnderLaneOperationsCallsBatchCommitted (CRW-1277 h): a run of the lane over ProductionWorld with the upward hook the binary installs
+// hands every committed batch to the hook (F11/CRW-1204 regression of the journal wrapper: the engine never registered its notice).
+func TestRunUnderLaneOperationsCallsBatchCommitted(t *testing.T) {
+	hook := &commitHook{}
+	prev := journal.UpwardFactory
+	t.Cleanup(func() { journal.UpwardFactory = prev })
+	journal.UpwardFactory = func(*store.Store, *journal.Journal, string, string, string) engine.UpwardHook { return hook }
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+	spec := l.start("start", "project-lane", "--args", `{"plan":"plan-1","milestone":"M1"}`, "--handoff", l.file)
+	l.closed(l.runToEnd(spec.RunID))
+	hook.mu.Lock()
+	defer hook.mu.Unlock()
+	if hook.batches == 0 {
+		t.Error("the upward hook was told of no committed batch during the run")
+	}
+}
+
+// TestBuildLaneOfAWorkflowWithoutLaneOperations (CRW-1277 h): a script workflow that calls no crw.* operation needs no lane, so a role table
+// without the executor and reviewer pairs does not fail its run (BuildLane answers an empty lane world); a workflow that calls one still
+// refuses such a table.
+func TestBuildLaneOfAWorkflowWithoutLaneOperations(t *testing.T) {
+	w := newWorld(t)
+	j, err := journal.Open(context.Background(), w.st, "run-nolane", journal.Identity{}, journal.Options{Immediate: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	plain := filepath.Join(dir, "plain.js")
+	if err := os.WriteFile(plain, []byte("export const meta = { name: 'plain' }\nconst r = await agent.call('say hi', { agentType: 'executor' })\nreturn r.status\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	laneful := filepath.Join(dir, "laneful.js")
+	if err := os.WriteFile(laneful, []byte("export const meta = { name: 'laneful' }\nawait crw.commit({ node: 'n1' })\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	req := func(script string) LaneRequest {
+		return LaneRequest{WorldRequest: WorldRequest{Spec: Spec{Schema: SpecSchema, RunID: "run-nolane", Workflow: "x", Script: script, Thread: "thread-owner"}, State: w.state},
+			Store: w.st, Journal: j, Policy: &engine.Policy{}}
+	}
+	got, err := BuildLane(context.Background(), req(plain), LaneOptions{})
+	if err != nil {
+		t.Fatalf("a workflow without lane operations: %v", err)
+	}
+	if got.Ops != nil || got.Journal != nil {
+		t.Errorf("a workflow without lane operations got a lane: %d operations", len(got.Ops))
+	}
+	if _, err := BuildLane(context.Background(), req(laneful), LaneOptions{}); err == nil || !strings.Contains(err.Error(), "no pair") {
+		t.Errorf("a workflow with lane operations and a role table without pairs: %v", err)
 	}
 }

@@ -93,6 +93,10 @@ func BuildLane(ctx context.Context, req LaneRequest, opt LaneOptions) (LaneWorld
 	if err != nil {
 		return LaneWorld{}, err
 	}
+	if len(LaneOperations(src)) == 0 {
+		// a workflow that calls no crw.* operation needs no lane: its run does not depend on a role table naming the executor and the reviewer
+		return LaneWorld{}, nil
+	}
 	skills := opt.SkillsDigest
 	if skills == "" {
 		skills = PluginSkillsDigest(getenv)
@@ -205,6 +209,16 @@ func (j runJournal) Append(e engine.Event) engine.Event {
 	}
 	return j.Journal.Append(e)
 }
+
+// SetOnCommit forwards the commit notice (engine.CommitNotifier): the engine registers its upward hook's batch notice through the journal it
+// is given (CRW-1204), so the wrapper must not hide it. A journal that cannot notify has nothing to do.
+func (j runJournal) SetOnCommit(notify func()) {
+	if n, ok := j.Journal.(engine.CommitNotifier); ok {
+		n.SetOnCommit(notify)
+	}
+}
+
+var _ engine.CommitNotifier = runJournal{}
 
 // Err is the failure of the run's journal (engine.FailingJournal).
 func (j runJournal) Err() error {
