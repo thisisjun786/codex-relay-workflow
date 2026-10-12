@@ -28,13 +28,24 @@ func newWorld(t *testing.T) *world {
 	t.Helper()
 	w := &world{t: t, state: t.TempDir()}
 	w.db = filepath.Join(w.state, "relay.sqlite3")
+	w.open()
+	t.Cleanup(w.close)
+	return w
+}
+
+func (w *world) open() {
 	st, err := store.Open(ctx, w.db, "")
 	if err != nil {
-		t.Fatal(err)
+		w.t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = st.Close() })
 	w.st = st
-	return w
+}
+
+func (w *world) close() {
+	if w.st != nil {
+		_ = w.st.Close()
+		w.st = nil
+	}
 }
 
 // run is a run the world's journal holds, with rows appended through the journal as a run process appends them.
@@ -113,13 +124,14 @@ func (r *run) close() {
 // with the answers the test sets.
 type testDeps struct {
 	*Deps
+	w       *world
 	spawned []SpawnRequest
 	order   *bytes.Buffer
 	facts   []Fact
 }
 
 func (w *world) deps() *testDeps {
-	td := &testDeps{order: &bytes.Buffer{}}
+	td := &testDeps{w: w, order: &bytes.Buffer{}}
 	for _, name := range Facts {
 		td.facts = append(td.facts, Fact{Name: name, Pass: true, Reading: "fine"})
 	}
@@ -150,10 +162,17 @@ func (w *world) deps() *testDeps {
 func (td *testDeps) do(args ...string) (int, string, string) {
 	var errOut bytes.Buffer
 	td.order.Reset()
+	// the relay store has one writer: the world's own is closed while a command that writes opens its own
+	td.w.close()
 	code := RunWith(ctx, td.Deps, args, strings.NewReader(""), td.order, &errOut)
+	td.w.open()
 	return code, td.order.String(), errOut.String()
 }
 
 func openJournal(w *world, id string) (*journal.Journal, error) {
 	return journal.Open(ctx, w.st, id, journal.Identity{}, journal.Options{Immediate: true})
+}
+
+func loadRun(w *world, id string) ([]engine.Event, bool, error) {
+	return journal.Load(ctx, w.st, id)
 }
