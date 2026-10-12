@@ -355,7 +355,8 @@ export async function dag(planId, lane, opts) {
       // the relay's release commit compares the node's slice of that plan again (CRW-1288): a plan that is another at either releases
       // nothing (plan_changed). With a signal path the lane then reads the plan again - another plan is a trigger,
       // and the release waits for the signal that comes of it, which re-plans and audits a delta for that plan or keeps the revision -
-      // and asks again; without one the node is not released.
+      // and asks again; without one the node is not released. A relay refusal while the plan the flow reads again is still the pinned
+      // one (relay_plan_changed) raises the run-level hold plan_superseded (CRW-1291): the run does not follow the relay's new revision.
       let rel = null
       for (let ask = 0; ; ask++) {
         if (S) {
@@ -370,6 +371,8 @@ export async function dag(planId, lane, opts) {
       }
       if (!rel) {
         out = { node: n.id, state: 'halted', reason: 'signal_halt' }
+      } else if (!rel.released && rel.hold) {
+        out = await superseded(n.id, rel)
       } else {
         if (!rel.released && rel.kind === 'executor') out = { node: n.id, state: 'unreleased', reason: rel.reason }
         else out = await lane(n, rel, S ? S.forLane(n.id) : noSignals)
@@ -404,6 +407,21 @@ export async function dag(planId, lane, opts) {
   pump()
   const results = await parallel(thunks, { keys, label: 'dag' })
   return S ? results.slice(0, nodes.length) : results
+}
+
+// superseded is a node under the run-level hold plan_superseded (CRW-1291): the relay's head moved past the plan revision the run pinned,
+// and the run does not follow it. Nothing restarts on its own: the node whose release raised the hold waits for the parent's decision on
+// it, which closes the node by escalation; every other node stays unreleased while the hold stands. Ending or cancelling the run and
+// starting a new one on the new revision is the other way out.
+async function superseded(node, rel) {
+  if (rel.escalation) {
+    const d = await crw.decide(node, { id: rel.escalation })
+    if (d.applied) {
+      const esc = await crw.escalate(node, { reason: 'plan_superseded', detail: 'closed by the decision on the hold ' + rel.escalation })
+      return { node, state: 'escalated', reason: 'plan_superseded', escalation: esc.id }
+    }
+  }
+  return { node, state: 'held', reason: 'plan_superseded', hold: rel.hold }
 }
 
 // explore routes the questions of an asker (crw.exploreRoute decides: reuse, inline, spawn, hand to the orchestrator, skip),

@@ -353,7 +353,9 @@ func (r *SchedRelay) Release(ctx context.Context, req ops.ReleaseRequest) (ops.R
 	}
 	res, err := r.Sched.ReleaseAgent(ctx, req.Plan, req.Node, r.Actor, request, dagsched.AgentReleaseOptions{Role: "executor", Tier: "executor", RunID: r.RunID, Worktree: r.worktreeHandle(req.Node)})
 	if err != nil {
-		if reason, held := holdBack(err); held {
+		if reason, held := holdBack(err); held && reason == ops.ReasonPlanChanged {
+			return r.planChanged(ctx, req.Plan, req.Node)
+		} else if held {
 			return ops.ReleaseResult{Reason: reason}, nil
 		}
 		return ops.ReleaseResult{}, epochLost(req.Plan, err)
@@ -364,6 +366,26 @@ func (r *SchedRelay) Release(ctx context.Context, req ops.ReleaseRequest) (ops.R
 	}
 	slice, _ := body["node_slice_digest"].(string)
 	return ops.ReleaseResult{Released: true, ExecutionID: res.ExecutionID, SlotID: res.SlotID, Replayed: res.Replayed, SliceDigest: slice}, nil
+}
+
+// planChanged is the answer to a release the relay refused plan_revision_conflict (CRW-1291): the revision the run pinned, the plan's
+// head revision, and the node's current agent execution the relay holds with the run it was released to (the release a refused replay
+// would have answered), so the run-level hold can return its slot or record whose it is.
+func (r *SchedRelay) planChanged(ctx context.Context, plan, node string) (ops.ReleaseResult, error) {
+	q := r.q(ctx)
+	_, head, err := dag.SnapshotAt(ctx, q, plan, 0)
+	if err != nil {
+		return ops.ReleaseResult{}, err
+	}
+	out := ops.ReleaseResult{Reason: ops.ReasonPlanChanged, PinnedRevision: r.Revision, HeadRevision: head}
+	cur, found, err := dagsched.CurrentExecution(ctx, q, plan, node)
+	if err != nil {
+		return ops.ReleaseResult{}, err
+	}
+	if found && cur.Kind == dagsched.ExecutionAgent {
+		out.HeldExecution, out.HeldRun = cur.Agent.ExecutionID, cur.Agent.RunID
+	}
+	return out, nil
 }
 
 // notReady is the detail of the refusal of a node the reading did not find ready: "<node> is not ready (<reason>): ...".
