@@ -26,13 +26,11 @@ func (c *command) resume(args []string) int {
 	if !ok {
 		return code
 	}
-	if len(positional) < 1 || len(positional) > 2 {
-		return c.usage("a run id and, optionally, the script file are required")
+	// anything but a run id, or a run id and a script, is the engine's command line to refuse
+	if len(positional) < 1 || len(positional) > 2 || !validRunID(positional[0]) {
+		return engine.RunCLI(c.ctx, withoutDetach(args), c.stdout, c.stderr)
 	}
 	run := positional[0]
-	if !validRunID(run) {
-		return c.usage("%q is not a run id", run)
-	}
 	sel, err := ResolveState(cm.state, cm.socket)
 	if err != nil {
 		return c.fail("%v", err)

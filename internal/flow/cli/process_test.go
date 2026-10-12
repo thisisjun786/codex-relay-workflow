@@ -30,6 +30,7 @@ type processWorld struct {
 	td     *testDeps
 	script string
 	handle func(engine.FakeRequest) engine.FakeReply
+	fake   *engine.Fake
 }
 
 func newProcessWorld(t *testing.T, script string) *processWorld {
@@ -54,10 +55,12 @@ func newProcessWorld(t *testing.T, script string) *processWorld {
 		if err != nil {
 			return World{}, err
 		}
-		fake := engine.NewFake()
-		if pw.handle != nil {
-			fake.Handler = pw.handle
+		// one host for the processes of a test: a thread a process started is there for the process that resumes it
+		if pw.fake == nil {
+			pw.fake = engine.NewFake()
 		}
+		fake := pw.fake
+		fake.Handler = pw.handle
 		return World{Journal: j, Backend: fake, Close: func() error { return errJoin(j.Close(), st.Close()) }}, nil
 	}
 	return pw
@@ -254,4 +257,55 @@ func TestPauseAndCancelSignalTheRunProcess(t *testing.T) {
 			t.Errorf("a second cancel: %d %q", code, errOut)
 		}
 	})
+}
+
+// TestResumeTakesTheRunFromItsSpec: a run that was paused is taken again by `crw flow resume RUN` with the workflow and the
+// arguments of its spec, once its lock is free (a held lock refuses it); --detach starts the process instead of running it, and a
+// run that no `crw flow start` made has no spec to resume from.
+func TestResumeTakesTheRunFromItsSpec(t *testing.T) {
+	pw := newProcessWorld(t, twoCalls)
+	spec := pw.spec("run-again", nil)
+	sigs := make(chan os.Signal, 2)
+	paused := true
+	pw.handle = func(r engine.FakeRequest) engine.FakeReply {
+		if paused && r.Kind == "turn" && strings.Contains(r.Prompt, "first") {
+			sigs <- syscall.SIGUSR1
+			time.Sleep(200 * time.Millisecond)
+		}
+		return engine.FakeReply{}
+	}
+	if code, errOut := pw.execute(spec, false, sigs); code != 0 {
+		t.Fatalf("exit %d %s", code, errOut)
+	}
+	if info := pw.info("run-again"); info.State != StateHeld {
+		t.Fatalf("the paused run: %+v", info)
+	}
+	paused = false
+
+	// a live run is not resumed
+	lock, err := TakeLock(pw.state, "run-again", "test", pw.td.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if code, _, errOut := pw.td.do("resume", "run-again", "--state", pw.state); code != exitLive || !strings.Contains(errOut, "a process holds the run run-again") {
+		t.Errorf("resume of a live run: %d %q", code, errOut)
+	}
+	if code, _, errOut := pw.td.do("resume", "run-again", "--state", pw.state, "--detach"); code != 2 || !strings.Contains(errOut, "a process holds the run") || len(pw.td.spawned) != 0 {
+		t.Errorf("--detach of a live run: %d %q, %d processes", code, errOut, len(pw.td.spawned))
+	}
+	lock.Release()
+
+	if code, out, errOut := pw.td.do("resume", "run-again", "--state", pw.state, "--detach"); code != 0 || !strings.Contains(out, "run run-again resumed (process 4242)") || len(pw.td.spawned) != 1 || !pw.td.spawned[0].Resume || pw.td.spawned[0].Spec.Script != pw.script {
+		t.Fatalf("--detach: %d %q %q %+v", code, out, errOut, pw.td.spawned)
+	}
+	if code, out, errOut := pw.td.do("resume", "run-again", "--state", pw.state); code != 0 {
+		t.Fatalf("resume: exit %d\n%s\n%s", code, out, errOut)
+	}
+	info := pw.info("run-again")
+	if info.State != StateCompleted || info.Processes != 2 {
+		t.Errorf("the resumed run: %+v", info)
+	}
+	if code, _, errOut := pw.td.do("resume", "run-nospec", "--state", pw.state); code != 2 || !strings.Contains(errOut, "has no spec file") {
+		t.Errorf("a run without a spec: %d %q", code, errOut)
+	}
 }
