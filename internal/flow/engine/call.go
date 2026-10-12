@@ -1271,7 +1271,47 @@ func (c *callRun) validate(text string, resolved *jsonschema.Resolved) ([]byte, 
 // the previous process, in the same kind of directory: it is the call's own as well (CRW-1202).
 func (c *callRun) ownsDirectory() bool {
 	pl, p := c.placement, c.plan
-	return pl != nil && pl.Kind == PlaceCall && pl.Path != "" && p.resume != nil && p.role == "architect" && p.opts.Head != "" && !p.qa
+	return pl != nil && ownsDirectoryAt(pl.Kind, pl.Path, p.role, p.opts.Head, p.resume != nil, p.qa)
+}
+
+// ownsDirectoryAt is the one rule of a directory of a call's own: a call-private placement of a continuation of the architect that names
+// the head it judges, not a QA turn. Every writer of a terminal row of an agent call decides by it (CRW-1202).
+func ownsDirectoryAt(kind, path, role, head string, continues, qa bool) bool {
+	return kind == PlaceCall && path != "" && continues && role == "architect" && head != "" && !qa
+}
+
+// ownDirectoryOfRows is the directory of its own that the newest attempt of a call made, read from the call's prepared row: the
+// terminal rows the engine writes outside the call's own run (a resume superseding an attempt an earlier process left) decide it by
+// the same rule as callRun.terminal. "" when the attempt has none.
+func ownDirectoryOfRows(rows []Event) string {
+	var prep Event
+	for _, ev := range rows {
+		if ev.Kind == KindCall && ev.Op == "agent" && ev.Event == EvPrepared {
+			prep = ev
+		}
+	}
+	m, ok := prep.Data["allocation"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	qa, _ := prep.Data["qa"].(bool)
+	if path := rowStr(m, "path"); ownsDirectoryAt(rowStr(m, "kind"), path, rowStr(prep.Data, "role"), rowStr(prep.Data, "head"), rowStr(prep.Data, "resume_of") != "", qa) {
+		return path
+	}
+	return ""
+}
+
+// supersededRow writes the superseded row the engine itself ends an agent call of an earlier process with, deciding the directory of
+// the call's own as callRun.terminal does - a superseded call is not an unknown outcome - and removes it after the row.
+func (e *Engine) supersededRow(callID string, rows []Event, first Event, data map[string]any) {
+	dir := ownDirectoryOfRows(rows)
+	if dir != "" {
+		data[ownDirectoryKey] = dir
+	}
+	e.j.Append(Event{RunID: e.runID, Kind: KindCall, CallID: callID, Path: first.Path, Position: first.Position, Op: "agent", Label: first.Label, Event: EvSuperseded, Data: data})
+	if dir != "" {
+		e.removeOwnDirectory(callID, dir)
+	}
 }
 
 // creationDirectory makes the directory a call's new thread (a start, a fork, a checkpoint thread) is created in. A directory of the

@@ -412,7 +412,7 @@ func (c *callRun) endOpenCalls(ctx context.Context) *supersedeFailure {
 			data["lineage"] = e.lineage
 		}
 		data["reason"] = reason
-		e.j.Append(Event{RunID: e.runID, Kind: KindCall, CallID: st.id, Path: first.Path, Position: first.Position, Op: "agent", Label: first.Label, Event: EvSuperseded, Data: data})
+		e.supersededRow(st.id, st.rows, first, data)
 		e.endSupersede(st.id, op, nil)
 	}
 	return nil

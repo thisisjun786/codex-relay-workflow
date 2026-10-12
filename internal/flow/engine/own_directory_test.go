@@ -82,3 +82,51 @@ func TestPinnedWorktreeSweepKeepsWhatACallIsAtWorkIn(t *testing.T) {
 		t.Errorf("the failed removal is journaled %d times, want once", kept)
 	}
 }
+
+// Every writer of a terminal row of an agent call decides the directory of the call's own by one rule (ownsDirectoryAt): the
+// superseded rows a resume writes for an attempt an earlier process left (supersedeSuffix, endOpenCalls) read it from the attempt's
+// prepared row, name it on the row and remove it after the row; an attempt that is no pinned architect continuation names none.
+func TestEveryTerminalRowWriterDecidesTheOwnDirectory(t *testing.T) {
+	prepared := func(data map[string]any) []Event {
+		return []Event{{Kind: KindCall, Op: "agent", Event: EvPrepared, Data: data}}
+	}
+	pinned := map[string]any{"role": "architect", "resume_of": "c_arch", "head": "abc", "allocation": map[string]any{"kind": PlaceCall, "path": "/s/calls/c1/wt"}}
+	with := func(key string, value any) map[string]any {
+		out := map[string]any{}
+		for k, v := range pinned {
+			out[k] = v
+		}
+		out[key] = value
+		return out
+	}
+	for _, testCase := range []struct {
+		name string
+		data map[string]any
+		want string
+	}{
+		{"pinned architect continuation", pinned, "/s/calls/c1/wt"},
+		{"no head", with("head", ""), ""},
+		{"not a continuation", with("resume_of", ""), ""},
+		{"another role", with("role", "reviewer"), ""},
+		{"a QA turn", with("qa", true), ""},
+		{"a continued directory", with("allocation", map[string]any{"kind": PlaceContinued, "path": "/s/wt/A"}), ""},
+	} {
+		if got := ownDirectoryOfRows(prepared(testCase.data)); got != testCase.want {
+			t.Errorf("%s: %q, want %q", testCase.name, got, testCase.want)
+		}
+	}
+
+	j := NewMemoryJournal()
+	backend := &removerBackend{Fake: NewFake()}
+	e := &Engine{cfg: Config{Backend: backend}, j: j, runID: "run-1", ctx: context.Background()}
+	first := Event{Path: "root", Position: 3, Label: "reflection:M1"}
+	e.supersededRow("c1", prepared(pinned), first, map[string]any{"reason": ReasonSupersededByResume})
+	e.supersededRow("c2", prepared(with("role", "reviewer")), first, map[string]any{"reason": ReasonSupersededByResume})
+	rows := j.Events()
+	if len(rows) != 2 || rows[0].Event != EvSuperseded || rowStr(rows[0].Data, ownDirectoryKey) != "/s/calls/c1/wt" || rowStr(rows[1].Data, ownDirectoryKey) != "" {
+		t.Fatalf("superseded rows: %+v", rows)
+	}
+	if !slices.Equal(backend.removed, []string{"/s/calls/c1/wt"}) {
+		t.Errorf("removed %v after the superseded rows", backend.removed)
+	}
+}

@@ -420,6 +420,9 @@ func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRes
 		}
 		return *now, nil
 	}
+	// The release of a lane (crw:lib/lane, crw.dag) is the only release path of a node to an executor, a child or a split, and it always
+	// passes pinned: this compare-and-swap is therefore the one check every release goes through (the workflows' call sites are held to
+	// it by TestEveryWorkflowReleasePassesPinned). A call without pinned is the operation's own unit tests.
 	if opts.Pinned {
 		m, err := readNow()
 		if err != nil {

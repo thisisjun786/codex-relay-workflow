@@ -1,12 +1,16 @@
 package scenario
 
 import (
+	"io/fs"
 	"os"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/workflows"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/workflows/lib"
 )
 
 // The two invariants of CRW-1202's last correction round (verifier rf4 on b4ec3fd8).
@@ -223,6 +227,80 @@ func TestPinnedWorktreeCleanupInCompletionUnit(t *testing.T) {
 		})
 	}
 
+	// A terminal row the resume writes itself for a pinned call decides the directory the same way: a reflection whose turn was in flight
+	// when the process died (its worktree left behind: a hard kill removes nothing) is superseded by the resume that runs it again with
+	// another packet, and that superseded row names the directory of the attempt it ends, which goes; the attempt that runs again in a
+	// directory of its own removes that one with its completed row. A resume that goes on with the same call from what reconcile decided
+	// keeps the directory until the call's own terminal row.
+	for _, edited := range []bool{true, false} {
+		name := "a terminal row the resume writes for an open pinned call names its directory"
+		if !edited {
+			name = "an open pinned call reconcile hands to the resume ends in its own directory"
+		}
+		t.Run(name, func(t *testing.T) {
+			lab := NewLab(t, twoNodes()...)
+			var started atomic.Value
+			lab.OnRow(func(event engine.Event) {
+				if event.Op == "agent" && event.Event == engine.EvTurnStarted && strings.HasPrefix(event.Label, "reflection:") && started.Load() == nil {
+					started.Store(event)
+					path := ""
+					for _, prior := range lab.Events() {
+						if prior.CallID == event.CallID && prior.Event == engine.EvPrepared {
+							allocation, _ := prior.Data["allocation"].(map[string]any)
+							path = str(allocation, "path")
+						}
+					}
+					// the process dies with the turn in flight: nothing of it removes the directory
+					lab.git(lab.Repo, "worktree", "lock", path)
+					lab.Kill()
+				}
+			})
+			lab.Run()
+			row, ok := started.Load().(engine.Event)
+			if !ok {
+				t.Fatalf("the run was not stopped in the reflection's turn; calls=%v", lab.Labels())
+			}
+			path, _ := pinnedDirOf(t, lab, row.CallID)
+			lab.git(lab.Repo, "worktree", "unlock", path)
+			if !exists(path) {
+				t.Fatalf("the directory of the reflection in flight %s is not there after the process died", path)
+			}
+			before := lab.LastSeq()
+			lab.NewProcess("proc-2")
+			var result *engine.Result
+			if edited {
+				result = lab.execEdited(func(text string) string {
+					return strings.Replace(text, "reflectionPacket(ms, current, closed)", "reflectionPacket(ms, current, closed) + '\\n\\nEDITED REFLECTION'", 1)
+				}, true)
+			} else {
+				result = lab.Resume()
+			}
+			if got := Value[laneResult](t, result); got.State != "closed" {
+				t.Fatalf("resume: %+v; calls=%v", got, lab.Labels())
+			}
+			named := false
+			for _, event := range rowsAfter(lab, before) {
+				if event.CallID == row.CallID && event.Kind == engine.KindCall && event.Event == engine.EvSuperseded {
+					named = str(event.Data, "own_directory") == path
+				}
+			}
+			if edited && !named {
+				t.Errorf("the superseded row of the reflection in flight does not name its directory %s", path)
+			}
+			if exists(path) {
+				t.Errorf("the directory %s of the reflection that was in flight is still there after the run closed", path)
+			}
+			for _, event := range rowsAfter(lab, before) {
+				if event.CallID == row.CallID && event.Event == engine.EvPrepared {
+					allocation, _ := event.Data["allocation"].(map[string]any)
+					if again := str(allocation, "path"); exists(again) {
+						t.Errorf("the directory %s of the reflection that ran again is still there", again)
+					}
+				}
+			}
+		})
+	}
+
 	t.Run("a removal that fails is recorded and retried by every resume", func(t *testing.T) {
 		lab := NewLab(t, twoNodes()...)
 		var locked atomic.Value
@@ -279,4 +357,68 @@ func TestPinnedWorktreeCleanupInCompletionUnit(t *testing.T) {
 			t.Errorf("unchanged resumes made live calls: %+v", live)
 		}
 	})
+}
+
+// Every release of a node in the shipped workflows goes through the compare-and-swap of invariant 1: each call of crw.release passes the
+// pinned option (the constant PINNED of crw:lib/lane, or the literal), so a new release path cannot skip it silently. A release named
+// any other way (crw['release'], a release taken off crw) is refused as well.
+func TestEveryWorkflowReleasePassesPinned(t *testing.T) {
+	sites := 0
+	for root, fsys := range map[string]fs.FS{"workflows/": workflows.FS, "workflows/lib/": lib.FS} {
+		if err := fs.WalkDir(fsys, ".", func(name string, d fs.DirEntry, err error) error {
+			if err != nil || d.IsDir() || !strings.HasSuffix(name, ".js") {
+				return err
+			}
+			raw, err := fs.ReadFile(fsys, name)
+			if err != nil {
+				return err
+			}
+			releaseSites(t, root+name, string(raw), &sites)
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if sites == 0 {
+		t.Fatal("no crw.release call site found in the workflows")
+	}
+}
+
+// releaseSites checks the release call sites of one workflow source.
+func releaseSites(t *testing.T, path, text string, sites *int) {
+	t.Helper()
+	call := regexp.MustCompile(`crw\.release\(`)
+	other := regexp.MustCompile(`\[\s*['"]release['"]\s*\]|\brelease\s*=\s*crw\.release\b|\{[^}]*\brelease\b[^}]*\}\s*=\s*crw\b`)
+	pinnedConst := regexp.MustCompile(`const PINNED = \{ pinned: true \}`)
+	pinnedLiteral := regexp.MustCompile(`^\{\s*pinned:\s*true\s*\}$`)
+	if loc := other.FindStringIndex(text); loc != nil {
+		t.Errorf("%s releases a node by another name than crw.release(...): %q", path, text[loc[0]:loc[1]])
+	}
+	for _, loc := range call.FindAllStringIndex(text, -1) {
+		*sites++
+		// the argument list, up to the parenthesis that closes the call
+		depth, end := 0, -1
+		for i := loc[1] - 1; i < len(text) && end < 0; i++ {
+			switch text[i] {
+			case '(', '{', '[':
+				depth++
+			case ')', '}', ']':
+				depth--
+				if depth == 0 {
+					end = i
+				}
+			}
+		}
+		if end < 0 {
+			t.Fatalf("%s: unbalanced crw.release call", path)
+		}
+		argList := text[loc[1]:end]
+		parts := strings.Split(argList, ",")
+		switch {
+		case len(parts) == 4 && strings.TrimSpace(parts[3]) == "PINNED" && pinnedConst.MatchString(text):
+		case len(parts) == 4 && pinnedLiteral.MatchString(strings.TrimSpace(parts[3])):
+		default:
+			t.Errorf("%s: crw.release(%s) does not pass {pinned: true}", path, argList)
+		}
+	}
 }

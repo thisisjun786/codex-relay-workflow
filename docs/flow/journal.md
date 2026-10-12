@@ -273,7 +273,9 @@ restored one the first executor call adopted, so a later continuation's `prepare
 and its thread is forked into it. A call that is not an executor's and runs again takes the next private directory of its own
 (`calls/<call_id>/wt`, then `wt-1`, `wt-2`): a path belongs to one allocation, and the directory of its earlier attempt is not
 made over. The directory of an architect turn that names its `head` is the call's own and goes with the call's end: the terminal
-row of the call (any but `outcome_unknown`) names it (`own_directory`), the engine removes it after that row with a context the
+row of the call (any but `outcome_unknown`) names it (`own_directory`) - the rows of the call's own run and the `superseded` rows a
+resume writes for an attempt an earlier process left, decided by the same rule from the attempt's `prepared` row; reconcile writes
+only `outcome_unknown`, which names none - the engine removes it after that row with a context the
 run's cancellation does not end, and a removal that fails is a flow row `own_directory_kept` (call, path, error). A resume removes,
 before the script runs, every directory a terminal row of an earlier process names that is still there, except the one a call is
 still at work in (a call whose newest state is no terminal row or an unknown outcome).

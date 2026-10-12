@@ -861,6 +861,8 @@ func (r *reconciler) apply(ctx context.Context, st *callState, p plan) *Recovery
 	switch {
 	case p.unknown != "":
 		if !(st.held() && st.unknownDetail == p.unknown) {
+			// an unknown outcome never names the directory of a call's own (ownDirectoryKey): a turn of the call may still be at
+			// work in it, so it is kept until a later terminal row of the call names it (CRW-1202)
 			r.j.Append(r.callRow(st, EvOutcomeUnknown, map[string]any{"reason": ReasonDispatchUnknown, "detail": p.unknown, "recovered": true}))
 			r.j.Append(r.flowRow(st, EvEscalation, map[string]any{"reason": ReasonDispatchUnknown, "node": st.node, "detail": p.unknown, "last_event": st.last}))
 		}
