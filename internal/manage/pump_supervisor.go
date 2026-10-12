@@ -347,18 +347,15 @@ func pumpSupervisorDeliver(ctx context.Context, e *Env, cfg *Config, st *pumpSta
 	pumpLog(cfg, fmt.Sprintf("supervisor queue thread=%s notice=%s request=%s class=%s", n.Thread, n.LogicalID, out.RequestID, out.Class))
 	switch {
 	case out.Class == deliverClassAccepted:
-		if err := supervisorMove(dir, name, pumpSentDir); err != nil {
-			return false, err
-		}
-		delete(st.Supervisor.Attempts, n.LogicalID)
+		// the obligation to tell the flow rows is durable before the notice leaves the queue: a pump that dies in between restarts with the
+		// notice still pending, and the delivery record answers it again (nothing is sent twice)
 		if n.ReportID != "" {
 			st.Supervisor.Delivered[n.ReportID] = out.RequestID
 		}
 		if err := st.pumpSave(cfg); err != nil {
-			return true, err
+			return false, err
 		}
-		pumpSupervisorConfirm(ctx, e, cfg, st)
-		return true, nil
+		return pumpSupervisorSettle(ctx, e, cfg, st, dir, name, n, pumpSentDir)
 	case supervisorUnloaded(out):
 		// the thread unloaded between the probe and the send: not a refusal of the notice, so it is not counted against the refusal
 		// limit; the next attempt goes out under a new id and the lead's thread is reported once
@@ -369,25 +366,34 @@ func pumpSupervisorDeliver(ctx context.Context, e *Env, cfg *Config, st *pumpSta
 	case out.Class == deliverClassRefused:
 		attempt.Refused++
 		if attempt.Refused >= pumpQueueRefusalLimit {
-			if err := supervisorMove(dir, name, supervisorRefusedDir); err != nil {
-				return false, err
-			}
-			delete(st.Supervisor.Attempts, n.LogicalID)
-			pumpLog(cfg, fmt.Sprintf("supervisor queue %s: notice %s moved to %s after %d refusals", n.Thread, n.LogicalID, supervisorRefusedDir, attempt.Refused))
+			pumpLog(cfg, fmt.Sprintf("supervisor queue %s: notice %s moves to %s after %d refusals", n.Thread, n.LogicalID, supervisorRefusedDir, attempt.Refused))
 			if n.ReportID != "" {
 				st.Supervisor.Delivered[n.ReportID] = "refused:" + out.RequestID
 			}
 			if err := st.pumpSave(cfg); err != nil {
-				return true, err
+				return false, err
 			}
-			pumpSupervisorConfirm(ctx, e, cfg, st)
-			return true, nil
+			return pumpSupervisorSettle(ctx, e, cfg, st, dir, name, n, supervisorRefusedDir)
 		}
 		st.Supervisor.Attempts[n.LogicalID] = attempt
 		return false, st.pumpSave(cfg)
 	}
 	// unknown: the next round reconciles the same id
 	return false, nil
+}
+
+// pumpSupervisorSettle moves a notice whose outcome is durable in the pump's state out of the queue, drops its attempt counts and tells
+// the flow rows.
+func pumpSupervisorSettle(ctx context.Context, e *Env, cfg *Config, st *pumpState, dir, name string, n supervisorNotice, sub string) (bool, error) {
+	if err := supervisorMove(dir, name, sub); err != nil {
+		return false, err
+	}
+	delete(st.Supervisor.Attempts, n.LogicalID)
+	if err := st.pumpSave(cfg); err != nil {
+		return true, err
+	}
+	pumpSupervisorConfirm(ctx, e, cfg, st)
+	return true, nil
 }
 
 func firstNonEmpty(texts ...string) string {

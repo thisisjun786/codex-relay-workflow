@@ -437,3 +437,51 @@ func TestSupervisorFlushRecoversAnUnloadRefusalWhoseOrdinalWasLost(t *testing.T)
 	}
 	supervisorTestCheckDelivered(t, flowTestCalls(t, record), [][]string{{"flow", "report-delivered", "--report", "rep_1", "--result", "accepted", "--request-id", "run-1:M1:report-l1"}})
 }
+
+// A delivery the bridge accepted must not leave the queue before the obligation to tell the flow rows is durable: the pump that dies (or
+// cannot save its state) between the move to sent/ and the save would restart with no notice to scan and no obligation in its state, and
+// the report would stand as undelivered for ever. The state is saved first; a round that could not save leaves the notice queued, and
+// the next round answers it from the settled delivery record (the bridge is not asked to send again) and tells the flow rows.
+// (post-evaluation d3)
+func TestSupervisorFlushKeepsTheNoticeUntilTheDeliveredObligationIsSaved(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	exe, record := flowTestCRW(t)
+	e.Executable = exe
+	supervisorTestSettings(t, coreSettings{Model: "gpt-supervisor", ReasoningEffort: "xhigh"})
+	accepting, acceptLog := deliverFakeBridge(t, []map[string]any{{"payload": map[string]any{"observation": "idle"}}, {"payload": map[string]any{"status": "accepted", "delivery": "turn_started"}}})
+	cfg := pumpTestConfig(t, accepting)
+	supervisorTestQueue(t, cfg, "lead-thread", "run-1:M1:report", "rep_1", now.Add(-2*time.Hour))
+	st := pumpTestReadStatePtr(t, cfg)
+	// the state cannot be saved: the state file's place is taken by a directory, so the atomic rename onto it fails
+	statePath := filepath.Join(cfg.StateDir, pumpStateFile)
+	_ = os.Remove(statePath)
+	if err := os.MkdirAll(filepath.Join(statePath, "x"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	restore := func() { _ = os.RemoveAll(statePath) }
+	t.Cleanup(restore)
+	supervisorTestFlush(t, e, cfg, st)
+	restore()
+	if sends := supervisorTestCallsTo(t, acceptLog, deliverToolSend, "lead-thread"); len(sends) != 1 {
+		t.Fatalf("sends %v", sends)
+	}
+	if _, ok := supervisorTestNotice(t, cfg, "lead-thread", "run-1:M1:report", ""); !ok {
+		t.Fatal("the notice left the queue before the obligation to tell the flow rows was saved")
+	}
+	if calls := flowTestCalls(t, record); len(calls) != 0 {
+		t.Fatalf("report-delivered was called before the obligation was saved: %v", calls)
+	}
+	// a new pump process: the delivery is settled in its record, so the bridge is asked for no second send
+	again, againLog := deliverFakeBridge(t, []map[string]any{{"payload": map[string]any{"observation": "idle"}}})
+	cfg.Bridge.Binary = again
+	fresh := pumpTestReadStatePtr(t, cfg)
+	supervisorTestFlush(t, e, cfg, fresh)
+	if sends := supervisorTestCallsTo(t, againLog, deliverToolSend, "lead-thread"); len(sends) != 0 {
+		t.Fatalf("the replay sent again: %v", sends)
+	}
+	if _, ok := supervisorTestNotice(t, cfg, "lead-thread", "run-1:M1:report", pumpSentDir); !ok {
+		t.Error("the notice is not in sent/ after the replay")
+	}
+	supervisorTestCheckDelivered(t, flowTestCalls(t, record), [][]string{{"flow", "report-delivered", "--report", "rep_1", "--result", "accepted", "--request-id", "run-1:M1:report"}})
+}
