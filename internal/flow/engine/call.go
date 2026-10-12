@@ -1022,7 +1022,7 @@ func (c *callRun) recover(ctx context.Context) (res CallResult, stop bool, k int
 	case RecoverThreadReady:
 		c.threadID, c.configured, c.cwd = rec.ThreadID, rec.Pair, rec.Cwd
 		res, stop = c.pairCheck(ThreadInfo{ID: rec.ThreadID, Pair: rec.Pair, Cwd: rec.Cwd})
-		return res, stop, 1, p.prompt, nil
+		return res, stop, 1, c.checkpointPreface() + p.prompt, nil
 	case RecoverResendCreate:
 		c.send = rec.Send
 		if rec.Kind == "fork" {
@@ -1030,7 +1030,7 @@ func (c *callRun) recover(ctx context.Context) (res CallResult, stop bool, k int
 		} else {
 			res, stop = c.startThread(ctx)
 		}
-		return res, stop, 1, p.prompt, nil
+		return res, stop, 1, c.checkpointPreface() + p.prompt, nil
 	}
 	info, _ := LookupCall(c.e.j, c.id)
 	c.threadID, c.configured, c.cwd = info.ThreadID, info.Configured, info.Cwd
@@ -1045,6 +1045,13 @@ func (c *callRun) recover(ctx context.Context) (res CallResult, stop bool, k int
 				c.turnIDs = append(c.turnIDs, rowStr(ev.Data, "turn_id"))
 			}
 			c.delivered = true
+		}
+	}
+	if c.firstK == 0 {
+		// the first ordinary turn of this pass: a repair turn follows an ordinary one
+		c.firstK = max(rec.K, 1)
+		if rec.Repair {
+			c.firstK = max(rec.K-1, 1)
 		}
 	}
 	if rec.Action == RecoverResendTurn {
@@ -1067,7 +1074,6 @@ func (c *callRun) turnLoop(ctx context.Context, resolved *jsonschema.Resolved, k
 		repair := k > c.firstK
 		if pre != nil {
 			// The turn was sent before the process stopped: no request, no gate, no intent row.
-			repair = pre.k > 1
 			c.repairUsed = c.repairUsed || repair
 			if pre.running {
 				host, _ := e.cfg.Backend.(ReconHost)
@@ -1092,7 +1098,7 @@ func (c *callRun) turnLoop(ctx context.Context, resolved *jsonschema.Resolved, k
 				}
 			}
 			op := fmt.Sprintf("%s/t%d", c.id, k)
-			intent := map[string]any{"k": k, "op": op, "input": input}
+			intent := map[string]any{"k": k, "op": op, "input": input, "repair": repair}
 			if resend {
 				intent["resend"] = true
 				resend = false

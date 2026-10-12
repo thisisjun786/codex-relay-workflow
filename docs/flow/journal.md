@@ -24,7 +24,11 @@ saw. A row is never updated.
   still buffered, so the error is read again after it: a run whose last write failed ends with the journal's error, not as completed.
 - `flow_runs` holds the identity of the run: the workflow, the digests of the script, its helpers and its arguments, and what the
   caller gives the journal (`Identity`: the plan and its revision, the actor task, the epoch nonce, the run it resumes). It is
-  written with the first `started` row; a resumed run reuses it.
+  written with the first `started` row; a resumed run reuses it: a journal that is opened again (`journal.Open` with no `Identity`,
+  as `crw flow resume` and `crw flow recover` do) reads the plan, its revision, the actor, the epoch and the resumed run back
+  from the run record, and a call the resumed process reaches for the first time on a node whose earlier calls were associated
+  with an execution is associated with the same execution, so the relay finds its rows by `plan_id`, `node_id` and `execution_id`
+  like the rows of the calls before it.
 - `flow_calls` holds every `KindCall` row. The columns the relay reads without opening `detail_json` are filled: `kind` (the
   call's op, `agent` for an agent call), `role`, `node_id`, `plan_id`, `execution_id` (when the row carries one), `commit_sha`
   (the commit of a `crw.commit` row, else the `head` a reviewer reads), `thread_id` and `turn_id` (a terminal row names the thread
@@ -170,10 +174,13 @@ the order the array lists them in, are not identity: items are keyed by their ex
 
 `crw.<name>` calls with an effect outside the engine - `commit`, `verify`, `review`, `accept`, `integrate`, `hold`, a report to the
 relay - are `engine.Op`s registered in `Config.Ops`. An op takes a position like a call. Its completed row (`crw.<name>`, with the
-`input_digest` of its arguments, its `result` and what its proofs read: the `node`, `commit` and `tree` of a commit, the
-`acceptance_id` of an acceptance) replays when the position's earlier positions replayed, the arguments are the same and
-`Op.Proven` says the effect is there. An op that ran and did not write its row runs again under the same call id and the same
-`RequestID`, so whoever it asked sees one request. `crw.tierStep`, `crw.clock` and `crw.classify` are the engine's own: a
+`input_digest` of its arguments, its `request_id`, its `result` and what its proofs read: the `node`, `commit` and `tree` of a
+commit, the `acceptance_id` of an acceptance) replays when the position's earlier positions replayed, the arguments are the same
+and `Op.Proven` says the effect is there. An op that ran and did not write its row runs again under the same call id and the
+same `RequestID`, so whoever it asked sees one request. An op that runs live at a position whose earlier attempt the journal
+ended (a completed row, or a refusal of other arguments) because its arguments changed or a position before it did not replay
+is a request of its own: its `RequestID` is `AttemptRequestID(run, call, n)` for the n-th ended attempt, so a receiver that
+deduplicates by request id does not answer it with the earlier attempt's result. `crw.tierStep`, `crw.clock` and `crw.classify` are the engine's own: a
 resumed script gets the step decision, the time and the state it got before.
 
 ### The suffix
@@ -216,13 +223,24 @@ not the through turn (found by id or by the turn's `clientId` marker) and has en
 whose configured pair is not the role's is refused for its pair (`pair_refused`). A fork whose answer was lost is found by reconcile through its cwd,
 `Thread.forkedFromId` and a history that is exactly the recorded prefix. When the source thread or the turn cannot be read, the
 continuation starts a new thread of the same role in the same directory, with a checkpoint packet built from the journal's
-record of the turns up to the through turn (a flow row `checkpoint_started` has its digest).
+record of the turns up to the through turn (a flow row `checkpoint_started` has its digest and the packet itself). The first turn
+of such a thread carries the packet before the call's input, also when the creation was recovered: the thread whose answer was
+lost and that the next process adopts, and the creation the next process proves absent and sends again, get the packet from the
+`checkpoint_started` row of the call's newest attempt.
+
+Every continuation of the suffix on a thread of the earlier process forks, not only the first: the node's worktree is then the
+restored one the first executor call adopted, so a later continuation's `prepared` row records the same path (`continued`, `fork`)
+and its thread is forked into it. A call that is not an executor's and runs again takes the next private directory of its own
+(`calls/<call_id>/wt`, then `wt-1`, `wt-2`): a path belongs to one allocation, and the directory of its earlier attempt is not
+made over.
 
 ### Held calls
 
 A position whose last event is `held` never replays: neither its held `CallResult` nor the `crw.hold` record after it is reused.
 When (a) to (d) and (f) hold for it, and its effect proof does (for an executor: the live snapshot of its worktree is its
-`p_held`; for `host_infra_activeTurnNotSteerable` also: the thread reads idle), it goes on in place: the call keeps its call id,
+`p_held`, compared with the live snapshot of the call's own worktree, not with the cumulative proof of the node's calls; a hold
+whose snapshot could not be made, `p_held_error`, has no state to compare, so its files are not known to be the call's; for
+`host_infra_activeTurnNotSteerable` also: the thread reads idle), it goes on in place: the call keeps its call id,
 cwd and pair, a flow row `hold_cleared` (call id, lineage, reason, input state) is written, and the records after it are the suffix
 and so superseded. What it sends follows `input_state` of the held row:
 
@@ -235,7 +253,9 @@ and so superseded. What it sends follows `input_state` of the held row:
   `<call_id>/t<k>` on the thread: a turn that carries it is an unknown outcome and nothing is sent; with every turn read in full
   and none carrying it, the original packet is sent as `<call_id>/t<k+1>`.
 
-A call held again on the retry has a second held row and its node holds again. When any condition fails, the held position is an
+A turn the retry sends is an ordinary turn, whatever its ordinal; the `turn_requested` row says so (`repair`: false) and a
+recovered retry turn is not taken for the call's schema repair: the call keeps its one repair turn, and `repair_used` is true
+only when it was sent. A call held again on the retry has a second held row and its node holds again. When any condition fails, the held position is an
 ordinary first failing position: it is superseded, the boundary is restored, `p_held` is kept on its ref, and the call runs with
 its full packet in the restored worktree.
 

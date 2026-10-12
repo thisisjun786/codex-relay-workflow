@@ -26,7 +26,7 @@ func (c *callRun) heldInPlace(rows []Event, prep Event) bool {
 	held := lastTerminal(rows)
 	reason := rowStr(held.Data, "reason")
 	// a held worktree failure made nothing of what the call needs: it starts again, in the allocation the journal records
-	if reason == ReasonWorktreeFailed || !c.effectHolds(held, true) {
+	if reason == ReasonWorktreeFailed || !c.heldStateHolds(rows, prep, held) {
 		return c.live()
 	}
 	info, _ := lookupCall(rows, c.id)
@@ -57,6 +57,49 @@ func (c *callRun) heldInPlace(rows []Event, prep Event) bool {
 	// are the suffix
 	e.markLive(c.path, c.position+1)
 	return true
+}
+
+// heldStateHolds is (e) for a held call. An executor goes on in place only when its worktree is exactly the state the hold
+// recorded: the live snapshot is P_held, which the cumulative proof of the node's calls cannot show (a later call of the script
+// on the same worktree, or a commit, can prove an earlier call whose own files are no longer there). A hold whose snapshot could
+// not be made (p_held_error) recorded no state to compare with, so the files are not known to be the call's: the position is the
+// first of a suffix and the boundary is restored.
+func (c *callRun) heldStateHolds(rows []Event, prep Event, held Event) bool {
+	e := c.e
+	if c.plan.spec.Family != "executor" || c.plan.node == "" {
+		return true
+	}
+	if rowStr(held.Data, "p_held_error") != "" {
+		return false
+	}
+	state := rowStr(held.Data, "p_held")
+	if state == "" {
+		return true
+	}
+	if placer, ok := e.cfg.Backend.(Placer); ok {
+		cwd := heldCwd(rows, prep)
+		if cwd == "" {
+			return false
+		}
+		snap, err := placer.Snapshot(e.ctx, cwd)
+		if err != nil || snap != state {
+			return false
+		}
+	}
+	return c.effectHolds(held, true)
+}
+
+// heldCwd is the directory a held call worked in: its allocation's path, else the directory its thread was started in.
+func heldCwd(rows []Event, prep Event) string {
+	if m, ok := prep.Data["allocation"].(map[string]any); ok {
+		if path := rowStr(m, "path"); path != "" {
+			return path
+		}
+	}
+	if info, ok := lookupCall(rows, prep.CallID); ok && info.Cwd != "" {
+		return info.Cwd
+	}
+	return rowStr(prep.Data, "thread_cwd")
 }
 
 // resumeHeld goes on with a held call: a call whose packet is in the thread continues with a turn of its own, a call whose
@@ -97,7 +140,7 @@ func (c *callRun) resumeHeld(ctx context.Context) (res CallResult, stop bool, k 
 	switch st.last {
 	case EvThreadStarted, EvForkStarted:
 		begin(1)
-		return CallResult{}, false, 1, p.prompt, nil
+		return CallResult{}, false, 1, c.checkpointPreface() + p.prompt, nil
 	case EvPrepared:
 		if p.resume != nil && !(c.placement != nil && c.placement.Fork) {
 			// a continuation on its handle's thread: nothing was created for it

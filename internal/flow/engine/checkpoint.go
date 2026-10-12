@@ -20,8 +20,30 @@ func (c *callRun) forkOrCheckpoint(ctx context.Context) (CallResult, bool) {
 	c.preface = packet + "\n\n"
 	c.e.j.Append(Event{RunID: c.e.runID, Kind: KindFlow, CallID: c.id, Path: c.path.id, Position: c.position, Op: "agent", Label: c.label, Event: EvCheckpointStarted,
 		Data: map[string]any{"call_id": c.id, "thread_id": p.resume.ThreadID, "through_turn_id": p.resume.ThroughTurnID, "checkpoint_digest": digestJSON([]byte(packet)),
-			"cwd": c.placement.Path}})
+			"packet": packet, "cwd": c.placement.Path}})
 	return c.startThread(ctx)
+}
+
+// checkpointPreface is the checkpoint packet the call's newest attempt started its thread with, as its checkpoint_started row
+// recorded it, followed by the blank line that separates it from the first turn's input; "" for a call whose thread is not a
+// checkpoint thread. A creation the next process recovers (the thread its lost answer left, the request it proves absent and
+// sends again) gets the first turn of the thread from here, because the packet is held in memory by the process that built it.
+func (c *callRun) checkpointPreface() string {
+	preface := ""
+	for _, ev := range c.e.j.Events() {
+		if ev.CallID != c.id {
+			continue
+		}
+		switch {
+		case ev.Kind == KindCall && ev.Event == EvPrepared:
+			preface = ""
+		case ev.Kind == KindFlow && ev.Event == EvCheckpointStarted:
+			if packet := rowStr(ev.Data, "packet"); packet != "" {
+				preface = packet + "\n\n"
+			}
+		}
+	}
+	return preface
 }
 
 // sourceReadable is whether the handle's thread can be read to its through turn on the host, and the turn has ended. A

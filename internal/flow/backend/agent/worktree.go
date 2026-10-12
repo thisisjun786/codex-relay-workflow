@@ -69,6 +69,29 @@ func (a *Allocator) CallPath(callID string) string {
 	return filepath.Join(a.cfg.StateDir, "flow", a.cfg.RunID, "calls", callID, "wt")
 }
 
+// callPathFor is the private directory of the call's next allocation. A call that runs again (a suffix of a resume runs it
+// with the call id its position has) never reuses the directory of an earlier allocation: a path belongs to one allocation,
+// so the nth allocation of a call is `wt-n`, and a directory that exists already is skipped.
+func (a *Allocator) callPathFor(events []engine.Event, callID string) string {
+	n := 0
+	for _, ev := range events {
+		if ev.Kind == engine.KindCall && ev.Event == engine.EvPrepared && ev.CallID == callID {
+			if m, ok := ev.Data["allocation"].(map[string]any); ok && strOf(m, "kind") == engine.PlaceCall {
+				n++
+			}
+		}
+	}
+	for ; ; n++ {
+		path := a.CallPath(callID)
+		if n > 0 {
+			path = filepath.Join(filepath.Dir(path), fmt.Sprintf("wt-%d", n))
+		}
+		if _, err := os.Lstat(path); err != nil {
+			return path
+		}
+	}
+}
+
 // RetiredRef is the ref an attempt worktree's HEAD and working snapshot are kept on when it is retired.
 func (a *Allocator) RetiredRef(node string, attempt int) string {
 	return fmt.Sprintf("refs/crw/flow/%s/retired/%s/a%d", a.cfg.RunID, node, attempt)
@@ -157,6 +180,19 @@ func pendingRestore(restores, prepared []allocation) *allocation {
 	return pending
 }
 
+// currentAllocation is the node's newest worktree: the latest of its restores and its recorded fresh or restore allocations.
+func currentAllocation(restores, prepared []allocation) *allocation {
+	var cur *allocation
+	for _, list := range [][]allocation{restores, prepared} {
+		for i := range list {
+			if list[i].path != "" && (cur == nil || list[i].seq > cur.seq) {
+				cur = &list[i]
+			}
+		}
+	}
+	return cur
+}
+
 // lastCommit is the result commit of the last crw.commit recorded for the node.
 func lastCommit(events []engine.Event, node string) string {
 	var commit string
@@ -188,7 +224,7 @@ func (a *Allocator) Place(req engine.PlaceRequest) (engine.Placement, error) {
 				if err != nil {
 					return engine.Placement{}, err
 				}
-				return engine.Placement{Kind: engine.PlaceCall, Path: a.CallPath(req.CallID), Start: start, Fork: true}, nil
+				return engine.Placement{Kind: engine.PlaceCall, Path: a.callPathFor(events, req.CallID), Start: start, Fork: true}, nil
 			}
 			return engine.Placement{Kind: engine.PlaceContinued}, nil
 		}
@@ -196,7 +232,7 @@ func (a *Allocator) Place(req engine.PlaceRequest) (engine.Placement, error) {
 		if err != nil {
 			return engine.Placement{}, err
 		}
-		return engine.Placement{Kind: engine.PlaceCall, Path: a.CallPath(req.CallID), Start: start}, nil
+		return engine.Placement{Kind: engine.PlaceCall, Path: a.callPathFor(events, req.CallID), Start: start}, nil
 	}
 	if pending != nil {
 		// (B) adoption: the restored worktree is the call's cwd as it is; nothing is made and no file is reset.
@@ -204,6 +240,13 @@ func (a *Allocator) Place(req engine.PlaceRequest) (engine.Placement, error) {
 			Start: pending.start, Pending: pending.pending, Digest: pending.digest, Fork: req.Continues != nil}, nil
 	}
 	if req.Continues != nil {
+		if req.Fork {
+			// a later continuation of the same suffix: the node's worktree is the one the suffix already works in (the restored
+			// one a first call adopted, or a fresh one), and the thread of the previous process is forked into it
+			if cur := currentAllocation(restores, prepared); cur != nil {
+				return engine.Placement{Kind: engine.PlaceContinued, Path: cur.path, Start: cur.start, Fork: true}, nil
+			}
+		}
 		return engine.Placement{Kind: engine.PlaceContinued}, nil
 	}
 	// (A) a new allocation.

@@ -41,7 +41,9 @@ type Op interface {
 // OpRequest is one run of an op.
 type OpRequest struct {
 	RunID, CallID string
-	// RequestID is the idempotent request id of the call: the same for the same call of the same run.
+	// RequestID is the idempotent request id of the attempt: the same for the same call of the same run while no row ended an
+	// attempt of it, and another one (AttemptRequestID) for an attempt that supersedes an ended one. The completed row names
+	// it (request_id), so an op's Proven can find the request a row made.
 	RequestID string
 	Args      json.RawMessage
 	// Journal is the run's journal.
@@ -60,6 +62,34 @@ type OpResult struct {
 func RequestID(runID, callID string) string {
 	s := sha256.Sum256([]byte("crw-flow-record\x00" + runID + "\x00" + callID))
 	return "req_" + hex.EncodeToString(s[:])[:24]
+}
+
+// AttemptRequestID is the request id of the nth attempt of a call's operation (n counts the attempts the journal already ended
+// with a row, from 0): the first is RequestID, each attempt that supersedes an ended one has an id of its own, so a receiver that
+// deduplicates by request id sees a new request and not the old one again.
+func AttemptRequestID(runID, callID string, n int) string {
+	if n <= 0 {
+		return RequestID(runID, callID)
+	}
+	s := sha256.Sum256([]byte(fmt.Sprintf("crw-flow-record\x00%s\x00%s\x00attempt\x00%d", runID, callID, n)))
+	return "req_" + hex.EncodeToString(s[:])[:24]
+}
+
+// opRequestID is the request id the op of a position runs with now. An attempt that left no row (the process died before the
+// op's row was written) is run again under the id it had, so the world sees one request. An attempt the journal ended -
+// a completed row, or a refusal of other arguments - is superseded by this one (the arguments changed, or a position before
+// this one did not replay), and this one is a request of its own.
+func (e *Engine) opRequestID(callID, op, digest string) string {
+	ended := 0
+	for _, ev := range e.j.Events() {
+		if ev.Kind != KindCall || ev.CallID != callID || ev.Op != op {
+			continue
+		}
+		if ev.Event == EvCompleted || (ev.Event == EvRefused && rowStr(ev.Data, "input_digest") != digest) {
+			ended++
+		}
+	}
+	return AttemptRequestID(e.runID, callID, ended)
 }
 
 // builtinOps are the crw members the engine defines itself.
@@ -114,14 +144,15 @@ func (s *scriptVM) opCall(name string, call goja.FunctionCall) goja.Value {
 		}
 	}
 	e.markLive(path, position)
+	requestID := e.opRequestID(id, label, digest)
 	e.inflight.Add(1)
 	go func() {
 		defer e.inflight.Done()
-		res, err := op.Run(e.ctx, OpRequest{RunID: e.runID, CallID: id, RequestID: RequestID(e.runID, id), Args: argsJSON, Journal: e.j})
+		res, err := op.Run(e.ctx, OpRequest{RunID: e.runID, CallID: id, RequestID: requestID, Args: argsJSON, Journal: e.j})
 		if err == nil && len(res.Result) == 0 {
 			res.Result = json.RawMessage("null")
 		}
-		data := map[string]any{"input_digest": digest}
+		data := map[string]any{"input_digest": digest, "request_id": requestID}
 		for k, v := range res.Data {
 			data[k] = v
 		}

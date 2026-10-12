@@ -191,6 +191,9 @@ type Recovery struct {
 	K     int
 	Op    string
 	Input string
+	// Repair is whether the turn is the call's schema repair (its turn_requested row says so; a row from before the member
+	// existed is a repair when it is not the first turn).
+	Repair bool
 	// TurnID is the turn of RecoverTurn; Running is set while it has not ended, Outcome is its end otherwise.
 	TurnID  string
 	Running bool
@@ -763,9 +766,18 @@ func (r *reconciler) observeTurnRequested(ctx context.Context, st *callState) pl
 		return r.unknown(st, "no turn carries %s and thread %s is %s", op, st.thread, th.Status)
 	}
 	rec := r.recoveryOf(st, RecoverResendTurn)
-	rec.K, rec.Op, rec.Input = rowInt(st.turnReq.Data, "k"), op, rowStr(st.turnReq.Data, "input")
+	rec.K, rec.Op, rec.Input, rec.Repair = rowInt(st.turnReq.Data, "k"), op, rowStr(st.turnReq.Data, "input"), turnIsRepair(st.turnReq.Data)
 	evidence := map[string]any{"listing": "complete", "turns": len(turns), "thread_status": th.Status, "marker": op}
 	return plan{rec: rec, evidence: evidence, rows: []Event{r.flowRow(st, EvCreationResendable, map[string]any{"proof": "turn_absent", "op": op, "evidence": evidence})}}
+}
+
+// turnIsRepair is whether a turn_requested row asked for the call's schema repair. A call that goes on after a hold sends an
+// ordinary turn t2 or later, so the ordinal does not say; the row does, and a row from before it did is read by its ordinal.
+func turnIsRepair(data map[string]any) bool {
+	if v, ok := data["repair"].(bool); ok {
+		return v
+	}
+	return rowInt(data, "k") > 1
 }
 
 // turnAdoption is a turn found by its marker that the turn_started row has not recorded yet.
@@ -807,6 +819,7 @@ func (r *reconciler) observeTurnStarted(ctx context.Context, st *callState, adop
 	}
 	rec := r.recoveryOf(st, RecoverTurn)
 	rec.K, rec.Op, rec.TurnID, rec.Input, rec.InterruptReason = k, op, turnID, rowStr(st.turnReq.Data, "input"), st.interrupt
+	rec.Repair = turnIsRepair(st.turnReq.Data)
 	if found.Status == "inProgress" || found.Status == "" {
 		rec.Running = true
 		return plan{rec: rec, rows: rows}
