@@ -121,8 +121,9 @@ function signalState(planId, opts, nodes) {
     plan(read) {
       if (!read || !read.changed) return
       const f = crw.callFacts(read)
-      S.planWait[node] = 'plan:' + read.digest
-      S.arrive({ kind: 'revision', call: 'plan:' + read.digest, node, digest: read.digest, live: f.live, seq: f.seq })
+      const call = read.occurrence ? 'plan:' + read.occurrence + ':' + read.digest : 'plan:' + read.digest
+      S.planWait[node] = call
+      S.arrive({ kind: 'revision', call, node, digest: read.digest, live: f.live, seq: f.seq })
     },
   })
   return S

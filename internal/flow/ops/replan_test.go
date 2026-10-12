@@ -408,7 +408,7 @@ func TestPlanReadStandsWhileASignalTookItsRevision(t *testing.T) {
 	if ok, _, _ := op.Proven(context.Background(), w.j.Events(), readRow); ok {
 		t.Errorf("a read stands on a signal that took another revision")
 	}
-	w.must("signalBind", "M", 3, "", []Trigger{{Kind: "revision", Call: "plan:" + seen.Digest, Node: "B", Digest: seen.Digest}})
+	w.must("signalBind", "M", 3, "", []Trigger{{Kind: "revision", Call: planTriggerCall(seen.Occurrence, seen.Digest), Node: "B", Digest: seen.Digest}})
 	ev = w.j.Events()
 	bind := ev[len(ev)-1]
 	if ok, why, _ := op.Proven(context.Background(), w.j.Events(), readRow); !ok {

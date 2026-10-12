@@ -254,7 +254,7 @@ func (l *Lane) markSuperseded(r rows, ms string) []string {
 // ---- the signal rows ----
 
 // Trigger is a terminal event a signal is made of: the RECEIPT of a lane (kind receipt: the call and the digest of its result) or a
-// plan revision a lane read when it was about to be released (kind revision: `plan:<digest>` and the digest). The plan the signal
+// plan revision a lane read when it was about to be released (kind revision: `plan:<occurrence>:<digest>` and the digest). The plan the signal
 // itself read is recorded on its row (revision_read).
 type Trigger struct {
 	Kind   string `json:"kind"`
@@ -285,6 +285,32 @@ func lastPlanDigest(r rows, ms string) string {
 		return dataStr(led, "milestone_digest")
 	}
 	return ""
+}
+
+func planOccurrence(r rows, ms, digest string) string {
+	superseded := r.supersededAfter()
+	for index := len(r) - 1; index >= 0; index-- {
+		observation := r[index]
+		if observation.Kind != engine.KindCall || observation.Event != engine.EvCompleted ||
+			(observation.Op != OpPlanRead && observation.Op != OpSignalBind) ||
+			dataStr(observation, "milestone") != ms || superseded[observation.CallID] >= observation.Seq {
+			continue
+		}
+		if prior := dataStr(observation, "plan_digest"); prior != "" && prior != digest {
+			return fmt.Sprintf("after:%d", observation.Seq)
+		}
+	}
+	if first, ok := firstLedger(r, ms); ok {
+		return fmt.Sprintf("after:%d", first.Seq)
+	}
+	return "initial"
+}
+
+func planTriggerCall(occurrence, digest string) string {
+	if occurrence == "" {
+		return "plan:" + digest
+	}
+	return "plan:" + occurrence + ":" + digest
 }
 
 // lanes says which nodes of the milestone had started and which had not: a node is started from its release on.
@@ -323,9 +349,10 @@ type planReadOp struct{ l *Lane }
 
 // PlanSeen is the answer of crw.planRead.
 type PlanSeen struct {
-	Milestone string `json:"milestone"`
-	Node      string `json:"node"`
-	Digest    string `json:"digest"`
+	Milestone  string `json:"milestone"`
+	Node       string `json:"node"`
+	Digest     string `json:"digest"`
+	Occurrence string `json:"occurrence"`
 	// Base is the plan digest the last signal read, or the one the first revision was made against.
 	Base    string `json:"base"`
 	Changed bool   `json:"changed"`
@@ -344,8 +371,9 @@ func (o *planReadOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRe
 		return engine.OpResult{}, err
 	}
 	out := PlanSeen{Milestone: ms, Node: node, Digest: digestOf(live), Base: lastPlanDigest(r, ms), CallID: req.CallID}
+	out.Occurrence = planOccurrence(r, ms, out.Digest)
 	out.Changed = out.Base != "" && out.Digest != out.Base
-	return engine.OpResult{Result: result(out), Data: map[string]any{"milestone": ms, "node": node, "plan_digest": out.Digest, "base": out.Base, "changed": out.Changed}}, nil
+	return engine.OpResult{Result: result(out), Data: map[string]any{"milestone": ms, "node": node, "plan_digest": out.Digest, "occurrence": out.Occurrence, "base": out.Base, "changed": out.Changed}}, nil
 }
 
 // Proven: the read stands while the node was released after it (the lane went on from what it read), and while a signal row that
@@ -359,7 +387,7 @@ func (o *planReadOp) Proven(_ context.Context, ev []engine.Event, row engine.Eve
 		return true, "", nil
 	}
 	if changed, _ := row.Data["changed"].(bool); changed {
-		call := "plan:" + dataStr(row, "plan_digest")
+		call := planTriggerCall(dataStr(row, "occurrence"), dataStr(row, "plan_digest"))
 		for _, b := range signalBinds(r, dataStr(row, "milestone")) {
 			if slices.ContainsFunc(triggersOf(b), func(t Trigger) bool { return t.Call == call }) {
 				return true, "", nil
