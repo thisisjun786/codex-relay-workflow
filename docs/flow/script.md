@@ -438,6 +438,12 @@ the rest of its path are the suffix: its calls end `superseded` with the reason 
 cleared, a call that ended held); `crw flow recover` settles a call in recovery hold, and a call it does not accept is a call
 `crw flow resume` takes.
 
+A call that ended held has one resolution command whatever the reason (a spent budget, a refused `thread/start`, a failed turn, an
+engine pause): it carries no outcome to prove, so nothing is asked of the operator, and what it needs is the condition outside the
+run gone and a process that goes on with the call. `crw flow resume` is that process: it retries the call in place (the original
+packet before a thread existed, the continuation instruction after a delivered turn) and writes `hold_cleared`; where it cannot go
+on in place the call runs again as a new attempt; a resume while the condition still holds ends the call held again.
+
 ## The App Server backend
 
 `internal/flow/backend/agent` runs a call as a persistent Codex 0.154 thread. A thread is never ephemeral: Codex refuses
