@@ -3,6 +3,8 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -33,7 +35,39 @@ func TestStartRefusesWorkflowsThatNeedLaneOperationsTheBuildLacks(t *testing.T) 
 			t.Errorf("%s: exit %d, %d processes\n%s%s", name, code, len(td.spawned)-before, out, errOut)
 		}
 	}
+	// the functions the engine itself puts on crw (clock, classify, tierStep) need no operation of the lane
+	engineOnly := filepath.Join(t.TempDir(), "engine-only.js")
+	if err := os.WriteFile(engineOnly, []byte("export const meta = { name: 'engine-only' }\nconst at = crw.clock()\nconst r = await agent.call('say hi', { agentType: 'executor' })\nreturn [at, crw.classify(r)]\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code, out, errOut := td.do("start", engineOnly, "--thread", "thread-owner", "--state", w.state); code != 0 || len(td.spawned) != 1 {
+		t.Errorf("a workflow that calls only the engine's own crw functions: exit %d, %d processes\n%s%s", code, len(td.spawned), out, errOut)
+	}
+	td.spawned = nil
 	if code, out, errOut := td.do("start", agentOnly, "--thread", "thread-owner", "--state", w.state); code != 0 || len(td.spawned) != 1 {
 		t.Errorf("a workflow that calls no lane operation: exit %d, %d processes\n%s%s", code, len(td.spawned), out, errOut)
+	}
+}
+
+// TestEngineCrwFunctionsAreTheEnginesOwn: the names LaneOperations leaves out are exactly the ones the engine puts on the crw object
+// itself (scriptvm.go), so a function the engine adds later is not taken for an operation the build has to install, and an operation
+// is never left out by mistake.
+func TestEngineCrwFunctionsAreTheEnginesOwn(t *testing.T) {
+	src, err := os.ReadFile(filepath.Join("..", "engine", "scriptvm.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found []string
+	for _, m := range regexp.MustCompile(`crw\.Set\("([A-Za-z]+)"`).FindAllStringSubmatch(string(src), -1) {
+		found = append(found, m[1])
+	}
+	var own []string
+	for name := range engineCrw {
+		own = append(own, name)
+	}
+	sort.Strings(found)
+	sort.Strings(own)
+	if strings.Join(found, ",") != strings.Join(own, ",") {
+		t.Errorf("the engine sets %v on crw, LaneOperations leaves out %v", found, own)
 	}
 }
