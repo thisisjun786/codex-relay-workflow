@@ -1,10 +1,14 @@
 package cli
 
 import (
+	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/journal"
@@ -12,8 +16,8 @@ import (
 
 // resume is `crw flow resume RUN [SCRIPT] [--detach]`. The run is taken from its journal once its run lock is free: a run a process
 // holds is refused (two processes would write one journal). With a SCRIPT it is the engine's command (the script and the
-// arguments are given), under the run lock; without one the workflow and the arguments are those the run started with (its spec),
-// and --detach lets the process go on in the background.
+// arguments are given), under the run lock and held to the budget and the deadline of the run's spec (specLimits); without one
+// the workflow and the arguments are those the run started with (its spec), and --detach lets the process go on in the background.
 func (c *command) resume(args []string) int {
 	fs, cm := c.flags()
 	repo := fs.String("repo", "", "the git repository the run's worktrees are made from")
@@ -39,12 +43,21 @@ func (c *command) resume(args []string) int {
 		if *detach {
 			return c.usage("--detach resumes with the run's own spec; a SCRIPT is given for the foreground command")
 		}
+		eargs, ctl, err := c.specLimits(fs, sel.Path, run, *budget, withoutDetach(args))
+		if err != nil {
+			return c.fail("%v", err)
+		}
 		lock, err := TakeLock(sel.Path, run, "resume", c.now())
 		if err != nil {
 			return c.fail("%v", err)
 		}
 		defer lock.Release()
-		return engine.RunCLI(c.ctx, withoutDetach(args), c.stdout, c.stderr)
+		ctx := c.ctx
+		if ctl != nil {
+			ctx = engine.WithControl(ctx, ctl.Control)
+			defer ctl.stop()
+		}
+		return engine.RunCLI(ctx, eargs, c.stdout, c.stderr)
 	}
 	if *argsJSON != "" || *argsFile != "" || *pool != 0 || *budget != 0 || *repo != "" {
 		return c.usage("a resume without a SCRIPT takes the run's own arguments, pool and budget from its spec")
@@ -75,6 +88,64 @@ func (c *command) resume(args []string) int {
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 	defer signal.Stop(sigs)
 	return c.execute(spec, sel.Path, true, sigs)
+}
+
+// deadlineControl is the Control a resume binds its run to, and the timer that pauses the run at the spec's deadline.
+type deadlineControl struct {
+	*engine.Control
+	timer *time.Timer
+}
+
+func (d *deadlineControl) stop() {
+	if d.timer != nil {
+		d.timer.Stop()
+	}
+}
+
+// specLimits holds a `crw flow resume RUN SCRIPT` to the budget and the deadline of the run's spec (a night batch's are the
+// decision's): the engine's command line, with the spec's budget when no --token-budget is given; a --token-budget of 0 (no
+// ceiling), below 0 or above the spec's is refused, a lower one narrows it; and a Control that pauses the run at the spec's
+// deadline (at once when it passed). A run that no `crw flow start` made has no spec and nothing to hold it to.
+func (c *command) specLimits(fs *flag.FlagSet, state, run string, budget int64, eargs []string) ([]string, *deadlineControl, error) {
+	spec, err := ReadSpec(state, run)
+	if errors.Is(err, ErrNoSpec) {
+		return eargs, nil, nil
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	if spec.TokenBudget > 0 {
+		given := false
+		fs.Visit(func(f *flag.Flag) { given = given || f.Name == "token-budget" })
+		switch {
+		case !given:
+			eargs = append(eargs, "--token-budget", strconv.FormatInt(spec.TokenBudget, 10))
+		case budget <= 0 || budget > spec.TokenBudget:
+			return nil, nil, fmt.Errorf("the token budget %d is not within the %d tokens of run %s's spec%s; give a budget from 1 to %d or none", budget, spec.TokenBudget, run, decisionOf(spec), spec.TokenBudget)
+		}
+	}
+	if spec.Deadline == "" {
+		return eargs, nil, nil
+	}
+	at, err := time.Parse(time.RFC3339, spec.Deadline)
+	if err != nil {
+		return nil, nil, fmt.Errorf("the deadline %q of run %s's spec is not an RFC 3339 time", spec.Deadline, run)
+	}
+	d := &deadlineControl{Control: &engine.Control{}}
+	pause := func() { d.Pause("deadline", "the run's deadline "+spec.Deadline+" passed") }
+	if wait := at.Sub(c.now()); wait > 0 {
+		d.timer = time.AfterFunc(wait, pause)
+	} else {
+		pause()
+	}
+	return eargs, d, nil
+}
+
+func decisionOf(spec Spec) string {
+	if spec.Decision == "" {
+		return ""
+	}
+	return " (the decision " + spec.Decision + ")"
 }
 
 // withoutDetach is the engine's resume command line: the arguments of this command, with --detach (which the engine's command does
