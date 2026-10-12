@@ -313,7 +313,7 @@ func (r *SchedRelay) Release(ctx context.Context, req ops.ReleaseRequest) (ops.R
 }
 
 // notReady is the detail of the refusal of a node the reading did not find ready: "<node> is not ready (<reason>): ...".
-var notReady = regexp.MustCompile(`is not ready \(([a-z_]+:[a-z_]+)\)`)
+var notReady = regexp.MustCompile(`is not ready \(([^()]+)\)`)
 
 // holdBack says whether a refused release is the scheduler holding the node back, and the reason: capacity (no slot, a ceiling nobody
 // measured, a host short of memory), an overlapping region, or a reading that does not find the node ready now. Those go away by

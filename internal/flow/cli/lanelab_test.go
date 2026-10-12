@@ -61,6 +61,8 @@ type laneLab struct {
 	// verifications counts the verifications of merged trees; processes the run processes the lab ran.
 	verifications int
 	processes     int
+	// after is called after every effect-bearing call of the relay, with the relay of the process and the call's name.
+	after func(r *SchedRelay, effect string)
 }
 
 const labOwner = "thread-owner"
@@ -327,7 +329,11 @@ func (r *labRelay) effect(name string, do func() error) error {
 	r.l.writes++
 	r.l.effects = append(r.l.effects, name)
 	hit := r.l.killAt > 0 && r.l.writes == r.l.killAt
+	after := r.l.after
 	r.l.mu.Unlock()
+	if after != nil {
+		after(r.SchedRelay, name)
+	}
 	if hit {
 		r.l.kill()
 	}
