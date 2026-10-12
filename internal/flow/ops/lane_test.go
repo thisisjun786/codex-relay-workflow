@@ -24,9 +24,14 @@ type stubRelay struct {
 	releases []ReleaseRequest
 	closes   []CloseRequest
 	tip      string
+	// plan is the milestone the relay reads, when a test sets one.
+	plan *Milestone
 }
 
 func (s *stubRelay) Milestone(context.Context, string, string) (Milestone, error) {
+	if s.plan != nil {
+		return *s.plan, nil
+	}
 	return Milestone{}, nil
 }
 func (s *stubRelay) Release(_ context.Context, r ReleaseRequest) (ReleaseResult, error) {

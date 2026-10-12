@@ -92,3 +92,241 @@ func mustJSON(v any) []byte {
 	}
 	return b
 }
+
+// ---- the numbers of SP-ARCH-2 on a journal ----
+
+// planOf is a milestone of nodes whose slice digests are the ones given.
+func planOfNodes(slices map[string]string, order ...string) *Milestone {
+	m := &Milestone{ID: "M", Plan: "plan-1", Criteria: []string{"c"}, CriteriaDigest: "cd"}
+	for _, id := range order {
+		m.Nodes = append(m.Nodes, PlanNode{ID: id, Issue: "CRW-" + id, SliceDigest: slices[id], CriteriaDigest: "cd-" + id, Criteria: []string{"c"}})
+	}
+	return m
+}
+
+// receipt writes the rows of an executor call that completed with a RECEIPT.
+func (w *world) receipt(call, node, mismatch string) {
+	w.t.Helper()
+	w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: call, Op: "agent", Event: engine.EvPrepared, Data: map[string]any{"role": "executor", "node": node}})
+	var pm any
+	if mismatch != "" {
+		pm = mismatch
+	}
+	result, _ := json.Marshal(map[string]any{"outcome": "ready_for_review", "files": []string{}, "verification": []any{}, "summary": "s", "gap": nil, "research_question": nil, "plan_mismatch": pm})
+	w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: call, Op: "agent", Event: engine.EvCompleted, Data: map[string]any{"result": string(result)}})
+}
+
+// signal binds the next signal of the milestone over the RECEIPT calls.
+func (w *world) signal(k int, calls ...string) SignalBind {
+	w.t.Helper()
+	var members []Trigger
+	for _, c := range calls {
+		node := ""
+		for _, ev := range rows(w.j.Events()).prepared() {
+			if ev.CallID == c {
+				node = str(ev.Data, "node")
+			}
+		}
+		members = append(members, Trigger{Kind: "receipt", Call: c, Node: node, Digest: "digest-" + c})
+	}
+	var out SignalBind
+	_ = json.Unmarshal(w.must("signalBind", "M", k, "", members), &out)
+	return out
+}
+
+func (w *world) numbers(opts ReplanOpts) ReplanState {
+	w.t.Helper()
+	var st ReplanState
+	_ = json.Unmarshal(w.must("replanSignals", "M", opts), &st)
+	return st
+}
+
+func (w *world) release(node string) ReleaseOutcome {
+	w.t.Helper()
+	var rel ReleaseOutcome
+	_ = json.Unmarshal(w.must("release", "plan-1", node, "M"), &rel)
+	if !rel.Released {
+		w.t.Fatalf("release of %s: %+v", node, rel)
+	}
+	return rel
+}
+
+func TestPlanMismatchOnceNoReplan(t *testing.T) {
+	w := newWorld(t)
+	w.ledgered(true, designOf("A", "B"))
+	w.release("A")
+	w.receipt("c_a1", "A", "the plan assumed more")
+	w.receipt("c_a2", "A", "")
+	w.signal(1, "c_a1", "c_a2")
+	st := w.numbers(ReplanOpts{Phase: "signal", Signal: 1})
+	if st.PlanMismatch != 1 || st.Due || len(st.Reasons) != 0 || st.Revision != "r0" {
+		t.Errorf("%+v", st)
+	}
+}
+
+// Two RECEIPTs that report a plan mismatch, of lanes released under the revision, are a reason whatever the alignment says; the same
+// call taken in twice is one RECEIPT.
+func TestPlanMismatchTwiceReplansEvenIfAligned(t *testing.T) {
+	w := newWorld(t)
+	w.ledgered(true, designOf("A", "B"))
+	w.release("A")
+	w.receipt("c_a1", "A", "the plan assumed more")
+	w.receipt("c_a2", "A", "the plan assumed less")
+	w.signal(1, "c_a1")
+	if st := w.numbers(ReplanOpts{Phase: "signal", Signal: 1}); st.PlanMismatch != 1 || st.Due {
+		t.Fatalf("after the first RECEIPT: %+v", st)
+	}
+	w.signal(2, "c_a2", "c_a1")
+	st := w.numbers(ReplanOpts{Phase: "close", Signal: 2, Final: "ALIGNED", Reflection: "ALIGNED"})
+	if st.PlanMismatch != 2 || !st.Due || len(st.Reasons) != 1 || st.Reasons[0] != ReasonPlanMismatch {
+		t.Errorf("%+v", st)
+	}
+	// the close adds the alignments: a MISALIGNED reviewer-final and a MISALIGNED reflection are reasons of their own
+	w2 := newWorld(t)
+	w2.ledgered(true, designOf("A"))
+	w2.release("A")
+	w2.receipt("c_a1", "A", "")
+	w2.signal(1, "c_a1")
+	if st := w2.numbers(ReplanOpts{Phase: "close", Final: "MISALIGNED", Reflection: "MISALIGNED"}); !st.Due || len(st.Reasons) != 2 || st.Reasons[0] != ReasonFinalMisaligned || st.Reasons[1] != ReasonReflectionMisaligned {
+		t.Errorf("%+v", st)
+	}
+	if st := w2.numbers(ReplanOpts{Phase: "close", Final: "NOT_ASSESSED", Reflection: "ALIGNED"}); st.Due {
+		t.Errorf("an alignment that was not assessed is a reason: %+v", st)
+	}
+	if st := w2.numbers(ReplanOpts{Phase: "signal", Signal: 1, Final: "MISALIGNED", Reflection: "MISALIGNED"}); st.Due {
+		t.Errorf("a signal of the run adds the alignments of the close: %+v", st)
+	}
+}
+
+// A RECEIPT of a lane released under an older revision does not count in the number of the revision that stands.
+func TestOldRevisionReceiptNotCounted(t *testing.T) {
+	w := newWorld(t)
+	w.ledgered(true, designOf("A", "B"))
+	w.release("A")
+	w.receipt("c_a1", "A", "the plan assumed more")
+	w.receipt("c_a2", "A", "the plan assumed less")
+	w.signal(1, "c_a1", "c_a2")
+	if st := w.numbers(ReplanOpts{Phase: "signal", Signal: 1}); st.PlanMismatch != 2 || !st.Due {
+		t.Fatalf("under r0: %+v", st)
+	}
+	// the re-plan made r1; B is released under it and reports one mismatch
+	design, _ := json.Marshal(designOf("A", "B"))
+	cand := Candidate{Design: design, Answers: json.RawMessage(`[]`)}
+	w.must("designAudit", "M", 1, cand, call("c_arch2", "completed", "claude-x", nil), call("c_aud2", "completed", "gpt-y", map[string]any{"verdict": "approved", "findings": []any{}, "summary": "ok"}))
+	w.must("designLedger", "M", map[string]any{"design": json.RawMessage(design), "answers": json.RawMessage(`[]`), "architect": call("c_arch2", "completed", "claude-x", nil), "signal": 1})
+	if rel := w.release("B"); rel.Revision != "r1" {
+		t.Fatalf("B was released under %s", rel.Revision)
+	}
+	w.receipt("c_b1", "B", "the plan assumed another thing")
+	w.signal(2, "c_b1")
+	st := w.numbers(ReplanOpts{Phase: "signal", Signal: 2})
+	if st.Revision != "r1" || st.PlanMismatch != 1 || st.Due || len(st.Calls) != 1 || st.Calls[0] != "c_b1" {
+		t.Errorf("under r1: %+v", st)
+	}
+}
+
+// More than a quarter of the nodes changed their slice since the revision is a reason; exactly a quarter is not.
+func TestSliceChangeOver25Replans(t *testing.T) {
+	w := newWorld(t)
+	then := map[string]string{"A": "a1", "B": "b1", "C": "c1", "D": "d1"}
+	w.relay.plan = planOfNodes(then, "A", "B", "C", "D")
+	w.ledgered(true, designOf("A", "B", "C", "D"))
+	w.release("A")
+	w.receipt("c_a1", "A", "")
+	w.signal(1, "c_a1")
+	w.relay.plan = planOfNodes(map[string]string{"A": "a1", "B": "b2", "C": "c2", "D": "d1"}, "A", "B", "C", "D")
+	st := w.numbers(ReplanOpts{Phase: "signal", Signal: 1})
+	if !st.Due || len(st.Reasons) != 1 || st.Reasons[0] != ReasonSliceChange || len(st.Slices.Changed) != 2 || st.Slices.Total != 4 || st.Slices.Percent != 50 {
+		t.Errorf("%+v", st)
+	}
+}
+
+func TestSliceChangeExactly25NoReplan(t *testing.T) {
+	w := newWorld(t)
+	then := map[string]string{"A": "a1", "B": "b1", "C": "c1", "D": "d1"}
+	w.relay.plan = planOfNodes(then, "A", "B", "C", "D")
+	w.ledgered(true, designOf("A", "B", "C", "D"))
+	w.release("A")
+	w.receipt("c_a1", "A", "")
+	w.signal(1, "c_a1")
+	w.relay.plan = planOfNodes(map[string]string{"A": "a1", "B": "b2", "C": "c1", "D": "d1"}, "A", "B", "C", "D")
+	st := w.numbers(ReplanOpts{Phase: "signal", Signal: 1})
+	if st.Due || len(st.Reasons) != 0 || len(st.Slices.Changed) != 1 || st.Slices.Total != 4 || st.Slices.Percent != 25 {
+		t.Errorf("%+v", st)
+	}
+	// the plan gains a node: five nodes, two changed (the new one and B): 40%
+	w.relay.plan = planOfNodes(map[string]string{"A": "a1", "B": "b2", "C": "c1", "D": "d1", "E": "e1"}, "A", "B", "C", "D", "E")
+	if st := w.numbers(ReplanOpts{Phase: "signal", Signal: 1}); !st.Due || st.Slices.Total != 5 || len(st.Slices.Changed) != 2 {
+		t.Errorf("%+v", st)
+	}
+}
+
+// The reflection of the architect is a verdict only when the call completed with a valid REFLECTION; the handle of the architect moves
+// to a completed reflection and to nothing else, and the row names the head the reflection judged.
+func TestReflectionRunsAtIntegratedHead(t *testing.T) {
+	w := newWorld(t)
+	w.ledgered(true, designOf("A"))
+	h := "abcdef1234567890abcdef1234567890abcdef12"
+	gate := map[string]any{"head": h, "range": "base.." + h}
+	cur := func() CurrentDesign {
+		var cd CurrentDesign
+		_ = json.Unmarshal(w.must("currentDesign", "M"), &cd)
+		return cd
+	}
+	if cd := cur(); cd.Handle != "crwh1:run-1:c_arch" || cd.Revision != "r0" {
+		t.Fatalf("the architect before the reflection: %+v", cd)
+	}
+	held := call("c_refl_held", "held", "claude-x", nil)
+	held.Reason = "host_infra_serverOverloaded"
+	var res ReflectionResult
+	_ = json.Unmarshal(w.must("reflection", "M", gate, held), &res)
+	if res.State != StateHeld || res.Alignment != "" || res.Head != h {
+		t.Errorf("held: %+v", res)
+	}
+	if cd := cur(); cd.Handle != "crwh1:run-1:c_arch" {
+		t.Errorf("a held reflection moved the handle: %+v", cd)
+	}
+	empty := call("c_refl_bad", "completed", "claude-x", map[string]any{"verdict": "MISALIGNED", "misaligned": []any{}})
+	_ = json.Unmarshal(w.must("reflection", "M", gate, empty), &res)
+	if res.State != StateNullModel || res.Alignment != "" {
+		t.Errorf("MISALIGNED over no decision: %+v", res)
+	}
+	if cd := cur(); cd.Handle != "crwh1:run-1:c_arch" {
+		t.Errorf("an invalid reflection moved the handle: %+v", cd)
+	}
+	good := call("c_refl", "completed", "claude-x", map[string]any{"verdict": "MISALIGNED", "misaligned": []any{map[string]any{"decision_id": "D1", "observed": "o", "affected_nodes": []string{"A"}, "evidence": []string{"f"}}}})
+	_ = json.Unmarshal(w.must("reflection", "M", gate, good), &res)
+	if res.State != StateVerdict || res.Alignment != "MISALIGNED" || len(res.Misaligned) != 1 || res.Head != h {
+		t.Errorf("completed: %+v", res)
+	}
+	if cd := cur(); cd.Handle != "crwh1:run-1:c_refl" || cd.Call != "c_refl" {
+		t.Errorf("the handle after the reflection: %+v", cd)
+	}
+}
+
+// A signal row records the tip of the integration target as it read it when it was decided, the head a re-plan turn of that signal judges.
+func TestReplanCwdIsCurrentTip(t *testing.T) {
+	w := newWorld(t)
+	w.relay.plan = planOfNodes(map[string]string{"A": "a1", "B": "b1"}, "A", "B")
+	w.ledgered(true, designOf("A", "B"))
+	w.release("A")
+	w.receipt("c_a1", "A", "")
+	w.receipt("c_a2", "A", "")
+	t1, t2 := "1111111111111111111111111111111111111111", "2222222222222222222222222222222222222222"
+	w.relay.tip = t1
+	if s := w.signal(1, "c_a1"); s.Tip != t1 || len(s.Unstarted) != 1 || s.Unstarted[0] != "B" || len(s.Started) != 1 || s.Started[0] != "A" {
+		t.Errorf("signal 1: %+v", s)
+	}
+	w.relay.tip = t2
+	s := w.signal(2, "c_a2")
+	if s.Tip != t2 {
+		t.Errorf("signal 2 recorded tip %s, the target was at %s", s.Tip, t2)
+	}
+	var rowTips []string
+	for _, ev := range rows(w.j.Events()).opRows(OpSignalBind) {
+		rowTips = append(rowTips, dataStr(ev, "tip"))
+	}
+	if len(rowTips) != 2 || rowTips[0] != t1 || rowTips[1] != t2 {
+		t.Errorf("the rows record tips %v", rowTips)
+	}
+}
