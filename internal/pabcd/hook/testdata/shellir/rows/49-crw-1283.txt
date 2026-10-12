@@ -1,0 +1,939 @@
+=== CRW-1283-wrapper-control | U
+--why Plan C (Sion 10-13): the reader does not follow the arguments a script forwards with "$@", so every gate refuses the forwarding wrapper even with a harmless command (a named limit; trusted wrappers are CRW-1290).
+--file slot.sh
+#!/bin/bash
+ionice -c3 nice "$@"
+--cmd
+bash slot.sh go version
+
+=== CRW-1283-direct-wrapper-control | U
+--why Plan C (Sion 10-13): the reader does not follow the arguments a script forwards with "$@", so every gate refuses the direct forwarding script even with a harmless command.
+--file slot.sh
+#!/bin/bash
+ionice -c3 nice "$@"
+--cmd
+{WORK}/slot.sh go version
+
+=== CRW-1283-direct-wrapper-memory | U
+--why Plan C (Sion 10-13): the reader does not follow the arguments a script forwards with "$@", so every gate refuses the direct forwarding script that receives a memory write.
+--file slot.sh
+#!/bin/bash
+ionice -c3 nice "$@"
+--cmd
+{WORK}/slot.sh tee {MEMORY}/note.md
+
+=== CRW-1283-direct-wrapper-removal | U
+--why Plan C (Sion 10-13): the reader does not follow the arguments a script forwards with "$@", so every gate refuses the direct forwarding script that receives a worktree removal.
+--file slot.sh
+#!/bin/bash
+ionice -c3 nice "$@"
+--cmd
+{WORK}/slot.sh rm -rf {CHECKOUT}
+
+=== CRW-1283-wrapper-post | U
+--why Plan C (Sion 10-13): the reader does not follow the arguments a script forwards with "$@", so every gate refuses the wrapper that receives a gh post.
+--file slot.sh
+#!/bin/bash
+ionice -c3 nice "$@"
+--cmd
+bash slot.sh gh pr comment 1 --body x
+
+=== CRW-1283-wrapper-push | U
+--why Plan C (Sion 10-13): the reader does not follow the arguments a script forwards with "$@", so every gate refuses the wrapper that receives a git push.
+--file slot.sh
+#!/bin/bash
+ionice -c3 nice "$@"
+--cmd
+bash slot.sh git push origin dev
+
+=== CRW-1283-wrapper-memory | U
+--why Plan C (Sion 10-13): the reader does not follow the arguments a script forwards with "$@", so every gate refuses the wrapper that receives a memory write.
+--file slot.sh
+#!/bin/bash
+ionice -c3 nice "$@"
+--cmd
+bash slot.sh tee {MEMORY}/note.md
+
+=== CRW-1283-script-control | B
+--why A readable shell file with a literal, unrelated command has no protected operation.
+--file check.sh
+go version
+--cmd
+bash check.sh
+
+=== CRW-1283-script-post | none/deny/allow
+--why A readable shell file that posts inline is still refused by the GitHub guard.
+--file post.sh
+gh pr comment 1 --body x
+--cmd
+bash post.sh
+
+=== CRW-1283-script-push | B
+--why git push is not a GitHub-guard target at c007bd50, run directly or inside a script file; the push policy for relay children is CRW-1284 (coordinator decision under Sion's split (1) A scope, 10-13).
+--file push.sh
+git push origin dev
+--cmd
+bash push.sh
+
+=== CRW-1283-script-memory | W
+--why Reading a script does not authorize its literal protected write.
+--file write.sh
+echo x >{MEMORY}/note.md
+--cmd
+bash write.sh
+
+=== CRW-1283-path-control | U
+--why Split (1) (Sion 10-13): every gate refuses a PATH assignment as at c007bd50 until CRW-1292 reads a literal PATH. CRW-1292 case: A literal PATH resolves the harmless installed binary without changing its policy.
+--cmd
+PATH=/usr/bin:/bin cat /dev/null
+
+=== CRW-1283-path-post | U
+--why Unknown PATH leaves an external target capable of running protected operations.
+--cmd
+PATH=$UNRESOLVED gh pr comment 1 --body x
+
+=== CRW-1283-path-push | U
+--why Split (1) (Sion 10-13): every gate refuses a PATH assignment as at c007bd50 until CRW-1292 reads a literal PATH. CRW-1292 case: A resolved git program behind a literal PATH does not bypass the push refusal.
+--cmd
+PATH=/usr/bin:/bin git push origin dev
+
+=== CRW-1283-path-memory | U
+--why Split (1) (Sion 10-13): every gate refuses a PATH assignment as at c007bd50 until CRW-1292 reads a literal PATH. CRW-1292 case: A resolved tee behind a literal PATH still writes its memory operand.
+--cmd
+PATH=/usr/bin:/bin tee {MEMORY}/note.md
+
+=== CRW-1283-unknown-path-absolute | U
+--why Plan C (Sion 10-13): a PATH value that is not literal is refused by every gate, as before CRW-1283, even in front of an absolute program.
+--cmd
+PATH=$UNRESOLVED /usr/bin/true
+
+=== CRW-1283-env-unknown-path-absolute | U
+--why Plan C (Sion 10-13): a PATH value that is not literal behind env is refused by every gate, as before CRW-1283.
+--cmd
+env PATH=$UNRESOLVED /usr/bin/true
+
+=== CRW-1283-path-direct-memory | U
+--why PATH relaxation must not hide an absolute shell file's memory write; echo under a PATH the reader does not know may be a file in some shells, so every gate refuses (review b2ae50e0).
+--file write.sh
+#!/bin/bash
+echo x >{MEMORY}/note.md
+--cmd
+PATH=$UNRESOLVED {WORK}/write.sh
+
+=== CRW-1283-path-direct-removal | U
+--why Split (1) (Sion 10-13): every gate refuses a PATH assignment as at c007bd50 until CRW-1292 reads a literal PATH. CRW-1292 case: PATH relaxation must not hide an absolute shell file's protected worktree removal.
+--file remove.sh
+#!/bin/bash
+rm -rf {CHECKOUT}
+--cmd
+PATH=/usr/bin:/bin {WORK}/remove.sh
+
+=== CRW-1283-source-inherits-arguments | U
+--why Plan C (Sion 10-13): the reader does not follow the arguments a script forwards with "$@", so every gate refuses the sourced body that receives a memory write.
+--file source.sh
+source {WORK}/body.sh
+--file body.sh
+"$@"
+--cmd
+bash source.sh tee {MEMORY}/note.md
+
+=== CRW-1283-modified-arguments | U
+--why Parameter rewriting is not exact forwarding and stays fail-closed.
+--file slot.sh
+#!/bin/bash
+ionice -c3 nice "${@#prefix}"
+--cmd
+bash slot.sh go version
+
+=== CRW-1283-inner-shell-post | U
+--why Plan C (Sion 10-13): the reader does not follow the arguments a script forwards with "$@", so every gate refuses the inner shell whose own arguments are a gh post.
+--file slot.sh
+#!/bin/bash
+bash -c '"$@"' zero gh pr comment 1 --body x
+--cmd
+bash slot.sh go version
+
+=== CRW-1283-review-set-memory | U
+--why set -- replaces the positional parameters, so "$@" is not the script's arguments and stays unreadable (review e4c54cc3).
+--file mutation.sh
+#!/bin/bash
+set -- tee {MEMORY}/note.md
+"$@"
+--cmd
+bash mutation.sh true
+
+=== CRW-1283-review-set-post | U
+--why A post set as the positional parameters is not hidden behind the harmless arguments the script is given.
+--file mutation.sh
+#!/bin/bash
+set -- gh pr comment 1 --body x
+"$@"
+--cmd
+bash mutation.sh true
+
+=== CRW-1283-review-shift-removal | U
+--why shift moves the protected removal into "$@"; the reader does not read "$@" as the arguments it was given.
+--file mutation.sh
+#!/bin/bash
+shift
+"$@"
+--cmd
+bash mutation.sh true rm -rf {CHECKOUT}
+
+=== CRW-1283-review-shift-direct-memory | U
+--why A direct forwarding script that shifts its arguments does not run them as given either.
+--file mutation.sh
+#!/bin/bash
+shift
+"$@"
+--cmd
+{WORK}/mutation.sh true tee {MEMORY}/note.md
+
+=== CRW-1283-review-eval-set-post | U
+--why A set inside eval changes the positional parameters as a set in the text does.
+--file mutation.sh
+#!/bin/bash
+eval 'set -- gh pr comment 1 --body x'
+"$@"
+--cmd
+bash mutation.sh true
+
+=== CRW-1283-review-option-set-control | U
+--why Plan C (Sion 10-13): the reader does not follow the arguments a script forwards with "$@", so every gate refuses the wrapper after set with options alone.
+--file slot.sh
+#!/bin/bash
+set -euo pipefail
+"$@"
+--cmd
+bash slot.sh go version
+
+=== CRW-1283-review-env-printf-memory | U
+--why Split (1) (Sion 10-13): every gate refuses a PATH assignment as at c007bd50 until CRW-1292 reads a literal PATH. CRW-1292 case: env runs the printf the assigned PATH finds, not the shell's builtin: that file's memory write is read.
+--file printf
+#!/bin/sh
+echo x >{MEMORY}/note.md
+--cmd
+env PATH={WORK}:/usr/bin:/bin printf
+
+=== CRW-1283-review-exec-printf-post | U
+--why Split (1) (Sion 10-13): every gate refuses a PATH assignment as at c007bd50 until CRW-1292 reads a literal PATH. CRW-1292 case: exec runs the printf the assigned PATH finds, so the post in that file is read and refused.
+--file printf
+#!/bin/sh
+gh pr comment 1 --body x
+--cmd
+PATH={WORK}:/usr/bin:/bin exec printf
+
+=== CRW-1283-review-env-true-removal | U
+--why Split (1) (Sion 10-13): every gate refuses a PATH assignment as at c007bd50 until CRW-1292 reads a literal PATH. CRW-1292 case: env runs the true the assigned PATH finds: its protected removal is read.
+--file true
+#!/bin/sh
+rm -rf {CHECKOUT}
+--cmd
+env PATH={WORK}:/usr/bin:/bin true
+
+=== CRW-1283-review-shadowed-printf-memory | U
+--why Split (1) (Sion 10-13): every gate refuses a PATH assignment as at c007bd50 until CRW-1292 reads a literal PATH. CRW-1292 case: printf is a builtin in some shells and the file the assigned PATH finds in others, so that file's memory write is read (review b2ae50e0, Sion decision 5).
+--file printf
+#!/bin/sh
+echo x >{MEMORY}/note.md
+--cmd
+PATH={WORK}:/usr/bin:/bin printf ok
+
+=== CRW-1283-review-path-renamed-shell-memory | U
+--why A binary the assigned PATH finds outside the system directories (a shell named check) is not identified by its name.
+--link check /usr/bin/dash
+--cmd
+PATH={WORK}:/usr/bin:/bin check -c 'echo x >{MEMORY}/note.md'
+
+=== CRW-1283-review-path-renamed-shell-post | U
+--why The renamed shell's -c post is refused with the program, not read as an unknown harmless binary.
+--link check /usr/bin/dash
+--cmd
+PATH={WORK} check -c 'gh pr comment 1 --body x'
+
+=== CRW-1283-review-path-renamed-shell-removal | U
+--why The renamed shell's -c removal of the checkout is refused with the program.
+--link check /usr/bin/dash
+--cmd
+PATH={WORK}:/usr/bin:/bin check -c 'cd .. && rm -rf repo'
+
+=== CRW-1283-review-path-git-alias-post | U
+--why git that the assigned PATH finds is read as git: an alias that runs a shell command stays refused.
+--link git /usr/bin/git
+--cmd
+PATH={WORK}:/usr/bin:/bin git -c 'alias.review=!gh pr comment 1 --body x' review
+
+=== CRW-1283-review-path-git-script-alias-removal | U
+--why A git script on the assigned PATH is read by its body and by its name: the alias removal stays refused.
+--file git
+#!/bin/sh
+exec /usr/bin/git "$@"
+--cmd
+PATH={WORK}:/usr/bin:/bin git -c 'alias.review=!rm -rf {CHECKOUT}' review
+
+=== CRW-1283-review-path-prefix-cd-removal | U
+--why Split (1) (Sion 10-13): every gate refuses a PATH assignment as at c007bd50 until CRW-1292 reads a literal PATH. CRW-1292 case: A PATH assignment in front of cd lasts for cd only; the directory cd moves to stays for the removal after it.
+--cmd
+PATH=/usr/bin:/bin cd {CHECKOUT}/..; rm -rf repo
+
+=== CRW-1283-review-path-prefix-special-builtin | U
+--why An assignment in front of a special builtin outlasts it in a POSIX shell, so env would run the printf of that PATH.
+--file printf
+#!/bin/sh
+echo x >{MEMORY}/note.md
+--cmd
+PATH={WORK}:/usr/bin:/bin export X=1; env printf
+
+=== CRW-1283-review-disabled-builtin-memory | U
+--why Split (1) (Sion 10-13): every gate refuses a PATH assignment as at c007bd50 until CRW-1292 reads a literal PATH. CRW-1292 case: A builtin the text disables is searched on the assigned PATH: the printf file found there and its memory write are read.
+--file printf
+#!/bin/sh
+echo x >{MEMORY}/note.md
+--cmd
+enable -n printf; PATH={WORK}:/usr/bin:/bin printf
+
+=== CRW-1283-r2-trap-shift-memory | U
+--why Review b2ae50e0 probe trap-shift: refused by the memory guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file t.sh
+trap '"$@"' EXIT
+shift
+--cmd
+bash {WORK}/t.sh true tee {MEMORY}/note.md
+
+=== CRW-1283-r2-trap-set-post | U
+--why Review b2ae50e0 probe trap-set: refused by the github guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file t.sh
+trap '"$@"' EXIT
+set -- gh pr comment 1 --body x
+--cmd
+bash {WORK}/t.sh true
+
+=== CRW-1283-r2-trap-shift-direct-post | P
+--why Review b2ae50e0 probe trap-shift-direct: refused by the github guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file t.sh
+#!/bin/bash
+trap '"$@"' EXIT
+shift
+--cmd
+{WORK}/t.sh true gh pr comment 1 --body x
+
+=== CRW-1283-r2-trap-return-func-post | P
+--why Review b2ae50e0 probe trap-return-func: refused by the github guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file t.sh
+trap '"$@"' EXIT
+set -- gh pr comment 1 --body x
+--cmd
+{WORK}/t.sh true
+
+=== CRW-1283-r2-bash-c-args-trap-post | U
+--why Review b2ae50e0 probe bash-c-args-trap: refused by the github guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--cmd
+bash -c 'trap '\''"$@"'\'' EXIT; shift' z true gh pr comment 1 --body x
+
+=== CRW-1283-r2-stdin-s-removal | U
+--why Review b2ae50e0 probe stdin-s: refused by the worktree guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file t.sh
+bash -s rm -rf {CHECKOUT} <<'EOF'
+"$@"
+EOF
+--cmd
+bash {WORK}/t.sh true
+
+=== CRW-1283-r2-stdin-s-direct-post | P
+--why Review b2ae50e0 probe stdin-s-direct: refused by the github guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file t.sh
+#!/bin/bash
+bash -s gh pr comment 1 --body x <<'EOF'
+"$@"
+EOF
+--cmd
+{WORK}/t.sh true
+
+=== CRW-1283-r2-dash-s-args-post | U
+--why Review b2ae50e0 probe dash-s-args: refused by the github guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file t.sh
+sh -s gh pr comment 1 --body x <<'EOF'
+"$@"
+EOF
+--cmd
+sh {WORK}/t.sh true
+
+=== CRW-1283-r2-fd-alias-removal | U
+--why Review b2ae50e0 probe fd-alias: refused by the worktree guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file t.sh
+bash /dev/fd/3 rm -rf {CHECKOUT} 3<<'EOF'
+"$@"
+EOF
+--cmd
+bash {WORK}/t.sh true
+
+=== CRW-1283-r2-dash-dot-args-memory | U
+--why Review b2ae50e0 probe dash-dot-args: refused by the memory guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file outer.sh
+. {WORK}/inner.sh true
+--file inner.sh
+"$@"
+--cmd
+sh {WORK}/outer.sh tee {MEMORY}/note.md
+
+=== CRW-1283-r2-zsh-posassign-post | U
+--why Review b2ae50e0 probe zsh-posassign: refused by the github guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file t.sh
+1=gh
+"$@"
+--cmd
+zsh {WORK}/t.sh true pr comment 1 --body x
+
+=== CRW-1283-r2-zsh-posassign-c-removal | U
+--why Review b2ae50e0 probe zsh-posassign-c: refused by the worktree guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--cmd
+zsh -c '1=rm; "$@"' z true -rf {CHECKOUT}
+
+=== CRW-1283-r2-xargs-feed-script-memory | U
+--why Review b2ae50e0 probe xargs-feed-script: refused by the memory guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file slot.sh
+#!/bin/bash
+"$@"
+--cmd
+echo tee {MEMORY}/note.md | xargs bash {WORK}/slot.sh
+
+=== CRW-1283-r2-xargs-feed-direct-post | U
+--why Review b2ae50e0 probe xargs-feed-direct: refused by the github guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file slot.sh
+#!/bin/bash
+"$@"
+--cmd
+echo gh pr comment 1 --body x | xargs {WORK}/slot.sh
+
+=== CRW-1283-r2-zsh-argv-array-removal | U
+--why Review b2ae50e0 probe zsh-argv-array: refused by the worktree guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--cmd
+zsh -c 'argv=(rm -rf {CHECKOUT}); "$@"' z true
+
+=== CRW-1283-r2-zsh-for-positional-memory | U
+--why Review b2ae50e0 probe zsh-for-positional: refused by the memory guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--cmd
+zsh -c 'for 1 in tee; do "$@"; done' z true {MEMORY}/note.md
+
+=== CRW-1283-r2-herestring-stdin-post | U
+--why Review b2ae50e0 probe herestring-stdin: refused by the github guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--cmd
+bash -s gh pr comment 1 --body x <<<'"$@"'
+
+=== CRW-1283-r2-prefix-time-removal | U
+--why Split (1) (Sion 10-13): every gate refuses a PATH assignment as at c007bd50 until CRW-1292 reads a literal PATH. CRW-1292 case: Review b2ae50e0 probe prefix-time: refused by the worktree guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file time
+#!/bin/sh
+rm -rf {CHECKOUT}
+--cmd
+PATH={WORK}:/usr/bin:/bin time true
+
+=== CRW-1283-r2-export-time-keyword-memory | U
+--why Review b2ae50e0 probe export-time-keyword: refused by the memory guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file time
+#!/bin/sh
+tee {MEMORY}/note.md
+--cmd
+export PATH={WORK}:/usr/bin:/bin; time true
+
+=== CRW-1283-r2-export-chdir-post | U
+--why Split (1) (Sion 10-13): every gate refuses a PATH assignment as at c007bd50 until CRW-1292 reads a literal PATH. CRW-1292 case: Review b2ae50e0 probe export-chdir: refused by the github guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file chdir
+#!/bin/sh
+gh pr comment 1 --body x
+--cmd
+export PATH={WORK}:/usr/bin:/bin; chdir /tmp
+
+=== CRW-1283-r2-export-printf-removal | U
+--why Split (1) (Sion 10-13): every gate refuses a PATH assignment as at c007bd50 until CRW-1292 reads a literal PATH. CRW-1292 case: Review b2ae50e0 probe export-printf: refused by the worktree guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file printf
+#!/bin/sh
+rm -rf {CHECKOUT}
+--cmd
+export PATH={WORK}:/usr/bin:/bin; printf x
+
+=== CRW-1283-r2-dash-let-memory | U
+--why Review b2ae50e0 probe dash-let: refused by the memory guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file let
+#!/bin/sh
+tee {MEMORY}/note.md
+--cmd
+sh -c 'export PATH={WORK}:/usr/bin:/bin; let x=1'
+
+=== CRW-1283-r2-dash-pushd-post | U
+--why Split (1) (Sion 10-13): every gate refuses a PATH assignment as at c007bd50 until CRW-1292 reads a literal PATH. CRW-1292 case: Review b2ae50e0 probe dash-pushd: refused by the github guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file pushd
+#!/bin/sh
+gh pr comment 1 --body x
+--cmd
+sh -c 'export PATH={WORK}:/usr/bin:/bin; pushd /tmp'
+
+=== CRW-1283-r2-dash-time-removal | U
+--why Review b2ae50e0 probe dash-time: refused by the worktree guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file time
+#!/bin/sh
+rm -rf {CHECKOUT}
+--cmd
+sh -c 'export PATH={WORK}:/usr/bin:/bin; time true'
+
+=== CRW-1283-r2-dash-declare-memory | U
+--why Review b2ae50e0 probe dash-declare: refused by the memory guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file declare
+#!/bin/sh
+tee {MEMORY}/note.md
+--cmd
+sh -c 'PATH={WORK}:/usr/bin:/bin; export PATH; declare x=1'
+
+=== CRW-1283-r2-dash-mapfile-post | U
+--why Split (1) (Sion 10-13): every gate refuses a PATH assignment as at c007bd50 until CRW-1292 reads a literal PATH. CRW-1292 case: Review b2ae50e0 probe dash-mapfile: refused by the github guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file mapfile
+#!/bin/sh
+gh pr comment 1 --body x
+--cmd
+sh -c 'export PATH={WORK}:/usr/bin:/bin; mapfile x </dev/null'
+
+=== CRW-1283-r2-zsh-readarray-removal | U
+--why Split (1) (Sion 10-13): every gate refuses a PATH assignment as at c007bd50 until CRW-1292 reads a literal PATH. CRW-1292 case: Review b2ae50e0 probe zsh-readarray: refused by the worktree guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file readarray
+#!/bin/sh
+rm -rf {CHECKOUT}
+--cmd
+zsh -c 'export PATH={WORK}:/usr/bin:/bin; readarray x </dev/null'
+
+=== CRW-1283-r2-dash-test-clause-memory | U
+--why Review b2ae50e0 probe dash-test-clause: refused by the memory guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file [[
+#!/bin/sh
+tee {MEMORY}/note.md
+--cmd
+sh -c 'export PATH={WORK}:/usr/bin:/bin; [[ -n x ]]'
+
+=== CRW-1283-r2-dash-arithmetic-post | U
+--why Review b2ae50e0 probe dash-arithmetic: refused by the github guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file check
+#!/bin/sh
+gh pr comment 1 --body x
+--cmd
+sh -c 'export PATH={WORK}:/usr/bin:/bin; ((check))'
+
+=== CRW-1283-r2-dash-coproc-removal | U
+--why Review b2ae50e0 probe dash-coproc: refused by the worktree guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file coproc
+#!/bin/sh
+rm -rf {CHECKOUT}
+--cmd
+sh -c 'export PATH={WORK}:/usr/bin:/bin; coproc true'
+
+=== CRW-1283-r2-dash-function-memory | U
+--why Review b2ae50e0 probe dash-function: refused by the memory guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file function
+#!/bin/sh
+tee {MEMORY}/note.md
+--cmd
+sh -c 'export PATH={WORK}:/usr/bin:/bin
+function f {
+true
+}'
+
+=== CRW-1283-r2-dash-select-post | U
+--why Review b2ae50e0 probe dash-select: refused by the github guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file select
+#!/bin/sh
+gh pr comment 1 --body x
+--cmd
+sh -c 'export PATH={WORK}:/usr/bin:/bin
+select x in a
+do break; done' </dev/null
+
+=== CRW-1283-r2-python3-named-script-removal | U
+--why Review b2ae50e0 probe python3-named-script: refused by the worktree guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file python3
+#!/bin/sh
+rm -rf {CHECKOUT}
+--cmd
+PATH={WORK}:/usr/bin:/bin python3 -c 'print(1)'
+
+=== CRW-1283-r2-python3-m-script-memory | U
+--why Review b2ae50e0 probe python3-m-script: refused by the memory guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file python3
+#!/bin/sh
+tee {MEMORY}/note.md
+--cmd
+PATH={WORK}:/usr/bin:/bin python3 -m json.tool /dev/null
+
+=== CRW-1283-r2-perl-e-script-post | U
+--why Review b2ae50e0 probe perl-e-script: refused by the github guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file perl
+#!/bin/sh
+gh pr comment 1 --body x
+--cmd
+PATH={WORK}:/usr/bin:/bin perl -e 1
+
+=== CRW-1283-r2-node-e-script-removal | U
+--why Review b2ae50e0 probe node-e-script: refused by the worktree guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file node
+#!/bin/sh
+rm -rf {CHECKOUT}
+--cmd
+PATH={WORK}:/usr/bin:/bin node -e 1
+
+=== CRW-1283-r2-awk-script-memory | U
+--why Review b2ae50e0 probe awk-script: refused by the memory guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file awk
+#!/bin/sh
+tee {MEMORY}/note.md
+--cmd
+PATH={WORK}:/usr/bin:/bin awk 'BEGIN{}'
+=== CRW-1283-r3-bin-dir-binary-memory | U
+--why Evaluation deb45bd1 d1: a binary a bin-named directory holds is not the program its name says; refused (Sion decision 5).
+--link usr/local/bin/check /bin/sh
+--cmd
+PATH={WORK}/usr/local/bin:/usr/bin:/bin check -c 'tee {MEMORY}/note.md'
+
+=== CRW-1283-r3-bin-dir-binary-post | U
+--why Evaluation deb45bd1 d1: a binary a bin-named directory holds is not the program its name says; refused (Sion decision 5).
+--link usr/local/bin/check /bin/sh
+--cmd
+PATH={WORK}/usr/local/bin:/usr/bin:/bin check -c 'gh pr comment 1 --body x'
+
+=== CRW-1283-r3-bin-dir-binary-removal | U
+--why Evaluation deb45bd1 d1: a binary a bin-named directory holds is not the program its name says; refused (Sion decision 5).
+--link usr/local/bin/check /bin/sh
+--cmd
+PATH={WORK}/usr/local/bin:/usr/bin:/bin check -c 'rm -rf {CHECKOUT}'
+
+=== CRW-1283-r3-bin-dir-binary-export-memory | U
+--why Evaluation deb45bd1 d1: a binary a bin-named directory holds is not the program its name says; refused (Sion decision 5).
+--link usr/local/bin/check /bin/sh
+--cmd
+export PATH={WORK}/usr/local/bin:/usr/bin:/bin; check -c 'tee {MEMORY}/note.md'
+
+=== CRW-1283-r3-bin-dir-binary-env-removal | U
+--why Evaluation deb45bd1 d1: a binary a bin-named directory holds is not the program its name says; refused (Sion decision 5).
+--link usr/local/bin/check /bin/sh
+--cmd
+env PATH={WORK}/usr/local/bin:/usr/bin:/bin check -c 'rm -rf {CHECKOUT}'
+
+=== CRW-1283-r3-bin-dir-link-chain-post | U
+--why Evaluation deb45bd1 d1: a binary a bin-named directory holds is not the program its name says; refused (Sion decision 5). (through a second link)
+--link bin/via /bin/sh
+--link usr/bin/check {WORK}/bin/via
+--cmd
+PATH={WORK}/usr/bin:/usr/bin:/bin check -c 'gh pr comment 1 --body x'
+
+=== CRW-1283-r3-env-shebang-memory | U
+--why Evaluation deb45bd1 d2: the interpreter an env #! line launches is the file the assigned PATH selects, not the script's body; refused (Sion decision 5).
+--file p/check
+#!/usr/bin/env bash
+printf ok
+--file p/bash
+#!/bin/sh
+tee {MEMORY}/note.md
+--cmd
+PATH={WORK}/p:/usr/bin:/bin check
+
+=== CRW-1283-r3-env-shebang-post | U
+--why Evaluation deb45bd1 d2: the interpreter an env #! line launches is the file the assigned PATH selects, not the script's body; refused (Sion decision 5).
+--file p/check
+#!/usr/bin/env bash
+printf ok
+--file p/bash
+#!/bin/sh
+gh pr comment 1 --body x
+--cmd
+PATH={WORK}/p:/usr/bin:/bin check
+
+=== CRW-1283-r3-env-shebang-removal | U
+--why Evaluation deb45bd1 d2: the interpreter an env #! line launches is the file the assigned PATH selects, not the script's body; refused (Sion decision 5).
+--file p/check
+#!/usr/bin/env bash
+printf ok
+--file p/bash
+#!/bin/sh
+rm -rf {CHECKOUT}
+--cmd
+PATH={WORK}/p:/usr/bin:/bin check
+
+=== CRW-1283-r3-env-shebang-export-memory | U
+--why Evaluation deb45bd1 d2: the interpreter an env #! line launches is the file the assigned PATH selects, not the script's body; refused (Sion decision 5).
+--file p/check
+#!/usr/bin/env bash
+printf ok
+--file p/bash
+#!/bin/sh
+tee {MEMORY}/note.md
+--cmd
+export PATH={WORK}/p:/usr/bin:/bin; check
+
+=== CRW-1283-r3-env-shebang-env-removal | U
+--why Evaluation deb45bd1 d2: the interpreter an env #! line launches is the file the assigned PATH selects, not the script's body; refused (Sion decision 5).
+--file p/check
+#!/usr/bin/env bash
+printf ok
+--file p/bash
+#!/bin/sh
+rm -rf {CHECKOUT}
+--cmd
+env PATH={WORK}/p:/usr/bin:/bin check
+
+=== CRW-1283-r3-env-shebang-direct-post | U
+--why Evaluation deb45bd1 d2: the interpreter an env #! line launches is the file the assigned PATH selects, not the script's body; refused (Sion decision 5).
+--file p/check
+#!/usr/bin/env bash
+printf ok
+--file p/bash
+#!/bin/sh
+gh pr comment 1 --body x
+--cmd
+PATH={WORK}/p:/usr/bin:/bin {WORK}/p/check
+
+=== CRW-1283-r3-env-shebang-split-memory | U
+--why Evaluation deb45bd1 d2: the interpreter an env #! line launches is the file the assigned PATH selects, not the script's body; refused (Sion decision 5).
+--file p/split
+#!/usr/bin/env -S bash -e
+printf ok
+--file p/bash
+#!/bin/sh
+tee {MEMORY}/note.md
+--cmd
+PATH={WORK}/p:/usr/bin:/bin split
+
+=== CRW-1283-r3-env-shebang-python-removal | U
+--why Evaluation deb45bd1 d2: the interpreter an env #! line launches is the file the assigned PATH selects, not the script's body; refused (Sion decision 5).
+--file p/py
+#!/usr/bin/env python3
+print(1)
+--file p/python3
+#!/bin/sh
+rm -rf {CHECKOUT}
+--cmd
+PATH={WORK}/p:/usr/bin:/bin py
+
+=== CRW-1283-r3-env-shebang-control | U
+--why Split (1) (Sion 10-13): every gate refuses a PATH assignment as at c007bd50 until CRW-1292 reads a literal PATH. CRW-1292 case: Control: an env #! script whose interpreter the assigned PATH leaves to the system directories is read as before (Sion decision 4).
+--file q/check
+#!/usr/bin/env bash
+set -eu
+printf ok
+--cmd
+PATH={WORK}/q:/usr/bin:/bin check
+
+=== CRW-1283-r3-bin-dir-control | U
+--why Split (1) (Sion 10-13): every gate refuses a PATH assignment as at c007bd50 until CRW-1292 reads a literal PATH. CRW-1292 case: Control: a system program the PATH the shell starts with runs is read by its name behind an assigned PATH (Sion decision 4).
+--cmd
+PATH=/usr/bin:/bin ls /tmp
+
+=== CRW-1283-r5-loop-wrapper-control | U
+--why Plan C (Sion 10-13): the reader does not follow the arguments a script forwards with "$@", so every gate refuses the loop wrapper of heavy_slot.sh shape (finding 2 of 418273ef is answered by the named limit).
+--file slot.sh
+#!/bin/bash
+while :; do x=1; nice "$@"; rc=$?; exit $rc; done
+--cmd
+bash slot.sh go version
+
+=== CRW-1283-r5-loop-direct-control | U
+--why Plan C (Sion 10-13): the reader does not follow the arguments a script forwards with "$@", so every gate refuses the loop wrapper run by its path.
+--file slot.sh
+#!/bin/bash
+while :; do x=1; nice "$@"; rc=$?; exit $rc; done
+--cmd
+{WORK}/slot.sh go version
+
+=== CRW-1283-r5-loop-wrapper-post | U
+--why Plan C (Sion 10-13): the reader does not follow the arguments a script forwards with "$@", so every gate refuses the loop wrapper that receives a gh post.
+--file slot.sh
+#!/bin/bash
+while :; do x=1; nice "$@"; rc=$?; exit $rc; done
+--cmd
+bash slot.sh gh pr comment 1 --body x
+
+=== CRW-1283-r5-loop-wrapper-memory | U
+--why Plan C (Sion 10-13): the reader does not follow the arguments a script forwards with "$@", so every gate refuses the loop wrapper that receives a memory write.
+--file slot.sh
+#!/bin/bash
+while :; do x=1; nice "$@"; rc=$?; exit $rc; done
+--cmd
+bash slot.sh tee {MEMORY}/note.md
+
+=== CRW-1283-r5-loop-wrapper-removal | U
+--why Plan C (Sion 10-13): the reader does not follow the arguments a script forwards with "$@", so every gate refuses the loop wrapper that receives a worktree removal.
+--file slot.sh
+#!/bin/bash
+while :; do x=1; nice "$@"; rc=$?; exit $rc; done
+--cmd
+{WORK}/slot.sh rm -rf {CHECKOUT}
+
+=== CRW-1283-r5-loop-posassign-post | U
+--why Final verification 418273ef finding 1: a zsh positional assignment after "$@" in a loop changes the next iteration's arguments; refused by the github guard before the relaxations and again now (Sion decision 5).
+--file t.sh
+#!/bin/bash
+while :; do nice "$@"; 1=env; done
+--cmd
+zsh {WORK}/t.sh true gh pr comment 1 --body x
+
+=== CRW-1283-r5-loop-posassign-memory | U
+--why Final verification 418273ef finding 1: the same loop with a memory write; refused before the relaxations and again now (Sion decision 5).
+--file t.sh
+#!/bin/bash
+while :; do nice "$@"; 1=env; done
+--cmd
+zsh {WORK}/t.sh true tee {MEMORY}/note.md
+
+=== CRW-1283-r5-loop-posassign-removal | U
+--why Final verification 418273ef finding 1: the same loop with a worktree removal; refused before the relaxations and again now (Sion decision 5).
+--file t.sh
+#!/bin/bash
+while :; do nice "$@"; 1=env; done
+--cmd
+zsh {WORK}/t.sh true rm -rf {CHECKOUT}
+
+=== CRW-1283-r6-print-v-post | U
+--why Final verification f2ef7770 finding: print -v 1 assigns or removes a positional parameter in zsh, so the "$@" after it is not the arguments the script was given; refused before the relaxations and again now (Sion decision 5).
+--file t.sh
+#!/bin/bash
+print -v 1 env
+nice "$@"
+--cmd
+zsh {WORK}/t.sh true gh pr comment 1 --body x
+
+=== CRW-1283-r6-zformat-post | U
+--why Final verification f2ef7770 finding: zformat -f 1 assigns or removes a positional parameter in zsh, so the "$@" after it is not the arguments the script was given; refused before the relaxations and again now (Sion decision 5).
+--file t.sh
+#!/bin/bash
+zformat -f 1 '%a' a:env
+nice "$@"
+--cmd
+zsh {WORK}/t.sh true gh pr comment 1 --body x
+
+=== CRW-1283-r6-getln-post | U
+--why Final verification f2ef7770 finding: getln 1 assigns or removes a positional parameter in zsh, so the "$@" after it is not the arguments the script was given; refused before the relaxations and again now (Sion decision 5).
+--file t.sh
+#!/bin/bash
+pushln env; getln 1
+nice "$@"
+--cmd
+zsh {WORK}/t.sh true gh pr comment 1 --body x
+
+=== CRW-1283-r6-noglob-shift-post | U
+--why Final verification f2ef7770 finding: noglob shift assigns or removes a positional parameter in zsh, so the "$@" after it is not the arguments the script was given; refused before the relaxations and again now (Sion decision 5).
+--file t.sh
+#!/bin/bash
+noglob shift
+nice "$@"
+--cmd
+zsh {WORK}/t.sh true gh pr comment 1 --body x
+
+=== CRW-1283-r6-loop-print-v-post | U
+--why Final verification f2ef7770 finding: print -v 1 in a loop assigns or removes a positional parameter in zsh, so the "$@" after it is not the arguments the script was given; refused before the relaxations and again now (Sion decision 5).
+--file t.sh
+#!/bin/bash
+while :; do nice "$@"; print -v 1 env; done
+--cmd
+zsh {WORK}/t.sh true gh pr comment 1 --body x
+
+=== CRW-1283-r6-print-v-memory | U
+--why Final verification f2ef7770 finding: print -v 1 assigns or removes a positional parameter in zsh, so the "$@" after it is not the arguments the script was given; refused before the relaxations and again now (Sion decision 5).
+--file t.sh
+#!/bin/bash
+print -v 1 env
+nice "$@"
+--cmd
+zsh {WORK}/t.sh true tee {MEMORY}/note.md
+
+=== CRW-1283-r6-print-v-removal | U
+--why Final verification f2ef7770 finding: print -v 1 assigns or removes a positional parameter in zsh, so the "$@" after it is not the arguments the script was given; refused before the relaxations and again now (Sion decision 5).
+--file t.sh
+#!/bin/bash
+print -v 1 env
+nice "$@"
+--cmd
+zsh {WORK}/t.sh true rm -rf {CHECKOUT}
+
+=== CRW-1283-r6-noglob-shift-memory | U
+--why Final verification f2ef7770 finding: noglob shift assigns or removes a positional parameter in zsh, so the "$@" after it is not the arguments the script was given; refused before the relaxations and again now (Sion decision 5).
+--file t.sh
+#!/bin/bash
+noglob shift
+nice "$@"
+--cmd
+zsh {WORK}/t.sh true tee {MEMORY}/note.md
+
+=== CRW-1283-r6-noglob-shift-removal | U
+--why Final verification f2ef7770 finding: noglob shift assigns or removes a positional parameter in zsh, so the "$@" after it is not the arguments the script was given; refused before the relaxations and again now (Sion decision 5).
+--file t.sh
+#!/bin/bash
+noglob shift
+nice "$@"
+--cmd
+zsh {WORK}/t.sh true rm -rf {CHECKOUT}
+
+=== CRW-1283-r6-loop-print-v-memory | U
+--why Final verification f2ef7770 finding: print -v 1 in a loop assigns or removes a positional parameter in zsh, so the "$@" after it is not the arguments the script was given; refused before the relaxations and again now (Sion decision 5).
+--file t.sh
+#!/bin/bash
+while :; do nice "$@"; print -v 1 env; done
+--cmd
+zsh {WORK}/t.sh true tee {MEMORY}/note.md
+
+=== CRW-1283-r6-loop-print-v-removal | U
+--why Final verification f2ef7770 finding: print -v 1 in a loop assigns or removes a positional parameter in zsh, so the "$@" after it is not the arguments the script was given; refused before the relaxations and again now (Sion decision 5).
+--file t.sh
+#!/bin/bash
+while :; do nice "$@"; print -v 1 env; done
+--cmd
+zsh {WORK}/t.sh true rm -rf {CHECKOUT}
+
+=== CRW-1283-r6-zparseopts-post | U
+--why Final verification f2ef7770 finding: zparseopts -D assigns or removes a positional parameter in zsh, so the "$@" after it is not the arguments the script was given; refused before the relaxations and again now (Sion decision 5).
+--file t.sh
+#!/bin/bash
+zparseopts -D n:=o
+"$@"
+--cmd
+zsh {WORK}/t.sh -n 5 gh pr comment 1 --body x
+
+=== CRW-1283-r6-print-control | U
+--why Plan C (Sion 10-13): the reader does not follow the arguments a script forwards with "$@", so every gate refuses the wrapper that prints first.
+--file t.sh
+#!/bin/bash
+print hello
+nice "$@"
+--cmd
+bash t.sh go version
+
+=== CRW-1283-r6-print-control-post | U
+--why Plan C (Sion 10-13): the reader does not follow the arguments a script forwards with "$@", so every gate refuses the printing wrapper that receives a gh post.
+--file t.sh
+#!/bin/bash
+print hello
+nice "$@"
+--cmd
+bash t.sh gh pr comment 1 --body x
+
+=== CRW-1283-e1-split-name-post | U
+--why Evaluation 882ffa84 d2: a declaration word whose name is spelled in parts ("P"ATH) and whose value the reader does not know assigns PATH; every gate refuses it as every other PATH assignment (until CRW-1292).
+--file hidden
+#!/bin/bash
+gh pr comment 1 --body x
+--cmd
+D="$UNRESOLVED"; export "P"ATH=$D; hidden
+
+=== CRW-1283-e1-quoted-name-memory | U
+--why Evaluation 882ffa84 d2: export "PATH"=$D assigns PATH with a value the reader does not know; refused by every gate.
+--cmd
+export "PATH"=$UNRESOLVED; tee {MEMORY}/note.md </dev/null
+
+=== CRW-1283-e1-partial-name-removal | U
+--why Evaluation 882ffa84 d2: a spelled start of PATH completed at run time (P$X=) may assign PATH; refused by every gate.
+--cmd
+export P$UNRESOLVED=/usr/bin:/bin; rm -rf {CHECKOUT}
+
+=== CRW-1283-e1-lower-path-control | U
+--why Evaluation 882ffa84 d2: zsh's path is PATH as an array, so export 'path=/d' assigns PATH, as path=/d is refused already; refused by every gate.
+--cmd
+export 'path=/usr/bin'; printf ok
+
+=== CRW-1283-e1-other-name-control | B
+--why Evaluation 882ffa84 d2 control: a declaration of another name spelled in parts ("MY"PATH) is read as before.
+--cmd
+export "MY"PATH=$UNRESOLVED; printf ok

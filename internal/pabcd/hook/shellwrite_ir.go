@@ -50,7 +50,13 @@ func shellIRDestsResult(res shellir.Result, cwd string, lookup func(string) (str
 			}
 			continue
 		}
-		if depth > 0 && githubPostDirectPath(e) && !githubPostInstalledName(e) {
+		// A shell file run by its path that forwards "$@" is read here too, so that the forward refuses it (CRW-1283 plan C).
+		if (depth == 0 && shellIRDirectForwarder(e) || depth > 0 && !githubPostInstalledName(e)) && githubPostDirectPath(e) {
+			own := shellIRExecDests(e)
+			if resolve {
+				own = shellIRResolve(own, e.Dir, cwd)
+			}
+			dests = append(dests, own...)
 			// A direct child of an admitted shell file must also be read.
 			// Only a bounded shell program has a destination reader here.
 			if _, err := os.Lstat(githubPostScriptPath(e.Program.Value, e.Dir.Path)); os.IsNotExist(err) && e.Dir.Known && !writes.stale(i, e.Program.Value, e.Dir) {

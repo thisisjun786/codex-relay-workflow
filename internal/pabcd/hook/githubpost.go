@@ -94,7 +94,7 @@ func githubPostDenyPayload(site githubPostSite, p map[string]any) string {
 		return githubPostDeny(site.rule, site.place)
 	}
 	leaf := p["agent_id"] != nil || p["agent_type"] != nil
-	recovery := "Run a readable script file."
+	recovery := "Use a direct command with a literal program and absolute file paths; GitHub text must come from a reviewed file. A readable script file must meet the same checks."
 	if leaf {
 		recovery = "Report the blocked command and cause code to your parent."
 	}
@@ -103,9 +103,10 @@ func githubPostDenyPayload(site githubPostSite, p map[string]any) string {
 		reason = "Cannot read the command or its program (unreadable-github-post): " + site.reason + "; GitHub posting has not been established. " + recovery
 	}
 	if site.unreadableText() {
-		// The text names no gh post: the refusal is the reader's, not a verdict on GitHub posting, so it says what could not be
-		// read, as the memory guard does, rather than repeating a policy refusal (CRW-1178).
-		reason = commandUnreadableReason(githubPostRuleUnread, site.reason, leaf, "It names no GitHub post.")
+		// The text spells no gh post: the refusal is the reader's, not a verdict on GitHub posting, so it says what could not be
+		// read, as the memory guard does, rather than repeating a policy refusal (CRW-1178). The part it cannot read may still
+		// post, so it says that it cannot tell, never that the command names no post (CRW-1283, Sion decision 1).
+		reason = commandUnreadableReason(githubPostRuleUnread, site.reason, leaf, "The reader cannot tell whether the command posts to GitHub.")
 	} else if site.post {
 		reason = "GitHub post cannot be verified (unreadable-github-post) at " + memoryGateLabel(site.place) + ". " + recovery
 	}

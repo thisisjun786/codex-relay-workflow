@@ -79,6 +79,20 @@ func worktreeDelJudgeText(command, cwd string, id WorktreeIdentity, depth int, o
 			v = worktreeDelJudgeScript(e, id, depth, written.at(i).as(githubPostBodyKey(e.Script.Value, e.Dir)))
 		} else {
 			v = worktreeDelJudgeExec(e, id)
+			// A shell file run by its path that forwards "$@" is read, so that the forward refuses it (CRW-1283 plan C).
+			if !v.Deny && githubPostDirectPath(e) && shellIRDirectForwarder(e) {
+				if written == nil {
+					written = githubPostWritesOf(res.Execs, outer)
+				}
+				if written.stale(i, e.Program.Value, e.Dir) {
+					return worktreeDelUnreadable(id)
+				}
+				body, kind := githubPostReadDirect(e.Program.Value, e.Dir.Path)
+				if kind != githubPostFileShell || depth >= worktreeDelMaxScriptDepth {
+					return worktreeDelUnreadable(id)
+				}
+				v = worktreeDelJudgeText(body, e.Dir.Path, id, depth+1, written.at(i).as(githubPostBodyKey(e.Program.Value, e.Dir)), e.Cdpath, true)
+			}
 		}
 		if v.Deny {
 			return v

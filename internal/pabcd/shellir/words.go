@@ -18,7 +18,8 @@ func (w *walker) word(x *syntax.Word, st *state, ctx Context) (Word, error) {
 		return Word{}, err
 	}
 	if reason := unknownWord(x, st); reason != "" {
-		return Word{Reason: reason}, nil
+		// A word that assigns PATH (export "PATH=$D") keeps that name, so a declaration still refuses it (CRW-1283).
+		return Word{Reason: reason, AssignmentName: pathAssignmentPrefix(x)}, nil
 	}
 	cfg := &expand.Config{
 		Env:       expand.FuncEnviron(func(name string) string { return st.value(name) }),
@@ -287,6 +288,10 @@ func unknownPart(p syntax.WordPart, quoted, first bool, st *state) string {
 		if simpleKnownParam(x, st) {
 			return ""
 		}
+		if x.Param != nil && x.Param.Value == "@" {
+			// CRW-1283 plan C: a script's forwarded arguments are not followed (trusted wrappers: CRW-1290).
+			return `"$@", the arguments a script forwards, which the reader does not follow; run the forwarded command directly (ionice and nice in front of it are read)`
+		}
 		if x.Param != nil {
 			return "variable " + x.Param.Value
 		}
@@ -532,4 +537,53 @@ func hasBraceExpansion(raw string) bool {
 		}
 	}
 	return false
+}
+
+// pathAssignmentPrefix is "PATH" when a word may assign PATH (or zsh's path): its name, spelled in literal parts quoted or not
+// (PATH=, "P"ATH=, P"ATH"+=, 'PA'"TH"=), is PATH, or a spelled start of PATH is completed at run time (P$X=, "PA$X"=). Else "": a
+// name built wholly at run time ("$N=/d") is not read as an assignment, like read PATH and printf -v PATH (CRW-1283).
+func pathAssignmentPrefix(word *syntax.Word) string {
+	var parts []syntax.WordPart
+	for _, part := range word.Parts {
+		if quoted, ok := part.(*syntax.DblQuoted); ok {
+			parts = append(parts, quoted.Parts...)
+		} else {
+			parts = append(parts, part)
+		}
+	}
+	name := ""
+	for _, part := range parts {
+		text := ""
+		switch x := part.(type) {
+		case *syntax.Lit:
+			text = strings.ReplaceAll(x.Value, `\`, "")
+		case *syntax.SglQuoted:
+			text = x.Value
+		default:
+			if name != "" && (strings.HasPrefix("PATH", name) || strings.HasPrefix("path", name)) {
+				return "PATH"
+			}
+			return ""
+		}
+		if i := strings.IndexByte(text, '='); i >= 0 {
+			if pathName(strings.TrimSuffix(name+text[:i], "+")) {
+				return "PATH"
+			}
+			return ""
+		}
+		name += text
+	}
+	return ""
+}
+
+func pathName(name string) bool { return name == "PATH" || name == "path" }
+
+// pathWord is whether a declaration word assigns PATH: PATH=dir or PATH+=dir (path in zsh), its value known or not. Every assignment to
+// PATH is refused as checkAssigns refuses it (CRW-1283; the literal PATH reading is CRW-1292).
+func pathWord(arg Word) bool {
+	if !arg.Known {
+		return arg.AssignmentName == "PATH"
+	}
+	name, _, assigns := strings.Cut(arg.Value, "=")
+	return assigns && pathName(strings.TrimSuffix(name, "+"))
 }

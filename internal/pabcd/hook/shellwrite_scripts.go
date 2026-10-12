@@ -5,8 +5,35 @@ import (
 	"slices"
 	"strings"
 
+	"mvdan.cc/sh/v3/syntax"
+
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/shellir"
 )
+
+func shellIRScriptUsesArgs(body string) bool {
+	file, err := syntax.NewParser().Parse(strings.NewReader(body), "")
+	if err != nil {
+		return false
+	}
+	found := false
+	syntax.Walk(file, func(node syntax.Node) bool {
+		if parameter, ok := node.(*syntax.ParamExp); ok && parameter.Param != nil && parameter.Param.Value == "@" {
+			found = true
+		}
+		return !found
+	})
+	return found
+}
+
+// shellIRDirectForwarder: a shell file run by its path whose body forwards "$@" is read by the memory and worktree guards, so that the
+// forward the reader does not follow refuses it (CRW-1283 plan C).
+func shellIRDirectForwarder(execution shellir.Exec) bool {
+	if !githubPostDirectPath(execution) {
+		return false
+	}
+	body, kind := githubPostReadDirect(execution.Program.Value, execution.Dir.Path)
+	return kind == githubPostFileShell && shellIRScriptUsesArgs(body)
+}
 
 // Carried shell files reuse the bounded regular-file reader and stale-file
 // checks of the GitHub guard. No file changed by this command can be trusted.

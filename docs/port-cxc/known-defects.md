@@ -1561,3 +1561,7 @@ Source: `plugins/codexclaw/components/pabcd-state/src/goalplan.ts` (`closeFixedW
 ## CRW-1085 — CRW-726/741 reader range
 
 CRW's shared reader accepts non-executing diagnostic options, bracket conditions, bounded shell files, four fixed Python modules with bounded test discovery, and read-only awk while unreadable code and destinations still fail closed. The oracle has no matching reader; port: fixed (CRW-specific over-refusal). Details and the superseded CRW-894 module controls are in [CRW-1085](known-defects/CRW-1085.md).
+
+## CRW-1283 — program wrappers, readable script files and assigned PATH
+
+Program wrappers (`ionice`, `nice`, `env`, `timeout`) stay read by their option grammar as at c007bd50, and `git push` stays unjudged by the GitHub guard as at c007bd50, in a script file too (push policy: CRW-1284); the memory gate reads a readable script file run as `bash f.sh`; refusals name a direct command with a literal program and absolute paths, and the GitHub guard's reader refusal says it cannot tell whether the command posts. A script wrapper that forwards `"$@"` (`heavy_slot.sh`) is refused by every guard as a named limit, with a reason that names the direct command (trusted wrappers: CRW-1290); every PATH assignment is refused, as at c007bd50 and also in the declaration words c007bd50 read as other names (`export "P"ATH=$D`), a named limit until the literal PATH reading of CRW-1292. Details and the pre-existing limits (CRW-1287) are in [CRW-1283](known-defects/CRW-1283.md).

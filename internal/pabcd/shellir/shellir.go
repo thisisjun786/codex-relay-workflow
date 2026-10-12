@@ -61,6 +61,8 @@ type Word struct {
 	Known  bool
 	Value  string
 	Reason string
+	// AssignmentName is "PATH" for a word the reader does not know that starts with PATH= (CRW-1283).
+	AssignmentName string
 }
 
 // Dir is the working directory at a point in the text. Known is false when
@@ -868,6 +870,9 @@ func (w *walker) decl(c *syntax.DeclClause, st *state, ctx Context) error {
 			if err != nil {
 				return err
 			}
+			if pathWord(v) {
+				return unreadablef("assignment to PATH changes which program runs") // export 'PATH=/dir', export "PATH=$D" (CRW-1283)
+			}
 			// A quoted declaration ('a[i]=v') evaluates its subscript as arithmetic (CRW-1178).
 			w.nameSubscriptPrefix(st, v)
 			if !v.Known || strings.HasPrefix(v.Value, "-") && strings.Contains(v.Value, "n") {
@@ -1284,6 +1289,14 @@ func (w *walker) dispatch(words []Word, assigns []Assign, redirs []Redir, st *st
 	case isWrapper(name):
 		return w.wrapped(name, words[1:], assigns, redirs, st, ctx)
 	case clobbersVars(name, words[1:]):
+		// A declaration builtin the walk reaches as a command (X=1 export PATH=/dir) assigns PATH as the clause does (CRW-1283).
+		if name == "export" || name == "declare" || name == "typeset" || name == "readonly" || name == "local" {
+			for _, arg := range words[1:] {
+				if pathWord(arg) {
+					return unreadablef("assignment to PATH changes which program runs")
+				}
+			}
+		}
 		st.clearVars()
 		if mayNamePycachePrefix(assignedNames(name, words[1:])) || declaresInteger(name, words[1:]) {
 			w.prefixUnknown = true
