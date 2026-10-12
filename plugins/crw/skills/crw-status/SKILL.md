@@ -94,6 +94,12 @@ orchestrator is invented for it. All of this follows the
 [scope of each level](../crw-canon/references/hierarchy.md#scope-of-each-level); reading a level does
 not give this skill that level's authority.
 
+## Read a project's run
+
+A project orchestrator whose plan has a flow run is reported from the run's own records, which need no wake. `crw flow ps` lists the runs that are not over (`running`, `paused`, `dead` or `held`); `crw flow show RUN` gives the tree of one run (its phases, each agent call with its role, node, status and reason, the review verdicts, the acceptance, the integration and any `recovery_hold`); `crw flow watch RUN --after SEQ` gives the rows after a cursor; and `crw relay journal-tail` reads the relay's own journal the same way. The state of a run is taken from those records, never from the status line its owner thread prints.
+
+Read the reports that wait with `crw flow reports --unread`: an unread report is a milestone report or a blocker that has reached its initiative lead and not been read, and the status says to whom it went, how long it has waited and what the last delivery said. Status reads it and does not acknowledge it: `crw flow report-ack` appends a row of its own, so the mark is the initiative lead's act. It starts, answers, pauses and resumes no run. A gap the run's records show goes to the project orchestrator that owns the run, as any gap at that level does.
+
 ## Choose the depth before reading
 
 The width of the question sets the width of the report, not its depth. '전체 프로젝트 어떻게

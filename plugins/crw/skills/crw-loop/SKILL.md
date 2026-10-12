@@ -88,7 +88,8 @@ Keep explicit-only skills and leaf-safe delivery restrictions intact.
 
 - DISPATCH-MANAGED-01 (STRICT): before fanning work out, start from the binding. A
   Linear issue or DAG node (also one the relay holds no assignment for yet) is an
-  independent relay child started and resumed through `crw-run`, never a
+  independent relay child started and resumed through `crw-run`, or a flow executor call of the
+  project orchestrator's run recorded in the relay, never a
   `create_thread` lane; the relay refuses a second active or paused assignment of
   the same issue and a release past capacity, and those answers are followed, not
   routed around by creating a thread by hand. An unresolved binding is not

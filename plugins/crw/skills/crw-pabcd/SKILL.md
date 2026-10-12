@@ -169,7 +169,8 @@ Choose the surface before dispatching, and start from the binding: before any
 dispatch of an independent lane, apply
 [DISPATCH-MANAGED-01](references/dispatch-surfaces.md#dispatch-managed-01-strict--start-from-the-binding-not-from-the-mechanism).
 A Linear issue or DAG node (also one the relay holds no assignment for yet) is an
-independent relay child started and resumed through `crw-run`, never a
+independent relay child started and resumed through `crw-run`, or a flow executor call of the
+project orchestrator's run recorded in the relay, never a
 `create_thread` lane, and the relay's duplicate-assignment and capacity refusals are
 followed, not routed around by creating a thread by hand. An unresolved binding is
 not permission to take the unmanaged route. The thread and subagent choice below is
@@ -199,7 +200,9 @@ its own goal, plan and phase authority; a peer message never advances either FSM
 
 The main session owns the plan, host goal, and transitions. Before authorized
 dispatch read [Delegation](references/delegation.md). Leaves do not spawn by
-default; attachments name the needed owner skills explicitly.
+default; attachments name the needed owner skills explicitly. The spawns of a flow run
+(an executor, a reviewer, an explorer, the architect) are decided by the
+[spawn policy](../crw-canon/references/spawn-policy.md), not by this procedure.
 No-delegation and scoped read/write restrictions take precedence.
 
 ## Loop Engineering (§11)

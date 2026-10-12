@@ -2,7 +2,8 @@
 
 Read when a request fans unmanaged work out across parallel tasks, or when watching more lanes
 than one wait can hold. A Linear issue or DAG node is a managed relay child started through
-`crw-run` and is not handed to a `create_thread` lane by this file; apply
+`crw-run`, or a flow executor call of the project orchestrator's run recorded in the relay, and is not handed to a
+`create_thread` lane by this file; apply
 [DISPATCH-MANAGED-01](../../crw-pabcd/references/dispatch-surfaces.md#dispatch-managed-01-strict--start-from-the-binding-not-from-the-mechanism)
 first. [Dispatch surfaces](../../crw-pabcd/references/dispatch-surfaces.md) owns
 the choice between a thread and a subagent; this file owns what a lane is handed and what

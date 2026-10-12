@@ -232,14 +232,26 @@ changes what the next one sees.
    field that is absent is an incomplete write: repair it on the same IDs rather than
    creating the item again. Where the connector cannot read something back, report it
    written, unverified, and do not claim it exists.
+5. Compile. Build the handoff from the issues as they were read back (the
+   `crw-flow-compile-input/1` document of [Hand the plan to the run](../SKILL.md#hand-the-plan-to-the-run)) and run
+   `crw flow compile --dry-run` over it. The step passes when the command exits 0. A refusal is a defect of the plan,
+   not of the command, and it names its rule: `input` (the document itself: a missing `schema`, an unknown or misspelled key, a region that is not a relative path inside the repository, an issue key held by two projects; read the printed path and fix the key), `over_64` (more than 64 live issues in one project: split the project by its
+   region map), `cycle` or `self_reference` (the boundary is wrong: reapply step 3), `region_order_missing` (two issues
+   share an edit region and nothing orders them: name one as the other's prerequisite or put both in one group, the one
+   ordering step 3 asks for), `group_cap` (a group of more than four issues), `after_unknown` (a prerequisite that is no
+   issue of the handoff), `size_value` (a `size_fit`, `size_reason` or `issue_size` outside its closed set) and
+   `milestone` (a milestone entry the issues and the run cannot use). Repair at the step that owns the defect and run the
+   steps from there again; the plan is not closed with a refusal. The preview lists `size_unreviewed` for an issue that
+   answered `over_line` with neither a bundle reason nor a split; that is not a refusal, and the plan is not closed until
+   the size check has judged each such issue.
 
 A boundary change carries its relations with it. Keep every relation to work outside the
 change, and drop one whose endpoints both fall inside it: it described a boundary that no
 longer exists, and keeping it makes an issue block itself.
 
-A draft-only or advisory request runs steps 1 to 3 against its draft items and their
-intended relations, omits step 4, and reports the result as checked but unwritten. Writing
-nothing is what that request asked for; skipping the check is not.
+A draft-only or advisory request runs steps 1 to 3 and 5 against its draft items and their
+intended relations (the compile reads a handoff and writes nothing), omits step 4, and reports the result as
+checked but unwritten. Writing nothing is what that request asked for; skipping the check is not.
 
 Re-running the same request converges because the split follows deliverables, and a
 deliverable comes from accepted criteria that read the same on every run and match an

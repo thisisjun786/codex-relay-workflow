@@ -487,6 +487,8 @@ func TestHierarchyTableRoleIds(t *testing.T) {
 		{"initiative lead", "`supervisor`", "부모"},
 		{"project orchestrator", "`parent`", "자식"},
 		{"issue child", "`child`", "이슈 child"},
+		// The row of the flow run's executor (CRW-1222): it is no relay role and no Codex task, so no role id.
+		{"issue executor", "", "없음 (레벨이 아님)"},
 	}
 	if len(rows) != len(want) {
 		t.Fatalf("level table has %d rows, want %d: %v", len(rows), len(want), rows)
@@ -500,7 +502,8 @@ func TestHierarchyTableRoleIds(t *testing.T) {
 			t.Errorf("row %d level = %q, want %q", i+1, row[0], w.level)
 		}
 		if w.relay == "" {
-			// The manager is the store seat; it is no initiative lead, project orchestrator or issue child.
+			// The manager is the store seat and the issue executor an agent call of a run; neither is an initiative lead, project
+			// orchestrator or issue child.
 			if relayRoleID.MatchString(row[1]) {
 				t.Errorf("manager row names a relay role id: %q", row[1])
 			}

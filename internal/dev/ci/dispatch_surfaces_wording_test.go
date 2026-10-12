@@ -40,6 +40,8 @@ func TestDispatchSurfaces_ManagedBindingComesFirst(t *testing.T) {
 	}
 	for _, want := range []string{
 		"independent relay child",
+		"a flow executor call of the project orchestrator's run, recorded in the relay",
+		"the implementation of an issue is its independent relay child's or its run's executor call",
 		"never a desktop `create_thread` lane",
 		"refuses a second active or paused assignment of the same issue",
 		"a release past capacity",
@@ -54,9 +56,20 @@ func TestDispatchSurfaces_ManagedBindingComesFirst(t *testing.T) {
 		"not permission to take the unmanaged route",
 		"a bounded helper or worktree worker needs no relay binding",
 		"never an independent child's assignment, a DAG acceptance or a relay receipt",
+		"it is not a flow executor call, which exists only as a call the run records",
 	} {
 		if !strings.Contains(section, want) {
 			t.Errorf("DISPATCH-MANAGED-01 lacks %q", want)
+		}
+	}
+	// The project orchestrator's own thread no longer reads as the whole of the project parent: the old sentence made the
+	// independent relay child the only managed surface for an issue.
+	for _, old := range []string{
+		"A project parent uses read-only and review helpers only; the implementation of an issue is its independent relay child's, and",
+		"An independent lane for it is an independent relay child, started and resumed through `crw-run`: the managed start, the DAG release and their bridge recovery, pair/profile, capacity and receipt rules. It is never a desktop",
+	} {
+		if strings.Contains(section, old) {
+			t.Errorf("DISPATCH-MANAGED-01 keeps the single-surface wording %q", old)
 		}
 	}
 }
@@ -109,6 +122,7 @@ func TestDispatchSurfaces_EntryPointsStartFromTheBinding(t *testing.T) {
 			"start from the binding",
 			managed,
 			"Linear issue or DAG node",
+			"flow executor call of the project orchestrator's run",
 			"never a `create_thread` lane",
 			"The thread and subagent choice below is for unmanaged work",
 			"For unmanaged work, work needing its own branch, checkout or merge/CI lane is thread work",
@@ -120,6 +134,7 @@ func TestDispatchSurfaces_EntryPointsStartFromTheBinding(t *testing.T) {
 		{"plugins/crw/skills/crw-loop/SKILL.md", []string{
 			"DISPATCH-MANAGED-01 (STRICT)",
 			managed,
+			"flow executor call of the project orchestrator's run",
 			"never a `create_thread` lane",
 			"DISPATCH-SURFACE-01 (STRICT): for unmanaged work, name the surface",
 			"For unmanaged work, a request for parallel branch or worktree lanes",
@@ -129,6 +144,7 @@ func TestDispatchSurfaces_EntryPointsStartFromTheBinding(t *testing.T) {
 		}},
 		{"plugins/crw/skills/crw-loop/references/lane-dispatch.md", []string{
 			managed,
+			"flow executor call of the project orchestrator's run",
 			"is not handed to a `create_thread` lane",
 			"## Nothing wakes the coordinator of unmanaged lanes",
 			"A managed run's goal-free parent is resumed by relay delivery",

@@ -47,6 +47,8 @@ orchestrators and their issue children, and hand each orchestrator its project b
 [coordination message](../crw-run/references/task-packet.md#coordination-message). Do not plan or
 dispatch another orchestrator's issues, and do not reach into any project's issue children.
 
+A project's orchestrator starts only when its prerequisites hold and the manager's orchestrator cap allows it; a project waiting on either stays in the approved set and starts when both hold.
+
 Hold the order in which projects reach a shared target, a shared resource and an unresolved
 disagreement between peers as this level's decisions
 ([direct coordination](../crw-canon/references/hierarchy.md#direct-coordination-between-project-orchestrators)).
@@ -57,6 +59,12 @@ supervision are in [Initiative supervision](../crw-run/references/initiative-sup
 
 An initiative lead runs without a native goal or an automatic loop. [Goal mode](../crw-run/references/goal-mode.md)
 is a project orchestrator's optional mode and never an initiative lead's.
+
+## Read the milestone reports
+
+A project's run reports each closed milestone to this level, and the project orchestrator lifts a project-level blocker or a decision request the same way ([what goes up from a run](../../../../docs/flow/reporting.md)). Run `crw flow reports --initiative INITIATIVE --unread` at the start of every turn: a report sent to a thread that is not loaded waits in the supervisor queue until the thread loads, so the list is the place a report is not missed. The kinds are `milestone_report` (the integrated range with the evidence of the close), `project_blocked` and `project_decision_request`; a decision only Jun takes goes to the manager, not here.
+
+Judge each report with [crw-check](../crw-check/SKILL.md) against the project's finish condition and the milestone's criteria, then leave the read mark with `crw flow report-ack REPORT --turn TURN`, using this turn's id. This level acknowledges a report only after it has judged it, and an unacknowledged report comes back to the manager after a while as `report_unread`. The mark records that the report was read; it does not accept the milestone, move a project or answer a blocker. A blocker or a decision request is answered by instructing the project orchestrator through the coordination message, or by handing the question up to the manager. This level reads and acknowledges reports and never operates a run: a run belongs to its project orchestrator, and the commands that start, answer, pause or resume it are not this skill's.
 
 ## Long-run midpoint check
 

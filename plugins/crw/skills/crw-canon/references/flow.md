@@ -1,6 +1,6 @@
 # The crw flow commands
 
-`crw flow` is the command line of the flow engine: the process that runs a workflow script for one run, and the commands that start, show, follow, answer, pause, cancel, resume and recover a run. This page is the one reference of the commands; the script format is [docs/flow/script.md](../../../../../docs/flow/script.md), the journal a run writes is [docs/flow/journal.md](../../../../../docs/flow/journal.md), and the scheduler a run asks for its slots is [docs/relay/dag-scheduler.md](../../../../../docs/relay/dag-scheduler.md).
+`crw flow` is the command line of the flow engine: the process that runs a workflow script for one run, and the commands that start, show, follow, answer, pause, cancel, resume and recover a run. This page is the one reference of the commands; the script format is [docs/flow/script.md](../../../../../docs/flow/script.md), the journal a run writes is [docs/flow/journal.md](../../../../../docs/flow/journal.md), and the scheduler a run asks for its slots is [docs/relay/dag-scheduler.md](../../../../../docs/relay/dag-scheduler.md). The agent calls a run makes, and why, are the [spawn policy](spawn-policy.md).
 
 A run is a process that lives for one run and loses nothing when it dies: every fact is a row of its journal in the relay store, the run lock (`<state>/flow/<run>/run.lock`) says whether a process holds the run, and `crw flow resume` or `crw flow recover` takes a run whose lock is free from the journal again. The orchestrator thread that started a run owns it; the Stop hook prints the run's status line in that thread only, at the end of its turns. While the thread is idle, the progress is read with `crw flow watch`, the GUI Runs page and Linear.
 
@@ -12,7 +12,7 @@ A run is a process that lives for one run and loses nothing when it dies: every 
 | `crw flow ps [--all] [--json]` | One line for each run: its state (`running`, `paused`, `dead`, `held`, `completed`, `cancelled`, `failed`), workflow, owner thread, calls and tokens. Without `--all` it lists the runs that are not over |
 | `crw flow show RUN [--json]` | The tree phase, then agent: for each agent call its role, node, thread, status and reason, the commits of its node, the review verdicts, the tokens, and `recovery_hold` where a call's outcome is unknown |
 | `crw flow watch RUN [--after SEQ] [--wait N] [--limit M] [--follow] [--json]` | The same tree as `show` with the cursor of the last row it was made of; with `--after SEQ` the rows of the run after that cursor, read as `crw relay journal-tail` reads the relay journal: the cursor is the `seq` of the last row, `--wait` waits for a row without holding a transaction, and the next call passes the cursor back. `--follow` keeps reading until the run is over or has no process. The rows are the run's own: a command that writes into a run (`crw flow report-up`, `apply`, `report-ack`, `report-delivered`) numbers its rows apart, and `crw flow reports` lists them |
-| `crw flow answer --decision D --run RUN --node N --question Q --revision V [--no-resume]` | Applies the manager's answer record D (`crw manage decisions`) to the wait of a run: it compares the question and its revision, the node and its attempt, the run, the plan basis and the authority of the record with the run's journal, appends one `decision_applied` row, and resumes that wait. The same answer again appends nothing |
+| `crw flow answer --decision D --run RUN --node N --question Q --revision V [--no-resume]` | Applies the manager's answer record D (the relay's user-decision record, answered with `crw relay decision-answer`) to the wait of a run: it compares the question and its revision, the node and its attempt, the run, the plan basis and the authority of the record with the run's journal, appends one `decision_applied` row, and resumes that wait. The same answer again appends nothing |
 | `crw flow pause RUN` | Asks the run process to stop sending requests; the calls in flight end held (`engine_paused`) and `crw flow resume` goes on with them |
 | `crw flow cancel RUN` | Ends the run: the calls in flight are cancelled and the run finishes `cancelled`; the executions the run released and still owns are given up and their slots returned |
 | `crw flow resume RUN [SCRIPT] [--detach]` | Takes the run from its journal again with the same script and arguments, once its run lock is free |
@@ -72,13 +72,37 @@ The line the Stop hook prints, `crw flow <run> <state> · <phase> · <n> calls �
 
 The digest of a night batch; see [The night batch](#the-night-batch).
 
+## Who owns control in a flow-managed run
+
+A flow-managed node is an issue node that the project orchestrator's run released to an executor, or the issue-lane run of an oversized child. In both the run is the one process that knows what happens next; no thread it starts holds that knowledge.
+
+| Control | Owner | What it means |
+|---|---|---|
+| Phases and their order | the run: its script and its journal | Build, verify, review, land and close follow the workflow the run was started with. An executor builds and returns its receipt; it never decides the next phase. A resume goes on from the journal |
+| Audit | the run | The run calls a reviewer of another model family for the design audit and for each head, and `crw flow audit` reads the reviews behind its acceptances back from the reviewer threads on the host |
+| Evidence | the run | A verification record, a verdict, a pre-merge record or a QA receipt is made from calls the run owns and commands the run itself runs. What an executor writes about its own work, a skill-loading line or a quoted instruction is no evidence |
+| Escalations and decisions | the orchestrator thread; Jun for what only Jun takes | The run raises an escalation and waits; `crw flow answer` applies the answer. The thread does not release, accept or integrate a node the run owns |
+| Acceptance and integration | the run, through the relay's DAG scheduler | The run holds the plan's coordinator epoch, so a transition written by another hand is refused by the epoch fence (`stale_coordinator_epoch`) and raised as an escalation, and the run does not take it over |
+| The PABCD state machine | nobody in a flow-managed node | The executor and an oversized child start no PABCD state machine. The standalone PABCD rules are unchanged: a task that is not a flow-managed node keeps its own phases |
+
+### The high-risk procedure of a C4 issue
+
+An issue that [crw-dev](../../crw-dev/SKILL.md) classifies as C4 runs in the flow in this order. The numbered steps are the run's own lane; none is a thread's choice.
+
+1. The architect DESIGN of the milestone.
+2. The pre-build design audit, by a reviewer of another model family than the architect, before any executor starts. `needs_changes` returns to the architect on its own thread, and a replan is audited again. Only an approved DESIGN reaches an executor.
+3. The candidate review of each issue: a fresh reviewer, of another model family than the issue's authors, over each executor head that passed its verification.
+4. After the issues are integrated, the final gate with full verification and the risk record, then reviewer-final over the integrated range.
+
+Reviewer-final does not replace the pre-build design audit: it rules on a range that is already built, and step 2 exists to stop a flawed design before any executor writes it. Neither does it replace step 3.
+
 ## The preview and the five facts
 
 `crw flow start` prints, before it starts anything, what the run will do and whether the way back to the orchestrator thread works. The five facts are each pass or fail with the reading behind it: (1) the assignment is routed to this thread; (2) the delivery service has ticked and has delivered; (3) the thread can be reached (its approval policy and goal state); (4) every disposition the run waits in can produce a delivery; (5) an unattended idle thread was woken into a turn in this scope. A run that cannot reach its owner would wait unseen, so a failed fact stops the start unless `--force` is given.
 
 ## Answers and waits
 
-A wait for a decision (`crw.decide`) ends the lane's work for the run; the run goes on with that wait only when its journal holds the `decision_applied` row for the question. `crw flow answer` appends that row after it compared the record with the journal; the record (written by the manager) and the row (written for the run) are two facts. The journal holds the evidence of an applied answer, and the relay's `decision-apply` is for the oversized child's relationship only.
+A wait for a decision (`crw.decide`) ends the lane's work for the run; the run goes on with that wait only when its journal holds the `decision_applied` row for the question. `crw flow answer` appends that row after it compared the record with the journal; the record (written by the manager with `crw relay decision-answer`) and the row (written for the run) are two facts. The journal holds the evidence of an applied answer, and the relay's `decision-apply` is for the oversized child's relationship only.
 
 ## The night batch
 

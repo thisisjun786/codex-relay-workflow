@@ -5,6 +5,8 @@ remove inapplicable items instead of sending placeholders. Embed the acceptance
 criteria unless the worker's access to the linked issue has been established;
 another task may not have the same connectors.
 
+The packets below are for an issue child of a plan with no run. The child of an oversized issue that a flow run releases runs the `issue-lane` workflow and starts no PABCD state machine, so the thread sends it no packet ([who owns control](../../crw-canon/references/flow.md#who-owns-control-in-a-flow-managed-run)).
+
 ## Child task titles
 
 Name each managed issue task as `ISSUE-ID · descriptive task title`,
