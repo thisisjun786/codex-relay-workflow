@@ -142,7 +142,7 @@ func capture(t *testing.T, s scenario) {
 		case "create":
 			in := bridge.CreateThread{RequestID: action[1].(string), CWD: root, Title: action[2].(string), Model: action[3].(string), Effort: "medium", Sandbox: "read-only", Role: action[4].(string)}
 			if in.Role == "child" {
-				in.Sandbox = "danger-full-access" // a relay child is created writable (CRW-1286)
+				in.Sandbox = "danger-full-access" // a relay child is created writable (CRW-1296)
 			}
 			r, e := a.Create(context.Background(), in)
 			actionErr = e

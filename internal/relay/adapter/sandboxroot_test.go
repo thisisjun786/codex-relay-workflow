@@ -43,7 +43,7 @@ func workspaceWrite(writable ...string) map[string]any {
 }
 
 // relayChildSandbox is the workspace-write sandbox the fixtures create a relay child in: with network access, so the child
-// reaches the relay daemon's socket, as bridge creation requires (CRW-1286).
+// reaches the relay daemon's socket, as bridge creation requires (CRW-1296).
 func relayChildSandbox() map[string]any {
 	sandbox := workspaceWrite()
 	sandbox["networkAccess"] = true

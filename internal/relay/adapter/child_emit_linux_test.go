@@ -551,3 +551,42 @@ func TestAChildIntentNamingTheDaemonsStoreByAnotherSpellingIsRecorded(t *testing
 		t.Fatalf("the daemon's store named through a symbolic link was not recorded in: %v %v", result, err)
 	}
 }
+
+// CRW-1289: where the Python relay answered a claim or a disposition whose intent names a store in a state directory it
+// cannot read with the store's refusal, the daemon serves its own store only: it refuses the command before a marker
+// is published, and nothing is recorded (the intent-store-state-unreadable goldens hold the child's side).
+func TestTheDaemonRefusesAChildIntentNamingAnUnreadableStore(t *testing.T) {
+	for _, command := range [][]string{{"intent-claim", "--dispatch-request-id", "dispatch-1", "--first-turn", "turn-dispatch-1"}, {"intent-disposition", "--turn", "turn-dispatch-1", "--outcome", "blocked_needs_input"}} {
+		t.Run(command[0], func(t *testing.T) {
+			state, database, host := blockedChildWorld(t)
+			marker, workspace := filepath.Join(filepath.Dir(state), "markers"), filepath.Dir(state)
+			t.Setenv(delivery.MarkerEnv, marker)
+			other := filepath.Join(t.TempDir(), "state")
+			_ = seedIntake(t, filepath.Join(other, "relay.sqlite3"), filepath.Dir(other))
+			if _, err := delivery.DeclareIntent(context.Background(), marker, delivery.IntentDeclaration{Workspace: workspace, DispatchRequestID: "dispatch-1", IssueKey: "REL-1", DBPath: filepath.Join(other, "relay.sqlite3")}); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(other, 0); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = os.Chmod(other, 0o700) })
+			assignment, err := delivery.AssignmentDir(marker, workspace, delivery.AssignmentID("dispatch-1"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, _ := os.ReadDir(assignment)
+			control, err := service.ListenControlStore(context.Background(), state, database, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer control.Close()
+			result, err := readonlyCommand(t, state, host, append(command, "--workspace", workspace, "--assignment", delivery.AssignmentID("dispatch-1"), "--session", "01child-task")...)
+			after, _ := os.ReadDir(assignment)
+			var exit *exec.ExitError
+			if !errors.As(err, &exit) || exit.ExitCode() != 3 || !strings.Contains(fmt.Sprint(result["detail"]), "the daemon's own store") || len(after) != len(before) ||
+				countRows(t, database, "SELECT COUNT(*) FROM events")+countRows(t, database, "SELECT COUNT(*) FROM reporting_sessions") != 0 {
+				t.Fatalf("a child intent naming an unreadable store must be refused before any marker or record: %v %v, markers %d -> %d", result, err, len(before), len(after))
+			}
+		})
+	}
+}

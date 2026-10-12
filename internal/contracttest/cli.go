@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
@@ -193,7 +194,7 @@ func runStep(t *testing.T, binary, home string, step, results map[string]any) (m
 		}
 		command.Stdin = bytes.NewReader(encoded)
 	}
-	if len(argv) > 0 && dispatch.ChildCommand(argv[0]) {
+	if line := argparse.Parse("", argv).Remaining; len(line) > 0 && dispatch.ChildCommand(line[0]) {
 		// A child command reports through the relay daemon of the case's state, which runs it there (CRW-1289).
 		defer testsupport.ChildOwner(t, filepath.Join(home, "state"), command.Dir, command.Env)()
 	}
