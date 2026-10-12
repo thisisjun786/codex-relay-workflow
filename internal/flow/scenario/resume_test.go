@@ -276,3 +276,34 @@ func TestQuotaPauseResumeRunsOnlyHeldCall(t *testing.T) {
 	}
 	_ = json.Marshal
 }
+
+// A close that judged a tip is not the close of a target that moved on after it, even when no lane changed: the target gets a commit
+// of another actor, and the resume runs the close and the report again over the new tip - and nothing else.
+func TestMilestoneCloseRunsAgainWhenTheTargetMovedOn(t *testing.T) {
+	l := NewLab(t, twoNodes()...)
+	if first := mustRun(t, l); first.State != "closed" {
+		t.Fatalf("state %q", first.State)
+	}
+	oldTip := l.Tip()
+	moved := l.Git("commit-tree", l.Git("rev-parse", oldTip+"^{tree}"), "-p", oldTip, "-m", "another actor moved the target")
+	l.Git("update-ref", IntegrationRef, moved)
+
+	before := l.LastSeq()
+	l.NewProcess("proc-2")
+	got := Value[laneResult](t, l.Resume())
+	if got.State != "closed" || got.Tip != moved {
+		t.Fatalf("resume: %+v, the target is at %s", got, moved)
+	}
+	var live []string
+	for _, ev := range rowsAfter(l, before) {
+		if ev.Kind == engine.KindCall && ev.Event == engine.EvCompleted && strings.HasPrefix(ev.Op, "crw.") && ev.Op != "crw.classify" {
+			live = append(live, ev.Op)
+		}
+	}
+	if !slices.Equal(live, []string{"crw.milestoneClose", "crw.reportUp"}) {
+		t.Errorf("live operations %v", live)
+	}
+	if turns := turnsSince(l, before); len(turns) != 0 {
+		t.Errorf("live agent turns %+v", turns)
+	}
+}

@@ -50,14 +50,14 @@ func TestSizeFitChildReleasesIssueChild(t *testing.T) {
 	if l.Relay.SlotHeld("A") {
 		t.Errorf("a slot is held for the child node")
 	}
-	var spawned bool
+	seen := map[string]bool{}
 	for _, r := range l.SpawnRows() {
-		if r.Rule == ops.RuleChild2 && r.Decision == "spawn" && r.Node == "A" {
-			spawned = true
+		if r.Decision == "spawn" && r.Node == "A" {
+			seen[r.Rule] = true
 		}
 	}
-	if !spawned {
-		t.Errorf("no SP-CHILD-2 spawn decision: %+v", l.SpawnRows())
+	if !seen[ops.RuleChild2] || !seen[ops.RuleChild1] || seen[ops.RuleExec1] {
+		t.Errorf("decisions of A: %v: want the signal (SP-CHILD-2) and the child's spawn (SP-CHILD-1), and no executor", seen)
 	}
 	if rows := l.Rows("crw.releaseChild"); len(rows) != 1 || str(rows[0].Data, "child") != "child-A" {
 		t.Errorf("releaseChild rows %+v", rows)
@@ -408,4 +408,25 @@ func TestUnreleasedNodeIsReleasedOnResume(t *testing.T) {
 	if !slices.Equal(l.Relay.Landed, []string{landed, waiting}) {
 		t.Errorf("landed %v", l.Relay.Landed)
 	}
+}
+
+// A verification that could not run (the verifier is not installed, it left no record) is not a failed verification: the node is
+// held, nothing is fixed, no reviewer is called and no tier evidence is counted.
+func TestVerificationThatCannotRunHoldsNoTierStep(t *testing.T) {
+	l := NewLab(t, oneNode()...)
+	l.Verify.Unavailable = map[string]bool{"A": true}
+	got := mustRunIncomplete(t, l)
+	if state, reason := laneOf(t, got, "A"); state != "held" || reason != "verify_unavailable" {
+		t.Fatalf("lane A: %s %s", state, reason)
+	}
+	if labels := l.Labels(); !slices.Equal(labels, []string{"architect", "design-audit:r1", "build:A:executor"}) {
+		t.Fatalf("calls %v", labels)
+	}
+	if rows := l.Rows("crw.verify"); len(rows) != 1 || rows[0].Data["ran"] != false || rows[0].Data["ok"] != false {
+		t.Errorf("verify rows %+v", rows)
+	}
+	if rows := l.Rows("crw.hold"); len(rows) != 1 || str(rows[0].Data, "reason") != "verify_unavailable" {
+		t.Errorf("hold rows %+v", rows)
+	}
+	noTierStep(t, l)
 }

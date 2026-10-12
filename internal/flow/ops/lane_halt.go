@@ -187,6 +187,13 @@ func (o *releaseChildOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 		return engine.OpResult{}, err
 	}
 	out := ChildOutcome{Started: res.Started, Node: node, Child: res.Child, Reason: res.Reason}
+	if res.Started {
+		// the structural spawn of the child (SP-CHILD-1); the signal that sized the node for it (SP-CHILD-2) is the lane's own decision
+		info := DecisionInfo{Node: node, Role: "child", Reason: plan.SizeReason, Inputs: map[string]any{"child": res.Child, "revision": plan.Revision}}
+		if err := o.l.d.Decisions.AppendSpawn(ctx, o.l.spawnRow(req, RuleChild1, DecisionSpawn, info, "child")); err != nil {
+			return engine.OpResult{}, err
+		}
+	}
 	return engine.OpResult{Result: result(out), Data: map[string]any{
 		"node": node, "plan": planID, "milestone": ms, "child": res.Child, "revision": plan.Revision, "design_digest": plan.DesignDigest, "size_reason": plan.SizeReason, "started": res.Started,
 	}}, nil

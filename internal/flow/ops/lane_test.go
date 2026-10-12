@@ -14,6 +14,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/acceptance/premerge"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -589,5 +590,23 @@ return out`
 	ev, _ := got["evidence"].(map[string]any)
 	if ev["letter"] != "d" || ev["rounds"] != float64(4) || len(ev["reviewer_calls"].([]any)) != 4 {
 		t.Errorf("evidence %v", ev)
+	}
+}
+
+// The reasons the lane closes an execution and holds a node with are the closed reasons of AgentClose (R07): the node given up
+// returns its slot, a recovery hold closes nothing.
+func TestCloseReasonsAreTheOnesOfAgentClose(t *testing.T) {
+	want := []string{dagsched.AgentEscalationTiersExhausted, dagsched.AgentEscalationBlockedScope, dagsched.AgentEscalationSizeSplit}
+	var got []string
+	for r := range closingReasons {
+		got = append(got, r)
+	}
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("closing reasons %v, AgentClose gives up a node for %v", got, want)
+	}
+	if holdDispatchUnknown != dagsched.AgentHoldDispatchUnknown || holdHostFailure != dagsched.AgentHoldHostFailure {
+		t.Errorf("hold reasons %q %q, AgentClose holds for %q %q", holdDispatchUnknown, holdHostFailure, dagsched.AgentHoldDispatchUnknown, dagsched.AgentHoldHostFailure)
 	}
 }
