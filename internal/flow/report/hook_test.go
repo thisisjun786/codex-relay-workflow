@@ -167,3 +167,29 @@ func (c *countingHook) RunFinished(ctx context.Context, run, status string) erro
 	c.status = status
 	return c.RunHook.RunFinished(ctx, run, status)
 }
+
+// A completion notice that is on record is not sent again: the queue path of send-parent writes the notice anew once the pump flushed it,
+// and a notice that came back with another one would wake the parent a second time. The check is made before the send, not after it.
+// (post-evaluation d8)
+func TestRunFinishedDoesNotSendARecordedCompletionAgain(t *testing.T) {
+	w := newWorld(t)
+	h := w.hook()
+	if err := h.RunFinished(ctx, testRun, "completed"); err != nil {
+		t.Fatal(err)
+	}
+	// an unchanged resume finishes the run again, by a hook that never saw the first send (a new process)
+	h2 := w.hook()
+	if err := h2.RunFinished(ctx, testRun, "completed"); err != nil {
+		t.Fatal(err)
+	}
+	if sent := w.sender.parentSent(); len(sent) != 1 {
+		t.Fatalf("the completion went out %d times: %+v", len(sent), sent)
+	}
+	// another status is another completion
+	if err := h2.RunFinished(ctx, testRun, "script_error"); err != nil {
+		t.Fatal(err)
+	}
+	if sent := w.sender.parentSent(); len(sent) != 2 || len(w.rows(KindCompletionNotice)) != 2 {
+		t.Errorf("sent %d, rows %d", len(sent), len(w.rows(KindCompletionNotice)))
+	}
+}

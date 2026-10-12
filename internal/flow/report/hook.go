@@ -53,6 +53,10 @@ func (h *RunHook) RunFinished(ctx context.Context, _, status string) error {
 		return firstError(err, rerr)
 	}
 	key := "done:" + h.Run + ":" + digestOfRows(h.Journal.Events(), status)
+	if told, terr := h.recorded(ctx, KindCompletionNotice, "notice_key", key); terr != nil || told {
+		// the completion of this run in this state was told: the send-parent queue path writes a flushed notice again, so it is not asked
+		return firstError(err, terr)
+	}
 	text := fmt.Sprintf("[crw flow] run finished run=%s workflow=%s status=%s digest=%s", h.Run, run.Workflow, status, key[strings.LastIndex(key, ":")+1:])
 	res, serr := h.send(ctx, run.Actor, "done-"+shortHash(key), text)
 	if serr != nil {
@@ -63,6 +67,20 @@ func (h *RunHook) RunFinished(ctx context.Context, _, status string) error {
 		err = firstError(err, aerr)
 	}
 	return err
+}
+
+// recorded says whether a row of the kind carries the value in its member key: in the run's journal, else in the store (any run).
+func (h *RunHook) recorded(ctx context.Context, kind, key, value string) (bool, error) {
+	for _, ev := range h.Journal.Events() {
+		if ev.Kind == engine.KindFlow && ev.Event == kind && fmt.Sprint(ev.Data[key]) == value {
+			return true, nil
+		}
+	}
+	var n int
+	if err := h.Store.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM flow_events WHERE kind = ? AND json_extract(payload_json, '$.'||?) = ?`, kind, key, value).Scan(&n); err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 func (h *RunHook) reconcile(ctx context.Context) error {
