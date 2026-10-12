@@ -55,6 +55,10 @@ func DetachedCommand(self string, req SpawnRequest, log *os.File) *exec.Cmd {
 	return cmd
 }
 
+// executable is the program a run process is started from: this one. A variable so that a test starts the built binary instead of
+// the test binary.
+var executable = os.Executable
+
 // markInherited keeps the caller's descriptors out of the process (internal/relay/fdsweep): a descriptor the caller holds, a lock
 // it took with `exec 9>lock` for one, would be held by the run for as long as it lives. A variable so that a check can make it fail.
 var markInherited = fdsweep.MarkInherited
@@ -62,7 +66,7 @@ var markInherited = fdsweep.MarkInherited
 // SpawnDetached starts the process of a run and lets go of it. The caller's descriptors are marked close-on-exec first; when that
 // cannot be done the run is not started.
 func SpawnDetached(ctx context.Context, req SpawnRequest) (int, error) {
-	self, err := os.Executable()
+	self, err := executable()
 	if err != nil {
 		return 0, err
 	}
@@ -86,18 +90,20 @@ func SpawnDetached(ctx context.Context, req SpawnRequest) (int, error) {
 	return pid, nil
 }
 
-// AwaitLock waits until the process of a run holds the run lock; it says so when the process ended first.
-func AwaitLock(ctx context.Context, state, run string, pid int) error {
+// AwaitLock waits until the process of a run holds the run lock, or has ended after leaving a result (a run that finished before
+// the first look), and says so when the process ended without either. since is the time the process was started at.
+func AwaitLock(ctx context.Context, state, run string, pid int, since time.Time) error {
 	deadline := time.Now().Add(15 * time.Second)
 	for {
 		if LockHeld(state, run) {
 			return nil
 		}
-		if pid > 1 {
-			if err := syscall.Kill(pid, 0); err != nil {
-				// a process that ended before it took the lock left its reason in the log
-				return fmt.Errorf("process %d ended before it held the run: %s", pid, logTail(state, run))
+		if processGone(pid) {
+			// the lock may have been taken and released between two looks: a result written since the start says so
+			if info, err := os.Stat(resultPath(state, run)); err == nil && !info.ModTime().Before(since.Add(-time.Second)) {
+				return nil
 			}
+			return fmt.Errorf("process %d ended before it held the run: %s", pid, logTail(state, run))
 		}
 		if time.Now().After(deadline) {
 			return fmt.Errorf("process %d did not take the run lock in time: %s", pid, logTail(state, run))
@@ -108,6 +114,21 @@ func AwaitLock(ctx context.Context, state, run string, pid int) error {
 		case <-time.After(50 * time.Millisecond):
 		}
 	}
+}
+
+// processGone says whether a process has ended: it does not exist, or it is a zombie its parent has not waited for (the command
+// that started a run does not wait for it).
+func processGone(pid int) bool {
+	if pid <= 1 {
+		return false
+	}
+	if raw, err := os.ReadFile("/proc/" + itoa(pid) + "/stat"); err == nil {
+		// the state is the field after the command's closing parenthesis
+		if i := bytes.LastIndexByte(raw, ')'); i >= 0 && i+2 < len(raw) {
+			return raw[i+2] == 'Z' || raw[i+2] == 'X'
+		}
+	}
+	return syscall.Kill(pid, 0) != nil
 }
 
 func logTail(state, run string) string {

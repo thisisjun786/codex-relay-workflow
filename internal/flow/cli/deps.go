@@ -29,7 +29,7 @@ type Deps struct {
 	// World opens what the process of a run works on: its journal, its backend and its operations.
 	World WorldFunc
 	// Ready waits until the process of a run holds the run lock, or says why it does not; nil does not wait.
-	Ready func(ctx context.Context, state, run string, pid int) error
+	Ready func(ctx context.Context, state, run string, pid int, since time.Time) error
 }
 
 // Default is the Deps of the shipped binary.

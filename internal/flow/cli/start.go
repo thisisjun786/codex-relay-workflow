@@ -238,12 +238,13 @@ func (c *command) start(args []string) int {
 		return c.fail("the run's spec cannot be written: %v", err)
 	}
 	dir, _ := os.Getwd()
+	spawned := c.now()
 	pid, err := c.Spawn(c.ctx, SpawnRequest{Spec: spec, State: sel.Path, Dir: dir})
 	if err != nil {
 		return c.fail("the run process cannot be started: %v", err)
 	}
 	if c.Ready != nil {
-		if err := c.Ready(c.ctx, sel.Path, spec.RunID, pid); err != nil {
+		if err := c.Ready(c.ctx, sel.Path, spec.RunID, pid, spawned); err != nil {
 			return c.fail("run %s: %v", spec.RunID, err)
 		}
 	}

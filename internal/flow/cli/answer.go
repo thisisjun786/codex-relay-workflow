@@ -146,12 +146,13 @@ func (c *command) resumeDetached(state, run string) (int, error) {
 		return 0, err
 	}
 	dir, _ := os.Getwd()
+	spawned := c.now()
 	pid, err := c.Spawn(c.ctx, SpawnRequest{Spec: spec, State: state, Resume: true, Dir: dir})
 	if err != nil {
 		return 0, err
 	}
 	if c.Ready != nil {
-		if err := c.Ready(c.ctx, state, run, pid); err != nil {
+		if err := c.Ready(c.ctx, state, run, pid, spawned); err != nil {
 			return pid, err
 		}
 	}

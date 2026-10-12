@@ -58,12 +58,13 @@ func (c *command) resume(args []string) int {
 			return c.fail("%v %s", ErrRunLive, run)
 		}
 		dir, _ := os.Getwd()
+		spawned := c.now()
 		pid, err := c.Spawn(c.ctx, SpawnRequest{Spec: spec, State: sel.Path, Resume: true, Dir: dir})
 		if err != nil {
 			return c.fail("the run process cannot be started: %v", err)
 		}
 		if c.Ready != nil {
-			if err := c.Ready(c.ctx, sel.Path, run, pid); err != nil {
+			if err := c.Ready(c.ctx, sel.Path, run, pid, spawned); err != nil {
 				return c.fail("run %s: %v", run, err)
 			}
 		}
