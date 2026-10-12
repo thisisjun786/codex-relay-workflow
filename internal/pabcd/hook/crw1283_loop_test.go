@@ -113,9 +113,9 @@ func TestReview1283LoopPositionalChange(t *testing.T) {
 	}
 }
 
-// TestReview1283LoopWrapperForwardsArguments: a loop whose body only assigns variables does not change the positional parameters, so
-// the wrapper forwards its arguments in every iteration (the shape of heavy_slot.sh, the CRW-1283 reproduction) and the reader reads
-// them; a protected command forwarded the same way stays refused.
+// TestReview1283LoopWrapperForwardsArguments: plan C (Sion 10-13) withdrew the reading of a forwarded "$@": a loop wrapper (the shape
+// of heavy_slot.sh, the CRW-1283 reproduction) is refused with a reason that names the path the user can follow, and a protected
+// command forwarded the same way stays refused.
 func TestReview1283LoopWrapperForwardsArguments(t *testing.T) {
 	bodies := map[string]string{
 		"assign_in_while": "while :; do x=1; nice \"$@\"; exit 0; done\n",
@@ -137,8 +137,10 @@ func TestReview1283LoopWrapperForwardsArguments(t *testing.T) {
 				"GOFLAGS=-p=4 TZ=UTC TMPDIR=/scratch/lt/it-guard-rd " + script + " go version",
 				"GOFLAGS=-p=4 TZ=UTC TMPDIR=/scratch/lt/it-guard-rd bash " + script + " go version",
 			} {
-				if site, denied := githubPostJudgeText(command, gh); denied {
-					t.Errorf("github guard refused a loop wrapper that forwards go version: %s: %+v", command, site)
+				// Plan C (Sion 10-13): the forwarded "$@" is not followed; the issue's reproduction is refused as a named limit with
+				// the path the user can follow (trusted wrappers: CRW-1290).
+				if site, denied := githubPostJudgeText(command, gh); !denied || !strings.Contains(site.reason, "run the forwarded command directly") {
+					t.Errorf("github guard did not refuse a loop wrapper with the followable path: %s: %+v", command, site)
 				}
 			}
 			for _, command := range []string{script + " gh pr comment 1 --body x", "bash " + script + " git push origin dev"} {
@@ -150,10 +152,8 @@ func TestReview1283LoopWrapperForwardsArguments(t *testing.T) {
 	}
 }
 
-// TestReview1283LoopWrapperMemoryAndWorktree: the memory and worktree guards read a loop wrapper like the GitHub guard does, and the
-// protected command it forwards stays refused. (The whole of heavy_slot.sh names its lock files from a command substitution, a
-// destination the memory gate cannot determine, and the worktree guard cannot tell that a lock file is not the managed checkout:
-// both refuse it for that, as before; the bodies here keep the loop shape without it.)
+// TestReview1283LoopWrapperMemoryAndWorktree: the memory and worktree guards read a loop wrapper like the GitHub guard does and, since
+// plan C, refuse it whatever it forwards, the protected command included.
 func TestReview1283LoopWrapperMemoryAndWorktree(t *testing.T) {
 	bodies := map[string]string{
 		"assign_in_while": "while :; do x=1; nice \"$@\"; exit 0; done\n",
@@ -168,8 +168,8 @@ func TestReview1283LoopWrapperMemoryAndWorktree(t *testing.T) {
 					continue
 				}
 				for _, command := range []string{"bash " + script + " go version", script + " go version"} {
-					if target.refused(command) {
-						t.Errorf("%s guard refused a loop wrapper that forwards go version: %s", target.name, command)
+					if !target.refused(command) {
+						t.Errorf("%s guard allowed a \"$@\" loop wrapper (plan C): %s", target.name, command)
 					}
 				}
 				for _, command := range []string{"bash " + script + " " + target.command, script + " " + target.command} {

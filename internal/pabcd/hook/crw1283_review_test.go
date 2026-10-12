@@ -99,12 +99,12 @@ func TestReview1283PositionalMutation(t *testing.T) {
 			}
 		})
 	}
-	// Options alone leave the positional parameters as they are: a wrapper that sets them still forwards its arguments.
+	// Plan C (Sion 10-13): the reader no longer follows a forwarded "$@", so a wrapper that sets options alone is refused too.
 	for _, body := range []string{"set -euo pipefail\n\"$@\"\n", "set -u\n\"$@\"\n", "set +x\n\"$@\"\n"} {
 		for _, target := range crw1283Targets(t) {
 			script := crw1283Script(t, target.dir, "options.sh", "#!/bin/bash\n"+body)
-			if target.refused("bash " + script + " go version") {
-				t.Errorf("%s guard refused an option-only set before \"$@\" (body %q)", target.name, body)
+			if !target.refused("bash " + script + " go version") {
+				t.Errorf("%s guard allowed a \"$@\" wrapper after an option-only set (body %q)", target.name, body)
 			}
 			if !target.refused("bash " + script + " " + target.command) {
 				t.Errorf("%s guard ALLOWED the forwarded protected command after an option-only set (body %q)", target.name, body)

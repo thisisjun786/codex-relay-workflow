@@ -44,8 +44,7 @@ func evaluateCommand(command, cwd string, id WorktreeIdentity) GuardVerdict {
 func worktreeDelRead(command, cwd string, cdpath, tainted bool, execution ...shellir.Exec) (shellir.Result, error) {
 	options := shellir.ScriptOptions{Cdpath: cdpath, ExitTainted: tainted, Startup: worktreeDelStartupEnv}
 	if len(execution) > 0 {
-		options.Args = shellIRScriptArgs(execution[0])
-		options.Path = execution[0].SearchPath
+		options.Body, options.Path = true, execution[0].SearchPath
 	}
 	return shellir.AnalyzeScriptProven(command, cwd, options)
 }

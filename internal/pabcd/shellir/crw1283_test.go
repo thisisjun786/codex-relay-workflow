@@ -1,6 +1,9 @@
 package shellir
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestCRW1283UnknownPathDoesNotRecoverTheOldEnvironment(t *testing.T) {
 	lookup := func(name string) (string, bool) { return "/usr/bin:/bin", name == "PATH" }
@@ -15,18 +18,19 @@ func TestCRW1283UnknownPathDoesNotRecoverTheOldEnvironment(t *testing.T) {
 	}
 }
 
-// TestCRW1283LoopArgumentsFollowPositionalChangesOnly: a loop that assigns variables forwards the same "$@" in every iteration (the
-// shape of heavy_slot.sh), one that can change the positional parameters (a zsh positional assignment word among them) does not.
+// TestCRW1283LoopArgumentsFollowPositionalChangesOnly: plan C (Sion 10-13) withdrew the reading of a script's forwarded "$@", so a
+// loop that forwards it is refused whether it only assigns variables (the shape of heavy_slot.sh, refused as a named limit; trusted
+// wrappers are CRW-1290) or can change the positional parameters, and the refusal names the path the user can follow.
 func TestCRW1283LoopArgumentsFollowPositionalChangesOnly(t *testing.T) {
 	lookup := func(string) (string, bool) { return "", false }
-	args := []Word{{Known: true, Value: "go"}, {Known: true, Value: "version"}}
 	for _, body := range []string{
 		"while :; do x=1; nice \"$@\"; rc=$?; exit $rc; done",
 		"for i in 1 2; do start=$(date +%s); ionice -c3 nice \"$@\"; done",
 		"until false; do X=1 env \"$@\"; n=$((n + 1)); cd /tmp; break; done",
 	} {
-		if _, err := AnalyzeScriptEnvArgs(body, "/work", false, lookup, args, nil); err != nil {
-			t.Errorf("a loop that assigns variables lost the arguments: %s: %v", body, err)
+		_, err := AnalyzeScriptBody(body, "/work", false, lookup, nil)
+		if err == nil || !strings.Contains(err.Error(), "run the forwarded command directly") {
+			t.Errorf("a loop that forwards \"$@\" was not refused with the followable path: %s: %v", body, err)
 		}
 	}
 	for _, body := range []string{
@@ -38,25 +42,25 @@ func TestCRW1283LoopArgumentsFollowPositionalChangesOnly(t *testing.T) {
 		"while :; do nice \"$@\"; shift; done",
 		"while :; do nice \"$@\"; for 1 in env; do :; done; done",
 	} {
-		if _, err := AnalyzeScriptEnvArgs(body, "/work", false, lookup, args, nil); err == nil {
+		if _, err := AnalyzeScriptBody(body, "/work", false, lookup, nil); err == nil {
 			t.Errorf("a loop that changes the positional parameters kept the arguments: %s", body)
 		}
 	}
 }
 
-// TestCRW1283ZshParameterBuiltinsEndTheArguments: a zsh builtin that assigns or removes positional parameters (print -v 1, zformat,
-// zparseopts, getln, vared) ends the arguments the reader follows, straight-line and in a loop; print without -v does not.
+// TestCRW1283ZshParameterBuiltinsEndTheArguments: a forwarded "$@" is not followed after a zsh builtin that assigns or removes
+// positional parameters (print -v 1, zformat, zparseopts, getln, vared), straight-line and in a loop, and since plan C not after a
+// print without -v either.
 func TestCRW1283ZshParameterBuiltinsEndTheArguments(t *testing.T) {
 	lookup := func(string) (string, bool) { return "", false }
-	args := []Word{{Known: true, Value: "go"}, {Known: true, Value: "version"}}
 	for _, body := range []string{
 		"print hello; nice \"$@\"",
 		"print -r -- 'a b'; nice \"$@\"",
 		"while :; do print -n x; nice \"$@\"; break; done",
 		"for i in 1 2; do nice \"$@\"; print done; done",
 	} {
-		if _, err := AnalyzeScriptEnvArgs(body, "/work", false, lookup, args, nil); err != nil {
-			t.Errorf("a print without -v lost the arguments: %s: %v", body, err)
+		if _, err := AnalyzeScriptBody(body, "/work", false, lookup, nil); err == nil {
+			t.Errorf("a print without -v forwarded \"$@\": %s", body)
 		}
 	}
 	for _, body := range []string{
@@ -83,7 +87,7 @@ func TestCRW1283ZshParameterBuiltinsEndTheArguments(t *testing.T) {
 		"for i in 1 2; do nice \"$@\"; vared 1; done",
 		"f() { print -v 1 env; }; while :; do nice \"$@\"; f; done",
 	} {
-		if _, err := AnalyzeScriptEnvArgs(body, "/work", false, lookup, args, nil); err == nil {
+		if _, err := AnalyzeScriptBody(body, "/work", false, lookup, nil); err == nil {
 			t.Errorf("a zsh builtin that assigns a positional parameter kept the arguments: %s", body)
 		}
 	}

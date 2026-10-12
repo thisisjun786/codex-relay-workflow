@@ -11,8 +11,8 @@ import (
 )
 
 // CRW-1283 differential fuzz. A grammar composes the forms the relaxations touch ("$@" forwarding wrapper files, program wrappers,
-// PATH assignments, readable script files, program files under names taken from the existing tests, and compositions of two
-// layers) around payloads taken only from crw1283_test.go, crw1283_review_test.go and crw1283_probe_test.go: each guard's
+// PATH assignments, readable script files, program files under names taken from the existing tests, PATH assignments the walk does
+// not follow in order, and compositions of two layers) around payloads taken only from crw1283_test.go, crw1283_review_test.go and crw1283_probe_test.go: each guard's
 // protected command and the benign controls. The corpus is deterministic (full enumeration; the depth-2 sample is drawn with PCG
 // seed 1283) and pinned by fzFamilyCounts. No test runs a command. A form is class target when its payload is a guard's target
 // (git push only behind a wrapper, script or PATH assignment, where the GitHub guard reads it) or an assigned PATH makes a fixture
@@ -32,13 +32,13 @@ import (
 // the base refuses and the head allows is a P0 when its class is target and an intended relaxation when it is benign.
 
 // fzOwnLimit is the forms of class ownlimit the guard allows: a script run by its path is not read by the memory and worktree
-// guards from the command itself unless its body forwards "$@" outside quotes (c007bd50 and the head alike; the CRW-1283 handoff
+// guards from the command itself unless its body forwards "$@" outside quotes (which plan C refuses) (c007bd50 and the head alike; the CRW-1283 handoff
 // names it an open item), and the worktree guard does not read one at any depth, nor a script without a shebang line. The count is
 // pinned so it cannot grow; a form of this class that the head refuses is not counted.
-var fzOwnLimit = map[string]int{"memory": 46, "github": 0, "worktree": 46}
+var fzOwnLimit = map[string]int{"memory": 36, "github": 0, "worktree": 36}
 
-var fzFamilyCounts = map[string]int{"plain": 6, "wrapper": 360, "mutate": 1080, "progwrap": 84, "assignpath": 288, "path": 288, "script": 36, "progfile": 816, "depth2": 1800,
-	"binhdr": 360, "shebang": 384}
+var fzFamilyCounts = map[string]int{"plain": 6, "wrapper": 432, "mutate": 1230, "progwrap": 84, "assignpath": 288, "path": 288, "script": 36, "progfile": 816, "depth2": 1800,
+	"binhdr": 360, "shebang": 384, "pathlate": 408}
 
 // fzDepth2Pairs is the depth-2 sample size; CRW1283_FUZZ_PAIRS=all runs every pair (an exhaustive search; the pinned counts and the
 // pinned limit are then not asserted).
@@ -120,7 +120,17 @@ var fzMutants = [][2]string{{"set -- {C}\n\"$@\"\n", "true"}, {"set -e -- {C}\n\
 	{"while :; do x=1; nice \"$@\"; noglob shift; done\n", "true {C}"},
 	// the last element of a pipeline runs in the current shell in zsh
 	{"echo env | read 1\n\"$@\"\n", "true {C}"}, {"true | shift\n\"$@\"\n", "true {C}"},
-	{"while :; do nice \"$@\"; echo env | read 1; done\n", "true {C}"}}
+	{"while :; do nice \"$@\"; echo env | read 1; done\n", "true {C}"},
+	// print -f, -C, -x and -X take an argument before -v, and zsh's read name?prompt assigns $1 (the final verification of 93890d32)
+	{"print -f %s -v 1 env\n\"$@\"\n", "true {C}"}, {"print -C 1 -v 1 env\n\"$@\"\n", "true {C}"}, {"print -X 4 -v argv {C}\n\"$@\"\n", "true"},
+	{"while :; do nice \"$@\"; print -x 4 -v 1 env; done\n", "true {C}"}, {"while :; do nice \"$@\"; read 1\\?p <<<env; done\n", "true {C}"}}
+
+// fzLate are PATH assignments the walk does not follow in order (the final verification of 93890d32): after the program in a loop,
+// the last element of a pipeline (zsh runs it in the current shell), a DEBUG trap, a function zsh or a trap runs, a sourced file and
+// eval. {V} is the PATH value, %s the program the assignment then selects.
+var fzLate = []string{"while :; do %s; export PATH={V}; done", "for i in 1 2; do %s; PATH={V}; done", "while %s; do PATH={V}; done",
+	"true | export PATH={V}; %s", "true | PATH={V}; %s", "trap 'PATH={V}' DEBUG; %s", "f() { export PATH={V}; }; trap f DEBUG; %s",
+	"TRAPDEBUG() { PATH={V}; }; %s", "chpwd() { PATH={V}; }; cd /tmp; %s", "precmd() { PATH={V}; }; %s", ". {L}; %s", "eval 'export PATH={V}'; %s"}
 
 // fzShebangs are scripts whose #! line launches the interpreter fzShebangProgs names through env (the evaluation of deb45bd1, d2): the
 // assigned PATH selects the interpreter, whose body in the evil fixture directory is the target. fzBinValues are the PATH values of
@@ -130,7 +140,7 @@ var fzShebangProgs = []string{"bash", "python3", "bash", "node"}
 var fzBinValues = []string{"{B}", "{B}:/usr/bin:/bin", "/usr/bin:/bin:{B}", "{L}:/usr/bin:/bin", "/usr/bin:/bin"}
 var fzBinProgs = []string{"check", "linked", "static-sh"}
 
-var fzRunModes = []string{"bash %s ", "sh %s ", "%s ", ". %s ", "source %s "}
+var fzRunModes = []string{"bash %s ", "sh %s ", "%s ", ". %s ", "source %s ", "zsh %s "}
 var fzScriptModes = []string{"bash %s", "sh %s", ". %s", "source %s", "%s", "%s"}
 var fzProgWraps = []string{"ionice -c3 ", "nice ", "nice -n 5 ", "env ", "env -i ", "env X=1 ", "timeout 60 ", "timeout -k 5 60 ", "nohup ",
 	"exec ", "command ", "ionice -c3 nice -n 5 ", "env -u FOO TZ=UTC ", "GOFLAGS=-p=4 TZ=UTC "}
@@ -214,7 +224,7 @@ func (g *fzGuard) setup() {
 		g.write(fmt.Sprintf("w%d.sh", i), strings.ReplaceAll(body, "{W2}", w2))
 	}
 	for _, name := range fzNames {
-		g.write("ben/"+name, "#!/bin/sh\nprintf ok\n")
+		g.write("ben/"+name, "#!/bin/sh\n:\n")
 		g.write("evil/"+name, "#!/bin/sh\n"+g.payloads[0].cmd+"\n")
 	}
 	shell, err := os.ReadFile("/bin/sh")
@@ -337,6 +347,19 @@ func (g *fzGuard) forms() (all []fzForm, counts map[string]int) {
 			}
 		}
 	}
+	for k, late := range fzLate {
+		for _, dir := range []string{"evil", "ben"} {
+			value := filepath.Join(g.dir, dir) + ":/usr/bin:/bin"
+			sourced := g.write(fmt.Sprintf("late-%s.sh", dir), "PATH="+value+"\n")
+			for _, name := range fzNames {
+				if cmd := fzFixture[name]; cmd != "" {
+					c := fzCmd{cmd: fmt.Sprintf(strings.NewReplacer("{V}", value, "{L}", sourced).Replace(late), cmd), path: value, deep: true}
+					c.desc = fmt.Sprintf("late%d.%s", k, dir)
+					add("pathlate", fzPayload{id: "file-" + name, cmd: cmd, prog: name}, c)
+				}
+			}
+		}
+	}
 	var pairs [][2]fzLayer
 	for _, outer := range []string{"wrapper", "progwrap", "path", "script", "mutate"} {
 		for _, o := range fzLayers(outer) {
@@ -386,7 +409,7 @@ func fzGuards(t *testing.T) []*fzGuard {
 }
 
 // TestCRW1283GuardFuzz: the corpus keeps its pinned size, every form carrying a guard's target is refused, and the intended
-// relaxations (a heavy_slot-shaped wrapper running go test, a PATH assignment with go, a readable script without a target) still allow.
+// relaxations (a program wrapper running go test, a PATH assignment with go, a readable script without a target) still allow.
 func TestCRW1283GuardFuzz(t *testing.T) {
 	t.Setenv("HOME", cleanTempDir(t))
 	t.Setenv("PATH", "/usr/bin:/bin")
@@ -439,8 +462,8 @@ func TestCRW1283GuardFuzz(t *testing.T) {
 	}
 }
 
-// controls: the intended relaxations still allow: a heavy_slot-shaped wrapper running go test, a PATH assignment with go (the
-// toolchain the starting PATH runs), a PATH of system directories, and a readable script without a target.
+// controls: the intended relaxations still allow: a program wrapper, a PATH assignment with go (the toolchain the starting PATH runs),
+// a PATH of system directories, and a readable script without a target; plan C refuses the heavy_slot-shaped "$@" script wrapper.
 func (g *fzGuard) controls() {
 	tool := filepath.Join(g.dir, "toolchain")
 	program, err := os.ReadFile("/usr/bin/true")
@@ -452,7 +475,12 @@ func (g *fzGuard) controls() {
 	}
 	g.t.Setenv("PATH", tool+":/usr/bin:/bin")
 	slot := filepath.Join(g.dir, "w2.sh")
-	for _, control := range []string{"bash " + slot + " go test ./...", slot + " go version", "PATH=" + tool + ":/usr/bin:/bin go version",
+	for _, refused := range []string{"bash " + slot + " go test ./...", slot + " go version"} {
+		if !g.refused(refused) {
+			g.t.Errorf("%s guard allowed the \"$@\" script wrapper plan C refuses: %s", g.name, refused)
+		}
+	}
+	for _, control := range []string{"ionice -c3 nice -n 5 go test ./...", "PATH=" + tool + ":/usr/bin:/bin go version",
 		"export PATH=" + tool + ":/usr/bin:/bin; go version", "PATH=/usr/bin:/bin printf x", "bash " + g.write("control.sh", "go version\n"),
 		"PATH=" + tool + ":/usr/bin:/bin " + filepath.Join(g.dir, "sb0")} {
 		if g.refused(control) {

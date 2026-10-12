@@ -90,8 +90,8 @@ func TestReview1283ZshParameterBuiltins(t *testing.T) {
 }
 
 // TestReview1283ZshParameterBuiltinControls: print without the option that assigns a variable, and the other builtins that name no
-// parameter, leave the arguments as they are: a wrapper that uses them still forwards what it was given, and the protected command it
-// forwards stays refused.
+// parameter, leave the arguments as they are; since plan C (Sion 10-13) the reader does not follow a forwarded "$@" at all, so a
+// wrapper that uses them is refused whatever it forwards, the protected command included.
 func TestReview1283ZshParameterBuiltinControls(t *testing.T) {
 	bodies := []string{
 		"print hello\nnice \"$@\"\n",
@@ -110,8 +110,8 @@ func TestReview1283ZshParameterBuiltinControls(t *testing.T) {
 				}
 				script := crw1283Script(t, target.dir, "zshctl.sh", "#!/bin/bash\n"+body)
 				for _, command := range []string{"bash " + script + " go version", script + " go version"} {
-					if target.refused(command) {
-						t.Errorf("%s guard refused a wrapper that prints and forwards go version: %s (body %q)", target.name, command, body)
+					if !target.refused(command) {
+						t.Errorf("%s guard allowed a \"$@\" wrapper that prints (plan C): %s (body %q)", target.name, command, body)
 					}
 				}
 				for _, command := range []string{"bash " + script + " " + target.command, script + " " + target.command} {
@@ -122,8 +122,8 @@ func TestReview1283ZshParameterBuiltinControls(t *testing.T) {
 			}
 			gh, _, _ := gateScene(t)
 			script := crw1283Script(t, gh, "zshctl.sh", "#!/bin/bash\n"+body)
-			if site, denied := githubPostJudgeText("bash "+script+" go version", gh); denied {
-				t.Errorf("github guard refused a printing wrapper that forwards go version: %+v (body %q)", site, body)
+			if site, denied := githubPostJudgeText("bash "+script+" go version", gh); !denied {
+				t.Errorf("github guard allowed a \"$@\" wrapper that prints (plan C): %+v (body %q)", site, body)
 			}
 			if _, denied := githubPostJudgeText("bash "+script+" gh pr comment 1 --body x", gh); !denied {
 				t.Errorf("github guard ALLOWED a post forwarded by a printing wrapper (body %q)", body)

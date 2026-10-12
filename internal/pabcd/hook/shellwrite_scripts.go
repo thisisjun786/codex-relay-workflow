@@ -25,18 +25,8 @@ func shellIRScriptUsesArgs(body string) bool {
 	return found
 }
 
-// shellIRScriptArgs is the positional parameters a script file starts with: the operands its record carries. Behind xargs, find
-// -exec and the other feeds the operands arrive at run time, so they are not known (nil: "$@" stays unreadable).
-func shellIRScriptArgs(execution shellir.Exec) []shellir.Word {
-	if execution.Ctx.Feed != nil || execution.Ctx.RuntimeCarrier != "" {
-		return nil
-	}
-	if execution.Kind == shellir.KindScriptFile {
-		return execution.Args
-	}
-	return append([]shellir.Word{}, execution.Args...)
-}
-
+// shellIRDirectForwarder: a shell file run by its path whose body forwards "$@" is read by the memory and worktree guards, so that the
+// forward the reader does not follow refuses it (CRW-1283 plan C).
 func shellIRDirectForwarder(execution shellir.Exec) bool {
 	if !githubPostDirectPath(execution) {
 		return false
@@ -63,12 +53,12 @@ func shellIRScriptDests(e shellir.Exec, cwd string, lookup func(string) (string,
 		return unknown
 	}
 	read, dir := func(body, dir string, cdpath bool) (shellir.Result, error) {
-		return shellir.AnalyzeScriptEnvArgs(body, dir, cdpath, lookup, shellIRScriptArgs(e), e.SearchPath)
+		return shellir.AnalyzeScriptBody(body, dir, cdpath, nil, e.SearchPath)
 	}, e.Dir.Path
 	if resolve {
 		// The script inherits what the text that runs it did to exit and cd (CRW-1165), and the environment the gate is given.
 		read = func(body, dir string, cdpath bool) (shellir.Result, error) {
-			return shellir.AnalyzeScriptProven(body, dir, shellir.ScriptOptions{Cdpath: cdpath, ExitTainted: e.ExitTainted, Startup: lookup, Lookup: lookup, Args: shellIRScriptArgs(e), Path: e.SearchPath})
+			return shellir.AnalyzeScriptProven(body, dir, shellir.ScriptOptions{Cdpath: cdpath, ExitTainted: e.ExitTainted, Startup: lookup, Body: true, Path: e.SearchPath})
 		}
 		if !e.Dir.Known {
 			dir = ""

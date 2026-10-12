@@ -29,7 +29,7 @@ func newMemoryShellAnalysis(command, dir string, lookup host.LookupEnv) *memoryS
 func memoryPlainReading(lookup host.LookupEnv) func(string, string) (shellir.Result, error) {
 	return func(command, dir string) (shellir.Result, error) {
 		return shellir.AnalyzeEnv(command, dir, func(name string) (string, bool) {
-			if (name == "PYTHONPATH" || name == "PATH") && lookup != nil {
+			if name == "PYTHONPATH" && lookup != nil {
 				return lookup(name)
 			}
 			return "", false

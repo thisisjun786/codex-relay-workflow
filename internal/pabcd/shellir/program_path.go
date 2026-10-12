@@ -11,18 +11,6 @@ import (
 	"mvdan.cc/sh/v3/syntax"
 )
 
-func quotedArgs(word *syntax.Word) bool {
-	if len(word.Parts) != 1 {
-		return false
-	}
-	quoted, ok := word.Parts[0].(*syntax.DblQuoted)
-	if !ok || len(quoted.Parts) != 1 {
-		return false
-	}
-	parameter, ok := quoted.Parts[0].(*syntax.ParamExp)
-	return ok && parameter.Param != nil && parameter.Param.Value == "@" && parameter.Exp == nil && parameter.Slice == nil && parameter.Repl == nil && parameter.Index == nil && parameter.NestedParam == nil && !parameter.Length && !parameter.Width && !parameter.Excl && parameter.Names == 0 && len(parameter.Modifiers) == 0 && parameter.Flags == nil
-}
-
 func pathAssignmentPrefix(word *syntax.Word) string {
 	parts := word.Parts
 	if len(parts) == 1 {
@@ -31,7 +19,7 @@ func pathAssignmentPrefix(word *syntax.Word) string {
 		}
 	}
 	if len(parts) > 0 {
-		if literal, ok := parts[0].(*syntax.Lit); ok && strings.HasPrefix(literal.Value, "PATH=") {
+		if literal, ok := parts[0].(*syntax.Lit); ok && (strings.HasPrefix(literal.Value, "PATH=") || strings.HasPrefix(literal.Value, "PATH+=")) {
 			return "PATH"
 		}
 	}
@@ -40,27 +28,64 @@ func pathAssignmentPrefix(word *syntax.Word) string {
 
 // declaredPath gives a declaration builtin that the walk reaches as a command (an assignment in front of it)
 // the PATH a declaration clause gives: `X=1 export PATH=/dir; prog` runs prog from /dir (CRW-1283, found by the differential fuzz).
-func declaredPath(name string, args []Word, st *state) {
+func declaredPath(name string, args []Word, st *state, ctx Context) error {
 	switch name {
 	case "export", "declare", "typeset", "readonly", "local":
 	default:
-		return
+		return nil
 	}
 	for _, arg := range args {
-		switch {
-		case !arg.Known && arg.AssignmentName == "PATH":
-			st.setVar("PATH", Word{Reason: arg.Reason}, false)
-		case arg.Known:
-			if variable, value, ok := splitAssignment(arg.Value); ok && variable == "PATH" {
-				st.setVar("PATH", Word{Known: true, Value: value}, false)
-			} else if variable, value, ok := splitAssignment(strings.Replace(arg.Value, "PATH+=", "PATH_APPEND=", 1)); ok && variable == "PATH_APPEND" {
-				st.setVar("PATH", Word{Known: true, Value: value}, true)
+		if a, ok := pathWord(arg); ok {
+			if err := checkAssigns([]Assign{a}, st, ctx); err != nil {
+				return err
 			}
-		default:
-			continue
+			st.setVar("PATH", a.Value, a.Append)
 		}
-		st.pathTouched = true
 	}
+	return nil
+}
+
+// pathWord is the assignment to PATH a declaration word makes: PATH=/dir, PATH+=/dir, or a PATH word whose value is not known.
+func pathWord(arg Word) (Assign, bool) {
+	a := Assign{Name: "PATH"}
+	switch {
+	case !arg.Known && arg.AssignmentName == "PATH":
+		a.Value = Word{Reason: arg.Reason}
+	case arg.Known && strings.HasPrefix(arg.Value, "PATH="):
+		a.Value = Word{Known: true, Value: strings.TrimPrefix(arg.Value, "PATH=")}
+	case arg.Known && strings.HasPrefix(arg.Value, "PATH+="):
+		a.Value, a.Append = Word{Known: true, Value: strings.TrimPrefix(arg.Value, "PATH+=")}, true
+	default:
+		return a, false
+	}
+	return a, true
+}
+
+// pathAssignment admits an assignment to PATH only where the reader follows its effect (CRW-1283 plan C, Sion 10-13): a literal
+// value, a PATH the shell starts with that the hook knows (its own environment), and a statement the walk reads in the order the
+// shell runs it. In a script file (a sourced one changes the shell that sources it), a loop (a later iteration runs after it), a
+// pipeline (zsh runs the last element in the current shell), a function (zsh and traps run some by name) or a text run later or
+// again (trap, eval, xargs) it is refused, as every PATH assignment was before this issue.
+func pathAssignment(a Assign, st *state, ctx Context) error {
+	if _, known := ambientPath(); !known {
+		return unreadablef("assignment to PATH changes which program runs, and the PATH the shell starts with is not known")
+	}
+	if !a.Value.Known || a.Append && (st.searchPath == nil || !st.searchPath.Known) {
+		return unreadablef("assignment to PATH with a value that is not literal changes which program runs")
+	}
+	if st.scriptBody || ctx.Loop || ctx.Pipeline || ctx.Repeat || ctx.FuncBody {
+		return unreadablef("assignment to PATH in a script file, a loop, a pipeline, a function or a text run later changes which program runs where the reader does not follow it; assign PATH in a statement of the command itself")
+	}
+	st.pathTouched = true
+	return nil
+}
+
+// pathValue is the value of an assignment as the reader takes it: a PATH value that is not literal is not known (plan C).
+func pathValue(name string, x *syntax.Word, v Word) Word {
+	if _, literal := literalWord(x); name == "PATH" && !literal {
+		return Word{Reason: "the PATH value is not literal"}
+	}
+	return v
 }
 
 func samePath(left, right *Word) bool {
@@ -218,113 +243,6 @@ func specialBuiltin(name string) bool {
 		return true
 	}
 	return false
-}
-
-// positionalChange is whether a builtin may change the positional parameters that a later "$@" expands to: set with an operand
-// or with -- or -, shift, and the builtins that run text of their own (eval, source, trap) or redefine words (alias).
-func positionalChange(name string, args []Word) bool {
-	switch name {
-	case "shift", "eval", "source", ".", "trap", "alias", "noglob", "nocorrect", "-":
-		return true // zsh's noglob, nocorrect and - run the command after them in this shell, a builtin among them
-	case "set":
-		return !setOptionsOnly(args)
-	}
-	return zshParamBuiltin(name, args)
-}
-
-// zshParamBuiltin is whether a zsh builtin may assign a parameter by a name in its operands, which is a positional parameter when the
-// name is 1, 2, ... or argv (print -v 1 X gives $1 the value X; zformat -a argv ... and getln 1 assign them; zparseopts -D removes
-// the options it parsed from them) or a name the text does not show. These are the zsh builtins, besides the ones the reader already
-// models (read, printf -v, the declarations), that assign by name: bash runs none of them (print and the rest are no bash builtins),
-// zsh loads zformat and zparseopts without a zmodload (CRW-1283, the final verification of f2ef7770). print assigns only with the
-// option -v, so print is judged by its option words: one that holds a v, or a word the text does not show (an unquoted $O may be -v).
-func zshParamBuiltin(name string, args []Word) bool {
-	switch name {
-	case "zformat", "zparseopts", "zregexparse", "getln", "vared", "sched", "zle", "compctl",
-		"compadd", "compset", "comparguments", "compcall", "compdescribe", "compfiles", "compgroups", "compquote", "comptags",
-		"comptry", "compvalues":
-		return true
-	case "print":
-		for _, a := range args {
-			switch {
-			case !a.Known:
-				return true
-			case a.Value == "--" || !strings.HasPrefix(a.Value, "-") || a.Value == "-":
-				return false // the options end at the first operand
-			case strings.Contains(a.Value, "v"):
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// setOptionsOnly is whether set's words are options alone (set -euo pipefail, set +x): each word a cluster of option letters, an
-// o last in a cluster taking the next word as the name of an option.
-func setOptionsOnly(args []Word) bool {
-	for i := 0; i < len(args); i++ {
-		if !args[i].Known {
-			return false
-		}
-		v := args[i].Value
-		if len(v) < 2 || v[0] != '-' && v[0] != '+' {
-			return false
-		}
-		for k := 1; k < len(v); k++ {
-			c := v[k]
-			if c == 'o' {
-				if k != len(v)-1 {
-					return false
-				}
-				if i+1 < len(args) {
-					i++
-					if !args[i].Known || !optionName(args[i].Value) {
-						return false
-					}
-				}
-				continue
-			}
-			if !strings.ContainsRune("abefhkmnptuvxBCEHPT", rune(c)) {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-// positionalAssignment is whether a program word is an assignment to a positional parameter in zsh (1=x, 2+=x, argv=x, *=x): bash
-// runs it as a program of that name, zsh changes what a later "$@" expands to (CRW-1283).
-func positionalAssignment(word string) bool {
-	i := strings.IndexByte(word, '=')
-	if i <= 0 {
-		return false
-	}
-	name := strings.TrimSuffix(word[:i], "+")
-	if j := strings.IndexByte(name, '['); j >= 0 {
-		name = name[:j]
-	}
-	return positionalName(name)
-}
-
-// positionalName is whether a variable name is a positional parameter or zsh's array of them: argv, *, @, # or digits.
-func positionalName(name string) bool {
-	switch name {
-	case "argv", "*", "@", "#":
-		return true
-	}
-	return name != "" && strings.Trim(name, "0123456789") == ""
-}
-
-func optionName(v string) bool {
-	if v == "" {
-		return false
-	}
-	for _, c := range v {
-		if c < 'a' || c > 'z' {
-			return false
-		}
-	}
-	return true
 }
 
 // pathProgramIdentified admits a program an assigned PATH finds, in any directory (a directory name such as /usr/local/bin, and a

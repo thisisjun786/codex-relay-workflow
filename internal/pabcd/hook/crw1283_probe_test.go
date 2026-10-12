@@ -114,25 +114,25 @@ func TestReview1283ProbeForms(t *testing.T) {
 	}
 }
 
-// TestReview1283ProbeControls: the relaxations the probes narrow still admit what CRW-1283 asks for: a forwarding wrapper, a
-// PATH assignment in front of a program the PATH finds in a system directory, and a builtin every shell runs itself.
+// TestReview1283ProbeControls: the relaxations the probes narrow still admit what CRW-1283 asks for: a program wrapper, a PATH
+// assignment in front of a program the PATH finds in a system directory, and a builtin every shell runs itself. Plan C (Sion 10-13)
+// refuses the forwarding script wrapper and the forwarding -c string whatever they forward.
 func TestReview1283ProbeControls(t *testing.T) {
 	t.Setenv("HOME", cleanTempDir(t))
 	for _, target := range crw1283Targets(t) {
 		slot := crw1283Script(t, target.dir, "slot.sh", "#!/bin/bash\nset -u\nexec ionice -c3 nice \"$@\"\n")
 		for _, command := range []string{
-			"bash " + slot + " go version",
-			slot + " go version",
+			"ionice -c3 nice go version",
 			"export PATH=" + target.dir + ":/usr/bin:/bin; cd /tmp; true",
 			"PATH=/usr/bin:/bin printf x",
 			"export PATH=/usr/bin:/bin; printf x; echo y; test -n z",
-			"bash -c '\"$@\"' z go version",
 		} {
 			if target.refused(command) {
 				t.Errorf("%s guard refused a control: %s", target.name, command)
 			}
 		}
-		for _, command := range []string{"bash " + slot + " " + target.command, slot + " " + target.command} {
+		for _, command := range []string{"bash " + slot + " " + target.command, slot + " " + target.command,
+			"bash " + slot + " go version", slot + " go version", "bash -c '\"$@\"' z go version"} {
 			if !target.refused(command) {
 				t.Errorf("%s guard ALLOWED the forwarded protected command: %s", target.name, command)
 			}

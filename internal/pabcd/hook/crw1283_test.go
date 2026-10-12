@@ -18,31 +18,70 @@ func crw1283Script(t *testing.T, cwd, name, body string) string {
 	return filename
 }
 
+// TestGithubPostGuardAllowsAWrapperThatNamesNoPost (plan C, Sion 10-13, decided answer 2): the program wrapper ionice -c3 nice in
+// front of a command that names no post is read and allowed; a script wrapper that forwards "$@" (heavy_slot.sh) is not read and is
+// refused, with a reason that names the path the user can follow, which no guard blocks.
 func TestGithubPostGuardAllowsAWrapperThatNamesNoPost(t *testing.T) {
-	cwd, _, _ := gateScene(t)
-	wrapper := crw1283Script(t, cwd, "heavy_slot.sh", "#!/bin/bash\nionice -c3 nice \"$@\"\n")
-	for _, command := range []string{wrapper + " go version", "bash " + wrapper + " go version"} {
+	cwd, _, env := gateScene(t)
+	for _, command := range []string{"ionice -c3 nice go version", "ionice -c3 nice -n 5 go test ./...", "nice ionice -c3 go version"} {
 		if site, denied := githubPostJudgeText(command, cwd); denied {
 			t.Errorf("%s: refused: %+v", command, site)
 		}
 	}
-	for _, command := range []string{wrapper + " gh pr comment 1 --body x", wrapper + " git push origin dev"} {
+	// git push run directly keeps the policy it had before CRW-1283; behind a script or an assigned PATH it is refused.
+	for _, command := range []string{"ionice -c3 nice gh pr comment 1 --body x", "nice -n 5 gh api -X POST repos/o/r/issues"} {
 		if _, denied := githubPostJudgeText(command, cwd); !denied {
-			t.Errorf("post escaped wrapper: %s", command)
+			t.Errorf("post escaped the program wrapper: %s", command)
 		}
+	}
+	wrapper := crw1283Script(t, cwd, "heavy_slot.sh", "#!/bin/bash\nionice -c3 nice \"$@\"\n")
+	for _, command := range []string{wrapper + " go version", "bash " + wrapper + " go version", wrapper + " gh pr comment 1 --body x",
+		wrapper + " git push origin dev"} {
+		reason := githubPostAnswerReason(t, HandleGitHubPostGuard(gateBash(t, cwd, command)))
+		if !strings.Contains(reason, "run the forwarded command directly") {
+			t.Errorf("the \"$@\" script wrapper was not refused with the followable path: %s: %q", command, reason)
+		}
+	}
+	// The path the refusal names: the forwarded command run directly, behind the program wrappers if the user wants them.
+	direct := "ionice -c3 nice go version"
+	if got := HandleMemoryWriteGate(gateBash(t, cwd, direct), env); got != "" {
+		t.Errorf("the memory gate refused the path the refusal names: %s", got)
+	}
+	rig := newDelRig(t)
+	if got := rig.verdict(direct); got.Deny {
+		t.Errorf("the worktree guard refused the path the refusal names: %+v", got)
 	}
 }
 
+// TestMemoryWriteGateReadsAReadableScriptFile (decided answer 3): the memory gate reads a readable script file run as bash f.sh or sh
+// f.sh; a script that writes memory is refused; a script whose destination the gate cannot place (a "$@" forward, plan C) is refused
+// with a reason that names a path the user can follow, which neither the GitHub nor the worktree guard blocks.
 func TestMemoryWriteGateReadsAReadableScriptFile(t *testing.T) {
 	cwd, root, env := gateScene(t)
-	script := crw1283Script(t, cwd, "check.sh", "#!/bin/bash\nionice -c3 nice \"$@\"\n")
-	if got := HandleMemoryWriteGate(gateBash(t, cwd, "bash "+script+" go version"), env); got != "" {
-		t.Fatalf("readable script refused: %s", got)
-	}
-	for _, command := range []string{"bash " + script + " tee " + root + "/note.md", "bash " + script + " sh -c 'echo x >\"" + root + "/note.md\"'"} {
-		if got := HandleMemoryWriteGate(gateBash(t, cwd, command), env); got == "" {
-			t.Fatalf("memory write escaped script: %s", command)
+	script := crw1283Script(t, cwd, "check.sh", "#!/bin/bash\nionice -c3 nice go version\n")
+	for _, command := range []string{"bash " + script, "sh " + script} {
+		if got := HandleMemoryWriteGate(gateBash(t, cwd, command), env); got != "" {
+			t.Fatalf("readable script refused: %s: %s", command, got)
 		}
+	}
+	writer := crw1283Script(t, cwd, "writer.sh", "#!/bin/bash\ntee "+root+"/note.md </dev/null\nsh -c 'echo x >\""+root+"/note.md\"'\n")
+	if got := HandleMemoryWriteGate(gateBash(t, cwd, "bash "+writer), env); got == "" {
+		t.Fatal("memory write escaped script")
+	}
+	forwarder := crw1283Script(t, cwd, "slot.sh", "#!/bin/bash\nionice -c3 nice \"$@\"\n")
+	for _, command := range []string{"bash " + forwarder + " go version", "bash " + forwarder + " tee " + root + "/note.md",
+		"bash " + forwarder + " sh -c 'echo x >\"" + root + "/note.md\"'"} {
+		reason := gateDeny(t, HandleMemoryWriteGate(gateBash(t, cwd, command), env))
+		if !strings.Contains(reason, "Use a direct command with a literal program") {
+			t.Fatalf("the refusal of a \"$@\" script names no path: %s: %s", command, reason)
+		}
+	}
+	direct := "ionice -c3 nice go version"
+	if site, denied := githubPostJudgeText(direct, cwd); denied {
+		t.Errorf("the GitHub guard refused the path the refusal names: %+v", site)
+	}
+	if got := newDelRig(t).verdict(direct); got.Deny {
+		t.Errorf("the worktree guard refused the path the refusal names: %+v", got)
 	}
 }
 
@@ -81,9 +120,10 @@ func TestCommandReaderPathAssignmentResolvesTheProgram(t *testing.T) {
 	if got := HandleMemoryWriteGate(gateBash(t, cwd, "PATH="+cwd+" writer"), env); got == "" {
 		t.Fatal("memory writer escaped PATH")
 	}
-	for _, command := range []string{"PATH=$UNKNOWN /usr/bin/true", "env PATH=$UNKNOWN /usr/bin/true"} {
-		if _, err := shellir.Analyze(command, cwd); err != nil {
-			t.Errorf("absolute program does not use unknown PATH: %s: %v", command, err)
+	// Plan C (decided answer 4): a PATH value that is not literal is refused as before CRW-1283, even in front of an absolute program.
+	for _, command := range []string{"PATH=$UNKNOWN /usr/bin/true", "env PATH=$UNKNOWN /usr/bin/true", "PATH=" + cwd + ":$PATH check"} {
+		if _, err := shellir.Analyze(command, cwd); err == nil {
+			t.Errorf("a PATH value that is not literal was read: %s", command)
 		}
 	}
 }
@@ -127,11 +167,12 @@ func TestCRW1283ScriptArgumentsDoNotLeakIntoFunctionBodies(t *testing.T) {
 	}
 }
 
+// Plan C: a direct forwarder is read by the memory and worktree guards so that its "$@" refuses it, whatever it forwards.
 func TestCRW1283DirectForwarderDoesNotHideAMemoryWrite(t *testing.T) {
 	cwd, root, env := gateScene(t)
 	wrapper := crw1283Script(t, cwd, "slot.sh", "#!/bin/bash\nionice -c3 nice \"$@\"\n")
-	if got := HandleMemoryWriteGate(gateBash(t, cwd, wrapper+" go version"), env); got != "" {
-		t.Fatalf("harmless direct forwarder refused: %s", got)
+	if got := HandleMemoryWriteGate(gateBash(t, cwd, wrapper+" go version"), env); got == "" {
+		t.Fatal("a direct forwarder was allowed although its \"$@\" is not read")
 	}
 	if got := HandleMemoryWriteGate(gateBash(t, cwd, wrapper+" tee "+root+"/note.md"), env); got == "" {
 		t.Fatal("direct forwarder hid a protected tee destination")
@@ -141,8 +182,8 @@ func TestCRW1283DirectForwarderDoesNotHideAMemoryWrite(t *testing.T) {
 func TestCRW1283DirectForwarderDoesNotHideWorktreeRemoval(t *testing.T) {
 	rig := newDelRig(t)
 	wrapper := crw1283Script(t, rig.checkout, "slot.sh", "#!/bin/bash\nionice -c3 nice \"$@\"\n")
-	if got := rig.verdict(wrapper + " go version"); got.Deny {
-		t.Fatalf("harmless direct forwarder refused: %+v", got)
+	if got := rig.verdict(wrapper + " go version"); !got.Deny {
+		t.Fatal("a direct forwarder was allowed although its \"$@\" is not read")
 	}
 	if got := rig.verdict(wrapper + " rm -rf " + rig.checkout); !got.Deny {
 		t.Fatal("direct forwarder hid a protected worktree removal")

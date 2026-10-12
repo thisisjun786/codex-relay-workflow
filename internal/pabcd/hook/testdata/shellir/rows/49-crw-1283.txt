@@ -1,53 +1,53 @@
-=== CRW-1283-wrapper-control | B
---why A readable forwarding wrapper passes its exact arguments to a harmless command.
+=== CRW-1283-wrapper-control | U
+--why Plan C (Sion 10-13): the reader does not follow the arguments a script forwards with "$@", so every gate refuses the forwarding wrapper even with a harmless command (a named limit; trusted wrappers are CRW-1290).
 --file slot.sh
 #!/bin/bash
 ionice -c3 nice "$@"
 --cmd
 bash slot.sh go version
 
-=== CRW-1283-direct-wrapper-control | B
---why A readable direct forwarding script passes its exact arguments without hiding worktree targets.
+=== CRW-1283-direct-wrapper-control | U
+--why Plan C (Sion 10-13): the reader does not follow the arguments a script forwards with "$@", so every gate refuses the direct forwarding script even with a harmless command.
 --file slot.sh
 #!/bin/bash
 ionice -c3 nice "$@"
 --cmd
 {WORK}/slot.sh go version
 
-=== CRW-1283-direct-wrapper-memory | W
---why The direct wrapper is read by the memory gate as well as the GitHub guard.
+=== CRW-1283-direct-wrapper-memory | U
+--why Plan C (Sion 10-13): the reader does not follow the arguments a script forwards with "$@", so every gate refuses the direct forwarding script that receives a memory write.
 --file slot.sh
 #!/bin/bash
 ionice -c3 nice "$@"
 --cmd
 {WORK}/slot.sh tee {MEMORY}/note.md
 
-=== CRW-1283-direct-wrapper-removal | R
---why A newly readable direct forwarder still exposes a protected worktree removal.
+=== CRW-1283-direct-wrapper-removal | U
+--why Plan C (Sion 10-13): the reader does not follow the arguments a script forwards with "$@", so every gate refuses the direct forwarding script that receives a worktree removal.
 --file slot.sh
 #!/bin/bash
 ionice -c3 nice "$@"
 --cmd
 {WORK}/slot.sh rm -rf {CHECKOUT}
 
-=== CRW-1283-wrapper-post | none/deny/allow
---why The forwarding wrapper exposes the real gh arguments; inline posting stays refused.
+=== CRW-1283-wrapper-post | U
+--why Plan C (Sion 10-13): the reader does not follow the arguments a script forwards with "$@", so every gate refuses the wrapper that receives a gh post.
 --file slot.sh
 #!/bin/bash
 ionice -c3 nice "$@"
 --cmd
 bash slot.sh gh pr comment 1 --body x
 
-=== CRW-1283-wrapper-push | none/deny/allow
---why A git push cannot hide behind the newly readable forwarding wrapper.
+=== CRW-1283-wrapper-push | U
+--why Plan C (Sion 10-13): the reader does not follow the arguments a script forwards with "$@", so every gate refuses the wrapper that receives a git push.
 --file slot.sh
 #!/bin/bash
 ionice -c3 nice "$@"
 --cmd
 bash slot.sh git push origin dev
 
-=== CRW-1283-wrapper-memory | W
---why Forwarded tee operands still name the protected memory root.
+=== CRW-1283-wrapper-memory | U
+--why Plan C (Sion 10-13): the reader does not follow the arguments a script forwards with "$@", so every gate refuses the wrapper that receives a memory write.
 --file slot.sh
 #!/bin/bash
 ionice -c3 nice "$@"
@@ -102,13 +102,13 @@ PATH=/usr/bin:/bin git push origin dev
 --cmd
 PATH=/usr/bin:/bin tee {MEMORY}/note.md
 
-=== CRW-1283-unknown-path-absolute | B
---why An absolute, harmless program does not search an unknown PATH.
+=== CRW-1283-unknown-path-absolute | U
+--why Plan C (Sion 10-13): a PATH value that is not literal is refused by every gate, as before CRW-1283, even in front of an absolute program.
 --cmd
 PATH=$UNRESOLVED /usr/bin/true
 
-=== CRW-1283-env-unknown-path-absolute | B
---why An absolute harmless command behind env does not search an unknown PATH either.
+=== CRW-1283-env-unknown-path-absolute | U
+--why Plan C (Sion 10-13): a PATH value that is not literal behind env is refused by every gate, as before CRW-1283.
 --cmd
 env PATH=$UNRESOLVED /usr/bin/true
 
@@ -128,8 +128,8 @@ rm -rf {CHECKOUT}
 --cmd
 PATH=/usr/bin:/bin {WORK}/remove.sh
 
-=== CRW-1283-source-inherits-arguments | W
---why A sourced body inherits the script's positional arguments, including protected tee operands.
+=== CRW-1283-source-inherits-arguments | U
+--why Plan C (Sion 10-13): the reader does not follow the arguments a script forwards with "$@", so every gate refuses the sourced body that receives a memory write.
 --file source.sh
 source {WORK}/body.sh
 --file body.sh
@@ -145,8 +145,8 @@ ionice -c3 nice "${@#prefix}"
 --cmd
 bash slot.sh go version
 
-=== CRW-1283-inner-shell-post | none/deny/allow
---why A new shell has its own positional arguments, not the outer script's harmless arguments.
+=== CRW-1283-inner-shell-post | U
+--why Plan C (Sion 10-13): the reader does not follow the arguments a script forwards with "$@", so every gate refuses the inner shell whose own arguments are a gh post.
 --file slot.sh
 #!/bin/bash
 bash -c '"$@"' zero gh pr comment 1 --body x
@@ -198,8 +198,8 @@ eval 'set -- gh pr comment 1 --body x'
 --cmd
 bash mutation.sh true
 
-=== CRW-1283-review-option-set-control | B
---why set with options alone keeps the positional parameters: the forwarding wrapper stays readable.
+=== CRW-1283-review-option-set-control | U
+--why Plan C (Sion 10-13): the reader does not follow the arguments a script forwards with "$@", so every gate refuses the wrapper after set with options alone.
 --file slot.sh
 #!/bin/bash
 set -euo pipefail
@@ -723,40 +723,40 @@ PATH={WORK}/q:/usr/bin:/bin check
 --cmd
 PATH=/usr/bin:/bin ls /tmp
 
-=== CRW-1283-r5-loop-wrapper-control | B
---why Final verification 418273ef finding 2: a loop that only assigns variables forwards its arguments in every iteration (the shape of heavy_slot.sh).
+=== CRW-1283-r5-loop-wrapper-control | U
+--why Plan C (Sion 10-13): the reader does not follow the arguments a script forwards with "$@", so every gate refuses the loop wrapper of heavy_slot.sh shape (finding 2 of 418273ef is answered by the named limit).
 --file slot.sh
 #!/bin/bash
 while :; do x=1; nice "$@"; rc=$?; exit $rc; done
 --cmd
 bash slot.sh go version
 
-=== CRW-1283-r5-loop-direct-control | B
---why Final verification 418273ef finding 2: the same loop wrapper run by its path.
+=== CRW-1283-r5-loop-direct-control | U
+--why Plan C (Sion 10-13): the reader does not follow the arguments a script forwards with "$@", so every gate refuses the loop wrapper run by its path.
 --file slot.sh
 #!/bin/bash
 while :; do x=1; nice "$@"; rc=$?; exit $rc; done
 --cmd
 {WORK}/slot.sh go version
 
-=== CRW-1283-r5-loop-wrapper-post | none/deny/allow
---why A post forwarded by a loop wrapper stays refused.
+=== CRW-1283-r5-loop-wrapper-post | U
+--why Plan C (Sion 10-13): the reader does not follow the arguments a script forwards with "$@", so every gate refuses the loop wrapper that receives a gh post.
 --file slot.sh
 #!/bin/bash
 while :; do x=1; nice "$@"; rc=$?; exit $rc; done
 --cmd
 bash slot.sh gh pr comment 1 --body x
 
-=== CRW-1283-r5-loop-wrapper-memory | W
---why Forwarded tee operands name the protected memory root through a loop wrapper.
+=== CRW-1283-r5-loop-wrapper-memory | U
+--why Plan C (Sion 10-13): the reader does not follow the arguments a script forwards with "$@", so every gate refuses the loop wrapper that receives a memory write.
 --file slot.sh
 #!/bin/bash
 while :; do x=1; nice "$@"; rc=$?; exit $rc; done
 --cmd
 bash slot.sh tee {MEMORY}/note.md
 
-=== CRW-1283-r5-loop-wrapper-removal | R
---why A protected worktree removal forwarded by a loop wrapper stays refused.
+=== CRW-1283-r5-loop-wrapper-removal | U
+--why Plan C (Sion 10-13): the reader does not follow the arguments a script forwards with "$@", so every gate refuses the loop wrapper that receives a worktree removal.
 --file slot.sh
 #!/bin/bash
 while :; do x=1; nice "$@"; rc=$?; exit $rc; done
@@ -892,8 +892,8 @@ zparseopts -D n:=o
 --cmd
 zsh {WORK}/t.sh -n 5 gh pr comment 1 --body x
 
-=== CRW-1283-r6-print-control | B
---why Control: print without -v names no parameter, so the wrapper still forwards its arguments.
+=== CRW-1283-r6-print-control | U
+--why Plan C (Sion 10-13): the reader does not follow the arguments a script forwards with "$@", so every gate refuses the wrapper that prints first.
 --file t.sh
 #!/bin/bash
 print hello
@@ -901,8 +901,8 @@ nice "$@"
 --cmd
 bash t.sh go version
 
-=== CRW-1283-r6-print-control-post | none/deny/allow
---why A post forwarded by a wrapper that prints stays refused.
+=== CRW-1283-r6-print-control-post | U
+--why Plan C (Sion 10-13): the reader does not follow the arguments a script forwards with "$@", so every gate refuses the printing wrapper that receives a gh post.
 --file t.sh
 #!/bin/bash
 print hello

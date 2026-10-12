@@ -101,13 +101,14 @@ func githubPostEnv(name string) (string, bool) {
 }
 
 func githubPostJudgeTextOnly(command, cwd string, depth int, outer *githubPostWrites, cdpath bool, execution ...shellir.Exec) (githubPostSite, bool) {
-	var args []shellir.Word
-	var searchPath *shellir.Word
+	read := shellir.AnalyzeScriptEnv
 	if len(execution) > 0 {
-		args = shellIRScriptArgs(execution[0])
-		searchPath = execution[0].SearchPath
+		// a script file's body, run with the PATH of the record that runs it (CRW-1283)
+		read = func(src, cwd string, cdpath bool, lookup func(string) (string, bool)) (shellir.Result, error) {
+			return shellir.AnalyzeScriptBody(src, cwd, cdpath, lookup, execution[0].SearchPath)
+		}
 	}
-	res, err := shellir.AnalyzeScriptEnvArgs(command, cwd, cdpath, githubPostEnv, args, searchPath)
+	res, err := read(command, cwd, cdpath, githubPostEnv)
 	if err != nil {
 		return githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, line: 0, reason: unreadableCause(err), analysis: true}, true
 	}

@@ -73,7 +73,6 @@ func shellIRDestsResult(res shellir.Result, cwd string, lookup func(string) (str
 				dests = append(dests, shellIRUnknownDest)
 			} else {
 				child := e
-				child.Args = shellIRScriptArgs(e)
 				child.Kind, child.Name, child.Script = shellir.KindScriptFile, "sh", e.Program
 				dests = append(dests, shellIRScriptDests(child, cwd, lookup, resolve, depth, writes.at(i).as(githubPostBodyKey(e.Program.Value, e.Dir)))...)
 			}

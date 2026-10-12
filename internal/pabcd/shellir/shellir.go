@@ -8,7 +8,6 @@ package shellir
 import (
 	"fmt"
 	"path"
-	"slices"
 	"strings"
 
 	"mvdan.cc/sh/v3/syntax"
@@ -203,14 +202,15 @@ type state struct {
 	dir Dir
 	// proveCD retains failed-cd possibilities for consumers that require a
 	// proven effective directory rather than the legacy literal-cd reading.
-	proveCD     bool
-	vars        map[string]string
-	funcs       map[string]*syntax.Stmt
-	cdpath      bool
-	lookup      func(string) (string, bool)
-	args        []Word
-	searchPath  *Word
-	pathTouched bool
+	proveCD bool
+	vars    map[string]string
+	funcs   map[string]*syntax.Stmt
+	cdpath  bool
+	lookup  func(string) (string, bool)
+	// searchPath is the PATH an assignment the walk read gives (nil: the PATH the shell starts with); pathTouched says the text assigned
+	// PATH; scriptBody says the text is a script file's body, where an assignment to PATH is refused (pathAssignment, CRW-1283).
+	searchPath              *Word
+	pathTouched, scriptBody bool
 	// exitTainted and startup are what the reader was told about the shell around the text (ScriptOptions); they are read once, at the
 	// start of the walk.
 	exitTainted bool
@@ -230,13 +230,13 @@ func newState(cwd string) *state {
 
 func (s *state) clone() *state {
 	c := &state{
-		dir:     s.dir,
-		proveCD: s.proveCD,
-		vars:    make(map[string]string, len(s.vars)),
-		funcs:   make(map[string]*syntax.Stmt, len(s.funcs)),
-		cdpath:  s.cdpath,
-		lookup:  s.lookup,
-		args:    s.args, searchPath: s.searchPath, pathTouched: s.pathTouched,
+		dir:        s.dir,
+		proveCD:    s.proveCD,
+		vars:       make(map[string]string, len(s.vars)),
+		funcs:      make(map[string]*syntax.Stmt, len(s.funcs)),
+		cdpath:     s.cdpath,
+		lookup:     s.lookup,
+		searchPath: s.searchPath, pathTouched: s.pathTouched, scriptBody: s.scriptBody,
 
 		exitTainted: s.exitTainted, startup: s.startup, noExitProof: s.noExitProof,
 	}
@@ -251,14 +251,8 @@ func (s *state) clone() *state {
 
 func (s *state) replace(o *state) { *s = *o }
 
+// clearVars makes the variables unknown, and an assigned PATH with them.
 func (s *state) clearVars() {
-	s.forgetVars()
-	s.args = nil
-}
-
-// forgetVars makes the variables and the search PATH unknown; the positional parameters stay as they were. An assignment to a
-// variable does not change them (a positional assignment, set and shift do, and clearVars forgets them with the rest).
-func (s *state) forgetVars() {
 	s.vars = map[string]string{}
 	if s.searchPath != nil {
 		s.searchPath = &Word{Reason: "PATH may have changed"}
@@ -270,15 +264,9 @@ func (s *state) unsetVar(name string) {
 	if name == "PATH" {
 		s.searchPath = &Word{Reason: "PATH is unset"}
 	}
-	if positionalName(name) {
-		s.args = nil // zsh's argv and 1, 2, ... are the positional parameters
-	}
 }
 
 func (s *state) setVar(name string, v Word, appendValue bool) {
-	if positionalName(name) {
-		s.args = nil // zsh's argv and 1, 2, ... are the positional parameters
-	}
 	if name == "PATH" {
 		search := v
 		if appendValue {
@@ -316,11 +304,8 @@ func joinStates(states ...*state) *state {
 	}
 	out.lookup = first.lookup
 	out.proveCD = first.proveCD
-	out.args, out.searchPath = first.args, first.searchPath
+	out.searchPath = first.searchPath
 	for _, s := range states {
-		if !slices.Equal(out.args, s.args) || (out.args == nil) != (s.args == nil) {
-			out.args = nil
-		}
 		out.pathTouched = out.pathTouched || s.pathTouched
 		if !samePath(out.searchPath, s.searchPath) {
 			out.searchPath = &Word{Reason: "PATH differs between branches"}
@@ -592,15 +577,12 @@ func loopContext(ctx Context) Context {
 // directory stay known through the loop.
 func prescanLoop(st *state, lists ...[]*syntax.Stmt) (keepsDir bool) {
 	dir := changesDir(st, lists...)
-	vars, args := newEffectScan(st, false), newArgsScan(st)
-	changes, argsChange := false, false
+	vars := newEffectScan(st, false)
+	changes := false
 	for _, list := range lists {
 		for _, s := range list {
 			if vars.stateChanges(s) {
 				changes = true
-			}
-			if args.stateChanges(s) {
-				argsChange = true
 			}
 		}
 	}
@@ -608,12 +590,7 @@ func prescanLoop(st *state, lists ...[]*syntax.Stmt) (keepsDir bool) {
 		st.dir = notProvenDir(st.dir)
 	}
 	if changes {
-		// A later iteration sees the variables an earlier one set, but the same positional parameters unless the statements can
-		// change those (CRW-1283: heavy_slot.sh assigns variables in the loop that forwards "$@").
-		st.forgetVars()
-	}
-	if argsChange {
-		st.args = nil
+		st.clearVars()
 	}
 	return !dir
 }
@@ -637,25 +614,15 @@ func changesDir(st *state, lists ...[]*syntax.Stmt) bool {
 // does. The verdict for each function is kept, so a function that many calls reach is judged once and the work stays bounded by
 // the size of the text. A verdict of no change is exact. A verdict of change may be conservative: a call back into a function
 // being judged, or a chain of calls deeper than MaxNestingDepth, counts as a change.
-//
-// An argsOnly scan judges whether a statement can change the positional parameters ("$@"): set, shift, eval, source and the other
-// builtins listed in positionalChange, a zsh positional assignment (1=x, 2+=x, argv=(...)), a positional loop variable, and any
-// builtin, declaration or expansion whose assigned name is a positional parameter or is not shown. An assignment to a variable
-// by name is not one.
 type effectScan struct {
 	st            *state
 	directoryOnly bool
-	argsOnly      bool
 	verdicts      map[string]bool
 	active        []string
 }
 
 func newEffectScan(st *state, directoryOnly bool) *effectScan {
 	return &effectScan{st: st, directoryOnly: directoryOnly, verdicts: map[string]bool{}}
-}
-
-func newArgsScan(st *state) *effectScan {
-	return &effectScan{st: st, argsOnly: true, verdicts: map[string]bool{}}
 }
 
 // stateChanges reports whether a node can change the state the scan judges. Changes are only ever set to true, so a later
@@ -669,95 +636,31 @@ func (e *effectScan) stateChanges(n syntax.Node) bool {
 				changes = true
 			}
 		case *syntax.CallExpr:
-			if !e.directoryOnly && e.assignsChange(c.Assigns) || e.callChanges(c) {
+			if !e.directoryOnly && len(c.Assigns) > 0 || e.callChanges(c) {
 				changes = true
 			}
-		case *syntax.DeclClause:
-			if !e.directoryOnly && (!e.argsOnly || declChangesArgs(c)) {
-				changes = true
-			}
-		case *syntax.LetClause, *syntax.ArithmCmd:
-			// the assignments inside are visited as BinaryArithm and UnaryArithm nodes
-			if !e.directoryOnly && !e.argsOnly {
-				changes = true
-			}
-		case *syntax.ForClause:
-			if !e.directoryOnly && (!e.argsOnly || forChangesArgs(c)) {
+		case *syntax.DeclClause, *syntax.LetClause, *syntax.ArithmCmd, *syntax.ForClause:
+			if !e.directoryOnly {
 				changes = true
 			}
 		case *syntax.BinaryArithm:
 			// an assignment inside an arithmetic expansion, $((n=1)), sets the variable on its left
-			if !e.directoryOnly && assignsArithm(c.Op) && (!e.argsOnly || arithmTargetMayBePositional(c.X)) {
+			if !e.directoryOnly && assignsArithm(c.Op) {
 				changes = true
 			}
 		case *syntax.UnaryArithm:
-			if !e.directoryOnly && (c.Op == syntax.Inc || c.Op == syntax.Dec) && (!e.argsOnly || arithmTargetMayBePositional(c.X)) {
+			if !e.directoryOnly && (c.Op == syntax.Inc || c.Op == syntax.Dec) {
 				changes = true
 			}
 		case *syntax.ParamExp:
 			// a default assignment, ${n:=x} or ${n=x}, sets the variable it names when the test holds
-			if !e.directoryOnly && c.Exp != nil && (c.Exp.Op == syntax.AssignUnset || c.Exp.Op == syntax.AssignUnsetOrNull) &&
-				(!e.argsOnly || c.Excl || c.Param == nil || c.NestedParam != nil || c.Flags != nil || positionalName(c.Param.Value)) {
+			if !e.directoryOnly && c.Exp != nil && (c.Exp.Op == syntax.AssignUnset || c.Exp.Op == syntax.AssignUnsetOrNull) {
 				changes = true
 			}
 		}
 		return !changes
 	})
 	return changes
-}
-
-// assignsChange reports whether the prefix assignments of a command change the state the scan judges: any assignment changes the
-// variables; only one to a positional parameter (argv=(...) in zsh) changes the arguments.
-func (e *effectScan) assignsChange(assigns []*syntax.Assign) bool {
-	if !e.argsOnly {
-		return len(assigns) > 0
-	}
-	for _, a := range assigns {
-		if a.Name == nil || positionalName(a.Name.Value) {
-			return true
-		}
-	}
-	return false
-}
-
-// declChangesArgs: a declaration changes the positional parameters when it assigns one (declare argv=(x)), makes a name reference
-// (declare -n r=argv; r=(x)) or takes a name or option the text does not show.
-func declChangesArgs(c *syntax.DeclClause) bool {
-	if c.Variant != nil && c.Variant.Value == "nameref" {
-		return true
-	}
-	for _, a := range c.Args {
-		if a.Name != nil {
-			if positionalName(a.Name.Value) {
-				return true
-			}
-			continue
-		}
-		v := a.Value.Lit()
-		if v == "" || !strings.HasPrefix(v, "-") || strings.Contains(v, "n") {
-			return true
-		}
-	}
-	return false
-}
-
-// forChangesArgs: a loop assigns its variable on every iteration; a positional name (for 1 in x, for argv in x) changes "$@".
-func forChangesArgs(c *syntax.ForClause) bool {
-	if it, ok := c.Loop.(*syntax.WordIter); ok {
-		return it.Name == nil || positionalName(it.Name.Value)
-	}
-	return false
-}
-
-// arithmTargetMayBePositional: an arithmetic assignment names the variable on its left; a plain name is not a positional parameter,
-// anything the text does not spell as a plain name (a subscript, an expansion) may be.
-func arithmTargetMayBePositional(x syntax.ArithmExpr) bool {
-	w, ok := x.(*syntax.Word)
-	if !ok {
-		return true
-	}
-	v := w.Lit()
-	return v == "" || positionalName(v)
 }
 
 // assignsArithm reports whether an arithmetic operator assigns to its left operand.
@@ -792,19 +695,8 @@ func (e *effectScan) wordsChange(words []Word) bool {
 	if e.directoryOnly && strings.ContainsAny(name, `\$'"`+"`") {
 		return true
 	}
-	if !e.directoryOnly && positionalAssignment(name) {
-		return true // zsh runs 1=x, 2+=x and argv=x as assignments to the positional parameters
-	}
 	if body, ok := e.st.funcs[name]; ok {
 		return e.function(name, body)
-	}
-	if !e.directoryOnly && zshParamBuiltin(name, words[1:]) {
-		return true // print -v, zformat, zparseopts, getln, vared assign a parameter by name, a positional one among them
-	}
-	if e.argsOnly {
-		if changes, judged := argsBuiltinChange(name, words[1:]); judged {
-			return changes
-		}
 	}
 	switch name {
 	case "command", "builtin", "exec":
@@ -826,48 +718,6 @@ func (e *effectScan) wordsChange(words []Word) bool {
 		return !e.directoryOnly
 	}
 	return false
-}
-
-// argsBuiltinChange judges the builtins whose effect on the positional parameters differs from their effect on the other state: a
-// directory change and a builtin that assigns a variable by name leave "$@" as it is, one that assigns a name the text does not
-// show or a positional parameter does not. judged is false for the others, which the general rules decide.
-func argsBuiltinChange(name string, args []Word) (changes, judged bool) {
-	switch name {
-	case "cd", "chdir", "pushd", "popd":
-		return false, true
-	case "read", "mapfile", "readarray", "getopts", "unset", "let", "export", "declare", "typeset", "local", "readonly", "printf", "wait":
-		if !clobbersVars(name, args) && name != "unset" {
-			return false, true
-		}
-		for _, a := range assignedNames(name, args) {
-			if !a.Known {
-				return true, true
-			}
-			v := a.Value
-			if strings.HasPrefix(v, "-") {
-				if strings.Contains(v, "n") {
-					return true, true // declare -n r=argv, unset -n r: a name reference reaches a positional parameter
-				}
-				continue
-			}
-			if i := strings.IndexByte(v, '='); i >= 0 {
-				v = v[:i]
-			}
-			v = strings.TrimSuffix(v, "+")
-			if i := strings.IndexByte(v, '['); i >= 0 {
-				v = v[:i]
-			}
-			if positionalName(v) {
-				return true, true
-			}
-		}
-		return false, true
-	case "set":
-		return positionalChange(name, args), true
-	case "shift", "eval", "source", ".", "trap", "alias":
-		return true, true
-	}
-	return false, false
 }
 
 // function judges the body of a function once for this scan. A call back into a function being judged is a change, as is a
@@ -959,15 +809,6 @@ func (w *walker) binary(c *syntax.BinaryCmd, st *state, ctx Context) error {
 			return err
 		}
 		w.pipeOut = w.stageSource(c.Y, beforeY, st)
-		// zsh runs the last element of a pipeline in the current shell (bash runs every element in a subshell), so an element that
-		// can change the positional parameters (echo x | read 1, true | print -v 1 env) changes what a later "$@" expands to
-		// (CRW-1283, Sion decision 5); the variables are forgotten the same way.
-		if newArgsScan(st).stateChanges(c.Y) {
-			st.args = nil
-		}
-		if newEffectScan(st, false).stateChanges(c.Y) {
-			st.forgetVars()
-		}
 		return nil
 	}
 	return unreadablef("unsupported binary operator %v", c.Op)
@@ -1069,9 +910,7 @@ func (w *walker) funcDecl(c *syntax.FuncDecl, st *state, ctx Context) error {
 	st.funcs[name] = c.Body
 	fctx := ctx
 	fctx.FuncBody = true
-	bodyState := st.clone()
-	bodyState.args = nil
-	return w.stmt(c.Body, bodyState, fctx)
+	return w.stmt(c.Body, st.clone(), fctx)
 }
 
 func (w *walker) callFunc(name string, body *syntax.Stmt, st *state, ctx Context) error {
@@ -1088,7 +927,6 @@ func (w *walker) callFunc(name string, body *syntax.Stmt, st *state, ctx Context
 	ctx.succeeds = false
 	w.calls = append(w.calls, name)
 	defer func() { w.calls = w.calls[:len(w.calls)-1] }()
-	st.args = nil
 	return w.stmt(body, st, ctx)
 }
 
@@ -1105,15 +943,9 @@ func (w *walker) decl(c *syntax.DeclClause, st *state, ctx Context) error {
 			}
 			// A quoted declaration ('a[i]=v') evaluates its subscript as arithmetic (CRW-1178).
 			w.nameSubscriptPrefix(st, v)
-			if !v.Known && v.AssignmentName == "PATH" {
-				assigns = append(assigns, Assign{Name: "PATH", Value: Word{Reason: v.Reason}})
+			if a, ok := pathWord(v); ok {
+				assigns = append(assigns, a)
 				continue
-			}
-			if v.Known {
-				if name, value, ok := splitAssignment(v.Value); ok && name == "PATH" {
-					assigns = append(assigns, Assign{Name: name, Value: Word{Known: true, Value: value}})
-					continue
-				}
 			}
 			if !v.Known || strings.HasPrefix(v.Value, "-") && strings.Contains(v.Value, "n") {
 				st.clearVars()
@@ -1143,7 +975,7 @@ func (w *walker) decl(c *syntax.DeclClause, st *state, ctx Context) error {
 			if err != nil {
 				return err
 			}
-			asg.Value = v
+			asg.Value = pathValue(asg.Name, a.Value, v)
 			if v.Known && textNamesPycachePrefix(v.Value) {
 				w.prefixUnknown = true // a name reference to it, built from parts (declare -n r=${N}PREFIX)
 			}
@@ -1153,7 +985,7 @@ func (w *walker) decl(c *syntax.DeclClause, st *state, ctx Context) error {
 		}
 		assigns = append(assigns, asg)
 	}
-	if err := checkAssigns(assigns, st); err != nil {
+	if err := checkAssigns(assigns, st, ctx); err != nil {
 		return err
 	}
 	for _, a := range assigns {
@@ -1251,7 +1083,7 @@ func (w *walker) call(c *syntax.CallExpr, redirs []Redir, st *state, ctx, wctx C
 			if err != nil {
 				return err
 			}
-			asg.Value = v
+			asg.Value = pathValue(asg.Name, a.Value, v)
 		default:
 			asg.Value = Word{Known: true}
 		}
@@ -1259,13 +1091,6 @@ func (w *walker) call(c *syntax.CallExpr, redirs []Redir, st *state, ctx, wctx C
 	}
 	words := make([]Word, 0, len(c.Args))
 	for _, arg := range c.Args {
-		if st.args != nil && quotedArgs(arg) {
-			if len(words)+len(st.args) > MaxCommandBytes {
-				return unreadablef("forwarded argument list exceeds the reader limit")
-			}
-			words = append(words, st.args...)
-			continue
-		}
 		v, err := w.word(arg, st, wctx)
 		if err != nil {
 			return err
@@ -1273,7 +1098,7 @@ func (w *walker) call(c *syntax.CallExpr, redirs []Redir, st *state, ctx, wctx C
 		words = append(words, v)
 	}
 	if len(words) == 0 {
-		if err := checkAssigns(assigns, st); err != nil {
+		if err := checkAssigns(assigns, st, ctx); err != nil {
 			return err
 		}
 		// A command with no words is a program position that is empty, not an unknown one: a redirection alone
@@ -1335,13 +1160,15 @@ func assignedNames(name string, args []Word) []Word {
 
 // checkAssigns refuses the assignments that change what a program means
 // before it runs, and records that CDPATH was assigned: from then on a cd to a bare name may land in a CDPATH directory.
-func checkAssigns(assigns []Assign, st *state) error {
+func checkAssigns(assigns []Assign, st *state, ctx Context) error {
 	for _, a := range assigns {
 		switch {
 		case a.Name == "path" || a.Name == "PATH" && a.Array:
 			return unreadablef("array or lower-case path assignment is not modelled")
 		case a.Name == "PATH":
-			st.pathTouched = true
+			if err := pathAssignment(a, st, ctx); err != nil {
+				return err
+			}
 		case isCodeEnvName(a.Name):
 			return unreadablef("assignment to %s makes a program run code the text does not show", a.Name)
 		case isCdpathName(a.Name):
@@ -1449,7 +1276,7 @@ func (w *walker) dispatch(words []Word, assigns []Assign, redirs []Redir, st *st
 	// A program another program starts is found on the PATH: the shell's builtin or function of that name does not run (CRW-1283).
 	launched := ctx.launched
 	ctx.launched = false
-	if err := checkAssigns(assigns, st); err != nil {
+	if err := checkAssigns(assigns, st, ctx); err != nil {
 		return err
 	}
 	if restore, err := st.prefixPath(name, words, assigns, launched); err != nil {
@@ -1525,10 +1352,6 @@ func (w *walker) dispatch(words []Word, assigns []Assign, redirs []Redir, st *st
 	case "enable", "disable", "source", ".", "eval", "unhash", "unfunction":
 		w.builtinsChanged = true
 	}
-	if positionalChange(name, words[1:]) || positionalAssignment(prog.Value) {
-		// "$@" after this command is not the arguments the text was given (CRW-1283); eval and source still read them first.
-		defer func(s *state) { s.args = nil }(st)
-	}
 	if script != nil {
 		if err := w.scriptFile(name, *script, st, ctx); err != nil {
 			return err
@@ -1583,7 +1406,9 @@ func (w *walker) dispatch(words []Word, assigns []Assign, redirs []Redir, st *st
 		return w.wrapped(name, words[1:], assigns, redirs, st, ctx)
 	case clobbersVars(name, words[1:]):
 		st.clearVars()
-		declaredPath(name, words[1:], st)
+		if err := declaredPath(name, words[1:], st, ctx); err != nil {
+			return err
+		}
 		if mayNamePycachePrefix(assignedNames(name, words[1:])) || declaresInteger(name, words[1:]) {
 			w.prefixUnknown = true
 		}
@@ -1697,13 +1522,6 @@ func declaresInteger(name string, args []Word) bool {
 }
 
 func clobbersVars(name string, args []Word) bool {
-	if zshParamBuiltin(name, args) {
-		return true // print -v NAME, zformat, zparseopts, getln, vared and the rest assign the parameters their operands name
-	}
-	switch name {
-	case "noglob", "nocorrect", "-":
-		return true // zsh runs the command after one of these in this shell, a builtin that assigns among them
-	}
 	switch name {
 	case "read", "mapfile", "readarray", "getopts", "let", "export", "declare", "typeset", "local", "readonly":
 		return true
@@ -1724,7 +1542,7 @@ func clobbersVars(name string, args []Word) bool {
 	return false
 }
 
-func (w *walker) scriptFile(name string, script Word, st *state, ctx Context, args ...Word) error {
+func (w *walker) scriptFile(name string, script Word, st *state, ctx Context) error {
 	if !script.Known {
 		return unreadablef("%s reads a script file that is not known (%s)", name, script.Reason)
 	}
@@ -1742,25 +1560,14 @@ func (w *walker) scriptFile(name string, script Word, st *state, ctx Context, ar
 	w.out = append(w.out, Exec{
 		Kind: KindScriptFile, Program: Word{Known: true, Value: name}, Name: name,
 		Script: script, Dir: st.dir, Ctx: ctx, Cdpath: st.cdpath, ExitTainted: !w.exitProof,
-		Args: slices.Clone(args), SearchPath: st.searchPath,
+		SearchPath: st.searchPath,
 	})
 	return nil
 }
 
 // carried parses text that a carrier runs (bash -c, eval, trap and the rest)
-// and walks it in the same layer. Only eval runs its text now with the positional parameters of the text around it; a trap runs
-// its text later, after the text may have changed them, and a new shell (su, a descriptor alias, standard input, a wrapper's
-// shell) starts with positional parameters of its own, so "$@" in their texts is not known (CRW-1283, Sion decision 5). A shell's
-// -c string gets the operands after it (carriedArgs).
+// and walks it in the same layer.
 func (w *walker) carried(text string, st *state, ctx Context, carrier string) error {
-	if carrier != "eval" {
-		st.args = nil
-	}
-	return w.carriedArgs(text, st, ctx, carrier)
-}
-
-// carriedArgs is carried with the positional parameters the caller gave st.
-func (w *walker) carriedArgs(text string, st *state, ctx Context, carrier string) error {
 	if len(text) > MaxCommandBytes {
 		return unreadablef("%s text is %d bytes; the limit is %d", carrier, len(text), MaxCommandBytes)
 	}
@@ -1799,18 +1606,8 @@ func (w *walker) sourceCall(args []Word, st *state, ctx Context) error {
 	if st.pathTouched && (!args[0].Known || !strings.Contains(args[0].Value, "/")) {
 		return unreadablef("source searches an assigned PATH; use an absolute script path")
 	}
-	// A sourced file runs with the positional parameters of the text that sources it. Operands after the file replace them in bash
-	// and zsh and are ignored by dash, so the parameters of a source with operands are not known (CRW-1283, Sion decision 5).
-	inherited := st.args
-	if len(args) > 1 {
-		inherited = nil
-	}
-	before := len(w.out)
-	if err := w.scriptFile("source", args[0], st, ctx, inherited...); err != nil {
+	if err := w.scriptFile("source", args[0], st, ctx); err != nil {
 		return err
-	}
-	if len(w.out) > before && inherited == nil {
-		w.out[len(w.out)-1].Args = nil
 	}
 	st.dir = unknownDir(st.dir)
 	st.clearVars()
@@ -1863,7 +1660,7 @@ func (w *walker) wrapped(name string, args []Word, assigns []Assign, redirs []Re
 	if err != nil {
 		return err
 	}
-	if err := checkAssigns(u.assigns, st); err != nil {
+	if err := checkAssigns(u.assigns, st, ctx); err != nil {
 		return err
 	}
 	if name == "xargs" || name == "find" || name == "entr" {

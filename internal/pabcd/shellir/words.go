@@ -17,8 +17,14 @@ func (w *walker) word(x *syntax.Word, st *state, ctx Context) (Word, error) {
 	if err := w.substsIn(x, st, ctx); err != nil {
 		return Word{}, err
 	}
-	if reason := unknownWord(x, st); reason != "" {
-		return Word{Reason: reason, AssignmentName: pathAssignmentPrefix(x)}, nil
+	// A PATH= word whose value is not literal (env PATH=$D, export "PATH=$D") is not known (CRW-1283 plan C).
+	path := pathAssignmentPrefix(x)
+	_, literal := literalWord(x)
+	if reason := unknownWord(x, st); reason != "" || path != "" && !literal {
+		if reason == "" {
+			reason = "the PATH value is not literal"
+		}
+		return Word{Reason: reason, AssignmentName: path}, nil
 	}
 	cfg := &expand.Config{
 		Env:       expand.FuncEnviron(func(name string) string { return st.value(name) }),
@@ -286,6 +292,10 @@ func unknownPart(p syntax.WordPart, quoted, first bool, st *state) string {
 	case *syntax.ParamExp:
 		if simpleKnownParam(x, st) {
 			return ""
+		}
+		if x.Param != nil && x.Param.Value == "@" {
+			// CRW-1283 plan C: a script's forwarded arguments are not followed (trusted wrappers: CRW-1290).
+			return `"$@", the arguments a script forwards, which the reader does not follow; run the forwarded command directly (ionice and nice in front of it are read)`
 		}
 		if x.Param != nil {
 			return "variable " + x.Param.Value
