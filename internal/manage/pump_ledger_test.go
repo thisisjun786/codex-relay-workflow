@@ -37,6 +37,9 @@ const (
 	pumpLedgerUnknown = "unknown"
 	// pumpLedgerLostReply: the host took the message and the ledger holds it accepted, but the reply is a tool error.
 	pumpLedgerLostReply = "lostreply"
+	// pumpLedgerOperationError: get_operation answers a tool error (the ledger could not be read), so the
+	// bridge says nothing about the request id; a send is the validation tool error.
+	pumpLedgerOperationError = "operror"
 )
 
 type pumpLedgerEntry struct {
@@ -103,6 +106,9 @@ func pumpLedgerAnswer(dir, tool string, args map[string]any) (string, bool) {
 		return payload(map[string]any{"observation": "idle"}), false
 	case deliverToolOperation:
 		requestID, _ := args["request_id"].(string)
+		if modeRaw, _ := os.ReadFile(filepath.Join(dir, "mode")); strings.TrimSpace(string(modeRaw)) == pumpLedgerOperationError {
+			return "Error: the ledger could not be read", true
+		}
 		entry, ok := pumpLedgerLoad(dir)[requestID]
 		if !ok {
 			return "get_operation: " + deliverUnknownRequestID, true
@@ -326,29 +332,118 @@ func TestPumpFrozenAttemptSurvivesAManagementThreadChange(t *testing.T) {
 	}
 }
 
-// CRW-1273 (post-evaluation 2, d2): when get_operation cannot place the frozen attempt either (the ledger keeps an
-// in-progress receipt), nothing is sent and the attempt stays frozen: a message that may be on the
-// host is never sent a second time.
-func TestPumpFrozenAttemptStaysWhenTheLedgerCannotPlaceItAfterAThreadChange(t *testing.T) {
-	h := newPumpLedgerHarness(t)
-	pumpLedgerSetMode(t, h.dir, pumpLedgerUnknown)
-	st := h.round()
-	if st.Attempt == nil {
-		t.Fatal("the undetermined send did not freeze the attempt")
+// CRW-1273 (post-evaluation 3): management_thread changes while the frozen attempt's receipt is one
+// get_operation cannot place (the ledger keeps in_progress_or_unknown, which the real ledger never
+// settles). The attempt went, if at all, to the old thread; the configured thread has never seen its
+// events. The record is closed as stranded, the pump log says the message may have reached the old
+// thread, and the events go to the configured thread under the next -m ordinal of the batch or merged
+// into a batch of new events. A bridge that answers nothing for the request id (get_operation itself
+// fails) proves nothing about the record, so the attempt stays frozen and nothing is sent.
+func TestPumpUnplaceableFrozenAttemptIsClosedAfterAThreadChange(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		add  bool
+		// mode is what the bridge does after the thread change.
+		mode string
+	}{
+		{"a new event arrives", true, pumpLedgerUp},
+		{"no new event", false, pumpLedgerUp},
+		{"get_operation does not answer", true, pumpLedgerOperationError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newPumpLedgerHarness(t)
+			pumpLedgerSetMode(t, h.dir, pumpLedgerUnknown)
+			st := h.round()
+			if st.Attempt == nil {
+				t.Fatal("the undetermined send did not freeze the attempt")
+			}
+			frozen := *st.Attempt
+			h.cfg.ManagementThread = "mgmt-thread-2"
+			pumpLedgerSetMode(t, h.dir, tc.mode)
+			before := len(mustSends(t, h.dir))
+			for i := 0; i < 5; i++ {
+				if tc.add && i == 1 {
+					h.addEvent("e2")
+				}
+				st = h.round()
+			}
+			ids, threads := pumpLedgerSends(t, h.dir)
+			if tc.mode == pumpLedgerOperationError {
+				if st.Attempt == nil || st.Attempt.LogicalID != frozen.LogicalID || st.Sent["e1"] || st.Sent["e2"] {
+					t.Fatalf("attempt %+v sent %v, want the attempt %s kept and nothing sent", st.Attempt, st.Sent, frozen.LogicalID)
+				}
+				if len(ids) != before {
+					t.Fatalf("%d sends while get_operation answered nothing, want none", len(ids)-before)
+				}
+				return
+			}
+			if !st.Sent["e1"] || (tc.add && !st.Sent["e2"]) || len(st.Pending) != 0 || st.Attempt != nil {
+				t.Fatalf("after the thread changed: sent %v pending %d attempt %+v (sends %v to %v), want every event delivered", st.Sent, len(st.Pending), st.Attempt, ids, threads)
+			}
+			if len(threads) < 2 {
+				t.Fatalf("the events never reached the new thread: sends %v to %v", ids, threads)
+			}
+			for i, thread := range threads[1:] {
+				if thread != "mgmt-thread-2" {
+					t.Errorf("send %d went to %s, want the configured mgmt-thread-2 (threads %v)", i+1, thread, threads)
+				}
+			}
+			seen := map[string]bool{}
+			for _, id := range ids {
+				if seen[id] {
+					t.Errorf("request id %s was sent more than once: %v", id, ids)
+				}
+				seen[id] = true
+			}
+			if !tc.add && ids[len(ids)-1] != pumpMgmtOrdinalID(frozen.LogicalID, 1) {
+				t.Errorf("the events went out under %s, want the next ordinal %s", ids[len(ids)-1], pumpMgmtOrdinalID(frozen.LogicalID, 1))
+			}
+			record, known, err := deliverLoad(h.cfg, frozen.LogicalID)
+			if err != nil || !known || record.State != deliverStateRefused || record.TargetThread != "mgmt-thread" {
+				t.Fatalf("the stranded record: %+v known %v err %v, want it closed (refused) on its old thread", record, known, err)
+			}
+			if excerpt := record.Attempts[len(record.Attempts)-1].ReceiptExcerpt; !strings.Contains(excerpt, "stranded") {
+				t.Errorf("the closing excerpt %q does not say the record was closed as stranded", excerpt)
+			}
+			raw, err := os.ReadFile(filepath.Join(h.cfg.StateDir, pumpLogFile))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(raw), "management attempt "+frozen.LogicalID+" closed as stranded: it may have reached thread mgmt-thread") {
+				t.Errorf("the pump log does not say the stranded attempt may have reached the old thread:\n%s", raw)
+			}
+		})
 	}
-	frozen := *st.Attempt
+}
+
+// CRW-1273 (post-evaluation 3): closing a stranded attempt spends the batch's next ordinal but is no
+// refusal of the bridge, so it never parks the events: a batch the bridge refused twice whose third
+// attempt is left unplaceable by a thread change still reaches the configured thread.
+func TestPumpStrandedCloseNeverParksTheEvents(t *testing.T) {
+	h := newPumpLedgerHarness(t)
+	pumpLedgerSetMode(t, h.dir, pumpLedgerDown)
+	st := h.round()
+	st = h.round()
+	base := pumpBatchID(st.Pending)
+	if st.MgmtRefused.ID != base || st.MgmtRefused.Count != 2 || st.Attempt != nil {
+		t.Fatalf("after two refused rounds: refused %+v attempt %+v, want the count 2 of %s", st.MgmtRefused, st.Attempt, base)
+	}
+	pumpLedgerSetMode(t, h.dir, pumpLedgerUnknown)
+	st = h.round()
+	if st.Attempt == nil || st.Attempt.LogicalID != pumpMgmtOrdinalID(base, 2) {
+		t.Fatalf("the third attempt: %+v, want %s frozen", st.Attempt, pumpMgmtOrdinalID(base, 2))
+	}
 	h.cfg.ManagementThread = "mgmt-thread-2"
 	pumpLedgerSetMode(t, h.dir, pumpLedgerUp)
-	h.addEvent("e2")
-	before := len(mustSends(t, h.dir))
 	for i := 0; i < 3; i++ {
 		st = h.round()
 	}
-	if st.Attempt == nil || st.Attempt.LogicalID != frozen.LogicalID || st.Sent["e1"] || st.Sent["e2"] {
-		t.Fatalf("attempt %+v sent %v, want the attempt %s kept and nothing sent", st.Attempt, st.Sent, frozen.LogicalID)
+	ids, threads := pumpLedgerSends(t, h.dir)
+	if !st.Sent["e1"] || len(st.Parked) != 0 || len(st.Pending) != 0 || st.Attempt != nil {
+		t.Fatalf("sent %v parked %+v pending %d attempt %+v (sends %v), want e1 delivered and nothing parked", st.Sent, st.Parked, len(st.Pending), st.Attempt, ids)
 	}
-	if after := len(mustSends(t, h.dir)); after != before {
-		t.Fatalf("%d sends after the thread change, want none", after-before)
+	if last := len(ids) - 1; ids[last] != pumpMgmtOrdinalID(base, 3) || threads[last] != "mgmt-thread-2" {
+		t.Errorf("the last send was %s to %s, want %s to mgmt-thread-2", ids[last], threads[last], pumpMgmtOrdinalID(base, 3))
 	}
 }
 

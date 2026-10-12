@@ -709,7 +709,7 @@ func pumpDeliver(ctx context.Context, e *Env, cfg *Config, st *pumpState, batch 
 		// The frozen attempt's own outbox record belongs to another message now (the management
 		// thread was changed), so Deliver would refuse it locally in every round and the attempt
 		// would never leave the freeze. The bridge's answer for its request id does not depend on the
-		// thread: it settles the attempt, which is then accepted, counted or kept.
+		// thread: it settles the attempt, which is then accepted, counted, closed as stranded or kept.
 		out, err = deliverReconcileStranded(ctx, e, cfg, message)
 	} else {
 		out, err = Deliver(ctx, e, cfg, message)
@@ -743,7 +743,18 @@ func pumpDeliver(ctx context.Context, e *Env, cfg *Config, st *pumpState, batch 
 		// batch may carry these events again under the next ordinal of its id. It is counted against
 		// the batch; the pumpQueueRefusalLimit-th refusal of one id parks its events.
 		st.Attempt = nil
-		pumpMgmtRefusalCount(cfg, st, attempt)
+		if status, _ := out.Receipt["status"].(string); status == deliverStranded {
+			// A record of another thread whose receipt places nothing was closed: the message may have
+			// reached that thread, the configured one has never seen these events. They go to it under
+			// the next ordinal of the batch (or in a batch with new events). The close spends the
+			// ordinal but is no refusal of the bridge, so it never parks the events by itself.
+			old, _ := out.Receipt["thread"].(string)
+			pumpLog(cfg, fmt.Sprintf("management attempt %s closed as stranded: it may have reached thread %s; its %d events go to %s under a new id",
+				attempt.LogicalID, old, len(attempt.IDs), cfg.ManagementThread))
+			pumpMgmtStrandedCount(st, attempt)
+		} else {
+			pumpMgmtRefusalCount(cfg, st, attempt)
+		}
 		if err := st.pumpSave(cfg); err != nil {
 			return 1, err
 		}
@@ -807,6 +818,18 @@ func pumpDeliverReason(cfg *Config, logicalID string, attemptsBefore int, cause 
 		reason = strings.ToValidUTF8(reason[:200], "") + "..."
 	}
 	return reason
+}
+
+// pumpMgmtStrandedCount spends the next ordinal of the batch's base id for an attempt closed as
+// stranded (deliverReconcileStranded), so its events go out under an id of their own, without the park
+// a bridge refusal at the limit takes.
+func pumpMgmtStrandedCount(st *pumpState, attempt pumpAttempt) {
+	base := pumpBatchIDStrings(attempt.IDs)
+	count := 1
+	if st.MgmtRefused.ID == base {
+		count = st.MgmtRefused.Count + 1
+	}
+	st.MgmtRefused = pumpQueueRefusal{ID: base, Count: count}
 }
 
 // pumpMgmtRefusalCount counts one proven refusal against the management batch's base id, as
