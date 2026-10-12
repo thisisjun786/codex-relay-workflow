@@ -45,7 +45,7 @@ type Plan struct {
 	// Handoff is the sha256 of the crw-plan handoff the run reads its compiled milestone from ("" when it names none).
 	Handoff string `json:"handoff,omitempty"`
 	Facts   []Fact `json:"facts"`
-	Refused     bool                `json:"refused,omitempty"`
+	Refused bool   `json:"refused,omitempty"`
 	// Blocked says why the run cannot start whatever the facts are (--force does not override it).
 	Blocked string `json:"blocked,omitempty"`
 }

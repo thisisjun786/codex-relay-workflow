@@ -51,6 +51,10 @@ import (
 
 var version = "dev"
 
+// The run process of a flow runs the project lane's operations over the relay's scheduler (CRW-1277): without them `crw flow start
+// project-lane` and `crw flow start night-batch` are refused before anything starts.
+func init() { flowcli.OpsFor = flowcli.SchedulerLane }
+
 // parserExit is the exit status for a command line that cannot be parsed; -h/--help and the
 // bridge's --version exit 0.
 const parserExit = 2

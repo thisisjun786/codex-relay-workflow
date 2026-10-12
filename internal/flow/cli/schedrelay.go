@@ -1,0 +1,602 @@
+package cli
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"sort"
+	"strings"
+	"sync"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/compile"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+)
+
+// SchedRelay is the relay's DAG scheduler as the project lane of a run uses it (ops.Relay over internal/relay/dagsched, CRW-1277). The
+// run is the orchestrator of its plan: it claims the plan's coordinator epoch before its first fenced write and holds it for as long as it
+// lives, releases the issue nodes to agents of the run (dag-release --surface agent), accepts and integrates them on the agent path with
+// the same scheduler and the same integration wiring as `crw relay dag-integrate`, and closes the executions it gives up. The milestone
+// it works on is the compiled milestone of the crw-plan handoff the run pinned: the nodes of the plan at the revision the run pinned,
+// the criteria, regions and group of their issues from the handoff, and the title, criteria, surfaces, grade and required commands of
+// the milestone's entry.
+type SchedRelay struct {
+	Sched *dagsched.Scheduler
+	// RunID is the run; Actor the task that runs it (the registered parent of the plan's project); Nonce the session nonce of its epoch
+	// claim (the run id: a resumed process is the same session, a new run is another).
+	RunID, Actor, Nonce string
+	// Revision is the plan revision the run pinned (journal.Identity.PlanRevision).
+	Revision int64
+	// Handoff is the handoff the run pinned; State the relay state directory (the run's artifacts are under <state>/flow/<run>).
+	Handoff HandoffRef
+	State   string
+	// CreatedAt is the time the run was started at: the capture time of the pinned handoff.
+	CreatedAt string
+	// Journal is the run's journal: the worktree a node's work is in and the acceptances the run made are read from it.
+	Journal engine.Journal
+	// Rule is the rule version a release is made under (dag-release-request/1 rule_version) and Verifier the pair an acceptance names
+	// as the one it was verified under.
+	Rule     dagsched.RuleVersion
+	Verifier dagsched.VerifierRule
+	// Verify is the verification an integration batch runs over the merged tree.
+	Verify dagsched.IntegrationBatchVerifier
+
+	mu      sync.Mutex
+	claimed string
+	input   *compile.Input
+}
+
+var _ ops.Relay = (*SchedRelay)(nil)
+
+// ErrChildReleaseUnwired is the answer of ReleaseChild: a managed child start needs the host settings of the parent and the child, which
+// the run does not hold (SP-CHILD-1). It is an error and never a ChildResult with Started false, which the project lane would record as a
+// child that is running.
+var ErrChildReleaseUnwired = errors.New("refused:child_release_unwired: the run starts no issue child: a managed child start needs the host settings of the parent and the child, which the run does not hold (SP-CHILD-1 host settings are a follow-up of CRW-1277)")
+
+func (r *SchedRelay) q(ctx context.Context) store.Querier { return r.Sched.Store.Q(ctx) }
+
+// handoff is the run's pinned handoff, read once and checked against the sha256 the run fixed.
+func (r *SchedRelay) handoff() (compile.Input, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.input != nil {
+		return *r.input, nil
+	}
+	if r.Handoff.Path == "" {
+		return compile.Input{}, errors.New("the run names no compiled milestone: it was started without --handoff, so there is no handoff to read the milestone from")
+	}
+	_, in, err := ReadHandoff(r.Handoff)
+	if err != nil {
+		return compile.Input{}, err
+	}
+	r.input = &in
+	return in, nil
+}
+
+// project is the project of the plan in the pinned handoff.
+func (r *SchedRelay) project(plan string) (compile.Project, error) {
+	in, err := r.handoff()
+	if err != nil {
+		return compile.Project{}, err
+	}
+	p, ok := HandoffProject(in, plan)
+	if !ok {
+		return compile.Project{}, fmt.Errorf("the run's handoff holds no project of plan %s: compile and put the handoff first", plan)
+	}
+	return p, nil
+}
+
+// target is where the plan's nodes integrate: the local checkout and the branch the handoff's target names. The agent path integrates
+// locally (the pull request landing of an agent node is CRW-1226's), so a target that is not a local checkout is refused.
+func (r *SchedRelay) target(plan string) (checkout, ref string, err error) {
+	p, err := r.project(plan)
+	if err != nil {
+		return "", "", err
+	}
+	if p.Target == nil || p.Target.Repository == "" || p.Target.BaseRef == "" {
+		return "", "", fmt.Errorf("the project %s of the run's handoff names no target {repository, base_ref}: the run integrates its nodes there", p.Key)
+	}
+	if !filepath.IsAbs(p.Target.Repository) {
+		return "", "", fmt.Errorf("the target repository %q of project %s is not a local checkout: an agent node integrates on a local branch (its pull request landing is CRW-1226's)", p.Target.Repository, p.Key)
+	}
+	return p.Target.Repository, p.Target.BaseRef, nil
+}
+
+// claim takes the plan's coordinator epoch for the run, once, before its first fenced write (CRW-1277 e): the claim of the run's nonce
+// under the task that runs it, and the scheduler's expected epoch from then on. A resumed process presents the same nonce and is the same
+// claim while no other session took the plan; once one did, the claim is refused and the run stops at the write.
+func (r *SchedRelay) claim(ctx context.Context, plan string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.claimed == plan {
+		return nil
+	}
+	if r.claimed != "" {
+		return fmt.Errorf("the run holds the coordinator epoch of plan %s and is asked to write plan %s: one run orchestrates one plan", r.claimed, plan)
+	}
+	res, err := r.Sched.ClaimEpoch(ctx, plan, dagsched.ClaimInput{Actor: r.Actor, SessionNonce: r.Nonce})
+	if err != nil {
+		return epochLost(plan, fmt.Errorf("the run cannot claim the coordinator epoch of plan %s: %w", plan, err))
+	}
+	r.Sched.ExpectedEpoch = res.Epoch
+	r.claimed = plan
+	return nil
+}
+
+// ErrEpochLost is the error of a fenced write the run made after another session claimed the plan: the run stops there, and its result
+// names the reason.
+var ErrEpochLost = errors.New("the run lost the coordinator epoch of its plan")
+
+// epochLost wraps a stale_coordinator_epoch refusal as ErrEpochLost; any other error is returned as it is.
+func epochLost(plan string, err error) error {
+	var refused *store.RefusedError
+	if errors.As(err, &refused) && refused.Reason == string(contract.RefusalStaleCoordinatorEpoch) {
+		return fmt.Errorf("%w %s (another session claimed it): the run stops: %v", ErrEpochLost, plan, err)
+	}
+	return err
+}
+
+// ---- the milestone ----
+
+// Milestone reads the compiled milestone (CRW-1277 c): the nodes of the plan at the run's pinned revision that carry an issue of the
+// milestone in the handoff, in the order the scheduler offers them, each with the edges from the milestone's nodes it waits for and the
+// criteria, regions and group of its issue; and the milestone's own title, criteria, surfaces, grade and required commands from its
+// entry. A handoff that is not the one the pinned revision was compiled from (an issue with no node, or criteria whose digest is not the
+// node's) is refused, and so is a milestone with no entry or an entry without surfaces or grade: nothing is defaulted.
+func (r *SchedRelay) Milestone(ctx context.Context, plan, milestone string) (ops.Milestone, error) {
+	p, err := r.project(plan)
+	if err != nil {
+		return ops.Milestone{}, err
+	}
+	entry, ok := HandoffMilestone(p, milestone)
+	if !ok {
+		return ops.Milestone{}, fmt.Errorf("the run's handoff names no entry of milestone %s in project %s: the milestone's title, criteria, surfaces, grade and required commands are compiled with the plan (milestones[] of %s)", milestone, p.Key, compile.InputSchema)
+	}
+	if len(entry.Surfaces) == 0 || strings.TrimSpace(entry.Grade) == "" || len(entry.Criteria) == 0 {
+		return ops.Milestone{}, fmt.Errorf("the entry of milestone %s names no surfaces, grade or criteria: the run defaults none of them", milestone)
+	}
+	if r.Revision <= 0 {
+		return ops.Milestone{}, fmt.Errorf("the run pins no revision of plan %s", plan)
+	}
+	snap, _, err := (&dag.Repo{Store: r.Sched.Store}).Snapshot(ctx, plan, r.Revision)
+	if err != nil {
+		return ops.Milestone{}, fmt.Errorf("plan %s at the run's revision %d: %w", plan, r.Revision, err)
+	}
+	byIssue := map[string]dag.SnapNode{}
+	for _, n := range snap.Nodes {
+		byIssue[n.IssueKey] = n
+	}
+	issues := map[string]compile.Issue{}
+	members := map[string]bool{}
+	for _, is := range p.Issues {
+		if is.Milestone != milestone {
+			continue
+		}
+		n, ok := byIssue[is.Key]
+		if !ok {
+			return ops.Milestone{}, fmt.Errorf("issue %s of milestone %s has no node in plan %s at revision %d: compile and put the handoff first", is.Key, milestone, plan, r.Revision)
+		}
+		if len(is.Criteria) == 0 {
+			return ops.Milestone{}, fmt.Errorf("issue %s names its criteria by digest only: the run releases a node with the text of its criteria, so the handoff names them", is.Key)
+		}
+		if want := compile.CriteriaDigest(is.Criteria); want != n.CriteriaSetDigest {
+			return ops.Milestone{}, fmt.Errorf("the criteria of issue %s digest to %s and node %s of plan %s carries %s at revision %d: compile and put the handoff first", is.Key, want, n.NodeID, plan, n.CriteriaSetDigest, r.Revision)
+		}
+		issues[n.NodeID] = is
+		members[n.NodeID] = true
+	}
+	if len(members) == 0 {
+		return ops.Milestone{}, fmt.Errorf("no issue of the handoff is in milestone %s", milestone)
+	}
+	after := map[string][]string{}
+	for _, e := range snap.Edges {
+		if members[e.FromNodeID] && members[e.ToNodeID] && !slices.Contains(after[e.ToNodeID], e.FromNodeID) {
+			after[e.ToNodeID] = append(after[e.ToNodeID], e.FromNodeID)
+		}
+	}
+	nodes := map[string]dag.SnapNode{}
+	for _, n := range snap.Nodes {
+		nodes[n.NodeID] = n
+	}
+	out := ops.Milestone{ID: milestone, Plan: plan, Title: entry.Title, Criteria: slices.Clone(entry.Criteria), CriteriaDigest: compile.CriteriaDigest(entry.Criteria),
+		Surfaces: slices.Clone(entry.Surfaces), Grade: entry.Grade, RequiredCommands: append([]string{}, entry.RequiredCommands...), Nodes: []ops.PlanNode{}}
+	for _, id := range dagsched.OfferingOrder(snap) {
+		if !members[id] {
+			continue
+		}
+		n, is := nodes[id], issues[id]
+		pn := ops.PlanNode{ID: n.NodeID, Issue: n.IssueKey, Title: n.Title, After: after[id], Regions: []string{}, Group: is.Group, Criteria: slices.Clone(is.Criteria),
+			CriteriaDigest: n.CriteriaSetDigest, SliceDigest: n.SliceDigest}
+		sort.Strings(pn.After)
+		if pn.After == nil {
+			pn.After = []string{}
+		}
+		for _, rg := range is.Regions {
+			pn.Regions = append(pn.Regions, rg.String())
+		}
+		out.Nodes = append(out.Nodes, pn)
+	}
+	return out, nil
+}
+
+// issueOf is the issue of the handoff a node of the pinned revision carries.
+func (r *SchedRelay) issueOf(ctx context.Context, plan, node string) (dag.SnapNode, compile.Issue, error) {
+	p, err := r.project(plan)
+	if err != nil {
+		return dag.SnapNode{}, compile.Issue{}, err
+	}
+	snap, _, err := (&dag.Repo{Store: r.Sched.Store}).Snapshot(ctx, plan, r.Revision)
+	if err != nil {
+		return dag.SnapNode{}, compile.Issue{}, err
+	}
+	for _, n := range snap.Nodes {
+		if n.NodeID != node {
+			continue
+		}
+		for _, is := range p.Issues {
+			if is.Key == n.IssueKey {
+				return n, is, nil
+			}
+		}
+		return n, compile.Issue{}, fmt.Errorf("node %s carries issue %s, which the run's handoff does not hold: compile and put the handoff first", node, n.IssueKey)
+	}
+	return dag.SnapNode{}, compile.Issue{}, fmt.Errorf("plan %s has no node %s at the run's revision %d", plan, node, r.Revision)
+}
+
+// ---- the release ----
+
+// worktreeHandle is the path the agent execution of a node records as its worktree: a link the run points at the worktree the node's
+// work is in before it asks for an acceptance, so the relay reads the head of the node's work from git whatever attempt worktree the
+// lane built it in.
+func (r *SchedRelay) worktreeHandle(node string) string {
+	return filepath.Join(RunDir(r.State, r.RunID), "node-wt", pathElement(node))
+}
+
+// pathElement makes a node id one safe path element.
+func pathElement(s string) string {
+	s = strings.Map(func(c rune) rune {
+		if c == '/' || c == '\\' || c == 0 {
+			return '_'
+		}
+		return c
+	}, s)
+	if s == "" || s == "." || s == ".." {
+		return "_" + s
+	}
+	return s
+}
+
+// Release releases a node to an executor of the run (CRW-1277 d): dagsched.ReleaseAgent under the task that runs it, with the request
+// the run holds the inputs of: the base from the plan's target, the rule version, the criteria of the node's issue as c1..cn required,
+// the pinned handoff as the volatile input and the run's directory as the artifact root. A node the scheduler holds back (no free slot,
+// an overlapping region, a host short of memory, a node that is not ready) is Released false with the reason; a malformed request and a
+// fenced write are errors.
+func (r *SchedRelay) Release(ctx context.Context, req ops.ReleaseRequest) (ops.ReleaseResult, error) {
+	if err := r.claim(ctx, req.Plan); err != nil {
+		return ops.ReleaseResult{}, err
+	}
+	n, is, err := r.issueOf(ctx, req.Plan, req.Node)
+	if err != nil {
+		return ops.ReleaseResult{}, err
+	}
+	criteria := make([]dagsched.Criterion, len(is.Criteria))
+	for i, c := range is.Criteria {
+		criteria[i] = dagsched.Criterion{ID: fmt.Sprintf("c%d", i+1), Title: strings.TrimSpace(c), Required: true}
+	}
+	request := dagsched.ReleaseRequest{Schema: dagsched.SchemaReleaseRequest, RuleVersion: r.Rule, Criteria: criteria,
+		CriteriaSource: compile.InputSchema + "@" + r.Handoff.SHA256,
+		Volatile:       []dagsched.Volatile{{Source: compile.InputSchema, SnapshotURI: r.Handoff.Path, SHA256: r.Handoff.SHA256, CapturedAt: r.CreatedAt}},
+		ArtifactRoots:  []string{RunDir(r.State, r.RunID)}}
+	if n.Kind == dag.NodeImplementation {
+		checkout, ref, err := r.target(req.Plan)
+		if err != nil {
+			return ops.ReleaseResult{}, err
+		}
+		request.Base = &dagsched.BaseSpec{Repository: checkout, Ref: ref}
+	}
+	res, err := r.Sched.ReleaseAgent(ctx, req.Plan, req.Node, r.Actor, request, dagsched.AgentReleaseOptions{Role: "executor", Tier: "executor", RunID: r.RunID, Worktree: r.worktreeHandle(req.Node)})
+	if err != nil {
+		if reason, held := holdBack(err); held {
+			return ops.ReleaseResult{Reason: reason}, nil
+		}
+		return ops.ReleaseResult{}, epochLost(req.Plan, err)
+	}
+	return ops.ReleaseResult{Released: true, ExecutionID: res.ExecutionID, SlotID: res.SlotID, Replayed: res.Replayed}, nil
+}
+
+// notReady is the detail of the refusal of a node the reading did not find ready: "<node> is not ready (<reason>): ...".
+var notReady = regexp.MustCompile(`is not ready \(([a-z_]+:[a-z_]+)\)`)
+
+// holdBack says whether a refused release is the scheduler holding the node back, and the reason: capacity (no slot, a ceiling nobody
+// measured, a host short of memory), an overlapping region, or a reading that does not find the node ready now. Those go away by
+// themselves; every other refusal is the request's or the run's fault.
+func holdBack(err error) (string, bool) {
+	var refused *store.RefusedError
+	if !errors.As(err, &refused) {
+		return "", false
+	}
+	switch contract.RefusalReason(refused.Reason) {
+	case contract.RefusalCapacityExhausted, contract.RefusalCapacityUnmeasured, contract.RefusalRegionOverlap:
+		if m := regexp.MustCompile(`\((defer:[a-z_]+)\)`).FindStringSubmatch(refused.Detail); m != nil {
+			return m[1], true
+		}
+		return refused.Reason, true
+	case contract.RefusalDispositionConflict:
+		if m := notReady.FindStringSubmatch(refused.Detail); m != nil {
+			return m[1], true
+		}
+	}
+	return "", false
+}
+
+// ReleaseStands is true while the node's current agent execution is the release's, and for an execution whose acceptance integrated.
+func (r *SchedRelay) ReleaseStands(ctx context.Context, plan, node, execution string) (bool, error) {
+	if execution == "" {
+		return false, nil
+	}
+	q := r.q(ctx)
+	cur, found, err := dagsched.CurrentExecution(ctx, q, plan, node)
+	if err != nil {
+		return false, err
+	}
+	if found && cur.Kind == dagsched.ExecutionAgent && cur.Agent.ExecutionID == execution {
+		return true, nil
+	}
+	acc, found, err := dagsched.CurrentAcceptance(ctx, q, plan, node)
+	if err != nil || !found || acc.Kind != dagsched.AcceptanceAgent || acc.Agent.ExecutionID != execution {
+		return false, err
+	}
+	return r.Sched.AgentAcceptanceIntegrated(ctx, q, acc.Agent)
+}
+
+// ReleaseChild refuses: the run holds no host settings for a managed child start (CRW-1277 g).
+func (r *SchedRelay) ReleaseChild(context.Context, ops.ChildRequest) (ops.ChildResult, error) {
+	return ops.ChildResult{}, ErrChildReleaseUnwired
+}
+
+// ---- acceptance and integration ----
+
+// pointWorktree points the node's worktree handle at the worktree the journal says the node's work is in now (its newest fresh or
+// restored allocation): a link replaced in one rename.
+func (r *SchedRelay) pointWorktree(node string) error {
+	wt := worktreeOf(r.Journal.Events(), node)
+	if wt == "" {
+		return nil
+	}
+	handle := r.worktreeHandle(node)
+	if cur, err := os.Readlink(handle); err == nil && cur == wt {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(handle), 0o700); err != nil {
+		return err
+	}
+	tmp := handle + ".tmp"
+	_ = os.Remove(tmp)
+	if err := os.Symlink(wt, tmp); err != nil {
+		return err
+	}
+	return os.Rename(tmp, handle)
+}
+
+// worktreeOf is the newest worktree of a node in the journal: the path of its latest fresh or restored allocation, or of the worktree a
+// resume suffix restored for it.
+func worktreeOf(events []engine.Event, node string) string {
+	path, seq := "", 0
+	for _, ev := range events {
+		switch {
+		case ev.Kind == engine.KindCall && ev.Event == engine.EvPrepared && str(ev.Data, "node") == node:
+			if m, ok := ev.Data["allocation"].(map[string]any); ok && str(m, "path") != "" && (str(m, "kind") == engine.PlaceFresh || str(m, "kind") == engine.PlaceRestore) && ev.Seq > seq {
+				path, seq = str(m, "path"), ev.Seq
+			}
+		case ev.Kind == engine.KindFlow && ev.Event == engine.EvWorktreeRestored && str(ev.Data, "node") == node && ev.Seq > seq:
+			path, seq = str(ev.Data, "path"), ev.Seq
+		}
+	}
+	return path
+}
+
+// agentReasons are the closed reasons of the agent path that travel in the detail of a disposition_conflict (dagsched/accept_agent.go).
+var agentReasons = []string{dagsched.ReviewerMissing, dagsched.ReviewerNotVerified, dagsched.IndependenceRefused, dagsched.IndependenceUnproven, dagsched.AgentWorktreeUnrecorded, dagsched.AgentNotOrchestrator}
+
+// refusalOf is the closed reason and the detail of a refusal: the agent path's own reason when the detail carries one.
+func refusalOf(refused *store.RefusedError) (string, string) {
+	for _, reason := range agentReasons {
+		if strings.HasPrefix(refused.Detail, reason+":") {
+			return reason, refused.Detail
+		}
+	}
+	return refused.Reason, refused.Detail
+}
+
+// Accept is dag-accept on the agent path (CRW-1277 f): the commit the run made, over the base its verification stood on, in the plan's
+// checkout, with the verification record and the pre-merge record the run assembled. A refusal is Accepted false with its reason; the new
+// output of a node whose current acceptance stands on another head supersedes it.
+func (r *SchedRelay) Accept(ctx context.Context, req ops.AcceptRequest) (ops.AcceptResult, error) {
+	if err := r.claim(ctx, req.Plan); err != nil {
+		return ops.AcceptResult{}, err
+	}
+	checkout, _, err := r.target(req.Plan)
+	if err != nil {
+		return ops.AcceptResult{}, err
+	}
+	if err := r.pointWorktree(req.Node); err != nil {
+		return ops.AcceptResult{}, fmt.Errorf("the worktree of node %s cannot be named to the relay: %w", req.Node, err)
+	}
+	// the acceptance reads the calls of the execution from the store: the rows the run's journal still buffers are stored first
+	if f, ok := r.Journal.(interface{ Flush() error }); ok {
+		if err := f.Flush(); err != nil {
+			return ops.AcceptResult{}, fmt.Errorf("the run's calls cannot be stored before the acceptance: %w", err)
+		}
+	}
+	in := dagsched.AcceptInput{RuleVersion: r.Verifier, Premerge: req.Premerge,
+		Commit: &dagsched.CommitRef{Head: req.Head, Base: req.Base, Checkout: checkout, Record: string(req.Verification)}}
+	if cur, found, err := dagsched.CurrentAcceptance(ctx, r.q(ctx), req.Plan, req.Node); err != nil {
+		return ops.AcceptResult{}, err
+	} else if found && cur.Kind == dagsched.AcceptanceAgent && cur.Agent.Head != req.Head {
+		in.Supersedes = cur.AcceptanceID
+	}
+	res, err := r.Sched.Accept(ctx, req.Plan, req.Node, r.Actor, in)
+	if err != nil {
+		var refused *store.RefusedError
+		if errors.As(err, &refused) && refused.Reason != string(contract.RefusalStaleCoordinatorEpoch) {
+			reason, detail := refusalOf(refused)
+			return ops.AcceptResult{Reason: reason, Detail: detail}, nil
+		}
+		return ops.AcceptResult{}, epochLost(req.Plan, err)
+	}
+	return ops.AcceptResult{Accepted: true, AcceptanceID: res.AcceptanceID, Replayed: res.Replayed}, nil
+}
+
+// acceptedBy is the plan and node of an acceptance the run made, from its crw.accept rows.
+func (r *SchedRelay) acceptedBy(id string) (plan, node string, ok bool) {
+	for _, ev := range r.Journal.Events() {
+		if ev.Kind == engine.KindCall && ev.Op == ops.OpAccept && ev.Event == engine.EvCompleted && str(ev.Data, "acceptance_id") == id {
+			plan, node, ok = str(ev.Data, "plan"), str(ev.Data, "node"), true
+		}
+	}
+	return plan, node, ok
+}
+
+// AcceptState reads an acceptance the run made: active while it is the node's current agent acceptance, and stale once the plan's node
+// no longer carries the criteria it was accepted under (or left the plan).
+func (r *SchedRelay) AcceptState(ctx context.Context, id string) (ops.AcceptState, bool, error) {
+	plan, node, ok := r.acceptedBy(id)
+	if !ok {
+		return ops.AcceptState{}, false, nil
+	}
+	q := r.q(ctx)
+	cur, found, err := dagsched.CurrentAcceptance(ctx, q, plan, node)
+	if err != nil {
+		return ops.AcceptState{}, false, err
+	}
+	if !found || cur.Kind != dagsched.AcceptanceAgent || cur.AcceptanceID != id {
+		return ops.AcceptState{}, true, nil
+	}
+	st := ops.AcceptState{Active: true, Head: cur.Agent.Head}
+	snap, _, err := dag.SnapshotAt(ctx, q, plan, 0)
+	if err != nil {
+		return ops.AcceptState{}, false, err
+	}
+	st.Stale = true
+	for _, n := range snap.Nodes {
+		if n.NodeID == node && n.CriteriaSetDigest == cur.Agent.CriteriaSetDigest {
+			st.Stale = false
+		}
+	}
+	return st, true, nil
+}
+
+// Integrate lands an accepted head on the plan's target branch (CRW-1277 f): one integration batch of the node with the scheduler and the
+// wiring of `crw relay dag-integrate` (dagsched.IntegrationDeps: the run's verification of the merged tree and git's compare-and-swap of
+// the branch), then the observation of the landing on that branch, which marks the node integrated and returns its slot. A head the branch
+// already holds is the replay of an integration that landed.
+func (r *SchedRelay) Integrate(ctx context.Context, req ops.IntegrateRequest) (ops.IntegrateResult, error) {
+	if err := r.claim(ctx, req.Plan); err != nil {
+		return ops.IntegrateResult{}, err
+	}
+	checkout, ref, err := r.target(req.Plan)
+	if err != nil {
+		return ops.IntegrateResult{}, err
+	}
+	out := ops.IntegrateResult{IntegrationRef: ref}
+	refused := func(err error) (ops.IntegrateResult, error) {
+		var rf *store.RefusedError
+		if errors.As(err, &rf) && rf.Reason != string(contract.RefusalStaleCoordinatorEpoch) {
+			out.Reason, out.Detail = refusalOf(rf)
+			return out, nil
+		}
+		return ops.IntegrateResult{}, epochLost(req.Plan, err)
+	}
+	tip, err := r.IntegrationTip(ctx, req.Plan)
+	if err != nil {
+		return ops.IntegrateResult{}, err
+	}
+	if contained, err := isAncestor(ctx, checkout, req.Head, tip); err != nil {
+		return ops.IntegrateResult{}, err
+	} else if contained {
+		out.Landed, out.Replayed, out.BatchCommit, out.Tip = true, true, tip, tip
+	} else {
+		res, err := r.Sched.IntegrateBatch(ctx, dagsched.IntegrationBatchInput{Plan: req.Plan, Actor: r.Actor, Checkout: checkout, IntegrationRef: ref, BaseRef: ref, Nodes: []string{req.Node}},
+			dagsched.IntegrationDeps(r.Verify))
+		if err != nil {
+			return refused(err)
+		}
+		for _, m := range res.Merged {
+			if m.NodeID == req.Node {
+				out.Landed, out.BatchCommit, out.Tip = true, res.NewHead, res.NewHead
+			}
+		}
+		for _, c := range res.AlreadyContained {
+			if c.NodeID == req.Node && !out.Landed {
+				out.Landed, out.Replayed, out.BatchCommit, out.Tip = true, true, tip, tip
+			}
+		}
+		for _, s := range res.Split {
+			if s.NodeID == req.Node && !out.Landed {
+				out.Reason, out.Detail = s.Reason, fmt.Sprintf("the batch %s left %s out: %s", res.BatchID, req.Node, s.Reason)
+			}
+		}
+		if !out.Landed {
+			if out.Reason == "" {
+				out.Reason, out.Detail = "not_integrated", fmt.Sprintf("the batch %s did not merge %s (merged %d, left out %d)", res.BatchID, req.Node, len(res.Merged), len(res.Split))
+			}
+			return out, nil
+		}
+	}
+	if _, err := r.Sched.ObserveIntegration(ctx, req.Plan, req.Node, r.Actor, []dagsched.Target{{Repository: checkout, BaseRef: ref}}); err != nil {
+		return refused(err)
+	}
+	return out, nil
+}
+
+// IntegrationTip is the commit the plan's target branch holds now.
+func (r *SchedRelay) IntegrationTip(ctx context.Context, plan string) (string, error) {
+	checkout, ref, err := r.target(plan)
+	if err != nil {
+		return "", err
+	}
+	tip, err := r.Sched.Tips.Tip(ctx, checkout, ref)
+	if err != nil {
+		return "", err
+	}
+	return tip.SHA, nil
+}
+
+// Close is AgentClose (CRW-1277 f): the node's current execution is closed (a node given up or cancelled returns its slot in the same
+// transaction) or held. A node the relay never gave an execution has nothing to close.
+func (r *SchedRelay) Close(ctx context.Context, req ops.CloseRequest) (ops.CloseResult, error) {
+	if req.Plan == "" {
+		return ops.CloseResult{}, nil
+	}
+	executed, err := dagsched.ExecutedNodes(ctx, r.q(ctx), req.Plan)
+	if err != nil {
+		return ops.CloseResult{}, err
+	}
+	if !executed[req.Node] {
+		return ops.CloseResult{}, nil
+	}
+	if err := r.claim(ctx, req.Plan); err != nil {
+		return ops.CloseResult{}, err
+	}
+	res, err := r.Sched.AgentClose(ctx, req.Plan, req.Node, r.Actor, dagsched.AgentCloseInput{Reason: req.Reason})
+	if err != nil {
+		return ops.CloseResult{}, epochLost(req.Plan, err)
+	}
+	return ops.CloseResult{Closed: res.Closed, Held: res.Held, SlotReleased: res.SlotReleased, Replayed: res.Replayed, ExecutionID: res.ExecutionID, State: res.State}, nil
+}
+
+// isAncestor says whether commit is an ancestor of (or is) tip in the checkout.
+func isAncestor(ctx context.Context, checkout, commit, tip string) (bool, error) {
+	if commit == "" || tip == "" {
+		return false, nil
+	}
+	return ops.IsAncestor(ctx, ops.ExecGit("git"), checkout, commit, tip)
+}
