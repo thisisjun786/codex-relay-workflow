@@ -114,7 +114,7 @@ func BuildLane(ctx context.Context, req LaneRequest, opt LaneOptions) (LaneWorld
 	if nonce == "" {
 		nonce = spec.RunID
 	}
-	relay := &SchedRelay{Sched: sched, RunID: spec.RunID, Actor: spec.Thread, Nonce: nonce, Revision: req.Identity.PlanRevision, Handoff: ref, State: req.State,
+	relay := &SchedRelay{Sched: sched, RunID: spec.RunID, Actor: spec.Thread, Nonce: nonce, Revision: req.Identity.PlanRevision, Handoff: ref, State: req.State, Repo: req.Repo,
 		CreatedAt: spec.CreatedAt, Journal: journal, Verify: verify,
 		Rule:     dagsched.RuleVersion{SkillsDigest: skills, Model: exec.Model, Effort: exec.Effort, PromptTemplate: prompt, RelayBuild: buildinfo.ID()},
 		Verifier: dagsched.VerifierRule{SkillsDigest: skills, Model: review.Model, Effort: review.Effort}}

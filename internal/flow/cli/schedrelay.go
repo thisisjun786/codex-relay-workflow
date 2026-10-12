@@ -35,9 +35,11 @@ type SchedRelay struct {
 	RunID, Actor, Nonce string
 	// Revision is the plan revision the run pinned (journal.Identity.PlanRevision).
 	Revision int64
-	// Handoff is the handoff the run pinned; State the relay state directory (the run's artifacts are under <state>/flow/<run>).
+	// Handoff is the handoff the run pinned; State the relay state directory (the run's artifacts are under <state>/flow/<run>); Repo
+	// the repository the run's worktrees are made from, which the plan's target has to be ("" checks nothing).
 	Handoff HandoffRef
 	State   string
+	Repo    string
 	// CreatedAt is the time the run was started at: the capture time of the pinned handoff.
 	CreatedAt string
 	// Journal is the run's journal: the worktree a node's work is in and the acceptances the run made are read from it.
@@ -109,6 +111,9 @@ func (r *SchedRelay) target(plan string) (checkout, ref string, err error) {
 	}
 	if !filepath.IsAbs(p.Target.Repository) {
 		return "", "", fmt.Errorf("the target repository %q of project %s is not a local checkout: an agent node integrates on a local branch (its pull request landing is CRW-1226's)", p.Target.Repository, p.Key)
+	}
+	if r.Repo != "" && !sameDirectory(r.Repo, p.Target.Repository) {
+		return "", "", fmt.Errorf("the target repository %s of project %s is not the repository %s the run's worktrees are made from: the relay reads a node's commits in the target (start the run with --repo %s)", p.Target.Repository, p.Key, r.Repo, p.Target.Repository)
 	}
 	return p.Target.Repository, p.Target.BaseRef, nil
 }
@@ -263,6 +268,16 @@ func (r *SchedRelay) worktreeHandle(node string) string {
 	return filepath.Join(RunDir(r.State, r.RunID), "node-wt", pathElement(node))
 }
 
+// sameDirectory says whether two paths name one directory.
+func sameDirectory(a, b string) bool {
+	if a == b {
+		return true
+	}
+	ia, errA := os.Stat(a)
+	ib, errB := os.Stat(b)
+	return errA == nil && errB == nil && os.SameFile(ia, ib)
+}
+
 // pathElement makes a node id one safe path element.
 func pathElement(s string) string {
 	s = strings.Map(func(c rune) rune {
@@ -316,7 +331,10 @@ func (r *SchedRelay) Release(ctx context.Context, req ops.ReleaseRequest) (ops.R
 }
 
 // notReady is the detail of the refusal of a node the reading did not find ready: "<node> is not ready (<reason>): ...".
-var notReady = regexp.MustCompile(`is not ready \(([^()]+)\)`)
+var (
+	notReady   = regexp.MustCompile(`is not ready \(([^()]+)\)`)
+	deferredBy = regexp.MustCompile(`\((defer:[a-z_]+)\)`)
+)
 
 // holdBack says whether a refused release is the scheduler holding the node back, and the reason: capacity (no slot, a ceiling nobody
 // measured, a host short of memory), an overlapping region, or a reading that does not find the node ready now. Those go away by
@@ -328,7 +346,7 @@ func holdBack(err error) (string, bool) {
 	}
 	switch contract.RefusalReason(refused.Reason) {
 	case contract.RefusalCapacityExhausted, contract.RefusalCapacityUnmeasured, contract.RefusalRegionOverlap:
-		if m := regexp.MustCompile(`\((defer:[a-z_]+)\)`).FindStringSubmatch(refused.Detail); m != nil {
+		if m := deferredBy.FindStringSubmatch(refused.Detail); m != nil {
 			return m[1], true
 		}
 		return refused.Reason, true

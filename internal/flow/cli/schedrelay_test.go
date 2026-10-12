@@ -36,7 +36,7 @@ func (l *laneLab) relayFor(run string, raw []byte, rev int64) *SchedRelay {
 		l.t.Fatal(err)
 	}
 	return &SchedRelay{Sched: &dagsched.Scheduler{Store: l.w.st, Tips: mergeturn.TargetReader{}, Ancestry: dagsched.GitAncestry{}.Ancestry}, RunID: run, Actor: labOwner, Nonce: run,
-		Revision: rev, Handoff: ref, State: l.w.state, CreatedAt: "2026-10-12T09:00:00Z", Journal: runJournal{j}, Verify: l.verifyMerged,
+		Revision: rev, Handoff: ref, State: l.w.state, Repo: l.repo, CreatedAt: "2026-10-12T09:00:00Z", Journal: runJournal{j}, Verify: l.verifyMerged,
 		Rule:     dagsched.RuleVersion{SkillsDigest: "sha256:lab-skills", Model: "claude-fake-haiku", Effort: "xhigh", PromptTemplate: "script:test", RelayBuild: "test"},
 		Verifier: dagsched.VerifierRule{SkillsDigest: "sha256:lab-skills", Model: "gpt-fake-sol", Effort: "high"}}
 }
@@ -360,6 +360,11 @@ func TestSchedRelayHeldBackReleaseIsNotAnError(t *testing.T) {
 	t.Logf("held back: %q and %q", waiting.Reason, overlap.Reason)
 	if _, err := r.Release(ctx, ops.ReleaseRequest{Plan: l.plan, Node: "no-such-node", RunID: r.RunID}); err == nil {
 		t.Error("the release of a node the plan does not hold is no error")
+	}
+	other := l.relayFor("run-held000002", l.handoffBytes(nil), 1)
+	other.Repo = t.TempDir()
+	if _, err := other.Release(ctx, ops.ReleaseRequest{Plan: l.plan, Node: l.nodeOf["C-1"], RunID: other.RunID}); err == nil || !strings.Contains(err.Error(), "is not the repository") {
+		t.Errorf("a target that is not the run's repository: %v", err)
 	}
 	if reason, held := holdBack(errors.New("a failure")); held || reason != "" {
 		t.Errorf("a plain error is a hold-back: %q", reason)
