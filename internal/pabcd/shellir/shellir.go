@@ -1328,9 +1328,9 @@ func (w *walker) dispatch(words []Word, assigns []Assign, redirs []Redir, st *st
 			return unreadablef("PATH program is written before it runs")
 		}
 		// The program the PATH finds is read as the same program by its absolute path would be: by its name, and a shell file's body
-		// by the consumers. A binary outside the system directories is not identified by its name (a copy of a shell named check runs
+		// by the consumers. A binary is not identified by its name or by the directory it stands in (a copy of a shell named check runs
 		// its -c text), so it is admitted only when the PATH the shell started with runs the same file for the name (CRW-1283).
-		if resolved && !systemProgram(prog.Value) {
+		if resolved {
 			if err := pathProgramIdentified(name, prog.Value); err != nil {
 				return err
 			}

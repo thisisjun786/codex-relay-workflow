@@ -104,8 +104,9 @@ func shellOwnSomewhere(name string) bool {
 }
 
 // keywordOnPath answers for a clause whose word is a builtin or keyword in bash and zsh and a program the PATH finds in sh (dash):
-// a declaration, let, time, [[, coproc, select or function. Behind an assigned PATH, a file of that name outside the system directories is refused, since the
-// clause is read as the builtin (CRW-1283, Sion decision 5). A name no directory holds, or a system program, is read as before.
+// a declaration, let, time, [[, coproc, select or function. Behind an assigned PATH, a file of that name is refused unless the PATH
+// the shell starts with runs the same file, since the clause is read as the builtin (CRW-1283, Sion decision 5). A name no
+// directory holds is read as before. The directory the file stands in decides nothing.
 func (w *walker) keywordOnPath(name string, st *state) error {
 	if st.searchPath == nil || posixShellOwn(name) && !w.builtinsChanged {
 		return nil
@@ -119,37 +120,10 @@ func (w *walker) keywordOnPath(name string, st *state) error {
 		return nil
 	case err != nil:
 		return err
-	case !strings.Contains(found.Value, "/") || systemProgram(found.Value):
+	case !strings.Contains(found.Value, "/") || startingPathRuns(name, found.Value):
 		return nil
 	}
 	return unreadablef("%s is a builtin in some shells and %s on the assigned PATH in others; run it with a PATH that does not hold it", name, found.Value)
-}
-
-func systemProgram(program string) bool {
-	directory, _ := filepath.Split(program)
-	if directory != "/bin/" && directory != "/usr/bin/" && directory != "/usr/local/bin/" && directory != "/opt/homebrew/bin/" {
-		return false
-	}
-	resolved, err := filepath.EvalSymlinks(program)
-	if err != nil {
-		return false
-	}
-	descriptor, err := syscall.Open(resolved, syscall.O_RDONLY|syscall.O_NONBLOCK|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0)
-	if err != nil {
-		return false
-	}
-	file := os.NewFile(uintptr(descriptor), resolved)
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil || !info.Mode().IsRegular() {
-		return false
-	}
-	head := make([]byte, 4096)
-	count, err := io.ReadFull(file, head)
-	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
-		return false
-	}
-	return !bytes.HasPrefix(head[:count], []byte("#!")) && bytes.IndexByte(head[:count], 0) >= 0
 }
 
 func resolveProgram(program Word, st *state) (Word, error) {
@@ -326,7 +300,8 @@ func optionName(v string) bool {
 	return true
 }
 
-// pathProgramIdentified admits a program an assigned PATH finds outside the system directories. A text file (a script) is read
+// pathProgramIdentified admits a program an assigned PATH finds, in any directory (a directory name such as /usr/local/bin, and a
+// file header, establish nothing about what a program is). A text file (a script) is read
 // by the consumers like a script run by its path, unless its name is an interpreter's: the reader then reads the interpreter's
 // inline program or module by the name, not the script. A binary is read by its name only, which says nothing of a copy or a link
 // named otherwise. Either is admitted only when the PATH the shell started with (the environment of this process) runs the same
@@ -340,17 +315,13 @@ func pathProgramIdentified(name, program string) error {
 	if !binary && !byName {
 		return nil
 	}
-	if ambient, ok := ambientProgram(name); ok {
-		left, leftErr := os.Stat(program)
-		right, rightErr := os.Stat(ambient)
-		if leftErr == nil && rightErr == nil && os.SameFile(left, right) {
-			return nil
-		}
+	if startingPathRuns(name, program) {
+		return nil
 	}
 	if !binary {
 		return unreadablef("%s is a script that the assigned PATH finds under the interpreter name %s and the PATH the shell starts with does not run; the reader would read the interpreter, not the script", program, name)
 	}
-	return unreadablef("%s is a binary that the assigned PATH finds outside the system directories and the PATH the shell starts with does not run; run it by its absolute path", program)
+	return unreadablef("%s is a binary that the assigned PATH finds and the PATH the shell starts with does not run; run it by its absolute path", program)
 }
 
 // programIsBinary is whether an executable file is a binary: a file whose head has no #! line and a NUL, as the consumers read it.
@@ -375,6 +346,51 @@ func programIsBinary(program string) (bool, error) {
 		return false, unreadablef("PATH program cannot be read")
 	}
 	return !bytes.HasPrefix(head[:count], []byte("#!")) && bytes.IndexByte(head[:count], 0) >= 0, nil
+}
+
+// startingPathRuns is whether the PATH the shell starts with runs the same file for a name as the file an assigned PATH found.
+func startingPathRuns(name, program string) bool {
+	ambient, ok := ambientProgram(name)
+	if !ok {
+		return false
+	}
+	left, leftErr := os.Stat(program)
+	right, rightErr := os.Stat(ambient)
+	return leftErr == nil && rightErr == nil && os.SameFile(left, right)
+}
+
+// EnvShebang judges the interpreter a #! line launches through env for a program run with an assigned PATH (path is that PATH, nil
+// when none is assigned): env finds the interpreter on the PATH the program runs with, so the file the assigned PATH selects is the
+// interpreter, and what the reader makes of the script's body says nothing about it. The interpreter is admitted only when the
+// PATH the shell starts with runs the same file for its name; an env option that changes the search or the environment (-i, -u,
+// -P, --, a NAME=value) cannot be followed and is refused. An interpreter named by a path, and a line that does not go through
+// env, do not depend on the PATH (CRW-1283, the evaluation of deb45bd1, d2).
+func EnvShebang(line string, path *Word, dir Dir) error {
+	words := strings.Fields(strings.TrimPrefix(line, "#!"))
+	if path == nil || len(words) == 0 || filepath.Base(words[0]) != "env" {
+		return nil
+	}
+	args := words[1:]
+	if len(args) > 0 && args[0] == "-S" {
+		args = args[1:]
+	}
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") || strings.Contains(args[0], "=") {
+		return unreadablef("the #! line launches its interpreter through env with an option the reader cannot follow under an assigned PATH")
+	}
+	name := args[0]
+	if strings.Contains(name, "/") {
+		return nil
+	}
+	found, err := resolveProgram(Word{Known: true, Value: name}, &state{dir: dir, searchPath: path})
+	switch {
+	case err != nil:
+		return err
+	case !strings.Contains(found.Value, "/"):
+		return unreadablef("the interpreter %s of the #! line cannot be found on the assigned PATH", name)
+	case !startingPathRuns(name, found.Value):
+		return unreadablef("the #! line launches %s through env, the assigned PATH finds %s, and the PATH the shell starts with does not run that file", name, found.Value)
+	}
+	return nil
 }
 
 // ambientPath is the PATH the shell that runs the command starts with: the environment of this process (a hook runs in the

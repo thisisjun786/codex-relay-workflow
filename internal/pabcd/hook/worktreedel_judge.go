@@ -91,7 +91,7 @@ func worktreeDelJudgeText(command, cwd string, id WorktreeIdentity, depth int, o
 				if written.stale(i, e.Program.Value, e.Dir) {
 					return worktreeDelUnreadable(id)
 				}
-				body, kind := githubPostReadDirect(e.Program.Value, e.Dir.Path)
+				body, kind := githubPostReadDirectExec(e, e.Dir.Path)
 				switch kind {
 				case githubPostFileBinary, githubPostFileAbsent:
 				case githubPostFileShell:

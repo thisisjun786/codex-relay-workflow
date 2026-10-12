@@ -684,10 +684,10 @@ func githubPostJudgeDirect(e shellir.Exec, depth int, writes *githubPostWrites) 
 	if !e.Dir.Known {
 		cwd = ""
 	}
-	body, kind := githubPostReadDirect(e.Program.Value, cwd)
+	body, kind := githubPostReadDirectExec(e, cwd)
 	switch kind {
 	case githubPostFileUnreadable:
-		unread.reason = githubPostScriptReason("script file cannot be read", e.Program.Value)
+		unread.reason = githubPostScriptReason("script file cannot be read or names an interpreter the assigned PATH selects", e.Program.Value)
 		return unread, true
 	case githubPostFileBinary, githubPostFileAbsent:
 		return githubPostSite{}, false
@@ -781,6 +781,22 @@ func githubPostReadDirect(name, dir string) (string, githubPostFileKind) {
 		return body, githubPostFileShell
 	}
 	return body, githubPostFileOther
+}
+
+// githubPostReadDirectExec reads the file an execution runs by its path, as githubPostReadDirect does, and follows the interpreter
+// of an env #! line when the execution has an assigned PATH: env runs the file that PATH selects for the interpreter's name, which
+// the body of the script says nothing about, so a script whose interpreter is not the one the starting PATH runs is unreadable
+// (CRW-1283, the evaluation of deb45bd1, d2).
+func githubPostReadDirectExec(e shellir.Exec, dir string) (string, githubPostFileKind) {
+	body, kind := githubPostReadDirect(e.Program.Value, dir)
+	if e.SearchPath == nil || kind != githubPostFileShell && kind != githubPostFileOther {
+		return body, kind
+	}
+	line, _, _ := strings.Cut(body, "\n")
+	if shellir.EnvShebang(line, e.SearchPath, e.Dir) != nil {
+		return "", githubPostFileUnreadable
+	}
+	return body, kind
 }
 
 // githubPostShellName is whether a program name is a POSIX or Korn family shell that reads a script file as shell text: the

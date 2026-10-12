@@ -584,3 +584,142 @@ PATH={WORK}:/usr/bin:/bin node -e 1
 tee {MEMORY}/note.md
 --cmd
 PATH={WORK}:/usr/bin:/bin awk 'BEGIN{}'
+=== CRW-1283-r3-bin-dir-binary-memory | U
+--why Evaluation deb45bd1 d1: a binary a bin-named directory holds is not the program its name says; refused (Sion decision 5).
+--link usr/local/bin/check /bin/sh
+--cmd
+PATH={WORK}/usr/local/bin:/usr/bin:/bin check -c 'tee {MEMORY}/note.md'
+
+=== CRW-1283-r3-bin-dir-binary-post | U
+--why Evaluation deb45bd1 d1: a binary a bin-named directory holds is not the program its name says; refused (Sion decision 5).
+--link usr/local/bin/check /bin/sh
+--cmd
+PATH={WORK}/usr/local/bin:/usr/bin:/bin check -c 'gh pr comment 1 --body x'
+
+=== CRW-1283-r3-bin-dir-binary-removal | U
+--why Evaluation deb45bd1 d1: a binary a bin-named directory holds is not the program its name says; refused (Sion decision 5).
+--link usr/local/bin/check /bin/sh
+--cmd
+PATH={WORK}/usr/local/bin:/usr/bin:/bin check -c 'rm -rf {CHECKOUT}'
+
+=== CRW-1283-r3-bin-dir-binary-export-memory | U
+--why Evaluation deb45bd1 d1: a binary a bin-named directory holds is not the program its name says; refused (Sion decision 5).
+--link usr/local/bin/check /bin/sh
+--cmd
+export PATH={WORK}/usr/local/bin:/usr/bin:/bin; check -c 'tee {MEMORY}/note.md'
+
+=== CRW-1283-r3-bin-dir-binary-env-removal | U
+--why Evaluation deb45bd1 d1: a binary a bin-named directory holds is not the program its name says; refused (Sion decision 5).
+--link usr/local/bin/check /bin/sh
+--cmd
+env PATH={WORK}/usr/local/bin:/usr/bin:/bin check -c 'rm -rf {CHECKOUT}'
+
+=== CRW-1283-r3-bin-dir-link-chain-post | U
+--why Evaluation deb45bd1 d1: a binary a bin-named directory holds is not the program its name says; refused (Sion decision 5). (through a second link)
+--link bin/via /bin/sh
+--link usr/bin/check {WORK}/bin/via
+--cmd
+PATH={WORK}/usr/bin:/usr/bin:/bin check -c 'gh pr comment 1 --body x'
+
+=== CRW-1283-r3-env-shebang-memory | U
+--why Evaluation deb45bd1 d2: the interpreter an env #! line launches is the file the assigned PATH selects, not the script's body; refused (Sion decision 5).
+--file p/check
+#!/usr/bin/env bash
+printf ok
+--file p/bash
+#!/bin/sh
+tee {MEMORY}/note.md
+--cmd
+PATH={WORK}/p:/usr/bin:/bin check
+
+=== CRW-1283-r3-env-shebang-post | U
+--why Evaluation deb45bd1 d2: the interpreter an env #! line launches is the file the assigned PATH selects, not the script's body; refused (Sion decision 5).
+--file p/check
+#!/usr/bin/env bash
+printf ok
+--file p/bash
+#!/bin/sh
+gh pr comment 1 --body x
+--cmd
+PATH={WORK}/p:/usr/bin:/bin check
+
+=== CRW-1283-r3-env-shebang-removal | U
+--why Evaluation deb45bd1 d2: the interpreter an env #! line launches is the file the assigned PATH selects, not the script's body; refused (Sion decision 5).
+--file p/check
+#!/usr/bin/env bash
+printf ok
+--file p/bash
+#!/bin/sh
+rm -rf {CHECKOUT}
+--cmd
+PATH={WORK}/p:/usr/bin:/bin check
+
+=== CRW-1283-r3-env-shebang-export-memory | U
+--why Evaluation deb45bd1 d2: the interpreter an env #! line launches is the file the assigned PATH selects, not the script's body; refused (Sion decision 5).
+--file p/check
+#!/usr/bin/env bash
+printf ok
+--file p/bash
+#!/bin/sh
+tee {MEMORY}/note.md
+--cmd
+export PATH={WORK}/p:/usr/bin:/bin; check
+
+=== CRW-1283-r3-env-shebang-env-removal | U
+--why Evaluation deb45bd1 d2: the interpreter an env #! line launches is the file the assigned PATH selects, not the script's body; refused (Sion decision 5).
+--file p/check
+#!/usr/bin/env bash
+printf ok
+--file p/bash
+#!/bin/sh
+rm -rf {CHECKOUT}
+--cmd
+env PATH={WORK}/p:/usr/bin:/bin check
+
+=== CRW-1283-r3-env-shebang-direct-post | U
+--why Evaluation deb45bd1 d2: the interpreter an env #! line launches is the file the assigned PATH selects, not the script's body; refused (Sion decision 5).
+--file p/check
+#!/usr/bin/env bash
+printf ok
+--file p/bash
+#!/bin/sh
+gh pr comment 1 --body x
+--cmd
+PATH={WORK}/p:/usr/bin:/bin {WORK}/p/check
+
+=== CRW-1283-r3-env-shebang-split-memory | U
+--why Evaluation deb45bd1 d2: the interpreter an env #! line launches is the file the assigned PATH selects, not the script's body; refused (Sion decision 5).
+--file p/split
+#!/usr/bin/env -S bash -e
+printf ok
+--file p/bash
+#!/bin/sh
+tee {MEMORY}/note.md
+--cmd
+PATH={WORK}/p:/usr/bin:/bin split
+
+=== CRW-1283-r3-env-shebang-python-removal | U
+--why Evaluation deb45bd1 d2: the interpreter an env #! line launches is the file the assigned PATH selects, not the script's body; refused (Sion decision 5).
+--file p/py
+#!/usr/bin/env python3
+print(1)
+--file p/python3
+#!/bin/sh
+rm -rf {CHECKOUT}
+--cmd
+PATH={WORK}/p:/usr/bin:/bin py
+
+=== CRW-1283-r3-env-shebang-control | B
+--why Control: an env #! script whose interpreter the assigned PATH leaves to the system directories is read as before (Sion decision 4).
+--file q/check
+#!/usr/bin/env bash
+set -eu
+printf ok
+--cmd
+PATH={WORK}/q:/usr/bin:/bin check
+
+=== CRW-1283-r3-bin-dir-control | B
+--why Control: a system program the PATH the shell starts with runs is read by its name behind an assigned PATH (Sion decision 4).
+--cmd
+PATH=/usr/bin:/bin ls /tmp
+

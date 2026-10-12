@@ -65,7 +65,7 @@ func shellIRDestsResult(res shellir.Result, cwd string, lookup func(string) (str
 			if _, err := os.Lstat(githubPostScriptPath(e.Program.Value, e.Dir.Path)); os.IsNotExist(err) && e.Dir.Known && !writes.stale(i, e.Program.Value, e.Dir) {
 				continue // A proven missing child has no body to execute.
 			}
-			_, kind := githubPostReadDirect(e.Program.Value, e.Dir.Path)
+			_, kind := githubPostReadDirectExec(e, e.Dir.Path)
 			if (e.PathResolved || e.SearchPath != nil) && kind == githubPostFileBinary && !writes.stale(i, e.Program.Value, e.Dir) {
 				continue
 			}

@@ -76,6 +76,22 @@ review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	python3-m-scri
 review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	perl-e-script (github guard)	CRW-1283-r2-perl-e-script-post	row	-
 review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	node-e-script (worktree guard)	CRW-1283-r2-node-e-script-removal	row	-
 review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	awk-script (memory guard)	CRW-1283-r2-awk-script-memory	row	-
+evaluation of deb45bd1 (crw1283-deb45bd1.json, CRW-1283 PATH relaxation)	d1: bin-dir-binary-memory	CRW-1283-r3-bin-dir-binary-memory	row	-
+evaluation of deb45bd1 (crw1283-deb45bd1.json, CRW-1283 PATH relaxation)	d1: bin-dir-binary-post	CRW-1283-r3-bin-dir-binary-post	row	-
+evaluation of deb45bd1 (crw1283-deb45bd1.json, CRW-1283 PATH relaxation)	d1: bin-dir-binary-removal	CRW-1283-r3-bin-dir-binary-removal	row	-
+evaluation of deb45bd1 (crw1283-deb45bd1.json, CRW-1283 PATH relaxation)	d1: bin-dir-binary-export-memory	CRW-1283-r3-bin-dir-binary-export-memory	row	-
+evaluation of deb45bd1 (crw1283-deb45bd1.json, CRW-1283 PATH relaxation)	d1: bin-dir-binary-env-removal	CRW-1283-r3-bin-dir-binary-env-removal	row	-
+evaluation of deb45bd1 (crw1283-deb45bd1.json, CRW-1283 PATH relaxation)	d1: bin-dir-link-chain-post	CRW-1283-r3-bin-dir-link-chain-post	row	-
+evaluation of deb45bd1 (crw1283-deb45bd1.json, CRW-1283 PATH relaxation)	d2: env-shebang-memory	CRW-1283-r3-env-shebang-memory	row	-
+evaluation of deb45bd1 (crw1283-deb45bd1.json, CRW-1283 PATH relaxation)	d2: env-shebang-post	CRW-1283-r3-env-shebang-post	row	-
+evaluation of deb45bd1 (crw1283-deb45bd1.json, CRW-1283 PATH relaxation)	d2: env-shebang-removal	CRW-1283-r3-env-shebang-removal	row	-
+evaluation of deb45bd1 (crw1283-deb45bd1.json, CRW-1283 PATH relaxation)	d2: env-shebang-export-memory	CRW-1283-r3-env-shebang-export-memory	row	-
+evaluation of deb45bd1 (crw1283-deb45bd1.json, CRW-1283 PATH relaxation)	d2: env-shebang-env-removal	CRW-1283-r3-env-shebang-env-removal	row	-
+evaluation of deb45bd1 (crw1283-deb45bd1.json, CRW-1283 PATH relaxation)	d2: env-shebang-direct-post	CRW-1283-r3-env-shebang-direct-post	row	-
+evaluation of deb45bd1 (crw1283-deb45bd1.json, CRW-1283 PATH relaxation)	d2: env-shebang-split-memory	CRW-1283-r3-env-shebang-split-memory	row	-
+evaluation of deb45bd1 (crw1283-deb45bd1.json, CRW-1283 PATH relaxation)	d2: env-shebang-python-removal	CRW-1283-r3-env-shebang-python-removal	row	-
+evaluation of deb45bd1 (crw1283-deb45bd1.json, CRW-1283 PATH relaxation)	d2: env-shebang-control	CRW-1283-r3-env-shebang-control	row	-
+evaluation of deb45bd1 (crw1283-deb45bd1.json, CRW-1283 PATH relaxation)	d1: bin-dir-control	CRW-1283-r3-bin-dir-control	row	-
 linear-issue-CRW-1012.json	python3 -c "print(\"f'}'\")"	CRW-1012-01	row	-
 linear-issue-CRW-1012.json	python3 -c "print(f'{len(\"abc\")}')"	CRW-1012-02	row	-
 linear-issue-CRW-1014.json	python3 -c 'open("<m>/a","w")'	CRW-1014-01	row	-

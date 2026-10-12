@@ -41,7 +41,7 @@ func shellIRDirectForwarder(execution shellir.Exec) bool {
 	if !githubPostDirectPath(execution) {
 		return false
 	}
-	body, kind := githubPostReadDirect(execution.Program.Value, execution.Dir.Path)
+	body, kind := githubPostReadDirectExec(execution, execution.Dir.Path)
 	return kind == githubPostFileShell && shellIRScriptUsesArgs(body)
 }
 
