@@ -12,6 +12,8 @@ export const meta = { name: 'project-lane', description: 'Run the issues of a mi
 install(crw)
 
 const AUDIT_ROUNDS = 3
+// the research continuations a node gets on one tier (SP-EXPL-2); after them the node escalates as a scope question
+const RESEARCH_PER_TIER = 2
 
 // A milestone that cannot go on: a call of the design phase that did not complete. held and unknown hold it (a resume goes on
 // when the cause is gone), refused and null_model escalate, superseded stops. A call that did not complete is never read as an
@@ -109,7 +111,7 @@ async function lane(n, rel) {
         await crw.hold(node, { reason: asked.failed.reason || asked.failed.status, call: asked.failed.callId, source: 'explorer' })
         return { node, state: 'held', reason: asked.failed.reason, call: asked.failed.callId }
       }
-      if (asked.escalate.length > 0 || ++researched > 2) {
+      if (asked.escalate.length > 0 || ++researched > RESEARCH_PER_TIER) {
         const esc = await crw.escalate(node, { reason: 'blocked_scope', call: ex.callId, detail: 'research_cap' })
         return { node, state: 'escalated', reason: 'blocked_scope', call: ex.callId, escalation: esc.id }
       }
@@ -185,6 +187,7 @@ async function lane(n, rel) {
     }
     step = await crw.tierStep(node, ev.evidence(tier))
     tier = 'executor-t1'
+    researched = 0
     ex = await start('build:' + node + ':' + tier, step.checkpoint)
   }
 }

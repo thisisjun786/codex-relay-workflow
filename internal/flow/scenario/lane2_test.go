@@ -2,6 +2,7 @@ package scenario
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -427,6 +428,36 @@ func TestVerificationThatCannotRunHoldsNoTierStep(t *testing.T) {
 	}
 	if rows := l.Rows("crw.hold"); len(rows) != 1 || str(rows[0].Data, "reason") != "verify_unavailable" {
 		t.Errorf("hold rows %+v", rows)
+	}
+	noTierStep(t, l)
+}
+
+// An executor that keeps asking for research gets two continuations on the tier: the third question is not sent to a third
+// explorer, and the node escalates as a scope question.
+func TestResearchCapEscalatesAsScopeQuestion(t *testing.T) {
+	l := NewLab(t, oneNode()...)
+	asks := 0
+	l.On("^(build|research):A:executor", func(c *Call) *fakehostPlan {
+		asks++
+		p := Say(ReceiptWith("needs_research", map[string]any{"research_question": fmt.Sprintf("which module owns case %d?", asks)}))
+		return &p
+	})
+	got := mustRunIncomplete(t, l)
+	if state, reason := laneOf(t, got, "A"); state != "escalated" || reason != "blocked_scope" {
+		t.Fatalf("lane A: %s %s", state, reason)
+	}
+	if n := len(l.CallsOf("explorer")); n != 2 {
+		t.Errorf("%d explorer calls, want the two continuations of the tier", n)
+	}
+	if n := len(l.CallsOf("executor")); n != 3 {
+		t.Errorf("%d executor calls (the build and two research continuations)", n)
+	}
+	esc := l.FlowRows(engine.EvEscalation)
+	if len(esc) != 1 || str(esc[0].Data, "detail") != "research_cap" || str(esc[0].Data, "class") != "scope" {
+		t.Errorf("escalations %+v", esc)
+	}
+	if got := l.Relay.CloseReasons(); !slices.Equal(got, []string{"A:blocked_scope"}) {
+		t.Errorf("closes %v", got)
 	}
 	noTierStep(t, l)
 }
