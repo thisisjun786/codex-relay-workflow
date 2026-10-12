@@ -37,6 +37,9 @@ block, a decision only the user can make, or a turn that settled without reporti
 the three things CRW-148 decided are news, plus the absence. Nothing else has an entry point,
 which is what makes a heartbeat unsendable rather than merely discouraged.
 
+The reports of a flow run (a milestone report, a project blocker, a decision request) do not use this channel: their path is
+`crw flow report-up` and `crw manage send-parent --role supervisor`, described in [reporting.md](../flow/reporting.md).
+
 Besides those, one other thing: a fault notification the relay's fault ledger has reserved
 (CRW-205 criterion 7), carried as a message of its own kind - see a fault notification, below.
 

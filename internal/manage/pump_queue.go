@@ -124,6 +124,10 @@ func pumpQueueFlushThread(ctx context.Context, e *Env, cfg *Config, st *pumpStat
 	if err != nil {
 		return err
 	}
+	if !dry {
+		// A summary notice (CRW-1204) that sent/ already holds is delivered: the queued copy is not part of any batch.
+		names = pumpSummaryWithoutSent(cfg, dir, thread, names)
+	}
 	if len(names) == 0 {
 		// A quiet thread starts no bridge process.
 		return nil
@@ -798,6 +802,8 @@ func pumpReview776QueueFinishAccepted(ctx context.Context, e *Env, cfg *Config, 
 		}
 		if !moved {
 			pumpLog(cfg, fmt.Sprintf("queue %s: the accepted notice %s was replaced or is gone; left queued", thread, name))
+		} else {
+			pumpSummarySettle(cfg, thread, name, summaryResultAccepted, pin.LogicalID)
 		}
 	}
 	if err := ctx.Err(); err != nil {
@@ -889,6 +895,7 @@ func pumpQueueRefusedLift(ctx context.Context, cfg *Config, st *pumpState, dir, 
 		}
 		pumpLog(cfg, fmt.Sprintf("queue %s: refused notice %s %d bytes moved to %s/%s after %d refusals: %s",
 			thread, name, info.Size(), pumpQueueRefusedDir, filepath.Base(destination), count, reason))
+		pumpSummarySettle(cfg, thread, name, summaryResultRefused, pin.LogicalID)
 	}
 	if err := ctx.Err(); err != nil {
 		return err
@@ -2309,20 +2316,10 @@ const (
 // core dials. An observation that is neither a confirmed active turn nor a confirmed idle one
 // is other, and a call that fails is reported so the notices stay queued.
 func pumpQueueTurnState(ctx context.Context, e *Env, cfg *Config, thread string) (string, error) {
-	bridge, err := deliverDial(ctx, e, cfg)
+	observation, turnID, err := pumpQueueObserve(ctx, e, cfg, thread)
 	if err != nil {
 		return pumpQueueOther, err
 	}
-	defer bridge.close()
-	reply := bridge.call(ctx, deliverToolActive, map[string]any{"thread_id": thread})
-	if reply.Err != nil {
-		return pumpQueueOther, reply.Err
-	}
-	if reply.Payload == nil {
-		return pumpQueueOther, fmt.Errorf("crw manage pump: the active-turn probe answered nothing readable")
-	}
-	observation, _ := reply.Payload["observation"].(string)
-	turnID, _ := reply.Payload["activeTurnId"].(string)
 	switch {
 	case observation == "active" && turnID != "":
 		return pumpQueueActive, nil
@@ -2331,6 +2328,28 @@ func pumpQueueTurnState(ctx context.Context, e *Env, cfg *Config, thread string)
 	default:
 		return pumpQueueOther, nil
 	}
+}
+
+// pumpQueueObserve is the active-turn probe itself: the observation the bridge answers with ("active", "idle", "notLoaded", ...)
+// and the active turn's id, read through the bridge the delivery core dials. A call that fails, or answers nothing readable, is an
+// error. pumpQueueTurnState folds the observation to the three states the parent queue acts on; the supervisor path (CRW-1204) acts on
+// the observation word itself.
+func pumpQueueObserve(ctx context.Context, e *Env, cfg *Config, thread string) (observation, turnID string, err error) {
+	bridge, err := deliverDial(ctx, e, cfg)
+	if err != nil {
+		return "", "", err
+	}
+	defer bridge.close()
+	reply := bridge.call(ctx, deliverToolActive, map[string]any{"thread_id": thread})
+	if reply.Err != nil {
+		return "", "", reply.Err
+	}
+	if reply.Payload == nil {
+		return "", "", fmt.Errorf("crw manage pump: the active-turn probe answered nothing readable")
+	}
+	observation, _ = reply.Payload["observation"].(string)
+	turnID, _ = reply.Payload["activeTurnId"].(string)
+	return observation, turnID, nil
 }
 
 // pumpQueueSafe refuses a queue path that is a symlink, the same guard send-parent applies, so a

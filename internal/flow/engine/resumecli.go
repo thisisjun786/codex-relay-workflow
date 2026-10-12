@@ -31,7 +31,10 @@ type ResumeSetup struct {
 	Journal Journal
 	Backend Backend
 	Ops     map[string]Op
-	Close   func() error
+	// Upward is the hook the resumed run hands what goes up from it to (the plan summary, the escalations, the completion digest); nil
+	// hands nothing.
+	Upward UpwardHook
+	Close  func() error
 }
 
 // ResumeEnv opens what `crw flow resume` works on for a run.
@@ -143,7 +146,7 @@ func resumeCmd(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	}
 	res, err := Run(ctx, prog, Config{
 		RunID: runID, Backend: setup.Backend, Policy: table, Journal: setup.Journal, Args: argsRaw, Pool: *pool, TokenBudget: *budget,
-		Resume: &ResumeOptions{}, Ops: setup.Ops, OmitSeq: true,
+		Resume: &ResumeOptions{}, Ops: setup.Ops, OmitSeq: true, Upward: setup.Upward,
 		Workflows: func(name, scriptPath string) (*script.Program, error) {
 			return loadSibling(fs.FS(dir), name, scriptPath)
 		},

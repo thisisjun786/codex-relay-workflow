@@ -18,7 +18,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
 )
 
-const flowUsage = `usage: crw flow run --backend fake [--args JSON | --args-file FILE] [--pool N] [--token-budget N] [--journal] (<script.js> | --script JS [--plan-only=false])
+const flowUsage = `usage: crw flow run --backend fake [--args JSON | --args-file FILE] [--pool N] [--token-budget N] [--journal] [--summary-document D] (<script.js> | --script JS [--plan-only=false])
        crw flow roles [--json]
        crw flow recover [--run RUN] CALL (--adopt THREAD|TURN | --absent)
        crw flow resume [--state DIR] [--socket PATH] [--repo DIR] [--args JSON | --args-file FILE] RUN SCRIPT
@@ -129,6 +129,7 @@ func runCmd(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	budget := fs_.Int64("token-budget", 0, "the run's token ceiling (0: none)")
 	withJournal := fs_.Bool("journal", false, "include the journal rows in the output")
 	inline := fs_.String("script", "", "an ad-hoc script given as text instead of a file")
+	summaryDoc := fs_.String("summary-document", "", "the document the run keeps the plan summary in; recorded in the run's journal for the upward hook")
 	planOnly := fs_.Bool("plan-only", true, "run the script on the fake backend and print the plan; the default for --script")
 	fs_.Usage = func() { fmt.Fprintln(stderr, flowUsage) }
 	// flags may follow the script name
@@ -232,7 +233,7 @@ func runCmd(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	journal := NewMemoryJournal()
 	res, err := Run(ctx, prog, Config{
-		Backend: NewFake(), Policy: table, Journal: journal, Args: argsRaw, Pool: *pool, TokenBudget: *budget,
+		Backend: NewFake(), Policy: table, Journal: journal, Args: argsRaw, Pool: *pool, TokenBudget: *budget, SummaryDocument: *summaryDoc,
 		// The journal sequence numbers of a call say in which order the host finished concurrent calls, which differs from
 		// run to run; the script and the printed result do not hold them, so two runs of one script print the same bytes
 		// (the journal rows, with --journal, keep them).

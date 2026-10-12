@@ -221,14 +221,16 @@ func modes() []mode {
 			// the relay store the run's journal is persisted in and the App Server connection of its host.
 			engine.RecoverEnv = journal.RecoverEnv
 			engine.ResumeEnv = journal.ResumeEnv
+			journal.UpwardFactory = flowcli.UpwardFactory
+			// apply and the report commands work on the flow rows of the relay store; audit reads the reviewer threads of a run from its
+			// host and leaves the result in its journal (internal/flow/cli).
+			if flowcli.Handles(c.args) {
+				flowcli.Env = flowcli.OpenStore
+				return flowcli.Run(c.ctx, c.args, c.stdout, c.stderr)
+			}
 			// trace export, shadow and measure read store copies and trace files and call no agent (internal/flow/shadow).
 			if shadow.Handles(c.args) {
 				return shadow.RunCLI(c.ctx, c.args, c.stdout, c.stderr)
-			}
-			// audit reads the reviewer threads of a run from its host and leaves the result in its journal (internal/flow/cli).
-			if flowcli.Handles(c.args) {
-				flowcli.Env = flowcli.OpenStore
-				return flowcli.RunCLI(c.ctx, c.args, c.stdout, c.stderr)
 			}
 			code := lint.RunCLI(c.ctx, c.args, c.stdout, c.stderr)
 			if len(c.args) > 0 && code == 0 && (c.args[0] == "help" || c.args[0] == "-h" || c.args[0] == "--help") {

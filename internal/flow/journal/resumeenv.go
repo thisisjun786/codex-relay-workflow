@@ -15,6 +15,10 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
+// UpwardFactory makes the hook the resumed run hands what goes up from it to; the binary installs it (internal/flow/cli). Nil installs none.
+// state and socket are the relay the store was selected by (the state directory the run was resumed in, the socket of its host).
+var UpwardFactory func(st *store.Store, j *Journal, runID, state, socket string) engine.UpwardHook
+
 // ResumeEnv is engine.ResumeEnv of the shipped binary: it opens the relay store the run's journal is persisted in (the state
 // directory the operator named, else the relay's own selection for the control socket), connects to the App Server control
 // socket the run's host listens on, and makes the allocator of the run's working directories (<state>/flow/<run>/...) over the
@@ -75,7 +79,11 @@ func ResumeEnv(ctx context.Context, req engine.ResumeEnvRequest) (engine.ResumeS
 		backend.Close()
 		return errors.Join(j.Close(), client.Close(), st.Close())
 	}
-	return engine.ResumeSetup{Journal: j, Backend: backend, Close: closeAll}, nil
+	setup := engine.ResumeSetup{Journal: j, Backend: backend, Close: closeAll}
+	if UpwardFactory != nil {
+		setup.Upward = UpwardFactory(st, j, req.RunID, selection.Path, socket)
+	}
+	return setup, nil
 }
 
 // repository is the git repository a run's worktrees are made from: the directory the operator named, else the top level of

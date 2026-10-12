@@ -209,7 +209,8 @@ func Deliver(ctx context.Context, e *Env, cfg *Config, m Message) (Outcome, erro
 	if known {
 		// The record is unsettled: read the bridge's own receipt before anything is sent, so an
 		// attempt that may already have gone out is never duplicated under a fresh id.
-		switch verdict := deliverReconcile(ctx, bridge, record); verdict {
+		verdict, receipt := deliverReconcileReceipt(ctx, bridge, record)
+		switch verdict {
 		case deliverReconcileAccepted:
 			record.State, record.Received, record.Applied = deliverStateAccepted, true, false
 			record.Attempts = append(record.Attempts, deliverAttempt{At: deliverNow(e), Class: deliverClassAccepted, ReceiptExcerpt: "reconciled with get_operation"})
@@ -245,7 +246,9 @@ func Deliver(ctx context.Context, e *Env, cfg *Config, m Message) (Outcome, erro
 		default:
 			record.State = deliverStateUnknown
 			record.Attempts = append(record.Attempts, deliverAttempt{At: deliverNow(e), Class: deliverClassUnknown, ReceiptExcerpt: "get_operation left the attempt undetermined; nothing was sent"})
-			return deliverSettled(cfg, record, Outcome{Class: deliverClassUnknown, RequestID: record.RequestID})
+			// the receipt the bridge holds is returned with the unknown: a caller that can place it (the supervisor path reads the unloaded-thread
+			// refusal from it) does not wait on this id for ever
+			return deliverSettled(cfg, record, Outcome{Class: deliverClassUnknown, RequestID: record.RequestID, Receipt: receipt})
 		}
 	}
 	for {
@@ -404,6 +407,12 @@ const (
 func deliverReconcile(ctx context.Context, b *deliverBridge, record deliverRecord) deliverReconcileVerdict {
 	verdict, _ := deliverReconcileReply(ctx, b, record)
 	return verdict
+}
+
+// deliverReconcileReceipt is deliverReconcile with the receipt the bridge answered (nil when it answered none).
+func deliverReconcileReceipt(ctx context.Context, b *deliverBridge, record deliverRecord) (deliverReconcileVerdict, map[string]any) {
+	verdict, reply := deliverReconcileReply(ctx, b, record)
+	return verdict, reply.Payload
 }
 
 // deliverReconcileReply is deliverReconcile with the bridge's answer, so a caller can tell a receipt

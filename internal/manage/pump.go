@@ -48,6 +48,14 @@ const (
 	pumpKindDag      = "dag"
 	pumpKindInfo     = "info"
 
+	// The kinds of the upward half of a flow run (CRW-1204): a run's escalation, a run that died, a report the initiative lead's thread
+	// could not be told, and a decision only Jun can make are urgent; a report nobody read is low.
+	pumpKindRunEscalation     = "run_escalation"
+	pumpKindRunDead           = "run_dead"
+	pumpKindReportUndelivered = "report_undelivered"
+	pumpKindJunDecision       = "jun_decision"
+	pumpKindReportUnread      = "report_unread"
+
 	// The two states a source reports: it read, or it could not. An unmeasured source emits no
 	// event and is never turned into a "resolved" or "no anomaly" one.
 	pumpSourceOK         = "ok"
@@ -74,6 +82,8 @@ type pumpSettings struct {
 	// seconds between capacity judgements (default 1800); see pump_signals.go.
 	DagReviewSeconds *int `json:"dag_review_seconds"`
 	CapacitySeconds  *int `json:"capacity_seconds"`
+	// RunDeadSeconds is how long a flow run that did not finish may write no row before the pump reports it dead (default 1800).
+	RunDeadSeconds *int `json:"run_dead_seconds"`
 }
 
 // pumpSettingsFrom reads the pump section of a configuration. An absent key leaves the default in
@@ -158,6 +168,10 @@ type pumpState struct {
 	// again; a thread holding a pin it has not been marked for (one another build left) is searched before
 	// that pin is acted on. A state written before the key existed reads as no thread searched.
 	QueueLegacyChecked map[string]bool `json:"queue_legacy_checked"`
+
+	// Supervisor is what the supervisor queue keeps between rounds (pump_supervisor.go): the attempt ordinals of each notice, the notices
+	// whose report_undelivered event was sent, and the deliveries whose report-delivered call is still to be made.
+	Supervisor pumpSupervisorState `json:"supervisor"`
 
 	// dry is set for the round being collected when it is a dry run, so a source reads without
 	// writing anything of its own. commits are the steps the sources asked to run once the round's
@@ -268,6 +282,7 @@ func pumpNewState() pumpState {
 		QueueAccepted: map[string][]string{}, QueueAttempt: map[string]pumpReview776QueuePin{},
 		QueueRefused:       map[string]pumpQueueRefusal{},
 		QueueLegacyChecked: map[string]bool{},
+		Supervisor:         newPumpSupervisorState(),
 		extra:              map[string]json.RawMessage{},
 	}
 }
@@ -318,6 +333,8 @@ func pumpLoadState(cfg *Config) (pumpState, error) {
 			err = json.Unmarshal(value, &st.QueueRefused)
 		case "queue_legacy_checked":
 			err = json.Unmarshal(value, &st.QueueLegacyChecked)
+		case "supervisor":
+			err = json.Unmarshal(value, &st.Supervisor)
 		case "mgmt_refused":
 			err = json.Unmarshal(value, &st.MgmtRefused)
 		case "parked":
@@ -357,6 +374,7 @@ func pumpLoadState(cfg *Config) (pumpState, error) {
 	if st.QueueLegacyChecked == nil {
 		st.QueueLegacyChecked = map[string]bool{}
 	}
+	st.Supervisor.fill()
 	return st, nil
 }
 
@@ -383,7 +401,7 @@ func (st pumpState) pumpSave(cfg *Config) error {
 		{"prs", st.PRs}, {"sources", st.Sources}, {"cursors", st.Cursors}, {"sent", st.Sent},
 		{"prs_seen", st.PRsSeen}, {"attempt", st.Attempt}, {"queue_accepted", st.QueueAccepted},
 		{"pr_seq", st.PRSeq}, {"queue_attempt", st.QueueAttempt},
-		{"queue_refused", st.QueueRefused}, {"queue_legacy_checked", st.QueueLegacyChecked},
+		{"queue_refused", st.QueueRefused}, {"queue_legacy_checked", st.QueueLegacyChecked}, {"supervisor", st.Supervisor},
 		{"mgmt_refused", st.MgmtRefused}, {"parked", st.Parked},
 	} {
 		if err := put(field.key, field.value); err != nil {
@@ -486,10 +504,10 @@ func pumpDue(pending []pumpEvent, firstAt *float64, now time.Time, s pumpSetting
 	}
 	urgent, normal := false, false
 	for _, ev := range pending {
-		if ev.Kind == pumpKindQuestion || ev.Kind == pumpKindDag {
+		if pumpKindUrgent(ev.Kind) {
 			urgent = true
 		}
-		if ev.Kind != pumpKindLow {
+		if !pumpKindLowPriority(ev.Kind) {
 			normal = true
 		}
 	}
@@ -533,16 +551,31 @@ func pumpBatchPrefix(events []pumpEvent, now time.Time, urgent bool, footer stri
 func pumpReview776UrgentFirst(events []pumpEvent) []pumpEvent {
 	ordered := make([]pumpEvent, 0, len(events))
 	for _, ev := range events {
-		if ev.Kind == pumpKindQuestion || ev.Kind == pumpKindDag {
+		if pumpKindUrgent(ev.Kind) {
 			ordered = append(ordered, ev)
 		}
 	}
 	for _, ev := range events {
-		if ev.Kind != pumpKindQuestion && ev.Kind != pumpKindDag {
+		if !pumpKindUrgent(ev.Kind) {
 			ordered = append(ordered, ev)
 		}
 	}
 	return ordered
+}
+
+// pumpKindUrgent says whether an event of the kind is delivered at once: a question, a DAG anomaly, and the upward kinds of a flow run
+// that need somebody now.
+func pumpKindUrgent(kind string) bool {
+	switch kind {
+	case pumpKindQuestion, pumpKindDag, pumpKindRunEscalation, pumpKindRunDead, pumpKindReportUndelivered, pumpKindJunDecision:
+		return true
+	}
+	return false
+}
+
+// pumpKindLowPriority says whether an event of the kind waits low_priority_seconds.
+func pumpKindLowPriority(kind string) bool {
+	return kind == pumpKindLow || kind == pumpKindReportUnread
 }
 
 // pumpBody is the delivered text: the issue's first line, the event bodies, then the configured
@@ -640,6 +673,11 @@ func pumpRound(ctx context.Context, e *Env, cfg *Config, s pumpSettings, dry boo
 		}
 	}
 	st.commits, st.dirty = nil, false
+	// The supervisor queue (CRW-1204) is flushed before the management batch, so an event it raises (a report nobody could tell the
+	// initiative lead's thread about) is in this round's batch.
+	if err := pumpSupervisorFlush(ctx, e, cfg, &st, s, now, dry); err != nil {
+		pumpLog(cfg, "supervisor queue flush: "+err.Error())
+	}
 	switch {
 	case cfg.ManagementThread == "":
 		pumpLog(cfg, "no management_thread; the management batch waits, the parent queue still runs")
@@ -928,6 +966,8 @@ var pumpSources = []pumpSource{
 	pumpSignalDagSource{},
 	pumpSignalCapacitySource{},
 	pumpSignalAuditSource{},
+	pumpFlowRunsSource{},
+	pumpFlowReportsSource{},
 }
 
 // pumpQueueSortedNames lists one queue directory's notice file names, sorted, so the body and
