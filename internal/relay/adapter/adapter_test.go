@@ -68,7 +68,11 @@ func (r *scriptRPC) Call(_ context.Context, method string, params map[string]any
 	}
 	if answer["creation"] == true {
 		cwd := params["cwd"].(string)
-		return json.Marshal(map[string]any{"thread": map[string]any{"id": "thread-created-1"}, "cwd": cwd, "approvalPolicy": "never", "model": "gpt-5.4", "reasoningEffort": "medium", "runtimeWorkspaceRoots": []any{cwd}, "sandbox": map[string]any{"type": "readOnly", "networkAccess": false}})
+		sandbox := map[string]any{"type": "readOnly", "networkAccess": false}
+		if params["sandbox"] == "danger-full-access" {
+			sandbox = map[string]any{"type": "dangerFullAccess"}
+		}
+		return json.Marshal(map[string]any{"thread": map[string]any{"id": "thread-created-1"}, "cwd": cwd, "approvalPolicy": "never", "model": "gpt-5.4", "reasoningEffort": "medium", "runtimeWorkspaceRoots": []any{cwd}, "sandbox": sandbox})
 	}
 	if phase, ok := answer["phase"].(string); ok {
 		return nil, &appserver.PhaseTimeout{Method: method, Phase: phase, Bound: 250 * time.Millisecond}
@@ -137,6 +141,9 @@ func capture(t *testing.T, s scenario) {
 			_, actionErr = a.SendMessage(context.Background(), action[1].(string), action[2].(string), action[3].(string), nil)
 		case "create":
 			in := bridge.CreateThread{RequestID: action[1].(string), CWD: root, Title: action[2].(string), Model: action[3].(string), Effort: "medium", Sandbox: "read-only", Role: action[4].(string)}
+			if in.Role == "child" {
+				in.Sandbox = "danger-full-access" // a relay child is created writable (CRW-1286)
+			}
 			r, e := a.Create(context.Background(), in)
 			actionErr = e
 			if r != nil {

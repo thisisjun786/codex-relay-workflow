@@ -117,10 +117,12 @@ func TestSendMessageSendsThePairsAutoCompactLimitAndStillDelivers(t *testing.T) 
 func TestAPolicyWithoutTheLimitSendsNoAutoCompactKey(t *testing.T) {
 	b, host := policyBridge(t, `{"roles":{"child":{"model":"explicit-model","reasoningEffort":"high"}}}`)
 	cwd := t.TempDir()
-	host.Respond("thread/start", startReply(cwd))
+	started := startReply(cwd)
+	started.Result["sandbox"] = map[string]any{"type": "dangerFullAccess"}
+	host.Respond("thread/start", started)
 	host.Respond("turn/start", fakehost.Reply{Result: map[string]any{"turn": map[string]any{"id": "turn-1"}}})
 	input := createInput(cwd, "auto-compact-absent")
-	input.Role = "child"
+	input.Role, input.Sandbox = "child", "danger-full-access"
 	receipt, err := b.CreateThread(context.Background(), input)
 	if err != nil || receipt["status"] != "accepted" {
 		t.Fatalf("receipt=%v err=%v", receipt, err)
@@ -164,11 +166,11 @@ func TestAnExceptionCarriesNoAutoCompactLimit(t *testing.T) {
 	}
 	b.Policy = loaded
 	start := startReply(cwd)
-	start.Result["model"] = "gpt-6-astra"
+	start.Result["model"], start.Result["sandbox"] = "gpt-6-astra", map[string]any{"type": "dangerFullAccess"}
 	host.Respond("thread/start", start)
 	host.Respond("turn/start", fakehost.Reply{Result: map[string]any{"turn": map[string]any{"id": "turn-1"}}})
 	input := createInput(cwd, "auto-compact-exception")
-	input.Role, input.Model, input.Effort, input.Exception = "child", "gpt-6-astra", "high", "one-task"
+	input.Role, input.Model, input.Effort, input.Exception, input.Sandbox = "child", "gpt-6-astra", "high", "one-task", "danger-full-access"
 	receipt, err := b.CreateThread(context.Background(), input)
 	if err != nil || receipt["status"] != "accepted" {
 		t.Fatalf("receipt=%v err=%v", receipt, err)
