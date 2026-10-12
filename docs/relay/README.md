@@ -197,13 +197,17 @@ What happens at send time:
 | resume returns no approval policy at all | withheld, `setting_unobservable`, held at once (below) |
 | resume matches | the turn begins, carrying no overrides |
 
-A refusal that retrying cannot fix, `settings_not_preserved` or `setting_unobservable`, does not take the backoff. The delivery is
+A refusal that retrying cannot fix, `settings_not_preserved` or `setting_unobservable`, does not take the backoff. (A recipient resumed
+settings-free, because it is a supervisor, cites an exception or its role allows several pairs, names a model or effort difference
+`settings_differ_after_load` instead; that code is not one of the two and keeps the backoff and the cap, and its refusal carries no
+`expected` and `observed`.) The delivery is
 held at its first such refusal: `withheld_pre_send` with the hold `held_settings_mismatch`, no retry scheduled
 (`next_eligible_at` is null), and a `delivery_settings_held` journal row `{requestId, hold, reason, field, expected, observed}` naming the
 value the record expects and the value the host returned. The refusals a later attempt can clear (a transport that refused the read, a
 busy recipient, `environments_unknown`) keep the backoff of 30 s doubling to 900 s and the attempt cap (`attempt_cap`) after the sixth try.
-`status`, `assignment-show` and the delivery snapshot show the hold (`holdReason`, `settingsHold` with `expected` and `observed`, and the
-`recovery`), and the fault sweep raises `delivery_stalled` for it as it does for any held delivery. Nothing sends a held delivery again: the
+`status` and `assignment-show` show the hold as the kind `capped` (`settingsHold` with `expected` and `observed`, and the `recovery`); the
+per-event delivery snapshot (`Service.SnapshotItem`) carries only the hold name (`holdReason` and the reported state `held:held_settings_mismatch`),
+and a merge grant carries `settingsHold` and `recovery` as null there. The fault sweep raises `delivery_stalled` for it as it does for any held delivery. Nothing sends a held delivery again: the
 parent reads the stored report (`show --event`), the operator brings the recipient back under its recorded settings or re-records them
 (`settings-record --source user_transition`), and a fresh execution generation (`generation-open`) carries the work on.
 
