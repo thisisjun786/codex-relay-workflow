@@ -17,6 +17,12 @@ The supervisor reads the record of a verdict for its discharge: for a relationsh
 or after the instant the verdict was decided, and made at a plan revision where the node the relationship is bound to was live, discharges the verdict's obligation (`delivery.PlanSummaryCarriesVerdict`, read next to the confirmed `sync_outbox` row by `Reportable`, `ReportableCurrent` and `Selection`). An entry that
 is not confirmed, one enqueued before the verdict, one of another document and one made at a plan revision where the node was not live does not discharge it. An entry made while the node was live keeps discharging after the plan retires or replaces the node.
 
+The entry's `document` and the relationship's `coordination_document` target (`sync_targets.target_ref`) are compared as the two texts they are, byte for byte, the way `Reportable`, `ReportableCurrent` and `Selection` compare a
+`sync_outbox` row's `target_ref` with the target: neither is normalised or resolved, so a document named by its URL is not the target recorded by its id, and the reverse. The parent therefore gives `dag-summary-enqueue --document`
+the spelling the relationship's target is recorded in. An entry of another spelling does not discharge the verdict: it stays standing until a confirmed record of the target's own spelling discharges it (the safe side). Whether the supervisor reports it again is a separate decision (`Selection` keeps `standing` and sets `report` false when a report was already made under the obligation, or when the recipient is not contactable); a report does not discharge it. The order of the two instants is the
+writers' own: the verdict is stamped by the delivery clock in `Ack.RecordVerdict`, the entry by `Scheduler.Now` in `EnqueueSummary`, and an entry stamped at or after the verdict's instant discharges it once it is confirmed
+(`TestPlanSummaryDischargesTheVerdictThroughTheRecordingWriters` runs the order through the writers with both clocks injected).
+
 ## The queue
 
 A **stream** is a plan and a document (the Linear document the summary is written to: an id or a URL, opaque text of one line, at most 512 characters). Within a stream every entry has a sequence number
