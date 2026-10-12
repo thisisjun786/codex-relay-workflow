@@ -235,7 +235,7 @@ changes what the next one sees.
 5. Compile. Build the handoff from the issues as they were read back (the
    `crw-flow-compile-input/1` document of [Hand the plan to the run](../SKILL.md#hand-the-plan-to-the-run)) and run
    `crw flow compile --dry-run` over it. The step passes when the command exits 0. A refusal is a defect of the plan,
-   not of the command, and it names its rule: `over_64` (more than 64 live issues in one project: split the project by its
+   not of the command, and it names its rule: `input` (the document itself: a missing `schema`, an unknown or misspelled key, a region that is not a relative path inside the repository, an issue key held by two projects; read the printed path and fix the key), `over_64` (more than 64 live issues in one project: split the project by its
    region map), `cycle` or `self_reference` (the boundary is wrong: reapply step 3), `region_order_missing` (two issues
    share an edit region and nothing orders them: name one as the other's prerequisite or put both in one group, the one
    ordering step 3 asks for), `group_cap` (a group of more than four issues), `after_unknown` (a prerequisite that is no

@@ -176,8 +176,19 @@ func runSectionProblems(section string, relay map[string]bool) []string {
 		`(?i)milestone ends .?incomplete`,
 		`(?i)out-of-band [^.]*transition[^.]*(is )?(raised|goes) (to the manager )?as an escalation`,
 		`(?i)` + "`crw flow resume`",
+		// The run releases the child of an oversized issue; the thread sends it no task packet and no PABCD is armed.
+		`(?i)releases? the child of an oversized issue itself`,
+		"`issue-lane`",
+		`(?i)sends? it no task packet`,
 	}) {
 		problems = append(problems, "the section lacks "+p)
+	}
+	if regexp.MustCompile(`(?i)is the path of an oversized issue`).MatchString(flat) {
+		problems = append(problems, "the section sends an oversized issue to the dispatch of an issue child, which a run does not use")
+	}
+	// A thread never hands a decision up through a command the binary does not have.
+	if strings.Contains(flat, "crw manage decisions") {
+		problems = append(problems, "the section names `crw manage decisions`, which the binary does not have")
 	}
 	// Every sentence that names the claim command says that the thread does not claim a plan a run holds, or when it may.
 	for _, sentence := range regexp.MustCompile(`[.;] `).Split(flat, -1) {
@@ -213,7 +224,8 @@ func TestRunProjectNeverClaimsRunEpoch(t *testing.T) {
 		good := "## Run a milestone with a flow run\n\nThe orchestrator starts one run for each milestone with `crw flow start project-lane --handoff F` after `--preview`. " +
 			"The thread handles only two things: an escalation, and the receipt of an oversized issue with `crw flow apply --event E`. " +
 			"It never claims the coordinator epoch of a plan a run holds with `dag-coordinator-claim`: the run's next write is `stale_coordinator_epoch` and the milestone ends `incomplete`. " +
-			"An out-of-band transition is raised as an escalation. A dead run is taken again with `crw flow resume`.\n"
+			"An out-of-band transition is raised as an escalation. A dead run is taken again with `crw flow resume`. " +
+			"The run releases the child of an oversized issue itself: it runs the `issue-lane` workflow and the thread sends it no task packet.\n"
 		fixture := map[string]bool{"dag-coordinator-claim": true}
 		if p := runSectionProblems(sectionOf(good, "Run a milestone with a flow run"), fixture); len(p) > 0 {
 			t.Fatalf("the good text is reported: %v", p)
@@ -227,6 +239,11 @@ func TestRunProjectNeverClaimsRunEpoch(t *testing.T) {
 			"no section":    func(s string) string { return strings.Replace(s, "## Run a milestone with a flow run", "## Other", 1) },
 			"no apply":      func(s string) string { return strings.Replace(s, "`crw flow apply --event E`", "a command", 1) },
 			"unconditional": func(s string) string { return s + "Run `dag-coordinator-claim` at the start of every turn.\n" },
+			"child path":    func(s string) string { return s + "The rest of this skill is the path of an oversized issue.\n" },
+			"no packet note": func(s string) string {
+				return strings.Replace(s, "and the thread sends it no task packet", "and the thread sends it a packet", 1)
+			},
+			"unknown command": func(s string) string { return s + "Hand it up with `crw manage decisions`.\n" },
 		} {
 			if p := runSectionProblems(sectionOf(mutate(good), "Run a milestone with a flow run"), fixture); len(p) == 0 {
 				t.Errorf("%s: the changed text is accepted", label)
@@ -272,7 +289,7 @@ func closingCheckProblems(section, compileSource string) []string {
 			problems = append(problems, "the section names the rule `"+m[1]+"`, which "+compileSourceFile+" does not write")
 		}
 	}
-	for _, rule := range []string{"over_64", "cycle", "region_order_missing", "group_cap", "size_value"} {
+	for _, rule := range []string{"input", "over_64", "cycle", "region_order_missing", "group_cap", "size_value"} {
 		if !strings.Contains(flat, "`"+rule+"`") {
 			problems = append(problems, "the section does not name the refusal `"+rule+"`")
 		}
@@ -301,9 +318,9 @@ func TestPlanClosingCheckRunsCompile(t *testing.T) {
 	}
 
 	t.Run("fixture: the step, its order and the refusals are each required", func(t *testing.T) {
-		good := "## Close the plan\n\n1. Coverage. a\n2. Duplication. b\n3. Relations. c\n4. Read-back. d\n5. Compile. Run `crw flow compile --dry-run` over the handoff; it exits 0. A refusal is a defect of the plan: `over_64`, `cycle`, `region_order_missing`, `group_cap`, `size_value`. The plan is not closed with a refusal. `size_unreviewed` is not a refusal.\n\n" +
+		good := "## Close the plan\n\n1. Coverage. a\n2. Duplication. b\n3. Relations. c\n4. Read-back. d\n5. Compile. Run `crw flow compile --dry-run` over the handoff; it exits 0. A refusal is a defect of the plan: `input`, `over_64`, `cycle`, `region_order_missing`, `group_cap`, `size_value`. The plan is not closed with a refusal. `size_unreviewed` is not a refusal.\n\n" +
 			"A draft-only request runs steps 1 to 3 and 5.\n"
-		source := `"over_64" "cycle" "region_order_missing" "group_cap" "size_value"`
+		source := `"input" "over_64" "cycle" "region_order_missing" "group_cap" "size_value"`
 		if p := closingCheckProblems(sectionOf(good, "Close the plan"), source); len(p) > 0 {
 			t.Fatalf("the good text is reported: %v", p)
 		}
@@ -314,6 +331,7 @@ func TestPlanClosingCheckRunsCompile(t *testing.T) {
 			},
 			"no command":    func(s string) string { return strings.Replace(s, "`crw flow compile --dry-run`", "the compiler", 1) },
 			"no rule":       func(s string) string { return strings.Replace(s, "`group_cap`, ", "", 1) },
+			"no input rule": func(s string) string { return strings.Replace(s, "`input`, ", "", 1) },
 			"closed anyway": func(s string) string { return strings.Replace(s, "The plan is not closed with a refusal.", "", 1) },
 			"foreign rule":  func(s string) string { return strings.Replace(s, "`cycle`", "`self_reference`", 1) },
 		} {
@@ -366,6 +384,183 @@ func compileMaxGroup(t *testing.T) int {
 	return n
 }
 
+// compileJSONKeys is the JSON keys of the handoff structs of the compiler, by struct name, read from its source.
+func compileJSONKeys(t *testing.T) map[string][]string {
+	t.Helper()
+	src := readRepoText(t, "internal/flow/compile/input.go")
+	keys := map[string][]string{}
+	for _, m := range regexp.MustCompile(`(?s)type (Input|Project|Milestone|Target|Issue) struct \{(.*?)\n\}`).FindAllStringSubmatch(src, -1) {
+		for _, f := range regexp.MustCompile("json:\"([a-z_]+)").FindAllStringSubmatch(m[2], -1) {
+			keys[m[1]] = append(keys[m[1]], f[1])
+		}
+	}
+	if len(keys) != 5 {
+		t.Fatalf("internal/flow/compile/input.go: read the keys of %d of 5 handoff structs", len(keys))
+	}
+	return keys
+}
+
+// handoffKeyProblems judges the paragraph of crw-plan that spells the handoff document: every JSON key it writes in a code span is a key
+// of the compiler, and every key the compiler reads is written unless the planner never sets it.
+func handoffKeyProblems(section string, keys map[string][]string, unset []string) []string {
+	var problems []string
+	flat := normalized(section)
+	if flat == "" {
+		return []string{"crw-plan has no section \"Hand the plan to the run\""}
+	}
+	known := map[string]bool{}
+	for _, ks := range keys {
+		for _, k := range ks {
+			known[k] = true
+		}
+	}
+	written := map[string]bool{}
+	for _, m := range regexp.MustCompile("`([a-z][a-z_]*)`").FindAllStringSubmatch(flat, -1) {
+		written[m[1]] = true
+	}
+	for _, k := range slices.Sorted(maps.Keys(known)) {
+		if !written[k] && !slices.Contains(unset, k) {
+			problems = append(problems, "the section does not name the key `"+k+"`")
+		}
+	}
+	for _, m := range regexp.MustCompile("`([a-z]+_[a-z_]+)`").FindAllStringSubmatch(flat, -1) {
+		// a snake_case word in a code span of this section is a key of the document
+		if !known[m[1]] {
+			problems = append(problems, "the section writes `"+m[1]+"`, which is no key of the handoff the compiler reads")
+		}
+	}
+	for _, p := range wordingMissing(flat, []string{"`crw-flow-compile-input/1`", `(?i)unknown key is refused`, "`schema` is required", "`crw flow compile --dry-run FILE`"}) {
+		problems = append(problems, "the section lacks "+p)
+	}
+	return problems
+}
+
+func TestPlanHandoffNamesTheCompilerKeys(t *testing.T) {
+	keys := compileJSONKeys(t)
+	unset := []string{"request_id", "coordinator_epoch", "kind", "criteria_set_digest"}
+	section := sectionOf(readRepoText(t, planSkillFile), "Hand the plan to the run")
+	if problems := handoffKeyProblems(section, keys, unset); len(problems) > 0 {
+		t.Errorf("%s, Hand the plan to the run:\n  %s\n%s", planSkillFile, strings.Join(problems, "\n  "), normalized(section))
+	}
+	t.Run("fixture: a misspelled key and a missing key are reported", func(t *testing.T) {
+		fk := map[string][]string{"Input": {"schema", "projects"}, "Issue": {"size_fit", "edit_regions_real"}}
+		good := "## Hand the plan to the run\n\nSchema `crw-flow-compile-input/1`; an unknown key is refused and `schema` is required. Keys: `projects`, `size_fit`, `edit_regions_real`. Check with `crw flow compile --dry-run FILE`.\n"
+		if p := handoffKeyProblems(good, fk, nil); len(p) > 0 {
+			t.Fatalf("the good text is reported: %v", p)
+		}
+		bad := strings.Replace(good, "`edit_regions_real`", "`edit_regions`", 1)
+		if p := handoffKeyProblems(bad, fk, nil); len(p) != 2 {
+			t.Errorf("a misspelled key is reported as %v", p)
+		}
+		if p := handoffKeyProblems(strings.Replace(good, "`projects`, ", "", 1), fk, nil); len(p) != 1 {
+			t.Errorf("a missing key is reported as %v", p)
+		}
+		if p := handoffKeyProblems(strings.Replace(good, "`schema` is required", "schema is optional", 1), fk, nil); len(p) == 0 {
+			t.Error("a handoff that does not require the schema is accepted")
+		}
+	})
+}
+
+// A task packet belongs to an issue child of a plan with no run; the child a run releases runs a workflow and starts no PABCD state machine.
+func taskPacketScopeProblems(intro string) []string {
+	flat := normalized(intro)
+	var problems []string
+	for _, p := range wordingMissing(flat, []string{
+		`(?i)packets? (below )?(is|are) for an issue child of a plan with no run`,
+		"`issue-lane`",
+		`(?i)(sends|gets)( it)? no (task )?packet`,
+		`(?i)no PABCD state machine`,
+		`flow\.md#who-owns-control-in-a-flow-managed-run`,
+	}) {
+		problems = append(problems, "the introduction lacks "+p)
+	}
+	return problems
+}
+
+func TestTaskPacketIsForAPlanWithNoRun(t *testing.T) {
+	text := readRepoText(t, "plugins/crw/skills/crw-run/references/task-packet.md")
+	intro := text
+	if i := strings.Index(text, "\n## Child task titles"); i > 0 {
+		intro = text[:i]
+	}
+	if problems := taskPacketScopeProblems(intro); len(problems) > 0 {
+		t.Errorf("task-packet.md introduction:\n  %s\n%s", strings.Join(problems, "\n  "), normalized(intro))
+	}
+	good := "The packets are for an issue child of a plan with no run. A node a run releases runs `issue-lane`, gets no packet from the thread and starts no PABCD state machine ([control](../../crw-canon/references/flow.md#who-owns-control-in-a-flow-managed-run))."
+	if p := taskPacketScopeProblems(good); len(p) > 0 {
+		t.Fatalf("the good text is reported: %v", p)
+	}
+	if p := taskPacketScopeProblems(strings.Replace(good, "gets no packet from the thread and ", "", 1)); len(p) == 0 {
+		t.Error("a text that does not say the run's child gets no packet is accepted")
+	}
+}
+
+var skillManageCommand = regexp.MustCompile("`crw manage ([a-z][a-z-]*)")
+
+// manageHelpSubcommands is the subcommands `crw manage --help` lists, one for each indented line.
+func manageHelpSubcommands(help string) []string {
+	var subs []string
+	for _, line := range lines(help) {
+		if m := regexp.MustCompile(`^  ([a-z][a-z-]*)(\s|$)`).FindStringSubmatch(line); m != nil {
+			subs = append(subs, m[1])
+		}
+	}
+	return subs
+}
+
+// skillManageProblems compares the `crw manage <sub>` the skills write in code spans with the ones the help lists.
+func skillManageProblems(texts map[string]string, help string) []string {
+	listed := manageHelpSubcommands(help)
+	if len(listed) == 0 {
+		return []string{"the help lists no subcommand"}
+	}
+	var problems []string
+	for _, file := range slices.Sorted(maps.Keys(texts)) {
+		for _, m := range skillManageCommand.FindAllStringSubmatch(texts[file], -1) {
+			if !slices.Contains(listed, m[1]) {
+				problems = append(problems, "`crw manage "+m[1]+"` is written in "+file+" and the binary does not list it (`crw manage --help`: "+strings.Join(listed, ", ")+")")
+			}
+		}
+	}
+	return problems
+}
+
+func TestSkillManageCommandsExist(t *testing.T) {
+	root := repoRoot()
+	texts := map[string]string{}
+	err := filepath.WalkDir(filepath.Join(root, "plugins/crw/skills"), func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(path, ".md") {
+			return err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(root, path)
+		texts[filepath.ToSlash(rel)] = string(data)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := exec.Command(testsupport.CRW(t), "manage", "--help").CombinedOutput()
+	if err != nil {
+		t.Fatalf("crw manage --help: %v\n%s", err, out)
+	}
+	if problems := skillManageProblems(texts, string(out)); len(problems) > 0 {
+		t.Errorf("%s", strings.Join(problems, "\n"))
+	}
+	t.Run("fixture: a subcommand the binary lacks is reported", func(t *testing.T) {
+		help := "usage: crw manage [-h] {audit,batch}\n  audit\tgrade\n  batch\tselect\n"
+		if p := skillManageProblems(map[string]string{"a.md": "Run `crw manage batch` and `crw manage audit --x`."}, help); len(p) > 0 {
+			t.Errorf("listed subcommands are reported: %v", p)
+		}
+		if p := skillManageProblems(map[string]string{"b.md": "Run `crw manage decisions`."}, help); len(p) != 1 {
+			t.Errorf("an unknown subcommand is reported as %v", p)
+		}
+	})
+}
+
 const (
 	flowCLIFile      = "internal/flow/cli/cli.go"
 	initiativeSkill  = "plugins/crw/skills/crw-run-initiative/SKILL.md"
@@ -406,6 +601,13 @@ func initiativeReportProblems(section, whole string) []string {
 	return problems
 }
 
+// The lead starts the orchestrator of a project when the project's prerequisites hold and the manager's cap allows it (the manager owns the caps).
+func TestRunInitiativeStartsOrchestratorUnderCap(t *testing.T) {
+	if !strings.Contains(normalized(readRepoText(t, initiativeSkill)), "only when its prerequisites hold and the manager's orchestrator cap allows it") {
+		t.Errorf("%s does not say that a project's orchestrator starts only when its prerequisites hold and the cap allows it", initiativeSkill)
+	}
+}
+
 func TestRunInitiativeReadsReports(t *testing.T) {
 	text := readRepoText(t, initiativeSkill)
 	if problems := initiativeReportProblems(sectionOf(text, "Read the milestone reports"), text); len(problems) > 0 {
@@ -416,9 +618,6 @@ func TestRunInitiativeReadsReports(t *testing.T) {
 		if !flowUsageHas(t, line) {
 			t.Errorf("internal/flow/cli/cli.go no longer has the usage line %q", line)
 		}
-	}
-	if !strings.Contains(normalized(text), "only when its prerequisites hold and the manager's orchestrator cap allows it") {
-		t.Errorf("%s does not say that a project's orchestrator starts only when its prerequisites hold and the cap allows it", initiativeSkill)
 	}
 
 	t.Run("fixture: an initiative lead that operates a run or skips the ack is reported", func(t *testing.T) {

@@ -103,7 +103,14 @@ The section states facts of the plan. It names no model and no effort, which the
 
 ## Hand the plan to the run
 
-The handoff the project orchestrator takes to the run is the `crw-flow-compile-input/1` document, built from the issues as they were read back: for each project its key, plan id, `target` (repository and base ref) and issues, and for each milestone an entry with its title, criteria, surfaces, grade and required commands. An issue line holds its key, title, criteria, milestone, edit regions, prerequisites (`after`), `group`, `size_fit`, `size_reason`, `issue_size` and, where there are one, its bundle reason and exception record. `crw flow compile --dry-run` checks it as the last step of the [closing check](references/issue-boundaries.md#close-the-plan); the project orchestrator puts the compiled revision into the plan and starts the run of a milestone from the same file ([crw-run](../crw-run/SKILL.md#run-a-milestone-with-a-flow-run)).
+The handoff the project orchestrator takes to the run is one JSON document, built from the issues as they were read back. The compiler reads it strictly: an unknown key is refused and `schema` is required, so write exactly these keys.
+
+- Top level: `schema` (always `crw-flow-compile-input/1`), `projects`, and optionally `initiative` and `author_task_id`.
+- Each project: `key`, optionally `plan_id` (the key when absent), `target` (an object with `repository`, written OWNER/NAME, and `base_ref`, written refs/heads/BRANCH; an issue ordered before another needs it), `issues`, and `milestones`.
+- Each issue: `key`, `title`, `criteria` (a list of strings), `milestone` (the key of a milestone entry), `regions` (the issue's edit regions as paths; a trailing slash makes a tree, otherwise the path is a file), `after` (prerequisite issue keys), `group`, `size_fit`, `size_reason`, `issue_size` and, where there are one, `bundle_reason` and `exception_record`.
+- Each milestone entry: `key`, `title`, `criteria`, `surfaces` (a subset of `logic`, `web`, `tui`, `desktop`), `grade` (`C1` to `C5`) and `required_commands` (empty means the repository's CI). When any entry is given, every milestone an issue names has one and every entry is named by an issue.
+
+`crw flow compile --dry-run FILE` checks the document as the last step of the [closing check](references/issue-boundaries.md#close-the-plan), and `crw flow compile --help` repeats the rules. The project orchestrator puts the compiled revision into the plan and starts the run of a milestone from the same file ([crw-run](../crw-run/SKILL.md#run-a-milestone-with-a-flow-run)).
 
 ## Schedule the plan
 

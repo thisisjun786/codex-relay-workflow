@@ -488,7 +488,7 @@ func TestHierarchyTableRoleIds(t *testing.T) {
 		{"project orchestrator", "`parent`", "자식"},
 		{"issue child", "`child`", "이슈 child"},
 		// The row of the flow run's executor (CRW-1222): it is no relay role and no Codex task, so no role id.
-		{"issue executor", "", "executor sub-agent"},
+		{"issue executor", "", "없음 (레벨이 아님)"},
 	}
 	if len(rows) != len(want) {
 		t.Fatalf("level table has %d rows, want %d: %v", len(rows), len(want), rows)
