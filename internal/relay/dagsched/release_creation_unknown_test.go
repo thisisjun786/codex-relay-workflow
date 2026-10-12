@@ -322,7 +322,9 @@ func TestReleaseCreationUnknownLegacyProfiles(t *testing.T) {
 				st.mu.Lock()
 				st.lostFirstTitle = true
 				st.mu.Unlock()
-				k.host.Script("thread/read", rpcFailure("host busy"))
+				// The first thread/read is the engine's look at the parent before the creation: it sees the pair the request declares. The next one fails.
+				parentRead := fakehost.Reply{Result: map[string]any{"thread": map[string]any{"model": "gpt-5.4", "reasoningEffort": "medium"}}}
+				k.host.Script("thread/read", parentRead, rpcFailure("host busy"))
 			} else {
 				st.dropFirst = true
 			}

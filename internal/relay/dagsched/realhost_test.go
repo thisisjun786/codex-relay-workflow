@@ -30,6 +30,9 @@ type realKit struct {
 	model string
 	mu    sync.Mutex
 	turns int
+	// parentThread is the thread object the fake host answers thread/read of the parent task with; nil is the pair the policy declares
+	// for the parent (gpt-5.4, medium), which is what the requests declare.
+	parentThread map[string]any
 }
 
 func newRealKit(t *testing.T) *realKit {
@@ -84,7 +87,17 @@ func newRealKit(t *testing.T) *realKit {
 		}
 		return fakehost.Reply{Result: map[string]any{"turn": map[string]any{"id": id}}}
 	})
-	host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{"status": map[string]any{"type": "idle"}, "canAcceptDirectInput": true, "model": "gpt-5.4", "reasoningEffort": "medium", "cwd": workspace}}})
+	host.Handle("thread/read", func(raw json.RawMessage) fakehost.Reply {
+		var params map[string]any
+		_ = json.Unmarshal(raw, &params)
+		k.mu.Lock()
+		parent := k.parentThread
+		k.mu.Unlock()
+		if params["threadId"] == "parent" && parent != nil {
+			return fakehost.Reply{Result: map[string]any{"thread": parent}}
+		}
+		return fakehost.Reply{Result: map[string]any{"thread": map[string]any{"status": map[string]any{"type": "idle"}, "canAcceptDirectInput": true, "model": "gpt-5.4", "reasoningEffort": "medium", "cwd": workspace}}}
+	})
 	host.Handle("thread/resume", func(json.RawMessage) fakehost.Reply { return fakehost.Reply{Result: response()} })
 	host.Respond("thread/goal/get", fakehost.Reply{Result: map[string]any{"goal": nil}})
 	host.Respond("thread/turns/list", fakehost.Reply{Result: map[string]any{"data": []any{map[string]any{"id": "standby", "status": "completed"}}, "nextCursor": nil}})

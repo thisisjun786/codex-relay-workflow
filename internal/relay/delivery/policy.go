@@ -12,6 +12,12 @@ const (
 	UnknownSendLost      = "unknown_send_lost"
 	UnknownSendUndecided = "unknown_send_undecided"
 	UnknownSendHoldNamed = "unknown_send_hold_named"
+	// HeldSettingsMismatch is the hold of a delivery the host refused on its recipient's settings, which a retry cannot fix (settings_not_preserved,
+	// setting_unobservable): the thread runs other settings than the ones recorded for it, or the host does not say what it runs. The delivery is
+	// held at the first such refusal, without a retry schedule, and DeliverySettingsHeld journals the expected and observed values (CRW-1274).
+	HeldSettingsMismatch = "held_settings_mismatch"
+	// DeliverySettingsHeld is the journal kind of that hold.
+	DeliverySettingsHeld = "delivery_settings_held"
 	MinSendInterval      = "min_send_interval"
 	HourlyCap            = "hourly_cap"
 	RateWindowSeconds    = 3600.0

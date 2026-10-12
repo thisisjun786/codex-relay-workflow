@@ -60,6 +60,8 @@ type startRun struct {
 	attempt    int             // the creation attempt now current: 0 is the request's own operation (reconcile.go)
 	adopted    bool            // the receipt is an unknown creation continued on the thread the App Server showed
 	reconciled *reconciliation // what reconcileCreation concluded, when it ran
+
+	check parentCheck // the parent's model and effort as the host reported them when the declaration was checked, or why it was refused (parent_settings.go)
 }
 
 // A step settles the request or hands over to the next one. It settles it with the answer Observe gives
@@ -141,6 +143,13 @@ func (r *startRun) answer(ctx context.Context, state, stage, reason string) (con
 	return r.result().Observe(ctx, r.m.Store, r.m.now(), state, stage, reason)
 }
 
+// answerObserved is answer with the observation that explains the refusal.
+func (r *startRun) answerObserved(ctx context.Context, state, stage, reason string, observed contract.OrderedObject) (contract.OrderedObject, error) {
+	res := r.result()
+	res.Observed = observed
+	return res.Observe(ctx, r.m.Store, r.m.now(), state, stage, reason)
+}
+
 // preflight refuses a request whose worker policy is not ready, before anything is reserved.
 func (r *startRun) preflight(ctx context.Context) (contract.OrderedObject, error) {
 	readiness, err := r.m.ready(ctx, r.req)
@@ -150,6 +159,30 @@ func (r *startRun) preflight(ctx context.Context) (contract.OrderedObject, error
 	if readiness != "" {
 		return r.answer(ctx, "refused", "preflight", readiness)
 	}
+	return nil, nil
+}
+
+// answerCreation is the refusal of a creation that did not go ahead: the readiness code, or the parent-settings reason
+// with the declared and the live values beside it.
+func (r *startRun) answerCreation(ctx context.Context, reason string) (contract.OrderedObject, error) {
+	if r.check.observed != nil {
+		return r.answerObserved(ctx, "refused", "creation", reason, r.check.observed)
+	}
+	return r.answer(ctx, "refused", "creation", reason)
+}
+
+// confirmParent checks the declared parent settings against the live parent thread for a request whose child already
+// exists and whose parent has nothing recorded yet, and keeps the live values for the record. A refusal records nothing
+// but the answer.
+func (r *startRun) confirmParent(ctx context.Context, stage string) (contract.OrderedObject, error) {
+	live, reason, observed, err := r.m.checkParentSettings(ctx, r.req)
+	if err != nil {
+		return nil, err
+	}
+	if reason != "" {
+		return r.answerObserved(ctx, "refused", stage, reason, observed)
+	}
+	r.check.live = live
 	return nil, nil
 }
 
@@ -220,13 +253,13 @@ func (r *startRun) createChild(ctx context.Context) (contract.OrderedObject, err
 	if receipt == nil || receipt["status"] == "not_attempted" {
 		var notReady string
 		var hold CreationHold
-		r.receipt, notReady, r.projectLock, hold, err = r.m.create(ctx, r.attemptIdentity(), r.req, r.ledger)
+		r.receipt, notReady, r.projectLock, hold, err = r.m.create(ctx, r.attemptIdentity(), r.req, r.ledger, &r.check)
 		r.setHold(hold)
 		if err != nil {
 			return nil, err
 		}
 		if notReady != "" {
-			return r.answer(ctx, "refused", "creation", notReady)
+			return r.answerCreation(ctx, notReady)
 		}
 	}
 	return nil, nil
@@ -345,10 +378,23 @@ func (r *startRun) registerCriteria(ctx context.Context) (contract.OrderedObject
 
 // authorizeSettings records the settings the parent and the child were started with.
 func (r *startRun) authorizeSettings(ctx context.Context) (contract.OrderedObject, error) {
+	if r.check.live == nil {
+		// The creation did not judge this request (it was armed by an earlier call). The parent's settings are recorded
+		// from what the host reports, so a parent with nothing recorded yet is read now.
+		recorded, err := parentRecorded(ctx, r.m.Store, pyjson.Text(r.parent["taskId"]))
+		if err != nil {
+			return nil, err
+		}
+		if !recorded {
+			if answer, err := r.confirmParent(ctx, "settings"); answer != nil || err != nil {
+				return answer, err
+			}
+		}
+	}
 	for _, entry := range []struct {
 		task, role string
 		settings   map[string]any
-	}{{pyjson.Text(r.parent["taskId"]), "parent", pyjson.Map(r.parent["settings"])}, {r.task, "child", r.childSettings}} {
+	}{{pyjson.Text(r.parent["taskId"]), "parent", recordedParentSettings(pyjson.Map(r.parent["settings"]), r.check.live)}, {r.task, "child", r.childSettings}} {
 		if _, err := EnsureSettings(ctx, r.m.Store, entry.task, settingsWithRole(entry.settings, entry.role), "managed_start", r.m.now()); err != nil {
 			return nil, err
 		}

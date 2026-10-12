@@ -10,7 +10,7 @@ import (
 // create is the one place a managed start asks the host for its child. Every refusal that can be decided
 // without the child is decided here, in the order it was always decided, and the last of them directly
 // before the host is asked: readiness, the project scope, the ledger, then the project scope again with
-// the request's own fields (requestRefusal). A request that names a project holds the project's lock
+// the request's own fields (requestRefusal), and last the live parent's settings against the request's declaration. A request that names a project holds the project's lock
 // (LockProject) from before the first of these, and the caller keeps it until the child is registered,
 // so a writer of the project's parent binding, which takes the lock exclusively, can change the binding
 // neither between the last ask and the creation nor between the creation and the registration (where
@@ -20,7 +20,7 @@ import (
 // that lets the lock go (never nil, may be called more than once, and must be called on every way out of
 // the caller), and, when the adapter keeps the creation's turn watch open (HeldCreator), the hold on it:
 // the caller waits for the standby turn under it and lets it go after the wait.
-func (m *Start) create(ctx context.Context, id Identity, req, ledger map[string]any) (map[string]any, string, func(), CreationHold, error) {
+func (m *Start) create(ctx context.Context, id Identity, req, ledger map[string]any, check *parentCheck) (map[string]any, string, func(), CreationHold, error) {
 	release := func() {}
 	if project := pyjson.Text(req["projectKey"]); project != "" {
 		held, err := LockProject(ctx, m.Store.Path, project)
@@ -52,6 +52,18 @@ func (m *Start) create(ctx context.Context, id Identity, req, ledger map[string]
 	if err := m.requestRefusal(ctx, req); err != nil {
 		return nil, "", release, nil, err
 	}
+	// The one thing the host is asked before the creation: whether the parent runs the settings the request declares for it
+	// (parent_settings.go). The declaration is not believed, and nothing is created or recorded for one the thread does not bear out.
+	*check = parentCheck{}
+	live, reason, observed, err := m.checkParentSettings(ctx, req)
+	if err != nil {
+		return nil, "", release, nil, err
+	}
+	if reason != "" {
+		check.observed = observed
+		return nil, reason, release, nil, nil
+	}
+	check.live = live
 	child := pyjson.Map(req["child"])
 	settings := pyjson.Map(child["settings"])
 	sandbox := pyjson.Map(settings["sandbox"])

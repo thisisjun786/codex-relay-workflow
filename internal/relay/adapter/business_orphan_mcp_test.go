@@ -92,7 +92,7 @@ func TestMCPOnlyMismatchRecreatedOverSocket(t *testing.T) {
 		if archived[id] {
 			load = "notLoaded"
 		}
-		return fakehost.Reply{Result: map[string]any{"thread": map[string]any{"id": id, "status": map[string]any{"type": load}, "canAcceptDirectInput": true}}}
+		return fakehost.Reply{Result: map[string]any{"thread": map[string]any{"id": id, "status": map[string]any{"type": load}, "canAcceptDirectInput": true, "model": "gpt-5.4", "reasoningEffort": "medium"}}}
 	})
 	host.Handle("thread/resume", func(raw json.RawMessage) fakehost.Reply {
 		mu.Lock()

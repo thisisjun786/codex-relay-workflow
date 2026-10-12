@@ -23,6 +23,9 @@ type readinessApp struct {
 }
 
 func (h *readinessApp) HostCall(ctx context.Context, method string, params map[string]any) (map[string]any, error) {
+	if method == "thread/read" && params["threadId"] == "parent" {
+		return h.Adapter.HostCall(ctx, method, params)
+	}
 	h.calls = append(h.calls, method)
 	switch method {
 	case "thread/list":
