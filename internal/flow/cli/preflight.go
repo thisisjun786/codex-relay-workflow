@@ -138,6 +138,34 @@ var (
 	nestedCall = regexp.MustCompile(`workflow\(\s*['"]([A-Za-z0-9_-]+)['"]`)
 )
 
+var laneCall = regexp.MustCompile(`\bcrw\.([A-Za-z]+)\s*\(`)
+
+// LaneOperations reads the `crw.*` operations a workflow calls, in the workflows it nests too: the names a build has to install
+// (OpsFor) for the workflow to run.
+func LaneOperations(src Source) []string {
+	seen := map[string]bool{}
+	var out []string
+	var walk func(body string, depth int)
+	walk = func(body string, depth int) {
+		for _, m := range laneCall.FindAllStringSubmatch(body, -1) {
+			if !seen[m[1]] {
+				seen[m[1]] = true
+				out = append(out, "crw."+m[1])
+			}
+		}
+		if depth > 2 || src.Workflows == nil {
+			return
+		}
+		for _, m := range nestedCall.FindAllStringSubmatch(body, -1) {
+			if child, err := src.Workflows(m[1], ""); err == nil {
+				walk(child.Body, depth+1)
+			}
+		}
+	}
+	walk(src.Program.Body, 0)
+	return out
+}
+
 // Dispositions reads the waiting dispositions of a workflow: the kinds of wait it makes (crw.decide, crw.escalate), looking in the
 // workflows it nests too.
 func Dispositions(src Source) []string {

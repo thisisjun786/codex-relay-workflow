@@ -41,6 +41,8 @@ type Plan struct {
 	Decision    string              `json:"decision,omitempty"`
 	Facts       []Fact              `json:"facts"`
 	Refused     bool                `json:"refused,omitempty"`
+	// Blocked says why the run cannot start whatever the facts are (--force does not override it).
+	Blocked string `json:"blocked,omitempty"`
 }
 
 // StartAnswer is the JSON answer of `crw flow start --json`.
@@ -215,11 +217,22 @@ func (c *command) start(args []string) int {
 	}
 	plan.Refused = len(failed) > 0 && !*force && !*previewOnly
 
+	if c.LaneOps != nil && !c.LaneOps() {
+		if need := LaneOperations(src); len(need) > 0 {
+			plan.Blocked = fmt.Sprintf("this build installs no project lane operations (cli.OpsFor is not set) and %s calls %s: the run would end in a script error at its first call", spec.Workflow, strings.Join(need, ", "))
+		}
+	}
 	answer := StartAnswer{Plan: plan}
 	if !*asJSON {
 		c.printPlan(plan)
 	}
 	switch {
+	case plan.Blocked != "":
+		if *asJSON {
+			_, _ = c.stdout.Write(JSON(answer))
+		}
+		fmt.Fprintf(c.stderr, "crw flow start: the run is not started: %s\n", plan.Blocked)
+		return 1
 	case *previewOnly:
 		if *asJSON {
 			_, _ = c.stdout.Write(JSON(answer))
@@ -329,6 +342,9 @@ func (c *command) printPlan(p Plan) {
 		fmt.Fprintf(w, "   deadline: %s", p.Deadline)
 	}
 	fmt.Fprintln(w)
+	if p.Blocked != "" {
+		fmt.Fprintf(w, "  blocked: %s\n", p.Blocked)
+	}
 	fmt.Fprintln(w, "  preflight:")
 	for _, f := range p.Facts {
 		mark := "pass"

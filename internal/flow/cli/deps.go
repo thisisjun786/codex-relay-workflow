@@ -26,6 +26,8 @@ type Deps struct {
 	Nodes func(ctx context.Context, spec Spec, src Source) (Preview, error)
 	// Signal sends a signal to the process that holds a run lock.
 	Signal func(pid int, sig syscall.Signal) error
+	// LaneOps says whether the build installs the project lane's `crw.*` operations (OpsFor); nil says it does.
+	LaneOps func() bool
 	// Settle gives up the executions a cancelled run still owns (AgentClose with the flow_cancel reason: the closure and the slot
 	// in one transaction); nil is SchedulerSettle.
 	Settle SettleFunc
@@ -38,15 +40,16 @@ type Deps struct {
 // Default is the Deps of the shipped binary.
 func Default() *Deps {
 	return &Deps{
-		Now:    time.Now,
-		Getenv: os.LookupEnv,
-		Reader: OpenReader,
-		Writer: OpenWriter,
-		Spawn:  SpawnDetached,
-		Probe:  StoreProber{},
-		Signal: killProcess,
-		World:  ProductionWorld,
-		Ready:  AwaitLock,
+		Now:     time.Now,
+		Getenv:  os.LookupEnv,
+		Reader:  OpenReader,
+		Writer:  OpenWriter,
+		Spawn:   SpawnDetached,
+		Probe:   StoreProber{},
+		Signal:  killProcess,
+		World:   ProductionWorld,
+		LaneOps: func() bool { return OpsFor != nil },
+		Ready:   AwaitLock,
 	}
 }
 
