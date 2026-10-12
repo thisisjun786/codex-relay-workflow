@@ -190,6 +190,12 @@ func (c *command) control(args []string, verb string) int {
 		return c.fail("%v", err)
 	}
 	if Over(info.State) {
+		if verb == "cancel" && info.State == StateCancelled {
+			// a cancel whose process ended before the executions were given up (or whose settlement failed) is finished here
+			if code := c.settleEnded(state, cm, rec); code != 0 {
+				return code
+			}
+		}
 		fmt.Fprintf(c.stderr, "crw flow %s: run %s is %s: nothing to %s\n", verb, run, info.State, verb)
 		return 1
 	}
@@ -227,8 +233,52 @@ func (c *command) control(args []string, verb string) int {
 			time.Sleep(50 * time.Millisecond)
 		}
 		fmt.Fprintf(c.stdout, "run %s ended\n", run)
+		return c.settleEnded(state, cm, rec)
 	}
 	return 0
+}
+
+// settleEnded gives up the executions of a cancelled run whose process has ended: under the run lock, so no process works on the
+// run, from the rows of its journal. A second call finds nothing open.
+func (c *command) settleEnded(state string, cm *common, rec RunRecord) int {
+	write := c.Writer
+	if write == nil {
+		write = OpenWriter
+	}
+	st, wstate, err := write(c.ctx, cm.state, cm.socket)
+	if err != nil {
+		return c.fail("%v", err)
+	}
+	defer st.Close()
+	if wstate != "" {
+		state = wstate
+	}
+	lock, err := TakeLock(state, rec.RunID, "cancel", c.now())
+	if err != nil {
+		return c.fail("the executions of run %s cannot be given up yet: %v", rec.RunID, err)
+	}
+	defer lock.Release()
+	events, _, err := journal.Load(c.ctx, st, rec.RunID)
+	if err != nil {
+		return c.fail("%v", err)
+	}
+	settled, err := c.settle(st, events)
+	if err != nil {
+		return c.fail("%v", err)
+	}
+	if settled.Closed > 0 || settled.SlotsReturned > 0 {
+		fmt.Fprintf(c.stdout, "%d execution(s) of run %s given up, %d slot(s) returned\n", settled.Closed, rec.RunID, settled.SlotsReturned)
+	}
+	return 0
+}
+
+// settle gives up the executions the run's rows show it released and did not end.
+func (c *command) settle(st *store.Store, events []engine.Event) (Settlement, error) {
+	settle := c.Settle
+	if settle == nil {
+		settle = SchedulerSettle
+	}
+	return settle(c.ctx, st, ops.OpenReleases(events))
 }
 
 // cancelDead ends a run no process holds: one finished row, error kind cancelled, appended under the run lock.
@@ -254,10 +304,17 @@ func (c *command) cancelDead(state string, cm *common, rec RunRecord) int {
 	if err != nil {
 		return c.fail("%v", err)
 	}
-	j.Append(engine.Event{RunID: rec.RunID, Kind: engine.KindRun, Event: "finished", Data: map[string]any{"status": engine.RunScriptError, "error_kind": engine.ErrKindCancelled, "by": "operator", "dead": true}})
+	// the run's executions are given up before the run is marked cancelled: a run that is cancelled in the journal and still holds
+	// slots is hidden from monitoring and blocks the nodes that overlap it. A failure leaves the run as it was, so the cancel can be
+	// repeated.
+	settled, err := c.settle(st, j.Events())
+	if err != nil {
+		return c.fail("%v", err)
+	}
+	j.Append(engine.Event{RunID: rec.RunID, Kind: engine.KindRun, Event: "finished", Data: map[string]any{"status": engine.RunScriptError, "error_kind": engine.ErrKindCancelled, "by": "operator", "dead": true, "executions_closed": settled.Closed, "slots_returned": settled.SlotsReturned}})
 	if err := j.Close(); err != nil || j.Err() != nil {
 		return c.fail("the row could not be stored: %v", errors.Join(err, j.Err()))
 	}
-	fmt.Fprintf(c.stdout, "run %s had no process; it is cancelled\n", rec.RunID)
+	fmt.Fprintf(c.stdout, "run %s had no process; it is cancelled (%d execution(s) given up, %d slot(s) returned)\n", rec.RunID, settled.Closed, settled.SlotsReturned)
 	return 0
 }

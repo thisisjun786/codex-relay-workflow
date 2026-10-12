@@ -26,6 +26,9 @@ type Deps struct {
 	Nodes func(ctx context.Context, spec Spec, src Source) (Preview, error)
 	// Signal sends a signal to the process that holds a run lock.
 	Signal func(pid int, sig syscall.Signal) error
+	// Settle gives up the executions a cancelled run still owns (AgentClose with the flow_cancel reason: the closure and the slot
+	// in one transaction); nil is SchedulerSettle.
+	Settle SettleFunc
 	// World opens what the process of a run works on: its journal, its backend and its operations.
 	World WorldFunc
 	// Ready waits until the process of a run holds the run lock, or says why it does not; nil does not wait.
