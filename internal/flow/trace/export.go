@@ -137,6 +137,10 @@ func build(ctx context.Context, r reader, opts Options) (*Trace, error) {
 		}
 	}
 	t.Runs = runs
+	if opts.Run != "" {
+		// the selection is the one Select makes of the whole export, so --run on the export and --run on the reader agree
+		return t.Select(opts.Run)
+	}
 	return t, nil
 }
 

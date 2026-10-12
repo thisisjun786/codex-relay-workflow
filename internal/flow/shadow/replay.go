@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -66,8 +67,12 @@ func (r *Replay) RunTurn(ctx context.Context, spec engine.TurnSpec) (engine.Turn
 	}
 	out := engine.TurnOutcome{TurnID: turnID}
 	switch {
+	case c.Status == engine.StatusCompleted && c.RepairUsed && len(spec.Schema) > 0 && !spec.Repair:
+		// the recorded call was answered wrong first and right on its repair turn: the first turn answers wrong again, so the
+		// script sees the repair and the turns the recorded call took; the tokens come with the turn that completes it
+		out.Text = "recorded first answer that does not satisfy the output schema"
 	case c.Status == engine.StatusCompleted:
-		out.Text = c.Result
+		out.Text = answerText(c.Result, spec.Schema)
 		out.Tokens = engine.Tokens{Input: c.Tokens.Input, Output: c.Tokens.Output, Total: c.Tokens.Total}
 		out.TokensUnmeasured = c.TokensUnmeasured
 	case c.Status == engine.StatusUnknown:
@@ -80,6 +85,20 @@ func (r *Replay) RunTurn(ctx context.Context, spec engine.TurnSpec) (engine.Turn
 		out.Failed = &engine.TurnFailure{CodexErrorInfo: hostKind(c.Reason), Message: "recorded failure " + c.Reason}
 	}
 	return out, nil
+}
+
+// answerText is the last agent message a recorded result stands for. The trace carries the canonical result the engine stored: for
+// a call with a schema the answer itself (a JSON document), for a call without one the message as a JSON string. The engine
+// encodes a schema-less message as a JSON string again when it makes the result, so that string is decoded here, once.
+func answerText(result string, schema []byte) string {
+	if len(schema) > 0 {
+		return result
+	}
+	var text string
+	if err := json.Unmarshal([]byte(result), &text); err != nil {
+		return result
+	}
+	return text
 }
 
 // replayable reports whether the recorded call ended in a way the host decided; a call the engine ended itself (a refusal of

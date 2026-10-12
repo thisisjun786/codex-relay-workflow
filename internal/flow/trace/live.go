@@ -35,7 +35,7 @@ func RefuseLive(path string) error {
 	if path == "" {
 		return errors.New("a path is required")
 	}
-	abs, err := filepath.Abs(path)
+	abs, err := rawAbs(path)
 	if err != nil {
 		return err
 	}
@@ -43,9 +43,17 @@ func RefuseLive(path string) error {
 	if err != nil {
 		return fmt.Errorf("resolve %s: %w", path, err)
 	}
+	// the place a write to the path lands: the directory the spelling leads to, the last name kept as it is (a name that is
+	// itself a symbolic link is replaced by a rename, not followed)
+	landing := resolved
+	if base := lastName(abs); base != "" && base != "." && base != ".." {
+		if dir, err := store.Realpath(store.PathlibParent(abs)); err == nil {
+			landing = store.PathlibChild(dir, base)
+		}
+	}
 	roots := liveRoots()
 	for _, root := range roots {
-		if within(root, resolved) || within(root, abs) {
+		if within(root, resolved) || within(root, landing) {
 			return fmt.Errorf("%w (%s is under the live state directory %s)", ErrLiveStore, path, root)
 		}
 	}
@@ -67,6 +75,28 @@ func RefuseLive(path string) error {
 	return nil
 }
 
+// rawAbs is the absolute spelling of path with nothing cleaned: a relative path is joined to the working directory as written, and
+// a symbolic link followed by ".." keeps the meaning the filesystem gives it. filepath.Abs would clean the spelling and name a
+// different directory than the kernel does for such a path, which is the spelling the relay's own state selection keeps.
+func rawAbs(path string) (string, error) {
+	if strings.IndexByte(path, 0) >= 0 {
+		return "", errors.New("the path holds a NUL byte")
+	}
+	if strings.HasPrefix(path, "/") {
+		return path, nil
+	}
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	return crwconfig.JoinRoot(cwd, path), nil
+}
+
+// lastName is the last component of a raw path, "" when it ends in a separator.
+func lastName(path string) string {
+	return path[strings.LastIndexByte(path, '/')+1:]
+}
+
 func within(root, path string) bool {
 	rel, err := filepath.Rel(root, path)
 	if err != nil {
@@ -81,7 +111,7 @@ func liveRoots() []string {
 	if sel, err := store.ResolveStateDir("", ""); err == nil {
 		candidates = append(candidates, sel.Path)
 		if sel.Source != "env" && sel.Source != "flag" {
-			candidates = append(candidates, filepath.Dir(sel.Path))
+			candidates = append(candidates, store.PathlibParent(sel.Path))
 		}
 	}
 	if v := os.Getenv("CODEX_SESSION_RELAY_STATE"); v != "" {
@@ -91,10 +121,10 @@ func liveRoots() []string {
 		candidates = append(candidates, configured)
 	}
 	if base := os.Getenv("XDG_STATE_HOME"); base != "" {
-		candidates = append(candidates, filepath.Join(base, "codex-session-relay"))
+		candidates = append(candidates, crwconfig.JoinRoot(base, "codex-session-relay"))
 	}
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		candidates = append(candidates, filepath.Join(home, ".local", "state", "codex-session-relay"))
+		candidates = append(candidates, crwconfig.JoinRoot(home, ".local", "state", "codex-session-relay"))
 	}
 	var roots []string
 	seen := map[string]bool{}
@@ -102,7 +132,7 @@ func liveRoots() []string {
 		if c == "" {
 			continue
 		}
-		abs, err := filepath.Abs(c)
+		abs, err := rawAbs(c)
 		if err != nil {
 			continue
 		}

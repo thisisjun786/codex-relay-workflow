@@ -65,6 +65,14 @@ func (b *Builder) Now() time.Time {
 	return b.now
 }
 
+// SetClock moves the builder's clock: the next reading is one second after at. A scenario whose workflow depends on the time
+// records it at a time of its own choosing, so a replay at the real time can be told from a replay of the recorded one.
+func (b *Builder) SetClock(at time.Time) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.now = at
+}
+
 // Stamp is a reading of the clock as the stores spell it.
 func (b *Builder) Stamp() string { return b.Now().UTC().Format(time.RFC3339Nano) }
 

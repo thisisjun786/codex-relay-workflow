@@ -30,7 +30,10 @@ Exit status: 0 when the command did what it was asked; 1 when the script of `sha
   `relay_state`, `XDG_STATE_HOME` or `~/.local/state`, `codex-session-relay`, scoped by the default socket, and the
   directory above it), or when it is the same file (device and inode) as a regular file under one of them: a hard link or a
   symbolic link to the live store is refused wherever it is placed. A store id cannot be the test, because a faithful copy has the
-  id of the store it was made from.
+  id of the store it was made from. A path is judged in the spelling it was given: a relative path is taken from the working
+  directory as written and a symbolic link followed by `..` leads where the filesystem leads (the relay keeps the same spelling
+  of a configured `relay_state`), so neither the configured root nor an output path is cleaned into another directory first. The
+  place a write lands (the directory the spelling leads to, then the last name) is judged as well as the file the path resolves to.
 - **Outputs are never inputs.** `--out` may not be the store copy, the trace or the script. A file is written whole under a
   temporary name in its directory and renamed.
 
@@ -59,13 +62,23 @@ counts the same). A busy answer is a `delivery_deferred_busy` journal row or a b
 policy sums them. A batch landed when it moved the target (a `ref_moved` stage or a batch row) or marked a member; a batch that
 did neither failed.
 
+`--run RUN` keeps one run, in `export`, `shadow` and `measure` alike (`export --run` gives what `--run` on the reader gives of the
+whole export). The run's own record stays whole; the agent acceptances that stand on one of its reviewer calls, the acceptances of its
+plan and nodes, and the integration batches of its plan (cut to its nodes) stay with it, so the audit of a healthy run is not failed
+by the acceptances of another run. The deliveries, the relay journal rows and `aux` are the store's, not a run's (no row of them
+names a run), and a selection keeps them whole.
+
 ## crw flow shadow
 
 `shadow` replays the workflow script `W` over each recorded run and compares the decisions the script makes with the decisions the
 run made. The script runs on the engine (`engine.Run`) with the run's own id, so a call has the id it had when it was recorded (the
 call id is a function of the run id, the call's path and its position), and the backend (`shadow.Replay`) starts no thread and sends
 no request: a turn of a call the trace recorded is answered with what the call came to (its last message and tokens, or the failure
-the host reported, or no answer at all for an unknown outcome); a call the trace has no record of is answered by the engine's
+the host reported, or no answer at all for an unknown outcome). The script sees what the recorded run saw: the message as the host
+sent it (a call without a schema gets its text back as it was, not encoded a second time), a call that was repaired replays as
+repaired (a first turn that does not satisfy the schema, then the answer on the repair turn, so `meta.repairUsed` and the turn
+count are the recorded ones), and `crw.clock()` answers with the times the recorded run read, in the order it read them, never the
+wall clock; a call the trace has no record of is answered by the engine's
 deterministic fake and counted as `invented` in the report, and what follows an invented call is not evidence. A call that the
 engine itself ended (a refusal of its own, a supersession) is decided again by the engine. `--args` are the script's arguments;
 `argsMatch` says whether they are the ones the run recorded. The script of the run and `W` may differ: that is the question.

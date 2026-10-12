@@ -16,9 +16,9 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // Schema is the format name a trace file carries.
@@ -264,7 +264,9 @@ func WriteBytes(path string, data []byte) error {
 	if err := RefuseLive(path); err != nil {
 		return err
 	}
-	dir := filepath.Dir(path)
+	// the temporary file is made in the directory the path's own spelling leads to (filepath.Dir would clean "link/.." away and
+	// name another directory), so the rename stays inside one directory
+	dir := store.PathlibParent(path)
 	tmp, err := os.CreateTemp(dir, ".crw-flow-out-*")
 	if err != nil {
 		return err
@@ -372,6 +374,12 @@ func (t *Trace) Run(id string) *Run {
 }
 
 // Select returns the trace with only the run id kept (all runs for ""). It is an error to name a run the trace lacks.
+//
+// What belongs to a run is what the trace ties to it: its journal rows, calls, nodes and decisions (the run's own record), the
+// agent acceptances that stand on one of its reviewer calls (or, with no reviewer call named, that are its plan's and its
+// nodes'), the relationship acceptances of its plan and nodes, and the integration batches of its plan, cut to the members
+// that are its nodes. The deliveries, the relay journal rows and the table counts of Aux are the store's own, not a run's: no
+// row of them names a run, so a selection keeps them whole.
 func (t *Trace) Select(id string) (*Trace, error) {
 	if id == "" {
 		return t, nil
@@ -380,7 +388,63 @@ func (t *Trace) Select(id string) (*Trace, error) {
 	if r == nil {
 		return nil, fmt.Errorf("the trace holds no run %q", id)
 	}
+	own := map[string]bool{}
+	for _, c := range r.Calls {
+		own[c.CallID] = true
+	}
+	foreign := map[string]bool{}
+	for i := range t.Runs {
+		if t.Runs[i].RunID == id {
+			continue
+		}
+		for _, c := range t.Runs[i].Calls {
+			if !own[c.CallID] {
+				foreign[c.CallID] = true
+			}
+		}
+	}
+	nodes := map[string]bool{}
+	for _, n := range r.Nodes {
+		nodes[n.NodeID] = true
+	}
+	for _, c := range r.Calls {
+		if c.Node != "" {
+			nodes[c.Node] = true
+		}
+	}
+	ofRun := func(plan, node string) bool { return plan == r.PlanID && nodes[node] }
 	out := *t
 	out.Runs = []Run{*r}
+	out.Acceptances = []Acceptance{}
+	for _, a := range t.Acceptances {
+		keep := false
+		switch {
+		case a.Kind == "agent" && own[a.ReviewerCallID]:
+			keep = true
+		case a.Kind == "agent" && foreign[a.ReviewerCallID]:
+		default:
+			keep = ofRun(a.PlanID, a.NodeID)
+		}
+		if keep {
+			out.Acceptances = append(out.Acceptances, a)
+		}
+	}
+	out.Integration = []Batch{}
+	for _, b := range t.Integration {
+		if b.PlanID != r.PlanID {
+			continue
+		}
+		kept := b
+		kept.Nodes = []BatchNode{}
+		for _, n := range b.Nodes {
+			if nodes[n.NodeID] {
+				kept.Nodes = append(kept.Nodes, n)
+			}
+		}
+		if len(b.Nodes) > 0 && len(kept.Nodes) == 0 {
+			continue
+		}
+		out.Integration = append(out.Integration, kept)
+	}
 	return &out, nil
 }

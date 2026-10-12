@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"sort"
 	"strconv"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
@@ -152,6 +153,7 @@ func compareRun(ctx context.Context, run *trace.Run, prog *script.Program, cfg C
 	journal := engine.NewMemoryJournal()
 	res, err := engine.Run(ctx, prog, engine.Config{
 		RunID: run.RunID, Backend: backend, Policy: cfg.Policy, Journal: journal, Args: cfg.Args, Pool: cfg.Pool, OmitSeq: true,
+		Now: recordedClock(run, journal),
 		Workflows: func(name, scriptPath string) (*script.Program, error) {
 			if cfg.Dir == nil {
 				return nil, errors.New("an ad-hoc script has no workflows directory")
@@ -325,4 +327,48 @@ func comparePair(a, c *Decision) (string, string) {
 		}
 	}
 	return ClassSame, ""
+}
+
+// recordedClock is the clock of a replayed run: the nth crw.clock the replayed script reads answers with the nth time the
+// recorded run read, so a decision that depends on the time is computed from the recorded run and repeats. Past the last
+// recorded reading the last one stays; a recorded run that read none has the time of its last journal row, and a run with no
+// rows the zero time. The wall clock is never read.
+func recordedClock(run *trace.Run, journal *engine.MemoryJournal) func() time.Time {
+	var readings []time.Time
+	for _, e := range run.Events {
+		if e.Kind != engine.KindCall || e.Op != "crw.clock" || e.Event != engine.EvCompleted {
+			continue
+		}
+		var text string
+		raw, _ := e.Data["result"].(string)
+		if json.Unmarshal([]byte(raw), &text) != nil {
+			continue
+		}
+		if at, err := time.Parse(time.RFC3339Nano, text); err == nil {
+			readings = append(readings, at)
+		}
+	}
+	fallback := time.Time{}
+	if len(run.Events) > 0 {
+		if at, err := time.Parse(time.RFC3339Nano, run.Events[len(run.Events)-1].At); err == nil {
+			fallback = at
+		}
+	}
+	return func() time.Time {
+		// the readings the script made so far: the engine's other uses of the clock (a thread's creation time) read it without
+		// consuming a recorded reading
+		n := 0
+		for _, e := range journal.Events() {
+			if e.Op == "crw.clock" && e.Event == engine.EvCompleted {
+				n++
+			}
+		}
+		switch {
+		case n < len(readings):
+			return readings[n]
+		case len(readings) > 0:
+			return readings[len(readings)-1]
+		}
+		return fallback
+	}
 }
