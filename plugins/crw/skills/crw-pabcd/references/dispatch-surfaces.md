@@ -13,16 +13,25 @@ the task packet, the assignment record the relay holds for it, or the DAG node
 ([OPS-7.1](../../crw-run/references/operations.md#ops-71-what-an-assignment-binds) says what an assignment binds).
 
 - **Managed** — a Linear issue or a DAG node, whether the relay already holds an assignment for it
-  or not. An issue with no assignment yet is not unmanaged: its first independent lane is the
-  managed start `crw-run` makes. An independent lane for it is an
-  independent relay child, started and resumed through `crw-run`: the managed start, the DAG release
-  and their bridge recovery, pair/profile, capacity and receipt rules. It is never a desktop
-  `create_thread` lane. The relay refuses a second active or paused assignment of the same issue and
-  a release past capacity; those answers are followed, not routed around by creating a thread by
-  hand. A project parent uses read-only and review helpers only; the implementation of an issue is
-  its independent relay child's, and that child may own bounded native helpers for its own task.
-  The manifest of managed lanes is a read-only projection of the relay assignments and DAG records,
-  not a second file to keep. A goal-free parent is resumed by relay delivery
+  or not. An issue with no assignment yet is not unmanaged: its first lane is a managed one. A
+  managed issue or node is one of two things, and the choice is the project orchestrator's plan,
+  not this file's:
+  - an independent relay child, started and resumed through `crw-run`: the managed start, the DAG
+    release and their bridge recovery, pair/profile, capacity and receipt rules. An oversized issue
+    is this one. It is never a desktop `create_thread` lane.
+  - a flow executor call of the project orchestrator's run, recorded in the relay: the run
+    releases the node to the relay's DAG scheduler and starts the executor (an engine thread of its
+    own, not a native helper of any task), and the call, its commits, its review and its acceptance
+    are rows of the run's journal and the DAG records
+    ([the flow commands](../../crw-canon/references/flow.md), [the spawn policy](../../crw-canon/references/spawn-policy.md)).
+
+  Either way the relay refuses a second active or paused assignment of the same issue and a release
+  past capacity; those answers are followed, not routed around by creating a thread by hand. A
+  project orchestrator's own thread uses read-only and review helpers only; the implementation of an
+  issue is its independent relay child's or its run's executor call, and that child, or that executor
+  within its stated allowance, may own bounded native helpers for its own task. The manifest of
+  managed lanes is a read-only projection of the relay assignments and DAG records (and, for a run,
+  its journal), not a second file to keep. A goal-free parent is resumed by relay delivery
   ([OPS-8.1](../../crw-run/references/operations.md#ops-81-parent-continuation-and-waiting)): it
   checks the existing wake readiness ([OPS-8.5](../../crw-run/references/operations.md#ops-85-the-goal-free-parents-wake-path))
   and yields only after that readiness is established, never by arming a wake of its own.
@@ -35,7 +44,8 @@ the task packet, the assignment record the relay holds for it, or the DAG node
   way either: a bounded helper or worktree worker needs no relay binding, and none is invented for it.
 
 A native helper's dispatch record is a local helper record. It is never an independent child's
-assignment, a DAG acceptance or a relay receipt.
+assignment, a DAG acceptance or a relay receipt, and it is not a flow executor call, which exists
+only as a call the run records.
 
 ## DISPATCH-SURFACE-01 (STRICT) — name the surface before dispatching
 

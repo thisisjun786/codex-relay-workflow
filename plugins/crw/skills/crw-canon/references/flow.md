@@ -1,6 +1,6 @@
 # The crw flow commands
 
-`crw flow` is the command line of the flow engine: the process that runs a workflow script for one run, and the commands that start, show, follow, answer, pause, cancel, resume and recover a run. This page is the one reference of the commands; the script format is [docs/flow/script.md](../../../../../docs/flow/script.md), the journal a run writes is [docs/flow/journal.md](../../../../../docs/flow/journal.md), and the scheduler a run asks for its slots is [docs/relay/dag-scheduler.md](../../../../../docs/relay/dag-scheduler.md).
+`crw flow` is the command line of the flow engine: the process that runs a workflow script for one run, and the commands that start, show, follow, answer, pause, cancel, resume and recover a run. This page is the one reference of the commands; the script format is [docs/flow/script.md](../../../../../docs/flow/script.md), the journal a run writes is [docs/flow/journal.md](../../../../../docs/flow/journal.md), and the scheduler a run asks for its slots is [docs/relay/dag-scheduler.md](../../../../../docs/relay/dag-scheduler.md). The agent calls a run makes, and why, are the [spawn policy](spawn-policy.md).
 
 A run is a process that lives for one run and loses nothing when it dies: every fact is a row of its journal in the relay store, the run lock (`<state>/flow/<run>/run.lock`) says whether a process holds the run, and `crw flow resume` or `crw flow recover` takes a run whose lock is free from the journal again. The orchestrator thread that started a run owns it; the Stop hook prints the run's status line in that thread only, at the end of its turns. While the thread is idle, the progress is read with `crw flow watch`, the GUI Runs page and Linear.
 
@@ -71,6 +71,30 @@ The line the Stop hook prints, `crw flow <run> <state> · <phase> · <n> calls �
 ### crw flow digest
 
 The digest of a night batch; see [The night batch](#the-night-batch).
+
+## Who owns control in a flow-managed run
+
+A flow-managed node is an issue node that the project orchestrator's run released to an executor, or the issue-lane run of an oversized child. In both the run is the one process that knows what happens next; no thread it starts holds that knowledge.
+
+| Control | Owner | What it means |
+|---|---|---|
+| Phases and their order | the run: its script and its journal | Build, verify, review, land and close follow the workflow the run was started with. An executor builds and returns its receipt; it never decides the next phase. A resume goes on from the journal |
+| Audit | the run | The run calls a reviewer of another model family for the design audit and for each head, and `crw flow audit` reads the reviews behind its acceptances back from the reviewer threads on the host |
+| Evidence | the run | A verification record, a verdict, a pre-merge record or a QA receipt is made from calls the run owns and commands the run itself runs. What an executor writes about its own work, a skill-loading line or a quoted instruction is no evidence |
+| Escalations and decisions | the orchestrator thread; Jun for what only Jun takes | The run raises an escalation and waits; `crw flow answer` applies the answer. The thread does not release, accept or integrate a node the run owns |
+| Acceptance and integration | the run, through the relay's DAG scheduler | The run holds the plan's coordinator epoch, so a transition written by another hand is a fault the run escalates, not a step it takes over |
+| The PABCD state machine | nobody in a flow-managed node | The executor and an oversized child start no PABCD state machine. The standalone PABCD rules are unchanged: a task that is not a flow-managed node keeps its own phases |
+
+### The high-risk procedure of a C4 issue
+
+An issue that [crw-dev](../../crw-dev/SKILL.md) classifies as C4 runs in the flow in this order. The numbered steps are the run's own lane; none is a thread's choice.
+
+1. The architect DESIGN of the milestone.
+2. The pre-build design audit, by a reviewer of another model family than the architect, before any executor starts. `needs_changes` returns to the architect on its own thread, and a replan is audited again. Only an approved DESIGN reaches an executor.
+3. The candidate review of each issue: a fresh reviewer, of another model family than the issue's authors, over each executor head that passed its verification.
+4. After the issues are integrated, the final gate with full verification and the risk record, then reviewer-final over the integrated range.
+
+Reviewer-final does not replace the pre-build design audit: it rules on a range that is already built, and step 2 exists to stop a flawed design before any executor writes it. Neither does it replace step 3.
 
 ## The preview and the five facts
 

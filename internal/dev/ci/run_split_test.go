@@ -121,7 +121,10 @@ func relayCommandSequence(t *testing.T, text string) []string {
 
 // TestRunCommandSequenceUnchanged: crw-run names the same relay commands in the same order as before the split.
 func TestRunCommandSequenceUnchanged(t *testing.T) {
-	expectEqual(t, "relay commands of "+runSkillFile, relayCommandSequence(t, splitRead(t, runSkillFile)), runCommandSequenceBefore)
+	// CRW-1222: the section on a flow run names dag-coordinator-claim once, ahead of the commands of the issue-child procedure,
+	// to say that this thread never claims the epoch of a plan a run holds (TestRunProjectNeverClaimsRunEpoch); every other
+	// command stays where it was.
+	expectEqual(t, "relay commands of "+runSkillFile, relayCommandSequence(t, splitRead(t, runSkillFile)), append([]string{"dag-coordinator-claim"}, runCommandSequenceBefore...))
 	// The initiative procedure sends a project to its orchestrator; it runs none of the project's release or
 	// close commands itself.
 	for _, command := range relayCommandSequence(t, splitRead(t, runInitiativeSkill)) {
