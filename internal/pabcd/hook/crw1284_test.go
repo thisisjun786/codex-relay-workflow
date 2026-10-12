@@ -103,3 +103,40 @@ func TestParentAndIntegratorPushUnaffected(t *testing.T) {
 		}
 	}
 }
+
+// TestCRW1284ChildPushFuzz composes the CRW-1283 corpus (wrappers, program wrappers, PATH assignments, scripts, mutated forwarders,
+// program files, depth-2 pairs) around push payloads: refspec variants, force, --all, --mirror, another remote, and the own branch.
+// In a relay child session every form carrying a push of another branch is refused (a script run by its path is read, so class
+// ownlimit is a target here); in any other session every form is allowed, as at the base, which has no such leg.
+func TestCRW1284ChildPushFuzz(t *testing.T) {
+	t.Setenv("HOME", cleanTempDir(t))
+	t.Setenv("PATH", "/usr/bin:/bin")
+	dir := cpScene(t)
+	child := func(string, string) ChildPushBinding { return ChildPushBinding{Child: true, Own: cpOwn} }
+	g := &fzGuard{name: "childpush", dir: dir, t: t, refused: func(c string) bool { return HandleChildPushGuard(gateBash(t, dir, c), child) != "" },
+		payloads: []fzPayload{{"head-dev", "git push origin HEAD:dev", "git", true}, {"force", "git push -f origin +r2-f01:dev", "git", true},
+			{"all", "git push --all origin", "git", true}, {"mirror", "git push --mirror origin", "git", true}, {"remote", "git push upstream HEAD:main", "git", true},
+			{"own", "git push origin r2-f01", "git", false}, {"go-version", "go version", "go", false}, {"true", "true", "true", false}}}
+	g.setup()
+	all, counts := g.forms()
+	stats := map[string]int{}
+	for _, f := range all {
+		refused := g.refused(f.cmd)
+		stats[f.class+"/"+map[bool]string{true: "refuse", false: "allow"}[refused]]++
+		if (f.class == "target" || f.class == "ownlimit") && !refused {
+			t.Errorf("a relay child is ALLOWED %s (%s): %s", f.key, f.desc, f.cmd)
+		}
+		if out := HandleChildPushGuard(gateBash(t, dir, f.cmd), func(string, string) ChildPushBinding { return ChildPushBinding{} }); out != "" {
+			t.Errorf("a session that is no relay child is judged %s: %s", f.key, out)
+		}
+	}
+	t.Logf("corpus %v; decisions %v", counts, stats)
+	if len(all) != 7640 || stats["target/allow"]+stats["ownlimit/allow"] != 0 {
+		t.Errorf("%d forms, pinned 7640", len(all))
+	}
+	for _, c := range []string{"git push origin r2-f01", "ionice -c3 nice -n 5 git push origin r2-f01", "bash own.sh", "env X=1 go version"} {
+		if g.refused(c) {
+			t.Errorf("a relay child is refused its own branch or a command without a push: %s", c)
+		}
+	}
+}
