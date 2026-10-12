@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strconv"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 )
 
 // This file is the QA evidence of a milestone's final gate (CRW-1206, F13): the answers of the three calls the run makes for it and
@@ -183,6 +185,9 @@ type QAResult struct {
 	Synthesis QACallRecord `json:"synthesis"`
 	Findings  []QAFinding  `json:"findings"`
 	Summary   string       `json:"summary"`
+	// Source is the identity of the tree the capture call ended in: what the receipt rests on. It is the clean head of the gate when
+	// the receipt is a PASS.
+	Source *source.Identity `json:"source"`
 }
 
 func (o *qaReceiptOp) Run(_ context.Context, req engine.OpRequest) (engine.OpResult, error) {
@@ -204,18 +209,13 @@ func (o *qaReceiptOp) Run(_ context.Context, req engine.OpRequest) (engine.OpRes
 	if receipt.CallID != "" {
 		res.Synthesis = qaCallRecord(receipt)
 	}
-	if capture.Status != "completed" {
-		return inconclusive("capture_" + capture.Status), nil
+	view := captureView(rows(req.Journal.Events()), gate, capture)
+	res.Captures = len(view.Captures)
+	if view.Source != nil {
+		res.Source = view.Source
 	}
-	captured, err := DecodeQACapture(capture.Output)
-	if err != nil {
-		return inconclusive("capture_invalid"), nil
-	}
-	res.Captures = len(captured.Captures)
-	if res.Captures == 0 {
-		// a PASS points at a non-empty artifact the call captured this round (the crw-qa skill, section 1): a capture that is not
-		// listed does not exist for the gate
-		return inconclusive("no_captures"), nil
+	if !view.OK {
+		return inconclusive(view.Reason), nil
 	}
 	verdict := QAPass
 	if gate.Passes {
@@ -254,6 +254,10 @@ func (o *qaReceiptOp) Run(_ context.Context, req engine.OpRequest) (engine.OpRes
 	if !continues(rows(req.Journal.Events()), receipt.CallID, capture.CallID) {
 		return inconclusive("synthesis_not_continuation"), nil
 	}
+	// a turn of the QA thread that edited the tree it works in did not judge the head the gate pinned either
+	if src, ok := callSource(rows(req.Journal.Events()), receipt.CallID); ok && source.Compare(src, source.CommitIdentity(gate.Head, nil)).Kind != source.ComparisonSame {
+		return inconclusive("synthesis_source_modified"), nil
+	}
 	ans, err := DecodeQAReceipt(receipt.Output)
 	if err != nil {
 		return inconclusive("synthesis_invalid"), nil
@@ -266,7 +270,7 @@ func (o *qaReceiptOp) Run(_ context.Context, req engine.OpRequest) (engine.OpRes
 func (o *qaReceiptOp) done(res QAResult) engine.OpResult {
 	return engine.OpResult{Result: result(res), Data: map[string]any{
 		"milestone": res.Milestone, "head": res.Head, "grade": res.Grade, "state": res.State, "reason": res.Reason, "captures": res.Captures,
-		"capture_call": res.Capture.Call, "synthesis_call": res.Synthesis.Call, "passes": len(res.Passes),
+		"capture_call": res.Capture.Call, "synthesis_call": res.Synthesis.Call, "passes": len(res.Passes), "source": res.Source,
 	}}
 }
 
@@ -287,4 +291,137 @@ func qaReceiptOf(row engine.Event) (QAResult, bool) {
 		return QAResult{}, false
 	}
 	return r, true
+}
+
+// ---- crw.qaCapture ----
+
+// qaCaptureOp is crw.qaCapture(milestone, gate, capture): the capture of the QA call as the later calls of the close may rely on it.
+// The capture call ran in a scratch worktree of its own, and its artifacts are files there; the passes and the self-review read
+// them from checkouts of their own. The answer is the list of captures with the path of each resolved against the directory the
+// capture ran in, and the identity of the tree the call exercised. A capture that cannot be handed on - not completed, not a
+// QA_CAPTURE, none listed, a path that cannot be resolved or that leaves the worktree, a tree that is not the head the gate pinned -
+// is not ok, with the reason the receipt will give; the close then asks nothing more of the QA call.
+type qaCaptureOp struct{ l *Lane }
+
+// QACaptureEntry is one capture with the path it can be read at.
+type QACaptureEntry struct {
+	Path  string `json:"path"`
+	Abs   string `json:"abs"`
+	Kind  string `json:"kind"`
+	Shows string `json:"shows"`
+}
+
+// QACaptureView is the answer of crw.qaCapture.
+type QACaptureView struct {
+	OK     bool   `json:"ok"`
+	Reason string `json:"reason"`
+	// Root is the working directory of the capture call.
+	Root     string           `json:"root"`
+	Captures []QACaptureEntry `json:"captures"`
+	Matrix   []string         `json:"matrix"`
+	Teardown []string         `json:"teardown"`
+	// Source is the identity of the tree the call ended in (nil when none was recorded).
+	Source *source.Identity `json:"source"`
+}
+
+func (o *qaCaptureOp) Run(_ context.Context, req engine.OpRequest) (engine.OpResult, error) {
+	var ms string
+	var gate GateRef
+	var capture CallRef
+	if err := args(req.Args, &ms, &gate, &capture); err != nil {
+		return engine.OpResult{}, fmt.Errorf("crw.qaCapture(milestone, gate, capture): %w", err)
+	}
+	if ms == "" || gate.Head == "" || capture.CallID == "" {
+		return engine.OpResult{}, fmt.Errorf("crw.qaCapture: a milestone, the head the gate judged and the QA call are required")
+	}
+	v := captureView(rows(req.Journal.Events()), gate, capture)
+	return engine.OpResult{Result: result(v), Data: map[string]any{
+		"milestone": ms, "head": gate.Head, "capture_call": capture.CallID, "ok": v.OK, "reason": v.Reason, "captures": len(v.Captures), "root": v.Root,
+	}}, nil
+}
+
+func (o *qaCaptureOp) Proven(ctx context.Context, ev []engine.Event, row engine.Event) (bool, string, error) {
+	return provenAlways(ctx, ev, row)
+}
+
+// captureView judges the capture call and resolves what it listed.
+func captureView(r rows, gate GateRef, capture CallRef) QACaptureView {
+	v := QACaptureView{Captures: []QACaptureEntry{}, Matrix: []string{}, Teardown: []string{}}
+	fail := func(reason string) QACaptureView {
+		v.OK, v.Reason = false, reason
+		return v
+	}
+	if capture.Status != "completed" {
+		return fail("capture_" + capture.Status)
+	}
+	captured, err := DecodeQACapture(capture.Output)
+	if err != nil {
+		return fail("capture_invalid")
+	}
+	if len(captured.Captures) == 0 {
+		// a PASS points at a non-empty artifact the call captured this round (the crw-qa skill, section 1): a capture that is not
+		// listed does not exist for the gate
+		return fail("no_captures")
+	}
+	v.Matrix, v.Teardown = nonNil(captured.Matrix), nonNil(captured.Teardown)
+	v.Root = callRoot(r, capture.CallID)
+	// what the call exercised is the tree it ended in; the gate pinned the clean head
+	src, ok := callSource(r, capture.CallID)
+	if !ok {
+		return fail("capture_source_unknown")
+	}
+	v.Source = &src
+	switch source.Compare(src, source.CommitIdentity(gate.Head, nil)).Kind {
+	case source.ComparisonUnavailable:
+		return fail("capture_source_unknown")
+	case source.ComparisonDifferent:
+		return fail("capture_source_modified")
+	}
+	for _, c := range captured.Captures {
+		abs := c.Path
+		if !filepath.IsAbs(abs) {
+			if v.Root == "" {
+				return fail("capture_root_unknown")
+			}
+			abs = filepath.Join(v.Root, c.Path)
+			if rel, err := filepath.Rel(v.Root, abs); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+				return fail("capture_path_outside")
+			}
+		}
+		v.Captures = append(v.Captures, QACaptureEntry{Path: c.Path, Abs: filepath.Clean(abs), Kind: c.Kind, Shows: c.Shows})
+	}
+	v.OK = true
+	return v
+}
+
+// callRoot is the working directory the newest attempt of a call was placed in ("" when the backend placed it nowhere).
+func callRoot(r rows, call string) string {
+	prep, ok := r.prepared().last(func(ev engine.Event) bool { return ev.CallID == call })
+	if !ok {
+		return ""
+	}
+	alloc, _ := prep.Data["allocation"].(map[string]any)
+	return str(alloc, "path")
+}
+
+// callSource is the source identity the engine recorded on the newest completed row of a QA call (qa_source): false when the row
+// records none, or the error of reading it.
+func callSource(r rows, call string) (source.Identity, bool) {
+	done, found := r.terminal(call)
+	if !found || done.Event != engine.EvCompleted {
+		return source.Identity{}, false
+	}
+	raw, ok := done.Data["qa_source"]
+	if !ok || raw == nil {
+		return source.Identity{}, false
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return source.Identity{}, false
+	}
+	var id source.Identity
+	if json.Unmarshal(b, &id) != nil || id.Kind == "" {
+		return source.Identity{}, false
+	}
+	return id, true
 }

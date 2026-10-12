@@ -21,6 +21,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/roles"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 )
 
 // Default timings of a backend.
@@ -69,14 +70,15 @@ type Backend struct {
 }
 
 var (
-	_ engine.Backend    = (*Backend)(nil)
-	_ engine.Placer     = (*Backend)(nil)
-	_ engine.Forker     = (*Backend)(nil)
-	_ engine.Reconciled = (*Backend)(nil)
-	_ engine.Restorer   = (*Backend)(nil)
-	_ engine.Prover     = (*Backend)(nil)
-	_ engine.Owned      = (*Backend)(nil)
-	_ engine.ReconHost  = (*Backend)(nil)
+	_ engine.Backend      = (*Backend)(nil)
+	_ engine.Placer       = (*Backend)(nil)
+	_ engine.SourceReader = (*Backend)(nil)
+	_ engine.Forker       = (*Backend)(nil)
+	_ engine.Reconciled   = (*Backend)(nil)
+	_ engine.Restorer     = (*Backend)(nil)
+	_ engine.Prover       = (*Backend)(nil)
+	_ engine.Owned        = (*Backend)(nil)
+	_ engine.ReconHost    = (*Backend)(nil)
 )
 
 // New returns a backend.
@@ -184,6 +186,20 @@ func (b *Backend) Snapshot(ctx context.Context, path string) (string, error) {
 		return "", errNoAllocator
 	}
 	return b.cfg.Allocator.Snapshot(ctx, path)
+}
+
+// SourceOf implements engine.SourceReader: the source identity of the directory a QA call ended in (git status of the tree, with
+// the state of the run under .crw/ left out), read in a process group the call's context owns. The run's own writes there - the
+// artifacts of the capture - are not source.
+func (b *Backend) SourceOf(ctx context.Context, cwd, _ string) (source.Identity, error) {
+	if cwd == "" {
+		return source.Identity{}, errors.New("the call ran in no directory")
+	}
+	id, err := source.CaptureContext(ctx, cwd, source.Options{ExcludeStateArtifacts: true})
+	if err != nil {
+		return source.Identity{}, fmt.Errorf("the source of %s could not be read: %w", cwd, err)
+	}
+	return id, nil
 }
 
 // Restore implements engine.Restorer.

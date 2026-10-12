@@ -1,8 +1,11 @@
 package engine
 
 import (
+	"errors"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 )
 
 // The QA capture call of a final gate (SP-QA-1, CRW-1206) is an executor call the script marks with the option qa: true. The mark is
@@ -124,5 +127,67 @@ return c.status`
 				t.Errorf("the resumed turn carries qa = %v, want %v", qaTurns == 1, tc.wantQATurn)
 			}
 		})
+	}
+}
+
+func completedRow(h *harness, label string) Event {
+	for _, e := range h.callRows(label) {
+		if e.Event == EvCompleted {
+			return e
+		}
+	}
+	h.t.Fatalf("no completed row for %s", label)
+	return Event{}
+}
+
+// The scratch worktree of a QA call is the surface the call exercised, and the call may edit it: the completed row of every turn of a
+// QA thread records the source identity of the directory the call ended in (CRW-1206 correction, d2), so the receipt can tell the
+// head that was gated from the tree that was driven. A call that is not a QA call records none.
+func TestQACallRecordsTheSourceItExercised(t *testing.T) {
+	h := newHarness(t)
+	var asked []string
+	h.fake.SourceHook = func(cwd, head string) (source.Identity, error) {
+		asked = append(asked, head)
+		if strings.HasSuffix(head, "dead") {
+			return source.Identity{}, errors.New("git status failed")
+		}
+		id := source.CommitIdentity(head, nil)
+		if strings.HasSuffix(head, "d1r7") {
+			id.Dirty, id.TreeHash = true, "hash-of-the-edit"
+		}
+		return id, nil
+	}
+	res := h.run(`
+const cap = await agent.call('capture', { agentType: 'executor', qa: true, head: 'abcdef0', label: 'qa' })
+const syn = await agent.call('synthesise', { resume: cap, head: 'abcdef0', label: 'qa-synthesis' })
+const edited = await agent.call('capture again', { agentType: 'executor', qa: true, head: 'abcd1d1r7', label: 'qa-edited' })
+const lost = await agent.call('capture once more', { agentType: 'executor', qa: true, head: 'abcdead', label: 'qa-lost' })
+const plain = await agent.call('build', { agentType: 'executor', node: 'n1', label: 'build' })
+return [cap.status, syn.status, edited.status, lost.status, plain.status]
+`)
+	if got := value[[]string](t, res); strings.Join(got, ",") != "completed,completed,completed,completed,completed" {
+		t.Fatalf("%v", got)
+	}
+	src := func(label string) (map[string]any, bool) {
+		m, ok := completedRow(h, label).Data["qa_source"].(map[string]any)
+		return m, ok
+	}
+	for _, label := range []string{"qa", "qa-synthesis"} {
+		m, ok := src(label)
+		if !ok || m["kind"] != "resolved" || m["commitSha"] != "abcdef0" || m["dirty"] != false {
+			t.Errorf("%s: qa_source = %v", label, completedRow(h, label).Data["qa_source"])
+		}
+	}
+	if m, ok := src("qa-edited"); !ok || m["dirty"] != true || m["treeHash"] != "hash-of-the-edit" {
+		t.Errorf("an edited scratch tree is recorded dirty: %v", completedRow(h, "qa-edited").Data["qa_source"])
+	}
+	if d := completedRow(h, "qa-lost").Data; d["qa_source"] != nil || d["qa_source_error"] != "git status failed" {
+		t.Errorf("a source that could not be read is recorded as the error: %v", d)
+	}
+	if _, present := completedRow(h, "build").Data["qa_source"]; present {
+		t.Errorf("a call that is not a QA call records a source identity")
+	}
+	if len(asked) != 4 {
+		t.Errorf("the backend was asked for the source %d times, want once for each QA turn (4): %v", len(asked), asked)
 	}
 }

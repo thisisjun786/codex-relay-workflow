@@ -121,3 +121,52 @@ func (e *env) scratchOf(turnText string) string {
 	}
 	return ""
 }
+
+// The completed row of a qa call records the source identity of the scratch worktree the call ended in (CRW-1206 correction, d2). The
+// artifacts a capture leaves under .crw/ are the state of the run, not of the source: they leave the tree the head it was started
+// at; an edit of a tracked file, or a new file anywhere else, is a tree the head does not describe.
+func TestQACallRecordsTheSourceOfItsScratchWorktree(t *testing.T) {
+	e := newEnv(t, withBound(nil))
+	head := git(t, e.repo, "rev-parse", "HEAD")
+	tracked := ""
+	e.plan(func(r fakehost.TurnRequest) fakehost.TurnPlan {
+		cwd := e.scratchOf(r.Text)
+		switch {
+		case strings.Contains(r.Text, "clean"):
+			_ = os.MkdirAll(filepath.Join(cwd, ".crw", "evidence", "s1", "qa", "home"), 0o755)
+			_ = os.WriteFile(filepath.Join(cwd, ".crw", "evidence", "s1", "qa", "home", "shot.png"), []byte("png"), 0o644)
+		case strings.Contains(r.Text, "edit"):
+			entries, _ := os.ReadDir(cwd)
+			for _, en := range entries {
+				if !en.IsDir() && !strings.HasPrefix(en.Name(), ".") {
+					tracked = en.Name()
+					break
+				}
+			}
+			_ = os.WriteFile(filepath.Join(cwd, tracked), []byte("edited to make the surface work\n"), 0o644)
+		case strings.Contains(r.Text, "stray"):
+			_ = os.WriteFile(filepath.Join(cwd, "stray-output.txt"), []byte("x"), 0o644)
+		}
+		return fakehost.TurnPlan{Message: passMessage}
+	})
+	res := e.run(`const S = ` + verdictSchema + `
+const a = await agent.call('clean capture', { agentType: 'executor', qa: true, head: ` + q(head) + `, schema: S, label: 'qa-clean' })
+const b = await agent.call('edit capture', { agentType: 'executor', qa: true, head: ` + q(head) + `, schema: S, label: 'qa-edit' })
+const c = await agent.call('stray capture', { agentType: 'executor', qa: true, head: ` + q(head) + `, schema: S, label: 'qa-stray' })
+return [a.status, b.status, c.status]`)
+	if got := value[[]string](t, res); !slices.Equal(got, []string{"completed", "completed", "completed"}) {
+		t.Fatalf("%v", got)
+	}
+	srcOf := func(label string) map[string]any {
+		m, _ := e.row(label, engine.EvCompleted).Data["qa_source"].(map[string]any)
+		return m
+	}
+	if m := srcOf("qa-clean"); m == nil || m["kind"] != "resolved" || m["commitSha"] != head || m["dirty"] != false {
+		t.Errorf("a capture that left artifacts under .crw/ only: %v", m)
+	}
+	for _, label := range []string{"qa-edit", "qa-stray"} {
+		if m := srcOf(label); m == nil || m["commitSha"] != head || m["dirty"] != true || m["treeHash"] == "" {
+			t.Errorf("%s: the tree is not the head: %v", label, m)
+		}
+	}
+}

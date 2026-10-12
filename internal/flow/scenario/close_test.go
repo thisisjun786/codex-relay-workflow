@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"os"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/audit"
@@ -400,5 +402,127 @@ func TestResumeAfterTheQACaptureContinuesTheQACall(t *testing.T) {
 	}
 	if forks := l.Requests("thread/fork"); len(forks) != 1 {
 		t.Errorf("%d thread/fork requests: the continuation of a thread of the ended process runs on a fork", len(forks))
+	}
+}
+
+// relativeCapture is a capture answer whose artifact is named as the crw-qa skill names it: relative to the worktree of the capture.
+func relativeCapture() map[string]any {
+	return map[string]any{"captures": []any{map[string]any{"path": ".crw/evidence/s1/qa/home/shot.png", "kind": "screenshot", "shows": "the home screen"}},
+		"matrix": []string{"home"}, "teardown": []string{"no resources spawned"}, "summary": "drove the surface"}
+}
+
+// The artifacts of a capture are files of the capture call's own scratch worktree; the passes and the self-review read checkouts of
+// their own. The packets they get name each artifact by the path it can be opened at - the capture's worktree and the relative path -
+// and the file is there (CRW-1206 correction, d3). The C2 self-review that runs after a resume, on a fork in another checkout,
+// gets the same path.
+func TestQAArtifactsAreHandedOnByThePathTheyCanBeOpenedAt(t *testing.T) {
+	for name, c := range map[string]struct {
+		grade  string
+		resume bool
+		labels []string
+	}{
+		"C3 passes":                {"C3", false, []string{"qa-pass:A:M1", "qa-pass:B:M1"}},
+		"C2 self-review":           {"C2", false, []string{"qa-review:M1"}},
+		"C2 self-review on resume": {"C2", true, []string{"qa-review:M1"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			l := NewLab(t, oneNode()...)
+			l.Relay.Surfaces, l.Relay.Grade = []string{"web"}, c.grade
+			l.On(`^qa:M1$`, func(call *Call) *fakehostPlan {
+				call.EditPath(".crw/evidence/s1/qa/home/shot.png", "png")
+				p := Say(relativeCapture())
+				return &p
+			})
+			var mu sync.Mutex
+			prompts := map[string]string{}
+			l.On(`^qa-(pass|review)`, func(call *Call) *fakehostPlan {
+				mu.Lock()
+				prompts[call.Label] = call.Text
+				mu.Unlock()
+				return nil
+			})
+			if c.resume {
+				killed := false
+				l.OnRow(func(ev engine.Event) {
+					if !killed && ev.Kind == engine.KindCall && ev.Op == "agent" && ev.Event == engine.EvCompleted && ev.Label == "qa:M1" {
+						killed = true
+						l.Kill()
+					}
+				})
+				l.Run()
+				if !killed {
+					t.Fatal("the run never reached the QA call")
+				}
+				l.OnRow(nil)
+				l.NewProcess("proc-2")
+			}
+			var got closeResult
+			if c.resume {
+				got = Value[closeResult](t, l.Resume())
+			} else {
+				got = closeOf(t, l)
+			}
+			if got.State != "closed" {
+				t.Fatalf("%+v; calls %v; escalations %v", got, l.Labels(), escalationReasons(l))
+			}
+			alloc, _ := l.Prepared(callNamed(t, l, "qa:M1").ID).Data["allocation"].(map[string]any)
+			root := str(alloc, "path")
+			if root == "" {
+				t.Fatalf("the QA call has no worktree: %v", alloc)
+			}
+			want := root + "/.crw/evidence/s1/qa/home/shot.png"
+			if _, err := os.Stat(want); err != nil {
+				t.Fatalf("the artifact is not where the capture left it: %v", err)
+			}
+			for _, label := range c.labels {
+				if !strings.Contains(prompts[label], "screenshot "+want+": the home screen") {
+					t.Errorf("the packet of %s does not name the artifact by %s:\n%s", label, want, prompts[label])
+				}
+			}
+			if len(prompts) != len(c.labels) {
+				t.Errorf("packets of %v, want %v", prompts, c.labels)
+			}
+		})
+	}
+}
+
+// A capture call that edits the tracked code of its scratch worktree to make the surface work exercised another tree than the head
+// the gate pinned: its receipt is INCONCLUSIVE, no pass is asked for it, the milestone is escalated and reviewer-final does not run
+// (CRW-1206 correction, d2). The artifacts under .crw/ are not an edit.
+func TestQAOverEditedSourceIsInconclusiveAndEscalates(t *testing.T) {
+	l := NewLab(t, oneNode()...)
+	l.Relay.Surfaces, l.Relay.Grade = []string{"web"}, "C3"
+	l.On(`^qa:M1$`, func(call *Call) *fakehostPlan {
+		call.EditPath(".crw/evidence/s1/qa/home/shot.png", "png")
+		call.EditPath("README.md", "patched so the page renders\n")
+		p := Say(relativeCapture())
+		return &p
+	})
+	got := closeOf(t, l)
+	if got.State != "escalated" || got.Source != "qa" || got.Reason != "qa_inconclusive" {
+		t.Fatalf("%+v; calls %v", got, l.Labels())
+	}
+	for _, label := range l.Labels() {
+		if strings.HasPrefix(label, "qa-pass:") || label == "qa-synthesis:M1" || label == "reviewer-final:M1" {
+			t.Errorf("the call %q ran over a capture of an edited tree", label)
+		}
+	}
+	rows := l.Rows("crw.qaReceipt")
+	if len(rows) != 1 || str(rows[0].Data, "state") != "INCONCLUSIVE" || str(rows[0].Data, "reason") != "capture_source_modified" {
+		t.Errorf("receipt rows %+v", rows)
+	}
+	if reasons := escalationReasons(l); !slices.Contains(reasons, "qa_inconclusive") {
+		t.Errorf("escalations %v", reasons)
+	}
+	// the artifacts alone are not an edit: the same capture without the patch passes
+	l2 := NewLab(t, oneNode()...)
+	l2.Relay.Surfaces, l2.Relay.Grade = []string{"web"}, "C3"
+	l2.On(`^qa:M1$`, func(call *Call) *fakehostPlan {
+		call.EditPath(".crw/evidence/s1/qa/home/shot.png", "png")
+		p := Say(relativeCapture())
+		return &p
+	})
+	if got := closeOf(t, l2); got.State != "closed" {
+		t.Errorf("a capture that left artifacts only: %+v; calls %v", got, l2.Labels())
 	}
 }

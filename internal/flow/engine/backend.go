@@ -3,6 +3,8 @@ package engine
 import (
 	"context"
 	"fmt"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 )
 
 // CallResult statuses.
@@ -279,6 +281,15 @@ type Placer interface {
 	Recheck(ctx context.Context, p Placement) error
 	// Snapshot is the working snapshot of a worktree (the P_held of a held executor call).
 	Snapshot(ctx context.Context, path string) (string, error)
+}
+
+// SourceReader is implemented by a backend that can say which source tree the directory of a call holds. The engine asks it when a
+// QA call (the capture call of a final gate, or a turn that continues it) completes: that call may edit its scratch worktree, so the
+// head it was started at is not what it exercised, and the identity of the tree it ended in is recorded on its completed row
+// (qa_source). head is the commit the call names. A backend without it records nothing, and the QA evidence made on it is
+// INCONCLUSIVE.
+type SourceReader interface {
+	SourceOf(ctx context.Context, cwd, head string) (source.Identity, error)
 }
 
 // ForkSpec is a thread/fork request of a continuation that runs in a restored worktree.

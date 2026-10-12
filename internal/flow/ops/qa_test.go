@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 )
 
 // The record of the QA evidence of a final gate (crw.qaReceipt) decides nothing a model says by itself: what it takes for a
@@ -55,11 +56,42 @@ func qaOp(t *testing.T, gate GateRef, capture CallRef, passes []CallRef, receipt
 // qaOpAfter is qaOp with a journal in which the receipt call continues the call resumeOf.
 func qaOpAfter(t *testing.T, gate GateRef, capture CallRef, passes []CallRef, receipt *CallRef, resumeOf string) QAResult {
 	t.Helper()
+	return qaOpSeeded(t, gate, capture, passes, receipt, resumeOf, qaSeed{})
+}
+
+// qaSeed is what the journal holds of the capture call besides its answer: the directory it ran in and the source identity it ended
+// in. The zero value is a call that ran in a clean checkout of the gate's head.
+type qaSeed struct {
+	// Root is the scratch worktree of the capture call; "" is the default one, "none" a call with no allocation.
+	Root string
+	// Source replaces the identity the capture ended in; NoSource records none, SourceError records the error of reading it.
+	Source      *source.Identity
+	NoSource    bool
+	SourceError string
+	// SynthesisSource is the identity the receipt call ended in; nil records none.
+	SynthesisSource *source.Identity
+}
+
+const qaRoot = "/state/flow/run-1/calls/c_cap/wt"
+
+func qaSourceMap(id source.Identity) map[string]any {
+	b, _ := json.Marshal(id)
+	var m map[string]any
+	_ = json.Unmarshal(b, &m)
+	return m
+}
+
+func qaOpSeeded(t *testing.T, gate GateRef, capture CallRef, passes []CallRef, receipt *CallRef, resumeOf string, seed qaSeed) QAResult {
+	t.Helper()
 	w := newWorld(t)
+	seedCapture(w, gate, capture, seed)
 	var rec any
 	if receipt != nil {
 		rec = *receipt
 		w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: receipt.CallID, Op: "agent", Event: engine.EvPrepared, Data: map[string]any{"role": "executor", "resume_of": resumeOf}})
+		if seed.SynthesisSource != nil {
+			w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: receipt.CallID, Op: "agent", Event: engine.EvCompleted, Data: map[string]any{"qa_source": qaSourceMap(*seed.SynthesisSource)}})
+		}
 	}
 	if passes == nil {
 		passes = []CallRef{}
@@ -67,6 +99,30 @@ func qaOpAfter(t *testing.T, gate GateRef, capture CallRef, passes []CallRef, re
 	var out QAResult
 	_ = json.Unmarshal(w.must("qaReceipt", "M", gate, capture, passes, rec), &out)
 	return out
+}
+
+// seedCapture writes the prepared and completed rows of the capture call the way the engine does for a QA call.
+func seedCapture(w *world, gate GateRef, capture CallRef, seed qaSeed) {
+	prep := map[string]any{"role": "executor", "qa": true}
+	if seed.Root != "none" {
+		root := seed.Root
+		if root == "" {
+			root = qaRoot
+		}
+		prep["allocation"] = map[string]any{"kind": "call", "path": root, "start_commit": gate.Head}
+	}
+	w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: capture.CallID, Op: "agent", Event: engine.EvPrepared, Data: prep})
+	done := map[string]any{}
+	switch {
+	case seed.SourceError != "":
+		done["qa_source_error"] = seed.SourceError
+	case seed.NoSource:
+	case seed.Source != nil:
+		done["qa_source"] = qaSourceMap(*seed.Source)
+	default:
+		done["qa_source"] = qaSourceMap(source.CommitIdentity(gate.Head, nil))
+	}
+	w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: capture.CallID, Op: "agent", Event: engine.EvCompleted, Data: done})
 }
 
 // A C2 receipt is the self-review on the thread of the QA call, over captures that exist.
@@ -245,5 +301,110 @@ func TestReviewerFinalIndependenceAndStates(t *testing.T) {
 	bad.Output = misaligned
 	if r := final(bad); r.State != StateNullModel {
 		t.Errorf("MISALIGNED with no drift named: %+v", r)
+	}
+}
+
+// The receipt stands on the tree the capture call exercised, not on the head it was asked to exercise (CRW-1206 correction, d2): a
+// capture whose scratch worktree ended on another commit, with uncommitted work, with a source nobody could read or with none
+// recorded is INCONCLUSIVE - never a PASS over code the gate did not pin - and the receipt row keeps the identity it rests on.
+func TestQAReceiptRestsOnTheSourceTheCaptureExercised(t *testing.T) {
+	gate := GateRef{Head: headOne, Grade: "C2"}
+	capture := qaCall("c_cap", "completed", "executor", "thr-qa", qaCapture(1))
+	review := qaCall("c_rev", "completed", "executor", "thr-qa", qaReceiptOut("PASS"))
+	clean := source.CommitIdentity(headOne, nil)
+	got := qaOpSeeded(t, gate, capture, nil, &review, capture.CallID, qaSeed{Source: &clean})
+	if got.State != QAPass || got.Source == nil || got.Source.CommitSha != headOne || got.Source.Dirty {
+		t.Fatalf("a capture over the clean head: %+v", got)
+	}
+	dirty := clean
+	dirty.Dirty, dirty.TreeHash = true, "hash-of-the-edit"
+	elsewhere := source.CommitIdentity(headTwo, nil)
+	unavailable := source.Identity{Kind: source.KindUnavailable}
+	for name, c := range map[string]struct {
+		seed   qaSeed
+		reason string
+	}{
+		"a tracked file was edited":      {qaSeed{Source: &dirty}, "capture_source_modified"},
+		"another commit":                 {qaSeed{Source: &elsewhere}, "capture_source_modified"},
+		"git could not answer":           {qaSeed{Source: &unavailable}, "capture_source_unknown"},
+		"the engine could not read it":   {qaSeed{SourceError: "git status failed"}, "capture_source_unknown"},
+		"the backend records no source":  {qaSeed{NoSource: true}, "capture_source_unknown"},
+		"the synthesis turn edited code": {qaSeed{SynthesisSource: &dirty}, "synthesis_source_modified"},
+	} {
+		got := qaOpSeeded(t, gate, capture, nil, &review, capture.CallID, c.seed)
+		if got.State != QAInconclusive || got.Reason != c.reason {
+			t.Errorf("%s: %+v", name, got)
+		}
+	}
+	// the judgement of the gate: a receipt whose state is not PASS is not evidence, and the PASS row carries its identity
+	w := newCloseWorld(t, web("C2"))
+	w.fake.SourceHook = func(string, string) (source.Identity, error) { return dirty, nil }
+	closed := w.close()
+	if closed["state"] != "stop" || closed["source"] != "qa" || closed["reason"] != GateQAInconclusive {
+		t.Fatalf("a QA over an edited tree closes the milestone: %v", closed)
+	}
+	if n := w.count("final"); n != 0 {
+		t.Errorf("reviewer-final ran over a QA that exercised another tree")
+	}
+	if rows := w.opRows(OpQAReceipt); len(rows) != 1 || dataStr(rows[0], "reason") != "capture_source_modified" || dataStr(rows[0], "state") != QAInconclusive {
+		t.Errorf("receipt rows %+v", rows)
+	}
+}
+
+// The artifacts of a capture are files of the capture call's own scratch worktree, named relative to it (the crw-qa skill puts them
+// under .crw/evidence/<session>/qa/...), and every other call reads a checkout of its own: the run hands the passes and the
+// self-review the paths resolved against the directory the capture ran in (CRW-1206 correction, d3).
+func TestQACaptureResolvesRelativeArtifactPaths(t *testing.T) {
+	gate := GateRef{Head: headOne, Grade: "C3", Passes: true}
+	relative := json.RawMessage(`{"captures":[{"path":".crw/evidence/s1/qa/home/shot.png","kind":"screenshot","shows":"home"},{"path":"/var/qa/abs.png","kind":"screenshot","shows":"abs"}],"matrix":["home"],"teardown":["none"],"summary":"ok"}`)
+	view := func(out json.RawMessage, seed qaSeed) QACaptureView {
+		t.Helper()
+		w := newWorld(t)
+		capture := qaCall("c_cap", "completed", "executor", "thr-qa", out)
+		seedCapture(w, gate, capture, seed)
+		var v QACaptureView
+		if err := json.Unmarshal(w.must("qaCapture", "M", gate, capture), &v); err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	v := view(relative, qaSeed{})
+	if !v.OK || v.Root != qaRoot || len(v.Captures) != 2 {
+		t.Fatalf("%+v", v)
+	}
+	if v.Captures[0].Abs != qaRoot+"/.crw/evidence/s1/qa/home/shot.png" || v.Captures[0].Path != ".crw/evidence/s1/qa/home/shot.png" || v.Captures[1].Abs != "/var/qa/abs.png" {
+		t.Errorf("captures %+v", v.Captures)
+	}
+	if v.Source == nil || v.Source.CommitSha != headOne || v.Source.Dirty {
+		t.Errorf("source %+v", v.Source)
+	}
+	escaping := json.RawMessage(`{"captures":[{"path":"../../other/call/shot.png","kind":"screenshot","shows":"x"}],"matrix":[],"teardown":[],"summary":"ok"}`)
+	for name, c := range map[string]struct {
+		out    json.RawMessage
+		seed   qaSeed
+		reason string
+	}{
+		"a path out of the capture's worktree": {escaping, qaSeed{}, "capture_path_outside"},
+		"a relative path and no worktree":      {relative, qaSeed{Root: "none"}, "capture_root_unknown"},
+		"a capture over an edited tree":        {relative, qaSeed{Source: &source.Identity{Kind: source.KindResolved, CommitSha: headOne, Dirty: true, TreeHash: "h"}}, "capture_source_modified"},
+		"no capture is listed":                 {qaCapture(0), qaSeed{}, "no_captures"},
+		"an answer that is no QA_CAPTURE":      {json.RawMessage(`{"captures":"none"}`), qaSeed{}, "capture_invalid"},
+	} {
+		if v := view(c.out, c.seed); v.OK || v.Reason != c.reason {
+			t.Errorf("%s: %+v", name, v)
+		}
+	}
+	// absolute paths need no worktree
+	abs := json.RawMessage(`{"captures":[{"path":"/var/qa/abs.png","kind":"screenshot","shows":"abs"}],"matrix":[],"teardown":[],"summary":"ok"}`)
+	if v := view(abs, qaSeed{Root: "none"}); !v.OK || v.Captures[0].Abs != "/var/qa/abs.png" {
+		t.Errorf("an absolute path: %+v", v)
+	}
+	// the receipt reads the same rules: a relative path nobody can resolve is not evidence
+	capture := qaCall("c_cap", "completed", "executor", "thr-qa", relative)
+	syn := qaCall("c_syn", "completed", "executor", "thr-qa", qaReceiptOut("PASS"))
+	passA := qaCall("c_a", "completed", "explorer", "thr-a", qaPassOut("A", "PASS"))
+	passB := qaCall("c_b", "completed", "explorer", "thr-b", qaPassOut("B", "PASS"))
+	if got := qaOpSeeded(t, gate, capture, []CallRef{passA, passB}, &syn, "c_cap", qaSeed{Root: "none"}); got.State != QAInconclusive || got.Reason != "capture_root_unknown" {
+		t.Errorf("%+v", got)
 	}
 }

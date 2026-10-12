@@ -377,7 +377,8 @@ inline (SP-INL-1), reuse an answer (SP-INL-2), skip, refuse or hand a question t
 | `spawnDecision`, `stepRecord`, `exploreRoute`, `exploreRecord` | the decision rows and the answers the reuse reads | always |
 | `finalGate(milestone)` | the gate over the pinned head: the state of the gate and of each piece of evidence (row `crw.finalGate`: `head`, `command`, `range`, `ok`) | the integration target is still the head the gate judged |
 | `qaReceipt(milestone, gate, capture, passes, receipt)` | the QA receipt: its state (`PASS`, `REVISE`, `FAIL`, `INCONCLUSIVE`), the head, the calls with their roles and read-back pairs | always |
-| `reviewerFinal(milestone, gate, call, opts)` | the review of reviewer-final over the range (`range`, `criteria_digest`, the alignment) | always |
+| `qaCapture(milestone, gate, capture)` | the capture of the QA call as the later calls read it: each capture with the path it can be opened at (the relative path resolved against the worktree the capture ran in), the identity of the tree the call ended in, and `ok` or the reason the capture cannot be handed on | always |
+| `reviewerFinal(milestone, gate, call, opts)` | the review of reviewer-final over the range (`range`, `criteria_digest`, the alignment); a `verified` answer is a verdict only when it evaluated every criterion of the milestone once, all met, with no defect of P0 to P2 | always |
 | `milestoneClose(milestone, evidence)` / `reportUp(milestone, close)` | the range and the tip the close judged, and whether the target moved on after the gate / the report row | the integration target is still the tip the close judged / always |
 | `audit(milestone)` / `archive(milestone)` | the audit results of the milestone's acceptances (row `crw.audit`) / the reviewer threads archived and kept | always |
 
@@ -418,13 +419,25 @@ of the QA call's thread (`QA_RECEIPT`: `PASS`, `REVISE` or `FAIL`). Why the run 
 read-only reviews in parallel, a native thread of the flow may spawn one explorer per call (SP-NAT-1), and a call the run owns satisfies
 both; the QA overlay tells the call not to start them and the binding line of the call allows no native spawn, so the hook refuses it.
 `crw.qaReceipt` judges what the calls answered and writes the receipt: it is `INCONCLUSIVE` when the capture did not complete or lists no
-capture, when a pass did not complete (the synthesis is then not asked for), is not an explorer call or answers for the other pass, or
+capture, when the tree the capture call ended in is not the clean head the gate pinned (`capture_source_modified`; `capture_source_unknown`
+when the engine recorded none), when a relative artifact path cannot be resolved (`capture_root_unknown`, `capture_path_outside`), when a pass did not complete (the synthesis is then not asked for), is not an explorer call or answers for the other pass, or
 when the synthesis is not a completed `QA_RECEIPT` of a call that continues the QA call (the journal's `resume_of`: after a resume the continuation runs on a fork of the thread); a `PASS` over a P0 or P1 finding is not a valid answer,
 and the receipt is as bad as the worst of the verdicts it rests on. The spawn decisions of the three calls (SP-QA-1, SP-QA-2 twice) are
 rows of `flow_spawn_decisions`; the roles and the pairs the threads read back are in the receipt.
 
+The capture call may edit its scratch worktree, so the head it was started at is not what it exercised. When a QA call completes, the
+engine asks the backend for the source identity of the directory the call ended in (`engine.SourceReader`; the agent backend runs
+`source.Capture` with the run's own writes under `.crw/` left out) and records it on the completed row (`qa_source`, or `qa_source_error`).
+`crw.qaReceipt` compares it with the clean identity of the pinned head and keeps it in the receipt (`source`); a PASS stands only over the
+head the gate pinned, and the gate compares the identity of a fresh receipt again. The artifacts of the capture are files of its own
+worktree, named relative to it (`.crw/evidence/<session>/qa/...`) while the passes and the self-review read checkouts of their own, so
+`crw.qaCapture` resolves each path against the directory the capture ran in (the call-private worktree persists with the run) and the
+packets of the passes and of the self-review name that path. The QA mark is part of the input digest of a call: the same call with another
+mark is another call on a resume.
+
 **reviewer-final.** After a passed gate, one `reviewer-final` call (SP-REVF-1) reads the integrated range with the gate as its input
-(its packet names the head, the range and the evidence the gate stood on) and answers `VERDICT_FINAL`; `crw.reviewerFinal` records it
+(its packet names the head, the range, the evidence the gate stood on and the decisions of the approved DESIGN, which live in the journal's
+ledger row and not in the checkout the reviewer reads) and answers `VERDICT_FINAL`; `crw.reviewerFinal` records it
 (the range and the criteria digest are what `ReviewerFinalProof` reads), refuses a reviewer of the model family of an author of the
 milestone, and asks a `null_model` reviewer once more. `crw.milestoneClose` then records the tip it judged; when the target is no longer
 the head the gate judged, the close is judged again from the new head, at most three times. The branches on the alignment of the range
@@ -435,7 +448,10 @@ agent path, the audit reads the reviewer call's persistent thread from the host 
 `thread/items/list` for a turn the list returned in summary) and checks that the journal recorded the thread, a turn id and the result
 digest; that the turn is `completed` on the host; that the digest of the last `agentMessage` is the result digest of the journal; that the
 packet the thread was sent names the head and the criteria digest of the acceptance (the `HEAD:` and `CRITERIA DIGEST:` lines of the
-reviewer packet); and that the pair of the executor that wrote the head was read back. The result of an acceptance is `ok`, `mismatch`
+reviewer packet); and that the pair of the executors that wrote the head was read back (the calls the recorded commits of the node name; an executor attempt that
+never created a thread or never completed wrote nothing, and a retry that replaced it is judged by its own pair). A reviewer call that continues
+another on its thread records that thread on its prepared row and creates none, so the thread is the continued call's; its packet is the first
+turn of the call that started the thread. The result of an acceptance is `ok`, `mismatch`
 (the record and the host differ, or the record is incomplete) or `unobserved` (the host does not list the turn, does not return its items,
 does not answer, or the executor's pair was never read back); unobserved is not a pass. The results are a row `crw.audit` in the journal.
 A mismatch is escalated (`audit_mismatch`). `crw.archive` then archives the reviewer thread of an acceptance only when the newest audit

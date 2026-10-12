@@ -9,6 +9,9 @@ import (
 	"regexp/syntax"
 	"strings"
 	"sync"
+	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 )
 
 // FakeThread is a thread of the fake backend.
@@ -52,6 +55,9 @@ type FakeReply struct {
 type Fake struct {
 	Handler   func(FakeRequest) FakeReply
 	StartHook func(ThreadSpec) (ThreadInfo, error)
+	// SourceHook decides the source identity the fake reports for the directory of a QA call; without it the directory holds a clean
+	// checkout of the head the call names.
+	SourceHook func(cwd, head string) (source.Identity, error)
 
 	mu       sync.Mutex
 	threads  map[string]*FakeThread
@@ -78,6 +84,16 @@ func (f *Fake) Thread(id string) (FakeThread, bool) {
 	}
 	return FakeThread{ID: t.ID, Pair: t.Pair, Role: t.Role, Sandbox: t.Sandbox, QA: t.QA, Turns: append([]string(nil), t.Turns...)}, true
 }
+
+// SourceOf implements SourceReader.
+func (f *Fake) SourceOf(_ context.Context, cwd, head string) (source.Identity, error) {
+	if f.SourceHook != nil {
+		return f.SourceHook(cwd, head)
+	}
+	return source.CommitIdentity(head, fakeNow), nil
+}
+
+func fakeNow() time.Time { return time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC) }
 
 // StartThread implements Backend.
 func (f *Fake) StartThread(ctx context.Context, spec ThreadSpec) (ThreadInfo, error) {

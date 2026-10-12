@@ -129,8 +129,10 @@ export function reviewPacket(node, plan, head, ci, opts) {
 
 // ---- the milestone close (crw:lib/close) ----
 
+// The captures as the later calls read them: the path each can be opened at (crw.qaCapture resolved it against the directory the
+// capture call ran in), not the path relative to that call's own worktree.
 function captureLines(captures) {
-  return list((captures || []).map((c) => c.kind + ' ' + c.path + ': ' + c.shows))
+  return list((captures || []).map((c) => c.kind + ' ' + (c.abs || c.path) + ': ' + c.shows))
 }
 
 function decisionLines(decisions) {
@@ -159,14 +161,14 @@ const PASS_FOCUS = {
 }
 
 // One of the two oracle passes (SP-QA-2): read-only, over the same capture packet.
-export function qaPassPacket(pass, ms, g, capture) {
+export function qaPassPacket(pass, ms, g, view) {
   return [
     'ROLE: explorer. QA pass ' + pass + ' for the final gate of milestone ' + ms.id + ' at the integrated head ' + g.head + '. Read only; edit nothing.',
     'HEAD: ' + g.head,
     PASS_FOCUS[pass],
-    section('CAPTURES (the same packet goes to both passes)', captureLines(capture.captures)),
-    section('SCENARIOS DRIVEN', list(capture.matrix)),
-    section('TEARDOWN', list(capture.teardown)),
+    section('CAPTURES (the same packet goes to both passes; open the paths given here directly)', captureLines(view.captures)),
+    section('SCENARIOS DRIVEN', list(view.matrix)),
+    section('TEARDOWN', list(view.teardown)),
     section('CRITERIA OF THE MILESTONE', list(ms.criteria)),
     'Answer with QA_PASS: pass "' + pass + '", a verdict of PASS, REVISE or FAIL, the findings with their severity, and a summary. A PASS stands over no P0 or P1 finding.',
   ].join('\n\n')
@@ -182,10 +184,10 @@ export function qaSynthesisPacket(ms, g, passes) {
 }
 
 // The next turn of the QA call's thread (C2): one self-review of its own captures is the receipt.
-export function qaSelfReviewPacket(ms, g, capture) {
+export function qaSelfReviewPacket(ms, g, view) {
   return [
     'Review your own captures of the final gate of milestone ' + ms.id + ' at ' + g.head + ' once, as a reviewer who did not make them, and give the QA receipt.',
-    section('YOUR CAPTURES', captureLines(capture.captures)),
+    section('YOUR CAPTURES (open the paths given here directly: they are resolved against the worktree you captured in)', captureLines(view.captures)),
     'Answer with QA_RECEIPT: PASS, REVISE or FAIL, the findings with their severity, and a summary. A PASS stands over no P0 or P1 finding.',
   ].join('\n\n')
 }

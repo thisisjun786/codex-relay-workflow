@@ -54,6 +54,7 @@ const (
 	NameReportUp       = "reportUp"
 	NameFinalGate      = "finalGate"
 	NameQAReceipt      = "qaReceipt"
+	NameQACapture      = "qaCapture"
 	NameReviewerFinal  = "reviewerFinal"
 	NameAudit          = "audit"
 	NameArchive        = "archive"
@@ -157,6 +158,7 @@ func (l *Lane) Ops() map[string]engine.Op {
 		NameReportUp:       &reportUpOp{l},
 		NameFinalGate:      &finalGateOp{l},
 		NameQAReceipt:      &qaReceiptOp{l},
+		NameQACapture:      &qaCaptureOp{l},
 		NameReviewerFinal:  &reviewerFinalOp{l},
 		NameAudit:          &auditOp{l},
 		NameArchive:        &archiveOp{l},

@@ -38,10 +38,15 @@ async function qa(ms, g) {
   const cap = await agent.call(qaCapturePacket(ms, g), { agentType: 'executor', qa: true, head: g.head, schema: QA_CAPTURE, label: 'qa:' + ms.id })
   let passes = []
   let syn = null
-  if (cap.status === 'completed') {
+  // The capture's artifacts are files of its own scratch worktree and every later call reads a checkout of its own: crw.qaCapture
+  // hands on the captures with their paths resolved against the directory the capture ran in, and says when the capture cannot be
+  // handed on (not a capture, a path that cannot be resolved, a tree that is not the pinned head). The passes and the synthesis are
+  // asked only for a capture that can; the receipt gives the reason otherwise.
+  const view = cap.status === 'completed' ? await crw.qaCapture(ms.id, g, cap) : null
+  if (view && view.ok) {
     if (g.qa_passes) {
       for (const p of PASSES) await crw.spawnDecision('QA_2', 'spawn', { role: 'explorer', inputs: { milestone: ms.id, head: g.head, pass: p } })
-      const ran = await parallel(PASSES.map((p) => () => agent.call(qaPassPacket(p, ms, g, cap.output), {
+      const ran = await parallel(PASSES.map((p) => () => agent.call(qaPassPacket(p, ms, g, view), {
         agentType: 'explorer', head: g.head, schema: QA_PASS, label: 'qa-pass:' + p + ':' + ms.id,
       })), { keys: PASSES, label: 'qa-passes' })
       passes = ran.map((c) => c || { callId: '', status: 'failed', reason: 'pass_thrown', meta: { role: 'explorer' } })
@@ -50,7 +55,7 @@ async function qa(ms, g) {
         syn = await agent.call(qaSynthesisPacket(ms, g, passes.map((c) => c.output)), { resume: cap, head: g.head, schema: QA_RECEIPT, label: 'qa-synthesis:' + ms.id })
       }
     } else {
-      syn = await agent.call(qaSelfReviewPacket(ms, g, cap.output), { resume: cap, head: g.head, schema: QA_RECEIPT, label: 'qa-review:' + ms.id })
+      syn = await agent.call(qaSelfReviewPacket(ms, g, view), { resume: cap, head: g.head, schema: QA_RECEIPT, label: 'qa-review:' + ms.id })
     }
   }
   return crw.qaReceipt(ms.id, g, cap, passes, syn)

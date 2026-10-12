@@ -270,7 +270,9 @@ func judgeQA(r rows, ms string, head source.Identity) Evidence {
 	})
 	if ok {
 		state := dataStr(fresh, "state")
-		return Evidence{Kind: EvidenceKindQA, State: EvidenceFresh, Pass: state == QAPass, Head: dataStr(fresh, "head"), Verdict: state, Digest: dataStr(fresh, "capture_call"), Call: fresh.CallID}
+		// a PASS stands only over the tree the gate pinned: the identity the receipt rests on is compared with the head's again
+		pass := state == QAPass && sourceIsHead(fresh, head)
+		return Evidence{Kind: EvidenceKindQA, State: EvidenceFresh, Pass: pass, Head: dataStr(fresh, "head"), Verdict: state, Digest: dataStr(fresh, "capture_call"), Call: fresh.CallID}
 	}
 	last := receipts[len(receipts)-1]
 	cmp := source.Compare(source.CommitIdentity(dataStr(last, "head"), nil), head)
@@ -279,6 +281,19 @@ func judgeQA(r rows, ms string, head source.Identity) Evidence {
 		why = cmp.Reason
 	}
 	return Evidence{Kind: EvidenceKindQA, State: EvidenceStale, Head: dataStr(last, "head"), Verdict: dataStr(last, "state"), Call: last.CallID, Why: why}
+}
+
+// sourceIsHead says whether the source identity a receipt row rests on is the identity of the head (the clean commit).
+func sourceIsHead(row engine.Event, head source.Identity) bool {
+	raw, err := json.Marshal(row.Data["source"])
+	if err != nil {
+		return false
+	}
+	var id source.Identity
+	if json.Unmarshal(raw, &id) != nil || id.Kind == "" {
+		return false
+	}
+	return source.Compare(id, head).Kind == source.ComparisonSame
 }
 
 // Proven: a gate judged the tip it pinned. While the target is still at that head the judgement stands (the evidence it read is

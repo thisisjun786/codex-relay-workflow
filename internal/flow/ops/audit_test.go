@@ -110,6 +110,8 @@ func closedMilestone(t *testing.T) (*world, *threadHost) {
 		add("c_rel_"+n, "crw.release", engine.EvCompleted, map[string]any{"node": n, "milestone": "M", "released": true, "revision": "r0"})
 		add(ex, "agent", engine.EvPrepared, map[string]any{"role": "executor", "family": "executor", "node": n})
 		add(ex, "agent", engine.EvThreadStarted, map[string]any{"thread_id": "thr-ex-" + n, "model": "claude-fake-haiku", "effort": "xhigh"})
+		add(ex, "agent", engine.EvCompleted, map[string]any{"result": "{}", "result_digest": "x"})
+		add("c_commit_"+n, "crw.commit", engine.EvCompleted, map[string]any{"node": n, "commit": head, "call": ex})
 		add(rv, "agent", engine.EvPrepared, map[string]any{"role": "reviewer", "family": "reviewer", "node": n, "head": head})
 		add(rv, "agent", engine.EvThreadStarted, map[string]any{"thread_id": thread, "model": "gpt-fake-sol", "effort": "high"})
 		add(rv, "agent", engine.EvTurnStarted, map[string]any{"turn_id": turn, "k": 1})

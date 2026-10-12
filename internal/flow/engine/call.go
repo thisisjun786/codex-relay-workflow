@@ -652,6 +652,32 @@ func (c *callRun) pendingTree(ctx context.Context, data map[string]any) error {
 	return nil
 }
 
+// qaSource adds the source identity of the directory a QA call ended in to the data of its completed row (qa_source). The call
+// edits a scratch worktree that is discarded and holds no pending tree, so this is the only record of what it exercised: the
+// receipt of the final gate compares it with the clean head the gate pinned. A source that cannot be read is recorded as the error
+// (qa_source_error), which the receipt reads as INCONCLUSIVE; a backend that cannot read one records nothing.
+func (c *callRun) qaSource(ctx context.Context, data map[string]any) {
+	if !c.plan.qa {
+		return
+	}
+	reader, ok := c.e.cfg.Backend.(SourceReader)
+	if !ok {
+		return
+	}
+	id, err := reader.SourceOf(ctx, c.cwd, c.plan.opts.Head)
+	if err != nil {
+		data["qa_source_error"] = err.Error()
+		return
+	}
+	// stored as the JSON object a journal row holds, so a replayed row and a live one read the same
+	var obj map[string]any
+	if err := json.Unmarshal(mustJSON(id), &obj); err != nil {
+		data["qa_source_error"] = err.Error()
+		return
+	}
+	data["qa_source"] = obj
+}
+
 // pendingTreeLost ends an executor call whose turn completed but whose worktree could not be snapshotted: the exact-tree
 // commit and the effect proof need the pending tree, so the call is not reported completed. It is held for the worktree
 // failure with the error on the row (pending_tree_error); the snapshot is tried once more as P_held, which stands in for the
@@ -1194,6 +1220,7 @@ func (c *callRun) turnLoop(ctx context.Context, resolved *jsonschema.Resolved, k
 			if err := c.pendingTree(ctx, data); err != nil {
 				return c.pendingTreeLost(ctx, err, data)
 			}
+			c.qaSource(ctx, data)
 			res := c.terminal(EvCompleted, StatusCompleted, "", data)
 			if pt, _ := data["pending_tree"].(string); pt != "" {
 				c.e.noteExecutor(p.node, pt)

@@ -33,7 +33,7 @@ const (
 // again.
 var recordOps = []string{"crw.releaseChild", "crw.escalate", "crw.reportUp", "crw.hold", "crw.tierStep",
 	"crw.spawnDecision", "crw.stepRecord", "crw.exploreRoute", "crw.exploreRecord", "crw.designAudit", "crw.designLedger",
-	"crw.qaReceipt", "crw.reviewerFinal", "crw.audit", "crw.archive"}
+	"crw.qaReceipt", "crw.qaCapture", "crw.reviewerFinal", "crw.audit", "crw.archive"}
 
 // The keys of the rows' Data that the executor calls carry: the pending tree P a completed call recorded, and P_held for a
 // held one.
