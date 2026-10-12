@@ -102,6 +102,12 @@ test("TestRunsPageRendersTree", async () => {
   assert.match(html, /review c_rev needs_changes@abcdef01/);
   // recovery_hold on the call, on the node and in the run's line
   assert.equal((html.match(/recovery_hold/g) ?? []).length >= 3, true, "recovery_hold is shown on the call, the node and the run");
+  const lost = html.indexOf('data-call="c_lost"');
+  assert.ok(lost > 0 && html.slice(lost, lost + 700).includes("recovery_hold"), "the call whose outcome is unknown carries recovery_hold on its own line");
+  const node2 = html.indexOf('data-node="n2"');
+  assert.ok(node2 > 0 && html.slice(node2, node2 + 500).includes("recovery_hold"), "the node of that call carries it too");
+  const node1 = html.indexOf('data-node="n1"');
+  assert.ok(!html.slice(node1, html.indexOf('data-node="n2"')).includes("recovery_hold"), "a node whose calls are known does not");
   assert.match(html, /outcome_unknown \(dispatch_unknown\)/);
   // a question that waits for an answer offers the answer
   assert.match(html, /question esc_one r1/);
