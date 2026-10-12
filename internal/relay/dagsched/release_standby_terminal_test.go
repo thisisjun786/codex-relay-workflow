@@ -3,6 +3,7 @@ package dagsched
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,7 +32,7 @@ func (h *interruptedReleaseHost) ReadTurn(_ context.Context, _, turn string) (*m
 	return &managed.Turn{ID: turn, Status: h.status}, nil
 }
 
-func (h *interruptedReleaseHost) HostCall(_ context.Context, method string, params map[string]any) (map[string]any, error) {
+func (h *interruptedReleaseHost) HostCall(ctx context.Context, method string, params map[string]any) (map[string]any, error) {
 	switch method {
 	case "thread/list":
 		data := []any{}
@@ -42,6 +43,9 @@ func (h *interruptedReleaseHost) HostCall(_ context.Context, method string, para
 	case "thread/goal/get":
 		return map[string]any{"goal": nil}, nil
 	case "thread/read":
+		if id, _ := params["threadId"].(string); strings.HasPrefix(id, "parent") {
+			return h.host.HostCall(ctx, method, params)
+		}
 		return map[string]any{"thread": map[string]any{"status": map[string]any{"type": "idle"}, "canAcceptDirectInput": true}}, nil
 	}
 	return map[string]any{}, nil

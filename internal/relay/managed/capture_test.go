@@ -996,7 +996,7 @@ func Test27_MST_8_PythonHostReadyRefusalsWholeOutput(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if orderedValue(t, receipt).(map[string]any)["reason"] != "business_failed" || worker.sent != 0 || len(worker.hostCalls) != len(host.hostCalls)+1 /* the thread/read that judges the child once its standby has ended */ {
+			if orderedValue(t, receipt).(map[string]any)["reason"] != "business_failed" || worker.sent != 0 || len(worker.hostCalls) != len(host.hostCalls)+2 /* the thread/read of the parent before the creation, and the one that judges the child once its standby has ended */ {
 				t.Fatalf("host refusal not applied before business send: receipt=%v sent=%d calls=%v", receipt, worker.sent, worker.hostCalls)
 			}
 		})

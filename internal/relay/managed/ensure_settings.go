@@ -95,3 +95,13 @@ func settingsJSON(v any) (string, error) {
 	data, err := pyjson.Encode(v, pyjson.Options{SortKeys: true, Marshal: true})
 	return string(data), err
 }
+
+// parentRecorded is whether the task has authorized settings recorded.
+func parentRecorded(ctx context.Context, s *store.Store, task string) (bool, error) {
+	var recorded string
+	err := s.Querier(ctx).QueryRowContext(ctx, "SELECT settings FROM authorized_settings WHERE task_id=?", task).Scan(&recorded)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}

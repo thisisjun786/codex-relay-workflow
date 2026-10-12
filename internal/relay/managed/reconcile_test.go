@@ -133,6 +133,10 @@ func (h *scriptedApp) failure(method, thread string) error {
 }
 
 func (h *scriptedApp) HostCall(ctx context.Context, method string, params map[string]any) (map[string]any, error) {
+	if method == "thread/read" && pyjson.Text(params["threadId"]) == "parent" {
+		// The parent runs the pair the fixture request declares for it (the child's); the engine confirms it before it starts anything.
+		return map[string]any{"thread": map[string]any{"model": h.settings["model"], "reasoningEffort": h.settings["reasoningEffort"]}}, nil
+	}
 	h.calls = append(h.calls, method)
 	id := pyjson.Text(params["threadId"])
 	if err := h.failure(method, id); err != nil {
