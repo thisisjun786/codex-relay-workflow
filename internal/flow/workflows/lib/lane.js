@@ -57,6 +57,16 @@ export async function dag(planId, lane, opts) {
     gate.promise = new Promise((resolve) => { gate.open = resolve })
     gates[n.id] = gate
   }
+  // a node waits for nodes that wait for it would never start: the plan is a DAG, and a script that is given another shape says so
+  const visiting = {}
+  const visit = (id, trail) => {
+    if (visiting[id] === 'done') return
+    if (visiting[id] === 'open') throw new TypeError('crw.dag: the nodes have a cycle through ' + trail.concat(id).join(' -> '))
+    visiting[id] = 'open'
+    for (const d of byId[id].after || []) if (byId[d]) visit(d, trail.concat(id))
+    visiting[id] = 'done'
+  }
+  for (const n of nodes) visit(n.id, [])
   const active = () => nodes.filter((n) => state[n.id] === 'running')
   function pump() {
     let again = true
@@ -237,10 +247,21 @@ async function land(node, o) {
   return { node, state: 'landed', head: o.head.commit, acceptance: acc.acceptance_id, batch_commit: ing.batch_commit, tip: ing.tip }
 }
 
-// install makes the composites members of crw. The operation the host registered as crw.review is the record of a review; the
-// composite replaces it, calling it for the record.
+// tierStep is the step to executor-t1 of a node: the engine mints the step decision (an id the executor-t1 call carries), and the
+// host records the decision - the rule, the evidence ids and the checkpoint the new tier starts from - in flow_step_decisions.
+// The step is {id, checkpoint}, the checkpoint being the head and tree of the node's last commit.
+async function tierStep(mint, node, ev) {
+  const step = await mint(node, ev)
+  const recorded = await crw.stepRecord(node, step, { from: ev.tier, to: 'executor-t1', letter: ev.letter, evidence: ev })
+  return { id: step.id, checkpoint: recorded.checkpoint }
+}
+
+// install makes the composites members of crw. The operation the host registered as crw.review is the record of a review, and the
+// engine's crw.tierStep mints the id of a step; the composites replace them, calling them for the part they own.
 export function install(host) {
   const record = host.review
+  const mint = host.tierStep
+  host.tierStep = (node, ev) => tierStep(mint, node, ev)
   host.dag = dag
   host.explore = explore
   host.exploreEvidence = exploreEvidence

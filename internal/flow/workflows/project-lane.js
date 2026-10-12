@@ -183,10 +183,7 @@ async function lane(n, rel) {
       const esc = await crw.escalate(node, { reason: 'tiers_exhausted', evidence: ev.evidence(tier) })
       return { node, state: 'escalated', reason: 'tiers_exhausted', escalation: esc.id }
     }
-    const evidence = ev.evidence(tier)
-    step = await crw.tierStep(node, evidence)
-    const recorded = await crw.stepRecord(node, step, { from: tier, to: 'executor-t1', letter: evidence.letter, evidence })
-    step = { id: step.id, checkpoint: recorded.checkpoint }
+    step = await crw.tierStep(node, ev.evidence(tier))
     tier = 'executor-t1'
     ex = await start('build:' + node + ':' + tier, step.checkpoint)
   }

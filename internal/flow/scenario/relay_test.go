@@ -10,7 +10,6 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
-	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/acceptance/premerge"
@@ -57,7 +56,6 @@ type FakeRelay struct {
 	n        int
 	clock    int
 	accepted map[string]ops.AcceptRequest
-	rejected []string
 
 	Releases   []ops.ReleaseRequest
 	Accepts    []ops.AcceptRequest
@@ -291,5 +289,3 @@ func (l *Lab) gitErr(dir string, args ...string) (string, error) {
 	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
 	return strings.TrimSpace(string(out)), err
 }
-
-var _ = testing.Short

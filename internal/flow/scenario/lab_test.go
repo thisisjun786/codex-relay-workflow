@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -275,7 +274,7 @@ func (l *Lab) exec(resume bool, args json.RawMessage) *engine.Result {
 // Script runs a script of the lab's (not the project lane) over the same world: the operations, the backend and the journal.
 func (l *Lab) Script(body string, resume bool) *engine.Result {
 	l.t.Helper()
-	prog, err := script_Load("export const meta = { name: 't' }\n" + body)
+	prog, err := loadScript("export const meta = { name: 't' }\n" + body)
 	if err != nil {
 		l.t.Fatal(err)
 	}
@@ -530,9 +529,8 @@ type Call struct {
 }
 
 type rule struct {
-	re   *regexp.Regexp
-	fn   func(*Call) *fakehost.TurnPlan
-	used int
+	re *regexp.Regexp
+	fn func(*Call) *fakehost.TurnPlan
 }
 
 // On scripts the model: the turns of the calls whose label matches the expression are answered by fn; a turn fn answers with nil
@@ -722,8 +720,6 @@ func (l *Lab) defaultPlan(c *Call) fakehost.TurnPlan {
 
 // ---- helpers for scenarios ----
 
-func script_Load(text string) (*scriptProgram, error) { return loadScript(text) }
-
 // Git runs git in the lab's repository.
 func (l *Lab) Git(args ...string) string { return l.git(l.Repo, args...) }
 
@@ -732,15 +728,3 @@ func (l *Lab) GitIn(dir string, args ...string) string { return l.git(dir, args.
 
 // Tip is the tip of the integration branch.
 func (l *Lab) Tip() string { return l.git(l.Repo, "rev-parse", IntegrationRef) }
-
-// run is exec.Command output helper for tests that need the raw command.
-func run(t *testing.T, dir, name string, args ...string) string {
-	t.Helper()
-	cmd := exec.Command(name, args...)
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("%s %v: %v\n%s", name, args, err, out)
-	}
-	return strings.TrimSpace(string(out))
-}

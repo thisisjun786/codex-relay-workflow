@@ -6,7 +6,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
@@ -243,15 +242,4 @@ func short(s string) string {
 		return s[:12]
 	}
 	return s
-}
-
-// joinLines joins non-empty lines.
-func joinLines(lines ...string) string {
-	var keep []string
-	for _, ln := range lines {
-		if strings.TrimSpace(ln) != "" {
-			keep = append(keep, ln)
-		}
-	}
-	return strings.Join(keep, "\n")
 }

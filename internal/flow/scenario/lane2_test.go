@@ -1,6 +1,7 @@
 package scenario
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"slices"
@@ -8,7 +9,10 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/lint"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/workflows"
 )
 
 // A node the architect sized for a child is released as an issue child (a managed start of an issue-lane run), not to an
@@ -340,4 +344,68 @@ func TestNullModelRebuildStartsFromLastCommitInNewWorktree(t *testing.T) {
 		t.Errorf("a restore for a rebuild: %+v", rows)
 	}
 	noTierStep(t, l)
+}
+
+// The built-in script passes the static rules of `crw flow lint`: the lifecycle of every executor node (build, commit, verify,
+// review, land), the tier step before every executor-t1, the reviewer's family, the labels, and the lanes' reads of outer
+// variables.
+func TestProjectLaneIsLintClean(t *testing.T) {
+	text, err := workflows.Source("project-lane")
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := lint.Check(context.Background(), script.Source{Name: "project-lane.js", Text: text, Dir: workflows.FS}, lint.Options{})
+	if !report.OK() {
+		for _, d := range report.Diagnostics {
+			t.Errorf("%s: %s: %s (line %d)", report.Script, d.Rule, d.Message, d.Line)
+		}
+	}
+}
+
+// A node the scheduler holds back - no slot is free - is not started and is not given up: the run reports it unreleased, and a
+// resume asks the scheduler again. The lane that was released replays and runs nothing.
+func TestUnreleasedNodeIsReleasedOnResume(t *testing.T) {
+	nodes := []NodeSpec{
+		{ID: "A", Issue: "CRW-A", Title: "issue A", Regions: []string{"a/"}},
+		{ID: "B", Issue: "CRW-B", Title: "issue B", Regions: []string{"b/"}},
+	}
+	l := NewLab(t, nodes...)
+	l.Relay.Slots = 1
+	got := mustRunIncomplete(t, l)
+	if got.State != "incomplete" {
+		t.Fatalf("state %q: %+v", got.State, got)
+	}
+	var landed, waiting string
+	for _, ln := range got.Lanes {
+		switch ln.State {
+		case "landed":
+			landed = ln.Node
+		case "unreleased":
+			waiting = ln.Node
+			if ln.Reason != "capacity_exhausted" {
+				t.Errorf("unreleased for %q", ln.Reason)
+			}
+		}
+	}
+	if landed == "" || waiting == "" || landed == waiting {
+		t.Fatalf("lanes %+v", got.Lanes)
+	}
+	if l.Relay.SlotHeld(landed) {
+		t.Errorf("the landed node still holds a slot")
+	}
+	before := l.LastSeq()
+	l.NewProcess("proc-2")
+	res := l.Resume()
+	final := Value[laneResult](t, res)
+	if final.State != "closed" {
+		t.Fatalf("resume: %+v", final)
+	}
+	for _, ts := range turnsSince(l, before) {
+		if label := labelOf(l, ts.call); !strings.Contains(label, ":"+waiting+":") {
+			t.Errorf("the resume ran %q: only the lane of the node that was waiting runs", label)
+		}
+	}
+	if !slices.Equal(l.Relay.Landed, []string{landed, waiting}) {
+		t.Errorf("landed %v", l.Relay.Landed)
+	}
 }

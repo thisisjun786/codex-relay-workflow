@@ -124,18 +124,5 @@ func resultOf(row engine.Event) json.RawMessage {
 // dataStr reads a string of a row's data.
 func dataStr(row engine.Event, key string) string { return str(row.Data, key) }
 
-// dataInt reads a number of a row's data (the journal round trip makes it a float64).
-func dataInt(row engine.Event, key string) int {
-	switch n := row.Data[key].(type) {
-	case int:
-		return n
-	case int64:
-		return int(n)
-	case float64:
-		return int(n)
-	}
-	return 0
-}
-
 // dataBool reads a flag of a row's data.
 func dataBool(row engine.Event, key string) bool { return flag(row.Data, key) }

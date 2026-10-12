@@ -111,7 +111,7 @@ Integrate: the recorded batch commit is an ancestor of the integration ref; the 
 passing record of the current integration head, the same command and the same range (`crw.gate`). Reviewer-final: a record of the
 same integration range and criteria digest (`crw.reviewerFinal`).
 
-**Recording calls.** `releaseChild`, `escalate`, `reportUp`, `hold` and `tierStep` only record a fact. A call with a completed row
+**Recording calls.** `releaseChild`, `escalate`, `reportUp`, `hold`, `tierStep`, `spawnDecision`, `stepRecord`, `exploreRoute`, `exploreRecord`, `designAudit` and `designLedger` only record a fact. A call with a completed row
 of its own operation at its call id is not sent again (a completed call of another operation at the same position, such as an
 agent call of the earlier script, is not its record), whatever else is true; a call without one is executed live under the same call id and the same idempotent
 request id (`ops.RequestID`).
@@ -173,7 +173,8 @@ the order the array lists them in, are not identity: items are keyed by their ex
 ### Ops
 
 `crw.<name>` calls with an effect outside the engine - `commit`, `verify`, `review`, `accept`, `integrate`, `hold`, a report to the
-relay - are `engine.Op`s registered in `Config.Ops`. An op takes a position like a call. Its completed row (`crw.<name>`, with the
+relay - are `engine.Op`s registered in `Config.Ops` (`ops.NewLane(...).Ops()` registers the operations of the project lane, listed
+with what each replays on in [script.md](script.md#the-project-lane)). An op takes a position like a call. Its completed row (`crw.<name>`, with the
 `input_digest` of its arguments, its `request_id`, its `result` and what its proofs read: the `node`, `commit` and `tree` of a
 commit, the `acceptance_id` of an acceptance) replays when the position's earlier positions replayed, the arguments are the same
 and `Op.Proven` says the effect is there. An op that ran and did not write its row runs again under the same call id and the

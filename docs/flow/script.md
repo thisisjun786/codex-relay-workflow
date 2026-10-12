@@ -119,13 +119,14 @@ target drops to ES2016 (esbuild then lowers async/await to generators) and this 
 | `workflow(nameOrRef, args)` | Runs another script inline as one step and resolves with what it returns. The child shares the run's pool, journal and budget, and its calls live on a child path. Nesting is one level: `workflow()` inside a child throws. `crw flow run` resolves a name to `<name>.js` and `{scriptPath}` to that relative path, inside the script's directory. |
 | `crw.classify(result)` | Maps an executor `CallResult` to one outcome state (below). |
 | `crw.clock()` | The time as an RFC 3339 string, journaled. It occupies a position of its path like a call. |
-| `crw.tierStep(node, evidence)` | Journals a step decision and resolves with `{id, checkpoint}`; a fresh `executor-t1` call carries `id` as `stepDecision`. It occupies a position of its path. In this build it holds the interface only: the evidence rules, the append-only `flow_step_decisions` row and the checkpoint worktree arrive with the issue that owns the operation, so `checkpoint` is `null` and the evidence is recorded by its digest. |
+| `crw.tierStep(node, evidence)` | Mints the step decision: it journals the call and resolves with `{id, checkpoint}`; a fresh `executor-t1` call carries `id` as `stepDecision`. It occupies a position of its path. The engine's own call holds the id only (its `checkpoint` is `null` and the evidence is recorded by its digest); the project lane's `crw.tierStep` ([below](#the-project-lane)) wraps it, appends the `flow_step_decisions` row with the evidence and the checkpoint, and resolves with the checkpoint filled in. |
 
 `opts` of a call: `agentType` (`architect`, `executor`, `executor-t1`, `reviewer`, `reviewer-final`, `explorer`), `schema`,
 `label`, `phase`, `node`, `worktree` or `cwd`, `head`, `resume`, `stepDecision`, and the Claude-style `model`, `effort` and
-`isolation`. The remaining `crw.*` operations (`dag`, `milestone`, the packet builders, `commit`, `verify`, `review`, `land`
-and the rest) arrive with the issues that own them; each is an `engine.Op` registered in `Config.Ops`, takes a position of its path
-like a call, and a resume replays it only while its effect still holds ([journal.md](journal.md#ops)).
+`isolation`. The other `crw.*` members are the operations and composites of [the project lane](#the-project-lane); each operation is an
+`engine.Op` registered in `Config.Ops`, takes a position of its path like a call, and a resume replays it only while its effect still
+holds ([journal.md](journal.md#ops)). The `crw.*` members a later issue owns (the final gate and reviewer-final of the milestone close,
+the delivery of the report, the revisions of the design ledger and the re-plan signals) are not here.
 
 `parallel` and `pipeline` accept `{keys: [...]}` (one explicit key per item, in place of the input index) and
 `{label}` (the label the join carries in a concurrency error).
@@ -273,6 +274,104 @@ is a `TypeError`; so are a bare object, a copy of a `CallResult`, `null`
 and a string that is no handle of a result of this run. Like every `crw.*` call, `crw.classify` takes a position of its path
 (journaled as an `Op: crw.classify` row), so calling it while another call or join of the path has not settled throws
 `CrwPathConcurrencyError` and ends the run `script_error`.
+
+## The project lane
+
+`internal/flow/workflows/project-lane.js` is the built-in workflow that runs the issues of a milestone (`args`: `plan`, `milestone`,
+and `cap`, the executors at once, default 3). Its steps, in order: `crw.milestone` reads the nodes of the milestone in the order the
+scheduler offers them; the architect answers `DESIGN` once for the milestone (SP-ARCH-1); the open questions of the DESIGN go to
+explorers (SP-EXPL-1); a reviewer of another model family than the architect audits the DESIGN (`DESIGN_AUDIT`, recorded by
+`crw.designAudit`), and `needs_changes` returns the DESIGN to the architect on its own thread; only an approved DESIGN becomes revision
+`r0` of the design ledger (`crw.designLedger`); `crw.dag` runs one lane for each node; when every lane landed, `crw.milestoneClose`
+judges the integrated range (the final gate and reviewer-final are the seam of the issue that owns them) and `crw.reportUp`
+records the report (its delivery is the seam of the issue that owns it). A milestone that cannot go on says why: a call of the design
+phase that did not complete is never read as an approval or as a design (`held` and `unknown` hold the milestone, `refused` and
+`null_model` escalate, `superseded` stops).
+
+**The lane of a node.** `crw.dag` starts a node when the nodes it waits for (a dependency or an order edge; the members of a
+group are chained by order edges) have landed, in the scheduler's order, at most `cap` nodes at once and never two nodes whose
+edit regions overlap (an undeclared region overlaps every other); there is no barrier. A node whose predecessor did not land is
+`blocked`. Each node runs on a path of its own (its id), and its first position is `crw.release`, which asks the relay for the
+slot and records the design revision and digest the node is released under. The lane builds its packet from that revision
+(`crw.issuePlan` reads the journal and nothing the script holds), and every call of the node carries the revision, the node's slice
+digest and its criteria digest in its input snapshot, so a ledger that later grows a revision changes nothing for a node that
+started under `r0`.
+
+| `crw.classify` state | The one transition |
+| --- | --- |
+| `ready` | commit, verify, review, land |
+| `self_failed` (the executor reports `failed` or `budget_exhausted`) | the run commits and verifies the worktree anyway and reviews it when the verification passes; the report is no evidence |
+| `research` | `crw.explore` answers the question (SP-EXPL-2: an answer of the run is reused, at most two research continuations on a tier), and the same executor thread goes on with the answer; never a tier step |
+| `scope` | `crw.escalate` with `blocked_scope`: the relay closes the node's execution and takes its slot back (R07) |
+| `null_model` | the first one: a fresh thread of the same tier in a new attempt worktree at the node's last commit; the second in a row is tier evidence |
+| `host_held` | `crw.hold`: the node is held and the call goes on in place when `crw flow resume` runs after the cause is gone; never a new thread, never tier evidence |
+| `null_unknown` | `crw.hold` with `dispatch_unknown` (a recovery hold): nothing is sent again |
+| `refused` | `crw.escalate` as a configuration fault, then `crw.decide`: the lane goes on, with a fresh thread of the same tier, only when the run journal has the `decision_applied` row of that escalation and node |
+| `superseded` | the lane stops |
+
+**Review.** `crw.review(node, plan, head, ci, opts)` is a fresh reviewer thread over the committed head (SP-REV-1), with the record
+of its answer (`crw.review` row: node, head, criteria digest, state). The state is `verdict` only for a completed, valid `VERDICT` of a
+reviewer whose model family differs from every author of the node (the node's executors and the architect); a `verified` verdict
+names no unmet criterion and no defect of P0 to P2, and a defect of kind `evidence_missing` carries its `evidence_question`. An
+answer that breaks those rules is `null_model` (`verdict_invalid`). The other states - `held`, `unknown`, `refused`
+(`independence_refused` included), `null_model`, `superseded` - are the call's own status; a `null_model` reviewer is asked once more
+on a fresh thread, and only the second result is the result. `crw.reviewHalt` takes every state that is not a verdict: `held` and
+`unknown` hold the node, `refused` and a second `null_model` escalate, `superseded` stops; none of them is an executor fix or tier
+evidence. A `needs_changes` verdict with a defect of kind `evidence_missing` sends the question to an explorer (SP-EXPL-3, at most
+two a node) before the next round, and its `FINDINGS` go into the next fix packet and the next reviewer packet; a verdict without such
+a defect records the skip.
+
+**Tier evidence (SP-TIER-1).** `crw:lib/evidence` keeps the evidence of one node and tier from the results the lane feeds it: (a)
+`needs_changes` in two consecutive reviewed rounds with a finding digest in both (`FindingDigest`: kind, file, line and the words of
+the finding), (b) the required verification failing on two consecutive committed heads, (c) `null_model` on two consecutive executor
+calls of the tier, (d) four reviewed rounds without a verified verdict. `crw.tierStep` then mints the step decision and
+`crw.stepRecord` appends the `flow_step_decisions` row (the rule, the letter of the evidence, the evidence ids, the head and tree of
+the node's last commit as the checkpoint); only then does a fresh `executor-t1` call start, in a new worktree at that commit,
+carrying the id. The same evidence on `executor-t1` is SP-TIER-2: the node escalates as `tiers_exhausted`, the relay closes its
+execution and returns its slot. A self-reported failure, `needs_research`, `blocked_scope`, a single `null_model`, `null_unknown` and
+every held, refused or superseded result are never evidence.
+
+**Land.** `crw.land` is `crw.accept` and then `crw.integrate`. `crw.accept` needs the passing verification record and the verified
+review of the head in the journal, assembles the premerge-record/1 from the verdict (a code step: `ops.AssemblePremerge`), judges it
+as the relay's acceptance will, and asks the relay for the agent acceptance (R05); every finding that needs a disposition is
+`blocking` by default, and only the orchestrator separates or carries one, so such a head is `land_refused` (`premerge_blocked`) and
+the lane escalates. `crw.integrate` lands the accepted head on the integration target. A refusal of either is an op error that carries
+a closed reason and leaves a refusal row, not a completed row: a resume asks again, and the engine's accepted-node check reads only
+completed `crw.accept` rows.
+
+**Decisions.** `crw.spawnDecision(rule, decision, info)` appends a `flow_spawn_decisions` row for every decision to spawn, do the work
+inline (SP-INL-1), reuse an answer (SP-INL-2), skip, refuse or hand a question to the orchestrator thread; the explorer routing
+(`crw.exploreRoute`) writes its own rows. A script names a rule by its key (`EXEC_1`, `TIER_1`, ...) and the id comes from
+`internal/flow/ops/rules.go`, the one place the `SP-*` strings are written.
+
+**Operations and composites.** The operations (`internal/flow/ops`, one `engine.Op` each, rows `crw.<name>`):
+
+| Operation | Records and returns | Replayed while |
+| --- | --- | --- |
+| `milestone(plan, milestone)` | the nodes of the milestone with edges, regions and slice digests | always (a read) |
+| `designAudit(milestone, round, candidate, architect, call)` | the audit row: state, candidate digest, auditor and architect models | always |
+| `designLedger(milestone, entry)` | revision `r0`: the DESIGN, the answers, the digest and the architect handle; refuses a DESIGN with no approved audit and any revision after `r0` | always |
+| `release(plan, node, milestone)` | the release under the ledger revision (`revision`, `design_digest`, `execution_id`); a node sized for a child or a split is not released to an executor | the relay says the execution stands |
+| `issuePlan(node)` | the node's entry of the DESIGN of its release revision | always |
+| `commit(node, call, regions)` | the commit of the call's recorded `pending_tree` (`commit`, `parent`, `tree`, `out_of_scope`, the receipt's outcome and `plan_mismatch`) | the commit is on the history of the node's worktree |
+| `verify(node, head)` | the verification (`ok`, `command`, `digest`, the record); a verification that could not run is `ran: false`, not a failure | always |
+| `review(node, head, criteriaDigest, call, opts)` | the `ReviewResult` | always |
+| `accept(node, head)` / `integrate(node, head, acceptanceId)` | the acceptance id / the batch commit and the target tip | the acceptance is active and not stale / the batch commit is on the target |
+| `escalate(node, info)` / `hold(node, info)` | the escalation flow row and, for `tiers_exhausted`, `blocked_scope` and `size_split`, the relay's close of the execution; the hold (the relay is told, nothing is closed) | always |
+| `releaseChild(node, plan)` / `decide(node, ask)` | the issue child that was started / whether a `decision_applied` row answers the ask | always / no applied row has appeared since |
+| `spawnDecision`, `stepRecord`, `exploreRoute`, `exploreRecord` | the decision rows and the answers the reuse reads | always |
+| `milestoneClose(milestone)` / `reportUp(milestone, close)` | the range and the tip the close judged / the report row | the integration target is still the tip the close judged / always |
+
+The composites (`crw:lib/lane`, made members of `crw` by `install(crw)`; they take no position of their own): `crw.dag`, `crw.review`,
+`crw.reviewHalt`, `crw.explore`, `crw.exploreEvidence`, `crw.land`, `crw.tierStep`, `crw.evidence` and `crw.skip`. The seams the
+operations are built on - `Relay` (the scheduler: milestone, release, agent acceptance and integration, the close of an execution),
+`Verifier` (`CILocalVerifier` runs `crw-dev ci local`), `Decisions` (`StoreDecisions` writes the relay store), `Closer` (F13) and
+`Reporter` (F11) - are interfaces in `internal/flow/ops/seams.go`; the dagsched-backed `Relay` belongs to the run process.
+
+**The scenario harness** (`internal/flow/scenario`) runs this script on the engine over the fake App Server host, a temporary relay
+store (the journal and the decision rows), a temporary git repository with an integration branch, a scripted model, a fake relay and
+a fake verifier. Its scenarios are the tests of the project lane named in CRW-1201; `go test ./internal/flow/scenario/` is the
+command.
 
 ## crw flow lint
 
