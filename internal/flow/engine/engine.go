@@ -191,6 +191,8 @@ type Engine struct {
 	claimedM   sync.Mutex
 	claimed    map[string]bool
 	superseded map[string]*supersedeOp
+	// facts are what crw.callFacts answers beyond the journal: the calls this process ran live (signal.go).
+	facts signalFacts
 	// escalated are the calls whose dispatch_unknown escalation was written by this run.
 	escalatedM sync.Mutex
 	escalated  map[string]bool

@@ -115,6 +115,7 @@ func (c *callRun) replayFrom(rows []Event, prep Event) bool {
 	c.startSeq = prep.Seq
 	res := c.replayResult(rows)
 	c.replay = &res
+	c.e.facts.noteReplayed(c.id)
 	term := lastTerminal(rows)
 	if term.Event == EvCompleted {
 		c.e.noteExecutor(c.plan.node, rowStr(term.Data, "pending_tree"))

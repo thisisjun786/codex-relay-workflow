@@ -53,7 +53,7 @@ func (o *milestoneCloseOp) Run(ctx context.Context, req engine.OpRequest) (engin
 		return engine.OpResult{}, err
 	}
 	base := ""
-	if led, ok := ledgerOf(r, ms, FirstRevision); ok {
+	if led, ok := firstLedger(r, ms); ok {
 		base = dataStr(led, "base_tip")
 	}
 	out := CloseResultOutcome{Milestone: ms, Base: base, Tip: tip, Gate: json.RawMessage(`null`), Final: json.RawMessage(`null`), Audit: json.RawMessage(`null`)}

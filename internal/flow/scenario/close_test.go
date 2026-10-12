@@ -61,8 +61,8 @@ func TestCloseWithOraclePassesAuditsAndArchives(t *testing.T) {
 		t.Fatalf("%+v; calls %v; escalations %v", got, l.Labels(), escalationReasons(l))
 	}
 	labels := l.Labels()
-	tail := labels[len(labels)-5:]
-	if tail[0] != "qa:M1" || tail[3] != "qa-synthesis:M1" || tail[4] != "reviewer-final:M1" || !slices.Contains(tail[1:3], "qa-pass:A:M1") || !slices.Contains(tail[1:3], "qa-pass:B:M1") {
+	tail := labels[len(labels)-6:]
+	if tail[0] != "qa:M1" || tail[3] != "qa-synthesis:M1" || tail[4] != "reviewer-final:M1" || tail[5] != "reflection:M1" || !slices.Contains(tail[1:3], "qa-pass:A:M1") || !slices.Contains(tail[1:3], "qa-pass:B:M1") {
 		t.Fatalf("calls %v", labels)
 	}
 	roles := map[string]string{}
@@ -400,7 +400,8 @@ func TestResumeAfterTheQACaptureContinuesTheQACall(t *testing.T) {
 	if len(rows) != 1 || str(rows[0].Data, "state") != "PASS" {
 		t.Errorf("receipt rows %+v", rows)
 	}
-	if forks := l.Requests("thread/fork"); len(forks) != 1 {
+	// the QA continuation and the reflection of the architect, whose thread the ended process started
+	if forks := l.Requests("thread/fork"); len(forks) != 2 {
 		t.Errorf("%d thread/fork requests: the continuation of a thread of the ended process runs on a fork", len(forks))
 	}
 }

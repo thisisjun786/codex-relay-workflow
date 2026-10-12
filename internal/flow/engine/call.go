@@ -180,7 +180,9 @@ func (s *scriptVM) agent(call goja.FunctionCall, plain bool) goja.Value {
 		s.e.inflight.Add(1)
 		go func() {
 			defer s.e.inflight.Done()
-			c.deliverNow(c.execute(s.e.ctx))
+			res := c.execute(s.e.ctx)
+			c.removeOwnDirectory(res)
+			c.deliverNow(res)
 		}()
 	}
 	return s.vm.ToValue(promise)
@@ -1154,6 +1156,9 @@ func (c *callRun) turnLoop(ctx context.Context, resolved *jsonschema.Resolved, k
 			if res, stop := c.gate(ctx); stop {
 				return res
 			}
+			if res, stop := c.ownDirectory(ctx); stop {
+				return res
+			}
 			if k == 1 && c.placement != nil && c.placement.Kind == PlaceRestore {
 				if placer, ok := e.cfg.Backend.(Placer); ok {
 					if err := placer.Recheck(ctx, *c.placement); err != nil {
@@ -1254,4 +1259,40 @@ func (c *callRun) validate(text string, resolved *jsonschema.Resolved) ([]byte, 
 		return nil, err
 	}
 	return json.Marshal(plain)
+}
+
+// ownsDirectory is whether the call is a continuation that runs in a directory of its own: the placement made one for it (an
+// architect turn that names the head it judges), and the turn names that directory as its cwd.
+func (c *callRun) ownsDirectory() bool {
+	pl := c.placement
+	return pl != nil && pl.Kind == PlaceCall && !pl.Fork && pl.Path != "" && c.plan.resume != nil
+}
+
+// ownDirectory makes the directory of a continuation that runs at a head of its own before the turn that needs it is sent, and
+// makes it the turn's cwd. A directory that is not there is made again at the head the call's prepared row records: a held call
+// that goes on, or a call a resume runs again, finds it removed (removeOwnDirectory), and a path belongs to one call.
+func (c *callRun) ownDirectory(ctx context.Context) (CallResult, bool) {
+	if !c.ownsDirectory() {
+		return CallResult{}, false
+	}
+	if w, ok := c.e.cfg.Backend.(interface{ WorktreeExists(string) bool }); !ok || !w.WorktreeExists(c.placement.Path) {
+		if placer, ok := c.e.cfg.Backend.(Placer); ok {
+			if err := placer.Establish(ctx, c.placeReq, *c.placement); err != nil {
+				return c.placementProblem(ctx, err), true
+			}
+		}
+	}
+	c.cwd = c.placement.Path
+	return CallResult{}, false
+}
+
+// removeOwnDirectory removes the directory of a continuation that ran at a head of its own once the call has its terminal row.
+// A call that has none (its outcome is not known) may still have a turn at work in it and keeps the directory.
+func (c *callRun) removeOwnDirectory(res CallResult) {
+	if !c.ownsDirectory() || res.Status == StatusUnknown {
+		return
+	}
+	if r, ok := c.e.cfg.Backend.(DirRemover); ok {
+		_ = r.RemoveDir(c.e.ctx, c.placement.Path)
+	}
 }

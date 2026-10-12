@@ -100,7 +100,7 @@ func TestDecideResumesOnlyOnAppliedRow(t *testing.T) {
 	for _, ts := range turnsSince(l, before) {
 		live = append(live, labelOf(l, ts.call))
 	}
-	if !slices.Equal(live, []string{"rebuild:A:executor:r1", "review:A:r2", "reviewer-final:M1"}) {
+	if !slices.Equal(live, []string{"rebuild:A:executor:r1", "review:A:r2", "reviewer-final:M1", "reflection:M1"}) {
 		t.Errorf("live turns %v: want the fresh executor and the review the decision let go on", live)
 	}
 	rows := l.Rows("crw.decide")
@@ -213,12 +213,13 @@ func TestMilestoneCloseRerunsAfterLaneSuffix(t *testing.T) {
 		}
 	}
 	want := []live{{"crw.integrate", "root/10:" + lost}, {"crw.finalGate", "root"}, {"crw.verify", "root"}, {"crw.finalGate", "root"}, {"crw.spawnDecision", "root"},
-		{"crw.reviewerFinal", "root"}, {"crw.milestoneClose", "root"}, {"crw.audit", "root"}, {"crw.archive", "root"}, {"crw.reportUp", "root"}}
+		{"crw.reviewerFinal", "root"}, {"crw.milestoneClose", "root"}, {"crw.currentDesign", "root"}, {"crw.spawnDecision", "root"}, {"crw.reflection", "root"},
+		{"crw.replanSignals", "root"}, {"crw.spawnDecision", "root"}, {"crw.audit", "root"}, {"crw.archive", "root"}, {"crw.reportUp", "root"}}
 	if !slices.Equal(ranLive, want) {
 		t.Errorf("live operations %v, want %v", ranLive, want)
 	}
-	if agents := turnsSince(l, before); len(agents) != 1 || labelOf(l, agents[0].call) != "reviewer-final:M1" {
-		t.Errorf("live agent turns %+v, want the final review of the new head only", agents)
+	if agents := turnsSince(l, before); len(agents) != 2 || labelOf(l, agents[0].call) != "reviewer-final:M1" || labelOf(l, agents[1].call) != "reflection:M1" {
+		t.Errorf("live agent turns %+v, want the final review of the new head and the reflection on it only", agents)
 	}
 	closes = l.Rows("crw.milestoneClose")
 	if last := closes[len(closes)-1]; len(closes) != 2 || str(last.Data, "tip") != newTip {
@@ -310,14 +311,14 @@ func TestQuotaPauseResumeRunsOnlyHeldCall(t *testing.T) {
 			heldTurn = ts
 		}
 	}
-	if !slices.Equal(sent, []string{"build:B:executor", "review:B:r1", "reviewer-final:M1"}) {
+	if !slices.Equal(sent, []string{"build:B:executor", "review:B:r1", "reviewer-final:M1", "reflection:M1"}) {
 		t.Fatalf("live turns %v, want B's held call, B's review and the final review of the close", sent)
 	}
 	if !strings.HasSuffix(heldTurn.op, "/t2") || heldTurn.thread != firstThread || firstThread == "" {
 		t.Errorf("the held call went on with %+v, want turn t2 of its own thread %s", heldTurn, firstThread)
 	}
 	for _, ev := range rowsAfter(l, before) {
-		if ev.Kind == engine.KindCall && ev.Op == "agent" && ev.Event == engine.EvPrepared && !strings.HasPrefix(ev.Label, "review:B") && ev.Label != "build:B:executor" && ev.Label != "reviewer-final:M1" {
+		if ev.Kind == engine.KindCall && ev.Op == "agent" && ev.Event == engine.EvPrepared && !strings.HasPrefix(ev.Label, "review:B") && ev.Label != "build:B:executor" && ev.Label != "reviewer-final:M1" && ev.Label != "reflection:M1" {
 			t.Errorf("a call prepared on the resume: %s", ev.Label)
 		}
 	}
@@ -355,11 +356,12 @@ func TestMilestoneCloseRunsAgainWhenTheTargetMovedOn(t *testing.T) {
 			live = append(live, ev.Op)
 		}
 	}
-	if !slices.Equal(live, []string{"crw.finalGate", "crw.verify", "crw.finalGate", "crw.spawnDecision", "crw.reviewerFinal", "crw.milestoneClose", "crw.audit", "crw.archive", "crw.reportUp"}) {
+	if !slices.Equal(live, []string{"crw.finalGate", "crw.verify", "crw.finalGate", "crw.spawnDecision", "crw.reviewerFinal", "crw.milestoneClose", "crw.currentDesign", "crw.spawnDecision", "crw.reflection",
+		"crw.replanSignals", "crw.spawnDecision", "crw.audit", "crw.archive", "crw.reportUp"}) {
 		t.Errorf("live operations %v", live)
 	}
-	if turns := turnsSince(l, before); len(turns) != 1 || labelOf(l, turns[0].call) != "reviewer-final:M1" {
-		t.Errorf("live agent turns %+v, want the final review of the new head only", turns)
+	if turns := turnsSince(l, before); len(turns) != 2 || labelOf(l, turns[0].call) != "reviewer-final:M1" || labelOf(l, turns[1].call) != "reflection:M1" {
+		t.Errorf("live agent turns %+v, want the final review of the new head and the reflection on it only", turns)
 	}
 }
 

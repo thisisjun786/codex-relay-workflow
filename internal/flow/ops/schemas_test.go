@@ -38,7 +38,6 @@ func librarySchemas(t *testing.T) map[string]any {
 // schemaOwner says which issue builds the producer of a schema this build only decodes.
 var schemaOwner = map[string]string{
 	SchemaVerdictBatch: "CRW-1225 (the candidate batch review, SP-REV-2)",
-	SchemaReflection:   "CRW-1202 (the architect's reflection, SP-ARCH-3)",
 }
 
 // consumers are the decoders of the Go side, by schema.

@@ -56,6 +56,50 @@ export function designFixPacket(audit) {
   ].filter(Boolean).join('\n\n')
 }
 
+function landedLines(landed) {
+  return list((landed || []).map((l) => l.node + ': ' + l.head), 'none landed')
+}
+
+function drivenDecisions(cur) {
+  return list(((cur.design && cur.design.decisions) || []).map((d) => d.id + ': ' + d.change), 'none recorded')
+}
+
+// The REFLECTION turn (SP-ARCH-3): the next turn of the architect's thread, at the integrated head the final gate pinned. The packet
+// names the head, the range from the head the DESIGN ran at, and the head every node landed with; the turn's directory is a detached
+// read-only worktree of that head.
+export function reflectionPacket(ms, cur, closed) {
+  const rng = (cur.base_tip ? cur.base_tip + '..' : '') + closed.gate.head
+  return [
+    'ROLE: architect. Reflection at the close of milestone ' + ms.id + ' (' + ms.title + '), on the thread of your DESIGN (revision ' + cur.revision + '). Your working directory is a read-only checkout of the integrated head.',
+    'HEAD: ' + closed.gate.head + '\nDESIGN RAN AT: ' + (cur.base_tip || 'unknown') + '\nRANGE: ' + rng,
+    section('DECISIONS OF THE DESIGN (map each to the files and criteria of the integrated range)', drivenDecisions(cur)),
+    section('LANDED HEADS', landedLines(cur.landed)),
+    'REVIEWER-FINAL ALIGNMENT: ' + (closed.final ? closed.final.alignment : 'none'),
+    'Answer with REFLECTION: ALIGNED, or MISALIGNED with each decision the range departs from, what you observed, the nodes it affects and the evidence.',
+  ].join('\n\n')
+}
+
+// The re-plan turn (SP-ARCH-2): the next turn of the architect's thread, as a DESIGN delta for the nodes that have not started. The
+// packet names the reasons and the numbers behind them, the head the turn judges and the range from the head the DESIGN ran at.
+export function replanPacket(ms, cur, due, head, misaligned) {
+  const rng = (cur.base_tip ? cur.base_tip + '..' : '') + head
+  const lines = due.reasons.map((r) => r)
+  const parts = [
+    'ROLE: architect. Re-plan milestone ' + ms.id + ' (' + ms.title + '), on the thread of your DESIGN (revision ' + cur.revision + '). Your working directory is a read-only checkout of the head below.',
+    'HEAD: ' + head + '\nDESIGN RAN AT: ' + (cur.base_tip || 'unknown') + '\nRANGE: ' + rng,
+    section('WHY THE MILESTONE RE-PLANS', lines),
+    'PLAN MISMATCHES OF THIS REVISION: ' + due.plan_mismatch + ' (calls ' + (due.plan_mismatch_calls.join(', ') || 'none') + ')',
+    'SLICES OF THE PLAN CHANGED SINCE THIS REVISION: ' + due.slice_change.changed.length + ' of ' + due.slice_change.total + (due.slice_change.changed.length ? ' (' + due.slice_change.changed.join(', ') + ')' : ''),
+    section('DECISIONS OF THE DESIGN', drivenDecisions(cur)),
+    section('LANDED HEADS', landedLines(cur.landed)),
+  ]
+  if (misaligned && misaligned.length) {
+    parts.push(section('DECISIONS THE REFLECTION FOUND THE RANGE TO DEPART FROM', misaligned.map((m) => '- ' + m.decision_id + ': ' + m.observed + ' (nodes ' + (m.affected_nodes || []).join(', ') + ')')))
+  }
+  parts.push('Answer with DESIGN: the delta of the plan. Keep the ids of the decisions you do not change. Lanes that have started keep the revision they were released under; the issues of nodes that have not started take this one, and the correction issues the orchestrator adds are planned in it.')
+  return parts.join('\n\n')
+}
+
 export function explorerPacket(kind, route, ctx) {
   return [
     'ROLE: explorer. Answer one question by reading the repository; do not edit anything.',

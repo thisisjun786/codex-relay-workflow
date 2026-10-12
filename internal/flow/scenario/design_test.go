@@ -68,7 +68,7 @@ func TestDesignAuditNeedsChangesReturnsToArchitect(t *testing.T) {
 	if got.State != "closed" {
 		t.Fatalf("state %q", got.State)
 	}
-	want := []string{"architect", "design-audit:r1", "design-fix:r1", "design-audit:r2", "build:A:executor", "review:A:r1", "reviewer-final:M1"}
+	want := []string{"architect", "design-audit:r1", "design-fix:r1", "design-audit:r2", "build:A:executor", "review:A:r1", "reviewer-final:M1", "reflection:M1"}
 	if labels := l.Labels(); !slices.Equal(labels, want) {
 		t.Fatalf("calls %v, want %v", labels, want)
 	}

@@ -149,6 +149,9 @@ func (s *scriptVM) install() error {
 	_ = crw.Set("classify", s.classify)
 	_ = crw.Set("clock", s.clock)
 	_ = crw.Set("tierStep", s.tierStep)
+	_ = crw.Set("callFacts", s.callFacts)
+	_ = crw.Set("recordedSignal", s.recordedSignal)
+	_ = crw.Set("priorRelease", s.priorRelease)
 	if err := s.installOps(crw); err != nil {
 		return err
 	}

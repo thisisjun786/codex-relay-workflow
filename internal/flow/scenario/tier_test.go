@@ -71,7 +71,7 @@ func TestTierStepOnRepeatedFinding(t *testing.T) {
 	if got.State != "closed" {
 		t.Fatalf("state %q: %+v", got.State, got)
 	}
-	want := []string{"architect", "design-audit:r1", "build:A:executor", "review:A:r1", "fix:A:executor:r1", "review:A:r2", "build:A:executor-t1", "review:A:r3", "reviewer-final:M1"}
+	want := []string{"architect", "design-audit:r1", "build:A:executor", "review:A:r1", "fix:A:executor:r1", "review:A:r2", "build:A:executor-t1", "review:A:r3", "reviewer-final:M1", "reflection:M1"}
 	if labels := l.Labels(); !slices.Equal(labels, want) {
 		t.Fatalf("calls %v, want %v", labels, want)
 	}
@@ -101,7 +101,7 @@ func TestTierStepOnTwoFailingHeads(t *testing.T) {
 	if got.State != "closed" {
 		t.Fatalf("state %q: %+v", got.State, got)
 	}
-	want := []string{"architect", "design-audit:r1", "build:A:executor", "fix:A:executor:r1", "build:A:executor-t1", "review:A:r3", "reviewer-final:M1"}
+	want := []string{"architect", "design-audit:r1", "build:A:executor", "fix:A:executor:r1", "build:A:executor-t1", "review:A:r3", "reviewer-final:M1", "reflection:M1"}
 	if labels := l.Labels(); !slices.Equal(labels, want) {
 		t.Fatalf("calls %v, want %v", labels, want)
 	}
@@ -124,7 +124,7 @@ func TestRoundCapStepsTier(t *testing.T) {
 	if got.State != "closed" {
 		t.Fatalf("state %q: %+v", got.State, got)
 	}
-	want := []string{"architect", "design-audit:r1", "build:A:executor", "review:A:r1", "fix:A:executor:r1", "review:A:r2", "fix:A:executor:r2", "review:A:r3", "fix:A:executor:r3", "review:A:r4", "build:A:executor-t1", "review:A:r5", "reviewer-final:M1"}
+	want := []string{"architect", "design-audit:r1", "build:A:executor", "review:A:r1", "fix:A:executor:r1", "review:A:r2", "fix:A:executor:r2", "review:A:r3", "fix:A:executor:r3", "review:A:r4", "build:A:executor-t1", "review:A:r5", "reviewer-final:M1", "reflection:M1"}
 	if labels := l.Labels(); !slices.Equal(labels, want) {
 		t.Fatalf("calls %v, want %v", labels, want)
 	}
@@ -234,7 +234,7 @@ func TestNoTierStepOnSingleNull(t *testing.T) {
 	if got.State != "closed" {
 		t.Fatalf("state %q", got.State)
 	}
-	want := []string{"architect", "design-audit:r1", "build:A:executor", "rebuild:A:executor:r1", "review:A:r2", "reviewer-final:M1"}
+	want := []string{"architect", "design-audit:r1", "build:A:executor", "rebuild:A:executor:r1", "review:A:r2", "reviewer-final:M1", "reflection:M1"}
 	if labels := l.Labels(); !slices.Equal(labels, want) {
 		t.Fatalf("calls %v, want %v", labels, want)
 	}
@@ -260,7 +260,7 @@ func TestSecondConsecutiveNullModelStepsTier(t *testing.T) {
 	if got.State != "closed" {
 		t.Fatalf("state %q: %+v", got.State, got)
 	}
-	want := []string{"architect", "design-audit:r1", "build:A:executor", "rebuild:A:executor:r1", "build:A:executor-t1", "review:A:r3", "reviewer-final:M1"}
+	want := []string{"architect", "design-audit:r1", "build:A:executor", "rebuild:A:executor:r1", "build:A:executor-t1", "review:A:r3", "reviewer-final:M1", "reflection:M1"}
 	if labels := l.Labels(); !slices.Equal(labels, want) {
 		t.Fatalf("calls %v, want %v", labels, want)
 	}
@@ -280,7 +280,7 @@ func selfReported(t *testing.T, outcome string) {
 	if got.State != "closed" {
 		t.Fatalf("state %q: %+v", got.State, got)
 	}
-	want := []string{"architect", "design-audit:r1", "build:A:executor", "review:A:r1", "reviewer-final:M1"}
+	want := []string{"architect", "design-audit:r1", "build:A:executor", "review:A:r1", "reviewer-final:M1", "reflection:M1"}
 	if labels := l.Labels(); !slices.Equal(labels, want) {
 		t.Fatalf("calls %v, want %v", labels, want)
 	}
@@ -312,7 +312,7 @@ func TestNeedsResearchResumesSameExecutor(t *testing.T) {
 		t.Fatalf("state %q: %+v", got.State, got)
 	}
 	labels := l.Labels()
-	if len(labels) != 7 || labels[6] != "reviewer-final:M1" || labels[2] != "build:A:executor" || !strings.HasPrefix(labels[3], "explore:A:") || labels[4] != "research:A:executor:r1" || labels[5] != "review:A:r2" {
+	if len(labels) != 8 || labels[6] != "reviewer-final:M1" || labels[7] != "reflection:M1" || labels[2] != "build:A:executor" || !strings.HasPrefix(labels[3], "explore:A:") || labels[4] != "research:A:executor:r1" || labels[5] != "review:A:r2" {
 		t.Fatalf("calls %v", labels)
 	}
 	build, research := callNamed(t, l, "build:A:executor"), callNamed(t, l, "research:A:executor:r1")

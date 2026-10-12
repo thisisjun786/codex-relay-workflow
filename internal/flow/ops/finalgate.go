@@ -151,7 +151,7 @@ func (o *finalGateOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpR
 		return engine.OpResult{}, fmt.Errorf("crw.finalGate: the integration target of plan %s has no tip", plan)
 	}
 	base := ""
-	if led, ok := ledgerOf(r, ms, FirstRevision); ok {
+	if led, ok := firstLedger(r, ms); ok {
 		base = dataStr(led, "base_tip")
 	}
 	id := source.CommitIdentity(head, o.l.d.Now)
@@ -185,7 +185,7 @@ func (o *finalGateOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpR
 // with the nodes whose issues name it. A milestone with no ledger row (or a ledger that holds no valid DESIGN) has none.
 func gateDecisions(r rows, ms string) []GateDecision {
 	out := []GateDecision{}
-	led, ok := ledgerOf(r, ms, FirstRevision)
+	led, ok := currentLedger(r, ms)
 	if !ok {
 		return out
 	}

@@ -178,9 +178,15 @@ func TestLedgerAndReleaseNeedAnApprovedAudit(t *testing.T) {
 	if rel.Released || rel.Reason != "node_not_designed" {
 		t.Errorf("release of an unplanned node: %+v", rel)
 	}
-	// a second revision is not this build's: the ledger holds r0 only
-	if _, err := w.op("designLedger", "M", map[string]any{"revision": "r1", "design": json.RawMessage(`{}`)}); err == nil || !strings.Contains(err.Error(), "F09") {
-		t.Errorf("a revision after r0: %v", err)
+	// a revision after r0 is recorded only over an audit of its own, made after r0: the audit r0 passed on the same DESIGN stands in for
+	// nothing
+	design, _ := json.Marshal(designOf("A"))
+	if _, err := w.op("designLedger", "M", map[string]any{"revision": "r1", "design": json.RawMessage(design)}); err == nil || !strings.Contains(err.Error(), "no approved audit") {
+		t.Errorf("a revision after r0 over the audit of r0: %v", err)
+	}
+	// and a revision is named by the ledger: the next one
+	if _, err := w.op("designLedger", "M", map[string]any{"revision": "r7", "design": json.RawMessage(design)}); err == nil || !strings.Contains(err.Error(), "adds r1 next") {
+		t.Errorf("a revision out of order: %v", err)
 	}
 }
 

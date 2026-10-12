@@ -228,6 +228,16 @@ func (a *Allocator) Place(req engine.PlaceRequest) (engine.Placement, error) {
 				}
 				return engine.Placement{Kind: engine.PlaceCall, Path: a.callPathFor(events, req.CallID), Start: start, Fork: true}, nil
 			}
+			if req.Role == "architect" && req.Head != "" && !req.QA {
+				// a turn of the architect after its DESIGN names the head it judges (the REFLECTION at the integrated head, the
+				// re-plan at the tip it read): it runs in a detached read-only worktree of its own at that head, which the turn
+				// names as its cwd, so no turn keeps the directory an earlier turn named (CRW-1202)
+				start, err := a.callStart(req, node)
+				if err != nil {
+					return engine.Placement{}, err
+				}
+				return engine.Placement{Kind: engine.PlaceCall, Path: a.callPathFor(events, req.CallID), Start: start}, nil
+			}
 			return engine.Placement{Kind: engine.PlaceContinued}, nil
 		}
 		start, err := a.callStart(req, node)
@@ -474,4 +484,16 @@ func (a *Allocator) Restore(ctx context.Context, req engine.RestoreRequest) (eng
 func (a *Allocator) WorktreeExists(path string) bool {
 	_, err := os.Lstat(path)
 	return err == nil
+}
+
+// RemoveDir removes the worktree of a call that has its terminal row: the architect turn at a fixed head reads its worktree
+// only while it runs, and a resume that runs the same call again makes it again at the head the call's row records.
+func (a *Allocator) RemoveDir(ctx context.Context, path string) error {
+	if _, err := os.Lstat(path); err != nil {
+		return nil
+	}
+	if _, err := a.git(ctx, a.cfg.Repo, nil, "worktree", "remove", "--force", path); err != nil {
+		return err
+	}
+	return nil
 }
