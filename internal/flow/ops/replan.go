@@ -287,16 +287,77 @@ func lastPlanDigest(r rows, ms string) string {
 	return ""
 }
 
+// pinnedPlan is the plan the audited DESIGN of the milestone stands on (CRW-1202): the plan its current revision was made for - the plan
+// the decision that made the revision evaluated, the milestone the run read for r0 - or, when a signal after that revision judged another
+// plan and found no reason to re-plan (continue), the plan the newest such signal judged, which it kept the revision for. A release is a
+// compare-and-swap on it (crw.release), and a plan read is a trigger exactly when the plan it reads is another (crw.planRead): the plan
+// moves the pin only through a signal that judged it, and the revision only through a re-plan whose delta was audited for it.
+func pinnedPlan(r rows, ms string) string {
+	pin, _, _ := planPins(r, ms)
+	return pin
+}
+
+// planPins reads the plan the audited DESIGN stands on (pin) and, when a signal after the current revision is bound and not yet decided,
+// the plan that signal read and its number: a plan a signal in flight is judging is not news to a lane - the lane waits for that signal
+// instead of bringing it again - but nothing is released under it before the signal decided it.
+func planPins(r rows, ms string) (pin, judging string, k int) {
+	led, ok := currentLedger(r, ms)
+	if !ok {
+		return "", "", 0
+	}
+	pin = dataStr(led, "milestone_digest")
+	sup := r.supersededAfter()
+	judged := map[int]string{}
+	for _, ev := range r {
+		if ev.Seq <= led.Seq || ev.Kind != engine.KindCall || ev.Event != engine.EvCompleted || sup[ev.CallID] >= ev.Seq || dataStr(ev, "milestone") != ms {
+			continue
+		}
+		switch ev.Op {
+		case OpSignalBind:
+			judging, k = dataStr(ev, "plan_digest"), intOf(ev.Data["k"])
+		case OpReplanSignals:
+			if dataStr(ev, "phase") == "signal" {
+				judged[intOf(ev.Data["signal"])] = dataStr(ev, "milestone_digest")
+			}
+		case OpSignalDone:
+			if intOf(ev.Data["k"]) == k {
+				judging, k = "", 0
+			}
+			if dataStr(ev, "outcome") == SignalContinue {
+				if d := judged[intOf(ev.Data["k"])]; d != "" {
+					pin = d
+				}
+			}
+		}
+	}
+	return pin, judging, k
+}
+
+// planObserved is the plan digest a row observed: the plan a lane read before its release, the plan a signal read when it was bound,
+// and the plan the decision of a signal judged.
+func planObserved(ev engine.Event) string {
+	switch ev.Op {
+	case OpPlanRead, OpSignalBind:
+		return dataStr(ev, "plan_digest")
+	case OpReplanSignals:
+		if dataStr(ev, "phase") == "signal" {
+			return dataStr(ev, "milestone_digest")
+		}
+	}
+	return ""
+}
+
+// planOccurrence names the occurrence of a plan digest: after the newest observation that stands of another plan. A plan that returns
+// after a signal judged another is a new occurrence, so its trigger is another than the one that signal may have taken.
 func planOccurrence(r rows, ms, digest string) string {
 	superseded := r.supersededAfter()
 	for index := len(r) - 1; index >= 0; index-- {
 		observation := r[index]
 		if observation.Kind != engine.KindCall || observation.Event != engine.EvCompleted ||
-			(observation.Op != OpPlanRead && observation.Op != OpSignalBind) ||
 			dataStr(observation, "milestone") != ms || superseded[observation.CallID] >= observation.Seq {
 			continue
 		}
-		if prior := dataStr(observation, "plan_digest"); prior != "" && prior != digest {
+		if prior := planObserved(observation); prior != "" && prior != digest {
 			return fmt.Sprintf("after:%d", observation.Seq)
 		}
 	}
@@ -340,7 +401,8 @@ func milestoneNodes(r rows, ms string) []string {
 }
 
 // planReadOp is crw.planRead(milestone, node): the plan revision a lane reads before it asks for its release - the digest of the
-// milestone as the relay has it now, and whether it is another than the one the last signal (or the first revision) read. A changed
+// milestone as the relay has it now, and whether it is another than the plan the audited DESIGN stands on (pinnedPlan): the plan the
+// current revision was made for, or the one a later signal judged and kept it for. A changed
 // plan revision is a trigger of the signal path, so the release of the node waits until the signal that comes of it is decided and
 // finds the revision that stands then. The row is the replay: a resume that finds the node released after this position keeps what
 // it read, and so does one that finds a signal row that stands and took the revision it read as a trigger (the signal is replayed
@@ -353,9 +415,12 @@ type PlanSeen struct {
 	Node       string `json:"node"`
 	Digest     string `json:"digest"`
 	Occurrence string `json:"occurrence"`
-	// Base is the plan digest the last signal read, or the one the first revision was made against.
+	// Base is the plan the audited DESIGN stands on (pinnedPlan): the plan crw.release compares the plan it releases under with.
 	Base    string `json:"base"`
 	Changed bool   `json:"changed"`
+	// Judging is the number of the signal in flight (bound, not yet decided) that read this very plan: the read is no trigger of its
+	// own, and the release of the node waits until that signal is decided.
+	Judging int `json:"judging"`
 	// CallID is the position of the read: crw.callFacts says by it whether this process replayed the row.
 	CallID string `json:"call_id"`
 }
@@ -370,10 +435,16 @@ func (o *planReadOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRe
 	if err != nil {
 		return engine.OpResult{}, err
 	}
-	out := PlanSeen{Milestone: ms, Node: node, Digest: digestOf(live), Base: lastPlanDigest(r, ms), CallID: req.CallID}
+	pin, judging, k := planPins(r, ms)
+	out := PlanSeen{Milestone: ms, Node: node, Digest: digestOf(live), Base: pin, CallID: req.CallID}
 	out.Occurrence = planOccurrence(r, ms, out.Digest)
-	out.Changed = out.Base != "" && out.Digest != out.Base
-	return engine.OpResult{Result: result(out), Data: map[string]any{"milestone": ms, "node": node, "plan_digest": out.Digest, "occurrence": out.Occurrence, "base": out.Base, "changed": out.Changed}}, nil
+	switch {
+	case k > 0 && out.Digest == judging:
+		out.Judging = k
+	default:
+		out.Changed = out.Base != "" && out.Digest != out.Base
+	}
+	return engine.OpResult{Result: result(out), Data: map[string]any{"milestone": ms, "node": node, "plan_digest": out.Digest, "occurrence": out.Occurrence, "base": out.Base, "changed": out.Changed, "judging": out.Judging}}, nil
 }
 
 // Proven: the read stands while the node was released after it (the lane went on from what it read), and while a signal row that

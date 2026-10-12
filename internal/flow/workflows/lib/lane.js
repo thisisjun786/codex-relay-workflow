@@ -56,7 +56,8 @@ export function admissionRegions(planRegions, editRegions) {
 
 // The signal path of crw.dag (engine.resume.signals). A lane reports the RECEIPT of each of its executor calls (sig.receipt): that is
 // a trigger, with the digest of the call's result and its place in the journal (crw.callFacts). The plan revision a lane reads before its
-// release (crw.planRead, sig.plan) is a trigger too when it is another than the one the last signal read. One signal path runs at a time, on
+// release (crw.planRead, sig.plan) is a trigger too when it is another than the plan the audited DESIGN stands on (the plan the current
+// revision was made for, or the one a later signal judged and kept it for). One signal path runs at a time, on
 // the path `signals:<milestone>` of the join of the dag; the triggers that arrive while it runs are taken together by the next one.
 // A signal is a position sequence of its own - crw.signalBind (its input: the triggers, in the order of the journal, and the result
 // digest of the signal before it), a join with one item, the child path `signal:<milestone>:<k>`, which runs onSignal, and
@@ -74,7 +75,7 @@ export function admissionRegions(planRegions, editRegions) {
 // whose plan read was a trigger (its own, or the same revision another lane brought first) waits until the signal that took that trigger
 // is decided, whether that signal runs live or is replayed: while a recorded signal waits for its triggers no lane is held otherwise.
 function signalState(planId, opts, nodes) {
-  const S = { queue: [], arrived: {}, taken: {}, takenAt: {}, planWait: {}, finished: {}, live: {}, remaining: nodes.length, lanesDone: nodes.length === 0, halted: false, active: false, replaying: false,
+  const S = { queue: [], arrived: {}, taken: {}, takenAt: {}, planWait: {}, planSignal: {}, finished: {}, live: {}, remaining: nodes.length, lanesDone: nodes.length === 0, halted: false, active: false, replaying: false,
     processed: 0, liveFrom: 0, over: false, waiters: [], recordedPending: !!crw.recordedSignal(opts.milestone, 1), allowed: {}, repump() {}, applyRegions() {} }
   S.notify = () => {
     const ws = S.waiters
@@ -117,8 +118,10 @@ function signalState(planId, opts, nodes) {
       const f = crw.callFacts(res)
       S.arrive({ kind: 'receipt', call: f.callId, node, digest: f.digest, live: f.live, seq: f.seq })
     },
-    // a plan revision the lane read (crw.planRead) that is not the one the last signal read is a trigger, once
+    // a plan revision the lane read (crw.planRead) that is not the one the audited DESIGN stands on is a trigger, once
     plan(read) {
+      // a plan a signal in flight already read is no trigger of its own: the release waits until that signal is decided
+      S.planSignal[node] = read && !read.changed && read.judging > 0 ? read.judging : 0
       if (!read || !read.changed) return
       const f = crw.callFacts(read)
       const call = read.occurrence ? 'plan:' + read.occurrence + ':' + read.digest : 'plan:' + read.digest
@@ -131,14 +134,21 @@ function signalState(planId, opts, nodes) {
 
 const noSignals = { receipt() {}, plan() {} }
 
+// the options of every release of a lane: a compare-and-swap on the plan the audited DESIGN stands on
+const PINNED = { pinned: true }
+
 // admit holds a lane back from its release while a signal is being decided, for a lane that an earlier process released under a
 // revision a signal made until that signal is decided, and for a lane whose plan read was a trigger until the signal that took the
-// trigger is decided. It answers false when the milestone was halted.
-async function admit(S, node) {
-  const prior = crw.priorRelease(node)
+// trigger is decided, or until the signal in flight that read the very plan it read is decided. ask counts the lane's asks for its
+// release: the recorded release is the answer of the ask after its plan_changed refusals, and only that ask waits for the signal of its
+// revision. It answers false when the milestone was halted.
+async function admit(S, node, ask) {
+  // the recorded release is the answer of the ask after the plan_changed refusals before it; an earlier ask replays its refusal
+  const recorded = crw.priorRelease(node)
+  const prior = recorded && (ask || 0) >= (recorded.refused || 0) ? recorded : null
   const planDecided = () => {
     const call = S.planWait[node]
-    return !call || S.over || (S.takenAt[call] > 0 && S.processed >= S.takenAt[call])
+    return (!call || S.over || (S.takenAt[call] > 0 && S.processed >= S.takenAt[call])) && S.decided(S.planSignal[node] || 0)
   }
   while (true) {
     if (S.halted) return false
@@ -238,7 +248,7 @@ async function signalPath(S, ms, onSignal) {
 // A node whose predecessor did not land is not started: its result is blocked. The result is the list of the lanes' results in
 // the order of opts.nodes. The lane function is called with the node, its release and an object whose receipt(result) reports the
 // RECEIPT of an executor call to the signal path (opts.onSignal; a dag without one has none). A node reads the plan (crw.planRead) before
-// its release when there is a signal path.
+// its release when there is a signal path, and every release compares the plan with the one the audited DESIGN stands on.
 export async function dag(planId, lane, opts) {
   const nodes = opts.nodes
   const cap = opts.cap > 0 ? opts.cap : DEFAULT_CAP
@@ -287,9 +297,9 @@ export async function dag(planId, lane, opts) {
   // after the scheduler admitted the node, so the node is checked against the nodes that hold theirs once more.
   const claimed = {}
   const clashes = (n) => nodes.some((o) => o !== n && claimed[o.id] && state[o.id] === 'running' && regionsOverlap(o.regions, n.regions))
-  async function claim(n) {
+  async function claim(n, ask) {
     while (true) {
-      if (!(await admit(S, n.id)) || S.halted) return false
+      if (!(await admit(S, n.id, ask)) || S.halted) return false
       if (S.holds()) continue
       if (!clashes(n)) {
         claimed[n.id] = true
@@ -340,15 +350,25 @@ export async function dag(planId, lane, opts) {
     }
     let out
     try {
-      if (S) {
-        // the plan revision the lane reads before its release: another than the one the last signal read is a trigger, and the
-        // release below waits for the signal that comes of it
-        S.forLane(n.id).plan(await crw.planRead(opts.milestone, n.id))
+      // Every release is a compare-and-swap on the plan the audited DESIGN stands on (crw.release, pinned): a plan that is another at
+      // the moment of the release releases nothing. With a signal path the lane then reads the plan again - another plan is a trigger,
+      // and the release waits for the signal that comes of it, which re-plans and audits a delta for that plan or keeps the revision -
+      // and asks again; without one the node is not released.
+      let rel = null
+      for (let ask = 0; ; ask++) {
+        if (S) {
+          S.forLane(n.id).plan(await crw.planRead(opts.milestone, n.id))
+          if (!(await claim(n, ask))) break
+        }
+        rel = await crw.release(planId, n.id, opts.milestone, PINNED)
+        if (!S || rel.released || rel.reason !== 'plan_changed') break
+        // the node holds no regions while it waits: the revision a re-plan makes may give it others
+        claimed[n.id] = false
+        rel = null
       }
-      if (S && !(await claim(n))) {
+      if (!rel) {
         out = { node: n.id, state: 'halted', reason: 'signal_halt' }
       } else {
-        const rel = await crw.release(planId, n.id, opts.milestone)
         if (!rel.released && rel.kind === 'executor') out = { node: n.id, state: 'unreleased', reason: rel.reason }
         else out = await lane(n, rel, S ? S.forLane(n.id) : noSignals)
       }

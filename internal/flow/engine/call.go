@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/dop251/goja"
 	"github.com/google/jsonschema-go/jsonschema"
@@ -482,6 +483,13 @@ func (c *callRun) terminal(ev, status, reason string, data map[string]any) CallR
 	}
 	if _, ok := data["repair_used"]; !ok && c.repairUsed {
 		data["repair_used"] = true
+	}
+	// the directory of a pinned architect turn is the call's own and goes with its end: the terminal row names it, so its removal is
+	// decided by the row that ends the call - whatever happens after the row (a cancellation, a resume that replays the call), the
+	// journal says the directory is to go (removeOwnDirectory, sweepOwnDirectories). A call whose outcome is unknown names none: a turn
+	// of it may still be at work there.
+	if status != StatusUnknown && c.ownsDirectory() {
+		data[ownDirectoryKey] = c.placement.Path
 	}
 	row := c.event(ev, data)
 	return c.result(status, reason, row.Seq, data)
@@ -1297,13 +1305,68 @@ func (c *callRun) ownDirectory(ctx context.Context) (CallResult, bool) {
 	return CallResult{}, false
 }
 
-// removeOwnDirectory removes the directory of a continuation that ran at a head of its own once the call has its terminal row.
-// A call that has none (its outcome is not known) may still have a turn at work in it and keeps the directory.
+// ownDirectoryKey is the key of a terminal row that names the directory of the call's own it ends (CRW-1202).
+const ownDirectoryKey = "own_directory"
+
+// EvOwnDirectoryKept is the flow row of a directory a terminal row names that could not be removed: the next resume removes it again.
+const EvOwnDirectoryKept = "own_directory_kept"
+
+// ownDirectoryWait bounds the removal of a directory of a call's own: it does not depend on the run's context, which a cancellation
+// right after the terminal row ends.
+const ownDirectoryWait = 30 * time.Second
+
+// removeOwnDirectory removes the directory of a continuation that ran at a head of its own once the call has its terminal row, which
+// names it. A call that has none (its outcome is not known) may still have a turn at work in it and keeps the directory.
 func (c *callRun) removeOwnDirectory(res CallResult) {
 	if !c.ownsDirectory() || res.Status == StatusUnknown {
 		return
 	}
-	if r, ok := c.e.cfg.Backend.(DirRemover); ok {
-		_ = r.RemoveDir(c.e.ctx, c.placement.Path)
+	c.e.removeOwnDirectory(c.id, c.placement.Path)
+}
+
+// removeOwnDirectory removes a directory a terminal row names, with a context of its own; a removal that fails is journaled
+// (own_directory_kept) and is made again by the next resume. Removing a directory that is not there is nothing.
+func (e *Engine) removeOwnDirectory(callID, path string) {
+	r, ok := e.cfg.Backend.(DirRemover)
+	if !ok || path == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(e.ctx), ownDirectoryWait)
+	defer cancel()
+	if err := r.RemoveDir(ctx, path); err != nil {
+		e.j.Append(Event{RunID: e.runID, Kind: KindFlow, CallID: callID, Op: "agent", Event: EvOwnDirectoryKept, Data: map[string]any{"call_id": callID, "path": path, "error": err.Error()}})
+	}
+}
+
+// sweepOwnDirectories is the part of a resume that removes the directories the terminal rows of the earlier processes name: a
+// cancellation right after the row, or a removal that failed, left it there, and a resume that replays the call, runs it again in a
+// directory of its own, or never reaches it again removes it all the same. The directory a call is still at work in - a call whose
+// newest state is not a terminal row, or an unknown outcome (a held call that went on in place uses the directory its held row named)
+// - is kept.
+func (e *Engine) sweepOwnDirectories() {
+	if _, ok := e.cfg.Backend.(DirRemover); !ok || e.prior == nil {
+		return
+	}
+	for _, id := range e.prior.order {
+		rows := e.prior.rowsOf(id, "agent")
+		inUse := ""
+		if term := lastTerminal(rows); term.Event == "" || term.Event == EvOutcomeUnknown {
+			for _, ev := range rows {
+				if ev.Event == EvPrepared {
+					if m, ok := ev.Data["allocation"].(map[string]any); ok {
+						inUse = rowStr(m, "path")
+					}
+				}
+			}
+		}
+		done := map[string]bool{}
+		for _, ev := range rows {
+			path := rowStr(ev.Data, ownDirectoryKey)
+			if !isTerminal(ev.Event) || path == "" || path == inUse || done[path] {
+				continue
+			}
+			done[path] = true
+			e.removeOwnDirectory(id, path)
+		}
 	}
 }

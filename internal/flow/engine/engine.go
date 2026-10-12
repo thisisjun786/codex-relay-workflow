@@ -286,6 +286,7 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 			e.startSeq = seq + 1
 		}
 		e.prior = newPriorIndex(e.j, e.startSeq)
+		e.sweepOwnDirectories()
 	}
 	e.noteSummaryDocument()
 	if cfg.Upward != nil {

@@ -1,6 +1,7 @@
 package agent_test
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/backend/agent"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 )
 
@@ -125,5 +127,44 @@ func TestArchitectTurnWorktreeRecreatedOnResume(t *testing.T) {
 	// the call's directory is never shared: the call after it, run again, has one of its own
 	if _, err := os.Stat(filepath.Join(filepath.Dir(otherDir), "wt-1")); err != nil {
 		t.Errorf("the worktree of the call after the reflection, made again: %v", err)
+	}
+}
+
+// The path of a directory the engine asks the allocator to remove comes from the journal (the terminal row that names it): only a
+// call-private directory of the run is removed, never another path a row could name (CRW-1202, the cleanup a resume makes again).
+func TestRemoveDirTakesOnlyACallDirectoryOfTheRun(t *testing.T) {
+	root := t.TempDir()
+	state := filepath.Join(root, "state")
+	var gitCalls int
+	alloc, err := agent.NewAllocator(agent.AllocatorConfig{Repo: root, StateDir: state, RunID: "run-x",
+		Base: func(string) (string, error) { return "", nil },
+		Git: func(context.Context, string, []string, ...string) (string, error) {
+			gitCalls++
+			return "", nil
+		}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(root, "repo")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{outside, filepath.Join(state, "flow", "run-y", "calls", "c1", "wt"), filepath.Join(state, "flow", "run-x", "calls", "..", "wt", "A")} {
+		if err := alloc.RemoveDir(context.Background(), path); err == nil {
+			t.Errorf("RemoveDir(%s) was accepted", path)
+		}
+	}
+	own := alloc.CallPath("c1")
+	if err := alloc.RemoveDir(context.Background(), own); err != nil || gitCalls != 0 {
+		t.Errorf("a call directory that is not there: err=%v git calls=%d", err, gitCalls)
+	}
+	if err := os.MkdirAll(own, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := alloc.RemoveDir(context.Background(), own); err != nil || gitCalls != 1 {
+		t.Errorf("the call directory of the run: err=%v git calls=%d", err, gitCalls)
+	}
+	if _, err := os.Stat(outside); err != nil {
+		t.Errorf("the path outside is gone: %v", err)
 	}
 }

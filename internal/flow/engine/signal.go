@@ -21,6 +21,8 @@ const (
 	opSignalBind  = "crw.signalBind"
 	opRelease     = "crw.release"
 	opDesignLedge = "crw.designLedger"
+	// releasePlanChanged is the reason of a release that compared another plan than the one the audited DESIGN stands on
+	releasePlanChanged = "plan_changed"
 )
 
 // signalFacts are the calls this process replayed from the journal of an earlier one.
@@ -164,6 +166,9 @@ func (s *scriptVM) recordedSignal(call goja.FunctionCall) goja.Value {
 // priorRelease is crw.priorRelease(node): the release of the node that an earlier process recorded and the journal still stands
 // on, with the revision it was made under and the signal that made that revision (0 for a revision the first design made), or
 // null. A lane released under a revision a signal made waits for that signal to be decided before it goes on (crw:lib/lane).
+// refused counts the releases of the lane's path before it that compared another plan (plan_changed): the lane asked again after
+// each of them, and only the ask the release answered waits for that signal - the signal may be the one a later plan read of the
+// lane brought.
 func (s *scriptVM) priorRelease(call goja.FunctionCall) goja.Value {
 	node := call.Argument(0).String()
 	if s.e.cfg.Resume == nil {
@@ -180,7 +185,21 @@ func (s *scriptVM) priorRelease(call goja.FunctionCall) goja.Value {
 	}); ok {
 		signal = rowInt(led.Data, "signal")
 	}
-	return s.fromJSON(mustJSON(map[string]any{"node": node, "revision": rev, "signal": signal, "call": rel.CallID}))
+	refused := 0
+	superseded := map[string]int{}
+	events := s.e.j.Events()
+	for _, ev := range events {
+		if ev.Kind == KindCall && ev.Event == EvSuperseded && ev.Seq > superseded[ev.CallID] {
+			superseded[ev.CallID] = ev.Seq
+		}
+	}
+	for _, ev := range events {
+		if ev.Kind == KindCall && ev.Op == opRelease && ev.Event == EvCompleted && superseded[ev.CallID] <= ev.Seq && ev.Path == rel.Path &&
+			ev.Position < rel.Position && rowStr(ev.Data, "node") == node && rowStr(ev.Data, "reason") == releasePlanChanged {
+			refused++
+		}
+	}
+	return s.fromJSON(mustJSON(map[string]any{"node": node, "revision": rev, "signal": signal, "call": rel.CallID, "refused": refused}))
 }
 
 // standingOrAnyRow is the newest completed row of an op that satisfies keep, whether or not a resume superseded it: what a

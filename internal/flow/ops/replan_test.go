@@ -609,3 +609,68 @@ func TestFirstRevisionRecordsTheHeadTheDesignRanAt(t *testing.T) {
 		})
 	}
 }
+
+// A release the lane makes (pinned) is a compare-and-swap on the plan the audited DESIGN stands on: the plan its revision was made for,
+// moved only by a signal that judged another plan and kept the revision. A plan that a signal in flight has read but not decided is no
+// trigger of its own (the read waits for that signal) and releases nothing either (CRW-1202, verifier rf4).
+func TestReleaseIsACompareAndSwapOnThePinnedPlan(t *testing.T) {
+	w := newWorld(t)
+	w.relay.plan = planOfNodes(map[string]string{"A": "a1", "B": "b1"}, "A", "B")
+	w.ledgered(true, designOf("A", "B"))
+	pinned := map[string]any{"pinned": true}
+	release := func(node string) ReleaseOutcome {
+		t.Helper()
+		var rel ReleaseOutcome
+		_ = json.Unmarshal(w.must("release", "plan-1", node, "M", pinned), &rel)
+		return rel
+	}
+	read := func(node string) PlanSeen {
+		t.Helper()
+		var seen PlanSeen
+		_ = json.Unmarshal(w.must("planRead", "M", node), &seen)
+		return seen
+	}
+	if rel := release("A"); !rel.Released {
+		t.Fatalf("the plan the revision was made for: %+v", rel)
+	}
+	w.receipt("c_a1", "A", "")
+	w.relay.plan = planOfNodes(map[string]string{"A": "a1", "B": "b2"}, "A", "B")
+	refused := release("B")
+	if refused.Released || refused.Reason != ReasonPlanChanged || len(w.relay.releases) != 1 {
+		t.Fatalf("a release under another plan: %+v, relay releases %d", refused, len(w.relay.releases))
+	}
+	ev := w.j.Events()
+	refusedRow := ev[len(ev)-1]
+	if dataStr(refusedRow, "revision") != "" || dataStr(refusedRow, "plan_digest") == dataStr(refusedRow, "pinned_plan") {
+		t.Errorf("the refused row: %v", refusedRow.Data)
+	}
+	if ok, why, _ := (&releaseOp{w.lane}).Proven(context.Background(), w.j.Events(), refusedRow); !ok {
+		t.Errorf("a plan_changed refusal is the decision of its moment and replays: %s", why)
+	}
+	if seen := read("B"); !seen.Changed || seen.Judging != 0 {
+		t.Fatalf("the plan after the refusal is a trigger: %+v", seen)
+	}
+	// a signal in flight read the plan: the read waits for it, and nothing is released before it is decided
+	w.signal(1, "c_a1")
+	if seen := read("B"); seen.Changed || seen.Judging != 1 {
+		t.Fatalf("a plan the signal in flight read: %+v", seen)
+	}
+	if rel := release("B"); rel.Released || rel.Reason != ReasonPlanChanged {
+		t.Fatalf("released under a plan no signal decided yet: %+v", rel)
+	}
+	// the signal judges the plan, finds no reason (one of two nodes changed is 50%: a halt or a re-plan would follow; here the decision
+	// keeps the revision) and the pin moves to the plan it judged
+	w.numbers(ReplanOpts{Phase: "signal", Signal: 1})
+	w.must("signalDone", "M", 1, SignalOutcome{Result: SignalContinue})
+	if seen := read("B"); seen.Changed || seen.Judging != 0 {
+		t.Fatalf("the plan the decided signal judged: %+v", seen)
+	}
+	if rel := release("B"); !rel.Released {
+		t.Fatalf("the plan the signal judged and kept the revision for: %+v", rel)
+	}
+	// a plan after it is refused again
+	w.relay.plan = planOfNodes(map[string]string{"A": "a3", "B": "b2"}, "A", "B")
+	if rel := release("A"); rel.Released || rel.Reason != ReasonPlanChanged {
+		t.Fatalf("a plan after the judged one: %+v", rel)
+	}
+}

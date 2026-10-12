@@ -488,7 +488,13 @@ func (a *Allocator) WorktreeExists(path string) bool {
 
 // RemoveDir removes the worktree of a call that has its terminal row: the architect turn at a fixed head reads its worktree
 // only while it runs, and a resume that runs the same call again makes it again at the head the call's row records.
+//
+// The path comes from the journal (the terminal row that names it): only a call-private directory of this run is removed.
 func (a *Allocator) RemoveDir(ctx context.Context, path string) error {
+	calls := filepath.Join(a.cfg.StateDir, "flow", a.cfg.RunID, "calls") + string(filepath.Separator)
+	if clean := filepath.Clean(path); !strings.HasPrefix(clean, calls) || strings.Contains(strings.TrimPrefix(clean, calls), "..") {
+		return fmt.Errorf("%s is not a call directory of run %s", path, a.cfg.RunID)
+	}
 	if _, err := os.Lstat(path); err != nil {
 		return nil
 	}

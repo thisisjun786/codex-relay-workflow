@@ -344,12 +344,27 @@ func ledgerOf(r rows, ms, revision string) (engine.Event, bool) {
 
 // ---- crw.release ----
 
-// releaseOp is crw.release(plan, node, milestone): the release of an issue node to an executor of the run, under the milestone's
+// releaseOp is crw.release(plan, node, milestone, opts): the release of an issue node to an executor of the run, under the milestone's
 // ledger revision. It refuses to release a node whose DESIGN has no approved audit - the structural guarantee that no executor
 // starts before the audit passed - and a node whose issue the architect sized for a child or a split is not released to an
 // executor at all (the lane releases the child or escalates). The row it writes names the revision and the digest: the packet of
 // the lane is built from them, and the input snapshot of every call of the node carries them.
+//
+// With opts.pinned (crw.dag passes it on every release of a lane, CRW-1202) the release is a compare-and-swap on the plan the audited
+// DESIGN stands on (pinnedPlan): the plan the relay has now is compared with it at the moment of the release, before the relay is asked
+// and before the node's size is read, and a node whose plan is another is not released (reason plan_changed). The lane then reads the
+// plan again - a trigger of the signal path - and asks again once the signal that comes of it re-planned and audited a delta for that
+// plan (or judged it and kept the revision).
 type releaseOp struct{ l *Lane }
+
+// ReleaseOpts are the options of crw.release.
+type ReleaseOpts struct {
+	// Pinned makes the release a compare-and-swap on the plan the audited DESIGN stands on.
+	Pinned bool `json:"pinned"`
+}
+
+// ReasonPlanChanged is the reason of a pinned release whose plan is not the one the audited DESIGN stands on.
+const ReasonPlanChanged = "plan_changed"
 
 // ReleaseOutcome is the answer of crw.release.
 type ReleaseOutcome struct {
@@ -364,8 +379,9 @@ type ReleaseOutcome struct {
 
 func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResult, error) {
 	var plan, node, ms string
-	if err := args(req.Args, &plan, &node, &ms); err != nil {
-		return engine.OpResult{}, fmt.Errorf("crw.release(plan, node, milestone): %w", err)
+	var opts ReleaseOpts
+	if err := args(req.Args, &plan, &node, &ms, &opts); err != nil {
+		return engine.OpResult{}, fmt.Errorf("crw.release(plan, node, milestone, opts): %w", err)
 	}
 	r := rows(req.Journal.Events())
 	led, ok := currentLedger(r, ms)
@@ -392,6 +408,30 @@ func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRes
 		out.Reason = "node_not_designed"
 		return finish()
 	}
+	// the plan as the relay has it now: the compare-and-swap of a pinned release, and the slice the release records
+	var now *Milestone
+	readNow := func() (Milestone, error) {
+		if now == nil {
+			m, err := o.l.liveMilestone(ctx, plan, ms)
+			if err != nil {
+				return Milestone{}, err
+			}
+			now = &m
+		}
+		return *now, nil
+	}
+	if opts.Pinned {
+		m, err := readNow()
+		if err != nil {
+			return engine.OpResult{}, err
+		}
+		live, pinned := digestOf(m), pinnedPlan(r, ms)
+		data["plan_digest"], data["pinned_plan"] = live, pinned
+		if live != pinned {
+			out.Reason = ReasonPlanChanged
+			return finish()
+		}
+	}
 	// A node that was released under a revision a resume superseded, whose slice of the plan is not the one the revision that stands
 	// was made against, and that a landed acceptance rests on, is not released again: the route is a plan revision with update_node
 	// or dag-correct, as for any accepted node whose spec changed.
@@ -411,11 +451,11 @@ func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRes
 	// the one a later revision of the ledger is compared with (a node whose slice another revision was not made against is not kept
 	// under it)
 	mnode, planned := planNodeOf(r, plan, ms, node)
-	now, err := o.l.liveMilestone(ctx, plan, ms)
+	m, err := readNow()
 	if err != nil {
 		return engine.OpResult{}, err
 	}
-	slice, live := liveSlices(now)[node]
+	slice, live := liveSlices(m)[node]
 	if !live && planned {
 		// the plan the relay reads has dropped the node: nothing is released, and no slice of the plan the run read first stands in for
 		// the one the node no longer has
@@ -448,6 +488,11 @@ func (o *releaseOp) Proven(ctx context.Context, ev []engine.Event, row engine.Ev
 		// of the ledger revision it names, which does not change, and the child's start has a row of its own (crw.releaseChild).
 		// Asking again would start the child again.
 		if k := dataStr(row, "kind"); k == "child" || k == "split" {
+			return true, "", nil
+		}
+		// a pinned release whose plan was not the one the audited DESIGN stood on is the decision of that moment: the lane read the
+		// plan again after it, and the positions it went on with are what a resume replays
+		if dataStr(row, "reason") == ReasonPlanChanged {
 			return true, "", nil
 		}
 		// a node the scheduler held back may be releasable now: the position asks again
