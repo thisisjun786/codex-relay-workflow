@@ -58,8 +58,8 @@ func TestChildPushGuardLegReadsTheRelayStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, c := range []struct{ session, cwd, command, want string }{
-		{"kid", kid, "git push origin HEAD:dev", "통합은 부모·통합기 몫"}, {"kid", kid, "git push origin r2-x", ""}, {"kid", kid, "git push -u origin HEAD", ""},
-		{"par", parent, "git push origin HEAD:dev", ""}, {"kid", parent, "git push origin dev", "no branch of its own"},
+		{"kid", kid, "git push origin HEAD:dev", "통합은 부모·통합기 몫"}, {"kid", kid, "git push origin HEAD:r2-x", ""}, {"kid", kid, "git push -u origin HEAD", "names no destination"},
+		{"par", parent, "git push origin HEAD:dev", ""}, {"kid", parent, "git push origin HEAD:dev", "no branch of its own"},
 	} {
 		if out := answer(c.session, c.cwd, c.command); c.want == "" && out != "" || !strings.Contains(out, c.want) || c.want != "" && !strings.Contains(out, `"permissionDecision":"deny"`) {
 			t.Errorf("%s in %s: %s: %s", c.session, c.cwd, c.command, out)

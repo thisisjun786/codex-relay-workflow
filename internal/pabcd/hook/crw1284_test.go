@@ -16,7 +16,7 @@ func cpScene(t *testing.T) string {
 	t.Helper()
 	dir := cleanTempDir(t)
 	for name, body := range map[string]string{"w.sh": "#!/bin/bash\nexec nice \"$@\"\n", "dev.sh": "#!/bin/bash\ngit push origin HEAD:dev\n",
-		"own.sh": "#!/bin/bash\ngit push origin " + cpOwn + "\n", "p.py": "import subprocess\nsubprocess.run(['git', 'push', 'origin', 'HEAD:dev'])\n"} {
+		"own.sh": "#!/bin/bash\ngit push origin HEAD:" + cpOwn + "\n", "p.py": "import subprocess\nsubprocess.run(['git', 'push', 'origin', 'HEAD:dev'])\n"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o755); err != nil {
 			t.Fatal(err)
 		}
@@ -39,7 +39,7 @@ func cpAnswer(t *testing.T, cwd, command string, b ChildPushBinding, asked *int)
 var cpRefused = []string{"git push origin HEAD:dev", "git push origin r2-f01:dev", "git push origin r2-f01:refs/heads/dev", "git push origin +HEAD:dev",
 	"git push -f origin HEAD:dev", "git push --force origin HEAD:main", "git push origin dev", "git push origin :dev", "git push --delete origin dev",
 	"git push --all origin", "git push --mirror origin", "git push --tags origin", "git push upstream HEAD:dev", "git push ../origin.git HEAD:dev",
-	"git push origin r2-f01 HEAD:dev", "git push origin 'refs/heads/*:refs/heads/*'", "git push origin :", "git push origin HEAD:heads/dev",
+	"git push origin r2-f01 HEAD:dev", "git push origin r2-f01", "git push -u origin HEAD", "git push --delete origin r2-f01", "git push origin +r2-f01", "git push origin 'refs/heads/*:refs/heads/*'", "git push origin :", "git push origin HEAD:heads/dev",
 	"git push", "git push origin", "git push -u origin", "git push --repo=origin HEAD:dev", "git push --receive-pack=x origin r2-f01",
 	"git -C ../repo push origin HEAD", "cd /tmp && git push origin HEAD", "git push origin HEAD:refs/tags/v1", "git push -uf origin HEAD:dev",
 	"nice git push origin HEAD:dev", "env X=1 git push origin HEAD:dev", "timeout 60 git push origin HEAD:dev", "/usr/bin/git push origin HEAD:dev",
@@ -47,9 +47,10 @@ var cpRefused = []string{"git push origin HEAD:dev", "git push origin r2-f01:dev
 	"bash w.sh git push origin r2-f01", "./w.sh git push origin r2-f01", "bash dev.sh", "./dev.sh", "sh dev.sh", "python3 p.py", "ssh h git push origin HEAD:dev",
 	"python3 -c \"import subprocess; subprocess.run(['git','push','origin','HEAD:dev'])\"", "git push origin \"$BRANCH\"", "git push origin HEAD:$B", "eval \"$X\""}
 
-var cpOwnForms = []string{"git push origin r2-f01", "git push -u origin HEAD", "git push origin HEAD:r2-f01", "git push --force-with-lease origin r2-f01",
-	"git push origin +r2-f01", "git push origin HEAD:refs/heads/r2-f01", "git push upstream r2-f01", "git push -o ci.skip origin r2-f01", "git push -- origin r2-f01",
-	"nice git push origin r2-f01", "bash own.sh", "./own.sh", "git push --delete origin r2-f01", "git push -uq origin HEAD"}
+var cpOwnForms = []string{"git push origin HEAD:r2-f01", "git push -u origin HEAD:r2-f01", "git push origin r2-f01:r2-f01", "git push --force-with-lease origin HEAD:r2-f01",
+	"git push origin +HEAD:r2-f01", "git push origin HEAD:refs/heads/r2-f01", "git push upstream HEAD:r2-f01", "git push -o ci.skip origin HEAD:r2-f01",
+	"git push -- origin HEAD:r2-f01", "nice git push origin HEAD:r2-f01", "bash own.sh", "./own.sh", "git push origin :r2-f01", "git push -uq origin HEAD:r2-f01",
+	"cd /tmp && git push origin HEAD:r2-f01"}
 
 // TestChildPushToIntegrationBranchRefused: in a relay child session every push to another branch than its own is refused, through a
 // wrapper, a script and any remote, and a push the reader cannot read is refused (fail-closed).
@@ -116,7 +117,7 @@ func TestCRW1284ChildPushFuzz(t *testing.T) {
 	g := &fzGuard{name: "childpush", dir: dir, t: t, refused: func(c string) bool { return HandleChildPushGuard(gateBash(t, dir, c), child) != "" },
 		payloads: []fzPayload{{"head-dev", "git push origin HEAD:dev", "git", true}, {"force", "git push -f origin +r2-f01:dev", "git", true},
 			{"all", "git push --all origin", "git", true}, {"mirror", "git push --mirror origin", "git", true}, {"remote", "git push upstream HEAD:main", "git", true},
-			{"own", "git push origin r2-f01", "git", false}, {"go-version", "go version", "go", false}, {"true", "true", "true", false}}}
+			{"own", "git push origin HEAD:r2-f01", "git", false}, {"go-version", "go version", "go", false}, {"true", "true", "true", false}}}
 	g.setup()
 	all, counts := g.forms()
 	stats := map[string]int{}
@@ -134,7 +135,7 @@ func TestCRW1284ChildPushFuzz(t *testing.T) {
 	if len(all) != 7640 || stats["target/allow"]+stats["ownlimit/allow"] != 0 {
 		t.Errorf("%d forms, pinned 7640", len(all))
 	}
-	for _, c := range []string{"git push origin r2-f01", "ionice -c3 nice -n 5 git push origin r2-f01", "bash own.sh", "env X=1 go version"} {
+	for _, c := range []string{"git push origin HEAD:r2-f01", "ionice -c3 nice -n 5 git push origin HEAD:r2-f01", "bash own.sh", "env X=1 go version"} {
 		if g.refused(c) {
 			t.Errorf("a relay child is refused its own branch or a command without a push: %s", c)
 		}

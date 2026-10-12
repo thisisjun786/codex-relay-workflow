@@ -248,9 +248,9 @@ GUI Runs page and Linear show the progress; the line is not mirrored into a plan
 The relay child push guard (`pre-tool-use-guarding-child-push`, CRW-1284) is a `PreToolUse` hook on the same shell tools, 10
 seconds, `(crw) Guarding relay child pushes`. A relay child does not integrate: integration is the parent's and the integrator's
 (통합은 부모·통합기 몫). In a session the relay store names as the child of a relationship (the store the completion hook's
-settings select), the leg refuses every `git push` whose destination is not the child's own branch (the branch its checkout has,
-when the parent's checkout has another): `HEAD:dev`, `src:dev`, a pattern, `--all`, `--mirror`, `--tags`, a push without a refspec,
-through any remote. It reads the command as the other guards do (program wrappers and readable scripts are read; a `"$@"`
+settings select), the leg refuses every `git push` whose refspecs do not each name the child's own branch as their destination (the branch its
+checkout has, when the parent's checkout has another; `git push origin HEAD:<branch>`): `HEAD:dev`, `src:dev`, a pattern, `--all`,
+`--mirror`, `--tags`, a refspec without a destination (which `remote.<name>.push` can map onto `dev`), through any remote. It reads the command as the other guards do (program wrappers and readable scripts are read; a `"$@"`
 forwarder, a word or text the reader cannot read, a program that spells `push` and a relay record that cannot be read are refused).
 It reads the relay store only for a command that pushes or cannot be read, and judges nothing in any other session.
 

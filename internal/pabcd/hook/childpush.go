@@ -1,15 +1,15 @@
 package hook
 
 // The relay child push guard (CRW-1284). In a relay child session a git push may move only the child's own branch: integration is
-// the parent's and the integrator's. A push whose destination is another branch (HEAD:dev, src:dev, a pattern, --all, --mirror, a
-// push whose destination git configuration decides) is refused, through any remote. The command is read with the shared reader as
+// the parent's and the integrator's. Every refspec must name the own branch as its destination (HEAD:own); any other push (HEAD:dev,
+// src:dev, a pattern, --all, --mirror, a refspec without a destination, which remote.<name>.push may map onto dev) is refused,
+// through any remote. The command is read with the shared reader as
 // the other guards read it (CRW-1283): a program wrapper is read; a script file a shell runs, or one run by its path, is read; a
 // "$@" forwarder, a word or text the reader cannot read, and a program file or inline program that spells push are refused. A
 // session the relay does not know as a child (a parent, an integrator) is not judged.
 
 import (
 	"context"
-	"path/filepath"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/gitprobe"
@@ -63,14 +63,14 @@ func HandleChildPushGuard(raw string, bind func(session, cwd string) ChildPushBi
 	}
 	for _, push := range s.pushes {
 		if s.why == "" {
-			s.why = childPushJudge(push, b.Own, cwd)
+			s.why = childPushJudge(push, b.Own)
 		}
 	}
 	if s.why == "" {
 		return ""
 	}
 	reason := "[crw CHILD-PUSH-GUARD] 통합은 부모·통합기 몫 (integration is the parent's and the integrator's): a relay child pushes only its own branch, " +
-		"named in a direct git push (git push origin " + b.Own + "). Refused: " + s.why + "."
+		"named as the destination of a direct git push (git push origin HEAD:" + b.Own + "). Refused: " + s.why + "."
 	return editAnswer("deny", reason, reason)
 }
 
@@ -91,7 +91,7 @@ func ChildPushOwnBranch(ctx context.Context, cwd, parent string) string {
 		return strings.TrimSpace(string(out))
 	}
 	own := branch(cwd)
-	if own != "" && parent != "" && branch(parent) == own {
+	if own != "" && parent != "" && strings.EqualFold(branch(parent), own) {
 		return ""
 	}
 	return own
@@ -104,12 +104,10 @@ type childPushScan struct {
 	why    string
 }
 
-// childPush is one git push: its words after push, where it runs, and whether -C, --git-dir, --work-tree or --namespace points it
-// at another repository, or find or xargs gives it words.
+// childPush is one git push: its words after push, and whether find or xargs gives it words.
 type childPush struct {
-	args            []shellir.Word
-	dir             shellir.Dir
-	elsewhere, feed bool
+	args []shellir.Word
+	feed bool
 }
 
 func (s *childPushScan) text(command, cwd string, depth int, outer *githubPostWrites, cdpath bool) {
@@ -198,22 +196,17 @@ func childPushInterpreter(name string) bool {
 
 // git records a git execution whose subcommand is push.
 func (s *childPushScan) git(e shellir.Exec) {
-	elsewhere := false
 	for i := 0; i < len(e.Args); i++ {
 		v := e.Args[i].Value
 		switch {
 		case !e.Args[i].Known:
 			s.why = "a git argument cannot be read"
 			return
-		case v == "-C" || v == "--git-dir" || v == "--work-tree" || v == "--namespace":
-			elsewhere = true
-			i++
-		case v == "-c" || v == "--super-prefix":
+		case v == "-C" || v == "--git-dir" || v == "--work-tree" || v == "--namespace" || v == "-c" || v == "--super-prefix":
 			i++
 		case strings.HasPrefix(v, "-"):
-			elsewhere = elsewhere || strings.HasPrefix(v, "--git-dir=") || strings.HasPrefix(v, "--work-tree=") || strings.HasPrefix(v, "--namespace=")
 		case v == "push":
-			s.pushes = append(s.pushes, childPush{args: e.Args[i+1:], dir: e.Dir, elsewhere: elsewhere, feed: e.Ctx.Feed != nil})
+			s.pushes = append(s.pushes, childPush{args: e.Args[i+1:], feed: e.Ctx.Feed != nil})
 			return
 		default:
 			return
@@ -228,8 +221,8 @@ var childPushFlags = map[string]bool{"--set-upstream": true, "--force": true, "-
 	"--dry-run": true, "--porcelain": true, "--atomic": true, "--no-atomic": true, "--no-verify": true, "--verify": true, "--thin": true,
 	"--no-thin": true, "--ipv4": true, "--ipv6": true, "--delete": true, "--recurse-submodules=no": true, "--recurse-submodules=check": true}
 
-// childPushJudge is why one push is refused for a child whose own branch is own in cwd, or "" when it pushes own only.
-func childPushJudge(p childPush, own, cwd string) string {
+// childPushJudge is why one push is refused for a child whose own branch is own, or "" when it pushes own only.
+func childPushJudge(p childPush, own string) string {
 	if own == "" {
 		return "this session has no branch of its own (its checkout has none, or the parent's checkout has the same)"
 	}
@@ -272,20 +265,13 @@ func childPushJudge(p childPush, own, cwd string) string {
 	for _, ref := range operands[1:] {
 		src, dst, colon := strings.Cut(strings.TrimPrefix(ref, "+"), ":")
 		switch {
-		case strings.ContainsAny(ref, "*") || strings.HasPrefix(src, "^"):
+		case strings.Contains(ref, "*") || strings.HasPrefix(src, "^"):
 			return "the refspec " + ref + " is a pattern"
-		case !colon && (src == "HEAD" || src == "@"):
-			// HEAD is the branch checked out where git runs, which is own only in the session's own checkout
-			if p.elsewhere || !p.dir.Known || filepath.Clean(p.dir.Path) != filepath.Clean(cwd) {
-				return "HEAD names the branch of another checkout"
-			}
 		case !colon:
-			dst = src
-			fallthrough
-		default:
-			if strings.TrimPrefix(dst, "refs/heads/") != own {
-				return "git push " + operands[0] + " " + ref + " does not push " + own
-			}
+			// without a destination, remote.<name>.push (or push.default) decides where src goes
+			return "the refspec " + ref + " names no destination, which git configuration then chooses"
+		case strings.TrimPrefix(dst, "refs/heads/") != own:
+			return "git push " + operands[0] + " " + ref + " does not push " + own
 		}
 	}
 	return ""
