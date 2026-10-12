@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"unsafe"
@@ -16,6 +18,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/service"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -226,5 +229,134 @@ func TestReadOnlyChildBlockedReachesTheParent(t *testing.T) {
 	var recipient, status string
 	if err := database.Q(context.Background()).QueryRowContext(context.Background(), "SELECT recipient_thread_id,state FROM deliveries").Scan(&recipient, &status); err != nil || recipient != "01parent-task" || status != "dispatched" || host.Count("turn/start") != 1 {
 		t.Fatalf("parent did not receive blocked report: %s %s %v, calls %v", recipient, status, err, host.Requests())
+	}
+}
+
+var blockedEmit = []string{"emit", "--relationship", "rel-1", "--generation", "1", "--outcome", "blocked_needs_input", "--turn-thread", "01child-task", "--turn-id", "turn-dispatch-1", "--turn-status", "completed"}
+
+// childIn runs the relay CLI as a readOnly child in its own working directory, env added to its environment.
+func childIn(t *testing.T, dir string, env []string, args ...string) (map[string]any, error) {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], append([]string{"relay"}, args...)...)
+	cmd.Dir, cmd.Env = dir, append(append(os.Environ(), "CRW_READONLY_CHILD_BINARY="+suiteBinary), env...)
+	raw, err := cmd.CombinedOutput()
+	var result map[string]any
+	if decodeErr := json.Unmarshal(raw, &result); decodeErr != nil {
+		t.Fatalf("child output %s: %v (%v)", raw, decodeErr, err)
+	}
+	return result, err
+}
+
+// CRW-1286: the relay daemon alone decides where a child report is recorded. The child's state selection, a flag
+// absolute or relative to its own directory or its environment, only finds the daemon's socket; the daemon, in
+// another directory with its own environment naming another state, records the report in its own store.
+func TestChildReportStateLocationIsTheDaemons(t *testing.T) {
+	for _, selection := range []struct {
+		name      string
+		args, env []string
+	}{{"absolute-flag", []string{"--state", ""}, nil}, {"relative-flag", []string{"--state", "state"}, nil}, {"child-environment", nil, []string{store.StateEnv + "="}}} {
+		t.Run(selection.name, func(t *testing.T) {
+			state, database, host := blockedChildWorld(t)
+			decoy := t.TempDir()
+			t.Setenv(store.StateEnv, decoy)
+			control, err := service.ListenControlStore(context.Background(), state, database, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer control.Close()
+			args, env := slices.Clone(selection.args), slices.Clone(selection.env)
+			if len(args) > 0 && args[1] == "" {
+				args[1] = state
+			}
+			if len(env) > 0 {
+				env[0] += state
+			}
+			result, err := childIn(t, filepath.Dir(state), env, append(append(args, "--socket", host.SocketPath), blockedEmit...)...)
+			if err != nil || countRows(t, database, "SELECT COUNT(*) FROM events WHERE outcome='blocked_needs_input'") != 1 {
+				t.Fatalf("the child's report is not in the daemon's store: %v %v", result, err)
+			}
+			if _, err := os.Stat(filepath.Join(decoy, "relay.sqlite3")); !os.IsNotExist(err) {
+				t.Fatalf("a relay store was made where the daemon's environment points: %v", err)
+			}
+		})
+	}
+}
+
+// CRW-1286: a request that reaches the daemon naming another state, an initialized store holding the same
+// relationship or a path relative to the child, cannot redirect the record: the daemon records it in its own store.
+func TestAChildStateSelectionCannotRedirectTheDaemonsRecord(t *testing.T) {
+	for _, named := range []string{"other", "state"} {
+		t.Run(named, func(t *testing.T) {
+			state, database, host := blockedChildWorld(t)
+			otherRoot := t.TempDir()
+			other := seedIntake(t, filepath.Join(otherRoot, "state", "relay.sqlite3"), otherRoot)
+			if named == "other" {
+				named = filepath.Dir(other.Path)
+			}
+			control, err := service.ListenControlStore(context.Background(), state, database, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer control.Close()
+			address, release, err := hook.ControlAddress(filepath.Join(state, "control.sock"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer release()
+			conn, err := net.Dial("unix", address)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer conn.Close()
+			argv := append([]string{"--state", named, "--socket", host.SocketPath}, blockedEmit...)
+			request, _ := json.Marshal(map[string]any{"protocol": 1, "method": "child-command", "program": "crw", "argv": argv})
+			var answer map[string]any
+			if _, err := conn.Write(append(request, '\n')); err != nil || json.NewDecoder(conn).Decode(&answer) != nil {
+				t.Fatalf("no answer: %v %v", answer, err)
+			}
+			if countRows(t, database, "SELECT COUNT(*) FROM events") != 1 || countRows(t, other, "SELECT COUNT(*) FROM events") != 0 {
+				t.Fatalf("the child's --state %s decided where its report is recorded: %v", named, answer)
+			}
+		})
+	}
+}
+
+// CRW-1286: the daemon never interprets a path relative to the child. A child naming one gets an explicit error
+// naming the option, and nothing is recorded.
+func TestTheDaemonRefusesACallerRelativePath(t *testing.T) {
+	claim := []string{"intent-claim", "--assignment", delivery.AssignmentID("dispatch-1"), "--session", "01child-task", "--dispatch-request-id", "dispatch-1"}
+	for _, relative := range []struct {
+		option string
+		argv   []string
+	}{
+		{"--socket", append([]string{"--socket", "host.sock"}, blockedEmit...)},
+		{"--independent-review", append(slices.Clone(blockedEmit), "--independent-review", "review.json")},
+		{"--workspace", append(slices.Clone(claim), "--workspace", ".")},
+		{"--marker-root", append(slices.Clone(claim), "--marker-root", "markers", "--workspace", "")},
+	} {
+		t.Run(relative.option, func(t *testing.T) {
+			state, database, _ := blockedChildWorld(t)
+			root := filepath.Dir(state)
+			t.Setenv(delivery.MarkerEnv, filepath.Join(root, "markers"))
+			if _, err := delivery.DeclareIntent(context.Background(), filepath.Join(root, "markers"), delivery.IntentDeclaration{Workspace: root, DispatchRequestID: "dispatch-1", IssueKey: "REL-1", DBPath: database.Path}); err != nil {
+				t.Fatal(err)
+			}
+			argv := slices.Clone(relative.argv)
+			if index := slices.Index(argv, ""); index > 0 {
+				argv[index] = root
+			}
+			control, err := service.ListenControlStore(context.Background(), state, database, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer control.Close()
+			result, err := childIn(t, root, nil, append([]string{"--state", state}, argv...)...)
+			if detail := fmt.Sprint(result["detail"]); err == nil || !strings.Contains(detail, relative.option) || !strings.Contains(detail, "caller-relative") {
+				t.Fatalf("a caller-relative %s must be refused by name: %v %v", relative.option, result, err)
+			}
+			if countRows(t, database, "SELECT COUNT(*) FROM events")+countRows(t, database, "SELECT COUNT(*) FROM reporting_sessions") != 0 {
+				t.Fatalf("a refused request was recorded: %v", result)
+			}
+		})
 	}
 }

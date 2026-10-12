@@ -152,8 +152,10 @@ func ChildCommand(name string) bool {
 	return name == "emit" || name == "intent-claim" || name == "intent-disposition"
 }
 
-func ExecuteOwnedChild(ctx context.Context, argv0 string, argv []string, stdout, stderr io.Writer) int {
-	return Execute(context.WithValue(ctx, childOwnerKey{}, true), argv0, argv, stdout, stderr)
+// ExecuteOwnedChild runs a child command inside the relay daemon on the daemon's own state directory: the caller's
+// --state is dropped, so no caller selection decides where the report is recorded (CRW-1286).
+func ExecuteOwnedChild(ctx context.Context, state, argv0 string, argv []string, stdout, stderr io.Writer) int {
+	return Execute(context.WithValue(ctx, childOwnerKey{}, state), argv0, argv, stdout, stderr)
 }
 
 // Execute is the relay CLI for one command line; argv0 is how the CLI was invoked (its base
@@ -234,7 +236,11 @@ func Execute(ctx context.Context, argv0 string, argv []string, stdout, stderr io
 	if values := root.Values["socket"]; len(values) > 0 {
 		global.socket = values[0]
 	}
-	if ForwardChild != nil && ChildCommand(name) && ctx.Value(childOwnerKey{}) != true {
+	owner, owned := ctx.Value(childOwnerKey{}).(string)
+	if owned {
+		global.state = owner
+	}
+	if ForwardChild != nil && ChildCommand(name) && !owned {
 		selection, err := store.ResolveStateDir(global.state, global.socket)
 		if err != nil {
 			return emit(stdout, stderr, nil, Host("the state directory cannot be resolved: "+Detail(err)), command.family)

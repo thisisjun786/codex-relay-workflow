@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
@@ -43,6 +44,9 @@ func ForwardChild(ctx context.Context, state, program string, argv []string) (an
 	response, err := readFrame(conn)
 	if err != nil {
 		return nil, dispatch.Host("relay daemon report outcome unknown; retry the same receipt identity: " + err.Error())
+	}
+	if detail, refused := response.Get("detail").(string); refused && response.Get("error") != nil {
+		return nil, dispatch.Host("relay daemon refused the child report: " + detail)
 	}
 	code, valid := response.Get("exitCode").(int64)
 	result, object := response.Get("result").(Object)
@@ -83,9 +87,18 @@ func handleChildCommand(ctx context.Context, conn net.Conn, state string, reques
 		}
 		return entries[len(entries)-1]
 	}
-	selected, err := store.ResolveStateDir(text(root.Values, "state"), text(root.Values, "socket"))
-	if err != nil || filepath.Clean(selected.Path) != filepath.Clean(state) {
-		return answerHost(conn, "child command may only write the daemon's own store")
+	// CRW-1286: the daemon alone decides where a child report is recorded. The caller's --state and environment only
+	// found this socket; the command runs on the daemon's own state (ExecuteOwnedChild drops the caller's --state),
+	// and a path relative to the caller is refused, never interpreted in the daemon's directory.
+	for _, option := range []struct {
+		values map[string][]string
+		key    string
+	}{{root.Values, "socket"}, {parsed.Values, "workspace"}, {parsed.Values, "marker-root"}, {parsed.Values, "independent-review"}} {
+		for _, value := range option.values[option.key] {
+			if !filepath.IsAbs(value) {
+				return answerHost(conn, "--"+option.key+" "+strconv.Quote(value)+" is caller-relative; the relay daemon never interprets a path relative to the child: name it absolute")
+			}
+		}
 	}
 	if name != "emit" {
 		selection, err := delivery.ResolveMarkerRoot(text(parsed.Values, "marker-root"))
@@ -108,7 +121,7 @@ func handleChildCommand(ctx context.Context, conn net.Conn, state string, reques
 		}
 	}
 	var stdout, stderr bytes.Buffer
-	code := dispatch.ExecuteOwnedChild(ctx, pyjson.Text(request.Get("program")), argv, &stdout, &stderr)
+	code := dispatch.ExecuteOwnedChild(ctx, state, pyjson.Text(request.Get("program")), argv, &stdout, &stderr)
 	result, err := decodeObject(stdout.Bytes())
 	if err != nil {
 		return answerHost(conn, "child command produced no JSON answer: "+stderr.String())
