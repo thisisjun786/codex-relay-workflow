@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	pabcdhook "github.com/thisisjun786/codex-relay-workflow/internal/pabcd/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -70,5 +73,40 @@ func TestChildPushGuardLegReadsTheRelayStore(t *testing.T) {
 	}
 	if out := answer("par", parent, "git push origin HEAD:dev"); !strings.Contains(out, "cannot be read") {
 		t.Errorf("settings that cannot be read: %s", out)
+	}
+}
+
+// TestChildPushGuardLegAnswersUnreadInput: the leg is behind the switch, and an input over the bound or one the host cancels before
+// it arrives whole is refused, as the GitHub post guard refuses it; a cancelled leg answers without waiting for its input.
+func TestChildPushGuardLegAnswersUnreadInput(t *testing.T) {
+	args := []string{"pre-tool-use", "--leg", "pre-tool-use-guarding-child-push"}
+	if leg, ok := switchedLeg(args, componentHooks()); !ok || leg != args[2] {
+		t.Errorf("the switch does not gate the leg: %q %v", leg, ok)
+	}
+	run := func(ctx context.Context, in io.Reader) string {
+		var out bytes.Buffer
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			if claimed, code := runComponentHook(invocation{ctx: ctx, args: args, stdout: &out}, in, componentHooks()); !claimed || code != 0 {
+				t.Errorf("claimed %v, exit %d", claimed, code)
+			}
+		}()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Fatal("the leg did not answer")
+		}
+		return out.String()
+	}
+	if out := run(context.Background(), strings.NewReader(strings.Repeat(" ", pabcdhook.GitHubPostMaxStdinBytes+1))); !strings.Contains(out, "cannot be read whole") {
+		t.Errorf("an input over the bound: %q", out)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	in, w := io.Pipe()
+	t.Cleanup(func() { w.Close() })
+	if out := run(ctx, in); !strings.Contains(out, "cannot be read whole") || !strings.Contains(out, `"permissionDecision":"deny"`) {
+		t.Errorf("a cancelled leg: %q", out)
 	}
 }

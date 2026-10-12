@@ -43,7 +43,7 @@ func TestExpectedLegs_areK1ThenTheTwoOwnRegistrations(t *testing.T) {
 		}
 	}
 	if legs[32].Leg != CompletionLeg || legs[33].Leg != GitHubPostLeg || legs[34].Leg != FlowStatusLeg || legs[35].Leg != ChildPushLeg {
-		t.Errorf("own legs are %s, %s and %s", legs[32].Leg, legs[33].Leg, legs[34].Leg)
+		t.Errorf("own legs are %s, %s, %s and %s", legs[32].Leg, legs[33].Leg, legs[34].Leg, legs[35].Leg)
 	}
 	if f := cxccorpus.FlowStatus; legs[34].Event != f.Event || legs[34].Matcher != f.Matcher || legs[34].Timeout != f.Timeout || legs[34].Status != f.Status {
 		t.Errorf("the flow status leg %+v is not the declaration the shipped plugin generates %+v", legs[34], f)

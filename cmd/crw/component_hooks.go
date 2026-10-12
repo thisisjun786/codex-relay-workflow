@@ -107,24 +107,34 @@ func componentHooks() []componentHook {
 			}
 		}},
 		// Relay child push guard (CRW-1284): a relay child pushes only its own branch; a session the relay does not know as a child is
-		// not judged. An input that cannot be read whole is refused, as the GitHub post guard refuses it.
+		// not judged. An input that cannot be read whole, or a leg cancelled before it is, is refused, as the GitHub post guard refuses
+		// it; input that arrives after the cancellation is neither recorded nor judged.
 		{"pre-tool-use-guarding-child-push", "pre-tool-use", func(c invocation, in io.Reader) int {
-			raw, over, ok := pabcdhook.GitHubPostInput(in)
-			if !ok || over {
-				_, _ = io.WriteString(c.stdout, pabcdhook.ChildPushInputUnreadAnswer())
-				return 0
-			}
-			harness.RecordInvocation(raw, harness.Component, "pre-tool-use-child-push", os.LookupEnv)
-			_, _ = io.WriteString(c.stdout, pabcdhook.HandleChildPushGuard(raw, func(session, cwd string) pabcdhook.ChildPushBinding {
-				child, parent, err := hook.ChildBinding(c.ctx, session)
-				switch {
-				case err != nil:
-					return pabcdhook.ChildPushBinding{Unreadable: err.Error()}
-				case !child:
-					return pabcdhook.ChildPushBinding{}
+			done := make(chan string, 1)
+			go func() {
+				raw, over, ok := pabcdhook.GitHubPostInput(in)
+				if !ok || over || c.ctx.Err() != nil {
+					done <- pabcdhook.ChildPushInputUnreadAnswer()
+					return
 				}
-				return pabcdhook.ChildPushBinding{Child: true, Own: pabcdhook.ChildPushOwnBranch(c.ctx, cwd, parent)}
-			}))
+				harness.RecordInvocation(raw, harness.Component, "pre-tool-use-child-push", os.LookupEnv)
+				done <- pabcdhook.HandleChildPushGuard(raw, func(session, cwd string) pabcdhook.ChildPushBinding {
+					child, parent, err := hook.ChildBinding(c.ctx, session)
+					switch {
+					case err != nil:
+						return pabcdhook.ChildPushBinding{Unreadable: err.Error()}
+					case !child:
+						return pabcdhook.ChildPushBinding{}
+					}
+					return pabcdhook.ChildPushBinding{Child: true, Own: pabcdhook.ChildPushOwnBranch(c.ctx, cwd, parent)}
+				})
+			}()
+			select {
+			case answer := <-done:
+				_, _ = io.WriteString(c.stdout, answer)
+			case <-c.ctx.Done():
+				_, _ = io.WriteString(c.stdout, pabcdhook.ChildPushInputUnreadAnswer())
+			}
 			return 0
 		}},
 		// Provider-bridge component ingress; activation is owned by the cutover.

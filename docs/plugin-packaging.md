@@ -130,7 +130,7 @@ the native wiring anchors the runtime pointer under it.
 | --- | --- | --- |
 | Stop hook | `"$HOME/.local/share/crw-runtime/current/bin/crw" hook --plugin-launch; exit 0`, `timeout: 10` | `crw hook --plugin-launch` through the pointer, reading the host's payload on stdin |
 | MCP server | `command: "sh"`, `args: ["./wiring/crw-bridge.sh"]`, `cwd: "."` | `exec "$HOME/.local/share/crw-runtime/current/bin/codex-thread-bridge" --plugin-launch "$@"` |
-| Ported hooks (33) | `"$HOME/.local/share/crw-runtime/current/bin/crw" hook <event> --leg <leg>`, the K1 timeout | the leg's handler, once the switch says `crw` ([the ported hooks and the switch](#the-ported-hooks-and-the-switch)) |
+| Ported hooks (35) | `"$HOME/.local/share/crw-runtime/current/bin/crw" hook <event> --leg <leg>`, the K1 timeout | the leg's handler, once the switch says `crw` ([the ported hooks and the switch](#the-ported-hooks-and-the-switch)) |
 
 `--plugin-launch` is where the record contract the Python launchers carried now lives
 ([decision 26](port/decisions.md)). `codex-thread-bridge --plugin-launch` (`crw bridge
@@ -249,9 +249,10 @@ The relay child push guard (`pre-tool-use-guarding-child-push`, CRW-1284) is a `
 seconds, `(crw) Guarding relay child pushes`. A relay child does not integrate: integration is the parent's and the integrator's
 (통합은 부모·통합기 몫). In a session the relay store names as the child of a relationship (the store the completion hook's
 settings select), the leg refuses every `git push` whose refspecs do not each name the child's own branch as their destination (the branch its
-checkout has, when the parent's checkout has another; `git push origin HEAD:<branch>`): `HEAD:dev`, `src:dev`, a pattern, `--all`,
+checkout has, when that is not `dev`, `main`, origin's HEAD branch or the parent's branch; `git push origin HEAD:<branch>`): `HEAD:dev`, `src:dev`, a pattern, `--all`,
 `--mirror`, `--tags`, a refspec without a destination (which `remote.<name>.push` can map onto `dev`), through any remote. It reads the command as the other guards do (program wrappers and readable scripts are read; a `"$@"`
-forwarder, a word or text the reader cannot read, a program that spells `push` and a relay record that cannot be read are refused).
+forwarder, a word or text the reader cannot read and a program that spells `push` are refused). While the relay record cannot be read,
+a push, and a command the reader cannot read that spells `push`, is refused in any session.
 It reads the relay store only for a command that pushes or cannot be read, and judges nothing in any other session.
 
 Every ported leg, and the guard, reads the switch `<CODEX_HOME>/crw/switch.json`
@@ -267,7 +268,7 @@ is written by hand.
 | Present but unreadable (a read error, over 64 KiB, not JSON, another `active`) | Runs, so a protective guard never goes quiet on a damaged switch, and writes `<CODEX_HOME>/crw/hook-observations/switch-warning.json` |
 
 The completion Stop runs whatever the switch says. The command a declaration names does not change
-with the switch, so neither do the hooks' trust hashes. The 33 ported declarations are new hook
+with the switch, so neither do the hooks' trust hashes. The 35 ported declarations are new hook
 identities and each needs its own trust, which the user gives; installing records none. One leg,
 `subagent-stop-observing-review`, is served by its handler `HandleReviewObserver` (CRW-564, registered
 in `internal/harness/legs.go`), which records the review sign-off in the goalplan and writes no output;
