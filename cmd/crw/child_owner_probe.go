@@ -22,8 +22,9 @@ import (
 // A crw built with -tags childownerprobe also answers `crw child-owner-probe <state>` (testsupport.ChildOwner): it
 // stands in for the relay daemon of a fixture's state, so a fixture's child report goes where the daemon records it
 // (CRW-1289). It listens on <state>/control.sock and runs each child command it is sent on that state, as the daemon
-// does (dispatch.ExecuteOwnedChild), in the composition of this program, and answers the command's exit code and its
-// stdout and stderr bytes. It ticks nothing and borrows no store, so the store sees only the command's own writes. It
+// does (dispatch.ExecuteOwnedChild), with the relay adapter registered as main registers it, and answers the command's
+// exit code and its stdout and stderr bytes. It exits before main.go's init (the flow ops lane), which no child command
+// reads. It ticks nothing and borrows no store, so the store sees only the command's own writes. It
 // prints "ready" once it listens and stops when its standard input closes. Release builds leave it out.
 func init() {
 	if len(os.Args) != 3 || os.Args[1] != "child-owner-probe" {

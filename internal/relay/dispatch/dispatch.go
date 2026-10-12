@@ -150,6 +150,8 @@ var ForwardChild func(ctx context.Context, state, program string, argv []string,
 
 type childOwnerKey struct{}
 
+// ChildCommand is whether name is a command a child reports with (emit, intent-claim, intent-disposition): the relay
+// daemon runs it on its own store (CRW-1286).
 func ChildCommand(name string) bool {
 	return name == "emit" || name == "intent-claim" || name == "intent-disposition"
 }
@@ -162,6 +164,8 @@ func OwnedChildState(ctx context.Context, state string) context.Context {
 	return context.WithValue(ctx, childStateKey{}, state)
 }
 
+// ExecuteOwnedChild is Execute for the relay daemon serving a child command: the command runs here, on the state
+// OwnedChildState names, and is never forwarded again.
 func ExecuteOwnedChild(ctx context.Context, argv0 string, argv []string, stdout, stderr io.Writer) int {
 	return Execute(context.WithValue(ctx, childOwnerKey{}, true), argv0, argv, stdout, stderr)
 }

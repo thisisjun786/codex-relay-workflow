@@ -108,7 +108,7 @@ func TestAnArgumentThatIsNotUTF8IsRefusedWherePythonEncodesIt(t *testing.T) {
 			break
 		}
 		stop := func() {}
-		if parsed := argparse.Parse("", argv); dispatch.ChildCommand(parsed.Remaining[0]) {
+		if parsed := argparse.Parse("", argv); len(parsed.Remaining) > 0 && dispatch.ChildCommand(parsed.Remaining[0]) {
 			// A child command reports through the relay daemon of its store, which runs it as the child would have.
 			stop = testsupport.ChildOwner(t, filepath.Join(root, "go"), "", os.Environ())
 		}

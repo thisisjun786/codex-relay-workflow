@@ -20,6 +20,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/service"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -191,6 +192,37 @@ func TestASlowChildReportIsServedToItsEnd(t *testing.T) {
 	defer control.Close()
 	if result, err := readonlyEmit(t, state, host); err != nil || countRows(t, database, "SELECT COUNT(*) FROM events WHERE outcome='blocked_needs_input'") != 1 {
 		t.Fatalf("a slow child report was cut short by the hop: %v %v", result, err)
+	}
+}
+
+// CRW-1289: the daemon's handler takes a child command's arguments as the child gave them, one that is not UTF-8
+// included, and the child writes the command's stdout and stderr bytes and exits with its code: what the command
+// answers when it runs on the daemon's store in the daemon itself.
+func TestTheHopCarriesAChildCommandByteForByte(t *testing.T) {
+	state, database, host := blockedChildWorld(t)
+	workspace := filepath.Dir(state)
+	t.Setenv(delivery.MarkerEnv, filepath.Join(workspace, "markers"))
+	control, err := service.ListenControlStore(context.Background(), state, database, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer control.Close()
+	owned := dispatch.OwnedChildState(store.WithBorrowedStore(context.Background(), database), state)
+	for _, call := range []struct {
+		argv     []string
+		answered string
+	}{
+		{[]string{"--json", "intent-claim", "--workspace", workspace, "--assignment", delivery.AssignmentID("dispatch-1"), "--session", "v", "--dispatch-request-id", "x\xffy"}, `'\\udcff' in position 1: surrogates not allowed`},
+		{append(slices.Clone(blockedEmit), "--relationship", "r\xfe\xff"), "position 1-2: surrogates not allowed"},
+		{append(slices.Clone(blockedEmit), "--turn-id", "turn-\xff"), `turn \"turn-\\xff\" does not exist`},
+	} {
+		argv := append([]string{"--socket", host.SocketPath}, call.argv...)
+		var out, errOut, ownOut, ownErr bytes.Buffer
+		code, err := hook.ForwardChild(context.Background(), state, "crw", argv, &out, &errOut)
+		own := dispatch.ExecuteOwnedChild(owned, "crw", argv, &ownOut, &ownErr)
+		if err != nil || code != own || !bytes.Equal(out.Bytes(), ownOut.Bytes()) || !bytes.Equal(errOut.Bytes(), ownErr.Bytes()) || !strings.Contains(out.String(), call.answered) {
+			t.Fatalf("%q through the hop: %d %q %q %v; on the daemon's store: %d %q %q", argv, code, out.String(), errOut.String(), err, own, ownOut.String(), ownErr.String())
+		}
 	}
 }
 
