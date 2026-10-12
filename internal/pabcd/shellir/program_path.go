@@ -224,10 +224,37 @@ func specialBuiltin(name string) bool {
 // or with -- or -, shift, and the builtins that run text of their own (eval, source, trap) or redefine words (alias).
 func positionalChange(name string, args []Word) bool {
 	switch name {
-	case "shift", "eval", "source", ".", "trap", "alias":
-		return true
+	case "shift", "eval", "source", ".", "trap", "alias", "noglob", "nocorrect", "-":
+		return true // zsh's noglob, nocorrect and - run the command after them in this shell, a builtin among them
 	case "set":
 		return !setOptionsOnly(args)
+	}
+	return zshParamBuiltin(name, args)
+}
+
+// zshParamBuiltin is whether a zsh builtin may assign a parameter by a name in its operands, which is a positional parameter when the
+// name is 1, 2, ... or argv (print -v 1 X gives $1 the value X; zformat -a argv ... and getln 1 assign them; zparseopts -D removes
+// the options it parsed from them) or a name the text does not show. These are the zsh builtins, besides the ones the reader already
+// models (read, printf -v, the declarations), that assign by name: bash runs none of them (print and the rest are no bash builtins),
+// zsh loads zformat and zparseopts without a zmodload (CRW-1283, the final verification of f2ef7770). print assigns only with the
+// option -v, so print is judged by its option words: one that holds a v, or a word the text does not show (an unquoted $O may be -v).
+func zshParamBuiltin(name string, args []Word) bool {
+	switch name {
+	case "zformat", "zparseopts", "zregexparse", "getln", "vared", "sched", "zle", "compctl",
+		"compadd", "compset", "comparguments", "compcall", "compdescribe", "compfiles", "compgroups", "compquote", "comptags",
+		"comptry", "compvalues":
+		return true
+	case "print":
+		for _, a := range args {
+			switch {
+			case !a.Known:
+				return true
+			case a.Value == "--" || !strings.HasPrefix(a.Value, "-") || a.Value == "-":
+				return false // the options end at the first operand
+			case strings.Contains(a.Value, "v"):
+				return true
+			}
+		}
 	}
 	return false
 }

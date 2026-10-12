@@ -786,3 +786,126 @@ zsh {WORK}/t.sh true tee {MEMORY}/note.md
 while :; do nice "$@"; 1=env; done
 --cmd
 zsh {WORK}/t.sh true rm -rf {CHECKOUT}
+
+=== CRW-1283-r6-print-v-post | U
+--why Final verification f2ef7770 finding: print -v 1 assigns or removes a positional parameter in zsh, so the "$@" after it is not the arguments the script was given; refused before the relaxations and again now (Sion decision 5).
+--file t.sh
+#!/bin/bash
+print -v 1 env
+nice "$@"
+--cmd
+zsh {WORK}/t.sh true gh pr comment 1 --body x
+
+=== CRW-1283-r6-zformat-post | U
+--why Final verification f2ef7770 finding: zformat -f 1 assigns or removes a positional parameter in zsh, so the "$@" after it is not the arguments the script was given; refused before the relaxations and again now (Sion decision 5).
+--file t.sh
+#!/bin/bash
+zformat -f 1 '%a' a:env
+nice "$@"
+--cmd
+zsh {WORK}/t.sh true gh pr comment 1 --body x
+
+=== CRW-1283-r6-getln-post | U
+--why Final verification f2ef7770 finding: getln 1 assigns or removes a positional parameter in zsh, so the "$@" after it is not the arguments the script was given; refused before the relaxations and again now (Sion decision 5).
+--file t.sh
+#!/bin/bash
+pushln env; getln 1
+nice "$@"
+--cmd
+zsh {WORK}/t.sh true gh pr comment 1 --body x
+
+=== CRW-1283-r6-noglob-shift-post | U
+--why Final verification f2ef7770 finding: noglob shift assigns or removes a positional parameter in zsh, so the "$@" after it is not the arguments the script was given; refused before the relaxations and again now (Sion decision 5).
+--file t.sh
+#!/bin/bash
+noglob shift
+nice "$@"
+--cmd
+zsh {WORK}/t.sh true gh pr comment 1 --body x
+
+=== CRW-1283-r6-loop-print-v-post | U
+--why Final verification f2ef7770 finding: print -v 1 in a loop assigns or removes a positional parameter in zsh, so the "$@" after it is not the arguments the script was given; refused before the relaxations and again now (Sion decision 5).
+--file t.sh
+#!/bin/bash
+while :; do nice "$@"; print -v 1 env; done
+--cmd
+zsh {WORK}/t.sh true gh pr comment 1 --body x
+
+=== CRW-1283-r6-print-v-memory | U
+--why Final verification f2ef7770 finding: print -v 1 assigns or removes a positional parameter in zsh, so the "$@" after it is not the arguments the script was given; refused before the relaxations and again now (Sion decision 5).
+--file t.sh
+#!/bin/bash
+print -v 1 env
+nice "$@"
+--cmd
+zsh {WORK}/t.sh true tee {MEMORY}/note.md
+
+=== CRW-1283-r6-print-v-removal | U
+--why Final verification f2ef7770 finding: print -v 1 assigns or removes a positional parameter in zsh, so the "$@" after it is not the arguments the script was given; refused before the relaxations and again now (Sion decision 5).
+--file t.sh
+#!/bin/bash
+print -v 1 env
+nice "$@"
+--cmd
+zsh {WORK}/t.sh true rm -rf {CHECKOUT}
+
+=== CRW-1283-r6-noglob-shift-memory | U
+--why Final verification f2ef7770 finding: noglob shift assigns or removes a positional parameter in zsh, so the "$@" after it is not the arguments the script was given; refused before the relaxations and again now (Sion decision 5).
+--file t.sh
+#!/bin/bash
+noglob shift
+nice "$@"
+--cmd
+zsh {WORK}/t.sh true tee {MEMORY}/note.md
+
+=== CRW-1283-r6-noglob-shift-removal | U
+--why Final verification f2ef7770 finding: noglob shift assigns or removes a positional parameter in zsh, so the "$@" after it is not the arguments the script was given; refused before the relaxations and again now (Sion decision 5).
+--file t.sh
+#!/bin/bash
+noglob shift
+nice "$@"
+--cmd
+zsh {WORK}/t.sh true rm -rf {CHECKOUT}
+
+=== CRW-1283-r6-loop-print-v-memory | U
+--why Final verification f2ef7770 finding: print -v 1 in a loop assigns or removes a positional parameter in zsh, so the "$@" after it is not the arguments the script was given; refused before the relaxations and again now (Sion decision 5).
+--file t.sh
+#!/bin/bash
+while :; do nice "$@"; print -v 1 env; done
+--cmd
+zsh {WORK}/t.sh true tee {MEMORY}/note.md
+
+=== CRW-1283-r6-loop-print-v-removal | U
+--why Final verification f2ef7770 finding: print -v 1 in a loop assigns or removes a positional parameter in zsh, so the "$@" after it is not the arguments the script was given; refused before the relaxations and again now (Sion decision 5).
+--file t.sh
+#!/bin/bash
+while :; do nice "$@"; print -v 1 env; done
+--cmd
+zsh {WORK}/t.sh true rm -rf {CHECKOUT}
+
+=== CRW-1283-r6-zparseopts-post | U
+--why Final verification f2ef7770 finding: zparseopts -D assigns or removes a positional parameter in zsh, so the "$@" after it is not the arguments the script was given; refused before the relaxations and again now (Sion decision 5).
+--file t.sh
+#!/bin/bash
+zparseopts -D n:=o
+"$@"
+--cmd
+zsh {WORK}/t.sh -n 5 gh pr comment 1 --body x
+
+=== CRW-1283-r6-print-control | B
+--why Control: print without -v names no parameter, so the wrapper still forwards its arguments.
+--file t.sh
+#!/bin/bash
+print hello
+nice "$@"
+--cmd
+bash t.sh go version
+
+=== CRW-1283-r6-print-control-post | none/deny/allow
+--why A post forwarded by a wrapper that prints stays refused.
+--file t.sh
+#!/bin/bash
+print hello
+nice "$@"
+--cmd
+bash t.sh gh pr comment 1 --body x

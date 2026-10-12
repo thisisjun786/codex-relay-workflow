@@ -43,3 +43,48 @@ func TestCRW1283LoopArgumentsFollowPositionalChangesOnly(t *testing.T) {
 		}
 	}
 }
+
+// TestCRW1283ZshParameterBuiltinsEndTheArguments: a zsh builtin that assigns or removes positional parameters (print -v 1, zformat,
+// zparseopts, getln, vared) ends the arguments the reader follows, straight-line and in a loop; print without -v does not.
+func TestCRW1283ZshParameterBuiltinsEndTheArguments(t *testing.T) {
+	lookup := func(string) (string, bool) { return "", false }
+	args := []Word{{Known: true, Value: "go"}, {Known: true, Value: "version"}}
+	for _, body := range []string{
+		"print hello; nice \"$@\"",
+		"print -r -- 'a b'; nice \"$@\"",
+		"while :; do print -n x; nice \"$@\"; break; done",
+		"for i in 1 2; do nice \"$@\"; print done; done",
+	} {
+		if _, err := AnalyzeScriptEnvArgs(body, "/work", false, lookup, args, nil); err != nil {
+			t.Errorf("a print without -v lost the arguments: %s: %v", body, err)
+		}
+	}
+	for _, body := range []string{
+		"print -v 1 env; nice \"$@\"",
+		"print -rv 1 env; nice \"$@\"",
+		"print -v argv env; nice \"$@\"",
+		"print $O env; nice \"$@\"",
+		"zformat -f 1 '%a' a:env; nice \"$@\"",
+		"zformat -a argv : env:x; nice \"$@\"",
+		"zparseopts -D n:=o; nice \"$@\"",
+		"zparseopts -a argv n:=o; nice \"$@\"",
+		"getln 1; nice \"$@\"",
+		"vared 1; nice \"$@\"",
+		"command print -v 1 env; nice \"$@\"",
+		"noglob shift; nice \"$@\"",
+		"echo env | read 1; nice \"$@\"",
+		"true | shift; nice \"$@\"",
+		"while :; do nice \"$@\"; echo env | read 1; done",
+		"while :; do nice \"$@\"; print -v 1 env; done",
+		"while :; do nice \"$@\"; print -rv argv env; done",
+		"while :; do x=1; nice \"$@\"; zformat -f 1 '%a' a:env; done",
+		"until false; do nice \"$@\"; zparseopts -D n:=o; done",
+		"for i in 1 2; do nice \"$@\"; getln 1; done",
+		"for i in 1 2; do nice \"$@\"; vared 1; done",
+		"f() { print -v 1 env; }; while :; do nice \"$@\"; f; done",
+	} {
+		if _, err := AnalyzeScriptEnvArgs(body, "/work", false, lookup, args, nil); err == nil {
+			t.Errorf("a zsh builtin that assigns a positional parameter kept the arguments: %s", body)
+		}
+	}
+}

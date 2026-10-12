@@ -1954,3 +1954,17 @@ final verification of 418273ef (opusverify-final-418273ef-f1, CRW-1283 loop argu
 final verification of 418273ef (opusverify-final-418273ef-f1, CRW-1283 loop arguments)	f1: loop positional assignment post	CRW-1283-r5-loop-posassign-post	row	-
 final verification of 418273ef (opusverify-final-418273ef-f1, CRW-1283 loop arguments)	f1: loop positional assignment memory	CRW-1283-r5-loop-posassign-memory	row	-
 final verification of 418273ef (opusverify-final-418273ef-f1, CRW-1283 loop arguments)	f1: loop positional assignment removal	CRW-1283-r5-loop-posassign-removal	row	-
+final verification of f2ef7770 (opusverify-final-f2ef7770-f2, CRW-1283 zsh builtins that assign positional parameters)	print -v 1: post	CRW-1283-r6-print-v-post	row	-
+final verification of f2ef7770 (opusverify-final-f2ef7770-f2, CRW-1283 zsh builtins that assign positional parameters)	zformat -f 1: post	CRW-1283-r6-zformat-post	row	-
+final verification of f2ef7770 (opusverify-final-f2ef7770-f2, CRW-1283 zsh builtins that assign positional parameters)	getln 1: post	CRW-1283-r6-getln-post	row	-
+final verification of f2ef7770 (opusverify-final-f2ef7770-f2, CRW-1283 zsh builtins that assign positional parameters)	noglob shift: post	CRW-1283-r6-noglob-shift-post	row	-
+final verification of f2ef7770 (opusverify-final-f2ef7770-f2, CRW-1283 zsh builtins that assign positional parameters)	print -v 1 in a loop: post	CRW-1283-r6-loop-print-v-post	row	-
+final verification of f2ef7770 (opusverify-final-f2ef7770-f2, CRW-1283 zsh builtins that assign positional parameters)	print -v 1: memory	CRW-1283-r6-print-v-memory	row	-
+final verification of f2ef7770 (opusverify-final-f2ef7770-f2, CRW-1283 zsh builtins that assign positional parameters)	print -v 1: removal	CRW-1283-r6-print-v-removal	row	-
+final verification of f2ef7770 (opusverify-final-f2ef7770-f2, CRW-1283 zsh builtins that assign positional parameters)	noglob shift: memory	CRW-1283-r6-noglob-shift-memory	row	-
+final verification of f2ef7770 (opusverify-final-f2ef7770-f2, CRW-1283 zsh builtins that assign positional parameters)	noglob shift: removal	CRW-1283-r6-noglob-shift-removal	row	-
+final verification of f2ef7770 (opusverify-final-f2ef7770-f2, CRW-1283 zsh builtins that assign positional parameters)	print -v 1 in a loop: memory	CRW-1283-r6-loop-print-v-memory	row	-
+final verification of f2ef7770 (opusverify-final-f2ef7770-f2, CRW-1283 zsh builtins that assign positional parameters)	print -v 1 in a loop: removal	CRW-1283-r6-loop-print-v-removal	row	-
+final verification of f2ef7770 (opusverify-final-f2ef7770-f2, CRW-1283 zsh builtins that assign positional parameters)	zparseopts -D: post	CRW-1283-r6-zparseopts-post	row	-
+final verification of f2ef7770 (opusverify-final-f2ef7770-f2, CRW-1283 zsh builtins that assign positional parameters)	print control	CRW-1283-r6-print-control	row	-
+final verification of f2ef7770 (opusverify-final-f2ef7770-f2, CRW-1283 zsh builtins that assign positional parameters)	print control: post	CRW-1283-r6-print-control-post	row	-

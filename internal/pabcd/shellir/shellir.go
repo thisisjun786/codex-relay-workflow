@@ -798,6 +798,9 @@ func (e *effectScan) wordsChange(words []Word) bool {
 	if body, ok := e.st.funcs[name]; ok {
 		return e.function(name, body)
 	}
+	if !e.directoryOnly && zshParamBuiltin(name, words[1:]) {
+		return true // print -v, zformat, zparseopts, getln, vared assign a parameter by name, a positional one among them
+	}
 	if e.argsOnly {
 		if changes, judged := argsBuiltinChange(name, words[1:]); judged {
 			return changes
@@ -956,6 +959,15 @@ func (w *walker) binary(c *syntax.BinaryCmd, st *state, ctx Context) error {
 			return err
 		}
 		w.pipeOut = w.stageSource(c.Y, beforeY, st)
+		// zsh runs the last element of a pipeline in the current shell (bash runs every element in a subshell), so an element that
+		// can change the positional parameters (echo x | read 1, true | print -v 1 env) changes what a later "$@" expands to
+		// (CRW-1283, Sion decision 5); the variables are forgotten the same way.
+		if newArgsScan(st).stateChanges(c.Y) {
+			st.args = nil
+		}
+		if newEffectScan(st, false).stateChanges(c.Y) {
+			st.forgetVars()
+		}
 		return nil
 	}
 	return unreadablef("unsupported binary operator %v", c.Op)
@@ -1685,6 +1697,13 @@ func declaresInteger(name string, args []Word) bool {
 }
 
 func clobbersVars(name string, args []Word) bool {
+	if zshParamBuiltin(name, args) {
+		return true // print -v NAME, zformat, zparseopts, getln, vared and the rest assign the parameters their operands name
+	}
+	switch name {
+	case "noglob", "nocorrect", "-":
+		return true // zsh runs the command after one of these in this shell, a builtin that assigns among them
+	}
 	switch name {
 	case "read", "mapfile", "readarray", "getopts", "let", "export", "declare", "typeset", "local", "readonly":
 		return true

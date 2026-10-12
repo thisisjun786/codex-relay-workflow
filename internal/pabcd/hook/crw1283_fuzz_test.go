@@ -35,9 +35,9 @@ import (
 // guards from the command itself unless its body forwards "$@" outside quotes (c007bd50 and the head alike; the CRW-1283 handoff
 // names it an open item), and the worktree guard does not read one at any depth, nor a script without a shebang line. The count is
 // pinned so it cannot grow; a form of this class that the head refuses is not counted.
-var fzOwnLimit = map[string]int{"memory": 36, "github": 0, "worktree": 36}
+var fzOwnLimit = map[string]int{"memory": 46, "github": 0, "worktree": 46}
 
-var fzFamilyCounts = map[string]int{"plain": 6, "wrapper": 360, "mutate": 630, "progwrap": 84, "assignpath": 288, "path": 288, "script": 36, "progfile": 816, "depth2": 1800,
+var fzFamilyCounts = map[string]int{"plain": 6, "wrapper": 360, "mutate": 1080, "progwrap": 84, "assignpath": 288, "path": 288, "script": 36, "progfile": 816, "depth2": 1800,
 	"binhdr": 360, "shebang": 384}
 
 // fzDepth2Pairs is the depth-2 sample size; CRW1283_FUZZ_PAIRS=all runs every pair (an exhaustive search; the pinned counts and the
@@ -109,7 +109,18 @@ var fzMutants = [][2]string{{"set -- {C}\n\"$@\"\n", "true"}, {"set -e -- {C}\n\
 	{"while :; do nice \"$@\"; 1=env; done\n", "true {C}"}, {"until false; do ionice -c3 \"$@\"; 2+=x; done\n", "true {C}"},
 	{"while :; do timeout 5 \"$@\"; argv=(env {C}); done\n", "true"}, {"while :; do env \"$@\"; set -- {C}; done\n", "true"},
 	{"while :; do nice \"$@\"; shift; done\n", "true {C}"}, {"while :; do nice \"$@\"; for 1 in env; do :; done; done\n", "true {C}"},
-	{"while :; do x=1; nice \"$@\"; if :; then 1=env; fi; done\n", "true {C}"}}
+	{"while :; do x=1; nice \"$@\"; if :; then 1=env; fi; done\n", "true {C}"},
+	// a zsh builtin that assigns or removes a positional parameter by name, straight-line and in a loop (the final verification of
+	// f2ef7770); TestReview1283ZshParameterBuiltins has the bodies
+	{"print -v 1 env\n\"$@\"\n", "true {C}"}, {"print -rv 1 env\n\"$@\"\n", "true {C}"}, {"zformat -f 1 '%a' a:env\n\"$@\"\n", "true {C}"},
+	{"zparseopts -D n:=o\n\"$@\"\n", "-n 5 {C}"}, {"pushln env; getln 1\n\"$@\"\n", "true {C}"}, {"noglob shift\n\"$@\"\n", "true {C}"},
+	{"command print -v 1 env\n\"$@\"\n", "true {C}"},
+	{"while :; do nice \"$@\"; print -v 1 env; done\n", "true {C}"}, {"until false; do ionice -c3 \"$@\"; zformat -f 1 '%a' a:env; done\n", "true {C}"},
+	{"while :; do env \"$@\"; zparseopts -D n:=o; done\n", "true {C}"}, {"for i in 1 2; do nice \"$@\"; getln 1; done\n", "true {C}"},
+	{"while :; do x=1; nice \"$@\"; noglob shift; done\n", "true {C}"},
+	// the last element of a pipeline runs in the current shell in zsh
+	{"echo env | read 1\n\"$@\"\n", "true {C}"}, {"true | shift\n\"$@\"\n", "true {C}"},
+	{"while :; do nice \"$@\"; echo env | read 1; done\n", "true {C}"}}
 
 // fzShebangs are scripts whose #! line launches the interpreter fzShebangProgs names through env (the evaluation of deb45bd1, d2): the
 // assigned PATH selects the interpreter, whose body in the evil fixture directory is the target. fzBinValues are the PATH values of
