@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -371,4 +372,88 @@ func TestNativeSpawnWithoutAppliedRecordEscalates(t *testing.T) {
 		other.CallID = "c_000000000099"
 		check(t, run(t, ledger(t, other)), "no_applied_record")
 	})
+}
+
+// CRW-1207 correction round (d2): an observation that says something new is a new row. The id covers the receiver, the decision,
+// the reason and the configured pair, so a transient failure of thread/read stored first does not keep the later reading out of
+// flow_spawn_decisions, while the same facts seen again stay one row.
+func TestNativeChangedObservationIsANewRow(t *testing.T) {
+	dir := ledger(t, allowed("tool-1", "", "low"))
+	items := []json.RawMessage{spawnItem(t, "tool-1", []string{nReceiver}, sp("explorer-model"), sp("high"))}
+	st, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "relay.sqlite3"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	runRow(t, st)
+	store := func(h *nativeHost) (NativeImport, int) {
+		got := importTurn(t, h, dir)
+		n, err := StoreSpawnRows(context.Background(), st.DB, got.Rows)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got, n
+	}
+	failing := &nativeHost{items: items, cfgErr: map[string]error{nReceiver: errors.New("rpc timeout")}}
+	if _, n := store(failing); n != 2 { // the decision and the unreadable observation
+		t.Fatalf("first import stored %d rows", n)
+	}
+	// the same facts, even with another error text, are the same row
+	failing.cfgErr[nReceiver] = errors.New("rpc timeout again")
+	if _, n := store(failing); n != 0 {
+		t.Fatalf("the same unreadable observation was stored again: %d", n)
+	}
+	// the thread reads now, with another effort than the hook applied
+	mismatch := &nativeHost{items: items, cfg: map[string][2]*string{nReceiver: {sp("explorer-model"), sp("low")}}}
+	got, n := store(mismatch)
+	if n != 1 {
+		t.Fatalf("the mismatch observation stored %d rows", n)
+	}
+	if len(got.Escalations) != 1 || got.Escalations[0].Reason != ObservationPairMismatch {
+		t.Fatalf("escalations %+v", got.Escalations)
+	}
+	// and then a reading that agrees: a third fact
+	good := &nativeHost{items: items, cfg: map[string][2]*string{nReceiver: {sp("explorer-model"), sp("high")}}}
+	if _, n := store(good); n != 1 {
+		t.Fatalf("the observed reading stored %d rows", n)
+	}
+	if _, n := store(mismatch); n != 0 {
+		t.Fatalf("a reading already recorded was stored again: %d", n)
+	}
+	rows, err := st.DB.Query(`SELECT decision, reason FROM flow_spawn_decisions WHERE kind = 'native_observation' ORDER BY rowid`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var seen []string
+	for rows.Next() {
+		var d, r string
+		if err := rows.Scan(&d, &r); err != nil {
+			t.Fatal(err)
+		}
+		seen = append(seen, d+"/"+r)
+	}
+	if strings.Join(seen, ",") != "unobserved/read_failed,pair_mismatch/,observed/" {
+		t.Fatalf("observations %v", seen)
+	}
+}
+
+// CRW-1207 correction round (d4): the import reads a ledger that has a cut tail.
+func TestNativeImportReadsALedgerWithACutTail(t *testing.T) {
+	dir := ledger(t, allowed("tool-1", "", ""))
+	path := filepath.Join(dir, bound.DecisionsDir, nThread+bound.FileSuffix)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(`{"run_id":"run-native","thread_id":"` + nThread + `","tool_use_id":"tool-2","deci`); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	h := &nativeHost{items: []json.RawMessage{spawnItem(t, "tool-1", []string{nReceiver}, sp("explorer-model"), sp("high"))},
+		cfg: map[string][2]*string{nReceiver: {sp("explorer-model"), sp("high")}}}
+	got := importTurn(t, h, dir)
+	if len(rowsOf(got, NativeKindSpawn)) != 1 || len(rowsOf(got, NativeKindObservation)) != 1 {
+		t.Fatalf("rows %+v", got.Rows)
+	}
 }

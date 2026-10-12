@@ -109,17 +109,34 @@ func AppendDecision(dir string, d Decision) error {
 	if err != nil {
 		return unavailable(ReasonLedger, "%s: %v", name, err)
 	}
-	for _, line := range bytes.SplitAfter(existing, []byte("\n")) {
-		if bytes.Equal(line, raw) {
-			return nil
+	// A line is committed when its line feed is written: the hook answers only after the whole line and its line feed are written
+	// and flushed, so what follows the last line feed is the cut end of a write that did not finish and was never answered. It is
+	// taken off before the next decision goes in. A committed line that is no decision is a ledger the run cannot import: the
+	// writer stops there instead of adding an allow it could not be read with.
+	end := bytes.LastIndexByte(existing, '\n') + 1
+	lines, err := decisionLines(name, existing[:end])
+	if err != nil {
+		return err
+	}
+	flush := func() error {
+		if err := f.Sync(); err != nil {
+			return unavailable(ReasonLedger, "%s: %v", name, err)
 		}
-		var seen Decision
-		if d.ToolUseID != "" && json.Unmarshal(line, &seen) == nil && seen.ToolUseID == d.ToolUseID && seen.Decision == d.Decision && seen.Reason == d.Reason {
-			return nil
+		return syncRoot(sub, "entry:"+name) // the ledger's own entry in the decisions directory
+	}
+	for i, line := range bytes.SplitAfter(existing[:end], []byte("\n")) {
+		if bytes.Equal(line, raw) || d.ToolUseID != "" && lines[i] != nil && lines[i].ToolUseID == d.ToolUseID && lines[i].Decision == d.Decision && lines[i].Reason == d.Reason {
+			return flush() // the decision is there; a flush that failed when it was written may not have reached the disk
 		}
 	}
-	if len(existing) > 0 && existing[len(existing)-1] != '\n' {
-		raw = append([]byte{'\n'}, raw...)
+	if end < len(existing) {
+		if err := f.Truncate(int64(end)); err != nil {
+			return unavailable(ReasonLedger, "%s: the cut tail cannot be taken off: %v", name, err)
+		}
+	}
+	// the ledger's entry in the decisions directory is flushed before the line goes in, so a refused flush leaves no decision behind
+	if err := syncRoot(sub, "entry:"+name); err != nil {
+		return err
 	}
 	if n, err := f.Write(raw); err != nil || n != len(raw) {
 		if err == nil {
@@ -133,8 +150,28 @@ func AppendDecision(dir string, d Decision) error {
 	return nil
 }
 
-// ReadDecisions reads the ledger of thread under dir, in the order written. A thread with no ledger has no decisions. A line
-// that does not parse is an error: the run does not import a ledger it cannot read whole.
+// decisionLines parses the committed lines of a ledger (data ends in a line feed or is empty). The result has one element for each
+// piece bytes.SplitAfter gives, nil for a blank one; a line that is no decision is an error.
+func decisionLines(name string, data []byte) ([]*Decision, error) {
+	pieces := bytes.SplitAfter(data, []byte("\n"))
+	out := make([]*Decision, len(pieces))
+	for i, line := range pieces {
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		var d Decision
+		dec := json.NewDecoder(bytes.NewReader(line))
+		if err := dec.Decode(&d); err != nil || dec.More() {
+			return nil, unavailable(ReasonLedger, "%s: line %d is not a decision", name, i+1)
+		}
+		out[i] = &d
+	}
+	return out, nil
+}
+
+// ReadDecisions reads the ledger of thread under dir, in the order written. A thread with no ledger has no decisions. A committed
+// line (one that ends in a line feed) that does not parse is an error: the run does not import a ledger it cannot read whole; the
+// end of a write that was cut short has no line feed and is left out.
 func ReadDecisions(dir, thread string) ([]Decision, error) {
 	if !ValidThreadID(thread) {
 		return nil, unavailable(ReasonLedger, "%q is not a thread id", thread)
@@ -179,17 +216,16 @@ func ReadDecisions(dir, thread string) ([]Decision, error) {
 	if err != nil {
 		return nil, unavailable(ReasonLedger, "%s: %v", name, err)
 	}
+	// the cut end of a write that did not finish (after the last line feed) is no decision: see AppendDecision
+	lines, err := decisionLines(name, data[:bytes.LastIndexByte(data, '\n')+1])
+	if err != nil {
+		return nil, err
+	}
 	var out []Decision
-	for i, line := range bytes.Split(data, []byte("\n")) {
-		if len(bytes.TrimSpace(line)) == 0 {
-			continue
+	for _, d := range lines {
+		if d != nil {
+			out = append(out, *d)
 		}
-		var d Decision
-		dec := json.NewDecoder(bytes.NewReader(line))
-		if err := dec.Decode(&d); err != nil || dec.More() {
-			return nil, unavailable(ReasonLedger, "%s: line %d is not a decision", name, i+1)
-		}
-		out = append(out, d)
 	}
 	return out, nil
 }

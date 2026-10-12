@@ -367,3 +367,94 @@ func TestLedgerKeepsOneEntryPerDecisionOfAToolUse(t *testing.T) {
 		t.Fatalf("%v %v", info, err)
 	}
 }
+
+// CRW-1207 correction round (d4): a ledger line is committed when its line feed is written. A cut tail is no decision: the reader
+// leaves it out, the writer takes it off before it appends, and a whole line that is no decision stops both.
+func TestLedgerCutTailIsNotADecision(t *testing.T) {
+	dir := home(t)
+	if err := (&Writer{}).Append(engineLine(threadA)); err != nil {
+		t.Fatal(err)
+	}
+	d1 := Decision{RunID: "run-1", ThreadID: threadA, ThreadKind: KindEngine, CallID: callA, ToolUseID: "t1", Decision: DecisionAllowed, AppliedModel: "m", AppliedEffort: "high"}
+	d2 := d1
+	d2.ToolUseID = "t2"
+	if err := AppendDecision(dir, d1); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(dir, DecisionsDir, threadA+FileSuffix)
+	f, err := os.OpenFile(file, os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteString(`{"run_id":"run-1","thread_id":"` + threadA + `","tool_use_id":"t-cut","deci`); err != nil {
+		t.Fatal(err)
+	}
+	f.Close()
+	if got, err := ReadDecisions(dir, threadA); err != nil || len(got) != 1 || got[0] != d1 {
+		t.Fatalf("the reader with a cut tail: %+v %v", got, err)
+	}
+	if err := AppendDecision(dir, d2); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := ReadDecisions(dir, threadA); err != nil || len(got) != 2 || got[0] != d1 || got[1] != d2 {
+		t.Fatalf("after the next decision: %+v %v", got, err)
+	}
+	if raw, _ := os.ReadFile(file); strings.Contains(string(raw), "t-cut") || strings.Count(string(raw), "\n") != 2 {
+		t.Fatalf("ledger bytes %q", raw)
+	}
+	// a tail that is a whole decision without its line feed is still not committed
+	if err := os.WriteFile(file, []byte(`{"tool_use_id":"x","decision":"allowed"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := ReadDecisions(dir, threadA); err != nil || len(got) != 0 {
+		t.Fatalf("an unterminated line: %+v %v", got, err)
+	}
+	// a whole line that is no decision: neither reads nor writes
+	if err := os.WriteFile(file, []byte("{\"tool_use_id\":\"x\"}\nnot a decision\n"+`{"tool_use_id":"y"}`+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ReadDecisions(dir, threadA); err == nil {
+		t.Fatal("the reader accepted a whole line that is no decision")
+	}
+	before, _ := os.ReadFile(file)
+	if err := AppendDecision(dir, d2); err == nil {
+		t.Fatal("the writer appended to a ledger the reader cannot read")
+	}
+	if after, _ := os.ReadFile(file); string(after) != string(before) {
+		t.Fatalf("the ledger changed: %q", after)
+	}
+}
+
+// CRW-1207 correction round (d3): the directory entries of the claim namespace are flushed, a failing flush is an error.
+func TestClaimEntriesAreFlushedAndFailuresPropagate(t *testing.T) {
+	dir := home(t)
+	if err := (&Writer{}).Append(engineLine(threadA)); err != nil {
+		t.Fatal(err)
+	}
+	var seen []string
+	old := SyncEntry
+	SyncEntry = func(label string, d *os.File) error { seen = append(seen, label); return d.Sync() }
+	t.Cleanup(func() { SyncEntry = old })
+	if created, err := CreateClaim(dir, threadA, callA, Claim{ToolUseID: "t", Input: "{}"}); err != nil || !created {
+		t.Fatalf("%v %v", created, err)
+	}
+	if err := WriteAnswer(dir, threadA, callA, "a\n"); err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(seen, " ")
+	for _, want := range []string{"entry:claims", "entry:" + threadA, "entry:" + callA, "entry:" + callA + ".answer"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("%q not flushed; flushed %v", want, seen)
+		}
+	}
+	SyncEntry = func(l string, d *os.File) error { return fmt.Errorf("injected %s", l) }
+	if _, err := CreateClaim(dir, threadA, "c_000000000003", Claim{ToolUseID: "t", Input: "{}"}); err == nil {
+		t.Error("CreateClaim ignored a failing flush")
+	}
+	if err := WriteAnswer(dir, threadA, "c_000000000003", "a\n"); err == nil {
+		t.Error("WriteAnswer ignored a failing flush")
+	}
+	if err := SyncClaims(dir, threadA); err == nil {
+		t.Error("SyncClaims ignored a failing flush")
+	}
+}

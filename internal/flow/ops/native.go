@@ -104,8 +104,10 @@ type collabItem struct {
 }
 
 // ImportNativeSpawns joins the hook's ledger of the engine thread (under the flow-bound directory dir) with the items of the turn
-// and the configuration of the threads it created. The rows are deterministic (their ids depend on the facts only), so an import
-// repeated for the same turn produces the rows again and StoreSpawnRows skips the stored ones. An error means the ledger or the
+// and the configuration of the threads it created. The rows are deterministic (their ids depend on the facts only: for an
+// observation the receiver, the verdict, the reason and the configured pair beside the applied one), so an import repeated for the
+// same turn produces the rows again and StoreSpawnRows skips the stored ones, while an observation that says something new (a
+// receiver unreadable at first and read later) is a row of its own. An error means the ledger or the
 // turn could not be read; nothing is imported then.
 func ImportNativeSpawns(ctx context.Context, host NativeHost, dir string, turn NativeTurn, now time.Time) (NativeImport, error) {
 	ledger, err := bound.ReadDecisions(dir, turn.ThreadID)
@@ -176,7 +178,7 @@ func (out *NativeImport) unbound(turn NativeTurn, item collabItem, ledger []boun
 		}
 	}
 	out.Rows = append(out.Rows, SpawnRow{
-		DecisionID: rowID(turn.RunID, turn.ThreadID, turn.CallID, item.ID, NativeKindObservation, ObservationUnbound),
+		DecisionID: rowID(turn.RunID, turn.ThreadID, turn.CallID, item.ID, NativeKindObservation, ObservationUnbound, why),
 		RunID:      turn.RunID, Kind: NativeKindObservation, CallID: turn.CallID, NodeID: turn.Node, RuleID: NativeRule, Decision: ObservationUnbound, Reason: why,
 		RequestedModel: strOf(item.Model), RequestedEffort: strOf(item.ReasoningEffort), ToolUseID: item.ID,
 		Evidence:  map[string]any{"thread_id": turn.ThreadID, "item": itemEvidence(item)},
@@ -184,6 +186,19 @@ func (out *NativeImport) unbound(turn NativeTurn, item collabItem, ledger []boun
 	})
 	out.Escalations = append(out.Escalations, NativeEscalation{Reason: ObservationUnbound, CallID: turn.CallID, ToolUseID: item.ID, Node: turn.Node,
 		Detail: map[string]any{"thread_id": turn.ThreadID, "why": why, "receivers": item.ReceiverThreads}})
+}
+
+// observedKey is the configured pair of an observation as part of its row id: a null field and a field that reads "" are two facts.
+// The text of a read error is left out, so the same failure worded differently twice is one fact.
+func observedKey(observed map[string]any) string {
+	key := func(name string) string {
+		p, _ := observed[name].(*string)
+		if p == nil {
+			return "null"
+		}
+		return "=" + *p
+	}
+	return key("model") + "\x00" + key("effort")
 }
 
 func strOf(p *string) string {
@@ -202,8 +217,9 @@ func itemEvidence(item collabItem) map[string]any {
 func (out *NativeImport) observe(ctx context.Context, host NativeHost, turn NativeTurn, item collabItem, d bound.Decision, now time.Time) {
 	row := func(receiver, decision, reason string, observed map[string]any) SpawnRow {
 		return SpawnRow{
-			DecisionID: rowID(turn.RunID, turn.ThreadID, turn.CallID, item.ID, NativeKindObservation, receiver),
-			RunID:      turn.RunID, Kind: NativeKindObservation, CallID: turn.CallID, NodeID: turn.Node, RuleID: NativeRule, Decision: decision, Reason: reason,
+			DecisionID: rowID(turn.RunID, turn.ThreadID, turn.CallID, item.ID, NativeKindObservation, receiver, decision, reason, observedKey(observed),
+				d.AppliedModel, d.AppliedEffort),
+			RunID: turn.RunID, Kind: NativeKindObservation, CallID: turn.CallID, NodeID: turn.Node, RuleID: NativeRule, Decision: decision, Reason: reason,
 			RequestedModel: d.RequestedModel, RequestedEffort: d.RequestedEffort, AppliedModel: d.AppliedModel, AppliedEffort: d.AppliedEffort, ToolUseID: item.ID,
 			Evidence: map[string]any{"thread_id": turn.ThreadID, "receiver_thread_id": receiver, "observed": observed, "item": itemEvidence(item),
 				"requested": map[string]any{"model": d.RequestedModel, "effort": d.RequestedEffort}, "applied": map[string]any{"model": d.AppliedModel, "effort": d.AppliedEffort}},

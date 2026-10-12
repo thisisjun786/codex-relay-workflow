@@ -35,6 +35,7 @@ const (
 	flowBoundArchitectGuidance  = "CRW-ROLE: architect is not a native helper role of a thread bound to a flow run; send it to run(crw flow)"
 	flowBoundForkGuidance       = "a full-history fork keeps the parent's model and effort, so its role pair cannot be set; spawn a new explorer with a question packet (the task and what it needs to know, fork_context false or fork_turns \"none\") instead"
 	flowBoundLimitGuidance      = "this engine call has used its native helper (one per call); do the rest yourself or report it in your final answer"
+	flowBoundCiphertextGuidance = "the task of a native V2 spawn is ciphertext, so the hook cannot read its CRW-ROLE header; name the role in task_name: reviewer or explorer, or the role and an underscore and more (reviewer_diff, explorer_parser)"
 	flowBoundNoneGuidance       = "this engine call may spawn no native helper; do the work yourself or report the need in your final answer"
 )
 
@@ -177,15 +178,25 @@ func (e *flowBoundEvent) allow(helper string, pair bound.Pair, answer string, or
 	return answer
 }
 
-// orchestrator answers a spawn of the thread that orchestrates an open run: the pair is the one the message's producer header
-// names, and keywords never choose.
+// orchestrator answers a spawn of the thread that orchestrates an open run: the pair is the one the producer named, and keywords
+// never choose. A plaintext message names it in its header; the task of a native V2 spawn is ciphertext, whose header the hook
+// cannot read, so it names it in the plaintext task_name, and a call whose role cannot be established is refused: it never gets
+// the explorer pair by default.
 func (e *flowBoundEvent) orchestrator() string {
+	role, readable := e.headerRole(), true
+	if e.ciphertext() {
+		role, readable = taskNameRole(e.input.Get("task_name")), false
+	}
 	helper := bound.HelperExplorer
-	switch e.headerRole() {
+	switch role {
 	case "reviewer":
 		helper = bound.HelperReviewer
 	case "architect":
 		return e.refuse(bound.ReasonNativeTypeRefused, flowBoundArchitectGuidance, "")
+	case "":
+		if !readable {
+			return e.refuse(bound.ReasonNativeTypeRefused, flowBoundCiphertextGuidance, "")
+		}
 	}
 	pair := e.line().HelperPairs[helper]
 	answer, orig, err := answerFrom(e.inText, pair)
@@ -195,14 +206,34 @@ func (e *flowBoundEvent) orchestrator() string {
 	return e.allow(helper, pair, answer, orig)
 }
 
-// headerRole is the CRW-ROLE value of the producer header of the message (the lines before the first line-start TASK:), "" for
-// none. The ciphertext of a native V2 task cannot be read, so it has no header.
-func (e *flowBoundEvent) headerRole() string {
-	v2 := IsCollaborationToolName(e.payload.Get("tool_name")) || IsV2SpawnInput(spawnHookView(e.input))
-	packet := spawnHookPacketText(e.input, v2)
-	if v2 && IsFernetTokenShape(packet) {
-		return ""
+// taskNameRole is the role a V2 task_name names: the role itself, or the role and an underscore and more ("reviewer_diff"); ""
+// for any other name. Only the three roles of the header are known, and the case is exact.
+func taskNameRole(v any) string {
+	name, _ := v.(string)
+	for _, role := range []string{"reviewer", "explorer", "architect"} {
+		if name == role || strings.HasPrefix(name, role+"_") {
+			return role
+		}
 	}
+	return ""
+}
+
+// packet is the message of the spawn as text, and whether it is a native V2 task of ciphertext shape.
+func (e *flowBoundEvent) packet() (text string, ciphertext bool) {
+	v2 := IsCollaborationToolName(e.payload.Get("tool_name")) || IsV2SpawnInput(spawnHookView(e.input))
+	text = spawnHookPacketText(e.input, v2)
+	return text, v2 && IsFernetTokenShape(text)
+}
+
+func (e *flowBoundEvent) ciphertext() bool {
+	_, c := e.packet()
+	return c
+}
+
+// headerRole is the CRW-ROLE value of the producer header of a plaintext message (the lines before the first line-start TASK:),
+// "" for none.
+func (e *flowBoundEvent) headerRole() string {
+	packet, _ := e.packet()
 	message := StripControlMarkers(packet, false)
 	header := message
 	if at := spawnClassifyTaskStart(message); at >= 0 {
@@ -280,6 +311,10 @@ func (e *flowBoundEvent) answer(claim bound.Claim, existing bool) string {
 	}
 	_, orig, err := answerFrom(claim.Input, pair)
 	if err != nil {
+		return e.unavailable(err)
+	}
+	// the allowance is spent for good only when the claim, its answer and the directories that hold them have reached the disk
+	if err := bound.SyncClaims(e.res.Dir, e.thread); err != nil {
 		return e.unavailable(err)
 	}
 	return e.allow(helper, pair, answer, orig)

@@ -76,6 +76,11 @@ func openSub(parent *os.Root, name string, create bool) (*os.Root, error) {
 		} else if err == nil {
 			_ = parent.Chmod(name, 0o700) // a restrictive umask may have taken bits off
 		}
+		// the new entry is in the parent: flush the parent (also when another process made the entry a moment ago, whose own flush
+		// may not have happened yet), or a restart can take the directory and everything under it
+		if err := syncRoot(parent, "entry:"+name); err != nil {
+			return nil, err
+		}
 		info, err = parent.Lstat(name)
 	}
 	if err != nil {
@@ -123,9 +128,8 @@ func CreateClaim(dir, thread, call string, c Claim) (created bool, err error) {
 		}
 		return false, unavailable(ReasonClaim, "%v", err)
 	}
-	if d, err := root.Open("."); err == nil {
-		_ = d.Sync()
-		d.Close()
+	if err := syncRoot(root, "entry:"+call); err != nil {
+		return false, err
 	}
 	return true, nil
 }
@@ -235,11 +239,7 @@ func WriteAnswer(dir, thread, call, answer string) error {
 		_ = root.Remove(tmp)
 		return unavailable(ReasonClaim, "%v", err)
 	}
-	if d, err := root.Open("."); err == nil {
-		_ = d.Sync()
-		d.Close()
-	}
-	return nil
+	return syncRoot(root, "entry:"+AnswerFile(call))
 }
 
 // writeTemp writes data to a new file with mode 0600 in root under a name that no other writer uses, optionally synced, and
@@ -269,4 +269,55 @@ func writeTemp(root *os.Root, base string, data []byte, sync bool) (string, erro
 		return "", fmt.Errorf("%s: %w", name, err)
 	}
 	return name, nil
+}
+
+// SyncEntry flushes a directory whose entries changed, label saying which entry. A test replaces it to see the flushes or to fail one.
+var SyncEntry = func(label string, d *os.File) error { return d.Sync() }
+
+// syncRoot flushes the entries of the directory root stands for; a failure is an error, because an entry that may not survive a
+// restart is not a record the hook can rest an allow on.
+func syncRoot(root *os.Root, label string) error {
+	d, err := root.Open(".")
+	if err != nil {
+		return unavailable(ReasonClaim, "%s: %v", label, err)
+	}
+	defer d.Close()
+	if err := SyncEntry(label, d); err != nil {
+		return unavailable(ReasonClaim, "%s: cannot be made durable: %v", label, err)
+	}
+	return nil
+}
+
+// SyncClaims flushes the claim namespace of thread from the bottom up: the directory that holds its claims and answers, the claims
+// directory that holds the thread's, and the flow-bound directory that holds claims. The hook calls it before it allows a spawn
+// that rests on a claim, so a claim a crash left behind an unflushed directory entry (a directory made by an earlier spawn that
+// stopped before its own flush) is flushed now, and an allow is never returned for a claim a restart could lose.
+func SyncClaims(dir, thread string) error {
+	if !ValidThreadID(thread) {
+		return unavailable(ReasonClaim, "%q is not a thread id", thread)
+	}
+	top, err := openDir(dir)
+	if err != nil {
+		return err
+	}
+	defer top.Close()
+	claims, err := openSub(top, ClaimsDir, false)
+	if err != nil {
+		return err
+	}
+	defer claims.Close()
+	sub, err := openSub(claims, thread, false)
+	if err != nil {
+		return err
+	}
+	defer sub.Close()
+	for _, step := range []struct {
+		root  *os.Root
+		label string
+	}{{sub, "tree:" + thread}, {claims, "tree:" + ClaimsDir}, {top, "tree:" + DirName}} {
+		if err := syncRoot(step.root, step.label); err != nil {
+			return err
+		}
+	}
+	return nil
 }

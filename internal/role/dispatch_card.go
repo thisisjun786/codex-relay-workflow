@@ -157,6 +157,6 @@ const dispatchFlowEngineCard = `[crw] Subagent dispatch, flow-bound engine call:
 ` + dispatchFlowCell + `const a = {agent_type:"explorer",message:"TASK: <question packet>"};
 text(await tools[s[0]](v1 ? a : {...a, task_name:"helper", fork_turns:"none"}));`
 
-const dispatchFlowOrchestratorCard = `[crw] Subagent dispatch, flow-bound orchestrator: agent_type "explorer" only; the spawn hook sets the pair from the CRW-ROLE line in the header of the message (before TASK:), never from words like review. Review helper: header line CRW-ROLE: reviewer (reviewer pair); explorer helper: CRW-ROLE: explorer or no header (explorer pair). Send other roles through run(crw flow). Pass no model or reasoning_effort. First Code Mode cell, review form:
+const dispatchFlowOrchestratorCard = `[crw] Subagent dispatch, flow-bound orchestrator: agent_type "explorer" only; the spawn hook sets the pair from the role, never from words like review. V1: header line CRW-ROLE: reviewer or CRW-ROLE: explorer before TASK:. V2: the message is ciphertext, so task_name names the role (reviewer or explorer, or reviewer_x); other names are refused. Other roles go through run(crw flow). Pass no model or reasoning_effort. First Code Mode cell, review form:
 ` + dispatchFlowCell + `const a = {agent_type:"explorer",message:"CRW-ROLE: reviewer\nTASK: <what to review>"};
-text(await tools[s[0]](v1 ? a : {...a, task_name:"helper", fork_turns:"none"}));`
+text(await tools[s[0]](v1 ? a : {...a, task_name:"reviewer", fork_turns:"none"}));`

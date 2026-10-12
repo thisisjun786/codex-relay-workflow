@@ -73,6 +73,10 @@ func TestDispatchCardUsesRoleKeyWhenFlowBound(t *testing.T) {
 	if !strings.Contains(orchestrator, `message:"CRW-ROLE: reviewer\nTASK:`) || !strings.Contains(orchestrator, "CRW-ROLE: explorer") {
 		t.Errorf("the orchestrator card does not show the header forms:\n%s", orchestrator)
 	}
+	// under native V2 the message is ciphertext: the review form names the role in the plaintext task_name too
+	if !strings.Contains(orchestrator, `task_name:"reviewer"`) || !strings.Contains(orchestrator, "ciphertext") {
+		t.Errorf("the orchestrator card does not name the role by task_name for V2:\n%s", orchestrator)
+	}
 	if strings.Contains(engine, "CRW-ROLE") {
 		t.Errorf("an engine call's card names a header:\n%s", engine)
 	}
