@@ -62,7 +62,27 @@ type Project struct {
 	// CoordinatorEpoch is the epoch the writing session holds on the plan (the epoch its claim raised it to); 0 for a plan nobody has claimed.
 	CoordinatorEpoch int64   `json:"coordinator_epoch,omitempty"`
 	Issues           []Issue `json:"issues"`
+	// Milestones are what the run of a milestone needs that no issue line says (CRW-1277): optional, and once one is given every
+	// milestone an issue names has its entry and every entry is named by an issue. They are not part of the plan revision: the run
+	// pins the handoff and reads them from it (crw flow start --handoff).
+	Milestones []Milestone `json:"milestones,omitempty"`
 }
+
+// Milestone is a milestone of a project as the run reads it: its title, its criteria (at least one), the surfaces of its criteria (a
+// non-empty subset of logic, web, tui and desktop: web, tui or desktop makes a QA receipt part of the final gate), its work grade
+// (C1..C5: from C3 the QA evidence is judged by the two oracle passes) and the required verification commands of its final gate
+// (empty: the repository's CI, crw-dev ci local).
+type Milestone struct {
+	Key              string   `json:"key"`
+	Title            string   `json:"title"`
+	Criteria         []string `json:"criteria"`
+	Surfaces         []string `json:"surfaces"`
+	Grade            string   `json:"grade"`
+	RequiredCommands []string `json:"required_commands"`
+}
+
+// Surfaces are the surfaces a milestone's criteria may name.
+var Surfaces = []string{"logic", "web", "tui", "desktop"}
 
 // Target is where the project's issues integrate: the repository and the base ref an order edge names.
 type Target struct {

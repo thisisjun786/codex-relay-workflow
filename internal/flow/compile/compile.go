@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -287,6 +288,7 @@ func compileProject(in Input, at int, owner map[string]string, opts Options) (Pl
 			addOrder(m[k-1], m[k])
 		}
 	}
+	refusals = append(refusals, milestoneRefusals(p)...)
 	if len(refusals) > 0 {
 		return plan, refusals
 	}
@@ -363,6 +365,86 @@ func dagRefusals(project string, err error) []Refusal {
 	}
 	return []Refusal{{Project: project, Rule: "input", Detail: err.Error()}}
 }
+
+// gradePattern is the shape of a milestone's work grade.
+var gradePattern = regexp.MustCompile(`^C[1-5]$`)
+
+// milestoneRefusals judges the milestone entries of a project (CRW-1277 b). None given is a project as before. Each entry is
+// judged on its own, and once one is given the entries and the issues name each other exactly: an issue whose milestone has no
+// entry (an issue with no milestone included) and an entry no issue names are refused, so the run never meets a milestone it has
+// to invent surfaces or a grade for.
+func milestoneRefusals(p Project) []Refusal {
+	if len(p.Milestones) == 0 {
+		return nil
+	}
+	var out []Refusal
+	refuse := func(path, format string, args ...any) {
+		out = append(out, Refusal{Project: p.Key, Rule: "milestone", Path: path, Detail: fmt.Sprintf(format, args...)})
+	}
+	entries := map[string]bool{}
+	for i, m := range p.Milestones {
+		path := fmt.Sprintf("milestones[%d]", i)
+		switch {
+		case strings.TrimSpace(m.Key) == "":
+			refuse(path+".key", "a milestone entry needs its key")
+		case entries[m.Key]:
+			refuse(path+".key", "milestone %s has an entry twice", m.Key)
+		}
+		entries[m.Key] = true
+		if strings.TrimSpace(m.Title) == "" {
+			refuse(path+".title", "milestone %s needs its title", m.Key)
+		}
+		if len(m.Criteria) == 0 {
+			refuse(path+".criteria", "milestone %s needs at least one criterion", m.Key)
+		}
+		for j, c := range m.Criteria {
+			if strings.TrimSpace(c) == "" {
+				refuse(fmt.Sprintf("%s.criteria[%d]", path, j), "a criterion of milestone %s needs its text", m.Key)
+			}
+		}
+		if len(m.Surfaces) == 0 {
+			refuse(path+".surfaces", "milestone %s needs at least one surface of %s", m.Key, strings.Join(Surfaces, ", "))
+		}
+		seen := map[string]bool{}
+		for j, s := range m.Surfaces {
+			switch {
+			case !slices.Contains(Surfaces, s):
+				refuse(fmt.Sprintf("%s.surfaces[%d]", path, j), "surface %q of milestone %s is not one of %s", s, m.Key, strings.Join(Surfaces, ", "))
+			case seen[s]:
+				refuse(fmt.Sprintf("%s.surfaces[%d]", path, j), "milestone %s names surface %s twice", m.Key, s)
+			}
+			seen[s] = true
+		}
+		if !gradePattern.MatchString(m.Grade) {
+			refuse(path+".grade", "the grade %q of milestone %s is not C1, C2, C3, C4 or C5", m.Grade, m.Key)
+		}
+		for j, c := range m.RequiredCommands {
+			if strings.TrimSpace(c) == "" {
+				refuse(fmt.Sprintf("%s.required_commands[%d]", path, j), "a required command of milestone %s is blank", m.Key)
+			}
+		}
+	}
+	named := map[string]bool{}
+	for i, is := range p.Issues {
+		named[is.Milestone] = true
+		if !entries[is.Milestone] {
+			ms := is.Milestone
+			if ms == "" {
+				ms = "(none)"
+			}
+			refuse(fmt.Sprintf("issues[%d].milestone", i), "issue %s is in milestone %s, which has no entry in milestones", is.Key, ms)
+		}
+	}
+	for i, m := range p.Milestones {
+		if m.Key != "" && !named[m.Key] {
+			refuse(fmt.Sprintf("milestones[%d]", i), "no issue of the project is in milestone %s", m.Key)
+		}
+	}
+	return out
+}
+
+// CriteriaDigest is criteriaDigest for the run (CRW-1277): the digest a node of a plan compiled from these criteria carries.
+func CriteriaDigest(criteria []string) string { return criteriaDigest(criteria) }
 
 // criteriaDigest is the node's criteria_set_digest, the digest dag-release recomputes from the canonical criteria
 // (delivery.SetDigest of {id, title, required}): the criteria of the handoff, in the order they are listed, are the canonical
