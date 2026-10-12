@@ -15,8 +15,8 @@ import (
 // The pump's sources of the upward half of a flow run (CRW-1204). Both read the relay store read-only: the flow rows are written by the
 // run and by the `crw flow` commands, never by the pump (a delivery the pump settles is told to `crw flow report-delivered`).
 //
-//   - flow_runs: a run's escalations (urgent kind run_escalation) and a run that died - it started, did not finish and has written no row of
-//     its own for run_dead_seconds (urgent kind run_dead). A resumed run writes rows again, so a second death is another event.
+//   - flow_runs: a run's escalations (urgent kind run_escalation) and a run that died - its newest process started, did not finish and has written no row of
+//     its own for run_dead_seconds (urgent kind run_dead). A resumed run writes rows again (and a finish of an earlier process says nothing of the newest one), so a second death is another event.
 //   - flow_reports: a decision only Jun can make (urgent kind jun_decision) and a report nobody read for low_priority_seconds (low kind
 //     report_unread: report id, age, the last delivery result).
 //
@@ -35,7 +35,7 @@ const (
 	// pumpFlowRunDeadWindow is how long after its last row a dead run is still reported: a run abandoned long ago is not news.
 	pumpFlowRunDeadWindow = 7 * 24 * time.Hour
 
-	// foreignSeqBase is engine.ForeignSeqBase: the sequence numbers from here on are rows a command wrote, which say nothing about
+	// pumpFlowForeignSeq is engine.ForeignSeqBase: the sequence numbers from here on are rows a command wrote, which say nothing about
 	// whether the run's process is alive.
 	pumpFlowForeignSeq = int64(1) << 40
 )
@@ -207,11 +207,11 @@ func pumpFlowReadAt(ctx context.Context, state string) (pumpFlowData, error) {
 			return err
 		}
 		runs, err := q.QueryContext(ctx, `SELECT r.run_id, r.actor_task_id, r.started_at,
- EXISTS (SELECT 1 FROM flow_events e WHERE e.run_id = r.run_id AND e.kind = 'finished'),
+ EXISTS (SELECT 1 FROM flow_events e WHERE e.run_id = r.run_id AND e.kind = 'finished' AND e.seq < ? AND e.seq > COALESCE((SELECT MAX(s.seq) FROM flow_events s WHERE s.run_id = r.run_id AND s.kind = 'started' AND s.seq < ? AND json_extract(s.payload_json, '$._kind') = 'run'), 0)),
  COALESCE((SELECT MAX(recorded_at) FROM flow_calls c WHERE c.run_id = r.run_id), ''),
  EXISTS (SELECT 1 FROM flow_calls c WHERE c.run_id = r.run_id AND c.kind = 'agent' AND NOT EXISTS (SELECT 1 FROM flow_calls t WHERE t.run_id = c.run_id AND t.call_id = c.call_id AND t.event IN ('completed', 'null_model', 'held', 'refused', 'outcome_unknown', 'superseded'))),
  COALESCE((SELECT MAX(recorded_at) FROM flow_events e WHERE e.run_id = r.run_id AND e.seq < ?), '')
- FROM flow_runs r ORDER BY r.rowid`, pumpFlowForeignSeq)
+ FROM flow_runs r ORDER BY r.rowid`, pumpFlowForeignSeq, pumpFlowForeignSeq, pumpFlowForeignSeq)
 		if err != nil {
 			return err
 		}

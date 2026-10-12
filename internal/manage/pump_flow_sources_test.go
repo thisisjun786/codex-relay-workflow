@@ -222,3 +222,22 @@ func TestPumpFlowSourcesAreUnmeasuredWithoutAStore(t *testing.T) {
 		t.Errorf("sources %v", st.Sources)
 	}
 }
+
+// A run that returned from its first process (a held or incomplete workflow leaves a finished row) and was resumed is alive again until
+// its new process finishes: when that process dies, the run is dead, whatever finished row its history holds. A run whose newest process
+// finished is not. (post-evaluation d5)
+func TestPumpRunDeadSeesAResumedRunThatDiedAfterAnEarlierFinish(t *testing.T) {
+	now := time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)
+	e, cfg, st, log := pumpFlowTestSetup(t, &now, pumpFlowRunsSource{})
+	// first process finished at -5h; resumed at -2h; the second process died
+	flowTestRun(t, st, "run-resumed-dead", "orch-task", now.Add(-5*time.Hour), true)
+	flowTestRun(t, st, "run-resumed-dead", "orch-task", now.Add(-2*time.Hour), false)
+	// first process finished, resumed, and the second finished too
+	flowTestRun(t, st, "run-resumed-done", "orch-task", now.Add(-5*time.Hour), true)
+	flowTestRun(t, st, "run-resumed-done", "orch-task", now.Add(-4*time.Hour), true)
+	pumpFlowTestRound(t, e, cfg)
+	msgs := pumpFlowTestMessages(t, log)
+	if len(msgs) != 1 || !strings.Contains(msgs[0], "run dead run=run-resumed-dead") {
+		t.Fatalf("messages %q", msgs)
+	}
+}
