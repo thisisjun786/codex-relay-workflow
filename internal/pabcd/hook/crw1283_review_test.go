@@ -146,11 +146,18 @@ func TestReview1283ExternalBuiltinName(t *testing.T) {
 				t.Errorf("%s guard ALLOWED external builtin-named program: %s", target.name, command)
 			}
 		}
-		// The shell itself runs its builtin printf: the file of that name on the PATH does not run.
-		for _, control := range []string{"PATH={DIR}:/usr/bin:/bin printf ok", "PATH={DIR}:/usr/bin:/bin command printf ok", "env PATH=/usr/bin:/bin printf ok"} {
-			command := strings.ReplaceAll(control, "{DIR}", target.dir)
-			if target.refused(command) {
-				t.Errorf("%s guard refused a builtin the shell runs itself: %s", target.name, command)
+		// printf is a builtin in bash, zsh and dash and a program the PATH finds in a strict POSIX shell or one without the builtin:
+		// a file of that name on the assigned PATH is read (review b2ae50e0, Sion decision 5). A PATH whose printf is the system's
+		// stays a control.
+		for _, shadowed := range []string{"PATH={DIR}:/usr/bin:/bin printf ok", "PATH={DIR}:/usr/bin:/bin command printf ok"} {
+			command := strings.ReplaceAll(shadowed, "{DIR}", target.dir)
+			if !target.refused(command) {
+				t.Errorf("%s guard ALLOWED a builtin name the assigned PATH shadows: %s", target.name, command)
+			}
+		}
+		for _, control := range []string{"PATH=/usr/bin:/bin printf ok", "PATH=/usr/bin:/bin command printf ok", "env PATH=/usr/bin:/bin printf ok"} {
+			if target.refused(control) {
+				t.Errorf("%s guard refused printf on a PATH of system directories: %s", target.name, control)
 			}
 		}
 	}

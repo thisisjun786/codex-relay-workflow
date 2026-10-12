@@ -42,15 +42,62 @@ func samePath(left, right *Word) bool {
 	return left == right || left != nil && right != nil && *left == *right
 }
 
+// pathIndependent is whether every shell the reader models (sh and dash, bash, zsh, ksh) runs a name itself without searching
+// the PATH: a function the text defines, a POSIX special builtin, and the builtins POSIX has the shell find before the PATH
+// (cd, command, getopts, read). A name that is a builtin or keyword in some shells only (printf, echo, test, time, let, declare,
+// local, pushd, mapfile, chdir, source, builtin and the rest) is a program the PATH finds in another (dash has no let, bash no
+// chdir, dash's time is a program), so it is searched on the assigned PATH (CRW-1283, Sion decision 5).
 func pathIndependent(name string, st *state) bool {
 	if _, ok := st.funcs[name]; ok {
 		return true
 	}
+	return posixShellOwn(name)
+}
+
+// posixShellOwn names the POSIX special builtins and the builtins every modelled shell runs before a search of the PATH.
+func posixShellOwn(name string) bool {
 	switch name {
-	case ":", "echo", "printf", "true", "false", "test", "[", "cd", "chdir", "pushd", "popd", "exit", "return", "break", "continue", "eval", "source", ".", "trap", "read", "mapfile", "readarray", "getopts", "unset", "export", "declare", "typeset", "local", "readonly", "set", "shift", "let", "command", "builtin", "exec", "time":
+	case ":", ".", "break", "continue", "eval", "exec", "exit", "export", "readonly", "return", "set", "shift", "times", "trap",
+		"unset", "cd", "command", "getopts", "read":
 		return true
 	}
 	return false
+}
+
+// shellOwnSomewhere names the builtins and keywords that some modelled shells run themselves and others search on the PATH: a
+// name of these that no directory of the PATH holds is the shell's own (or not found), and is read by its name.
+func shellOwnSomewhere(name string) bool {
+	switch name {
+	case "echo", "printf", "true", "false", "test", "[", "chdir", "pushd", "popd", "dirs", "source", "mapfile", "readarray",
+		"declare", "typeset", "local", "let", "builtin", "time", "enable", "disable", "shopt", "setopt", "unsetopt", "print",
+		"pwd", "type", "hash", "alias", "unalias", "umask", "wait", "kill", "jobs", "fg", "bg", "ulimit", "fc", "nameref",
+		"caller", "compgen", "complete", "help", "history", "logout", "suspend", "disown", "unhash", "unfunction", "whence",
+		"where", "which", "autoload", "zmodload", "functions", "noglob", "emulate", "integer", "float", "zparseopts":
+		return true
+	}
+	return false
+}
+
+// keywordOnPath answers for a clause whose word is a builtin or keyword in bash and zsh and a program the PATH finds in sh (dash):
+// a declaration, let, time, [[, coproc, select or function. Behind an assigned PATH, a file of that name outside the system directories is refused, since the
+// clause is read as the builtin (CRW-1283, Sion decision 5). A name no directory holds, or a system program, is read as before.
+func (w *walker) keywordOnPath(name string, st *state) error {
+	if st.searchPath == nil || posixShellOwn(name) && !w.builtinsChanged {
+		return nil
+	}
+	if _, ok := st.funcs[name]; ok && !w.builtinsChanged {
+		return nil
+	}
+	found, err := resolveProgram(Word{Known: true, Value: name}, st)
+	switch {
+	case err == errPathNotFound:
+		return nil
+	case err != nil:
+		return err
+	case !strings.Contains(found.Value, "/") || systemProgram(found.Value):
+		return nil
+	}
+	return unreadablef("%s is a builtin in some shells and %s on the assigned PATH in others; run it with a PATH that does not hold it", name, found.Value)
 }
 
 func systemProgram(program string) bool {
@@ -219,6 +266,29 @@ func setOptionsOnly(args []Word) bool {
 	return true
 }
 
+// positionalAssignment is whether a program word is an assignment to a positional parameter in zsh (1=x, 2+=x, argv=x, *=x): bash
+// runs it as a program of that name, zsh changes what a later "$@" expands to (CRW-1283).
+func positionalAssignment(word string) bool {
+	i := strings.IndexByte(word, '=')
+	if i <= 0 {
+		return false
+	}
+	name := strings.TrimSuffix(word[:i], "+")
+	if j := strings.IndexByte(name, '['); j >= 0 {
+		name = name[:j]
+	}
+	return positionalName(name)
+}
+
+// positionalName is whether a variable name is a positional parameter or zsh's array of them: argv, *, @, # or digits.
+func positionalName(name string) bool {
+	switch name {
+	case "argv", "*", "@", "#":
+		return true
+	}
+	return name != "" && strings.Trim(name, "0123456789") == ""
+}
+
 func optionName(v string) bool {
 	if v == "" {
 		return false
@@ -231,16 +301,18 @@ func optionName(v string) bool {
 	return true
 }
 
-// pathBinaryIdentified admits a program an assigned PATH finds outside the system directories. A text file (a script) is read by
-// the consumers like a script run by its path. A binary is read by its name only, which says nothing of a copy or a link named
-// otherwise, so it is admitted only when the PATH the shell started with (the environment of this process) runs the same file
-// for the name: the assignment then does not change which program runs. Any other binary is refused (CRW-1283, Sion decision 5).
-func pathBinaryIdentified(name, program string) error {
+// pathProgramIdentified admits a program an assigned PATH finds outside the system directories. A text file (a script) is read
+// by the consumers like a script run by its path, unless its name is an interpreter's: the reader then reads the interpreter's
+// inline program or module by the name, not the script. A binary is read by its name only, which says nothing of a copy or a link
+// named otherwise. Either is admitted only when the PATH the shell started with (the environment of this process) runs the same
+// file for the name: the assignment then does not change which program runs. Any other is refused (CRW-1283, Sion decision 5).
+func pathProgramIdentified(name, program string) error {
 	binary, err := programIsBinary(program)
 	if err != nil {
 		return err
 	}
-	if !binary {
+	byName := isInterpreter(name) || isPythonName(name) || isOpaqueInterpreter(name)
+	if !binary && !byName {
 		return nil
 	}
 	if ambient, ok := ambientProgram(name); ok {
@@ -249,6 +321,9 @@ func pathBinaryIdentified(name, program string) error {
 		if leftErr == nil && rightErr == nil && os.SameFile(left, right) {
 			return nil
 		}
+	}
+	if !binary {
+		return unreadablef("%s is a script that the assigned PATH finds under the interpreter name %s and the PATH the shell starts with does not run; the reader would read the interpreter, not the script", program, name)
 	}
 	return unreadablef("%s is a binary that the assigned PATH finds outside the system directories and the PATH the shell starts with does not run; run it by its absolute path", program)
 }

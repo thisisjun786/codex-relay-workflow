@@ -488,7 +488,7 @@ loop:
 		if ctx.Feed != nil || ctx.RuntimeCarrier != "" {
 			child.args = nil
 		}
-		return w.carried(text, child, ctx, name+" -c")
+		return w.carriedArgs(text, child, ctx, name+" -c")
 	}
 	if operand != nil && !stdinMode && operand.Known && fdAliasPath(operand.Value, st.dir) {
 		// A shell that runs a descriptor alias runs the text that descriptor carries, as a shell string does.
@@ -499,7 +499,12 @@ loop:
 		return w.carried(text, st.clone(), ctx, name+" fd")
 	}
 	if operand != nil && !stdinMode {
-		return w.scriptFile(name, *operand, st, ctx, args[i+1:]...)
+		scriptArgs := args[i+1:]
+		if ctx.Feed != nil || ctx.RuntimeCarrier != "" {
+			// xargs, find -exec and the other feeds append operands at run time: the script's positional parameters are not known.
+			scriptArgs = nil
+		}
+		return w.scriptFile(name, *operand, st, ctx, scriptArgs...)
 	}
 	if file, ok := stdinIsFile(ctx); ok && ctx.Carrier != "" {
 		// A shell in a carried text reads its program from a file the text names: /dev/null holds none, any other file is

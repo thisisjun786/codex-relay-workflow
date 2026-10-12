@@ -98,7 +98,7 @@ func TestCRW1178SourcelessBytecodeStaysRefusedWithItsCause(t *testing.T) {
 		t.Errorf("reason over the bound: %d", len(reason))
 	}
 	gh := githubPostAnswerReason(t, HandleGitHubPostGuard(gateBash(t, cwd, cmd)))
-	for _, want := range []string{"unreadable-github-post", "hidden.pyc", "compiled code", "names no GitHub post"} {
+	for _, want := range []string{"unreadable-github-post", "hidden.pyc", "compiled code", "cannot tell whether the command posts"} {
 		if !strings.Contains(gh, want) {
 			t.Errorf("GitHub reason lacks %q: %s", want, gh)
 		}
@@ -126,7 +126,7 @@ func TestCRW1178SourcelessBytecodeStaysRefusedWithItsCause(t *testing.T) {
 func TestCRW1178UnreadableGithubPostKeepsPostWording(t *testing.T) {
 	cwd, _, _ := gateScene(t)
 	gh := githubPostAnswerReason(t, HandleGitHubPostGuard(gateBash(t, cwd, `"$FOO" a; gh pr comment 1 --body-file x`)))
-	if !strings.Contains(gh, "unreadable-github-post") || strings.Contains(gh, "names no GitHub post") {
+	if !strings.Contains(gh, "unreadable-github-post") || strings.Contains(gh, "cannot tell whether the command posts") {
 		t.Errorf("a command that names a post: %s", gh)
 	}
 }
@@ -191,10 +191,10 @@ func TestCRW1178FreeformApplyPatchIsJudged(t *testing.T) {
 }
 
 // githubReaderWording is whether a GitHub guard answer is the command reader's refusal (it says what could not be read and that
-// the text names no post) and not a policy refusal about GitHub posting.
+// that it cannot tell whether the command posts) and not a policy refusal about GitHub posting.
 func crw1178ReaderWording(t *testing.T, reason string) {
 	t.Helper()
-	if !strings.Contains(reason, "[crw command-reader]") || !strings.Contains(reason, "names no GitHub post") {
+	if !strings.Contains(reason, "[crw command-reader]") || !strings.Contains(reason, "cannot tell whether the command posts") {
 		t.Errorf("not the command reader's wording: %s", reason)
 	}
 	for _, bad := range []string{"GitHub posting has not been established", "GitHub post blocked", "--body-file"} {
@@ -245,7 +245,7 @@ func TestCRW1178UnreadableScriptFileIsReaderWording(t *testing.T) {
 	}
 	// The same refusal beside a spelled gh post keeps the GitHub wording.
 	reason := githubPostAnswerReason(t, HandleGitHubPostGuard(gateBash(t, cwd, "bash missing.sh; gh pr comment 1 --body-file x")))
-	if strings.Contains(reason, "names no GitHub post") {
+	if strings.Contains(reason, "cannot tell whether the command posts") {
 		t.Errorf("a command that spells a post: %s", reason)
 	}
 }
@@ -261,7 +261,7 @@ func TestCRW1178NestedScriptMentionIsOfItsOwnText(t *testing.T) {
 	write("post.sh", "\"$FOO\" a\ngh pr comment 1 --body-file body.md\n")
 	write("plain.sh", "\"$FOO\" a\necho done\n")
 	post := githubPostAnswerReason(t, HandleGitHubPostGuard(gateBash(t, cwd, "bash post.sh")))
-	if post == "" || strings.Contains(post, "names no GitHub post") {
+	if post == "" || strings.Contains(post, "cannot tell whether the command posts") {
 		t.Errorf("a script that spells a post lost the GitHub wording: %s", post)
 	}
 	plain := githubPostAnswerReason(t, HandleGitHubPostGuard(gateBash(t, cwd, "bash plain.sh")))
@@ -269,7 +269,7 @@ func TestCRW1178NestedScriptMentionIsOfItsOwnText(t *testing.T) {
 	// A script that runs a script that spells a post, from a command that does not.
 	write("outer.sh", "bash post.sh\n")
 	outer := githubPostAnswerReason(t, HandleGitHubPostGuard(gateBash(t, cwd, "bash outer.sh")))
-	if outer == "" || strings.Contains(outer, "names no GitHub post") {
+	if outer == "" || strings.Contains(outer, "cannot tell whether the command posts") {
 		t.Errorf("a nested script that spells a post lost the GitHub wording: %s", outer)
 	}
 }

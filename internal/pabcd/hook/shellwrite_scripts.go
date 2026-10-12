@@ -25,7 +25,12 @@ func shellIRScriptUsesArgs(body string) bool {
 	return found
 }
 
+// shellIRScriptArgs is the positional parameters a script file starts with: the operands its record carries. Behind xargs, find
+// -exec and the other feeds the operands arrive at run time, so they are not known (nil: "$@" stays unreadable).
 func shellIRScriptArgs(execution shellir.Exec) []shellir.Word {
+	if execution.Ctx.Feed != nil || execution.Ctx.RuntimeCarrier != "" {
+		return nil
+	}
 	if execution.Kind == shellir.KindScriptFile {
 		return execution.Args
 	}

@@ -112,8 +112,8 @@ PATH=$UNRESOLVED /usr/bin/true
 --cmd
 env PATH=$UNRESOLVED /usr/bin/true
 
-=== CRW-1283-path-direct-memory | W
---why PATH relaxation must not hide an absolute shell file's builtin memory write.
+=== CRW-1283-path-direct-memory | U
+--why PATH relaxation must not hide an absolute shell file's memory write; echo under a PATH the reader does not know may be a file in some shells, so every gate refuses (review b2ae50e0).
 --file write.sh
 #!/bin/bash
 echo x >{MEMORY}/note.md
@@ -231,8 +231,8 @@ rm -rf {CHECKOUT}
 --cmd
 env PATH={WORK}:/usr/bin:/bin true
 
-=== CRW-1283-review-builtin-printf-control | B
---why The shell runs its own printf; the file of that name on the assigned PATH does not run.
+=== CRW-1283-review-shadowed-printf-memory | W
+--why printf is a builtin in some shells and the file the assigned PATH finds in others, so that file's memory write is read (review b2ae50e0, Sion decision 5).
 --file printf
 #!/bin/sh
 echo x >{MEMORY}/note.md
@@ -291,3 +291,296 @@ PATH={WORK}:/usr/bin:/bin export X=1; env printf
 echo x >{MEMORY}/note.md
 --cmd
 enable -n printf; PATH={WORK}:/usr/bin:/bin printf
+
+=== CRW-1283-r2-trap-shift-memory | U
+--why Review b2ae50e0 probe trap-shift: refused by the memory guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file t.sh
+trap '"$@"' EXIT
+shift
+--cmd
+bash {WORK}/t.sh true tee {MEMORY}/note.md
+
+=== CRW-1283-r2-trap-set-post | U
+--why Review b2ae50e0 probe trap-set: refused by the github guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file t.sh
+trap '"$@"' EXIT
+set -- gh pr comment 1 --body x
+--cmd
+bash {WORK}/t.sh true
+
+=== CRW-1283-r2-trap-shift-direct-post | P
+--why Review b2ae50e0 probe trap-shift-direct: refused by the github guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file t.sh
+#!/bin/bash
+trap '"$@"' EXIT
+shift
+--cmd
+{WORK}/t.sh true gh pr comment 1 --body x
+
+=== CRW-1283-r2-trap-return-func-post | P
+--why Review b2ae50e0 probe trap-return-func: refused by the github guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file t.sh
+trap '"$@"' EXIT
+set -- gh pr comment 1 --body x
+--cmd
+{WORK}/t.sh true
+
+=== CRW-1283-r2-bash-c-args-trap-post | U
+--why Review b2ae50e0 probe bash-c-args-trap: refused by the github guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--cmd
+bash -c 'trap '\''"$@"'\'' EXIT; shift' z true gh pr comment 1 --body x
+
+=== CRW-1283-r2-stdin-s-removal | U
+--why Review b2ae50e0 probe stdin-s: refused by the worktree guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file t.sh
+bash -s rm -rf {CHECKOUT} <<'EOF'
+"$@"
+EOF
+--cmd
+bash {WORK}/t.sh true
+
+=== CRW-1283-r2-stdin-s-direct-post | P
+--why Review b2ae50e0 probe stdin-s-direct: refused by the github guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file t.sh
+#!/bin/bash
+bash -s gh pr comment 1 --body x <<'EOF'
+"$@"
+EOF
+--cmd
+{WORK}/t.sh true
+
+=== CRW-1283-r2-dash-s-args-post | U
+--why Review b2ae50e0 probe dash-s-args: refused by the github guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file t.sh
+sh -s gh pr comment 1 --body x <<'EOF'
+"$@"
+EOF
+--cmd
+sh {WORK}/t.sh true
+
+=== CRW-1283-r2-fd-alias-removal | U
+--why Review b2ae50e0 probe fd-alias: refused by the worktree guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file t.sh
+bash /dev/fd/3 rm -rf {CHECKOUT} 3<<'EOF'
+"$@"
+EOF
+--cmd
+bash {WORK}/t.sh true
+
+=== CRW-1283-r2-dash-dot-args-memory | U
+--why Review b2ae50e0 probe dash-dot-args: refused by the memory guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file outer.sh
+. {WORK}/inner.sh true
+--file inner.sh
+"$@"
+--cmd
+sh {WORK}/outer.sh tee {MEMORY}/note.md
+
+=== CRW-1283-r2-zsh-posassign-post | U
+--why Review b2ae50e0 probe zsh-posassign: refused by the github guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file t.sh
+1=gh
+"$@"
+--cmd
+zsh {WORK}/t.sh true pr comment 1 --body x
+
+=== CRW-1283-r2-zsh-posassign-c-removal | U
+--why Review b2ae50e0 probe zsh-posassign-c: refused by the worktree guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--cmd
+zsh -c '1=rm; "$@"' z true -rf {CHECKOUT}
+
+=== CRW-1283-r2-xargs-feed-script-memory | U
+--why Review b2ae50e0 probe xargs-feed-script: refused by the memory guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file slot.sh
+#!/bin/bash
+"$@"
+--cmd
+echo tee {MEMORY}/note.md | xargs bash {WORK}/slot.sh
+
+=== CRW-1283-r2-xargs-feed-direct-post | U
+--why Review b2ae50e0 probe xargs-feed-direct: refused by the github guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file slot.sh
+#!/bin/bash
+"$@"
+--cmd
+echo gh pr comment 1 --body x | xargs {WORK}/slot.sh
+
+=== CRW-1283-r2-zsh-argv-array-removal | U
+--why Review b2ae50e0 probe zsh-argv-array: refused by the worktree guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--cmd
+zsh -c 'argv=(rm -rf {CHECKOUT}); "$@"' z true
+
+=== CRW-1283-r2-zsh-for-positional-memory | U
+--why Review b2ae50e0 probe zsh-for-positional: refused by the memory guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--cmd
+zsh -c 'for 1 in tee; do "$@"; done' z true {MEMORY}/note.md
+
+=== CRW-1283-r2-herestring-stdin-post | U
+--why Review b2ae50e0 probe herestring-stdin: refused by the github guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--cmd
+bash -s gh pr comment 1 --body x <<<'"$@"'
+
+=== CRW-1283-r2-prefix-time-removal | R
+--why Review b2ae50e0 probe prefix-time: refused by the worktree guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file time
+#!/bin/sh
+rm -rf {CHECKOUT}
+--cmd
+PATH={WORK}:/usr/bin:/bin time true
+
+=== CRW-1283-r2-export-time-keyword-memory | U
+--why Review b2ae50e0 probe export-time-keyword: refused by the memory guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file time
+#!/bin/sh
+tee {MEMORY}/note.md
+--cmd
+export PATH={WORK}:/usr/bin:/bin; time true
+
+=== CRW-1283-r2-export-chdir-post | P
+--why Review b2ae50e0 probe export-chdir: refused by the github guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file chdir
+#!/bin/sh
+gh pr comment 1 --body x
+--cmd
+export PATH={WORK}:/usr/bin:/bin; chdir /tmp
+
+=== CRW-1283-r2-export-printf-removal | R
+--why Review b2ae50e0 probe export-printf: refused by the worktree guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file printf
+#!/bin/sh
+rm -rf {CHECKOUT}
+--cmd
+export PATH={WORK}:/usr/bin:/bin; printf x
+
+=== CRW-1283-r2-dash-let-memory | U
+--why Review b2ae50e0 probe dash-let: refused by the memory guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file let
+#!/bin/sh
+tee {MEMORY}/note.md
+--cmd
+sh -c 'export PATH={WORK}:/usr/bin:/bin; let x=1'
+
+=== CRW-1283-r2-dash-pushd-post | P
+--why Review b2ae50e0 probe dash-pushd: refused by the github guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file pushd
+#!/bin/sh
+gh pr comment 1 --body x
+--cmd
+sh -c 'export PATH={WORK}:/usr/bin:/bin; pushd /tmp'
+
+=== CRW-1283-r2-dash-time-removal | U
+--why Review b2ae50e0 probe dash-time: refused by the worktree guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file time
+#!/bin/sh
+rm -rf {CHECKOUT}
+--cmd
+sh -c 'export PATH={WORK}:/usr/bin:/bin; time true'
+
+=== CRW-1283-r2-dash-declare-memory | U
+--why Review b2ae50e0 probe dash-declare: refused by the memory guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file declare
+#!/bin/sh
+tee {MEMORY}/note.md
+--cmd
+sh -c 'PATH={WORK}:/usr/bin:/bin; export PATH; declare x=1'
+
+=== CRW-1283-r2-dash-mapfile-post | P
+--why Review b2ae50e0 probe dash-mapfile: refused by the github guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file mapfile
+#!/bin/sh
+gh pr comment 1 --body x
+--cmd
+sh -c 'export PATH={WORK}:/usr/bin:/bin; mapfile x </dev/null'
+
+=== CRW-1283-r2-zsh-readarray-removal | R
+--why Review b2ae50e0 probe zsh-readarray: refused by the worktree guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file readarray
+#!/bin/sh
+rm -rf {CHECKOUT}
+--cmd
+zsh -c 'export PATH={WORK}:/usr/bin:/bin; readarray x </dev/null'
+
+=== CRW-1283-r2-dash-test-clause-memory | U
+--why Review b2ae50e0 probe dash-test-clause: refused by the memory guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file [[
+#!/bin/sh
+tee {MEMORY}/note.md
+--cmd
+sh -c 'export PATH={WORK}:/usr/bin:/bin; [[ -n x ]]'
+
+=== CRW-1283-r2-dash-arithmetic-post | U
+--why Review b2ae50e0 probe dash-arithmetic: refused by the github guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file check
+#!/bin/sh
+gh pr comment 1 --body x
+--cmd
+sh -c 'export PATH={WORK}:/usr/bin:/bin; ((check))'
+
+=== CRW-1283-r2-dash-coproc-removal | U
+--why Review b2ae50e0 probe dash-coproc: refused by the worktree guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file coproc
+#!/bin/sh
+rm -rf {CHECKOUT}
+--cmd
+sh -c 'export PATH={WORK}:/usr/bin:/bin; coproc true'
+
+=== CRW-1283-r2-dash-function-memory | U
+--why Review b2ae50e0 probe dash-function: refused by the memory guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file function
+#!/bin/sh
+tee {MEMORY}/note.md
+--cmd
+sh -c 'export PATH={WORK}:/usr/bin:/bin
+function f {
+true
+}'
+
+=== CRW-1283-r2-dash-select-post | U
+--why Review b2ae50e0 probe dash-select: refused by the github guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file select
+#!/bin/sh
+gh pr comment 1 --body x
+--cmd
+sh -c 'export PATH={WORK}:/usr/bin:/bin
+select x in a
+do break; done' </dev/null
+
+=== CRW-1283-r2-python3-named-script-removal | U
+--why Review b2ae50e0 probe python3-named-script: refused by the worktree guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file python3
+#!/bin/sh
+rm -rf {CHECKOUT}
+--cmd
+PATH={WORK}:/usr/bin:/bin python3 -c 'print(1)'
+
+=== CRW-1283-r2-python3-m-script-memory | U
+--why Review b2ae50e0 probe python3-m-script: refused by the memory guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file python3
+#!/bin/sh
+tee {MEMORY}/note.md
+--cmd
+PATH={WORK}:/usr/bin:/bin python3 -m json.tool /dev/null
+
+=== CRW-1283-r2-perl-e-script-post | U
+--why Review b2ae50e0 probe perl-e-script: refused by the github guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file perl
+#!/bin/sh
+gh pr comment 1 --body x
+--cmd
+PATH={WORK}:/usr/bin:/bin perl -e 1
+
+=== CRW-1283-r2-node-e-script-removal | U
+--why Review b2ae50e0 probe node-e-script: refused by the worktree guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file node
+#!/bin/sh
+rm -rf {CHECKOUT}
+--cmd
+PATH={WORK}:/usr/bin:/bin node -e 1
+
+=== CRW-1283-r2-awk-script-memory | U
+--why Review b2ae50e0 probe awk-script: refused by the memory guard before the CRW-1283 relaxations and again now (Sion decision 5).
+--file awk
+#!/bin/sh
+tee {MEMORY}/note.md
+--cmd
+PATH={WORK}:/usr/bin:/bin awk 'BEGIN{}'

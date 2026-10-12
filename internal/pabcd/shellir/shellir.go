@@ -266,14 +266,14 @@ func (s *state) unsetVar(name string) {
 	if name == "PATH" {
 		s.searchPath = &Word{Reason: "PATH is unset"}
 	}
-	if name == "argv" {
-		s.args = nil // zsh's argv is the positional parameters
+	if positionalName(name) {
+		s.args = nil // zsh's argv and 1, 2, ... are the positional parameters
 	}
 }
 
 func (s *state) setVar(name string, v Word, appendValue bool) {
-	if name == "argv" {
-		s.args = nil // zsh's argv is the positional parameters
+	if positionalName(name) {
+		s.args = nil // zsh's argv and 1, 2, ... are the positional parameters
 	}
 	if name == "PATH" {
 		search := v
@@ -498,33 +498,64 @@ func (w *walker) stmt(s *syntax.Stmt, st *state, ctx Context) error {
 		afterLoop(st, before, keepsDir)
 		return err
 	case *syntax.ForClause:
+		if c.Select {
+			if err := w.keywordOnPath("select", st); err != nil {
+				return err
+			}
+		}
 		return w.forClause(c, st, ctx)
 	case *syntax.CaseClause:
 		return w.caseClause(c, st, ctx)
 	case *syntax.FuncDecl:
+		if c.RsrvWord {
+			if err := w.keywordOnPath("function", st); err != nil {
+				return err
+			}
+		}
 		return w.funcDecl(c, st, ctx)
 	case *syntax.ArithmCmd:
+		if st.searchPath != nil {
+			// sh (dash) reads ((word)) as subshells that run the program word on the PATH (CRW-1283, Sion decision 5).
+			return unreadablef("(( is arithmetic in bash and zsh and runs the program it holds in sh; with an assigned PATH that program is not known")
+		}
 		if err := w.substsIn(c, st, ctx); err != nil {
 			return err
 		}
 		st.clearVars()
 		return nil
 	case *syntax.TestClause:
+		if err := w.keywordOnPath("[[", st); err != nil {
+			return err
+		}
 		return w.substsIn(c, st, ctx)
 	case *syntax.LetClause:
+		if err := w.keywordOnPath("let", st); err != nil {
+			return err
+		}
 		if err := w.substsIn(c, st, ctx); err != nil {
 			return err
 		}
 		st.clearVars()
 		return nil
 	case *syntax.DeclClause:
+		if c.Variant != nil {
+			if err := w.keywordOnPath(c.Variant.Value, st); err != nil {
+				return err
+			}
+		}
 		return w.decl(c, st, ctx)
 	case *syntax.TimeClause:
+		if err := w.keywordOnPath("time", st); err != nil {
+			return err
+		}
 		if c.Stmt == nil {
 			return nil
 		}
 		return w.stmt(c.Stmt, st, ctx)
 	case *syntax.CoprocClause:
+		if err := w.keywordOnPath("coproc", st); err != nil {
+			return err
+		}
 		cctx := ctx
 		cctx.Coprocess = true
 		return w.stmt(c.Stmt, st.clone(), cctx)
@@ -1286,7 +1317,7 @@ func (w *walker) dispatch(words []Word, assigns []Assign, redirs []Redir, st *st
 	if st.searchPath != nil && !strings.Contains(prog.Value, "/") && (!exempt || w.builtinsChanged) {
 		found, err := resolveProgram(prog, st)
 		switch {
-		case err == errPathNotFound && exempt:
+		case err == errPathNotFound && (exempt || !launched && shellOwnSomewhere(name)):
 			found = prog
 		case err != nil:
 			return err
@@ -1300,7 +1331,7 @@ func (w *walker) dispatch(words []Word, assigns []Assign, redirs []Redir, st *st
 		// by the consumers. A binary outside the system directories is not identified by its name (a copy of a shell named check runs
 		// its -c text), so it is admitted only when the PATH the shell started with runs the same file for the name (CRW-1283).
 		if resolved && !systemProgram(prog.Value) {
-			if err := pathBinaryIdentified(name, prog.Value); err != nil {
+			if err := pathProgramIdentified(name, prog.Value); err != nil {
 				return err
 			}
 		}
@@ -1346,7 +1377,7 @@ func (w *walker) dispatch(words []Word, assigns []Assign, redirs []Redir, st *st
 	case "enable", "disable", "source", ".", "eval", "unhash", "unfunction":
 		w.builtinsChanged = true
 	}
-	if positionalChange(name, words[1:]) {
+	if positionalChange(name, words[1:]) || positionalAssignment(prog.Value) {
 		// "$@" after this command is not the arguments the text was given (CRW-1283); eval and source still read them first.
 		defer func(s *state) { s.args = nil }(st)
 	}
@@ -1555,14 +1586,25 @@ func (w *walker) scriptFile(name string, script Word, st *state, ctx Context, ar
 	w.out = append(w.out, Exec{
 		Kind: KindScriptFile, Program: Word{Known: true, Value: name}, Name: name,
 		Script: script, Dir: st.dir, Ctx: ctx, Cdpath: st.cdpath, ExitTainted: !w.exitProof,
-		Args: append([]Word{}, args...), SearchPath: st.searchPath,
+		Args: slices.Clone(args), SearchPath: st.searchPath,
 	})
 	return nil
 }
 
 // carried parses text that a carrier runs (bash -c, eval, trap and the rest)
-// and walks it in the same layer.
+// and walks it in the same layer. Only eval runs its text now with the positional parameters of the text around it; a trap runs
+// its text later, after the text may have changed them, and a new shell (su, a descriptor alias, standard input, a wrapper's
+// shell) starts with positional parameters of its own, so "$@" in their texts is not known (CRW-1283, Sion decision 5). A shell's
+// -c string gets the operands after it (carriedArgs).
 func (w *walker) carried(text string, st *state, ctx Context, carrier string) error {
+	if carrier != "eval" {
+		st.args = nil
+	}
+	return w.carriedArgs(text, st, ctx, carrier)
+}
+
+// carriedArgs is carried with the positional parameters the caller gave st.
+func (w *walker) carriedArgs(text string, st *state, ctx Context, carrier string) error {
 	if len(text) > MaxCommandBytes {
 		return unreadablef("%s text is %d bytes; the limit is %d", carrier, len(text), MaxCommandBytes)
 	}
@@ -1601,9 +1643,11 @@ func (w *walker) sourceCall(args []Word, st *state, ctx Context) error {
 	if st.pathTouched && (!args[0].Known || !strings.Contains(args[0].Value, "/")) {
 		return unreadablef("source searches an assigned PATH; use an absolute script path")
 	}
+	// A sourced file runs with the positional parameters of the text that sources it. Operands after the file replace them in bash
+	// and zsh and are ignored by dash, so the parameters of a source with operands are not known (CRW-1283, Sion decision 5).
 	inherited := st.args
 	if len(args) > 1 {
-		inherited = args[1:]
+		inherited = nil
 	}
 	before := len(w.out)
 	if err := w.scriptFile("source", args[0], st, ctx, inherited...); err != nil {

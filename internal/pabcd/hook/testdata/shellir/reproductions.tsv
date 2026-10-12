@@ -30,7 +30,7 @@ review of e4c54cc3 (opusverify-e4c54cc3-r1, CRW-1283 relaxations)	option-only se
 review of e4c54cc3 (opusverify-e4c54cc3-r1, CRW-1283 relaxations)	env PATH=<cwd> printf runs the file named printf	CRW-1283-review-env-printf-memory	row	-
 review of e4c54cc3 (opusverify-e4c54cc3-r1, CRW-1283 relaxations)	PATH=<cwd> exec printf runs the file named printf	CRW-1283-review-exec-printf-post	row	-
 review of e4c54cc3 (opusverify-e4c54cc3-r1, CRW-1283 relaxations)	env PATH=<cwd> true runs the file named true	CRW-1283-review-env-true-removal	row	-
-review of e4c54cc3 (opusverify-e4c54cc3-r1, CRW-1283 relaxations)	PATH=<cwd> printf runs the builtin control	CRW-1283-review-builtin-printf-control	row	-
+review of e4c54cc3 (opusverify-e4c54cc3-r1, CRW-1283 relaxations)	PATH=<cwd> printf whose shadowing file writes memory	CRW-1283-review-shadowed-printf-memory	row	-
 review of e4c54cc3 (opusverify-e4c54cc3-r1, CRW-1283 relaxations)	PATH=<cwd> check -c with check a copy of dash (memory)	CRW-1283-review-path-renamed-shell-memory	row	-
 review of e4c54cc3 (opusverify-e4c54cc3-r1, CRW-1283 relaxations)	PATH=<cwd> check -c with check a copy of dash (post)	CRW-1283-review-path-renamed-shell-post	row	-
 review of e4c54cc3 (opusverify-e4c54cc3-r1, CRW-1283 relaxations)	PATH=<cwd> check -c with check a copy of dash (removal)	CRW-1283-review-path-renamed-shell-removal	row	-
@@ -39,6 +39,43 @@ review of e4c54cc3 (opusverify-e4c54cc3-r1, CRW-1283 relaxations)	git script on 
 review of e4c54cc3 (opusverify-e4c54cc3-r1, CRW-1283 relaxations)	PATH= prefix on cd dropped the directory change	CRW-1283-review-path-prefix-cd-removal	row	-
 review of e4c54cc3 (opusverify-e4c54cc3-r1, CRW-1283 relaxations)	PATH= prefix on a special builtin outlasts it	CRW-1283-review-path-prefix-special-builtin	row	-
 review of e4c54cc3 (opusverify-e4c54cc3-r1, CRW-1283 relaxations)	enable -n printf before PATH=<cwd> printf	CRW-1283-review-disabled-builtin-memory	row	-
+review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	trap-shift (memory guard)	CRW-1283-r2-trap-shift-memory	row	-
+review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	trap-set (github guard)	CRW-1283-r2-trap-set-post	row	-
+review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	trap-shift-direct (github guard)	CRW-1283-r2-trap-shift-direct-post	row	-
+review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	trap-return-func (github guard)	CRW-1283-r2-trap-return-func-post	row	-
+review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	bash-c-args-trap (github guard)	CRW-1283-r2-bash-c-args-trap-post	row	-
+review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	stdin-s (worktree guard)	CRW-1283-r2-stdin-s-removal	row	-
+review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	stdin-s-direct (github guard)	CRW-1283-r2-stdin-s-direct-post	row	-
+review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	dash-s-args (github guard)	CRW-1283-r2-dash-s-args-post	row	-
+review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	fd-alias (worktree guard)	CRW-1283-r2-fd-alias-removal	row	-
+review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	dash-dot-args (memory guard)	CRW-1283-r2-dash-dot-args-memory	row	-
+review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	zsh-posassign (github guard)	CRW-1283-r2-zsh-posassign-post	row	-
+review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	zsh-posassign-c (worktree guard)	CRW-1283-r2-zsh-posassign-c-removal	row	-
+review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	xargs-feed-script (memory guard)	CRW-1283-r2-xargs-feed-script-memory	row	-
+review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	xargs-feed-direct (github guard)	CRW-1283-r2-xargs-feed-direct-post	row	-
+review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	zsh-argv-array (worktree guard)	CRW-1283-r2-zsh-argv-array-removal	row	-
+review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	zsh-for-positional (memory guard)	CRW-1283-r2-zsh-for-positional-memory	row	-
+review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	herestring-stdin (github guard)	CRW-1283-r2-herestring-stdin-post	row	-
+review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	prefix-time (worktree guard)	CRW-1283-r2-prefix-time-removal	row	-
+review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	export-time-keyword (memory guard)	CRW-1283-r2-export-time-keyword-memory	row	-
+review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	export-chdir (github guard)	CRW-1283-r2-export-chdir-post	row	-
+review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	export-printf (worktree guard)	CRW-1283-r2-export-printf-removal	row	-
+review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	dash-let (memory guard)	CRW-1283-r2-dash-let-memory	row	-
+review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	dash-pushd (github guard)	CRW-1283-r2-dash-pushd-post	row	-
+review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	dash-time (worktree guard)	CRW-1283-r2-dash-time-removal	row	-
+review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	dash-declare (memory guard)	CRW-1283-r2-dash-declare-memory	row	-
+review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	dash-mapfile (github guard)	CRW-1283-r2-dash-mapfile-post	row	-
+review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	zsh-readarray (worktree guard)	CRW-1283-r2-zsh-readarray-removal	row	-
+review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	dash-test-clause (memory guard)	CRW-1283-r2-dash-test-clause-memory	row	-
+review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	dash-arithmetic (github guard)	CRW-1283-r2-dash-arithmetic-post	row	-
+review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	dash-coproc (worktree guard)	CRW-1283-r2-dash-coproc-removal	row	-
+review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	dash-function (memory guard)	CRW-1283-r2-dash-function-memory	row	-
+review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	dash-select (github guard)	CRW-1283-r2-dash-select-post	row	-
+review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	python3-named-script (worktree guard)	CRW-1283-r2-python3-named-script-removal	row	-
+review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	python3-m-script (memory guard)	CRW-1283-r2-python3-m-script-memory	row	-
+review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	perl-e-script (github guard)	CRW-1283-r2-perl-e-script-post	row	-
+review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	node-e-script (worktree guard)	CRW-1283-r2-node-e-script-removal	row	-
+review of b2ae50e0 (opusverify-b2ae50e0-r1, CRW-1283 relaxations)	awk-script (memory guard)	CRW-1283-r2-awk-script-memory	row	-
 linear-issue-CRW-1012.json	python3 -c "print(\"f'}'\")"	CRW-1012-01	row	-
 linear-issue-CRW-1012.json	python3 -c "print(f'{len(\"abc\")}')"	CRW-1012-02	row	-
 linear-issue-CRW-1014.json	python3 -c 'open("<m>/a","w")'	CRW-1014-01	row	-
