@@ -138,6 +138,16 @@ type pumpState struct {
 	// not replayed. A state written before the key existed reads as no refusals.
 	QueueRefused map[string]pumpQueueRefusal `json:"queue_refused"`
 
+	// MgmtRefused is the count of refusals the management batch of one id has taken (CRW-1273), the
+	// queue's rule for the management thread: the next attempt of that batch is sent under
+	// <id>-r<count>, so neither the ledger's refusal of the earlier id nor a body whose HH:MM head
+	// moved on is met again. A state without the key reads as no refusals.
+	MgmtRefused pumpQueueRefusal `json:"mgmt_refused"`
+	// Parked holds the events of a management batch the bridge refused pumpQueueRefusalLimit times
+	// under one id. They leave pending so the events behind them flow, are never sent again, and stay
+	// in the state with the reason, as the queue keeps its notices in refused/.
+	Parked []pumpParkedEvent `json:"parked"`
+
 	// QueueLegacyChecked marks a queue thread whose queue was searched for the pre-change ledger
 	// records that could have carried its notices and left nothing to answer for beyond a pin that holds
 	// the whole evidence: no record, only records that settled as never delivered, the one provable record
@@ -234,6 +244,14 @@ type pumpQueueRefusal struct {
 	Count int    `json:"count"`
 }
 
+// pumpParkedEvent is an event that left pending after its batch was refused too often: the event,
+// the bridge's last answer for the batch in one line, and when it was parked.
+type pumpParkedEvent struct {
+	pumpEvent
+	Reason string `json:"reason"`
+	At     string `json:"at"`
+}
+
 // pumpAttempt is one frozen batch: the logical id it was tried under, the ids it carried, and its
 // text. Freezing is what makes a second round reconcile the same request id.
 type pumpAttempt struct {
@@ -300,6 +318,10 @@ func pumpLoadState(cfg *Config) (pumpState, error) {
 			err = json.Unmarshal(value, &st.QueueRefused)
 		case "queue_legacy_checked":
 			err = json.Unmarshal(value, &st.QueueLegacyChecked)
+		case "mgmt_refused":
+			err = json.Unmarshal(value, &st.MgmtRefused)
+		case "parked":
+			err = json.Unmarshal(value, &st.Parked)
 		default:
 			// A key this file does not name belongs to a later node; it is preserved on write.
 			st.extra[key] = value
@@ -362,6 +384,7 @@ func (st pumpState) pumpSave(cfg *Config) error {
 		{"prs_seen", st.PRsSeen}, {"attempt", st.Attempt}, {"queue_accepted", st.QueueAccepted},
 		{"pr_seq", st.PRSeq}, {"queue_attempt", st.QueueAttempt},
 		{"queue_refused", st.QueueRefused}, {"queue_legacy_checked", st.QueueLegacyChecked},
+		{"mgmt_refused", st.MgmtRefused}, {"parked", st.Parked},
 	} {
 		if err := put(field.key, field.value); err != nil {
 			return err
@@ -550,6 +573,10 @@ func pumpCollect(ctx context.Context, e *Env, cfg *Config, st *pumpState, s pump
 	for _, ev := range st.Pending {
 		seen[ev.ID] = true
 	}
+	// A parked event was given up after its batch was refused: it is not collected again.
+	for _, ev := range st.Parked {
+		seen[ev.ID] = true
+	}
 	for _, source := range pumpSources {
 		res := source.Collect(ctx, e, cfg, st, s)
 		st.Sources[source.Name()] = res.Status
@@ -649,7 +676,16 @@ func pumpDeliver(ctx context.Context, e *Env, cfg *Config, st *pumpState, batch 
 	// the logical id, so a later round reconciles the same request id instead of resending a batch
 	// that may already have been accepted. An attempt already frozen is reused as it stands.
 	if st.Attempt == nil {
-		attempt := pumpAttempt{LogicalID: pumpBatchID(batch), IDs: pumpPendingIDs(batch), Text: body}
+		// A batch the ledger refused under this id is tried again under the next ordinal of the id
+		// (the rule of the parent queue, CRW-991): the refusal of the id itself is final in the
+		// ledger, and the body's HH:MM head moves on, so the same id would meet either the replayed
+		// refusal or "already belongs to another message".
+		base := pumpBatchID(batch)
+		logicalID := base
+		if refusal := st.MgmtRefused; refusal.ID == base && refusal.Count > 0 {
+			logicalID = fmt.Sprintf("%s-r%d", base, refusal.Count)
+		}
+		attempt := pumpAttempt{LogicalID: logicalID, IDs: pumpPendingIDs(batch), Text: body}
 		st.Attempt = &attempt
 		if err := st.pumpSave(cfg); err != nil {
 			return 1, err
@@ -663,16 +699,26 @@ func pumpDeliver(ctx context.Context, e *Env, cfg *Config, st *pumpState, batch 
 	if err != nil && out.Class == "" {
 		return 1, err
 	}
-	pumpLog(cfg, fmt.Sprintf("deliver request=%s events=%d class=%s received=%v applied=%v",
-		out.RequestID, len(attempt.IDs), out.Class, out.Class == deliverClassAccepted, false))
+	line := fmt.Sprintf("deliver request=%s events=%d class=%s received=%v applied=%v",
+		out.RequestID, len(attempt.IDs), out.Class, out.Class == deliverClassAccepted, false)
+	if out.Class != deliverClassAccepted {
+		// The bridge's answer rides on the line, in one line: the outbox holds it too, but a person
+		// reading the pump log sees why a batch did not go (CRW-1273).
+		line += " reason=" + pumpDeliverReason(cfg, attempt.LogicalID, err)
+	}
+	pumpLog(cfg, line)
 	if out.Class != deliverClassAccepted {
 		if out.Class == deliverClassUnknown {
 			// The attempt stays frozen so the next round reconciles it under the same id.
 			return 0, err
 		}
 		// A refusal is terminal and nothing was sent, so the freeze lifts: a later batch may carry
-		// these events again, and a new event changes the logical id as usual.
+		// these events again under the next ordinal of its id. A refusal the ledger proves is
+		// counted against the batch; the pumpQueueRefusalLimit-th refusal of one id parks its events.
 		st.Attempt = nil
+		if pumpReview776QueueRefusalSettled(cfg, attempt.LogicalID) {
+			pumpMgmtRefusalCount(cfg, st, attempt)
+		}
 		if err := st.pumpSave(cfg); err != nil {
 			return 1, err
 		}
@@ -692,6 +738,7 @@ func pumpDeliver(ctx context.Context, e *Env, cfg *Config, st *pumpState, batch 
 		}
 	}
 	st.Pending, st.Attempt = remaining, nil
+	st.MgmtRefused = pumpQueueRefusal{}
 	if len(remaining) == 0 {
 		st.FirstAt = nil
 	}
@@ -699,6 +746,57 @@ func pumpDeliver(ctx context.Context, e *Env, cfg *Config, st *pumpState, batch 
 		return 1, err
 	}
 	return 0, nil
+}
+
+// pumpDeliverReason is why a batch did not go, on one line for the pump log: the bridge's last
+// answer the ledger keeps for the logical id, else the delivery core's own error (a refusal before
+// any bridge call, such as an unset execution policy), cut short.
+func pumpDeliverReason(cfg *Config, logicalID string, cause error) string {
+	reason := pumpQueueRefusalReason(cfg, logicalID)
+	if reason == "no receipt excerpt" || reason == "refused" {
+		if cause != nil {
+			reason = strings.Join(strings.Fields(cause.Error()), " ")
+		}
+	}
+	if len(reason) > 200 {
+		reason = strings.ToValidUTF8(reason[:200], "") + "..."
+	}
+	return reason
+}
+
+// pumpMgmtRefusalCount counts one proven refusal against the management batch's base id, as
+// pumpQueueRefusedLift does for the queue. Below the limit the batch stays pending and goes out
+// under its next ordinal; the limit-th refusal of one id parks the batch's events, with a log line
+// naming each, so the events behind them flow. A count of another id restarts at one.
+func pumpMgmtRefusalCount(cfg *Config, st *pumpState, attempt pumpAttempt) {
+	base := pumpBatchIDStrings(attempt.IDs)
+	count := 1
+	if st.MgmtRefused.ID == base {
+		count = st.MgmtRefused.Count + 1
+	}
+	if count < pumpQueueRefusalLimit {
+		st.MgmtRefused = pumpQueueRefusal{ID: base, Count: count}
+		return
+	}
+	reason := pumpQueueRefusalReason(cfg, attempt.LogicalID)
+	parked := map[string]bool{}
+	for _, id := range attempt.IDs {
+		parked[id] = true
+	}
+	remaining := make([]pumpEvent, 0, len(st.Pending))
+	at := time.Now().UTC().Format(time.RFC3339)
+	for _, ev := range st.Pending {
+		if !parked[ev.ID] {
+			remaining = append(remaining, ev)
+			continue
+		}
+		st.Parked = append(st.Parked, pumpParkedEvent{pumpEvent: ev, Reason: reason, At: at})
+		pumpLog(cfg, fmt.Sprintf("management event %s parked after %d refusals: %s", ev.ID, count, reason))
+	}
+	st.Pending, st.MgmtRefused = remaining, pumpQueueRefusal{}
+	if len(remaining) == 0 {
+		st.FirstAt = nil
+	}
 }
 
 // pumpPendingIDs is the ids of one batch, in order.
@@ -824,6 +922,15 @@ func pumpRun(ctx context.Context, e *Env, args []string) int {
 		}
 	}
 	cfg := coreDefaults(e)
+	if problem := coreDeliverSettingsProblem(cfg); problem != "" {
+		// A pump that cannot deliver would collect events and see every send refused: it does not
+		// start. A dry run sends nothing, so it only warns.
+		if !dry {
+			fmt.Fprintf(e.Stderr, "crw manage pump: error: %s\n", problem)
+			return usageExit
+		}
+		fmt.Fprintf(e.Stderr, "crw manage pump: warning: %s\n", problem)
+	}
 	release, code := pumpLockOrReport(e, cfg)
 	if release == nil {
 		return code
