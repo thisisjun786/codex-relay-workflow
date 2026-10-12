@@ -1263,13 +1263,14 @@ func renderFindings(findings any) any {
 
 var attemptSettingsCodes = append(slices.Clone(SettingsRefusals), UnsupportedApprovalPolicy)
 
-// settingsRefusalOf is settings_refusal_of: this attempt's settings cause, or nil.
+// settingsRefusalOf is settings_refusal_of: this attempt's settings cause, or nil. A refusal a retry cannot fix
+// (unretryableSettings) also carries the values the host's first finding names, expected and observed.
 func settingsRefusalOf(facts Facts, findings any) any {
 	code, ok := facts.RPCErrorCode.(string)
 	if facts.FailedOperation != "thread/resume" || !ok || !slices.Contains(attemptSettingsCodes, code) {
 		return nil
 	}
-	var field any
+	var field, expected, observed any
 	if list, _ := findings.([]any); len(list) > 0 {
 		if o, ok := list[0].(Obj); ok {
 			if f, ok := o.Lookup("field"); ok {
@@ -1277,9 +1278,43 @@ func settingsRefusalOf(facts Facts, findings any) any {
 					field = s
 				}
 			}
+			expected, _ = o.Lookup("expected")
+			observed, _ = o.Lookup("returned")
 		}
 	}
-	return Obj{{Key: "reason", Value: code}, {Key: "field", Value: field}}
+	refusal := Obj{{Key: "reason", Value: code}, {Key: "field", Value: field}}
+	if slices.Contains(unretryableSettings, code) {
+		refusal = append(refusal, F{Key: "expected", Value: expected}, F{Key: "observed", Value: observed})
+	}
+	return refusal
+}
+
+// unretryableSettings are the settings refusals no retry fixes: the recipient's thread runs other settings than the recorded ones
+// (settings_not_preserved), or the host does not say what it runs (setting_unobservable). The delivery is held at the first one
+// (HeldSettingsMismatch) and not scheduled again; the transient refusals keep the backoff.
+var unretryableSettings = []string{registry.SettingsNotPreserved, registry.SettingUnobservable}
+
+// settingsHold is the hold a settings refusal puts a withheld delivery under, or nil when the refusal is retryable (or no settings refusal).
+func settingsHold(refusal any) any {
+	o, ok := refusal.(Obj)
+	if !ok {
+		return nil
+	}
+	if reason, _ := o.Get("reason").(string); slices.Contains(unretryableSettings, reason) {
+		return HeldSettingsMismatch
+	}
+	return nil
+}
+
+// journalSettingsHeld writes the journal row of a delivery held on a settings refusal: the refusal as the attempt recorded it, with the
+// values expected and observed.
+func journalSettingsHeld(ctx context.Context, s *store.Store, eventID, requestID string, refusal any, at string) error {
+	o, _ := refusal.(Obj)
+	detail := Obj{{Key: "requestId", Value: requestID}, {Key: "hold", Value: HeldSettingsMismatch}}
+	for _, key := range []string{"reason", "field", "expected", "observed"} {
+		detail = append(detail, F{Key: key, Value: o.Get(key)})
+	}
+	return journal(ctx, s, DeliverySettingsHeld, eventID, detail, at)
 }
 
 // RecordFailure is record_failure.
@@ -1477,6 +1512,10 @@ func (d *Service) settle(ctx context.Context, eventID, requestID string, record 
 		if n >= d.Policy.MaxAttempts {
 			hold = d.Policy.CapReason("presend")
 		}
+		// A settings refusal no retry fixes holds the delivery at once, with no retry scheduled (CRW-1274).
+		if named := settingsHold(settingsRefusal); named != nil {
+			hold, when = named, nil
+		}
 	case InboxOnly:
 		hold = PushChannelClosed
 	}
@@ -1525,6 +1564,11 @@ func (d *Service) settle(ctx context.Context, eventID, requestID string, record 
 		// relay carried the message, so it admits the turn itself, in this transaction (CRW-669).
 		if err := d.admitKeptDecisionTurnIn(ctx, eventID, state, facts); err != nil {
 			return err
+		}
+		if hold == HeldSettingsMismatch {
+			if err := journalSettingsHeld(ctx, d.Store, eventID, requestID, settingsRefusal, d.Clock.ISO()); err != nil {
+				return err
+			}
 		}
 		safe, _ := record.Lookup("retrySafe")
 		if err := journal(ctx, d.Store, "delivery_attempted", eventID, Obj{{Key: "requestId", Value: requestID}, {Key: "state", Value: state}, {Key: "retrySafe", Value: safe}, {Key: "turnPreviouslyObserved", Value: previously}, {Key: "hold", Value: hold}, {Key: "settingsRefusal", Value: settingsRefusal}}, d.Clock.ISO()); err != nil {

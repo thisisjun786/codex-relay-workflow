@@ -331,6 +331,7 @@ func (rc *Reconciler) settleFromReceipt(ctx context.Context, attempt, delivery R
 		return nil, err
 	}
 	var next, hold any
+	refusal := settingsRefusalOf(facts, findings)
 	if facts.RetrySafe {
 		reason := "presend"
 		if facts.DeliveryState == DeferredBusy {
@@ -346,12 +347,16 @@ func (rc *Reconciler) settleFromReceipt(ctx context.Context, attempt, delivery R
 		if hold == nil && facts.DeliveryState == DeferredBusy && delivery.S("state") == DeferredBusy && delivery.Opt("next_eligible_at") != nil {
 			next = delivery.F("next_eligible_at")
 		}
+		// A settings refusal no retry fixes holds the delivery at once, with no retry scheduled (CRW-1274).
+		if named := settingsHold(refusal); named != nil && facts.DeliveryState == WithheldPreSend {
+			hold, next = named, nil
+		}
 	}
 	var dispatchEvidence any
 	if facts.DeliveryState == Dispatched {
 		dispatchEvidence = "transport_accepted"
 	}
-	anchor, err := rc.write(ctx, attempt, delivery, record, facts.DeliveryState, evidence, observation, "not scanned", next, writeOpts{hold: hold, dispatchEvidence: dispatchEvidence, dispatchTurn: facts.TurnID, settingsRefusal: settingsRefusalOf(facts, findings), notes: notes})
+	anchor, err := rc.write(ctx, attempt, delivery, record, facts.DeliveryState, evidence, observation, "not scanned", next, writeOpts{hold: hold, dispatchEvidence: dispatchEvidence, dispatchTurn: facts.TurnID, settingsRefusal: refusal, notes: notes})
 	if err != nil {
 		return nil, err
 	}
@@ -511,6 +516,11 @@ func (rc *Reconciler) write(ctx context.Context, attempt, delivery Row, record O
 			var previous any
 			if before != nil {
 				previous = before.Opt("hold_reason")
+			}
+			if promoted == 1 && o.hold == HeldSettingsMismatch {
+				if err := journalSettingsHeld(ctx, rc.Store, attempt.S("event_id"), attempt.S("request_id"), o.settingsRefusal, now); err != nil {
+					return err
+				}
 			}
 			if promoted == 1 && o.hold != nil && previous != o.hold {
 				if err := journal(ctx, rc.Store, UnknownSendHoldNamed, attempt.S("request_id"), Obj{{Key: "hold", Value: o.hold}, {Key: "previous", Value: previous}, {Key: "eventId", Value: attempt.S("event_id")}}, now); err != nil {
