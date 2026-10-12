@@ -232,12 +232,8 @@ func Deliver(ctx context.Context, e *Env, cfg *Config, m Message) (Outcome, erro
 			record.Attempts = append(record.Attempts, deliverAttempt{At: deliverNow(e), Class: deliverClassRefused, ReceiptExcerpt: "get_operation: refused before the dispatch"})
 			return deliverSettled(cfg, record, Outcome{Class: deliverClassRefused, RequestID: record.RequestID})
 		case deliverReconcileResendSame, deliverReconcileResendNew:
-			// Nothing was sent. An id the bridge recorded and answered not_attempted for is reused,
-			// because that makes the attempt rather than replaying an answer; an id it never recorded,
-			// or one it answered not_delivered for, takes a new id under the same retry cap. The record
-			// stays unsettled until that attempt settles, so a process that dies during it reconciles.
 			excerpt := "get_operation: nothing was sent; resending under the same request id"
-			if verdict == deliverReconcileResendNew {
+			if verdict == deliverReconcileResendNew || m.SteerOnly {
 				if retries >= deliverRetryLimit {
 					record.State = deliverStateRefused
 					record.Attempts = append(record.Attempts, deliverAttempt{At: deliverNow(e), Class: deliverClassRefused, ReceiptExcerpt: "get_operation: nothing was sent; the retry cap is spent"})

@@ -36,7 +36,8 @@ const (
 	// pumpLedgerUnknown: the ledger keeps an in-progress receipt and the answer is undetermined.
 	pumpLedgerUnknown = "unknown"
 	// pumpLedgerLostReply: the host took the message and the ledger holds it accepted, but the reply is a tool error.
-	pumpLedgerLostReply = "lostreply"
+	pumpLedgerLostReply   = "lostreply"
+	pumpLedgerLostRefusal = "lostrefusal"
 	// pumpLedgerOperationError: get_operation answers a tool error (the ledger could not be read), so the
 	// bridge says nothing about the request id; a send is the validation tool error.
 	pumpLedgerOperationError = "operror"
@@ -155,6 +156,11 @@ func pumpLedgerAnswer(dir, tool string, args map[string]any) (string, bool) {
 		mode := strings.TrimSpace(string(modeRaw))
 		var receipt map[string]any
 		switch mode {
+		case pumpLedgerLostRefusal:
+			receipt = map[string]any{"status": "not_attempted", "delivery": "not_delivered", "retrySafe": true}
+			ledger[requestID] = pumpLedgerEntry{Fingerprint: fingerprint, Receipt: receipt}
+			pumpLedgerStore(dir, ledger)
+			return "Error: reply lost after recording the refusal", true
 		case pumpLedgerDown:
 			receipt = map[string]any{"status": "not_attempted", "delivery": "not_delivered"}
 		case pumpLedgerUp:
