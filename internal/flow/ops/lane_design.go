@@ -354,21 +354,26 @@ func ledgerOf(r rows, ms, revision string) (engine.Event, bool) {
 // (pinnedPlan): the plan the relay has now is compared with it in the flow, before the relay is asked and before the node's size is
 // read, and a node whose plan is another is not released (reason plan_changed). The lane then reads the plan again - a trigger of the
 // signal path - and asks again once the signal that comes of it re-planned and audited a delta for that plan (or judged it and kept
-// the revision). This is a check in the flow and not an atomic compare-and-swap: Relay.Release does not receive the plan slice that
-// was compared and its release commit does not compare it, so a plan that changes between this comparison and that commit is not caught
-// there and the node is released under the DESIGN of the plan it was audited for. CRW-1288 makes the relay compare the expected slice in
-// its release transaction.
+// the revision). The release is a compare-and-swap on the plan (CRW-1288): Relay.Release carries the node's slice of the compared plan,
+// and the relay compares it with the node's slice in the transaction that reserves the slot and records the release, so a plan that
+// changes between the flow's comparison and that commit releases nothing (plan_changed) and the row records the slice the relay
+// committed.
 type releaseOp struct{ l *Lane }
 
 // ReleaseOpts are the options of crw.release.
 type ReleaseOpts struct {
-	// Pinned makes the release compare the live plan with the plan the audited DESIGN stands on in the flow, before Relay.Release (the
-	// relay's release commit does not compare the plan slice; CRW-1288).
+	// Pinned makes the release compare the live plan with the plan the audited DESIGN stands on in the flow, before Relay.Release, whose
+	// release commit compares the node's slice of that plan again (CRW-1288).
 	Pinned bool `json:"pinned"`
 }
 
 // ReasonPlanChanged is the reason of a pinned release whose plan is not the one the audited DESIGN stands on.
 const ReasonPlanChanged = "plan_changed"
+
+// ReasonRelayPlanChanged is the reason of a pinned release the relay refused as plan_changed while the plan the flow reads again is
+// still the one the audited DESIGN stands on: the relay releases from a plan the flow does not read (a run reads its plan at the
+// revision it pinned), so no signal comes of the change and the lane does not ask again.
+const ReasonRelayPlanChanged = "relay_plan_changed"
 
 // ReleaseOutcome is the answer of crw.release.
 type ReleaseOutcome struct {
@@ -426,9 +431,9 @@ func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRes
 	}
 	// The release of a lane (crw:lib/lane, crw.dag) is the only release path of a node to an executor, a child or a split, and it always
 	// passes pinned: this comparison is therefore the one check every release goes through (the workflows' call sites are held to it by
-	// TestEveryWorkflowReleasePassesPinned). It happens here, in the flow, before Relay.Release below; the relay's release commit does
-	// not compare the plan slice, so a plan change between this comparison and that commit is not caught (CRW-1288). A call without
-	// pinned is the operation's own unit tests.
+	// TestEveryWorkflowReleasePassesPinned). It happens here, in the flow, before Relay.Release below, and the relay's release commit
+	// compares the node's slice of this plan again (CRW-1288), so a plan change between this comparison and that commit releases nothing.
+	// A call without pinned is the operation's own unit tests.
 	if opts.Pinned {
 		m, err := readNow()
 		if err != nil {
@@ -471,12 +476,29 @@ func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRes
 		out.Reason = "node_not_in_plan"
 		return finish()
 	}
+	// the release carries the slice it compared (CRW-1288); a released row records the slice the relay committed (a replay's is the
+	// slice of the release it replays), an unreleased one the slice the flow asked for
 	data["slice_digest"], data["criteria_digest"] = slice, mnode.CriteriaDigest
-	res, err := o.l.d.Relay.Release(ctx, ReleaseRequest{Plan: plan, Node: node, RunID: req.RunID, Revision: out.Revision, DesignDigest: out.DesignDigest, RequestID: req.RequestID})
+	res, err := o.l.d.Relay.Release(ctx, ReleaseRequest{Plan: plan, Node: node, RunID: req.RunID, Revision: out.Revision, DesignDigest: out.DesignDigest, RequestID: req.RequestID,
+		SliceDigest: slice, PlanDigest: digestOf(m)})
 	if err != nil {
 		return engine.OpResult{}, err
 	}
 	out.Released, out.Reason, out.ExecutionID = res.Released, res.Reason, res.ExecutionID
+	if res.Released {
+		data["slice_digest"] = res.SliceDigest
+	}
+	if opts.Pinned && !res.Released && res.Reason == ReasonPlanChanged {
+		// the relay's plan gave the node another slice at its commit: a plan the flow reads again as the pinned one is a change the
+		// flow cannot see, and the lane must not ask again for it
+		again, err := o.l.liveMilestone(ctx, plan, ms)
+		if err != nil {
+			return engine.OpResult{}, err
+		}
+		if digestOf(again) == pinnedPlan(r, ms) {
+			out.Reason = ReasonRelayPlanChanged
+		}
+	}
 	data["execution_id"], data["slot_id"], data["request_id"] = res.ExecutionID, res.SlotID, req.RequestID
 	return finish()
 }

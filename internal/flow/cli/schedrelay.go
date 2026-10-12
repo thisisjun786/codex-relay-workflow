@@ -314,7 +314,9 @@ func pathElement(s string) string {
 // the run holds the inputs of: the base from the plan's target, the rule version, the criteria of the node's issue as c1..cn required,
 // the pinned handoff as the volatile input and the run's directory as the artifact root. A node the scheduler holds back (no free slot,
 // an overlapping region, a host short of memory, a node that is not ready) is Released false with the reason; a malformed request and a
-// fenced write are errors.
+// fenced write are errors. The request carries the node's slice the flow compared (CRW-1288): the relay compares it with the node's slice
+// of the plan's head when it judges the release and again in the transaction that records it, and a slice that is another releases nothing
+// (Released false, plan_changed). A release answers the slice of the manifest it committed (a replay, the one of the release it replays).
 func (r *SchedRelay) Release(ctx context.Context, req ops.ReleaseRequest) (ops.ReleaseResult, error) {
 	if err := r.claim(ctx, req.Plan); err != nil {
 		return ops.ReleaseResult{}, err
@@ -330,7 +332,7 @@ func (r *SchedRelay) Release(ctx context.Context, req ops.ReleaseRequest) (ops.R
 	request := dagsched.ReleaseRequest{Schema: dagsched.SchemaReleaseRequest, RuleVersion: r.Rule, Criteria: criteria,
 		CriteriaSource: compile.InputSchema + "@" + r.Handoff.SHA256,
 		Volatile:       []dagsched.Volatile{{Source: compile.InputSchema, SnapshotURI: r.Handoff.Path, SHA256: r.Handoff.SHA256, CapturedAt: r.CreatedAt}},
-		ArtifactRoots:  []string{RunDir(r.State, r.RunID)}}
+		ArtifactRoots:  []string{RunDir(r.State, r.RunID)}, ExpectedSliceDigest: req.SliceDigest}
 	if n.Kind == dag.NodeImplementation {
 		checkout, ref, err := r.target(req.Plan)
 		if err != nil {
@@ -355,7 +357,12 @@ func (r *SchedRelay) Release(ctx context.Context, req ops.ReleaseRequest) (ops.R
 		}
 		return ops.ReleaseResult{}, epochLost(req.Plan, err)
 	}
-	return ops.ReleaseResult{Released: true, ExecutionID: res.ExecutionID, SlotID: res.SlotID, Replayed: res.Replayed}, nil
+	body, found, err := dag.ReadManifestOn(ctx, r.q(ctx), res.ManifestDigest)
+	if err != nil || !found {
+		return ops.ReleaseResult{}, errors.Join(err, fmt.Errorf("node %s was released under manifest %s, which the relay does not read back", req.Node, res.ManifestDigest))
+	}
+	slice, _ := body["node_slice_digest"].(string)
+	return ops.ReleaseResult{Released: true, ExecutionID: res.ExecutionID, SlotID: res.SlotID, Replayed: res.Replayed, SliceDigest: slice}, nil
 }
 
 // notReady is the detail of the refusal of a node the reading did not find ready: "<node> is not ready (<reason>): ...".
@@ -366,7 +373,8 @@ var (
 
 // holdBack says whether a refused release is the scheduler holding the node back, and the reason: capacity (no slot, a ceiling nobody
 // measured, a host short of memory), an overlapping region, or a reading that does not find the node ready now. Those go away by
-// themselves; every other refusal is the request's or the run's fault.
+// themselves. A plan whose head gives the node another slice than the one the flow compared (plan_revision_conflict) is plan_changed:
+// the flow reads the plan again. Every other refusal is the request's or the run's fault.
 func holdBack(err error) (string, bool) {
 	var refused *store.RefusedError
 	if !errors.As(err, &refused) {
@@ -382,6 +390,8 @@ func holdBack(err error) (string, bool) {
 		if m := notReady.FindStringSubmatch(refused.Detail); m != nil {
 			return m[1], true
 		}
+	case contract.RefusalPlanRevisionConflict:
+		return ops.ReasonPlanChanged, true
 	}
 	return "", false
 }

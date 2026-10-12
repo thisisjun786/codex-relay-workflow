@@ -18,9 +18,9 @@ import (
 // The release of a lane compares the live plan with the plan the audited DESIGN stands on in the flow, before Relay.Release: the plan
 // the current revision was made for, or the plan a later signal judged and kept that revision for. A release whose plan is another at
 // that comparison is not made; the lane reads the plan again, which is a trigger, and its signal re-plans and audits again (or keeps
-// the revision) before the node is released. The relay's release commit does not compare the plan slice, so a plan that changes
-// between the comparison and the commit is not caught there; CRW-1288 makes the relay compare the expected slice in its release
-// transaction, and the verifier probe TestSolReleaseMustCompareAtRelayCommit is its first failing test.
+// the revision) before the node is released. The relay's release commit compares the node's slice of the compared plan again
+// (CRW-1288), so a plan that changes between the comparison and the commit releases nothing either (internal/flow/ops
+// TestSolReleaseMustCompareAtRelayCommit, internal/relay/dagsched TestReleaseComparesThePlanSliceAtTheRelayCommit).
 //
 // The worktree of a pinned architect turn is the call's own, and its removal is decided by the call's terminal row, which names it:
 // the engine removes it after the row with a context of its own (not the run's, which a cancellation ends), and a resume removes every

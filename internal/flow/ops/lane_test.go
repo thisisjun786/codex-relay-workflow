@@ -28,6 +28,10 @@ type stubRelay struct {
 	plan *Milestone
 	// milestoneErr, when a test sets it, is what the relay answers when it is asked for the plan.
 	milestoneErr error
+	// relaySlice, when a test sets it, is the slice of a node the relay releases from, where it is not the one of plan (the flow's read).
+	relaySlice map[string]string
+	// afterRelease, when a test sets it, runs after the relay answered a release.
+	afterRelease func()
 }
 
 func (s *stubRelay) Milestone(context.Context, string, string) (Milestone, error) {
@@ -41,7 +45,18 @@ func (s *stubRelay) Milestone(context.Context, string, string) (Milestone, error
 }
 func (s *stubRelay) Release(_ context.Context, r ReleaseRequest) (ReleaseResult, error) {
 	s.releases = append(s.releases, r)
-	return ReleaseResult{Released: true, ExecutionID: "exec-" + r.Node}, nil
+	if s.afterRelease != nil {
+		defer s.afterRelease()
+	}
+	// the relay compares the slice the flow compared with the node's slice in its release transaction (CRW-1288)
+	slice, ok := s.relaySlice[r.Node]
+	if !ok && s.plan != nil {
+		slice = liveSlices(*s.plan)[r.Node]
+	}
+	if r.SliceDigest != "" && r.SliceDigest != slice {
+		return ReleaseResult{Reason: ReasonPlanChanged}, nil
+	}
+	return ReleaseResult{Released: true, ExecutionID: "exec-" + r.Node, SliceDigest: slice}, nil
 }
 func (s *stubRelay) ReleaseStands(context.Context, string, string, string) (bool, error) {
 	return true, nil

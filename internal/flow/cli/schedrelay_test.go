@@ -338,6 +338,31 @@ func TestSchedRelayReleaseAgentReservesSlotAndReplays(t *testing.T) {
 	}
 }
 
+// TestSchedRelayReleaseComparesTheExpectedSlice (CRW-1288): the release carries the slice the flow compared to the relay, which
+// releases nothing when the plan gives the node another (Released false, plan_changed, no execution), and a release answers the
+// slice of the manifest the relay committed.
+func TestSchedRelayReleaseComparesTheExpectedSlice(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+	r := l.relayFor("run-slice00001", l.handoffBytes(nil), 1)
+	node, slice := l.nodeOf["A-1"], ""
+	for _, n := range l.snapshot(0).Nodes {
+		if n.NodeID == node {
+			slice = n.SliceDigest
+		}
+	}
+	other, err := r.Release(ctx, ops.ReleaseRequest{Plan: l.plan, Node: node, RunID: r.RunID, RequestID: "req-1", SliceDigest: "sha256:another"})
+	if err != nil || other.Released || other.Reason != ops.ReasonPlanChanged {
+		t.Fatalf("a release under another slice: %+v %v", other, err)
+	}
+	if n := l.count("SELECT COUNT(*) FROM dag_agent_executions") + l.count("SELECT COUNT(*) FROM dag_input_manifests"); n != 0 {
+		t.Fatalf("the refused release wrote %d rows", n)
+	}
+	res, err := r.Release(ctx, ops.ReleaseRequest{Plan: l.plan, Node: node, RunID: r.RunID, RequestID: "req-1", SliceDigest: slice})
+	if err != nil || !res.Released || slice == "" || res.SliceDigest != slice {
+		t.Fatalf("the release under slice %s: %+v %v", slice, res, err)
+	}
+}
+
 // TestSchedRelayHeldBackReleaseIsNotAnError (CRW-1277 d): a node the scheduler holds back is Released false with the reason and no error
 // (a node waiting for the node it comes after, a node whose region overlaps a running node's), so the lane asks again later; a request the
 // relay refuses for what it is (a node the plan does not hold) is an error.

@@ -65,6 +65,10 @@ type ReleaseRequest struct {
 	AllowedRecipients []string    `json:"allowed_recipients"`
 	Parent            Endpoint    `json:"parent"`
 	Child             Endpoint    `json:"child"`
+	// ExpectedSliceDigest is the node's slice of the plan the caller compared (CRW-1288): a release whose node has another slice
+	// when it is judged, or in the transaction that reserves the slot and records the release, releases nothing
+	// (plan_revision_conflict). Empty compares nothing.
+	ExpectedSliceDigest string `json:"expected_slice_digest,omitempty"`
 }
 
 // ReleaseResult is what Release answers. Bound is true once the child is bound to the node; a managed start that was refused or left incomplete leaves the intent and the slot in
@@ -257,7 +261,7 @@ func (s *Scheduler) Release(ctx context.Context, plan, node, actor string, req R
 			return nil
 		}
 		// a refusal is returned after the transaction (and the conflict row a refusal recorded commits with it); any other failure rolls everything back.
-		if refused, err := asRefusal(s.rejudge(txCtx, tx, plan, node, body, opts, actor, false)); err != nil {
+		if refused, err := asRefusal(s.rejudge(txCtx, tx, plan, node, req.ExpectedSliceDigest, body, opts, actor, false)); err != nil {
 			return err
 		} else if refused != nil {
 			stash = refused
@@ -341,6 +345,9 @@ type releaseJudgement struct {
 func (s *Scheduler) judgeNodeRelease(ctx context.Context, q store.Querier, plan, node, actor string, req ReleaseRequest, agent bool) (releaseJudgement, *NodeReading, error) {
 	snap, n, err := liveNode(ctx, q, plan, node)
 	if err != nil {
+		return releaseJudgement{}, nil, err
+	}
+	if err := expectSlice(snap, plan, node, req.ExpectedSliceDigest); err != nil {
 		return releaseJudgement{}, nil, err
 	}
 	var base *BaseRef
@@ -437,10 +444,19 @@ func (s *Scheduler) checkCriteria(n dag.SnapNode, criteria []Criterion) error {
 	return nil
 }
 
-// rejudge repeats, under the lock, what the store half of the judgement said before it (a plan revision, an acceptance or a registration may have moved in between): the node is
-// still ready or waiting only for capacity, the manifest still matches the node's slice, criteria and incoming edges, every input still stands, and nobody owns the issue (for a managed start:
-// the agent surface judges the node under the same rule as judgeNodeRelease did, agent).
-func (s *Scheduler) rejudge(ctx context.Context, q store.Querier, plan, node string, body map[string]any, opts VerifyOptions, actor string, agent bool) error {
+// rejudge repeats, under the lock, what the store half of the judgement said before it (a plan revision, an acceptance or a registration may have moved in between): the node still
+// has the slice the caller compared (expected, CRW-1288), it is still ready or waiting only for capacity, the manifest still matches the node's slice, criteria and incoming edges, every
+// input still stands, and nobody owns the issue (for a managed start: the agent surface judges the node under the same rule as judgeNodeRelease did, agent).
+func (s *Scheduler) rejudge(ctx context.Context, q store.Querier, plan, node, expected string, body map[string]any, opts VerifyOptions, actor string, agent bool) error {
+	if expected != "" {
+		snap, _, err := dag.SnapshotAt(ctx, q, plan, 0)
+		if err != nil {
+			return err
+		}
+		if err := expectSlice(snap, plan, node, expected); err != nil {
+			return err
+		}
+	}
 	reading, err := s.Ready(ctx, q, plan, readyFor(node, agent, true))
 	if err != nil {
 		return err
@@ -482,6 +498,19 @@ func (s *Scheduler) rejudge(ctx context.Context, q store.Querier, plan, node str
 	// Nothing asks again here whether the issue already has an open relationship or a managed start in flight: Ready, called first on this same transaction, runs those two queries in resourceHold before it
 	// lets a node be ready, or wait only for a slot, and rejudge returns above for any other reading; the store has one connection and nothing is written between, so a node that got here passed both.
 	// (An agent release asks neither: an agent is given the node, not the issue.)
+	return nil
+}
+
+// expectSlice is the compare-and-swap of a release on the plan (CRW-1288): a caller that names the slice of the node it compared (expected_slice_digest) has the node released only
+// while the plan's head gives the node that slice. It is asked when the release is judged and again first in the transaction that reserves the slot and records the release, so a plan
+// revision made at any point before that commit releases nothing (plan_revision_conflict: the caller reads the plan again and decides again). An empty expected compares nothing.
+func expectSlice(snap dag.Snapshot, plan, node, expected string) error {
+	if expected == "" {
+		return nil
+	}
+	if n, ok := nodeOf(snap, node); !ok || n.SliceDigest != expected {
+		return refuse(contract.RefusalPlanRevisionConflict, "plan_changed: the release of %s expects slice %s and plan %s at revision %d gives the node %q", node, expected, plan, snap.Revision, n.SliceDigest)
+	}
 	return nil
 }
 
@@ -1014,7 +1043,7 @@ func (s *Scheduler) ReleaseAgent(ctx context.Context, plan, node, actor string, 
 				return nil
 			}
 		}
-		if refused, err := asRefusal(s.rejudge(txCtx, tx, plan, node, j.body, j.opts, actor, true)); err != nil {
+		if refused, err := asRefusal(s.rejudge(txCtx, tx, plan, node, req.ExpectedSliceDigest, j.body, j.opts, actor, true)); err != nil {
 			return err
 		} else if refused != nil {
 			stash = refused
