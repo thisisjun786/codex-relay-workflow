@@ -92,6 +92,20 @@ export const DESIGN = obj({
   risks: texts,
 })
 
+// DESIGN_AUDIT: the independent audit of a DESIGN before the first executor starts. The auditor is a reviewer of another
+// model family than the architect; needs_changes sends the DESIGN back to the architect (the same thread), and the executors
+// start only on an approved audit. The findings name what must change, by the decision or issue they concern.
+export const DESIGN_AUDIT = obj({
+  verdict: { type: 'string', enum: ['approved', 'needs_changes'] },
+  findings: list(obj({
+    ref: text,
+    severity: { type: 'string', enum: ['P0', 'P1', 'P2', 'P3'] },
+    finding: text,
+    evidence: texts,
+  })),
+  summary: text,
+})
+
 // REFLECTION: the architect's milestone-close check of its own decisions.
 export const REFLECTION = obj({
   verdict: { type: 'string', enum: ['ALIGNED', 'MISALIGNED'] },

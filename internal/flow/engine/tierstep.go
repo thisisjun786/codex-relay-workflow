@@ -6,12 +6,12 @@ import (
 	"github.com/dop251/goja"
 )
 
-// tierStep is crw.tierStep(node, evidence): the one place a node may move from the executor to executor-t1. This build
-// holds only its interface, which the lint rule and the parity corpus rest on: the call takes a position of its path,
-// journals a step decision and resolves with {id, checkpoint}. The id is what the executor-t1 call carries as
-// stepDecision. The SP-TIER-1 evidence rules, the append-only flow_step_decisions row and the checkpoint worktree
-// arrive with the issue that owns crw.tierStep, so checkpoint is null here and the evidence argument is recorded by
-// its digest only.
+// tierStep is crw.tierStep(node, evidence): the call that mints the step decision, the one place a node may move from the executor
+// to executor-t1. It takes a position of its path, journals a step decision and resolves with {id, checkpoint}; the id is what the
+// executor-t1 call carries as stepDecision. The engine's call holds the id only: the SP-TIER-1 evidence rules are the lane's
+// (internal/flow/workflows/lib/evidence.js), and the append-only flow_step_decisions row with the evidence and the checkpoint is
+// written by the lane's crw.stepRecord (internal/flow/ops), which the project lane's crw.tierStep composite calls after this one, so
+// checkpoint is null here and the evidence argument is recorded by its digest only.
 func (s *scriptVM) tierStep(call goja.FunctionCall) goja.Value {
 	// A node that holds a call with an unknown outcome (recovery_hold), or that a changed restore stopped, takes no tier
 	// step: the step would let the next build run on the node while a request of it may still be at work on the host.

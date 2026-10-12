@@ -25,7 +25,7 @@
             "args_digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
             "helpers": [
               {
-                "digest": "a05b2da5a32f0d938be72bce74e5f0e32616f751da365f09c20ef05b498fcb99",
+                "digest": "82d12a8e17acd84452fd9f9adfd16cc1ac2cd8fe4b1b01fb00656cbbfa2436a7",
                 "spec": "crw:lib/schemas"
               }
             ],

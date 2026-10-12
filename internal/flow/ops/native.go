@@ -58,7 +58,7 @@ const (
 	ObservationPairMismatch = "pair_mismatch"
 	ObservationUnbound      = "unbound_spawn"
 	// NativeRule is the rule id of the rows (the native helper of a flow-bound thread, SP-NAT-1).
-	NativeRule = "SP-NAT-1"
+	NativeRule = RuleNat1
 )
 
 // The reasons of an unobserved row.
