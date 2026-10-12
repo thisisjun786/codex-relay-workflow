@@ -369,6 +369,53 @@ func dagRefusals(project string, err error) []Refusal {
 // gradePattern is the shape of a milestone's work grade.
 var gradePattern = regexp.MustCompile(`^C[1-5]$`)
 
+// MilestoneEntryRefusals judges one milestone entry on its own (CRW-1277 b): its key, title, criteria, surfaces, work grade and required
+// commands. The compiler applies it to every entry of a project, and the run applies it to the entry of the milestone it works on, so a
+// handoff edited after it was compiled never reaches the final gate with metadata the compiler refuses. project and path (the entry's place
+// in the document) only label the refusals.
+func MilestoneEntryRefusals(project, path string, m Milestone) []Refusal {
+	var out []Refusal
+	refuse := func(sub, format string, args ...any) {
+		out = append(out, Refusal{Project: project, Rule: "milestone", Path: path + sub, Detail: fmt.Sprintf(format, args...)})
+	}
+	if strings.TrimSpace(m.Key) == "" {
+		refuse(".key", "a milestone entry needs its key")
+	}
+	if strings.TrimSpace(m.Title) == "" {
+		refuse(".title", "milestone %s needs its title", m.Key)
+	}
+	if len(m.Criteria) == 0 {
+		refuse(".criteria", "milestone %s needs at least one criterion", m.Key)
+	}
+	for j, c := range m.Criteria {
+		if strings.TrimSpace(c) == "" {
+			refuse(fmt.Sprintf(".criteria[%d]", j), "a criterion of milestone %s needs its text", m.Key)
+		}
+	}
+	if len(m.Surfaces) == 0 {
+		refuse(".surfaces", "milestone %s needs at least one surface of %s", m.Key, strings.Join(Surfaces, ", "))
+	}
+	seen := map[string]bool{}
+	for j, s := range m.Surfaces {
+		switch {
+		case !slices.Contains(Surfaces, s):
+			refuse(fmt.Sprintf(".surfaces[%d]", j), "surface %q of milestone %s is not one of %s", s, m.Key, strings.Join(Surfaces, ", "))
+		case seen[s]:
+			refuse(fmt.Sprintf(".surfaces[%d]", j), "milestone %s names surface %s twice", m.Key, s)
+		}
+		seen[s] = true
+	}
+	if !gradePattern.MatchString(m.Grade) {
+		refuse(".grade", "the grade %q of milestone %s is not C1, C2, C3, C4 or C5", m.Grade, m.Key)
+	}
+	for j, c := range m.RequiredCommands {
+		if strings.TrimSpace(c) == "" {
+			refuse(fmt.Sprintf(".required_commands[%d]", j), "a required command of milestone %s is blank", m.Key)
+		}
+	}
+	return out
+}
+
 // milestoneRefusals judges the milestone entries of a project (CRW-1277 b). None given is a project as before. Each entry is
 // judged on its own, and once one is given the entries and the issues name each other exactly: an issue whose milestone has no
 // entry (an issue with no milestone included) and an entry no issue names are refused, so the run never meets a milestone it has
@@ -384,45 +431,11 @@ func milestoneRefusals(p Project) []Refusal {
 	entries := map[string]bool{}
 	for i, m := range p.Milestones {
 		path := fmt.Sprintf("milestones[%d]", i)
-		switch {
-		case strings.TrimSpace(m.Key) == "":
-			refuse(path+".key", "a milestone entry needs its key")
-		case entries[m.Key]:
+		out = append(out, MilestoneEntryRefusals(p.Key, path, m)...)
+		if strings.TrimSpace(m.Key) != "" && entries[m.Key] {
 			refuse(path+".key", "milestone %s has an entry twice", m.Key)
 		}
 		entries[m.Key] = true
-		if strings.TrimSpace(m.Title) == "" {
-			refuse(path+".title", "milestone %s needs its title", m.Key)
-		}
-		if len(m.Criteria) == 0 {
-			refuse(path+".criteria", "milestone %s needs at least one criterion", m.Key)
-		}
-		for j, c := range m.Criteria {
-			if strings.TrimSpace(c) == "" {
-				refuse(fmt.Sprintf("%s.criteria[%d]", path, j), "a criterion of milestone %s needs its text", m.Key)
-			}
-		}
-		if len(m.Surfaces) == 0 {
-			refuse(path+".surfaces", "milestone %s needs at least one surface of %s", m.Key, strings.Join(Surfaces, ", "))
-		}
-		seen := map[string]bool{}
-		for j, s := range m.Surfaces {
-			switch {
-			case !slices.Contains(Surfaces, s):
-				refuse(fmt.Sprintf("%s.surfaces[%d]", path, j), "surface %q of milestone %s is not one of %s", s, m.Key, strings.Join(Surfaces, ", "))
-			case seen[s]:
-				refuse(fmt.Sprintf("%s.surfaces[%d]", path, j), "milestone %s names surface %s twice", m.Key, s)
-			}
-			seen[s] = true
-		}
-		if !gradePattern.MatchString(m.Grade) {
-			refuse(path+".grade", "the grade %q of milestone %s is not C1, C2, C3, C4 or C5", m.Grade, m.Key)
-		}
-		for j, c := range m.RequiredCommands {
-			if strings.TrimSpace(c) == "" {
-				refuse(fmt.Sprintf("%s.required_commands[%d]", path, j), "a required command of milestone %s is blank", m.Key)
-			}
-		}
 	}
 	named := map[string]bool{}
 	for i, is := range p.Issues {

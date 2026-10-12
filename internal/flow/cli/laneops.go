@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -130,6 +129,16 @@ func BuildLane(ctx context.Context, req LaneRequest, opt LaneOptions) (LaneWorld
 	verifier := opt.Verifier
 	if verifier == nil {
 		verifier = ops.CILocalVerifier{}
+		// the shipped verifier runs crw-dev ci local only: a milestone that requires another command is refused when the run reads it
+		relay.RunnableCommand = func(command string) string {
+			if command != ops.CILocalCommand {
+				return fmt.Sprintf("the shipped lane's verifier runs %q only", ops.CILocalCommand)
+			}
+			return ""
+		}
+	}
+	relay.HostMemory = func() (*dagsched.HostMemoryBound, error) {
+		return dagsched.HostMemoryFromEnvironment(func(k string) string { v, _ := getenv(k); return v })
 	}
 	var seam ops.Relay = relay
 	if opt.Relay != nil {
@@ -306,33 +315,62 @@ func pluginRoot(getenv func(string) (string, bool)) (string, string) {
 	return "", fmt.Sprintf("%d crw plugin versions are installed under %s", len(found), home)
 }
 
-// treeDigest is the digest of the regular files under a directory.
+// maxTreeFiles bounds the files a digested tree may hold (links included), so a link to a large tree is an unresolved digest and not a
+// walk of the host.
+const maxTreeFiles = 20000
+
+// treeDigest is the digest of the regular files under a directory, the content of a link taken as the content of what it resolves to (a
+// linked directory, a linked file, the directory itself being a link): a change in linked bytes changes the digest. A link that cannot be
+// resolved, a link back into the tree that holds it and a tree larger than maxTreeFiles are errors, never an empty digest.
 func treeDigest(dir string) (string, error) {
 	var lines []string
-	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if !d.Type().IsRegular() {
-			return nil
-		}
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(dir, path)
-		if err != nil {
-			return err
-		}
-		lines = append(lines, filepath.ToSlash(rel)+"\x00"+sha256Hex(raw))
-		return nil
-	})
-	if err != nil {
+	files := 0
+	if err := collectTree(dir, "", map[string]bool{}, &files, &lines); err != nil {
 		return "", err
 	}
 	sort.Strings(lines)
 	sum := sha256.Sum256([]byte(strings.Join(lines, "\n")))
 	return hex.EncodeToString(sum[:]), nil
+}
+
+// collectTree adds the lines "<path>\x00<sha256>" of the regular files under dir to lines; stack holds the resolved directories being walked.
+func collectTree(dir, rel string, stack map[string]bool, files *int, lines *[]string) error {
+	real, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return err
+	}
+	if stack[real] {
+		return fmt.Errorf("%s is a link back into the tree that holds it", dir)
+	}
+	stack[real] = true
+	defer delete(stack, real)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		if *files++; *files > maxTreeFiles {
+			return fmt.Errorf("more than %d files under %s", maxTreeFiles, dir)
+		}
+		path, name := filepath.Join(dir, e.Name()), filepath.ToSlash(filepath.Join(rel, e.Name()))
+		info, err := os.Stat(path) // follows a link
+		if err != nil {
+			return err
+		}
+		switch {
+		case info.IsDir():
+			if err := collectTree(path, name, stack, files, lines); err != nil {
+				return err
+			}
+		case info.Mode().IsRegular():
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			*lines = append(*lines, name+"\x00"+sha256Hex(raw))
+		}
+	}
+	return nil
 }
 
 // runRecord is the run record an earlier process of a run stored (flow_runs): the plan it names, the revision it pinned, the owner and

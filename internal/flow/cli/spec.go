@@ -251,10 +251,26 @@ func CheckHandoff(in compile.Input, plan, milestone string) string {
 	if milestone == "" {
 		return ""
 	}
-	if _, ok := HandoffMilestone(p, milestone); !ok {
+	m, ok := HandoffMilestone(p, milestone)
+	if !ok {
 		return fmt.Sprintf("the handoff names no entry of milestone %q in project %s (milestones[] of crw-flow-compile-input/1)", milestone, p.Key)
 	}
-	return ""
+	return EntryProblem(p, m)
+}
+
+// EntryProblem says why the entry of a milestone is not one the compiler would have compiled ("" when it is): the rules of
+// compile.MilestoneEntryRefusals (surfaces of the closed set, a work grade C1 to C5, a title, criteria and commands that are not blank),
+// which the run applies again to the handoff it pinned.
+func EntryProblem(p compile.Project, m compile.Milestone) string {
+	refusals := compile.MilestoneEntryRefusals(p.Key, "milestones", m)
+	if len(refusals) == 0 {
+		return ""
+	}
+	parts := make([]string, len(refusals))
+	for i, r := range refusals {
+		parts[i] = r.Path + ": " + r.Detail
+	}
+	return fmt.Sprintf("the entry of milestone %s in project %s is not one the compiler accepts (%s)", m.Key, p.Key, strings.Join(parts, "; "))
 }
 
 // PinHandoff writes the bytes of a handoff into the run's directory, once, and answers the reference the run's arguments carry.

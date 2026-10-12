@@ -50,7 +50,14 @@ type SchedRelay struct {
 	Verifier dagsched.VerifierRule
 	// Verify is the verification an integration batch runs over the merged tree.
 	Verify dagsched.IntegrationBatchVerifier
+	// HostMemory samples the host memory bound for a release (dag-release applies it, read once per command; the run lives long, so it
+	// is sampled for each release); nil applies none. A threshold that is not usable is an error of the release.
+	HostMemory func() (*dagsched.HostMemoryBound, error)
+	// RunnableCommand says why the run's verifier cannot run a required command of a milestone ("" when it can); nil checks nothing.
+	RunnableCommand func(command string) string
 
+	// release serializes the releases: the bound of the host is set on the scheduler for the one being made.
+	release sync.Mutex
 	mu      sync.Mutex
 	claimed string
 	input   *compile.Input
@@ -170,6 +177,17 @@ func (r *SchedRelay) Milestone(ctx context.Context, plan, milestone string) (ops
 	}
 	if len(entry.Surfaces) == 0 || strings.TrimSpace(entry.Grade) == "" || len(entry.Criteria) == 0 {
 		return ops.Milestone{}, fmt.Errorf("the entry of milestone %s names no surfaces, grade or criteria: the run defaults none of them", milestone)
+	}
+	// the compiler's rules for an entry hold for the handoff the run pinned, however it came to be edited since it was compiled
+	if why := EntryProblem(p, entry); why != "" {
+		return ops.Milestone{}, errors.New(why)
+	}
+	if r.RunnableCommand != nil {
+		for _, c := range entry.RequiredCommands {
+			if why := r.RunnableCommand(c); why != "" {
+				return ops.Milestone{}, fmt.Errorf("milestone %s requires the command %q, which the run cannot verify: %s", milestone, c, why)
+			}
+		}
 	}
 	if r.Revision <= 0 {
 		return ops.Milestone{}, fmt.Errorf("the run pins no revision of plan %s", plan)
@@ -319,6 +337,16 @@ func (r *SchedRelay) Release(ctx context.Context, req ops.ReleaseRequest) (ops.R
 			return ops.ReleaseResult{}, err
 		}
 		request.Base = &dagsched.BaseSpec{Repository: checkout, Ref: ref}
+	}
+	r.release.Lock()
+	defer r.release.Unlock()
+	if r.HostMemory != nil {
+		bound, err := r.HostMemory()
+		if err != nil {
+			return ops.ReleaseResult{}, err
+		}
+		r.Sched.Host = bound
+		defer func() { r.Sched.Host = nil }()
 	}
 	res, err := r.Sched.ReleaseAgent(ctx, req.Plan, req.Node, r.Actor, request, dagsched.AgentReleaseOptions{Role: "executor", Tier: "executor", RunID: r.RunID, Worktree: r.worktreeHandle(req.Node)})
 	if err != nil {
@@ -541,20 +569,26 @@ func (r *SchedRelay) Integrate(ctx context.Context, req ops.IntegrateRequest) (o
 	if err != nil {
 		return ops.IntegrateResult{}, err
 	}
-	// the acceptance the run is integrating is the node's current one: only then can a refusal be the replay of a landing
-	isCurrent := found && cur.Kind == dagsched.AcceptanceAgent && cur.AcceptanceID == req.AcceptanceID
-	if isCurrent {
-		if landed, err := r.Sched.AgentAcceptanceIntegrated(ctx, q, cur.Agent); err != nil {
+	// the batch merges the node's current acceptance and nothing else, so the call has to name that acceptance and the head it accepted:
+	// otherwise the answer would describe an integration other than the one the branch took
+	if !found || cur.Kind != dagsched.AcceptanceAgent || cur.AcceptanceID != req.AcceptanceID {
+		out.Reason, out.Detail = "acceptance_not_current", fmt.Sprintf("acceptance %q is not the current agent acceptance of node %s: nothing was integrated", req.AcceptanceID, req.Node)
+		return out, nil
+	}
+	if req.Head == "" || cur.Agent.Head != req.Head {
+		out.Reason, out.Detail = "head_not_accepted", fmt.Sprintf("acceptance %s accepted head %s, not %q: nothing was integrated", cur.AcceptanceID, cur.Agent.Head, req.Head)
+		return out, nil
+	}
+	if landed, err := r.Sched.AgentAcceptanceIntegrated(ctx, q, cur.Agent); err != nil {
+		return ops.IntegrateResult{}, err
+	} else if landed {
+		// the integration landed and was observed: the replay of a call whose answer the run did not record
+		tip, err := r.IntegrationTip(ctx, req.Plan)
+		if err != nil {
 			return ops.IntegrateResult{}, err
-		} else if landed {
-			// the integration landed and was observed: the replay of a call whose answer the run did not record
-			tip, err := r.IntegrationTip(ctx, req.Plan)
-			if err != nil {
-				return ops.IntegrateResult{}, err
-			}
-			out.Landed, out.Replayed, out.BatchCommit, out.Tip = true, true, tip, tip
-			return out, nil
 		}
+		out.Landed, out.Replayed, out.BatchCommit, out.Tip = true, true, tip, tip
+		return out, nil
 	}
 	// the batch completes the marks an earlier batch left pending and never merges a head the branch already holds again
 	res, err := r.Sched.IntegrateBatch(ctx, dagsched.IntegrationBatchInput{Plan: req.Plan, Actor: r.Actor, Checkout: checkout, IntegrationRef: ref, BaseRef: ref, Nodes: []string{req.Node}},
@@ -565,12 +599,12 @@ func (r *SchedRelay) Integrate(ctx context.Context, req ops.IntegrateRequest) (o
 			return ops.IntegrateResult{}, epochLost(req.Plan, err)
 		}
 		// a node a batch merged before the run recorded it is no candidate any more: the branch holds its head, and only the observation
-		// may be missing. Any other refusal stands: the fallback is for the acceptance the run is integrating, the node's current one
+		// may be missing. Any other refusal stands
 		tip, terr := r.IntegrationTip(ctx, req.Plan)
 		if terr != nil {
 			return ops.IntegrateResult{}, terr
 		}
-		if contained, cerr := isAncestor(ctx, checkout, req.Head, tip); !isCurrent || cerr != nil || !contained {
+		if contained, cerr := isAncestor(ctx, checkout, req.Head, tip); cerr != nil || !contained {
 			return refused(err)
 		}
 		out.Landed, out.Replayed, out.BatchCommit, out.Tip = true, true, tip, tip
