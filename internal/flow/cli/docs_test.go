@@ -62,10 +62,7 @@ func TestSchedulerDocRestartRowNamesRunCommands(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var table []string
-	for _, r := range tableRows(t, string(ref), "## The crw flow command table") {
-		table = append(table, r)
-	}
+	table := tableRows(t, string(ref), "## The crw flow command table")
 	listed := func(sub string) bool {
 		for _, r := range table {
 			if strings.HasPrefix(r, "| `crw flow "+sub+" ") || strings.HasPrefix(r, "| `crw flow "+sub+"`") || strings.HasPrefix(r, "| `crw flow "+sub+",") {

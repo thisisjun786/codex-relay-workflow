@@ -16,11 +16,11 @@ import (
 func TestStartPreviewThenDetached(t *testing.T) {
 	w := newWorld(t)
 	td := w.deps()
-	code, out, errOut := td.do("start", "night-batch", "--thread", "thread-owner", "--state", w.state, "--decision", "ud-none")
+	code, out, _ := td.do("start", "night-batch", "--thread", "thread-owner", "--state", w.state, "--decision", "ud-none")
 	if code == 0 {
 		t.Fatalf("a night batch without a readable decision started: %s", out)
 	}
-	code, out, errOut = td.do("start", "project-lane", "--thread", "thread-owner", "--state", w.state, "--args", `{ "plan": "plan-1", "milestone": "M1" }`, "--token-budget", "5000")
+	code, out, errOut := td.do("start", "project-lane", "--thread", "thread-owner", "--state", w.state, "--args", `{ "plan": "plan-1", "milestone": "M1" }`, "--token-budget", "5000")
 	if code != 0 {
 		t.Fatalf("exit %d\n%s\n%s", code, out, errOut)
 	}
