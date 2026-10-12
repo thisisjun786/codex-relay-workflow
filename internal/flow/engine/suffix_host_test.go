@@ -152,6 +152,8 @@ type env struct {
 	cancel context.CancelFunc
 	alive  func(owner string) bool
 	owner  string
+	// clock, when set, is the clock of the engine and of the host and what a resume waits on.
+	clock *stepClock
 }
 
 func newEnv(t *testing.T) *env {
@@ -210,6 +212,12 @@ func (e *env) config(resume bool) engine.Config {
 		Ops: map[string]engine.Op{"commit": commitOp{e}, "hold": holdOp{}}}
 	if resume {
 		cfg.Resume = &engine.ResumeOptions{Wait: func(context.Context, time.Duration) error { return nil }, Grace: time.Millisecond, Skew: time.Hour, OpenWait: 10 * time.Millisecond, Poll: time.Millisecond}
+	}
+	if e.clock != nil {
+		cfg.Now = e.clock.Now
+		if resume {
+			cfg.Resume.Wait = e.clock.Wait
+		}
 	}
 	return cfg
 }

@@ -75,7 +75,10 @@ func (o worldOp) Run(_ context.Context, req OpRequest) (OpResult, error) {
 func (o worldOp) Proven(_ context.Context, _ []Event, row Event) (bool, string, error) {
 	o.w.mu.Lock()
 	defer o.w.mu.Unlock()
-	req := RequestID(row.RunID, row.CallID)
+	req := rowStr(row.Data, "request_id")
+	if req == "" {
+		req = RequestID(row.RunID, row.CallID)
+	}
 	if !o.w.done[req] || o.w.gone[req] {
 		return false, "the effect is gone", nil
 	}
@@ -149,6 +152,8 @@ type treeFake struct {
 	*Fake
 	mu   sync.Mutex
 	tree string
+	// snapshotErr makes Snapshot fail while it is set.
+	snapshotErr bool
 }
 
 func newTreeFake() *treeFake {
@@ -183,6 +188,9 @@ func (t *treeFake) Recheck(context.Context, Placement) error                 { r
 func (t *treeFake) Snapshot(context.Context, string) (string, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if t.snapshotErr {
+		return "", fmt.Errorf("the object store is not available")
+	}
 	return t.tree, nil
 }
 
