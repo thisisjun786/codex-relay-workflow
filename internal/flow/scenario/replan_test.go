@@ -1914,6 +1914,63 @@ func TestLiveTriggerWithTheSameDigestSupersedesItsSignal(t *testing.T) {
 	}
 }
 
+// A resume after the resume that ran a trigger again changes nothing: the signal row the earlier resume bound live (attempt "live") is
+// replayed with the very arguments it was bound with once its triggers replay with the digests they answered, so the third process
+// makes no call, runs no operation live and supersedes nothing, and the milestone is as closed as the second process left it.
+func TestUnchangedResumeAfterALiveTriggerResumeIsZeroLive(t *testing.T) {
+	l := NewLab(t, twoNodes()...)
+	var edited atomic.Bool
+	l.On("^review:A:r2$", func(*Call) *fakehostPlan {
+		if edited.Load() {
+			return nil
+		}
+		p := Fail("serverOverloaded")
+		return &p
+	})
+	mismatchingWhile(l, func() bool { return true }, "A")
+	fixedOnce(l, "A")
+	if res := l.Run(); res.Status != engine.RunCompleted {
+		t.Fatalf("run %s: %s", res.Status, res.Error)
+	}
+	edited.Store(true)
+	l.NewProcess("proc-2")
+	res := l.execEdited(editBuildOf("A"), true)
+	if got := Value[laneResult](t, res); got.State != "closed" {
+		t.Fatalf("second process: %+v; calls %v; escalations %v", got, l.Labels(), escalationReasons(l))
+	}
+	var attempts []string
+	for _, ev := range l.Rows("crw.signalBind") {
+		if str(ev.Data, "attempt") == "live" {
+			attempts = append(attempts, ev.CallID)
+		}
+	}
+	if len(attempts) == 0 {
+		t.Fatalf("the second process bound no signal as a live attempt")
+	}
+	tip := l.Tip()
+	before := l.LastSeq()
+	l.NewProcess("proc-3")
+	res = l.execEdited(editBuildOf("A"), true)
+	if res.Status != engine.RunCompleted {
+		t.Fatalf("third process %s: %s; calls %v", res.Status, res.Error, l.Labels())
+	}
+	got := Value[laneResult](t, res)
+	if got.State != "closed" || got.Tip != tip {
+		t.Errorf("third process: %+v, want closed at %s; escalations %v", got, tip, escalationReasons(l))
+	}
+	if live := l.LiveCalls(before); len(live) != 0 {
+		t.Errorf("the third process made %d live calls: %+v", len(live), live)
+	}
+	for _, ev := range rowsAfter(l, before) {
+		if ev.Kind == engine.KindCall && ev.Event == engine.EvCompleted && strings.HasPrefix(ev.Op, "crw.") && ev.Op != "crw.classify" {
+			t.Errorf("an operation ran live: %s at %s", ev.Op, ev.Path)
+		}
+		if ev.Event == engine.EvSuperseded {
+			t.Errorf("a call was superseded: %s %s", ev.Label, ev.Path)
+		}
+	}
+}
+
 // The slices a revision is compared with are those of the plan the architect and the auditor evaluated: a plan revision made while the
 // delta is audited is not absorbed into the revision's baseline. B's slice changes during the audit of the delta of signal 2 (a third
 // of the plan), the lanes that read it find it is news and signal 3 counts it against r1, so the milestone re-plans once more.

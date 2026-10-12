@@ -195,7 +195,9 @@ async function signalPath(S, ms, onSignal) {
       S.queue = S.queue.filter((t) => !S.taken[t.call])
       // a recorded signal that does not replay (one of its triggers ran again) is bound as a live attempt: its triggers can answer the very
       // digests they answered before, and the row of the earlier process must still not replay
-      const bound = rec && !replay ? await crw.signalBind(ms, k, prev, members, 'live') : await crw.signalBind(ms, k, prev, members)
+      // (a row that an earlier resume bound live replays with the argument it was bound with: its triggers answer the digests they answered)
+      const attempt = rec && !replay ? 'live' : rec && rec.attempt ? rec.attempt : ''
+      const bound = attempt ? await crw.signalBind(ms, k, prev, members, attempt) : await crw.signalBind(ms, k, prev, members)
       const ran = await parallel([() => onSignal(bound)], { keys: ['signal:' + ms + ':' + k], label: 'signal' })
       const out = signalOutcome(ran[0])
       const done = await crw.signalDone(ms, k, { result: out.result, revision: out.revision, reasons: out.reasons })
