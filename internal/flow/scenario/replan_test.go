@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -756,7 +757,7 @@ func TestSliceChangeOver25Replans(t *testing.T) {
 // A run that re-planned for a plan revision with no RECEIPT behind it is resumed unchanged: the reads of the plan, the signals, the
 // DESIGN delta and the lanes released under it replay, and no call is live.
 func TestResumeAfterPlanRevisionTriggerZeroLive(t *testing.T) {
-	l := planRevisionWorld(t)
+	l := planRevisionWorld(t, nil)
 	if got := mustRun(t, l); got.State != "closed" {
 		t.Fatalf("state %q; calls %v; escalations %v", got.State, l.Labels(), escalationReasons(l))
 	}
@@ -816,7 +817,7 @@ func TestReplanRefreshesAdmissionRegions(t *testing.T) {
 // next release, and the nodes that have not started are held until the signal that the revision makes is decided - the re-plan is
 // made before they start, and they are released under it.
 func TestPlanRevisionWithoutReceiptIsATrigger(t *testing.T) {
-	l := planRevisionWorld(t)
+	l := planRevisionWorld(t, nil)
 	got := mustRun(t, l)
 	if got.State != "closed" {
 		t.Fatalf("state %q; calls %v; escalations %v", got.State, l.Labels(), escalationReasons(l))
@@ -824,8 +825,73 @@ func TestPlanRevisionWithoutReceiptIsATrigger(t *testing.T) {
 	checkPlanRevisionRun(t, l)
 }
 
+// A process that ends while the signal a plan revision made is being decided, or after it was decided and before the nodes that read
+// the revision were released, is resumed unchanged: the reads of the plan replay with the revision they read (the signal row took their
+// trigger), the signal replays from its rows - the re-plan turn and the audit of its DESIGN are not made again, and nothing is
+// superseded - and B, C and D are released only after it, under the revision it made.
+func TestResumeDuringPlanRevisionSignalZeroLive(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		stop func(engine.Event) bool
+	}{
+		{"replan turn completed", func(ev engine.Event) bool {
+			return ev.Kind == engine.KindCall && ev.Op == "agent" && ev.Event == engine.EvCompleted && ev.Label == "replan:s2"
+		}},
+		{"revision recorded", func(ev engine.Event) bool {
+			return ev.Kind == engine.KindCall && ev.Op == "crw.designLedger" && ev.Event == engine.EvCompleted && str(ev.Data, "revision") == "r1"
+		}},
+		{"signal decided", func(ev engine.Event) bool {
+			return ev.Kind == engine.KindCall && ev.Op == "crw.signalDone" && ev.Event == engine.EvCompleted && str(ev.Data, "revision") == "r1"
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			l := planRevisionWorld(t, tc.stop)
+			if rev := releaseRevisions(l); rev["B"] != "" || rev["C"] != "" || rev["D"] != "" {
+				t.Fatalf("B, C or D was released before the process ended: %v", rev)
+			}
+			before := l.LastSeq()
+			done := map[string]bool{}
+			unchangedRead := map[string]bool{}
+			for _, ev := range l.Events() {
+				if ev.Kind == engine.KindCall && ev.Op == "agent" && ev.Event == engine.EvCompleted {
+					done[ev.Label] = true
+				}
+				if ev.Kind == engine.KindCall && ev.Op == "crw.planRead" && ev.Event == engine.EvCompleted && !flagOf(ev.Data, "changed") {
+					unchangedRead[ev.CallID] = true
+				}
+			}
+			l.NewProcess("proc-2")
+			got := Value[laneResult](t, l.Resume())
+			if got.State != "closed" {
+				t.Fatalf("resume: %+v; calls %v; escalations %v", got, l.Labels(), escalationReasons(l))
+			}
+			// no call the first process completed is made again; the re-plan turn always completed before the process ended
+			for _, c := range l.LiveCalls(before) {
+				if done[c.Label] || strings.HasPrefix(c.Label, "replan:") {
+					t.Errorf("the resume ran %q live", c.Label)
+				}
+			}
+			for _, ev := range rowsAfter(l, before) {
+				// a read of the plan that found no revision and that the node did not go on from is read again: the plan may have
+				// changed while no process ran
+				if ev.Event == engine.EvSuperseded && !unchangedRead[ev.CallID] {
+					t.Errorf("the resume superseded %s %s at %s", ev.Op, ev.Label, ev.Path)
+				}
+				if ev.Kind == engine.KindCall && ev.Op == "crw.release" && ev.Event == engine.EvCompleted && flagOf(ev.Data, "released") && str(ev.Data, "revision") != "r1" {
+					t.Errorf("%s was released under %s", str(ev.Data, "node"), str(ev.Data, "revision"))
+				}
+			}
+			if rows := l.FlowRows(ops.EvRevisionSuperseded); len(rows) != 0 {
+				t.Errorf("revision_superseded rows %+v", rows)
+			}
+			checkPlanRevisionRun(t, l)
+		})
+	}
+}
+
 // planRevisionWorld is the run in which the plan changes after the signal of A's RECEIPT was decided and before B, C and D are released.
-func planRevisionWorld(t *testing.T) *Lab {
+// stop, when it is given, ends the process at the first row it answers true for (a crash).
+func planRevisionWorld(t *testing.T, stop func(engine.Event) bool) *Lab {
 	t.Helper()
 	l := NewLab(t, fourNodes()...)
 	gate := make(chan struct{})
@@ -834,7 +900,7 @@ func planRevisionWorld(t *testing.T) *Lab {
 		p.Gate = gate
 		return &p
 	})
-	var once atomic.Bool
+	var once, stopped atomic.Bool
 	l.OnRow(func(ev engine.Event) {
 		// the signal of A's RECEIPT is decided; the plan is revised after it, and A's review goes on
 		if ev.Kind == engine.KindCall && ev.Op == "crw.signalDone" && ev.Event == engine.EvCompleted && once.CompareAndSwap(false, true) {
@@ -843,7 +909,16 @@ func planRevisionWorld(t *testing.T) *Lab {
 			}
 			close(gate)
 		}
+		if stop != nil && stop(ev) && stopped.CompareAndSwap(false, true) {
+			l.Kill()
+		}
 	})
+	if stop != nil {
+		l.Run()
+		if !stopped.Load() {
+			t.Fatalf("the run never reached the row it was to end at; calls %v", l.Labels())
+		}
+	}
 	return l
 }
 
@@ -1185,6 +1260,119 @@ func TestSupersededTriggerSupersedesSignalAndRevision(t *testing.T) {
 	}
 	if rebinds := l.FlowRows(ops.EvReleaseRebind); len(rebinds) != 2 {
 		t.Errorf("release_rebind rows %+v", rebinds)
+	}
+}
+
+// A recorded trigger of a lane that ran a call live in the resume does not come any more, and the signal path does not wait for the lane
+// to end to know it. The earlier process made its second signal of two RECEIPTs of A - the build and the fix round, which both came
+// while the re-plan of the first signal was being made. The resume runs A's build again (its prompt was edited) and A's first review now
+// verifies, so the fix round is not made: the second signal is bound live, with A's new RECEIPT, while A's review still waits.
+func TestLiveLaneSettlesItsRecordedTriggerAtOnce(t *testing.T) {
+	nodes := []NodeSpec{
+		{ID: "Z", Issue: "CRW-Z", Title: "issue Z", Regions: []string{"z/"}},
+		{ID: "A", Issue: "CRW-A", Title: "issue A", Regions: []string{"a/"}},
+		{ID: "Y", Issue: "CRW-Y", Title: "issue Y", Regions: []string{"y/"}, After: []string{"Z"}},
+		{ID: "W", Issue: "CRW-W", Title: "issue W", Regions: []string{"w/"}, After: []string{"Z"}},
+	}
+	l := NewLab(t, nodes...)
+	var resumed atomic.Bool
+	buildGate, replanGate, reviewGate := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	l.On("^build:Z:executor$", func(c *Call) *fakehostPlan {
+		if resumed.Load() {
+			return nil
+		}
+		c.Edit()
+		p := Say(Receipt("ready_for_review"))
+		// A is released before Z's RECEIPT comes
+		p.Delay = 200 * time.Millisecond
+		return &p
+	})
+	l.On("^build:A:executor$", func(c *Call) *fakehostPlan {
+		if resumed.Load() {
+			return nil
+		}
+		c.Edit()
+		p := Say(Receipt("ready_for_review"))
+		p.Gate = buildGate
+		return &p
+	})
+	l.On("^replan:s1$", func(*Call) *fakehostPlan {
+		p := Say(l.designFor())
+		p.Gate = replanGate
+		return &p
+	})
+	l.On("^review:A:r\\d+$", func(c *Call) *fakehostPlan {
+		var p fakehostPlan
+		switch {
+		case resumed.Load():
+			p = Say(Verdict(true))
+			p.Gate = reviewGate
+		case c.Label == "review:A:r1":
+			p = Say(Verdict(false, Defect("d1", "correctness", "P2", "fix this")))
+		default:
+			p = Fail("serverOverloaded")
+		}
+		return &p
+	})
+	var seenFix, seenBind1 atomic.Bool
+	l.OnRow(func(ev engine.Event) {
+		if ev.Kind != engine.KindCall || ev.Event != engine.EvCompleted {
+			return
+		}
+		switch {
+		case ev.Op == "agent" && ev.Label == "build:Z:executor":
+			// the plan is revised while Z works: two of the four slices change, so the signal of Z's RECEIPT re-plans
+			for _, id := range []string{"Y", "W"} {
+				l.Relay.ChangeNode(id, func(n *NodeSpec) { n.Regions = append(slices.Clone(n.Regions), id+"-more/") })
+			}
+		case ev.Op == "crw.signalBind" && num(ev.Data["k"]) == 1 && seenBind1.CompareAndSwap(false, true):
+			close(buildGate)
+		case ev.Op == "agent" && strings.HasPrefix(ev.Label, "fix:A:") && seenFix.CompareAndSwap(false, true):
+			close(replanGate)
+		}
+	})
+	res := l.Run()
+	if got := Value[laneResult](t, res); got.State != "incomplete" {
+		t.Fatalf("state %q: %s; calls %v", got.State, res.Value, l.Labels())
+	}
+	var second []string
+	for _, b := range l.Rows("crw.signalBind") {
+		if num(b.Data["k"]) == 2 {
+			for _, m := range b.Data["members"].([]any) {
+				second = append(second, str(m.(map[string]any), "node"))
+			}
+		}
+	}
+	if !slices.Equal(second, []string{"A", "A"}) {
+		t.Fatalf("the second signal of the first process was made of %v, want A's build and fix RECEIPTs; calls %v", second, l.Labels())
+	}
+
+	var once sync.Once
+	var byTimeout atomic.Bool
+	timer := time.AfterFunc(20*time.Second, func() {
+		once.Do(func() {
+			byTimeout.Store(true)
+			close(reviewGate)
+		})
+	})
+	defer timer.Stop()
+	resumed.Store(true)
+	l.NewProcess("proc-2")
+	// the rows from here on are the resume's (a new process has a journal of its own)
+	l.OnRow(func(ev engine.Event) {
+		if ev.Kind == engine.KindCall && ev.Op == "crw.signalBind" && ev.Event == engine.EvCompleted && num(ev.Data["k"]) == 2 {
+			once.Do(func() { close(reviewGate) })
+		}
+	})
+	res = l.execEdited(editBuildOf("A"), true)
+	if got := Value[laneResult](t, res); got.State != "closed" {
+		t.Fatalf("resume: %s; calls %v; escalations %v", res.Value, l.Labels(), escalationReasons(l))
+	}
+	if byTimeout.Load() {
+		t.Fatalf("the second signal was not bound while A's review waited: the signal path waited for the RECEIPT of A's fix round, which the resume does not make")
+	}
+	if c := labelsWithPrefix(l, "fix:A:"); len(c) != 1 {
+		t.Errorf("the fix rounds of A %v: the resume made one again", c)
 	}
 }
 

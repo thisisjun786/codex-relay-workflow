@@ -316,7 +316,8 @@ func milestoneNodes(r rows, ms string) []string {
 // milestone as the relay has it now, and whether it is another than the one the last signal (or the first revision) read. A changed
 // plan revision is a trigger of the signal path, so the release of the node waits until the signal that comes of it is decided and
 // finds the revision that stands then. The row is the replay: a resume that finds the node released after this position keeps what
-// it read, and one that finds no release after it reads the plan again.
+// it read, and so does one that finds a signal row that stands and took the revision it read as a trigger (the signal is replayed
+// from its rows, so the read it was made of is too); one that finds neither reads the plan again.
 type planReadOp struct{ l *Lane }
 
 // PlanSeen is the answer of crw.planRead.
@@ -346,15 +347,25 @@ func (o *planReadOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRe
 	return engine.OpResult{Result: result(out), Data: map[string]any{"milestone": ms, "node": node, "plan_digest": out.Digest, "base": out.Base, "changed": out.Changed}}, nil
 }
 
-// Proven: the read stands while the node was released after it (the lane went on from what it read); a read the node did not go on
-// from is made again.
+// Proven: the read stands while the node was released after it (the lane went on from what it read), and while a signal row that
+// stands took the changed revision it read as a trigger: read again, the plan would answer the revision that signal read as its own
+// base (changed=false), the trigger would not come, and the signal it was made of could not replay. A read that neither the node nor
+// a signal went on from is made again.
 func (o *planReadOp) Proven(_ context.Context, ev []engine.Event, row engine.Event) (bool, string, error) {
 	r := rows(ev)
 	node := dataStr(row, "node")
 	if _, ok := r.current(OpRelease).last(func(e engine.Event) bool { return e.Seq > row.Seq && dataStr(e, "node") == node }); ok {
 		return true, "", nil
 	}
-	return false, "the node was not released after the plan was read", nil
+	if changed, _ := row.Data["changed"].(bool); changed {
+		call := "plan:" + dataStr(row, "plan_digest")
+		for _, b := range signalBinds(r, dataStr(row, "milestone")) {
+			if b.Seq > row.Seq && slices.ContainsFunc(triggersOf(b), func(t Trigger) bool { return t.Call == call }) {
+				return true, "", nil
+			}
+		}
+	}
+	return false, "the node was not released after the plan was read and no signal took the revision it read", nil
 }
 
 // signalBindOp is crw.signalBind(milestone, k, prev, members): the signal row. The arguments are the signal's input: the number

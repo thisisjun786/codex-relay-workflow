@@ -377,3 +377,43 @@ func TestPlanReadChangedOnlyAgainstWhatTheLastSignalRead(t *testing.T) {
 		t.Errorf("a read the node was released after does not stand: %s", why)
 	}
 }
+
+// A changed plan revision a lane read stands, before its node is released, while a signal row that stands took it as a trigger: read
+// again it would answer the revision that signal read as its base (no change), and the signal could not replay from its rows.
+func TestPlanReadStandsWhileASignalTookItsRevision(t *testing.T) {
+	w := newWorld(t)
+	w.relay.plan = planOfNodes(map[string]string{"A": "a1", "B": "b1"}, "A", "B")
+	w.ledgered(true, designOf("A", "B"))
+	w.must("planRead", "M", "A")
+	w.release("A")
+	w.receipt("c_a1", "A", "")
+	w.signal(1, "c_a1")
+	w.relay.plan = planOfNodes(map[string]string{"A": "a1", "B": "b2"}, "A", "B")
+	var seen PlanSeen
+	_ = json.Unmarshal(w.must("planRead", "M", "B"), &seen)
+	if !seen.Changed {
+		t.Fatalf("the revision after the signal: %+v", seen)
+	}
+	ev := w.j.Events()
+	readRow := ev[len(ev)-1]
+	op := &planReadOp{w.lane}
+	if ok, _, _ := op.Proven(context.Background(), w.j.Events(), readRow); ok {
+		t.Fatalf("a read that neither the node nor a signal went on from stands")
+	}
+	// a signal of another revision does not take it
+	w.must("signalBind", "M", 2, "", []Trigger{{Kind: "revision", Call: "plan:other", Node: "B", Digest: "other"}})
+	if ok, _, _ := op.Proven(context.Background(), w.j.Events(), readRow); ok {
+		t.Errorf("a read stands on a signal that took another revision")
+	}
+	w.must("signalBind", "M", 3, "", []Trigger{{Kind: "revision", Call: "plan:" + seen.Digest, Node: "B", Digest: seen.Digest}})
+	ev = w.j.Events()
+	bind := ev[len(ev)-1]
+	if ok, why, _ := op.Proven(context.Background(), w.j.Events(), readRow); !ok {
+		t.Errorf("a read whose revision a signal took does not stand: %s", why)
+	}
+	// once a resume superseded that signal, the read is made again
+	w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: bind.CallID, Op: OpSignalBind, Event: engine.EvSuperseded})
+	if ok, _, _ := op.Proven(context.Background(), w.j.Events(), readRow); ok {
+		t.Errorf("a read stands on a signal a resume superseded")
+	}
+}

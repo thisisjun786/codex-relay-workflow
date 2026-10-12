@@ -70,9 +70,11 @@ export function admissionRegions(planRegions, editRegions) {
 // admitted, because a re-plan that is due changes the packet and the admission regions of the lanes that have not started. A lane that a
 // resume finds released under a revision a signal made waits until that signal is decided, so the release finds the revision it stands on
 // (crw.release). Until the signals the earlier process recorded are decided, only the nodes they concern are admitted: any other node is
-// released after them, under the revision that stands then. A recorded trigger whose lane ran a call live does not come any more.
+// released after them, under the revision that stands then. A recorded trigger whose lane ran a call live does not come any more. A lane
+// whose plan read was a trigger (its own, or the same revision another lane brought first) waits until the signal that took that trigger
+// is decided, whether that signal runs live or is replayed: while a recorded signal waits for its triggers no lane is held otherwise.
 function signalState(planId, opts, nodes) {
-  const S = { queue: [], arrived: {}, taken: {}, finished: {}, live: {}, remaining: nodes.length, lanesDone: nodes.length === 0, halted: false, active: false, replaying: false,
+  const S = { queue: [], arrived: {}, taken: {}, takenAt: {}, planWait: {}, finished: {}, live: {}, remaining: nodes.length, lanesDone: nodes.length === 0, halted: false, active: false, replaying: false,
     processed: 0, liveFrom: 0, over: false, waiters: [], recordedPending: !!crw.recordedSignal(opts.milestone, 1), allowed: {}, repump() {}, applyRegions() {} }
   S.notify = () => {
     const ws = S.waiters
@@ -119,6 +121,7 @@ function signalState(planId, opts, nodes) {
     plan(read) {
       if (!read || !read.changed) return
       const f = crw.callFacts(read)
+      S.planWait[node] = 'plan:' + read.digest
       S.arrive({ kind: 'revision', call: 'plan:' + read.digest, node, digest: read.digest, live: f.live, seq: f.seq })
     },
   })
@@ -127,13 +130,18 @@ function signalState(planId, opts, nodes) {
 
 const noSignals = { receipt() {}, plan() {} }
 
-// admit holds a lane back from its release while a signal is being decided and, for a lane that an earlier process released under a
-// revision a signal made, until that signal is decided. It answers false when the milestone was halted.
+// admit holds a lane back from its release while a signal is being decided, for a lane that an earlier process released under a
+// revision a signal made until that signal is decided, and for a lane whose plan read was a trigger until the signal that took the
+// trigger is decided. It answers false when the milestone was halted.
 async function admit(S, node) {
   const prior = crw.priorRelease(node)
+  const planDecided = () => {
+    const call = S.planWait[node]
+    return !call || S.over || (S.takenAt[call] > 0 && S.processed >= S.takenAt[call])
+  }
   while (true) {
     if (S.halted) return false
-    if (!S.holds() && (!prior || S.decided(prior.signal))) return true
+    if (!S.holds() && (!prior || S.decided(prior.signal)) && planDecided()) return true
     await S.wait()
   }
 }
@@ -180,7 +188,10 @@ async function signalPath(S, ms, onSignal) {
       if (members.length === 0 || S.halted) break
       S.active = true
       if (!replay) S.endRecorded()
-      for (const m of members) S.taken[m.call] = true
+      for (const m of members) {
+        S.taken[m.call] = true
+        S.takenAt[m.call] = k
+      }
       S.queue = S.queue.filter((t) => !S.taken[t.call])
       const bound = await crw.signalBind(ms, k, prev, members)
       const ran = await parallel([() => onSignal(bound)], { keys: ['signal:' + ms + ':' + k], label: 'signal' })
