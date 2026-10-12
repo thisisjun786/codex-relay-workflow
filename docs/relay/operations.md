@@ -453,8 +453,8 @@ the recipient reads it); the source says where the cause was read, and `detail` 
 refusal's own text. `recovery` is `{actor, reason, command, then, laterDeliveries, refusalDetail}`
 with the command rendered for this store and `refusalDetail` that same text: a withheld hold is the
 operator's (`settings-show --task <recipient>`, then bring the recipient back under its recorded
-settings or re-record it with `--source user_transition`), except a host answer that left a
-setting out, which the daemon may clear itself; the role gate's refusals (`role_policy_unconfigured`,
+settings or re-record it with `--source user_transition`), except a host answer that left the
+environments out (`environments_unknown`), which the daemon may clear itself; the role gate's refusals (`role_policy_unconfigured`,
 `role_binding_mismatch`, `settings_record_stale_for_role`), which each cover more than one cause
 and so point at the repair the refusal names in `refusalDetail`, never at whichever failure row a
 timestamp puts last (declare the role,
