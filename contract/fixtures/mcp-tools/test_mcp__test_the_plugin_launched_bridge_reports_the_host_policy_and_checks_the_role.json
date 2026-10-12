@@ -36,6 +36,7 @@
         "tool": "create_thread",
         "arguments": {
           "request_id": "right-child",
+          "sandbox": "danger-full-access",
           "cwd": "${HOME}",
           "prompt": "READY",
           "model": "anthropic/claude-opus-5-5",

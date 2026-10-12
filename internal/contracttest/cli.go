@@ -16,6 +16,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 
 	// The relay commands register in the relay command table when their packages load: these
 	// are the packages cmd/crw links, so Registered agrees with the binary.
@@ -93,7 +94,7 @@ func runCLI(t *testing.T, scenario Scenario) (map[string]any, error) {
 			copyStep["socket"] = socket
 			step = copyStep
 		}
-		last, err = runStep(binary, home, step, results)
+		last, err = runStep(t, binary, home, step, results)
 		if err != nil {
 			return nil, fmt.Errorf("step %d: %w", index, err)
 		}
@@ -144,7 +145,7 @@ func cliSteps(run map[string]any) ([]map[string]any, error) {
 	return steps, nil
 }
 
-func runStep(binary, home string, step, results map[string]any) (map[string]any, error) {
+func runStep(t *testing.T, binary, home string, step, results map[string]any) (map[string]any, error) {
 	resolved, err := resolve(step, results, home)
 	if err != nil {
 		return nil, err
@@ -191,6 +192,10 @@ func runStep(binary, home string, step, results map[string]any) (map[string]any,
 			return nil, fmt.Errorf("stdin: %w", err)
 		}
 		command.Stdin = bytes.NewReader(encoded)
+	}
+	if len(argv) > 0 && dispatch.ChildCommand(argv[0]) {
+		// A child command reports through the relay daemon of the case's state, which runs it there (CRW-1289).
+		defer testsupport.ChildOwner(t, filepath.Join(home, "state"), command.Dir, command.Env)()
 	}
 	var stdout, stderr bytes.Buffer
 	command.Stdout, command.Stderr = &stdout, &stderr

@@ -144,6 +144,8 @@ func Test24NumericDownstreamBytes(t *testing.T) {
 	for _, field := range []string{"generation", "attempt"} {
 		for _, v := range []string{"9223372036854775807", "-9223372036854775808", "9223372036854775808"} {
 			t.Run("emit-execution/"+field+"/"+v, func(t *testing.T) {
+				// emit reports through the relay daemon of the store, which runs it on that store.
+				defer testsupport.ChildOwner(t, filepath.Join(home, "state"), "", goEnv)()
 				assert(t, []string{"emit", "--relationship", ids["relationship"], "--generation=1", "--attempt=1", "--outcome=interrupted", "--turn-thread=C", "--turn-id=turn", "--turn-status=interrupted", "--no-enqueue", "--" + field + "=" + v})
 			})
 		}

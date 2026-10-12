@@ -3,9 +3,7 @@ package delivery
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +14,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
@@ -64,8 +63,8 @@ func newSide(t *testing.T, work string) *cliSide {
 func (s *cliSide) run(args ...string) (string, int) {
 	parsed := argparse.Parse("", args)
 	if len(parsed.Remaining) > 0 && dispatch.ChildCommand(parsed.Remaining[0]) {
-		closeOwner := s.childOwner()
-		defer closeOwner()
+		// A child command reports through the relay daemon of the side's state, which runs it there.
+		defer testsupport.ChildOwner(s.t, s.state, s.dir, s.env)()
 	}
 	argv := append(append([]string(nil), s.argv0...), append([]string{"--state", s.state}, args...)...)
 	cmd := exec.Command(argv[0], argv[1:]...)
@@ -81,34 +80,6 @@ func (s *cliSide) run(args ...string) (string, int) {
 		s.t.Fatal(err)
 	}
 	return out.String(), code
-}
-
-func (s *cliSide) childOwner() func() {
-	s.t.Helper()
-	listener, err := net.Listen("unix", filepath.Join(s.state, "control.sock"))
-	if err != nil {
-		s.t.Fatal(err)
-	}
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		conn, err := listener.Accept()
-		if err != nil {
-			return
-		}
-		defer conn.Close()
-		var request struct {
-			Program string
-			Argv    []string
-		}
-		if json.NewDecoder(conn).Decode(&request) != nil {
-			return
-		}
-		var stdout, stderr bytes.Buffer
-		code := dispatch.ExecuteOwnedChild(context.Background(), request.Program, request.Argv, &stdout, &stderr)
-		_ = json.NewEncoder(conn).Encode(map[string]any{"exitCode": code, "result": json.RawMessage(stdout.Bytes())})
-	}()
-	return func() { _ = listener.Close(); <-done }
 }
 
 // expect checks got, the answer to what with the side's home already masked (normal), against the
