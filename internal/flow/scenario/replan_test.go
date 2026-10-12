@@ -1698,6 +1698,112 @@ func TestReflectionRunsAtIntegratedHead(t *testing.T) {
 	}
 }
 
+func TestReplanAuditFixUsesPinnedHead(t *testing.T) {
+	for _, phase := range []string{"signal", "close"} {
+		t.Run(phase, func(t *testing.T) {
+			nodes := []NodeSpec{
+				{ID: "Z", Issue: "CRW-Z", Title: "issue Z", Regions: []string{"z/"}},
+				{ID: "A", Issue: "CRW-A", Title: "issue A", Regions: []string{"a/"}, After: []string{"Z"}},
+				{ID: "B", Issue: "CRW-B", Title: "issue B", Regions: []string{"b/"}, After: []string{"A"}},
+			}
+			lab := NewLab(t, nodes...)
+			lab.Cap = 1
+			if phase == "signal" {
+				mismatching(lab, "A")
+				fixedOnce(lab, "A")
+			} else {
+				lab.On("^reflection:M1$", func(*Call) *fakehostPlan {
+					plan := Say(Reflection(false))
+					return &plan
+				})
+			}
+			needsChanges := func(*Call) fakehostPlan {
+				return Say(map[string]any{"verdict": "needs_changes", "findings": []any{map[string]any{"ref": "D1", "severity": "P2", "finding": "check the newly landed source", "evidence": []string{}}}, "summary": "revise the delta"})
+			}
+			lab.Sequence("^design-audit:replan-.*:r[0-9]+$", needsChanges, needsChanges,
+				func(*Call) fakehostPlan {
+					return Say(map[string]any{"verdict": "approved", "findings": []any{}, "summary": "approved"})
+				})
+			var heads, detached sync.Map
+			lab.On("^design-fix:replan-", func(call *Call) *fakehostPlan {
+				heads.Store(call.ID, headIn(lab, call.Cwd))
+				_, branchErr := lab.gitErr(call.Cwd, "symbolic-ref", "-q", "HEAD")
+				detached.Store(call.ID, branchErr != nil)
+				return nil
+			})
+			result := mustRun(t, lab)
+			if phase == "signal" && result.State != "closed" || phase == "close" && result.State != "replanned" {
+				t.Fatalf("state=%s calls=%v", result.State, lab.Labels())
+			}
+			replans := lab.turnsOf("replan:")
+			if len(replans) != 1 {
+				t.Fatalf("replan turns: %+v", replans)
+			}
+			pinnedHead := str(lab.Prepared(replans[0].Call).Data, "head")
+			if phase == "signal" {
+				var signalHead string
+				for _, row := range lab.Rows("crw.signalBind") {
+					if replans[0].Label == fmt.Sprintf("replan:s%d", num(row.Data["k"])) {
+						signalHead = str(row.Data, "tip")
+					}
+				}
+				if pinnedHead != signalHead {
+					t.Fatalf("replan head %s != signal head %s", pinnedHead, signalHead)
+				}
+			} else if pinnedHead != lab.Tip() {
+				t.Fatalf("replan head %s != integrated head %s", pinnedHead, lab.Tip())
+			}
+			if pinnedHead == "" || pinnedHead == lab.Base {
+				t.Fatalf("precondition: pinned head %s must differ from initial DESIGN head %s", pinnedHead, lab.Base)
+			}
+			fixes := lab.turnsOf("design-fix:replan-")
+			if len(fixes) != 2 {
+				t.Fatalf("correction turns: %+v", fixes)
+			}
+			seenCwds := map[string]bool{replans[0].Cwd: true, lab.turnsOf("architect")[0].Cwd: true}
+			previous := replans[0].Label
+			for _, turn := range fixes {
+				replanTurnResumes(t, lab, turn.Label, previous)
+				previous = turn.Label
+				if turn.Thread != replans[0].Thread {
+					t.Errorf("correction thread %s != replan thread %s", turn.Thread, replans[0].Thread)
+				}
+				wantCwd := filepath.Join(lab.State, "flow", lab.RunID, "calls", turn.Call, "wt")
+				actualHead, _ := heads.Load(turn.Call)
+				isDetached, _ := detached.Load(turn.Call)
+				prepared := lab.Prepared(turn.Call)
+				t.Logf("%s: prepared head=%v actual head=%v pinned head=%s cwd=%s", turn.Label, prepared.Data["head"], actualHead, pinnedHead, turn.Cwd)
+				if actualHead != pinnedHead || str(prepared.Data, "head") != pinnedHead || isDetached != true {
+					t.Errorf("correction must run detached at %s: actual=%v prepared=%v detached=%v", pinnedHead, actualHead, prepared.Data["head"], isDetached)
+				}
+				if turn.Cwd != wantCwd || seenCwds[turn.Cwd] {
+					t.Errorf("correction cwd %s must be call-private %s", turn.Cwd, wantCwd)
+				}
+				seenCwds[turn.Cwd] = true
+				allocation, _ := prepared.Data["allocation"].(map[string]any)
+				if str(allocation, "path") != wantCwd || str(allocation, "start_commit") != pinnedHead || str(allocation, "kind") != engine.PlaceCall {
+					t.Errorf("correction allocation: %v", allocation)
+				}
+				text := textOfCall(lab, turn.Call)
+				if !strings.Contains(text, "HEAD: "+pinnedHead) || !strings.Contains(text, "RANGE: "+lab.Base+".."+pinnedHead) {
+					t.Errorf("correction packet lacks pinned head and DESIGN range:\n%s", text)
+				}
+				for _, row := range lab.Rows("crw.integrate") {
+					if phase == "close" || str(row.Data, "node") == "Z" {
+						if !strings.Contains(text, str(row.Data, "node")+": "+str(row.Data, "head")) {
+							t.Errorf("correction packet lacks landed head: %v", row.Data)
+						}
+					}
+				}
+				if _, err := os.Stat(wantCwd); !os.IsNotExist(err) {
+					t.Errorf("terminal correction worktree not removed: %v", err)
+				}
+			}
+			replansResumeTheTurnBefore(t, lab)
+		})
+	}
+}
+
 // The re-plan turn of a signal runs at the tip of the integration target that the signal row recorded when it decided to re-plan: the
 // node that landed before it is in that worktree.
 func TestReplanCwdIsCurrentTip(t *testing.T) {

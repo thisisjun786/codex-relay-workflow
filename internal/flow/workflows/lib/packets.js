@@ -48,11 +48,13 @@ export function designAuditPacket(ms, cand, round) {
   ].join('\n\n')
 }
 
-export function designFixPacket(audit) {
+export function designFixPacket(audit, context) {
   return [
     'ROLE: architect. The independent audit of your DESIGN found what follows. Answer with the DESIGN again, with every finding addressed.',
     section('FINDINGS', audit.findings.map((f) => '- [' + f.severity + '] ' + f.ref + ': ' + f.finding)),
     audit.summary ? 'AUDIT SUMMARY: ' + audit.summary : '',
+    context ? 'Your working directory is a read-only checkout of the pinned head.\nHEAD: ' + context.head + '\nDESIGN RAN AT: ' + (context.base_tip || 'unknown') + '\nRANGE: ' + (context.base_tip ? context.base_tip + '..' : '') + context.head : '',
+    context ? section('LANDED HEADS', landedLines(context.landed)) : '',
   ].filter(Boolean).join('\n\n')
 }
 

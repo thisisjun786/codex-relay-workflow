@@ -21,7 +21,7 @@ const ms = await crw.milestone(args.plan, args.milestone)
 // DESIGN with the answers, and needs_changes sends it back to the architect on its own thread, for AUDIT_ROUNDS rounds. tag names
 // the labels of a re-plan's rounds. The answer is {ok, arch, answers}, or {ok: false, result} with what the milestone came to when
 // the design could not be approved.
-async function auditedDesign(first, tag) {
+async function auditedDesign(first, tag, context) {
   let arch = first
   for (let round = 1; round <= AUDIT_ROUNDS; round++) {
     const asked = await crw.explore('open_questions', arch.output.open_questions, { milestone: ms.id })
@@ -38,7 +38,7 @@ async function auditedDesign(first, tag) {
     if (audit.state === 'approved') return { ok: true, arch, answers }
     if (audit.state !== 'needs_changes') return { ok: false, result: await crw.milestoneHalt(ms, 'design_audit', audit.state, audit.reason, call.callId) }
     // back to the architect, on its own thread: the DESIGN it revises is the one it wrote
-    arch = await agent.call(designFixPacket(audit), { resume: arch, schema: DESIGN, label: 'design-fix:' + tag + 'r' + round })
+    arch = await agent.call(designFixPacket(audit, context), { resume: arch, schema: DESIGN, head: context && context.head, label: 'design-fix:' + tag + 'r' + round })
     if (arch.status !== 'completed') return { ok: false, result: await crw.milestoneHalt(ms, 'architect', arch.status, arch.reason, arch.callId) }
   }
   const esc = await crw.escalate(null, { reason: 'design_audit_rounds', detail: 'the DESIGN was not approved in ' + AUDIT_ROUNDS + ' audit rounds' })
@@ -61,7 +61,7 @@ async function replan(tag, signal, due, head, misaligned) {
     milestone: ms.id, revision: cur.revision, signal, head, reasons: due.reasons, plan_mismatch: due.plan_mismatch, slice_change: due.slice_change.changed } })
   const call = await agent.call(replanPacket(ms, cur, due, head, misaligned), { resume: cur.handle, schema: DESIGN, head, label: 'replan:' + tag })
   if (call.status !== 'completed') return { state: 'halted', result: await crw.milestoneHalt(ms, 'replan', call.status, call.reason, call.callId) }
-  const audited = await auditedDesign(call, 'replan-' + tag + ':')
+  const audited = await auditedDesign(call, 'replan-' + tag + ':', { head, base_tip: cur.base_tip, landed: cur.landed })
   if (!audited.ok) return { state: 'halted', result: audited.result }
   const led = await crw.designLedger(ms.id, { design: audited.arch.output, answers: audited.answers, architect: audited.arch, signal, head, plan: due.plan })
   await askOrchestrator(audited.answers)
