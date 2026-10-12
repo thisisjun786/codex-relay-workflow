@@ -154,7 +154,7 @@ real store and asserted the chain until todo 44 removed that package, and
 [the Go runtime's managed tests](../../../../../internal/relay/managed/capture_test.go) holds the Go
 relay's output for the same sequence equal to its recorded answer, so an instruction that stopped
 producing it fails there. It covers
-managed START only: an offline `emit` stages and a staged receipt has no delivery row, and
+managed START only: an `emit` without `--socket` stages (the relay daemon still records it) and a staged receipt has no delivery row, and
 `deliver` needs the socket, so the delivery and correction legs are asserted against a real store
 through the fake host instead. Note that the doc and the test are not yet compared automatically —
 keep them in step by hand when either changes.
@@ -558,7 +558,7 @@ for everything unresolved after a restart. Neither ever sends. `daemon` runs the
 cadence when a process can stay up.
 
 Until one of those runs, a staged receipt is real progress that the parent cannot claim, and the
-child has not failed. This is the split described above: the child emits from the store, a
+child has not failed. This is the split described above: the child's emit is recorded by the relay daemon in its store, a
 host-capable process owns delivery.
 
 ## Which children stopped, and whether anyone was told
@@ -1021,8 +1021,8 @@ that generation, and an admission does not carry into another generation.
 Where an operator has to record the admission out of band instead, `admit-turn --relationship
 <rel> --generation <n> --turn <id> --actor <who> --reason <why>` does it. When the actor is the relationship's registered parent task, the admission is also recorded as a direct parent intervention that `intervention-show --relationship <rel>` reads back ([Answering a child that stopped for input](#answering-a-child-that-stopped-for-input)).
 
-Admission changes which turns may emit and nothing else. Offline, the receipt is still STAGED until
-a host-capable process observes the turn end, as in
+Admission changes which turns may emit and nothing else. Without `--socket`, the receipt (recorded through the
+relay daemon) is still STAGED until a host-capable process observes the turn end, as in
 [A staged receipt needs a host-capable process](#a-staged-receipt-needs-a-host-capable-process).
 
 ## The parent verifies

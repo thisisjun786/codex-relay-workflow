@@ -32,7 +32,7 @@ func TestCreateThreadRefusesAnUnworkableChildSandbox(t *testing.T) {
 	}
 }
 
-// CRW-1286: create_worktree_thread is the other bridge path that creates a relay child; it refuses a readOnly child the
+// CRW-1296: create_worktree_thread is the other bridge path that creates a relay child; it refuses a readOnly child the
 // same way, before the checkout exists or the host is asked.
 func TestCreateWorktreeThreadRefusesAReadOnlyChild(t *testing.T) {
 	b, host := policyBridge(t, `{"roles":{"child":{"model":"explicit-model","reasoningEffort":"high"}}}`)
@@ -47,7 +47,7 @@ func TestCreateWorktreeThreadRefusesAReadOnlyChild(t *testing.T) {
 	}
 }
 
-// CRW-1286: a relay child reports only through the relay daemon's control.sock, and Codex refuses that connect (EPERM) in
+// CRW-1296: a relay child reports only through the relay daemon's control.sock, and Codex refuses that connect (EPERM) in
 // a workspace-write sandbox without network access as in a read-only one (codex-cli 0.154.0). Such a child is refused
 // at creation on both bridge paths, naming the sandboxes that reach the daemon; those two pass the refusal.
 func TestCreateThreadRefusesARelayChildThatCannotReachTheDaemon(t *testing.T) {

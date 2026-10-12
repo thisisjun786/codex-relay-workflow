@@ -9,7 +9,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 )
 
-// CRW-1286: a parent that names no sandbox gets create_thread's schema default, read-only (as in r2 F0-2). For a relay
+// CRW-1296: a parent that names no sandbox gets create_thread's schema default, read-only (as in r2 F0-2). For a relay
 // child that is refused through the tool too, with the recreate guidance, and no thread is started.
 func TestCreateThreadWithTheDefaultSandboxRefusesARelayChild(t *testing.T) {
 	host := fakehost.Start(t)

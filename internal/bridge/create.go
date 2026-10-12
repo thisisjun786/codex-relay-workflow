@@ -23,7 +23,7 @@ const createAckBound = 60 * time.Second
 
 // refuseReadOnlyChild refuses a relay child (the child role) on every bridge path that creates one (create_thread, the
 // relay's managed start through it, create_worktree_thread), before anything is reserved or sent, when it could not work
-// or could not report through the relay daemon's control.sock (CRW-1286): a readOnly sandbox, or a workspace-write one
+// or could not report through the relay daemon's control.sock (CRW-1296): a readOnly sandbox, or a workspace-write one
 // without network access, where Codex refuses that connect (EPERM, codex-cli 0.154.0). A workspace-write child passes
 // only with an expected policy granting networkAccess, which travels in the start config and is checked on creation.
 func refuseReadOnlyChild(role, sandbox string, policy map[string]any) error {

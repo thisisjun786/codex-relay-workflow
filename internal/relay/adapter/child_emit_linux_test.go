@@ -34,7 +34,7 @@ func init() {
 	runtime.LockOSThread()
 	// A read-only filesystem as the child sees it: a writable open, and every call that makes, removes, renames or
 	// links a name, fails with EROFS. That is Codex's read-only sandbox with its network enabled, where the child's
-	// connect to control.sock is allowed (codex-cli 0.154.0, CRW-1286). CRW_READONLY_CHILD_NO_NETWORK adds the refusal
+	// connect to control.sock is allowed (codex-cli 0.154.0, CRW-1296). CRW_READONLY_CHILD_NO_NETWORK adds the refusal
 	// Codex gives a sandbox without network access, read-only or workspace-write: every connect fails with EPERM.
 	if os.Getenv("CRW_READONLY_CHILD_NO_NETWORK") != "" {
 		installSeccomp([]unix.SockFilter{
@@ -132,7 +132,7 @@ func TestReadOnlyChildClaimsAndDeclaresThroughTheDaemon(t *testing.T) {
 	}
 }
 
-// CRW-1286: in a sandbox without network access (Codex's read-only and workspace-write ones) the child cannot connect
+// CRW-1296: in a sandbox without network access (Codex's read-only and workspace-write ones) the child cannot connect
 // to the daemon's socket. Each child command then ends with the explicit exit 3, naming the sandbox as the reason and
 // the sandboxes that can report, records nothing and writes nothing locally, while the daemon is listening.
 func TestAChildWithoutNetworkAccessIsToldItsSandboxCannotReport(t *testing.T) {

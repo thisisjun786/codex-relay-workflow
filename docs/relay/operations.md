@@ -90,7 +90,10 @@ network access: `read-only`, and `workspace-write` unless its policy grants
 and says that its sandbox refuses the connection. The connect succeeds under
 `danger-full-access`, under `workspace-write` with network access, and under a read-only
 filesystem with network access, so a child whose filesystem cannot write the store still
-reports through the daemon when its network is enabled.
+reports through the daemon when its network is enabled. The bridge still refuses to create a
+relay child with a `read-only` sandbox or an explicit `readOnly` policy, network or not: a
+relay child writes its work, so the refusal names the two sandboxes that both write and
+reach the daemon (CRW-1296).
 
 Bridge `create_thread` (the relay's managed start included) and `create_worktree_thread`
 refuse a `child` role whose sandbox cannot reach the daemon, before starting a thread or
