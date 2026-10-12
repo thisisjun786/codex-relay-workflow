@@ -1435,6 +1435,7 @@ func (w *walker) dispatch(words []Word, assigns []Assign, redirs []Redir, st *st
 		return w.wrapped(name, words[1:], assigns, redirs, st, ctx)
 	case clobbersVars(name, words[1:]):
 		st.clearVars()
+		declaredPath(name, words[1:], st)
 		if mayNamePycachePrefix(assignedNames(name, words[1:])) || declaresInteger(name, words[1:]) {
 			w.prefixUnknown = true
 		}

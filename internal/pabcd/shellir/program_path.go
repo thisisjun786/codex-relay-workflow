@@ -38,6 +38,31 @@ func pathAssignmentPrefix(word *syntax.Word) string {
 	return ""
 }
 
+// declaredPath gives a declaration builtin that the walk reaches as a command (an assignment in front of it)
+// the PATH a declaration clause gives: `X=1 export PATH=/dir; prog` runs prog from /dir (CRW-1283, found by the differential fuzz).
+func declaredPath(name string, args []Word, st *state) {
+	switch name {
+	case "export", "declare", "typeset", "readonly", "local":
+	default:
+		return
+	}
+	for _, arg := range args {
+		switch {
+		case !arg.Known && arg.AssignmentName == "PATH":
+			st.setVar("PATH", Word{Reason: arg.Reason}, false)
+		case arg.Known:
+			if variable, value, ok := splitAssignment(arg.Value); ok && variable == "PATH" {
+				st.setVar("PATH", Word{Known: true, Value: value}, false)
+			} else if variable, value, ok := splitAssignment(strings.Replace(arg.Value, "PATH+=", "PATH_APPEND=", 1)); ok && variable == "PATH_APPEND" {
+				st.setVar("PATH", Word{Known: true, Value: value}, true)
+			}
+		default:
+			continue
+		}
+		st.pathTouched = true
+	}
+}
+
 func samePath(left, right *Word) bool {
 	return left == right || left != nil && right != nil && *left == *right
 }
