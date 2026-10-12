@@ -289,9 +289,11 @@ func lastPlanDigest(r rows, ms string) string {
 
 // pinnedPlan is the plan the audited DESIGN of the milestone stands on (CRW-1202): the plan its current revision was made for - the plan
 // the decision that made the revision evaluated, the milestone the run read for r0 - or, when a signal after that revision judged another
-// plan and found no reason to re-plan (continue), the plan the newest such signal judged, which it kept the revision for. A release is a
-// compare-and-swap on it (crw.release), and a plan read is a trigger exactly when the plan it reads is another (crw.planRead): the plan
-// moves the pin only through a signal that judged it, and the revision only through a re-plan whose delta was audited for it.
+// plan and found no reason to re-plan (continue), the plan the newest such signal judged, which it kept the revision for. A release
+// compares the live plan with it in the flow before Relay.Release (crw.release; the relay's release commit does not compare the plan
+// slice, so this is not atomic with it, CRW-1288), and a plan read is a trigger exactly when the plan it reads is another
+// (crw.planRead): the plan moves the pin only through a signal that judged it, and the revision only through a re-plan whose delta
+// was audited for it.
 func pinnedPlan(r rows, ms string) string {
 	pin, _, _ := planPins(r, ms)
 	return pin

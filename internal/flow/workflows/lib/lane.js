@@ -134,7 +134,8 @@ function signalState(planId, opts, nodes) {
 
 const noSignals = { receipt() {}, plan() {} }
 
-// the options of every release of a lane: a compare-and-swap on the plan the audited DESIGN stands on
+// the options of every release of a lane: crw.release compares the live plan with the plan the audited DESIGN stands on, in the flow,
+// before Relay.Release (the relay's release commit does not compare the plan slice; CRW-1288)
 const PINNED = { pinned: true }
 
 // admit holds a lane back from its release while a signal is being decided, for a lane that an earlier process released under a
@@ -350,8 +351,9 @@ export async function dag(planId, lane, opts) {
     }
     let out
     try {
-      // Every release is a compare-and-swap on the plan the audited DESIGN stands on (crw.release, pinned): a plan that is another at
-      // the moment of the release releases nothing. With a signal path the lane then reads the plan again - another plan is a trigger,
+      // Every release compares the plan with the plan the audited DESIGN stands on (crw.release, pinned) before the relay is asked: a
+      // plan that is another at that comparison releases nothing; a plan that changes after it, before the relay's release commit, is
+      // not caught there (CRW-1288). With a signal path the lane then reads the plan again - another plan is a trigger,
       // and the release waits for the signal that comes of it, which re-plans and audits a delta for that plan or keeps the revision -
       // and asks again; without one the node is not released.
       let rel = null

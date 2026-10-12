@@ -350,16 +350,20 @@ func ledgerOf(r rows, ms, revision string) (engine.Event, bool) {
 // executor at all (the lane releases the child or escalates). The row it writes names the revision and the digest: the packet of
 // the lane is built from them, and the input snapshot of every call of the node carries them.
 //
-// With opts.pinned (crw.dag passes it on every release of a lane, CRW-1202) the release is a compare-and-swap on the plan the audited
-// DESIGN stands on (pinnedPlan): the plan the relay has now is compared with it at the moment of the release, before the relay is asked
-// and before the node's size is read, and a node whose plan is another is not released (reason plan_changed). The lane then reads the
-// plan again - a trigger of the signal path - and asks again once the signal that comes of it re-planned and audited a delta for that
-// plan (or judged it and kept the revision).
+// With opts.pinned (crw.dag passes it on every release of a lane, CRW-1202) the release checks the plan the audited DESIGN stands on
+// (pinnedPlan): the plan the relay has now is compared with it in the flow, before the relay is asked and before the node's size is
+// read, and a node whose plan is another is not released (reason plan_changed). The lane then reads the plan again - a trigger of the
+// signal path - and asks again once the signal that comes of it re-planned and audited a delta for that plan (or judged it and kept
+// the revision). This is a check in the flow and not an atomic compare-and-swap: Relay.Release does not receive the plan slice that
+// was compared and its release commit does not compare it, so a plan that changes between this comparison and that commit is not caught
+// there and the node is released under the DESIGN of the plan it was audited for. CRW-1288 makes the relay compare the expected slice in
+// its release transaction.
 type releaseOp struct{ l *Lane }
 
 // ReleaseOpts are the options of crw.release.
 type ReleaseOpts struct {
-	// Pinned makes the release a compare-and-swap on the plan the audited DESIGN stands on.
+	// Pinned makes the release compare the live plan with the plan the audited DESIGN stands on in the flow, before Relay.Release (the
+	// relay's release commit does not compare the plan slice; CRW-1288).
 	Pinned bool `json:"pinned"`
 }
 
@@ -408,7 +412,7 @@ func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRes
 		out.Reason = "node_not_designed"
 		return finish()
 	}
-	// the plan as the relay has it now: the compare-and-swap of a pinned release, and the slice the release records
+	// the plan as the relay has it now: the comparison of a pinned release, and the slice the release records
 	var now *Milestone
 	readNow := func() (Milestone, error) {
 		if now == nil {
@@ -421,8 +425,10 @@ func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRes
 		return *now, nil
 	}
 	// The release of a lane (crw:lib/lane, crw.dag) is the only release path of a node to an executor, a child or a split, and it always
-	// passes pinned: this compare-and-swap is therefore the one check every release goes through (the workflows' call sites are held to
-	// it by TestEveryWorkflowReleasePassesPinned). A call without pinned is the operation's own unit tests.
+	// passes pinned: this comparison is therefore the one check every release goes through (the workflows' call sites are held to it by
+	// TestEveryWorkflowReleasePassesPinned). It happens here, in the flow, before Relay.Release below; the relay's release commit does
+	// not compare the plan slice, so a plan change between this comparison and that commit is not caught (CRW-1288). A call without
+	// pinned is the operation's own unit tests.
 	if opts.Pinned {
 		m, err := readNow()
 		if err != nil {

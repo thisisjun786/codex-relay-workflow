@@ -610,8 +610,9 @@ func TestFirstRevisionRecordsTheHeadTheDesignRanAt(t *testing.T) {
 	}
 }
 
-// A release the lane makes (pinned) is a compare-and-swap on the plan the audited DESIGN stands on: the plan its revision was made for,
-// moved only by a signal that judged another plan and kept the revision. A plan that a signal in flight has read but not decided is no
+// A release the lane makes (pinned) compares the live plan with the plan the audited DESIGN stands on, in the flow before Relay.Release
+// (the relay's release commit does not compare the plan slice; CRW-1288): the plan its revision was made for, moved only by a signal
+// that judged another plan and kept the revision. A plan that a signal in flight has read but not decided is no
 // trigger of its own (the read waits for that signal) and releases nothing either (CRW-1202, verifier rf4).
 func TestReleaseIsACompareAndSwapOnThePinnedPlan(t *testing.T) {
 	w := newWorld(t)

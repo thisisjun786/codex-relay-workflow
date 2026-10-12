@@ -15,9 +15,12 @@ import (
 
 // The two invariants of CRW-1202's last correction round (verifier rf4 on b4ec3fd8).
 //
-// The release of a lane is a compare-and-swap on the plan the audited DESIGN stands on: the plan the current revision was made for, or
-// the plan a later signal judged and kept that revision for. A release whose plan is another is not made; the lane reads the plan
-// again, which is a trigger, and its signal re-plans and audits again (or keeps the revision) before the node is released.
+// The release of a lane compares the live plan with the plan the audited DESIGN stands on in the flow, before Relay.Release: the plan
+// the current revision was made for, or the plan a later signal judged and kept that revision for. A release whose plan is another at
+// that comparison is not made; the lane reads the plan again, which is a trigger, and its signal re-plans and audits again (or keeps
+// the revision) before the node is released. The relay's release commit does not compare the plan slice, so a plan that changes
+// between the comparison and the commit is not caught there; CRW-1288 makes the relay compare the expected slice in its release
+// transaction, and the verifier probe TestSolReleaseMustCompareAtRelayCommit is its first failing test.
 //
 // The worktree of a pinned architect turn is the call's own, and its removal is decided by the call's terminal row, which names it:
 // the engine removes it after the row with a context of its own (not the run's, which a cancellation ends), and a resume removes every
@@ -359,7 +362,7 @@ func TestPinnedWorktreeCleanupInCompletionUnit(t *testing.T) {
 	})
 }
 
-// Every release of a node in the shipped workflows goes through the compare-and-swap of invariant 1: each call of crw.release passes the
+// Every release of a node in the shipped workflows goes through the flow-side plan comparison of invariant 1: each call of crw.release passes the
 // pinned option (the constant PINNED of crw:lib/lane, or the literal), so a new release path cannot skip it silently. A release named
 // any other way (crw['release'], a release taken off crw) is refused as well.
 func TestEveryWorkflowReleasePassesPinned(t *testing.T) {
