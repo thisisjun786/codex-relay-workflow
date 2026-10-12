@@ -28,7 +28,14 @@ func TestGithubPostGuardAllowsAWrapperThatNamesNoPost(t *testing.T) {
 			t.Errorf("%s: refused: %+v", command, site)
 		}
 	}
-	// git push run directly keeps the policy it had before CRW-1283; behind a script or an assigned PATH it is refused.
+	// git push run directly, or behind the program wrappers, keeps the policy it had at c007bd50: the GitHub guard does not judge it.
+	// Inside a script file (bash push.sh) it is refused, and behind an assigned PATH the assignment is refused.
+	for _, command := range []string{"git push origin dev", "ionice -c3 nice git push origin dev"} {
+		if site, denied := githubPostJudgeText(command, cwd); denied {
+			t.Errorf("%s: git push run directly is refused, unlike at c007bd50: %+v", command, site)
+		}
+	}
+	// A gh post behind the program wrappers is refused.
 	for _, command := range []string{"ionice -c3 nice gh pr comment 1 --body x", "nice -n 5 gh api -X POST repos/o/r/issues"} {
 		if _, denied := githubPostJudgeText(command, cwd); !denied {
 			t.Errorf("post escaped the program wrapper: %s", command)
@@ -123,6 +130,57 @@ func TestCommandReaderPathAssignmentResolvesTheProgram(t *testing.T) {
 	for _, command := range []string{"PATH=$UNKNOWN /usr/bin/true", "env PATH=$UNKNOWN /usr/bin/true", "PATH=" + cwd + ":$PATH check"} {
 		if _, err := shellir.Analyze(command, cwd); err == nil {
 			t.Errorf("a PATH value that is not literal was read: %s", command)
+		}
+	}
+}
+
+// TestCRW1283PathDeclarationNameSpelledInParts (evaluation 882ffa84 d2): a declaration word whose value the reader does not know assigns
+// PATH when its name is spelled in quoted and unquoted parts ("P"ATH=$D, P"ATH"=$D, "PATH"=$D) or starts with a spelled part of PATH and
+// is completed at run time (P$X=$D), as PATH=$D does; every guard refuses it as every other PATH assignment. A name that is not PATH,
+// however it is spelled, is read as before.
+func TestCRW1283PathDeclarationNameSpelledInParts(t *testing.T) {
+	cwd, root, env := gateScene(t)
+	rig := newDelRig(t)
+	crw1283Script(t, cwd, "hidden", "#!/bin/bash\ngh pr comment 1 --body x\n")
+	for _, declaration := range []string{`export "P"ATH=$D`, `export P"ATH"=$D`, `export "PATH"=$D`, `export 'PA'"TH"="$D"`,
+		`export "P"ATH+=$D`, `declare -x "P"ATH=$D`, `typeset "PATH"=$D`, `X=1 export "P"ATH=$D`, `export P$X=$D`,
+		`export "PA$X"=$D`, `export 'path=/d'`, `export "pa"th=$D`} {
+		for _, tail := range []string{"; hidden", "; printf ok", "; tee " + root + "/note.md </dev/null"} {
+			command := `D="$CRW1283_UNSET"; ` + declaration + tail
+			if _, err := shellir.Analyze(command, cwd); err == nil || !strings.Contains(err.Error(), "changes which program runs") {
+				t.Errorf("%s: the PATH assignment was read: %v", command, err)
+			}
+			if _, denied := githubPostJudgeText(command, cwd); !denied {
+				t.Errorf("GitHub guard allowed a PATH assignment: %s", command)
+			}
+			if got := HandleMemoryWriteGate(gateBash(t, cwd, command), env); got == "" {
+				t.Errorf("memory gate allowed a PATH assignment: %s", command)
+			}
+			if got := rig.verdict(command); !got.Deny {
+				t.Errorf("worktree guard allowed a PATH assignment: %s", command)
+			}
+		}
+		inFunction := `f() { local ` + strings.TrimPrefix(strings.TrimPrefix(declaration, "export "), "declare -x ") + `; printf ok; }; f`
+		if !strings.HasPrefix(declaration, "X=1") && !strings.HasPrefix(declaration, "typeset") {
+			if _, err := shellir.Analyze(inFunction, cwd); err == nil {
+				t.Errorf("%s: the PATH assignment was read", inFunction)
+			}
+		}
+	}
+	// Controls: a declaration of another name, spelled in parts or not, is read as before.
+	for _, command := range []string{`D="$CRW1283_UNSET"; export "MY"PATH=$D; printf ok`, `D="$CRW1283_UNSET"; export "P"ATHS=$D; printf ok`,
+		`D="$CRW1283_UNSET"; export "GO"FLAGS=$D; printf ok`, `export "PATH_EXTRA"=x; printf ok`} {
+		if _, err := shellir.Analyze(command, cwd); err != nil {
+			t.Errorf("%s: a declaration of another name was refused: %v", command, err)
+		}
+		if _, denied := githubPostJudgeText(command, cwd); denied {
+			t.Errorf("GitHub guard refused a declaration of another name: %s", command)
+		}
+		if got := HandleMemoryWriteGate(gateBash(t, cwd, command), env); got != "" {
+			t.Errorf("memory gate refused a declaration of another name: %s: %s", command, got)
+		}
+		if got := rig.verdict(command); got.Deny {
+			t.Errorf("worktree guard refused a declaration of another name: %s", command)
 		}
 	}
 }

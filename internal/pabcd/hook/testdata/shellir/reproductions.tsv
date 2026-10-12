@@ -1968,3 +1968,8 @@ final verification of f2ef7770 (opusverify-final-f2ef7770-f2, CRW-1283 zsh built
 final verification of f2ef7770 (opusverify-final-f2ef7770-f2, CRW-1283 zsh builtins that assign positional parameters)	zparseopts -D: post	CRW-1283-r6-zparseopts-post	row	-
 final verification of f2ef7770 (opusverify-final-f2ef7770-f2, CRW-1283 zsh builtins that assign positional parameters)	print control	CRW-1283-r6-print-control	row	-
 final verification of f2ef7770 (opusverify-final-f2ef7770-f2, CRW-1283 zsh builtins that assign positional parameters)	print control: post	CRW-1283-r6-print-control-post	row	-
+evaluation of 882ffa84 (crw1283-882ffa84 d2, CRW-1283 PATH declaration name spelled in parts)	export "P"ATH=$D; hidden: post	CRW-1283-e1-split-name-post	row	-
+evaluation of 882ffa84 (crw1283-882ffa84 d2, CRW-1283 PATH declaration name spelled in parts)	export "PATH"=$D; tee: memory	CRW-1283-e1-quoted-name-memory	row	-
+evaluation of 882ffa84 (crw1283-882ffa84 d2, CRW-1283 PATH declaration name spelled in parts)	export P$X=...; rm -rf: removal	CRW-1283-e1-partial-name-removal	row	-
+evaluation of 882ffa84 (crw1283-882ffa84 d2, CRW-1283 PATH declaration name spelled in parts)	export path=...: zsh PATH array	CRW-1283-e1-lower-path-control	row	-
+evaluation of 882ffa84 (crw1283-882ffa84 d2, CRW-1283 PATH declaration name spelled in parts)	export "MY"PATH=$D: control	CRW-1283-e1-other-name-control	row	-

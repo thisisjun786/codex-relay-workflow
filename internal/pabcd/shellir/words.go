@@ -539,24 +539,51 @@ func hasBraceExpansion(raw string) bool {
 	return false
 }
 
-// pathAssignmentPrefix is "PATH" when a word starts with the literal PATH= or PATH+= (quoted or not), else "".
+// pathAssignmentPrefix is "PATH" when a word may assign PATH (or zsh's path): its name, spelled in literal parts quoted or not
+// (PATH=, "P"ATH=, P"ATH"+=, 'PA'"TH"=), is PATH, or a spelled start of PATH is completed at run time (P$X=, "PA$X"=). Else "": a
+// name built wholly at run time ("$N=/d") is not read as an assignment, like read PATH and printf -v PATH (CRW-1283).
 func pathAssignmentPrefix(word *syntax.Word) string {
-	parts := word.Parts
-	if len(parts) == 1 {
-		if quoted, ok := parts[0].(*syntax.DblQuoted); ok {
-			parts = quoted.Parts
+	var parts []syntax.WordPart
+	for _, part := range word.Parts {
+		if quoted, ok := part.(*syntax.DblQuoted); ok {
+			parts = append(parts, quoted.Parts...)
+		} else {
+			parts = append(parts, part)
 		}
 	}
-	if len(parts) > 0 {
-		if literal, ok := parts[0].(*syntax.Lit); ok && (strings.HasPrefix(literal.Value, "PATH=") || strings.HasPrefix(literal.Value, "PATH+=")) {
-			return "PATH"
+	name := ""
+	for _, part := range parts {
+		text := ""
+		switch x := part.(type) {
+		case *syntax.Lit:
+			text = strings.ReplaceAll(x.Value, `\`, "")
+		case *syntax.SglQuoted:
+			text = x.Value
+		default:
+			if name != "" && (strings.HasPrefix("PATH", name) || strings.HasPrefix("path", name)) {
+				return "PATH"
+			}
+			return ""
 		}
+		if i := strings.IndexByte(text, '='); i >= 0 {
+			if pathName(strings.TrimSuffix(name+text[:i], "+")) {
+				return "PATH"
+			}
+			return ""
+		}
+		name += text
 	}
 	return ""
 }
 
-// pathWord is whether a declaration word assigns PATH: PATH=dir or PATH+=dir, its value known or not. Every assignment to PATH is
-// refused as checkAssigns refuses it (CRW-1283; the literal PATH reading is CRW-1292).
+func pathName(name string) bool { return name == "PATH" || name == "path" }
+
+// pathWord is whether a declaration word assigns PATH: PATH=dir or PATH+=dir (path in zsh), its value known or not. Every assignment to
+// PATH is refused as checkAssigns refuses it (CRW-1283; the literal PATH reading is CRW-1292).
 func pathWord(arg Word) bool {
-	return !arg.Known && arg.AssignmentName == "PATH" || arg.Known && (strings.HasPrefix(arg.Value, "PATH=") || strings.HasPrefix(arg.Value, "PATH+="))
+	if !arg.Known {
+		return arg.AssignmentName == "PATH"
+	}
+	name, _, assigns := strings.Cut(arg.Value, "=")
+	return assigns && pathName(strings.TrimSuffix(name, "+"))
 }

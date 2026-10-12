@@ -909,3 +909,31 @@ print hello
 nice "$@"
 --cmd
 bash t.sh gh pr comment 1 --body x
+
+=== CRW-1283-e1-split-name-post | U
+--why Evaluation 882ffa84 d2: a declaration word whose name is spelled in parts ("P"ATH) and whose value the reader does not know assigns PATH; every gate refuses it as every other PATH assignment (until CRW-1292).
+--file hidden
+#!/bin/bash
+gh pr comment 1 --body x
+--cmd
+D="$UNRESOLVED"; export "P"ATH=$D; hidden
+
+=== CRW-1283-e1-quoted-name-memory | U
+--why Evaluation 882ffa84 d2: export "PATH"=$D assigns PATH with a value the reader does not know; refused by every gate.
+--cmd
+export "PATH"=$UNRESOLVED; tee {MEMORY}/note.md </dev/null
+
+=== CRW-1283-e1-partial-name-removal | U
+--why Evaluation 882ffa84 d2: a spelled start of PATH completed at run time (P$X=) may assign PATH; refused by every gate.
+--cmd
+export P$UNRESOLVED=/usr/bin:/bin; rm -rf {CHECKOUT}
+
+=== CRW-1283-e1-lower-path-control | U
+--why Evaluation 882ffa84 d2: zsh's path is PATH as an array, so export 'path=/d' assigns PATH, as path=/d is refused already; refused by every gate.
+--cmd
+export 'path=/usr/bin'; printf ok
+
+=== CRW-1283-e1-other-name-control | B
+--why Evaluation 882ffa84 d2 control: a declaration of another name spelled in parts ("MY"PATH) is read as before.
+--cmd
+export "MY"PATH=$UNRESOLVED; printf ok
