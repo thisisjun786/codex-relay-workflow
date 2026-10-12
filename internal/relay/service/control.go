@@ -31,6 +31,8 @@ func ListenControl(ctx context.Context, state string) (*Control, error) {
 	return ListenControlWake(ctx, state, nil)
 }
 
+// ListenControlStore is ListenControlWake for the daemon that owns the store at state: the child commands it serves run
+// on owner, borrowed, never on a store of their own (CRW-1286).
 func ListenControlStore(ctx context.Context, state string, owner *store.Store, wake func(string)) (*Control, error) {
 	return ListenControlWake(store.WithBorrowedStore(ctx, owner), state, wake)
 }
@@ -145,6 +147,9 @@ func (c *Control) Close() error {
 	return errors.Join(err, <-c.done)
 }
 
+// control.sock serves guard-evaluate, as Python's GuardServer does, and, when the listener holds the daemon's store
+// (ListenControlStore), a child's emit, intent-claim and intent-disposition (child-command, CRW-1286). Decision-25
+// ingress is the queued command's own file publication, never a socket method. The handler reads the one request line.
 func dispatchControl(ctx context.Context, conn net.Conn, state string, wake func(thread string)) error {
 	return hook.HandleControlWake(ctx, conn, state, wake)
 }

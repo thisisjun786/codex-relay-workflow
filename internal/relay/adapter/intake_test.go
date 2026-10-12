@@ -17,9 +17,9 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/golden"
 )
 
-func seedIntake(t *testing.T, path, root string) *store.Store {
+func seedIntake(t *testing.T, path, root string, socket ...string) *store.Store {
 	t.Helper()
-	s, err := openStore(context.Background(), path, "")
+	s, err := openStore(context.Background(), path, strings.Join(socket, ""))
 	if err != nil {
 		t.Fatal(err)
 	}

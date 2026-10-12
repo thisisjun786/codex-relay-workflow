@@ -1,6 +1,7 @@
 package adapter
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -28,15 +30,21 @@ func init() {
 		return
 	}
 	runtime.LockOSThread()
-	filters := []unix.SockFilter{
-		{Code: unix.BPF_LD | unix.BPF_W | unix.BPF_ABS, K: 0},
+	// A read-only filesystem as the child sees it: a writable open, and every call that makes, removes, renames or
+	// links a name, fails with EROFS.
+	changes := []uint32{unix.SYS_MKDIRAT, unix.SYS_MKNODAT, unix.SYS_UNLINKAT, unix.SYS_RENAMEAT, unix.SYS_RENAMEAT2, unix.SYS_LINKAT, unix.SYS_SYMLINKAT}
+	filters := []unix.SockFilter{{Code: unix.BPF_LD | unix.BPF_W | unix.BPF_ABS, K: 0}}
+	for index, number := range changes {
+		filters = append(filters, unix.SockFilter{Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K, K: number, Jt: uint8(len(changes) - index + 4)})
+	}
+	filters = append(filters, []unix.SockFilter{
 		{Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K, K: unix.SYS_OPENAT, Jt: 1},
 		{Code: unix.BPF_RET | unix.BPF_K, K: unix.SECCOMP_RET_ALLOW},
 		{Code: unix.BPF_LD | unix.BPF_W | unix.BPF_ABS, K: 32},
 		{Code: unix.BPF_JMP | unix.BPF_JSET | unix.BPF_K, K: unix.O_WRONLY | unix.O_RDWR | unix.O_CREAT | unix.O_TRUNC, Jt: 1},
 		{Code: unix.BPF_RET | unix.BPF_K, K: unix.SECCOMP_RET_ALLOW},
 		{Code: unix.BPF_RET | unix.BPF_K, K: unix.SECCOMP_RET_ERRNO | uint32(unix.EROFS)},
-	}
+	}...)
 	program := unix.SockFprog{Len: uint16(len(filters)), Filter: &filters[0]}
 	if err := unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0); err != nil {
 		panic(err)
@@ -129,6 +137,42 @@ func TestReadOnlyChildCanEmitBlockedNeedsInput(t *testing.T) {
 	result, err = readonlyEmit(t, state, host)
 	if err == nil || !strings.Contains(fmt.Sprint(result["detail"]), "daemon") || result["reason"] == "store_owned_by_other" {
 		t.Fatalf("absent daemon must be explicit, without local store fallback: %v %v", err, result)
+	}
+}
+
+// CRW-1286: the relay daemon process itself (crw relay daemon, its control.sock over the store it owns) records a readOnly
+// child's report, not only a listener a test builds over a store it opened.
+func TestTheRelayDaemonProcessRecordsAReadOnlyChildsReport(t *testing.T) {
+	root := t.TempDir()
+	state := filepath.Join(root, "state")
+	t.Setenv("CODEX_SESSION_RELAY_SCOPE_DIR", filepath.Join(root, "scopes"))
+	host := fakehost.Start(t)
+	host.Respond("thread/turns/list", fakehost.Reply{Result: map[string]any{"data": []any{map[string]any{"id": "turn-dispatch-1", "status": "completed"}}, "nextCursor": nil}})
+	// The store is bound to the host socket the daemon serves, so the daemon takes it as it is.
+	database := seedIntake(t, filepath.Join(state, "relay.sqlite3"), root, host.SocketPath)
+	var output bytes.Buffer
+	daemon := exec.Command(suiteBinary, "relay", "--state", state, "--socket", host.SocketPath, "daemon", "--deadline", "60", "--allow-isolated-scope")
+	daemon.Stdout, daemon.Stderr = &output, &output
+	if err := daemon.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = daemon.Process.Kill(); _ = daemon.Wait() })
+	address, release, err := hook.ControlAddress(filepath.Join(state, "control.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	for start := time.Now(); ; time.Sleep(50 * time.Millisecond) {
+		if conn, err := net.Dial("unix", address); err == nil {
+			_ = conn.Close()
+			break
+		} else if time.Since(start) > 20*time.Second {
+			t.Fatalf("the daemon never served control.sock: %v", err)
+		}
+	}
+	if result, err := readonlyEmit(t, state, host); err != nil || countRows(t, database, "SELECT COUNT(*) FROM events WHERE outcome='blocked_needs_input' AND producer='child'") != 1 {
+		_, _ = daemon.Process.Kill(), daemon.Wait()
+		t.Fatalf("the daemon process did not record the readOnly child's report: %v %v; daemon: %s", result, err, output.String())
 	}
 }
 
