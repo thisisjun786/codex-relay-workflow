@@ -71,6 +71,7 @@ type deliverRecord struct {
 	MessageSHA256 string           `json:"message_sha256"`
 	CreatedAt     string           `json:"created_at"`
 	State         string           `json:"state"`
+	CloseKind     string           `json:"close_kind,omitempty"`
 	Received      bool             `json:"received"`
 	Applied       bool             `json:"applied"`
 	Attempts      []deliverAttempt `json:"attempts"`

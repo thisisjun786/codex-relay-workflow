@@ -201,7 +201,7 @@ func Deliver(ctx context.Context, e *Env, cfg *Config, m Message) (Outcome, erro
 		case deliverStateAccepted:
 			return Outcome{Class: deliverClassAccepted, RequestID: record.RequestID, Receipt: map[string]any{"status": "accepted", "replayed": true}}, nil
 		case deliverStateRefused:
-			return Outcome{Class: deliverClassRefused, RequestID: record.RequestID, Receipt: map[string]any{"status": "refused", "replayed": true}}, nil
+			return deliverRefusedReplay(record), nil
 		}
 	}
 	bridge, err := deliverDial(ctx, e, cfg)
@@ -342,6 +342,15 @@ func deliverSettled(cfg *Config, record deliverRecord, outcome Outcome) (Outcome
 	return outcome, nil
 }
 
+func deliverRefusedReplay(record deliverRecord) Outcome {
+	receipt := map[string]any{"status": "refused", "replayed": true}
+	if record.CloseKind == deliverStranded {
+		receipt["status"] = deliverStranded
+		receipt["thread"] = record.TargetThread
+	}
+	return Outcome{Class: deliverClassRefused, RequestID: record.RequestID, Receipt: receipt}
+}
+
 // deliverRecordStranded reports whether the outbox holds a record for the message's logical id that
 // this message can no longer be sent under: the record belongs to another thread or to another text,
 // which Deliver refuses locally before it reads the bridge. A caller that keeps such an attempt
@@ -390,7 +399,7 @@ func deliverReconcileStranded(ctx context.Context, e *Env, cfg *Config, m Messag
 	case deliverStateAccepted:
 		return Outcome{Class: deliverClassAccepted, RequestID: record.RequestID, Receipt: map[string]any{"status": "accepted", "replayed": true}}, nil
 	case deliverStateRefused:
-		return Outcome{Class: deliverClassRefused, RequestID: record.RequestID, Receipt: map[string]any{"status": "refused", "replayed": true}}, nil
+		return deliverRefusedReplay(record), nil
 	}
 	bridge, err := deliverDial(ctx, e, cfg)
 	if err != nil {
@@ -415,6 +424,7 @@ func deliverReconcileStranded(ctx context.Context, e *Env, cfg *Config, m Messag
 		// configured thread, which has never seen it, under a new id.
 		status, _ := reply.Payload["status"].(string)
 		record.State = deliverStateRefused
+		record.CloseKind = deliverStranded
 		record.Attempts = append(record.Attempts, deliverAttempt{At: deliverNow(e), Class: deliverClassRefused, ReceiptExcerpt: fmt.Sprintf(
 			"get_operation: the receipt places nothing (status %q); the record belongs to thread %s, not the configured %s, so it is closed as stranded: the message may have reached %s; nothing is sent under this id again",
 			status, record.TargetThread, m.Thread, record.TargetThread)})
