@@ -547,7 +547,9 @@ func (pumpSignalDagSource) Collect(ctx context.Context, e *Env, cfg *Config, st 
 	current = pumpSignalTupleSet(current)
 	measured := true
 	for _, check := range review.Checks {
-		if check.State == dagReviewUnmeasured {
+		// The check that is unmeasured for good (CRW-1272) is no round's gap: counting it would keep every
+		// set from being cleared once the store holds a plan.
+		if check.State == dagReviewUnmeasured && !dagReviewCheckIsStandingGap(check.Name) {
 			measured = false
 		}
 	}
