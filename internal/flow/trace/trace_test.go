@@ -220,9 +220,9 @@ func firstDifference(got, want []byte) string {
 func TestExportRefusesLiveStore(t *testing.T) {
 	s := tracetest.NewScenario(tracetest.New(t))
 	copyPath := s.Copy()
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatal(err)
+	home := os.Getenv("HOME") // the home the isolation gave this test binary
+	if home == "" {
+		t.Fatal("HOME is not set")
 	}
 	live := filepath.Join(home, ".local", "state", "codex-session-relay", "0123456789abcdef", "relay.sqlite3")
 	if err := os.MkdirAll(filepath.Dir(live), 0o700); err != nil {

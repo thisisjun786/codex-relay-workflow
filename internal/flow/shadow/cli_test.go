@@ -108,9 +108,9 @@ func hexOf(b []byte) string {
 func TestShadowRefusesLiveStore(t *testing.T) {
 	s := tracetest.NewScenario(tracetest.New(t))
 	copyPath := s.Copy()
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatal(err)
+	home := os.Getenv("HOME") // the home the isolation gave this test binary
+	if home == "" {
+		t.Fatal("HOME is not set")
 	}
 	liveDir := filepath.Join(home, ".local", "state", "codex-session-relay", "0123456789abcdef")
 	if err := os.MkdirAll(liveDir, 0o700); err != nil {
