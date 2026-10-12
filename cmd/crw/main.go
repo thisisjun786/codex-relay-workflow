@@ -13,6 +13,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/mcp"
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
+	flowcli "github.com/thisisjun786/codex-relay-workflow/internal/flow/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/journal"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/lint"
@@ -220,6 +221,10 @@ func modes() []mode {
 			// the relay store the run's journal is persisted in and the App Server connection of its host.
 			engine.RecoverEnv = journal.RecoverEnv
 			engine.ResumeEnv = journal.ResumeEnv
+			// apply and the report commands work on the flow rows of the relay store (internal/flow/cli).
+			if flowcli.Handles(c.args) {
+				return flowcli.Run(c.ctx, c.args, c.stdout, c.stderr)
+			}
 			// trace export, shadow and measure read store copies and trace files and call no agent (internal/flow/shadow).
 			if shadow.Handles(c.args) {
 				return shadow.RunCLI(c.ctx, c.args, c.stdout, c.stderr)

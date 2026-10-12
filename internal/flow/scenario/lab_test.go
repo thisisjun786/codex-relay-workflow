@@ -64,6 +64,8 @@ type Lab struct {
 	rules     []*rule
 	// Decisions are the rows of flow_spawn_decisions and flow_step_decisions, read through the store.
 	decisions ops.Decisions
+	// children are the issue-lane runs of the children the lab started (child_test.go).
+	children []*ChildRun
 }
 
 // hookJournal wraps the run's journal: a process that dies writes no more rows, and a test can look at every row as it is written.
@@ -568,8 +570,9 @@ func (l *Lab) onTurn(r fakehost.TurnRequest) fakehost.TurnPlan {
 	c := &Call{ThreadID: r.ThreadID, Text: r.Text, N: r.N, lab: l}
 	if m := opLine.FindStringSubmatch(strings.SplitN(r.Text, "\n", 2)[0]); m != nil {
 		c.ID = m[1]
-		for i := len(l.Events()) - 1; i >= 0; i-- {
-			ev := l.Events()[i]
+		all := l.allEvents()
+		for i := len(all) - 1; i >= 0; i-- {
+			ev := all[i]
 			if ev.Kind == engine.KindCall && ev.Event == engine.EvPrepared && ev.CallID == c.ID {
 				c.Label, c.Role, c.Node = ev.Label, str(ev.Data, "role"), str(ev.Data, "node")
 				if m, ok := ev.Data["allocation"].(map[string]any); ok && str(m, "path") != "" {

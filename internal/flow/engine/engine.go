@@ -80,6 +80,12 @@ type Config struct {
 	// because only an external act changes them. Git facts are never read here: they are rebuilt from the journal. Nil
 	// records and compares none.
 	InputSnapshot func(ctx context.Context, req SnapshotRequest) (string, error)
+	// Upward is the hook the things that go up from the run are handed to (the plan summary, the escalations, the completion digest;
+	// summary_hook.go). Nil hands nothing.
+	Upward UpwardHook
+	// SummaryDocument is the document the run keeps the plan summary in (crw flow run --summary-document): the run records it in a
+	// row of its journal before the script runs, and the hook reads it from there.
+	SummaryDocument string
 }
 
 // SnapshotRequest is a call as the input snapshot sees it.
@@ -156,6 +162,8 @@ type Engine struct {
 
 	spent  atomic.Int64
 	warned atomic.Bool
+	// inHook is set while the upward hook runs, so the batches it commits are not told to it again (summary_hook.go).
+	inHook atomic.Bool
 	pauseM sync.Mutex
 	paused string
 	// turns are the calls with a turn in flight; quotaEscalated is set once the run's quota escalation was written.
@@ -266,10 +274,18 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 	if cfg.Resume != nil {
 		e.resume(ctx)
 		// what reconcile appended is the journal's state too: the calls are compared with every row written so far
-		if rows := e.j.Events(); len(rows) > 0 {
-			e.startSeq = rows[len(rows)-1].Seq + 1
+		if seq := lastRunSeq(e.j.Events()); seq > 0 {
+			e.startSeq = seq + 1
 		}
 		e.prior = newPriorIndex(e.j, e.startSeq)
+	}
+	e.noteSummaryDocument()
+	if cfg.Upward != nil {
+		if n, ok := e.j.(CommitNotifier); ok {
+			n.SetOnCommit(e.batchCommitted)
+			defer n.SetOnCommit(nil)
+		}
+		e.hookRun("started", func(h UpwardHook) error { return h.RunStarted(ctx, e.runID) })
 	}
 	root := &pathState{id: RootPath}
 	main, err := e.newScriptVM(prog, root, 0, args)
@@ -354,6 +370,13 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 	res.Phases = e.phases
 	res.Logs = e.logs
 	e.j.Append(Event{RunID: e.runID, Kind: KindRun, Event: "finished", Data: map[string]any{"status": res.Status, "error_kind": res.ErrorKind}})
+	if cfg.Upward != nil {
+		// the journal no longer notifies: the finish is the last point, and the hook reads the whole journal
+		if n, ok := e.j.(CommitNotifier); ok {
+			n.SetOnCommit(nil)
+		}
+		e.hookRun("finished", func(h UpwardHook) error { return h.RunFinished(ctx, e.runID, res.Status) })
+	}
 	// the finished row is written with the rows still buffered: when that write fails the run did not end on disk, and the
 	// caller is told so instead of getting a completed run
 	if err := journalErr(e.j); err != nil && res.Status == RunCompleted {
