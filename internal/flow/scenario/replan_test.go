@@ -753,6 +753,121 @@ func TestSliceChangeOver25Replans(t *testing.T) {
 	}
 }
 
+// A run that re-planned for a plan revision with no RECEIPT behind it is resumed unchanged: the reads of the plan, the signals, the
+// DESIGN delta and the lanes released under it replay, and no call is live.
+func TestResumeAfterPlanRevisionTriggerZeroLive(t *testing.T) {
+	l := planRevisionWorld(t)
+	if got := mustRun(t, l); got.State != "closed" {
+		t.Fatalf("state %q; calls %v; escalations %v", got.State, l.Labels(), escalationReasons(l))
+	}
+	tip := l.Tip()
+	before := l.LastSeq()
+	l.NewProcess("proc-2")
+	res := l.Resume()
+	got := Value[laneResult](t, res)
+	if got.State != "closed" || got.Tip != tip {
+		t.Fatalf("resume: %+v", got)
+	}
+	if live := l.LiveCalls(before); len(live) != 0 {
+		t.Errorf("the resume made %d live calls: %+v", len(live), live)
+	}
+	for _, ev := range rowsAfter(l, before) {
+		if ev.Kind == engine.KindCall && ev.Event == engine.EvCompleted && strings.HasPrefix(ev.Op, "crw.") && ev.Op != "crw.classify" {
+			t.Errorf("an operation ran live: %s at %s", ev.Op, ev.Path)
+		}
+		if ev.Event == engine.EvSuperseded {
+			t.Errorf("a call was superseded: %s %s", ev.Label, ev.Path)
+		}
+	}
+}
+
+// The nodes that have not started are admitted by the edit regions of the revision a re-plan made: the first DESIGN gave B and C
+// their own directories, the delta gives both shared/, so the second executor starts after the first lane ended.
+func TestReplanRefreshesAdmissionRegions(t *testing.T) {
+	l := NewLab(t, chainNodes()...)
+	mismatching(l, "A")
+	fixedOnce(l, "A")
+	l.On("^replan:", func(*Call) *fakehostPlan {
+		d := l.designFor()
+		for i := range d.Issues {
+			if d.Issues[i].Node != "A" {
+				d.Issues[i].EditRegions = []string{"shared/"}
+			}
+		}
+		p := Say(d)
+		return &p
+	})
+	got := mustRun(t, l)
+	if got.State != "closed" {
+		t.Fatalf("state %q; calls %v; escalations %v", got.State, l.Labels(), escalationReasons(l))
+	}
+	labels := l.Labels()
+	b, c := slices.Index(labels, "build:B:executor"), slices.Index(labels, "build:C:executor")
+	first, second := "B", "C"
+	if c < b {
+		first, second, b, c = "C", "B", c, b
+	}
+	if b < 0 || c < 0 || c < slices.Index(labels, "review:"+first+":r1") {
+		t.Errorf("calls %v: the executor of %s started before the lane of %s ended although the revision gives both shared/", labels, second, first)
+	}
+}
+
+// A plan revision is a trigger of the signal path on its own: the plan changes after the last RECEIPT that was signalled and before the
+// next release, and the nodes that have not started are held until the signal that the revision makes is decided - the re-plan is
+// made before they start, and they are released under it.
+func TestPlanRevisionWithoutReceiptIsATrigger(t *testing.T) {
+	l := planRevisionWorld(t)
+	got := mustRun(t, l)
+	if got.State != "closed" {
+		t.Fatalf("state %q; calls %v; escalations %v", got.State, l.Labels(), escalationReasons(l))
+	}
+	checkPlanRevisionRun(t, l)
+}
+
+// planRevisionWorld is the run in which the plan changes after the signal of A's RECEIPT was decided and before B, C and D are released.
+func planRevisionWorld(t *testing.T) *Lab {
+	t.Helper()
+	l := NewLab(t, fourNodes()...)
+	gate := make(chan struct{})
+	l.On("^review:A:r1$", func(*Call) *fakehostPlan {
+		p := Say(Verdict(true))
+		p.Gate = gate
+		return &p
+	})
+	var once atomic.Bool
+	l.OnRow(func(ev engine.Event) {
+		// the signal of A's RECEIPT is decided; the plan is revised after it, and A's review goes on
+		if ev.Kind == engine.KindCall && ev.Op == "crw.signalDone" && ev.Event == engine.EvCompleted && once.CompareAndSwap(false, true) {
+			for _, id := range []string{"B", "C"} {
+				l.Relay.ChangeNode(id, func(n *NodeSpec) { n.Regions = append(slices.Clone(n.Regions), id+"-more/") })
+			}
+			close(gate)
+		}
+	})
+	return l
+}
+
+func checkPlanRevisionRun(t *testing.T, l *Lab) {
+	t.Helper()
+	if labels := labelsWithPrefix(l, "replan:"); !slices.Equal(labels, []string{"replan:s2"}) {
+		t.Fatalf("re-plan calls %v in %v", labels, l.Labels())
+	}
+	replansResumeTheTurnBefore(t, l)
+	if rev := releaseRevisions(l); rev["A"] != "r0" || rev["B"] != "r1" || rev["C"] != "r1" || rev["D"] != "r1" {
+		t.Errorf("release revisions %v: the nodes that had not started take the revision the plan revision made", rev)
+	}
+	var kinds []string
+	for _, b := range l.Rows("crw.signalBind") {
+		list, _ := b.Data["members"].([]any)
+		for _, m := range list {
+			kinds = append(kinds, str(m.(map[string]any), "kind"))
+		}
+	}
+	if !slices.Contains(kinds, "revision") {
+		t.Errorf("no signal was made of a plan revision: %v", kinds)
+	}
+}
+
 func TestSliceChangeExactly25NoReplan(t *testing.T) {
 	l := NewLab(t, fourNodes()...)
 	l.On("^build:A:executor$", func(c *Call) *fakehostPlan {
@@ -1201,6 +1316,42 @@ func TestLaneUnderSupersededRevisionRebindsOrReruns(t *testing.T) {
 			}
 		}
 	})
+}
+
+// A resume that finds a signal it cannot replay (the trigger ran again) does not release a node it has not released before while it
+// waits to know: the node would stand under a revision that is about to be superseded and would land on its DESIGN with no rebind.
+// Here the process ended after the review of Z, so B and Y (which wait for Z) were never released; Z lands in the resume, the signal
+// that made r1 cannot replay (A's build prompt changed) and the nodes are released under r0, at the default cap.
+func TestUnreleasedNodeNotReleasedUnderRevisionAboutToBeSuperseded(t *testing.T) {
+	stop := func(ev engine.Event) bool {
+		return ev.Kind == engine.KindCall && ev.Op == "agent" && ev.Event == engine.EvCompleted && ev.Label == "review:Z:r1"
+	}
+	w := newSupersededWorld(t, supersededSetup{After: []string{"B", "Y"}, Stop: stop})
+	l := w.l
+	if rev := releaseRevisions(l); rev["B"] != "" || rev["Y"] != "" {
+		t.Fatalf("B and Y were released before the process ended: %v", rev)
+	}
+	w.edited.Store(true)
+	before := l.LastSeq()
+	l.NewProcess("proc-2")
+	res := l.execEdited(editBuildOf("A"), true)
+	if got := Value[laneResult](t, res); got.State != "closed" {
+		t.Fatalf("resume: %s; calls %v; escalations %v", res.Value, l.Labels(), escalationReasons(l))
+	}
+	for _, ev := range rowsAfter(l, before) {
+		if ev.Kind == engine.KindCall && ev.Op == "crw.release" && ev.Event == engine.EvCompleted && flagOf(ev.Data, "released") && (str(ev.Data, "node") == "B" || str(ev.Data, "node") == "Y") && str(ev.Data, "revision") != "r0" {
+			t.Errorf("%s was released under %s, a revision the resume superseded", str(ev.Data, "node"), str(ev.Data, "revision"))
+		}
+	}
+	sup := l.FlowRows(ops.EvRevisionSuperseded)
+	if len(sup) != 1 || str(sup[0].Data, "revision") != "r1" {
+		t.Errorf("revision_superseded rows %+v", sup)
+	}
+	for _, n := range []string{"B", "Y"} {
+		if text := textOfCall(l, callNamed(t, l, "build:"+n+":executor").ID); !strings.Contains(text, "DESIGN REVISION: r0") {
+			t.Errorf("the packet of %s is not the one of the revision that stands:\n%s", n, text)
+		}
+	}
 }
 
 // A signal is made of the triggers its row names, in the order of the journal, and a resume replays it with that membership: the lanes

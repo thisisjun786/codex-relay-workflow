@@ -1,6 +1,7 @@
 package ops
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"testing"
@@ -328,5 +329,51 @@ func TestReplanCwdIsCurrentTip(t *testing.T) {
 	}
 	if len(rowTips) != 2 || rowTips[0] != t1 || rowTips[1] != t2 {
 		t.Errorf("the rows record tips %v", rowTips)
+	}
+}
+
+// crw.planRead says whether the plan revision a lane reads before its release is another than the one the last signal (or the first
+// revision) read; once a signal read it, the same revision is not news again. The read stands once the node was released after it.
+func TestPlanReadChangedOnlyAgainstWhatTheLastSignalRead(t *testing.T) {
+	w := newWorld(t)
+	then := map[string]string{"A": "a1", "B": "b1"}
+	w.relay.plan = planOfNodes(then, "A", "B")
+	w.ledgered(true, designOf("A", "B"))
+	read := func(node string) PlanSeen {
+		var out PlanSeen
+		_ = json.Unmarshal(w.must("planRead", "M", node), &out)
+		return out
+	}
+	first := read("A")
+	if first.Changed || first.CallID == "" || first.Digest == "" {
+		t.Fatalf("the plan the first revision was made against: %+v", first)
+	}
+	w.release("A")
+	w.receipt("c_a1", "A", "")
+	w.relay.plan = planOfNodes(map[string]string{"A": "a1", "B": "b2"}, "A", "B")
+	moved := read("B")
+	if !moved.Changed || moved.Digest == first.Digest || moved.Base != first.Digest {
+		t.Fatalf("a plan revision that came after: %+v (first %+v)", moved, first)
+	}
+	// the signal that read it makes it the revision to compare with
+	w.signal(1, "c_a1")
+	if again := read("B"); again.Changed {
+		t.Errorf("the revision the last signal read is news again: %+v", again)
+	}
+	// the read stands only for a node that was released after it
+	op := &planReadOp{w.lane}
+	rows0 := w.j.Events()
+	readRow := rows0[len(rows0)-1]
+	for _, ev := range rows0 {
+		if ev.Op == OpPlanRead && ev.Event == engine.EvCompleted {
+			readRow = ev
+		}
+	}
+	if ok, _, _ := op.Proven(context.Background(), w.j.Events(), readRow); ok {
+		t.Errorf("a read the node was not released after stands")
+	}
+	w.release("B")
+	if ok, why, _ := op.Proven(context.Background(), w.j.Events(), readRow); !ok {
+		t.Errorf("a read the node was released after does not stand: %s", why)
 	}
 }

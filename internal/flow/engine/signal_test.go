@@ -131,6 +131,47 @@ func TestCallFactsAndRecordedRowsOfAResume(t *testing.T) {
 	}
 }
 
+// idOp is an op whose result names the position it ran at.
+type idOp struct{}
+
+func (idOp) Run(_ context.Context, req OpRequest) (OpResult, error) {
+	b, _ := json.Marshal(map[string]any{"call_id": req.CallID, "n": 1})
+	return OpResult{Result: b, Data: map[string]any{"node": "A"}}, nil
+}
+func (idOp) Proven(context.Context, []Event, Event) (bool, string, error) { return true, "", nil }
+
+// crw.callFacts also answers for the result of an operation that names the position it ran at (call_id): live when this process ran
+// it, not live when a resume replayed its row, and live again when the position ran again with other arguments.
+func TestCallFactsOfAnOperationResult(t *testing.T) {
+	h := newHarness(t)
+	run := func(node string) CallFacts {
+		h.t.Helper()
+		h.cfg.Ops = map[string]Op{"planRead": idOp{}}
+		res := h.run(`const r = await crw.planRead('M', '` + node + `')
+return crw.callFacts(r)`)
+		if res.Status != RunCompleted {
+			h.t.Fatalf("run %s: %s", res.Status, res.Error)
+		}
+		var f CallFacts
+		if err := json.Unmarshal(res.Value, &f); err != nil {
+			h.t.Fatalf("%s: %v", res.Value, err)
+		}
+		return f
+	}
+	first := run("A")
+	if !first.Live || first.Seq == 0 || first.Digest == "" || first.Status != StatusCompleted {
+		t.Fatalf("a run's own operation answers %+v", first)
+	}
+	h.cfg.Resume = &ResumeOptions{}
+	same := run("A")
+	if same.Live || same.Seq != first.Seq || same.Digest != first.Digest || same.CallID != first.CallID {
+		t.Errorf("a replayed operation answers %+v, the run's was %+v", same, first)
+	}
+	if again := run("B"); !again.Live || again.CallID != first.CallID {
+		t.Errorf("an operation that ran again answers %+v", again)
+	}
+}
+
 // laneScript is two lanes on paths of their own: A's RECEIPT makes a signal and the revision that signal made, B is released under that
 // revision (the release names it), as the dag does for a signal path and the nodes after it.
 const laneScript = `const out = await parallel([

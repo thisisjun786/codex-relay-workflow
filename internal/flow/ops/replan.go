@@ -28,6 +28,7 @@ const (
 	NameReplanSignals = "replanSignals"
 	NameCurrentDesign = "currentDesign"
 	NameReflection    = "reflection"
+	NamePlanRead      = "planRead"
 	NameSignalBind    = "signalBind"
 	NameSignalDone    = "signalDone"
 	NameSignalClose   = "signalClose"
@@ -38,6 +39,7 @@ const (
 	OpReplanSignals = "crw." + NameReplanSignals
 	OpCurrentDesign = "crw." + NameCurrentDesign
 	OpReflection    = "crw." + NameReflection
+	OpPlanRead      = "crw." + NamePlanRead
 	OpSignalBind    = "crw." + NameSignalBind
 	OpSignalDone    = "crw." + NameSignalDone
 	OpSignalClose   = "crw." + NameSignalClose
@@ -250,8 +252,9 @@ func (l *Lane) markSuperseded(r rows, ms string) []string {
 
 // ---- the signal rows ----
 
-// Trigger is a terminal event a signal is made of: the RECEIPT of a lane (kind receipt: the call and the digest of its result).
-// A plan revision that was read for the signal is recorded on the row of the signal (revision_read) and is not an argument of it.
+// Trigger is a terminal event a signal is made of: the RECEIPT of a lane (kind receipt: the call and the digest of its result) or a
+// plan revision a lane read when it was about to be released (kind revision: `plan:<digest>` and the digest). The plan the signal
+// itself read is recorded on its row (revision_read).
 type Trigger struct {
 	Kind   string `json:"kind"`
 	Call   string `json:"call"`
@@ -307,6 +310,51 @@ func milestoneNodes(r rows, ms string) []string {
 		out = append(out, n.ID)
 	}
 	return out
+}
+
+// planReadOp is crw.planRead(milestone, node): the plan revision a lane reads before it asks for its release - the digest of the
+// milestone as the relay has it now, and whether it is another than the one the last signal (or the first revision) read. A changed
+// plan revision is a trigger of the signal path, so the release of the node waits until the signal that comes of it is decided and
+// finds the revision that stands then. The row is the replay: a resume that finds the node released after this position keeps what
+// it read, and one that finds no release after it reads the plan again.
+type planReadOp struct{ l *Lane }
+
+// PlanSeen is the answer of crw.planRead.
+type PlanSeen struct {
+	Milestone string `json:"milestone"`
+	Node      string `json:"node"`
+	Digest    string `json:"digest"`
+	// Base is the plan digest the last signal read, or the one the first revision was made against.
+	Base    string `json:"base"`
+	Changed bool   `json:"changed"`
+	// CallID is the position of the read: crw.callFacts says by it whether this process replayed the row.
+	CallID string `json:"call_id"`
+}
+
+func (o *planReadOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResult, error) {
+	var ms, node string
+	if err := args(req.Args, &ms, &node); err != nil {
+		return engine.OpResult{}, fmt.Errorf("crw.planRead(milestone, node): %w", err)
+	}
+	r := rows(req.Journal.Events())
+	live, err := o.l.liveMilestone(ctx, planOf(r, ms), ms)
+	if err != nil {
+		return engine.OpResult{}, err
+	}
+	out := PlanSeen{Milestone: ms, Node: node, Digest: digestOf(live), Base: lastPlanDigest(r, ms), CallID: req.CallID}
+	out.Changed = out.Base != "" && out.Digest != out.Base
+	return engine.OpResult{Result: result(out), Data: map[string]any{"milestone": ms, "node": node, "plan_digest": out.Digest, "base": out.Base, "changed": out.Changed}}, nil
+}
+
+// Proven: the read stands while the node was released after it (the lane went on from what it read); a read the node did not go on
+// from is made again.
+func (o *planReadOp) Proven(_ context.Context, ev []engine.Event, row engine.Event) (bool, string, error) {
+	r := rows(ev)
+	node := dataStr(row, "node")
+	if _, ok := r.current(OpRelease).last(func(e engine.Event) bool { return e.Seq > row.Seq && dataStr(e, "node") == node }); ok {
+		return true, "", nil
+	}
+	return false, "the node was not released after the plan was read", nil
 }
 
 // signalBindOp is crw.signalBind(milestone, k, prev, members): the signal row. The arguments are the signal's input: the number

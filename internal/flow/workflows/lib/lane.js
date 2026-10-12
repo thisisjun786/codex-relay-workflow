@@ -55,7 +55,8 @@ export function admissionRegions(planRegions, editRegions) {
 }
 
 // The signal path of crw.dag (engine.resume.signals). A lane reports the RECEIPT of each of its executor calls (sig.receipt): that is
-// a trigger, with the digest of the call's result and its place in the journal (crw.callFacts). One signal path runs at a time, on
+// a trigger, with the digest of the call's result and its place in the journal (crw.callFacts). The plan revision a lane reads before its
+// release (crw.planRead, sig.plan) is a trigger too when it is another than the one the last signal read. One signal path runs at a time, on
 // the path `signals:<milestone>` of the join of the dag; the triggers that arrive while it runs are taken together by the next one.
 // A signal is a position sequence of its own - crw.signalBind (its input: the triggers, in the order of the journal, and the result
 // digest of the signal before it), a join with one item, the child path `signal:<milestone>:<k>`, which runs onSignal, and
@@ -65,12 +66,14 @@ export function admissionRegions(planRegions, editRegions) {
 // first signal that does not replay, and every signal after it, are the suffix: the revisions they made are superseded, and the
 // triggers that did replay re-enter the first live signal, in the journal's order.
 //
-// While a signal is being decided no lane is released (a lane that has not released waits; a lane that has goes on), because
-// a re-plan that is due changes the packet of the lanes that have not started. A lane that a resume finds released under a revision
-// a signal made waits until that signal is decided, so the release finds the revision it stands on (crw.release).
+// While a signal is being decided no lane is released (a lane that has not released waits; a lane that has goes on) and no node is
+// admitted, because a re-plan that is due changes the packet and the admission regions of the lanes that have not started. A lane that a
+// resume finds released under a revision a signal made waits until that signal is decided, so the release finds the revision it stands on
+// (crw.release). Until the signals the earlier process recorded are decided, only the nodes they concern are admitted: any other node is
+// released after them, under the revision that stands then. A recorded trigger whose lane ran a call live does not come any more.
 function signalState(planId, opts, nodes) {
-  const S = { queue: [], arrived: {}, taken: {}, finished: {}, remaining: nodes.length, lanesDone: nodes.length === 0, halted: false, active: false, replaying: false,
-    processed: 0, liveFrom: 0, over: false, waiters: [] }
+  const S = { queue: [], arrived: {}, taken: {}, finished: {}, live: {}, remaining: nodes.length, lanesDone: nodes.length === 0, halted: false, active: false, replaying: false,
+    processed: 0, liveFrom: 0, over: false, waiters: [], recordedPending: !!crw.recordedSignal(opts.milestone, 1), allowed: {}, repump() {}, applyRegions() {} }
   S.notify = () => {
     const ws = S.waiters
     S.waiters = []
@@ -86,20 +89,43 @@ function signalState(planId, opts, nodes) {
     if (--S.remaining <= 0) S.lanesDone = true
     S.notify()
   }
+  // the earlier process's signals are all decided (replayed, or the first that did not replay has begun): the nodes that no signal
+  // of it concerned may be released
+  S.endRecorded = () => {
+    if (!S.recordedPending) return
+    S.recordedPending = false
+    S.repump()
+  }
+  // a trigger reached the signal path; a lane that ran a call live is live from there on, and a recorded trigger of it that has not
+  // come cannot come any more
+  S.arrive = (t) => {
+    const seen = S.arrived[t.call]
+    if (seen) {
+      if (t.seq < seen.seq) seen.seq = t.seq
+      return
+    }
+    S.arrived[t.call] = t
+    if (t.live) S.live[t.node] = true
+    S.queue.push(t)
+    S.notify()
+  }
   S.forLane = (node) => ({
     receipt(res) {
       if (!res || res.status !== 'completed') return
       const f = crw.callFacts(res)
-      const t = { kind: 'receipt', call: f.callId, node, digest: f.digest, live: f.live, seq: f.seq }
-      S.arrived[t.call] = t
-      S.queue.push(t)
-      S.notify()
+      S.arrive({ kind: 'receipt', call: f.callId, node, digest: f.digest, live: f.live, seq: f.seq })
+    },
+    // a plan revision the lane read (crw.planRead) that is not the one the last signal read is a trigger, once
+    plan(read) {
+      if (!read || !read.changed) return
+      const f = crw.callFacts(read)
+      S.arrive({ kind: 'revision', call: 'plan:' + read.digest, node, digest: read.digest, live: f.live, seq: f.seq })
     },
   })
   return S
 }
 
-const noSignals = { receipt() {} }
+const noSignals = { receipt() {}, plan() {} }
 
 // admit holds a lane back from its release while a signal is being decided and, for a lane that an earlier process released under a
 // revision a signal made, until that signal is decided. It answers false when the milestone was halted.
@@ -116,10 +142,11 @@ function plainTrigger(t) {
   return { kind: t.kind, call: t.call, node: t.node, digest: t.digest }
 }
 
-// The result of onSignal: a string, or {result, revision, reasons}.
+// The result of onSignal: a string, or {result, revision, reasons, regions}; regions maps a node to the admission regions it has under
+// the revision the signal made.
 function signalOutcome(v) {
   if (typeof v === 'string') return { result: v, revision: '', reasons: [] }
-  if (v && typeof v.result === 'string') return { result: v.result, revision: v.revision || '', reasons: v.reasons || [] }
+  if (v && typeof v.result === 'string') return { result: v.result, revision: v.revision || '', reasons: v.reasons || [], regions: v.regions || null }
   return { result: 'halt', revision: '', reasons: ['onSignal_returned_nothing'] }
 }
 
@@ -128,14 +155,18 @@ async function signalPath(S, ms, onSignal) {
   let k = 1
   try {
     for (; ; k++) {
-      const rec = crw.recordedSignal(ms, k)
+      // the first signal that did not replay, and every signal after it, are live: none of them is looked up in the earlier process's
+      // record
+      const rec = S.liveFrom > 0 ? null : crw.recordedSignal(ms, k)
       let members = null
       let replay = false
+      if (!rec) S.endRecorded()
       if (rec) {
         // the signal the earlier process made: it waits for the triggers it was made of, and is replayed when each of them was
-        // replayed and answered the digest it answered then
+        // replayed and answered the digest it answered then. A trigger is settled when it came, when its lane ran a call live (what
+        // it does after that is live, so a recorded trigger of it that has not come does not come) or when its lane has ended.
         S.replaying = true
-        while (!rec.members.every((m) => S.arrived[m.call] || S.finished[m.node]) && !S.halted) await S.wait()
+        while (!rec.members.every((m) => S.arrived[m.call] || S.live[m.node] || S.finished[m.node]) && !S.halted) await S.wait()
         replay = rec.members.every((m) => {
           const a = S.arrived[m.call]
           return a && a.live === false && a.digest === m.digest && !S.taken[m.call]
@@ -148,24 +179,28 @@ async function signalPath(S, ms, onSignal) {
       if (!members) members = S.queue.filter((t) => !S.taken[t.call]).sort((a, b) => a.seq - b.seq).map(plainTrigger)
       if (members.length === 0 || S.halted) break
       S.active = true
+      if (!replay) S.endRecorded()
       for (const m of members) S.taken[m.call] = true
       S.queue = S.queue.filter((t) => !S.taken[t.call])
       const bound = await crw.signalBind(ms, k, prev, members)
       const ran = await parallel([() => onSignal(bound)], { keys: ['signal:' + ms + ':' + k], label: 'signal' })
       const out = signalOutcome(ran[0])
-      const done = await crw.signalDone(ms, k, out)
+      const done = await crw.signalDone(ms, k, { result: out.result, revision: out.revision, reasons: out.reasons })
+      if (out.regions) S.applyRegions(out.regions)
       prev = done.digest
       S.processed = k
       if (!replay && S.liveFrom === 0) S.liveFrom = k
       if (out.result === 'halt') S.halted = true
       S.active = false
       S.notify()
+      S.repump()
     }
     const closing = await crw.signalClose(ms, { signals: k - 1, digest: prev })
     return { signals: k - 1, digest: prev, superseded: closing.superseded }
   } finally {
     S.active = false
     S.over = true
+    S.recordedPending = false
     S.notify()
   }
 }
@@ -176,7 +211,8 @@ async function signalPath(S, ms, onSignal) {
 // path of its own (its id), starts with crw.release - the scheduler's admission and the slot - and ends with the lane's result.
 // A node whose predecessor did not land is not started: its result is blocked. The result is the list of the lanes' results in
 // the order of opts.nodes. The lane function is called with the node, its release and an object whose receipt(result) reports the
-// RECEIPT of an executor call to the signal path (opts.onSignal; a dag without one has none).
+// RECEIPT of an executor call to the signal path (opts.onSignal; a dag without one has none). A node reads the plan (crw.planRead) before
+// its release when there is a signal path.
 export async function dag(planId, lane, opts) {
   const nodes = opts.nodes
   const cap = opts.cap > 0 ? opts.cap : DEFAULT_CAP
@@ -203,6 +239,22 @@ export async function dag(planId, lane, opts) {
     visiting[id] = 'done'
   }
   for (const n of nodes) visit(n.id, [])
+  if (S && S.recordedPending) {
+    // until the signals the earlier process recorded are decided, only the nodes they concern start: the lanes that were released
+    // (and the lanes they wait for) and the lanes whose triggers the signals are made of. The others are released after, under the
+    // revision that stands then.
+    const allow = (id) => {
+      if (S.allowed[id] || !byId[id]) return
+      S.allowed[id] = true
+      for (const d of byId[id].after || []) allow(d)
+    }
+    for (const n of nodes) if (crw.priorRelease(n.id)) allow(n.id)
+    for (let k = 1; ; k++) {
+      const rec = crw.recordedSignal(opts.milestone, k)
+      if (!rec) break
+      for (const m of rec.members) allow(m.node)
+    }
+  }
   const active = () => nodes.filter((n) => state[n.id] === 'running')
   function pump() {
     let again = true
@@ -227,6 +279,9 @@ export async function dag(planId, lane, opts) {
           again = true
           continue
         }
+        if (S && S.recordedPending && !S.allowed[n.id]) continue
+        // no node is admitted while a signal is decided: what it makes (a revision, the regions of its nodes) is what the admission reads
+        if (S && S.holds()) continue
         const running = active()
         if (running.length >= cap) continue
         if (running.some((r) => regionsOverlap(r.regions, n.regions))) continue
@@ -243,6 +298,11 @@ export async function dag(planId, lane, opts) {
     }
     let out
     try {
+      if (S) {
+        // the plan revision the lane reads before its release: another than the one the last signal read is a trigger, and the
+        // release below waits for the signal that comes of it
+        S.forLane(n.id).plan(await crw.planRead(opts.milestone, n.id))
+      }
       if (S && !(await admit(S, n.id))) {
         out = { node: n.id, state: 'halted', reason: 'signal_halt' }
       } else {
@@ -262,6 +322,11 @@ export async function dag(planId, lane, opts) {
     return out
   })
   if (S) {
+    S.repump = pump
+    S.applyRegions = (regions) => {
+      for (const n of nodes) if (state[n.id] === 'pending' && regions[n.id]) n.regions = regions[n.id]
+      pump()
+    }
     thunks.push(async () => {
       try {
         return await signalPath(S, opts.milestone, onSignal)

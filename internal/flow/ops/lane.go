@@ -165,6 +165,7 @@ func (l *Lane) Ops() map[string]engine.Op {
 		NameReplanSignals:  &replanSignalsOp{l},
 		NameCurrentDesign:  &currentDesignOp{l},
 		NameReflection:     &reflectionOp{l},
+		NamePlanRead:       &planReadOp{l},
 		NameSignalBind:     &signalBindOp{l},
 		NameSignalDone:     &signalDoneOp{l},
 		NameSignalClose:    &signalCloseOp{l},

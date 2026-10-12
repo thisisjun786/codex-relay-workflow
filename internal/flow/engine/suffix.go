@@ -102,7 +102,10 @@ func (e *Engine) noteExecutor(node, pending string) {
 }
 
 // noteReplayed records an op row a resumed run replayed.
-func (e *Engine) noteReplayed(row Event) { e.noteOp(row) }
+func (e *Engine) noteReplayed(row Event) {
+	e.facts.noteReplayed(row.CallID)
+	e.noteOp(row)
+}
 
 // noteOp records the commit a completed op row made (replayed or live): the node's files are the commit's tree.
 func (e *Engine) noteOp(row Event) {

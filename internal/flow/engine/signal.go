@@ -80,7 +80,24 @@ func (e *Engine) callFactsOf(res CallResult) CallFacts {
 	return CallFacts{CallID: res.CallID, Status: res.Status, Digest: digest, Live: !e.facts.isReplayed(res.CallID), Seq: seq}
 }
 
-// callFacts is crw.callFacts(result): the facts the signal path rests on, for the CallResult agent.call returned or its handle.
+// opFactsOf reads the facts of the completed row of an operation's position: the digest of its result, the place of its row in the
+// journal and whether this process replayed it (an operation that ran again at its position is live).
+func (e *Engine) opFactsOf(callID string) (CallFacts, bool) {
+	var row Event
+	found := false
+	for _, ev := range e.j.Events() {
+		if ev.Kind == KindCall && ev.CallID == callID && ev.Op != "agent" && ev.Event == EvCompleted {
+			row, found = ev, true
+		}
+	}
+	if !found {
+		return CallFacts{}, false
+	}
+	return CallFacts{CallID: callID, Status: StatusCompleted, Digest: canonicalDigest([]byte(rowStr(row.Data, "result"))), Live: !e.facts.isReplayed(callID), Seq: row.Seq}, true
+}
+
+// callFacts is crw.callFacts(result): the facts the signal path rests on, for the CallResult agent.call returned or its handle, or
+// for the result of an operation that names the position it ran at (a plain object with a call_id).
 func (s *scriptVM) callFacts(call goja.FunctionCall) goja.Value {
 	v := call.Argument(0)
 	var res CallResult
@@ -88,12 +105,20 @@ func (s *scriptVM) callFacts(call goja.FunctionCall) goja.Value {
 	if obj, ok := v.(*goja.Object); ok {
 		if ref := s.results[obj]; ref != nil {
 			res, found = ref.res, true
+		} else if cv := obj.Get("call_id"); cv != nil {
+			if id, ok := cv.Export().(string); ok && id != "" {
+				facts, ok := s.e.opFactsOf(id)
+				if !ok {
+					s.throwType("crw.callFacts: the operation %s has no completed row", id)
+				}
+				return s.fromJSON(mustJSON(facts))
+			}
 		}
 	} else if str, ok := v.Export().(string); ok {
 		res, found = s.e.byHandle[str]
 	}
 	if !found {
-		s.throwType("crw.callFacts takes the CallResult agent.call returned or its handle")
+		s.throwType("crw.callFacts takes the CallResult agent.call returned, its handle, or the result of an operation that names its call_id")
 	}
 	return s.fromJSON(mustJSON(s.e.callFactsOf(res)))
 }

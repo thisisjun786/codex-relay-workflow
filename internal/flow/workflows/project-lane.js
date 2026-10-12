@@ -85,7 +85,14 @@ async function onSignal(sig) {
   }
   const out = await replan('s' + sig.k, sig.k, due, sig.tip, null)
   if (out.state !== 'revised') return { result: 'halt', reasons: due.reasons }
-  return { result: 'refresh', revision: out.revision, reasons: due.reasons }
+  // the nodes that have not started are admitted by the regions of the revision just made, not of the first one
+  const cur = await crw.currentDesign(ms.id)
+  const regions = {}
+  for (const is of cur.design.issues) {
+    const planned = ms.nodes.find((n) => n.id === is.node)
+    regions[is.node] = crw.admissionRegions(planned ? planned.regions : [], is.edit_regions)
+  }
+  return { result: 'refresh', revision: out.revision, reasons: due.reasons, regions }
 }
 
 phase('design')
