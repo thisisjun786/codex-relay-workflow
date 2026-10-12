@@ -381,6 +381,7 @@ func TestHostFailureMap(t *testing.T) {
 		"cyberPolicy":                  {StatusRefused, "host_policy_cyberPolicy", ""},
 		"misalignmentPolicyViolation":  {StatusRefused, "host_policy_misalignmentPolicyViolation", ""},
 		"contextWindowExceeded":        {StatusNullModel, "context_window_exceeded", ""},
+		CodexErrorFlowBinding:          {StatusHeld, "host_config_flow_binding", ""},
 		"":                             {StatusHeld, "host_infra_unknown", ""},
 		"aVariantThePinnedSchemaLacks": {StatusHeld, "host_infra_unknown", ""},
 	} {

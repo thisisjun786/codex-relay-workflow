@@ -207,7 +207,10 @@ quota, rate, overload, connection, stream, rollback, steering and `other` kinds 
 rate limit also pauses the run), `sessionBudgetExceeded` is `held` with `budget_exhausted`, `badRequest`, `unauthorized` and
 `sandboxError` are `refused` (`host_config_<kind>`), `cyberPolicy` and `misalignmentPolicyViolation` are `refused`
 (`host_policy_<kind>`), `contextWindowExceeded` is `null_model`, and a failure with no `codexErrorInfo` or one the table does
-not list is `held` with `host_infra_unknown`. An interrupt the engine did not send is `held` with `host_interrupted_external`.
+not list is `held` with `host_infra_unknown`. An interrupt the engine did not send is `held` with `host_interrupted_external`. A turn the App Server backend did not send because the
+flow binding of its thread could not be written (the spawn hook's file, `~/.local/state/crw/flow-bound/<thread_id>.jsonl`; F14) is `held`
+with `host_config_flow_binding`: the flow-bound directory is the current user's, mode 0700 and no symlink, and the thread id has the form
+of a thread id (lower-case hexadecimal and `-`).
 A request that failed without an answer (a lost connection, a timeout) ends `unknown` with `dispatch_unknown`; on the fake
 backend the call writes `outcome_unknown`, and on the App Server backend it writes no terminal row at all, so its last row
 stays the intent that was sent and the reconcile pass decides it ([Reconcile and recovery](#reconcile-and-recovery)). The node

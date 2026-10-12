@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,6 +18,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/backend/agent"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/bound"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
 )
@@ -171,6 +173,9 @@ type env struct {
 	// killable, when set, is the backend the runs use: a process that can be killed (killAfter, killBefore).
 	killable *killable
 
+	// boundOverride, when set, is the binding configuration of the backend instead of the one the env makes.
+	boundOverride *agent.BoundConfig
+
 	cfg   envConfig
 	gitMu sync.Mutex
 	calls []gitCall
@@ -181,6 +186,31 @@ type envOption func(*envConfig)
 type envConfig struct {
 	poll, interruptWait time.Duration
 	owner               string
+	// bound makes the backend write the flow-bound binding of every turn (F14); writer is the binding writer it uses (nil: the
+	// default one, over the isolated home).
+	bound  bool
+	writer *bound.Writer
+}
+
+// hexThreadID is the id the fake host gives its threads when a test needs the shape of a real one (lower-case hexadecimal and
+// '-'): a flow binding can only name a thread with an id of that shape.
+func hexThreadID(n int) string { return fmt.Sprintf("0190a000-0000-7000-8000-%012x", n) }
+
+// withBound makes the backend of the env write the binding of every engine turn, through writer (nil is the default writer), and
+// gives the fake host's threads ids a binding can name.
+func withBound(writer *bound.Writer) envOption {
+	return func(c *envConfig) { c.bound, c.writer = true, writer }
+}
+
+// boundConfig is the binding configuration of an env's backend, nil when the env has none.
+func (e *env) boundConfig() *agent.BoundConfig {
+	if e.boundOverride != nil {
+		return e.boundOverride
+	}
+	if !e.cfg.bound {
+		return nil
+	}
+	return &agent.BoundConfig{RunID: e.runID, Policy: e.policy, Writer: e.cfg.writer}
 }
 
 // withOwner names the process the first backend lives in.
@@ -203,6 +233,9 @@ func newEnv(t *testing.T, opts ...envOption) *env {
 	e := &env{t: t, runID: "run-test", policy: engine.FakePolicy(), journal: &hookJournal{MemoryJournal: engine.NewMemoryJournal()}}
 	e.host = fakehost.Start(t)
 	e.threads = e.host.Threads()
+	if cfg.bound {
+		e.threads.ThreadIDs(hexThreadID)
+	}
 	e.threads.OnTurn(func(fakehost.TurnRequest) fakehost.TurnPlan { return fakehost.TurnPlan{Message: passMessage} })
 	e.root = t.TempDir()
 	e.repo, e.base = newRepo(t, e.root)
@@ -226,12 +259,12 @@ func newEnv(t *testing.T, opts ...envOption) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
+	e.cfg = cfg
 	e.backend, err = agent.New(agent.Config{Client: e.client, Allocator: e.alloc, Threads: registry, PollEvery: cfg.poll, InterruptWait: cfg.interruptWait,
-		Owner: cfg.owner, OwnerAlive: e.ownerAlive})
+		Owner: cfg.owner, OwnerAlive: e.ownerAlive, Bound: e.boundConfig()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.cfg = cfg
 	return e
 }
 
@@ -251,7 +284,7 @@ func (e *env) restart(owner string) {
 	e.client = appserver.New(e.host.SocketPath, appserver.DefaultBounds, agent.ClientOption(e.owned))
 	e.t.Cleanup(func() { _ = e.client.Close() })
 	b, err := agent.New(agent.Config{Client: e.client, Allocator: e.alloc, Threads: e.owned, PollEvery: e.cfg.poll, InterruptWait: e.cfg.interruptWait,
-		Owner: owner, OwnerAlive: e.ownerAlive})
+		Owner: owner, OwnerAlive: e.ownerAlive, Bound: e.boundConfig()})
 	if err != nil {
 		e.t.Fatal(err)
 	}

@@ -45,7 +45,7 @@ func (t *Threads) Seed(spec SeedThread) string {
 	defer t.mu.Unlock()
 	t.nextID++
 	th := &threadState{
-		id: fmt.Sprintf("thr-fake-%03d", t.nextID), cwd: spec.Cwd, model: spec.Model, effort: spec.Effort, sandbox: "workspace-write",
+		id: t.threadID(), cwd: spec.Cwd, model: spec.Model, effort: spec.Effort, sandbox: "workspace-write",
 		source: spec.Source, parent: spec.ParentThreadID, forkedOf: spec.ForkedFromID, config: map[string]any{},
 	}
 	if th.source == "" {

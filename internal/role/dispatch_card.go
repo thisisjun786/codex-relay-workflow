@@ -3,6 +3,7 @@ package role
 import (
 	"fmt"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/bound"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
@@ -122,3 +123,40 @@ if (v1 === v2) throw new Error("collab family unresolved: v1=" + v1 + " v2=" + v
 const a = {message:"Report your model and say OK; do not edit files.",` + dispatchModelKey(model) + `reasoning_effort:"low"};
 text(await tools[s[0]](v1 ? a : {...a, task_name:"model_probe", fork_turns:"none"}));`
 }
+
+// RenderFlowBoundDispatchCard is the dispatch card of a thread a flow run bound (F14), kind being the kind of its binding line
+// (bound.KindEngine, bound.KindOrchestrator). The ordinary card shows a model alias and reasoning_effort "low" for the helper; here
+// the hook sets the pair from the role, so the card shows the role key (agent_type "explorer") and no model or effort, and the
+// orchestrator's review form carries the producer header line `CRW-ROLE: reviewer` that picks the reviewer pair: the hook never
+// picks it from review keywords. Like the ordinary card, its cell is data the parent runs as printed.
+func RenderFlowBoundDispatchCard(kind string) (string, error) {
+	var card string
+	switch kind {
+	case bound.KindEngine:
+		card = dispatchFlowEngineCard
+	case bound.KindOrchestrator:
+		card = dispatchFlowOrchestratorCard
+	default:
+		return "", sentinel("no flow-bound dispatch card for " + kind)
+	}
+	if dispatchUTF16Len(card) > 1200 {
+		return "", sentinel("dispatch card core exceeds 1200 characters")
+	}
+	return card, nil
+}
+
+// dispatchFlowCell resolves the spawn tool as the ordinary card does and calls it with the argument object a.
+const dispatchFlowCell = `const n = ALL_TOOLS.map(t => t.name), has = r => n.some(x => r.test(x));
+const s = n.filter(x => /spawn_agent$/.test(x));
+if (s.length !== 1) throw new Error("expected one spawn_agent helper, found " + s.length);
+const v1 = has(/(send_input|close_agent|resume_agent)$/), v2 = has(/(followup_task|interrupt_agent|list_agents)$/);
+if (v1 === v2) throw new Error("collab family unresolved: v1=" + v1 + " v2=" + v2);
+`
+
+const dispatchFlowEngineCard = `[crw] Subagent dispatch, flow-bound engine call: one native helper per call, agent_type "explorer" only. Pass no model or reasoning_effort (the spawn hook sets the explorer role pair); a full-history fork is refused, so give a new explorer its question packet. First Code Mode cell (resolves and calls), swap the packet for the question:
+` + dispatchFlowCell + `const a = {agent_type:"explorer",message:"TASK: <question packet>"};
+text(await tools[s[0]](v1 ? a : {...a, task_name:"helper", fork_turns:"none"}));`
+
+const dispatchFlowOrchestratorCard = `[crw] Subagent dispatch, flow-bound orchestrator: agent_type "explorer" only; the spawn hook sets the pair from the role, never from words like review. V1: header line CRW-ROLE: reviewer or CRW-ROLE: explorer before TASK:. V2: the message is ciphertext, so task_name names the role (reviewer or explorer, or reviewer_x); other names are refused. Other roles go through run(crw flow). Pass no model or reasoning_effort. First Code Mode cell, review form:
+` + dispatchFlowCell + `const a = {agent_type:"explorer",message:"CRW-ROLE: reviewer\nTASK: <what to review>"};
+text(await tools[s[0]](v1 ? a : {...a, task_name:"reviewer", fork_turns:"none"}));`

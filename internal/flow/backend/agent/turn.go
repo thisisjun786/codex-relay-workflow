@@ -109,11 +109,15 @@ func turnParams(spec engine.TurnSpec) (map[string]any, error) {
 	return params, nil
 }
 
-// RunTurn implements engine.Backend: it starts the turn, follows the thread's notifications until the turn's terminal
+// RunTurn implements engine.Backend: it writes the flow binding of the turn (BoundConfig), starts the turn, follows the thread's notifications until the turn's terminal
 // state, and reads the turn from the host by its recorded id when no notification comes.
 func (b *Backend) RunTurn(ctx context.Context, spec engine.TurnSpec) (engine.TurnOutcome, error) {
 	params, err := turnParams(spec)
 	if err != nil {
+		return engine.TurnOutcome{}, err
+	}
+	// F14: the line that tells the spawn hook whose thread this is is durable before the turn is sent; without it nothing is.
+	if err := b.bindTurn(spec); err != nil {
 		return engine.TurnOutcome{}, err
 	}
 	if err := b.hold(ctx, spec.ThreadID); err != nil {

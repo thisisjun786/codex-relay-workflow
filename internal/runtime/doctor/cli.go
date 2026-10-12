@@ -60,6 +60,9 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			// The storage check of crw config check, run for the same configuration: one function
 			// reads the roots, so the two commands cannot disagree (CRW-958).
 			return crwconfig.Run(append([]string{"check"}, args[1:]...), stdout, stderr, os.Getenv)
+		case "flow-bound":
+			// The directory check the native spawn hook makes before it trusts a flow binding (F14), by the same function.
+			return flowBoundCLI(args[1:], stdout, stderr)
 		case "retrust":
 			// The CXC hook trust rewrite (decision 8, J4): a command only the user runs, never a
 			// hook, the installer or SessionStart. Its plugin package is the host's PLUGIN_ROOT.
@@ -84,7 +87,7 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return usageExit
 	}
 	if flags.NArg() > 0 {
-		fmt.Fprintf(stderr, "crw doctor: unknown argument %q (choose from declared-schema, harness, retrust, storage)\n", flags.Arg(0))
+		fmt.Fprintf(stderr, "crw doctor: unknown argument %q (choose from declared-schema, flow-bound, harness, retrust, storage)\n", flags.Arg(0))
 		return usageExit
 	}
 	options := Options{Env: env, CodexHome: *codexHome, RecordPath: *recordPath, RelayCommand: *relayCommand, Socket: *socket, State: *state, Temporary: *temporary}
