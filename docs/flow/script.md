@@ -124,7 +124,8 @@ target drops to ES2016 (esbuild then lowers async/await to generators) and this 
 `opts` of a call: `agentType` (`architect`, `executor`, `executor-t1`, `reviewer`, `reviewer-final`, `explorer`), `schema`,
 `label`, `phase`, `node`, `worktree` or `cwd`, `head`, `resume`, `stepDecision`, and the Claude-style `model`, `effort` and
 `isolation`. The remaining `crw.*` operations (`dag`, `milestone`, the packet builders, `commit`, `verify`, `review`, `land`
-and the rest) arrive with the issues that own them.
+and the rest) arrive with the issues that own them; each is an `engine.Op` registered in `Config.Ops`, takes a position of its path
+like a call, and a resume replays it only while its effect still holds ([journal.md](journal.md#ops)).
 
 `parallel` and `pipeline` accept `{keys: [...]}` (one explicit key per item, in place of the input index) and
 `{label}` (the label the join carries in a concurrency error).
