@@ -3,7 +3,8 @@ export const meta = { name: 'night-batch', description: 'Run the issues a night 
 // The night batch (CRW-1205, with 1040a). The manager selected the issues and recorded the decision (crw manage batch decide);
 // `crw flow start night-batch --decision D` started this run from it. Releases happen only inside the run, so there is no
 // freeze and no grant: the run reads the milestone the decision names, checks that its nodes are exactly the selected issues,
-// and lets the project lane run them. The budget and the deadline are the run's own (the engine pauses the calls when the
+// and lets the project lane run them. A milestone that is not the selection releases nothing: the run asks the manager (the question
+// stays in the run's journal, so the run is held and the digest says why) and the manager starts the batch again from a plan that is. The budget and the deadline are the run's own (the engine pauses the calls when the
 // token budget is spent, and the run process pauses the run at the deadline): a lane that is held by either is carried to the
 // next night, with the reason, and the morning report says so.
 
@@ -17,7 +18,7 @@ const missing = args.issues.filter((key) => !have[key])
 const extra = ms.nodes.filter((n) => !wanted[n.issue]).map((n) => n.issue)
 if (missing.length > 0 || extra.length > 0) {
   // the milestone is not the selection: nothing is released, and the manager is asked for the plan that is
-  const esc = await crw.escalate(null, { reason: 'night_batch_selection', detail: 'issues the milestone lacks: ' + missing.join(', ') + '; issues it holds beyond the selection: ' + extra.join(', ') })
+  const esc = await crw.escalate(null, { reason: 'night_batch_selection', ask: 'night_batch_selection', detail: 'issues the milestone lacks: ' + missing.join(', ') + '; issues it holds beyond the selection: ' + extra.join(', ') })
   return { state: 'selection_mismatch', decision: args.decision, selected: args.issues, nodes: have, missing, extra, escalation: esc.id }
 }
 

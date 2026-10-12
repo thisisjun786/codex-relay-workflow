@@ -122,6 +122,7 @@ func BuildDigest(in DigestInput) BatchDigest {
 			}
 		}
 	}
+	mismatch := selectionMismatch(in.Events)
 	heldReason := map[string]string{}
 	order, rows := callRows(in.Events)
 	for _, id := range order {
@@ -144,6 +145,10 @@ func BuildDigest(in DigestInput) BatchDigest {
 		node := nodeOf[issue]
 		n := nodes[node]
 		switch {
+		case mismatch != "":
+			item.Outcome = OutcomeDecision
+			item.Reason = "the milestone is not the selection (night_batch_selection): " + mismatch + "; nothing was released and the manager starts the batch again from a plan that is"
+			item.Evidence = fmt.Sprintf("run %s: the escalation row night_batch_selection (crw flow show %s)", in.Run.RunID, in.Run.RunID)
 		case node != "" && n.Integrated != "":
 			item.Outcome = OutcomeIntegrated
 			item.Evidence = fmt.Sprintf("run %s node %s: commit %s, acceptance %s, integrated %s", in.Run.RunID, node, shortList(n.Commits), cell(n.Accepted), short(n.Integrated))
@@ -182,9 +187,26 @@ func BuildDigest(in DigestInput) BatchDigest {
 		d.Items = append(d.Items, item)
 	}
 	d.Stopped = stoppedWhy(info, in)
+	if mismatch != "" && info.State != StateCancelled && info.State != StateFailed && info.State != StateDead {
+		d.Stopped = "night_batch_selection: the milestone is not the selection (" + mismatch + "); nothing was released"
+	}
 	d.Providers = append(d.Providers, DigestProvider{Name: "token budget", Observed: in.Spec.TokenBudget > 0, Detail: budgetDetail(info.Tokens, in.Spec.TokenBudget)},
 		DigestProvider{Name: "model providers", Observed: false, Detail: "the flow run does not observe provider quota or capacity"})
 	return d
+}
+
+// selectionMismatch is the detail of the escalation a night batch raised when the milestone of its plan was not the selection
+// (night-batch.js), "" when it raised none.
+func selectionMismatch(events []engine.Event) string {
+	for _, e := range events {
+		if e.Kind == engine.KindFlow && e.Event == engine.EvEscalation && str(e.Data, "reason") == "night_batch_selection" {
+			if detail := str(e.Data, "detail"); detail != "" {
+				return detail
+			}
+			return "no detail"
+		}
+	}
+	return ""
 }
 
 func budgetDetail(spent, budget int64) string {

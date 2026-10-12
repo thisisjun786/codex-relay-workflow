@@ -265,3 +265,33 @@ func TestNightBatchResumeAfterKill(t *testing.T) {
 		t.Errorf("landed %s", got)
 	}
 }
+
+// TestNightBatchMismatchIsNotCompleted: a batch whose milestone is not the selection ends with the plain facts of the journal: the
+// run is held (its question waits for the manager), not completed, so it stays in `crw flow ps` and the status line, and its digest
+// says nothing was released and why, never that every selected issue was worked on (CRW-1205 d6).
+func TestNightBatchMismatchIsNotCompleted(t *testing.T) {
+	l := NewLab(t, twoNodes()...)
+	issues := []string{"CRW-A", "CRW-Z"}
+	l.NightBatch(nightArgs(issues...), false)
+	events, _, err := journal.Load(context.Background(), l.Store, l.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	info := cli.Summarize(cli.RunRecord{RunID: l.RunID, Workflow: cli.NightBatchWorkflow, Owner: "parent"}, events, false, 0)
+	if info.State != cli.StateHeld || info.Waiting != 1 {
+		t.Errorf("the run after a selection mismatch: state %s, %d question(s) waiting", info.State, info.Waiting)
+	}
+	d := l.digestOf(t, issues, 100000, false)
+	if strings.Contains(d.Stopped, "every selected issue was worked on") || !strings.Contains(d.Stopped, "night_batch_selection") || !strings.Contains(d.Stopped, "CRW-Z") {
+		t.Errorf("the run stopped because: %q", d.Stopped)
+	}
+	for _, it := range d.Items {
+		if it.Outcome != cli.OutcomeDecision || !strings.Contains(it.Reason, "night_batch_selection") {
+			t.Errorf("an item of a mismatched batch: %+v", it)
+		}
+	}
+	report, _ := reportOf(t, d)
+	if !strings.Contains(report, "Jun 결정 필요 2건") {
+		t.Errorf("the report:\n%s", report)
+	}
+}
