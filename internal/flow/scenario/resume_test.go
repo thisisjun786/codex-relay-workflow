@@ -1,0 +1,278 @@
+package scenario
+
+import (
+	"encoding/json"
+	"slices"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
+)
+
+// turnsSince are the turns the host was sent since the journal had seq rows, as call id, thread and turn number.
+type turnSent struct{ call, thread, op string }
+
+func turnsSince(l *Lab, seq int) []turnSent {
+	var out []turnSent
+	thread := map[string]string{}
+	for _, ev := range l.Events() {
+		if ev.Kind == engine.KindCall && (ev.Event == engine.EvThreadStarted || ev.Event == engine.EvForkStarted) {
+			thread[ev.CallID] = str(ev.Data, "thread_id")
+		}
+		if ev.Seq > seq && ev.Kind == engine.KindCall && ev.Event == engine.EvTurnRequested {
+			out = append(out, turnSent{call: ev.CallID, thread: thread[ev.CallID], op: str(ev.Data, "op")})
+		}
+	}
+	return out
+}
+
+func labelOf(l *Lab, callID string) string {
+	for _, c := range l.Calls() {
+		if c.ID == callID {
+			return c.Label
+		}
+	}
+	return ""
+}
+
+// apply appends a flow row the way `crw flow answer` does: to the run's journal, by the process that holds the run.
+func (l *Lab) apply(event string, data map[string]any) {
+	l.journal.Append(engine.Event{RunID: l.RunID, Kind: engine.KindFlow, Event: event, Data: data})
+	l.journal.flush()
+}
+
+// A lane that waits for the orchestrator's decision goes on only when the run journal has the row that says the decision was
+// applied (decision_applied): the run resumed without it, with a decision that is only recorded, or with an applied row of another
+// question or node, runs nothing; the row of this question and node resumes that wait, and nothing else.
+func TestDecideResumesOnlyOnAppliedRow(t *testing.T) {
+	l := NewLab(t, oneNode()...)
+	l.Sequence("^build:A:executor$", func(*Call) fakehostPlan {
+		return fakehostPlan{StartError: map[string]any{"code": -32600, "message": "bad request", "data": map[string]any{"codexErrorInfo": "badRequest"}}}
+	})
+	got := mustRunIncomplete(t, l)
+	if state, reason := laneOf(t, got, "A"); state != "waiting" || reason != "host_config_badRequest" {
+		t.Fatalf("lane A: %s %s", state, reason)
+	}
+	esc := l.FlowRows(engine.EvEscalation)
+	if len(esc) != 1 || str(esc[0].Data, "class") != "configuration_fault" {
+		t.Fatalf("escalations %+v", esc)
+	}
+	ask := str(esc[0].Data, "escalation_id")
+	quiet := func(what string) {
+		t.Helper()
+		before := l.LastSeq()
+		l.NewProcess("proc-" + what)
+		res := l.Resume()
+		if res.Status != engine.RunCompleted {
+			t.Fatalf("%s: run %s: %s", what, res.Status, res.Error)
+		}
+		if state, _ := laneOf(t, Value[laneResult](t, res), "A"); state != "waiting" {
+			t.Fatalf("%s: lane A is %s: the wait must hold", what, state)
+		}
+		if live := turnsSince(l, before); len(live) != 0 {
+			t.Fatalf("%s: live turns %+v", what, live)
+		}
+		if rows := rowsAfter(l, before); len(rows) > 0 {
+			for _, ev := range rows {
+				if ev.Kind == engine.KindCall && (ev.Event == engine.EvPrepared || ev.Event == engine.EvThreadRequested) && ev.Op == "agent" {
+					t.Fatalf("%s: a call was prepared: %s", what, ev.Label)
+				}
+			}
+		}
+	}
+	quiet("nothing")
+	l.apply("decision_recorded", map[string]any{"ask": ask, "node": "A", "decision": map[string]any{"action": "retry"}})
+	quiet("recorded")
+	l.apply(ops.EvDecisionApplied, map[string]any{"ask": "esc_other", "node": "A", "decision": map[string]any{"action": "retry"}})
+	l.apply(ops.EvDecisionApplied, map[string]any{"ask": ask, "node": "B", "decision": map[string]any{"action": "retry"}})
+	quiet("other")
+
+	before := l.LastSeq()
+	l.apply(ops.EvDecisionApplied, map[string]any{"ask": ask, "node": "A", "decision": map[string]any{"action": "retry"}})
+	l.NewProcess("proc-applied")
+	res := l.Resume()
+	if got := Value[laneResult](t, res); got.State != "closed" {
+		t.Fatalf("after the applied row: %+v", got)
+	}
+	var live []string
+	for _, ts := range turnsSince(l, before) {
+		live = append(live, labelOf(l, ts.call))
+	}
+	if !slices.Equal(live, []string{"rebuild:A:executor:r1", "review:A:r2"}) {
+		t.Errorf("live turns %v: want the fresh executor and the review the decision let go on", live)
+	}
+	rows := l.Rows("crw.decide")
+	if len(rows) == 0 || !dataBoolOf(rows[len(rows)-1], "applied") {
+		t.Errorf("decide rows %+v", rows)
+	}
+}
+
+// A landing the integration target lost is integrated again when the run resumes: the lane that landed it runs only its integrate
+// (everything before it replays: the commit, the verification, the review and the acceptance still stand) and lands a new batch,
+// the target is not the tip the milestone close judged, and the close runs live again - and the report with it. The other lane
+// runs nothing, and no agent is called.
+func TestMilestoneCloseRerunsAfterLaneSuffix(t *testing.T) {
+	nodes := []NodeSpec{
+		{ID: "A", Issue: "CRW-A", Title: "issue A", Regions: []string{"a/"}},
+		{ID: "B", Issue: "CRW-B", Title: "issue B", Regions: []string{"b/"}},
+	}
+	l := NewLab(t, nodes...)
+	first := mustRun(t, l)
+	if first.State != "closed" {
+		t.Fatalf("state %q", first.State)
+	}
+	oldTip := l.Tip()
+	closes := l.Rows("crw.milestoneClose")
+	if len(closes) != 1 || str(closes[0].Data, "tip") != oldTip {
+		t.Fatalf("close rows %+v, tip %s", closes, oldTip)
+	}
+	if len(l.Relay.Landed) != 2 {
+		t.Fatalf("landed %v", l.Relay.Landed)
+	}
+	// the second lane to land merged into the first; the target loses that merge
+	kept, lost := l.Relay.Landed[0], l.Relay.Landed[1]
+	var keptBatch string
+	for _, r := range l.Rows("crw.integrate") {
+		if str(r.Data, "node") == kept {
+			keptBatch = str(r.Data, "batch_commit")
+		}
+	}
+	l.Git("update-ref", IntegrationRef, keptBatch)
+
+	before := l.LastSeq()
+	l.NewProcess("proc-2")
+	res := l.Resume()
+	got := Value[laneResult](t, res)
+	if got.State != "closed" {
+		t.Fatalf("resume: %+v", got)
+	}
+	newTip := l.Tip()
+	if newTip == oldTip || newTip == keptBatch {
+		t.Fatalf("the integration branch is at %s (was %s, kept %s)", newTip, oldTip, keptBatch)
+	}
+	type live struct{ op, path string }
+	var ranLive []live
+	for _, ev := range rowsAfter(l, before) {
+		if ev.Kind == engine.KindCall && ev.Event == engine.EvCompleted && strings.HasPrefix(ev.Op, "crw.") && ev.Op != "crw.classify" {
+			ranLive = append(ranLive, live{ev.Op, ev.Path})
+		}
+	}
+	want := []live{{"crw.integrate", "root/10:" + lost}, {"crw.milestoneClose", "root"}, {"crw.reportUp", "root"}}
+	if !slices.Equal(ranLive, want) {
+		t.Errorf("live operations %v, want %v", ranLive, want)
+	}
+	if agents := turnsSince(l, before); len(agents) != 0 {
+		t.Errorf("live agent turns %+v", agents)
+	}
+	closes = l.Rows("crw.milestoneClose")
+	if last := closes[len(closes)-1]; len(closes) != 2 || str(last.Data, "tip") != newTip {
+		t.Errorf("close rows: %d, the last judged %v, the branch is at %s", len(closes), last.Data["tip"], newTip)
+	}
+}
+
+// Three lanes run; B is held by the host's usage limit after A and C landed, and the run pauses. When the cause is gone and the
+// run resumes, the only live work is B's held call, which goes on in place - the next turn of the same thread - and what follows
+// it in B's lane: A and C run nothing, and B's hold is cleared.
+func TestQuotaPauseResumeRunsOnlyHeldCall(t *testing.T) {
+	nodes := []NodeSpec{
+		{ID: "A", Issue: "CRW-A", Title: "issue A", Regions: []string{"a/"}},
+		{ID: "B", Issue: "CRW-B", Title: "issue B", Regions: []string{"b/"}},
+		{ID: "C", Issue: "CRW-C", Title: "issue C", Regions: []string{"c/"}},
+	}
+	l := NewLab(t, nodes...)
+	gate := make(chan struct{})
+	var once sync.Once
+	landed := 0
+	var mu sync.Mutex
+	l.OnRow(func(ev engine.Event) {
+		if ev.Op == ops.OpIntegrate && ev.Event == engine.EvCompleted {
+			mu.Lock()
+			landed++
+			n := landed
+			mu.Unlock()
+			if n == 2 {
+				once.Do(func() { close(gate) })
+			}
+		}
+	})
+	l.On("^build:B:executor$", func(c *Call) *fakehostPlan {
+		if c.N > 1 {
+			return nil
+		}
+		c.Edit()
+		p := Fail("usageLimitExceeded")
+		p.Gate = gate
+		return &p
+	})
+	got := mustRunIncomplete(t, l)
+	if got.State != "incomplete" {
+		t.Fatalf("state %q: %+v", got.State, got)
+	}
+	for node, want := range map[string]string{"A": "landed", "B": "held", "C": "landed"} {
+		if state, _ := laneOf(t, got, node); state != want {
+			t.Fatalf("lane %s is %s, want %s", node, state, want)
+		}
+	}
+	if reason := ""; true {
+		_, reason = laneOf(t, got, "B")
+		if reason != "host_infra_usageLimitExceeded" {
+			t.Fatalf("B is held for %q", reason)
+		}
+	}
+	var quota int
+	for _, ev := range l.FlowRows(engine.EvEscalation) {
+		if str(ev.Data, "reason") == "quota_or_rate" {
+			quota++
+		}
+	}
+	if quota != 1 {
+		t.Errorf("%d quota_or_rate escalations", quota)
+	}
+	if rows := l.Rows("crw.hold"); len(rows) != 1 || str(rows[0].Data, "node") != "B" {
+		t.Fatalf("hold rows %+v", rows)
+	}
+	build := callNamed(t, l, "build:B:executor")
+	var firstThread string
+	for _, ev := range l.Events() {
+		if ev.CallID == build.ID && ev.Event == engine.EvThreadStarted {
+			firstThread = str(ev.Data, "thread_id")
+		}
+	}
+
+	before := l.LastSeq()
+	l.NewProcess("proc-2")
+	res := l.Resume()
+	final := Value[laneResult](t, res)
+	if final.State != "closed" {
+		t.Fatalf("resume: %+v", final)
+	}
+	var sent []string
+	var heldTurn turnSent
+	for _, ts := range turnsSince(l, before) {
+		sent = append(sent, labelOf(l, ts.call))
+		if ts.call == build.ID {
+			heldTurn = ts
+		}
+	}
+	if !slices.Equal(sent, []string{"build:B:executor", "review:B:r1"}) {
+		t.Fatalf("live turns %v, want B's held call and B's review only", sent)
+	}
+	if !strings.HasSuffix(heldTurn.op, "/t2") || heldTurn.thread != firstThread || firstThread == "" {
+		t.Errorf("the held call went on with %+v, want turn t2 of its own thread %s", heldTurn, firstThread)
+	}
+	for _, ev := range rowsAfter(l, before) {
+		if ev.Kind == engine.KindCall && ev.Op == "agent" && ev.Event == engine.EvPrepared && !strings.HasPrefix(ev.Label, "review:B") && ev.Label != "build:B:executor" {
+			t.Errorf("a call prepared on the resume: %s", ev.Label)
+		}
+	}
+	cleared := l.FlowRows(engine.EvHoldCleared)
+	if len(cleared) != 1 || str(cleared[0].Data, "call_id") != build.ID {
+		t.Errorf("hold_cleared rows %+v", cleared)
+	}
+	if !slices.Equal(l.Relay.Landed, []string{"A", "C", "B"}) && !slices.Equal(l.Relay.Landed, []string{"C", "A", "B"}) {
+		t.Errorf("landed %v", l.Relay.Landed)
+	}
+	_ = json.Marshal
+}

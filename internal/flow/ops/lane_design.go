@@ -388,6 +388,12 @@ func releaseRowOf(r rows, node string) (engine.Event, bool) {
 	return r.opRows(OpRelease).last(func(ev engine.Event) bool { return dataStr(ev, "node") == node && dataBool(ev, "released") })
 }
 
+// designRowOf is the node's newest release row that names the design revision it was made under, whether it released the node to
+// an executor or found it sized for a child or a split.
+func designRowOf(r rows, node string) (engine.Event, bool) {
+	return r.opRows(OpRelease).last(func(ev engine.Event) bool { return dataStr(ev, "node") == node && dataStr(ev, "revision") != "" })
+}
+
 // ---- crw.issuePlan ----
 
 // issuePlanOp is crw.issuePlan(node): the plan of the node's issue from the ledger revision the node was released under. It reads
@@ -417,7 +423,7 @@ func (o *issuePlanOp) Run(_ context.Context, req engine.OpRequest) (engine.OpRes
 		return engine.OpResult{}, fmt.Errorf("crw.issuePlan(node): %w", err)
 	}
 	r := rows(req.Journal.Events())
-	rel, ok := releaseRowOf(r, node)
+	rel, ok := designRowOf(r, node)
 	if !ok {
 		return engine.OpResult{}, fmt.Errorf("crw.issuePlan: node %s has no release in the journal", node)
 	}

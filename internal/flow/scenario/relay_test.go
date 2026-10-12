@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -54,6 +55,7 @@ type FakeRelay struct {
 	released map[string]ops.ReleaseResult
 	held     map[string]bool
 	n        int
+	clock    int
 	accepted map[string]ops.AcceptRequest
 	rejected []string
 
@@ -174,7 +176,16 @@ func (r *FakeRelay) Integrate(_ context.Context, req ops.IntegrateRequest) (ops.
 		if err != nil {
 			return ops.IntegrateResult{Reason: "disposition_conflict", Detail: "the head does not merge into the integration branch: " + tree}, nil
 		}
-		batch = l.git(l.Repo, "commit-tree", strings.TrimSpace(strings.Split(tree, "\n")[0]), "-p", tip, "-p", req.Head, "-m", "integrate "+req.Node)
+		// every merge commit has a time of its own (a clock that counts), so a merge made again is another commit
+		r.clock++
+		stamp := fmt.Sprintf("@%d +0000", 1790000000+r.clock)
+		cmd := exec.Command("git", "-C", l.Repo, "commit-tree", strings.TrimSpace(strings.Split(tree, "\n")[0]), "-p", tip, "-p", req.Head, "-m", "integrate "+req.Node)
+		cmd.Env = append(os.Environ(), "GIT_AUTHOR_DATE="+stamp, "GIT_COMMITTER_DATE="+stamp)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return ops.IntegrateResult{}, fmt.Errorf("commit-tree: %v: %s", err, out)
+		}
+		batch = strings.TrimSpace(string(out))
 	}
 	l.git(l.Repo, "update-ref", IntegrationRef, batch)
 	r.Landed = append(r.Landed, req.Node)
