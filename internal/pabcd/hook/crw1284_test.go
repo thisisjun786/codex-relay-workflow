@@ -2,6 +2,7 @@ package hook
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -67,7 +68,19 @@ func TestChildPushToIntegrationBranchRefused(t *testing.T) {
 	for _, b := range []ChildPushBinding{{Child: true}, {Unreadable: "the relay store is locked"}} {
 		gateDeny(t, cpAnswer(t, dir, "git push origin r2-f01", b, &asked))
 	}
-	if asked != len(cpRefused)+2 {
+	// git branch -M heads/dev, then git push origin HEAD:heads/dev: git resolves the destination heads/dev on the remote as
+	// refs/heads/dev, so the renamed checkout has no branch of its own.
+	repo := filepath.Join(cleanTempDir(t), "child")
+	for _, args := range [][]string{{"init", "-q", "-b", cpOwn, repo}, {"-C", repo, "commit", "-q", "--allow-empty", "-m", "x"}, {"-C", repo, "branch", "-M", "heads/dev"}} {
+		if out, err := exec.Command("git", append([]string{"-c", "user.name=t", "-c", "user.email=t@t"}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	renamed := ChildPushBinding{Child: true, Own: ChildPushOwnBranch(context.Background(), repo, "")}
+	if reason := gateDeny(t, cpAnswer(t, repo, "git push origin HEAD:heads/dev", renamed, &asked)); !strings.Contains(reason, "no branch of its own") {
+		t.Errorf("git branch -M heads/dev, git push origin HEAD:heads/dev: %s", reason)
+	}
+	if asked != len(cpRefused)+3 {
 		t.Errorf("the binding was read %d times", asked)
 	}
 }
@@ -116,7 +129,8 @@ func TestParentAndIntegratorPushUnaffected(t *testing.T) {
 }
 
 // TestChildPushOwnBranch: the own branch is the branch the child's checkout has, unless it is an integration branch (dev, main, the
-// branch origin's HEAD names) or the parent's checkout has it, in any letter case; a detached or non-repository checkout has none.
+// branch origin's HEAD names) or the parent's checkout has it, in any letter case, or its name begins with refs/, heads/, tags/ or
+// remotes/ (git resolves such a destination on the remote, heads/dev as refs/heads/dev); a detached or non-repository checkout has none.
 func TestChildPushOwnBranch(t *testing.T) {
 	dir := cleanTempDir(t)
 	git := func(args ...string) {
@@ -125,16 +139,24 @@ func TestChildPushOwnBranch(t *testing.T) {
 		}
 	}
 	repo := map[string]string{}
-	for _, b := range []string{"r2-x", "R2-X", "dev", "Main", "trunk", "r2-y"} {
-		repo[b] = filepath.Join(dir, b+"-repo")
+	for i, b := range []string{"r2-x", "R2-X", "dev", "Main", "trunk", "r2-y", "heads/dev", "heads/Main", "heads/trunk", "heads/r2-x", "refs/heads/dev",
+		"tags/dev", "remotes/origin/dev", "Heads/dev", "r2-tag"} {
+		repo[b] = filepath.Join(dir, fmt.Sprintf("repo%d", i))
 		git("init", "-q", "-b", b, repo[b])
 	}
-	git("-C", repo["trunk"], "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk")
+	for _, b := range []string{"trunk", "heads/trunk"} {
+		git("-C", repo[b], "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk")
+	}
 	git("-C", repo["r2-y"], "commit", "-q", "--allow-empty", "-m", "x")
 	git("-C", repo["r2-y"], "checkout", "-q", "--detach")
+	// a tag of the branch's name makes git's short name heads/r2-tag; the branch is r2-tag
+	git("-C", repo["r2-tag"], "commit", "-q", "--allow-empty", "-m", "x")
+	git("-C", repo["r2-tag"], "tag", "r2-tag")
 	for _, c := range []struct{ cwd, parent, want string }{{repo["r2-x"], "", "r2-x"}, {repo["r2-x"], repo["dev"], "r2-x"},
 		{repo["r2-x"], filepath.Join(dir, "none"), "r2-x"}, {repo["r2-x"], repo["R2-X"], ""}, {repo["dev"], "", ""}, {repo["Main"], repo["r2-x"], ""},
-		{repo["trunk"], "", ""}, {repo["r2-y"], "", ""}, {dir, "", ""}} {
+		{repo["trunk"], "", ""}, {repo["r2-y"], "", ""}, {dir, "", ""}, {repo["heads/dev"], "", ""}, {repo["heads/Main"], "", ""},
+		{repo["heads/trunk"], "", ""}, {repo["heads/r2-x"], repo["r2-x"], ""}, {repo["refs/heads/dev"], "", ""}, {repo["tags/dev"], "", ""},
+		{repo["remotes/origin/dev"], "", ""}, {repo["Heads/dev"], "", ""}, {repo["r2-tag"], "", "r2-tag"}} {
 		if got := ChildPushOwnBranch(context.Background(), c.cwd, c.parent); got != c.want {
 			t.Errorf("checkout %s, parent %q: own %q, want %q", filepath.Base(c.cwd), c.parent, got, c.want)
 		}

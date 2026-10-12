@@ -90,18 +90,27 @@ func ChildPushInputUnreadAnswer() string {
 
 // ChildPushOwnBranch is the branch a child in cwd may push: the branch its checkout has, unless that is an integration branch (dev
 // and main, which the canon's delivery grant never covers, or the branch origin's HEAD names) or the parent's checkout has it, in
-// any letter case; then the child has none. The checkout is read at each command, so a branch renamed to dev is not the own one.
+// any letter case, or its name begins with refs/, heads/, tags/ or remotes/; then the child has none. git resolves a push
+// destination without refs/ on the remote by the rules refs/%s, refs/tags/%s, refs/heads/%s, refs/remotes/%s, so a branch named
+// heads/dev reaches refs/heads/dev; a name without those prefixes reaches a branch of the remote only under refs/heads/<name>. The
+// checkout is read at each command, so a branch renamed to dev or heads/dev is not the own one.
 func ChildPushOwnBranch(ctx context.Context, cwd, parent string) string {
 	branch := func(dir, ref string) string {
-		out, err := gitprobe.Command(ctx, dir, nil, "symbolic-ref", "-q", "--short", ref).Output()
+		out, err := gitprobe.Command(ctx, dir, nil, "symbolic-ref", "-q", ref).Output()
 		if err != nil {
 			return ""
 		}
 		return strings.TrimSpace(string(out))
 	}
-	own := branch(cwd, "HEAD")
-	if own == "" || strings.EqualFold(own, "dev") || strings.EqualFold(own, "main") ||
-		strings.EqualFold("origin/"+own, branch(cwd, "refs/remotes/origin/HEAD")) || parent != "" && strings.EqualFold(branch(parent, "HEAD"), own) {
+	own, _ := strings.CutPrefix(branch(cwd, "HEAD"), "refs/heads/")
+	lower := strings.ToLower(own)
+	for _, p := range []string{"refs/", "heads/", "tags/", "remotes/"} {
+		if strings.HasPrefix(lower, p) {
+			return ""
+		}
+	}
+	if own == "" || lower == "dev" || lower == "main" || strings.EqualFold("refs/remotes/origin/"+own, branch(cwd, "refs/remotes/origin/HEAD")) ||
+		parent != "" && strings.EqualFold(branch(parent, "HEAD"), "refs/heads/"+own) {
 		return ""
 	}
 	return own
@@ -239,7 +248,7 @@ var childPushFlags = map[string]bool{"--set-upstream": true, "--force": true, "-
 // childPushJudge is why one push is refused for a child whose own branch is own, or "" when it pushes own only.
 func childPushJudge(p childPush, own string) string {
 	if own == "" {
-		return "this session has no branch of its own (its checkout has none or an integration branch, or the parent's checkout has the same)"
+		return "this session has no branch of its own (its checkout has none, an integration branch or a name under refs/, heads/, tags/ or remotes/, or the parent's checkout has the same)"
 	}
 	if p.feed {
 		return "find or xargs gives the push its words"
