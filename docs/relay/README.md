@@ -189,13 +189,23 @@ What happens at send time:
 | record missing a field | withheld before any transport call, naming the missing fields |
 | record whose `cwd`, `model` or `reasoningEffort` is not text | withheld before any transport call, `settings_mistyped`, naming each field and the type it holds |
 | record whose `sandbox` is not a policy object, or whose type has no resume mode | withheld before any transport call, `unsupported_sandbox_type`, naming what the row holds |
-| resume returns a different sandbox, cwd, roots, model or effort | withheld, `settings_not_preserved`, no turn started |
-| resume returns no value for one of them | withheld, `setting_unobservable`, no turn started |
+| resume returns a different sandbox, cwd, roots, model or effort | withheld, `settings_not_preserved`, no turn started; held at once (below) |
+| resume returns no value for one of them | withheld, `setting_unobservable`, no turn started; held at once (below) |
 | resume returns `environments: null` | withheld, `environments_unknown` |
 | resume returns an approval policy other than `never` or `on-request` | `inbox_only`: stored, not woken |
 | resume returns `never` or `on-request` and it differs from the record | the turn begins; the difference is noted on the transport receipt as `approval_policy_differs_from_record` |
-| resume returns no approval policy at all | withheld, `setting_unobservable`, still retryable |
+| resume returns no approval policy at all | withheld, `setting_unobservable`, held at once (below) |
 | resume matches | the turn begins, carrying no overrides |
+
+A refusal that retrying cannot fix, `settings_not_preserved` or `setting_unobservable`, does not take the backoff. The delivery is
+held at its first such refusal: `withheld_pre_send` with the hold `held_settings_mismatch`, no retry scheduled
+(`next_eligible_at` is null), and a `delivery_settings_held` journal row `{requestId, hold, reason, field, expected, observed}` naming the
+value the record expects and the value the host returned. The refusals a later attempt can clear (a transport that refused the read, a
+busy recipient, `environments_unknown`) keep the backoff of 30 s doubling to 900 s and the attempt cap (`attempt_cap`) after the sixth try.
+`status`, `assignment-show` and the delivery snapshot show the hold (`holdReason`, `settingsHold` with `expected` and `observed`, and the
+`recovery`), and the fault sweep raises `delivery_stalled` for it as it does for any held delivery. Nothing sends a held delivery again: the
+parent reads the stored report (`show --event`), the operator brings the recipient back under its recorded settings or re-records them
+(`settings-record --source user_transition`), and a fresh execution generation (`generation-open`) carries the work on.
 
 Those three fields are the ones `ThreadResumeParams` types as strings, and the resume carries
 each recorded value as it stands, so a record holding something else is refused rather than sent
@@ -360,6 +370,18 @@ same replay.
 A create's parameters carry the title, so a create that a runtime without this rule recorded
 `not_attempted` conflicts when the same request is retried on a runtime with it. The runtime swap
 that brings this rule in is made only while no managed request holds a `not_attempted` create.
+
+A declaration is not believed. Right before the creation (after the scope, ledger and request checks, before the host is asked to
+create the task), the entry reads the parent thread with the App Server's `thread/read` and compares the model and reasoning effort it
+reports with `parent.settings.model` and `parent.settings.reasoningEffort`. A request whose declared pair is not the live one is refused
+as `parent_settings_differ_from_thread`; a live value the host does not give (the thread cannot be read, the answer has no model or no
+`reasoningEffort` field, or an effort that is not text) is refused as `parent_settings_unobservable`. Both answer `refused` at the stage
+`creation` with a `parentSettings` observation `{taskId, declared, live, differing | problem}`, create nothing and record nothing; the same
+request creates its task once the thread runs what the request declares. A host that does not answer at all (a transport failure) is a failed
+call of the start, like any other host call, and is retried. The parent's `authorized_settings` row (source `managed_start`) holds the
+values the host confirmed. A request already armed by an earlier call is not judged again before its creation; its parent is read when its
+settings are about to be recorded if the parent has none yet (refusal stage `settings`), and an admitted request replays from what was recorded.
+`dag-release` starts its child through this entry, so a release declares the parent's real settings or is refused.
 
 The entry reserves the issue before asking the bridge to create a standby task. It then binds
 the returned task and turn to the marker, registry, criteria and settings before sending the

@@ -432,6 +432,7 @@ transport call.
 | `held:host_lost_turn` | the host lost the redelivery's turn as well; held, and nothing sends it again |
 | `held:unknown_send_lost` | the last attempt's send got no answer and the recipient keeps no trace of it; held for the parent, never sent again, and still settled by a message found later (see "When an uncertain send leaves no trace"); once a newer generation or the answer to a correction supersedes it, it reads `superseded:<reason>` instead |
 | `held:unknown_send_undecided` | an uncertain send whose reading cannot decide however long the relay waits; held for the parent in the same way, and read as `superseded:<reason>` in the same way |
+| `held:held_settings_mismatch` | the host refused the send on the recipient's settings with a refusal no retry fixes (`settings_not_preserved`, `setting_unobservable`); held at the first one, never sent again, with `settingsHold` naming the field and the values `expected` and `observed`, and `recovery` naming who restores them |
 | `awaiting_child_receipt` | a revision request was delivered; contract v1 defines no acknowledgement for that direction, so the child answers with its next completion receipt |
 | `awaiting_grant_acknowledgement` | a merge-turn grant was delivered and its turn has not recorded the acknowledgement; it is answered with `merge-turn-acknowledge`, never with an `ack` |
 | `grant_acknowledged` | the grant was acknowledged on its merge turn, in any delivery state (a parent can answer before the notice is sent) and including after that turn later landed or was returned |
@@ -445,7 +446,9 @@ difference where there is one, and the next retry time.
 
 A delivery held on its recipient's settings also carries `settingsHold` and `recovery` (CRW-235).
 `settingsHold` is `{kind, source, reason, field, requestId, detail}`: the kind is `withheld` (still
-retried), `capped` (held at the attempt cap, never sent again) or `channel_closed` (stored where
+retried), `capped` (held, never sent again: at the attempt cap, or at the first `settings_not_preserved` or
+`setting_unobservable` refusal, which a retry cannot fix and which holds the delivery at once as
+`held_settings_mismatch` with `expected` and `observed` added to the hold) or `channel_closed` (stored where
 the recipient reads it); the source says where the cause was read, and `detail` is a pre-send
 refusal's own text. `recovery` is `{actor, reason, command, then, laterDeliveries, refusalDetail}`
 with the command rendered for this store and `refusalDetail` that same text: a withheld hold is the
