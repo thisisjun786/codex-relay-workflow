@@ -225,3 +225,43 @@ func TestSchedRelayPlanChangedNamesTheRevisionsAndReturnsTheSlot(t *testing.T) {
 		t.Errorf("%d closures of the execution", n)
 	}
 }
+
+// TestPlanSupersededHoldReturnsTheRunsSlotEndToEnd (d1 of the evaluation of 157e0c3d): B has a live execution of the run committed under
+// the slice of the relay's new revision (the stray release a refused replay leaves, CRW-1288 P3). The run's release of B is refused and
+// raises the hold, which closes that execution (its slot returns); killed after the close, the resumed raising call closes it again.
+func TestPlanSupersededHoldReturnsTheRunsSlotEndToEnd(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"}, labIssue{Key: "B-1", Milestone: "M1", After: []string{"A-1"}})
+	a, b := l.nodeOf["A-1"], l.nodeOf["B-1"]
+	var stray, closed = ops.ReleaseResult{}, false
+	l.after = func(r *SchedRelay, effect string) {
+		if effect == "close:"+b && !closed {
+			closed = true
+			l.kill()
+		}
+		if effect != "integrate:"+a || stray.ExecutionID != "" {
+			return
+		}
+		l.retitle(r, "B-1")
+		var err error // no expected slice: the relay commits the release under the slice of its head (revision 2)
+		if stray, err = r.Release(ctx, ops.ReleaseRequest{Plan: l.plan, Node: b, RunID: r.RunID, RequestID: "req-stray"}); err != nil || !stray.Released {
+			t.Errorf("the stray release of B: %+v %v", stray, err)
+		}
+	}
+	spec := l.start("start", "project-lane", "--args", `{"plan":"plan-1","milestone":"M1"}`, "--handoff", l.file)
+	res, effects := l.runToEnd(spec.RunID), strings.Join(l.effects, " ")+" "
+	if v := (laneValue{}); json.Unmarshal(res.Value, &v) != nil || v.State != "held" || l.processes != 2 || strings.Count(effects, "close:"+b+" ") != 2 || strings.Count(effects, "release:"+b+" ") != 1 {
+		t.Fatalf("the run: %s %s, %d processes, the relay asked: %s", res.Status, res.Value, l.processes, effects)
+	}
+	var hold []map[string]any
+	for _, e := range l.events() {
+		if evidence, _ := e.Data["evidence"].(map[string]any); e.Kind == engine.KindFlow && e.Event == engine.EvEscalation && e.Data["reason"] == ops.ReasonPlanSuperseded {
+			hold = append(hold, evidence)
+		}
+	}
+	if len(hold) != 1 || hold[0]["held_execution"] != stray.ExecutionID || hold[0]["held_run"] != spec.RunID || hold[0]["slot"] != "returned" {
+		t.Fatalf("the holds record %v, want the stray execution %s of the run, its slot returned", hold, stray.ExecutionID)
+	}
+	if n := l.count("SELECT COUNT(*) FROM execution_slots WHERE subject_key = ? AND state = 'held'", l.plan+"/"+b); n != 0 || l.count("SELECT COUNT(*) FROM dag_agent_closures WHERE subject_id = ? AND reason = ? AND state = 'cancelled' AND slot_released = 1", stray.ExecutionID, ops.ReasonPlanSuperseded) != 1 {
+		t.Errorf("%d held slots of B; the closures of the stray execution are not one cancelled plan_superseded close that returned the slot", n)
+	}
+}

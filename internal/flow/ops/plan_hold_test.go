@@ -75,7 +75,7 @@ func TestPlanSupersededHoldReleasesHeldSlot(t *testing.T) {
 		if relay.slotHeld == mine || (len(relay.closes) == 1) != mine {
 			t.Errorf("%s: slot held %v after the closes %+v", owner, relay.slotHeld, relay.closes)
 		}
-		if mine && (relay.closes[0].Reason != ReasonPlanSuperseded || relay.closes[0].Node != "A" || evidence["slot"] != "returned") {
+		if mine && (relay.closes[0].Reason != ReasonPlanSuperseded || relay.closes[0].Node != "A" || relay.closes[0].Plan != "plan-1" || evidence["slot"] != "returned") {
 			t.Errorf("the run's execution was closed with %+v and the hold says its slot is %v", relay.closes[0], evidence["slot"])
 		}
 		if !mine && evidence["slot"] != "owned_by_run" {
@@ -116,5 +116,28 @@ func TestPlanSupersededHoldStopsTheRunUntilADecision(t *testing.T) {
 	world.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindFlow, Event: EvDecisionApplied, Data: map[string]any{"ask": b.Hold, "node": "A", "decision": map[string]any{"id": "dec-1"}}})
 	if !proven(rel[0]) || proven(rel[1]) {
 		t.Fatal("after the decision the hold's own release must stand and the release it answered must ask again")
+	}
+}
+
+// TestPlanSupersededHoldOfTheRaisingCall (d1, d3 of the evaluation of 157e0c3d): two nodes refused at once raise two holds. The call that
+// raised the older one and runs again (its process ended before the call completed) answers its own hold and closes its execution again.
+func TestPlanSupersededHoldOfTheRaisingCall(t *testing.T) {
+	world := newWorld(t)
+	world.relay.plan = planOfNodes(map[string]string{"A": "a1", "B": "b1"}, "A", "B")
+	world.ledgered(true, designOf("A", "B"))
+	relay := &heldRelay{stubRelay: world.relay, execution: "agent-exec-A", run: "run-1", slotHeld: true}
+	world.lane.d.Relay = relay
+	run := func() (out ReleaseOutcome) {
+		res, err := world.lane.Ops()["release"].Run(context.Background(), engine.OpRequest{RunID: "run-1", CallID: "c_A", RequestID: "req-A", Args: json.RawMessage(`["plan-1","A","M",{"pinned":true}]`), Journal: world.j})
+		if err != nil || json.Unmarshal(res.Result, &out) != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	own := run().Escalation
+	world.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindFlow, CallID: "c_B", Op: OpRelease, Event: engine.EvEscalation, Data: map[string]any{"reason": ReasonPlanSuperseded,
+		"ask": ReasonPlanSuperseded, "node": "B", "escalation_id": "esc_B", "release_call": "c_B", "evidence": map[string]any{"plan": "plan-1", "node": "B", "slot": "none"}}})
+	if out := run(); out.Escalation != own || out.Reason != ReasonRelayPlanChanged || len(relay.closes) != 2 || relay.closes[1].Node != "A" || relay.closes[1].Plan != "plan-1" {
+		t.Fatalf("the raising call again answered %+v (its hold %s) after the closes %+v", out, own, relay.closes)
 	}
 }

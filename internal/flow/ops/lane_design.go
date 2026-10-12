@@ -413,7 +413,7 @@ func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRes
 	}
 	// a run under the hold plan_superseded releases nothing and asks the relay nothing until a decision lifts it (CRW-1291); the call
 	// that raised the hold and runs again answers it as its own
-	if hold, ok := standingHold(r); ok {
+	if hold, ok := standingHold(r, req.CallID); ok {
 		out.Reason, out.Hold = ReasonPlanSuperseded, dataStr(hold, "escalation_id")
 		if dataStr(hold, "release_call") == req.CallID {
 			out.Reason, out.Escalation = ReasonRelayPlanChanged, out.Hold
@@ -573,15 +573,20 @@ func (o *releaseOp) returnSlot(ctx context.Context, req engine.OpRequest, hold e
 	return err
 }
 
-// standingHold is the newest plan_superseded hold of the run that no applied decision answered.
-func standingHold(r rows) (engine.Event, bool) {
-	return r.flow(engine.EvEscalation).last(func(ev engine.Event) bool {
+// standingHold is a plan_superseded hold of the run that no applied decision answered: the one the call raised (two releases refused at
+// once raise one each), else the newest.
+func standingHold(r rows, call string) (engine.Event, bool) {
+	stands := func(ev engine.Event) bool {
 		if dataStr(ev, "reason") != ReasonPlanSuperseded || dataStr(ev, "ask") == "" {
 			return false
 		}
 		_, applied := appliedRow(r, dataStr(ev, "node"), dataStr(ev, "escalation_id"))
 		return !applied
-	})
+	}
+	if own, ok := r.flow(engine.EvEscalation).last(func(ev engine.Event) bool { return dataStr(ev, "release_call") == call && stands(ev) }); ok {
+		return own, true
+	}
+	return r.flow(engine.EvEscalation).last(stands)
 }
 
 // Proven: a release is proven while the relay says it stands. It is also proven when the run itself ended the execution after the
@@ -613,7 +618,7 @@ func (o *releaseOp) Proven(ctx context.Context, ev []engine.Event, row engine.Ev
 			return true, "", nil
 		}
 		if dataStr(row, "reason") == ReasonPlanSuperseded {
-			if _, standing := standingHold(rows(ev)); standing {
+			if _, standing := standingHold(rows(ev), ""); standing {
 				return true, "", nil
 			}
 			return false, "the hold plan_superseded was lifted", nil
