@@ -1854,3 +1854,120 @@ func TestReplanHeldResumesAsTheNextTurn(t *testing.T) {
 		t.Errorf("%d re-plan calls: %v", n, l.Labels())
 	}
 }
+
+// A trigger that ran again (its lane's call is live in the resume) is another attempt even when it answers the same RECEIPT, byte for
+// byte: the signal it was part of is not replayed, whatever its arguments say. The build prompt of A changes and the model of A reports
+// the same plan mismatches as before, so every RECEIPT of A has the digest and the membership the earlier process recorded; the signal
+// that made r1 (signal 2, of the RECEIPT of A's fix) runs live, its row and the revision it made are superseded.
+func TestLiveTriggerWithTheSameDigestSupersedesItsSignal(t *testing.T) {
+	l := NewLab(t, twoNodes()...)
+	var edited atomic.Bool
+	l.On("^review:A:r2$", func(*Call) *fakehostPlan {
+		if edited.Load() {
+			return nil
+		}
+		p := Fail("serverOverloaded")
+		return &p
+	})
+	mismatchingWhile(l, func() bool { return true }, "A")
+	fixedOnce(l, "A")
+	res := l.Run()
+	if res.Status != engine.RunCompleted {
+		t.Fatalf("run %s: %s", res.Status, res.Error)
+	}
+	var bind2, ledgerR1 string
+	for _, ev := range l.Rows("crw.signalBind") {
+		if num(ev.Data["k"]) == 2 {
+			bind2 = ev.CallID
+		}
+	}
+	for _, ev := range l.Rows("crw.designLedger") {
+		if str(ev.Data, "revision") == "r1" {
+			ledgerR1 = ev.CallID
+		}
+	}
+	if bind2 == "" || ledgerR1 == "" {
+		t.Fatalf("the first process made no signal 2 or no r1; calls %v", l.Labels())
+	}
+	edited.Store(true)
+	before := l.LastSeq()
+	l.NewProcess("proc-2")
+	res = l.execEdited(editBuildOf("A"), true)
+	if res.Status != engine.RunCompleted {
+		t.Fatalf("resume %s: %s; calls %v; escalations %v", res.Status, res.Error, l.Labels(), escalationReasons(l))
+	}
+	sup := supersededCalls(l, before)
+	if !sup[bind2] || !sup[ledgerR1] {
+		t.Errorf("the signal row %s and the ledger row of r1 %s are superseded: %v", bind2, ledgerR1, sup)
+	}
+	live := false
+	for _, ev := range rowsAfter(l, before) {
+		if ev.Kind == engine.KindCall && ev.Op == "crw.signalBind" && ev.Event == engine.EvCompleted && num(ev.Data["k"]) == 2 {
+			live = true
+		}
+	}
+	if !live {
+		t.Errorf("signal 2 was not bound again in the resume although the RECEIPT it was made of ran again")
+	}
+	if supRevs := l.FlowRows(ops.EvRevisionSuperseded); len(supRevs) == 0 || str(supRevs[0].Data, "revision") != "r1" {
+		t.Errorf("revision_superseded rows %+v", supRevs)
+	}
+}
+
+// The slices a revision is compared with are those of the plan the architect and the auditor evaluated: a plan revision made while the
+// delta is audited is not absorbed into the revision's baseline. B's slice changes during the audit of the delta of signal 2 (a third
+// of the plan), the lanes that read it find it is news and signal 3 counts it against r1, so the milestone re-plans once more.
+func TestPlanRevisedDuringTheAuditOfAReplanIsAnotherSignal(t *testing.T) {
+	l := NewLab(t, chainNodes()...)
+	mismatching(l, "A")
+	fixedOnce(l, "A")
+	var once atomic.Bool
+	l.On("^design-audit:replan-s2:r1$", func(*Call) *fakehostPlan {
+		if once.CompareAndSwap(false, true) {
+			l.Relay.ChangeNode("B", func(n *NodeSpec) { n.Regions = append(slices.Clone(n.Regions), "b-more/") })
+		}
+		return nil
+	})
+	got := mustRun(t, l)
+	if got.State != "closed" {
+		t.Fatalf("state %q; calls %v; escalations %v", got.State, l.Labels(), escalationReasons(l))
+	}
+	if labels := labelsWithPrefix(l, "replan:"); !slices.Equal(labels, []string{"replan:s2", "replan:s3"}) {
+		t.Fatalf("re-plan calls %v in %v: the change made during the audit is counted against the revision the audit approved", labels, l.Labels())
+	}
+	if rev := releaseRevisions(l); rev["B"] != "r2" || rev["C"] != "r2" {
+		t.Errorf("release revisions %v", rev)
+	}
+}
+
+// Two nodes the scheduler admitted together under the regions of the first revision, and that the revision a re-plan makes before their
+// release gives overlapping regions, are not released together: the executor of the second starts after the lane of the first ended.
+func TestReplanRegionsCoverTheNodesAdmittedButNotReleased(t *testing.T) {
+	l := planRevisionWorld(t, nil)
+	l.On("^replan:", func(*Call) *fakehostPlan {
+		d := l.designFor()
+		for i := range d.Issues {
+			if d.Issues[i].Node == "B" || d.Issues[i].Node == "C" {
+				d.Issues[i].EditRegions = []string{"shared/"}
+			}
+		}
+		p := Say(d)
+		return &p
+	})
+	got := mustRun(t, l)
+	if got.State != "closed" {
+		t.Fatalf("state %q; calls %v; escalations %v", got.State, l.Labels(), escalationReasons(l))
+	}
+	if rev := releaseRevisions(l); rev["B"] != "r1" || rev["C"] != "r1" {
+		t.Fatalf("release revisions %v: B and C are released under the revision of the re-plan", rev)
+	}
+	labels := l.Labels()
+	b, c := slices.Index(labels, "build:B:executor"), slices.Index(labels, "build:C:executor")
+	first, second := "B", "C"
+	if c < b {
+		first, second, b, c = "C", "B", c, b
+	}
+	if b < 0 || c < 0 || c < slices.Index(labels, "review:"+first+":r1") {
+		t.Errorf("calls %v: the executor of %s started before the lane of %s ended although the revision gives both shared/", labels, second, first)
+	}
+}

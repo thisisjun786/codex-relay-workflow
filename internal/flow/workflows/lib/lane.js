@@ -193,7 +193,9 @@ async function signalPath(S, ms, onSignal) {
         S.takenAt[m.call] = k
       }
       S.queue = S.queue.filter((t) => !S.taken[t.call])
-      const bound = await crw.signalBind(ms, k, prev, members)
+      // a recorded signal that does not replay (one of its triggers ran again) is bound as a live attempt: its triggers can answer the very
+      // digests they answered before, and the row of the earlier process must still not replay
+      const bound = rec && !replay ? await crw.signalBind(ms, k, prev, members, 'live') : await crw.signalBind(ms, k, prev, members)
       const ran = await parallel([() => onSignal(bound)], { keys: ['signal:' + ms + ':' + k], label: 'signal' })
       const out = signalOutcome(ran[0])
       const done = await crw.signalDone(ms, k, { result: out.result, revision: out.revision, reasons: out.reasons })
@@ -267,6 +269,22 @@ export async function dag(planId, lane, opts) {
     }
   }
   const active = () => nodes.filter((n) => state[n.id] === 'running')
+  // A node holds its regions from the moment it is past the signal gate and about to be released. The regions of a node that has not
+  // held them yet are the ones of the revision that stands when it does: a signal that made another revision may have changed them
+  // after the scheduler admitted the node, so the node is checked against the nodes that hold theirs once more.
+  const claimed = {}
+  const clashes = (n) => nodes.some((o) => o !== n && claimed[o.id] && state[o.id] === 'running' && regionsOverlap(o.regions, n.regions))
+  async function claim(n) {
+    while (true) {
+      if (!(await admit(S, n.id)) || S.halted) return false
+      if (S.holds()) continue
+      if (!clashes(n)) {
+        claimed[n.id] = true
+        return true
+      }
+      await S.wait()
+    }
+  }
   function pump() {
     let again = true
     while (again) {
@@ -314,7 +332,7 @@ export async function dag(planId, lane, opts) {
         // release below waits for the signal that comes of it
         S.forLane(n.id).plan(await crw.planRead(opts.milestone, n.id))
       }
-      if (S && !(await admit(S, n.id))) {
+      if (S && !(await claim(n))) {
         out = { node: n.id, state: 'halted', reason: 'signal_halt' }
       } else {
         const rel = await crw.release(planId, n.id, opts.milestone)
@@ -335,7 +353,7 @@ export async function dag(planId, lane, opts) {
   if (S) {
     S.repump = pump
     S.applyRegions = (regions) => {
-      for (const n of nodes) if (state[n.id] === 'pending' && regions[n.id]) n.regions = regions[n.id]
+      for (const n of nodes) if ((state[n.id] === 'pending' || (state[n.id] === 'running' && !claimed[n.id])) && regions[n.id]) n.regions = regions[n.id]
       pump()
     }
     thunks.push(async () => {

@@ -198,6 +198,10 @@ type LedgerEntry struct {
 	// target the architect judged for a revision after the first.
 	Signal int    `json:"signal"`
 	Head   string `json:"head"`
+	// Plan is the plan the architect and the auditor evaluated for a revision after the first (the plan of crw.replanSignals): the
+	// revision records its slices, so that a plan revision made while the delta was architected or audited is a change against the
+	// revision, counted by the next signal, and not part of its baseline. Without it the revision records the plan as it is now.
+	Plan *PlanSnapshot `json:"plan"`
 }
 
 // Ledger is the answer of crw.designLedger and the shape of the revision a release reads back.
@@ -251,17 +255,29 @@ func (o *designLedgerOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 	if err != nil {
 		return engine.OpResult{}, err
 	}
-	// the slices are those of the plan the architect saw: the milestone as the run read it for the first revision, the plan as it
-	// is now for the ones after (a re-plan after a plan revision starts counting the change from that revision)
+	// the slices are those of the plan the architect saw: the milestone as the run read it for the first revision, the plan the
+	// decision evaluated for the ones after (a re-plan after a plan revision starts counting the change from that revision, and a
+	// change made after the evaluation is counted by the next signal)
 	var mile Milestone
-	if hasPrev {
+	var sl map[string]string
+	var mileDigest string
+	switch {
+	case hasPrev && e.Plan != nil:
+		sl, mileDigest = e.Plan.Slices, e.Plan.Digest
+		if sl == nil {
+			sl = map[string]string{}
+		}
+	case hasPrev:
 		if mile, err = o.l.liveMilestone(ctx, plan, ms); err != nil {
 			return engine.OpResult{}, err
 		}
-	} else if mile, _, err = milestoneOf(r, ms); err != nil {
-		return engine.OpResult{}, err
+		sl, mileDigest = liveSlices(mile), digestOf(mile)
+	default:
+		if mile, _, err = milestoneOf(r, ms); err != nil {
+			return engine.OpResult{}, err
+		}
+		sl, mileDigest = liveSlices(mile), digestOf(mile)
 	}
-	sl := liveSlices(mile)
 	base := tip
 	if hasPrev && e.Head != "" {
 		base = e.Head
@@ -278,7 +294,7 @@ func (o *designLedgerOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 	_ = json.Unmarshal(e.Design, &designAny)
 	return engine.OpResult{Result: result(led), Data: map[string]any{
 		"milestone": ms, "revision": e.Revision, "digest": digest, "architect_call": e.Architect.CallID, "architect_handle": e.Architect.Handle,
-		"base_tip": base, "design": designAny, "answers": answers, "signal": e.Signal, "slices": sl, "milestone_digest": digestOf(mile),
+		"base_tip": base, "design": designAny, "answers": answers, "signal": e.Signal, "slices": sl, "milestone_digest": mileDigest,
 	}}, nil
 }
 
@@ -361,12 +377,17 @@ func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRes
 	// the criteria are those of the plan the run read; the slice is the node's slice of the plan as it is when the node is released,
 	// the one a later revision of the ledger is compared with (a node whose slice another revision was not made against is not kept
 	// under it)
-	mnode, _ := planNodeOf(r, plan, ms, node)
-	slice := mnode.SliceDigest
-	if now, err := o.l.liveMilestone(ctx, plan, ms); err == nil {
-		if d, ok := liveSlices(now)[node]; ok {
-			slice = d
-		}
+	mnode, planned := planNodeOf(r, plan, ms, node)
+	now, err := o.l.liveMilestone(ctx, plan, ms)
+	if err != nil {
+		return engine.OpResult{}, err
+	}
+	slice, live := liveSlices(now)[node]
+	if !live && planned {
+		// the plan the relay reads has dropped the node: nothing is released, and no slice of the plan the run read first stands in for
+		// the one the node no longer has
+		out.Reason = "node_not_in_plan"
+		return finish()
 	}
 	data["slice_digest"], data["criteria_digest"] = slice, mnode.CriteriaDigest
 	res, err := o.l.d.Relay.Release(ctx, ReleaseRequest{Plan: plan, Node: node, RunID: req.RunID, Revision: out.Revision, DesignDigest: out.DesignDigest, RequestID: req.RequestID})

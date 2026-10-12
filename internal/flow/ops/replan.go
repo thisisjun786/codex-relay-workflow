@@ -368,8 +368,11 @@ func (o *planReadOp) Proven(_ context.Context, ev []engine.Event, row engine.Eve
 	return false, "the node was not released after the plan was read and no signal took the revision it read", nil
 }
 
-// signalBindOp is crw.signalBind(milestone, k, prev, members): the signal row. The arguments are the signal's input: the number
-// of the signal, the triggers as (call, digest) and the result digest of the signal before it. A resume replays the row only when
+// signalBindOp is crw.signalBind(milestone, k, prev, members, attempt): the signal row. The arguments are the signal's input: the number
+// of the signal, the triggers as (call, digest) and the result digest of the signal before it, and attempt, which the script names
+// ("live") only for a signal the earlier process recorded and that cannot replay because one of its triggers ran again: the
+// triggers of such a signal can answer the very digests they answered then, and the arguments are then another input for that reason
+// alone, so the position runs again and the signal and the revision it made are the suffix of the resume. A resume replays the row only when
 // the script hands it the same arguments - which it does only when every trigger position replayed and answered the same result
 // digest (crw.callFacts) and the signal before it replayed - so a signal one of whose triggers ran again, and every signal after
 // it, are the suffix of the resume. The row records what had started and what had not at that moment, the tip of the integration
@@ -400,11 +403,14 @@ type SignalBind struct {
 }
 
 func (o *signalBindOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResult, error) {
-	var ms, prev string
+	var ms, prev, attempt string
 	var k int
 	var members []Trigger
-	if err := args(req.Args, &ms, &k, &prev, &members); err != nil {
-		return engine.OpResult{}, fmt.Errorf("crw.signalBind(milestone, k, prev, members): %w", err)
+	if err := args(req.Args, &ms, &k, &prev, &members, &attempt); err != nil {
+		return engine.OpResult{}, fmt.Errorf("crw.signalBind(milestone, k, prev, members, attempt): %w", err)
+	}
+	if attempt != "" && attempt != "live" {
+		return engine.OpResult{}, fmt.Errorf("crw.signalBind: attempt %q is not \"live\"", attempt)
 	}
 	if len(members) == 0 {
 		return engine.OpResult{}, fmt.Errorf("crw.signalBind: signal %d of milestone %s has no trigger", k, ms)
@@ -433,7 +439,7 @@ func (o *signalBindOp) Run(ctx context.Context, req engine.OpRequest) (engine.Op
 	}
 	return engine.OpResult{Result: result(out), Data: map[string]any{
 		"milestone": ms, "k": k, "prev": prev, "members": members, "started": out.Started, "unstarted": out.Unstarted, "tip": tip, "revision": out.Revision,
-		"plan_digest": out.PlanRead.Digest, "revision_read": out.PlanRead, "superseded": out.Superseded,
+		"plan_digest": out.PlanRead.Digest, "revision_read": out.PlanRead, "superseded": out.Superseded, "attempt": attempt,
 	}}, nil
 }
 
@@ -573,8 +579,17 @@ type ReplanState struct {
 	Base            string   `json:"base"`
 	Landed          []Landed `json:"landed"`
 	MilestoneDigest string   `json:"milestone_digest"`
-	Final           string   `json:"final"`
-	Reflection      string   `json:"reflection"`
+	// Plan is the plan this decision evaluated: the architect's delta and its audit are made against it, and the ledger revision the
+	// delta becomes records it (LedgerEntry.Plan), whatever the plan is by the time the revision is written.
+	Plan       PlanSnapshot `json:"plan"`
+	Final      string       `json:"final"`
+	Reflection string       `json:"reflection"`
+}
+
+// PlanSnapshot is a plan as one decision read it: the digest of the milestone and the slice digest of each of its nodes.
+type PlanSnapshot struct {
+	Digest string            `json:"digest"`
+	Slices map[string]string `json:"slices"`
 }
 
 // receiptOf reads the RECEIPT a call completed with: its plan_mismatch and the sequence number of its terminal row.
@@ -639,6 +654,7 @@ func (o *replanSignalsOp) Run(ctx context.Context, req engine.OpRequest) (engine
 		return engine.OpResult{}, err
 	}
 	st.MilestoneDigest = digestOf(live)
+	st.Plan = PlanSnapshot{Digest: st.MilestoneDigest, Slices: liveSlices(live)}
 	st.Slices = sliceChange(ledgerSlices(led), liveSlices(live))
 	if st.Tip, err = o.l.d.Relay.IntegrationTip(ctx, plan); err != nil {
 		return engine.OpResult{}, err

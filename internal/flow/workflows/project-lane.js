@@ -63,7 +63,7 @@ async function replan(tag, signal, due, head, misaligned) {
   if (call.status !== 'completed') return { state: 'halted', result: await crw.milestoneHalt(ms, 'replan', call.status, call.reason, call.callId) }
   const audited = await auditedDesign(call, 'replan-' + tag + ':')
   if (!audited.ok) return { state: 'halted', result: audited.result }
-  const led = await crw.designLedger(ms.id, { design: audited.arch.output, answers: audited.answers, architect: audited.arch, signal, head })
+  const led = await crw.designLedger(ms.id, { design: audited.arch.output, answers: audited.answers, architect: audited.arch, signal, head, plan: due.plan })
   await askOrchestrator(audited.answers)
   return { state: 'revised', revision: led.revision }
 }

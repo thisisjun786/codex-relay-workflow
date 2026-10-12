@@ -3,7 +3,10 @@ package ops
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
@@ -415,5 +418,83 @@ func TestPlanReadStandsWhileASignalTookItsRevision(t *testing.T) {
 	w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: bind.CallID, Op: OpSignalBind, Event: engine.EvSuperseded})
 	if ok, _, _ := op.Proven(context.Background(), w.j.Events(), readRow); ok {
 		t.Errorf("a read stands on a signal a resume superseded")
+	}
+}
+
+// A revision after the first records the plan the architect and the auditor evaluated (the plan crw.replanSignals read for the decision),
+// not the plan as it is when the ledger is written: a plan revision made while the delta was audited is the change the next signal
+// counts against it.
+func TestLedgerRecordsTheEvaluatedPlan(t *testing.T) {
+	w := newWorld(t)
+	w.relay.plan = planOfNodes(map[string]string{"A": "a1", "B": "b1"}, "A", "B")
+	w.ledgered(true, designOf("A", "B"))
+	w.release("A")
+	w.receipt("c_a1", "A", "")
+	w.signal(1, "c_a1")
+	// the plan the decision evaluates: both slices changed
+	w.relay.plan = planOfNodes(map[string]string{"A": "a2", "B": "b2"}, "A", "B")
+	st := map[string]any{}
+	_ = json.Unmarshal(w.must("replanSignals", "M", ReplanOpts{Phase: "signal", Signal: 1}), &st)
+	evaluated, _ := st["plan"].(map[string]any)
+	if evaluated == nil {
+		t.Fatalf("crw.replanSignals names no plan it evaluated: %v", st)
+	}
+	// B changes once more while the delta is audited
+	w.relay.plan = planOfNodes(map[string]string{"A": "a2", "B": "b3"}, "A", "B")
+	d1 := designOf("A", "B")
+	d1.Issues[0].Approach = "approach A after the re-plan"
+	design, _ := json.Marshal(d1)
+	cand := Candidate{Design: design, Answers: json.RawMessage(`[]`)}
+	w.must("designAudit", "M", 1, cand, call("c_arch2", "completed", "claude-x", nil),
+		call("c_aud2", "completed", "gpt-y", map[string]any{"verdict": "approved", "findings": []any{}, "summary": "ok"}))
+	w.must("designLedger", "M", map[string]any{"design": json.RawMessage(design), "answers": json.RawMessage(`[]`), "architect": call("c_arch2", "completed", "claude-x", nil), "signal": 1, "head": strings.Repeat("2", 40), "plan": evaluated})
+	led, ok := currentLedger(rows(w.j.Events()), "M")
+	if !ok || dataStr(led, "revision") != "r1" {
+		t.Fatalf("the current revision: %v %v", led.Data["revision"], ok)
+	}
+	if got := ledgerSlices(led); got["A"] != "a2" || got["B"] != "b2" {
+		t.Errorf("the slices of r1 are %v, want the ones the architect evaluated (a2, b2)", got)
+	}
+	next := w.numbers(ReplanOpts{Phase: "signal", Signal: 2})
+	if !slices.Equal(next.Slices.Changed, []string{"B"}) {
+		t.Errorf("the change after the evaluation: %v, want [B]", next.Slices.Changed)
+	}
+}
+
+// A release records the slice its node has in the plan the relay reads when the node is released; it never takes the slice of the plan the
+// run read first for it: a plan that cannot be read, or that has dropped the node, releases nothing.
+func TestReleaseNeverRecordsTheFrozenSliceForALiveOne(t *testing.T) {
+	w := newWorld(t)
+	w.relay.plan = planOfNodes(map[string]string{"A": "a1"}, "A")
+	w.ledgered(true, designOf("A"))
+	w.relay.plan = planOfNodes(map[string]string{"A": "a2"}, "A")
+	w.relay.milestoneErr = errors.New("the relay is unavailable")
+	if _, err := w.op("release", "plan-1", "A", "M"); err == nil {
+		t.Fatalf("a release was answered although the plan could not be read")
+	}
+	if len(w.relay.releases) != 0 {
+		t.Fatalf("the relay released with a plan nobody read: %+v", w.relay.releases)
+	}
+	w.relay.milestoneErr = nil
+	w.relay.plan = planOfNodes(map[string]string{"B": "b1"}, "B")
+	var rel ReleaseOutcome
+	raw, err := w.op("release", "plan-1", "A", "M")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = json.Unmarshal(raw, &rel)
+	if rel.Released || rel.Reason != "node_not_in_plan" || len(w.relay.releases) != 0 {
+		t.Fatalf("a node the plan dropped: %+v, releases %+v", rel, w.relay.releases)
+	}
+	w.relay.plan = planOfNodes(map[string]string{"A": "a2"}, "A")
+	w.release("A")
+	slice := ""
+	for _, ev := range w.j.Events() {
+		if ev.Op == OpRelease && ev.Event == engine.EvCompleted && dataBool(ev, "released") {
+			slice = dataStr(ev, "slice_digest")
+		}
+	}
+	if slice != "a2" {
+		t.Errorf("the release row records the slice %q, want the live a2", slice)
 	}
 }

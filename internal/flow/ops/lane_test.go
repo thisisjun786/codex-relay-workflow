@@ -26,9 +26,14 @@ type stubRelay struct {
 	tip      string
 	// plan is the milestone the relay reads, when a test sets one.
 	plan *Milestone
+	// milestoneErr, when a test sets it, is what the relay answers when it is asked for the plan.
+	milestoneErr error
 }
 
 func (s *stubRelay) Milestone(context.Context, string, string) (Milestone, error) {
+	if s.milestoneErr != nil {
+		return Milestone{}, s.milestoneErr
+	}
 	if s.plan != nil {
 		return *s.plan, nil
 	}

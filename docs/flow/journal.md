@@ -137,12 +137,12 @@ which names the milestone), and the QA evidence a `crw.qaReceipt` row (it holds 
 
 **The design ledger and the signals.** A row `crw.designLedger` is a revision of the milestone's ledger (`revision`, `digest`, `design`, `answers`,
 `architect_call` and `architect_handle`, the `signal` that made it, `base_tip` - the head the DESIGN ran at - and `slices`, the slice digest of every node of the plan it was made
-against). Revision ids are used once: the next is named after every ledger row of the milestone, the ones a resume superseded included. The ledger that stands is the newest
+against: for a revision after the first the plan the architect and the auditor evaluated, as the decision read it). Revision ids are used once: the next is named after every ledger row of the milestone, the ones a resume superseded included. The ledger that stands is the newest
 row no `superseded` row came after; the handle of the architect thread is that of the newest row that stands among the revisions and the `crw.reflection` rows. A release is proven
 while its revision stands; a release under a revision a resume superseded is proven when the node's slice (`slice_digest`, the slice of the plan when the node was released) is the
 one the revision that stands was made against, and a flow row `release_rebind` (node, `from_revision`, `to_revision`) says the replay was kept. The flow row `revision_superseded`
 (milestone, revision, signal) names a revision whose signal a resume did not replay. A signal is the rows `crw.signalBind` (milestone, `k`, `prev`, `members` as (kind, call, node,
-digest), `started` and `unstarted` nodes, `tip`, `plan_digest` and `revision_read`), `crw.signalDone` (`outcome`, `revision`, `reasons`, `digest`) and, at the end of the path,
+digest), `attempt` (`live` for a recorded signal that could not replay), `started` and `unstarted` nodes, `tip`, `plan_digest` and `revision_read`), `crw.signalDone` (`outcome`, `revision`, `reasons`, `digest`) and, at the end of the path,
 `crw.signalClose`. A member is a RECEIPT (kind `receipt`: its call and the digest of its result) or a plan revision a lane read before its release (kind `revision`: call `plan:<digest>`, the digest; the row of `crw.planRead` with `changed`, `plan_digest`, `base`). The engine reads three things for the signal path and writes none of them: `crw.callFacts`, `crw.recordedSignal` and `crw.priorRelease` (script.md).
 
 **Audit.** A row `crw.audit` (the call row of the audit, written by `crw.audit` in a run and by `crw flow audit` beside it) holds the
@@ -278,7 +278,7 @@ made over.
 
 A signal replays under the rule of the walk above: its `crw.signalBind` position replays when its arguments are the recorded ones. The arguments are the signal's input - its triggers
 as (call, result digest) and the result digest of the signal before it - so a signal replays only when every trigger position replayed and answered the same result digest (the
-script hands the bind the recorded triggers only then; `crw.callFacts` says whether a call was replayed) and the signal before it replayed. The first signal that does not replay
+script hands the bind the recorded triggers only then, and marks any other bind of a recorded signal `live` so that its arguments are not the recorded ones even when every trigger answers the digest it answered; `crw.callFacts` says whether a call was replayed) and the signal before it replayed. The first signal that does not replay
 is the first position of a suffix of the path `signals:<milestone>`: the rows of that signal and of every later one - the calls they made and the revisions they recorded - are
 ended superseded, the revisions get a `revision_superseded` row, and the triggers that replayed re-enter the first signal that runs, in the order of the journal, with the number after
 the last signal that replayed. A lane released under such a revision waits for that signal to be decided and then keeps its replay (`release_rebind`), is released again, or is refused,
