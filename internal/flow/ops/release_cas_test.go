@@ -83,7 +83,8 @@ func (w *world) releaseRows() []engine.Event {
 
 // TestReleaseJournalsTheCommittedSlice (CRW-1288): the release carries the slice the flow compared, and the slice_digest of a released
 // crw.release row is the slice the relay committed the release under: a release the relay answers as the replay of one it committed
-// under another slice records that slice, not the one the flow read.
+// under another slice records that slice, not the one the flow read (the flow records the relay's answer; the relay itself answers a
+// replay only under the expected slice, TestReleaseReplayComparesTheExpectedSlice).
 func TestReleaseJournalsTheCommittedSlice(t *testing.T) {
 	world := newWorld(t)
 	world.relay.plan = planOfNodes(map[string]string{"A": "a1"}, "A")

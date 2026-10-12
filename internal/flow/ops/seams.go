@@ -63,7 +63,7 @@ type ReleaseResult struct {
 	SlotID      string `json:"slot_id"`
 	Replayed    bool   `json:"replayed"`
 	// SliceDigest is the node's slice of the plan the relay committed the release under (the frozen manifest's); a replayed
-	// release names the slice of the release it replays.
+	// release names the slice of the release it replays, which the relay answers only to a request that expects that slice.
 	SliceDigest string `json:"slice_digest"`
 }
 

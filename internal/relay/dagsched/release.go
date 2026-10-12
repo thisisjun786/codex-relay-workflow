@@ -194,7 +194,7 @@ func (s *Scheduler) Release(ctx context.Context, plan, node, actor string, req R
 	if row, found, err := latestRelease(ctx, q, plan, node); err != nil {
 		return out, err
 	} else if found {
-		return s.replay(ctx, plan, node, actor, row)
+		return s.replay(ctx, plan, node, actor, req.ExpectedSliceDigest, row)
 	}
 	// 1b. a node an agent holds is not given to a managed child (R04: one kind of current execution per node)
 	if err := refuseLiveAgentExecution(ctx, q, plan, node); err != nil {
@@ -210,7 +210,7 @@ func (s *Scheduler) Release(ctx context.Context, plan, node, actor string, req R
 		if row, found, err := latestRelease(ctx, q, plan, node); err != nil {
 			return out, err
 		} else if found {
-			return s.replay(ctx, plan, node, actor, row)
+			return s.replay(ctx, plan, node, actor, req.ExpectedSliceDigest, row)
 		}
 		return out, refusalOfReading(*notReady)
 	}
@@ -321,7 +321,7 @@ func (s *Scheduler) Release(ctx context.Context, plan, node, actor string, req R
 		if err != nil || !found {
 			return out, errors.Join(err, errors.New("a concurrent release of the node was decided and cannot be read"))
 		}
-		return s.replay(ctx, plan, node, actor, row)
+		return s.replay(ctx, plan, node, actor, req.ExpectedSliceDigest, row)
 	}
 	recorded = true
 	return s.startAndBind(ctx, plan, node, actor, out, raw, false)
@@ -514,6 +514,23 @@ func expectSlice(snap dag.Snapshot, plan, node, expected string) error {
 	return nil
 }
 
+// expectReplayed is the compare-and-swap of a release answered as a replay (CRW-1288): the release it replays was committed under the node's slice of its frozen manifest, and a caller
+// that names another slice (it stopped after that commit and before it recorded the release, and the plan changed since) is not answered with it: plan_revision_conflict, nothing
+// written. A caller that names the committed slice gets the replay, whatever the plan's head is now. An empty expected compares nothing.
+func expectReplayed(ctx context.Context, q store.Querier, node, digest, expected string) error {
+	if expected == "" {
+		return nil
+	}
+	body, found, err := dag.ReadManifestOn(ctx, q, digest)
+	if err != nil {
+		return err
+	}
+	if committed := textOf(body["node_slice_digest"]); !found || committed != expected {
+		return refuse(contract.RefusalPlanRevisionConflict, "plan_changed: the release of %s expects slice %s and the release it would replay was committed under manifest %s with slice %q", node, expected, digest, committed)
+	}
+	return nil
+}
+
 // readyFor is the reading a release judges a node on: the agent surface names the node (ReadyOptions.AgentNode), and the judgement under the lock leaves the artifact bytes, hashed before, unread.
 func readyFor(node string, agent, skipBytes bool) ReadyOptions {
 	opts := ReadyOptions{SkipArtifactBytes: skipBytes}
@@ -660,10 +677,14 @@ func contains(list []string, v string) bool {
 }
 
 // replay continues a release whose intent was recorded: bound already (nothing to do), or not yet (send the frozen request again). The request is never rebuilt: the managed engine
-// fingerprints the whole request and a tip or a clock that moved would read as a second release.
-func (s *Scheduler) replay(ctx context.Context, plan, node, actor string, row releaseRow) (ReleaseResult, error) {
+// fingerprints the whole request and a tip or a clock that moved would read as a second release. A caller that expects another slice than the one the release was committed under is
+// refused before anything (expectReplayed).
+func (s *Scheduler) replay(ctx context.Context, plan, node, actor, expected string, row releaseRow) (ReleaseResult, error) {
 	out := ReleaseResult{PlanID: plan, NodeID: node, ManifestDigest: row.Digest, RequestID: row.Request, Replayed: true}
 	q := s.Store.Q(ctx)
+	if err := expectReplayed(ctx, q, node, row.Digest, expected); err != nil {
+		return out, err
+	}
 	slot, err := s.slotOf(ctx, q, plan, node)
 	if err != nil {
 		return out, err
@@ -972,10 +993,17 @@ func (s *Scheduler) ReleaseAgent(ctx context.Context, plan, node, actor string, 
 	if err := refuseLiveRelationshipExecution(ctx, q, plan, node); err != nil {
 		return out, err
 	}
+	// a replay is answered only to a caller that expects the slice the execution was committed under (CRW-1288)
+	replay := func(cur AgentExecution) (AgentReleaseResult, error) {
+		if err := expectReplayed(ctx, q, node, cur.ManifestDigest, req.ExpectedSliceDigest); err != nil {
+			return out, err
+		}
+		return s.agentReplay(ctx, cur)
+	}
 	if cur, live, err := currentAgentExecution(ctx, q, plan, node); err != nil {
 		return out, err
 	} else if live {
-		return s.agentReplay(ctx, cur)
+		return replay(cur)
 	}
 	// 2. a new release, judged on plain reads: the managed release's judgement, and the owner rule of the regions the node shares with the other nodes of its issue
 	j, notReady, err := s.judgeNodeRelease(ctx, q, plan, node, actor, req, true)
@@ -987,7 +1015,7 @@ func (s *Scheduler) ReleaseAgent(ctx context.Context, plan, node, actor string, 
 		if cur, live, err := currentAgentExecution(ctx, q, plan, node); err != nil {
 			return out, err
 		} else if live {
-			return s.agentReplay(ctx, cur)
+			return replay(cur)
 		}
 		return out, refusalOfReading(*notReady)
 	}
@@ -1098,7 +1126,7 @@ func (s *Scheduler) ReleaseAgent(ctx context.Context, plan, node, actor string, 
 		return out, stash
 	}
 	if concurrent != nil {
-		return s.agentReplay(ctx, *concurrent)
+		return replay(*concurrent)
 	}
 	return s.agentResult(ctx, s.Store.Q(ctx), row, false)
 }

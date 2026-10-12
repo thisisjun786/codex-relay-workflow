@@ -476,8 +476,8 @@ func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRes
 		out.Reason = "node_not_in_plan"
 		return finish()
 	}
-	// the release carries the slice it compared (CRW-1288); a released row records the slice the relay committed (a replay's is the
-	// slice of the release it replays), an unreleased one the slice the flow asked for
+	// the release carries the slice it compared (CRW-1288), which the relay also compares with the slice a replayed release was
+	// committed under; a released row records the slice the relay committed, an unreleased one the slice the flow asked for
 	data["slice_digest"], data["criteria_digest"] = slice, mnode.CriteriaDigest
 	res, err := o.l.d.Relay.Release(ctx, ReleaseRequest{Plan: plan, Node: node, RunID: req.RunID, Revision: out.Revision, DesignDigest: out.DesignDigest, RequestID: req.RequestID,
 		SliceDigest: slice, PlanDigest: digestOf(m)})

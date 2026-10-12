@@ -111,12 +111,15 @@ func sliceOf(n NodeSpec) string {
 }
 
 // Release implements ops.Relay. Like the relay, it compares the slice the flow compared with the node's slice of the plan it holds
-// when it records the release (CRW-1288), and answers the slice it released under.
+// when it records the release (CRW-1288), answers a replay only under the slice it was released under, and answers that slice.
 func (r *FakeRelay) Release(_ context.Context, req ops.ReleaseRequest) (ops.ReleaseResult, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.Releases = append(r.Releases, req)
 	if prior, ok := r.released[req.Node]; ok && r.held[req.Node] {
+		if req.SliceDigest != "" && req.SliceDigest != prior.SliceDigest {
+			return ops.ReleaseResult{Reason: ops.ReasonPlanChanged}, nil
+		}
 		prior.Replayed = true
 		return prior, nil
 	}

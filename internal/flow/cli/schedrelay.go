@@ -316,7 +316,8 @@ func pathElement(s string) string {
 // an overlapping region, a host short of memory, a node that is not ready) is Released false with the reason; a malformed request and a
 // fenced write are errors. The request carries the node's slice the flow compared (CRW-1288): the relay compares it with the node's slice
 // of the plan's head when it judges the release and again in the transaction that records it, and a slice that is another releases nothing
-// (Released false, plan_changed). A release answers the slice of the manifest it committed (a replay, the one of the release it replays).
+// (Released false, plan_changed), and so does the replay of a release committed under another slice. A release answers the slice of the
+// manifest it committed.
 func (r *SchedRelay) Release(ctx context.Context, req ops.ReleaseRequest) (ops.ReleaseResult, error) {
 	if err := r.claim(ctx, req.Plan); err != nil {
 		return ops.ReleaseResult{}, err
