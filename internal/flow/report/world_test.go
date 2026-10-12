@@ -120,7 +120,7 @@ func (w *world) seat(task string) {
 }
 
 func (w *world) writer() *Writer {
-	return &Writer{Store: w.st, Rows: ForeignAppender{Store: w.st, Run: testRun, Now: fixedNow}, Resolver: StoreResolver{Store: w.st}, Sender: w.sender, ArtifactDir: w.t.TempDir(), Now: fixedNow}
+	return &Writer{Store: w.st, Rows: ForeignAppender{Store: w.st, Run: testRun, Now: fixedNow}, Resolver: StoreResolver{Store: w.st}, Sender: w.sender, ArtifactDir: w.t.TempDir()}
 }
 
 func (w *world) up(kind, milestone string, body string) UpResult {

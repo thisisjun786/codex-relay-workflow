@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -42,14 +41,6 @@ type Writer struct {
 	Sender   Sender
 	// ArtifactDir holds the body of each report (<id>.md); empty keeps the body in the row's digest only.
 	ArtifactDir string
-	Now         func() time.Time
-}
-
-func (w *Writer) now() time.Time {
-	if w.Now != nil {
-		return w.Now()
-	}
-	return time.Now()
 }
 
 // UpRequest is one report to send up.

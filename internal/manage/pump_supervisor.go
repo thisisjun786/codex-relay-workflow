@@ -473,16 +473,3 @@ func pumpSupervisorConfirm(ctx context.Context, e *Env, cfg *Config, st *pumpSta
 		}
 	}
 }
-
-// supervisorQueueState says where the notice of a logical id is in the supervisor queue of a thread: pending, sent, refused, or "".
-func supervisorQueueState(cfg *Config, thread, logicalID string) (string, error) {
-	dir := supervisorQueueDirOf(cfg, thread)
-	for _, probe := range []struct{ sub, state string }{{pumpSentDir, "sent"}, {supervisorRefusedDir, "refused"}, {"", "pending"}} {
-		if _, err := os.Lstat(crwconfig.JoinRoot(dir, probe.sub, logicalID+".json")); err == nil {
-			return probe.state, nil
-		} else if !os.IsNotExist(err) {
-			return "", err
-		}
-	}
-	return "", nil
-}

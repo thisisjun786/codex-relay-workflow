@@ -90,14 +90,6 @@ func (w *world) upToDate() bool {
 	return len(st.Streams) == 1 && st.Streams[0].UpToDate
 }
 
-func ids(rows []Row, key string) []string {
-	var out []string
-	for _, r := range rows {
-		out = append(out, r.Str(key))
-	}
-	return out
-}
-
 // distinct is the logical ids the orchestrator thread was sent, each once: the send of one logical id is idempotent in crw manage, so the
 // fake counts ids, not calls.
 func (f *fakeSender) distinctParent() []string {

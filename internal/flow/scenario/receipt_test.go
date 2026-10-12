@@ -39,11 +39,7 @@ func TestFakeOversizedReceiptApplyScenario(t *testing.T) {
 	// the child's run
 	child := l.NewChild("run-child-A", "child-task-A")
 	res := child.Run("A")
-	var out struct {
-		State, Head, Review string
-		Rounds              int
-	}
-	out = Value[struct {
+	out := Value[struct {
 		State, Head, Review string
 		Rounds              int
 	}](t, res)
