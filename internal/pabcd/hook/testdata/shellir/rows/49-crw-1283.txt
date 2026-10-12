@@ -722,4 +722,3 @@ PATH={WORK}/q:/usr/bin:/bin check
 --why Control: a system program the PATH the shell starts with runs is read by its name behind an assigned PATH (Sion decision 4).
 --cmd
 PATH=/usr/bin:/bin ls /tmp
-

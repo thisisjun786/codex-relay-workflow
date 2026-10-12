@@ -37,7 +37,8 @@ import (
 // pinned so it cannot grow; a form of this class that the head refuses is not counted.
 var fzOwnLimit = map[string]int{"memory": 46, "github": 0, "worktree": 48}
 
-var fzFamilyCounts = map[string]int{"plain": 6, "wrapper": 300, "mutate": 420, "progwrap": 84, "assignpath": 288, "path": 288, "script": 36, "progfile": 816, "depth2": 1800}
+var fzFamilyCounts = map[string]int{"plain": 6, "wrapper": 300, "mutate": 420, "progwrap": 84, "assignpath": 288, "path": 288, "script": 36, "progfile": 816, "depth2": 1800,
+	"binhdr": 360, "shebang": 384}
 
 // fzDepth2Pairs is the depth-2 sample size; CRW1283_FUZZ_PAIRS=all runs every pair (an exhaustive search; the pinned counts and the
 // pinned limit are then not asserted).
@@ -50,6 +51,7 @@ type fzPayload struct {
 
 type fzCmd struct {
 	cmd, desc, path string // path is the PATH value a layer assigned ("" if none)
+	amb             string // the PATH the shell starts with, when the form needs another than /usr/bin:/bin
 	deep            bool   // a wrapper file, a script or a PATH assignment is around the payload
 	direct          bool   // a script is run by its path somewhere in the chain
 }
@@ -68,14 +70,14 @@ type fzGuard struct {
 	t               *testing.T
 }
 
-type fzForm struct{ key, class, desc, cmd string }
+type fzForm struct{ key, class, desc, cmd, amb string }
 
 // fzFixture is the payload that runs each program name of the fixture directories; the names are those the existing CRW-1283
 // tests use (builtins, keywords, common programs). The target program names are fixtures too, without a payload of their own.
 var fzFixture = map[string]string{"go": "go version", "true": "true", "echo": "echo ok", "printf": "printf x", "test": "test -n x",
 	"time": "time true", "let": "let x=1", "declare": "declare x=1", "mapfile": "mapfile x </dev/null", "[[": "[[ -n x ]]",
 	"pushd": "pushd /tmp", "python3": "python3 -c 'print(1)'", "perl": "perl -e 1", "node": "node -e 1", "awk": "awk 'BEGIN{}'",
-	"cd": "cd /tmp", "command": "command true", "gh": "", "git": "", "tee": "", "rm": ""}
+	"cd": "cd /tmp", "command": "command true", "gh": "", "git": "", "tee": "", "rm": "", "bash": ""}
 
 var fzNames = func() (names []string) {
 	for name := range fzFixture {
@@ -100,6 +102,14 @@ var fzMutants = [][2]string{{"set -- {C}\n\"$@\"\n", "true"}, {"set -e -- {C}\n\
 	{"trap '\"$@\"' EXIT\nshift\n", "true {C}"}, {"trap '\"$@\"' EXIT\nset -- {C}\n", "true"},
 	{"bash -s {C} <<'EOF'\n\"$@\"\nEOF\n", "true"}, {"bash /dev/fd/3 {C} 3<<'EOF'\n\"$@\"\nEOF\n", "true"},
 	{"sh -s {C} <<'EOF'\n\"$@\"\nEOF\n", "true"}, {". ./shift.sh\n\"$@\"\n", "true {C}"}}
+
+// fzShebangs are scripts whose #! line launches the interpreter fzShebangProgs names through env (the evaluation of deb45bd1, d2): the
+// assigned PATH selects the interpreter, whose body in the evil fixture directory is the target. fzBinValues are the PATH values of
+// the binary-headed forms (d1): a fixture directory named like a system one (usr/local/bin), another bin directory, and /usr/bin.
+var fzShebangs = []string{"#!/usr/bin/env bash\n:\n", "#!/usr/bin/env python3\n:\n", "#!/usr/bin/env -S bash -e\n:\n", "#!/usr/bin/env node"}
+var fzShebangProgs = []string{"bash", "python3", "bash", "node"}
+var fzBinValues = []string{"{B}", "{B}:/usr/bin:/bin", "/usr/bin:/bin:{B}", "{L}:/usr/bin:/bin", "/usr/bin:/bin"}
+var fzBinProgs = []string{"check", "linked", "static-sh"}
 
 var fzRunModes = []string{"bash %s ", "sh %s ", "%s ", ". %s ", "source %s "}
 var fzScriptModes = []string{"bash %s", "sh %s", ". %s", "source %s", "%s", "%s"}
@@ -188,6 +198,21 @@ func (g *fzGuard) setup() {
 		g.write("ben/"+name, "#!/bin/sh\nprintf ok\n")
 		g.write("evil/"+name, "#!/bin/sh\n"+g.payloads[0].cmd+"\n")
 	}
+	shell, err := os.ReadFile("/bin/sh")
+	if err != nil {
+		g.t.Fatal(err)
+	}
+	for k, body := range fzShebangs {
+		for _, d := range []string{"", "ben/", "evil/"} {
+			g.write(fmt.Sprintf("%ssb%d", d, k), body)
+		}
+	}
+	for _, d := range []string{"usr/local/bin", "bin"} {
+		g.write(d+"/check", string(shell))
+		if err := os.Symlink("/bin/sh", filepath.Join(g.dir, d, "linked")); err != nil {
+			g.t.Fatal(err)
+		}
+	}
 }
 
 // fzResolve is where the assigned PATH value finds a program: evil (a fixture running the target), benign, system, none or unknown
@@ -227,7 +252,7 @@ func (g *fzGuard) form(family string, n int, p fzPayload, c fzCmd) fzForm {
 	if class == "target" && g.name != "github" && c.direct {
 		class = "ownlimit"
 	}
-	return fzForm{fmt.Sprintf("%s:%s-%04d", g.name, family, n), class, c.desc + " <- " + p.id, c.cmd}
+	return fzForm{fmt.Sprintf("%s:%s-%04d", g.name, family, n), class, c.desc + " <- " + p.id, c.cmd, c.amb}
 }
 
 func (g *fzGuard) forms() (all []fzForm, counts map[string]int) {
@@ -264,6 +289,33 @@ func (g *fzGuard) forms() (all []fzForm, counts map[string]int) {
 			c := assign.apply(g, inner.apply(g, fzCmd{cmd: p.cmd}))
 			c.desc = assign.name + "<-" + inner.name
 			add("assignpath", p, c)
+		}
+	}
+	// The evaluation of deb45bd1: d2, a script whose env #! interpreter the assigned PATH selects (run by name and by path); d1, a
+	// binary-headed program (a copy, a link, busybox as static-sh under a starting PATH that lacks it) in a PATH directory.
+	for _, layer := range fzLayers("path") {
+		for k, prog := range fzShebangProgs {
+			for _, dir := range []string{"", g.dir + "/"} {
+				name := fmt.Sprintf("sb%d", k)
+				c := layer.apply(g, fzCmd{cmd: dir + name})
+				c.desc = layer.name
+				add("shebang", fzPayload{id: name, cmd: dir + name, prog: prog}, c)
+			}
+		}
+	}
+	for ki, kind := range fzPathKinds {
+		for i, value := range fzBinValues {
+			v := strings.NewReplacer("{B}", filepath.Join(g.dir, "usr/local/bin"), "{L}", filepath.Join(g.dir, "bin")).Replace(value)
+			for _, prog := range fzBinProgs {
+				for _, p := range g.payloads {
+					c := fzCmd{cmd: fmt.Sprintf(kind, v) + prog + " -c '" + strings.ReplaceAll(p.cmd, "'", `'\''`) + "'", path: v, deep: true}
+					c.desc = fmt.Sprintf("binhdr%d.%d.%s", ki, i, prog)
+					if prog == "static-sh" {
+						c.amb = filepath.Join(g.dir, "amb")
+					}
+					add("binhdr", p, c)
+				}
+			}
 		}
 	}
 	var pairs [][2]fzLayer
@@ -340,6 +392,9 @@ func TestCRW1283GuardFuzz(t *testing.T) {
 			canon = strings.NewReplacer(g.dir, "{DIR}", g.root, "{ROOT}")
 		}
 		for _, f := range all {
+			if err := os.Setenv("PATH", map[bool]string{true: f.amb, false: "/usr/bin:/bin"}[f.amb != ""]); err != nil {
+				t.Fatal(err)
+			}
 			refused := g.refused(f.cmd)
 			decision := map[bool]string{true: "refuse", false: "allow"}[refused]
 			stats[f.class+"/"+decision]++
@@ -379,7 +434,8 @@ func (g *fzGuard) controls() {
 	g.t.Setenv("PATH", tool+":/usr/bin:/bin")
 	slot := filepath.Join(g.dir, "w2.sh")
 	for _, control := range []string{"bash " + slot + " go test ./...", slot + " go version", "PATH=" + tool + ":/usr/bin:/bin go version",
-		"export PATH=" + tool + ":/usr/bin:/bin; go version", "PATH=/usr/bin:/bin printf x", "bash " + g.write("control.sh", "go version\n")} {
+		"export PATH=" + tool + ":/usr/bin:/bin; go version", "PATH=/usr/bin:/bin printf x", "bash " + g.write("control.sh", "go version\n"),
+		"PATH=" + tool + ":/usr/bin:/bin " + filepath.Join(g.dir, "sb0")} {
 		if g.refused(control) {
 			g.t.Errorf("%s guard refused the intended relaxation: %s", g.name, control)
 		}
