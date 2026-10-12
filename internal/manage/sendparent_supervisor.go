@@ -9,7 +9,7 @@ import (
 )
 
 // sendParentRoleUsage is the usage line of the role options.
-const sendParentRoleUsage = "       crw manage send-parent --role supervisor --thread T --message-file F --logical-id ID [--report ID] [--initiative I] [--queue]"
+const sendParentRoleUsage = "       crw manage send-parent --role supervisor --thread T --message-file F --logical-id ID [--report ID] [--initiative I] [--state DIR] [--socket PATH] [--queue]"
 
 // supervisorReply is the one JSON object `send-parent --role supervisor` answers with. The default role answers {class, requestId,
 // logicalId} and nothing else; this answer adds the role, the observation of the thread when it kept the notice in the supervisor queue,
@@ -49,8 +49,11 @@ func sendParentSupervisorReport(e *Env, r supervisorReply) int {
 // not loaded (notLoaded: the delivery core sends nothing to such a thread and answers unknown, so the send is not even tried), gets the
 // notice in the supervisor queue, where the pump delivers it when the thread can take it. Nothing of the parent path changes.
 func sendParentSupervisor(ctx context.Context, e *Env, cfg *Config, parsed sendParentArgs, logicalID string, text []byte) int {
+	// the relay the report was written in (flow report-up --state S --socket P) is the one the binding is read in and the delivery is
+	// told to; the notice remembers it for the pump
+	cfg = withRelay(cfg, parsed.relayState, parsed.relaySocket)
 	n := supervisorNotice{LogicalID: logicalID, Thread: parsed.thread, BindingTask: parsed.thread, ReportID: parsed.report, Initiative: parsed.initiative,
-		Text: string(text), CreatedAt: deliverNow(e)}
+		RelayState: parsed.relayState, RelaySocket: parsed.relaySocket, Text: string(text), CreatedAt: deliverNow(e)}
 	queue := func(reason, observation string, loadRetry int) int {
 		n.LoadRetry = loadRetry
 		state, err := supervisorQueueWrite(cfg, n)

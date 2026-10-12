@@ -47,6 +47,10 @@ type Sender interface {
 // ManageSender runs `crw manage send-parent`. Program is the crw executable; Run replaces the process start (tests).
 type ManageSender struct {
 	Program string
+	// State and Socket are the relay the reports are written in, when the operator selected one (flow report-up --state S --socket P, a
+	// resume of a run in that store): a supervisor notice names it, so the command reads the binding's authorization and the pump tells the
+	// flow rows there. Empty: the configuration's relay.
+	State, Socket string
 	// Dir holds the message files (default: the temporary directory).
 	Dir string
 	Run func(ctx context.Context, program string, args ...string) (stdout []byte, exit int, err error)
@@ -114,6 +118,12 @@ func (m ManageSender) run(ctx context.Context, text string, args []string) (Send
 // SendSupervisor implements Sender: send-parent --role supervisor.
 func (m ManageSender) SendSupervisor(ctx context.Context, s SupervisorSend) (SendResult, error) {
 	args := []string{"--role", "supervisor", "--thread", s.Thread, "--logical-id", s.LogicalID}
+	if m.State != "" {
+		args = append(args, "--state", m.State)
+	}
+	if m.Socket != "" {
+		args = append(args, "--socket", m.Socket)
+	}
 	if s.ReportID != "" {
 		args = append(args, "--report", s.ReportID)
 	}

@@ -272,3 +272,49 @@ func TestSupervisorSettingsAreReadFromTheBinding(t *testing.T) {
 		t.Fatalf("settings %+v err %v", got, err)
 	}
 }
+
+// The relay a report was written in is not always the one the manage configuration names: `crw flow report-up --state S --socket P` and a
+// resumed run work on the store they were given. `send-parent --role supervisor --state S --socket P` reads the binding's authorization
+// there, and the notice it queues remembers the pair so the pump reads the same settings and tells the same store's flow rows.
+// (post-evaluation d6)
+func TestSendParentSupervisorUsesTheSelectedRelay(t *testing.T) {
+	coreTempHome(t)
+	bridge, _ := deliverFakeBridge(t, []map[string]any{{"payload": map[string]any{"observation": "notLoaded"}}})
+	cfg := deliverSendConfig(t, bridge)
+	cfg.Relay = coreRelay{State: "/relay/default", Socket: "/sock/default"}
+	sendParentWithConfig(t, cfg)
+	var seen []coreRelay
+	saved := supervisorSettingsRead
+	supervisorSettingsRead = func(_ context.Context, _ *Env, c *Config, _ string) (coreSettings, error) {
+		seen = append(seen, c.Relay)
+		return coreSettings{Model: "gpt-supervisor", ReasoningEffort: "xhigh"}, nil
+	}
+	t.Cleanup(func() { supervisorSettingsRead = saved })
+
+	code, reply := supervisorTestSend(t, "--report", "rep_1", "--state", "/relay/selected", "--socket", "/sock/selected")
+	if code != sendParentExitAccepted || reply["class"] != sendParentClassQueued {
+		t.Fatalf("exit %d reply %v", code, reply)
+	}
+	if len(seen) != 1 || seen[0].State != "/relay/selected" || seen[0].Socket != "/sock/selected" {
+		t.Fatalf("the settings were read in %+v, want the selected relay", seen)
+	}
+	n, ok := supervisorTestNotice(t, cfg, "lead-thread", "run-1:M1:report", "")
+	if !ok || n.RelayState != "/relay/selected" || n.RelaySocket != "/sock/selected" {
+		t.Fatalf("the queued notice is %+v", n)
+	}
+	if cfg.Relay.State != "/relay/default" {
+		t.Errorf("the shared configuration was changed: %+v", cfg.Relay)
+	}
+	// without the options the configuration's relay is read, as before
+	seen = nil
+	if code, _ := supervisorTestSend(t, "--report", "rep_2", "--logical-id", "run-2:M2:report"); code != sendParentExitAccepted && code != sendParentExitRefused {
+		t.Fatalf("exit %d", code)
+	}
+	if len(seen) != 1 || seen[0].State != "/relay/default" {
+		t.Errorf("the default read in %+v", seen)
+	}
+	// the parent role takes no relay options
+	if code, _ := sendParentRunCommand(t, "--thread", "t", "--message-file", sendParentMessageFile(t, "x"), "--state", "/relay/selected"); code != usageExit {
+		t.Errorf("the parent role accepted --state (exit %d)", code)
+	}
+}

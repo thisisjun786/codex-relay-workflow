@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -233,3 +234,43 @@ func TestApplyCommandStatesAndExits(t *testing.T) {
 type events func() (apply.EventInfo, error)
 
 func (e events) Event(context.Context, string) (apply.EventInfo, error) { return e() }
+
+// A report-up in a relay the operator selected (--state, --socket) sends its notice with that relay named, so the notice is not read and
+// delivered against the manage configuration's relay; the hook of a resumed run does the same. (post-evaluation d6)
+func TestReportUpAndTheResumeHookNameTheSelectedRelay(t *testing.T) {
+	w := newCLIWorld(t)
+	dir := t.TempDir()
+	record := filepath.Join(dir, "argv.txt")
+	program := filepath.Join(dir, "crw")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + record + "\nprintf '%s\\n' '{\"class\":\"accepted\",\"requestId\":\"r1\"}'\n"
+	syscall.ForkLock.RLock()
+	err := os.WriteFile(program, []byte(script), 0o700)
+	syscall.ForkLock.RUnlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.env.Sender, w.env.Program = nil, program
+	evidence := filepath.Join(t.TempDir(), "evidence.md")
+	if err := os.WriteFile(evidence, []byte("blocked on a decision"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code := w.run("report-up", "--kind", "project_blocked", "--run", "run-1", "--evidence", evidence, "--state", "/relay/selected", "--socket", "/sock/selected"); code != ExitOK {
+		t.Fatalf("report-up: exit %d %s", code, w.errOut.String())
+	}
+	raw, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := string(raw)
+	// the state is the one the command resolved (the test's Open answers the store's directory), the socket the one named
+	if !strings.Contains(line, "--role supervisor") || !strings.Contains(line, "--state "+filepath.Dir(w.st.Path)) || !strings.Contains(line, "--socket /sock/selected") {
+		t.Errorf("send-parent was called as %q", line)
+	}
+	hook, ok := UpwardFactory(w.st, nil, "run-1", "/relay/resumed", "/sock/resumed").(*report.RunHook)
+	if !ok {
+		t.Fatal("the factory makes no RunHook")
+	}
+	if sender, _ := hook.Sender.(report.ManageSender); sender.State != "/relay/resumed" || sender.Socket != "/sock/resumed" {
+		t.Errorf("the hook's sender is %+v", hook.Sender)
+	}
+}

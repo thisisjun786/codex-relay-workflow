@@ -16,7 +16,8 @@ import (
 )
 
 // UpwardFactory makes the hook the resumed run hands what goes up from it to; the binary installs it (internal/flow/cli). Nil installs none.
-var UpwardFactory func(st *store.Store, j *Journal, runID string) engine.UpwardHook
+// state and socket are the relay the store was selected by (the state directory the run was resumed in, the socket of its host).
+var UpwardFactory func(st *store.Store, j *Journal, runID, state, socket string) engine.UpwardHook
 
 // ResumeEnv is engine.ResumeEnv of the shipped binary: it opens the relay store the run's journal is persisted in (the state
 // directory the operator named, else the relay's own selection for the control socket), connects to the App Server control
@@ -80,7 +81,7 @@ func ResumeEnv(ctx context.Context, req engine.ResumeEnvRequest) (engine.ResumeS
 	}
 	setup := engine.ResumeSetup{Journal: j, Backend: backend, Close: closeAll}
 	if UpwardFactory != nil {
-		setup.Upward = UpwardFactory(st, j, req.RunID)
+		setup.Upward = UpwardFactory(st, j, req.RunID, selection.Path, socket)
 	}
 	return setup, nil
 }

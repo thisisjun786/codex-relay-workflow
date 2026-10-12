@@ -34,6 +34,8 @@ type sendParentArgs struct {
 	role       string
 	report     string
 	initiative string
+	// relayState and relaySocket name the relay a supervisor notice's report was written in (--state, --socket); empty: the configuration's.
+	relayState, relaySocket string
 }
 
 // sendParentConfig is where the command reads its configuration: the defaults today, and the crw
@@ -175,6 +177,8 @@ func sendParentParse(args []string, out io.Writer) (sendParentArgs, error) {
 	set.StringVar(&parsed.role, "role", "parent", "the role to send with: parent (default) or supervisor")
 	set.StringVar(&parsed.report, "report", "", "the flow report a supervisor notice is about (--role supervisor)")
 	set.StringVar(&parsed.initiative, "initiative", "", "the initiative a supervisor notice is for (--role supervisor)")
+	set.StringVar(&parsed.relayState, "state", "", "the relay state directory the report was written in (--role supervisor; default: the configuration's)")
+	set.StringVar(&parsed.relaySocket, "socket", "", "the App Server control socket of that relay (--role supervisor; default: the configuration's)")
 	if err := set.Parse(args); err != nil {
 		return sendParentArgs{}, err
 	}
@@ -189,6 +193,9 @@ func sendParentParse(args []string, out io.Writer) (sendParentArgs, error) {
 	}
 	if parsed.role == "parent" && (parsed.report != "" || parsed.initiative != "") {
 		return sendParentArgs{}, fmt.Errorf("--report and --initiative apply to --role supervisor")
+	}
+	if parsed.role == "parent" && (parsed.relayState != "" || parsed.relaySocket != "") {
+		return sendParentArgs{}, fmt.Errorf("--state and --socket apply to --role supervisor")
 	}
 	return parsed, nil
 }

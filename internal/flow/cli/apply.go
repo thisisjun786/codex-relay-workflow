@@ -41,7 +41,7 @@ var applyDeps = func(ctx context.Context, env Env, state, socket, repo string) (
 			return err
 		}
 		_, err = report.ReconcileSummary(ctx, report.SummaryEnv{Store: st, Sched: &dagsched.Scheduler{Store: st}, Rows: report.ForeignAppender{Store: st, Run: run}, Run: run,
-			Plan: plan, Document: document, Actor: ev.ParentTask, Sender: env.sender()})
+			Plan: plan, Document: document, Actor: ev.ParentTask, Sender: env.sender(statePath, socket)})
 		return err
 	}
 	return deps, func() { _ = st.Close() }, nil

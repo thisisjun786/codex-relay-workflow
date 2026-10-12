@@ -44,6 +44,10 @@ type supervisorNotice struct {
 	BindingTask string `json:"binding_task"`
 	ReportID    string `json:"report_id,omitempty"`
 	Initiative  string `json:"initiative,omitempty"`
+	// RelayState and RelaySocket are the relay the report was written in, when the sender named one (send-parent --state, --socket): the
+	// settings are read and the delivery is told to the flow rows there. Empty: the manage configuration's relay.
+	RelayState  string `json:"relay_state,omitempty"`
+	RelaySocket string `json:"relay_socket,omitempty"`
 	// LoadRetry is the number of times a send of this notice met the unloaded-thread refusal; the next attempt goes out under
 	// <logical id>-l<n>.
 	LoadRetry int    `json:"load_retry,omitempty"`
@@ -59,6 +63,8 @@ type pumpSupervisorState struct {
 	Undelivered map[string]bool `json:"undelivered"`
 	// Delivered are the accepted deliveries whose `crw flow report-delivered` call is still to be made: report id to request id.
 	Delivered map[string]string `json:"delivered"`
+	// DeliveredRelay is the relay a Delivered report's notice named, by report id (absent: the configuration's relay).
+	DeliveredRelay map[string]coreRelay `json:"delivered_relay,omitempty"`
 }
 
 // pumpSupervisorAttempt counts the refusals of one notice's logical id (-r<n>) and the unloaded-thread refusals (-l<n>).
@@ -68,7 +74,7 @@ type pumpSupervisorAttempt struct {
 }
 
 func newPumpSupervisorState() pumpSupervisorState {
-	return pumpSupervisorState{Attempts: map[string]pumpSupervisorAttempt{}, Undelivered: map[string]bool{}, Delivered: map[string]string{}}
+	return pumpSupervisorState{Attempts: map[string]pumpSupervisorAttempt{}, Undelivered: map[string]bool{}, Delivered: map[string]string{}, DeliveredRelay: map[string]coreRelay{}}
 }
 
 func (s *pumpSupervisorState) fill() {
@@ -80,6 +86,9 @@ func (s *pumpSupervisorState) fill() {
 	}
 	if s.Delivered == nil {
 		s.Delivered = map[string]string{}
+	}
+	if s.DeliveredRelay == nil {
+		s.DeliveredRelay = map[string]coreRelay{}
 	}
 }
 
@@ -94,6 +103,22 @@ func (a pumpSupervisorAttempt) attemptID(base string, noticeLoaded int) string {
 		id = fmt.Sprintf("%s-l%d", id, n)
 	}
 	return id
+}
+
+// withRelay is the configuration with the relay a command or a notice named: the state directory and the socket the report was written
+// in. Nothing named gives the configuration itself.
+func withRelay(cfg *Config, state, socket string) *Config {
+	if state == "" && socket == "" {
+		return cfg
+	}
+	c := *cfg
+	if state != "" {
+		c.Relay.State = state
+	}
+	if socket != "" {
+		c.Relay.Socket = socket
+	}
+	return &c
 }
 
 // supervisorSettingsRead reads the settings a delivery to the supervisor of a thread carries: the authorization recorded for the
@@ -275,7 +300,15 @@ func pumpSupervisorFlushThread(ctx context.Context, e *Env, cfg *Config, st *pum
 		fmt.Fprintf(e.Stdout, "supervisor queue %s %d notices\n", thread, len(names))
 		return nil
 	}
-	observation, turnID, err := pumpQueueObserve(ctx, e, cfg, thread)
+	// the probe goes to the host of the relay the first notice names
+	probeCfg := cfg
+	for _, name := range names {
+		if n, err := supervisorQueueRead(dir, name); err == nil {
+			probeCfg = withRelay(cfg, n.RelayState, n.RelaySocket)
+			break
+		}
+	}
+	observation, turnID, err := pumpQueueObserve(ctx, e, probeCfg, thread)
 	if err != nil {
 		// the probe failed: the notices stay queued and the thread is unmeasured, as a source whose read failed is
 		pumpLog(cfg, "supervisor queue "+thread+" "+pumpSourceUnmeasured+": "+err.Error())
@@ -326,6 +359,8 @@ func supervisorNoticeTime(n supervisorNotice, dir, name string) time.Time {
 // pumpSupervisorDeliver sends one notice with the role supervisor and the settings its binding records now. done is whether the notice
 // left the queue (delivered, or moved aside after too many refusals).
 func pumpSupervisorDeliver(ctx context.Context, e *Env, cfg *Config, st *pumpState, dir, name string, n supervisorNotice, observation string, waited time.Duration) (done bool, err error) {
+	// the relay the notice was written in: the binding is read there, the bridge of its socket takes the send
+	cfg = withRelay(cfg, n.RelayState, n.RelaySocket)
 	task := firstNonEmpty(n.BindingTask, n.Thread)
 	settings, err := supervisorSettingsRead(ctx, e, cfg, task)
 	if err != nil {
@@ -351,6 +386,7 @@ func pumpSupervisorDeliver(ctx context.Context, e *Env, cfg *Config, st *pumpSta
 		// notice still pending, and the delivery record answers it again (nothing is sent twice)
 		if n.ReportID != "" {
 			st.Supervisor.Delivered[n.ReportID] = out.RequestID
+			noteRelay(st, n)
 		}
 		if err := st.pumpSave(cfg); err != nil {
 			return false, err
@@ -369,6 +405,7 @@ func pumpSupervisorDeliver(ctx context.Context, e *Env, cfg *Config, st *pumpSta
 			pumpLog(cfg, fmt.Sprintf("supervisor queue %s: notice %s moves to %s after %d refusals", n.Thread, n.LogicalID, supervisorRefusedDir, attempt.Refused))
 			if n.ReportID != "" {
 				st.Supervisor.Delivered[n.ReportID] = "refused:" + out.RequestID
+				noteRelay(st, n)
 			}
 			if err := st.pumpSave(cfg); err != nil {
 				return false, err
@@ -380,6 +417,13 @@ func pumpSupervisorDeliver(ctx context.Context, e *Env, cfg *Config, st *pumpSta
 	}
 	// unknown: the next round reconciles the same id
 	return false, nil
+}
+
+// noteRelay keeps the relay a delivered notice named next to its obligation to tell the flow rows.
+func noteRelay(st *pumpState, n supervisorNotice) {
+	if n.RelayState != "" || n.RelaySocket != "" {
+		st.Supervisor.DeliveredRelay[n.ReportID] = coreRelay{State: n.RelayState, Socket: n.RelaySocket}
+	}
 }
 
 // pumpSupervisorSettle moves a notice whose outcome is durable in the pump's state out of the queue, drops its attempt counts and tells
@@ -471,11 +515,13 @@ func pumpSupervisorConfirm(ctx context.Context, e *Env, cfg *Config, st *pumpSta
 			result, request = "refused", rest
 		}
 		args := []string{"report-delivered", "--report", report, "--result", result, "--request-id", request}
-		if err := pumpFlowRun(ctx, e, cfg, args...); err != nil {
+		relay := st.Supervisor.DeliveredRelay[report]
+		if err := pumpFlowRun(ctx, e, withRelay(cfg, relay.State, relay.Socket), args...); err != nil {
 			pumpLog(cfg, "supervisor queue: report-delivered "+report+": "+err.Error())
 			continue
 		}
 		delete(st.Supervisor.Delivered, report)
+		delete(st.Supervisor.DeliveredRelay, report)
 		changed = true
 	}
 	if changed {

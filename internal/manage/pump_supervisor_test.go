@@ -485,3 +485,39 @@ func TestSupervisorFlushKeepsTheNoticeUntilTheDeliveredObligationIsSaved(t *test
 	}
 	supervisorTestCheckDelivered(t, flowTestCalls(t, record), [][]string{{"flow", "report-delivered", "--report", "rep_1", "--result", "accepted", "--request-id", "run-1:M1:report"}})
 }
+
+// A queued notice that names the relay it was written in is delivered with the settings that relay's binding records, and the flow
+// command that records the delivery opens that relay's store. (post-evaluation d6)
+func TestSupervisorFlushUsesTheRelayTheNoticeNamed(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	exe, record := flowTestCRW(t)
+	e.Executable = exe
+	var seen []coreRelay
+	saved := supervisorSettingsRead
+	supervisorSettingsRead = func(_ context.Context, _ *Env, c *Config, _ string) (coreSettings, error) {
+		seen = append(seen, c.Relay)
+		return coreSettings{Model: "gpt-supervisor", ReasoningEffort: "xhigh"}, nil
+	}
+	t.Cleanup(func() { supervisorSettingsRead = saved })
+	bridge, _ := deliverFakeBridge(t, []map[string]any{{"payload": map[string]any{"observation": "idle"}}, {"payload": map[string]any{"status": "accepted", "delivery": "turn_started"}}})
+	cfg := pumpTestConfig(t, bridge)
+	cfg.Relay = coreRelay{State: "/relay/default", Socket: "/sock/default"}
+	n := supervisorNotice{LogicalID: "run-1:M1:report", Thread: "lead-thread", BindingTask: "lead-thread", ReportID: "rep_1", Initiative: "I-23", Text: "report is ready",
+		CreatedAt: now.Add(-2 * time.Hour).UTC().Format(time.RFC3339), RelayState: "/relay/selected", RelaySocket: "/sock/selected"}
+	if _, err := supervisorQueueWrite(cfg, n); err != nil {
+		t.Fatal(err)
+	}
+	st := pumpTestReadStatePtr(t, cfg)
+	supervisorTestFlush(t, e, cfg, st)
+	if len(seen) != 1 || seen[0].State != "/relay/selected" || seen[0].Socket != "/sock/selected" {
+		t.Fatalf("the settings were read in %+v", seen)
+	}
+	calls := flowTestCalls(t, record)
+	if len(calls) != 1 || !reflect.DeepEqual(calls[0][len(calls[0])-4:], []string{"--state", "/relay/selected", "--socket", "/sock/selected"}) {
+		t.Fatalf("report-delivered was called as %v, want it to open the notice's relay", calls)
+	}
+	if len(st.Supervisor.Delivered) != 0 || len(st.Supervisor.DeliveredRelay) != 0 {
+		t.Errorf("the obligation stands: %v %v", st.Supervisor.Delivered, st.Supervisor.DeliveredRelay)
+	}
+}
