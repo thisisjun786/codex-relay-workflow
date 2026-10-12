@@ -152,3 +152,142 @@ bash slot.sh go version
 bash -c '"$@"' zero gh pr comment 1 --body x
 --cmd
 bash slot.sh go version
+
+=== CRW-1283-review-set-memory | U
+--why set -- replaces the positional parameters, so "$@" is not the script's arguments and stays unreadable (review e4c54cc3).
+--file mutation.sh
+#!/bin/bash
+set -- tee {MEMORY}/note.md
+"$@"
+--cmd
+bash mutation.sh true
+
+=== CRW-1283-review-set-post | U
+--why A post set as the positional parameters is not hidden behind the harmless arguments the script is given.
+--file mutation.sh
+#!/bin/bash
+set -- gh pr comment 1 --body x
+"$@"
+--cmd
+bash mutation.sh true
+
+=== CRW-1283-review-shift-removal | U
+--why shift moves the protected removal into "$@"; the reader does not read "$@" as the arguments it was given.
+--file mutation.sh
+#!/bin/bash
+shift
+"$@"
+--cmd
+bash mutation.sh true rm -rf {CHECKOUT}
+
+=== CRW-1283-review-shift-direct-memory | U
+--why A direct forwarding script that shifts its arguments does not run them as given either.
+--file mutation.sh
+#!/bin/bash
+shift
+"$@"
+--cmd
+{WORK}/mutation.sh true tee {MEMORY}/note.md
+
+=== CRW-1283-review-eval-set-post | U
+--why A set inside eval changes the positional parameters as a set in the text does.
+--file mutation.sh
+#!/bin/bash
+eval 'set -- gh pr comment 1 --body x'
+"$@"
+--cmd
+bash mutation.sh true
+
+=== CRW-1283-review-option-set-control | B
+--why set with options alone keeps the positional parameters: the forwarding wrapper stays readable.
+--file slot.sh
+#!/bin/bash
+set -euo pipefail
+"$@"
+--cmd
+bash slot.sh go version
+
+=== CRW-1283-review-env-printf-memory | W
+--why env runs the printf the assigned PATH finds, not the shell's builtin: that file's memory write is read.
+--file printf
+#!/bin/sh
+echo x >{MEMORY}/note.md
+--cmd
+env PATH={WORK}:/usr/bin:/bin printf
+
+=== CRW-1283-review-exec-printf-post | P
+--why exec runs the printf the assigned PATH finds, so the post in that file is read and refused.
+--file printf
+#!/bin/sh
+gh pr comment 1 --body x
+--cmd
+PATH={WORK}:/usr/bin:/bin exec printf
+
+=== CRW-1283-review-env-true-removal | R
+--why env runs the true the assigned PATH finds: its protected removal is read.
+--file true
+#!/bin/sh
+rm -rf {CHECKOUT}
+--cmd
+env PATH={WORK}:/usr/bin:/bin true
+
+=== CRW-1283-review-builtin-printf-control | B
+--why The shell runs its own printf; the file of that name on the assigned PATH does not run.
+--file printf
+#!/bin/sh
+echo x >{MEMORY}/note.md
+--cmd
+PATH={WORK}:/usr/bin:/bin printf ok
+
+=== CRW-1283-review-path-renamed-shell-memory | U
+--why A binary the assigned PATH finds outside the system directories (a shell named check) is not identified by its name.
+--link check /usr/bin/dash
+--cmd
+PATH={WORK}:/usr/bin:/bin check -c 'echo x >{MEMORY}/note.md'
+
+=== CRW-1283-review-path-renamed-shell-post | U
+--why The renamed shell's -c post is refused with the program, not read as an unknown harmless binary.
+--link check /usr/bin/dash
+--cmd
+PATH={WORK} check -c 'gh pr comment 1 --body x'
+
+=== CRW-1283-review-path-renamed-shell-removal | U
+--why The renamed shell's -c removal of the checkout is refused with the program.
+--link check /usr/bin/dash
+--cmd
+PATH={WORK}:/usr/bin:/bin check -c 'cd .. && rm -rf repo'
+
+=== CRW-1283-review-path-git-alias-post | U
+--why git that the assigned PATH finds is read as git: an alias that runs a shell command stays refused.
+--link git /usr/bin/git
+--cmd
+PATH={WORK}:/usr/bin:/bin git -c 'alias.review=!gh pr comment 1 --body x' review
+
+=== CRW-1283-review-path-git-script-alias-removal | U
+--why A git script on the assigned PATH is read by its body and by its name: the alias removal stays refused.
+--file git
+#!/bin/sh
+exec /usr/bin/git "$@"
+--cmd
+PATH={WORK}:/usr/bin:/bin git -c 'alias.review=!rm -rf {CHECKOUT}' review
+
+=== CRW-1283-review-path-prefix-cd-removal | R
+--why A PATH assignment in front of cd lasts for cd only; the directory cd moves to stays for the removal after it.
+--cmd
+PATH=/usr/bin:/bin cd {CHECKOUT}/..; rm -rf repo
+
+=== CRW-1283-review-path-prefix-special-builtin | U
+--why An assignment in front of a special builtin outlasts it in a POSIX shell, so env would run the printf of that PATH.
+--file printf
+#!/bin/sh
+echo x >{MEMORY}/note.md
+--cmd
+PATH={WORK}:/usr/bin:/bin export X=1; env printf
+
+=== CRW-1283-review-disabled-builtin-memory | W
+--why A builtin the text disables is searched on the assigned PATH: the printf file found there and its memory write are read.
+--file printf
+#!/bin/sh
+echo x >{MEMORY}/note.md
+--cmd
+enable -n printf; PATH={WORK}:/usr/bin:/bin printf

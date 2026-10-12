@@ -140,6 +140,10 @@ type Context struct {
 	// wrapRedirs says a wrapper around this command carries a redirection: the reader does not follow a pipe into a shell
 	// behind a redirected wrapper (exec with a redirection), so the piped program stays unreadable there.
 	wrapRedirs bool
+	// launched says a program other than the shell itself starts this command (env, exec, nice, xargs, find -exec and the other
+	// wrappers except command and builtin): it runs the file the PATH finds, never a builtin or a function of that name (CRW-1283).
+	// dispatch reads it for its own command only.
+	launched bool
 }
 
 // Inline is the program text an interpreter receives on its command line or
@@ -262,9 +266,15 @@ func (s *state) unsetVar(name string) {
 	if name == "PATH" {
 		s.searchPath = &Word{Reason: "PATH is unset"}
 	}
+	if name == "argv" {
+		s.args = nil // zsh's argv is the positional parameters
+	}
 }
 
 func (s *state) setVar(name string, v Word, appendValue bool) {
+	if name == "argv" {
+		s.args = nil // zsh's argv is the positional parameters
+	}
 	if name == "PATH" {
 		search := v
 		if appendValue {
@@ -359,6 +369,9 @@ type walker struct {
 	createdUpTo  int
 	// pipeOut is what the last pipeline the walk finished prints (see stageSource).
 	pipeOut *pipeSource
+	// builtinsChanged is whether the text may have disabled a builtin or a function (enable, disable, or a file it sources), so that a
+	// name the shell ran itself may now be searched on the PATH (CRW-1283).
+	builtinsChanged bool
 	// prefixNamed is whether a text the walk read spells PYTHONPYCACHEPREFIX, and prefixUnknown whether a command or an expansion of
 	// it may assign a variable whose name it does not spell: either may give a later module run a cache prefix (CRW-1178).
 	prefixNamed, prefixUnknown bool
@@ -1254,29 +1267,42 @@ func (w *walker) dispatch(words []Word, assigns []Assign, redirs []Redir, st *st
 	if w.createdByText(prog.Value, st.dir) {
 		return unreadablef("program %q is created by this text; the file it writes is what runs", prog.Value)
 	}
+	// A program another program starts is found on the PATH: the shell's builtin or function of that name does not run (CRW-1283).
+	launched := ctx.launched
+	ctx.launched = false
 	if err := checkAssigns(assigns, st); err != nil {
 		return err
 	}
-	for _, assignment := range assigns {
-		if assignment.Name == "PATH" {
-			st = st.clone()
-			st.setVar(assignment.Name, assignment.Value, assignment.Append)
-		}
+	if restore, err := st.prefixPath(name, words, assigns, launched); err != nil {
+		return err
+	} else if restore != nil {
+		defer restore()
 	}
 	resolved := false
-	if st.searchPath != nil && !strings.Contains(prog.Value, "/") && !pathIndependent(name, st) {
-		var err error
-		prog, err = resolveProgram(prog, st)
-		if err != nil {
+	// The shell runs its own builtin or function of a name without searching PATH, unless the text may have disabled it (enable -n,
+	// zsh's disable, or a sourced file that does): then a file of that name on the PATH is what runs, and only a name no directory
+	// holds is still the builtin.
+	exempt := !launched && pathIndependent(name, st)
+	if st.searchPath != nil && !strings.Contains(prog.Value, "/") && (!exempt || w.builtinsChanged) {
+		found, err := resolveProgram(prog, st)
+		switch {
+		case err == errPathNotFound && exempt:
+			found = prog
+		case err != nil:
 			return err
 		}
+		prog = found
 		resolved = strings.Contains(prog.Value, "/")
 		if resolved && w.createdByText(prog.Value, st.dir) {
 			return unreadablef("PATH program is written before it runs")
 		}
+		// The program the PATH finds is read as the same program by its absolute path would be: by its name, and a shell file's body
+		// by the consumers. A binary outside the system directories is not identified by its name (a copy of a shell named check runs
+		// its -c text), so it is admitted only when the PATH the shell started with runs the same file for the name (CRW-1283).
 		if resolved && !systemProgram(prog.Value) {
-			w.out = append(w.out, Exec{Kind: KindCommand, Program: prog, Name: name, Args: words[1:], Assigns: assigns, Redirs: redirs, Dir: st.dir, Ctx: ctx, Cdpath: st.cdpath, SearchPath: st.searchPath, PathResolved: true})
-			return nil
+			if err := pathBinaryIdentified(name, prog.Value); err != nil {
+				return err
+			}
 		}
 	}
 	if reason := zshOnlyUse(name, words[1:]); reason != "" {
@@ -1316,6 +1342,14 @@ func (w *walker) dispatch(words []Word, assigns []Assign, redirs []Redir, st *st
 		Assigns: assigns, Redirs: redirs, Dir: st.dir, Ctx: ctx, Inline: inline, Cdpath: st.cdpath,
 		SearchPath: st.searchPath, PathResolved: resolved,
 	})
+	switch name {
+	case "enable", "disable", "source", ".", "eval", "unhash", "unfunction":
+		w.builtinsChanged = true
+	}
+	if positionalChange(name, words[1:]) {
+		// "$@" after this command is not the arguments the text was given (CRW-1283); eval and source still read them first.
+		defer func(s *state) { s.args = nil }(st)
+	}
 	if script != nil {
 		if err := w.scriptFile(name, *script, st, ctx); err != nil {
 			return err
@@ -1682,6 +1716,7 @@ func (w *walker) wrapped(name string, args []Word, assigns []Assign, redirs []Re
 				ictx.Feed.Dir = st.dir
 			}
 		}
+		ictx.launched = name != "command" && name != "builtin"
 		if external {
 			if len(inner) > 0 && shellStateBuiltin(inner[0]) {
 				return unreadablef("a shell builtin named behind the external program %s", name)

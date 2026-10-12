@@ -21,6 +21,24 @@ linear-issue-CRW-1283.json	PATH assigned before an absolute worktree-removing sh
 linear-issue-CRW-1283.json	source inherits script arguments	CRW-1283-source-inherits-arguments	row	-
 linear-issue-CRW-1283.json	modified positional parameters are not exact forwarding	CRW-1283-modified-arguments	row	-
 linear-issue-CRW-1283.json	new shell owns its positional parameters	CRW-1283-inner-shell-post	row	-
+review of e4c54cc3 (opusverify-e4c54cc3-r1, CRW-1283 relaxations)	set -- before "$@" hides a memory write	CRW-1283-review-set-memory	row	-
+review of e4c54cc3 (opusverify-e4c54cc3-r1, CRW-1283 relaxations)	set -- before "$@" hides a GitHub post	CRW-1283-review-set-post	row	-
+review of e4c54cc3 (opusverify-e4c54cc3-r1, CRW-1283 relaxations)	shift before "$@" hides a worktree removal	CRW-1283-review-shift-removal	row	-
+review of e4c54cc3 (opusverify-e4c54cc3-r1, CRW-1283 relaxations)	direct script shifts before "$@"	CRW-1283-review-shift-direct-memory	row	-
+review of e4c54cc3 (opusverify-e4c54cc3-r1, CRW-1283 relaxations)	eval set -- before "$@"	CRW-1283-review-eval-set-post	row	-
+review of e4c54cc3 (opusverify-e4c54cc3-r1, CRW-1283 relaxations)	option-only set before "$@" control	CRW-1283-review-option-set-control	row	-
+review of e4c54cc3 (opusverify-e4c54cc3-r1, CRW-1283 relaxations)	env PATH=<cwd> printf runs the file named printf	CRW-1283-review-env-printf-memory	row	-
+review of e4c54cc3 (opusverify-e4c54cc3-r1, CRW-1283 relaxations)	PATH=<cwd> exec printf runs the file named printf	CRW-1283-review-exec-printf-post	row	-
+review of e4c54cc3 (opusverify-e4c54cc3-r1, CRW-1283 relaxations)	env PATH=<cwd> true runs the file named true	CRW-1283-review-env-true-removal	row	-
+review of e4c54cc3 (opusverify-e4c54cc3-r1, CRW-1283 relaxations)	PATH=<cwd> printf runs the builtin control	CRW-1283-review-builtin-printf-control	row	-
+review of e4c54cc3 (opusverify-e4c54cc3-r1, CRW-1283 relaxations)	PATH=<cwd> check -c with check a copy of dash (memory)	CRW-1283-review-path-renamed-shell-memory	row	-
+review of e4c54cc3 (opusverify-e4c54cc3-r1, CRW-1283 relaxations)	PATH=<cwd> check -c with check a copy of dash (post)	CRW-1283-review-path-renamed-shell-post	row	-
+review of e4c54cc3 (opusverify-e4c54cc3-r1, CRW-1283 relaxations)	PATH=<cwd> check -c with check a copy of dash (removal)	CRW-1283-review-path-renamed-shell-removal	row	-
+review of e4c54cc3 (opusverify-e4c54cc3-r1, CRW-1283 relaxations)	PATH=<cwd> git -c alias.review=!gh review	CRW-1283-review-path-git-alias-post	row	-
+review of e4c54cc3 (opusverify-e4c54cc3-r1, CRW-1283 relaxations)	git script on PATH with a removing alias	CRW-1283-review-path-git-script-alias-removal	row	-
+review of e4c54cc3 (opusverify-e4c54cc3-r1, CRW-1283 relaxations)	PATH= prefix on cd dropped the directory change	CRW-1283-review-path-prefix-cd-removal	row	-
+review of e4c54cc3 (opusverify-e4c54cc3-r1, CRW-1283 relaxations)	PATH= prefix on a special builtin outlasts it	CRW-1283-review-path-prefix-special-builtin	row	-
+review of e4c54cc3 (opusverify-e4c54cc3-r1, CRW-1283 relaxations)	enable -n printf before PATH=<cwd> printf	CRW-1283-review-disabled-builtin-memory	row	-
 linear-issue-CRW-1012.json	python3 -c "print(\"f'}'\")"	CRW-1012-01	row	-
 linear-issue-CRW-1012.json	python3 -c "print(f'{len(\"abc\")}')"	CRW-1012-02	row	-
 linear-issue-CRW-1014.json	python3 -c 'open("<m>/a","w")'	CRW-1014-01	row	-

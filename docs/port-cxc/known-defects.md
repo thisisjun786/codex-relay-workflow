@@ -1564,4 +1564,4 @@ CRW's shared reader accepts non-executing diagnostic options, bracket conditions
 
 ## CRW-1283 — forwarding script arguments and assigned PATH
 
-Readable shell wrappers carry exact quoted positional arguments into each guard, and scalar PATH assignments resolve the program they select. Unreadable code, unknown external search paths and protected operations still fail closed. Details, the unchanged security cases and the limits of script recovery are in [CRW-1283](known-defects/CRW-1283.md).
+Readable shell wrappers carry exact quoted positional arguments into each guard, and scalar PATH assignments resolve the program they select. Unreadable code, unknown external search paths and protected operations still fail closed, and so do `"$@"` after the positional parameters may have changed, a binary the assigned PATH finds outside the system directories that the starting PATH does not run, and a PATH assignment in front of a special builtin; a builtin name behind env, exec or another launcher is searched on the assigned PATH. Details, the unchanged security cases and the limits of script recovery are in [CRW-1283](known-defects/CRW-1283.md).
