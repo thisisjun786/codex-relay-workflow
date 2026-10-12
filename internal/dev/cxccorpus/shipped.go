@@ -44,6 +44,15 @@ var GitHubPostGuard = ShippedHook{
 	Timeout: 10, Status: "(crw) Guarding GitHub posts",
 }
 
+// FlowStatus is CRW's own Stop hook of the run surface (CRW-1205): it prints the status line of the flow runs the thread whose turn
+// ended owns, and nothing for any other thread. It is declared after the GitHub post guard.
+var FlowStatus = ShippedHook{
+	Leg: "stop-showing-flow-status", Event: "Stop", Timeout: 10, Status: "(crw) Reading the flow runs of this thread",
+}
+
+// OwnHooks are CRW's own declarations, in manifest order after the K1 legs.
+var OwnHooks = []ShippedHook{GitHubPostGuard, FlowStatus}
+
 // File is the declaration's file name: the leg's name, so the leg split out of one oracle file
 // (post-compact-injecting-bg-terminal-affordance.<event>) has a file of its own.
 func (h ShippedHook) File() string { return h.Leg + ".json" }
@@ -80,8 +89,8 @@ func (h ShippedHook) Document() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// ShippedHooks is every generated declaration in manifest order: the K1 legs in theirs, then the
-// GitHub post guard. A K1 leg keeps its event, matcher and timeout byte for byte; its statusMessage
+// ShippedHooks is every generated declaration in manifest order: the K1 legs in theirs, then CRW's
+// own (the GitHub post guard, the flow status line). A K1 leg keeps its event, matcher and timeout byte for byte; its statusMessage
 // goes through R24 of the substitution table.
 func ShippedHooks(root string) ([]ShippedHook, error) {
 	decls, _, err := LoadDeclarations(root)
@@ -105,10 +114,12 @@ func ShippedHooks(root string) ([]ShippedHook, error) {
 	for _, d := range decls.Legs {
 		out = append(out, ShippedHook{Leg: d.Leg, Event: d.Event, Matcher: d.Matcher, Timeout: d.Timeout, Status: re.ReplaceAllString(d.Status, rule.Replace)})
 	}
-	if slices.ContainsFunc(out, func(h ShippedHook) bool { return h.Leg == GitHubPostGuard.Leg }) {
-		return nil, fmt.Errorf("%s declares %s, CRW's own leg", Declarations, GitHubPostGuard.Leg)
+	for _, own := range OwnHooks {
+		if slices.ContainsFunc(out, func(h ShippedHook) bool { return h.Leg == own.Leg }) {
+			return nil, fmt.Errorf("%s declares %s, CRW's own leg", Declarations, own.Leg)
+		}
 	}
-	return append(out, GitHubPostGuard), nil
+	return append(out, OwnHooks...), nil
 }
 
 // ShippedHookList is the manifest's hooks list: the completion Stop, then every generated file.

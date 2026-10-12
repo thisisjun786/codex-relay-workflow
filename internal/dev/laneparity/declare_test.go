@@ -28,8 +28,8 @@ func TestExpectedLegs_areK1ThenTheTwoOwnRegistrations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(legs) != 34 {
-		t.Fatalf("%d legs, want 32 of K1 and 2 own", len(legs))
+	if len(legs) != 35 {
+		t.Fatalf("%d legs, want 32 of K1 and 3 own", len(legs))
 	}
 	for i, l := range legs {
 		if !strings.HasPrefix(l.Status, "(crw) ") || strings.Contains(l.Status, "codexclaw") {
@@ -42,8 +42,11 @@ func TestExpectedLegs_areK1ThenTheTwoOwnRegistrations(t *testing.T) {
 			t.Errorf("%s: Own = %v at index %d", l.Leg, l.Own, i)
 		}
 	}
-	if legs[32].Leg != CompletionLeg || legs[33].Leg != GitHubPostLeg {
-		t.Errorf("own legs are %s and %s", legs[32].Leg, legs[33].Leg)
+	if legs[32].Leg != CompletionLeg || legs[33].Leg != GitHubPostLeg || legs[34].Leg != FlowStatusLeg {
+		t.Errorf("own legs are %s, %s and %s", legs[32].Leg, legs[33].Leg, legs[34].Leg)
+	}
+	if f := cxccorpus.FlowStatus; legs[34].Event != f.Event || legs[34].Matcher != f.Matcher || legs[34].Timeout != f.Timeout || legs[34].Status != f.Status {
+		t.Errorf("the flow status leg %+v is not the declaration the shipped plugin generates %+v", legs[34], f)
 	}
 	if g := cxccorpus.GitHubPostGuard; legs[33].Leg != g.Leg || legs[33].Event != g.Event || legs[33].Matcher != g.Matcher || legs[33].Timeout != g.Timeout || legs[33].Status != g.Status {
 		t.Errorf("the GitHub post leg %+v is not the declaration the shipped plugin generates %+v", legs[33], g)
@@ -113,8 +116,8 @@ func TestGeneratePluginRoot_declaresEveryLegOnceAndKeepsTheSkills(t *testing.T) 
 	if rep := CheckRegistration(manifest, got, legs); !rep.OK {
 		t.Fatalf("a generated root does not register as required: %+v", rep)
 	}
-	if len(got) != 34 {
-		t.Errorf("%d registrations, want 34", len(got))
+	if len(got) != 35 {
+		t.Errorf("%d registrations, want 35", len(got))
 	}
 	for _, r := range got {
 		if !strings.HasPrefix(r.Command, `"/opt/crw-under-test/crw" hook `) {

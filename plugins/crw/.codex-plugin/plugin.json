@@ -19,7 +19,6 @@
   "skills": "./skills/",
   "hooks": [
     "./wiring/hooks/stop-recording-completion.json",
-    "./wiring/hooks/stop-showing-flow-status.json",
     "./wiring/hooks/session-start-ensuring-provider-bridge.json",
     "./wiring/hooks/session-start-bootstrapping-pabcd-state.json",
     "./wiring/hooks/session-start-healing-declared-features.json",
@@ -52,7 +51,8 @@
     "./wiring/hooks/user-prompt-submit-delivering-background-completions.json",
     "./wiring/hooks/session-start-adopting-background-completions.json",
     "./wiring/hooks/pre-tool-use-guarding-automation-ownership.json",
-    "./wiring/hooks/pre-tool-use-guarding-github-post.json"
+    "./wiring/hooks/pre-tool-use-guarding-github-post.json",
+    "./wiring/hooks/stop-showing-flow-status.json"
   ],
   "mcpServers": "./wiring/mcp.json",
   "interface": {
