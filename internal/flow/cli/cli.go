@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/report"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -48,6 +49,9 @@ type Env struct {
 	Open func(ctx context.Context, state, socket string) (*store.Store, string, error)
 	// Getenv reads the environment.
 	Getenv func(string) string
+	// Sender and Resolver replace the notices through `crw manage send-parent` and the linkage walk (tests).
+	Sender   report.Sender
+	Resolver report.Resolver
 }
 
 // Run is `crw flow <command>` for a command of Commands.

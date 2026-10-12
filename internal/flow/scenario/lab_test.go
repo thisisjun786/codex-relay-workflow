@@ -66,6 +66,10 @@ type Lab struct {
 	decisions ops.Decisions
 	// children are the issue-lane runs of the children the lab started (child_test.go).
 	children []*ChildRun
+	// Upward is the hook the lab's run hands what goes up from it to, and Reporter the reporter of its milestone close (upward_test.go);
+	// nil hands nothing.
+	Upward   engine.UpwardHook
+	Reporter ops.Reporter
 }
 
 // hookJournal wraps the run's journal: a process that dies writes no more rows, and a test can look at every row as it is written.
@@ -200,7 +204,12 @@ func (l *Lab) spawn(owner string) {
 	l.journal = &hookJournal{Journal: j}
 	l.journal.flush = func() { _ = j.Flush() }
 	l.decisions = ops.StoreDecisions{DB: l.Store.DB}
-	l.lane = ops.NewLane(ops.Deps{RunID: l.RunID, Repo: l.Repo, Journal: l.journal, Relay: l.Relay, Verifier: l.Verify, Decisions: l.decisions, Actor: "parent",
+	l.newLane()
+}
+
+// newLane makes the lane's operations over the lab's journal, relay and verifier (and the reporter, when the lab has one).
+func (l *Lab) newLane() {
+	l.lane = ops.NewLane(ops.Deps{RunID: l.RunID, Repo: l.Repo, Journal: l.journal, Relay: l.Relay, Verifier: l.Verify, Decisions: l.decisions, Actor: "parent", Reporter: l.Reporter,
 		Now: func() time.Time { return time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC) }})
 }
 
@@ -237,7 +246,7 @@ func (l *Lab) OnRow(fn func(engine.Event)) {
 // Config is the engine configuration of the lab's run.
 func (l *Lab) Config(resume bool) engine.Config {
 	cfg := engine.Config{Backend: l.backend, Policy: l.Policy, Journal: l.journal, RunID: l.RunID, TokenBudget: l.Budget, Ops: l.lane.Ops(), InputSnapshot: l.lane.InputSnapshot,
-		Prover: ops.NewProver(), Now: func() time.Time { return time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC) }}
+		Prover: ops.NewProver(), Upward: l.Upward, Now: func() time.Time { return time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC) }}
 	if resume {
 		cfg.Resume = &engine.ResumeOptions{Wait: func(context.Context, time.Duration) error { return nil }, Grace: time.Millisecond, Skew: time.Hour, OpenWait: 10 * time.Millisecond, Poll: time.Millisecond}
 	}

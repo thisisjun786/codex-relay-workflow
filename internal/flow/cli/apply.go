@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/apply"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/report"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 )
 
 // applyDeps is apply's wiring over the relay store the operator named; a test replaces it.
@@ -17,7 +19,22 @@ var applyDeps = func(ctx context.Context, env Env, state, socket, repo string) (
 		return apply.Deps{}, nil, err
 	}
 	relay := apply.RelayCommand{Program: env.Program, State: statePath, Socket: socket}
-	return apply.Deps{Store: st, Events: apply.StoreEvents{Store: st}, Commits: apply.Git, Receive: relay.Receive, Correct: relay.Correct, Repo: repo}, func() { _ = st.Close() }, nil
+	deps := apply.Deps{Store: st, Events: apply.StoreEvents{Store: st}, Commits: apply.Git, Receive: relay.Receive, Correct: relay.Correct, Repo: repo}
+	// after each verdict the plan summary is brought up to date and the orchestrator thread is told what is owed
+	deps.AfterVerdict = func(ctx context.Context, ev apply.EventInfo, childRun string) error {
+		child, ok, err := report.ReadRun(ctx, st.DB, childRun)
+		if err != nil || !ok {
+			return err
+		}
+		run, document, found, err := report.SummaryTarget(ctx, st.DB, child.PlanID, ev.ParentTask)
+		if err != nil || !found {
+			return err
+		}
+		_, err = report.ReconcileSummary(ctx, report.SummaryEnv{Store: st, Sched: &dagsched.Scheduler{Store: st}, Rows: report.ForeignAppender{Store: st, Run: run}, Run: run,
+			Plan: child.PlanID, Document: document, Actor: ev.ParentTask, Sender: env.sender()})
+		return err
+	}
+	return deps, func() { _ = st.Close() }, nil
 }
 
 // applyCmd is `crw flow apply`. It prints the Result as JSON and exits 0 when the verdict is recorded, 1 when a check or the relay

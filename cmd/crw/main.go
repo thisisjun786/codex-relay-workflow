@@ -221,6 +221,7 @@ func modes() []mode {
 			// the relay store the run's journal is persisted in and the App Server connection of its host.
 			engine.RecoverEnv = journal.RecoverEnv
 			engine.ResumeEnv = journal.ResumeEnv
+			journal.UpwardFactory = flowcli.UpwardFactory
 			// apply and the report commands work on the flow rows of the relay store (internal/flow/cli).
 			if flowcli.Handles(c.args) {
 				return flowcli.Run(c.ctx, c.args, c.stdout, c.stderr)

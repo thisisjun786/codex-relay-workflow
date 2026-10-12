@@ -47,12 +47,25 @@ type CommitNotifier interface {
 // EvUpwardHookFailed is the log row a failed hook leaves.
 const EvUpwardHookFailed = "upward_hook_failed"
 
-// hookRun calls one entry of the hook and journals its failure.
+// hookRun calls one entry of the hook and journals its failure. The hook runs one call at a time: a start or a finish waits for the call in
+// progress, and a batch committed while a call is in progress (the rows the hook itself appends, or another call's batch) is not told - the
+// call in progress or the next one reads the whole journal.
 func (e *Engine) hookRun(point string, call func(h UpwardHook) error) {
 	h := e.cfg.Upward
 	if h == nil {
 		return
 	}
+	if point == "batch" {
+		select {
+		case e.hookSem <- struct{}{}:
+		default:
+			return
+		}
+	} else {
+		e.hookSem <- struct{}{}
+	}
+	// the failure row is appended before the hook is released: the commit it may cause is not told to a hook that just failed
+	defer func() { <-e.hookSem }()
 	if err := call(h); err != nil {
 		e.j.Append(Event{RunID: e.runID, Kind: KindFlow, Event: EvUpwardHookFailed, Data: map[string]any{"point": point, "error": err.Error()}})
 	}
@@ -78,13 +91,9 @@ func (e *Engine) noteSummaryDocument() {
 	}
 }
 
-// batchCommitted is the journal's notice that a batch was committed. A batch the hook itself caused (the rows it appends) is not told
-// again, and a batch committed while the run is being cancelled is left to the next reconcile.
+// batchCommitted is the journal's notice that a batch was committed. A batch committed while the run is being cancelled is left to the
+// next reconcile.
 func (e *Engine) batchCommitted() {
-	if !e.inHook.CompareAndSwap(false, true) {
-		return
-	}
-	defer e.inHook.Store(false)
 	if e.ctx.Err() != nil {
 		return
 	}

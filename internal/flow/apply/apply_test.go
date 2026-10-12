@@ -446,3 +446,35 @@ func TestApplyRefusesBadRequestsAndUnknownEvents(t *testing.T) {
 		t.Errorf("relay refusal: %+v", res)
 	}
 }
+
+// Once the verdict is recorded the summary of the plan is brought up to date: the hook is called after the relay's steps, with the event
+// and the child's run, and its failure is told in the result without undoing the verdict. A refused application calls nothing.
+func TestApplyBringsTheSummaryUpToDateAfterTheVerdict(t *testing.T) {
+	f := newFx(t)
+	f.goodRun()
+	var calls []string
+	f.deps.AfterVerdict = func(_ context.Context, ev EventInfo, run string) error {
+		calls = append(calls, ev.ID+"@"+run)
+		return nil
+	}
+	if res := f.apply(Request{}); res.State != StateApplied || res.SummaryError != "" {
+		t.Fatalf("result %+v", res)
+	}
+	if len(calls) != 1 || calls[0] != eventID+"@"+childRun || len(f.receives) != 1 {
+		t.Fatalf("calls %v receives %d", calls, len(f.receives))
+	}
+	f.deps.AfterVerdict = func(context.Context, EventInfo, string) error { return fmt.Errorf("the outbox is busy") }
+	if res := f.apply(Request{}); res.State != StateApplied || res.SummaryError != "the outbox is busy" {
+		t.Fatalf("result %+v", res)
+	}
+	g := newFx(t)
+	h := g.commit("a.txt", "work")
+	g.ev.Head = h
+	g.executor("ex-1", h, "claude-fake-haiku")
+	g.review("rv-1", h, "gpt-fake-sol", "verified", "other-digest")
+	called := false
+	g.deps.AfterVerdict = func(context.Context, EventInfo, string) error { called = true; return nil }
+	if res := g.apply(Request{}); res.State != StateRefused || called {
+		t.Errorf("a refusal called the hook: %+v", res)
+	}
+}
