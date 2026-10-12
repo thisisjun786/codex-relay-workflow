@@ -54,10 +54,6 @@ func git(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-func gitOK(dir string, args ...string) bool {
-	return exec.Command("git", append([]string{"-C", dir}, args...)...).Run() == nil
-}
-
 func writeFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -295,14 +291,6 @@ func value[T any](t *testing.T, res *engine.Result) T {
 		t.Fatalf("value %s: %v", res.Value, err)
 	}
 	return v
-}
-
-func calls(res *engine.Result) map[string]engine.CallResult {
-	out := map[string]engine.CallResult{}
-	for _, c := range res.Calls {
-		out[c.Label] = c
-	}
-	return out
 }
 
 type request struct {

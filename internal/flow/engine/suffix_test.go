@@ -132,16 +132,6 @@ func (h *harness) resumeOn(body string) *Result {
 	return h.run(body)
 }
 
-func (h *harness) turnCount() int {
-	n := 0
-	for _, r := range h.fake.Requests() {
-		if r.Kind == "turn" {
-			n++
-		}
-	}
-	return n
-}
-
 // liveCalls are the agent calls the backend was asked to run since the mark.
 func (h *harness) liveSince(mark int) []string {
 	var out []string
