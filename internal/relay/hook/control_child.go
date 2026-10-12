@@ -135,7 +135,7 @@ func handleChildCommand(ctx context.Context, conn net.Conn, state string, reques
 		}
 		facts, _ := delivery.ReadAssignment(ctx, directory)
 		intent, _ := facts.Get("intent").(Object)
-		if target, ok := intent.Get("dbPath").(string); ok && filepath.Clean(target) != filepath.Join(state, "relay.sqlite3") {
+		if target, ok := intent.Get("dbPath").(string); ok && !store.SameStoreFile(target, filepath.Join(state, "relay.sqlite3")) {
 			return answerHost(conn, "child intent may only name the daemon's own store")
 		}
 	}

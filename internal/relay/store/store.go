@@ -74,7 +74,7 @@ type OpenOptions struct {
 
 func Open(ctx context.Context, path, socketPath string) (*Store, error) {
 	if owner, ok := ctx.Value(borrowedStoreKey{}).(*Store); ok {
-		if filepath.Clean(path) != filepath.Clean(owner.Path) {
+		if !SameStoreFile(path, owner.Path) {
 			return nil, &RefusedError{Reason: "store_owned_by_other", Detail: "child command may only borrow the daemon's own store"}
 		}
 		borrowed := *owner
@@ -103,6 +103,20 @@ func WithBorrowedStore(ctx context.Context, owner *Store) context.Context {
 func HasBorrowedStore(ctx context.Context) bool {
 	owner, _ := ctx.Value(borrowedStoreKey{}).(*Store)
 	return owner != nil
+}
+
+// SameStoreFile is whether a and b name one store file: one spelling, or one file reached by two (a symbolic link on
+// the path, CRW-1286). A path that cannot be read names no store a child may borrow.
+func SameStoreFile(a, b string) bool {
+	if filepath.Clean(a) == filepath.Clean(b) {
+		return true
+	}
+	first, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	second, err := os.Stat(b)
+	return err == nil && os.SameFile(first, second)
 }
 
 // Admitted is the one writable store a relay command admitted before its handler ran (cli.main's

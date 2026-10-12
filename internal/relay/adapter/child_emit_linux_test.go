@@ -507,3 +507,47 @@ func TestTheDaemonRefusesACallerRelativePath(t *testing.T) {
 		})
 	}
 }
+
+// CRW-1286: a --kind-module that installs something (codex_session_relay.projects) would install it in the relay daemon
+// for every later command, so a child report naming one is refused and records nothing; one that installs nothing is
+// served.
+func TestTheDaemonRefusesAChildKindModuleThatInstalls(t *testing.T) {
+	state, database, host := blockedChildWorld(t)
+	control, err := service.ListenControlStore(context.Background(), state, database, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer control.Close()
+	result, err := readonlyCommand(t, state, host, append([]string{"--kind-module", "codex_session_relay.projects"}, blockedEmit...)...)
+	var exit *exec.ExitError
+	if detail := fmt.Sprint(result["detail"]); !errors.As(err, &exit) || exit.ExitCode() != 3 || !strings.Contains(detail, "codex_session_relay.projects") || countRows(t, database, "SELECT COUNT(*) FROM events") != 0 {
+		t.Fatalf("a child's installing --kind-module must be refused and record nothing: %v %v", result, err)
+	}
+	if result, err := readonlyCommand(t, state, host, append([]string{"--kind-module", "json"}, blockedEmit...)...); err != nil || countRows(t, database, "SELECT COUNT(*) FROM events") != 1 {
+		t.Fatalf("a child's --kind-module that installs nothing is served: %v %v", result, err)
+	}
+}
+
+// CRW-1286: an intent naming the daemon's store by another spelling (a symbolic link to its state directory) names the
+// daemon's own store, and the daemon records the child's claim there.
+func TestAChildIntentNamingTheDaemonsStoreByAnotherSpellingIsRecorded(t *testing.T) {
+	state, database, host := blockedChildWorld(t)
+	marker, workspace := filepath.Join(filepath.Dir(state), "markers"), filepath.Dir(state)
+	t.Setenv(delivery.MarkerEnv, marker)
+	alias := filepath.Join(t.TempDir(), "alias")
+	if err := os.Symlink(state, alias); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := delivery.DeclareIntent(context.Background(), marker, delivery.IntentDeclaration{Workspace: workspace, DispatchRequestID: "dispatch-1", IssueKey: "REL-1", DBPath: filepath.Join(alias, "relay.sqlite3")}); err != nil {
+		t.Fatal(err)
+	}
+	control, err := service.ListenControlStore(context.Background(), state, database, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer control.Close()
+	result, err := readonlyCommand(t, state, host, "intent-claim", "--dispatch-request-id", "dispatch-1", "--first-turn", "turn-dispatch-1", "--workspace", workspace, "--assignment", delivery.AssignmentID("dispatch-1"), "--session", "01child-task")
+	if record, _ := result["storeRecord"].(map[string]any); err != nil || record["recorded"] != true || countRows(t, database, "SELECT COUNT(*) FROM reporting_sessions") != 1 {
+		t.Fatalf("the daemon's store named through a symbolic link was not recorded in: %v %v", result, err)
+	}
+}

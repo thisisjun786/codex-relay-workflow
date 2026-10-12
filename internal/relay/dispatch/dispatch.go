@@ -251,6 +251,12 @@ func Execute(ctx context.Context, argv0 string, argv []string, stdout, stderr io
 	if state, ok := ctx.Value(childStateKey{}).(string); ok && ctx.Value(childOwnerKey{}) == true {
 		global.state = state
 	}
+	for _, module := range global.modules {
+		// A module that installs something would install it in the relay daemon for every later command (CRW-1286).
+		if ctx.Value(childOwnerKey{}) == true && kindModules[module] != nil {
+			return emit(stdout, stderr, nil, Host(fmt.Sprintf("--kind-module %q installs into the relay daemon that runs a child command, for every later command; a child report names no module that installs", module)), command.family)
+		}
+	}
 	if ForwardChild != nil && ChildCommand(name) && ctx.Value(childOwnerKey{}) != true {
 		selection, err := store.ResolveStateDir(global.state, global.socket)
 		if err != nil {
