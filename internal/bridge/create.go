@@ -7,6 +7,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/sandboxroot"
 	"path/filepath"
 	"sync"
 	"time"
@@ -137,6 +138,11 @@ func (b *Bridge) CreateThread(ctx context.Context, in CreateThread) (receipt led
 		if err != nil {
 			return err
 		}
+		// CRW-1265: a sandboxed thread never starts in the account home, above it or above a project
+		// root. Nothing has been written or sent yet, so the request ID stays usable.
+		if err := sandboxroot.CheckAll(cwd, absolute(writableRoots(in.Roots, in.Policy)), effectiveSandbox(in.Sandbox, in.Policy)); err != nil {
+			return err
+		}
 		authorized, err = b.Policy.Authorize(execution.Input{Model: execution.Optional(in.Model), Effort: execution.Optional(in.Effort), CWD: cwd, Exception: in.Exception, Role: in.Role})
 		if err != nil {
 			return err
@@ -197,6 +203,9 @@ func (b *Bridge) CreateThread(ctx context.Context, in CreateThread) (receipt led
 		}
 		receipt["settings"] = contract.Receipt(observed, "creation")
 		if _, err = b.Ledger.Save(ctx, receipt); err != nil {
+			return err
+		}
+		if err = createdRefusal(observed, in.Sandbox); err != nil {
 			return err
 		}
 		if findings := contract.Findings(observed); len(findings) > 0 {

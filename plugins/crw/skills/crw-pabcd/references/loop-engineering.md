@@ -57,9 +57,8 @@ the failing delta → re-verify.
   throwing it back ("patch-to-reviewer") is a retry, not a loop — a re-dispatch without
   synthesis counts as a failed repair under LOOP-REPAIR-01. E7 guidance (agent-followed,
   not hook-enforced). Lineage: jawcode devlog `260615_pabcd_synthesis_review_loops`
-  (design-note lineage, not production-validated). Reviewer lifecycle across rounds is
-  owned by `structure/20_pabcd_dispatch_doctrine.md` §3 (DISPATCH-ACTOR-01 /
-  DISPATCH-RETIRE-01; repository-only provenance, not an installed prerequisite).
+  (design-note lineage, not production-validated). Reviewer lifecycle across rounds follows
+  DISPATCH-ACTOR-01 / DISPATCH-RETIRE-01.
 
 ### §11.4 Loop archetype by problem type (DEFAULT, LOOP-ARCHETYPE-01)
 

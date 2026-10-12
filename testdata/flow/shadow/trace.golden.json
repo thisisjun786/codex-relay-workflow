@@ -1,0 +1,1104 @@
+{
+  "schema": "crw-flow-trace/1",
+  "source": {
+    "digest": "",
+    "bytes": 0,
+    "storeId": ""
+  },
+  "runs": [
+    {
+      "runId": "run-a",
+      "workflow": "scenario",
+      "scriptDigest": "21652355111e8807939c9edac09d43631bc41aa7e410defdedd214879dd082af",
+      "argsDigest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "planId": "plan-1",
+      "planRevision": 1,
+      "resumeFrom": "",
+      "startedAt": "2026-10-12T09:00:01Z",
+      "events": [
+        {
+          "seq": 1,
+          "kind": "run",
+          "event": "started",
+          "at": "2026-10-12T09:00:02Z",
+          "data": {
+            "args_digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+            "helpers": [
+              {
+                "digest": "a05b2da5a32f0d938be72bce74e5f0e32616f751da365f09c20ef05b498fcb99",
+                "spec": "crw:lib/schemas"
+              }
+            ],
+            "meta": {
+              "name": "scenario"
+            },
+            "policy_digest": "",
+            "policy_source": "",
+            "script_digest": "21652355111e8807939c9edac09d43631bc41aa7e410defdedd214879dd082af",
+            "workflow": "scenario"
+          }
+        },
+        {
+          "seq": 2,
+          "kind": "flow",
+          "event": "phase",
+          "path": "root",
+          "at": "2026-10-12T09:00:03Z",
+          "data": {
+            "title": "n1"
+          }
+        },
+        {
+          "seq": 3,
+          "kind": "call",
+          "event": "prepared",
+          "callId": "c_7ea9193cc1c4",
+          "path": "root",
+          "position": 1,
+          "op": "agent",
+          "label": "build-n1",
+          "at": "2026-10-12T09:00:04Z",
+          "data": {
+            "context": {
+              "kind": "fresh",
+              "packet": "515ef8bf35f26798a54d0432fe8c0eca3c7d83e290ec829f64898a4a5d862e68"
+            },
+            "cwd": "",
+            "effort": "xhigh",
+            "explicit_label": true,
+            "family": "executor",
+            "head": "",
+            "input_digest": "b9a4cd214fd5ea590e85580b240ee5d33b57a64884dade549bc16860d556e010",
+            "model": "claude-fake-haiku",
+            "node": "n1",
+            "phase": "n1",
+            "plain": false,
+            "policy_digest": "",
+            "prompt_digest": "515ef8bf35f26798a54d0432fe8c0eca3c7d83e290ec829f64898a4a5d862e68",
+            "requested_effort": "xhigh",
+            "requested_model": "claude-fake-haiku",
+            "role": "executor",
+            "sandbox": "workspace-write",
+            "schema_digest": "62fa33478c75348d546e7cdf71e06f742002b062b8a87e51cd8cc7cbb9c3b417",
+            "step_decision": ""
+          }
+        },
+        {
+          "seq": 4,
+          "kind": "call",
+          "event": "thread_requested",
+          "callId": "c_7ea9193cc1c4",
+          "path": "root",
+          "position": 1,
+          "op": "agent",
+          "label": "build-n1",
+          "at": "2026-10-12T09:00:06Z",
+          "data": {
+            "at": 1791795605000,
+            "cwd": "",
+            "send": 1
+          }
+        },
+        {
+          "seq": 5,
+          "kind": "call",
+          "event": "thread_started",
+          "callId": "c_7ea9193cc1c4",
+          "path": "root",
+          "position": 1,
+          "op": "agent",
+          "label": "build-n1",
+          "at": "2026-10-12T09:00:07Z",
+          "data": {
+            "cwd": "",
+            "effort": "xhigh",
+            "model": "claude-fake-haiku",
+            "thread_id": "thr_c_7ea9193cc1c4"
+          }
+        },
+        {
+          "seq": 6,
+          "kind": "call",
+          "event": "turn_requested",
+          "callId": "c_7ea9193cc1c4",
+          "path": "root",
+          "position": 1,
+          "op": "agent",
+          "label": "build-n1",
+          "at": "2026-10-12T09:00:08Z",
+          "data": {
+            "input": "build n1",
+            "k": 1,
+            "op": "c_7ea9193cc1c4/t1",
+            "repair": false
+          }
+        },
+        {
+          "seq": 7,
+          "kind": "call",
+          "event": "turn_started",
+          "callId": "c_7ea9193cc1c4",
+          "path": "root",
+          "position": 1,
+          "op": "agent",
+          "label": "build-n1",
+          "at": "2026-10-12T09:00:09Z",
+          "data": {
+            "k": 1,
+            "op": "c_7ea9193cc1c4/t1",
+            "turn_id": "thr_c_7ea9193cc1c4/turn-1"
+          }
+        },
+        {
+          "seq": 8,
+          "kind": "call",
+          "event": "completed",
+          "callId": "c_7ea9193cc1c4",
+          "path": "root",
+          "position": 1,
+          "op": "agent",
+          "label": "build-n1",
+          "at": "2026-10-12T09:00:10Z",
+          "data": {
+            "reason": "",
+            "repair_used": false,
+            "result": "{\"files\":[],\"gap\":\"\",\"outcome\":\"ready_for_review\",\"plan_mismatch\":\"\",\"research_question\":\"\",\"summary\":\"\",\"verification\":[]}",
+            "result_digest": "60fbaae01c77a18133828a096a8c62df05798fbd669e800dfc91e1f6ce1466bd",
+            "tokens": {
+              "input": 750,
+              "output": 250,
+              "total": 1000
+            }
+          }
+        },
+        {
+          "seq": 9,
+          "kind": "call",
+          "event": "prepared",
+          "callId": "c_13eff316c0d1",
+          "path": "root",
+          "position": 2,
+          "op": "agent",
+          "label": "review-n1",
+          "at": "2026-10-12T09:00:11Z",
+          "data": {
+            "context": {
+              "kind": "fresh",
+              "packet": "d9ae90f2847e6492c55a3bb229b456fbaaedcf9aa7c4677fc93ba8c3045449c0"
+            },
+            "cwd": "",
+            "effort": "high",
+            "explicit_label": true,
+            "family": "reviewer",
+            "head": "",
+            "input_digest": "2e842b848fb1b6ba1af3140282ce9aa7b9b2d30f3a007ecdb3fb40abdb0046f8",
+            "model": "gpt-fake-sol",
+            "node": "n1",
+            "phase": "n1",
+            "plain": false,
+            "policy_digest": "",
+            "prompt_digest": "d9ae90f2847e6492c55a3bb229b456fbaaedcf9aa7c4677fc93ba8c3045449c0",
+            "requested_effort": "high",
+            "requested_model": "gpt-fake-sol",
+            "role": "reviewer",
+            "sandbox": "read-only",
+            "schema_digest": "6aa1f4ff88a814ddcf6787c4c70b505a20384e59e2473266258f5645a5546ec6",
+            "step_decision": ""
+          }
+        },
+        {
+          "seq": 10,
+          "kind": "call",
+          "event": "thread_requested",
+          "callId": "c_13eff316c0d1",
+          "path": "root",
+          "position": 2,
+          "op": "agent",
+          "label": "review-n1",
+          "at": "2026-10-12T09:00:13Z",
+          "data": {
+            "at": 1791795612000,
+            "cwd": "",
+            "send": 1
+          }
+        },
+        {
+          "seq": 11,
+          "kind": "call",
+          "event": "thread_started",
+          "callId": "c_13eff316c0d1",
+          "path": "root",
+          "position": 2,
+          "op": "agent",
+          "label": "review-n1",
+          "at": "2026-10-12T09:00:14Z",
+          "data": {
+            "cwd": "",
+            "effort": "high",
+            "model": "gpt-fake-sol",
+            "thread_id": "thr_c_13eff316c0d1"
+          }
+        },
+        {
+          "seq": 12,
+          "kind": "call",
+          "event": "turn_requested",
+          "callId": "c_13eff316c0d1",
+          "path": "root",
+          "position": 2,
+          "op": "agent",
+          "label": "review-n1",
+          "at": "2026-10-12T09:00:15Z",
+          "data": {
+            "input": "review n1",
+            "k": 1,
+            "op": "c_13eff316c0d1/t1",
+            "repair": false
+          }
+        },
+        {
+          "seq": 13,
+          "kind": "call",
+          "event": "turn_started",
+          "callId": "c_13eff316c0d1",
+          "path": "root",
+          "position": 2,
+          "op": "agent",
+          "label": "review-n1",
+          "at": "2026-10-12T09:00:16Z",
+          "data": {
+            "k": 1,
+            "op": "c_13eff316c0d1/t1",
+            "turn_id": "thr_c_13eff316c0d1/turn-1"
+          }
+        },
+        {
+          "seq": 14,
+          "kind": "call",
+          "event": "completed",
+          "callId": "c_13eff316c0d1",
+          "path": "root",
+          "position": 2,
+          "op": "agent",
+          "label": "review-n1",
+          "at": "2026-10-12T09:00:17Z",
+          "data": {
+            "reason": "",
+            "repair_used": false,
+            "result": "{\"criteria\":[],\"defects\":[],\"summary\":\"\",\"verdict\":\"verified\"}",
+            "result_digest": "0b101b2a829ac2ba56caf0eee2720d17ec2df24d1477a7804ad3b666bb749c03",
+            "tokens": {
+              "input": 300,
+              "output": 100,
+              "total": 400
+            }
+          }
+        },
+        {
+          "seq": 15,
+          "kind": "flow",
+          "event": "phase",
+          "path": "root",
+          "at": "2026-10-12T09:00:18Z",
+          "data": {
+            "title": "n2"
+          }
+        },
+        {
+          "seq": 16,
+          "kind": "call",
+          "event": "prepared",
+          "callId": "c_c1f8be384e78",
+          "path": "root",
+          "position": 3,
+          "op": "agent",
+          "label": "build-n2",
+          "at": "2026-10-12T09:00:19Z",
+          "data": {
+            "context": {
+              "kind": "fresh",
+              "packet": "aea80af45fcdda0611902dc19c7e842655232b194ba051c05a2d56c949496126"
+            },
+            "cwd": "",
+            "effort": "xhigh",
+            "explicit_label": true,
+            "family": "executor",
+            "head": "",
+            "input_digest": "b897a498c420a79d9349b4b758468e5ce3bb09358393bbaa8f583fbf961a1abd",
+            "model": "claude-fake-haiku",
+            "node": "n2",
+            "phase": "n2",
+            "plain": false,
+            "policy_digest": "",
+            "prompt_digest": "aea80af45fcdda0611902dc19c7e842655232b194ba051c05a2d56c949496126",
+            "requested_effort": "xhigh",
+            "requested_model": "claude-fake-haiku",
+            "role": "executor",
+            "sandbox": "workspace-write",
+            "step_decision": ""
+          }
+        },
+        {
+          "seq": 17,
+          "kind": "call",
+          "event": "thread_requested",
+          "callId": "c_c1f8be384e78",
+          "path": "root",
+          "position": 3,
+          "op": "agent",
+          "label": "build-n2",
+          "at": "2026-10-12T09:00:21Z",
+          "data": {
+            "at": 1791795620000,
+            "cwd": "",
+            "send": 1
+          }
+        },
+        {
+          "seq": 18,
+          "kind": "call",
+          "event": "thread_started",
+          "callId": "c_c1f8be384e78",
+          "path": "root",
+          "position": 3,
+          "op": "agent",
+          "label": "build-n2",
+          "at": "2026-10-12T09:00:22Z",
+          "data": {
+            "cwd": "",
+            "effort": "xhigh",
+            "model": "claude-fake-haiku",
+            "thread_id": "thr_c_c1f8be384e78"
+          }
+        },
+        {
+          "seq": 19,
+          "kind": "call",
+          "event": "turn_requested",
+          "callId": "c_c1f8be384e78",
+          "path": "root",
+          "position": 3,
+          "op": "agent",
+          "label": "build-n2",
+          "at": "2026-10-12T09:00:23Z",
+          "data": {
+            "input": "build n2",
+            "k": 1,
+            "op": "c_c1f8be384e78/t1",
+            "repair": false
+          }
+        },
+        {
+          "seq": 20,
+          "kind": "call",
+          "event": "turn_started",
+          "callId": "c_c1f8be384e78",
+          "path": "root",
+          "position": 3,
+          "op": "agent",
+          "label": "build-n2",
+          "at": "2026-10-12T09:00:24Z",
+          "data": {
+            "k": 1,
+            "op": "c_c1f8be384e78/t1",
+            "turn_id": "thr_c_c1f8be384e78/turn-1"
+          }
+        },
+        {
+          "seq": 21,
+          "kind": "call",
+          "event": "completed",
+          "callId": "c_c1f8be384e78",
+          "path": "root",
+          "position": 3,
+          "op": "agent",
+          "label": "build-n2",
+          "at": "2026-10-12T09:00:25Z",
+          "data": {
+            "reason": "",
+            "repair_used": false,
+            "result": "\"fake answer to: build n2\"",
+            "result_digest": "7bfeec4f025a1eee688a5bb9f39b4a36755401363a17188b95a796db35c67b3c",
+            "tokens": {
+              "input": 525,
+              "output": 175,
+              "total": 700
+            }
+          }
+        },
+        {
+          "seq": 22,
+          "kind": "call",
+          "event": "completed",
+          "callId": "c_8bb96c4def57",
+          "path": "root",
+          "position": 4,
+          "op": "crw.tierStep",
+          "label": "crw.tierStep",
+          "at": "2026-10-12T09:00:26Z",
+          "data": {
+            "evidence_digest": "a00dc6338f11a8532a11a1feefb54b73b3736510b43f298bac2078738133728d",
+            "input_digest": "849693cae556d6323f7495424f3fd682c4e36c64dfeba039a2e31809e630c616",
+            "result": "{\"checkpoint\":null,\"id\":\"step_8bb96c4def57\"}",
+            "step_decision": "step_8bb96c4def57"
+          }
+        },
+        {
+          "seq": 23,
+          "kind": "call",
+          "event": "prepared",
+          "callId": "c_66511539b2be",
+          "path": "root",
+          "position": 5,
+          "op": "agent",
+          "label": "build-n2-t1",
+          "at": "2026-10-12T09:00:27Z",
+          "data": {
+            "context": {
+              "kind": "fresh",
+              "packet": "d599bfbba9a4a44375013cc96536498b53dede1a2bd3b08bb6b004d7bf1134a0"
+            },
+            "cwd": "",
+            "effort": "xhigh",
+            "explicit_label": true,
+            "family": "executor",
+            "head": "",
+            "input_digest": "2524c976120492938ce340fe885f3fd71cbea2b89c3602f94c7c5fc25b64fa89",
+            "model": "claude-fake-sonnet",
+            "node": "n2",
+            "phase": "n2",
+            "plain": false,
+            "policy_digest": "",
+            "prompt_digest": "d599bfbba9a4a44375013cc96536498b53dede1a2bd3b08bb6b004d7bf1134a0",
+            "requested_effort": "xhigh",
+            "requested_model": "claude-fake-sonnet",
+            "role": "executor-t1",
+            "sandbox": "workspace-write",
+            "step_decision": "step_8bb96c4def57"
+          }
+        },
+        {
+          "seq": 24,
+          "kind": "call",
+          "event": "thread_requested",
+          "callId": "c_66511539b2be",
+          "path": "root",
+          "position": 5,
+          "op": "agent",
+          "label": "build-n2-t1",
+          "at": "2026-10-12T09:00:29Z",
+          "data": {
+            "at": 1791795628000,
+            "cwd": "",
+            "send": 1
+          }
+        },
+        {
+          "seq": 25,
+          "kind": "call",
+          "event": "thread_started",
+          "callId": "c_66511539b2be",
+          "path": "root",
+          "position": 5,
+          "op": "agent",
+          "label": "build-n2-t1",
+          "at": "2026-10-12T09:00:30Z",
+          "data": {
+            "cwd": "",
+            "effort": "xhigh",
+            "model": "claude-fake-sonnet",
+            "thread_id": "thr_c_66511539b2be"
+          }
+        },
+        {
+          "seq": 26,
+          "kind": "call",
+          "event": "turn_requested",
+          "callId": "c_66511539b2be",
+          "path": "root",
+          "position": 5,
+          "op": "agent",
+          "label": "build-n2-t1",
+          "at": "2026-10-12T09:00:31Z",
+          "data": {
+            "input": "build n2 again",
+            "k": 1,
+            "op": "c_66511539b2be/t1",
+            "repair": false
+          }
+        },
+        {
+          "seq": 27,
+          "kind": "call",
+          "event": "turn_started",
+          "callId": "c_66511539b2be",
+          "path": "root",
+          "position": 5,
+          "op": "agent",
+          "label": "build-n2-t1",
+          "at": "2026-10-12T09:00:32Z",
+          "data": {
+            "k": 1,
+            "op": "c_66511539b2be/t1",
+            "turn_id": "thr_c_66511539b2be/turn-1"
+          }
+        },
+        {
+          "seq": 28,
+          "kind": "call",
+          "event": "completed",
+          "callId": "c_66511539b2be",
+          "path": "root",
+          "position": 5,
+          "op": "agent",
+          "label": "build-n2-t1",
+          "at": "2026-10-12T09:00:33Z",
+          "data": {
+            "reason": "",
+            "repair_used": false,
+            "result": "\"fake answer to: build n2 again\"",
+            "result_digest": "e4ce8f756a2c62c48f37d1b1532adc51a66411bd73088a24aceaaa9e709351f1",
+            "tokens": {
+              "input": 675,
+              "output": 225,
+              "total": 900
+            }
+          }
+        },
+        {
+          "seq": 29,
+          "kind": "flow",
+          "event": "phase",
+          "path": "root",
+          "at": "2026-10-12T09:00:34Z",
+          "data": {
+            "title": "n3"
+          }
+        },
+        {
+          "seq": 30,
+          "kind": "call",
+          "event": "prepared",
+          "callId": "c_65f8ce8a7820",
+          "path": "root",
+          "position": 6,
+          "op": "agent",
+          "label": "build-n3",
+          "at": "2026-10-12T09:00:35Z",
+          "data": {
+            "context": {
+              "kind": "fresh",
+              "packet": "e80f8b7d0c9f4d4d3166e650842cea0c5f2dbc8a09826817cc394707cef41b65"
+            },
+            "cwd": "",
+            "effort": "xhigh",
+            "explicit_label": true,
+            "family": "executor",
+            "head": "",
+            "input_digest": "cc4554070655be8e7646b6441d41063774899980d016145b2c0b9997e80b492d",
+            "model": "claude-fake-haiku",
+            "node": "n3",
+            "phase": "n3",
+            "plain": false,
+            "policy_digest": "",
+            "prompt_digest": "e80f8b7d0c9f4d4d3166e650842cea0c5f2dbc8a09826817cc394707cef41b65",
+            "requested_effort": "xhigh",
+            "requested_model": "claude-fake-haiku",
+            "role": "executor",
+            "sandbox": "workspace-write",
+            "step_decision": ""
+          }
+        },
+        {
+          "seq": 31,
+          "kind": "call",
+          "event": "thread_requested",
+          "callId": "c_65f8ce8a7820",
+          "path": "root",
+          "position": 6,
+          "op": "agent",
+          "label": "build-n3",
+          "at": "2026-10-12T09:00:37Z",
+          "data": {
+            "at": 1791795636000,
+            "cwd": "",
+            "send": 1
+          }
+        },
+        {
+          "seq": 32,
+          "kind": "call",
+          "event": "thread_started",
+          "callId": "c_65f8ce8a7820",
+          "path": "root",
+          "position": 6,
+          "op": "agent",
+          "label": "build-n3",
+          "at": "2026-10-12T09:00:38Z",
+          "data": {
+            "cwd": "",
+            "effort": "xhigh",
+            "model": "claude-fake-haiku",
+            "thread_id": "thr_c_65f8ce8a7820"
+          }
+        },
+        {
+          "seq": 33,
+          "kind": "call",
+          "event": "turn_requested",
+          "callId": "c_65f8ce8a7820",
+          "path": "root",
+          "position": 6,
+          "op": "agent",
+          "label": "build-n3",
+          "at": "2026-10-12T09:00:39Z",
+          "data": {
+            "input": "build n3",
+            "k": 1,
+            "op": "c_65f8ce8a7820/t1",
+            "repair": false
+          }
+        },
+        {
+          "seq": 34,
+          "kind": "flow",
+          "event": "escalation",
+          "callId": "c_65f8ce8a7820",
+          "path": "root",
+          "position": 6,
+          "op": "agent",
+          "label": "build-n3",
+          "at": "2026-10-12T09:00:40Z",
+          "data": {
+            "call_id": "c_65f8ce8a7820",
+            "detail": "the connection was lost",
+            "last_event": "turn_requested",
+            "node": "n3",
+            "reason": "dispatch_unknown"
+          }
+        },
+        {
+          "seq": 35,
+          "kind": "call",
+          "event": "outcome_unknown",
+          "callId": "c_65f8ce8a7820",
+          "path": "root",
+          "position": 6,
+          "op": "agent",
+          "label": "build-n3",
+          "at": "2026-10-12T09:00:41Z",
+          "data": {
+            "error": "the connection was lost",
+            "reason": "dispatch_unknown"
+          }
+        },
+        {
+          "seq": 36,
+          "kind": "run",
+          "event": "finished",
+          "at": "2026-10-12T09:00:42Z",
+          "data": {
+            "error_kind": "",
+            "status": "completed"
+          }
+        }
+      ],
+      "nodes": [
+        {
+          "nodeId": "n1",
+          "transitions": [
+            {
+              "stage": "released",
+              "at": "2026-10-12T09:00:02Z",
+              "source": "dag_agent_executions",
+              "detail": "initial"
+            },
+            {
+              "stage": "build",
+              "at": "2026-10-12T09:00:04Z",
+              "seq": 3,
+              "callId": "c_7ea9193cc1c4",
+              "source": "flow_calls",
+              "detail": "executor"
+            },
+            {
+              "stage": "review",
+              "at": "2026-10-12T09:00:11Z",
+              "seq": 9,
+              "callId": "c_13eff316c0d1",
+              "source": "flow_calls",
+              "detail": "reviewer"
+            },
+            {
+              "stage": "accepted",
+              "at": "2026-10-12T09:01:40Z",
+              "source": "dag_agent_acceptances",
+              "detail": "acc-n1"
+            },
+            {
+              "stage": "integrated",
+              "at": "2026-10-12T09:02:06Z",
+              "source": "integration",
+              "detail": "batch-2"
+            }
+          ]
+        },
+        {
+          "nodeId": "n2",
+          "transitions": [
+            {
+              "stage": "released",
+              "at": "2026-10-12T09:00:03Z",
+              "source": "dag_agent_executions",
+              "detail": "initial"
+            },
+            {
+              "stage": "build",
+              "at": "2026-10-12T09:00:19Z",
+              "seq": 16,
+              "callId": "c_c1f8be384e78",
+              "source": "flow_calls",
+              "detail": "executor"
+            },
+            {
+              "stage": "build",
+              "at": "2026-10-12T09:00:27Z",
+              "seq": 23,
+              "callId": "c_66511539b2be",
+              "source": "flow_calls",
+              "detail": "executor-t1"
+            },
+            {
+              "stage": "accepted",
+              "at": "2026-10-12T09:01:45Z",
+              "source": "dag_agent_acceptances",
+              "detail": "acc-n2"
+            },
+            {
+              "stage": "integrated",
+              "at": "2026-10-12T09:02:07Z",
+              "source": "integration",
+              "detail": "batch-2"
+            }
+          ]
+        },
+        {
+          "nodeId": "n3",
+          "transitions": [
+            {
+              "stage": "released",
+              "at": "2026-10-12T09:00:04Z",
+              "source": "dag_agent_executions",
+              "detail": "initial"
+            },
+            {
+              "stage": "build",
+              "at": "2026-10-12T09:00:35Z",
+              "seq": 30,
+              "callId": "c_65f8ce8a7820",
+              "source": "flow_calls",
+              "detail": "executor"
+            },
+            {
+              "stage": "escalated",
+              "at": "2026-10-12T09:01:00Z",
+              "source": "dag_agent_closures",
+              "detail": "dispatch_unknown"
+            }
+          ]
+        }
+      ],
+      "calls": [
+        {
+          "callId": "c_7ea9193cc1c4",
+          "path": "root",
+          "position": 1,
+          "label": "build-n1",
+          "role": "executor",
+          "family": "executor",
+          "node": "n1",
+          "model": "claude-fake-haiku",
+          "effort": "xhigh",
+          "schemaDigest": "62fa33478c75348d546e7cdf71e06f742002b062b8a87e51cd8cc7cbb9c3b417",
+          "threadId": "thr_c_7ea9193cc1c4",
+          "status": "completed",
+          "tokens": {
+            "input": 750,
+            "output": 250,
+            "total": 1000
+          },
+          "turns": 1,
+          "preparedSeq": 3,
+          "preparedAt": "2026-10-12T09:00:04Z",
+          "terminalSeq": 8,
+          "terminalAt": "2026-10-12T09:00:10Z",
+          "result": "{\"files\":[],\"gap\":\"\",\"outcome\":\"ready_for_review\",\"plan_mismatch\":\"\",\"research_question\":\"\",\"summary\":\"\",\"verification\":[]}"
+        },
+        {
+          "callId": "c_13eff316c0d1",
+          "path": "root",
+          "position": 2,
+          "label": "review-n1",
+          "role": "reviewer",
+          "family": "reviewer",
+          "node": "n1",
+          "model": "gpt-fake-sol",
+          "effort": "high",
+          "schemaDigest": "6aa1f4ff88a814ddcf6787c4c70b505a20384e59e2473266258f5645a5546ec6",
+          "threadId": "thr_c_13eff316c0d1",
+          "status": "completed",
+          "tokens": {
+            "input": 300,
+            "output": 100,
+            "total": 400
+          },
+          "turns": 1,
+          "preparedSeq": 9,
+          "preparedAt": "2026-10-12T09:00:11Z",
+          "terminalSeq": 14,
+          "terminalAt": "2026-10-12T09:00:17Z",
+          "result": "{\"criteria\":[],\"defects\":[],\"summary\":\"\",\"verdict\":\"verified\"}"
+        },
+        {
+          "callId": "c_c1f8be384e78",
+          "path": "root",
+          "position": 3,
+          "label": "build-n2",
+          "role": "executor",
+          "family": "executor",
+          "node": "n2",
+          "model": "claude-fake-haiku",
+          "effort": "xhigh",
+          "threadId": "thr_c_c1f8be384e78",
+          "status": "completed",
+          "tokens": {
+            "input": 525,
+            "output": 175,
+            "total": 700
+          },
+          "turns": 1,
+          "preparedSeq": 16,
+          "preparedAt": "2026-10-12T09:00:19Z",
+          "terminalSeq": 21,
+          "terminalAt": "2026-10-12T09:00:25Z",
+          "result": "\"fake answer to: build n2\""
+        },
+        {
+          "callId": "c_66511539b2be",
+          "path": "root",
+          "position": 5,
+          "label": "build-n2-t1",
+          "role": "executor-t1",
+          "family": "executor",
+          "node": "n2",
+          "model": "claude-fake-sonnet",
+          "effort": "xhigh",
+          "stepDecision": "step_8bb96c4def57",
+          "threadId": "thr_c_66511539b2be",
+          "status": "completed",
+          "tokens": {
+            "input": 675,
+            "output": 225,
+            "total": 900
+          },
+          "turns": 1,
+          "preparedSeq": 23,
+          "preparedAt": "2026-10-12T09:00:27Z",
+          "terminalSeq": 28,
+          "terminalAt": "2026-10-12T09:00:33Z",
+          "result": "\"fake answer to: build n2 again\""
+        },
+        {
+          "callId": "c_65f8ce8a7820",
+          "path": "root",
+          "position": 6,
+          "label": "build-n3",
+          "role": "executor",
+          "family": "executor",
+          "node": "n3",
+          "model": "claude-fake-haiku",
+          "effort": "xhigh",
+          "threadId": "thr_c_65f8ce8a7820",
+          "status": "unknown",
+          "reason": "dispatch_unknown",
+          "tokens": {
+            "input": 0,
+            "output": 0,
+            "total": 0
+          },
+          "turns": 0,
+          "preparedSeq": 30,
+          "preparedAt": "2026-10-12T09:00:35Z",
+          "terminalSeq": 35,
+          "terminalAt": "2026-10-12T09:00:41Z"
+        }
+      ],
+      "decisions": [
+        {
+          "source": "flow_step_decisions",
+          "id": "st-1",
+          "kind": "tier",
+          "node": "n2",
+          "rule": "SP-TIER-1",
+          "fromTier": "executor",
+          "toTier": "executor-t1",
+          "at": "2026-10-12T09:00:50Z"
+        },
+        {
+          "source": "flow_spawn_decisions",
+          "id": "sd-2",
+          "kind": "inline",
+          "node": "n1",
+          "rule": "SP-EXPL-2",
+          "decision": "inline",
+          "at": "2026-10-12T09:00:51Z"
+        },
+        {
+          "source": "dag_agent_closures",
+          "id": "execution:x-n3",
+          "kind": "escalation",
+          "node": "n3",
+          "reason": "dispatch_unknown",
+          "at": "2026-10-12T09:01:00Z"
+        }
+      ]
+    }
+  ],
+  "journal": [
+    {
+      "seq": 1,
+      "at": "2026-10-12T09:03:20Z",
+      "kind": "delivery_deferred_busy",
+      "subject": "ev-2"
+    },
+    {
+      "seq": 2,
+      "at": "2026-10-12T09:03:25Z",
+      "kind": "delivery_deferred_busy",
+      "subject": "ev-3"
+    },
+    {
+      "seq": 3,
+      "at": "2026-10-12T09:03:20Z",
+      "kind": "delivery_queued",
+      "subject": "ev-1"
+    },
+    {
+      "seq": 5,
+      "at": "2026-10-12T09:03:22Z",
+      "kind": "event_accepted",
+      "subject": "ev-1"
+    }
+  ],
+  "deliveries": [
+    {
+      "eventId": "ev-1",
+      "relationshipId": "rel-1",
+      "recipientTaskId": "task-a",
+      "kind": "verdict",
+      "state": "dispatched",
+      "createdAt": "2026-10-12T09:03:20Z",
+      "firstSentAt": "2026-10-12T09:03:24Z",
+      "sends": 1,
+      "busyAnswers": 0
+    },
+    {
+      "eventId": "ev-2",
+      "relationshipId": "rel-1",
+      "recipientTaskId": "task-a",
+      "kind": "verdict",
+      "state": "dispatched",
+      "createdAt": "2026-10-12T09:03:20Z",
+      "firstSentAt": "2026-10-12T09:03:30Z",
+      "sends": 2,
+      "busyAnswers": 2
+    },
+    {
+      "eventId": "ev-3",
+      "relationshipId": "rel-2",
+      "recipientTaskId": "task-a",
+      "kind": "verdict",
+      "state": "deferred_busy",
+      "holdReason": "busy_cap",
+      "createdAt": "2026-10-12T09:03:25Z",
+      "sends": 0,
+      "busyAnswers": 3
+    }
+  ],
+  "acceptances": [
+    {
+      "acceptanceId": "acc-n1",
+      "kind": "agent",
+      "planId": "plan-1",
+      "nodeId": "n1",
+      "executionId": "x-n1",
+      "reviewerCallId": "c_13eff316c0d1",
+      "at": "2026-10-12T09:01:40Z"
+    },
+    {
+      "acceptanceId": "acc-n2",
+      "kind": "agent",
+      "planId": "plan-1",
+      "nodeId": "n2",
+      "executionId": "x-n2",
+      "reviewerCallId": "c_13eff316c0d1",
+      "at": "2026-10-12T09:01:45Z"
+    }
+  ],
+  "integration": [
+    {
+      "batchId": "batch-1",
+      "planId": "plan-1",
+      "intentAt": "2026-10-12T09:01:50Z",
+      "landed": false,
+      "nodes": [
+        {
+          "nodeId": "n1",
+          "acceptanceId": "acc-n1",
+          "intentAt": "2026-10-12T09:01:50Z"
+        },
+        {
+          "nodeId": "n2",
+          "acceptanceId": "acc-n2",
+          "intentAt": "2026-10-12T09:01:50Z"
+        }
+      ]
+    },
+    {
+      "batchId": "batch-2",
+      "planId": "plan-1",
+      "ref": "refs/heads/integration",
+      "intentAt": "2026-10-12T09:02:00Z",
+      "movedAt": "2026-10-12T09:02:05Z",
+      "landed": true,
+      "nodes": [
+        {
+          "nodeId": "n1",
+          "acceptanceId": "acc-n1",
+          "intentAt": "2026-10-12T09:02:00Z",
+          "markedAt": "2026-10-12T09:02:06Z"
+        },
+        {
+          "nodeId": "n2",
+          "acceptanceId": "acc-n2",
+          "intentAt": "2026-10-12T09:02:00Z",
+          "markedAt": "2026-10-12T09:02:07Z"
+        }
+      ]
+    }
+  ],
+  "aux": {
+    "syncOutbox": {
+      "rows": 2,
+      "byState": {
+        "done": 1,
+        "pending": 1
+      }
+    },
+    "mergeTrains": {
+      "trains": 1,
+      "members": 1,
+      "events": 1
+    }
+  }
+}

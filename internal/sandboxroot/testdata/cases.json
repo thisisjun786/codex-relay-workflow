@@ -1,0 +1,2800 @@
+{
+ "schema": "crw-sandbox-root-cases/1",
+ "cases": [
+  {
+   "name": "account_home",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/home/jun",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "account_home"
+   }
+  },
+  {
+   "name": "home_ancestor",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/home",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "home_ancestor"
+   }
+  },
+  {
+   "name": "filesystem_root",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "/",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "filesystem_root"
+   }
+  },
+  {
+   "name": "symlink_to_home",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {
+    "{root}/scratch/crw/link": "{root}/home/jun"
+   },
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/scratch/crw/link",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "account_home",
+    "resolved": "{root}/home/jun"
+   }
+  },
+  {
+   "name": "dotdot_to_home",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/scratch/crw/../../home/jun",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "account_home",
+    "resolved": "{root}/home/jun"
+   }
+  },
+  {
+   "name": "dotdot_to_home_ancestor",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/scratch/crw/../../home",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "home_ancestor",
+    "resolved": "{root}/home"
+   }
+  },
+  {
+   "name": "project_ancestor_code",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere",
+    "{root}/home/jun/code/aas",
+    "{root}/home/jun/code/crw"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": "[projects.\"{root}/home/jun/code/aas\"]\ntrust_level = \"trusted\"\n\n[projects.\"{root}/home/jun/code/crw\"]\ntrust_level = \"trusted\"\n\n",
+   "kind": "check",
+   "candidate": "{root}/home/jun/code",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "project_ancestor",
+    "project": "{root}/home/jun/code/aas"
+   }
+  },
+  {
+   "name": "project_ancestor_names_one_project",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere",
+    "{root}/home/jun/code/aas",
+    "{root}/home/jun/code/crw"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": "[projects.\"{root}/home/jun/code/crw\"]\ntrust_level = \"trusted\"\n\n[projects.\"{root}/home/jun/code/aas\"]\ntrust_level = \"trusted\"\n\n",
+   "kind": "check",
+   "candidate": "{root}/home/jun/code",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "project_ancestor",
+    "project": "{root}/home/jun/code/aas"
+   }
+  },
+  {
+   "name": "project_ancestor_under_sandbox_root",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere",
+    "{root}/scratch/crw/repo"
+   ],
+   "git_dirs": [
+    "{root}/scratch/crw/repo"
+   ],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": "[projects.\"{root}/scratch/crw/repo\"]\ntrust_level = \"trusted\"\n\n",
+   "kind": "check",
+   "candidate": "{root}/scratch/crw",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "project_ancestor",
+    "project": "{root}/scratch/crw/repo"
+   }
+  },
+  {
+   "name": "project_ancestor_git_file_under_sandbox_root",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere",
+    "{root}/scratch/crw/repo"
+   ],
+   "git_dirs": [],
+   "git_files": [
+    "{root}/scratch/crw/repo"
+   ],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": "[projects.\"{root}/scratch/crw/repo\"]\ntrust_level = \"trusted\"\n\n",
+   "kind": "check",
+   "candidate": "{root}/scratch/crw",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "project_ancestor",
+    "project": "{root}/scratch/crw/repo"
+   }
+  },
+  {
+   "name": "project_ancestor_intermediate_under_sandbox_root",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere",
+    "{root}/scratch/crw/group/repo"
+   ],
+   "git_dirs": [
+    "{root}/scratch/crw/group/repo"
+   ],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": "[projects.\"{root}/scratch/crw/group/repo\"]\ntrust_level = \"trusted\"\n\n",
+   "kind": "check",
+   "candidate": "{root}/scratch/crw/group",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "project_ancestor",
+    "project": "{root}/scratch/crw/group/repo"
+   }
+  },
+  {
+   "name": "relative",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "scratch/crw",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "relative"
+   }
+  },
+  {
+   "name": "relative_dot",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": ".",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "relative"
+   }
+  },
+  {
+   "name": "missing",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/scratch/crw/nope",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "missing"
+   }
+  },
+  {
+   "name": "missing_is_not_created",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/scratch/crw/nope/deeper",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "missing"
+   }
+  },
+  {
+   "name": "outside_dedicated_root",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/opt/elsewhere",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "outside_dedicated_root"
+   }
+  },
+  {
+   "name": "outside_dedicated_root_home_child",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere",
+    "{root}/home/jun/other"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/home/jun/other",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "outside_dedicated_root"
+   }
+  },
+  {
+   "name": "outside_sandbox_root_parent",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/scratch",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "outside_dedicated_root"
+   }
+  },
+  {
+   "name": "allow_sandbox_root_itself",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/scratch/crw",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "allow"
+   }
+  },
+  {
+   "name": "allow_path_under_sandbox_root",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/scratch/crw/pre-eval/pr-1",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "allow"
+   }
+  },
+  {
+   "name": "allow_non_project_dir_with_trust_key",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": "[projects.\"{root}/scratch/crw/pre-eval/pr-1\"]\ntrust_level = \"trusted\"\n\n[projects.\"{root}/scratch/crw/pre-eval\"]\ntrust_level = \"trusted\"\n\n",
+   "kind": "check",
+   "candidate": "{root}/scratch/crw/pre-eval/pr-1",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "allow"
+   }
+  },
+  {
+   "name": "allow_sandbox_root_with_only_nonrepo_keys",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere",
+    "{root}/scratch/crw/pre-eval"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": "[projects.\"{root}/scratch/crw/pre-eval/pr-1\"]\ntrust_level = \"trusted\"\n\n[projects.\"{root}/scratch/crw/pre-eval\"]\ntrust_level = \"trusted\"\n\n[projects.\"{root}/scratch/crw\"]\ntrust_level = \"trusted\"\n\n",
+   "kind": "check",
+   "candidate": "{root}/scratch/crw",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "allow"
+   }
+  },
+  {
+   "name": "allow_project_root_itself",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere",
+    "{root}/home/jun/code/aas",
+    "{root}/home/jun/code/crw"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": "[projects.\"{root}/home/jun/code/aas\"]\ntrust_level = \"trusted\"\n\n[projects.\"{root}/home/jun/code/crw\"]\ntrust_level = \"trusted\"\n\n",
+   "kind": "check",
+   "candidate": "{root}/home/jun/code/aas",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "allow"
+   }
+  },
+  {
+   "name": "allow_inside_project_root",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere",
+    "{root}/home/jun/code/aas/src"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": "[projects.\"{root}/home/jun/code/aas\"]\ntrust_level = \"trusted\"\n\n[projects.\"{root}/home/jun/code/crw\"]\ntrust_level = \"trusted\"\n\n",
+   "kind": "check",
+   "candidate": "{root}/home/jun/code/aas/src",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "allow"
+   }
+  },
+  {
+   "name": "allow_project_under_sandbox_root",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere",
+    "{root}/scratch/crw/repo"
+   ],
+   "git_dirs": [
+    "{root}/scratch/crw/repo"
+   ],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": "[projects.\"{root}/scratch/crw/repo\"]\ntrust_level = \"trusted\"\n\n",
+   "kind": "check",
+   "candidate": "{root}/scratch/crw/repo",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "allow"
+   }
+  },
+  {
+   "name": "allow_inside_project_under_sandbox_root",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere",
+    "{root}/scratch/crw/repo/sub"
+   ],
+   "git_dirs": [
+    "{root}/scratch/crw/repo"
+   ],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": "[projects.\"{root}/scratch/crw/repo\"]\ntrust_level = \"trusted\"\n\n",
+   "kind": "check",
+   "candidate": "{root}/scratch/crw/repo/sub",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "allow"
+   }
+  },
+  {
+   "name": "allow_other_dir_beside_project_under_sandbox_root",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere",
+    "{root}/scratch/crw/repo"
+   ],
+   "git_dirs": [
+    "{root}/scratch/crw/repo"
+   ],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": "[projects.\"{root}/scratch/crw/repo\"]\ntrust_level = \"trusted\"\n\n",
+   "kind": "check",
+   "candidate": "{root}/scratch/crw/pre-eval/pr-1",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "allow"
+   }
+  },
+  {
+   "name": "explicit_project_root_under_sandbox_root_is_kept",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere",
+    "{root}/scratch/crw/plain"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    },
+    "sandbox": {
+     "project_roots": [
+      "{root}/scratch/crw/plain"
+     ]
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/scratch/crw",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "project_ancestor",
+    "project": "{root}/scratch/crw/plain"
+   }
+  },
+  {
+   "name": "explicit_project_root_allowed_itself",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere",
+    "{root}/home/jun/work/proj"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    },
+    "sandbox": {
+     "project_roots": [
+      "{root}/home/jun/work/proj"
+     ]
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/home/jun/work/proj",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "allow"
+   }
+  },
+  {
+   "name": "explicit_project_root_ancestor_refused",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere",
+    "{root}/home/jun/work/proj"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    },
+    "sandbox": {
+     "project_roots": [
+      "{root}/home/jun/work/proj"
+     ]
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/home/jun/work",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "project_ancestor",
+    "project": "{root}/home/jun/work/proj"
+   }
+  },
+  {
+   "name": "explicit_project_roots_drop_missing_root_and_home",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    },
+    "sandbox": {
+     "project_roots": [
+      "{root}/missing",
+      "/",
+      "{root}/home/jun",
+      "{root}/home"
+     ]
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/scratch/crw",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "allow"
+   }
+  },
+  {
+   "name": "project_list_ignores_home_key",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": "[projects.\"{root}/home/jun\"]\ntrust_level = \"trusted\"\n\n",
+   "kind": "check",
+   "candidate": "{root}/home/jun",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "account_home"
+   }
+  },
+  {
+   "name": "project_list_home_key_does_not_allow_home_child",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere",
+    "{root}/home/jun/other"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": "[projects.\"{root}/home/jun\"]\ntrust_level = \"trusted\"\n\n",
+   "kind": "check",
+   "candidate": "{root}/home/jun/other",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "outside_dedicated_root"
+   }
+  },
+  {
+   "name": "project_list_ignores_missing_key",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": "[projects.\"{root}/opt/gone\"]\ntrust_level = \"trusted\"\n\n",
+   "kind": "check",
+   "candidate": "{root}/opt",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "outside_dedicated_root"
+   }
+  },
+  {
+   "name": "project_list_symlink_key_resolves_to_its_real_path",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere",
+    "{root}/opt/real",
+    "{root}/home/jun/code"
+   ],
+   "git_dirs": [
+    "{root}/opt/real"
+   ],
+   "git_files": [],
+   "symlinks": {
+    "{root}/home/jun/code/link": "{root}/opt/real"
+   },
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": "[projects.\"{root}/home/jun/code/link\"]\ntrust_level = \"trusted\"\n\n",
+   "kind": "check",
+   "candidate": "{root}/home/jun/code/link",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "allow"
+   }
+  },
+  {
+   "name": "allow_linked_worktree_under_worktree_root",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere",
+    "{root}/data/worktrees/abc/repo"
+   ],
+   "git_dirs": [],
+   "git_files": [
+    "{root}/data/worktrees/abc/repo"
+   ],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw",
+     "worktree_root": "{root}/data/worktrees"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/data/worktrees/abc/repo",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "allow"
+   }
+  },
+  {
+   "name": "allow_inside_linked_worktree",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere",
+    "{root}/data/worktrees/abc/repo/sub"
+   ],
+   "git_dirs": [],
+   "git_files": [
+    "{root}/data/worktrees/abc/repo"
+   ],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw",
+     "worktree_root": "{root}/data/worktrees"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/data/worktrees/abc/repo/sub",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "allow"
+   }
+  },
+  {
+   "name": "allow_linked_worktree_under_codex_home",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere",
+    "{root}/codex-home/worktrees/h1/repo"
+   ],
+   "git_dirs": [],
+   "git_files": [
+    "{root}/codex-home/worktrees/h1/repo"
+   ],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw",
+     "worktree_root": "{root}/data/worktrees"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/codex-home/worktrees/h1/repo",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "allow"
+   }
+  },
+  {
+   "name": "refuse_worktree_root_dir_without_git_file",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere",
+    "{root}/data/worktrees/abc/repo"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw",
+     "worktree_root": "{root}/data/worktrees"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/data/worktrees/abc/repo",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "outside_dedicated_root"
+   }
+  },
+  {
+   "name": "refuse_clone_with_git_dir_under_worktree_root",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere",
+    "{root}/data/worktrees/abc/repo"
+   ],
+   "git_dirs": [
+    "{root}/data/worktrees/abc/repo"
+   ],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw",
+     "worktree_root": "{root}/data/worktrees"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/data/worktrees/abc/repo",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "outside_dedicated_root"
+   }
+  },
+  {
+   "name": "refuse_worktree_root_itself",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere",
+    "{root}/data/worktrees"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw",
+     "worktree_root": "{root}/data/worktrees"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/data/worktrees",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "outside_dedicated_root"
+   }
+  },
+  {
+   "name": "refuse_worktree_container_dir",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere",
+    "{root}/data/worktrees/abc/repo"
+   ],
+   "git_dirs": [],
+   "git_files": [
+    "{root}/data/worktrees/abc/repo"
+   ],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw",
+     "worktree_root": "{root}/data/worktrees"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/data/worktrees/abc",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "outside_dedicated_root"
+   }
+  },
+  {
+   "name": "fake_home_under_sandbox_root_is_not_protected",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere",
+    "{root}/scratch/crw/fakehome"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/scratch/crw",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "allow"
+   },
+   "home_env": "{root}/scratch/crw/fakehome"
+  },
+  {
+   "name": "fake_home_under_sandbox_root_is_allowed",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere",
+    "{root}/scratch/crw/fakehome"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/scratch/crw/fakehome",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "allow"
+   },
+   "home_env": "{root}/scratch/crw/fakehome"
+  },
+  {
+   "name": "env_home_outside_sandbox_root_is_protected",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere",
+    "{root}/other/h"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/other/h",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "account_home"
+   },
+   "home_env": "{root}/other/h"
+  },
+  {
+   "name": "env_home_outside_sandbox_root_ancestor_is_refused",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere",
+    "{root}/other/h"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/other",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "home_ancestor"
+   },
+   "home_env": "{root}/other/h"
+  },
+  {
+   "name": "writable_account_home",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "writable",
+   "candidate": "{root}/home/jun",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "account_home"
+   }
+  },
+  {
+   "name": "writable_home_ancestor",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "writable",
+   "candidate": "{root}/home",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "home_ancestor"
+   }
+  },
+  {
+   "name": "writable_filesystem_root",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "writable",
+   "candidate": "/",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "filesystem_root"
+   }
+  },
+  {
+   "name": "writable_relative",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "writable",
+   "candidate": "tmp",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "relative"
+   }
+  },
+  {
+   "name": "writable_missing",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "writable",
+   "candidate": "{root}/nope",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "missing"
+   }
+  },
+  {
+   "name": "writable_project_ancestor",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere",
+    "{root}/home/jun/code/aas"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": "[projects.\"{root}/home/jun/code/aas\"]\ntrust_level = \"trusted\"\n\n",
+   "kind": "writable",
+   "candidate": "{root}/home/jun/code",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "project_ancestor",
+    "project": "{root}/home/jun/code/aas"
+   }
+  },
+  {
+   "name": "writable_outside_dedicated_root_is_allowed",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "writable",
+   "candidate": "{root}/opt/elsewhere",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "allow"
+   }
+  },
+  {
+   "name": "writable_under_home_is_allowed",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere",
+    "{root}/home/jun/other"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "writable",
+   "candidate": "{root}/home/jun/other",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "allow"
+   }
+  },
+  {
+   "name": "destination_new_under_worktree_root",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere",
+    "{root}/data/worktrees"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw",
+     "worktree_root": "{root}/data/worktrees"
+    }
+   },
+   "codex_toml": null,
+   "kind": "destination",
+   "candidate": "{root}/data/worktrees/new",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "allow"
+   }
+  },
+  {
+   "name": "destination_nested_new_under_worktree_root",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere",
+    "{root}/data/worktrees"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw",
+     "worktree_root": "{root}/data/worktrees"
+    }
+   },
+   "codex_toml": null,
+   "kind": "destination",
+   "candidate": "{root}/data/worktrees/a/b/c",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "allow"
+   }
+  },
+  {
+   "name": "destination_new_under_worktree_root_missing_root",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw",
+     "worktree_root": "{root}/data/worktrees"
+    }
+   },
+   "codex_toml": null,
+   "kind": "destination",
+   "candidate": "{root}/data/worktrees/new",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "allow"
+   }
+  },
+  {
+   "name": "destination_new_under_codex_home_worktrees",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere",
+    "{root}/codex-home"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw",
+     "worktree_root": "{root}/data/worktrees"
+    }
+   },
+   "codex_toml": null,
+   "kind": "destination",
+   "candidate": "{root}/codex-home/worktrees/h/repo",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "allow"
+   }
+  },
+  {
+   "name": "destination_new_under_sandbox_root",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "destination",
+   "candidate": "{root}/scratch/crw/wt",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "allow"
+   }
+  },
+  {
+   "name": "destination_new_in_project_root",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere",
+    "{root}/home/jun/code/aas"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": "[projects.\"{root}/home/jun/code/aas\"]\ntrust_level = \"trusted\"\n\n",
+   "kind": "destination",
+   "candidate": "{root}/home/jun/code/aas/wt",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "allow"
+   }
+  },
+  {
+   "name": "destination_account_home",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "destination",
+   "candidate": "{root}/home/jun",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "account_home"
+   }
+  },
+  {
+   "name": "destination_home_ancestor",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "destination",
+   "candidate": "{root}/home",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "home_ancestor"
+   }
+  },
+  {
+   "name": "destination_filesystem_root",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "destination",
+   "candidate": "/",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "filesystem_root"
+   }
+  },
+  {
+   "name": "destination_relative",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "destination",
+   "candidate": "wt/new",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "relative"
+   }
+  },
+  {
+   "name": "destination_worktree_root_itself",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere",
+    "{root}/data/worktrees"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw",
+     "worktree_root": "{root}/data/worktrees"
+    }
+   },
+   "codex_toml": null,
+   "kind": "destination",
+   "candidate": "{root}/data/worktrees",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "outside_dedicated_root"
+   }
+  },
+  {
+   "name": "destination_outside_dedicated_root",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "destination",
+   "candidate": "{root}/opt/new",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "outside_dedicated_root"
+   }
+  },
+  {
+   "name": "destination_new_child_of_home",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "destination",
+   "candidate": "{root}/home/jun/new",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "outside_dedicated_root"
+   }
+  },
+  {
+   "name": "destination_through_symlink_to_home",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {
+    "{root}/scratch/crw/link": "{root}/home/jun"
+   },
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "destination",
+   "candidate": "{root}/scratch/crw/link/new",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "outside_dedicated_root",
+    "resolved": "{root}/home/jun/new"
+   }
+  },
+  {
+   "name": "destination_dotdot_out_of_worktree_root",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere",
+    "{root}/data/worktrees"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw",
+     "worktree_root": "{root}/data/worktrees"
+    }
+   },
+   "codex_toml": null,
+   "kind": "destination",
+   "candidate": "{root}/data/worktrees/../escape",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "outside_dedicated_root",
+    "resolved": "{root}/data/escape"
+   }
+  },
+  {
+   "name": "destination_danger_full_access_is_outside_the_rule",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "destination",
+   "candidate": "{root}/home/jun/new",
+   "sandbox": "danger-full-access",
+   "expect": {
+    "verdict": "allow"
+   }
+  },
+  {
+   "name": "sandbox_off_danger-full-access",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/home/jun",
+   "sandbox": "danger-full-access",
+   "expect": {
+    "verdict": "allow"
+   }
+  },
+  {
+   "name": "sandbox_off_dangerFullAccess",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/home/jun",
+   "sandbox": "dangerFullAccess",
+   "expect": {
+    "verdict": "allow"
+   }
+  },
+  {
+   "name": "sandbox_off_bypass",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/home/jun",
+   "sandbox": "bypass",
+   "expect": {
+    "verdict": "allow"
+   }
+  },
+  {
+   "name": "sandbox_off_writable_home",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "writable",
+   "candidate": "{root}/home/jun",
+   "sandbox": "danger-full-access",
+   "expect": {
+    "verdict": "allow"
+   }
+  },
+  {
+   "name": "sandbox_on_read-only",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/home/jun",
+   "sandbox": "read-only",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "account_home"
+   }
+  },
+  {
+   "name": "sandbox_on_workspace-write",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/home/jun",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "account_home"
+   }
+  },
+  {
+   "name": "sandbox_on_readOnly",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/home/jun",
+   "sandbox": "readOnly",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "account_home"
+   }
+  },
+  {
+   "name": "sandbox_on_workspaceWrite",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/home/jun",
+   "sandbox": "workspaceWrite",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "account_home"
+   }
+  },
+  {
+   "name": "sandbox_on_unknown",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/home/jun",
+   "sandbox": "unknown",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "account_home"
+   }
+  },
+  {
+   "name": "sandbox_on_externalSandbox",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/home/jun",
+   "sandbox": "externalSandbox",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "account_home"
+   }
+  },
+  {
+   "name": "sandbox_on_nonsense",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/home/jun",
+   "sandbox": "nonsense",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "account_home"
+   }
+  },
+  {
+   "name": "sandbox_unspecified_without_config_counts_as_on",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/home/jun",
+   "sandbox": "",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "account_home"
+   }
+  },
+  {
+   "name": "sandbox_unspecified_config_danger_full_access",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": "sandbox_mode = \"danger-full-access\"\n",
+   "kind": "check",
+   "candidate": "{root}/home/jun",
+   "sandbox": "",
+   "expect": {
+    "verdict": "allow"
+   }
+  },
+  {
+   "name": "sandbox_unspecified_config_workspace_write",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": "sandbox_mode = \"workspace-write\"\n",
+   "kind": "check",
+   "candidate": "{root}/home/jun",
+   "sandbox": "",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "account_home"
+   }
+  },
+  {
+   "name": "sandbox_unspecified_config_permission_profile_is_on",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": "sandbox_mode = \"danger-full-access\"\ndefault_permissions = \"ps\"\n",
+   "kind": "check",
+   "candidate": "{root}/home/jun",
+   "sandbox": "",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "account_home"
+   }
+  },
+  {
+   "name": "sandbox_unspecified_selected_profile_overrides",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": "sandbox_mode = \"danger-full-access\"\nprofile = \"tight\"\n[profiles.tight]\nsandbox_mode = \"read-only\"\n",
+   "kind": "check",
+   "candidate": "{root}/home/jun",
+   "sandbox": "",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "account_home"
+   }
+  },
+  {
+   "name": "sandbox_unspecified_selected_profile_turns_it_off",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": "sandbox_mode = \"read-only\"\nprofile = \"open\"\n[profiles.open]\nsandbox_mode = \"danger-full-access\"\n",
+   "kind": "check",
+   "candidate": "{root}/home/jun",
+   "sandbox": "",
+   "expect": {
+    "verdict": "allow"
+   }
+  },
+  {
+   "name": "sandbox_unspecified_unparsable_config_counts_as_on",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": "sandbox_mode = = danger\n",
+   "kind": "check",
+   "candidate": "{root}/home/jun",
+   "sandbox": "",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "account_home"
+   }
+  },
+  {
+   "name": "explicit_sandbox_beats_config_default",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": "sandbox_mode = \"danger-full-access\"\n",
+   "kind": "check",
+   "candidate": "{root}/home/jun",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "account_home"
+   }
+  },
+  {
+   "name": "unusable_sandbox_root_is_account_home",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/home/jun"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/opt/elsewhere",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "sandbox_root_unusable"
+   }
+  },
+  {
+   "name": "unusable_sandbox_root_is_home_ancestor",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/home"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/opt/elsewhere",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "sandbox_root_unusable"
+   }
+  },
+  {
+   "name": "unusable_sandbox_root_missing",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/gone"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/opt/elsewhere",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "sandbox_root_unusable"
+   }
+  },
+  {
+   "name": "unusable_sandbox_root_is_filesystem_root",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "/"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/opt/elsewhere",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "sandbox_root_unusable"
+   }
+  },
+  {
+   "name": "unusable_sandbox_root_relative",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "scratch/crw"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/opt/elsewhere",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "sandbox_root_unusable"
+   }
+  },
+  {
+   "name": "unusable_sandbox_root_symlink_to_home",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {
+    "{root}/lnk": "{root}/home/jun"
+   },
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/lnk"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/opt/elsewhere",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "sandbox_root_unusable"
+   }
+  },
+  {
+   "name": "unusable_sandbox_root_refuses_writable_roots",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/home/jun"
+    }
+   },
+   "codex_toml": null,
+   "kind": "writable",
+   "candidate": "{root}/opt/elsewhere",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "sandbox_root_unusable"
+   }
+  },
+  {
+   "name": "unusable_sandbox_root_refuses_destinations",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/home/jun"
+    }
+   },
+   "codex_toml": null,
+   "kind": "destination",
+   "candidate": "{root}/opt/elsewhere/new",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "sandbox_root_unusable"
+   }
+  },
+  {
+   "name": "unusable_sandbox_root_does_not_stop_a_run_without_sandbox",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/home/jun"
+    }
+   },
+   "codex_toml": null,
+   "kind": "check",
+   "candidate": "{root}/home/jun",
+   "sandbox": "danger-full-access",
+   "expect": {
+    "verdict": "allow"
+   }
+  },
+  {
+   "name": "unusable_sandbox_root_even_for_project_root",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere",
+    "{root}/home/jun/code/aas"
+   ],
+   "git_dirs": [],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/gone"
+    }
+   },
+   "codex_toml": "[projects.\"{root}/home/jun/code/aas\"]\ntrust_level = \"trusted\"\n\n",
+   "kind": "check",
+   "candidate": "{root}/home/jun/code/aas",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "refuse",
+    "rule": "sandbox_root_unusable"
+   }
+  },
+  {
+   "name": "sandbox_root_containing_project_stays_usable_as_a_base",
+   "note": "",
+   "account_home": "{root}/home/jun",
+   "dirs": [
+    "{root}/home/jun",
+    "{root}/scratch/crw",
+    "{root}/scratch/crw/pre-eval/pr-1",
+    "{root}/opt/elsewhere",
+    "{root}/scratch/crw/repo"
+   ],
+   "git_dirs": [
+    "{root}/scratch/crw/repo"
+   ],
+   "git_files": [],
+   "symlinks": {},
+   "crw_config": {
+    "paths": {
+     "sandbox_root": "{root}/scratch/crw"
+    }
+   },
+   "codex_toml": "[projects.\"{root}/scratch/crw/repo\"]\ntrust_level = \"trusted\"\n\n",
+   "kind": "check",
+   "candidate": "{root}/scratch/crw/pre-eval/pr-1",
+   "sandbox": "workspace-write",
+   "expect": {
+    "verdict": "allow"
+   }
+  }
+ ]
+}

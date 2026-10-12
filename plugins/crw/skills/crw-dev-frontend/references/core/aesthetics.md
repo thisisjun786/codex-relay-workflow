@@ -25,7 +25,7 @@ Hero-scale typography belongs to true hero surfaces. It is usually slop inside w
 - **Body**: `text-base text-gray-600 leading-relaxed max-w-[65ch]`
 - **Serif**: BANNED for Dashboard/Software UIs. OK for editorial/creative only.
 
-### Serif Discipline (verified 2026-07-09)
+### Serif Discipline
 Serif is a DOMAIN-GATED direction, not a default and not a blanket ban.
 "It feels creative/premium" is still NOT a reason — but the 2024-2026 serif
 renaissance in AI/tech branding is real and measurable, and direction work
@@ -183,7 +183,7 @@ Atmospheric techniques are secondary:
 - **Layered transparencies**: Frosted glass with inner refraction borders
 - **Dramatic shadows**: Tinted to background hue, not generic black
 
-### Expressive vs Functional Layers (verified 2026-07-09)
+### Expressive vs Functional Layers
 
 The strongest 2025-2026 announcement/hero grammar (OpenAI model cards, Apple
 capsule UI) splits every surface into two layers that must never mix:
@@ -278,7 +278,7 @@ Vary between these. NEVER converge on the same archetype across generations.
 
 ---
 
-### AI-Brand Grammar Vocabulary (verified 2026-07-09)
+### AI-Brand Grammar Vocabulary
 
 Direction shorthand for AI/tech surfaces, grounded in who actually designed what:
 

@@ -1,6 +1,6 @@
 # Full Pre-Flight Checklist (launch/audit depth)
 
-Companion to `dev-frontend/SKILL.md` §14. The router keeps the minimum blocking gates;
+Companion to `dev-frontend/SKILL.md` §12. The router keeps the minimum blocking gates;
 this file is the full launch/audit list. Production surfaces only (`dev` §0.4).
 
 ## Design & composition
@@ -25,7 +25,7 @@ this file is the full launch/audit list. Production surfaces only (`dev` §0.4).
 
 ## States & behavior
 - [ ] Loading, empty, and error states provided
-- [ ] State classified before adding store/Context/Effect/cache (SKILL §12)
+- [ ] State classified before adding store/Context/Effect/cache (SKILL §9)
 - [ ] Effects sync with external systems; derived state is not Effect-synced
 - [ ] Container queries considered before viewport-query or JS layout workarounds
 - [ ] View transitions respect reduced motion
@@ -34,7 +34,7 @@ this file is the full launch/audit list. Production surfaces only (`dev` §0.4).
 - [ ] Forms validate with schema and show field-level errors (SKILL §8)
 - [ ] Focus management on modals and popovers (SKILL §7)
 - [ ] Interactive components isolated as Client Components (if RSC)
-- [ ] Error Boundaries wrap major sections, not the entire app (SKILL §13)
+- [ ] Error Boundaries wrap major sections, not the entire app (SKILL §10)
 
 ## Korean-first
 - [ ] CJK typography and Korean UX writing rules followed (korea-2026.md, ux-writing-ko.md)

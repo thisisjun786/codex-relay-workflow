@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -19,6 +20,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/sandboxroot/sandboxroottest"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
@@ -26,6 +28,20 @@ func TestMain(m *testing.M) {
 	testsupport.Main(m, testsupport.TempDirInRoot, func(root string) (func() error, error) {
 		suiteDirectory = root
 		return nil, installSuiteBinary(root)
+	}, sandboxroottest.Setup, func(root string) (func() error, error) {
+		workspaceRoot = filepath.Join(root, "fs", "workspace", "example")
+		worktree = ws("codex-session-relay/relay-core")
+		rootsCWD = ws("tasks/PA")
+		recordedRoots = []any{rootsCWD, ws("run"), ws("evidence"), ws("relay-state")}
+		if err := os.MkdirAll(filepath.Join(root, "parent"), 0o755); err != nil {
+			return nil, err
+		}
+		for _, dir := range append([]any{worktree, ws("elsewhere")}, recordedRoots...) {
+			if err := os.MkdirAll(dir.(string), 0o755); err != nil {
+				return nil, err
+			}
+		}
+		return nil, nil
 	})
 }
 
@@ -268,7 +284,15 @@ func page(rows ...map[string]any) map[string]any {
 	return map[string]any{"data": a, "nextCursor": nil}
 }
 
-const worktree = "/workspace/example/codex-session-relay/relay-core"
+// workspaceRoot holds the directories the scenarios name as a thread's cwd and roots. They are real
+// directories below the suite directory, which the sandbox-root rule (CRW-1265) reads as its sandbox
+// base, and the goldens keep them under the name the scenarios were recorded with.
+var workspaceRoot string
+
+// ws is the directory rel below the scenarios' workspace.
+func ws(rel string) string { return filepath.Join(workspaceRoot, rel) }
+
+var worktree string
 
 func authorized() map[string]any {
 	return map[string]any{"sandbox": map[string]any{"type": "workspaceWrite", "writableRoots": []any{}, "networkAccess": false, "excludeTmpdirEnvVar": false, "excludeSlashTmp": false}, "approvalPolicy": "never", "cwd": worktree, "runtimeWorkspaceRoots": []any{worktree}, "model": "anthropic/claude-opus-5", "reasoningEffort": "xhigh", "environments": []any{map[string]any{"environmentId": "local", "cwd": worktree, "runtimeWorkspaceRoots": []any{worktree}}}}

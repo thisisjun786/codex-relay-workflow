@@ -17,7 +17,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "CRW-1083: chat index --verify (content-verified freshness) is listed in the synopsis and described, as the usage text of the port lists it CRW-1220: the description states the corpus; the host memory pipeline diagnosis moves to references/operator.md for the manager",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
       "hunks": [
         {
           "line": 3,
@@ -68,8 +68,16 @@
             "`crw recall memory status` reports the HOST extraction pipeline, which is a different system\n",
             "from the recall index above: per-kind job counts, jobs that exhausted their retries\n",
             "bucketed by cause, and the newest success. It names the store it read, because the host\n",
-            "supports more than one memories schema, and reports `unsupported` rather than guessing.\n",
-            "\n",
+            "supports more than one memories schema, and reports `unsupported` rather than guessing.\n"
+          ],
+          "new": [
+            "Diagnosing the host memory pipeline (`crw recall memory status`, `crw recall memory requeue`) is operator\n",
+            "work for the manager: [operator.md](references/operator.md).\n"
+          ]
+        },
+        {
+          "line": 62,
+          "old": [
             "Every snapshot carries `observationSource: \"jobs-db\"`, identifying the collector even\n",
             "when the store is missing or unreadable. `effectiveExtractionRoute` and\n",
             "`startupGuardDecision` are always `\"unknown\"`: job history, including a recent success\n",
@@ -85,11 +93,17 @@
             "By default it selects only transient causes; `--include-context-window` is opt-in and\n",
             "usually a bad idea, since an input that did not fit the context window will not fit on a\n",
             "retry either — it just spends quota failing again.\n",
-            "- `--json` on `crw recall chat index` prints index status as JSON.\n"
-          ],
-          "new": [
-            "Diagnosing the host memory pipeline (`crw recall memory status`, `crw recall memory requeue`) is operator\n",
-            "work for the manager: [operator.md](references/operator.md).\n"
+            "- `--json` on `crw recall chat index` prints index status as JSON.\n",
+            "\n"
+          ]
+        },
+        {
+          "line": 215,
+          "old": [
+            "- **Aside** (`aside` on PATH): `aside memory search --json \"<q>\"`. If the top\n",
+            "  score is below 0.72, treat the semantic lane as a miss. Recover proper nouns\n",
+            "  with `rg --fixed-strings`. Dedupe by `path` (neighbor chunks of the same file\n",
+            "  are not extra evidence).\n"
           ]
         }
       ]

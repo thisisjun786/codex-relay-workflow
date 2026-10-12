@@ -39,5 +39,8 @@ var rowTestReads = []rowTestRead{
 	{"TestRepoGovernanceInCanon", "internal/dev/ci", []string{"plugins/crw/skills/crw-dev-devops/", "plugins/crw/skills/crw-canon/references/", "plugins/crw/skills/crw-dev/references/"}, nil},
 	{"TestPabcdHasNoPlanTriggers", "internal/dev/ci", []string{"plugins/crw/skills/crw-pabcd/SKILL.md", "plugins/crw/skills/crw-plan/SKILL.md", "plugins/crw/skills/crw-define/SKILL.md", "plugins/crw/skills/crw-interview/SKILL.md"}, nil},
 	{"TestRefactorHasNoWriteProcedure", "internal/dev/ci", []string{"plugins/crw/skills/crw-refactor/SKILL.md", "plugins/crw/skills/crw-refactor/references/candidate-record.md"}, nil},
+	{"TestNoDuplicateSkillAssets", "internal/dev/ci", []string{"plugins/crw/skills/"}, nil},
+	{"TestScaffoldingCanonWording", "internal/dev/ci", []string{"plugins/crw/skills/crw-dev-scaffolding/"}, nil},
+	{"TestScaffoldAuditMergedCoversBothCallers", "internal/dev/ci", []string{"plugins/crw/skills/crw-dev-scaffolding/scripts/scaffold-audit.sh", "plugins/crw/skills/crw-dev-backend/scripts/README.md"}, nil},
 	{"TestTidyJobsSeparated", "internal/dev/ci", []string{"plugins/crw/skills/crw-tidy/SKILL.md", "plugins/crw/skills/crw-tidy/references/surfaces.md"}, nil},
 }

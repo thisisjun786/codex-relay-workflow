@@ -1,6 +1,6 @@
 ---
 name: crw-dev-frontend
-description: "MUST USE for any frontend, web UI, or visual implementation work — building, styling, or redesigning pages/components, responsive layouts, motion, component architecture, and production-surface polish. Pairs with crw-dev-uiux-design: load it first when design direction is vague; this skill implements the chosen direction. Triggers: 'frontend', 'UI', 'component', 'CSS', 'responsive', 'animation', 'React', 'Vue', 'Svelte', 'Tailwind', 'layout', 'styling', 'redesign', 'mockup', 'anti-slop', '프론트엔드', 'UI 작업', '반응형', '디자인 수정'."
+description: "Frontend and web UI implementation: building, styling or redesigning pages and components, responsive layouts, motion, component architecture. Implements the direction chosen with crw-dev-uiux-design. Triggers: frontend, UI, component, CSS, responsive, animation, React, Tailwind, 프론트엔드, 반응형."
 ---
 
 # Dev-Frontend — Domain-Correct Frontend Engineering
@@ -31,8 +31,7 @@ wiring, visual verification, and frontend platform rules.
 | ----------------------------------------- | ------------------------------------ | --------------------------------------------------------------------------------- |
 | `references/core/crud-ui.md`              | C2 list/detail/form product screens  | State coverage (loading/empty/error/permission), forms, objective UX gates         |
 | `references/core/anti-slop.md`            | New/redesigned visual surfaces, visual audits, and variant generation | 2026 AI slop patterns, Korean slop, oversized text, fake assets, default UI smells |
-| `../crw-dev-uiux-design/references/design-trends.md` | Calibrating a dated design example | Source provenance, surface-specific exceptions, and re-verification before promoting a sample to a default |
-| `../crw-dev-uiux-design/references/design-trends.md` | Implementing a dated trend or checking whether a technique is stable | 2026-07-14 axis prevalence, technique maturity, signature status, risks, and re-crawl/promotion rules |
+| `../crw-dev-uiux-design/references/design-trends.md` | Calibrating a dated design example, implementing a dated trend or checking whether a technique is stable | Source provenance, surface-specific exceptions, axis prevalence, technique maturity, signature status, risks, and re-crawl/promotion rules |
 | `references/core/aesthetics.md`           | Implementing an established visual direction | Domain-correct typography, color, composition constraints, serif three-role system, expressive/functional layers, AI-brand grammar |
 | `references/core/product-density.md`      | Apps, tools, dashboards              | Density profiles for landing, consumer app, SaaS, ops, finance, devtools          |
 | `references/core/asset-requirements.md`   | Any public/product/visual surface    | Required screenshots, images, diagrams, charts, generated bitmaps, or 3D assets, mockup production pipeline   |
@@ -48,7 +47,7 @@ wiring, visual verification, and frontend platform rules.
 | `references/core/top-bar.md`              | Top/nav bar composition, sticky chrome | Top-bar grammar: geometry, slots, scroll-state contract (FE-TOPBAR-STATE-01), hover-surface contract (FE-TOPBAR-HOVER-01), domain gate, mobile collapse |
 | `references/core/iterative-design.md`     | Multi-round design                   | LLM convergence problem, Diverge→Kill→Mutate process, upgrade techniques           |
 | `references/core/prototype-variants.md`   | Runnable design variants             | `?variant=` switchers, structurally distinct options, cleanup after winner selection |
-| `references/core/typography-wrapping.md`  | Heading/descriptor text changes      | `text-wrap: balance/pretty`, natural phrase breaks at any width, dynamic-viewport verification, `ch` units, Korean keep-all/orphan rules (verified 2026-07-07) |
+| `references/core/typography-wrapping.md`  | Heading/descriptor text changes      | `text-wrap: balance/pretty`, natural phrase breaks at any width, dynamic-viewport verification, `ch` units, Korean keep-all/orphan rules |
 | `references/core/logo-sections.md`        | Integration/partner logo display     | Marquee CSS, static grid, orphan cell fix, grayscale treatment, no individual hover |
 | `references/core/brand-asset-sourcing.md` | Brand logos in UI                    | Simple Icons/SVGL sourcing, AI agent strategy, placeholder hierarchy, legal guide  |
 | `references/core/reference-capture.md`    | Cloning/analyzing other sites        | HTML+asset capture mechanics (pageAssets/curl), analysis-only legal line, provenance manifest, never-ship gate |
@@ -62,7 +61,7 @@ wiring, visual verification, and frontend platform rules.
 | `references/core/a11y-patterns.md`        | Interactive widgets, modals, forms   | ARIA patterns, focus management, keyboard nav, screen reader testing               |
 | `references/core/performance-budget.md`   | Launch / audit                       | CWV targets, bundle budgets, font loading, image optimization, build gates         |
 | `references/core/theme-switching.md`      | Dark mode / theme                    | CSS custom properties toggle, FOWT prevention, transition, component checklist     |
-| `references/core/color-system.md`         | Color tokens, palettes wiring, theme-ready CSS | Token layering, `oklch()` + fallback discipline, `color-mix()`, `light-dark()`, Tailwind v4/shadcn wiring, contrast gates (verified 2026-07-07) |
+| `references/core/color-tokens.md`         | Color tokens, palettes wiring, theme-ready CSS | Token layering, `oklch()` + fallback discipline, `color-mix()`, `light-dark()`, Tailwind v4/shadcn wiring, contrast gates |
 | `references/core/i18n-global.md`          | Multi-language / RTL                 | RTL layout, pluralization, Intl API, locale switching, content expansion           |
 | See also: `dev-uiux-design` skill         | Vague requests, onboarding, UX states | Intent discovery, design isms, product personalities, onboarding/empty/error patterns |
 | `references/stacks/react.md`              | React projects                       | Server Components, hooks, state, TanStack Query, shadcn/ui, performance            |
@@ -136,7 +135,7 @@ If frontend structure is unclear, read existing source-of-truth docs first, then
 ## 1.5 Objective Gates vs Style Samples
 
 Two different kinds of rules live in this skill (see `dev` §0.2):
-- **Objective UX gates (STRICT/DEFAULT)** — accessibility baseline (§7, §11), state coverage
+- **Objective UX gates (STRICT/DEFAULT)** — accessibility baseline (§7, §8), state coverage
   (loading/empty/error/permission), keyboard operability, visible focus, contrast. Missing
   these are review findings.
 - **Style direction (STYLE_SAMPLE)** — design direction intake (§2), aesthetics, density profiles,
@@ -337,7 +336,7 @@ For widget keyboard paths, focus trapping, ARIA state, and screen-reader testing
 The objective accessibility baseline in §7 remains mandatory.
 ---
 
-## 12. Frontend Platform Rules
+## 9. Frontend Platform Rules
 Prefer project conventions; detect installed framework/version before changing configuration.
 Read `references/stacks/react.md` for React 19.2+ features, Compiler, Suspense, Effects, state.
 Read `references/stacks/nextjs.md` for Next.js 16 App Router, caching, Server Actions, RSC.
@@ -366,7 +365,7 @@ For shadcn/ui, inspect local components and follow `components.json`, aliases, t
 AI-native interfaces must represent real states; never fake streaming, citations, or tool calls.
 ---
 
-## 13. Error Boundaries
+## 10. Error Boundaries
 
 React Error Boundary pattern:
 - Wrap each major section (not the entire app) in an Error Boundary
@@ -383,11 +382,11 @@ Error state hierarchy:
 
 ---
 
-## 15. Backend Contract & Security Alignment
+## 11. Backend Contract & Security Alignment
 
 Frontend does not operate in isolation. When consuming backend APIs or implementing security-sensitive UI:
 
-### 15.1 Contract Ownership
+### 11.1 Contract Ownership
 
 | Responsibility | Owner |
 |---------------|-------|
@@ -401,7 +400,7 @@ Frontend does not operate in isolation. When consuming backend APIs or implement
 2. If changed, update or add a contract test first (see `dev-testing` §3.5)
 3. Align frontend mocks/fixtures with backend golden examples
 
-### 15.2 Security Responsibilities
+### 11.2 Security Responsibilities
 
 | Control | Policy Owner | Implementation Owner |
 |---------|-------------|---------------------|
@@ -411,13 +410,13 @@ Frontend does not operate in isolation. When consuming backend APIs or implement
 | Token storage | `dev-security` §2 | Frontend (`httpOnly` cookies preferred over `localStorage`) |
 | Auth state display | `dev-security` §2 | Frontend (loading → check → redirect or render; never flash protected content) |
 
-### 15.3 Testing Integration
+### 11.3 Testing Integration
 
 - Playwright smoke tests validate rendered flows AFTER backend API + contract tests pass
 - Frontend unit tests mock API responses using the **same envelope shape** defined in `dev-backend` §5
 - When backend error codes change, frontend error-mapping tests must be updated
 
-## §16 Pre-Flight Checklist
+## 12. Pre-Flight Checklist
 
 Before shipping a production frontend surface, run through the full pre-flight checklist
 at `references/core/preflight-full.md`. It covers design/composition, responsive/mobile,

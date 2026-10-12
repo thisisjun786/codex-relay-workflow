@@ -243,9 +243,34 @@
       ]
     },
     {
-      "file": "references/delegation.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. State the dispatch rules of CRW-1126, CRW-1127 and CRW-1129: a failed or task_failed handoff reads the recorded child first, a created report needs the spawn hook's issuance, a first message carrying the attempt's marker (a child forked from the session is tied by the call's result alone) and a child tied to the issued call by the host's own spawn result (an unissued child only through reconciliation, never satisfying independent review), and a policy stop's child cleanup is recorded by a stopped report without reopening the dispatch. Under multi-agent V2 the created report's agentId is the agent path root/<task> (written with a leading slash) that spawn_agent returns, which the command resolves to the child's thread id, and the spawn hook issues a V2 call whose task it cannot read to the attempt of the dispatch its task_name names when the claim opted in with v2TaskName:true, never to a direct call whose name only equals a dispatch id (CRW-1260). State the dispatch rule of CRW-1257: dispatch is the default procedure of a role with a configured first fallback and not a prohibition, and a direct native spawn the user's current request explicitly asks for is allowed by the spawn hook as unmanaged.",
+      "file": "references/catalog-discovery.yaml",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
       "hunks": [
+        {
+          "line": 15,
+          "old": [
+            "last-verified: 2026-07-04\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/delegation.md",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
+      "hunks": [
+        {
+          "line": 64,
+          "old": [
+            "Repository-only provenance for lifecycle, economy, isolation, skill transport and\n",
+            "topology: `structure/20_pabcd_dispatch_doctrine.md` §3. This is not an installed\n",
+            "prerequisite; do not assume the path exists inside the plugin payload. An explicitly\n",
+            "required task source still must be loaded or reported missing before its governed action.\n"
+          ],
+          "new": [
+            "An explicitly required task source still must be loaded or reported missing before its\n",
+            "governed action.\n"
+          ]
+        },
         {
           "line": 141,
           "old": [
@@ -253,6 +278,16 @@
           ],
           "new": [
             "[Waiting on work](../../crw-loop/references/waiting.md) rules in either HITL or HOTL.\n"
+          ]
+        },
+        {
+          "line": 362,
+          "old": [
+            "at the next P; discard them when the phase map changes. See DISPATCH-ECONOMY-01 in\n",
+            "`structure/20_pabcd_dispatch_doctrine.md` §3 (repository-only provenance, not an installed prerequisite).\n"
+          ],
+          "new": [
+            "at the next P; discard them when the phase map changes. See DISPATCH-ECONOMY-01.\n"
           ]
         },
         {
@@ -478,10 +513,15 @@
     },
     {
       "file": "references/implementation-units.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. CRW-1219: the numbered plan documents are written as workspace-local execution evidence that quotes the Linear canon where the work has an issue (standalone work quotes its request and the repository's contract documents), and this file owns their format.",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
       "hunks": [
         {
           "line": 3,
+          "old": [
+            "Full documentation routine (P concretizes the docs, A audits them as a hard gate, D\n",
+            "archives to `_fin/`, plus the mainstream design-doc/RFC translation table):\n",
+            "[Implementation log](../../dev-scaffolding/references/implementation-log.md).\n"
+          ],
           "new": [
             "The numbered plan documents of a unit are workspace-local execution evidence: the plan as it\n",
             "is carried out in this checkout. Where the work has a Linear issue, each one quotes the Linear issue and documents it implements\n",
@@ -489,17 +529,7 @@
             "[Linear holds canonical documents](../../crw-canon/references/linear-model.md#linear-holds-canonical-documents),\n",
             "and never replaces them. Standalone work with no Linear issue quotes the original request and the repository's own contract documents instead, and creates no issue to have something to cite. A product decision is made and recorded in Linear; a plan document\n",
             "points to it, and where the two disagree the Linear record wins and the plan document is\n",
-            "amended at the next P. This file owns the format of the numbered documents.\n",
-            "\n"
-          ]
-        },
-        {
-          "line": 5,
-          "old": [
-            "[Implementation log](../../dev-scaffolding/references/implementation-log.md).\n"
-          ],
-          "new": [
-            "[Implementation log](../../crw-dev-scaffolding/references/implementation-log.md).\n"
+            "amended at the next P. This file owns the format of the numbered documents.\n"
           ]
         },
         {
@@ -515,8 +545,20 @@
     },
     {
       "file": "references/loop-engineering.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments.",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
       "hunks": [
+        {
+          "line": 60,
+          "old": [
+            "  (design-note lineage, not production-validated). Reviewer lifecycle across rounds is\n",
+            "  owned by `structure/20_pabcd_dispatch_doctrine.md` §3 (DISPATCH-ACTOR-01 /\n",
+            "  DISPATCH-RETIRE-01; repository-only provenance, not an installed prerequisite).\n"
+          ],
+          "new": [
+            "  (design-note lineage, not production-validated). Reviewer lifecycle across rounds follows\n",
+            "  DISPATCH-ACTOR-01 / DISPATCH-RETIRE-01.\n"
+          ]
+        },
         {
           "line": 143,
           "old": [
@@ -532,7 +574,7 @@
     },
     {
       "file": "references/phase-audit.md",
-      "reason": "CRW-1116: name the reviewer's closing line VERDICT: GO-WITH-FIXES (blockers=N) as the form the observer records, with the attest auditResidual disposing of each blocker. The A>B attest names auditBlockers for the blockers of a recorded GO-WITH-FIXES (blockers=N) round.",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
       "hunks": [
         {
           "line": 3,
@@ -541,6 +583,18 @@
           ],
           "new": [
             "2. **A — Audit**: Adversarial, read-only review of the plan against the real codebase. Dispatch an independent read-only reviewer using the exposed spawn schema (`agent_type:\"reviewer\"` when available; otherwise supported `agent_type:\"explorer\"` with `CRW-ROLE: reviewer` before `TASK:`; when the schema has no `agent_type`, use the same header and explicit read-only scope in supported `message` or text-`items`, per the [live-schema transport owner](delegation.md#live-tool-schema-and-role-transport)). Logical scope does not claim a native sandbox. Dispatch this reviewer — even a small/mini-model one — to challenge assumptions, find blockers (rollback gaps, missing callers, phantom constants), and verify references. For each conditional path the plan adds, the reviewer also asks: is the trigger reachable at all from states the system actually visits (callers exist, preconditions can co-occur, upstream code does not consume the trigger first), and does the plan name its activation scenario (C-ACTIVATION-GROUNDING-01)? An unreachable-by-construction branch is a plan blocker, not a C-phase discovery. The reviewer also checks: new devlog phase documents use the numbered lexicographic filename convention; bare-named or research/implementation-mixed docs are a FAIL (LEXICO-SPLIT-01). Multi-phase units satisfy DIFFLEVEL-ROADMAP-01: every roadmap phase has a diff-level decade doc (no outline-only or missing phases), and the phase map is dependency-ordered, not effort-bucketed (PHASE-SPLIT-01). **Audit loop (STRICT, AUDIT-LOOP-01):** A is a loop — audit -> synthesize -> amend plan -> re-audit — not a single round. Exit A>B only when the MAIN agent judges the round **pass** (reviewer approved) or **near-pass**: every High/Critical blocker was folded into the plan as a concrete amendment or explicitly rebutted with recorded rationale, and only non-blocking residuals remain (`GO-WITH-FIXES; 2 blockers folded back` qualifies — the main agent is the judge, not a string parser; the reviewer's own closing line is `VERDICT: GO-WITH-FIXES (blockers=N)`, which the observer records as a near-pass with its count, and the attest's `auditBlockers` then gives each blocker its disposition, folded or rebutted, with the reason). A FAIL round never exits: apply REVIEW-SYNTHESIS-01 (loop-engineering.md §11.3), amend the plan, and re-audit with the SAME reviewer (V2 `followup_task` to its task_name or V1 `send_input` to its agent_id; DISPATCH-ACTOR-01); LOOP-REPAIR-01 bounds the loop — after 3 failed rounds return to P with a changed plan (HITL may return to Interview). The dispatch packet explicitly names `$crw:crw-dev-code-reviewer` AND `$crw:crw-search` (reference/version/external-claim verification rides the search ladder) and instructs the reviewer to end with a normalized final line `VERDICT: PASS | GO-WITH-FIXES (blockers=N) | FAIL` plus numbered blockers. No code changes. The `A>B` attest structurally requires `auditOutput` (the pasted tail of the reviewer's verdict) plus `auditVerdict` (`pass|near-pass|fail` — the MAIN agent's own judgment of the round); `near-pass` additionally requires `auditResidual` naming each residual blocker and its disposition (folded/rebutted); when the recorded reviewer verdict is `GO-WITH-FIXES (blockers=N)` it also requires `auditBlockers`, one `{\"blocker\":<n>,\"disposition\":\"folded\"|\"rebutted\",\"reason\":\"...\"}` for each blocker 1..N (the gate checks that form, in any language, never the prose of `auditResidual`). A declared `fail` never advances, and a pasted tail whose final verdict line says FAIL is rejected regardless of the claimed judgment. Still a form-only bar: the gate cannot verify the paste's provenance, so faithful execution (really dispatching the reviewer, really looping) remains the agent's obligation.\n"
+          ]
+        },
+        {
+          "line": 17,
+          "old": [
+            "  a direct independent audit instead. Normative lifecycle rules: DISPATCH-ACTOR-01 /\n",
+            "  DISPATCH-RETIRE-01 in `structure/20_pabcd_dispatch_doctrine.md` §3\n",
+            "  (repository-only provenance, not an installed prerequisite).\n"
+          ],
+          "new": [
+            "  a direct independent audit instead. Lifecycle rules: DISPATCH-ACTOR-01 /\n",
+            "  DISPATCH-RETIRE-01.\n"
           ]
         }
       ]

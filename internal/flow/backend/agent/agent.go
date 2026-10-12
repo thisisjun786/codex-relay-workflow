@@ -50,6 +50,8 @@ type Config struct {
 	OwnerAlive func(owner string) bool
 	// Source is the Thread.source of the threads the backend creates (DefaultSource when empty).
 	Source string
+	// Bound makes the backend tell the native spawn hook which threads are the run's own (F14); nil writes no binding.
+	Bound *BoundConfig
 }
 
 // Backend is the engine.Backend that runs calls on the App Server. It also places calls (engine.Placer), forks threads
@@ -61,6 +63,8 @@ type Backend struct {
 
 	mu         sync.Mutex
 	tokenTotal map[string]engine.Tokens
+	// orchestrator is the thread BindOrchestrator bound, until CloseOrchestrator.
+	orchestrator string
 }
 
 var (
@@ -94,6 +98,11 @@ func NewHost(cfg Config) (*Backend, error) {
 var errNoAllocator = errors.New("agent: this backend only reads the host: it has no allocator")
 
 func newBackend(cfg Config) (*Backend, error) {
+	if cfg.Bound != nil {
+		if err := cfg.Bound.validate(); err != nil {
+			return nil, err
+		}
+	}
 	if cfg.Threads == nil {
 		cfg.Threads = NewThreads()
 	}

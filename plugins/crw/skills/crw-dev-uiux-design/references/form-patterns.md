@@ -115,4 +115,4 @@ FE-DROPDOWN-LAYER-01): one skin, behavior-correct primitive per pattern.
 
 - Mobile form rules: `dev-frontend/references/core/mobile-ux.md`
 - Validation UX states: `ux-states.md` §9
-- Schema validation: `dev-frontend/SKILL.md` §10 (Zod + react-hook-form)
+- Schema validation: `dev-frontend/SKILL.md` §8 (React, Forms, and Accessibility)

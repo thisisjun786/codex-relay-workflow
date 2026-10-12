@@ -5,7 +5,9 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strconv"
 	"strings"
@@ -114,6 +116,332 @@ func validDocument(document string) error {
 	return nil
 }
 
+// IssueRow is the row a plan summary carries for one issue (one live node of the plan): its stage, the newest verdict with its revision and the gist of its findings, the acceptance that stands and the
+// batch that integrated it. The rows state what the relationship outbox's verdict summary stated of the issue (the verdict, the generation and revision, the criteria set and ruling, the correction it
+// queued, the child, the findings), for the node an agent runs and for the node a managed child runs alike (CRW-1216). Surface says which of the two ran it ("" for a node nothing ran).
+type IssueRow struct {
+	NodeID, IssueKey, Kind, Surface, Stage string
+	// Verdict is nil for an issue nobody has ruled on.
+	Verdict                        *RowVerdict
+	AcceptanceID, IntegrationBatch string
+}
+
+// RowVerdict is the newest verdict of an issue. For a managed child it is the newest ruling of the relationships the plan bound to the node (the verdicts table); for an agent it is the newest completed
+// reviewer call of the node whose result document carries a verdict. Revision is the revision hash of the ruled event, or the commit the reviewer judged; Generation is the execution generation or the
+// attempt; CriteriaSet is the criteria set digest the verdict was given under; Ruling counts the rulings an event has had (1 for the first); NextGeneration is the generation a needs_changes ruling opened.
+type RowVerdict struct {
+	Verdict, Revision, CriteriaSet, ChildTaskID string
+	Generation, Ruling, NextGeneration          int64
+	// Findings are the findings one line each, in the order the verdict gave them; FindingsDigest is the digest of all of them.
+	Findings       []string
+	FindingsDigest string
+}
+
+// summarySubjectOf is what an entry states: the digest that identifies it and the rows its text renders.
+type summarySubjectOf struct {
+	Digest string
+	Rows   []IssueRow
+}
+
+// subjectVersion names the definition of the subject digest. A digest of another definition is another digest, so the first enqueue after an upgrade is one entry more, never a wrong replay.
+const subjectVersion = "dag-summary-subject/2"
+
+// summarySubject is the one place the subject of a summary is computed. The digest is the digest of the progress together with the normalised render of the issue rows (the stage, the newest verdict
+// and its revision, the digest of its findings, the acceptance id, the integration batch of every issue), so a verdict or a finding that changes under the same stage is another subject. EnqueueSummary
+// compares it with the newest entry to replay it, and SummaryStatus compares it with the newest entry for up_to_date. It reads in the transaction of the caller and writes nothing.
+func (s *Scheduler) summarySubject(ctx context.Context, q store.Querier, p Progress) (summarySubjectOf, error) {
+	rows, err := s.issueRows(ctx, q, p)
+	if err != nil {
+		return summarySubjectOf{}, err
+	}
+	keys := make([]any, len(rows))
+	for i, r := range rows {
+		keys[i] = r.key()
+	}
+	raw, err := json.Marshal(keys)
+	if err != nil {
+		return summarySubjectOf{}, err
+	}
+	return summarySubjectOf{Digest: shaOf([]byte(subjectVersion + "\n" + p.Digest + "\n" + string(raw))), Rows: rows}, nil
+}
+
+// key is the normalised render of a row that the subject digest covers. It holds the digest of the findings and not their text: the text of a finding is the row's, the digest is the subject's.
+func (r IssueRow) key() []any {
+	verdict := []any{}
+	if v := r.Verdict; v != nil {
+		verdict = []any{v.Verdict, v.Generation, v.Revision, v.CriteriaSet, v.Ruling, v.NextGeneration, v.ChildTaskID, v.FindingsDigest}
+	}
+	return []any{r.NodeID, r.IssueKey, r.Kind, r.Surface, r.Stage, verdict, r.AcceptanceID, r.IntegrationBatch}
+}
+
+// issueRows reads the row of every live node of the progress, in the order of the progress: the stage, the acceptance and the executions come from the progress itself (the acceptance is acceptanceOf's,
+// the executions are the union of both sides), the verdict from the side that ran the node and the batch from the stage rows of the acceptance.
+func (s *Scheduler) issueRows(ctx context.Context, q store.Querier, p Progress) ([]IssueRow, error) {
+	flow, err := tableExists(ctx, q, "flow_calls")
+	if err != nil {
+		return nil, err
+	}
+	rows := make([]IssueRow, 0, len(p.Nodes))
+	for _, n := range p.Nodes {
+		row := IssueRow{NodeID: n.NodeID, IssueKey: n.IssueKey, Kind: n.Kind, Stage: n.Stage, AcceptanceID: n.AcceptanceID}
+		var relationships []string
+		attempts := map[string]int64{}
+		for _, e := range n.Links.Executions {
+			if e.ExecutionID != "" {
+				attempts[e.ExecutionID] = e.Generation
+			} else if !slices.Contains(relationships, e.RelationshipID) {
+				relationships = append(relationships, e.RelationshipID)
+			}
+		}
+		if row.Surface, err = surfaceOf(ctx, q, p.Reading.PlanID, n.NodeID, len(relationships) > 0, len(attempts) > 0); err != nil {
+			return nil, err
+		}
+		switch row.Surface {
+		case ExecutionAgent:
+			if flow {
+				row.Verdict, err = agentRowVerdict(ctx, q, p.Reading.PlanID, n.NodeID, attempts)
+			}
+		case ExecutionRelationship:
+			row.Verdict, err = relationshipRowVerdict(ctx, q, relationships)
+		}
+		if err != nil {
+			return nil, err
+		}
+		if row.IntegrationBatch, err = integrationBatchOf(ctx, q, n.AcceptanceID); err != nil {
+			return nil, err
+		}
+		rows = append(rows, row)
+	}
+	return rows, nil
+}
+
+// surfaceOf is which side ran the node: the side of its current execution (executionOf reads both), else the only side that ever held one. A node both sides hold without a current execution, or one the two
+// sides contradict, has no side: its row states no verdict rather than the verdict of the wrong side.
+func surfaceOf(ctx context.Context, q store.Querier, plan, node string, relationshipSide, agentSide bool) (string, error) {
+	cur, live, err := executionOf(ctx, q, plan, node)
+	switch {
+	case err != nil && crossKindHeld(err):
+		return "", nil
+	case err != nil:
+		return "", err
+	case live:
+		return cur.Kind, nil
+	case relationshipSide && !agentSide:
+		return ExecutionRelationship, nil
+	case agentSide && !relationshipSide:
+		return ExecutionAgent, nil
+	}
+	return "", nil
+}
+
+const (
+	maxFindingLine = 240
+	maxFindingRows = 12
+)
+
+// findingLine is the finding as the text of the summary shows it: one line, clipped. It is display only: the digest of a row's findings is taken over the whole lines (findingsOf), so a finding that
+// differs beyond the clip is another subject.
+func findingLine(s string) string { return clip(oneLine(s), maxFindingLine) }
+
+// findingsOf is the displayed lines of a row's findings (one line each, clipped) and the digest of the whole lines (one line each, not clipped).
+func findingsOf(whole []string) (lines []string, digest string) {
+	for _, w := range whole {
+		lines = append(lines, findingLine(w))
+	}
+	oneLines := make([]string, len(whole))
+	for i, w := range whole {
+		oneLines[i] = oneLine(w)
+	}
+	return lines, shaOf([]byte(strings.Join(oneLines, "\n")))
+}
+
+// relationshipRowVerdict is the newest ruling over the relationships the plan bound to the node: the ruled event's generation and revision, the criteria set and findings of its context, the generation a
+// needs_changes ruling opened, the child, and how many times the event was ruled (the journal keeps each ruling an earlier one was replaced by).
+func relationshipRowVerdict(ctx context.Context, q store.Querier, relationships []string) (*RowVerdict, error) {
+	if len(relationships) == 0 {
+		return nil, nil
+	}
+	marks := strings.TrimSuffix(strings.Repeat("?,", len(relationships)), ",")
+	args := make([]any, len(relationships))
+	for i, r := range relationships {
+		args[i] = r
+	}
+	var event, findings string
+	v := &RowVerdict{}
+	found, err := queryOne(ctx, q, "SELECT v.event_id, v.verdict, COALESCE(v.next_generation, 0), e.execution_generation, e.revision_hash, COALESCE(c.set_digest, ''), COALESCE(c.findings, ''), COALESCE(r.child_task_id, '')"+
+		" FROM verdicts v JOIN events e ON e.event_id = v.event_id LEFT JOIN verdict_context c ON c.event_id = v.event_id LEFT JOIN relationships r ON r.relationship_id = e.relationship_id"+
+		" WHERE e.relationship_id IN ("+marks+") ORDER BY v.decided_at DESC, v.rowid DESC LIMIT 1", args,
+		&event, &v.Verdict, &v.NextGeneration, &v.Generation, &v.Revision, &v.CriteriaSet, &findings, &v.ChildTaskID)
+	if err != nil || !found {
+		return nil, err
+	}
+	var superseded int64
+	if _, err := queryOne(ctx, q, "SELECT COUNT(*) FROM journal WHERE kind = 'verdict_superseded' AND subject = ?", []any{event}, &superseded); err != nil {
+		return nil, err
+	}
+	v.Ruling = 1 + superseded
+	v.Findings, v.FindingsDigest = findingsOf(relationshipFindings(findings))
+	return v, nil
+}
+
+// relationshipFindings are the findings a ruling recorded (verdict_context.findings, a JSON list), one whole line each as the verdict summary of the relationship outbox wrote them: the criterion, its verdict and
+// its note. A text that is not a list of objects is kept whole as one line, so an unexpected shape is visible and is part of the digest.
+func relationshipFindings(text string) []string {
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	var list []map[string]any
+	if err := json.Unmarshal([]byte(text), &list); err != nil {
+		return []string{text}
+	}
+	lines := make([]string, 0, len(list))
+	for _, f := range list {
+		line := fieldText(f["id"]) + ": " + fieldText(f["verdict"])
+		if note := fieldText(f["note"]); note != "" {
+			line += " — " + note
+		}
+		lines = append(lines, line)
+	}
+	return lines
+}
+
+func fieldText(v any) string {
+	switch t := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return t
+	}
+	raw, _ := json.Marshal(v)
+	return string(raw)
+}
+
+// agentRowVerdict is the newest completed reviewer call of the node whose result document carries a verdict: the commit it judged, the attempt of the execution it ran in, the criteria set its input
+// carried and the defects it found (the findings of an agent). A reviewer call without a verdict document (a failed or empty result) rules nothing and is passed over.
+func agentRowVerdict(ctx context.Context, q store.Querier, plan, node string, attempts map[string]int64) (*RowVerdict, error) {
+	rows, err := q.QueryContext(ctx, "SELECT execution_id, commit_sha, COALESCE(CAST(result_bytes AS TEXT), ''), detail_json FROM flow_calls"+
+		" WHERE kind = 'agent' AND event = 'completed' AND role IN ('"+strings.Join(reviewerRoles, "','")+"') AND plan_id = ? AND node_id = ? ORDER BY rowid DESC", plan, node)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var execution, commit, result, detail string
+		if err := rows.Scan(&execution, &commit, &result, &detail); err != nil {
+			return nil, err
+		}
+		var doc struct {
+			Verdict string `json:"verdict"`
+			Defects []struct {
+				Ref      string `json:"ref"`
+				Kind     string `json:"kind"`
+				Severity string `json:"severity"`
+				File     string `json:"file"`
+				Line     int64  `json:"line"`
+				Finding  string `json:"finding"`
+			} `json:"defects"`
+		}
+		if json.Unmarshal([]byte(result), &doc) != nil || doc.Verdict == "" {
+			continue
+		}
+		var seen struct {
+			CriteriaDigest string `json:"criteria_digest"`
+		}
+		_ = json.Unmarshal([]byte(detail), &seen)
+		v := &RowVerdict{Verdict: doc.Verdict, Revision: commit, Generation: attempts[execution], CriteriaSet: seen.CriteriaDigest, Ruling: 1}
+		var whole []string
+		for _, d := range doc.Defects {
+			line := d.Ref + ": " + d.Severity + " " + d.Kind
+			if d.File != "" {
+				line += " " + d.File + ":" + strconv.FormatInt(d.Line, 10)
+			}
+			if d.Finding != "" {
+				line += " — " + d.Finding
+			}
+			whole = append(whole, line)
+		}
+		v.Findings, v.FindingsDigest = findingsOf(whole)
+		return v, rows.Err()
+	}
+	return nil, rows.Err()
+}
+
+// integrationBatchOf is the batch that marked the acceptance merged: the newest marked row of the acceptance in the stage table of the relationship side or of the agent side (the ids of the two sides do
+// not collide). "" when no batch marked it.
+func integrationBatchOf(ctx context.Context, q store.Querier, acceptance string) (string, error) {
+	if acceptance == "" {
+		return "", nil
+	}
+	var batch string
+	if found, err := queryOne(ctx, q, "SELECT batch_id FROM dag_integration_stages WHERE acceptance_id = ? AND stage = 'marked' ORDER BY rowid DESC LIMIT 1", []any{acceptance}, &batch); err != nil || found {
+		return batch, err
+	}
+	has, err := tableExists(ctx, q, "dag_agent_integration_stages")
+	if err != nil || !has {
+		return "", err
+	}
+	_, err = queryOne(ctx, q, "SELECT batch_id FROM dag_agent_integration_stages WHERE acceptance_id = ? AND stage = 'marked' ORDER BY rowid DESC LIMIT 1", []any{acceptance}, &batch)
+	return batch, err
+}
+
+// summaryText is the text an entry carries: the text of the progress and, under it, the row of every issue.
+func summaryText(p Progress, rows []IssueRow) string {
+	var b strings.Builder
+	b.WriteString(SummaryText(p))
+	b.WriteString("\n\nIssues\n")
+	for _, r := range rows {
+		b.WriteString(rowText(r))
+	}
+	return canonText(b.String())
+}
+
+func shortHex(s string) string { return s[:min(len(s), 12)] }
+
+func rowText(r IssueRow) string {
+	var b strings.Builder
+	surface := r.Surface
+	if surface == "" {
+		surface = "no execution"
+	}
+	fmt.Fprintf(&b, "  %s, %s, %s, %s, stage %s\n", r.NodeID, r.IssueKey, r.Kind, surface, r.Stage)
+	v := r.Verdict
+	if v == nil {
+		b.WriteString("    no verdict\n")
+	} else {
+		fmt.Fprintf(&b, "    verdict %s, generation %d, revision %s", v.Verdict, v.Generation, shortHex(v.Revision))
+		if v.CriteriaSet != "" {
+			fmt.Fprintf(&b, ", criteria set %s", shortHex(v.CriteriaSet))
+		}
+		if v.Ruling > 1 {
+			fmt.Fprintf(&b, ", ruling %d", v.Ruling)
+		}
+		b.WriteString("\n")
+		if v.ChildTaskID != "" {
+			fmt.Fprintf(&b, "    child %s\n", v.ChildTaskID)
+		}
+		if v.NextGeneration > 0 {
+			fmt.Fprintf(&b, "    revision request queued under generation %d\n", v.NextGeneration)
+		}
+		if len(v.Findings) > 0 {
+			fmt.Fprintf(&b, "    findings %d, digest %s\n", len(v.Findings), shortHex(v.FindingsDigest))
+			for i, f := range v.Findings {
+				if i == maxFindingRows {
+					fmt.Fprintf(&b, "      and %d more\n", len(v.Findings)-maxFindingRows)
+					break
+				}
+				fmt.Fprintf(&b, "      %s\n", f)
+			}
+		}
+	}
+	if r.AcceptanceID != "" {
+		fmt.Fprintf(&b, "    acceptance %s\n", r.AcceptanceID)
+	}
+	if r.IntegrationBatch != "" {
+		fmt.Fprintf(&b, "    integrated in batch %s\n", r.IntegrationBatch)
+	}
+	return b.String()
+}
+
 // SummaryEnqueued is the answer of EnqueueSummary.
 type SummaryEnqueued struct {
 	Entry      SummaryEntry
@@ -143,17 +471,21 @@ func (s *Scheduler) EnqueueSummary(ctx context.Context, plan, actor, document st
 		if err != nil {
 			return err
 		}
+		subject, err := s.summarySubject(txCtx, q, progress)
+		if err != nil {
+			return err
+		}
 		newest, found, err := newestEntry(txCtx, q, plan, document)
 		if err != nil {
 			return err
 		}
-		if found && newest.SubjectDigest == progress.Digest && !(again && newest.State == SummaryConfirmed) {
+		if found && newest.SubjectDigest == subject.Digest && !(again && newest.State == SummaryConfirmed) {
 			out.Entry, out.Replayed = newest, true
 			return nil
 		}
 		now := s.now()
-		entry := SummaryEntry{PlanID: plan, ProjectKey: progress.ProjectKey, Document: document, PlanRevision: progress.Reading.PlanRevision, Seq: newest.Seq + 1, SubjectDigest: progress.Digest,
-			StateDigest: progress.Reading.StateDigest, Summary: SummaryText(progress), State: SummaryPending, EnqueuedBy: actor, CreatedAt: now, UpdatedAt: now}
+		entry := SummaryEntry{PlanID: plan, ProjectKey: progress.ProjectKey, Document: document, PlanRevision: progress.Reading.PlanRevision, Seq: newest.Seq + 1, SubjectDigest: subject.Digest,
+			StateDigest: progress.Reading.StateDigest, Summary: summaryText(progress, subject.Rows), State: SummaryPending, EnqueuedBy: actor, CreatedAt: now, UpdatedAt: now}
 		entry.SummarySHA256 = shaOf([]byte(entry.Summary))
 		entry.SummaryID = summaryID(plan, document, entry.PlanRevision, entry.SubjectDigest, entry.Seq)
 		rows, err := q.QueryContext(txCtx, "SELECT summary_id FROM dag_summary_outbox WHERE plan_id = ? AND document = ? AND state IN ('pending','claimed','failed') ORDER BY seq", plan, document)
@@ -263,10 +595,17 @@ func (s *Scheduler) SummaryStatus(ctx context.Context, plan, document string, hi
 		if err := rows.Err(); err != nil {
 			return err
 		}
+		if len(out.Streams) == 0 {
+			return nil
+		}
+		subject, err := s.summarySubject(txCtx, q, progress)
+		if err != nil {
+			return err
+		}
 		for i := range out.Streams {
 			st := &out.Streams[i]
 			st.Owed = st.Newest.State != SummaryConfirmed
-			st.UpToDate = st.Newest.SubjectDigest == progress.Digest
+			st.UpToDate = st.Newest.SubjectDigest == subject.Digest
 		}
 		return nil
 	})

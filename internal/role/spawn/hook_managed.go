@@ -182,18 +182,23 @@ func spawnHookWithout(o pyjson.Object, keys ...string) pyjson.Object {
 // managed), that already resolved a marker, or whose task_name names no opted-in dispatch of the session waiting for its spawn is
 // left unmanaged, as before: a direct native call keeps its own model and effort and consumes no issuance, even when its task_name
 // equals a claimed dispatch's id, and neither an unrelated call's child nor a parallel unrelated call is tied to an attempt.
-func spawnHookManagedCiphertext(a *spawnHookAssembly) {
+func spawnHookManagedCiphertext(a *spawnHookAssembly) (deny string, stopped bool) {
 	if a.managed != nil || !a.encryptedV2Message || a.sessionID == "" || IsFullHistoryFork(spawnHookView(a.toolInput)) {
-		return
+		return "", false
 	}
 	task, _ := a.toolInput.Get("task_name").(string)
 	if task == "" {
-		return
+		return "", false
 	}
 	selection, source, err := role.NewManagedSpawnResolver(a.cwd).Named(a.sessionID, task, a.toolUseID, spawnCiphertextRoles(a.toolInput.Get("agent_type")))
+	if role.IsManagedSpawnRootRefusal(err) {
+		// CRW-1265: the call names a dispatch, and its child would run where a sandboxed Codex may not; not unmanaged, refused.
+		return DenyEnvelope("managed dispatch: " + spawnParityNodeError(err)), true
+	}
 	if err == nil && selection != nil {
 		a.managed, a.dispatchSource = selection, source
 	}
+	return "", false
 }
 
 // spawnCiphertextRoles are the roles a ciphertext call of this agent_type can carry (nil: any). An explorer-typed call can carry

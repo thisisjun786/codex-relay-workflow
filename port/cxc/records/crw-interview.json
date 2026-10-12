@@ -20,7 +20,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Separate task Interview from crw-define initiative discovery without granting phase or Linear-write authority. State the boundary to crw-define in the description, so a request routes to the skill that owns it. CRW-1219: the description names one job, takes the clarifying-question and catalog-discovery triggers and the requirements-clarification trigger from crw-pabcd, and sends initiative intent to crw-define.",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
       "hunks": [
         {
           "line": 3,
@@ -50,6 +50,24 @@
           ],
           "new": [
             "  General mid-work questions follow [Async user questions](../crw-dev/references/async-questions.md).\n"
+          ]
+        },
+        {
+          "line": 241,
+          "old": [
+            "## Runtime Status (shipped)\n"
+          ],
+          "new": [
+            "## Interview runtime\n"
+          ]
+        },
+        {
+          "line": 243,
+          "old": [
+            "The interview runtime is shipped, not planned:\n"
+          ],
+          "new": [
+            "The interview runtime provides:\n"
           ]
         }
       ]

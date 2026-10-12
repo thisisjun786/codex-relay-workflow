@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -195,6 +196,11 @@ func (c *Channel) Reportable(ctx context.Context, o Obligation) (bool, string, e
 			return false, "", err
 		}
 		if err == nil && state == "confirmed" && ref == target {
+			return false, "already_in_the_record_the_supervisor_reads", nil
+		}
+		if summary, err := delivery.PlanSummaryCarriesVerdict(ctx, c.Store.Q(ctx), o.RelationID, eventID, target); err != nil {
+			return false, "", err
+		} else if summary != "" {
 			return false, "already_in_the_record_the_supervisor_reads", nil
 		}
 	}

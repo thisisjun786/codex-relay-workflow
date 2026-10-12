@@ -274,7 +274,7 @@ return r.map((c) => c.status)`)
 func (e *env) recreate() {
 	e.t.Helper()
 	b, err := agent.New(agent.Config{Client: e.client, Allocator: e.alloc, Threads: e.owned, PollEvery: e.cfg.poll, InterruptWait: e.cfg.interruptWait,
-		Owner: e.backend.Owner(), OwnerAlive: e.ownerAlive})
+		Owner: e.backend.Owner(), OwnerAlive: e.ownerAlive, Bound: e.boundConfig()})
 	if err != nil {
 		e.t.Fatal(err)
 	}

@@ -58,9 +58,10 @@ func Test28_EmitDeliverClaimAckRoundTrip(t *testing.T) {
 		return fakehost.Reply{Result: map[string]any{"data": data, "nextCursor": nil}}
 	})
 	parent := resume()
-	parent["cwd"] = "/parent"
-	parent["runtimeWorkspaceRoots"] = []any{"/parent"}
-	parent["thread"].(map[string]any)["environments"] = []any{map[string]any{"environmentId": "local", "cwd": "/parent", "runtimeWorkspaceRoots": []any{"/parent"}}}
+	parentDir := filepath.Join(suiteDirectory, "parent")
+	parent["cwd"] = parentDir
+	parent["runtimeWorkspaceRoots"] = []any{parentDir}
+	parent["thread"].(map[string]any)["environments"] = []any{map[string]any{"environmentId": "local", "cwd": parentDir, "runtimeWorkspaceRoots": []any{parentDir}}}
 	host.Respond("thread/resume", fakehost.Reply{Result: parent})
 	host.Respond("turn/start", fakehost.Reply{Result: map[string]any{"turn": map[string]any{"id": "delivery-turn"}}})
 	oldClock, oldHost, oldObserve := delivery.CommandClock, delivery.HostCommand, delivery.ObserveTurn

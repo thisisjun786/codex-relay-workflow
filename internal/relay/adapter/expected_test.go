@@ -127,6 +127,8 @@ func repoRoot(t testing.TB) string {
 func goldenOptions(t testing.TB, extra ...golden.Option) []golden.Option {
 	t.Helper()
 	options := append([]golden.Option{}, extra...)
+	// The scenarios' directories are real ones (adapter_test.go); the goldens hold the names they were recorded with.
+	options = append(options, golden.Substitute(workspaceRoot, "/workspace/example"))
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)

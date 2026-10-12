@@ -77,7 +77,7 @@ source-fetch and evidence-status rules.
 ## Reference-Result / Score-Objective Evaluation
 For scarce, paid, rate-limited, or opaque evaluators, route to
 `references/reference-result-evaluation.md` for all proxy-score gates.
-### 1.6 Property-Based & Mutation Testing (verified 2026-07-02)
+### 1.6 Property-Based & Mutation Testing
 
 | Technique | Use for | Default tools | When |
 |-----------|---------|---------------|------|

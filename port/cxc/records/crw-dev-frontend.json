@@ -151,15 +151,19 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Normalize frontmatter to the repository-supported name and description fields; preserve the invocation description and record the removed oracle metadata. Adapt backticked cross-skill relative paths to the staged crw-* directory names; preserve the referenced guidance.",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
       "hunks": [
         {
-          "line": 4,
+          "line": 3,
           "old": [
+            "description: \"MUST USE for any frontend, web UI, or visual implementation work — building, styling, or redesigning pages/components, responsive layouts, motion, component architecture, and production-surface polish. Pairs with crw-dev-uiux-design: load it first when design direction is vague; this skill implements the chosen direction. Triggers: 'frontend', 'UI', 'component', 'CSS', 'responsive', 'animation', 'React', 'Vue', 'Svelte', 'Tailwind', 'layout', 'styling', 'redesign', 'mockup', 'anti-slop', '프론트엔드', 'UI 작업', '반응형', '디자인 수정'.\"\n",
             "metadata:\n",
             "  last-verified: \"2026-07-14\"\n",
             "  short-description: \"Production-grade frontend implementation with responsive, accessible, anti-slop UI guidance.\"\n",
             "  keywords: [frontend, UI, component, CSS, responsive, layout, animation, design implementation]\n"
+          ],
+          "new": [
+            "description: \"Frontend and web UI implementation: building, styling or redesigning pages and components, responsive layouts, motion, component architecture. Implements the direction chosen with crw-dev-uiux-design. Triggers: frontend, UI, component, CSS, responsive, animation, React, Tailwind, 프론트엔드, 반응형.\"\n"
           ]
         },
         {
@@ -169,8 +173,7 @@
             "| `../dev-uiux-design/references/design-trends.md` | Implementing a dated trend or checking whether a technique is stable | 2026-07-14 axis prevalence, technique maturity, signature status, risks, and re-crawl/promotion rules |\n"
           ],
           "new": [
-            "| `../crw-dev-uiux-design/references/design-trends.md` | Calibrating a dated design example | Source provenance, surface-specific exceptions, and re-verification before promoting a sample to a default |\n",
-            "| `../crw-dev-uiux-design/references/design-trends.md` | Implementing a dated trend or checking whether a technique is stable | 2026-07-14 axis prevalence, technique maturity, signature status, risks, and re-crawl/promotion rules |\n"
+            "| `../crw-dev-uiux-design/references/design-trends.md` | Calibrating a dated design example, implementing a dated trend or checking whether a technique is stable | Source provenance, surface-specific exceptions, axis prevalence, technique maturity, signature status, risks, and re-crawl/promotion rules |\n"
           ]
         },
         {
@@ -181,17 +184,372 @@
           "new": [
             "| `../crw-dev-uiux-design/references/conversational-ai.md` | Implementing a turn-based AI surface with streaming, interruption, regeneration, or uncertain results | Turn-state contract the frontend must preserve before wiring rendering and a11y |\n"
           ]
+        },
+        {
+          "line": 55,
+          "old": [
+            "| `references/core/typography-wrapping.md`  | Heading/descriptor text changes      | `text-wrap: balance/pretty`, natural phrase breaks at any width, dynamic-viewport verification, `ch` units, Korean keep-all/orphan rules (verified 2026-07-07) |\n"
+          ],
+          "new": [
+            "| `references/core/typography-wrapping.md`  | Heading/descriptor text changes      | `text-wrap: balance/pretty`, natural phrase breaks at any width, dynamic-viewport verification, `ch` units, Korean keep-all/orphan rules |\n"
+          ]
+        },
+        {
+          "line": 69,
+          "old": [
+            "| `references/core/color-system.md`         | Color tokens, palettes wiring, theme-ready CSS | Token layering, `oklch()` + fallback discipline, `color-mix()`, `light-dark()`, Tailwind v4/shadcn wiring, contrast gates (verified 2026-07-07) |\n"
+          ],
+          "new": [
+            "| `references/core/color-tokens.md`         | Color tokens, palettes wiring, theme-ready CSS | Token layering, `oklch()` + fallback discipline, `color-mix()`, `light-dark()`, Tailwind v4/shadcn wiring, contrast gates |\n"
+          ]
+        },
+        {
+          "line": 143,
+          "old": [
+            "- **Objective UX gates (STRICT/DEFAULT)** — accessibility baseline (§7, §11), state coverage\n"
+          ],
+          "new": [
+            "- **Objective UX gates (STRICT/DEFAULT)** — accessibility baseline (§7, §8), state coverage\n"
+          ]
+        },
+        {
+          "line": 344,
+          "old": [
+            "## 12. Frontend Platform Rules\n"
+          ],
+          "new": [
+            "## 9. Frontend Platform Rules\n"
+          ]
+        },
+        {
+          "line": 373,
+          "old": [
+            "## 13. Error Boundaries\n"
+          ],
+          "new": [
+            "## 10. Error Boundaries\n"
+          ]
+        },
+        {
+          "line": 390,
+          "old": [
+            "## 15. Backend Contract & Security Alignment\n"
+          ],
+          "new": [
+            "## 11. Backend Contract & Security Alignment\n"
+          ]
+        },
+        {
+          "line": 394,
+          "old": [
+            "### 15.1 Contract Ownership\n"
+          ],
+          "new": [
+            "### 11.1 Contract Ownership\n"
+          ]
+        },
+        {
+          "line": 408,
+          "old": [
+            "### 15.2 Security Responsibilities\n"
+          ],
+          "new": [
+            "### 11.2 Security Responsibilities\n"
+          ]
+        },
+        {
+          "line": 418,
+          "old": [
+            "### 15.3 Testing Integration\n"
+          ],
+          "new": [
+            "### 11.3 Testing Integration\n"
+          ]
+        },
+        {
+          "line": 424,
+          "old": [
+            "## §16 Pre-Flight Checklist\n"
+          ],
+          "new": [
+            "## 12. Pre-Flight Checklist\n"
+          ]
         }
       ]
     },
     {
       "file": "agents/openai.yaml",
-      "reason": "Add the required interface default prompt naming the staged CRW skill; preserve the oracle display text and implicit-invocation policy.",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
       "hunks": [
         {
           "line": 4,
           "new": [
             "  default_prompt: \"Use $crw-dev-frontend to guide this task and verify its result.\"\n"
+          ]
+        },
+        {
+          "line": 5,
+          "old": [
+            "  allow_implicit_invocation: true\n"
+          ],
+          "new": [
+            "  allow_implicit_invocation: false\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/core/aesthetics.md",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
+      "hunks": [
+        {
+          "line": 28,
+          "old": [
+            "### Serif Discipline (verified 2026-07-09)\n"
+          ],
+          "new": [
+            "### Serif Discipline\n"
+          ]
+        },
+        {
+          "line": 186,
+          "old": [
+            "### Expressive vs Functional Layers (verified 2026-07-09)\n"
+          ],
+          "new": [
+            "### Expressive vs Functional Layers\n"
+          ]
+        },
+        {
+          "line": 281,
+          "old": [
+            "### AI-Brand Grammar Vocabulary (verified 2026-07-09)\n"
+          ],
+          "new": [
+            "### AI-Brand Grammar Vocabulary\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/core/anti-slop.md",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
+      "hunks": [
+        {
+          "line": 69,
+          "old": [
+            "### Opaque Functional Surfaces (FE-GRADIENT-02, DEFAULT, verified 2026-07-09)\n"
+          ],
+          "new": [
+            "### Opaque Functional Surfaces (FE-GRADIENT-02, DEFAULT)\n"
+          ]
+        },
+        {
+          "line": 100,
+          "old": [
+            "illustrations. See `color-system.md` § Accent Surface Emphasis for token\n"
+          ],
+          "new": [
+            "illustrations. See `color-tokens.md` § Accent Surface Emphasis for token\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/core/asset-requirements.md",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
+      "hunks": [
+        {
+          "line": 61,
+          "old": [
+            "## Mockup Production Pipeline (verified 2026-07-09)\n"
+          ],
+          "new": [
+            "## Mockup Production Pipeline\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/core/color-system.md",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
+      "remove": true
+    },
+    {
+      "file": "references/core/color-tokens.md",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
+      "add": true,
+      "sha256": "785369495d7bc9f5e99f13a136694bbe0f44dfe785c5399aa23fd9bd7d6478b5"
+    },
+    {
+      "file": "references/core/dropdown-layer.md",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
+      "hunks": [
+        {
+          "line": 40,
+          "old": [
+            "Design System Detection in `dev-frontend/SKILL.md` Section 12 wins.\n"
+          ],
+          "new": [
+            "Design System Detection in `dev-frontend/SKILL.md` Section 9 wins.\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/core/korea-2026.md",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
+      "hunks": [
+        {
+          "line": 48,
+          "old": [
+            "### Korean Hero / Large Display Type (verified 2026-07-08)\n"
+          ],
+          "new": [
+            "### Korean Hero / Large Display Type\n"
+          ]
+        },
+        {
+          "line": 94,
+          "old": [
+            "### Korean Serif / Myeongjo Display (verified 2026-07-09)\n"
+          ],
+          "new": [
+            "### Korean Serif / Myeongjo Display\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/core/layout-discipline.md",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
+      "hunks": [
+        {
+          "line": 11,
+          "old": [
+            "## Hero Composition Grammar (verified 2026-07-09)\n"
+          ],
+          "new": [
+            "## Hero Composition Grammar\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/core/liquid-glass.md",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
+      "hunks": [
+        {
+          "line": 6,
+          "old": [
+            "practitioner notes (verified 2026-07-07; evidence:\n"
+          ],
+          "new": [
+            "practitioner notes (evidence:\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/core/motion.md",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
+      "hunks": [
+        {
+          "line": 201,
+          "old": [
+            "The CSS scroll-driven animations module (MDN, verified 2026-07-07) animates\n"
+          ],
+          "new": [
+            "The CSS scroll-driven animations module (MDN) animates\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/core/preflight-full.md",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
+      "hunks": [
+        {
+          "line": 3,
+          "old": [
+            "Companion to `dev-frontend/SKILL.md` §14. The router keeps the minimum blocking gates;\n"
+          ],
+          "new": [
+            "Companion to `dev-frontend/SKILL.md` §12. The router keeps the minimum blocking gates;\n"
+          ]
+        },
+        {
+          "line": 28,
+          "old": [
+            "- [ ] State classified before adding store/Context/Effect/cache (SKILL §12)\n"
+          ],
+          "new": [
+            "- [ ] State classified before adding store/Context/Effect/cache (SKILL §9)\n"
+          ]
+        },
+        {
+          "line": 37,
+          "old": [
+            "- [ ] Error Boundaries wrap major sections, not the entire app (SKILL §13)\n"
+          ],
+          "new": [
+            "- [ ] Error Boundaries wrap major sections, not the entire app (SKILL §10)\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/core/theme-switching.md",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
+      "hunks": [
+        {
+          "line": 29,
+          "old": [
+            "  (token layering + `oklch()`/`light-dark()` mechanics: `color-system.md`)\n"
+          ],
+          "new": [
+            "  (token layering + `oklch()`/`light-dark()` mechanics: `color-tokens.md`)\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "references/core/typography-wrapping.md",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
+      "hunks": [
+        {
+          "line": 40,
+          "old": [
+            "   global keep-all degrades Chinese/Japanese wrapping (verified 2026-07-07,\n",
+            "   MDN + Naver SmartStudio). */\n"
+          ],
+          "new": [
+            "   global keep-all degrades Chinese/Japanese wrapping (MDN +\n",
+            "   Naver SmartStudio). */\n"
+          ]
+        },
+        {
+          "line": 230,
+          "old": [
+            "Korean facts (verified 2026-07-07, Tier-2: MDN, CSSWG Text 4, KLREQ, Chrome\n"
+          ],
+          "new": [
+            "Korean facts (Tier-2: MDN, CSSWG Text 4, KLREQ, Chrome\n"
+          ]
+        }
+      ]
+    },
+    {
+      "file": "scripts/README.md",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
+      "hunks": [
+        {
+          "line": 8,
+          "old": [
+            "Initializes a new React + TypeScript + Tailwind project aligned with `SKILL.md` §12.\n"
+          ],
+          "new": [
+            "Initializes a new React + TypeScript + Tailwind project aligned with `SKILL.md` §9.\n"
           ]
         }
       ]

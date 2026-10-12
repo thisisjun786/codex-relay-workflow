@@ -1,6 +1,6 @@
 ---
 name: crw-dev-visualizer
-description: "Create well-composed visual documents, HTML reports, SVG diagrams, charts, interactive explainers and PDF deliverables. Use for visualize, visual explanations, architecture diagrams, comparison reports, infographics, document creation, 시각화, 그려줘, 문서 만들어줘, 보고서, PDF 생성. Preserve explicit formats and templates; text-only requests and ordinary code changes do not need a visual. A simple inline or static artifact ships without a render round trip; rendered proof is for computed and exported output."
+description: "Visual documents: HTML reports, SVG diagrams, charts, interactive explainers, infographics and PDF deliverables. Triggers: visualize, architecture diagram, comparison report, infographic, 시각화, 그려줘, 보고서, PDF 생성. Text-only requests and ordinary code changes need no visual."
 ---
 
 # Visual documents — compose, render, deliver
@@ -12,14 +12,8 @@ require a development loop. This skill owns artifact composition and delivery.
 `dev-uiux-design` owns broader design judgment, `dev-frontend` owns frontend
 implementation, and available format-specific skills own document mechanics.
 
-**VIZ-SCOPE-01 — caller-scoped artifacts, upstream-first maintenance.** Shared
-visualizer fixes are implemented and verified in codexclaw first, then adapted to
-the standalone `aside-visualizer` repository. For explicitly requested maintenance,
-follow [the port workflow](reference/port-maintenance.md); an upstream merge alone
-does not close a downstream issue. This direction does not authorize maintenance
-while answering an ordinary artifact request or duplicate Aside's roadmap here.
-Within crw the skill has no independent mandate either. It composes and verifies
-the artifact the calling task asked for, under that task's plan and verification gate.
+**VIZ-SCOPE-01 — caller-scoped artifacts.** This skill has no independent mandate.
+It composes and verifies the artifact the calling task asked for, under that task's plan and verification gate.
 It does not open a repository of its own, install itself or its scripts as a
 prerequisite, publish, deploy, upload or open an artifact nobody requested, or start a
 loop of its own. When something beyond the requested artifact looks necessary, say so
@@ -47,14 +41,14 @@ focused explanation. Neither phrase grants permission to publish or install.
 
 | Requested result | Authoring route | Read when selected |
 |---|---|---|
-| In-conversation comparison, simulation or explainer | Current host's exposed `visualize` skill, if available | Its current full SKILL.md; [delivery](reference/environment-detection.md) |
-| Small static structure expressible as labeled nodes/edges | Mermaid if host supports it; otherwise a suitable artifact | [SVG and interaction](reference/svg-and-interaction.md) only for custom output |
-| Editable SVG diagram or infographic | Native SVG with legible geometry and text | [Visual design](reference/visual-design.md), [SVG and interaction](reference/svg-and-interaction.md) |
-| HTML report, technical brief, visual review or document | Semantic HTML with purposeful figures and readable sections | [Reader documents](reference/reader-documents.md), [Visual design](reference/visual-design.md), [documents/PDF](reference/document-pdf.md) |
-| Multi-page report for a decision maker (client report, research report, proposal, 보고서) | [Report writing](reference/report-writing.md) storyline first, then [paged-report.html](assets/paged-report.html) exported with `scripts/export-paged-report.mjs` | [Report writing](reference/report-writing.md), [Documents/PDF](reference/document-pdf.md) REPORT-PRINT-01/QA-01 and the CJK recipe, [Visual design](reference/visual-design.md) REPORT-DESIGN-01/VIZ-01 |
-| Interactive HTML model | One useful visual plus requested inputs that change it | [SVG and interaction](reference/svg-and-interaction.md), design reference if styling is open |
-| PDF, print report or handout | Choose an available print/PDF engine; actually export | [Reader documents](reference/reader-documents.md), [Documents/PDF](reference/document-pdf.md); current PDF skill if available |
-| Word/Google Docs, Slides/PPTX or spreadsheet | Available format-specific owner; use this skill for visual composition | [Documents/PDF](reference/document-pdf.md) for boundaries |
+| In-conversation comparison, simulation or explainer | Current host's exposed `visualize` skill, if available | Its current full SKILL.md; [delivery](references/environment-detection.md) |
+| Small static structure expressible as labeled nodes/edges | Mermaid if host supports it; otherwise a suitable artifact | [SVG and interaction](references/svg-and-interaction.md) only for custom output |
+| Editable SVG diagram or infographic | Native SVG with legible geometry and text | [Visual design](references/visual-design.md), [SVG and interaction](references/svg-and-interaction.md) |
+| HTML report, technical brief, visual review or document | Semantic HTML with purposeful figures and readable sections | [Reader documents](../crw-dev/references/reader-documents.md), [Visual design](references/visual-design.md), [documents/PDF](references/document-pdf.md) |
+| Multi-page report for a decision maker (client report, research report, proposal, 보고서) | [Report writing](references/report-writing.md) storyline first, then [paged-report.html](assets/paged-report.html) exported with `scripts/export-paged-report.mjs` | [Report writing](references/report-writing.md), [Documents/PDF](references/document-pdf.md) REPORT-PRINT-01/QA-01 and the CJK recipe, [Visual design](references/visual-design.md) REPORT-DESIGN-01/VIZ-01 |
+| Interactive HTML model | One useful visual plus requested inputs that change it | [SVG and interaction](references/svg-and-interaction.md), design reference if styling is open |
+| PDF, print report or handout | Choose an available print/PDF engine; actually export | [Reader documents](../crw-dev/references/reader-documents.md), [Documents/PDF](references/document-pdf.md); current PDF skill if available |
+| Word/Google Docs, Slides/PPTX or spreadsheet | Available format-specific owner; use this skill for visual composition | [Documents/PDF](references/document-pdf.md) for boundaries |
 | Scientific figure intended for export/publication | Standard plotting tools and vector/raster artifact | Design/label principles here; scientific tool's own workflow |
 | Website, app page or existing component change | Frontend owner and project conventions; Sites if required by the project | This skill only for embedded explanatory artifacts |
 
@@ -65,22 +59,22 @@ the missing requested output. Never call print-ready HTML a generated PDF.
 ## Report evidence, language and analytical exhibits
 
 For a report that answers research questions, use the existing model and
-[research handoff](reference/report-pipeline.md); source-only intake performs no
+[research handoff](references/report-pipeline.md); source-only intake performs no
 retrieval. Preserve unknown provenance and unanswered questions. For English or
-bilingual output, use [English authoring](reference/english-authoring.md), choose
+bilingual output, use [English authoring](references/english-authoring.md), choose
 source/output languages separately, and preserve values and qualifications. Choose
-[exhibit recipes](reference/exhibit-recipes.md) by question and evidence; a table
+[exhibit recipes](references/exhibit-recipes.md) by question and evidence; a table
 or prose is valid. These are report tools, not prerequisites for a simple HTML edit.
 
 ## Compose before styling
 
 Start from the reader contract and document type in
-[Reader documents](reference/reader-documents.md), then run a compact design
+[Reader documents](../crw-dev/references/reader-documents.md), then run a compact design
 read: **reader → question → information structure → visual encoding →
 type/color/spacing → output constraints**. State the chosen direction
 briefly when it helps the user evaluate an open brief. Reuse existing design tokens.
 
-[Visual design](reference/visual-design.md) supplies distinct optional directions
+[Visual design](references/visual-design.md) supplies distinct optional directions
 and composition recipes. Select a coherent set for this artifact. Borrow principles
 from several references, then reconcile them: one type hierarchy, one spacing rhythm,
 consistent semantic colors, a deliberate level of detail. A source's trend or star
@@ -93,10 +87,10 @@ Examples of structure that earns its form:
 - Pick the genre first: decision memo, research synthesis, explanation or history,
   how-to or reference. It selects the structure and the review questions
   (REPORT-STORY-00). Evidence goes in an appendix in every genre.
-- Decision documents and explanations follow [Reader documents](reference/reader-documents.md):
+- Decision documents and explanations follow [Reader documents](../crw-dev/references/reader-documents.md):
   answer first, headings that state findings. A research synthesis instead ends at what
   is unresolved, and a reference ends at the definitions — neither owes the reader an ask.
-- A report over about four pages follows [Report writing](reference/report-writing.md):
+- A report over about four pages follows [Report writing](references/report-writing.md):
   write the storyline before any HTML, make every section heading carry that unit's
   content, give the summary a full page that stands alone, number and source every
   exhibit, hold one register, and name the issuing organization the way the reader knows
@@ -134,7 +128,7 @@ verify actual versions and APIs, use authorized pinned assets, and distinguish
 “one HTML file” from “works offline.” Do not execute retrieved HTML/JS or insert
 untrusted strings as executable markup. Preserve dependency/font notices when copying.
 
-The legacy `reference/html-templates.md` and `scripts/diagram-to-html.sh` remain
+The legacy `references/html-templates.md` and `scripts/diagram-to-html.sh` remain
 optional compatibility samples, **not the normal authoring route**. Their dark-theme,
 CDN and environment defaults are not requirements. The shell helper wraps trusted
 local content, is not a sanitizer or inline-fragment generator, and needs an explicit
@@ -186,7 +180,7 @@ bottom, a half-empty page or a figure whose text prints under 8.5pt is a defect.
 How much of that verification a PDF/print/paged report owes is a **choice stated up front**, not a
 fixed tax. Reading every rendered page is expensive, and a draft does not earn it.
 Pick a receipt profile — `draft`, `standard` or `publication` — per
-[report pipeline](reference/report-pipeline.md) REPORT-ASSURANCE-01, and report the
+[report pipeline](references/report-pipeline.md) REPORT-ASSURANCE-01, and report the
 verdict with the profile and the checks it omitted. A lighter profile is honest; a
 draft presented as a verified publication is not.
 
@@ -208,8 +202,7 @@ absolute file link for a requested standalone artifact. Use the current host's e
 content-reference contract for inline output. Only say it opened, rendered, exported
 or published when that outcome was observed. Describe the useful result concisely.
 
-[Source patterns](reference/source-patterns.md) records the GitHub references,
+[Source patterns](references/source-patterns.md) records the GitHub references,
 observed dates, licensing and adopted/rejected ideas. Read it when borrowing further
-material or refreshing the skill, not for every small diagram. Existing
-`reference/visualize-contract.md` and `upstream/` are historical snapshots/maintenance
-aids. The current exposed host skill wins; a snapshot cannot grant renderer support.
+material or refreshing the skill, not for every small diagram. `references/visualize-contract.md` delegates to the current exposed host skill, which
+wins; no stored note can grant renderer support.

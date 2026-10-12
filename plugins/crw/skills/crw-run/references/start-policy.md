@@ -344,7 +344,7 @@ applies. Activation and durable continuation are different claims, and on the me
 installation only the first holds. Keep them apart in every report.
 
 The goal activates: a project parent creates or reuses its native goal and reads it back active.
-What follows is not durable automatic continuation. Measured before the port on the CXC plugin
+What follows is not durable automatic continuation. Measured before the port on the original plugin
 `0.2.33` and re-read on `0.2.34`, the Stop handler of its `pabcd-state` component blocked the stop
 when a goal read `active` while the phase was `IDLE` and no orchestration was in flight, and the
 continuation it injected carried an unconditional directive to enter PABCD, adding a
@@ -357,7 +357,7 @@ coordination duties instead. The honest exits the block itself names are complet
 is honest only once the agreed scope is verified, or recording it blocked.
 
 That budget is finite, though not in the way a first reading suggests. The figures here are the
-CXC measurement, not something the current CRW tree executes or tests. Three consecutive blocks are
+measurement of the original plugin, not something the current CRW tree executes or tests. Three consecutive blocks are
 allowed, and the next one releases instead, so the turn can end. The release also clears the
 per-phase counter, and a cleared counter no longer matches the phase it is compared against, so the
 stop after it reads as progress and can open another burst of three. What never resets is the
@@ -390,7 +390,7 @@ entry that composes the completion guard with the PABCD continuation; today the 
 evaluator per invocation and the continuation is unimplemented, so nothing composes them yet. When
 the continuation is ported as it stood, it will not skip a project parent registered in goal mode, and making it skip one is a
 deliberate deviation from the port, an owner decision recorded in
-[known defects](../../../../../docs/port-cxc/known-defects/CRW-195.md), and until it is taken the
+the CRW-195 known-defects record of the port, and until it is taken the
 parent declines the steer. Overriding a hook by registration order, intercepting its output,
 patching the plugin cache and writing private state are excluded, and none of them is offered as
 a workaround. The evidence sits in [CRW-29](https://linear.app/jun786/issue/CRW-29) and

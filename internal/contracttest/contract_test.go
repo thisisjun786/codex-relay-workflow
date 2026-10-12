@@ -6,6 +6,7 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/sandboxroot/sandboxroottest"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
@@ -31,7 +32,7 @@ func TestMain(m *testing.M) {
 			}
 		}
 		return nil, nil
-	})
+	}, sandboxroottest.SetupTemp)
 }
 
 // pendingDomains are fixture domains recorded for an implementation the Go build does not have

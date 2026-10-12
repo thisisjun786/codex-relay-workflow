@@ -629,7 +629,7 @@ is. It sits on that same identification region and adds
 the part the envelope deliberately does not know: which typed data a particular occasion
 cannot do without.
 
-Eleven occasions, where there used to be two words. Downward: assignment, revision request,
+Eleven occasions rather than two words. Downward: assignment, revision request,
 resume, receipt confirmation, acceptance, integration result. Upward: completion, review
 ready, blocked, decision request, progress. Each declares its own required data, and a packet
 missing any of it is refused by field name rather than accepted and discovered three rounds
@@ -1586,8 +1586,8 @@ never the same on a correction, and the child acts on the one it was given.
 Declare which finding carries it, and put it in the first one. The declaration is what
 makes a failure visible; the position is what makes failure unlikely, and the two are
 different jobs. A relay that recognises the declaration refuses a correction it cannot
-carry BEFORE that correction opens the next generation, so the transaction the coordinator
-used to be unable to get back to is one it can now simply not enter;
+carry BEFORE that correction opens the next generation, so a transaction the coordinator could
+not get back to is one it simply never enters;
 [codex-session-relay](relay.md#the-parent-verifies) records the flag and the outcomes it
 names.
 

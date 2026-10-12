@@ -95,6 +95,9 @@ type TurnPlan struct {
 	// FinishDespiteInterrupt ends a Hang or Gate turn completed when turn/interrupt arrives: the turn won the race
 	// against the interrupt.
 	FinishDespiteInterrupt bool
+	// Items are further items of the turn (a collabAgentToolCall, say), placed before the final answer in the order
+	// given. They are part of the turn as a read returns it; no notification announces them.
+	Items []map[string]any
 	// NullPhase gives the final agentMessage the phase null (0.154 MessagePhase is nullable, and not every provider sets
 	// it): the item and its item/completed notification carry "phase": null.
 	NullPhase bool
@@ -179,10 +182,12 @@ type Threads struct {
 	server *Server
 	mu     sync.Mutex
 	nextID int
-	seq    int64
-	all    []*threadState
-	byID   map[string]*threadState
-	subs   map[string][]*Conn
+	// ids names the threads the model makes (nil: thr-fake-NNN).
+	ids  func(n int) string
+	seq  int64
+	all  []*threadState
+	byID map[string]*threadState
+	subs map[string][]*Conn
 
 	onTurn       func(TurnRequest) TurnPlan
 	onStart      func(params map[string]any) map[string]any
@@ -224,6 +229,23 @@ func (s *Server) Threads() *Threads {
 	s.HandleConn("turn/start", t.guarded("turn/start", t.handleTurnStart))
 	s.HandleConn("turn/interrupt", t.handleInterrupt)
 	return t
+}
+
+// ThreadIDs names the threads the model makes from now on: the n-th thread (from 1, counting seeded threads too) gets
+// fn(n). The default is thr-fake-NNN; a test whose code only accepts the ids a real host makes (lower-case hexadecimal
+// and '-', as a UUID) gives ids of that shape.
+func (t *Threads) ThreadIDs(fn func(n int) string) {
+	t.mu.Lock()
+	t.ids = fn
+	t.mu.Unlock()
+}
+
+// threadID is the id of the thread just counted by nextID. The caller holds the lock.
+func (t *Threads) threadID() string {
+	if t.ids != nil {
+		return t.ids(t.nextID)
+	}
+	return fmt.Sprintf("thr-fake-%03d", t.nextID)
 }
 
 // Clock makes the createdAt of every thread the model makes read from fn (whole seconds), so that a test whose engine
@@ -437,7 +459,7 @@ func (t *Threads) create(c *Conn, params map[string]any) *threadState {
 	t.nextID++
 	config, _ := params["config"].(map[string]any)
 	th := &threadState{
-		id: fmt.Sprintf("thr-fake-%03d", t.nextID), cwd: str(params, "cwd"), model: str(params, "model"),
+		id: t.threadID(), cwd: str(params, "cwd"), model: str(params, "model"),
 		effort: configString(config, "model_reasoning_effort"), sandbox: str(params, "sandbox"),
 		dev: str(params, "developerInstructions"), config: config, start: params, created: t.createdAt(), source: "appServer",
 	}
@@ -911,6 +933,7 @@ func (t *Threads) run(conn *Conn, th *threadState, tu *turnState) {
 			commentary = map[string]any{"type": "agentMessage", "id": "c-" + tu.id, "text": plan.Commentary, "phase": "commentary"}
 			tu.items = append(tu.items, commentary)
 		}
+		tu.items = append(tu.items, plan.Items...)
 		item := map[string]any{"type": "agentMessage", "id": "m-" + tu.id, "text": plan.Message, "phase": "final_answer"}
 		if plan.NullPhase {
 			item["phase"] = nil

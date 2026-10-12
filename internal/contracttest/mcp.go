@@ -20,6 +20,7 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 // runMCP is the `mcp` family of contract/README.md (contract/runner/mcp.py): the built crw is
@@ -208,6 +209,12 @@ func launcherEnvironment(cmd *exec.Cmd, home string, policy any) error {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
 			return err
 		}
+	}
+	// CRW-1265: the user's crw configuration (the default location below that HOME) names the temporary
+	// directory the case lives in as the sandbox root, as the isolated configuration of the test process does
+	// (testsupport.SandboxConfig), so the bridge judges the case's workspace on every host as it does there.
+	if err := testsupport.WriteSandboxConfig(filepath.Join(userHome, ".config", "crw", "config.json"), os.TempDir()); err != nil {
+		return err
 	}
 	cmd.Dir = pkg
 	cmd.Env = []string{"HOME=" + userHome, "PATH=" + os.Getenv("PATH")}

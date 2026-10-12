@@ -29,7 +29,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Normalize frontmatter to the repository-supported name and description fields; preserve the invocation description and record the removed oracle metadata.",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
       "hunks": [
         {
           "line": 4,
@@ -37,6 +37,24 @@
             "metadata:\n",
             "  last-verified: \"2026-07-02\"\n",
             "  short-description: \"Data pipelines, ETL/ELT design, data quality validation, SQL optimization, and analysis patterns.\"\n"
+          ]
+        },
+        {
+          "line": 114,
+          "old": [
+            "Engine landscape (verified 2026-07-02): dbt Core remains the default; dbt Fusion is the separately-documented/licensed current engine (check feature matrix + license before adopting); SQLMesh is a credible active alternative. Lakehouse format: choose Delta vs Iceberg by ecosystem — both active; never claim a \"winner\".\n"
+          ],
+          "new": [
+            "Engine landscape: dbt Core remains the default; dbt Fusion is the separately-documented/licensed current engine (check feature matrix + license before adopting); SQLMesh is a credible active alternative. Lakehouse format: choose Delta vs Iceberg by ecosystem — both active; never claim a \"winner\".\n"
+          ]
+        },
+        {
+          "line": 375,
+          "old": [
+            "| `dev-frontend` | Downstream reporting/dashboard consumers, data format expectations | §15 Backend Contract & Security Alignment |\n"
+          ],
+          "new": [
+            "| `dev-frontend` | Downstream reporting/dashboard consumers, data format expectations | §11 Backend Contract & Security Alignment |\n"
           ]
         }
       ]

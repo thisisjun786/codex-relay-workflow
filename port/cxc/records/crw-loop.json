@@ -423,9 +423,9 @@
     },
     {
       "file": "tests/lane-manifest.test.mjs",
-      "reason": "Move the S-class skill-script test lane-manifest.test.mjs from CXC v0.2.40 plugins/codexclaw/test/ beside the skill it protects, changing only its import paths to the staged layout and the name table of contract/schema/cxc/name-substitution.json; it runs under Node in the skill-scripts-node CI job.",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
       "add": true,
-      "sha256": "2bb6b537181d75d484afb4ac27cd8f9b4340e126d3cd87218126db6d93cfa617"
+      "sha256": "020617da0633038e426ad88fd617d39685479c91eda4efad33d4dbb21125e28a"
     },
     {
       "file": "tests/lane-packet.test.mjs",

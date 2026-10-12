@@ -342,6 +342,21 @@
       ]
     },
     {
+      "file": "references/development-practice.md",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
+      "hunks": [
+        {
+          "line": 63,
+          "old": [
+            "**DEV-NECESSITY-01 (DEFAULT — ponytail discipline, verified 2026-07-02):** before writing\n"
+          ],
+          "new": [
+            "**DEV-NECESSITY-01 (DEFAULT — ponytail discipline):** before writing\n"
+          ]
+        }
+      ]
+    },
+    {
       "file": "references/logging.md",
       "reason": "Replace the out-of-scope messenger serve command with a neutral long-running server example. Preserve the local-server stdout lesson without claiming a removed serve runtime. Retain distinct log consumers/sinks while removing out-of-scope messenger-bridge source claims. Update the CLI QA source-path citation to its renamed skill owner; original line span re-read.",
       "hunks": [
@@ -409,8 +424,35 @@
     },
     {
       "file": "references/reader-documents.md",
-      "reason": "CRW-1220: the description is the classifier and router without a catch-all or neighbour triggers; the C4 row names the flow-managed high-risk lane and the design audit; the router has an executor row that loads crw-dev-star skills only; the family invariants move to crw-canon skill-family; the stub sections become links; requesting and receiving review move here from crw-dev-code-reviewer; the governance owner files are crw-canon files",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
       "hunks": [
+        {
+          "line": 11,
+          "old": [
+            "devlog `000_plan.md`, and D-phase summaries. It does not apply to audit artifacts\n"
+          ],
+          "new": [
+            "a numbered plan document, and D-phase summaries. It does not apply to audit artifacts\n"
+          ]
+        },
+        {
+          "line": 44,
+          "old": [
+            "`dev-visualizer/reference/report-writing.md` REPORT-STORY-01). What those documents\n"
+          ],
+          "new": [
+            "`crw-dev-visualizer/references/report-writing.md` REPORT-STORY-01). What those documents\n"
+          ]
+        },
+        {
+          "line": 124,
+          "old": [
+            "`dev-visualizer/reference/report-writing.md` and `assets/paged-report.html`.\n"
+          ],
+          "new": [
+            "`crw-dev-visualizer/references/report-writing.md` and `assets/paged-report.html`.\n"
+          ]
+        },
         {
           "line": 129,
           "old": [
@@ -418,6 +460,20 @@
           ],
           "new": [
             "`kwrite`; general output hygiene is FAMILY-SLOP-01 in [Family invariants](../../crw-canon/references/skill-family.md#family-invariants). Limit a revision to one\n"
+          ]
+        },
+        {
+          "line": 135,
+          "old": [
+            "Patterns adopted from opened sources with dates and licenses:\n",
+            "`devlog/_plan/260908_narrative_documents/001_sources.md` (Minto Pyramid/SCQA and\n",
+            "MECE, Korean 두괄식 guidance, Amazon narrative memos, Google design docs, MADR,\n",
+            "Diátaxis, Anthropic doc-coauthoring, executive-summary skills). No text is vendored.\n"
+          ],
+          "new": [
+            "Patterns adopted from opened sources: Minto Pyramid/SCQA and MECE, Korean 두괄식\n",
+            "guidance, Amazon narrative memos, Google design docs, MADR, Diátaxis, Anthropic\n",
+            "doc-coauthoring and executive-summary skills. No text is vendored.\n"
           ]
         }
       ]
@@ -436,7 +492,7 @@
     },
     {
       "file": "references/skill-ownership.md",
-      "reason": "CRW-1220: the description is the classifier and router without a catch-all or neighbour triggers; the C4 row names the flow-managed high-risk lane and the design audit; the router has an executor row that loads crw-dev-star skills only; the family invariants move to crw-canon skill-family; the stub sections become links; requesting and receiving review move here from crw-dev-code-reviewer; the governance owner files are crw-canon files",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
       "hunks": [
         {
           "line": 31,
@@ -444,7 +500,7 @@
             "| Reader-facing document structure (READER-DOC-*) | `dev/references/reader-documents.md` | `dev` Family Invariants, `dev-visualizer`, `pabcd` plan-output/phase-check/D, `dev-scaffolding` implementation-log, `kwrite`, `search` deep-research |\n"
           ],
           "new": [
-            "| Reader-facing document structure (READER-DOC-*) | `dev/references/reader-documents.md` | `crw-canon` Family invariants, `dev-visualizer`, `pabcd` plan-output/phase-check/D, `dev-scaffolding` implementation-log, `kwrite`, `search` deep-research |\n"
+            "| Reader-facing document structure (READER-DOC-*) | `dev/references/reader-documents.md` | `crw-canon` Family invariants, `dev-visualizer`, `pabcd` plan-output/phase-check/D/implementation-units, `kwrite`, `search` deep-research |\n"
           ]
         },
         {

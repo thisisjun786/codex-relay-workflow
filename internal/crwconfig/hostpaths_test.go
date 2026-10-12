@@ -72,6 +72,10 @@ func TestNoHostPathOrDeviceNameInProduct(t *testing.T) {
 			for n, line := range strings.Split(string(data), "\n") {
 				if hostPath.MatchString(line) {
 					rel, _ := filepath.Rel(root, path)
+					if rel == filepath.Join("internal", "crwconfig", "paths.go") && strings.TrimSpace(line) == `const DefaultSandboxRoot = "/scratch/crw"` {
+						// CRW-1265, decision C: sandbox_root's default is the one host path product code names.
+						continue
+					}
 					hits = append(hits, rel+":"+strconv.Itoa(n+1)+": "+strings.TrimSpace(line))
 				}
 			}

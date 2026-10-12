@@ -239,13 +239,19 @@ func (c *Channel) ReportableCurrent(ctx context.Context, o Obligation) (bool, st
 	}
 	var state, ref string
 	err = c.Store.Q(ctx).QueryRowContext(ctx, "SELECT state,target_ref FROM sync_outbox WHERE relationship_id=? AND event_id=? AND subject_kind='verdict' AND target='coordination_document' ORDER BY rowid DESC LIMIT 1", o.RelationID, o.Basis["eventId"]).Scan(&state, &ref)
-	if err == sql.ErrNoRows {
-		return true, "", nil
+	if err != nil && err != sql.ErrNoRows {
+		return false, "", err
 	}
+	if err == nil && state == "confirmed" && ref == target {
+		return false, "already_in_the_record_the_supervisor_reads", nil
+	}
+	// a relationship a plan runs has no sync_outbox row of its verdict: the plan's confirmed summary entry is the record (delivery.PlanSummaryCarriesVerdict)
+	eventID, _ := o.Basis["eventId"].(string)
+	summary, err := delivery.PlanSummaryCarriesVerdict(ctx, c.Store.Q(ctx), o.RelationID, eventID, target)
 	if err != nil {
 		return false, "", err
 	}
-	if state == "confirmed" && ref == target {
+	if summary != "" {
 		return false, "already_in_the_record_the_supervisor_reads", nil
 	}
 	return true, "", nil
