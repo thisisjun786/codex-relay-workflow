@@ -389,6 +389,30 @@ acceptance and integration, the close of an execution), `Verifier` (`CILocalVeri
 (`StoreDecisions` writes the relay store), `Threads` (the host the close reads the reviewer threads from and archives them on) and
 `Reporter` (F11) - are interfaces in `internal/flow/ops/seams.go`; the dagsched-backed `Relay` belongs to the run process.
 
+**The run process's scheduler (CRW-1277).** The shipped binary installs the lane's operations in the run process (`cmd/crw` assigns
+`cli.OpsFor = cli.SchedulerLane`): `ops.NewLane` over `cli.SchedRelay` (the `Relay` over `internal/relay/dagsched`), `CILocalVerifier`,
+`StoreDecisions` and the host's reviewer threads, with the run's owner thread as the actor; the report has no delivery until F11. The
+milestone is the compiled milestone of the crw-plan handoff (`crw-flow-compile-input/1`) the run pinned with `crw flow start --handoff
+FILE` (a night batch pins the one its decision names): the nodes of the plan at the revision the run pinned (`flow_runs.plan_revision`)
+whose issues are the milestone's in the handoff, in the scheduler's offering order (`dagsched.OfferingOrder`: the longest chain below a
+node, then the most nodes below it, then the node id), each waiting for the nodes of the milestone its plan edges come from, with the
+criteria, regions and group of its issue; the milestone's title, criteria, surfaces, grade and required commands are its entry in
+`milestones[]`, which compile judges (an issue without an entry and an entry without an issue are refused). A handoff that is not the
+one the pinned revision was compiled from (an issue with no node, criteria whose digest is not the node's) is refused with "compile and
+put the handoff first", and nothing is defaulted. Before its first fenced write the run claims the plan's coordinator epoch with its
+run id as the session nonce (a resumed process is the same claim); a write after another session claimed the plan is refused
+(`stale_coordinator_epoch`) and the run stops there with the reason. `release` is `ReleaseAgent` (dag-release-request/1: the base from
+the plan's target, the criteria `c1..cn` of the issue, the pinned handoff as the volatile input, the run's directory as the artifact
+root, the rule version of the executor pair, the script and helper digests, the installed plugin's skills digest and the build); a
+node the scheduler holds back (no slot, an overlapping region, a host short of memory, a node not ready) is `released: false` with
+the reading's reason. `accept` is `Accept` on the agent path: the execution records a link the run points at the node's current
+worktree before it asks, the run's buffered rows are stored first, and the run's journal stamps the release's execution on the
+node's calls and the reviewer's input criteria digest on the reviewer's completed row, which the acceptance reads. `integrate` is one
+`IntegrateBatch` of the node with the wiring of `crw relay dag-integrate` (`dagsched.IntegrationDeps`: `crw-dev ci local` over the
+merged tree, git's compare-and-swap of the branch) onto the plan's target branch, followed by the observation of the landing there;
+`close` is `AgentClose`. `releaseChild` is refused (`refused:child_release_unwired:`): a managed child start needs host settings the
+run does not hold.
+
 ## The milestone close
 
 `crw.closeMilestone(ms)` (`crw:lib/close`) closes a milestone over evidence the run makes itself, in this order; the order is what the
