@@ -14,6 +14,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/backend/agent"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/journal"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -56,7 +57,10 @@ func ProductionWorld(ctx context.Context, req WorldRequest) (World, error) {
 	}
 	id := journal.Identity{}
 	if !req.Resume {
-		id = journal.Identity{ActorTaskID: spec.Thread, PlanID: planOf(spec.Args)}
+		if id, err = RunIdentity(ctx, st, spec); err != nil {
+			_ = st.Close()
+			return World{}, err
+		}
 	}
 	j, err := journal.Open(ctx, st, spec.RunID, id, journal.Options{})
 	if err != nil {
@@ -90,6 +94,22 @@ func ProductionWorld(ctx context.Context, req WorldRequest) (World, error) {
 		return errors.Join(j.Close(), client.Close(), st.Close())
 	}
 	return w, nil
+}
+
+// RunIdentity is what the run record of a new run holds besides what the engine knows: the owner thread and the plan the run
+// names with its arguments ("plan") at the revision the plan has now, which the run is pinned to for as long as it lives (the
+// plan basis an answer is judged against). A run that names no plan pins none.
+func RunIdentity(ctx context.Context, st *store.Store, spec Spec) (journal.Identity, error) {
+	id := journal.Identity{ActorTaskID: spec.Thread, PlanID: planOf(spec.Args)}
+	if id.PlanID == "" {
+		return id, nil
+	}
+	_, head, err := (&dag.Repo{Store: st}).Snapshot(ctx, id.PlanID, 0)
+	if err != nil {
+		return journal.Identity{}, fmt.Errorf("the plan %s the run names cannot be read from the relay store: %w", id.PlanID, err)
+	}
+	id.PlanRevision = head
+	return id, nil
 }
 
 // planOf is the plan a run's arguments name ("plan"), or "".

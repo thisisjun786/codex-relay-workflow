@@ -121,3 +121,39 @@ func TestNightBatchStartsFromDecision(t *testing.T) {
 		t.Errorf("%d processes started by refused commands", len(td.spawned)-before)
 	}
 }
+
+// TestNightBatchOverridesOnlyNarrowTheDecision: the flags of `start` may lower the budget and bring the deadline forward, never
+// remove or widen what the manager approved: a negative budget (the engine reads it as no limit), a budget above the decision's,
+// and a later deadline start nothing (CRW-1205 d4).
+func TestNightBatchOverridesOnlyNarrowTheDecision(t *testing.T) {
+	w := newWorld(t)
+	nightDecision(t, w, "ud-night", batchJSON(t, nil), NightRun)
+	td := w.deps()
+	start := func(extra ...string) (int, string) {
+		code, _, errOut := td.do(append([]string{"start", "night-batch", "--decision", "ud-night", "--thread", "thread-owner", "--state", w.state}, extra...)...)
+		return code, errOut
+	}
+	for name, tc := range map[string]struct {
+		args []string
+		want string
+	}{
+		"a negative budget":           {[]string{"--token-budget", "-1"}, "token budget"},
+		"a budget above the approved": {[]string{"--token-budget", "1500000"}, "750000"},
+		"a later deadline":            {[]string{"--deadline", "2026-10-13T09:00:00Z"}, "2026-10-13T06:00:00Z"},
+	} {
+		before := len(td.spawned)
+		if code, errOut := start(tc.args...); code == 0 || !strings.Contains(errOut, tc.want) || len(td.spawned) != before {
+			t.Errorf("%s: exit %d %q, %d processes", name, code, errOut, len(td.spawned)-before)
+		}
+	}
+	if code, errOut := start("--token-budget", "750000", "--deadline", "2026-10-13T05:00:00Z"); code != 0 {
+		t.Fatalf("a budget as high as the decision's and an earlier deadline: %d %q", code, errOut)
+	}
+	if spec := td.spawned[len(td.spawned)-1].Spec; spec.TokenBudget != 750000 || spec.Deadline != "2026-10-13T05:00:00Z" {
+		t.Errorf("the spec: %+v", spec)
+	}
+	// a plain start refuses a negative budget too
+	if code, _, errOut := td.do("start", "--preview", "--thread", "thread-owner", "--state", w.state, "--token-budget", "-5", "project-lane"); code == 0 || !strings.Contains(errOut, "token budget") {
+		t.Errorf("a negative budget on a plain start: %d %q", code, errOut)
+	}
+}

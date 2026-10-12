@@ -72,6 +72,9 @@ func (c *command) start(args []string) int {
 	if len(positional) != 1 {
 		return c.usage("exactly one workflow (a built-in name or a script file) is required")
 	}
+	if *budget < 0 {
+		return c.usage("the token budget cannot be negative (0 names none)")
+	}
 	spec := Spec{Schema: SpecSchema, Workflow: positional[0], Thread: *thread, TokenBudget: *budget, Pool: *pool, Deadline: *deadline, Socket: cm.socket, Decision: *decision}
 	if spec.Thread == "" {
 		spec.Thread = c.getenv("CODEX_THREAD_ID")
@@ -123,11 +126,24 @@ func (c *command) start(args []string) int {
 			return c.usage("night-batch takes its arguments from the decision; --args is not given")
 		}
 		spec.Args = compactJSON(batch.Args(*decision))
-		if spec.TokenBudget == 0 {
+		// the flags narrow what the manager approved and never widen it: a budget above the decision's and a later deadline are refused
+		switch {
+		case spec.TokenBudget == 0:
 			spec.TokenBudget = batch.TokenBudget
+		case spec.TokenBudget > batch.TokenBudget:
+			return c.fail("the token budget %d is above the %d tokens the decision %s approved", spec.TokenBudget, batch.TokenBudget, *decision)
 		}
 		if spec.Deadline == "" {
 			spec.Deadline = batch.Deadline
+		} else {
+			asked, err := time.Parse(time.RFC3339, spec.Deadline)
+			if err != nil {
+				return c.fail("the deadline %q is not an RFC 3339 time", spec.Deadline)
+			}
+			approved, _ := time.Parse(time.RFC3339, batch.Deadline) // Validate parsed it
+			if asked.After(approved) {
+				return c.fail("the deadline %s is later than the %s the decision %s approved", spec.Deadline, batch.Deadline, *decision)
+			}
 		}
 	} else if *decision != "" {
 		return c.usage("--decision starts a night batch only")
