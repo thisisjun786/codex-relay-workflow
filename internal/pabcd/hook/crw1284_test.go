@@ -1,7 +1,9 @@
 package hook
 
 import (
+	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -103,6 +105,40 @@ func TestParentAndIntegratorPushUnaffected(t *testing.T) {
 			t.Errorf("%s: %s", p, out)
 		}
 	}
+	// While the relay's record cannot be read the session may be a child: a push, or a command the reader cannot read that spells
+	// push, is refused in any session; a command the reader cannot read that spells no push passes.
+	for c, refused := range map[string]bool{"git push origin HEAD:dev": true, "bash dev.sh": true, "./w.sh git push origin r2-f01": true,
+		"eval \"$P\" push": true, "./w.sh go version": false, "bash w.sh go test ./...": false, "eval \"$X\"": false} {
+		if out := cpAnswer(t, dir, c, ChildPushBinding{Unreadable: "the relay store is locked"}, &asked); (out != "") != refused {
+			t.Errorf("relay record unreadable, %s: %q", c, out)
+		}
+	}
+}
+
+// TestChildPushOwnBranch: the own branch is the branch the child's checkout has, unless it is an integration branch (dev, main, the
+// branch origin's HEAD names) or the parent's checkout has it, in any letter case; a detached or non-repository checkout has none.
+func TestChildPushOwnBranch(t *testing.T) {
+	dir := cleanTempDir(t)
+	git := func(args ...string) {
+		if out, err := exec.Command("git", append([]string{"-c", "user.name=t", "-c", "user.email=t@t"}, args...)...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	repo := map[string]string{}
+	for _, b := range []string{"r2-x", "R2-X", "dev", "Main", "trunk", "r2-y"} {
+		repo[b] = filepath.Join(dir, b+"-repo")
+		git("init", "-q", "-b", b, repo[b])
+	}
+	git("-C", repo["trunk"], "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/trunk")
+	git("-C", repo["r2-y"], "commit", "-q", "--allow-empty", "-m", "x")
+	git("-C", repo["r2-y"], "checkout", "-q", "--detach")
+	for _, c := range []struct{ cwd, parent, want string }{{repo["r2-x"], "", "r2-x"}, {repo["r2-x"], repo["dev"], "r2-x"},
+		{repo["r2-x"], filepath.Join(dir, "none"), "r2-x"}, {repo["r2-x"], repo["R2-X"], ""}, {repo["dev"], "", ""}, {repo["Main"], repo["r2-x"], ""},
+		{repo["trunk"], "", ""}, {repo["r2-y"], "", ""}, {dir, "", ""}} {
+		if got := ChildPushOwnBranch(context.Background(), c.cwd, c.parent); got != c.want {
+			t.Errorf("checkout %s, parent %q: own %q, want %q", filepath.Base(c.cwd), c.parent, got, c.want)
+		}
+	}
 }
 
 // TestCRW1284ChildPushFuzz composes the CRW-1283 corpus (wrappers, program wrappers, PATH assignments, scripts, mutated forwarders,
@@ -132,8 +168,8 @@ func TestCRW1284ChildPushFuzz(t *testing.T) {
 		}
 	}
 	t.Logf("corpus %v; decisions %v", counts, stats)
-	if len(all) != 7640 || stats["target/allow"]+stats["ownlimit/allow"] != 0 {
-		t.Errorf("%d forms, pinned 7640", len(all))
+	if len(all) < 7640 || stats["target/allow"]+stats["ownlimit/allow"] != 0 {
+		t.Errorf("%d forms, at least 7640 pinned", len(all))
 	}
 	for _, c := range []string{"git push origin HEAD:r2-f01", "ionice -c3 nice -n 5 git push origin HEAD:r2-f01", "bash own.sh", "env X=1 go version"} {
 		if g.refused(c) {

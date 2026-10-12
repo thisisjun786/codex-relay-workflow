@@ -27,6 +27,8 @@ type ChildPushBinding struct {
 
 // HandleChildPushGuard is the guard's PreToolUse leg: the deny envelope for a push it stops, else empty. bind is asked only for a
 // command that pushes or that the reader cannot read; its answer for any other session than a child lets the command through.
+// While the relay's record cannot be read the session may be a child, so a push is refused in any session, and so is a command the
+// reader cannot read that spells push; one that spells no push passes, as it does in a session that is no child.
 func HandleChildPushGuard(raw string, bind func(session, cwd string) ChildPushBinding) string {
 	p := editObject(raw)
 	tool, _ := p["tool_name"].(string)
@@ -56,6 +58,8 @@ func HandleChildPushGuard(raw string, bind func(session, cwd string) ChildPushBi
 	session, _ := p["session_id"].(string)
 	b := bind(session, cwd)
 	switch {
+	case b.Unreadable != "" && len(s.pushes) == 0 && !childPushSpells(command):
+		return ""
 	case b.Unreadable != "":
 		s.why = "the relay's record of this session cannot be read (" + unreadableLabel(b.Unreadable) + ")"
 	case !b.Child:
@@ -69,8 +73,12 @@ func HandleChildPushGuard(raw string, bind func(session, cwd string) ChildPushBi
 	if s.why == "" {
 		return ""
 	}
+	own := b.Own
+	if own == "" {
+		own = "<its own branch>"
+	}
 	reason := "[crw CHILD-PUSH-GUARD] 통합은 부모·통합기 몫 (integration is the parent's and the integrator's): a relay child pushes only its own branch, " +
-		"named as the destination of a direct git push (git push origin HEAD:" + b.Own + "). Refused: " + s.why + "."
+		"named as the destination of a direct git push (git push origin HEAD:" + own + "). Refused: " + s.why + "."
 	return editAnswer("deny", reason, reason)
 }
 
@@ -80,18 +88,20 @@ func ChildPushInputUnreadAnswer() string {
 	return editAnswer("deny", reason, reason)
 }
 
-// ChildPushOwnBranch is the branch a child in cwd may push: the branch its checkout has, unless the parent's checkout has the same
-// one, which is then not the child's own.
+// ChildPushOwnBranch is the branch a child in cwd may push: the branch its checkout has, unless that is an integration branch (dev
+// and main, which the canon's delivery grant never covers, or the branch origin's HEAD names) or the parent's checkout has it, in
+// any letter case; then the child has none. The checkout is read at each command, so a branch renamed to dev is not the own one.
 func ChildPushOwnBranch(ctx context.Context, cwd, parent string) string {
-	branch := func(dir string) string {
-		out, err := gitprobe.Command(ctx, dir, nil, "symbolic-ref", "-q", "--short", "HEAD").Output()
+	branch := func(dir, ref string) string {
+		out, err := gitprobe.Command(ctx, dir, nil, "symbolic-ref", "-q", "--short", ref).Output()
 		if err != nil {
 			return ""
 		}
 		return strings.TrimSpace(string(out))
 	}
-	own := branch(cwd)
-	if own != "" && parent != "" && strings.EqualFold(branch(parent), own) {
+	own := branch(cwd, "HEAD")
+	if own == "" || strings.EqualFold(own, "dev") || strings.EqualFold(own, "main") ||
+		strings.EqualFold("origin/"+own, branch(cwd, "refs/remotes/origin/HEAD")) || parent != "" && strings.EqualFold(branch(parent, "HEAD"), own) {
 		return ""
 	}
 	return own
@@ -179,9 +189,14 @@ func (s *childPushScan) text(command, cwd string, depth int, outer *githubPostWr
 
 // mentions refuses a word the reader cannot evaluate, or one that spells push, where a program the guard does not read gets it.
 func (s *childPushScan) mentions(w shellir.Word, what string) {
-	if s.why == "" && (!w.Known || strings.Contains(strings.ToLower(strings.NewReplacer("\"", "", "'", "", "\\", "").Replace(w.Value)), "push")) {
+	if s.why == "" && (!w.Known || childPushSpells(w.Value)) {
 		s.why = what + " may push, and the guard does not read it"
 	}
+}
+
+// childPushSpells is whether a text spells push once quotes and backslashes are taken out, in any letter case.
+func childPushSpells(v string) bool {
+	return strings.Contains(strings.ToLower(strings.NewReplacer("\"", "", "'", "", "\\", "").Replace(v)), "push")
 }
 
 // childPushInterpreter is whether a program runs a program file it is given: the guard reads that file for a push.
@@ -224,7 +239,7 @@ var childPushFlags = map[string]bool{"--set-upstream": true, "--force": true, "-
 // childPushJudge is why one push is refused for a child whose own branch is own, or "" when it pushes own only.
 func childPushJudge(p childPush, own string) string {
 	if own == "" {
-		return "this session has no branch of its own (its checkout has none, or the parent's checkout has the same)"
+		return "this session has no branch of its own (its checkout has none or an integration branch, or the parent's checkout has the same)"
 	}
 	if p.feed {
 		return "find or xargs gives the push its words"
