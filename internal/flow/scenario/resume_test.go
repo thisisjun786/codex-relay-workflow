@@ -307,3 +307,56 @@ func TestMilestoneCloseRunsAgainWhenTheTargetMovedOn(t *testing.T) {
 		t.Errorf("live agent turns %+v", turns)
 	}
 }
+
+// A node the lane gave up (tiers_exhausted, blocked_scope) has its execution closed at the relay, and a closed execution does not
+// stand. The release of that node is still proven on a resume: the run itself closed the execution, so the lane is not released
+// again, no executor is built again, the relay is not asked to close a second time, and the escalation stays what it was.
+func TestResumeAfterGivenUpNodeRunsNothing(t *testing.T) {
+	cases := []struct {
+		name   string
+		reason string
+		lab    func(t *testing.T) *Lab
+	}{
+		{"tiers_exhausted", "tiers_exhausted", exhausted},
+		{"blocked_scope", "blocked_scope", func(t *testing.T) *Lab {
+			l := NewLab(t, oneNode()...)
+			l.Sequence("^build:A:executor$", func(c *Call) fakehostPlan {
+				return Say(ReceiptWith("blocked_scope", map[string]any{"gap": "the change needs the other package"}))
+			})
+			return l
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			l := tc.lab(t)
+			first := mustRunIncomplete(t, l)
+			if state, reason := laneOf(t, first, "A"); state != "escalated" || reason != tc.reason {
+				t.Fatalf("lane A: %s %s", state, reason)
+			}
+			if l.Relay.SlotHeld("A") || len(l.Relay.CloseReasons()) != 1 {
+				t.Fatalf("closes %v, slot held %v", l.Relay.CloseReasons(), l.Relay.SlotHeld("A"))
+			}
+			releases := len(l.Relay.Releases)
+			before := l.LastSeq()
+			l.NewProcess("proc-given-up")
+			again := Value[laneResult](t, l.Resume())
+			if state, reason := laneOf(t, again, "A"); state != "escalated" || reason != tc.reason {
+				t.Errorf("resume: lane A: %s %s", state, reason)
+			}
+			if turns := turnsSince(l, before); len(turns) != 0 {
+				t.Errorf("live agent turns on the resume: %+v", turns)
+			}
+			if n := len(l.Relay.Releases); n != releases {
+				t.Errorf("%d releases after the resume, %d before: the given-up node was released again", n, releases)
+			}
+			if got := l.Relay.CloseReasons(); len(got) != 1 {
+				t.Errorf("closes %v: the execution is closed once", got)
+			}
+			for _, ev := range rowsAfter(l, before) {
+				if ev.Kind == engine.KindCall && ev.Event == engine.EvCompleted && (ev.Op == "crw.release" || ev.Op == "crw.escalate") {
+					t.Errorf("%s ran again on the resume (%s)", ev.Op, ev.Path)
+				}
+			}
+		})
+	}
+}

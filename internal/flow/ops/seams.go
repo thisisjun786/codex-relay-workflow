@@ -139,7 +139,10 @@ type Relay interface {
 	Milestone(ctx context.Context, plan, milestone string) (Milestone, error)
 	// Release admits a node to an executor of the run (dag-release --surface agent) and reserves its slot.
 	Release(ctx context.Context, req ReleaseRequest) (ReleaseResult, error)
-	// ReleaseStands reports whether a release is still the node's current one (its execution is not closed).
+	// ReleaseStands reports whether a release is still the node's current one: true while its execution is open, and true for a node
+	// that landed (integration ends the execution without taking the release back); false for an execution that was closed
+	// (AgentClose) or released again. The lane does not rest on it for an execution its own journal shows it ended - a node it gave
+	// up or landed - so a relay may answer false for a closed execution without the lane building the node again on a resume.
 	ReleaseStands(ctx context.Context, plan, node, execution string) (bool, error)
 	// ReleaseChild releases a node as an issue child.
 	ReleaseChild(ctx context.Context, req ChildRequest) (ChildResult, error)

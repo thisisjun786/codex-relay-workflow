@@ -461,3 +461,19 @@ func TestResearchCapEscalatesAsScopeQuestion(t *testing.T) {
 	}
 	noTierStep(t, l)
 }
+
+// The verification of a head names the range the acceptance judges: its base is the tip of the integration target the node started
+// from, so the verification record and the premerge record of the node talk about the same commits.
+func TestVerifyNamesTheIntegrationTipAsBase(t *testing.T) {
+	l := NewLab(t, oneNode()...)
+	start := l.Tip()
+	mustRun(t, l)
+	if len(l.Verify.Calls) == 0 {
+		t.Fatal("nothing was verified")
+	}
+	for _, c := range l.Verify.Calls {
+		if c.Base != start {
+			t.Errorf("verification of %s at %s has base %q, want the tip %s", c.Node, c.Head, c.Base, start)
+		}
+	}
+}

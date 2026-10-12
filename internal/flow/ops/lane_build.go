@@ -161,7 +161,17 @@ func (o *verifyOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 	if o.l.d.Verifier == nil {
 		res.Error = "no verifier is wired"
 	} else {
-		out, err := o.l.d.Verifier.Verify(ctx, VerifyRequest{Node: node, Head: head.Commit, Worktree: wt})
+		// the range is the one the acceptance judges: from the integration tip (crw.accept's premerge names it as its base), not from
+		// the merge-base with origin/dev that `crw-dev ci local` falls back to
+		base := ""
+		if rel, ok := releaseRowOf(r, node); ok {
+			tip, terr := o.l.d.Relay.IntegrationTip(ctx, dataStr(rel, "plan"))
+			if terr != nil {
+				return engine.OpResult{}, terr
+			}
+			base = tip
+		}
+		out, err := o.l.d.Verifier.Verify(ctx, VerifyRequest{Node: node, Head: head.Commit, Worktree: wt, Base: base})
 		if err != nil {
 			res.Error = err.Error()
 		} else {

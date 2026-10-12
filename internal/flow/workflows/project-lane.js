@@ -182,6 +182,7 @@ async function lane(n, rel) {
     }
     // SP-TIER-1 evidence stands on the tier: one step to executor-t1, and no step after it
     if (tier === 'executor-t1') {
+      await crw.spawnDecision('TIER_2', 'refused', { node, role: tier, tier, reason: 'tiers_exhausted', inputs: ev.evidence(tier) })
       const esc = await crw.escalate(node, { reason: 'tiers_exhausted', evidence: ev.evidence(tier) })
       return { node, state: 'escalated', reason: 'tiers_exhausted', escalation: esc.id }
     }

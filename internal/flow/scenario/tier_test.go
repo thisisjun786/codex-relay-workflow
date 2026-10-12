@@ -169,6 +169,16 @@ func TestTiersExhaustedEscalates(t *testing.T) {
 	if len(l.Relay.Landed) != 0 {
 		t.Errorf("landed %v", l.Relay.Landed)
 	}
+	// the end of the tiers is a decision with its rule: SP-TIER-2 refuses a third tier, and the escalation follows it
+	var tier2 []SpawnRow
+	for _, r := range l.SpawnRows() {
+		if r.Rule == ops.RuleTier2 {
+			tier2 = append(tier2, r)
+		}
+	}
+	if len(tier2) != 1 || tier2[0].Node != "A" || tier2[0].Decision != "refused" || tier2[0].Kind != "signal" {
+		t.Errorf("SP-TIER-2 decision rows %+v: one refusal of a third tier for A", tier2)
+	}
 }
 
 // A tiers_exhausted escalation is the end of the node's execution: the relay is asked to close it (AgentClose, reason

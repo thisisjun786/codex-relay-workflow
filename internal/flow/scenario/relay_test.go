@@ -206,8 +206,11 @@ func (r *FakeRelay) Close(_ context.Context, req ops.CloseRequest) (ops.CloseRes
 		return ops.CloseResult{Held: true, ExecutionID: r.released[req.Node].ExecutionID}, nil
 	}
 	was := r.held[req.Node]
+	exec := r.released[req.Node].ExecutionID
 	r.held[req.Node] = false
-	return ops.CloseResult{Closed: true, SlotReleased: was, State: "escalated", ExecutionID: r.released[req.Node].ExecutionID}, nil
+	// as the interface says, a closed execution does not stand: ReleaseStands is false for it from now on
+	delete(r.released, req.Node)
+	return ops.CloseResult{Closed: true, SlotReleased: was, State: "escalated", ExecutionID: exec}, nil
 }
 
 // SlotHeld says whether the node holds a slot.

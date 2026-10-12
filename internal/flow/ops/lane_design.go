@@ -323,10 +323,17 @@ func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRes
 	return finish()
 }
 
-func (o *releaseOp) Proven(ctx context.Context, _ []engine.Event, row engine.Event) (bool, string, error) {
+// Proven: a release is proven while the relay says it stands. It is also proven when the run itself ended the execution after the
+// release: it gave the node up (a completed crw.escalate row of the node that closed the execution) or landed it (a completed
+// crw.integrate row of the node). A closed execution does not stand at the relay, and the lane that closed it must not be
+// released and built again on a resume - the escalation is the node's decision until crw.decide answers it.
+func (o *releaseOp) Proven(ctx context.Context, ev []engine.Event, row engine.Event) (bool, string, error) {
 	if !dataBool(row, "released") {
 		// a node the scheduler held back may be releasable now: the position asks again
 		return false, "the release did not happen", nil
+	}
+	if ended, how := endedByRun(rows(ev), row); ended {
+		return true, how, nil
 	}
 	ok, err := o.l.d.Relay.ReleaseStands(ctx, dataStr(row, "plan"), dataStr(row, "node"), dataStr(row, "execution_id"))
 	if err != nil {
@@ -336,6 +343,21 @@ func (o *releaseOp) Proven(ctx context.Context, _ []engine.Event, row engine.Eve
 		return false, "the execution of the release is closed", nil
 	}
 	return true, "", nil
+}
+
+// endedByRun says whether the run ended the execution of a release: a later completed escalation of the node that closed it, or a
+// later completed integration of the node.
+func endedByRun(r rows, release engine.Event) (bool, string) {
+	node := dataStr(release, "node")
+	if _, ok := r.opRows(OpEscalate).last(func(ev engine.Event) bool {
+		return ev.Seq > release.Seq && dataStr(ev, "node") == node && dataBool(ev, "closed")
+	}); ok {
+		return true, "the run closed the execution when it gave the node up"
+	}
+	if _, ok := r.opRows(OpIntegrate).last(func(ev engine.Event) bool { return ev.Seq > release.Seq && dataStr(ev, "node") == node }); ok {
+		return true, "the run landed the node"
+	}
+	return false, ""
 }
 
 // planOf is the plan a milestone was read from.
