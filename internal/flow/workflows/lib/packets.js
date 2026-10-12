@@ -112,6 +112,8 @@ export function fixPacket(node, verdict, ci, notes, receipt) {
 export function reviewPacket(node, plan, head, ci, opts) {
   const parts = [
     'ROLE: reviewer. Review the head ' + head.commit + ' of node ' + node + ' (' + plan.issue + ') against its criteria; round ' + (opts.round || 1) + '.',
+    // the two lines `crw flow audit` reads back from the thread on the host: what the acceptance of this review stands on
+    'HEAD: ' + head.commit + '\nCRITERIA DIGEST: ' + plan.criteria_digest,
     section('CRITERIA', criteriaList(plan.criteria)),
     section('DONE CONDITION', [plan.done_condition]),
     section('EDIT REGIONS', list(plan.regions, 'undeclared')),
@@ -123,4 +125,74 @@ export function reviewPacket(node, plan, head, ci, opts) {
   if (n) parts.push(n)
   parts.push('Answer with VERDICT. verified means every criterion is met and no defect of P0 to P2 stands. Answer one entry of criteria for each criterion c1, c2, ... above, each once, under its id. A defect you cannot judge from the head is of kind evidence_missing and carries an evidence_question.')
   return parts.join('\n\n')
+}
+
+// ---- the milestone close (crw:lib/close) ----
+
+function captureLines(captures) {
+  return list((captures || []).map((c) => c.kind + ' ' + c.path + ': ' + c.shows))
+}
+
+function evidenceLines(g) {
+  return list((g.evidence || []).map((e) => e.kind + (e.command ? ' ' + e.command : '') + ': ' + e.state + (e.pass ? ' pass' : '') + (e.head ? ' at ' + e.head : '')))
+}
+
+// The QA capture call (SP-QA-1): drives the surface in a scratch worktree at the head the gate pinned and judges nothing.
+export function qaCapturePacket(ms, g) {
+  return [
+    'ROLE: executor. QA capture for the final gate of milestone ' + ms.id + ' (' + ms.title + ') at the integrated head ' + g.head + '.',
+    'HEAD: ' + g.head,
+    section('SURFACES', list(g.surfaces)),
+    section('CRITERIA OF THE MILESTONE', list(ms.criteria)),
+    'Follow sections 1 to 4 of the crw-qa skill: state the surface and the invocation, drive it, capture the artifacts of every scenario, probe the adversarial classes, and tear down what you started. Your worktree is a scratch copy of the head; whatever you edit there is discarded. Do not start helpers: the run starts the reviewer passes itself.',
+    'Answer with QA_CAPTURE: every capture you made (path, kind, one line on what it shows), the scenarios you drove, and the teardown lines. A capture that is not listed does not exist for the gate. Do not judge the captures in this answer.',
+  ].join('\n\n')
+}
+
+const PASS_FOCUS = {
+  A: 'Pass A - design and functional integrity: is this a real, coherent implementation built on the reused primitives of the project (not a mock-only screen or a pasted raster), and do the intended features work?',
+  B: 'Pass B - visual fidelity and CJK precision: open the captures directly; hunt clipping, baseline drop, glyph breakage, KO/JA/ZH precision, and border or box-drawing drift.',
+}
+
+// One of the two oracle passes (SP-QA-2): read-only, over the same capture packet.
+export function qaPassPacket(pass, ms, g, capture) {
+  return [
+    'ROLE: explorer. QA pass ' + pass + ' for the final gate of milestone ' + ms.id + ' at the integrated head ' + g.head + '. Read only; edit nothing.',
+    'HEAD: ' + g.head,
+    PASS_FOCUS[pass],
+    section('CAPTURES (the same packet goes to both passes)', captureLines(capture.captures)),
+    section('SCENARIOS DRIVEN', list(capture.matrix)),
+    section('TEARDOWN', list(capture.teardown)),
+    section('CRITERIA OF THE MILESTONE', list(ms.criteria)),
+    'Answer with QA_PASS: pass "' + pass + '", a verdict of PASS, REVISE or FAIL, the findings with their severity, and a summary. A PASS stands over no P0 or P1 finding.',
+  ].join('\n\n')
+}
+
+// The next turn of the QA call's thread (C3 and above): synthesise the two passes into the receipt.
+export function qaSynthesisPacket(ms, g, passes) {
+  return [
+    'The two reviewer passes of the final gate of milestone ' + ms.id + ' at ' + g.head + ' are back. Synthesise them into one QA receipt.',
+    section('PASS RESULTS', passes.map((p) => '- pass ' + p.pass + ': ' + p.verdict + ' - ' + p.summary + (p.findings.length ? '\n  ' + p.findings.map((f) => '[' + f.severity + '] ' + f.ref + ': ' + f.finding).join('\n  ') : ''))),
+    'Answer with QA_RECEIPT: PASS only when both passes found nothing that stands against the criteria; REVISE when something must change; FAIL when the surface does not work.',
+  ].join('\n\n')
+}
+
+// The next turn of the QA call's thread (C2): one self-review of its own captures is the receipt.
+export function qaSelfReviewPacket(ms, g, capture) {
+  return [
+    'Review your own captures of the final gate of milestone ' + ms.id + ' at ' + g.head + ' once, as a reviewer who did not make them, and give the QA receipt.',
+    section('YOUR CAPTURES', captureLines(capture.captures)),
+    'Answer with QA_RECEIPT: PASS, REVISE or FAIL, the findings with their severity, and a summary. A PASS stands over no P0 or P1 finding.',
+  ].join('\n\n')
+}
+
+// reviewer-final: the review of the integrated range, after the final gate passed. The gate is its input.
+export function finalPacket(ms, g) {
+  return [
+    'ROLE: reviewer-final. Review the integrated range ' + g.range + ' of milestone ' + ms.id + ' (' + ms.title + ') after its final gate passed. You review the range, not the issues one by one: those were reviewed before.',
+    'HEAD: ' + g.head + '\nRANGE: ' + g.range,
+    section('FINAL GATE (passed)', evidenceLines(g)),
+    section('CRITERIA OF THE MILESTONE', criteriaList(ms.criteria)),
+    'Answer with VERDICT_FINAL: the verdict, one entry of criteria for each criterion c1, c2, ... above, the defects, and the alignment of the integrated range with the decisions of the DESIGN (ALIGNED, MISALIGNED with the drift you saw, or NOT_ASSESSED).',
+  ].join('\n\n')
 }

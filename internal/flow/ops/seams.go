@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 )
 
 // PlanNode is a node of the plan as the relay reads it for the lane: the issue it carries, the nodes it waits for (a dependency
@@ -30,6 +32,12 @@ type Milestone struct {
 	Nodes          []PlanNode `json:"nodes"`
 	Criteria       []string   `json:"criteria"`
 	CriteriaDigest string     `json:"criteria_digest"`
+	// Surfaces are the surfaces of the milestone's criteria (logic, web, tui, desktop); web, tui or desktop makes a QA receipt part
+	// of the final gate. Grade is the work class of the milestone (C2, C3, ...): from C3 the QA evidence is judged by the two
+	// oracle passes. RequiredCommands is the plan's required set of verification commands (empty: CILocalCommand).
+	Surfaces         []string `json:"surfaces"`
+	Grade            string   `json:"grade"`
+	RequiredCommands []string `json:"required_commands"`
 }
 
 // ReleaseRequest releases an issue node to an executor of the run: the node is admitted by the scheduler (the regions it edits
@@ -161,6 +169,9 @@ type Relay interface {
 // VerifyRequest asks for the verification of a committed head in the node's worktree.
 type VerifyRequest struct {
 	Node, Head, Worktree, Base string
+	// Command is the verification command asked for (the final gate asks for each command of the plan's required set); empty is
+	// the verifier's own command.
+	Command string
 }
 
 // VerifyOutcome is the verification of a head: the command that ran, whether it passed, the digest of the
@@ -185,17 +196,22 @@ type CloseRange struct {
 	Base, Tip string
 }
 
-// CloseOutcome is what the milestone close answered: the final gate and the review of reviewer-final over the integrated range.
-// This issue records the call; the gate and the final review are F13's.
+// CloseOutcome is what the milestone close judged: the final gate over the integrated head, the review of reviewer-final that took
+// the gate as its input, and the audit of the nodes' reviews that ran before the reviewer threads were archived.
 type CloseOutcome struct {
-	Wired bool            `json:"wired"`
 	Gate  json.RawMessage `json:"gate"`
 	Final json.RawMessage `json:"final"`
+	Audit json.RawMessage `json:"audit"`
 }
 
-// Closer is the milestone close of F13: the final gate over the integrated range and reviewer-final.
-type Closer interface {
-	Close(ctx context.Context, ms Milestone, rng CloseRange) (CloseOutcome, error)
+// Threads is the host as the close reads and archives the reviewer threads of the nodes (CRW-1206): thread/turns/list and
+// thread/items/list for the audit, thread/archive once an acceptance has its audit pass. A lane without one reports every audit
+// as unobserved and archives nothing.
+type Threads interface {
+	// ReadTurns reads the turns of a thread by their ids, in full.
+	ReadTurns(ctx context.Context, threadID string, turnIDs []string) ([]appserver.TurnReading, error)
+	// ArchiveThread archives a thread.
+	ArchiveThread(ctx context.Context, threadID string) error
 }
 
 // Report is the milestone report that goes up to the initiative lead.

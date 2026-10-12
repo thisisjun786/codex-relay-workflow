@@ -76,7 +76,7 @@ func (f *Fake) Thread(id string) (FakeThread, bool) {
 	if !ok {
 		return FakeThread{}, false
 	}
-	return FakeThread{ID: t.ID, Pair: t.Pair, Role: t.Role, Sandbox: t.Sandbox, Turns: append([]string(nil), t.Turns...)}, true
+	return FakeThread{ID: t.ID, Pair: t.Pair, Role: t.Role, Sandbox: t.Sandbox, QA: t.QA, Turns: append([]string(nil), t.Turns...)}, true
 }
 
 // StartThread implements Backend.

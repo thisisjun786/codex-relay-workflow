@@ -66,6 +66,9 @@ func (v CILocalVerifier) Verify(ctx context.Context, req VerifyRequest) (VerifyO
 	if req.Worktree == "" || req.Head == "" {
 		return VerifyOutcome{}, errors.New("ops: a verification needs the head and the worktree it is committed in")
 	}
+	if req.Command != "" && req.Command != CILocalCommand {
+		return VerifyOutcome{}, fmt.Errorf("ops: this verifier runs %q only, not %q", CILocalCommand, req.Command)
+	}
 	run := v.Run
 	if run == nil {
 		run = ExecCommand

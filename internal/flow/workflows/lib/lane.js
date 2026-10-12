@@ -11,6 +11,7 @@
 import { FINDINGS, VERDICT } from 'crw:lib/schemas'
 import { evidence } from 'crw:lib/evidence'
 import { explorerPacket, reviewPacket } from 'crw:lib/packets'
+import { closeMilestone, settleReviews } from 'crw:lib/close'
 
 // The executors a project runs at once (docs: at most three, and never more than the region-disjoint ready nodes).
 export const DEFAULT_CAP = 3
@@ -282,6 +283,8 @@ export function install(host) {
   host.review = (node, plan, head, ci, opts) => review(record, node, plan, head, ci, opts || {})
   host.reviewHalt = reviewHalt
   host.land = land
+  host.closeMilestone = closeMilestone
+  host.settleReviews = settleReviews
   host.evidence = evidence
   host.skip = (rule, info) => host.spawnDecision(rule, 'skip', info || {})
   return host

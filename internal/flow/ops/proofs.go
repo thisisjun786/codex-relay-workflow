@@ -23,8 +23,8 @@ const (
 	OpAccept = "crw.accept"
 	// OpIntegrate: node, batch_commit, integration_ref.
 	OpIntegrate = "crw.integrate"
-	// OpGate: head, command, range, ok.
-	OpGate = "crw.gate"
+	// OpGate: head, command (the plan's required set, joined with ";"), range, ok. The row of crw.finalGate (finalgate.go).
+	OpGate = "crw.finalGate"
 	// OpReviewerFinal: range, criteria_digest.
 	OpReviewerFinal = "crw.reviewerFinal"
 )
@@ -32,7 +32,8 @@ const (
 // recordOps are the calls that only record a fact (to the relay, to the parent, to the plan): a recorded one is never sent
 // again.
 var recordOps = []string{"crw.releaseChild", "crw.escalate", "crw.reportUp", "crw.hold", "crw.tierStep",
-	"crw.spawnDecision", "crw.stepRecord", "crw.exploreRoute", "crw.exploreRecord", "crw.designAudit", "crw.designLedger"}
+	"crw.spawnDecision", "crw.stepRecord", "crw.exploreRoute", "crw.exploreRecord", "crw.designAudit", "crw.designLedger",
+	"crw.qaReceipt", "crw.reviewerFinal", "crw.audit", "crw.archive"}
 
 // The keys of the rows' Data that the executor calls carry: the pending tree P a completed call recorded, and P_held for a
 // held one.
@@ -149,7 +150,7 @@ func (p Prover) IntegrateProof(ctx context.Context, events []engine.Event, repo,
 	return ok(ev.CallID), nil
 }
 
-// GateProof: a passing check of the current integration head with the same command over the same range was recorded.
+// GateProof: a passing check of the current integration head with the same command set over the same range was recorded.
 func GateProof(events []engine.Event, head, command, rng string) Verdict {
 	ev, hit := completed(events, OpGate, func(d map[string]any) bool {
 		return str(d, "head") == head && str(d, "command") == command && str(d, "range") == rng && flag(d, "ok")

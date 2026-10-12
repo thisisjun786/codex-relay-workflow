@@ -120,3 +120,33 @@ export const FINDINGS = obj({
   inferred: texts,
   unknown: texts,
 })
+
+const qaVerdict = { type: 'string', enum: ['PASS', 'REVISE', 'FAIL'] }
+const qaFinding = obj({ ref: text, severity: { type: 'string', enum: ['P0', 'P1', 'P2', 'P3'] }, finding: text, evidence: texts })
+
+// QA_CAPTURE: the answer of the QA capture call (SP-QA-1) of a final gate: what it captured from the surface, the scenarios it
+// drove and the teardown of what it started. A capture that is not listed here does not exist for the gate; the call judges
+// nothing in this answer (section 2 to 4 of the crw-qa skill).
+export const QA_CAPTURE = obj({
+  captures: list(obj({ path: text, kind: { type: 'string', enum: ['screenshot', 'terminal_capture', 'response', 'transcript'] }, shows: text })),
+  matrix: texts,
+  teardown: texts,
+  summary: text,
+})
+
+// QA_PASS: the answer of one read-only oracle pass (SP-QA-2): Pass A judges design and functional integrity, Pass B visual fidelity
+// and CJK precision, both over the same captures.
+export const QA_PASS = obj({
+  pass: { type: 'string', enum: ['A', 'B'] },
+  verdict: qaVerdict,
+  findings: list(qaFinding),
+  summary: text,
+})
+
+// QA_RECEIPT: the QA verdict of a final gate. For a C2 milestone it is the self-review of the QA call over its own captures; for
+// C3 and above it is the synthesis of the two oracle passes, asked on the thread of the QA call.
+export const QA_RECEIPT = obj({
+  verdict: qaVerdict,
+  findings: list(qaFinding),
+  summary: text,
+})
