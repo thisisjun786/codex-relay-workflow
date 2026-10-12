@@ -12,10 +12,13 @@ type Env struct {
 	Version string
 }
 
-// Response is what a route handler returns: the status and a value that is encoded as JSON.
+// Response is what a route handler returns: the status and a value that is encoded as JSON. A handler that answers with a stream
+// (the server-sent events of the Runs page) sets Stream instead: the server hands it the response and writes nothing itself, so the
+// stream owns its status, its headers and its end.
 type Response struct {
 	Status int
 	Body   any
+	Stream func(w http.ResponseWriter, r *http.Request)
 }
 
 // Handler serves one registered route. It receives the request after the guard has run, so
@@ -23,7 +26,8 @@ type Response struct {
 // 500 with a short error code.
 type Handler func(env *Env, r *http.Request) (Response, error)
 
-// Route is one registered method and path.
+// Route is one registered method and path. A path that ends in "/" is a prefix route: it serves every path below it that no exact
+// route serves (/api/runs/<id>/events), and its handler reads the rest of the path itself.
 type Route struct {
 	Method  string
 	Path    string
