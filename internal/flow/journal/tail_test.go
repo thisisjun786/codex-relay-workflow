@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // TestLoadAfterPagesTheRunInOrder: reading a run page by page with the last sequence number as the cursor gives every row Load
@@ -78,5 +79,95 @@ return [a.status, b.status]`)
 	}
 	if _, _, _, err := LoadAfter(ctx, st, runID, 0, 0); err == nil {
 		t.Error("an empty page was accepted")
+	}
+}
+
+// seedRun writes the rows of a run that has begun: its started row (seq 1) and one prepared row of a call (seq 2).
+func seedRun(t *testing.T, st *store.Store) *Journal {
+	t.Helper()
+	j, err := Open(ctx, st, runID, identity, Options{Immediate: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	j.Append(engine.Event{RunID: runID, Kind: engine.KindRun, Event: "started", Data: map[string]any{"workflow": "w", "script_digest": "d", "args_digest": "a"}})
+	j.Append(engine.Event{RunID: runID, Kind: engine.KindCall, CallID: "c1", Path: "0", Op: "agent", Event: engine.EvPrepared})
+	if err := j.Err(); err != nil {
+		t.Fatal(err)
+	}
+	return j
+}
+
+func readOnly(t *testing.T, path string) *store.Store {
+	t.Helper()
+	ro, err := store.OpenReadOnlyStore(ctx, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ro.Close() })
+	return ro
+}
+
+// TestLoadAfterPageIsOneSnapshot: the page of the rows after a cursor does not skip a committed call row. The call rows and the flow
+// rows are two statements; a writer that commits a call row (seq 3) and a flow row (seq 4) between them must not make the page
+// hold seq 4 alone, because its cursor would then pass seq 3 for good (CRW-1205 d3).
+func TestLoadAfterPageIsOneSnapshot(t *testing.T) {
+	st, path := newStore(t)
+	j := seedRun(t, st)
+	ro := readOnly(t, path)
+	fired := false
+	testAfterCallsRead = func() {
+		if fired {
+			return
+		}
+		fired = true
+		j.Append(engine.Event{RunID: runID, Kind: engine.KindCall, CallID: "c1", Path: "0", Op: "agent", Event: engine.EvCompleted})
+		j.Append(engine.Event{RunID: runID, Kind: engine.KindRun, Event: "finished", Data: map[string]any{"status": "completed"}})
+	}
+	t.Cleanup(func() { testAfterCallsRead = nil })
+	var seen []int
+	cursor := 2
+	for i := 0; i < 4; i++ {
+		page, _, _, err := LoadAfter(ctx, ro, runID, cursor, 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range page {
+			seen = append(seen, e.Seq)
+			cursor = e.Seq
+		}
+	}
+	if !fired {
+		t.Fatal("the writer never ran between the two statements")
+	}
+	if len(seen) != 2 || seen[0] != 3 || seen[1] != 4 {
+		t.Fatalf("a follower of the cursor saw seq %v, want [3 4]", seen)
+	}
+}
+
+// TestReadPageStateIsOfThePageMoment: the rows a state is summed from are those of the page's own snapshot. A run that finishes
+// after an empty page was read is not reported over with that page, because a follower that stops on "over" would stop at the old
+// cursor and never see the finished row (CRW-1205 d3).
+func TestReadPageStateIsOfThePageMoment(t *testing.T) {
+	st, path := newStore(t)
+	j := seedRun(t, st)
+	ro := readOnly(t, path)
+	testAfterPageRead = func() {
+		j.Append(engine.Event{RunID: runID, Kind: engine.KindRun, Event: "finished", Data: map[string]any{"status": "completed"}})
+	}
+	t.Cleanup(func() { testAfterPageRead = nil })
+	p, err := ReadPage(ctx, ro, runID, 2, 10, true)
+	if err != nil || !p.HasRun {
+		t.Fatalf("ReadPage: %v %v", p.HasRun, err)
+	}
+	if len(p.Events) != 0 {
+		t.Fatalf("the page holds %d rows after the last row", len(p.Events))
+	}
+	if len(p.Lean) != 2 {
+		t.Fatalf("the rows of the state hold %d rows, the page's snapshot holds 2 (the finished row came after it)", len(p.Lean))
+	}
+	testAfterPageRead = nil
+	next, err := ReadPage(ctx, ro, runID, 2, 10, true)
+	if err != nil || len(next.Events) != 1 || next.Events[0].Seq != 3 || len(next.Lean) != 3 {
+		t.Fatalf("the next page: %+v %v", next, err)
 	}
 }

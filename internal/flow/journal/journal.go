@@ -475,11 +475,11 @@ func Load(ctx context.Context, st *store.Store, runID string) (events []engine.E
 	if n == 0 {
 		return nil, false, nil
 	}
-	calls, err := readCalls(ctx, st, `WHERE run_id = ?`, runID)
+	calls, err := readCalls(ctx, st.DB, `WHERE run_id = ?`, runID)
 	if err != nil {
 		return nil, true, err
 	}
-	flows, err := readEvents(ctx, st, runID)
+	flows, err := readEvents(ctx, st.DB, runID)
 	if err != nil {
 		return nil, true, err
 	}
@@ -488,14 +488,14 @@ func Load(ctx context.Context, st *store.Store, runID string) (events []engine.E
 	return events, true, nil
 }
 
-func readCalls(ctx context.Context, st *store.Store, where string, args ...any) ([]engine.Event, error) {
+func readCalls(ctx context.Context, st queryer, where string, args ...any) ([]engine.Event, error) {
 	return readCallsLimited(ctx, st, where, 0, false, args...)
 }
 
 // readCallsLimited reads the rows of flow_calls that where selects, in order, at most limit of them (0: all). Lean leaves the
 // result bytes out: the rows then carry no "result" member, which a reader of the shape of a run (not of what its calls returned)
 // does not need and which can be large.
-func readCallsLimited(ctx context.Context, st *store.Store, where string, limit int, lean bool, args ...any) ([]engine.Event, error) {
+func readCallsLimited(ctx context.Context, st queryer, where string, limit int, lean bool, args ...any) ([]engine.Event, error) {
 	order := ` ORDER BY event_seq`
 	if limit > 0 {
 		order += ` LIMIT ` + strconv.Itoa(limit)
@@ -504,7 +504,7 @@ func readCallsLimited(ctx context.Context, st *store.Store, where string, limit 
 	if lean {
 		result = `NULL`
 	}
-	rows, err := st.DB.QueryContext(ctx, `SELECT run_id, call_id, event_seq, path, position, kind, event, `+result+`, detail_json FROM flow_calls `+where+order, args...)
+	rows, err := st.QueryContext(ctx, `SELECT run_id, call_id, event_seq, path, position, kind, event, `+result+`, detail_json FROM flow_calls `+where+order, args...)
 	if err != nil {
 		return nil, fmt.Errorf("journal: %w", err)
 	}
@@ -538,17 +538,17 @@ func readCallsLimited(ctx context.Context, st *store.Store, where string, limit 
 	return out, rows.Err()
 }
 
-func readEvents(ctx context.Context, st *store.Store, runID string) ([]engine.Event, error) {
+func readEvents(ctx context.Context, st queryer, runID string) ([]engine.Event, error) {
 	return readEventsAfter(ctx, st, runID, 0, 0)
 }
 
 // readEventsAfter reads the flow rows of a run after the sequence number after, in order, at most limit of them (0: all).
-func readEventsAfter(ctx context.Context, st *store.Store, runID string, after, limit int) ([]engine.Event, error) {
+func readEventsAfter(ctx context.Context, st queryer, runID string, after, limit int) ([]engine.Event, error) {
 	order := ` ORDER BY seq`
 	if limit > 0 {
 		order += ` LIMIT ` + strconv.Itoa(limit)
 	}
-	rows, err := st.DB.QueryContext(ctx, `SELECT run_id, seq, kind, call_id, payload_json FROM flow_events WHERE run_id = ? AND seq > ?`+order, runID, after)
+	rows, err := st.QueryContext(ctx, `SELECT run_id, seq, kind, call_id, payload_json FROM flow_events WHERE run_id = ? AND seq > ?`+order, runID, after)
 	if err != nil {
 		return nil, fmt.Errorf("journal: %w", err)
 	}
@@ -600,7 +600,7 @@ func splitMeta(raw string) (meta, data map[string]any, err error) {
 // read. ok is false when the call has no prepared row, or its newest attempt (the rows from the last prepared row on) has no
 // terminal row: a call that is open again has no result, and the terminal row of an earlier attempt is not its result.
 func ReadCallResult(ctx context.Context, st *store.Store, runID, callID string, omitSeq bool) (res engine.CallResult, ok bool, err error) {
-	rows, err := readCalls(ctx, st, `WHERE run_id = ? AND call_id = ?`, runID, callID)
+	rows, err := readCalls(ctx, st.DB, `WHERE run_id = ? AND call_id = ?`, runID, callID)
 	if err != nil {
 		return engine.CallResult{}, false, err
 	}
@@ -621,58 +621,117 @@ func RunOf(ctx context.Context, st *store.Store, callID string) (string, error) 
 	return run.String, nil
 }
 
-// LoadAfter reads the rows of run runID whose sequence number is above after, in order, at most limit of them (limit 1 or more),
-// and says whether a row beyond the page exists. It is the read of `crw flow watch` and of the GUI's event stream: the number of
-// the last row is the cursor of the next read, as `crw relay journal-tail` keeps the relay journal's. A store that holds no
-// run runID answers hasRun false.
+// queryer is what a read statement runs on: the store's database, or a transaction of it that holds one snapshot.
+type queryer interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// testAfterCallsRead and testAfterPageRead run between the statements of a read (tests only): after the call rows of a page, and
+// after the page, before the rows the state is read from.
+var testAfterCallsRead, testAfterPageRead func()
+
+// PageRead is what ReadPage answers: the page and, when it was asked for, every row of the run, both from one snapshot.
+type PageRead struct {
+	// HasRun is false for a store that holds no run runID; the rest is then empty.
+	HasRun bool
+	// Events are the rows after the cursor in order, at most the limit of them, and More says that a row beyond them exists.
+	Events []engine.Event
+	More   bool
+	// Lean is every row of the run without call results (LoadLean) when ReadPage was asked for it.
+	Lean []engine.Event
+}
+
+// ReadPage reads the rows of run runID whose sequence number is above after, in order, at most limit of them (limit 1 or more),
+// and, with lean, every row of the run without the results of its calls, all in one read transaction: a writer that commits
+// while the page is being read is seen completely or not at all, so the cursor (the seq of the last row) never passes a
+// committed row, and a state summed from Lean is the state at the page's own moment. A reader that holds no transaction between
+// two pages (a wait) reads each page this way again.
+func ReadPage(ctx context.Context, st *store.Store, runID string, after, limit int, lean bool) (PageRead, error) {
+	if limit < 1 {
+		return PageRead{}, errors.New("journal: a page holds at least one row")
+	}
+	tx, err := st.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return PageRead{}, fmt.Errorf("journal: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	var n int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM flow_runs WHERE run_id = ?`, runID).Scan(&n); err != nil {
+		return PageRead{}, fmt.Errorf("journal: %w", err)
+	}
+	if n == 0 {
+		return PageRead{}, nil
+	}
+	out := PageRead{HasRun: true}
+	calls, err := readCallsLimited(ctx, tx, `WHERE run_id = ? AND event_seq > ?`, limit+1, true, runID, after)
+	if err != nil {
+		return PageRead{}, err
+	}
+	if testAfterCallsRead != nil {
+		testAfterCallsRead()
+	}
+	flows, err := readEventsAfter(ctx, tx, runID, after, limit+1)
+	if err != nil {
+		return PageRead{}, err
+	}
+	events := append(calls, flows...)
+	sort.SliceStable(events, func(i, k int) bool { return events[i].Seq < events[k].Seq })
+	if len(events) > limit {
+		events, out.More = events[:limit], true
+	}
+	out.Events = events
+	if testAfterPageRead != nil {
+		testAfterPageRead()
+	}
+	if lean {
+		if out.Lean, err = loadLean(ctx, tx, runID); err != nil {
+			return PageRead{}, err
+		}
+	}
+	return out, nil
+}
+
+// LoadAfter is ReadPage without the rows of the whole run: the read of `crw flow watch` and of the GUI's event stream. The number
+// of the last row is the cursor of the next read, as `crw relay journal-tail` keeps the relay journal's. A store that holds no run
+// runID answers hasRun false.
 //
 // The rows are lean: they carry no call result (the "result" member of Data), so a follower of a run pays for the shape of the
 // run and not for what its calls returned.
 func LoadAfter(ctx context.Context, st *store.Store, runID string, after, limit int) (events []engine.Event, more, hasRun bool, err error) {
-	if limit < 1 {
-		return nil, false, false, errors.New("journal: a page holds at least one row")
-	}
-	var n int
-	if err := st.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM flow_runs WHERE run_id = ?`, runID).Scan(&n); err != nil {
-		return nil, false, false, fmt.Errorf("journal: %w", err)
-	}
-	if n == 0 {
-		return nil, false, false, nil
-	}
-	calls, err := readCallsLimited(ctx, st, `WHERE run_id = ? AND event_seq > ?`, limit+1, true, runID, after)
-	if err != nil {
-		return nil, false, true, err
-	}
-	flows, err := readEventsAfter(ctx, st, runID, after, limit+1)
-	if err != nil {
-		return nil, false, true, err
-	}
-	events = append(calls, flows...)
-	sort.SliceStable(events, func(i, k int) bool { return events[i].Seq < events[k].Seq })
-	if len(events) > limit {
-		events, more = events[:limit], true
-	}
-	return events, more, true, nil
+	p, err := ReadPage(ctx, st, runID, after, limit, false)
+	return p.Events, p.More, p.HasRun, err
 }
 
-// LoadLean is Load without the results of the calls: the rows of a run as `crw flow ps`, `show` and the GUI read them.
+// LoadLean is Load without the results of the calls: the rows of a run as `crw flow ps`, `show` and the GUI read them, from one
+// snapshot.
 func LoadLean(ctx context.Context, st *store.Store, runID string) (events []engine.Event, hasRun bool, err error) {
+	tx, err := st.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, false, fmt.Errorf("journal: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
 	var n int
-	if err := st.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM flow_runs WHERE run_id = ?`, runID).Scan(&n); err != nil {
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM flow_runs WHERE run_id = ?`, runID).Scan(&n); err != nil {
 		return nil, false, fmt.Errorf("journal: %w", err)
 	}
 	if n == 0 {
 		return nil, false, nil
 	}
-	calls, err := readCallsLimited(ctx, st, `WHERE run_id = ?`, 0, true, runID)
+	events, err = loadLean(ctx, tx, runID)
+	return events, true, err
+}
+
+func loadLean(ctx context.Context, q queryer, runID string) ([]engine.Event, error) {
+	calls, err := readCallsLimited(ctx, q, `WHERE run_id = ?`, 0, true, runID)
 	if err != nil {
-		return nil, true, err
+		return nil, err
 	}
-	flows, err := readEvents(ctx, st, runID)
+	flows, err := readEvents(ctx, q, runID)
 	if err != nil {
-		return nil, true, err
+		return nil, err
 	}
-	events = append(calls, flows...)
+	events := append(calls, flows...)
 	sort.SliceStable(events, func(i, k int) bool { return events[i].Seq < events[k].Seq })
-	return events, true, nil
+	return events, nil
 }

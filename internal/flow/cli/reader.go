@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/journal"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -99,11 +98,11 @@ func (r *Reader) live(run string) (bool, int) {
 
 // Info reads one run's line.
 func (r *Reader) Info(ctx context.Context, rec RunRecord) (RunInfo, error) {
+	live, pid := r.live(rec.RunID) // before the rows: see Tail
 	events, _, err := journal.LoadLean(ctx, r.St, rec.RunID)
 	if err != nil {
 		return RunInfo{}, err
 	}
-	live, pid := r.live(rec.RunID)
 	return Summarize(rec, events, live, pid), nil
 }
 
@@ -130,11 +129,11 @@ func (r *Reader) Detail(ctx context.Context, run string) (RunDetail, error) {
 	if err != nil {
 		return RunDetail{}, err
 	}
+	live, pid := r.live(run) // before the rows: see Tail
 	events, _, err := journal.LoadLean(ctx, r.St, run)
 	if err != nil {
 		return RunDetail{}, err
 	}
-	live, pid := r.live(run)
 	return Detail(rec, events, live, pid), nil
 }
 
@@ -165,8 +164,10 @@ type Page struct {
 var TailPoll = time.Second
 
 // Tail reads the rows of a run after the cursor, at most limit of them. With wait it reads again every TailPoll while there is no
-// row and the wait is not over, holding no transaction while it sleeps (every read is one short statement), as
-// `crw relay journal-tail --wait` does. A wait that ends with no row answers an empty page whose cursor is after.
+// row and the wait is not over, holding no transaction while it sleeps (every read is one short transaction), as
+// `crw relay journal-tail --wait` does. A wait that ends with no row answers an empty page whose cursor is after. The page that is
+// answered and the state it reports are read in one snapshot (journal.ReadPage), so a cursor never passes a committed row and a
+// page is reported over only when no row beyond its cursor existed in it.
 func (r *Reader) Tail(ctx context.Context, run string, after, limit int, wait time.Duration) (Page, error) {
 	rec, err := r.Record(ctx, run)
 	if err != nil {
@@ -174,37 +175,39 @@ func (r *Reader) Tail(ctx context.Context, run string, after, limit int, wait ti
 	}
 	deadline := time.Now().Add(wait)
 	for {
-		events, more, _, err := journal.LoadAfter(ctx, r.St, run, after, limit)
+		if wait > 0 {
+			probe, err := journal.ReadPage(ctx, r.St, run, after, limit, false)
+			if err != nil {
+				return Page{}, err
+			}
+			if len(probe.Events) == 0 && time.Until(deadline) > 0 {
+				timer := time.NewTimer(min(TailPoll, time.Until(deadline)))
+				select {
+				case <-ctx.Done():
+					timer.Stop()
+					return Page{}, ctx.Err()
+				case <-timer.C:
+				}
+				continue
+			}
+		}
+		// the lock is read before the snapshot: a holder commits its last row before it lets go, so a run seen without a holder has
+		// every row of it in the snapshot that follows
+		live, pid := r.live(run)
+		read, err := journal.ReadPage(ctx, r.St, run, after, limit, true)
 		if err != nil {
 			return Page{}, err
 		}
-		if len(events) > 0 || wait <= 0 {
-			return r.page(ctx, rec, after, events, more)
-		}
-		remaining := time.Until(deadline)
-		if remaining <= 0 {
-			return r.page(ctx, rec, after, events, more)
-		}
-		timer := time.NewTimer(min(TailPoll, remaining))
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return Page{}, ctx.Err()
-		case <-timer.C:
-		}
+		return page(rec, after, read, live, pid), nil
 	}
 }
 
-func (r *Reader) page(ctx context.Context, rec RunRecord, after int, events []engine.Event, more bool) (Page, error) {
-	p := Page{Run: rec.RunID, After: after, Cursor: after, More: more, Rows: []Row{}}
-	for _, e := range events {
+func page(rec RunRecord, after int, read journal.PageRead, live bool, pid int) Page {
+	p := Page{Run: rec.RunID, After: after, Cursor: after, More: read.More, Rows: []Row{}}
+	for _, e := range read.Events {
 		p.Rows = append(p.Rows, Row{Seq: e.Seq, Kind: e.Kind, Event: e.Event, CallID: e.CallID, Op: e.Op, Label: e.Label, Data: e.Data})
 		p.Cursor = e.Seq
 	}
-	info, err := r.Info(ctx, rec)
-	if err != nil {
-		return Page{}, err
-	}
-	p.State = info.State
-	return p, nil
+	p.State = Summarize(rec, read.Lean, live, pid).State
+	return p
 }

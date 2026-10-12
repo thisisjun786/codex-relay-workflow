@@ -74,9 +74,16 @@ func TakeLock(state, run, command string, now time.Time) (*Lock, error) {
 		}
 		return nil, err
 	}
+	// the holder must be nameable: a lock whose record cannot be written would let `crw flow pause` and `cancel` find a held run with
+	// no process to signal
 	rec, _ := json.Marshal(lockRecord{PID: os.Getpid(), Since: now.UTC().Format(time.RFC3339), Command: command})
-	if err := f.Truncate(0); err == nil {
-		_, _ = f.WriteAt(append(rec, '\n'), 0)
+	if err := f.Truncate(0); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("the pid of the holder of run %s cannot be recorded: %w", run, err)
+	}
+	if _, err := f.WriteAt(append(rec, '\n'), 0); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("the pid of the holder of run %s cannot be recorded: %w", run, err)
 	}
 	return &Lock{f: f}, nil
 }
@@ -129,3 +136,12 @@ func LockHolder(state, run string) (int, bool) {
 }
 
 func itoa(n int) string { return strconv.Itoa(n) }
+
+// killProcess sends sig to one process. A pid of 1 or less is refused: kill(2) sends to the caller's process group for 0, to
+// every process the caller may signal for -1 and to a process group for any other negative number.
+func killProcess(pid int, sig syscall.Signal) error {
+	if pid <= 1 {
+		return fmt.Errorf("%d is not the pid of a run process", pid)
+	}
+	return syscall.Kill(pid, sig)
+}

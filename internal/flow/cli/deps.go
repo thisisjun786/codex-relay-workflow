@@ -41,7 +41,7 @@ func Default() *Deps {
 		Writer: OpenWriter,
 		Spawn:  SpawnDetached,
 		Probe:  StoreProber{},
-		Signal: func(pid int, sig syscall.Signal) error { return syscall.Kill(pid, sig) },
+		Signal: killProcess,
 		World:  ProductionWorld,
 		Ready:  AwaitLock,
 	}

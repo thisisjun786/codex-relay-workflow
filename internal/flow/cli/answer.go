@@ -200,13 +200,18 @@ func (c *command) control(args []string, verb string) int {
 		}
 		return c.cancelDead(state, cm, rec)
 	}
+	if info.PID <= 1 {
+		// a signal to pid 0 goes to the whole process group of this command, and to pid -n to a group: a holder that cannot be named is not signalled
+		fmt.Fprintf(c.stderr, "crw flow %s: a process holds run %s but its lock names no process (holder unknown): nothing was signalled; look at %s and end the process by hand\n", verb, run, lockPath(state, run))
+		return 1
+	}
 	sig, what := syscall.SIGUSR1, "pause"
 	if verb == "cancel" {
 		sig, what = syscall.SIGTERM, "cancel"
 	}
 	signal := c.Signal
 	if signal == nil {
-		signal = func(pid int, s syscall.Signal) error { return syscall.Kill(pid, s) }
+		signal = killProcess
 	}
 	if err := signal(info.PID, sig); err != nil {
 		return c.fail("process %d of run %s cannot be signalled: %v", info.PID, run, err)
