@@ -82,7 +82,7 @@ A flow-managed node is an issue node that the project orchestrator's run release
 | Audit | the run | The run calls a reviewer of another model family for the design audit and for each head, and `crw flow audit` reads the reviews behind its acceptances back from the reviewer threads on the host |
 | Evidence | the run | A verification record, a verdict, a pre-merge record or a QA receipt is made from calls the run owns and commands the run itself runs. What an executor writes about its own work, a skill-loading line or a quoted instruction is no evidence |
 | Escalations and decisions | the orchestrator thread; Jun for what only Jun takes | The run raises an escalation and waits; `crw flow answer` applies the answer. The thread does not release, accept or integrate a node the run owns |
-| Acceptance and integration | the run, through the relay's DAG scheduler | The run holds the plan's coordinator epoch, so a transition written by another hand is a fault the run escalates, not a step it takes over |
+| Acceptance and integration | the run, through the relay's DAG scheduler | The run holds the plan's coordinator epoch, so a transition written by another hand is refused by the epoch fence (`stale_coordinator_epoch`) and raised as an escalation, and the run does not take it over |
 | The PABCD state machine | nobody in a flow-managed node | The executor and an oversized child start no PABCD state machine. The standalone PABCD rules are unchanged: a task that is not a flow-managed node keeps its own phases |
 
 ### The high-risk procedure of a C4 issue
