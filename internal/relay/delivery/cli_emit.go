@@ -79,6 +79,9 @@ func recordedSocket(ctx context.Context, s *store.Store) string {
 
 // cmdEmit is cmd_emit: the child's receipt, accepted, and queued when final.
 func cmdEmit(c *cliRun) (any, error) {
+	if store.HasBorrowedStore(c.ctx) && c.s("--manifest-ref") != "" && len(c.list("--artifact")) > 0 {
+		return nil, &store.RefusedError{Reason: "manifest_forbidden", Detail: "daemon child reports cannot freeze artifacts into a caller-selected destination; omit --manifest-ref"}
+	}
 	// CRW-675: a turn id that is not the thread's Codex id form is refused before anything is
 	// written. The check reads only the arguments, so it runs before the store is opened: a refused
 	// malformed turn id leaves no socket_path recorded (CRW-680). Without --socket, a turn the

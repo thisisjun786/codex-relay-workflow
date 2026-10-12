@@ -129,6 +129,37 @@ func TestReadOnlyChildCanEmitBlockedNeedsInput(t *testing.T) {
 	}
 }
 
+func TestVerifierReadOnlyChildCannotOverwriteAnUnrelatedManifest(t *testing.T) {
+	state, database, host := blockedChildWorld(t)
+	control, err := service.ListenControlStore(context.Background(), state, database, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer control.Close()
+	artifact := filepath.Join(filepath.Dir(state), "artifact.txt")
+	if err := os.WriteFile(artifact, []byte("permitted artifact"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	unrelated := t.TempDir()
+	manifest := filepath.Join(unrelated, "MANIFEST.json")
+	before := "unrelated manifest: must not change"
+	if err := os.WriteFile(manifest, []byte(before), 0600); err != nil {
+		t.Fatal(err)
+	}
+	result, commandErr := readonlyCommand(t, state, host, "emit", "--relationship", "rel-1", "--generation", "1", "--outcome", "blocked_needs_input", "--turn-thread", "01child-task", "--turn-id", "turn-dispatch-1", "--turn-status", "completed", "--artifact", artifact, "--manifest-ref", unrelated)
+	after, err := os.ReadFile(manifest)
+	if err != nil || string(after) != before {
+		t.Fatalf("writable-open-denied child overwrote unrelated manifest through daemon: %s %v; response=%v, commandErr=%v", after, err, result, commandErr)
+	}
+	if commandErr == nil || result["reason"] != "manifest_forbidden" {
+		t.Fatalf("external freeze destination must be explicitly refused: %v %v", result, commandErr)
+	}
+	var count int
+	if err := database.Q(context.Background()).QueryRowContext(context.Background(), "SELECT COUNT(*) FROM events").Scan(&count); err != nil || count != 0 {
+		t.Fatalf("refused freeze wrote relay events: count=%d, err=%v", count, err)
+	}
+}
+
 func TestChildCommandRequiresTheDaemonsOwnedStore(t *testing.T) {
 	state, database, host := blockedChildWorld(t)
 	marker, workspace := filepath.Join(filepath.Dir(state), "markers"), filepath.Dir(state)
