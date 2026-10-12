@@ -99,20 +99,38 @@ func (r *FakeRelay) Milestone(_ context.Context, plan, milestone string) (ops.Mi
 	for _, n := range r.nodes {
 		pn := ops.PlanNode{ID: n.ID, Issue: n.Issue, Title: n.Title, After: n.After, Regions: n.Regions, Group: n.Group, Criteria: n.criteria()}
 		pn.CriteriaDigest = sha(strings.Join(pn.Criteria, "\n"))
-		pn.SliceDigest = sha(fmt.Sprintf("%s|%s|%v|%v", n.ID, n.Issue, n.After, n.Regions))
+		pn.SliceDigest = sliceOf(n)
 		ms.Nodes = append(ms.Nodes, pn)
 	}
 	return ms, nil
 }
 
-// Release implements ops.Relay.
+// sliceOf is a node's slice of the plan.
+func sliceOf(n NodeSpec) string {
+	return sha(fmt.Sprintf("%s|%s|%v|%v", n.ID, n.Issue, n.After, n.Regions))
+}
+
+// Release implements ops.Relay. Like the relay, it compares the slice the flow compared with the node's slice of the plan it holds
+// when it records the release (CRW-1288), answers a replay only under the slice it was released under, and answers that slice.
 func (r *FakeRelay) Release(_ context.Context, req ops.ReleaseRequest) (ops.ReleaseResult, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.Releases = append(r.Releases, req)
 	if prior, ok := r.released[req.Node]; ok && r.held[req.Node] {
+		if req.SliceDigest != "" && req.SliceDigest != prior.SliceDigest {
+			return ops.ReleaseResult{Reason: ops.ReasonPlanChanged}, nil
+		}
 		prior.Replayed = true
 		return prior, nil
+	}
+	slice := ""
+	for _, n := range r.nodes {
+		if n.ID == req.Node {
+			slice = sliceOf(n)
+		}
+	}
+	if req.SliceDigest != "" && req.SliceDigest != slice {
+		return ops.ReleaseResult{Reason: ops.ReasonPlanChanged}, nil
 	}
 	used := 0
 	for _, h := range r.held {
@@ -124,7 +142,7 @@ func (r *FakeRelay) Release(_ context.Context, req ops.ReleaseRequest) (ops.Rele
 		return ops.ReleaseResult{Reason: "capacity_exhausted"}, nil
 	}
 	r.n++
-	res := ops.ReleaseResult{Released: true, ExecutionID: fmt.Sprintf("exec-%s-%d", req.Node, r.n), SlotID: "slot-" + req.Node}
+	res := ops.ReleaseResult{Released: true, ExecutionID: fmt.Sprintf("exec-%s-%d", req.Node, r.n), SlotID: "slot-" + req.Node, SliceDigest: slice}
 	r.released[req.Node] = res
 	r.held[req.Node] = true
 	return res, nil

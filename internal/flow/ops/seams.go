@@ -46,6 +46,10 @@ type ReleaseRequest struct {
 	Plan, Node, RunID string
 	// Revision and DesignDigest are the design revision the release is made under; the lane's packets are built from it.
 	Revision, DesignDigest string
+	// SliceDigest is the node's slice of the plan the flow compared (CRW-1288) and PlanDigest the digest of that plan: the relay
+	// compares SliceDigest with the node's slice in the transaction that reserves the slot and records the release, and a slice that
+	// is another releases nothing (Reason plan_changed). An empty SliceDigest compares nothing.
+	SliceDigest, PlanDigest string
 	// RequestID makes the release idempotent: the same request is the same release.
 	RequestID string
 }
@@ -58,6 +62,9 @@ type ReleaseResult struct {
 	ExecutionID string `json:"execution_id"`
 	SlotID      string `json:"slot_id"`
 	Replayed    bool   `json:"replayed"`
+	// SliceDigest is the node's slice of the plan the relay committed the release under (the frozen manifest's); a replayed
+	// release names the slice of the release it replays, which the relay answers only to a request that expects that slice.
+	SliceDigest string `json:"slice_digest"`
 }
 
 // AcceptRequest asks the relay to accept an agent node's head (dag-accept on the agent path, R05): the premerge record the run

@@ -338,6 +338,84 @@ func TestSchedRelayReleaseAgentReservesSlotAndReplays(t *testing.T) {
 	}
 }
 
+// TestSchedRelayReleaseComparesTheExpectedSlice (CRW-1288): the release carries the slice the flow compared to the relay, which
+// releases nothing when the plan gives the node another (Released false, plan_changed, no execution), and a release answers the
+// slice of the manifest the relay committed.
+func TestSchedRelayReleaseComparesTheExpectedSlice(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+	r := l.relayFor("run-slice00001", l.handoffBytes(nil), 1)
+	node, slice := l.nodeOf["A-1"], ""
+	for _, n := range l.snapshot(0).Nodes {
+		if n.NodeID == node {
+			slice = n.SliceDigest
+		}
+	}
+	other, err := r.Release(ctx, ops.ReleaseRequest{Plan: l.plan, Node: node, RunID: r.RunID, RequestID: "req-1", SliceDigest: "sha256:another"})
+	if err != nil || other.Released || other.Reason != ops.ReasonPlanChanged {
+		t.Fatalf("a release under another slice: %+v %v", other, err)
+	}
+	if n := l.count("SELECT COUNT(*) FROM dag_agent_executions") + l.count("SELECT COUNT(*) FROM dag_input_manifests"); n != 0 {
+		t.Fatalf("the refused release wrote %d rows", n)
+	}
+	res, err := r.Release(ctx, ops.ReleaseRequest{Plan: l.plan, Node: node, RunID: r.RunID, RequestID: "req-1", SliceDigest: slice})
+	if err != nil || !res.Released || slice == "" || res.SliceDigest != slice {
+		t.Fatalf("the release under slice %s: %+v %v", slice, res, err)
+	}
+}
+
+// TestSchedRelayReplayUnderAnotherSliceIsNotReleased (CRW-1288): the relay committed a node's release under its slice and the run
+// stopped before the journal row; a plan revision then gave the node another slice, and the run asks again with that slice. The
+// execution the relay replays was built under the old slice, so the answer is not a release under the new one (Released false,
+// plan_changed, no second execution); asked again with the slice it was committed under, the release is the idempotent replay.
+func TestSchedRelayReplayUnderAnotherSliceIsNotReleased(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+	r := l.relayFor("run-replay00001", l.handoffBytes(nil), 1)
+	node := l.nodeOf["A-1"]
+	sliceAt := func() string {
+		for _, n := range l.snapshot(0).Nodes {
+			if n.NodeID == node {
+				return n.SliceDigest
+			}
+		}
+		return ""
+	}
+	committed := sliceAt()
+	first, err := r.Release(ctx, ops.ReleaseRequest{Plan: l.plan, Node: node, RunID: r.RunID, RequestID: "req-1", SliceDigest: committed})
+	if err != nil || !first.Released || first.SliceDigest != committed {
+		t.Fatalf("the release under slice %s: %+v %v", committed, first, err)
+	}
+	in, _ := DecodeHandoff(l.handoffBytes(func(in *compile.Input) {
+		in.Projects[0].Issues[0].Title = "issue A-1, retitled by a plan revision"
+	}))
+	res, err := compile.Compile(in, compile.Options{Bases: map[string]dag.State{l.plan: dag.StateFromSnapshot(l.snapshot(0))}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Plans[0].Change == nil {
+		t.Fatal("the retitle compiled to no plan revision")
+	}
+	change := *res.Plans[0].Change
+	change.CoordinatorEpoch = r.Sched.ExpectedEpoch
+	if _, err := (&dag.Repo{Store: l.w.st}).Put(ctx, change); err != nil {
+		t.Fatal(err)
+	}
+	now := sliceAt()
+	if now == committed {
+		t.Fatal("the plan revision did not change the node's slice")
+	}
+	again, err := r.Release(ctx, ops.ReleaseRequest{Plan: l.plan, Node: node, RunID: r.RunID, RequestID: "req-1", SliceDigest: now})
+	if err != nil || again.Released || again.Reason != ops.ReasonPlanChanged {
+		t.Fatalf("the release asked under the new slice %s replays the one committed under %s: %+v %v, want Released false, plan_changed", now, committed, again, err)
+	}
+	if n := l.count("SELECT COUNT(*) FROM dag_agent_executions"); n != 1 {
+		t.Fatalf("%d executions", n)
+	}
+	replay, err := r.Release(ctx, ops.ReleaseRequest{Plan: l.plan, Node: node, RunID: r.RunID, RequestID: "req-1", SliceDigest: committed})
+	if err != nil || !replay.Released || !replay.Replayed || replay.ExecutionID != first.ExecutionID || replay.SliceDigest != committed {
+		t.Fatalf("the release asked again under the committed slice: %+v %v, want the replay of %s", replay, err, first.ExecutionID)
+	}
+}
+
 // TestSchedRelayHeldBackReleaseIsNotAnError (CRW-1277 d): a node the scheduler holds back is Released false with the reason and no error
 // (a node waiting for the node it comes after, a node whose region overlaps a running node's), so the lane asks again later; a request the
 // relay refuses for what it is (a node the plan does not hold) is an error.
