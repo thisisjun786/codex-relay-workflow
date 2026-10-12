@@ -181,3 +181,28 @@ func TestAuditCommandReportsACloseError(t *testing.T) {
 		}
 	}
 }
+
+// The run surface serves `crw flow audit` (one package after the merge with CRW-1206): Handles and RunWith take it, Usage lists it
+// beside the other commands, and RunWith hands it to RunAudit, which needs the AuditEnv the binary installs.
+func TestRunSurfaceServesAudit(t *testing.T) {
+	if !Handles([]string{"audit"}) || !Handles([]string{"start"}) {
+		t.Error("Handles does not take audit and start")
+	}
+	if !strings.Contains(Usage, "crw flow audit (--run RUN | --acceptance ID)") || !strings.Contains(Usage, "crw flow start WORKFLOW") {
+		t.Errorf("Usage: %s", Usage)
+	}
+	prev := AuditEnv
+	AuditEnv = nil
+	t.Cleanup(func() { AuditEnv = prev })
+	var out, errOut bytes.Buffer
+	if code := RunWith(context.Background(), &Deps{}, []string{"audit", "--run", "r"}, strings.NewReader(""), &out, &errOut); code != 2 || !strings.Contains(errOut.String(), "installs no journal store") {
+		t.Errorf("RunWith audit without an environment: exit %d, stderr %q", code, errOut.String())
+	}
+	fixedClock(t)
+	useEnv(t, acceptedWithNoReview(true), true, nil)
+	out.Reset()
+	errOut.Reset()
+	if code := RunWith(context.Background(), &Deps{}, []string{"audit", "--run", "run-1", "--no-record"}, strings.NewReader(""), &out, &errOut); code != 1 || !strings.Contains(out.String(), "mismatch") {
+		t.Errorf("RunWith audit: exit %d, stdout %q, stderr %q", code, out.String(), errOut.String())
+	}
+}
