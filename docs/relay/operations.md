@@ -66,7 +66,10 @@ decides where a child report is recorded: the child's `--state` or
 `CODEX_SESSION_RELAY_STATE` only finds the socket, and the daemon records the command in
 its own store whatever the request names. A path relative to the child (`--socket`,
 `--workspace`, `--marker-root`, `--independent-review`) is refused with an explicit error;
-the child names it absolute.
+the child names it absolute. The command runs in the daemon's environment: the default marker root
+is the daemon's (`CODEX_SESSION_RELAY_MARKER_ROOT`, else under `XDG_STATE_HOME` or the
+home), a child naming another `--marker-root` is refused, and a `--kind-module` the child
+names (one of the modules the CLI lists) is installed in the daemon.
 
 An unavailable daemon is an explicit host error (exit 3), not success and not a fallback
 to a local writer or a bridge MCP call. A lost answer after submission is reported as an
