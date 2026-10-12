@@ -866,44 +866,45 @@ func (c *callRun) forkThread(ctx context.Context) (CallResult, bool) {
 // threadPrefix is the turns of a thread through throughTurn, in order, as the journal recorded them: each turn's id and
 // its `<call_id>/t<k>` marker. A fork's prefix is what the forked thread must hold. A thread that was itself forked starts
 // with the turns it inherited (the prefix its fork request recorded, which is the whole history through its boundary), and
-// only then come the turns its own calls ran; a turn an operator replaced is not part of the history.
+// only then come the turns its own calls ran; a turn an operator replaced is not part of the history. The rows are read in
+// order, and a turn belongs to the thread its call was on when the turn started: a call that ran again on another thread
+// (a new attempt, a fork in a suffix) left its earlier turns on the thread it ran them on.
 func threadPrefix(j Journal, threadID, throughTurn string) []map[string]any {
-	owner := map[string]string{}
 	events := j.Events()
 	replaced := replacedTurns(events)
-	var inherited []map[string]any
+	owner := map[string]string{}
 	forkReq := map[string]Event{}
+	var out []map[string]any
+	inherited := false
 	for _, ev := range events {
 		if ev.Kind != KindCall {
 			continue
 		}
 		switch ev.Event {
 		case EvPrepared:
-			if t, _ := ev.Data["thread_id"].(string); t != "" {
-				owner[ev.CallID] = t
-			}
+			// a continuation is on its handle's thread from the start, any other call on none until its thread starts
+			owner[ev.CallID], _ = ev.Data["thread_id"].(string)
 		case EvForkRequested:
 			forkReq[ev.CallID] = ev
-		case EvThreadStarted, EvForkStarted:
+		case EvThreadStarted:
 			owner[ev.CallID], _ = ev.Data["thread_id"].(string)
-			if t, _ := ev.Data["thread_id"].(string); ev.Event == EvForkStarted && t == threadID && inherited == nil {
+		case EvForkStarted:
+			t, _ := ev.Data["thread_id"].(string)
+			owner[ev.CallID] = t
+			if t == threadID && !inherited {
+				inherited = true
 				for _, p := range prefixOf(forkReq[ev.CallID].Data) {
-					inherited = append(inherited, map[string]any{"turn_id": p.TurnID, "op": p.Op})
+					out = append(out, map[string]any{"turn_id": p.TurnID, "op": p.Op})
 				}
 			}
+		case EvTurnStarted:
+			id, _ := ev.Data["turn_id"].(string)
+			if owner[ev.CallID] != threadID || replaced[id] {
+				continue
+			}
+			op, _ := ev.Data["op"].(string)
+			out = append(out, map[string]any{"turn_id": id, "op": op})
 		}
-	}
-	out := inherited
-	for _, ev := range events {
-		if ev.Kind != KindCall || ev.Event != EvTurnStarted || owner[ev.CallID] != threadID {
-			continue
-		}
-		id, _ := ev.Data["turn_id"].(string)
-		if replaced[id] {
-			continue
-		}
-		op, _ := ev.Data["op"].(string)
-		out = append(out, map[string]any{"turn_id": id, "op": op})
 	}
 	for i, p := range out {
 		if p["turn_id"] == throughTurn {

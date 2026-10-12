@@ -602,6 +602,59 @@ return [b.status, f2.status, f3.status, c1.commit, c2.commit, c3.commit]`
 	if n := len(e.requests("thread/start")); n != 1 {
 		t.Errorf("%d thread/start requests: the build was run again", n)
 	}
+	// a further resume of the same script finds the suffix's own work in the restored worktree and replays all of it
+	before, rowsBefore := len(e.host.Requests()), len(e.journal.Events())
+	e.newProcess("proc-3")
+	e.edits(nil)
+	again := value[[]string](t, e.resume(body("fixtwo edited")))
+	if n := len(e.host.Requests()) - before; n != 0 {
+		t.Errorf("the second resume sent %d requests: nothing is live", n)
+	}
+	for _, ev := range e.journal.Events()[rowsBefore:] {
+		if ev.Kind == engine.KindCall && (ev.Event == engine.EvPrepared || ev.Event == engine.EvSuperseded) {
+			t.Errorf("the second resume wrote %s for %s", ev.Event, ev.Label)
+		}
+	}
+	if len(e.flowRows(engine.EvWorktreeRestored)) != 1 {
+		t.Errorf("the second resume restored a worktree again: %d rows", len(e.flowRows(engine.EvWorktreeRestored)))
+	}
+	res2 := value[[]string](t, res)
+	if !slices.Equal(again, res2) {
+		t.Errorf("the second resume returned %v, the first %v", again, res2)
+	}
+}
+
+// A complete run over real git resumes with nothing live: the commits are proven by their chain, the executor calls by the
+// commits that carry their pending trees, and no thread, turn or commit is made again.
+func TestResumeOfACompleteGitRunReplaysEverything(t *testing.T) {
+	e := newEnv(t)
+	e.edits(nil)
+	body := buildScript + `
+const c1 = await crw.commit('n1', b.callId)
+const f2 = await agent.call('fixtwo the parser', { resume: b, label: 'fix2' })
+const c2 = await crw.commit('n1', f2.callId)
+const f3 = await agent.call('fixthree', { resume: f2, label: 'fix3' })
+return [b.status, f2.status, f3.status, c1.commit, c2.commit]`
+	first := value[[]string](t, e.run(body))
+	before, rowsBefore := len(e.host.Requests()), len(e.journal.Events())
+	head := git(t, e.wt("n1", 1, 0), "rev-parse", "HEAD")
+	e.newProcess("proc-2")
+	e.edits(nil)
+	again := value[[]string](t, e.resume(body))
+	if !slices.Equal(first, again) {
+		t.Errorf("the resume returned %v, the run %v", again, first)
+	}
+	if n := len(e.host.Requests()) - before; n != 0 {
+		t.Errorf("the resume sent %d requests", n)
+	}
+	for _, ev := range e.journal.Events()[rowsBefore:] {
+		if ev.Kind == engine.KindCall && ev.Event != "" && ev.Event != engine.EvCompleted {
+			t.Errorf("the resume wrote %s for %s", ev.Event, ev.Label)
+		}
+	}
+	if got := git(t, e.wt("n1", 1, 0), "rev-parse", "HEAD"); got != head {
+		t.Errorf("HEAD moved from %s to %s", head, got)
+	}
 }
 
 // A run that ended after the build and before the next continuation, or whose continuation's prompt changed, resumes with
@@ -676,6 +729,22 @@ return [b.status, r.status]`,
 			}
 			if _, err := os.Stat(filepath.Join(old, "research.txt")); err == nil && name == "died before the continuation" {
 				t.Errorf("the continuation wrote into the retired worktree")
+			}
+			// the next resume of the same script finds the build in the prefix the restored worktree carries and the continuation
+			// on its fork: nothing is live and nothing is restored again
+			before, rowsBefore := len(e.host.Requests()), len(e.journal.Events())
+			e.newProcess("proc-3")
+			e.edits(nil)
+			if again := value[[]string](t, e.resume(c.second)); again[1] != "completed" {
+				t.Fatalf("%v", again)
+			}
+			if n := len(e.host.Requests()) - before; n != 0 {
+				t.Errorf("the next resume sent %d requests", n)
+			}
+			for _, ev := range e.journal.Events()[rowsBefore:] {
+				if ev.Kind == engine.KindCall && (ev.Event == engine.EvPrepared || ev.Event == engine.EvSuperseded) || ev.Event == engine.EvWorktreeRestored {
+					t.Errorf("the next resume wrote %s for %s", ev.Event, ev.Label)
+				}
 			}
 		})
 	}
@@ -773,6 +842,9 @@ return [b.status, r.status]`)
 	if got := value[[]string](t, res); got[1] != "completed" {
 		t.Fatalf("%v", got)
 	}
+	// the next resume reads the checkpoint thread's call as the journal recorded it: nothing is live
+	e.nothingLive(t, "proc-3", buildScript+`const r = await agent.call('research two', { resume: b, label: 'research' })
+return [b.status, r.status]`, []string{"completed", "completed"})
 	return e, e.wt("n1", 2, 1), pending
 }
 
@@ -900,6 +972,35 @@ return [b.status, r.status]`
 	if alloc["kind"] != "restore" || alloc["path"] != b["path"] {
 		t.Errorf("the continuation's allocation %v", alloc)
 	}
+	e.nothingLive(t, "proc-4", continuation, []string{"completed", "completed"})
+}
+
+// nothingLive resumes the script in a new process and checks that every position replays: the host gets no request, no call
+// is prepared or superseded, nothing is restored, and the value is the one given.
+func (e *env) nothingLive(t *testing.T, owner, body string, want any) {
+	t.Helper()
+	before, rowsBefore := len(e.host.Requests()), len(e.journal.Events())
+	e.newProcess(owner)
+	e.edits(nil)
+	res := e.resume(body)
+	if res.Status != engine.RunCompleted {
+		t.Fatalf("the next resume: %s %s", res.Status, res.Error)
+	}
+	if want != nil {
+		var got any
+		_ = json.Unmarshal(res.Value, &got)
+		if fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Errorf("the next resume returned %v, want %v", got, want)
+		}
+	}
+	if n := len(e.host.Requests()) - before; n != 0 {
+		t.Errorf("the next resume sent %d requests", n)
+	}
+	for _, ev := range e.journal.Events()[rowsBefore:] {
+		if ev.Kind == engine.KindCall && (ev.Event == engine.EvPrepared || ev.Event == engine.EvSuperseded) || ev.Event == engine.EvWorktreeRestored || ev.Event == engine.EvHoldCleared {
+			t.Errorf("the next resume wrote %s for %s", ev.Event, ev.Label)
+		}
+	}
 }
 
 // turnText is the text of the input of a turn/start request.
@@ -985,6 +1086,7 @@ func TestHeldCallRetriedOnResumeSameThread(t *testing.T) {
 	if rows := kinds(e.rows("side")); countOf(rows, engine.EvPrepared) != 1 {
 		t.Errorf("the other path's call ran again: %v", rows)
 	}
+	e.nothingLive(t, "proc-3", body, []string{"completed", "completed"})
 }
 
 // A call held before its thread existed - a budget stop at the gate, or a thread/start the host refused - goes on in place:
@@ -1220,6 +1322,7 @@ return [b.status]`
 		if len(entries) != 1 {
 			t.Errorf("worktree directories %v", entries)
 		}
+		e.nothingLive(t, "proc-3", body, []string{"completed"})
 	})
 	t.Run("the files changed during the hold", func(t *testing.T) {
 		e := setup(t)
@@ -1258,6 +1361,7 @@ return [b.status]`
 		if git(t, e.repo, "rev-parse", heldRef+"^{tree}") != held || held == changed {
 			t.Errorf("the held state %s is not kept on %s", held, heldRef)
 		}
+		e.nothingLive(t, "proc-3", body, []string{"completed"})
 	})
 }
 

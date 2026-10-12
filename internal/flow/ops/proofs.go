@@ -478,7 +478,9 @@ func nodeCalls(events []engine.Event, node string) []attemptCall {
 			c := attemptCall{id: ev.CallID, role: str(ev.Data, "role"), prepared: ev.Seq, cwd: str(ev.Data, "thread_cwd")}
 			if m, isMap := ev.Data["allocation"].(map[string]any); isMap {
 				c.alloc = m
-				if p := str(m, "path"); p != "" && c.cwd == "" {
+				// where the call runs is where its allocation puts it: a continuation that forked into a restored worktree
+				// records the handle's thread cwd too, which is the directory of the attempt it left
+				if p := str(m, "path"); p != "" {
 					c.cwd = p
 				}
 			}
