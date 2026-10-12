@@ -57,8 +57,10 @@ row reads the same live and after a restart.
 and `show` and the GUI need, and a result can be large), and `journal.LoadAfter(run, after, limit)` reads one page of rows after a
 sequence number, lean, with `more` set when a row beyond the page exists. `crw flow watch` and the GUI's event stream keep the `seq` of
 the last row they delivered and ask for the rows after it, as `crw relay journal-tail` does with the relay journal: a reader that was away
-resumes exactly where it stopped, and no row is delivered twice. Only the run process (and a command that holds the run lock) writes the
-run's rows; a reader opens the store read-only and creates nothing.
+resumes exactly where it stopped, and no row is delivered twice. A page holds the run's own rows (below `engine.ForeignSeqBase`): a
+cursor that took the number of a command's row would pass every row the live run writes after it, so the commands' rows are read with
+`crw flow reports` (and are in `LoadLean`). Only the run process (and a command that holds the run lock) writes the run's own rows; a
+reader opens the store read-only and creates nothing.
 
 ## The replayed CallResult
 
