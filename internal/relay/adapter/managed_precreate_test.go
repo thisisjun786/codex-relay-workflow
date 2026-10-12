@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -235,6 +236,31 @@ func Test28_ManagedStartRefusesBeforeCreation(t *testing.T) {
 			}
 			if n := cli.host.Count("thread/start"); n != 0 {
 				t.Fatalf("the refused request asked the app-server to start %d threads", n)
+			}
+		})
+	}
+}
+
+// CRW-1296: a managed start asks bridge.CreateThread for a child-role thread, which refuses a relay child whose
+// sandbox cannot reach the relay daemon's control.sock (readOnly, or workspace-write without network access)
+// before the app-server is asked to start a thread; the refusal names the two sandboxes that reach it.
+func Test28_ManagedStartRefusesARelayChildThatCannotReachTheDaemon(t *testing.T) {
+	for name, sandbox := range map[string]map[string]any{"readOnly": {"type": "readOnly", "networkAccess": false}, "workspace-write without network": workspaceWrite()} {
+		t.Run(name, func(t *testing.T) {
+			cli := newManagedCLI(t)
+			stdout, stderr, code := cli.start(cli.request(func(r map[string]any) {
+				settings := map[string]any{}
+				for k, v := range cli.settings {
+					settings[k] = v
+				}
+				settings["sandbox"] = sandbox
+				r["child"].(map[string]any)["settings"] = settings
+			}))
+			if code != 3 || !strings.Contains(stdout, "danger-full-access, or workspace-write with an expected_sandbox_policy granting networkAccess") {
+				t.Fatalf("exit %d stdout %q stderr %q, want exit 3 and the refusal naming the sandboxes that reach the daemon", code, stdout, stderr)
+			}
+			if n := cli.host.Count("thread/start"); n != 0 {
+				t.Fatalf("the refused child asked the app-server to start %d threads", n)
 			}
 		})
 	}
