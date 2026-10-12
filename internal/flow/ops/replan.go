@@ -361,7 +361,7 @@ func (o *planReadOp) Proven(_ context.Context, ev []engine.Event, row engine.Eve
 	if changed, _ := row.Data["changed"].(bool); changed {
 		call := "plan:" + dataStr(row, "plan_digest")
 		for _, b := range signalBinds(r, dataStr(row, "milestone")) {
-			if b.Seq > row.Seq && slices.ContainsFunc(triggersOf(b), func(t Trigger) bool { return t.Call == call }) {
+			if slices.ContainsFunc(triggersOf(b), func(t Trigger) bool { return t.Call == call }) {
 				return true, "", nil
 			}
 		}

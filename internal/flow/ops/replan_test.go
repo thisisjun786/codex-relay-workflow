@@ -421,6 +421,45 @@ func TestPlanReadStandsWhileASignalTookItsRevision(t *testing.T) {
 	}
 }
 
+func TestPlanReadProofDoesNotDependOnSignalBindOrder(t *testing.T) {
+	for _, testCase := range []struct {
+		name          string
+		readSeq       int
+		bindSeq       int
+		milestone     string
+		triggerDigest string
+		changed       bool
+		superseded    bool
+		want          bool
+	}{
+		{"read before bind", 1, 2, "M", "new", true, false, true},
+		{"read after bind", 2, 1, "M", "new", true, false, true},
+		{"another milestone", 2, 1, "other", "new", true, false, false},
+		{"another revision", 2, 1, "M", "other", true, false, false},
+		{"unchanged read", 2, 1, "M", "new", false, false, false},
+		{"superseded bind", 2, 1, "M", "new", true, true, false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			readRow := engine.Event{Seq: testCase.readSeq, Kind: engine.KindCall, CallID: "read", Op: OpPlanRead, Event: engine.EvCompleted,
+				Data: map[string]any{"milestone": "M", "node": "B", "plan_digest": "new", "changed": testCase.changed}}
+			bindRow := engine.Event{Seq: testCase.bindSeq, Kind: engine.KindCall, CallID: "bind", Op: OpSignalBind, Event: engine.EvCompleted,
+				Data: map[string]any{"milestone": testCase.milestone, "members": []Trigger{{Kind: "revision", Call: "plan:" + testCase.triggerDigest, Node: "C", Digest: testCase.triggerDigest}}}}
+			events := []engine.Event{readRow, bindRow}
+			if testCase.bindSeq < testCase.readSeq {
+				events = []engine.Event{bindRow, readRow}
+			}
+			if testCase.superseded {
+				events = append(events, engine.Event{Seq: 3, Kind: engine.KindCall, CallID: bindRow.CallID, Op: OpSignalBind, Event: engine.EvSuperseded})
+			}
+			op := &planReadOp{}
+			proven, reason, err := op.Proven(context.Background(), events, readRow)
+			if err != nil || proven != testCase.want {
+				t.Fatalf("Proven = %v, %q, %v; want %v", proven, reason, err, testCase.want)
+			}
+		})
+	}
+}
+
 // A revision after the first records the plan the architect and the auditor evaluated (the plan crw.replanSignals read for the decision),
 // not the plan as it is when the ledger is written: a plan revision made while the delta was audited is the change the next signal
 // counts against it.
