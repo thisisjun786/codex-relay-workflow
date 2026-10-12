@@ -493,3 +493,66 @@ func TestPumpSteerOnlyUnsentAttemptFollowsAManagementThreadChange(t *testing.T) 
 		t.Fatalf("pump.log closed an attempt that was never sent: %v\n%s", err, raw)
 	}
 }
+
+// CRW-1275: a steer-only steer that the bridge refuses as not_delivered is retried under a new request id
+// into the turn the call's one observation found, without observing again, so every id the outbox holds
+// is one the bridge was handed. The thread reads idle right after the first steer: a second observation
+// would end the call with the retry id unsent, and the next call would reconcile the first id to its
+// not_attempted receipt and steer it again into another turn, which the bridge's ledger refuses as a
+// conflict for good.
+func TestDeliverSteerOnlyRetrySteersTheObservedTurnWithoutObservingAgain(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		recovers  bool
+		wantClass string
+		wantIDs   []string
+	}{
+		{"the outage lasts", false, deliverClassRefused, []string{"retry-message", "retry-message-r1", "retry-message-r2"}},
+		{"the host recovers after the first steer", true, deliverClassAccepted, []string{"retry-message", "retry-message-r1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			now := pumpTestNow
+			environment := pumpTestEnv(t, &now)
+			bridge, dir := pumpLedgerBridge(t)
+			configuration := pumpTestConfig(t, bridge)
+			pumpLedgerSetMode(t, dir, pumpLedgerDown)
+			pumpLedgerSetObservation(t, dir, "active", "turn-1")
+			if err := os.WriteFile(filepath.Join(dir, pumpLedgerObservationNext), []byte(`{"observation":"idle"}`), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if tc.recovers {
+				if err := os.WriteFile(filepath.Join(dir, pumpLedgerModeNext), []byte(pumpLedgerUp), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			message := Message{LogicalID: "retry-message", Thread: "mgmt-thread", Text: "body", SteerOnly: true}
+			outcome, err := Deliver(context.Background(), environment, configuration, message)
+			if outcome.Class != tc.wantClass {
+				t.Fatalf("outcome %+v err %v, want class %s", outcome, err, tc.wantClass)
+			}
+			observations := 0
+			var steered []string
+			for _, call := range deliverSendCallsOf(t, filepath.Join(dir, "calls.jsonl")) {
+				args, _ := call["args"].(map[string]any)
+				switch call["tool"] {
+				case deliverToolActive:
+					observations++
+				case deliverToolSteer:
+					steered = append(steered, deliverSendRequestIDOf(t, call))
+					if args["expected_turn_id"] != "turn-1" {
+						t.Errorf("a retry steered %+v, want the observed turn-1", args)
+					}
+				default:
+					t.Errorf("unexpected call %+v", call)
+				}
+			}
+			if observations != 1 || strings.Join(steered, " ") != strings.Join(tc.wantIDs, " ") {
+				t.Fatalf("observations %d steers %v, want one observation and steers %v", observations, steered, tc.wantIDs)
+			}
+			record, known, err := deliverLoad(configuration, message.LogicalID)
+			if err != nil || !known || record.RequestID != tc.wantIDs[len(tc.wantIDs)-1] {
+				t.Fatalf("outbox record %+v known %v err %v, want the last dispatched id %s", record, known, err, tc.wantIDs[len(tc.wantIDs)-1])
+			}
+		})
+	}
+}

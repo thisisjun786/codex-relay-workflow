@@ -41,8 +41,9 @@ const (
 )
 
 // Message is one logical message to deliver. SteerOnly (the management pump's manage.pump.steer_only,
-// CRW-1275) restricts the delivery to steering the thread's active turn: it never starts a turn, and a
-// request id reaches the outbox only right before steer_thread is called with it.
+// CRW-1275) restricts the delivery to steering the thread's active turn: it never starts a turn, a
+// request id reaches the outbox only right before steer_thread is called with it, and a retry steers
+// the turn the call observed.
 type Message struct {
 	LogicalID string
 	Thread    string

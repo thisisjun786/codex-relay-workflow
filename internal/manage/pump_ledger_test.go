@@ -44,6 +44,10 @@ const (
 	// pumpLedgerObservationDown is the file whose presence makes get_active_turn end the session
 	// without an answer, while get_operation and the sends keep answering.
 	pumpLedgerObservationDown = "observation-down"
+	// pumpLedgerObservationNext and pumpLedgerModeNext, when present, replace the observation and the
+	// mode once a send or a steer has been answered: the thread or the host changes right after a dispatch.
+	pumpLedgerObservationNext = "observation-next.json"
+	pumpLedgerModeNext        = "mode-next"
 )
 
 type pumpLedgerEntry struct {
@@ -86,6 +90,10 @@ func pumpLedgerServe(dir string) {
 			os.Exit(0)
 		}
 		text, isError := pumpLedgerAnswer(dir, name, args)
+		if name == deliverToolSend || name == deliverToolSteer {
+			_ = os.Rename(filepath.Join(dir, pumpLedgerObservationNext), filepath.Join(dir, "observation.json"))
+			_ = os.Rename(filepath.Join(dir, pumpLedgerModeNext), filepath.Join(dir, "mode"))
+		}
 		result := map[string]any{"content": []any{map[string]any{"type": "text", "text": text}}}
 		if isError {
 			result["isError"] = true

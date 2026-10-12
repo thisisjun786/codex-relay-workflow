@@ -126,9 +126,9 @@ func deliverLock(cfg *Config, logicalID string) (func(), error) {
 // record that is already settled -- accepted or refused -- is answered from the record itself: the
 // same request id stays one attempt, nothing is sent again, and a terminal refusal never decays
 // into an undetermined outcome on a replay. A steer-only message (Message.SteerOnly) writes its request
-// id when the steer is dispatched instead, after the observation found the active turn: a thread with
-// no turn to steer leaves nothing in the outbox to reconcile, and the call answers unknown with the
-// status "waiting".
+// id when the steer is dispatched instead, after the observation found the active turn, and its retries
+// steer that same turn: a thread with no turn to steer leaves nothing in the outbox to reconcile, and
+// the call answers unknown with the status "waiting".
 func Deliver(ctx context.Context, e *Env, cfg *Config, m Message) (Outcome, error) {
 	if cfg == nil {
 		cfg = coreDefaults(e)
@@ -266,20 +266,32 @@ func Deliver(ctx context.Context, e *Env, cfg *Config, m Message) (Outcome, erro
 			return deliverSettled(cfg, record, Outcome{Class: deliverClassUnknown, RequestID: record.RequestID, Receipt: receipt})
 		}
 	}
+	// steerTurn is the active turn a steer-only call's one observation found. A retry after a
+	// not_delivered refusal steers that turn under its new id without observing again, so every request
+	// id the outbox holds is one the bridge was handed; the bridge's expected_turn_id guard refuses the
+	// retry if the turn has ended meanwhile.
+	steerTurn := ""
 	for {
 		dispatched := false
-		reply, tool := deliverAttemptSend(ctx, bridge, m, requestID, func() error {
-			if m.SteerOnly {
-				// The request id is in the outbox before the bridge sees it, so a process that dies
-				// during the steer reconciles the id it actually dispatched.
-				record.RequestID = requestID
-				if err := deliverSave(cfg, record); err != nil {
-					return err
+		var reply deliverReply
+		var tool string
+		if steerTurn != "" {
+			reply, tool, dispatched = bridge.call(ctx, deliverToolSteer, deliverSteerArgs(m, requestID, steerTurn)), deliverToolSteer, true
+		} else {
+			reply, tool = deliverAttemptSend(ctx, bridge, m, requestID, func(turnID string) error {
+				if m.SteerOnly {
+					// The request id is in the outbox before the bridge sees it, so a process that dies
+					// during the steer reconciles the id it actually dispatched.
+					record.RequestID = requestID
+					if err := deliverSave(cfg, record); err != nil {
+						return err
+					}
+					steerTurn = turnID
 				}
-			}
-			dispatched = true
-			return nil
-		})
+				dispatched = true
+				return nil
+			})
+		}
 		if m.SteerOnly && !dispatched {
 			// Nothing was dispatched under this id: the thread had no active turn to steer, its
 			// observation failed, or the record could not be written. The outbox keeps what it held,
@@ -310,19 +322,6 @@ func Deliver(ctx context.Context, e *Env, cfg *Config, m Message) (Outcome, erro
 			// attempted, instead of resending the message under the id the bridge already
 			// answered not_delivered for. The record stays unsettled until that retry settles,
 			// because nothing has answered for the new id yet.
-			if m.SteerOnly {
-				// The refusal is kept under the id it answered; the retry id is written when its steer
-				// is dispatched, so a thread that went idle meanwhile spends no id (the next call
-				// reconciles the refused id and mints the same retry id again).
-				record.State = deliverStateUnknown
-				if err := deliverSave(cfg, record); err != nil {
-					return Outcome{Class: class, RequestID: requestID, Receipt: reply.Payload}, err
-				}
-				retries++
-				requestID = deliverRetryRequestID(m.LogicalID, retries)
-				record.RequestID = requestID
-				continue
-			}
 			retries++
 			requestID = deliverRetryRequestID(m.LogicalID, retries)
 			record.RequestID, record.State = requestID, deliverStateUnknown
@@ -520,10 +519,11 @@ func deliverRetryRequestID(logicalID string, retry int) string {
 
 // deliverAttemptSend reads the thread's active turn and steers it, or starts a turn on a thread
 // that is not active. The tool it used comes back with the reply, because the two carry different
-// accepted receipts. dispatch runs right before the steer or the send and may stop it; a reply of
-// get_active_turn means nothing was dispatched. A steer-only message is never sent as a new turn:
-// any observation but an active turn returns that observation and dispatches nothing.
-func deliverAttemptSend(ctx context.Context, b *deliverBridge, m Message, requestID string, dispatch func() error) (deliverReply, string) {
+// accepted receipts. dispatch runs right before the steer (with the turn it goes to) or the send (with
+// no turn) and may stop it; a reply of get_active_turn means nothing was dispatched. A steer-only
+// message is never sent as a new turn: any observation but an active turn returns that observation and
+// dispatches nothing.
+func deliverAttemptSend(ctx context.Context, b *deliverBridge, m Message, requestID string, dispatch func(turnID string) error) (deliverReply, string) {
 	turn := b.call(ctx, deliverToolActive, map[string]any{"thread_id": m.Thread})
 	if turn.Err != nil {
 		return turn, deliverToolActive
@@ -533,10 +533,10 @@ func deliverAttemptSend(ctx context.Context, b *deliverBridge, m Message, reques
 		turnID, _ := turn.Payload["activeTurnId"].(string)
 		switch {
 		case observation == "active" && turnID != "":
-			if err := dispatch(); err != nil {
+			if err := dispatch(turnID); err != nil {
 				return deliverReply{Err: err}, deliverToolActive
 			}
-			return b.call(ctx, deliverToolSteer, map[string]any{"request_id": requestID, "thread_id": m.Thread, "expected_turn_id": turnID, "message": m.Text}), deliverToolSteer
+			return b.call(ctx, deliverToolSteer, deliverSteerArgs(m, requestID, turnID)), deliverToolSteer
 		case m.SteerOnly:
 			return turn, deliverToolActive
 		case observation == "idle":
@@ -557,10 +557,15 @@ func deliverAttemptSend(ctx context.Context, b *deliverBridge, m Message, reques
 	if m.Role != "" {
 		args["role"] = m.Role
 	}
-	if err := dispatch(); err != nil {
+	if err := dispatch(""); err != nil {
 		return deliverReply{Err: err}, deliverToolActive
 	}
 	return b.call(ctx, deliverToolSend, args), deliverToolSend
+}
+
+// deliverSteerArgs are the arguments of one steer of the message into the turn turnID.
+func deliverSteerArgs(m Message, requestID, turnID string) map[string]any {
+	return map[string]any{"request_id": requestID, "thread_id": m.Thread, "expected_turn_id": turnID, "message": m.Text}
 }
 
 // deliverDial starts the configured bridge and opens one MCP session over its stdio. A configured
