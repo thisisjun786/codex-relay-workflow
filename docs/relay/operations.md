@@ -74,8 +74,9 @@ unknown report outcome: retry the same receipt identity, not a new receipt. A wr
 child needs the daemon too. A child whose filesystem is read-only can still report
 `blocked_needs_input` when the socket is accessible.
 
-Bridge `create_thread` refuses a `child` role with a `read-only` sandbox or an explicit
-`readOnly` policy, before starting a thread. Recreate that child with an explicitly
+Bridge `create_thread` (the relay's managed start included) and `create_worktree_thread`
+refuse a `child` role with a `read-only` sandbox or an explicit `readOnly` policy, before
+starting a thread or creating a checkout. Recreate that child with an explicitly
 authorized writable sandbox (`workspace-write` or `danger-full-access`); the bridge never
 silently changes its sandbox. Read-only threads without the child role remain supported.
 

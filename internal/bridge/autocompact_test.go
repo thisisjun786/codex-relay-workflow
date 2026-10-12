@@ -140,8 +140,9 @@ func TestAPolicyWithoutTheLimitSendsNoAutoCompactKey(t *testing.T) {
 func TestCreateWorktreeThreadSendsThePairsAutoCompactLimit(t *testing.T) {
 	b, host := policyBridge(t, autoCompactPolicy)
 	input := worktreeInput(t)
-	input.Role = "child"
-	worktreeHost(host, input.Destination)
+	// A relay child is created writable (CRW-1286).
+	input.Role, input.Sandbox, input.Policy = "child", "danger-full-access", map[string]any{"type": "dangerFullAccess"}
+	worktreeHost(host, input.Destination, input.Policy)
 	receipt, err := b.CreateWorktreeThread(context.Background(), input)
 	if err != nil || receipt["status"] != "accepted" || receipt["phase"] != "complete" {
 		t.Fatalf("receipt=%v err=%v", receipt, err)

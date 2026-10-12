@@ -41,8 +41,10 @@ func worktreeInput(t *testing.T) CreateWorktree {
 	return CreateWorktree{RequestID: "isolated", Source: source, Revision: gitAt(t, source, "rev-parse", "HEAD"), Destination: filepath.Join(root, "isolated"), Mode: "bridge-managed-retained", Sandbox: "read-only", Policy: map[string]any{"type": "readOnly", "networkAccess": false}, Model: "explicit-model", Effort: "high"}
 }
 
-func worktreeHost(host *fakehost.Server, destination string) {
-	host.Respond("thread/start", fakehost.Reply{Result: map[string]any{"thread": map[string]any{"id": "thread-1", "cwd": destination}, "cwd": destination, "model": "explicit-model", "reasoningEffort": "high", "approvalPolicy": "never", "sandbox": map[string]any{"type": "readOnly", "networkAccess": false}, "runtimeWorkspaceRoots": []any{destination}}})
+// worktreeHost answers a worktree creation; the started thread reports sandbox when one is given, readOnly otherwise.
+func worktreeHost(host *fakehost.Server, destination string, sandbox ...map[string]any) {
+	sandbox = append(sandbox, map[string]any{"type": "readOnly", "networkAccess": false})
+	host.Respond("thread/start", fakehost.Reply{Result: map[string]any{"thread": map[string]any{"id": "thread-1", "cwd": destination}, "cwd": destination, "model": "explicit-model", "reasoningEffort": "high", "approvalPolicy": "never", "sandbox": sandbox[0], "runtimeWorkspaceRoots": []any{destination}}})
 	host.Respond("turn/start", fakehost.Reply{Result: map[string]any{"turn": map[string]any{"id": "turn-1"}}})
 }
 

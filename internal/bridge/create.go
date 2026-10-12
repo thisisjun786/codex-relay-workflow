@@ -21,6 +21,16 @@ import (
 // did the work, so the create path waits longer than every other caller of the client.
 const createAckBound = 60 * time.Second
 
+// refuseReadOnlyChild refuses a relay child (the child role) in a readOnly sandbox on every bridge path that creates one
+// (create_thread, the relay's managed start through it, create_worktree_thread), before anything is reserved or sent
+// (CRW-1286).
+func refuseReadOnlyChild(role, sandbox string, policy map[string]any) error {
+	if role == "child" && (sandbox == "read-only" || policy["type"] == "readOnly") {
+		return &Invalid{"a relay child cannot work in a readOnly sandbox; recreate it with a writable sandbox (workspace-write or danger-full-access); settings are never silently changed"}
+	}
+	return nil
+}
+
 func nullable(value string) any {
 	if value == "" {
 		return nil
@@ -147,8 +157,8 @@ func (b *Bridge) CreateThread(ctx context.Context, in CreateThread) (receipt led
 		if err != nil {
 			return err
 		}
-		if in.Role == "child" && (in.Sandbox == "read-only" || in.Policy["type"] == "readOnly") {
-			return &Invalid{"a relay child cannot work in a readOnly sandbox; recreate it with a writable sandbox (workspace-write or danger-full-access); settings are never silently changed"}
+		if err := refuseReadOnlyChild(in.Role, in.Sandbox, in.Policy); err != nil {
+			return err
 		}
 		contract = settings.Contract{CWD: cwd, Sandbox: in.Sandbox, Model: authorized.Model, ReasoningEffort: authorized.Effort, Roots: in.Roots, ExpectedPolicy: in.Policy, AutoCompactTokenLimit: authorized.AutoCompactTokenLimit}
 		if err := contract.Validate(); err != nil {
