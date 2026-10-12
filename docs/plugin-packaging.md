@@ -17,7 +17,7 @@ installer, and the package only points at what that installer left behind.
 | `plugins/crw/` | The plugin root, copied into the version cache as it stands |
 | `plugins/crw/.codex-plugin/plugin.json` | Manifest: plugin name, the version that names the payload, and the declared skills path |
 | `plugins/crw/skills/` | The registered skills: CRW's own and, since the activation move (CRW-392), the 24 ported from CXC, whose records stay under `port/cxc/records` |
-| `plugins/crw/wiring/` | The 35 declared hooks (`wiring/hooks/`) and the MCP server, and the `crw-bridge.sh` launcher the server starts. The two Python launchers the pre-native declarations started left the package in todo 43 ([the native wiring](#the-native-wiring)) |
+| `plugins/crw/wiring/` | The 36 declared hooks (`wiring/hooks/`) and the MCP server, and the `crw-bridge.sh` launcher the server starts. The two Python launchers the pre-native declarations started left the package in todo 43 ([the native wiring](#the-native-wiring)) |
 | `plugins/crw/LICENSE` | The repository license, shipped with the package |
 Edit the skills at `plugins/crw/skills/`. Until todo 44 the repository root also kept `skills`, a
 Git symlink to that directory, for installations made before the move; nothing installed through
@@ -221,8 +221,8 @@ verification fails.
 ## The ported hooks and the switch
 
 Beside the completion Stop the package declares the 32 hook legs CXC v0.2.40 registered (K1,
-`contract/schema/cxc/hook-declarations.json`) and CRW's own GitHub post guard and flow status line, one file per leg
-under `wiring/hooks/`: 35 declarations with the completion Stop. `crw-dev cxc hooks` writes the 34
+`contract/schema/cxc/hook-declarations.json`) and CRW's own GitHub post guard, flow status line and relay child push guard, one file per leg
+under `wiring/hooks/`: 36 declarations with the completion Stop. `crw-dev cxc hooks` writes the 35
 files from K1 (inside the selected repository only; it refuses a linked hooks directory or declaration), and `crw-dev cxc lint` (part of `crw-dev ci contracts`) refuses a file or a manifest
 `hooks` list that differs from what it would write. Each declaration keeps:
 
@@ -244,6 +244,15 @@ It is declared for every thread and prints for one: the leg reads the thread id 
 store, and answers `{"systemMessage": "<line>"}` only when that thread owns a run that is not over. It answers nothing for any other
 thread, and nothing when the store cannot be read, and it never blocks a turn. While the owner thread is idle, `crw flow watch`, the
 GUI Runs page and Linear show the progress; the line is not mirrored into a plan item.
+
+The relay child push guard (`pre-tool-use-guarding-child-push`, CRW-1284) is a `PreToolUse` hook on the same shell tools, 10
+seconds, `(crw) Guarding relay child pushes`. A relay child does not integrate: integration is the parent's and the integrator's
+(통합은 부모·통합기 몫). In a session the relay store names as the child of a relationship (the store the completion hook's
+settings select), the leg refuses every `git push` whose destination is not the child's own branch (the branch its checkout has,
+when the parent's checkout has another): `HEAD:dev`, `src:dev`, a pattern, `--all`, `--mirror`, `--tags`, a push without a refspec,
+through any remote. It reads the command as the other guards do (program wrappers and readable scripts are read; a `"$@"`
+forwarder, a word or text the reader cannot read, a program that spells `push` and a relay record that cannot be read are refused).
+It reads the relay store only for a command that pushes or cannot be read, and judges nothing in any other session.
 
 Every ported leg, and the guard, reads the switch `<CODEX_HOME>/crw/switch.json`
 (`{"active": "crw" | "cxc", "changedAt", "by"}`) before anything else. The hook only reads it. The

@@ -12,6 +12,7 @@ import (
 	pabcdhook "github.com/thisisjun786/codex-relay-workflow/internal/pabcd/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/provider"
 	"github.com/thisisjun786/codex-relay-workflow/internal/recall"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/job"
 	"github.com/thisisjun786/codex-relay-workflow/internal/role"
 	"github.com/thisisjun786/codex-relay-workflow/internal/role/spawn"
@@ -104,6 +105,27 @@ func componentHooks() []componentHook {
 				_, _ = io.WriteString(c.stdout, pabcdhook.GitHubPostCancelledAnswer())
 				return 0
 			}
+		}},
+		// Relay child push guard (CRW-1284): a relay child pushes only its own branch; a session the relay does not know as a child is
+		// not judged. An input that cannot be read whole is refused, as the GitHub post guard refuses it.
+		{"pre-tool-use-guarding-child-push", "pre-tool-use", func(c invocation, in io.Reader) int {
+			raw, over, ok := pabcdhook.GitHubPostInput(in)
+			if !ok || over {
+				_, _ = io.WriteString(c.stdout, pabcdhook.ChildPushInputUnreadAnswer())
+				return 0
+			}
+			harness.RecordInvocation(raw, harness.Component, "pre-tool-use-child-push", os.LookupEnv)
+			_, _ = io.WriteString(c.stdout, pabcdhook.HandleChildPushGuard(raw, func(session, cwd string) pabcdhook.ChildPushBinding {
+				child, parent, err := hook.ChildBinding(c.ctx, session)
+				switch {
+				case err != nil:
+					return pabcdhook.ChildPushBinding{Unreadable: err.Error()}
+				case !child:
+					return pabcdhook.ChildPushBinding{}
+				}
+				return pabcdhook.ChildPushBinding{Child: true, Own: pabcdhook.ChildPushOwnBranch(c.ctx, cwd, parent)}
+			}))
+			return 0
 		}},
 		// Provider-bridge component ingress; activation is owned by the cutover.
 		{"session-start-ensuring-provider-bridge", "session-start", func(c invocation, in io.Reader) int {

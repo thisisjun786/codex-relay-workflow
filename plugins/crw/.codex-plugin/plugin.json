@@ -1,6 +1,6 @@
 {
   "name": "crw",
-  "version": "0.4.0+3970289b128c",
+  "version": "0.4.0+e6e58d60c585",
   "description": "Linear-driven workflow skills for Codex: define an initiative, plan projects and issues, run delivery, and check the result against its canonical criteria.",
   "author": {
     "name": "thisisjun786",
@@ -52,7 +52,8 @@
     "./wiring/hooks/session-start-adopting-background-completions.json",
     "./wiring/hooks/pre-tool-use-guarding-automation-ownership.json",
     "./wiring/hooks/pre-tool-use-guarding-github-post.json",
-    "./wiring/hooks/stop-showing-flow-status.json"
+    "./wiring/hooks/stop-showing-flow-status.json",
+    "./wiring/hooks/pre-tool-use-guarding-child-push.json"
   ],
   "mcpServers": "./wiring/mcp.json",
   "interface": {

@@ -71,7 +71,7 @@ func TestEveryDispatchedLegIsDeclared(t *testing.T) {
 	for _, l := range harness.Legs() {
 		dispatched[l.ID] = l.Event
 	}
-	if launches != 1 || len(declared) != 34 || len(dispatched) != 34 {
+	if launches != 1 || len(declared) != 35 || len(dispatched) != 35 {
 		t.Fatalf("%d completion Stop, %d declared legs, %d dispatched legs", launches, len(declared), len(dispatched))
 	}
 	for leg, event := range dispatched {

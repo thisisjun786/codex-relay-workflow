@@ -74,6 +74,12 @@ func HandleChildPushGuard(raw string, bind func(session, cwd string) ChildPushBi
 	return editAnswer("deny", reason, reason)
 }
 
+// ChildPushInputUnreadAnswer is the deny of a leg whose input could not be read whole: the command it carries is not known.
+func ChildPushInputUnreadAnswer() string {
+	reason := "[crw CHILD-PUSH-GUARD] 통합은 부모·통합기 몫 (integration is the parent's and the integrator's): the hook input cannot be read whole, so whether the command pushes another branch is not known."
+	return editAnswer("deny", reason, reason)
+}
+
 // ChildPushOwnBranch is the branch a child in cwd may push: the branch its checkout has, unless the parent's checkout has the same
 // one, which is then not the child's own.
 func ChildPushOwnBranch(ctx context.Context, cwd, parent string) string {

@@ -827,7 +827,7 @@ func Test47_PLG_20_ShippedHookDeclarationsPass(t *testing.T) {
 	}
 	m := doc(parse(t, f[manifestPath]))
 	hooks, _ := m["hooks"].([]any)
-	if len(hooks) != 35 {
+	if len(hooks) != 36 {
 		t.Fatalf("the manifest declares %d hook files", len(hooks))
 	}
 	for _, h := range hooks {
