@@ -538,6 +538,8 @@ func (l *laneLab) design() ops.Design {
 func (l *laneLab) onTurn(r fakehost.TurnRequest) fakehost.TurnPlan {
 	c := l.callOf(r)
 	switch {
+	case c.Role == "architect" && strings.HasPrefix(c.Label, "reflection:"):
+		return labSay(map[string]any{"verdict": "ALIGNED", "misaligned": []any{}})
 	case c.Role == "architect":
 		return labSay(l.design())
 	case c.Role == "reviewer-final":
