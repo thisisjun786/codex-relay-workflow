@@ -262,7 +262,7 @@ func (c *command) settleEnded(state string, cm *common, rec RunRecord) int {
 	if err != nil {
 		return c.fail("%v", err)
 	}
-	settled, err := c.settle(st, events)
+	settled, err := c.settle(st, rec.RunID, events)
 	if err != nil {
 		return c.fail("%v", err)
 	}
@@ -273,12 +273,12 @@ func (c *command) settleEnded(state string, cm *common, rec RunRecord) int {
 }
 
 // settle gives up the executions the run's rows show it released and did not end.
-func (c *command) settle(st *store.Store, events []engine.Event) (Settlement, error) {
+func (c *command) settle(st *store.Store, runID string, events []engine.Event) (Settlement, error) {
 	settle := c.Settle
 	if settle == nil {
 		settle = SchedulerSettle
 	}
-	return settle(c.ctx, st, ops.OpenReleases(events))
+	return settle(c.ctx, st, runID, ops.OpenReleases(events))
 }
 
 // cancelDead ends a run no process holds: one finished row, error kind cancelled, appended under the run lock.
@@ -307,7 +307,7 @@ func (c *command) cancelDead(state string, cm *common, rec RunRecord) int {
 	// the run's executions are given up before the run is marked cancelled: a run that is cancelled in the journal and still holds
 	// slots is hidden from monitoring and blocks the nodes that overlap it. A failure leaves the run as it was, so the cancel can be
 	// repeated.
-	settled, err := c.settle(st, j.Events())
+	settled, err := c.settle(st, rec.RunID, j.Events())
 	if err != nil {
 		return c.fail("%v", err)
 	}

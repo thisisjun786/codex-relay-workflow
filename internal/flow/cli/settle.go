@@ -16,13 +16,14 @@ type Settlement struct {
 	Closed, SlotsReturned int
 }
 
-// SettleFunc gives up the executions a cancelled run released and does not own any longer.
-type SettleFunc func(ctx context.Context, st *store.Store, nodes []ops.ReleaseRef) (Settlement, error)
+// SettleFunc gives up the executions a cancelled run released and still owns: runID is the run, nodes the nodes its rows show released
+// and not ended, each with the execution of its last release.
+type SettleFunc func(ctx context.Context, st *store.Store, runID string, nodes []ops.ReleaseRef) (Settlement, error)
 
 // SchedulerSettle settles through the relay's scheduler: AgentClose with the flow_cancel reason for each node (R07), which closes the
 // execution and returns its slot in one transaction. A cancel that only wrote the run's finished row would hide the run from
 // monitoring while its nodes kept their slots and their regions.
-func SchedulerSettle(ctx context.Context, st *store.Store, nodes []ops.ReleaseRef) (Settlement, error) {
+func SchedulerSettle(ctx context.Context, st *store.Store, runID string, nodes []ops.ReleaseRef) (Settlement, error) {
 	var out Settlement
 	if len(nodes) == 0 {
 		return out, nil
@@ -32,9 +33,9 @@ func SchedulerSettle(ctx context.Context, st *store.Store, nodes []ops.ReleaseRe
 		if n.Plan == "" || n.Node == "" {
 			return out, errors.New("a release row of the run names no plan or node")
 		}
-		list = append(list, dagsched.RunNode{Plan: n.Plan, Node: n.Node})
+		list = append(list, dagsched.RunNode{Plan: n.Plan, Node: n.Node, Execution: n.Execution})
 	}
-	results, err := (&dagsched.Scheduler{Store: st}).CancelRunNodes(ctx, list)
+	results, err := (&dagsched.Scheduler{Store: st}).CancelRunNodes(ctx, runID, list)
 	for _, r := range results {
 		if r.Closed && !r.Replayed {
 			out.Closed++

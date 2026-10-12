@@ -64,7 +64,10 @@ func TestCancelGivesUpTheExecutionsOfTheRun(t *testing.T) {
 	td := w.deps()
 	var settled [][]ops.ReleaseRef
 	fail := true
-	td.Settle = func(_ context.Context, _ *store.Store, nodes []ops.ReleaseRef) (Settlement, error) {
+	td.Settle = func(_ context.Context, _ *store.Store, runID string, nodes []ops.ReleaseRef) (Settlement, error) {
+		if runID != "run-held" {
+			t.Errorf("the settlement is for run %q", runID)
+		}
 		settled = append(settled, nodes)
 		if fail {
 			return Settlement{}, errors.New("the relay is busy")

@@ -52,7 +52,7 @@ Signals the process that holds the run lock (SIGUSR1). The process stops sending
 
 ### crw flow cancel
 
-Signals the process (SIGTERM): the calls in flight are cancelled and the run finishes `cancelled`. A process whose lock names no pid is never signalled (a pid of 0 would be the caller's own process group); the command says so and the operator ends the process by hand. A run no process holds is cancelled by a finished row appended under the run lock, after the executions its journal shows it released and did not end have been closed with `flow_cancel` (the slot returns in the same transaction); when that fails the run stays as it was and the command can be repeated. A run that is already cancelled is settled the same way once more and then refused as over.
+Signals the process (SIGTERM): the calls in flight are cancelled and the run finishes `cancelled`. A process whose lock names no pid is never signalled (a pid of 0 would be the caller's own process group); the command says so and the operator ends the process by hand. A run no process holds is cancelled by a finished row appended under the run lock, after the executions its journal shows it released and did not end have been closed with `flow_cancel` (the slot returns in the same transaction); when that fails the run stays as it was and the command can be repeated. An execution is given up only while it is the run's: its run id is the cancelled run's and it is the execution the run released (or follows it in the node's chain). A node that another run released again after this run's cancel keeps its execution and its slot, so the second cancel of a cancelled run never takes them. A run that is already cancelled is settled the same way once more and then refused as over.
 
 ### crw flow resume
 
