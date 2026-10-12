@@ -36,6 +36,12 @@ type managedFake struct {
 	creationReceipt            map[string]any
 	hostScenario               string
 	hostCalls                  []string
+	// parentLive is what thread/read answers for a parent task (the fixtures name them "parent...", the capture scenarios "01parent-task"): nil answers the model and effort of settings,
+	// which the fixtures give the parent too. parentReadError fails that read, parentThread replaces the whole thread object.
+	parentLive      map[string]any
+	parentThread    map[string]any
+	parentReadError error
+	parentReads     int // thread/read asks for the parent
 }
 
 func (f *managedFake) RequireLedger(_ context.Context, expected map[string]any) error {
@@ -823,6 +829,20 @@ func (f *managedFake) HostCall(_ context.Context, method string, params map[stri
 		}
 		return map[string]any{"goal": nil}, nil
 	case "thread/read":
+		if id, _ := params["threadId"].(string); strings.HasPrefix(id, "parent") || id == "01parent-task" {
+			f.parentReads++
+			if f.parentReadError != nil {
+				return nil, f.parentReadError
+			}
+			if f.parentThread != nil {
+				return map[string]any{"thread": f.parentThread}, nil
+			}
+			live := map[string]any{"model": f.settings["model"], "reasoningEffort": f.settings["reasoningEffort"]}
+			if f.parentLive != nil {
+				live = f.parentLive
+			}
+			return map[string]any{"thread": live}, nil
+		}
 		if f.hostScenario == "lifecycle_unknown" {
 			return nil, fmt.Errorf("thread/read: thread not found")
 		}

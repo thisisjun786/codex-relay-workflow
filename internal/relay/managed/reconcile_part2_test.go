@@ -95,7 +95,7 @@ type readTrackingApp struct {
 }
 
 func (h *readTrackingApp) HostCall(ctx context.Context, method string, params map[string]any) (map[string]any, error) {
-	if method == "thread/read" {
+	if method == "thread/read" && params["threadId"] != "parent" {
 		h.reads = append(h.reads, params["threadId"].(string))
 	}
 	return h.scriptedApp.HostCall(ctx, method, params)

@@ -32,12 +32,13 @@ const (
 	kindRevision       = "revision_request"
 	kindMergeTurnGrant = "merge_turn_grant"
 
-	pushChannelClosed  = "push_channel_closed"
-	attemptCap         = "attempt_cap"
-	hostLostTurn       = "host_lost_turn"
-	turnCheckUndecided = "turn_check_undecided"
-	hourlyCap          = "hourly_cap"
-	minSendInterval    = "min_send_interval"
+	pushChannelClosed    = "push_channel_closed"
+	attemptCap           = "attempt_cap"
+	heldSettingsMismatch = "held_settings_mismatch"
+	hostLostTurn         = "host_lost_turn"
+	turnCheckUndecided   = "turn_check_undecided"
+	hourlyCap            = "hourly_cap"
+	minSendInterval      = "min_send_interval"
 
 	mergeTurnAbsent        = "merge_turn_absent"
 	mergeTurnClosed        = "merge_turn_closed"
@@ -470,7 +471,7 @@ func currentSettingsHold(ctx context.Context, s *store.Store, event string) (con
 	kind := map[string]string{stWithheldPreSend: "withheld", stInboxOnly: "channel_closed"}[state]
 	if state == stWithheldPreSend && pyvalue.Truthy(col(row, "sh_hold_reason")) {
 		kind = ""
-		if colText(row, "sh_hold_reason") == attemptCap {
+		if hold := colText(row, "sh_hold_reason"); hold == attemptCap || hold == heldSettingsMismatch {
 			kind = "capped"
 		}
 	}
@@ -502,8 +503,15 @@ func currentSettingsHold(ctx context.Context, s *store.Store, event string) (con
 		refusal, ok := get(settlement.detail, "settingsRefusal").(contract.OrderedObject)
 		if reason, isText := get(refusal, "reason").(string); ok && isText {
 			field, _ := get(refusal, "field").(string)
-			set("hold", contract.OrderedObject{{Key: "source", Value: "attempt"}, {Key: "reason", Value: reason},
-				{Key: "field", Value: nullableText(field)}, {Key: "requestId", Value: col(row, "sh_request")}})
+			held := contract.OrderedObject{{Key: "source", Value: "attempt"}, {Key: "reason", Value: reason},
+				{Key: "field", Value: nullableText(field)}, {Key: "requestId", Value: col(row, "sh_request")}}
+			// A refusal no retry fixes carries the values the host's finding names (CRW-1274).
+			for _, key := range []string{"expected", "observed"} {
+				if has(refusal, key) {
+					held = append(held, contract.Field{Key: key, Value: get(refusal, key)})
+				}
+			}
+			set("hold", held)
 		}
 		return reading, nil
 	}

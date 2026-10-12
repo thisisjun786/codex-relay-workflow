@@ -138,8 +138,8 @@ func TestDeclared_leavesOutALegUnderTheWrongEventOrDeclaredTwice(t *testing.T) {
 	if _, ok := declared[twice]; ok {
 		t.Error("a leg declared twice is run")
 	}
-	if len(declared) != 32 {
-		t.Errorf("%d legs declared, want 32", len(declared))
+	if len(declared) != 33 {
+		t.Errorf("%d legs declared, want 33", len(declared))
 	}
 }
 

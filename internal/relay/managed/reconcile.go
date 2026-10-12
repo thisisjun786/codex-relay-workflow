@@ -204,13 +204,13 @@ func (r *startRun) reconcileCreation(ctx context.Context) (contract.OrderedObjec
 		r.reconciled = &d.rec
 		var notReady string
 		var hold CreationHold
-		r.receipt, notReady, r.projectLock, hold, err = r.m.create(ctx, r.attemptIdentity(), r.req, r.ledger)
+		r.receipt, notReady, r.projectLock, hold, err = r.m.create(ctx, r.attemptIdentity(), r.req, r.ledger, &r.check)
 		r.setHold(hold)
 		if err != nil {
 			return nil, err
 		}
 		if notReady != "" {
-			return r.answer(ctx, "refused", "creation", notReady)
+			return r.answerCreation(ctx, notReady)
 		}
 		return nil, nil
 	}
@@ -1130,13 +1130,13 @@ func (r *startRun) recreateOrphan(ctx context.Context) (contract.OrderedObject, 
 	var notReady string
 	var hold CreationHold
 	var err error
-	r.receipt, notReady, r.projectLock, hold, err = r.m.create(ctx, r.attemptIdentity(), r.req, r.ledger)
+	r.receipt, notReady, r.projectLock, hold, err = r.m.create(ctx, r.attemptIdentity(), r.req, r.ledger, &r.check)
 	r.setHold(hold)
 	if err != nil {
 		return nil, err
 	}
 	if notReady != "" {
-		return r.answer(ctx, "refused", "creation", notReady)
+		return r.answerCreation(ctx, notReady)
 	}
 	r.adopted, r.task, r.standby, r.ended = false, "", "", nil
 	r.rewind = true

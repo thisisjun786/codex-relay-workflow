@@ -495,3 +495,23 @@ func TestSessionStartStaticLegsSkipResumeThroughTheDispatcher(t *testing.T) {
 		t.Errorf("subagent fallback on the second resume: %q", out)
 	}
 }
+
+// TestFlowStatusLegIsDispatchedAndQuietWithoutARun: the flow status Stop leg (CRW-1205) is a component leg of the Stop event, claimed by
+// the dispatcher, and for a thread that owns no run - here, a relay state with no store - it prints nothing and exits 0: it never
+// blocks a turn and never fails one. The line it prints for the owner thread is internal/flow/cli's TestStatusLineScopedToOwnerThread.
+func TestFlowStatusLegIsDispatchedAndQuietWithoutARun(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
+	t.Setenv("CODEX_SESSION_RELAY_STATE", filepath.Join(home, "relay-state"))
+	for _, payload := range []string{`{"session_id":"thread-x","hook_event_name":"Stop"}`, `{}`, `not json`, ``} {
+		var out bytes.Buffer
+		claimed, code := runComponentHook(invocation{ctx: context.Background(), args: []string{"stop", "--leg", "stop-showing-flow-status"}, stdout: &out}, strings.NewReader(payload), componentHooks())
+		if !claimed || code != 0 || out.Len() != 0 {
+			t.Errorf("payload %q: claimed %v, exit %d, printed %q", payload, claimed, code, out.String())
+		}
+	}
+	if claimed, _ := runComponentHook(invocation{ctx: context.Background(), args: []string{"pre-tool-use", "--leg", "stop-showing-flow-status"}, stdout: io.Discard}, strings.NewReader(`{}`), componentHooks()); claimed {
+		t.Error("the leg answers an event it is not declared for")
+	}
+}

@@ -18,6 +18,9 @@ var twoPairManagedPolicy = strings.ReplaceAll("{'allowed':[{'model':'anthropic/c
 // parentOn is a request change that puts the parent's settings on the parent's own pair.
 func (c *managedCLI) parentOn(model, effort string) func(map[string]any) {
 	return func(request map[string]any) {
+		c.mu.Lock()
+		c.parentPair = []string{model, effort}
+		c.mu.Unlock()
 		settings := map[string]any{}
 		for k, v := range c.settings {
 			settings[k] = v

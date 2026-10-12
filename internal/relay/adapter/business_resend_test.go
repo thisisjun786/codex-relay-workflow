@@ -82,7 +82,7 @@ func businessResendSocketScenario(t *testing.T, collision string) {
 		if failFinalRead {
 			return fakehost.Reply{Error: &fakehost.RPCError{Code: -32000, Message: "synthetic read failure"}}
 		}
-		return fakehost.Reply{Result: map[string]any{"thread": map[string]any{"id": "resend-child", "status": map[string]any{"type": load}, "canAcceptDirectInput": true}}}
+		return fakehost.Reply{Result: map[string]any{"thread": map[string]any{"id": "resend-child", "status": map[string]any{"type": load}, "canAcceptDirectInput": true, "model": "gpt-5.4", "reasoningEffort": "medium"}}}
 	})
 	host.Handle("thread/resume", func(raw json.RawMessage) fakehost.Reply {
 		mu.Lock()

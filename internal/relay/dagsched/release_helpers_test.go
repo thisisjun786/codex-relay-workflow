@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -56,6 +57,8 @@ type scriptedHost struct {
 	loseFirstCreation bool
 	// alterSetting: the creation receipt reports another value for this settings key.
 	alterSetting string
+	// parentThread is what thread/read answers for the parent task ("parent"); nil is the model and effort of settings, which the requests declare for the parent too.
+	parentThread map[string]any
 }
 
 func newScriptedHost(t *testing.T, settings map[string]any) *scriptedHost {
@@ -104,7 +107,15 @@ func (h *scriptedHost) SendMessage(_ context.Context, in managed.SendRequest) (m
 func (h *scriptedHost) ReadTurn(_ context.Context, _, turn string) (*managed.Turn, error) {
 	return &managed.Turn{ID: turn, Status: "completed"}, nil
 }
-func (h *scriptedHost) HostCall(context.Context, string, map[string]any) (map[string]any, error) {
+func (h *scriptedHost) HostCall(_ context.Context, method string, params map[string]any) (map[string]any, error) {
+	if id, _ := params["threadId"].(string); method == "thread/read" && strings.HasPrefix(id, "parent") {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		if h.parentThread != nil {
+			return map[string]any{"thread": h.parentThread}, nil
+		}
+		return map[string]any{"thread": map[string]any{"model": h.settings["model"], "reasoningEffort": h.settings["reasoningEffort"]}}, nil
+	}
 	return map[string]any{}, nil
 }
 func (h *scriptedHost) Lifecycle(context.Context, string, string) (bool, string, error) {

@@ -27,6 +27,9 @@ type managedCLI struct {
 	marker   string
 	settings map[string]any
 	host     *fakehost.Server
+	// parentPair, when set (parentOn), is the model and effort the app-server reports for the parent thread; unset, the parent runs the child's pair.
+	mu         sync.Mutex
+	parentPair []string
 }
 
 func newManagedCLI(t *testing.T) *managedCLI {
@@ -78,7 +81,19 @@ func newManagedCLIOn(t *testing.T, policy, model, effort string) *managedCLI {
 		}
 		return fakehost.Reply{Result: map[string]any{"turn": map[string]any{"id": id}}}
 	})
-	c.host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{"status": map[string]any{"type": "idle"}, "canAcceptDirectInput": true, "model": model, "reasoningEffort": effort, "cwd": workspace}}})
+	c.host.Handle("thread/read", func(raw json.RawMessage) fakehost.Reply {
+		var params map[string]any
+		if err := json.Unmarshal(raw, &params); err != nil {
+			t.Error(err)
+		}
+		read, readEffort := model, effort
+		c.mu.Lock()
+		if params["threadId"] == "parent" && c.parentPair != nil {
+			read, readEffort = c.parentPair[0], c.parentPair[1]
+		}
+		c.mu.Unlock()
+		return fakehost.Reply{Result: map[string]any{"thread": map[string]any{"status": map[string]any{"type": "idle"}, "canAcceptDirectInput": true, "model": read, "reasoningEffort": readEffort, "cwd": workspace}}}
+	})
 	c.host.Respond("thread/resume", fakehost.Reply{Result: response()})
 	c.host.Respond("thread/goal/get", fakehost.Reply{Result: map[string]any{"goal": nil}})
 	c.host.Respond("thread/turns/list", fakehost.Reply{Result: map[string]any{"data": []any{map[string]any{"id": "standby", "status": "completed"}}, "nextCursor": nil}})

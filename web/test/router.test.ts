@@ -26,12 +26,13 @@ test("empty hash defaults to the CRW default route", () => {
 
 test("explicit hash routes resolve to their path", () => {
   withHash("#/status", () => assert.equal(currentRoute(), "/status"));
+  withHash("#/runs", () => assert.equal(currentRoute(), "/runs"));
   withHash("#/policy", () => assert.equal(currentRoute(), "/policy"));
   withHash("#/helper-roles", () => assert.equal(currentRoute(), "/helper-roles"));
 });
 
-test("the route table is the three CRW routes and nothing else", () => {
-  assert.deepEqual(ROUTES.map((r) => r.path), ["/status", "/policy", "/helper-roles"]);
+test("the route table is the four CRW routes and nothing else", () => {
+  assert.deepEqual(ROUTES.map((r) => r.path), ["/status", "/runs", "/policy", "/helper-roles"]);
 });
 
 test("every route carries what a screen renders, so no route can render blank", () => {

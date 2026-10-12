@@ -314,7 +314,7 @@ func SettingsHoldReading(row *HoldColumns) contract.OrderedObject {
 	}
 	if row.State == "withheld_pre_send" && row.HoldReason != "" {
 		kind = ""
-		if row.HoldReason == "attempt_cap" {
+		if row.HoldReason == "attempt_cap" || row.HoldReason == "held_settings_mismatch" {
 			kind = "capped"
 		}
 	}
@@ -359,8 +359,15 @@ func SettingsHoldReading(row *HoldColumns) contract.OrderedObject {
 				if _, ok := field.(string); !ok {
 					field = nil
 				}
-				reading = reading.Set("hold", contract.OrderedObject{{Key: "source", Value: "attempt"}, {Key: "reason", Value: text},
-					{Key: "field", Value: field}, {Key: "requestId", Value: nullText(row.Request)}})
+				held := contract.OrderedObject{{Key: "source", Value: "attempt"}, {Key: "reason", Value: text},
+					{Key: "field", Value: field}, {Key: "requestId", Value: nullText(row.Request)}}
+				// A refusal no retry fixes carries the values the host's finding names (CRW-1274).
+				for _, key := range []string{"expected", "observed"} {
+					if value, present := object.Lookup(key); present {
+						held = append(held, contract.Field{Key: key, Value: value})
+					}
+				}
+				reading = reading.Set("hold", held)
 
 			}
 			return reading

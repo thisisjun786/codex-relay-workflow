@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/affordance"
+	flowcli "github.com/thisisjun786/codex-relay-workflow/internal/flow/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
 	pabcdhook "github.com/thisisjun786/codex-relay-workflow/internal/pabcd/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/provider"
@@ -114,6 +115,11 @@ func componentHooks() []componentHook {
 			return configguard.RunSelfHealReportHook(c.ctx, in, c.stdout, os.LookupEnv)
 		}},
 
+		// The status line of the flow runs a thread owns (CRW-1205): printed at the end of that thread's turns only, for the runs that
+		// are not over, and nothing for any other thread. It never blocks a turn.
+		{"stop-showing-flow-status", "stop", func(c invocation, in io.Reader) int {
+			return flowcli.RunStopHook(c.ctx, in, c.stdout, flowcli.Default(), "", "", 5*time.Second)
+		}},
 		{"stop-waking-on-background-completion", "stop", bg("stop")},
 		{"user-prompt-submit-delivering-background-completions", "user-prompt-submit", bg("user-prompt-submit")},
 		{"session-start-adopting-background-completions", "session-start", bg("session-start")},

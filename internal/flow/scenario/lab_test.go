@@ -67,6 +67,12 @@ type Lab struct {
 	rules     []*rule
 	// Decisions are the rows of flow_spawn_decisions and flow_step_decisions, read through the store.
 	decisions ops.Decisions
+	// children are the issue-lane runs of the children the lab started (child_test.go).
+	children []*ChildRun
+	// Upward is the hook the lab's run hands what goes up from it to, and Reporter the reporter of its milestone close (upward_test.go);
+	// nil hands nothing.
+	Upward   engine.UpwardHook
+	Reporter ops.Reporter
 }
 
 // hookJournal wraps the run's journal: a process that dies writes no more rows, and a test can look at every row as it is written.
@@ -206,7 +212,13 @@ func (l *Lab) spawn(owner string) {
 	l.journal = &hookJournal{Journal: j}
 	l.journal.flush = func() { _ = j.Flush() }
 	l.decisions = ops.StoreDecisions{DB: l.Store.DB}
-	deps := ops.Deps{RunID: l.RunID, Repo: l.Repo, Journal: l.journal, Relay: l.Relay, Verifier: l.Verify, Decisions: l.decisions, Actor: "parent",
+	l.newLane()
+}
+
+// newLane makes the lane's operations over the lab's journal, relay and verifier (and the reporter, when the lab has one), with the
+// host of the close.
+func (l *Lab) newLane() {
+	deps := ops.Deps{RunID: l.RunID, Repo: l.Repo, Journal: l.journal, Relay: l.Relay, Verifier: l.Verify, Decisions: l.decisions, Actor: "parent", Reporter: l.Reporter,
 		Now: func() time.Time { return time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC) }}
 	deps.Threads = labThreads{BusReader: audit.BusReader{Bus: l.client.Bus()}, backend: l.backend}
 	l.lane = ops.NewLane(deps)
@@ -263,7 +275,7 @@ func (l *Lab) Rewrite(fn func(engine.Event) engine.Event) {
 // Config is the engine configuration of the lab's run.
 func (l *Lab) Config(resume bool) engine.Config {
 	cfg := engine.Config{Backend: l.backend, Policy: l.Policy, Journal: l.journal, RunID: l.RunID, TokenBudget: l.Budget, Ops: l.lane.Ops(), InputSnapshot: l.lane.InputSnapshot,
-		Prover: ops.NewProver(), Now: func() time.Time { return time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC) }}
+		Prover: ops.NewProver(), Upward: l.Upward, Now: func() time.Time { return time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC) }}
 	if resume {
 		cfg.Resume = &engine.ResumeOptions{Wait: func(context.Context, time.Duration) error { return nil }, Grace: time.Millisecond, Skew: time.Hour, OpenWait: 10 * time.Millisecond, Poll: time.Millisecond}
 	}
@@ -600,8 +612,9 @@ func (l *Lab) onTurn(r fakehost.TurnRequest) fakehost.TurnPlan {
 	c := &Call{ThreadID: r.ThreadID, Text: r.Text, N: r.N, lab: l}
 	if m := opLine.FindStringSubmatch(strings.SplitN(r.Text, "\n", 2)[0]); m != nil {
 		c.ID = m[1]
-		for i := len(l.Events()) - 1; i >= 0; i-- {
-			ev := l.Events()[i]
+		all := l.allEvents()
+		for i := len(all) - 1; i >= 0; i-- {
+			ev := all[i]
 			if ev.Kind == engine.KindCall && ev.Event == engine.EvPrepared && ev.CallID == c.ID {
 				c.Label, c.Role, c.Node = ev.Label, str(ev.Data, "role"), str(ev.Data, "node")
 				if m, ok := ev.Data["allocation"].(map[string]any); ok && str(m, "path") != "" {
