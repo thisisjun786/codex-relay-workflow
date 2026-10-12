@@ -144,7 +144,9 @@ func Names() []string {
 
 const parserExit = 2 // the exit status of a command line the parser cannot read
 
-var ForwardChild func(context.Context, string, string, []string) (any, error)
+// ForwardChild runs a child command on the relay daemon (hook.ForwardChild): the daemon's stdout and stderr bytes arrive
+// as written, and its exit code is the command's.
+var ForwardChild func(ctx context.Context, state, program string, argv []string, stdout, stderr io.Writer) (int, error)
 
 type childOwnerKey struct{}
 
@@ -250,8 +252,11 @@ func Execute(ctx context.Context, argv0 string, argv []string, stdout, stderr io
 		if err != nil {
 			return emit(stdout, stderr, nil, Host("the state directory cannot be resolved: "+Detail(err)), command.family)
 		}
-		result, err := ForwardChild(ctx, selection.Path, argv0, argv)
-		return emit(stdout, stderr, result, err, command.family)
+		code, err := ForwardChild(ctx, selection.Path, argv0, argv, stdout, stderr)
+		if err != nil {
+			return emit(stdout, stderr, nil, err, command.family)
+		}
+		return code
 	}
 	result, err := command.run(ctx, global, Args{Parsed: parsed, Positionals: positionals, Defaults: command.Defaults})
 	return emit(stdout, stderr, result, err, command.family)

@@ -308,7 +308,10 @@ func TestAChildStateSelectionCannotRedirectTheDaemonsRecord(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer conn.Close()
-			argv := append([]string{"--state", named, "--socket", host.SocketPath}, blockedEmit...)
+			argv := [][]byte{} // base64 on the wire, as hook.ForwardChild sends it
+			for _, argument := range append([]string{"--state", named, "--socket", host.SocketPath}, blockedEmit...) {
+				argv = append(argv, []byte(argument))
+			}
 			request, _ := json.Marshal(map[string]any{"protocol": 1, "method": "child-command", "program": "crw", "argv": argv})
 			var answer map[string]any
 			if _, err := conn.Write(append(request, '\n')); err != nil || json.NewDecoder(conn).Decode(&answer) != nil {

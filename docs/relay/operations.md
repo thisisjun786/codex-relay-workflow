@@ -57,6 +57,8 @@ the resolved database and the measured access.
 the selected state's `control.sock`. The child process does not open a writable store or
 publish its claim or disposition marker. The daemon executes the command against its
 already-owned store, preserving receipt admission, replay identity and parent delivery.
+The command crosses the socket byte for byte: its arguments arrive as the child was given
+them, and the child prints the command's stdout and stderr and exits with its exit code.
 The socket client checks the daemon's peer UID and the ownership of the socket and its
 directory. The daemon accepts only these child commands, its own store and its own marker
 root; a marker naming another store is refused before publication. The daemon alone

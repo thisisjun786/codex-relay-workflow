@@ -3,6 +3,7 @@ package hook
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net"
@@ -17,43 +18,54 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
-func ForwardChild(ctx context.Context, state, program string, argv []string) (any, error) {
+// ForwardChild carries a child command to the relay daemon: argv as base64, so a byte that is not UTF-8 arrives as it was
+// given, and the daemon's stdout and stderr back as raw bytes, so the child prints exactly what the daemon's command wrote.
+func ForwardChild(ctx context.Context, state, program string, argv []string, stdout, stderr io.Writer) (int, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 	address, release, err := ControlAddress(filepath.Join(state, "control.sock"))
 	if err != nil {
-		return nil, dispatch.Host("relay daemon unavailable; child report was not submitted: " + err.Error())
+		return 0, dispatch.Host("relay daemon unavailable; child report was not submitted: " + err.Error())
 	}
 	defer release()
 	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", address)
 	if err != nil {
-		return nil, dispatch.Host("relay daemon unavailable; child report was not submitted: " + err.Error())
+		return 0, dispatch.Host("relay daemon unavailable; child report was not submitted: " + err.Error())
 	}
 	defer conn.Close()
 	deadline, _ := ctx.Deadline()
 	if err := conn.SetDeadline(deadline); err != nil {
-		return nil, dispatch.Host(err.Error())
+		return 0, dispatch.Host(err.Error())
 	}
 	if err := authenticatePeer(ctx, conn, filepath.Join(state, "control.sock")); err != nil {
-		return nil, dispatch.Host(err.Error())
+		return 0, dispatch.Host(err.Error())
 	}
-	request := Object{{Key: "protocol", Value: int64(1)}, {Key: "method", Value: "child-command"}, {Key: "program", Value: program}, {Key: "argv", Value: argv}}
+	encoded := make([]any, len(argv))
+	for index, argument := range argv {
+		encoded[index] = base64.StdEncoding.EncodeToString([]byte(argument))
+	}
+	request := Object{{Key: "protocol", Value: int64(1)}, {Key: "method", Value: "child-command"}, {Key: "program", Value: program}, {Key: "argv", Value: encoded}}
 	if _, err := io.WriteString(conn, pyjson.Dumps(request, pyjson.Options{Compact: true})+"\n"); err != nil {
-		return nil, dispatch.Host("relay daemon report outcome unknown; retry the same receipt identity: " + err.Error())
+		return 0, dispatch.Host("relay daemon report outcome unknown; retry the same receipt identity: " + err.Error())
 	}
 	response, err := readFrame(conn)
 	if err != nil {
-		return nil, dispatch.Host("relay daemon report outcome unknown; retry the same receipt identity: " + err.Error())
+		return 0, dispatch.Host("relay daemon report outcome unknown; retry the same receipt identity: " + err.Error())
 	}
 	if detail, refused := response.Get("detail").(string); refused && response.Get("error") != nil {
-		return nil, dispatch.Host("relay daemon refused the child report: " + detail)
+		return 0, dispatch.Host("relay daemon refused the child report: " + detail)
 	}
 	code, valid := response.Get("exitCode").(int64)
-	result, object := response.Get("result").(Object)
-	if !valid || !object || code < 0 || code > 255 {
-		return nil, dispatch.Host("relay daemon did not accept the child-command protocol; no local store fallback")
+	outText, isOut := response.Get("stdout").(string)
+	errText, isErr := response.Get("stderr").(string)
+	out, outErr := base64.StdEncoding.DecodeString(outText)
+	errOut, errErr := base64.StdEncoding.DecodeString(errText)
+	if !valid || !isOut || !isErr || outErr != nil || errErr != nil || code < 0 || code > 255 {
+		return 0, dispatch.Host("relay daemon did not accept the child-command protocol; no local store fallback")
 	}
-	return nil, &dispatch.PayloadExit{Payload: result, Code: int(code)}
+	_, _ = stdout.Write(out)
+	_, _ = stderr.Write(errOut)
+	return int(code), nil
 }
 
 func handleChildCommand(ctx context.Context, conn net.Conn, state string, request Object, wake func(string)) error {
@@ -66,10 +78,12 @@ func handleChildCommand(ctx context.Context, conn net.Conn, state string, reques
 	}
 	argv := make([]string, len(values))
 	for index, value := range values {
-		var valid bool
-		if argv[index], valid = value.(string); !valid {
-			return answerHost(conn, "child arguments must be strings")
+		text, isText := value.(string)
+		raw, err := base64.StdEncoding.DecodeString(text)
+		if !isText || err != nil {
+			return answerHost(conn, "child arguments must be base64 strings")
 		}
+		argv[index] = string(raw)
 	}
 	root := argparse.Parse("", argv)
 	if root.Help || root.Message != "" || len(root.Remaining) == 0 || !dispatch.ChildCommand(root.Remaining[0]) {
@@ -122,10 +136,6 @@ func handleChildCommand(ctx context.Context, conn net.Conn, state string, reques
 	}
 	var stdout, stderr bytes.Buffer
 	code := dispatch.ExecuteOwnedChild(dispatch.OwnedChildState(ctx, state), pyjson.Text(request.Get("program")), argv, &stdout, &stderr)
-	result, err := decodeObject(stdout.Bytes())
-	if err != nil {
-		return answerHost(conn, "child command produced no JSON answer: "+stderr.String())
-	}
 	if wake != nil && code == 0 {
 		thread := text(parsed.Values, "turn-thread")
 		if thread == "" {
@@ -135,6 +145,6 @@ func handleChildCommand(ctx context.Context, conn net.Conn, state string, reques
 			wake(thread)
 		}
 	}
-	_, err = io.WriteString(conn, pyjson.Dumps(Object{{Key: "exitCode", Value: int64(code)}, {Key: "result", Value: result}}, pyjson.Options{Compact: true})+"\n")
+	_, err := io.WriteString(conn, pyjson.Dumps(Object{{Key: "exitCode", Value: int64(code)}, {Key: "stdout", Value: base64.StdEncoding.EncodeToString(stdout.Bytes())}, {Key: "stderr", Value: base64.StdEncoding.EncodeToString(stderr.Bytes())}}, pyjson.Options{Compact: true})+"\n")
 	return err
 }
