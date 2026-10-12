@@ -6,13 +6,16 @@ the script format, the loader, the globals, call identity, the call result and t
 `internal/flow/script` (loader and runtime) and `internal/flow/engine` (calls, journal, paths) do.
 
 ```text
-crw flow run --backend fake [--args JSON | --args-file FILE] [--pool N] [--token-budget N] [--journal] <script.js>
+crw flow run --backend fake [--args JSON | --args-file FILE] [--pool N] [--token-budget N] [--journal] [--summary-document D] <script.js>
 crw flow run --script JS [--plan-only=false --backend fake] [--args JSON] [--journal]
 crw flow roles [--json]
 crw flow recover [--run RUN] CALL (--adopt THREAD|TURN | --absent)
 crw flow resume [--state DIR] [--socket PATH] [--repo DIR] [--args JSON | --args-file FILE] RUN SCRIPT
 crw flow lint [--args JSON | --args-file FILE] [--no-dry-run] [--json] <script.js>...
 ```
+
+The commands that reach up from a run - `apply`, `report-up`, `reports`, `report-ack`, `report-delivered` - and the summary document
+`--summary-document` names are in [reporting.md](reporting.md).
 
 `--backend fake` runs the script against the in-process fake backend: every turn answers immediately with a value that
 satisfies the call's schema, including its numeric bounds, `multipleOf` and `pattern` (or a short sentence for a call without one). It is the only backend the

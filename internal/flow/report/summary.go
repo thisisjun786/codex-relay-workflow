@@ -118,6 +118,23 @@ func ReconcileSummary(ctx context.Context, env SummaryEnv) (SummaryOutcome, erro
 			}
 			continue
 		}
+		// the entry is read again just before the send: an entry that was confirmed or superseded meanwhile is not told
+		if fresh, found, err := streamOf(ctx, env); err != nil {
+			return out, err
+		} else if found {
+			current := ""
+			for _, e := range fresh.History {
+				if e.SummaryID == id {
+					current = e.State
+				}
+			}
+			if !owed(current) {
+				if err := settle(ctx, env, id, SettledObsolete, "", &out); err != nil {
+					return out, err
+				}
+				continue
+			}
+		}
 		sent, err := env.send(ctx, id)
 		out.Sent++
 		if err != nil {

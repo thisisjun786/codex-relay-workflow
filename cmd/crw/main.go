@@ -233,6 +233,7 @@ func modes() []mode {
 			code := lint.RunCLI(c.ctx, c.args, c.stdout, c.stderr)
 			if len(c.args) > 0 && code == 0 && (c.args[0] == "help" || c.args[0] == "-h" || c.args[0] == "--help") {
 				fmt.Fprintln(c.stdout, shadow.Usage)
+				fmt.Fprintln(c.stdout, flowcli.Usage)
 			}
 			return code
 		}},
