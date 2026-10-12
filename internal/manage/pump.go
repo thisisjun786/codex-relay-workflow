@@ -78,6 +78,7 @@ type pumpSettings struct {
 	IssuePattern       string `json:"issue_pattern"`
 	Footer             string `json:"footer"`
 	RolloutReports     *bool  `json:"rollout_reports"`
+	SteerOnly          bool   `json:"steer_only"`
 	// DagReviewSeconds is the seconds between DAG reviews (default 600) and CapacitySeconds the
 	// seconds between capacity judgements (default 1800); see pump_signals.go.
 	DagReviewSeconds *int `json:"dag_review_seconds"`
@@ -148,10 +149,10 @@ type pumpState struct {
 	// not replayed. A state written before the key existed reads as no refusals.
 	QueueRefused map[string]pumpQueueRefusal `json:"queue_refused"`
 
-	// MgmtRefused is the count of refusals the management batch of one id has taken (CRW-1273), the
-	// queue's rule for the management thread: the next attempt of that batch is sent under
-	// <id>-m<count>, so neither the ledger's refusal of the earlier id nor a body whose HH:MM head
-	// moved on is met again. A state without the key reads as no refusals.
+	// MgmtRefused holds the management batch's refusal count and independent attempt ordinal.
+	// The next attempt is sent under <id>-m<ordinal>, so neither an earlier refusal nor a body whose
+	// HH:MM head moved on is met again. Stranded closes advance only the ordinal; an older state
+	// without it uses the count as its ordinal floor. A state without the key reads as no refusals.
 	MgmtRefused pumpQueueRefusal `json:"mgmt_refused"`
 	// Parked holds the events of a management batch the bridge refused pumpQueueRefusalLimit times
 	// under one id. They leave pending so the events behind them flow, are never sent again, and stay
@@ -254,8 +255,9 @@ type pumpReview776QueueLegacyRef struct {
 // of that id is sent under the ordinal, so the ledger's refusal of the earlier id is not replayed. A
 // state without the key reads as no refusals.
 type pumpQueueRefusal struct {
-	ID    string `json:"id"`
-	Count int    `json:"count"`
+	ID      string `json:"id"`
+	Count   int    `json:"count"`
+	Ordinal int    `json:"ordinal,omitempty"`
 }
 
 // pumpParkedEvent is an event that left pending after its batch was refused too often: the event,
@@ -714,6 +716,18 @@ func pumpDeliver(ctx context.Context, e *Env, cfg *Config, st *pumpState, batch 
 	// the logical id, so a later round reconciles the same request id instead of resending a batch
 	// that may already have been accepted. An attempt already frozen is reused as it stands.
 	if st.Attempt == nil {
+		if pumpSettingsFrom(cfg).SteerOnly {
+			// steer_only (CRW-1275): a batch is formed only while the management thread has an active
+			// turn to steer; on an idle or unmeasured thread the pending events wait and gather.
+			state, err := pumpQueueTurnState(ctx, e, cfg, cfg.ManagementThread)
+			if err != nil {
+				pumpLog(cfg, "management steer waits: "+err.Error())
+				return 0, nil
+			}
+			if state != pumpQueueActive {
+				return 0, nil
+			}
+		}
 		// A batch the ledger refused under this id is tried again under the next ordinal of the id
 		// (the rule of the parent queue, CRW-991): the refusal of the id itself is final in the
 		// ledger, and the body's HH:MM head moves on, so the same id would meet either the replayed
@@ -724,8 +738,8 @@ func pumpDeliver(ctx context.Context, e *Env, cfg *Config, st *pumpState, batch 
 		// (CRW-1273).
 		base := pumpBatchID(batch)
 		logicalID := base
-		if refusal := st.MgmtRefused; refusal.ID == base && refusal.Count > 0 {
-			logicalID = pumpMgmtOrdinalID(base, refusal.Count)
+		if refusal := st.MgmtRefused; refusal.ID == base && max(refusal.Count, refusal.Ordinal) > 0 {
+			logicalID = pumpMgmtOrdinalID(base, max(refusal.Count, refusal.Ordinal))
 		}
 		attempt := pumpAttempt{LogicalID: logicalID, IDs: pumpPendingIDs(batch), Text: body}
 		st.Attempt = &attempt
@@ -739,7 +753,8 @@ func pumpDeliver(ctx context.Context, e *Env, cfg *Config, st *pumpState, batch 
 	attemptsBefore := pumpOutboxAttempts(cfg, attempt.LogicalID)
 	message := Message{
 		LogicalID: attempt.LogicalID, Thread: cfg.ManagementThread, Text: attempt.Text,
-		Settings: cfg.Settings.Management,
+		Settings:  cfg.Settings.Management,
+		SteerOnly: pumpSettingsFrom(cfg).SteerOnly,
 	}
 	var out Outcome
 	var err error
@@ -754,6 +769,20 @@ func pumpDeliver(ctx context.Context, e *Env, cfg *Config, st *pumpState, batch 
 	}
 	if err != nil && out.Class == "" {
 		return 1, err
+	}
+	if status, _ := out.Receipt["status"].(string); status == deliverSteerOnlyWaiting {
+		// steer_only: the management thread had no active turn to steer, so nothing was dispatched and
+		// the outbox holds no request id. The attempt stays frozen and is steered under the same id and
+		// body once the thread is active; no retry id, refusal or ordinal is spent.
+		reason := "no active turn to steer"
+		if observation, _ := out.Receipt["observation"].(string); observation != "" {
+			reason += " (observation " + observation + ")"
+		}
+		if err != nil {
+			reason = strings.Join(strings.Fields(err.Error()), " ")
+		}
+		pumpLog(cfg, fmt.Sprintf("management batch %s waits on %s: %s; nothing was sent", attempt.LogicalID, cfg.ManagementThread, reason))
+		return 0, err
 	}
 	line := fmt.Sprintf("deliver request=%s events=%d class=%s received=%v applied=%v",
 		out.RequestID, len(attempt.IDs), out.Class, out.Class == deliverClassAccepted, false)
@@ -822,7 +851,7 @@ func pumpDeliver(ctx context.Context, e *Env, cfg *Config, st *pumpState, batch 
 	return 0, nil
 }
 
-// pumpMgmtOrdinalID is the logical id of a management batch after count refusals of its base id. The
+// pumpMgmtOrdinalID is the logical id of a management or parent batch after count spent ordinals. The
 // form carries no "-r": deliverRetryRequestID mints <logical id>-r<n> for Deliver's own retries, and
 // an ordinal of that form would be the request id one of them already used. Base and ordinal stay
 // well inside the 128 characters the outbox allows.
@@ -863,11 +892,10 @@ func pumpDeliverReason(cfg *Config, logicalID string, attemptsBefore int, cause 
 // a bridge refusal at the limit takes.
 func pumpMgmtStrandedCount(st *pumpState, attempt pumpAttempt) {
 	base := pumpBatchIDStrings(attempt.IDs)
-	count := 1
-	if st.MgmtRefused.ID == base {
-		count = st.MgmtRefused.Count + 1
+	if st.MgmtRefused.ID != base {
+		st.MgmtRefused = pumpQueueRefusal{ID: base}
 	}
-	st.MgmtRefused = pumpQueueRefusal{ID: base, Count: count}
+	st.MgmtRefused.Ordinal = max(st.MgmtRefused.Count, st.MgmtRefused.Ordinal) + 1
 }
 
 // pumpMgmtRefusalCount counts one proven refusal against the management batch's base id, as
@@ -877,11 +905,13 @@ func pumpMgmtStrandedCount(st *pumpState, attempt pumpAttempt) {
 func pumpMgmtRefusalCount(cfg *Config, st *pumpState, attempt pumpAttempt) {
 	base := pumpBatchIDStrings(attempt.IDs)
 	count := 1
+	ordinal := 1
 	if st.MgmtRefused.ID == base {
 		count = st.MgmtRefused.Count + 1
+		ordinal = max(st.MgmtRefused.Count, st.MgmtRefused.Ordinal) + 1
 	}
 	if count < pumpQueueRefusalLimit {
-		st.MgmtRefused = pumpQueueRefusal{ID: base, Count: count}
+		st.MgmtRefused = pumpQueueRefusal{ID: base, Count: count, Ordinal: ordinal}
 		return
 	}
 	reason := pumpQueueRefusalReason(cfg, attempt.LogicalID)

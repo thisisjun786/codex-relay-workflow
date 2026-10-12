@@ -40,13 +40,17 @@ const (
 	deliverRetrySuffixRoom = 3
 )
 
-// Message is one logical message to deliver.
+// Message is one logical message to deliver. SteerOnly (the management pump's manage.pump.steer_only,
+// CRW-1275) restricts the delivery to steering the thread's active turn: it never starts a turn, a
+// request id reaches the outbox only right before steer_thread is called with it, and a retry steers
+// the turn the call observed.
 type Message struct {
 	LogicalID string
 	Thread    string
 	Text      string
 	Role      string
 	Settings  coreSettings
+	SteerOnly bool
 }
 
 // Outcome is what a delivery settled on: its class, the request id it stands under, and the
@@ -67,6 +71,7 @@ type deliverRecord struct {
 	MessageSHA256 string           `json:"message_sha256"`
 	CreatedAt     string           `json:"created_at"`
 	State         string           `json:"state"`
+	CloseKind     string           `json:"close_kind,omitempty"`
 	Received      bool             `json:"received"`
 	Applied       bool             `json:"applied"`
 	Attempts      []deliverAttempt `json:"attempts"`

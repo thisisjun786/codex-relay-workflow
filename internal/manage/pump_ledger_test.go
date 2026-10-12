@@ -36,10 +36,19 @@ const (
 	// pumpLedgerUnknown: the ledger keeps an in-progress receipt and the answer is undetermined.
 	pumpLedgerUnknown = "unknown"
 	// pumpLedgerLostReply: the host took the message and the ledger holds it accepted, but the reply is a tool error.
-	pumpLedgerLostReply = "lostreply"
+	pumpLedgerLostReply   = "lostreply"
+	pumpLedgerLostRefusal = "lostrefusal"
 	// pumpLedgerOperationError: get_operation answers a tool error (the ledger could not be read), so the
 	// bridge says nothing about the request id; a send is the validation tool error.
 	pumpLedgerOperationError = "operror"
+
+	// pumpLedgerObservationDown is the file whose presence makes get_active_turn end the session
+	// without an answer, while get_operation and the sends keep answering.
+	pumpLedgerObservationDown = "observation-down"
+	// pumpLedgerObservationNext and pumpLedgerModeNext, when present, replace the observation and the
+	// mode once a send or a steer has been answered: the thread or the host changes right after a dispatch.
+	pumpLedgerObservationNext = "observation-next.json"
+	pumpLedgerModeNext        = "mode-next"
 )
 
 type pumpLedgerEntry struct {
@@ -77,7 +86,15 @@ func pumpLedgerServe(dir string) {
 		name, _ := params["name"].(string)
 		args, _ := params["arguments"].(map[string]any)
 		deliverFakeLog(filepath.Join(dir, "calls.jsonl"), name, args)
+		if _, err := os.Stat(filepath.Join(dir, pumpLedgerObservationDown)); err == nil && name == deliverToolActive {
+			// The observation never answers: the session ends, which the client reads as a transport failure.
+			os.Exit(0)
+		}
 		text, isError := pumpLedgerAnswer(dir, name, args)
+		if name == deliverToolSend || name == deliverToolSteer {
+			_ = os.Rename(filepath.Join(dir, pumpLedgerObservationNext), filepath.Join(dir, "observation.json"))
+			_ = os.Rename(filepath.Join(dir, pumpLedgerModeNext), filepath.Join(dir, "mode"))
+		}
 		result := map[string]any{"content": []any{map[string]any{"type": "text", "text": text}}}
 		if isError {
 			result["isError"] = true
@@ -103,6 +120,9 @@ func pumpLedgerAnswer(dir, tool string, args map[string]any) (string, bool) {
 	payload := func(v map[string]any) string { raw, _ := json.Marshal(v); return string(raw) }
 	switch tool {
 	case deliverToolActive:
+		if observation, err := os.ReadFile(filepath.Join(dir, "observation.json")); err == nil {
+			return string(observation), false
+		}
 		return payload(map[string]any{"observation": "idle"}), false
 	case deliverToolOperation:
 		requestID, _ := args["request_id"].(string)
@@ -136,10 +156,18 @@ func pumpLedgerAnswer(dir, tool string, args map[string]any) (string, bool) {
 		mode := strings.TrimSpace(string(modeRaw))
 		var receipt map[string]any
 		switch mode {
+		case pumpLedgerLostRefusal:
+			receipt = map[string]any{"status": "not_attempted", "delivery": "not_delivered", "retrySafe": true}
+			ledger[requestID] = pumpLedgerEntry{Fingerprint: fingerprint, Receipt: receipt}
+			pumpLedgerStore(dir, ledger)
+			return "Error: reply lost after recording the refusal", true
 		case pumpLedgerDown:
 			receipt = map[string]any{"status": "not_attempted", "delivery": "not_delivered"}
 		case pumpLedgerUp:
 			receipt = map[string]any{"status": "accepted", "delivery": "turn_started"}
+			if tool == deliverToolSteer {
+				receipt["delivery"] = "accepted_not_applied"
+			}
 		case pumpLedgerUnknown:
 			receipt = map[string]any{"status": "in_progress_or_unknown", "retrySafe": false}
 		case pumpLedgerLostReply:

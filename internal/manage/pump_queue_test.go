@@ -197,8 +197,8 @@ func TestPumpQueueRefusedBatchRetriesWithOrdinalThenMovesAside(t *testing.T) {
 		ids = append(ids, sent[0])
 	}
 	base := ids[0]
-	if ids[1] != base+"-r1" || ids[2] != base+"-r2" {
-		t.Errorf("the refused batch was sent under %v, want %s then -r1 then -r2", ids, base)
+	if ids[1] != base+"-m1" || ids[2] != base+"-m2" {
+		t.Errorf("the refused batch was sent under %v, want %s then -m1 then -m2", ids, base)
 	}
 	if _, ok := pumpReview776QueueAttempt(t, cfg, "parent-1"); ok {
 		t.Errorf("the refused batch kept its pin")

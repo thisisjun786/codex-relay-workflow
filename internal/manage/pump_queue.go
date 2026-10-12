@@ -250,7 +250,7 @@ func pumpQueueSend(ctx context.Context, e *Env, cfg *Config, st *pumpState, dir,
 	// A batch the ledger refused under this id is tried again under the next ordinal of the id. The
 	// ledger's refusal of the id itself is final, so resending under it would only replay that refusal.
 	if refusal := st.QueueRefused[thread]; refusal.ID == base && refusal.Count > 0 {
-		logicalID = fmt.Sprintf("%s-r%d", base, refusal.Count)
+		logicalID = pumpMgmtOrdinalID(base, refusal.Count)
 	}
 	st.QueueAttempt[thread] = pumpReview776QueuePin{
 		LogicalID: logicalID, Base: base, Names: append([]string(nil), batch.names...), Body: batch.body,
@@ -661,7 +661,8 @@ func pumpReview776QueueReconcileReceipt(ctx context.Context, e *Env, cfg *Config
 		return true, nil
 	}
 	defer bridge.close()
-	switch deliverReconcile(ctx, bridge, record) {
+	verdict := deliverReconcile(ctx, bridge, record)
+	switch verdict {
 	case deliverReconcileAccepted:
 		at := deliverNow(e)
 		if err := ctx.Err(); err != nil {
@@ -675,23 +676,25 @@ func pumpReview776QueueReconcileReceipt(ctx context.Context, e *Env, cfg *Config
 			}
 		}
 		return pumpReview776QueueAcceptPin(ctx, e, cfg, st, dir, thread, pin)
-	case deliverReconcileRefused:
-		// The bridge settled the attempt as a refusal before any dispatch, so nothing was sent. The
-		// refusal is recorded the way Deliver records one, and counted against the batch.
+	case deliverReconcileRefused, deliverReconcileResendSame, deliverReconcileResendNew:
+		if verdict != deliverReconcileRefused && (pin.Base == "" || deliverRetryCount(pin.Base, pin.LogicalID) == 0) {
+			return false, nil
+		}
 		at := deliverNow(e)
 		if err := ctx.Err(); err != nil {
 			// The outbox record, the count and the pin clear are durable effects: a cancelled round makes none.
 			return true, err
 		}
 		record.State = deliverStateRefused
-		record.Attempts = append(record.Attempts, deliverAttempt{At: at, Class: deliverClassRefused, ReceiptExcerpt: "get_operation: refused before the dispatch"})
+		excerpt := "get_operation: refused before the dispatch"
+		if verdict != deliverReconcileRefused {
+			excerpt = "get_operation: nothing was sent; retiring the pre-change queue ordinal that overlaps delivery retry ids"
+		}
+		record.Attempts = append(record.Attempts, deliverAttempt{At: at, Class: deliverClassRefused, ReceiptExcerpt: excerpt})
 		if err := deliverSave(cfg, record); err != nil {
 			return true, err
 		}
 		return false, pumpQueueRefusedLift(ctx, cfg, st, dir, thread, pin, nil)
-	case deliverReconcileResendSame, deliverReconcileResendNew:
-		// Nothing was sent under the attempt, so the caller may make it under the queue's gate.
-		return false, nil
 	default:
 		// Undetermined: the pin stays, so the next round reconciles the same logical id and body.
 		return true, nil
