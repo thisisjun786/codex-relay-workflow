@@ -206,7 +206,7 @@ func stoppedWhy(info RunInfo, in DigestInput) string {
 	case info.State == StateRunning || info.State == StatePaused:
 		return "still running"
 	case contains(info.HeldReasons, engine.ReasonBudgetExhausted):
-		return "token budget spent: " + budgetDetail(info.Tokens, in.Spec.TokenBudget)
+		return fmt.Sprintf("token budget reached (%d of %d tokens)", info.Tokens, in.Spec.TokenBudget)
 	case strings.HasPrefix(info.Paused, "deadline"):
 		return "deadline: " + strings.TrimPrefix(info.Paused, "deadline: ")
 	case info.Paused != "":

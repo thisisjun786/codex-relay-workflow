@@ -158,7 +158,7 @@ func TestNightBatchBudgetPauses(t *testing.T) {
 		t.Errorf("landed %v on a spent budget", l.Relay.Landed)
 	}
 	d := l.digestOf(t, []string{"CRW-A", "CRW-B"}, 25, false)
-	if !strings.HasPrefix(d.Stopped, "token budget spent") || !strings.Contains(d.Stopped, "of 25 tokens") {
+	if !strings.HasPrefix(d.Stopped, "token budget reached") || !strings.Contains(d.Stopped, "of 25 tokens") {
 		t.Errorf("the run stopped because: %q", d.Stopped)
 	}
 	carried := 0
@@ -174,16 +174,16 @@ func TestNightBatchBudgetPauses(t *testing.T) {
 		t.Errorf("nothing was carried to the next night: %+v", d.Items)
 	}
 	report, _ := reportOf(t, d)
-	if !strings.Contains(report, "종료 사유 token budget spent") || !strings.Contains(report, "## 취소·이월") {
+	if !strings.Contains(report, "종료 사유 token budget reached") || !strings.Contains(report, "## 취소·이월") {
 		t.Errorf("the report:\n%s", report)
 	}
 }
 
-// TestMorningReportFromDigest: the digest of a finished night batch, written by `crw flow digest`, is read by the manager's report
+// TestNightBatchReportFromTheRun: the digest of a finished night batch, built as `crw flow digest` builds it, is read by the manager's report
 // as it stands: the issues the journal shows integrated are under "통합됨" with the journal's evidence (commit, acceptance,
 // integration), the ones it does not are not claimed, a deadline and a stop reason are on the conclusion, and a digest with an
 // issue that never ran says so in the unverified part.
-func TestMorningReportFromDigest(t *testing.T) {
+func TestNightBatchReportFromTheRun(t *testing.T) {
 	l := NewLab(t, twoNodes()...)
 	l.NightBatch(nightArgs("CRW-A", "CRW-B"), false)
 	d := l.digestOf(t, []string{"CRW-A", "CRW-B"}, 100000, false)
