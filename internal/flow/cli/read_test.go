@@ -163,17 +163,45 @@ func TestWatchFollowsJournalTail(t *testing.T) {
 		t.Fatalf("the wait: %+v %v after %v", page, err, time.Since(start))
 	}
 
-	// the command: the rows after --after, then the cursor line to pass back
+	// the command: without --after the tree as of a cursor, recovery_hold included; with it the rows after that cursor
 	td := w.deps()
-	code, out, errOut := td.do("watch", "run-a", "--state", w.state, "--after", itoa(cursor-1), "--limit", "10")
+	code, out, errOut := td.do("watch", "run-a", "--state", w.state)
+	treeCursor := itoa(cursor + 1)
+	if code != 0 || !strings.Contains(out, "phase design") || !strings.Contains(out, "[recovery_hold]") || !strings.Contains(out, "phase milestone") || !strings.HasSuffix(strings.TrimSpace(out), "cursor "+treeCursor+"  state dead") {
+		t.Fatalf("watch without a cursor: exit %d\n%s%s", code, out, errOut)
+	}
+	code, out, errOut = td.do("watch", "run-a", "--state", w.state, "--after", itoa(cursor-1), "--limit", "10")
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	if code != 0 || len(lines) != 3 || !strings.Contains(lines[0], "call/outcome_unknown") || !strings.Contains(lines[1], "flow/phase") || !strings.HasPrefix(lines[2], "cursor "+itoa(cursor+1)+"  more false") {
+	if code != 0 || len(lines) != 3 || !strings.Contains(lines[0], "call/outcome_unknown") || !strings.Contains(lines[1], "flow/phase") || !strings.HasPrefix(lines[2], "cursor "+treeCursor+"  more false") {
 		t.Fatalf("watch: exit %d\n%s%s", code, out, errOut)
 	}
-	code, out, _ = td.do("watch", "run-a", "--state", w.state, "--after", itoa(cursor+1), "--json")
+	code, out, _ = td.do("watch", "run-a", "--state", w.state, "--after", treeCursor, "--json")
 	var p Page
 	if code != 0 || json.Unmarshal([]byte(strings.TrimSpace(out)), &p) != nil || len(p.Rows) != 0 || p.Cursor != cursor+1 {
 		t.Fatalf("watch --json at the end: %d %s", code, out)
+	}
+	code, out, _ = td.do("watch", "run-a", "--state", w.state, "--json")
+	var first struct {
+		Cursor int       `json:"cursor"`
+		Tree   RunDetail `json:"tree"`
+	}
+	if code != 0 || json.Unmarshal([]byte(strings.TrimSpace(out)), &first) != nil || first.Cursor != cursor+1 || len(first.Tree.Phases) != 3 || first.Tree.Holds != 1 {
+		t.Fatalf("watch --json without a cursor: %d %s", code, out)
+	}
+	// --follow prints the tree, then the rows after it as they arrive, and ends with the tree when the run has no process
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		r3, err := w.reopen("run-a")
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		r3.phase("report")
+		r3.close()
+	}()
+	code, out, errOut = td.doKeep("watch", "run-a", "--state", w.state, "--follow", "--wait", "1")
+	if code != 0 || strings.Count(out, "phase design") != 2 || !strings.Contains(out, "flow/phase  title=report") || !strings.Contains(out, "phase report") {
+		t.Fatalf("watch --follow: exit %d\n%s%s", code, out, errOut)
 	}
 	for _, bad := range [][]string{{"--after", "-1"}, {"--limit", "0"}, {"--limit", "1001"}, {"--wait", "3601"}} {
 		if code, _, _ := td.do(append([]string{"watch", "run-a", "--state", w.state}, bad...)...); code != 2 {

@@ -2,8 +2,8 @@ package cli
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
-	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -174,12 +174,14 @@ func shorten(list []string) []string {
 	return out
 }
 
-// watch is `crw flow watch RUN`: the rows of the run after a cursor, read as `crw relay journal-tail` reads the relay journal.
-// One call answers the rows after --after (at most --limit), waiting up to --wait seconds when there are none, and prints the
-// cursor to pass back; --follow keeps reading from the cursor until the run is over or the command is stopped.
+// watch is `crw flow watch RUN`: the tree of the run, then its journal read as `crw relay journal-tail` reads the relay journal.
+// Without --after it prints the tree as of the last row it read (the same phase, then agent tree as `show`, recovery_hold included)
+// and the cursor to pass back. With --after it prints the rows after that cursor, at most --limit, waiting up to --wait seconds when
+// there are none, and the new cursor. --follow keeps reading from the cursor until the run is over or has no process, printing each
+// row as it arrives and the tree again at the end.
 func (c *command) watch(args []string) int {
 	fs, cm := c.flags()
-	after := fs.Int("after", 0, "the seq of the last row already seen (0 reads from the first)")
+	after := fs.Int("after", 0, "the seq of the last row already seen: print the rows after it (without it, print the tree)")
 	wait := fs.Int("wait", 0, "seconds to wait for a row when there is none after the cursor (0 to 3600)")
 	limit := fs.Int("limit", 100, "at most this many rows in an answer (1 to 1000)")
 	follow := fs.Bool("follow", false, "keep reading from the cursor until the run is over")
@@ -188,6 +190,8 @@ func (c *command) watch(args []string) int {
 	if !ok {
 		return code
 	}
+	cursorGiven := false
+	fs.Visit(func(f *flag.Flag) { cursorGiven = cursorGiven || f.Name == "after" })
 	switch {
 	case len(positional) != 1:
 		return c.usage("exactly one run id is required")
@@ -203,13 +207,37 @@ func (c *command) watch(args []string) int {
 		return c.fail("%v", err)
 	}
 	defer r.Close()
+	run := positional[0]
 	cursor := *after
+	if !cursorGiven {
+		// the tree first: its cursor is the last row it was made of, so the rows that follow are exactly what it lacks
+		d, err := r.Detail(c.ctx, run)
+		if err != nil {
+			return c.fail("%v", err)
+		}
+		cursor = d.LastSeq
+		if *asJSON {
+			b, _ := json.Marshal(struct {
+				Run    string    `json:"run"`
+				Cursor int       `json:"cursor"`
+				State  string    `json:"state"`
+				Tree   RunDetail `json:"tree"`
+			}{run, cursor, d.State, d})
+			fmt.Fprintf(c.stdout, "%s\n", b)
+		} else {
+			c.printDetail(d)
+			fmt.Fprintf(c.stdout, "cursor %d  state %s\n", cursor, d.State)
+		}
+		if !*follow {
+			return 0
+		}
+	}
 	for {
 		w := time.Duration(*wait) * time.Second
 		if *follow && w == 0 {
 			w = 30 * time.Second
 		}
-		page, err := r.Tail(c.ctx, positional[0], cursor, *limit, w)
+		page, err := r.Tail(c.ctx, run, cursor, *limit, w)
 		if err != nil {
 			if c.ctx.Err() != nil {
 				return 0
@@ -228,7 +256,15 @@ func (c *command) watch(args []string) int {
 			}
 		}
 		cursor = page.Cursor
-		if !*follow || (len(page.Rows) == 0 && !page.More && (Over(page.State) || page.State == StateDead || page.State == StateHeld)) {
+		if !*follow {
+			return 0
+		}
+		if len(page.Rows) == 0 && !page.More && (Over(page.State) || page.State == StateDead || page.State == StateHeld) {
+			if !*asJSON {
+				if d, err := r.Detail(c.ctx, run); err == nil {
+					c.printDetail(d)
+				}
+			}
 			return 0
 		}
 	}
@@ -249,7 +285,5 @@ func rowLine(row Row) string {
 			parts = append(parts, key+"="+oneLine(v))
 		}
 	}
-	keys := make([]string, 0)
-	_ = sort.StringSlice(keys)
 	return strings.Join(parts, "  ")
 }

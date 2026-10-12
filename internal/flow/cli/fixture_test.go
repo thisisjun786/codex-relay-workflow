@@ -176,3 +176,11 @@ func openJournal(w *world, id string) (*journal.Journal, error) {
 func loadRun(w *world, id string) ([]engine.Event, bool, error) {
 	return journal.Load(ctx, w.st, id)
 }
+
+// doKeep is do without closing the world's own store: for a command that only reads, while the test goes on writing.
+func (td *testDeps) doKeep(args ...string) (int, string, string) {
+	var errOut bytes.Buffer
+	td.order.Reset()
+	code := RunWith(ctx, td.Deps, args, strings.NewReader(""), td.order, &errOut)
+	return code, td.order.String(), errOut.String()
+}
