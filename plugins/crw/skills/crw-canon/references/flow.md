@@ -22,6 +22,54 @@ A run is a process that lives for one run and loses nothing when it dies: every 
 | `crw flow run --backend fake`, `crw flow roles`, `crw flow compile`, `crw flow lint` | The fake run, the role table, the plan compiler and the script check of the engine |
 | `crw flow trace export`, `crw flow shadow`, `crw flow measure` | The trace tools, which read store copies and trace files and call no agent |
 
+## The commands
+
+Exit statuses: 0 did what was asked; 1 refused with a reason (a failed preflight fact, a record that does not hold, a run that is over, a run no process holds); 2 a command line, a store or a record it cannot use; 3 a process already holds the run lock. Every command takes `--state DIR` and `--socket PATH`; without them the relay's own selection is used.
+
+### crw flow start
+
+Shows the preview, then starts the run process: the same executable as `crw flow _run`, in a session of its own, with no descriptor of the caller's (a descriptor that cannot be kept out stops the start), no input and its output in `<state>/flow/<run>/process.log`. The spec it starts from (`<state>/flow/<run>/run.json`: the workflow, the arguments, the owner thread, the budget, the deadline, the repository) is written first and never replaced, so a resume runs the script and the arguments the run started with. The answer is the run id.
+
+### crw flow ps
+
+Lists the runs of the store. A run is `running` or `paused` while a process holds its run lock, `dead` when none does and the journal has no finished row after the last start, `held` when it finished but a call, a recovery hold or a question is left, and `completed`, `cancelled` or `failed` when it is over.
+
+### crw flow show
+
+The tree of one run: its phases in the order the script opened them, the agent calls made in each (role, node, status and reason, thread, tokens), and under them what each node has: the commits, the review verdicts with the reviewer's call, the acceptance and the integration, the tokens. A call whose outcome is unknown, and the node it belongs to, are marked `recovery_hold`.
+
+### crw flow watch
+
+One read of the run's journal after `--after`: at most `--limit` rows, `--wait` seconds for a row when there is none, and the cursor line to pass back. `--follow` keeps reading from the cursor until the run is over or has no process. The rows carry no call results; the journal itself holds them.
+
+### crw flow answer
+
+See [How an answer names its question](#how-an-answer-names-its-question). The answer is applied to the journal of a run no process holds: a run a process holds is refused (`crw flow pause` first), the row is appended under the run lock, and the run is resumed in the background unless `--no-resume` is given. The refusals are `not_answered`, `bad_binding`, `other_run`, `other_node`, `unknown_question`, `stale_revision`, `stale_attempt`, `stale_plan_basis`, `out_of_scope_authority` and `already_applied`.
+
+### crw flow pause
+
+Signals the process that holds the run lock (SIGUSR1). The process stops sending: the turn in flight is interrupted and the calls that would send end held `engine_paused`; the run then finishes `held`, and `crw flow resume` goes on with those calls. A run no process holds is refused, since nothing runs.
+
+### crw flow cancel
+
+Signals the process (SIGTERM): the calls in flight are cancelled and the run finishes `cancelled`. A run no process holds is cancelled by a finished row appended under the run lock. A run that is over is refused.
+
+### crw flow resume
+
+Takes the run from its journal once its run lock is free: with the run's own spec (`crw flow resume RUN`, in the foreground, or `--detach`), or with a script and arguments given (`crw flow resume RUN SCRIPT`, the engine's command, which refuses a script or arguments that are not the run's). Every call whose last row is an intent is looked up on the host before the script runs again; a call in recovery hold stays until `crw flow recover` settles it.
+
+### crw flow recover
+
+The engine's recovery of a call in `recovery_hold`, under the run lock of the run that holds the call. `--adopt THREAD|TURN` takes the thread or turn the operator names after the proofs of the call's cwd, source and history; `--absent` reads the host again and accepts the call only when the same proofs hold as for an automatic outcome. What it relied on is appended to the journal as `recovery_cleared` with its evidence.
+
+### crw flow status-line
+
+The line the Stop hook prints, `crw flow <run> <state> · <phase> · <n> calls · ...`, for the runs of thread T that are not over, and nothing for any other thread.
+
+### crw flow digest
+
+The digest of a night batch; see [The night batch](#the-night-batch).
+
 ## The preview and the five facts
 
 `crw flow start` prints, before it starts anything, what the run will do and whether the way back to the orchestrator thread works. The five facts are each pass or fail with the reading behind it: (1) the assignment is routed to this thread; (2) the delivery service has ticked and has delivered; (3) the thread can be reached (its approval policy and goal state); (4) every disposition the run waits in can produce a delivery; (5) an unattended idle thread was woken into a turn in this scope. A run that cannot reach its owner would wait unseen, so a failed fact stops the start unless `--force` is given.
