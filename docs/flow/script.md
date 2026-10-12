@@ -451,6 +451,33 @@ is every later one of the lane) when it had started and was not accepted - and a
 `update_node` or `dag-correct`). A milestone that closed with a reason to re-plan is `replanned`: the revision is recorded, the orchestrator is asked for the correction issues
 (`crw-add-issue` and a plan revision), and the milestone does not report.
 
+**The run process's scheduler (CRW-1277).** The shipped binary installs the lane's operations in the run process (`cmd/crw` assigns
+`cli.OpsFor = cli.SchedulerLane`): `ops.NewLane` over `cli.SchedRelay` (the `Relay` over `internal/relay/dagsched`), `CILocalVerifier`,
+`StoreDecisions`, the host's reviewer threads and the reporter of F11 (`report.Reporter`: the report's rows in the run's journal, the notice
+through `crw manage send-parent` on the relay the run is in), with the run's owner thread as the actor. The
+milestone is the compiled milestone of the crw-plan handoff (`crw-flow-compile-input/1`) the run pinned with `crw flow start --handoff
+FILE` (a night batch pins the one its decision names): the nodes of the plan at the revision the run pinned (`flow_runs.plan_revision`)
+whose issues are the milestone's in the handoff, in the scheduler's offering order (`dagsched.OfferingOrder`: the longest chain below a
+node, then the most nodes below it, then the node id), each waiting for the nodes of the milestone its plan edges come from, with the
+criteria, regions and group of its issue; the milestone's title, criteria, surfaces, grade and required commands are its entry in
+`milestones[]`, which compile judges (an issue without an entry and an entry without an issue are refused) and the run judges again by the same
+entry rules (`compile.MilestoneEntryRefusals`) when it starts and when it reads the milestone; the verifier of the shipped lane runs
+`crw-dev ci local` only, so an entry that requires another command is refused when the run reads it. A handoff that is not the
+one the pinned revision was compiled from (an issue with no node, criteria whose digest is not the node's) is refused with "compile and
+put the handoff first", and nothing is defaulted. Before its first fenced write the run claims the plan's coordinator epoch with its
+run id as the session nonce (a resumed process is the same claim); a write after another session claimed the plan is refused
+(`stale_coordinator_epoch`) and writes nothing; `project-lane.js` takes the refusal of the acceptance or of the close as the lane's `land_refused`, so that milestone ends `incomplete` with the reason in the journal (the run does not stop on the spot: a parallel lane's next fenced write is refused the same way). `release` is `ReleaseAgent` (dag-release-request/1: the base from
+the plan's target, the criteria `c1..cn` of the issue, the pinned handoff as the volatile input, the run's directory as the artifact
+root, the rule version of the executor pair, the script and helper digests, the installed plugin's skills digest and the build); a
+node the scheduler holds back (no slot, an overlapping region, a host short of memory, a node not ready) is `released: false` with
+the reading's reason; the host memory bound is the one `dag-release` reads from `CRW_DAG_HOST_*`, sampled again for each release. `accept` is `Accept` on the agent path: the execution records a link the run points at the node's current
+worktree before it asks, the run's buffered rows are stored first, and the run's journal stamps the release's execution on the
+node's calls and the reviewer's input criteria digest on the reviewer's completed row, which the acceptance reads. `integrate` names the node's current acceptance and the head it accepted (anything else is refused before the batch, `acceptance_not_current` or `head_not_accepted`) and is one
+`IntegrateBatch` of the node with the wiring of `crw relay dag-integrate` (`dagsched.IntegrationDeps`: `crw-dev ci local` over the
+merged tree, git's compare-and-swap of the branch) onto the plan's target branch, followed by the observation of the landing there;
+`close` is `AgentClose`. `releaseChild` is refused (`refused:child_release_unwired:`): a managed child start needs host settings the
+run does not hold.
+
 ## The milestone close
 
 `crw.closeMilestone(ms)` (`crw:lib/close`) closes a milestone over evidence the run makes itself, in this order; the order is what the

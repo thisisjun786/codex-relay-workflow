@@ -20,7 +20,8 @@ func TestStartPreviewThenDetached(t *testing.T) {
 	if code == 0 {
 		t.Fatalf("a night batch without a readable decision started: %s", out)
 	}
-	code, out, errOut := td.do("start", "project-lane", "--thread", "thread-owner", "--state", w.state, "--args", `{ "plan": "plan-1", "milestone": "M1" }`, "--token-budget", "5000")
+	handoff := defaultHandoff(t)
+	code, out, errOut := td.do("start", "project-lane", "--thread", "thread-owner", "--state", w.state, "--args", `{ "plan": "plan-1", "milestone": "M1" }`, "--token-budget", "5000", "--handoff", handoff)
 	if code != 0 {
 		t.Fatalf("exit %d\n%s\n%s", code, out, errOut)
 	}
@@ -37,7 +38,7 @@ func TestStartPreviewThenDetached(t *testing.T) {
 		t.Fatalf("%d processes started", len(td.spawned))
 	}
 	req := td.spawned[0]
-	if req.Resume || req.State != w.state || !strings.HasPrefix(req.Spec.RunID, "run-") || req.Spec.Thread != "thread-owner" || req.Spec.TokenBudget != 5000 || string(req.Spec.Args) != `{"plan":"plan-1","milestone":"M1"}` {
+	if req.Resume || req.State != w.state || !strings.HasPrefix(req.Spec.RunID, "run-") || req.Spec.Thread != "thread-owner" || req.Spec.TokenBudget != 5000 || !strings.HasPrefix(string(req.Spec.Args), `{"plan":"plan-1","milestone":"M1","handoff":`) {
 		t.Errorf("the process is started with %+v", req)
 	}
 	if !strings.Contains(post, "run "+req.Spec.RunID+" started (process 4242)") {
@@ -49,7 +50,7 @@ func TestStartPreviewThenDetached(t *testing.T) {
 	}
 
 	// --json is one document: the preview and the run
-	code, out, _ = td.do("start", "project-lane", "--thread", "thread-owner", "--state", w.state, "--json")
+	code, out, _ = td.do("start", "project-lane", "--thread", "thread-owner", "--state", w.state, "--json", "--args", `{"plan":"plan-1","milestone":"M1"}`, "--handoff", handoff)
 	var ans StartAnswer
 	if code != 0 || json.Unmarshal([]byte(strings.TrimPrefix(out, "<<spawned>>\n")), &ans) != nil || ans.Run == "" || ans.PID != 4242 || len(ans.Plan.Facts) != 5 {
 		t.Errorf("start --json: exit %d %s", code, out)
@@ -90,7 +91,8 @@ func TestStartPreviewListsFivePreflightFacts(t *testing.T) {
 	w := newWorld(t)
 	td := w.deps()
 	td.facts[3] = Fact{Name: FactWaits, Pass: false, Reading: "crw.decide waits and nothing delivers"}
-	code, out, errOut := td.do("start", "project-lane", "--thread", "thread-owner", "--state", w.state, "--preview", "--json")
+	lane := []string{"--args", `{"plan":"plan-1","milestone":"M1"}`, "--handoff", defaultHandoff(t)}
+	code, out, errOut := td.do(append([]string{"start", "project-lane", "--thread", "thread-owner", "--state", w.state, "--preview", "--json"}, lane...)...)
 	if code != 1 || len(td.spawned) != 0 {
 		t.Fatalf("a preview with a failed fact: exit %d, %d processes\n%s%s", code, len(td.spawned), out, errOut)
 	}
@@ -108,11 +110,11 @@ func TestStartPreviewListsFivePreflightFacts(t *testing.T) {
 	if ans.Plan.Facts[3].Pass || !ans.Plan.Facts[0].Pass {
 		t.Errorf("pass and fail: %+v", ans.Plan.Facts)
 	}
-	code, out, errOut = td.do("start", "project-lane", "--thread", "thread-owner", "--state", w.state)
+	code, out, errOut = td.do(append([]string{"start", "project-lane", "--thread", "thread-owner", "--state", w.state}, lane...)...)
 	if code != 1 || len(td.spawned) != 0 || !strings.Contains(out, "FAIL  waits_deliverable") || !strings.Contains(errOut, "waits_deliverable failed") {
 		t.Fatalf("a failed fact started the run: exit %d, %d processes\n%s%s", code, len(td.spawned), out, errOut)
 	}
-	code, out, errOut = td.do("start", "project-lane", "--thread", "thread-owner", "--state", w.state, "--force")
+	code, out, errOut = td.do(append([]string{"start", "project-lane", "--thread", "thread-owner", "--state", w.state, "--force"}, lane...)...)
 	if code != 0 || len(td.spawned) != 1 || strings.Join(td.spawned[0].Spec.Forced, ",") != FactWaits {
 		t.Fatalf("--force: exit %d, spawned %+v\n%s%s", code, td.spawned, out, errOut)
 	}

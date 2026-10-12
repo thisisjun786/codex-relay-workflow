@@ -11,17 +11,19 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/audit"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/backend/agent"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/journal"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/report"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
-// OpsFor installs the operations of the project lane (`crw.*`) for a run: they are built on the relay's scheduler, which the
-// binary that has the adapter installs here. A build that installs none runs the workflows that call no `crw.*` operation, and a
-// workflow that calls one ends in a script error that names it.
-var OpsFor func(ctx context.Context, req WorldRequest, j engine.Journal) (map[string]engine.Op, engine.Prover, func(ctx context.Context, req engine.SnapshotRequest) (string, error), error)
+// OpsFor installs the operations of the project lane (`crw.*`) for a run: they are built on the relay's scheduler, which the binary
+// installs here (cmd/crw/main.go assigns SchedulerLane, CRW-1277). A build that installs none runs the workflows that call no `crw.*`
+// operation, and refuses to start one that calls one (start.go).
+var OpsFor func(ctx context.Context, req LaneRequest) (LaneWorld, error)
 
 // ProductionWorld is the World of the shipped binary: the relay store the run's journal is persisted in, the App Server
 // connection of its host, and the allocator of its working directories (<state>/flow/<run>/...). The backend binds every engine
@@ -68,32 +70,51 @@ func ProductionWorld(ctx context.Context, req WorldRequest) (World, error) {
 		_ = st.Close()
 		return World{}, err
 	}
-	alloc, err := agent.NewAllocator(agent.AllocatorConfig{Repo: repo, StateDir: req.State, RunID: spec.RunID})
-	if err != nil {
-		_ = st.Close()
-		return World{}, err
-	}
 	threads := agent.NewThreads()
 	client := appserver.New(socket, appserver.DefaultBounds, agent.ClientOption(threads))
-	backend, err := agent.New(agent.Config{Client: client, Allocator: alloc, Threads: threads, Bound: &agent.BoundConfig{RunID: spec.RunID, Policy: table}})
+	var backend *agent.Backend
+	lane := LaneWorld{}
+	if OpsFor != nil {
+		if req.Resume {
+			// the run record the first process stored: the plan revision the run pinned and the nonce of its epoch claim
+			if id, err = runRecord(ctx, st, spec.RunID); err != nil {
+				_ = client.Close()
+				_ = st.Close()
+				return World{}, err
+			}
+		}
+		host := hostThreads{BusReader: audit.BusReader{Bus: client.Bus()}, archive: func(ctx context.Context, id string) error { return backend.ArchiveThread(ctx, id) }}
+		// the milestone report goes up as `crw flow report-up` sends one (F11): its rows in the run's journal, the notice through
+		// `crw manage send-parent` on the relay the run is in
+		program, _ := os.Executable()
+		reporter := report.Reporter{Run: spec.RunID, W: &report.Writer{Store: st, Rows: report.JournalAppender{Journal: j, RunID: spec.RunID, Store: st}, Resolver: report.StoreResolver{Store: st},
+			Sender: report.ManageSender{Program: program, State: statePath, Socket: socket}, ArtifactDir: filepath.Join(statePath, "flow", spec.RunID, "reports")}}
+		if lane, err = OpsFor(ctx, LaneRequest{WorldRequest: req, Store: st, Journal: j, Identity: id, Repo: repo, Policy: table, Threads: host, Reporter: reporter}); err != nil {
+			_ = client.Close()
+			_ = st.Close()
+			return World{}, err
+		}
+	}
+	alloc, err := agent.NewAllocator(agent.AllocatorConfig{Repo: repo, StateDir: req.State, RunID: spec.RunID, Base: lane.Base})
 	if err != nil {
 		_ = client.Close()
 		_ = st.Close()
 		return World{}, err
 	}
-	w := World{Journal: j, Backend: backend, Policy: table}
+	backend, err = agent.New(agent.Config{Client: client, Allocator: alloc, Threads: threads, Bound: &agent.BoundConfig{RunID: spec.RunID, Policy: table}})
+	if err != nil {
+		_ = client.Close()
+		_ = st.Close()
+		return World{}, err
+	}
+	w := World{Journal: j, Backend: backend, Policy: table, Ops: lane.Ops, Prover: lane.Prover, InputSnapshot: lane.InputSnapshot}
 	if journal.UpwardFactory != nil {
 		// what goes up from the run (CRW-1204) is handed to the hook the binary installs, as the engine's resume command does
 		// (journal.ResumeEnv): the relay is the one the run is in
 		w.Upward = journal.UpwardFactory(st, j, spec.RunID, statePath, socket)
 	}
-	if OpsFor != nil {
-		if w.Ops, w.Prover, w.InputSnapshot, err = OpsFor(ctx, req, j); err != nil {
-			backend.Close()
-			_ = client.Close()
-			_ = st.Close()
-			return World{}, err
-		}
+	if lane.Journal != nil {
+		w.Journal = lane.Journal
 	}
 	w.Close = func() error {
 		backend.Close()
@@ -110,6 +131,9 @@ func RunIdentity(ctx context.Context, st *store.Store, spec Spec) (journal.Ident
 	if id.PlanID == "" {
 		return id, nil
 	}
+	// the session nonce the run claims the plan's coordinator epoch under (CRW-1277 e): the run's own id, so a resumed process of the
+	// run is the same session and another run is another
+	id.EpochNonce = spec.RunID
 	_, head, err := (&dag.Repo{Store: st}).Snapshot(ctx, id.PlanID, 0)
 	if err != nil {
 		return journal.Identity{}, fmt.Errorf("the plan %s the run names cannot be read from the relay store: %w", id.PlanID, err)
@@ -126,6 +150,15 @@ func planOf(args json.RawMessage) string {
 	_ = json.Unmarshal(args, &a)
 	return a.Plan
 }
+
+// hostThreads is the host as the milestone close reads and archives the reviewer threads: the turns through the run's client, the archive
+// through its backend.
+type hostThreads struct {
+	audit.BusReader
+	archive func(ctx context.Context, id string) error
+}
+
+func (h hostThreads) ArchiveThread(ctx context.Context, id string) error { return h.archive(ctx, id) }
 
 // repository is the git repository a run's worktrees are made from: the directory the operator named, else the top level of
 // the repository the working directory is in.

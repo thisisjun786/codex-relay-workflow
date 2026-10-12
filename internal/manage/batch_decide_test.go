@@ -2,6 +2,8 @@ package manage
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -57,6 +59,22 @@ func batchDecidePlan(t *testing.T, selected ...string) string {
 	return path
 }
 
+// batchDecideHandoff writes a crw-plan handoff whose project is plan-1 with milestone M1 holding the issues, and returns its path.
+func batchDecideHandoff(t *testing.T, milestone string, issues ...string) string {
+	t.Helper()
+	var list []string
+	for _, key := range issues {
+		list = append(list, `{"key":"`+key+`","title":"title `+key+`","criteria":["criterion of `+key+`"],"milestone":"`+milestone+`"}`)
+	}
+	doc := `{"schema":"crw-flow-compile-input/1","projects":[{"key":"P","plan_id":"plan-1","issues":[` + strings.Join(list, ",") + `],` +
+		`"milestones":[{"key":"` + milestone + `","title":"the milestone","criteria":["done"],"surfaces":["logic"],"grade":"C2","required_commands":[]}]}]}`
+	path := filepath.Join(t.TempDir(), "handoff.json")
+	if err := os.WriteFile(path, []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
 func TestBatchDecideRecordsTheNightBatchDecision(t *testing.T) {
 	auditListHome(t)
 	exe, record := batchDecideRelay(t, "raised", 0)
@@ -67,7 +85,10 @@ func TestBatchDecideRecordsTheNightBatchDecision(t *testing.T) {
 	e.Executable = exe
 	e.Now = func() time.Time { return time.Date(2026, 10, 12, 20, 0, 0, 0, time.UTC) }
 	plan := batchDecidePlan(t, "CRW-11", "CRW-12")
-	args := []string{"decide", "--plan", plan, "--flow-plan", "plan-1", "--milestone", "M1", "--token-budget", "750000", "--deadline", "2026-10-13T06:00:00Z", "--cap", "2", "--by", "manager-task"}
+	handoff := batchDecideHandoff(t, "M1", "CRW-11", "CRW-12")
+	handoffRaw, _ := os.ReadFile(handoff)
+	handoffSum := sha256.Sum256(handoffRaw)
+	args := []string{"decide", "--plan", plan, "--flow-plan", "plan-1", "--milestone", "M1", "--token-budget", "750000", "--deadline", "2026-10-13T06:00:00Z", "--cap", "2", "--by", "manager-task", "--handoff", handoff}
 	if code := batchMain(context.Background(), e, args); code != 0 {
 		t.Fatalf("exit %d\n%s", code, errOut.String())
 	}
@@ -91,9 +112,11 @@ func TestBatchDecideRecordsTheNightBatchDecision(t *testing.T) {
 		TokenBudget     int64 `json:"token_budget"`
 		Deadline        string
 		Cap             int
+		Handoff         struct{ Path, SHA256 string }
 	}
 	if err := json.Unmarshal([]byte(flags["--context"][0]), &doc); err != nil || doc.Schema != "crw-night-batch/1" || doc.Label != "night-2026-10-12" || strings.Join(doc.Issues, ",") != "CRW-11,CRW-12" ||
-		doc.Plan != "plan-1" || doc.Milestone != "M1" || doc.TokenBudget != 750000 || doc.Deadline != "2026-10-13T06:00:00Z" || doc.Cap != 2 {
+		doc.Plan != "plan-1" || doc.Milestone != "M1" || doc.TokenBudget != 750000 || doc.Deadline != "2026-10-13T06:00:00Z" || doc.Cap != 2 ||
+		doc.Handoff.Path != handoff || doc.Handoff.SHA256 != hex.EncodeToString(handoffSum[:]) {
 		t.Errorf("the context: %s %v", flags["--context"], err)
 	}
 	if flags["--kind"][0] != "policy" || flags["--authority"][0] != "delegated-management" || flags["--needed-by"][0] != "2026-10-13T06:00:00Z" || flags["--origin-project"][0] != "plan-1" || flags["--source"][0] != "night_batch=night-2026-10-12" || len(flags["--option"]) != 2 ||
@@ -144,6 +167,10 @@ func TestBatchDecideRecordsTheNightBatchDecision(t *testing.T) {
 		{"no issue selected", []string{"--plan", batchDecidePlan(t)}, "selects no issue"},
 		{"a document that is no plan", []string{"--plan", filepath.Join(t.TempDir(), "missing.json")}, "no such file"},
 		{"no manager task", []string{"--by", " "}, "names the manager task"},
+		{"no handoff", []string{"--handoff", " "}, "--handoff needs a value"},
+		{"a handoff that cannot be read", []string{"--handoff", filepath.Join(t.TempDir(), "missing.json")}, "no such file"},
+		{"a handoff without the milestone", []string{"--handoff", batchDecideHandoff(t, "M2", "CRW-11")}, "no entry of milestone"},
+		{"a handoff of no plan", []string{"--flow-plan", "plan-9"}, "no project of plan"},
 	}
 	for _, tc := range refused {
 		errOut.Reset()
