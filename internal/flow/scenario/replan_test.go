@@ -1063,9 +1063,14 @@ func (l *Lab) execEdited(edit func(string) string, resume bool) *engine.Result {
 
 // editBuildOf changes the build prompt of a node: the node's first executor call is another call than the one the run made.
 func editBuildOf(node string) func(string) string {
+	return editBuildOfWith(node, "EDITED PROMPT")
+}
+
+// editBuildOfWith is editBuildOf with the text the prompt ends with.
+func editBuildOfWith(node, mark string) func(string) string {
 	return func(text string) string {
 		return strings.Replace(text, "return agent.call(packet(node, plan, checkpoint, notes), opts)",
-			"return agent.call(packet(node, plan, checkpoint, notes) + (node === '"+node+"' ? '\\n\\nEDITED PROMPT' : ''), opts)", 1)
+			"return agent.call(packet(node, plan, checkpoint, notes) + (node === '"+node+"' ? '\\n\\n"+mark+"' : ''), opts)", 1)
 	}
 }
 
@@ -1914,7 +1919,7 @@ func TestLiveTriggerWithTheSameDigestSupersedesItsSignal(t *testing.T) {
 	}
 }
 
-// A resume after the resume that ran a trigger again changes nothing: the signal row the earlier resume bound live (attempt "live") is
+// A resume after the resume that ran a trigger again changes nothing: the signal row the earlier resume bound live (attempt "live:1") is
 // replayed with the very arguments it was bound with once its triggers replay with the digests they answered, so the third process
 // makes no call, runs no operation live and supersedes nothing, and the milestone is as closed as the second process left it.
 func TestUnchangedResumeAfterALiveTriggerResumeIsZeroLive(t *testing.T) {
@@ -1940,7 +1945,7 @@ func TestUnchangedResumeAfterALiveTriggerResumeIsZeroLive(t *testing.T) {
 	}
 	var attempts []string
 	for _, ev := range l.Rows("crw.signalBind") {
-		if str(ev.Data, "attempt") == "live" {
+		if strings.HasPrefix(str(ev.Data, "attempt"), "live:") {
 			attempts = append(attempts, ev.CallID)
 		}
 	}
@@ -1967,6 +1972,103 @@ func TestUnchangedResumeAfterALiveTriggerResumeIsZeroLive(t *testing.T) {
 		}
 		if ev.Event == engine.EvSuperseded {
 			t.Errorf("a call was superseded: %s %s", ev.Label, ev.Path)
+		}
+	}
+}
+
+// A second resume that runs a trigger again after a resume that already did supersedes what the first one made: each live attempt of a
+// recorded signal is bound with an attempt of its own (live:<n>, one more than the row it does not replay), so its arguments are never
+// those of the row the earlier resume bound live, even when every trigger answers the digest it answered. A stays unaccepted after the
+// second process (the review of its last round is still held), the third process changes A's build prompt once more, and the fourth
+// process changes nothing.
+func TestSecondLiveTriggerResumeSupersedesTheRevisionOfTheFirst(t *testing.T) {
+	l := NewLab(t, twoNodes()...)
+	var stage atomic.Int32
+	l.On("^review:A:r2$", func(*Call) *fakehostPlan {
+		if stage.Load() >= 2 {
+			return nil
+		}
+		p := Fail("serverOverloaded")
+		return &p
+	})
+	mismatchingWhile(l, func() bool { return true }, "A")
+	fixedOnce(l, "A")
+	if res := l.Run(); res.Status != engine.RunCompleted {
+		t.Fatalf("run %s: %s", res.Status, res.Error)
+	}
+	stage.Store(1)
+	before2 := l.LastSeq()
+	l.NewProcess("proc-2")
+	if res := l.execEdited(editBuildOf("A"), true); res.Status != engine.RunCompleted {
+		t.Fatalf("second process %s: %s", res.Status, res.Error)
+	}
+	var revs2, ledger2 []string
+	for _, ev := range rowsAfter(l, before2) {
+		if ev.Kind == engine.KindCall && ev.Op == "crw.designLedger" && ev.Event == engine.EvCompleted {
+			revs2 = append(revs2, str(ev.Data, "revision"))
+			ledger2 = append(ledger2, ev.CallID)
+		}
+	}
+	if len(revs2) == 0 {
+		t.Fatalf("the second process made no revision; calls %v", l.Labels())
+	}
+	stage.Store(2)
+	before3 := l.LastSeq()
+	l.NewProcess("proc-3")
+	res := l.execEdited(editBuildOfWith("A", "EDITED AGAIN"), true)
+	if res.Status != engine.RunCompleted {
+		t.Fatalf("third process %s: %s; calls %v", res.Status, res.Error, l.Labels())
+	}
+	if got := Value[laneResult](t, res); got.State != "closed" {
+		t.Fatalf("third process: %+v; escalations %v", got, escalationReasons(l))
+	}
+	var bound []string
+	for _, ev := range rowsAfter(l, before3) {
+		if ev.Kind == engine.KindCall && ev.Op == "crw.signalBind" && ev.Event == engine.EvCompleted && (num(ev.Data["k"]) == 1 || num(ev.Data["k"]) == 2) {
+			bound = append(bound, str(ev.Data, "attempt"))
+		}
+	}
+	if len(bound) == 0 {
+		t.Errorf("neither signal 1 nor signal 2 was bound again in the third process although A's RECEIPT ran again (live)")
+	} else if !slices.Contains(bound, "live:2") {
+		t.Errorf("attempts bound in the third process %v: signal 1, which the second process bound as live:1, is not bound as live:2", bound)
+	}
+	sup := supersededCalls(l, before3)
+	for _, id := range ledger2 {
+		if !sup[id] {
+			t.Errorf("the ledger row %s the second process wrote is not superseded in the third", id)
+		}
+	}
+	supRevs := map[string]bool{}
+	for _, ev := range l.FlowRows(ops.EvRevisionSuperseded) {
+		if ev.Seq > before3 {
+			supRevs[str(ev.Data, "revision")] = true
+		}
+	}
+	for _, rev := range revs2 {
+		if !supRevs[rev] {
+			t.Errorf("the revision %s the second process made has no revision_superseded row in the third (attempts bound %v)", rev, bound)
+		}
+	}
+	tip := l.Tip()
+	before4 := l.LastSeq()
+	l.NewProcess("proc-4")
+	res = l.execEdited(editBuildOfWith("A", "EDITED AGAIN"), true)
+	if res.Status != engine.RunCompleted {
+		t.Fatalf("fourth process %s: %s; calls %v", res.Status, res.Error, l.Labels())
+	}
+	if got := Value[laneResult](t, res); got.State != "closed" || got.Tip != tip {
+		t.Errorf("fourth process: %+v, want closed at %s; escalations %v", got, tip, escalationReasons(l))
+	}
+	if live := l.LiveCalls(before4); len(live) != 0 {
+		t.Errorf("the fourth process made %d live calls: %+v", len(live), live)
+	}
+	for _, ev := range rowsAfter(l, before4) {
+		if ev.Kind == engine.KindCall && ev.Event == engine.EvCompleted && strings.HasPrefix(ev.Op, "crw.") && ev.Op != "crw.classify" {
+			t.Errorf("an operation ran live in the fourth process: %s at %s", ev.Op, ev.Path)
+		}
+		if ev.Event == engine.EvSuperseded {
+			t.Errorf("a call was superseded in the fourth process: %s %s", ev.Label, ev.Path)
 		}
 	}
 }

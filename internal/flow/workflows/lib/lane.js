@@ -146,6 +146,14 @@ async function admit(S, node) {
   }
 }
 
+// nextAttempt is the attempt of the live signal that takes over a recorded row bound with attempt a: '' (the first process) and 'live'
+// (a row bound before attempts were numbered) count as 0 and 1.
+function nextAttempt(a) {
+  const m = /^live(?::(\d+))?$/.exec(a || '')
+  const n = !a || !m ? 0 : m[1] ? Number(m[1]) : 1
+  return 'live:' + (n + 1)
+}
+
 function plainTrigger(t) {
   return { kind: t.kind, call: t.call, node: t.node, digest: t.digest }
 }
@@ -194,9 +202,11 @@ async function signalPath(S, ms, onSignal) {
       }
       S.queue = S.queue.filter((t) => !S.taken[t.call])
       // a recorded signal that does not replay (one of its triggers ran again) is bound as a live attempt: its triggers can answer the very
-      // digests they answered before, and the row of the earlier process must still not replay
-      // (a row that an earlier resume bound live replays with the argument it was bound with: its triggers answer the digests they answered)
-      const attempt = rec && !replay ? 'live' : rec && rec.attempt ? rec.attempt : ''
+      // digests they answered before, and the row of the earlier process must still not replay. The attempt is one more than the attempt
+      // of the row it does not replay (live:<n>), so a resume after a resume that ran a trigger again does not hand the row that resume
+      // bound live its own arguments. A row an earlier resume bound live replays with the attempt it was bound with: its triggers
+      // answer the digests they answered.
+      const attempt = rec && !replay ? nextAttempt(rec.attempt) : rec && rec.attempt ? rec.attempt : ''
       const bound = attempt ? await crw.signalBind(ms, k, prev, members, attempt) : await crw.signalBind(ms, k, prev, members)
       const ran = await parallel([() => onSignal(bound)], { keys: ['signal:' + ms + ':' + k], label: 'signal' })
       const out = signalOutcome(ran[0])

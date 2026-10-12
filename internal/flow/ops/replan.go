@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"slices"
 	"sort"
 
@@ -370,15 +371,19 @@ func (o *planReadOp) Proven(_ context.Context, ev []engine.Event, row engine.Eve
 
 // signalBindOp is crw.signalBind(milestone, k, prev, members, attempt): the signal row. The arguments are the signal's input: the number
 // of the signal, the triggers as (call, digest) and the result digest of the signal before it, and attempt, which the script names
-// ("live") only for a signal the earlier process recorded and that cannot replay because one of its triggers ran again: the
-// triggers of such a signal can answer the very digests they answered then, and the arguments are then another input for that reason
-// alone, so the position runs again and the signal and the revision it made are the suffix of the resume. A resume replays the row only when
+// (live:<n>, one more than the attempt of the recorded row) only for a signal the earlier process recorded and that cannot replay because
+// one of its triggers ran again: the triggers of such a signal can answer the very digests they answered then, and the arguments are then
+// another input for that reason alone - also when the recorded row is itself a live attempt of an earlier resume - so the position runs again and the signal and the revision it made are the suffix of the resume. A resume replays the row only when
 // the script hands it the same arguments - which it does only when every trigger position replayed and answered the same result
 // digest (crw.callFacts) and the signal before it replayed - so a signal one of whose triggers ran again, and every signal after
 // it, are the suffix of the resume. The row records what had started and what had not at that moment, the tip of the integration
 // target (the head an architect turn of this signal judges) and the plan revision read for it, and names the revisions the resume
 // superseded.
 type signalBindOp struct{ l *Lane }
+
+// liveAttempt is the attempt of a live signal: live:<n>, n one more than the attempt of the row it does not replay ("live" is the
+// attempt of a row bound before attempts were numbered, and counts as 1).
+var liveAttempt = regexp.MustCompile(`^live(:[1-9][0-9]*)?$`)
 
 // PlanRead is the plan revision a signal read.
 type PlanRead struct {
@@ -409,8 +414,8 @@ func (o *signalBindOp) Run(ctx context.Context, req engine.OpRequest) (engine.Op
 	if err := args(req.Args, &ms, &k, &prev, &members, &attempt); err != nil {
 		return engine.OpResult{}, fmt.Errorf("crw.signalBind(milestone, k, prev, members, attempt): %w", err)
 	}
-	if attempt != "" && attempt != "live" {
-		return engine.OpResult{}, fmt.Errorf("crw.signalBind: attempt %q is not \"live\"", attempt)
+	if attempt != "" && !liveAttempt.MatchString(attempt) {
+		return engine.OpResult{}, fmt.Errorf("crw.signalBind: attempt %q is not \"live:<n>\"", attempt)
 	}
 	if len(members) == 0 {
 		return engine.OpResult{}, fmt.Errorf("crw.signalBind: signal %d of milestone %s has no trigger", k, ms)

@@ -147,7 +147,7 @@ func (e *Engine) standingRow(op string, keep func(map[string]any) bool) (Event, 
 // recordedSignal is crw.recordedSignal(milestone, k): the signal k of the milestone as an earlier process recorded it and as the
 // journal still stands on it, or null. A signal stands while its row is not superseded: the first signal a resume does not
 // replay, and every signal after it, are the suffix of the resume, and the rows of a suffix stand for nothing. attempt is what the
-// row was bound with ("live" for a signal that an earlier resume ran again, "" otherwise): replaying the row means handing
+// row was bound with ("live:<n>" for a signal that an earlier resume ran again, "" otherwise): replaying the row means handing
 // crw.signalBind the arguments it was recorded with, that one included.
 func (s *scriptVM) recordedSignal(call goja.FunctionCall) goja.Value {
 	ms, k := call.Argument(0).String(), int(call.Argument(1).ToInteger())

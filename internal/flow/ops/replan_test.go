@@ -498,3 +498,26 @@ func TestReleaseNeverRecordsTheFrozenSliceForALiveOne(t *testing.T) {
 		t.Errorf("the release row records the slice %q, want the live a2", slice)
 	}
 }
+
+// A signal row records the attempt it was bound with: empty, "live" (a row bound before attempts were numbered) or live:<n>; any other
+// attempt is refused, so a script cannot bind a live attempt whose arguments a later resume could confuse with another.
+func TestSignalBindAttempts(t *testing.T) {
+	w := newWorld(t)
+	w.relay.plan = planOfNodes(map[string]string{"A": "a1"}, "A")
+	w.ledgered(true, designOf("A"))
+	w.release("A")
+	w.receipt("c_a1", "A", "")
+	members := []Trigger{{Kind: "receipt", Call: "c_a1", Node: "A", Digest: "digest-c_a1"}}
+	for k, attempt := range []string{"", "live", "live:1", "live:2", "live:17"} {
+		w.must("signalBind", "M", k+1, "", members, attempt)
+		ev := w.j.Events()
+		if got := str(ev[len(ev)-1].Data, "attempt"); got != attempt {
+			t.Errorf("attempt %q recorded as %q", attempt, got)
+		}
+	}
+	for _, attempt := range []string{"live:", "live:0", "live:01", "live:x", "again", "LIVE:2"} {
+		if _, err := w.op("signalBind", "M", 9, "", members, attempt); err == nil {
+			t.Errorf("attempt %q was accepted", attempt)
+		}
+	}
+}
