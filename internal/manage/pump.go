@@ -140,7 +140,7 @@ type pumpState struct {
 
 	// MgmtRefused is the count of refusals the management batch of one id has taken (CRW-1273), the
 	// queue's rule for the management thread: the next attempt of that batch is sent under
-	// <id>-r<count>, so neither the ledger's refusal of the earlier id nor a body whose HH:MM head
+	// <id>-m<count>, so neither the ledger's refusal of the earlier id nor a body whose HH:MM head
 	// moved on is met again. A state without the key reads as no refusals.
 	MgmtRefused pumpQueueRefusal `json:"mgmt_refused"`
 	// Parked holds the events of a management batch the bridge refused pumpQueueRefusalLimit times
@@ -679,11 +679,15 @@ func pumpDeliver(ctx context.Context, e *Env, cfg *Config, st *pumpState, batch 
 		// A batch the ledger refused under this id is tried again under the next ordinal of the id
 		// (the rule of the parent queue, CRW-991): the refusal of the id itself is final in the
 		// ledger, and the body's HH:MM head moves on, so the same id would meet either the replayed
-		// refusal or "already belongs to another message".
+		// refusal or "already belongs to another message". The ordinal is -m<count>, never -r<count>:
+		// Deliver's own retries go out under <logical id>-r<n> request ids, so after an outage that
+		// spent B, B-r1 and B-r2 a logical id B-r1 would reach the ledger as the request id of a
+		// retry that already holds another body, and the bridge would answer ErrConflict for ever
+		// (CRW-1273).
 		base := pumpBatchID(batch)
 		logicalID := base
 		if refusal := st.MgmtRefused; refusal.ID == base && refusal.Count > 0 {
-			logicalID = fmt.Sprintf("%s-r%d", base, refusal.Count)
+			logicalID = pumpMgmtOrdinalID(base, refusal.Count)
 		}
 		attempt := pumpAttempt{LogicalID: logicalID, IDs: pumpPendingIDs(batch), Text: body}
 		st.Attempt = &attempt
@@ -695,10 +699,21 @@ func pumpDeliver(ctx context.Context, e *Env, cfg *Config, st *pumpState, batch 
 	// The attempts the outbox holds before the call tell, afterwards, whether its last answer is this
 	// call's own (pumpDeliverReason).
 	attemptsBefore := pumpOutboxAttempts(cfg, attempt.LogicalID)
-	out, err := Deliver(ctx, e, cfg, Message{
+	message := Message{
 		LogicalID: attempt.LogicalID, Thread: cfg.ManagementThread, Text: attempt.Text,
 		Settings: cfg.Settings.Management,
-	})
+	}
+	var out Outcome
+	var err error
+	if deliverRecordStranded(cfg, message) {
+		// The frozen attempt's own outbox record belongs to another message now (the management
+		// thread was changed), so Deliver would refuse it locally in every round and the attempt
+		// would never leave the freeze. The bridge's answer for its request id does not depend on the
+		// thread: it settles the attempt, which is then accepted, counted or kept.
+		out, err = deliverReconcileStranded(ctx, e, cfg, message)
+	} else {
+		out, err = Deliver(ctx, e, cfg, message)
+	}
 	if err != nil && out.Class == "" {
 		return 1, err
 	}
@@ -756,6 +771,14 @@ func pumpDeliver(ctx context.Context, e *Env, cfg *Config, st *pumpState, batch 
 		return 1, err
 	}
 	return 0, nil
+}
+
+// pumpMgmtOrdinalID is the logical id of a management batch after count refusals of its base id. The
+// form carries no "-r": deliverRetryRequestID mints <logical id>-r<n> for Deliver's own retries, and
+// an ordinal of that form would be the request id one of them already used. Base and ordinal stay
+// well inside the 128 characters the outbox allows.
+func pumpMgmtOrdinalID(base string, count int) string {
+	return fmt.Sprintf("%s-m%d", base, count)
 }
 
 // pumpOutboxAttempts is how many attempts the outbox holds for a logical id, zero when there is no

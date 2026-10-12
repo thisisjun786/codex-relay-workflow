@@ -290,6 +290,72 @@ func deliverSettled(cfg *Config, record deliverRecord, outcome Outcome) (Outcome
 	return outcome, nil
 }
 
+// deliverRecordStranded reports whether the outbox holds a record for the message's logical id that
+// this message can no longer be sent under: the record belongs to another thread or to another text,
+// which Deliver refuses locally before it reads the bridge. A caller that keeps such an attempt
+// frozen would meet that refusal in every round.
+func deliverRecordStranded(cfg *Config, m Message) bool {
+	record, known, err := deliverLoad(cfg, m.LogicalID)
+	if err != nil || !known {
+		return false
+	}
+	return record.TargetThread != m.Thread || record.MessageSHA256 != deliverMessageSHA256(m.Text)
+}
+
+// deliverReconcileStranded settles a record deliverRecordStranded found, from the bridge's answer for
+// its request id alone (the lookup depends on no thread). An accepted answer settles the record as
+// accepted: the message went out as the record was written. A refusal, or an id the bridge holds
+// nothing sent under, settles it as refused and nothing is sent. An answer that places nothing leaves
+// the record unsettled and the outcome unknown, so the caller keeps the attempt and asks again. Nothing
+// is ever sent from here.
+func deliverReconcileStranded(ctx context.Context, e *Env, cfg *Config, m Message) (Outcome, error) {
+	if cfg.Bridge.ExecutionPolicy == "" {
+		return Outcome{Class: deliverClassRefused, RequestID: m.LogicalID},
+			fmt.Errorf("crw manage: %s: bridge.execution_policy is not set", deliverPolicyUnconfigured)
+	}
+	if err := deliverPathComponent(m.LogicalID, "logical id"); err != nil {
+		return Outcome{}, err
+	}
+	release, err := deliverLock(cfg, m.LogicalID)
+	if err != nil {
+		return Outcome{}, err
+	}
+	defer release()
+	record, known, err := deliverLoad(cfg, m.LogicalID)
+	if err != nil {
+		return Outcome{}, err
+	}
+	if !known {
+		return Outcome{}, errors.New("crw manage: the outbox record to reconcile is gone")
+	}
+	switch record.State {
+	case deliverStateAccepted:
+		return Outcome{Class: deliverClassAccepted, RequestID: record.RequestID, Receipt: map[string]any{"status": "accepted", "replayed": true}}, nil
+	case deliverStateRefused:
+		return Outcome{Class: deliverClassRefused, RequestID: record.RequestID, Receipt: map[string]any{"status": "refused", "replayed": true}}, nil
+	}
+	bridge, err := deliverDial(ctx, e, cfg)
+	if err != nil {
+		return Outcome{Class: deliverClassUnknown, RequestID: record.RequestID}, err
+	}
+	defer bridge.close()
+	switch deliverReconcile(ctx, bridge, record) {
+	case deliverReconcileAccepted:
+		record.State, record.Received, record.Applied = deliverStateAccepted, true, false
+		record.Attempts = append(record.Attempts, deliverAttempt{At: deliverNow(e), Class: deliverClassAccepted, ReceiptExcerpt: "reconciled with get_operation"})
+		return deliverSettled(cfg, record, Outcome{Class: deliverClassAccepted, RequestID: record.RequestID})
+	case deliverReconcileRefused, deliverReconcileResendSame, deliverReconcileResendNew:
+		// Nothing was sent, and this message can not be sent under the record any more.
+		record.State = deliverStateRefused
+		record.Attempts = append(record.Attempts, deliverAttempt{At: deliverNow(e), Class: deliverClassRefused, ReceiptExcerpt: "get_operation: nothing was sent; the record belongs to another thread or text, so it is closed"})
+		return deliverSettled(cfg, record, Outcome{Class: deliverClassRefused, RequestID: record.RequestID})
+	default:
+		record.State = deliverStateUnknown
+		record.Attempts = append(record.Attempts, deliverAttempt{At: deliverNow(e), Class: deliverClassUnknown, ReceiptExcerpt: "get_operation left the attempt undetermined; nothing was sent"})
+		return deliverSettled(cfg, record, Outcome{Class: deliverClassUnknown, RequestID: record.RequestID})
+	}
+}
+
 // deliverReconcileVerdict is what the bridge's own receipt for an unsettled request id settles.
 type deliverReconcileVerdict int
 

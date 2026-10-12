@@ -398,6 +398,13 @@ func init() { Register(coreConfigCommand) }
 // product cannot use is exit 2, and an output write that fails is exit 1, because a
 // truncated report must not read as one.
 func coreRunConfig(_ context.Context, e *Env, args []string) int {
+	return coreConfigReportRun(e, args, true)
+}
+
+// coreConfigReportRun is the body of crw manage config. judgeDelivery says whether a configuration
+// that cannot deliver to the management thread (coreDeliverSettingsProblem) is refused: the command
+// refuses it, the reader of the report ConfigReport serves does not.
+func coreConfigReportRun(e *Env, args []string, judgeDelivery bool) int {
 	flagPath := ""
 	for i := 0; i < len(args); i++ {
 		switch {
@@ -448,9 +455,11 @@ func coreRunConfig(_ context.Context, e *Env, args []string) int {
 		fmt.Fprintf(e.Stderr, "crw manage config: error: %v\n", state.err)
 		return usageExit
 	}
-	if problem := coreDeliverSettingsProblem(state.cfg); problem != "" {
-		fmt.Fprintf(e.Stderr, "crw manage config: error: %s\n", problem)
-		return usageExit
+	if judgeDelivery {
+		if problem := coreDeliverSettingsProblem(state.cfg); problem != "" {
+			fmt.Fprintf(e.Stderr, "crw manage config: error: %s\n", problem)
+			return usageExit
+		}
 	}
 	data, err := json.MarshalIndent(coreConfigReport(state.cfg), "", "  ")
 	if err != nil {

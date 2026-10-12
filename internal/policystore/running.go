@@ -68,10 +68,16 @@ type manageRelay struct {
 // environment this reader is handed is not what it runs with, and the parameter is unused. It stays
 // in the signature because the seam type is shared with the stubs the tests in this package install,
 // and this issue does not change them. config is a local file read with no work a context could
-// cancel, so the call runs on a background context rather than the reading own.
+// cancel, so the call takes none.
+//
+// The report is the one manage.ConfigReport serves: the command's own file, precedence and refusals of a
+// file it cannot use, without the judgement that the configuration can deliver to the management thread.
+// A configuration that names a management_thread and leaves settings.management empty is refused by
+// crw manage config, because every send would fail; the relay block this reader needs is still the one
+// the file names (CRW-1273).
 func manageRelaySettings(_ func(string) string) (manageRelay, error) {
 	var stdout, stderr bytes.Buffer
-	if code := manage.Run(context.Background(), []string{"config"}, nil, &stdout, &stderr); code != 0 {
+	if code := manage.ConfigReport(nil, &stdout, &stderr); code != 0 {
 		reason := strings.TrimSpace(stderr.String())
 		if reason == "" {
 			reason = fmt.Sprintf("crw manage config exited with status %d", code)

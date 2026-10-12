@@ -37,7 +37,7 @@ func pumpRefusedRound(t *testing.T, e *Env, cfg *Config) {
 
 // CRW-1273 (1): a batch the bridge refused is sent again once the cause is fixed. The refusal
 // settles the logical id in the ledger and lifts the freeze; the next attempt of the same events
-// goes out under <id>-r1 (the rule of the parent queue, CRW-991) and is delivered, carrying the
+// goes out under <id>-m1 (the rule of the parent queue, CRW-991) and is delivered, carrying the
 // settings that were fixed.
 func TestPumpRefusedBatchIsDeliveredAfterTheSettingsAreFixed(t *testing.T) {
 	now := pumpTestNow
@@ -68,8 +68,8 @@ func TestPumpRefusedBatchIsDeliveredAfterTheSettingsAreFixed(t *testing.T) {
 		t.Fatalf("after the fix: pending %+v attempt %v sent %v, want the event delivered", st.Pending, st.Attempt, st.Sent)
 	}
 	ids := pumpQueueTestSendIDs(t, acceptedLog)
-	if len(ids) != 1 || ids[0] != first[0]+"-r1" {
-		t.Fatalf("the second attempt used %v, want %s-r1", ids, first[0])
+	if len(ids) != 1 || ids[0] != first[0]+"-m1" {
+		t.Fatalf("the second attempt used %v, want %s-m1", ids, first[0])
 	}
 	for _, call := range deliverSendCallsOf(t, acceptedLog) {
 		if call["tool"] != deliverToolSend {
@@ -111,8 +111,8 @@ func TestPumpRefusedBatchAcrossAMinuteBoundary(t *testing.T) {
 	if len(st.Pending) != 0 || !st.Sent["e1"] {
 		t.Fatalf("pending %+v sent %v, want the event delivered across the minute", st.Pending, st.Sent)
 	}
-	if ids := pumpQueueTestSendIDs(t, acceptedLog); len(ids) != 1 || !strings.HasSuffix(ids[0], "-r1") {
-		t.Fatalf("the second attempt used %v, want the -r1 ordinal", ids)
+	if ids := pumpQueueTestSendIDs(t, acceptedLog); len(ids) != 1 || !strings.HasSuffix(ids[0], "-m1") {
+		t.Fatalf("the second attempt used %v, want the -m1 ordinal", ids)
 	}
 }
 
@@ -133,8 +133,8 @@ func TestPumpRefusedBatchIsParkedAfterTheLimit(t *testing.T) {
 		ids = append(ids, pumpQueueTestSendIDs(t, log)...)
 	}
 	base := ids[0]
-	if len(ids) != 3 || ids[1] != base+"-r1" || ids[2] != base+"-r2" {
-		t.Fatalf("the sends used %v, want %s then -r1 then -r2", ids, base)
+	if len(ids) != 3 || ids[1] != base+"-m1" || ids[2] != base+"-m2" {
+		t.Fatalf("the sends used %v, want %s then -m1 then -m2", ids, base)
 	}
 	st := pumpTestReadState(t, cfg)
 	if len(st.Pending) != 0 || len(st.Parked) != 1 || st.Parked[0].ID != "e1" {
@@ -434,7 +434,7 @@ func TestPumpMissingSettingsToolErrorIsReconciledThenRecovered(t *testing.T) {
 	if !st.Sent["e1"] || len(st.Pending) != 0 || st.Attempt != nil {
 		t.Fatalf("after the fix: sent %v pending %d attempt %+v, want e1 delivered", st.Sent, len(st.Pending), st.Attempt)
 	}
-	if len(calls) != 2 || deliverSendRequestIDOf(t, calls[1]) != base+"-r1" {
-		t.Fatalf("the delivering round called %v, want one send under %s-r1", calls, base)
+	if len(calls) != 2 || deliverSendRequestIDOf(t, calls[1]) != base+"-m1" {
+		t.Fatalf("the delivering round called %v, want one send under %s-m1", calls, base)
 	}
 }
