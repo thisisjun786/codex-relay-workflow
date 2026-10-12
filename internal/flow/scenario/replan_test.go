@@ -1394,3 +1394,97 @@ func TestReplanCwdIsCurrentTip(t *testing.T) {
 		}
 	}
 }
+
+// A re-plan call that did not complete is no DESIGN: the milestone halts - held for a call the host stopped, escalated for one it
+// refused - the signal is a halt, and no node that had not started is released.
+func TestReplanCallThatDoesNotCompleteHaltsTheMilestone(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		plan   func(*Call) fakehostPlan
+		hold   bool
+		reason string
+	}{
+		{"held", func(*Call) fakehostPlan { return Fail("serverOverloaded") }, true, ""},
+		{"null_model", func(*Call) fakehostPlan { return Garbage() }, false, "replan_null_model"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			l := NewLab(t, twoNodes()...)
+			mismatching(l, "A")
+			fixedOnce(l, "A")
+			l.Sequence("^replan:s2$", c.plan)
+			res := l.Run()
+			if res.Status != engine.RunCompleted {
+				t.Fatalf("run %s: %s", res.Status, res.Error)
+			}
+			got := Value[laneResult](t, res)
+			if got.State != "incomplete" {
+				t.Fatalf("state %q: %s; calls %v", got.State, res.Value, l.Labels())
+			}
+			if revs := releaseRevisions(l); revs["B"] != "" {
+				t.Errorf("B was released under %v", revs)
+			}
+			if rows := l.Rows("crw.signalDone"); len(rows) == 0 || str(rows[len(rows)-1].Data, "outcome") != "halt" {
+				t.Errorf("signal rows %+v", rows)
+			}
+			if len(l.Rows("crw.designLedger")) != 1 {
+				t.Errorf("a revision was recorded over a call that did not complete")
+			}
+			noCallLabelled(t, l, "design-audit:replan")
+			if c.hold {
+				if rows := l.Rows("crw.hold"); len(rows) != 1 || str(rows[0].Data, "node") != "milestone:M1" || str(rows[0].Data, "source") != "replan" {
+					t.Errorf("hold rows %+v", rows)
+				}
+			} else if reasons := escalationReasons(l); !slices.Contains(reasons, c.reason) {
+				t.Errorf("escalations %v, want %s", reasons, c.reason)
+			}
+		})
+	}
+}
+
+// The re-plan call the host stopped is asked again when the cause is gone: the resume goes on with the held call, as the next turn of
+// its thread, the signal that halted is decided again, and the nodes that had not started are released under the revision it makes.
+func TestReplanHeldResumesAsTheNextTurn(t *testing.T) {
+	l := NewLab(t, twoNodes()...)
+	mismatching(l, "A")
+	fixedOnce(l, "A")
+	l.On("^replan:s2$", func(c *Call) *fakehostPlan {
+		// the turns of the architect's thread: the DESIGN (1), the re-plan turn that is held (2); the turn that goes on is the default
+		if c.N > 2 {
+			return nil
+		}
+		p := Fail("serverOverloaded")
+		return &p
+	})
+	res := l.Run()
+	if got := Value[laneResult](t, res); got.State != "incomplete" {
+		t.Fatalf("state %q: %s; calls %v", got.State, res.Value, l.Labels())
+	}
+	if rows := l.Rows("crw.hold"); len(rows) != 1 || str(rows[0].Data, "source") != "replan" {
+		t.Fatalf("hold rows %+v", rows)
+	}
+	held := callNamed(t, l, "replan:s2")
+	before := l.LastSeq()
+	l.NewProcess("proc-2")
+	got := Value[laneResult](t, l.Resume())
+	if got.State != "closed" {
+		t.Fatalf("resume: %+v; calls %v; escalations %v", got, l.Labels(), escalationReasons(l))
+	}
+	var sent []string
+	for _, ts := range turnsSince(l, before) {
+		if ts.call == held.ID {
+			sent = append(sent, ts.op[strings.LastIndex(ts.op, "/"):])
+		}
+	}
+	if !slices.Equal(sent, []string{"/t2"}) {
+		t.Errorf("turns of the re-plan call on the resume: %v, want the next turn of its thread", sent)
+	}
+	if cleared := l.FlowRows(engine.EvHoldCleared); len(cleared) != 1 || str(cleared[0].Data, "call_id") != held.ID {
+		t.Errorf("hold_cleared rows %+v", cleared)
+	}
+	if revs := releaseRevisions(l); revs["B"] != "r1" {
+		t.Errorf("release revisions %v", revs)
+	}
+	if n := len(labelsWithPrefix(l, "replan:")); n != 1 {
+		t.Errorf("%d re-plan calls: %v", n, l.Labels())
+	}
+}

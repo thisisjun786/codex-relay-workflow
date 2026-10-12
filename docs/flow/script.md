@@ -121,13 +121,20 @@ target drops to ES2016 (esbuild then lowers async/await to generators) and this 
 | `crw.classify(result)` | Maps an executor `CallResult` to one outcome state (below). |
 | `crw.clock()` | The time as an RFC 3339 string, journaled. It occupies a position of its path like a call. |
 | `crw.tierStep(node, evidence)` | Mints the step decision: it journals the call and resolves with `{id, checkpoint}`; a fresh `executor-t1` call carries `id` as `stepDecision`. It occupies a position of its path. The engine's own call holds the id only (its `checkpoint` is `null` and the evidence is recorded by its digest); the project lane's `crw.tierStep` ([below](#the-project-lane)) wraps it, appends the `flow_step_decisions` row with the evidence and the checkpoint, and resolves with the checkpoint filled in. |
+| `crw.callFacts(result)` | The facts of a call's result that the signal path of `crw.dag` rests on: its `digest` (the canonical digest of its output), its `seq` (the place of its terminal row in the journal) and `live` (false for a result a resume replayed from the journal of an earlier process). A read: it takes no position and writes no row. |
+| `crw.recordedSignal(milestone, k)` | The signal `k` of the milestone as an earlier process recorded it and the journal still stands on it (its triggers and the digest of the signal before it), or `null`. A read, like the next one. |
+| `crw.priorRelease(node)` | The release of the node that an earlier process recorded and the journal still stands on, with the revision it was made under and the number of the signal that made that revision, or `null`. |
 
 `opts` of a call: `agentType` (`architect`, `executor`, `executor-t1`, `reviewer`, `reviewer-final`, `explorer`), `schema`,
 `label`, `phase`, `node`, `worktree` or `cwd`, `head`, `resume`, `stepDecision`, `qa` (below), and the Claude-style `model`, `effort` and
 `isolation`. The other `crw.*` members are the operations and composites of [the project lane](#the-project-lane); each operation is an
 `engine.Op` registered in `Config.Ops`, takes a position of its path like a call, and a resume replays it only while its effect still
-holds ([journal.md](journal.md#ops)). The `crw.*` members a later issue owns (the delivery of the report, the revisions of the design
-ledger and the re-plan signals) are not here.
+holds ([journal.md](journal.md#ops)). The `crw.*` member a later issue owns (the delivery of the report) is not here.
+
+`head` names the commit a call reads. An `architect` call that continues its thread and names a `head` (the REFLECTION at the close, a re-plan)
+runs in a detached read-only worktree of its own at that commit, `<state>/flow/<run>/calls/<call_id>/wt`, and its turn names that directory as
+its cwd; the worktree is removed when the call has its terminal row, and a resume that runs the call again makes it again at the head the call's
+`prepared` row records. A continuation that names no head keeps the directory its thread started in, as before.
 
 `qa: true` marks the QA capture call (SP-QA-1) of a milestone's final gate: an `executor` call, refused with `policy_refused` on any
 other role and with `foreign_handle` on a handle that is not a QA thread. The mark is in the call's prepared row (`qa`), reaches the
@@ -291,11 +298,13 @@ and `cap`, the executors at once, default 3). Its steps, in order: `crw.mileston
 scheduler offers them; the architect answers `DESIGN` once for the milestone (SP-ARCH-1); the open questions of the DESIGN go to
 explorers (SP-EXPL-1); a reviewer of another model family than the architect audits the DESIGN (`DESIGN_AUDIT`, recorded by
 `crw.designAudit`), and `needs_changes` returns the DESIGN to the architect on its own thread; only an approved DESIGN becomes revision
-`r0` of the design ledger (`crw.designLedger`); `crw.dag` runs one lane for each node; when every lane landed, `crw.closeMilestone` closes the milestone over
-evidence the run makes itself ([The milestone close](#the-milestone-close)), `crw.settleReviews` audits the reviews behind the
+`r0` of the design ledger (`crw.designLedger`); `crw.dag` runs one lane for each node and the signal path of the milestone
+([The architect's continuity and the re-plan](#the-architects-continuity-and-the-re-plan)); when every lane landed, `crw.closeMilestone` closes the milestone over
+evidence the run makes itself ([The milestone close](#the-milestone-close)); the architect reflects on the integrated range, on its own thread, and a
+reason to re-plan makes the DESIGN delta; `crw.settleReviews` audits the reviews behind the
 acceptances against the reviewer threads on the host and archives the threads whose audit passed, and `crw.reportUp` records the report
-(its delivery is the seam of the issue that owns it). A milestone that cannot go on says why: a call of the design phase or of the close
-that did not complete is never read as an approval, a design, a gate or a review (`held` and `unknown` hold the milestone, `refused` and
+(its delivery is the seam of the issue that owns it). A milestone that cannot go on says why (`crw.milestoneHalt`): a call of the design phase, of the close or of
+a re-plan that did not complete is never read as an approval, a design, a gate, a review or an alignment (`held` and `unknown` hold the milestone, `refused` and
 `null_model` escalate, a gate that failed or cannot be settled and a QA that is INCONCLUSIVE escalate, `superseded` stops).
 
 **The lane of a node.** `crw.dag` starts a node when the nodes it waits for (a dependency or an order edge; the members of a
@@ -307,7 +316,8 @@ is scoped to the DESIGN's; there is no barrier. A node whose predecessor did not
 slot and records the design revision and digest the node is released under. The lane builds its packet from that revision
 (`crw.issuePlan` reads the journal and nothing the script holds), and every call of the node carries the revision, the node's slice
 digest and its criteria digest in its input snapshot, so a ledger that later grows a revision changes nothing for a node that
-started under `r0`.
+started under the revision it was released under. The lane function is called with a third argument, `sig`, whose `receipt(result)` reports the RECEIPT of each
+executor call to the signal path.
 
 | `crw.classify` state | The one transition |
 | --- | --- |
@@ -365,8 +375,8 @@ inline (SP-INL-1), reuse an answer (SP-INL-2), skip, refuse or hand a question t
 | --- | --- | --- |
 | `milestone(plan, milestone)` | the nodes of the milestone with edges, regions and slice digests | always (a read) |
 | `designAudit(milestone, round, candidate, architect, call)` | the audit row: state, candidate digest, auditor and architect models | always |
-| `designLedger(milestone, entry)` | revision `r0`: the DESIGN, the answers, the digest and the architect handle; refuses a DESIGN with no approved audit and any revision after `r0` | always |
-| `release(plan, node, milestone)` | the release under the ledger revision (`revision`, `design_digest`, `execution_id`); a node sized for a child or a split is not released to an executor | the relay says the execution stands |
+| `designLedger(milestone, entry)` | the next revision (`r0`, `r1`, ...): the DESIGN, the answers, the digest, the architect handle, the signal that made it and the slice digest of every node of the plan it was made against; refuses a DESIGN with no approved audit - for a revision after `r0` an audit made after the revision before it | always |
+| `release(plan, node, milestone)` | the release under the revision of the ledger that stands (`revision`, `design_digest`, `slice_digest`, `execution_id`); a node sized for a child or a split is not released to an executor | the relay says the execution stands, and the revision it was made under stands or the node's slice is the one the revision that stands was made against (`release_rebind`) |
 | `issuePlan(node)` | the node's entry of the DESIGN of its release revision | always |
 | `commit(node, call, regions)` | the commit of the call's recorded `pending_tree` (`commit`, `parent`, `tree`, `out_of_scope`, the receipt's outcome and `plan_mismatch`) | the commit is on the history of the node's worktree |
 | `verify(node, head, opts)` | the verification (`ok`, `command`, `digest`, the record); a verification that could not run is `ran: false`, not a failure. With no node, `opts` names the milestone, the command and the base: the verification of the integrated head for the final gate, in a worktree of the repository | always while it ran |
@@ -380,14 +390,60 @@ inline (SP-INL-1), reuse an answer (SP-INL-2), skip, refuse or hand a question t
 | `qaCapture(milestone, gate, capture)` | the capture of the QA call as the later calls read it: each capture with the path it can be opened at (the relative path resolved against the worktree the capture ran in), the identity of the tree the call ended in, and `ok` or the reason the capture cannot be handed on | always |
 | `reviewerFinal(milestone, gate, call, opts)` | the review of reviewer-final over the range (`range`, `criteria_digest`, the alignment); a `verified` answer is a verdict only when it evaluated every criterion of the milestone once, all met, with no defect of P0 to P2 | always |
 | `milestoneClose(milestone, evidence)` / `reportUp(milestone, close)` | the range and the tip the close judged, and whether the target moved on after the gate / the report row | the integration target is still the tip the close judged / always |
+| `replanSignals(milestone, opts)` | the two numbers of SP-ARCH-2 and the reasons that stand (`plan_mismatch`, `slice_change`, and at the close `reviewer_final_misaligned`, `reflection_misaligned`) | always |
+| `currentDesign(milestone)` | the revision that stands, its DESIGN, the handle of the architect thread and the heads the nodes landed with | always |
+| `reflection(milestone, gate, call)` | the architect's REFLECTION over the integrated range: a verdict only for a completed, valid answer; the row moves the architect's handle on | always |
+| `signalBind(milestone, k, prev, members)` / `signalDone(milestone, k, outcome)` / `signalClose(milestone, summary)` | the signal row (its triggers, what had started and what had not, the tip of the target, the plan revision read), its result (continue, refresh, halt; the revision it made) and the end of the signal path | always; a resume replays a bind only with the same arguments |
 | `audit(milestone)` / `archive(milestone)` | the audit results of the milestone's acceptances (row `crw.audit`) / the reviewer threads archived and kept | always |
 
 The composites (`crw:lib/lane` and `crw:lib/close`, made members of `crw` by `install(crw)`; they take no position of their own): `crw.dag`,
 `crw.review`, `crw.reviewHalt`, `crw.explore`, `crw.exploreEvidence`, `crw.land`, `crw.tierStep`, `crw.evidence`, `crw.skip`,
-`crw.closeMilestone` and `crw.settleReviews`. The seams the operations are built on - `Relay` (the scheduler: milestone, release, agent
+`crw.closeMilestone`, `crw.settleReviews` and `crw.milestoneHalt`. `crw.dag` takes an `onSignal` function (below). The seams the operations are built on - `Relay` (the scheduler: milestone, release, agent
 acceptance and integration, the close of an execution), `Verifier` (`CILocalVerifier` runs `crw-dev ci local`), `Decisions`
 (`StoreDecisions` writes the relay store), `Threads` (the host the close reads the reviewer threads from and archives them on) and
 `Reporter` (F11) - are interfaces in `internal/flow/ops/seams.go`; the dagsched-backed `Relay` belongs to the run process.
+
+## The architect's continuity and the re-plan
+
+**One thread.** The architect has one thread for a milestone. The design ledger (`crw.designLedger`, rows `crw.designLedger`) holds the handle of the
+thread, and every completed architect turn moves it on: the DESIGN (and the fixes the audit asked for), the REFLECTION at the close
+(`crw.reflection`) and the DESIGN delta of a re-plan are the turns of that thread, one after the other (`agent.call` with `resume`, which
+`crw.currentDesign` hands the script). A call that did not complete is never read as ALIGNED or as a DESIGN: `held` and `unknown` hold the milestone
+(the resume goes on with the same call as its next turn), `refused` and `null_model` escalate (`crw.milestoneHalt`). The REFLECTION turn
+(SP-ARCH-3) and the delta name the head they judge (`head`, above): the REFLECTION the integrated head the final gate pinned, a re-plan during the run
+the tip of the integration target that its signal row recorded when it decided to re-plan. The packet names the head, the range from the head the
+DESIGN ran at, and the head each node landed with.
+
+**Revisions.** The ledger holds revisions `r0`, `r1`, ...: a revision is recorded only over an approved audit of its own, made after the revision before it
+(the delta goes through the same audit rounds as a DESIGN, `needs_changes` returning it to the architect on the same thread), and the nodes that have not started are
+released under a revision only after that, because the signal that re-plans keeps every new release back until it is decided. A lane that started keeps the
+revision it was released under; it ends under it and lands or is held as usual. Each revision records the slice digest of every node of the plan it was made
+against, and a release records the slice of the node as the plan is when the node is released.
+
+**The numbers (SP-ARCH-2).** `crw.replanSignals` writes two numbers to the journal: the RECEIPTs that report a `plan_mismatch`, of lanes released under the revision that stands (each call
+once; a RECEIPT of a lane released under an older revision does not count in the new revision's number), and the share of the milestone's nodes whose slice
+digest of the plan now is not the one the revision that stands was made against. The reasons are two plan mismatches, more than a quarter of the slices changed
+(exactly a quarter is not a reason), and, once the milestone closed, a MISALIGNED reviewer-final and a MISALIGNED REFLECTION. One reason is enough, whatever the
+alignment says. Every decision - to re-plan, and to skip it with its reason - is a row of `flow_spawn_decisions` (`ARCH_2`).
+
+**The signal path.** `crw.dag(plan, lane, {nodes, milestone, cap, onSignal})` runs the signal path next to the lanes when it is given `onSignal`. The
+RECEIPT of an executor call of a lane is a trigger (`sig.receipt`); the path `signals:<milestone>` takes the triggers that have arrived, in the order of the
+journal and not the order they finished in, into one signal at a time, and the triggers that arrive while a signal runs are taken together by the next one.
+A signal is `crw.signalBind` (its input: the number `k`, the triggers as (call, digest) and the result digest of the signal before it; the row records what had started and
+what had not, the tip of the integration target and the plan revision read), a join of one item, the child path `signal:<milestone>:<k>`, which runs
+`onSignal`, and `crw.signalDone` (continue, refresh or halt, and the revision it made). While a signal is decided no lane is released. `onSignal` of the project lane
+counts the numbers and, when a reason stands and a node has not started, runs the re-plan: the delta, its audit rounds, the revision; a re-plan that cannot be done halts the milestone,
+and no node that has not started is released. When the reason stands after the last node started the close judges the same numbers.
+
+**A resume.** A signal is replayed with the membership its row recorded (`crw.recordedSignal`), whatever order the lanes replay in now, and only when each of its triggers was
+replayed from the journal (`crw.callFacts`: not live) with the digest it answered then and the signal before it was replayed. The first signal that does not replay, and every
+signal after it, are the suffix: the engine ends their rows and the calls they made superseded, the revisions they made get a flow row `revision_superseded`, and the triggers that
+replayed enter the first signal that runs again, in the journal's order. A lane that was released under a superseded revision waits until that signal is decided, then is compared with the
+revision that stands: a node whose slice is the one that revision was made against keeps its replay and a flow row `release_rebind` says so (its packet is still the one of the
+revision it was built from); any other node is released again under the revision that stands - with a new packet when it had not started, from its first position (the position is live, so
+is every later one of the lane) when it had started and was not accepted - and a node an acceptance rests on is refused (`accepted_node_changed`, with the route: a plan revision with
+`update_node` or `dag-correct`). A milestone that closed with a reason to re-plan is `replanned`: the revision is recorded, the orchestrator is asked for the correction issues
+(`crw-add-issue` and a plan revision), and the milestone does not report.
 
 ## The milestone close
 
@@ -440,8 +496,8 @@ mark is another call on a resume.
 ledger row and not in the checkout the reviewer reads) and answers `VERDICT_FINAL`; `crw.reviewerFinal` records it
 (the range and the criteria digest are what `ReviewerFinalProof` reads), refuses a reviewer of the model family of an author of the
 milestone, and asks a `null_model` reviewer once more. `crw.milestoneClose` then records the tip it judged; when the target is no longer
-the head the gate judged, the close is judged again from the new head, at most three times. The branches on the alignment of the range
-(re-plan) are the issue of the architect's continuity (F09).
+the head the gate judged, the close is judged again from the new head, at most three times. What the alignment of the range does is in
+[The architect's continuity and the re-plan](#the-architects-continuity-and-the-re-plan).
 
 **The audit and the archive.** `crw.settleReviews(ms)` runs `crw.audit`, then `crw.archive`. For each acceptance of the milestone on the
 agent path, the audit reads the reviewer call's persistent thread from the host (`thread/turns/list` with `itemsView` full, and
@@ -710,7 +766,8 @@ There are two ways to get one, and the call's `prepared` row records which (`all
   sends nothing; the next resume restores the boundary in a new lineage.
 
 The `cwd` and `worktree` options of a call are journaled in `prepared` but do not choose its directory: no two calls share one, so
-the allocator does. A continuation that runs in no restored worktree makes nothing and keeps the directory its thread started in. Every other role
+the allocator does. An architect turn that continues its thread and names a `head` gets a call-private detached worktree at that head
+(`calls/<call_id>/wt`, a later allocation of the same call `wt-1`, ...), named as the turn's cwd, and the backend removes it when the call has its terminal row. A continuation that runs in no restored worktree makes nothing and keeps the directory its thread started in. Every other role
 runs in `<state>/flow/<run>/calls/<call_id>/wt`, a detached worktree at the `head` option (else the node's base); a reviewer
 reads it through a read-only thread. The run commits and reads the head from git (`Allocator.Commit`, `Allocator.Head`); a model
 never does. Every git command of the allocator runs in the directory it is given: the variables that route git to a
