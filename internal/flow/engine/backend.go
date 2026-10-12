@@ -68,6 +68,8 @@ type ThreadSpec struct {
 	// Send is the send ordinal of the creation request: 1 for the first, one more for each time reconcile proved the
 	// previous one absent and sent it again.
 	Send int
+	// QA is set on the thread of a QA capture call: the backend gives it the QA overlay and no native helper.
+	QA bool
 }
 
 // ThreadInfo is what the backend reads back about a created thread: its id and the pair it is configured with.
@@ -95,6 +97,8 @@ type TurnSpec struct {
 	// call's own: a backend decides whether a turn of the role may carry it (only an architect turn does).
 	Cwd    string
 	Repair bool
+	// QA is set on a turn of a QA capture call's thread (the capture turn and the turns that continue it).
+	QA bool
 	// Started is called once the host has accepted the turn and named it; the packet counts as delivered from then on.
 	Started func(turnID string)
 }
@@ -241,6 +245,9 @@ type Placement struct {
 // PlaceRequest is what a placer is asked about.
 type PlaceRequest struct {
 	RunID, CallID, Role, Family, Node, Head string
+	// QA is the QA capture call: an executor call that gets a call-private scratch worktree at Head, as the roles that do not
+	// write get one, and no node worktree.
+	QA bool
 	// Continues is the record of the handle a continuation resumes, nil for a call that creates a thread.
 	Continues *CallInfo
 	// Journal is the run's journal: the allocations of the node so far are read from it.
@@ -282,6 +289,8 @@ type ForkSpec struct {
 	Cwd                string
 	SourceThreadID     string
 	ThroughTurnID      string
+	// QA is set when the forked thread is a QA capture call's.
+	QA bool
 	// ThroughOp is the operation marker of the through turn (`<call_id>/t<k>`), "" when the journal names none: the fork's
 	// history is checked to end at the turn by its id or by this marker.
 	ThroughOp             string

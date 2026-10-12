@@ -35,6 +35,23 @@ type callPlan struct {
 	refusal   *Refusal
 	// explicitLabel is whether the script gave the call a label of its own (lint judges label uniqueness on those).
 	explicitLabel bool
+	// qa is whether the call is a QA capture call or a continuation of one: the mark of the option, or of the handle's call.
+	qa bool
+}
+
+func (s *scriptVM) optBool(o *goja.Object, key string) bool {
+	if o == nil {
+		return false
+	}
+	v := o.Get(key)
+	if v == nil || goja.IsUndefined(v) || goja.IsNull(v) {
+		return false
+	}
+	b, ok := v.Export().(bool)
+	if !ok {
+		s.throwType("agent: option %s must be a boolean", key)
+	}
+	return b
 }
 
 func (s *scriptVM) optString(o *goja.Object, key string) string {
@@ -107,7 +124,7 @@ func (s *scriptVM) agent(call goja.FunctionCall, plain bool) goja.Value {
 	p.opts = CallOpts{
 		AgentType: s.optString(o, "agentType"), Model: s.optString(o, "model"), Effort: s.optString(o, "effort"),
 		Isolation: s.optString(o, "isolation"), Node: s.optString(o, "node"), StepDecision: s.optString(o, "stepDecision"),
-		Label: s.optString(o, "label"), Phase: s.optString(o, "phase"), Head: s.optString(o, "head"),
+		Label: s.optString(o, "label"), Phase: s.optString(o, "phase"), Head: s.optString(o, "head"), QA: s.optBool(o, "qa"),
 	}
 	p.opts.Cwd = s.optString(o, "worktree")
 	if c := s.optString(o, "cwd"); p.opts.Cwd == "" {
@@ -189,6 +206,12 @@ func (s *scriptVM) plan(p *callPlan) {
 			if p.role == "executor-t1" && p.step == "" {
 				refuse(ReasonMissingStepDecision, "a fresh executor-t1 call carries the stepDecision id crw.tierStep returned")
 			}
+			if p.opts.QA {
+				if p.role != "executor" {
+					refuse(ReasonPolicyRefused, "qa marks the QA capture call, which is an executor call, not "+p.role)
+				}
+				p.qa = true
+			}
 		}
 	} else {
 		s.planResume(p, refuse)
@@ -229,6 +252,12 @@ func (s *scriptVM) planResume(p *callPlan, refuse func(reason, detail string)) {
 	}
 	p.resume, p.role, p.spec = &info, info.Role, spec
 	p.requested = requested(p.opts, spec)
+	// the mark belongs to the thread: a continuation of a QA thread is a QA turn, and no other thread becomes one
+	p.qa = info.QA
+	if p.opts.QA && !info.QA {
+		refuse(ReasonForeignHandle, "the handle is not a QA capture thread: qa marks the call that starts one")
+		return
+	}
 
 	// An explicit value that differs from what the handle carries is refused: another role family or another node is a
 	// foreign handle, the same family on another pair or step decision is a pair refusal.
@@ -397,6 +426,9 @@ func (c *callRun) prepare() {
 	if p.schema != nil {
 		d["schema_digest"] = digestJSON(p.schema)
 	}
+	if p.qa {
+		d["qa"] = true
+	}
 	if p.resume != nil {
 		d["resume_of"] = p.resume.CallID
 		d["thread_id"] = p.resume.ThreadID
@@ -410,7 +442,7 @@ func (c *callRun) prepare() {
 		}
 	}
 	if placer, ok := c.e.cfg.Backend.(Placer); ok && p.refusal == nil && c.prepHold == nil && !c.e.nodeStopped(p.node) {
-		c.placeReq = PlaceRequest{RunID: c.e.runID, CallID: c.id, Role: p.role, Family: p.spec.Family, Node: p.node, Head: p.opts.Head, Continues: p.resume, Journal: c.e.j,
+		c.placeReq = PlaceRequest{RunID: c.e.runID, CallID: c.id, Role: p.role, Family: p.spec.Family, Node: p.node, Head: p.opts.Head, QA: p.qa, Continues: p.resume, Journal: c.e.j,
 			Fork: c.forksInSuffix()}
 		pl, err := placer.Place(c.placeReq)
 		if err != nil {
@@ -585,7 +617,7 @@ func (c *callRun) aborted(ctx context.Context) bool {
 // the run classified the failure (for a call that sent nothing, the snapshot it started from).
 func (c *callRun) heldSnapshot(ctx context.Context, data map[string]any) {
 	placer, ok := c.e.cfg.Backend.(Placer)
-	if !ok || c.cwd == "" || c.plan.spec.Family != "executor" {
+	if !ok || c.cwd == "" || !c.writesNodeWorktree() {
 		return
 	}
 	snap, err := placer.Snapshot(ctx, c.cwd)
@@ -596,13 +628,19 @@ func (c *callRun) heldSnapshot(ctx context.Context, data map[string]any) {
 	data["p_held"] = snap
 }
 
+// writesNodeWorktree is whether the call's edits are the state of a node: an executor call that is not the QA capture call, whose
+// scratch worktree is discarded when the call ends and holds no pending tree.
+func (c *callRun) writesNodeWorktree() bool {
+	return c.plan.spec.Family == "executor" && !c.plan.qa
+}
+
 // pendingTree adds the pending tree P to the data of a completed executor call: the working snapshot of the call's worktree
 // at the moment its turn ended, which crw.commit later commits as it is and which the effect proof of the call compares
 // the worktree with. A call that runs in no worktree of the backend's (a reviewer, a backend without a placer) has none.
 // It returns the error of a snapshot that could not be made; the call then has no pending tree to record.
 func (c *callRun) pendingTree(ctx context.Context, data map[string]any) error {
 	placer, ok := c.e.cfg.Backend.(Placer)
-	if !ok || c.cwd == "" || c.plan.spec.Family != "executor" {
+	if !ok || c.cwd == "" || !c.writesNodeWorktree() {
 		return nil
 	}
 	snap, err := placer.Snapshot(ctx, c.cwd)
@@ -813,7 +851,7 @@ func (c *callRun) startThread(ctx context.Context) (CallResult, bool) {
 	if res, down := c.journalDown(); down {
 		return res, true
 	}
-	info, err := e.cfg.Backend.StartThread(ctx, ThreadSpec{CallID: c.id, Role: p.role, Pair: p.spec.Pair, Sandbox: p.spec.Sandbox, Cwd: cwd, Node: p.node, Head: p.opts.Head, Placement: placement, AutoCompactTokenLimit: p.spec.AutoCompactTokenLimit, Send: send})
+	info, err := e.cfg.Backend.StartThread(ctx, ThreadSpec{CallID: c.id, Role: p.role, Pair: p.spec.Pair, Sandbox: p.spec.Sandbox, Cwd: cwd, Node: p.node, Head: p.opts.Head, Placement: placement, AutoCompactTokenLimit: p.spec.AutoCompactTokenLimit, Send: send, QA: p.qa})
 	if err != nil {
 		return c.fromError(ctx, err), true
 	}
@@ -851,7 +889,7 @@ func (c *callRun) forkThread(ctx context.Context) (CallResult, bool) {
 		return res, true
 	}
 	info, err := forker.ForkThread(ctx, ForkSpec{CallID: c.id, Role: p.role, Node: p.node, Pair: p.spec.Pair, Sandbox: p.spec.Sandbox, Cwd: cwd,
-		SourceThreadID: p.resume.ThreadID, ThroughTurnID: p.resume.ThroughTurnID, ThroughOp: throughOp, AutoCompactTokenLimit: p.spec.AutoCompactTokenLimit, Send: send})
+		SourceThreadID: p.resume.ThreadID, ThroughTurnID: p.resume.ThroughTurnID, ThroughOp: throughOp, AutoCompactTokenLimit: p.spec.AutoCompactTokenLimit, Send: send, QA: p.qa})
 	if err != nil {
 		return c.fromError(ctx, err), true
 	}
@@ -1111,7 +1149,7 @@ func (c *callRun) turnLoop(ctx context.Context, resolved *jsonschema.Resolved, k
 			turnCtx, endTurn := c.beginTurn(ctx, op)
 			out, err = e.cfg.Backend.RunTurn(turnCtx, TurnSpec{
 				CallID: c.id, Op: op, K: k, ThreadID: c.threadID, Role: p.role, Node: p.node, Pair: p.spec.Pair,
-				Input: "crw-flow-op: " + op + "\n\n" + input, Schema: p.schema, Cwd: c.cwd, Repair: repair,
+				Input: "crw-flow-op: " + op + "\n\n" + input, Schema: p.schema, Cwd: c.cwd, Repair: repair, QA: p.qa,
 				Started: func(turnID string) {
 					c.turnIDs = append(c.turnIDs, turnID)
 					c.delivered = true

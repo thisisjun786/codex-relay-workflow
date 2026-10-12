@@ -30,8 +30,8 @@ type BoundConfig struct {
 	Policy *engine.Policy
 	// Writer appends the lines; nil is a writer over bound.Dir.
 	Writer *bound.Writer
-	// NativeAllowance is how many native helpers the call of a turn may spawn (0 or 1); nil gives 0 to an explorer call and 1
-	// to every other. The QA capture call (SP-QA-1) spawns none: whoever marks that call (F13) decides here.
+	// NativeAllowance is how many native helpers the call of a turn may spawn (0 or 1); nil gives 0 to an explorer call and to
+	// the QA capture call (SP-QA-1, the turns marked qa: the run starts the oracle passes itself) and 1 to every other.
 	NativeAllowance func(engine.TurnSpec) int
 }
 
@@ -66,7 +66,7 @@ func (c *BoundConfig) allowance(spec engine.TurnSpec) int {
 	if c.NativeAllowance != nil {
 		return min(1, max(0, c.NativeAllowance(spec)))
 	}
-	if spec.Role == bound.HelperExplorer {
+	if spec.Role == bound.HelperExplorer || spec.QA {
 		return 0
 	}
 	return 1

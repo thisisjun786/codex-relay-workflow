@@ -40,8 +40,9 @@ type Config struct {
 	Allocator *Allocator
 	// Threads records the threads this backend started; nil keeps a private record.
 	Threads *Threads
-	// Prompt returns the developer instructions of a role; nil uses the role definition and its CRW overlay.
-	Prompt func(role string) (string, error)
+	// Prompt returns the developer instructions of a role, and of the QA capture call (SP-QA-1) of a final gate when qa is set; nil
+	// uses the role definition and its CRW overlay.
+	Prompt func(role string, qa bool) (string, error)
 	// PollEvery and InterruptWait override the defaults (a test shortens them).
 	PollEvery, InterruptWait time.Duration
 	// Owner names the process the backend lives in (ProcessOwner when empty); every creation intent records it.
@@ -107,7 +108,7 @@ func newBackend(cfg Config) (*Backend, error) {
 		cfg.Threads = NewThreads()
 	}
 	if cfg.Prompt == nil {
-		cfg.Prompt = func(role string) (string, error) { return roles.Prompt(role, roles.Options{}) }
+		cfg.Prompt = func(role string, qa bool) (string, error) { return roles.Prompt(role, roles.Options{QA: qa}) }
 	}
 	if cfg.PollEvery <= 0 {
 		cfg.PollEvery = DefaultPollEvery

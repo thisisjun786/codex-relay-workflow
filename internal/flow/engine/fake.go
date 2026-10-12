@@ -18,6 +18,8 @@ type FakeThread struct {
 	Role    string
 	Sandbox string
 	Turns   []string
+	// QA is set on the thread of a QA capture call.
+	QA bool
 }
 
 // FakeRequest is one request the fake backend received.
@@ -28,6 +30,8 @@ type FakeRequest struct {
 	ThreadID string
 	Prompt   string
 	Repair   bool
+	// QA is set on a turn of a QA capture call's thread.
+	QA bool
 }
 
 // FakeReply is what a fake turn answers. The zero value is the default answer.
@@ -94,7 +98,7 @@ func (f *Fake) StartThread(ctx context.Context, spec ThreadSpec) (ThreadInfo, er
 		}
 	}
 	f.mu.Lock()
-	f.threads[info.ID] = &FakeThread{ID: info.ID, Pair: info.Pair, Role: spec.Role, Sandbox: spec.Sandbox}
+	f.threads[info.ID] = &FakeThread{ID: info.ID, Pair: info.Pair, Role: spec.Role, Sandbox: spec.Sandbox, QA: spec.QA}
 	f.mu.Unlock()
 	return info, nil
 }
@@ -105,7 +109,7 @@ func (f *Fake) RunTurn(ctx context.Context, spec TurnSpec) (TurnOutcome, error) 
 	if _, rest, ok := strings.Cut(prompt, "\n\n"); ok {
 		prompt = rest
 	}
-	req := FakeRequest{Kind: "turn", CallID: spec.CallID, Op: spec.Op, ThreadID: spec.ThreadID, Prompt: prompt, Repair: spec.Repair}
+	req := FakeRequest{Kind: "turn", CallID: spec.CallID, Op: spec.Op, ThreadID: spec.ThreadID, Prompt: prompt, Repair: spec.Repair, QA: spec.QA}
 	f.mu.Lock()
 	f.requests = append(f.requests, req)
 	th := f.threads[spec.ThreadID]
