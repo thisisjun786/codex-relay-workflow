@@ -107,6 +107,26 @@ func replanTurnResumes(t *testing.T, l *Lab, replan, previous string) {
 	}
 }
 
+// replansResumeTheTurnBefore asserts that every re-plan call of the run continues the architect call right before it, whatever turns the
+// architect had in between (the DESIGN and its fixes, a reflection), and that there is at least one.
+func replansResumeTheTurnBefore(t *testing.T, l *Lab) {
+	t.Helper()
+	calls := l.CallsOf("architect")
+	found := 0
+	for i, c := range calls {
+		if !strings.HasPrefix(c.Label, "replan:") {
+			continue
+		}
+		found++
+		if i == 0 || c.Resume != calls[i-1].ID {
+			t.Errorf("%s continues %q, want the architect's turn before it, %s", c.Label, c.Resume, calls[max(i-1, 0)].Label)
+		}
+	}
+	if found == 0 {
+		t.Errorf("no re-plan call among %v", l.Labels())
+	}
+}
+
 // architectThread is the thread of the architect's DESIGN.
 func architectThread(t *testing.T, l *Lab) string {
 	t.Helper()
@@ -258,7 +278,9 @@ func TestReflectionFailureNotAligned(t *testing.T) {
 	})
 	t.Run("unknown", func(t *testing.T) {
 		l := NewLab(t, oneNode()...)
-		l.Threads.DropAck("turn/start", func(_ int, params map[string]any) bool { return strings.Contains(inputText(params), "Reflection at the close") })
+		l.Threads.DropAck("turn/start", func(_ int, params map[string]any) bool {
+			return strings.Contains(inputText(params), "Reflection at the close")
+		})
 		got := runReplan(t, l)
 		if got.State != "held" || got.Source != "reflection" {
 			t.Fatalf("%+v; calls %v", got, l.Labels())
@@ -434,6 +456,7 @@ func TestPlanMismatchTwiceReplansEvenIfAligned(t *testing.T) {
 	if rows := spawnRowsOf(l, "SP-ARCH-2", "spawn"); len(rows) != 1 || rows[0].Reason != "plan_mismatch" {
 		t.Errorf("re-plan decisions %+v", rows)
 	}
+	replansResumeTheTurnBefore(t, l)
 }
 
 // One RECEIPT with a plan mismatch is not a reason: no re-plan call, and the decision to skip is a row with its reason.
@@ -506,6 +529,7 @@ func TestOldRevisionReceiptNotCounted(t *testing.T) {
 	if labels := labelsWithPrefix(l, "replan:"); !slices.Equal(labels, []string{"replan:s2"}) {
 		t.Fatalf("re-plan calls %v in %v", labels, l.Labels())
 	}
+	replansResumeTheTurnBefore(t, l)
 	revs := releaseRevisions(l)
 	if revs["A"] != "r0" || revs["B"] != "r1" || revs["C"] != "r1" {
 		t.Errorf("release revisions %v", revs)
@@ -535,6 +559,7 @@ func TestReplanRefreshesOnlyUnstartedPackets(t *testing.T) {
 	if got.State != "closed" {
 		t.Fatalf("state %q; calls %v; escalations %v", got.State, l.Labels(), escalationReasons(l))
 	}
+	replansResumeTheTurnBefore(t, l)
 	packet := func(label string) string { return textOfCall(l, callNamed(t, l, label).ID) }
 	for _, label := range []string{"build:A:executor", "fix:A:executor:r1"} {
 		if text := packet(label); label == "build:A:executor" && (!strings.Contains(text, "DESIGN REVISION: r0") || strings.Contains(text, "after the re-plan")) {
@@ -673,6 +698,7 @@ func TestTwoNearSimultaneousReceiptsOneReplan(t *testing.T) {
 	if labels := labelsWithPrefix(l, "replan:"); len(labels) != 1 {
 		t.Fatalf("%d re-plan turns: %v", len(labels), labels)
 	}
+	replansResumeTheTurnBefore(t, l)
 	if rev := releaseRevisions(l); rev["A"] != "r0" || rev["C"] != "r0" || rev["D"] != "r1" {
 		t.Errorf("release revisions %v", rev)
 	}
@@ -711,6 +737,7 @@ func TestSliceChangeOver25Replans(t *testing.T) {
 	if labels := labelsWithPrefix(l, "replan:"); !slices.Equal(labels, []string{"replan:s1"}) {
 		t.Fatalf("re-plan calls %v in %v", labels, l.Labels())
 	}
+	replansResumeTheTurnBefore(t, l)
 	var due map[string]any
 	for _, r := range l.Rows("crw.replanSignals") {
 		if r.Data["due"] == true {
