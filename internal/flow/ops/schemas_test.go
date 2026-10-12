@@ -38,7 +38,6 @@ func librarySchemas(t *testing.T) map[string]any {
 // schemaOwner says which issue builds the producer of a schema this build only decodes.
 var schemaOwner = map[string]string{
 	SchemaVerdictBatch: "CRW-1225 (the candidate batch review, SP-REV-2)",
-	SchemaVerdictFinal: "CRW-1206 (the final gate and reviewer-final of the milestone close)",
 	SchemaReflection:   "CRW-1202 (the architect's reflection, SP-ARCH-3)",
 }
 
@@ -46,6 +45,7 @@ var schemaOwner = map[string]string{
 var consumers = map[string]string{
 	SchemaReceipt: "DecodeReceipt", SchemaVerdict: "DecodeVerdict", SchemaVerdictBatch: "DecodeVerdictBatch", SchemaVerdictFinal: "DecodeVerdictFinal",
 	SchemaDesign: "DecodeDesign", SchemaDesignAudit: "DecodeDesignAudit", SchemaReflection: "DecodeReflection", SchemaFindings: "DecodeFindings",
+	SchemaQACapture: "DecodeQACapture", SchemaQAPass: "DecodeQAPass", SchemaQAReceipt: "DecodeQAReceipt",
 }
 
 // readAll reads the text of every file of a directory tree of an embedded or real file system.

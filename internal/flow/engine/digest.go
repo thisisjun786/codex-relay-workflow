@@ -5,7 +5,7 @@ import (
 )
 
 // The input digest of a call (c of the replay rule) covers everything the call was given: the canonical prompt bytes, the
-// schema, the role and its pair, the node, step decision, head and directory options, the context boundary, and the digests
+// schema, the role and its pair, the node, step decision, head and directory options, the QA mark, the context boundary, and the digests
 // of the joins settled before it on its path. A position whose digest differs is another call, whatever its prompt says.
 
 // contextBoundary is the conversation a call starts from, the third part of its input digest: {fresh, packet digest} for a
@@ -28,10 +28,17 @@ func (c *callRun) contextBoundary() map[string]any {
 func (c *callRun) inputDigest() (string, map[string]any) {
 	p := c.plan
 	ctxb := c.contextBoundary()
-	return digestJSON(mustJSON(map[string]any{
+	in := map[string]any{
 		"prompt": digestJSON([]byte(p.prompt)), "schema": c.schemaDigest(), "role": p.role, "model": p.spec.Pair.Model, "effort": p.spec.Pair.Effort,
 		"node": p.node, "step": p.step, "head": p.opts.Head, "cwd": p.opts.Cwd, "context": ctxb, "joins": c.path.joins,
-	})), ctxb
+	}
+	// The QA mark changes the overlay, the placement, the snapshot and the native-spawn allowance of the call, so a call that
+	// differs from an earlier one only by it is another call (CRW-1206). It is part of the digest only when set, so the digest of
+	// every call that is not a QA call is what it was.
+	if p.qa {
+		in["qa"] = true
+	}
+	return digestJSON(mustJSON(in)), ctxb
 }
 
 // threadChain is the digest of a thread's history through a turn, as the journal knows it: the turns in order (id and

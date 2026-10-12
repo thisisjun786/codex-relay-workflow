@@ -120,8 +120,9 @@ project lane, and a child of a relationship outside a flow run is verified by th
 
 ## Milestone reports and project-level reports
 
-`crw.reportUp` closes a milestone: the report goes to the initiative lead. The project's orchestrator lifts a project-level blocker or a
-decision request the initiative decides:
+`crw.reportUp` closes a milestone: the report goes to the initiative lead. Its body names the integrated range and the evidence of the
+close (the final gate, the review of reviewer-final and the audit of the reviews, CRW-1206; a piece the close did not make is `none`).
+The project's orchestrator lifts a project-level blocker or a decision request the initiative decides:
 
 ```
 crw flow report-up --kind project_blocked|project_decision_request|jun_decision_request --run RUN --evidence FILE [--subject TEXT] [--milestone M]

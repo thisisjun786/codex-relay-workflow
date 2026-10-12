@@ -16,21 +16,21 @@ import (
 
 // sender is the sender of the notices: the relay the command works in (the state directory it resolved and the socket the operator named)
 // goes with every supervisor notice, so `crw manage send-parent` reads the binding there and not in the configuration's relay.
-func (env Env) sender(statePath, socket string) report.Sender {
+func (env Environment) sender(statePath, socket string) report.Sender {
 	if env.Sender != nil {
 		return env.Sender
 	}
 	return report.ManageSender{Program: env.Program, State: statePath, Socket: socket}
 }
 
-func (env Env) resolver(st *store.Store) report.Resolver {
+func (env Environment) resolver(st *store.Store) report.Resolver {
 	if env.Resolver != nil {
 		return env.Resolver
 	}
 	return report.StoreResolver{Store: st}
 }
 
-func printJSON(env Env, v any) error {
+func printJSON(env Environment, v any) error {
 	enc := json.NewEncoder(env.Stdout)
 	enc.SetIndent("", "  ")
 	return enc.Encode(v)
@@ -39,7 +39,7 @@ func printJSON(env Env, v any) error {
 // reportUpCmd is `crw flow report-up`: the orchestrator lifts a project-level blocker or decision request to the initiative lead, and a
 // decision only Jun can make to the store seat (the manager's pump tells Jun). The evidence file is the body of the report. It prints
 // the result as JSON and exits 0 when the report is on record (delivered, queued or standing), 1 when the delivery was refused.
-func reportUpCmd(ctx context.Context, args []string, env Env) int {
+func reportUpCmd(ctx context.Context, args []string, env Environment) int {
 	var kind, run, evidence, subject, milestone, state, socket string
 	positional, code, ok := flags("report-up", args, env, func(fs *flag.FlagSet) {
 		fs.StringVar(&kind, "kind", "", "project_blocked, project_decision_request, jun_decision_request (milestone_report is the run's)")
@@ -80,7 +80,7 @@ func reportUpCmd(ctx context.Context, args []string, env Env) int {
 }
 
 // reportsCmd is `crw flow reports`: the reports of the store, those of an initiative, the unread ones.
-func reportsCmd(ctx context.Context, args []string, env Env) int {
+func reportsCmd(ctx context.Context, args []string, env Environment) int {
 	var initiative, state, socket string
 	var unread, asJSON bool
 	positional, code, ok := flags("reports", args, env, func(fs *flag.FlagSet) {
@@ -130,7 +130,7 @@ func reportsCmd(ctx context.Context, args []string, env Env) int {
 }
 
 // reportAckCmd is `crw flow report-ack REPORT --turn T`: the lead read the report in the turn.
-func reportAckCmd(ctx context.Context, args []string, env Env) int {
+func reportAckCmd(ctx context.Context, args []string, env Environment) int {
 	var turn, state, socket string
 	positional, code, ok := flags("report-ack", args, env, func(fs *flag.FlagSet) {
 		fs.StringVar(&turn, "turn", "", "the lead's own turn id")
@@ -160,7 +160,7 @@ func reportAckCmd(ctx context.Context, args []string, env Env) int {
 
 // reportDeliveredCmd is `crw flow report-delivered`: the delivery row a delivery the pump made came to. The pump reads the relay store and
 // writes none of it; this command is the one writer of the rows.
-func reportDeliveredCmd(ctx context.Context, args []string, env Env) int {
+func reportDeliveredCmd(ctx context.Context, args []string, env Environment) int {
 	var id, result, request, observation, state, socket string
 	positional, code, ok := flags("report-delivered", args, env, func(fs *flag.FlagSet) {
 		fs.StringVar(&id, "report", "", "the report id")

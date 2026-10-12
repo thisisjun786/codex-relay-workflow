@@ -327,16 +327,13 @@ func shortHash(parts ...string) string {
 func milestoneBody(rep ops.Report) []byte {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Milestone %s of plan %s is closed.\n\nIntegrated range: %s..%s\n", rep.Milestone, rep.Plan, rep.Range.Base, rep.Range.Tip)
-	if rep.Close.Wired {
-		fmt.Fprintf(&b, "\nFinal gate: %s\nFinal review: %s\n", compact(rep.Close.Gate), compact(rep.Close.Final))
-	} else {
-		b.WriteString("\nThe final gate and the final review are not wired in this build; the close recorded the range only.\n")
-	}
+	fmt.Fprintf(&b, "\nFinal gate: %s\nFinal review: %s\nAudit: %s\n", compact(rep.Close.Gate), compact(rep.Close.Final), compact(rep.Close.Audit))
 	return []byte(b.String())
 }
 
+// compact is a piece of the close's evidence on one line; a piece the close did not make is "none".
 func compact(raw []byte) string {
-	if len(raw) == 0 {
+	if len(raw) == 0 || strings.TrimSpace(string(raw)) == "null" {
 		return "none"
 	}
 	return strings.Join(strings.Fields(string(raw)), " ")

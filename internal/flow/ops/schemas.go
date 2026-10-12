@@ -29,6 +29,9 @@ const (
 	SchemaDesignAudit  = "DESIGN_AUDIT"
 	SchemaReflection   = "REFLECTION"
 	SchemaFindings     = "FINDINGS"
+	SchemaQACapture    = "QA_CAPTURE"
+	SchemaQAPass       = "QA_PASS"
+	SchemaQAReceipt    = "QA_RECEIPT"
 )
 
 const (
@@ -43,6 +46,9 @@ const (
 	verdictFieldsJSON = `"verdict":{"type":"string","enum":["verified","needs_changes"]},"criteria":{"type":"array","items":` + criterionJSON + `},"defects":{"type":"array","items":` + defectJSON + `},"summary":{"type":"string"}`
 	textsJSON         = `{"type":"array","items":{"type":"string"}}`
 	maybeTextJSON     = `{"type":["string","null"]}`
+
+	qaVerdicts  = `["PASS", "REVISE", "FAIL"]`
+	qaFindingJS = `{"type":"object","properties":{"ref":{"type":"string"},"severity":{"type":"string","enum":` + severities + `},"finding":{"type":"string"},"evidence":` + textsJSON + `},"required":["ref","severity","finding","evidence"],"additionalProperties":false}`
 )
 
 // schemaTexts are the validation copies, by the name the library exports.
@@ -66,7 +72,11 @@ var schemaTexts = map[string]string{
 		`"risks":` + textsJSON + `},"required":["decisions","issues","open_questions","risks"],"additionalProperties":false}`,
 	SchemaDesignAudit: `{"type":"object","properties":{"verdict":{"type":"string","enum":["approved","needs_changes"]},"findings":{"type":"array","items":{"type":"object","properties":{"ref":{"type":"string"},"severity":{"type":"string","enum":` + severities + `},"finding":{"type":"string"},"evidence":` + textsJSON + `},"required":["ref","severity","finding","evidence"],"additionalProperties":false}},"summary":{"type":"string"}},"required":["verdict","findings","summary"],"additionalProperties":false}`,
 	SchemaReflection:  `{"type":"object","properties":{"verdict":{"type":"string","enum":["ALIGNED","MISALIGNED"]},"misaligned":{"type":"array","items":{"type":"object","properties":{"decision_id":{"type":"string"},"observed":{"type":"string"},"affected_nodes":` + textsJSON + `,"evidence":` + textsJSON + `},"required":["decision_id","observed","affected_nodes","evidence"],"additionalProperties":false}}},"required":["verdict","misaligned"],"additionalProperties":false}`,
-	SchemaFindings:    `{"type":"object","properties":{"answer":{"type":"string"},"evidence":` + textsJSON + `,"verified":` + textsJSON + `,"inferred":` + textsJSON + `,"unknown":` + textsJSON + `},"required":["answer","evidence","verified","inferred","unknown"],"additionalProperties":false}`,
+	SchemaQACapture: `{"type":"object","properties":{"captures":{"type":"array","items":{"type":"object","properties":{"path":{"type":"string"},"kind":{"type":"string","enum":["screenshot","terminal_capture","response","transcript"]},"shows":{"type":"string"}},"required":["path","kind","shows"],"additionalProperties":false}},` +
+		`"matrix":` + textsJSON + `,"teardown":` + textsJSON + `,"summary":{"type":"string"}},"required":["captures","matrix","teardown","summary"],"additionalProperties":false}`,
+	SchemaQAPass:    `{"type":"object","properties":{"pass":{"type":"string","enum":["A","B"]},"verdict":{"type":"string","enum":` + qaVerdicts + `},"findings":{"type":"array","items":` + qaFindingJS + `},"summary":{"type":"string"}},"required":["pass","verdict","findings","summary"],"additionalProperties":false}`,
+	SchemaQAReceipt: `{"type":"object","properties":{"verdict":{"type":"string","enum":` + qaVerdicts + `},"findings":{"type":"array","items":` + qaFindingJS + `},"summary":{"type":"string"}},"required":["verdict","findings","summary"],"additionalProperties":false}`,
+	SchemaFindings:  `{"type":"object","properties":{"answer":{"type":"string"},"evidence":` + textsJSON + `,"verified":` + textsJSON + `,"inferred":` + textsJSON + `,"unknown":` + textsJSON + `},"required":["answer","evidence","verified","inferred","unknown"],"additionalProperties":false}`,
 }
 
 // SchemaNames lists the schemas this file holds a copy of.

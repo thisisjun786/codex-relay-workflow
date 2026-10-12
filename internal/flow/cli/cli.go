@@ -1,5 +1,6 @@
-// Package cli is the part of `crw flow` that works on the relay store's flow rows and reaches up from a run (CRW-1204, F11): apply,
-// report-up, reports, report-ack and report-delivered. The engine's own commands (run, resume, recover, compile, roles) and lint stay
+// Package cli is the part of `crw flow` that works on the relay store's flow rows: apply, report-up, reports, report-ack and
+// report-delivered reach up from a run (CRW-1204, F11), and audit (CRW-1206, F13, audit.go) reads the reviews behind the acceptances
+// of a run back from the reviewer threads on the host. The engine's own commands (run, resume, recover, compile, roles) and lint stay
 // where they are; the binary asks Handles first.
 package cli
 
@@ -18,14 +19,15 @@ import (
 )
 
 // Commands are the `crw flow` commands this package runs.
-var Commands = []string{"apply", "report-up", "reports", "report-ack", "report-delivered"}
+var Commands = []string{"apply", "report-up", "reports", "report-ack", "report-delivered", "audit"}
 
 // Usage is the usage of those commands.
 const Usage = `usage: crw flow apply --event E --turn T [--run RUN] [--base COMMIT] [--wait 10m] [--override REASON] [--manifest-request FILE] [--repo DIR] [--state DIR] [--socket PATH]
        crw flow report-up --kind project_blocked|project_decision_request|jun_decision_request --run RUN --evidence FILE [--subject TEXT] [--state DIR] [--socket PATH]
        crw flow reports [--initiative I] [--unread] [--json] [--state DIR] [--socket PATH]
        crw flow report-ack REPORT --turn T [--state DIR] [--socket PATH]
-       crw flow report-delivered --report ID --result accepted|queued|refused|unknown --request-id R [--observation O] [--state DIR] [--socket PATH]`
+       crw flow report-delivered --report ID --result accepted|queued|refused|unknown --request-id R [--observation O] [--state DIR] [--socket PATH]
+       crw flow audit (--run RUN | --acceptance ID) [--milestone M] [--state DIR] [--socket PATH] [--json] [--no-record]`
 
 // The exit statuses: 0 an application or a record that was made, 1 a refusal, 2 a command line or an infrastructure failure, 3 an
 // application that waits for a later turn.
@@ -39,8 +41,8 @@ const (
 // Handles reports whether the first argument names a command of this package.
 func Handles(args []string) bool { return len(args) > 0 && slices.Contains(Commands, args[0]) }
 
-// Env is what the commands work through; the binary leaves it as it is and a test replaces what it needs.
-type Env struct {
+// Environment is what the commands work through; the binary leaves it as it is and a test replaces what it needs.
+type Environment struct {
 	// Stdout and Stderr are the command's streams.
 	Stdout, Stderr io.Writer
 	// Program is the crw executable relay commands are run with ("" is the running one).
@@ -56,11 +58,11 @@ type Env struct {
 
 // Run is `crw flow <command>` for a command of Commands.
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	return RunEnv(ctx, args, Env{Stdout: stdout, Stderr: stderr})
+	return RunEnv(ctx, args, Environment{Stdout: stdout, Stderr: stderr})
 }
 
 // RunEnv is Run with its environment given.
-func RunEnv(ctx context.Context, args []string, env Env) int {
+func RunEnv(ctx context.Context, args []string, env Environment) int {
 	if env.Open == nil {
 		env.Open = openStore
 	}
@@ -87,6 +89,8 @@ func RunEnv(ctx context.Context, args []string, env Env) int {
 		return reportAckCmd(ctx, args[1:], env)
 	case "report-delivered":
 		return reportDeliveredCmd(ctx, args[1:], env)
+	case "audit":
+		return RunCLI(ctx, args, env.Stdout, env.Stderr)
 	}
 	fmt.Fprintln(env.Stderr, Usage)
 	return ExitUsage
@@ -114,7 +118,7 @@ func openStore(ctx context.Context, state, socket string) (*store.Store, string,
 }
 
 // flags parses a command's flags, which may follow its positional arguments.
-func flags(name string, args []string, env Env, define func(*flag.FlagSet)) (positional []string, code int, ok bool) {
+func flags(name string, args []string, env Environment, define func(*flag.FlagSet)) (positional []string, code int, ok bool) {
 	fs := flag.NewFlagSet("crw flow "+name, flag.ContinueOnError)
 	fs.SetOutput(env.Stderr)
 	fs.Usage = func() { fmt.Fprintln(env.Stderr, Usage) }
@@ -136,13 +140,13 @@ func flags(name string, args []string, env Env, define func(*flag.FlagSet)) (pos
 	return positional, ExitOK, true
 }
 
-func usageErr(env Env, name, format string, a ...any) int {
+func usageErr(env Environment, name, format string, a ...any) int {
 	fmt.Fprintln(env.Stderr, Usage)
 	fmt.Fprintf(env.Stderr, "crw flow %s: error: %s\n", name, fmt.Sprintf(format, a...))
 	return ExitUsage
 }
 
-func failure(env Env, name string, err error) int {
+func failure(env Environment, name string, err error) int {
 	fmt.Fprintf(env.Stderr, "crw flow %s: error: %s\n", name, strings.TrimSpace(err.Error()))
 	return ExitUsage
 }

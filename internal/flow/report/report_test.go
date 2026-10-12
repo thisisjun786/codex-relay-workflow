@@ -250,7 +250,7 @@ func TestReporterWritesTheMilestoneReportOfAClose(t *testing.T) {
 	w := newWorld(t)
 	w.supervise(testLead)
 	r := Reporter{W: w.writer(), Run: testRun}
-	rep := ops.Report{Plan: testPlan, Milestone: "M1", Range: ops.CloseRange{Base: "b1", Tip: "t1"}, Close: ops.CloseOutcome{Wired: true, Gate: []byte(`{"ok": true}`), Final: []byte(`{"verdict":  "ALIGNED"}`)}}
+	rep := ops.Report{Plan: testPlan, Milestone: "M1", Range: ops.CloseRange{Base: "b1", Tip: "t1"}, Close: ops.CloseOutcome{Gate: []byte(`{"ok": true}`), Final: []byte(`{"verdict":  "ALIGNED"}`), Audit: []byte(`{"summary": {"ok": 1}}`)}}
 	id, err := r.ReportUp(ctx, rep)
 	if err != nil || !strings.HasPrefix(id, "rep_") {
 		t.Fatalf("id %q err %v", id, err)
@@ -261,7 +261,7 @@ func TestReporterWritesTheMilestoneReportOfAClose(t *testing.T) {
 	}
 	row := w.rows(KindReport)[0]
 	body := readBody(t, row.Str("body_path"))
-	for _, want := range []string{"Milestone M1 of plan plan-1 is closed", "b1..t1", `{"ok": true}`, `{"verdict": "ALIGNED"}`} {
+	for _, want := range []string{"Milestone M1 of plan plan-1 is closed", "b1..t1", `Final gate: {"ok": true}`, `Final review: {"verdict": "ALIGNED"}`, `Audit: {"summary": {"ok": 1}}`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("the body lacks %q: %s", want, body)
 		}

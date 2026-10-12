@@ -44,7 +44,7 @@ func (f fixedResolver) Recipient(context.Context, string, string) (report.Recipi
 type cliWorld struct {
 	t      *testing.T
 	st     *store.Store
-	env    Env
+	env    Environment
 	out    *bytes.Buffer
 	errOut *bytes.Buffer
 	sender *fakeSender
@@ -66,7 +66,7 @@ func newCLIWorld(t *testing.T) *cliWorld {
 		t.Fatal(err)
 	}
 	w := &cliWorld{t: t, st: st, out: &bytes.Buffer{}, errOut: &bytes.Buffer{}, sender: &fakeSender{reply: report.SendResult{Class: "accepted", RequestID: "req-1"}}}
-	w.env = Env{Stdout: w.out, Stderr: w.errOut, Sender: w.sender, Resolver: fixedResolver{report.Recipient{State: report.RecipientInitiative, Thread: "lead-1", InitiativeKey: "INI-1", ProjectKey: "PRJ-1"}},
+	w.env = Environment{Stdout: w.out, Stderr: w.errOut, Sender: w.sender, Resolver: fixedResolver{report.Recipient{State: report.RecipientInitiative, Thread: "lead-1", InitiativeKey: "INI-1", ProjectKey: "PRJ-1"}},
 		Open: func(context.Context, string, string) (*store.Store, string, error) {
 			// a command closes the store it opened; the test keeps its own handle open
 			again, err := store.Open(ctx, st.Path, "")
@@ -199,7 +199,7 @@ func TestApplyCommandStatesAndExits(t *testing.T) {
 	var known = true
 	saved := applyDeps
 	t.Cleanup(func() { applyDeps = saved })
-	applyDeps = func(ctx context.Context, env Env, state, socket, repo string) (apply.Deps, func(), error) {
+	applyDeps = func(ctx context.Context, env Environment, state, socket, repo string) (apply.Deps, func(), error) {
 		st, _, err := env.Open(ctx, state, socket)
 		if err != nil {
 			return apply.Deps{}, nil, err
@@ -272,5 +272,19 @@ func TestReportUpAndTheResumeHookNameTheSelectedRelay(t *testing.T) {
 	}
 	if sender, _ := hook.Sender.(report.ManageSender); sender.State != "/relay/resumed" || sender.Socket != "/sock/resumed" {
 		t.Errorf("the hook's sender is %+v", hook.Sender)
+	}
+}
+
+// audit (CRW-1206) goes through Run like the reach-up commands: the binary asks Handles once and Run serves audit with the Env it
+// installed.
+func TestRunServesTheAuditCommand(t *testing.T) {
+	fixedClock(t)
+	useEnv(t, acceptedWithNoReview(true), true, nil)
+	if !Handles([]string{"audit"}) {
+		t.Fatal("audit is not handled")
+	}
+	var out, errOut bytes.Buffer
+	if code := Run(ctx, []string{"audit", "--run", "run-1", "--no-record"}, &out, &errOut); code != 1 || !strings.Contains(out.String(), "1 mismatch") {
+		t.Errorf("exit %d stdout %q stderr %q", code, out.String(), errOut.String())
 	}
 }

@@ -222,8 +222,10 @@ func modes() []mode {
 			engine.RecoverEnv = journal.RecoverEnv
 			engine.ResumeEnv = journal.ResumeEnv
 			journal.UpwardFactory = flowcli.UpwardFactory
-			// apply and the report commands work on the flow rows of the relay store (internal/flow/cli).
+			// apply and the report commands work on the flow rows of the relay store; audit reads the reviewer threads of a run from its
+			// host and leaves the result in its journal (internal/flow/cli).
 			if flowcli.Handles(c.args) {
+				flowcli.Env = flowcli.OpenStore
 				return flowcli.Run(c.ctx, c.args, c.stdout, c.stderr)
 			}
 			// trace export, shadow and measure read store copies and trace files and call no agent (internal/flow/shadow).

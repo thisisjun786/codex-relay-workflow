@@ -127,10 +127,22 @@ func (o *commitOp) Proven(ctx context.Context, ev []engine.Event, row engine.Eve
 
 // ---- crw.verify ----
 
-// verifyOp is crw.verify(node, head): the verification of a committed head by the Verifier (crw-dev ci local, which leaves a
+// verifyOp is crw.verify(node, head, opts): the verification of a committed head by the Verifier (crw-dev ci local, which leaves a
 // verification-record/1). A verification that could not run is not a failed one: it is answered with ran false, and the lane holds
 // the node instead of counting it as evidence against the executor.
+//
+// With no node it is the verification of the integrated head of a milestone, for the final gate (CRW-1206): opts names the
+// milestone, the command asked for (a command of the plan's required set) and the base of the range, and the head is verified in
+// a clean worktree of the repository of the run, since no node's worktree is the place of an integrated head. The row it leaves
+// has the node "" and the milestone, which is how the gate finds it.
 type verifyOp struct{ l *Lane }
+
+// VerifyOpts are the options of a milestone-level crw.verify.
+type VerifyOpts struct {
+	Milestone string `json:"milestone"`
+	Command   string `json:"command"`
+	Base      string `json:"base"`
+}
 
 // VerifyResult is the answer of crw.verify.
 type VerifyResult struct {
@@ -149,16 +161,26 @@ type VerifyResult struct {
 func (o *verifyOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResult, error) {
 	var node string
 	var head HeadRef
-	if err := args(req.Args, &node, &head); err != nil {
-		return engine.OpResult{}, fmt.Errorf("crw.verify(node, head): %w", err)
+	var opts VerifyOpts
+	if err := args(req.Args, &node, &head, &opts); err != nil {
+		return engine.OpResult{}, fmt.Errorf("crw.verify(node, head, opts): %w", err)
 	}
 	if head.Commit == "" {
 		return engine.OpResult{}, fmt.Errorf("crw.verify: node %s: no head to verify", node)
 	}
+	if node == "" && opts.Milestone == "" {
+		return engine.OpResult{}, fmt.Errorf("crw.verify: a verification with no node is the one of a milestone's head: name the milestone")
+	}
 	r := rows(req.Journal.Events())
 	wt := r.worktreeOf(node)
+	if node == "" {
+		wt = o.l.d.Repo
+	}
 	res := VerifyResult{Failures: []string{}, Head: head.Commit}
 	data := map[string]any{"node": node, "head": head.Commit}
+	if node == "" {
+		data["milestone"] = opts.Milestone
+	}
 	var record json.RawMessage
 	base := ""
 	if o.l.d.Verifier == nil {
@@ -166,14 +188,16 @@ func (o *verifyOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 	} else {
 		// the range is the one the acceptance judges: from the commit the node's work grew from (stableBase), not from the merge-base
 		// with origin/dev that `crw-dev ci local` falls back to
-		if rel, ok := releaseRowOf(r, node); ok {
+		if node == "" {
+			base = opts.Base
+		} else if rel, ok := releaseRowOf(r, node); ok {
 			b, berr := o.l.stableBase(ctx, dataStr(rel, "plan"), wt, head.Commit)
 			if berr != nil {
 				return engine.OpResult{}, berr
 			}
 			base = b
 		}
-		out, err := o.l.d.Verifier.Verify(ctx, VerifyRequest{Node: node, Head: head.Commit, Worktree: wt, Base: base})
+		out, err := o.l.d.Verifier.Verify(ctx, VerifyRequest{Node: node, Head: head.Commit, Worktree: wt, Base: base, Command: opts.Command})
 		if err != nil {
 			res.Error = err.Error()
 		} else {

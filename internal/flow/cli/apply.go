@@ -13,7 +13,7 @@ import (
 )
 
 // applyDeps is apply's wiring over the relay store the operator named; a test replaces it.
-var applyDeps = func(ctx context.Context, env Env, state, socket, repo string) (apply.Deps, func(), error) {
+var applyDeps = func(ctx context.Context, env Environment, state, socket, repo string) (apply.Deps, func(), error) {
 	st, statePath, err := env.Open(ctx, state, socket)
 	if err != nil {
 		return apply.Deps{}, nil, err
@@ -49,7 +49,7 @@ var applyDeps = func(ctx context.Context, env Env, state, socket, repo string) (
 
 // applyCmd is `crw flow apply`. It prints the Result as JSON and exits 0 when the verdict is recorded, 1 when a check or the relay
 // refused, 3 when the wait ended first (apply again in a later turn) and 2 for a command line or a failure of the store or the relay.
-func applyCmd(ctx context.Context, args []string, env Env) int {
+func applyCmd(ctx context.Context, args []string, env Environment) int {
 	var event, turn, run, base, override, manifest, repo, state, socket string
 	var wait time.Duration
 	positional, code, ok := flags("apply", args, env, func(fs *flag.FlagSet) {

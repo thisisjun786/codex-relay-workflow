@@ -22,8 +22,10 @@ import (
 //     acceptance and the integration of R05, the closure of an execution and the return of its slot of R07;
 //   - Verifier is the verification of a head (crw-dev ci local, which leaves a verification-record/1);
 //   - Decisions is where flow_spawn_decisions and flow_step_decisions rows are appended;
-//   - Closer and Reporter are the two seams of the issues that follow this one (F13: the final gate and reviewer-final of the
-//     milestone close; F11: the delivery of the report): this issue records the call and asks the seam, nothing more.
+//   - Threads is the host as the milestone close reads and archives the reviewer threads of the nodes (F13, CRW-1206): the audit
+//     of each acceptance and the archive of the threads whose audit passed;
+//   - Reporter is the seam of the issue that follows (F11: the delivery of the report): the lane records the call and asks the
+//     seam, nothing more.
 //
 // The args of an op are the JSON array of the script's arguments; its result is the JSON the script gets. A CallResult passed
 // as an argument arrives as CallRef.
@@ -50,6 +52,12 @@ const (
 	NameDecide         = "decide"
 	NameMilestoneClose = "milestoneClose"
 	NameReportUp       = "reportUp"
+	NameFinalGate      = "finalGate"
+	NameQAReceipt      = "qaReceipt"
+	NameQACapture      = "qaCapture"
+	NameReviewerFinal  = "reviewerFinal"
+	NameAudit          = "audit"
+	NameArchive        = "archive"
 )
 
 // The Ops that have no constant in proofs.go.
@@ -69,6 +77,8 @@ const (
 	OpDecide         = "crw." + NameDecide
 	OpMilestoneClose = "crw." + NameMilestoneClose
 	OpReportUp       = "crw." + NameReportUp
+	OpAudit          = "crw." + NameAudit
+	OpArchive        = "crw." + NameArchive
 	// OpCommitName is OpCommit under the name the agent allocator and the engine use for the rows of crw.commit.
 	OpCommitName = OpCommit
 )
@@ -94,8 +104,9 @@ type Deps struct {
 	Verifier Verifier
 	// Decisions receives the rows of flow_spawn_decisions and flow_step_decisions; nil keeps them in memory only.
 	Decisions Decisions
-	// Closer and Reporter are the seams of F13 and F11; nil records the call and answers that nothing is wired.
-	Closer   Closer
+	// Threads reads and archives the reviewer threads at the milestone close; nil reports every audit as unobserved and archives
+	// nothing. Reporter is the seam of F11; nil records the call and answers that nothing is wired.
+	Threads  Threads
 	Reporter Reporter
 	// Now is the clock of the rows' decided_at; nil is time.Now.
 	Now func() time.Time
@@ -145,6 +156,12 @@ func (l *Lane) Ops() map[string]engine.Op {
 		NameDecide:         &decideOp{l},
 		NameMilestoneClose: &milestoneCloseOp{l},
 		NameReportUp:       &reportUpOp{l},
+		NameFinalGate:      &finalGateOp{l},
+		NameQAReceipt:      &qaReceiptOp{l},
+		NameQACapture:      &qaCaptureOp{l},
+		NameReviewerFinal:  &reviewerFinalOp{l},
+		NameAudit:          &auditOp{l},
+		NameArchive:        &archiveOp{l},
 	}
 }
 

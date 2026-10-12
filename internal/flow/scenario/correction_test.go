@@ -79,8 +79,14 @@ func TestVerifierBackAfterResumeVerifiesAgain(t *testing.T) {
 	if final.State != "closed" {
 		t.Fatalf("resume: %+v; labels %v", final, l.Labels())
 	}
-	if n := len(l.Verify.Calls); n != 2 {
-		t.Errorf("%d verifications, want the failed start and the one after the resume", n)
+	nodeCalls := 0
+	for _, c := range l.Verify.Calls {
+		if c.Node == "A" {
+			nodeCalls++
+		}
+	}
+	if nodeCalls != 2 {
+		t.Errorf("%d verifications of the node, want the failed start and the one after the resume", nodeCalls)
 	}
 	for _, c := range l.LiveCalls(before) {
 		if strings.HasPrefix(c.Label, "build:") {

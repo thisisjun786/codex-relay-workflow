@@ -12,6 +12,7 @@ crw flow roles [--json]
 crw flow recover [--run RUN] CALL (--adopt THREAD|TURN | --absent)
 crw flow resume [--state DIR] [--socket PATH] [--repo DIR] [--args JSON | --args-file FILE] RUN SCRIPT
 crw flow lint [--args JSON | --args-file FILE] [--no-dry-run] [--json] <script.js>...
+crw flow audit (--run RUN | --acceptance ID) [--milestone M] [--state DIR] [--socket PATH] [--json] [--no-record]
 ```
 
 The commands that reach up from a run - `apply`, `report-up`, `reports`, `report-ack`, `report-delivered` - and the summary document
@@ -125,11 +126,19 @@ target drops to ES2016 (esbuild then lowers async/await to generators) and this 
 | `crw.tierStep(node, evidence)` | Mints the step decision: it journals the call and resolves with `{id, checkpoint}`; a fresh `executor-t1` call carries `id` as `stepDecision`. It occupies a position of its path. The engine's own call holds the id only (its `checkpoint` is `null` and the evidence is recorded by its digest); the project lane's `crw.tierStep` ([below](#the-project-lane)) wraps it, appends the `flow_step_decisions` row with the evidence and the checkpoint, and resolves with the checkpoint filled in. |
 
 `opts` of a call: `agentType` (`architect`, `executor`, `executor-t1`, `reviewer`, `reviewer-final`, `explorer`), `schema`,
-`label`, `phase`, `node`, `worktree` or `cwd`, `head`, `resume`, `stepDecision`, and the Claude-style `model`, `effort` and
+`label`, `phase`, `node`, `worktree` or `cwd`, `head`, `resume`, `stepDecision`, `qa` (below), and the Claude-style `model`, `effort` and
 `isolation`. The other `crw.*` members are the operations and composites of [the project lane](#the-project-lane); each operation is an
 `engine.Op` registered in `Config.Ops`, takes a position of its path like a call, and a resume replays it only while its effect still
-holds ([journal.md](journal.md#ops)). The `crw.*` members a later issue owns (the final gate and reviewer-final of the milestone close,
-the delivery of the report, the revisions of the design ledger and the re-plan signals) are not here.
+holds ([journal.md](journal.md#ops)). The `crw.*` members a later issue owns (the delivery of the report, the revisions of the design
+ledger and the re-plan signals) are not here.
+
+`qa: true` marks the QA capture call (SP-QA-1) of a milestone's final gate: an `executor` call, refused with `policy_refused` on any
+other role and with `foreign_handle` on a handle that is not a QA thread. The mark is in the call's prepared row (`qa`), reaches the
+backend in `ThreadSpec.QA`, `ForkSpec.QA` and `TurnSpec.QA`, and is inherited by every continuation of the thread (the synthesis turn).
+The App Server backend gives such a call the QA overlay of the executor (`roles.Options{QA: true}`), a call-private scratch worktree at
+the `head` it names (an executor call with no mark gets a worktree of its node; the scratch worktree is made as it is for the roles that
+do not write), no pending tree (what the call edits there is discarded; it is never a commit), and a binding line with
+`nativeAllowance` 0, so the spawn hook refuses every native spawn of the thread.
 
 `parallel` and `pipeline` accept `{keys: [...]}` (one explicit key per item, in place of the input index) and
 `{label}` (the label the join carries in a concurrency error).
@@ -285,11 +294,12 @@ and `cap`, the executors at once, default 3). Its steps, in order: `crw.mileston
 scheduler offers them; the architect answers `DESIGN` once for the milestone (SP-ARCH-1); the open questions of the DESIGN go to
 explorers (SP-EXPL-1); a reviewer of another model family than the architect audits the DESIGN (`DESIGN_AUDIT`, recorded by
 `crw.designAudit`), and `needs_changes` returns the DESIGN to the architect on its own thread; only an approved DESIGN becomes revision
-`r0` of the design ledger (`crw.designLedger`); `crw.dag` runs one lane for each node; when every lane landed, `crw.milestoneClose`
-judges the integrated range (the final gate and reviewer-final are the seam of the issue that owns them) and `crw.reportUp`
-records the report (its delivery is the seam of the issue that owns it). A milestone that cannot go on says why: a call of the design
-phase that did not complete is never read as an approval or as a design (`held` and `unknown` hold the milestone, `refused` and
-`null_model` escalate, `superseded` stops).
+`r0` of the design ledger (`crw.designLedger`); `crw.dag` runs one lane for each node; when every lane landed, `crw.closeMilestone` closes the milestone over
+evidence the run makes itself ([The milestone close](#the-milestone-close)), `crw.settleReviews` audits the reviews behind the
+acceptances against the reviewer threads on the host and archives the threads whose audit passed, and `crw.reportUp` records the report
+(its delivery is the seam of the issue that owns it). A milestone that cannot go on says why: a call of the design phase or of the close
+that did not complete is never read as an approval, a design, a gate or a review (`held` and `unknown` hold the milestone, `refused` and
+`null_model` escalate, a gate that failed or cannot be settled and a QA that is INCONCLUSIVE escalate, `superseded` stops).
 
 **The lane of a node.** `crw.dag` starts a node when the nodes it waits for (a dependency or an order edge; the members of a
 group are chained by order edges) have landed, in the scheduler's order, at most `cap` nodes at once and never two nodes whose
@@ -362,19 +372,100 @@ inline (SP-INL-1), reuse an answer (SP-INL-2), skip, refuse or hand a question t
 | `release(plan, node, milestone)` | the release under the ledger revision (`revision`, `design_digest`, `execution_id`); a node sized for a child or a split is not released to an executor | the relay says the execution stands |
 | `issuePlan(node)` | the node's entry of the DESIGN of its release revision | always |
 | `commit(node, call, regions)` | the commit of the call's recorded `pending_tree` (`commit`, `parent`, `tree`, `out_of_scope`, the receipt's outcome and `plan_mismatch`) | the commit is on the history of the node's worktree |
-| `verify(node, head)` | the verification (`ok`, `command`, `digest`, the record); a verification that could not run is `ran: false`, not a failure | always |
+| `verify(node, head, opts)` | the verification (`ok`, `command`, `digest`, the record); a verification that could not run is `ran: false`, not a failure. With no node, `opts` names the milestone, the command and the base: the verification of the integrated head for the final gate, in a worktree of the repository | always while it ran |
 | `review(node, head, criteriaDigest, call, opts)` | the `ReviewResult` | always |
 | `accept(node, head)` / `integrate(node, head, acceptanceId)` | the acceptance id / the batch commit and the target tip | the acceptance is active and not stale / the batch commit is on the target |
 | `escalate(node, info)` / `hold(node, info)` | the escalation flow row and, for `tiers_exhausted`, `blocked_scope` and `size_split`, the relay's close of the execution; the hold (the relay is told, nothing is closed) | always |
 | `releaseChild(node, plan)` / `decide(node, ask)` | the issue child that was started / whether a `decision_applied` row answers the ask | always / no applied row has appeared since |
 | `spawnDecision`, `stepRecord`, `exploreRoute`, `exploreRecord` | the decision rows and the answers the reuse reads | always |
-| `milestoneClose(milestone)` / `reportUp(milestone, close)` | the range and the tip the close judged / the report row | the integration target is still the tip the close judged / always |
+| `finalGate(milestone)` | the gate over the pinned head: the state of the gate and of each piece of evidence (row `crw.finalGate`: `head`, `command`, `range`, `ok`) | the integration target is still the head the gate judged |
+| `qaReceipt(milestone, gate, capture, passes, receipt)` | the QA receipt: its state (`PASS`, `REVISE`, `FAIL`, `INCONCLUSIVE`), the head, the calls with their roles and read-back pairs | always |
+| `qaCapture(milestone, gate, capture)` | the capture of the QA call as the later calls read it: each capture with the path it can be opened at (the relative path resolved against the worktree the capture ran in), the identity of the tree the call ended in, and `ok` or the reason the capture cannot be handed on | always |
+| `reviewerFinal(milestone, gate, call, opts)` | the review of reviewer-final over the range (`range`, `criteria_digest`, the alignment); a `verified` answer is a verdict only when it evaluated every criterion of the milestone once, all met, with no defect of P0 to P2 | always |
+| `milestoneClose(milestone, evidence)` / `reportUp(milestone, close)` | the range and the tip the close judged, and whether the target moved on after the gate / the report row | the integration target is still the tip the close judged / always |
+| `audit(milestone)` / `archive(milestone)` | the audit results of the milestone's acceptances (row `crw.audit`) / the reviewer threads archived and kept | always |
 
-The composites (`crw:lib/lane`, made members of `crw` by `install(crw)`; they take no position of their own): `crw.dag`, `crw.review`,
-`crw.reviewHalt`, `crw.explore`, `crw.exploreEvidence`, `crw.land`, `crw.tierStep`, `crw.evidence` and `crw.skip`. The seams the
-operations are built on - `Relay` (the scheduler: milestone, release, agent acceptance and integration, the close of an execution),
-`Verifier` (`CILocalVerifier` runs `crw-dev ci local`), `Decisions` (`StoreDecisions` writes the relay store), `Closer` (F13) and
+The composites (`crw:lib/lane` and `crw:lib/close`, made members of `crw` by `install(crw)`; they take no position of their own): `crw.dag`,
+`crw.review`, `crw.reviewHalt`, `crw.explore`, `crw.exploreEvidence`, `crw.land`, `crw.tierStep`, `crw.evidence`, `crw.skip`,
+`crw.closeMilestone` and `crw.settleReviews`. The seams the operations are built on - `Relay` (the scheduler: milestone, release, agent
+acceptance and integration, the close of an execution), `Verifier` (`CILocalVerifier` runs `crw-dev ci local`), `Decisions`
+(`StoreDecisions` writes the relay store), `Threads` (the host the close reads the reviewer threads from and archives them on) and
 `Reporter` (F11) - are interfaces in `internal/flow/ops/seams.go`; the dagsched-backed `Relay` belongs to the run process.
+
+## The milestone close
+
+`crw.closeMilestone(ms)` (`crw:lib/close`) closes a milestone over evidence the run makes itself, in this order; the order is what the
+close guarantees. The Go side is `internal/flow/ops/{finalgate,qa,lane_close,audit}.go` and `internal/flow/audit`.
+
+**The final gate.** `crw.finalGate(milestone)` pins the integrated head H (the tip of the integration target now) and judges the
+evidence that stands on it: the test evidence, a verification of H for each command of the plan's required set (`crw.verify` with no node;
+a plan that names none requires `crw-dev ci local`), and, when a criterion of the milestone has the surface `web`, `tui` or `desktop`,
+the QA receipt (`crw.qaReceipt`). Each piece is `fresh` (it stands on H), `missing` (there is none) or `stale` (it stands on another head,
+or on an identity git could not resolve: that verifies nothing); the identities are compared with `source.Compare` of
+`internal/pabcd/source`, the rule of the native final gate (`source.CommitIdentity` is the identity of a pinned commit), and the
+judgement of every piece is in the `crw.finalGate` row (the call row of the gate). The gate is `pass` when every piece is fresh and
+passes, `failed` when a fresh piece does not pass (a verification that ran and failed, a receipt that is `REVISE`, `FAIL` or
+`INCONCLUSIVE`), and `pending` while a piece is missing or stale. The gate makes no evidence. The close makes it, at H: `crw.verify(null node)` for each
+command named in `need_tests`, and the QA calls below when `need_qa`; then the gate is judged again. A verification that cannot run holds
+the milestone (`verify_unavailable`). A head that moves while evidence is made is judged again from the new head, at most three rounds.
+A gate that failed ends the close with an escalation (`final_gate_test_failed`, `qa_failed`, `qa_inconclusive`) and reviewer-final does not
+run; neither does it when the gate cannot be settled (`final_gate_unsettled`). The native final-gate hook (`[CRW-FINAL-GATE]`, goalplan
+`finalGate`) and the standalone `crw-qa` skill are unchanged and read none of this.
+
+**The QA evidence.** The QA capture call (SP-QA-1) is one `executor` call with `qa: true` over the head H: a scratch worktree at H, the
+matrix and the captures of sections 1 to 4 of the `crw-qa` skill, the edits discarded, no native helper (`QA_CAPTURE`: the captures with
+path, kind and what each shows, the scenarios driven, the teardown). A work grade of C2 (the milestone's `Grade`): the same call's
+self-review, one more turn on its thread, is the receipt (`QA_RECEIPT`). From C3 (a grade nobody gave is read as C3), the run starts the two
+oracle passes itself (SP-QA-2): two read-only `explorer` calls over the same capture packet, run at the same time - Pass A the design and
+functional integrity, Pass B the visual fidelity and the CJK precision (`QA_PASS`) - and the synthesis of the two results is the next turn
+of the QA call's thread (`QA_RECEIPT`: `PASS`, `REVISE` or `FAIL`). Why the run starts the passes: section 5 of `crw-qa` asks for two
+read-only reviews in parallel, a native thread of the flow may spawn one explorer per call (SP-NAT-1), and a call the run owns satisfies
+both; the QA overlay tells the call not to start them and the binding line of the call allows no native spawn, so the hook refuses it.
+`crw.qaReceipt` judges what the calls answered and writes the receipt: it is `INCONCLUSIVE` when the capture did not complete or lists no
+capture, when the tree the capture call ended in is not the clean head the gate pinned (`capture_source_modified`; `capture_source_unknown`
+when the engine recorded none), when a relative artifact path cannot be resolved (`capture_root_unknown`, `capture_path_outside`), when a pass did not complete (the synthesis is then not asked for), is not an explorer call or answers for the other pass, or
+when the synthesis is not a completed `QA_RECEIPT` of a call that continues the QA call (the journal's `resume_of`: after a resume the continuation runs on a fork of the thread); a `PASS` over a P0 or P1 finding is not a valid answer,
+and the receipt is as bad as the worst of the verdicts it rests on. The spawn decisions of the three calls (SP-QA-1, SP-QA-2 twice) are
+rows of `flow_spawn_decisions`; the roles and the pairs the threads read back are in the receipt.
+
+The capture call may edit its scratch worktree, so the head it was started at is not what it exercised. When a QA call completes, the
+engine asks the backend for the source identity of the directory the call ended in (`engine.SourceReader`; the agent backend runs
+`source.Capture` with the run's own writes under `.crw/` left out) and records it on the completed row (`qa_source`, or `qa_source_error`).
+`crw.qaReceipt` compares it with the clean identity of the pinned head and keeps it in the receipt (`source`); a PASS stands only over the
+head the gate pinned, and the gate compares the identity of a fresh receipt again. The artifacts of the capture are files of its own
+worktree, named relative to it (`.crw/evidence/<session>/qa/...`) while the passes and the self-review read checkouts of their own, so
+`crw.qaCapture` resolves each path against the directory the capture ran in (the call-private worktree persists with the run) and the
+packets of the passes and of the self-review name that path. The QA mark is part of the input digest of a call: the same call with another
+mark is another call on a resume.
+
+**reviewer-final.** After a passed gate, one `reviewer-final` call (SP-REVF-1) reads the integrated range with the gate as its input
+(its packet names the head, the range, the evidence the gate stood on and the decisions of the approved DESIGN, which live in the journal's
+ledger row and not in the checkout the reviewer reads) and answers `VERDICT_FINAL`; `crw.reviewerFinal` records it
+(the range and the criteria digest are what `ReviewerFinalProof` reads), refuses a reviewer of the model family of an author of the
+milestone, and asks a `null_model` reviewer once more. `crw.milestoneClose` then records the tip it judged; when the target is no longer
+the head the gate judged, the close is judged again from the new head, at most three times. The branches on the alignment of the range
+(re-plan) are the issue of the architect's continuity (F09).
+
+**The audit and the archive.** `crw.settleReviews(ms)` runs `crw.audit`, then `crw.archive`. For each acceptance of the milestone on the
+agent path, the audit reads the reviewer call's persistent thread from the host (`thread/turns/list` with `itemsView` full, and
+`thread/items/list` for a turn the list returned in summary) and checks that the journal recorded the thread, a turn id and the result
+digest; that the turn is `completed` on the host; that the digest of the last `agentMessage` is the result digest of the journal; that the
+packet the thread was sent names the head and the criteria digest of the acceptance (the `HEAD:` and `CRITERIA DIGEST:` lines of the
+reviewer packet); and that the pair of the executors that wrote the head was read back (the calls the recorded commits of the node name; an executor attempt that
+never created a thread or never completed wrote nothing, and a retry that replaced it is judged by its own pair). A reviewer call that continues
+another on its thread records that thread on its prepared row and creates none, so the thread is the continued call's; its packet is the first
+turn of the call that started the thread. The result of an acceptance is `ok`, `mismatch`
+(the record and the host differ, or the record is incomplete) or `unobserved` (the host does not list the turn, does not return its items,
+does not answer, or the executor's pair was never read back); unobserved is not a pass. The results are a row `crw.audit` in the journal.
+A mismatch is escalated (`audit_mismatch`). `crw.archive` then archives the reviewer thread of an acceptance only when the newest audit
+row about it says `ok`, reading the rows and not the script; a thread already archived is not archived again, and a host that refuses
+keeps the thread. `crw flow audit` is the same audit on demand.
+
+**`crw flow audit`.** `crw flow audit (--run RUN | --acceptance ID) [--milestone M] [--state DIR] [--socket PATH] [--json] [--no-record]`
+opens the relay store the journal of the run is in (an acceptance given alone is looked up in the store), connects to the App Server
+control socket, and prints the result of each acceptance. It exits 0 when every acceptance is `ok`, 1 when one is a `mismatch` or is
+`unobserved`, and 2 for a command line, a store or a run it cannot use. It appends its result to the journal as a `crw.audit` row with a
+call id of its own (`audit_...`), unless `--no-record` is given or the run has not finished (a run that is still writing owns its journal).
 
 **The scenario harness** (`internal/flow/scenario`) runs this script on the engine over the fake App Server host, a temporary relay
 store (the journal and the decision rows), a temporary git repository with an integration branch, a scripted model, a fake relay and
