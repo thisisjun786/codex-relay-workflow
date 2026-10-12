@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"net"
 	"path/filepath"
 	"strconv"
+	"syscall"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
@@ -28,6 +30,10 @@ func ForwardChild(ctx context.Context, state, program string, argv []string, std
 	}
 	defer release()
 	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", address)
+	if errors.Is(err, syscall.EPERM) {
+		// CRW-1286: EPERM on connect is how a Codex sandbox without network access refuses it; no child report leaves it.
+		return 0, dispatch.Host("relay daemon unavailable; child report was not submitted: " + err.Error() + "; this sandbox refuses the connection to the relay daemon (no network access): a relay child reports only from a sandbox with network access (danger-full-access, or workspace-write with network access)")
+	}
 	if err != nil {
 		return 0, dispatch.Host("relay daemon unavailable; child report was not submitted: " + err.Error())
 	}

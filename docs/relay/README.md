@@ -335,7 +335,7 @@ The role pairs below are examples; read your host's declared
     "settings": {
       "model": "anthropic/claude-opus-5-5", "reasoningEffort": "xhigh",
       "approvalPolicy": "never",
-      "sandbox": {"type": "workspaceWrite", "writableRoots": [], "networkAccess": false},
+      "sandbox": {"type": "workspaceWrite", "writableRoots": [], "networkAccess": true},
       "cwd": "/workspace/issue-42", "runtimeWorkspaceRoots": ["/workspace/issue-42"],
       "environments": [{"environmentId": "local", "cwd": "/workspace/issue-42",
                         "runtimeWorkspaceRoots": ["/workspace/issue-42"]}]
@@ -348,6 +348,10 @@ The role pairs below are examples; read your host's declared
   "scopeRef": "issue:EXAMPLE-42", "prompt": "The complete authorized assignment goes here."
 }
 ```
+
+The child's sandbox must reach the relay daemon's socket, which a sandbox without network
+access cannot: `dangerFullAccess`, or `workspaceWrite` with `networkAccess: true`. Creation
+refuses any other child sandbox ([operations](operations.md#child-reports-use-the-daemon)).
 
 Identifiers, source/scope references, baseline and prompt are nonblank strings. Roots and
 recipients are nonempty string arrays; criteria is a nonempty object array. `projectKey`, when

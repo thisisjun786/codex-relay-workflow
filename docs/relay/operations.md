@@ -77,14 +77,27 @@ unknown report outcome: retry the same receipt identity, not a new receipt. The 
 serves one child command for up to 50 s after its request line (the store's 30 s busy wait
 and one 20 s App Server read, `hook.ChildCommandBudget`), and the child waits that long;
 the 5 s bound of `control.sock` is the request line's. A writable
-child needs the daemon too. A child whose filesystem is read-only can still report
-`blocked_needs_input` when the socket is accessible.
+child needs the daemon too.
+
+Reaching `control.sock` is a network permission, not a filesystem one. Codex (measured on
+codex-cli 0.154.0) refuses the child's `connect` with `EPERM` in every sandbox without
+network access: `read-only`, and `workspace-write` unless its policy grants
+`networkAccess`. A child there cannot report at all; each child command ends with exit 3
+and says that its sandbox refuses the connection. The connect succeeds under
+`danger-full-access`, under `workspace-write` with network access, and under a read-only
+filesystem with network access, so a child whose filesystem cannot write the store still
+reports through the daemon when its network is enabled.
 
 Bridge `create_thread` (the relay's managed start included) and `create_worktree_thread`
-refuse a `child` role with a `read-only` sandbox or an explicit `readOnly` policy, before
-starting a thread or creating a checkout. Recreate that child with an explicitly
-authorized writable sandbox (`workspace-write` or `danger-full-access`); the bridge never
-silently changes its sandbox. Read-only threads without the child role remain supported.
+refuse a `child` role whose sandbox cannot reach the daemon, before starting a thread or
+creating a checkout: a `read-only` sandbox or an explicit `readOnly` policy, and a
+`workspace-write` sandbox whose `expected_sandbox_policy` does not grant `networkAccess`
+(without that policy the network is the host configuration's, which the bridge cannot
+see). Recreate that child with an explicitly authorized writable sandbox that reaches the
+daemon: `danger-full-access`, or `workspace-write` with an `expected_sandbox_policy`
+granting `networkAccess` (it travels in the start config and the created thread is checked
+against it). The bridge never silently changes its sandbox. Read-only threads without the
+child role remain supported.
 
 Status: implemented in source. Installation and live delivery are separate operations.
 

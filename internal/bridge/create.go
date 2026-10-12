@@ -21,12 +21,15 @@ import (
 // did the work, so the create path waits longer than every other caller of the client.
 const createAckBound = 60 * time.Second
 
-// refuseReadOnlyChild refuses a relay child (the child role) in a readOnly sandbox on every bridge path that creates one
-// (create_thread, the relay's managed start through it, create_worktree_thread), before anything is reserved or sent
-// (CRW-1286).
+// refuseReadOnlyChild refuses a relay child (the child role) on every bridge path that creates one (create_thread, the
+// relay's managed start through it, create_worktree_thread), before anything is reserved or sent, when it could not work
+// or could not report through the relay daemon's control.sock (CRW-1286): a readOnly sandbox, or a workspace-write one
+// without network access, where Codex refuses that connect (EPERM, codex-cli 0.154.0). A workspace-write child passes
+// only with an expected policy granting networkAccess, which travels in the start config and is checked on creation.
 func refuseReadOnlyChild(role, sandbox string, policy map[string]any) error {
-	if role == "child" && (sandbox == "read-only" || policy["type"] == "readOnly") {
-		return &Invalid{"a relay child cannot work in a readOnly sandbox; recreate it with a writable sandbox (workspace-write or danger-full-access); settings are never silently changed"}
+	reaches := (sandbox == "danger-full-access" && policy == nil) || policy["type"] == "dangerFullAccess" || (policy["type"] == "workspaceWrite" && policy["networkAccess"] == true)
+	if role == "child" && (sandbox == "read-only" || !reaches) {
+		return &Invalid{"a relay child reports through the relay daemon's socket, which a readOnly sandbox or a workspace-write sandbox without network access cannot reach; recreate it with a writable sandbox that reaches it (danger-full-access, or workspace-write with an expected_sandbox_policy granting networkAccess); settings are never silently changed"}
 	}
 	return nil
 }

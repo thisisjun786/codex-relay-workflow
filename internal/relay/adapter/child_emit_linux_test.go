@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -32,7 +33,17 @@ func init() {
 	}
 	runtime.LockOSThread()
 	// A read-only filesystem as the child sees it: a writable open, and every call that makes, removes, renames or
-	// links a name, fails with EROFS.
+	// links a name, fails with EROFS. That is Codex's read-only sandbox with its network enabled, where the child's
+	// connect to control.sock is allowed (codex-cli 0.154.0, CRW-1286). CRW_READONLY_CHILD_NO_NETWORK adds the refusal
+	// Codex gives a sandbox without network access, read-only or workspace-write: every connect fails with EPERM.
+	if os.Getenv("CRW_READONLY_CHILD_NO_NETWORK") != "" {
+		installSeccomp([]unix.SockFilter{
+			{Code: unix.BPF_LD | unix.BPF_W | unix.BPF_ABS, K: 0},
+			{Code: unix.BPF_JMP | unix.BPF_JEQ | unix.BPF_K, K: unix.SYS_CONNECT, Jf: 1},
+			{Code: unix.BPF_RET | unix.BPF_K, K: unix.SECCOMP_RET_ERRNO | uint32(unix.EPERM)},
+			{Code: unix.BPF_RET | unix.BPF_K, K: unix.SECCOMP_RET_ALLOW},
+		})
+	}
 	changes := []uint32{unix.SYS_MKDIRAT, unix.SYS_MKNODAT, unix.SYS_UNLINKAT, unix.SYS_RENAMEAT, unix.SYS_RENAMEAT2, unix.SYS_LINKAT, unix.SYS_SYMLINKAT}
 	filters := []unix.SockFilter{{Code: unix.BPF_LD | unix.BPF_W | unix.BPF_ABS, K: 0}}
 	for index, number := range changes {
@@ -46,15 +57,19 @@ func init() {
 		{Code: unix.BPF_RET | unix.BPF_K, K: unix.SECCOMP_RET_ALLOW},
 		{Code: unix.BPF_RET | unix.BPF_K, K: unix.SECCOMP_RET_ERRNO | uint32(unix.EROFS)},
 	}...)
+	installSeccomp(filters)
+	if err := unix.Exec(os.Getenv("CRW_READONLY_CHILD_BINARY"), append([]string{"crw"}, os.Args[1:]...), os.Environ()); err != nil {
+		panic(err)
+	}
+}
+
+func installSeccomp(filters []unix.SockFilter) {
 	program := unix.SockFprog{Len: uint16(len(filters)), Filter: &filters[0]}
 	if err := unix.Prctl(unix.PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0); err != nil {
 		panic(err)
 	}
 	if _, _, errno := unix.Syscall(unix.SYS_SECCOMP, unix.SECCOMP_SET_MODE_FILTER, unix.SECCOMP_FILTER_FLAG_TSYNC, uintptr(unsafe.Pointer(&program))); errno != 0 {
 		panic(errno)
-	}
-	if err := unix.Exec(os.Getenv("CRW_READONLY_CHILD_BINARY"), append([]string{"crw"}, os.Args[1:]...), os.Environ()); err != nil {
-		panic(err)
 	}
 }
 
@@ -114,6 +129,41 @@ func TestReadOnlyChildClaimsAndDeclaresThroughTheDaemon(t *testing.T) {
 		if err != nil || record["recorded"] != true {
 			t.Fatalf("daemon did not record %s: %v %v", command[0], result, err)
 		}
+	}
+}
+
+// CRW-1286: in a sandbox without network access (Codex's read-only and workspace-write ones) the child cannot connect
+// to the daemon's socket. Each child command then ends with the explicit exit 3, naming the sandbox as the reason and
+// the sandboxes that can report, records nothing and writes nothing locally, while the daemon is listening.
+func TestAChildWithoutNetworkAccessIsToldItsSandboxCannotReport(t *testing.T) {
+	state, database, host := blockedChildWorld(t)
+	marker, workspace := filepath.Join(filepath.Dir(state), "markers"), filepath.Dir(state)
+	t.Setenv(delivery.MarkerEnv, marker)
+	t.Setenv("CRW_READONLY_CHILD_NO_NETWORK", "1")
+	control, err := service.ListenControlStore(context.Background(), state, database, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer control.Close()
+	common := []string{"--workspace", workspace, "--assignment", delivery.AssignmentID("dispatch-1"), "--session", "01child-task"}
+	for _, command := range [][]string{
+		{"emit", "--relationship", "rel-1", "--generation", "1", "--outcome", "blocked_needs_input", "--turn-thread", "01child-task", "--turn-id", "turn-dispatch-1", "--turn-status", "completed"},
+		append([]string{"intent-claim", "--dispatch-request-id", "dispatch-1", "--first-turn", "turn-dispatch-1"}, common...),
+		append([]string{"intent-disposition", "--turn", "turn-dispatch-1", "--outcome", "blocked_needs_input"}, common...),
+	} {
+		result, err := readonlyCommand(t, state, host, command...)
+		detail := fmt.Sprint(result["detail"])
+		var exit *exec.ExitError
+		if !errors.As(err, &exit) || exit.ExitCode() != 3 || !strings.Contains(detail, "child report was not submitted") || !strings.Contains(detail, "operation not permitted") ||
+			!strings.Contains(detail, "sandbox") || !strings.Contains(detail, "danger-full-access") || !strings.Contains(detail, "network access") {
+			t.Fatalf("%s: expected the explicit sandbox refusal (exit 3), got %v %v", command[0], err, result)
+		}
+	}
+	if rows := countRows(t, database, "SELECT COUNT(*) FROM events") + countRows(t, database, "SELECT COUNT(*) FROM reporting_sessions"); rows != 0 {
+		t.Fatalf("a child that could not reach the daemon recorded %d rows", rows)
+	}
+	if entries, err := os.ReadDir(marker); err == nil && len(entries) != 0 {
+		t.Fatalf("a child that could not reach the daemon published markers: %v", entries)
 	}
 }
 
