@@ -164,7 +164,7 @@ func TestWriterStartsANewLineAfterACutOne(t *testing.T) {
 	}
 }
 
-func TestLookupStates(t *testing.T) {
+func TestFlowBoundUnregisteredThreadStandaloneLookupStates(t *testing.T) {
 	dir := home(t)
 	if res := Lookup(threadA); res.State != Standalone {
 		t.Fatalf("no directory: %v", res.State)
@@ -257,8 +257,8 @@ func TestCheckDir(t *testing.T) {
 	}
 }
 
-// Of any number of claims for one call at once, exactly one is made.
-func TestOneClaimWinsAndIsNeverHalfWritten(t *testing.T) {
+// Of any number of claims for one call at once, exactly one is made, and nobody reads a half-written one.
+func TestFlowBoundSameEventConcurrentDeliveryMakesOneClaim(t *testing.T) {
 	dir := home(t)
 	if err := (&Writer{}).Append(engineLine(threadA)); err != nil {
 		t.Fatal(err)
