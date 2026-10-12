@@ -27,6 +27,19 @@ const maxControlBytes = 64 << 20
 // for the whole line plus this grace.
 const ControlAnswerGrace = 250 * time.Millisecond
 
+// ControlReadTimeout is control.py's READ_TIMEOUT: the whole request line arrives within it.
+const ControlReadTimeout = 5 * time.Second
+
+// ChildCommandBudget is how long the daemon serves one child command after its request line (CRW-1289): what the
+// command waited for when the child ran it itself, the store's busy wait (30 s) and one App Server read
+// (appserver.DefaultBounds, 20 s). The listener gives a connection ControlRequestBound, and the child waits that long
+// and one more grace before it calls the outcome unknown.
+const ChildCommandBudget = 30*time.Second + 20*time.Second
+
+// ControlRequestBound is how long the listener serves one connection: the request line, a child command's budget and
+// the grace to answer. A guard request is still served within the line's bound and its grace.
+const ControlRequestBound = ControlReadTimeout + ChildCommandBudget + ControlAnswerGrace
+
 type responseError struct{ outcome, reading string }
 
 func (e *responseError) Error() string { return e.outcome }

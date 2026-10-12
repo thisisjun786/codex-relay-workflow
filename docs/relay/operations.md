@@ -70,7 +70,10 @@ the child names it absolute.
 
 An unavailable daemon is an explicit host error (exit 3), not success and not a fallback
 to a local writer or a bridge MCP call. A lost answer after submission is reported as an
-unknown report outcome: retry the same receipt identity, not a new receipt. A writable
+unknown report outcome: retry the same receipt identity, not a new receipt. The daemon
+serves one child command for up to 50 s after its request line (the store's 30 s busy wait
+and one 20 s App Server read, `hook.ChildCommandBudget`), and the child waits that long;
+the 5 s bound of `control.sock` is the request line's. A writable
 child needs the daemon too. A child whose filesystem is read-only can still report
 `blocked_needs_input` when the socket is accessible.
 

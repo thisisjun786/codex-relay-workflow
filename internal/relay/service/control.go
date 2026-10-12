@@ -107,8 +107,9 @@ func ListenControlWake(ctx context.Context, state string, wake func(thread strin
 				defer func() { _ = recover() }()
 				// control.py gives the whole request line 5 s from the moment it serves the peer
 				// (READ_TIMEOUT) and answers its expiry; the handler keeps ControlAnswerGrace past
-				// it to write that answer.
-				requestCtx, stop := context.WithTimeout(serveCtx, 5*time.Second+hook.ControlAnswerGrace)
+				// it to write that answer, and serves a guard request within it. A child command
+				// runs for hook.ChildCommandBudget after its line (CRW-1289).
+				requestCtx, stop := context.WithTimeout(serveCtx, hook.ControlRequestBound)
 				defer stop()
 				// The request deadline bounds malformed/idle clients too.
 				deadline, _ := requestCtx.Deadline()

@@ -9,7 +9,6 @@ import (
 	"net"
 	"path/filepath"
 	"strconv"
-	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
@@ -21,7 +20,7 @@ import (
 // ForwardChild carries a child command to the relay daemon: argv as base64, so a byte that is not UTF-8 arrives as it was
 // given, and the daemon's stdout and stderr back as raw bytes, so the child prints exactly what the daemon's command wrote.
 func ForwardChild(ctx context.Context, state, program string, argv []string, stdout, stderr io.Writer) (int, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, ControlRequestBound+ControlAnswerGrace)
 	defer cancel()
 	address, release, err := ControlAddress(filepath.Join(state, "control.sock"))
 	if err != nil {
@@ -134,8 +133,12 @@ func handleChildCommand(ctx context.Context, conn net.Conn, state string, reques
 			return answerHost(conn, "child intent may only name the daemon's own store")
 		}
 	}
+	// The command keeps the grace of the connection's bound to answer (ChildCommandBudget).
+	deadline, _ := ctx.Deadline()
+	runCtx, cancel := context.WithDeadline(ctx, deadline.Add(-ControlAnswerGrace))
+	defer cancel()
 	var stdout, stderr bytes.Buffer
-	code := dispatch.ExecuteOwnedChild(dispatch.OwnedChildState(ctx, state), pyjson.Text(request.Get("program")), argv, &stdout, &stderr)
+	code := dispatch.ExecuteOwnedChild(dispatch.OwnedChildState(runCtx, state), pyjson.Text(request.Get("program")), argv, &stdout, &stderr)
 	if wake != nil && code == 0 {
 		thread := text(parsed.Values, "turn-thread")
 		if thread == "" {

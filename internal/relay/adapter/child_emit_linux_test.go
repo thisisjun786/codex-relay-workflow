@@ -176,6 +176,24 @@ func TestTheRelayDaemonProcessRecordsAReadOnlyChildsReport(t *testing.T) {
 	}
 }
 
+// CRW-1289: a child report that takes longer than the control socket's 5 s request line, here a host read of 7 s, is
+// served to its end on both sides of the hop and recorded, not answered as an unknown outcome.
+func TestASlowChildReportIsServedToItsEnd(t *testing.T) {
+	state, database, host := blockedChildWorld(t)
+	host.Handle("thread/turns/list", func(json.RawMessage) fakehost.Reply {
+		time.Sleep(7 * time.Second)
+		return fakehost.Reply{Result: map[string]any{"data": []any{map[string]any{"id": "turn-dispatch-1", "status": "completed"}}, "nextCursor": nil}}
+	})
+	control, err := service.ListenControlStore(context.Background(), state, database, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer control.Close()
+	if result, err := readonlyEmit(t, state, host); err != nil || countRows(t, database, "SELECT COUNT(*) FROM events WHERE outcome='blocked_needs_input'") != 1 {
+		t.Fatalf("a slow child report was cut short by the hop: %v %v", result, err)
+	}
+}
+
 func TestVerifierReadOnlyChildCannotOverwriteAnUnrelatedManifest(t *testing.T) {
 	state, database, host := blockedChildWorld(t)
 	control, err := service.ListenControlStore(context.Background(), state, database, nil)

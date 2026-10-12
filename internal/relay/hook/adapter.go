@@ -570,7 +570,12 @@ func HandleControlWake(ctx context.Context, conn net.Conn, ownerState string, wa
 	if err := conn.SetDeadline(deadline); err != nil {
 		return err
 	}
-	if err := conn.SetReadDeadline(deadline.Add(-ControlAnswerGrace)); err != nil {
+	// control.py's READ_TIMEOUT bounds the request line however long ctx lets the request be served.
+	line := deadline.Add(-ControlAnswerGrace)
+	if bound := time.Now().Add(ControlReadTimeout); bound.Before(line) {
+		line = bound
+	}
+	if err := conn.SetReadDeadline(line); err != nil {
 		return err
 	}
 	request, refused, err := readRequest(conn)
@@ -592,6 +597,9 @@ func HandleControlWake(ctx context.Context, conn net.Conn, ownerState string, wa
 	params, stop, at, refused := guardParams(request, time.Now())
 	if refused != "" {
 		return answerHost(conn, refused)
+	}
+	if line.Add(ControlAnswerGrace).Before(at) {
+		at = line.Add(ControlAnswerGrace)
 	}
 	var cancel context.CancelFunc
 	ctx, cancel = context.WithDeadline(ctx, at)
