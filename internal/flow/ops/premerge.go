@@ -19,6 +19,9 @@ type PremergeInput struct {
 	Verdict                                ReviewVerdict
 	// By is the task that decides the dispositions: the orchestrator the run acts for.
 	By string
+	// Expect are the ids of the criteria of the node's plan (CriterionIDs); a verdict that does not evaluate each of them once is
+	// no record. Nil checks nothing.
+	Expect []string
 }
 
 // AssemblePremerge assembles the premerge-record/1 of a head from the verdict of its review. It is a code step of the run
@@ -29,6 +32,9 @@ type PremergeInput struct {
 func AssemblePremerge(in PremergeInput) (premerge.Record, error) {
 	if len(in.Verdict.Criteria) == 0 {
 		return premerge.Record{}, errors.New("the verdict lists no criterion: an incomplete evaluation is not a record")
+	}
+	if err := CheckCoverage(in.Verdict.Criteria, in.Expect); err != nil {
+		return premerge.Record{}, fmt.Errorf("an incomplete evaluation is not a record: %w", err)
 	}
 	rec := premerge.Record{
 		Schema: premerge.RecordSchema, Issue: in.Issue, Node: in.Node, Head: in.Head, Dev: in.Dev, CriteriaDigest: in.CriteriaDigest, Grader: in.Grader,

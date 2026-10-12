@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/google/jsonschema-go/jsonschema"
@@ -206,6 +207,13 @@ func (v ReviewVerdict) check(what string) error {
 	if err := checkDefects(what, v.Defects); err != nil {
 		return err
 	}
+	seen := map[string]bool{}
+	for _, c := range v.Criteria {
+		if seen[c.ID] {
+			return fmt.Errorf("%s: criterion %q is named twice", what, c.ID)
+		}
+		seen[c.ID] = true
+	}
 	if v.Verdict == "verified" {
 		for _, c := range v.Criteria {
 			if !c.Met {
@@ -217,6 +225,48 @@ func (v ReviewVerdict) check(what string) error {
 				return fmt.Errorf("%s: verified, and defect %q is %s", what, d.Ref, d.Severity)
 			}
 		}
+	}
+	return nil
+}
+
+// CriterionIDs are the ids of the n criteria of a node's plan, in the order the plan lists them: c1 to cn. The packets of the lane
+// label the criteria with them and a verified verdict answers one entry for each.
+func CriterionIDs(n int) []string {
+	ids := make([]string, n)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("c%d", i+1)
+	}
+	return ids
+}
+
+// CheckCoverage says whether a verdict evaluated exactly the criteria with the ids, each once: a criterion the reviewer left out
+// was never judged, one it names twice has two answers, and one the plan does not have is not the plan's. An empty want checks
+// nothing (a plan with no criteria has nothing to cover).
+func CheckCoverage(have []Criterion, want []string) error {
+	if len(want) == 0 {
+		return nil
+	}
+	left := map[string]bool{}
+	for _, id := range want {
+		left[id] = true
+	}
+	for _, c := range have {
+		if !left[c.ID] {
+			if slices.Contains(want, c.ID) {
+				return fmt.Errorf("criterion %q is named twice", c.ID)
+			}
+			return fmt.Errorf("criterion %q is not a criterion of the plan (%s)", c.ID, strings.Join(want, ", "))
+		}
+		delete(left, c.ID)
+	}
+	if len(left) > 0 {
+		var missing []string
+		for _, id := range want {
+			if left[id] {
+				missing = append(missing, id)
+			}
+		}
+		return fmt.Errorf("the verdict leaves criteria unevaluated: %s", strings.Join(missing, ", "))
 	}
 	return nil
 }

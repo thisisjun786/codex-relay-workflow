@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -83,8 +84,12 @@ func (l *Lane) spawnRow(req engine.OpRequest, rule, decision string, info Decisi
 	if info.Call != "" {
 		evidence["call"] = info.Call
 	}
+	// The id derives from the run, the position of the op call, the suffix and the content of the decision. A position is not a
+	// decision: an invalidated suffix that runs live again makes its decision at the same position with other inputs, and that is
+	// another row (the table is append-only), while the same decision again - a resume that runs the op again - is the same row.
+	content := digestOf(map[string]any{"rule": rule, "decision": decision, "kind": kind, "node": info.Node, "reason": info.Reason, "evidence": evidence})
 	return SpawnRow{
-		DecisionID: "sd_" + hashParts(req.RunID, req.CallID, suffix)[:32], RunID: req.RunID, Kind: kind, CallID: req.CallID, NodeID: info.Node,
+		DecisionID: "sd_" + hashParts(req.RunID, req.CallID, suffix, content)[:32], RunID: req.RunID, Kind: kind, CallID: req.CallID, NodeID: info.Node,
 		RuleID: rule, Decision: decision, Reason: info.Reason, Evidence: evidence, DecidedAt: l.d.Now(),
 	}
 }
@@ -148,9 +153,18 @@ func (o *stepRecordOp) Run(ctx context.Context, req engine.OpRequest) (engine.Op
 	}
 	row := StepRow{StepID: step.ID, RunID: req.RunID, NodeID: node, FromTier: info.From, ToTier: info.To, RuleID: RuleTier1, Evidence: evidence,
 		CheckpointHead: cp.Head, CheckpointTree: cp.Tree, DecidedAt: o.l.d.Now()}
-	if err := o.l.d.Decisions.AppendStep(ctx, row); err != nil {
+	// The step id the engine mints belongs to a position. A suffix that runs live again after an earlier effect was invalidated
+	// reaches the same position with another checkpoint, and the stored decision must describe the checkpoint the executor-t1 of
+	// this run starts from: the id of that decision is the engine's id with the digest of what it decided.
+	err := o.l.d.Decisions.AppendStep(ctx, row)
+	if errors.Is(err, ErrStepConflict) {
+		row.StepID = step.ID + "_" + digestOf(map[string]any{"head": cp.Head, "tree": cp.Tree, "evidence": evidence, "from": info.From, "to": info.To})[:12]
+		err = o.l.d.Decisions.AppendStep(ctx, row)
+	}
+	if err != nil {
 		return engine.OpResult{}, err
 	}
+	step.ID = row.StepID
 	return engine.OpResult{Result: result(map[string]any{"id": step.ID, "rule": RuleTier1, "letter": info.Letter, "checkpoint": cp}),
 		Data: map[string]any{"node": node, "step_id": step.ID, "rule": RuleTier1, "letter": info.Letter, "from": info.From, "to": info.To, "checkpoint_head": cp.Head, "checkpoint_tree": cp.Tree}}, nil
 }
@@ -195,6 +209,9 @@ type ExploreContext struct {
 	Tier      string `json:"tier"`
 	// Regions are the edit regions the asker declared.
 	Regions []string `json:"regions"`
+	// Head is the committed head an evidence question is about (SP-EXPL-3): the explorer reads its worktree at that commit, and an
+	// answer about one head is not an answer about another.
+	Head string `json:"head"`
 }
 
 // Route is the decision for one question.
@@ -282,6 +299,9 @@ func (o *exploreRouteOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 	first := map[string]int{} // the first question of this call by digest: a repeat of it is the same question
 	for i, q := range qs {
 		rt := Route{Index: i, ID: q.ID, Question: q.Question, Digest: QuestionDigest(q.Question), Rule: rule, Files: q.FilesNeeded, SameAs: -1}
+		if kind == ExploreEvidence && ec.Head != "" {
+			rt.Digest = textDigest(normalizeQuestion(q.Question) + "\x00" + ec.Head)
+		}
 		if rt.Files == nil {
 			rt.Files = []string{}
 		}

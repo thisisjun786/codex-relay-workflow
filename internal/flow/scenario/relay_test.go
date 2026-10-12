@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -130,14 +131,51 @@ func (r *FakeRelay) Accept(ctx context.Context, req ops.AcceptRequest) (ops.Acce
 	if r.RefuseAccept != "" {
 		return ops.AcceptResult{Reason: r.RefuseAccept, Detail: "refused by the scenario"}, nil
 	}
-	if _, err := premerge.Decode(req.Premerge); err != nil {
+	// The relay judges what the acceptance of R05 judges (relay/dagsched/accept_agent.go): the premerge record decodes, stands
+	// on the head and the base the acceptance names, and passes the judgment; the verification record is a pass of this head
+	// over this base; the base is an ancestor of the head; the record sees every criterion of the node's plan.
+	rec, err := premerge.Decode(req.Premerge)
+	if err != nil {
 		return ops.AcceptResult{Reason: "premerge_missing", Detail: err.Error()}, nil
+	}
+	if err := premerge.Judge(rec, premerge.Options{}); err != nil {
+		return ops.AcceptResult{Reason: "premerge_blocked", Detail: err.Error()}, nil
+	}
+	if rec.Head != req.Head || rec.Dev != req.Base || rec.CriteriaDigest != req.CriteriaDigest {
+		return ops.AcceptResult{Reason: "premerge_head_mismatch", Detail: fmt.Sprintf("the premerge record names head %s dev %s criteria %s, the acceptance %s %s %s", rec.Head, rec.Dev, rec.CriteriaDigest, req.Head, req.Base, req.CriteriaDigest)}, nil
 	}
 	if len(req.Verification) == 0 {
 		return ops.AcceptResult{Reason: "verification_missing"}, nil
 	}
+	var ver struct {
+		Schema, HeadCommit, Base, Result string
+	}
+	if err := json.Unmarshal(req.Verification, &ver); err != nil || ver.Schema != "verification-record/1" {
+		return ops.AcceptResult{Reason: "verification_missing", Detail: "the verification is no verification-record/1"}, nil
+	}
+	if ver.Result != "pass" || ver.HeadCommit != req.Head || ver.Base != req.Base {
+		return ops.AcceptResult{Reason: "verification_stale", Detail: fmt.Sprintf("the verification record is %s of head %s over base %s; the acceptance names head %s over base %s", ver.Result, ver.HeadCommit, ver.Base, req.Head, req.Base)}, nil
+	}
 	if out, err := r.lab.gitErr(r.lab.Repo, "cat-file", "-e", req.Head+"^{commit}"); err != nil {
 		return ops.AcceptResult{Reason: "head_not_receipt_head", Detail: out}, nil
+	}
+	if out, err := r.lab.gitErr(r.lab.Repo, "merge-base", "--is-ancestor", req.Base, req.Head); err != nil {
+		return ops.AcceptResult{Reason: "merge_base_mismatch", Detail: "the base " + req.Base + " is not an ancestor of the head " + req.Head + ": " + out}, nil
+	}
+	for _, n := range r.nodes {
+		if n.ID != req.Node {
+			continue
+		}
+		want := map[string]bool{}
+		for i := range n.criteria() {
+			want[fmt.Sprintf("c%d", i+1)] = true
+		}
+		for id := range rec.Criteria {
+			delete(want, id)
+		}
+		if len(want) > 0 {
+			return ops.AcceptResult{Reason: "criteria_set_changed", Detail: fmt.Sprintf("the premerge record leaves %d criteria of the plan unevaluated", len(want))}, nil
+		}
 	}
 	id := "acc-" + req.Node + "-" + req.Head[:8]
 	_, replayed := r.accepted[id]
@@ -263,7 +301,7 @@ func (v *FakeVerifier) Verify(_ context.Context, req ops.VerifyRequest) (ops.Ver
 			pass = false
 		}
 	}
-	rec := map[string]any{"schema": "verification-record/1", "headCommit": req.Head, "result": map[bool]string{true: "pass", false: "fail"}[pass]}
+	rec := map[string]any{"schema": "verification-record/1", "headCommit": req.Head, "base": req.Base, "result": map[bool]string{true: "pass", false: "fail"}[pass]}
 	raw, _ := json.Marshal(rec)
 	out := ops.VerifyOutcome{Pass: pass, Command: ops.CILocalCommand, Digest: "sha256:" + sha(string(raw)), Record: raw, Summary: "pass", Failures: []string{}}
 	if !pass {
@@ -291,4 +329,32 @@ func (l *Lab) git(dir string, args ...string) string {
 func (l *Lab) gitErr(dir string, args ...string) (string, error) {
 	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
 	return strings.TrimSpace(string(out)), err
+}
+
+// AdvanceIntegration moves the integration branch on by a commit of another actor that adds a file: a landing that happens while
+// a node of the run is being verified or reviewed. It returns the new tip.
+func (l *Lab) AdvanceIntegration(file string) string {
+	l.t.Helper()
+	l.advanceMu.Lock()
+	defer l.advanceMu.Unlock()
+	tip := l.git(l.Repo, "rev-parse", IntegrationRef)
+	idx := filepath.Join(l.Root, "advance.index")
+	run := func(stdin string, args ...string) string {
+		cmd := exec.Command("git", append([]string{"-C", l.Repo}, args...)...)
+		cmd.Env = append(os.Environ(), "GIT_INDEX_FILE="+idx)
+		cmd.Stdin = strings.NewReader(stdin)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			l.t.Errorf("git %v: %v: %s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	_ = os.Remove(idx)
+	run("", "read-tree", tip)
+	blob := run("outside landing of "+file+"\n", "hash-object", "-w", "--stdin")
+	run("", "update-index", "--add", "--cacheinfo", "100644,"+blob+","+file)
+	tree := run("", "write-tree")
+	commit := run("", "commit-tree", tree, "-p", tip, "-m", "landing of "+file)
+	l.git(l.Repo, "update-ref", IntegrationRef, commit)
+	return commit
 }

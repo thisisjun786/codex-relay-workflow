@@ -142,6 +142,8 @@ type VerifyResult struct {
 	Failures []string `json:"failures"`
 	Error    string   `json:"error"`
 	Head     string   `json:"head"`
+	// Base is the commit the verification and the acceptance of the head stand on (stableBase).
+	Base string `json:"base"`
 }
 
 func (o *verifyOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResult, error) {
@@ -158,18 +160,18 @@ func (o *verifyOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 	res := VerifyResult{Failures: []string{}, Head: head.Commit}
 	data := map[string]any{"node": node, "head": head.Commit}
 	var record json.RawMessage
+	base := ""
 	if o.l.d.Verifier == nil {
 		res.Error = "no verifier is wired"
 	} else {
-		// the range is the one the acceptance judges: from the integration tip (crw.accept's premerge names it as its base), not from
-		// the merge-base with origin/dev that `crw-dev ci local` falls back to
-		base := ""
+		// the range is the one the acceptance judges: from the commit the node's work grew from (stableBase), not from the merge-base
+		// with origin/dev that `crw-dev ci local` falls back to
 		if rel, ok := releaseRowOf(r, node); ok {
-			tip, terr := o.l.d.Relay.IntegrationTip(ctx, dataStr(rel, "plan"))
-			if terr != nil {
-				return engine.OpResult{}, terr
+			b, berr := o.l.stableBase(ctx, dataStr(rel, "plan"), wt, head.Commit)
+			if berr != nil {
+				return engine.OpResult{}, berr
 			}
-			base = tip
+			base = b
 		}
 		out, err := o.l.d.Verifier.Verify(ctx, VerifyRequest{Node: node, Head: head.Commit, Worktree: wt, Base: base})
 		if err != nil {
@@ -182,15 +184,38 @@ func (o *verifyOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 			record = out.Record
 		}
 	}
-	data["ok"], data["ran"], data["command"], data["digest"], data["error"] = res.Pass, res.Ran, res.Command, res.Digest, res.Error
+	res.Base = base
+	data["ok"], data["ran"], data["command"], data["digest"], data["error"], data["base"] = res.Pass, res.Ran, res.Command, res.Digest, res.Error, base
 	if len(record) > 0 {
 		data["record"] = string(record)
 	}
 	return engine.OpResult{Result: result(res), Data: data}, nil
 }
 
-func (o *verifyOp) Proven(ctx context.Context, ev []engine.Event, row engine.Event) (bool, string, error) {
-	return provenAlways(ctx, ev, row)
+// Proven: a verification that ran stays what it was (a pass, or the failure its record shows). One that did not run (the verifier
+// is not installed, it left no record) is no result to replay: the node is held, and a resume that finds the verifier back asks it
+// again.
+func (o *verifyOp) Proven(_ context.Context, _ []engine.Event, row engine.Event) (bool, string, error) {
+	if !dataBool(row, "ran") {
+		return false, "the verification did not run", nil
+	}
+	return true, "", nil
+}
+
+// stableBase is the base a head is verified and accepted over: the commit of the integration target that the node's work grew
+// from, found as the merge-base of the head and the tip. It is an ancestor of the head by construction and it does not move when
+// another node lands on the target, so the verification record, the premerge record and the acceptance of one head name the same
+// commit; the tip itself is sampled at each step and is neither.
+func (l *Lane) stableBase(ctx context.Context, plan, worktree, head string) (string, error) {
+	tip, err := l.d.Relay.IntegrationTip(ctx, plan)
+	if err != nil {
+		return "", err
+	}
+	base, err := l.d.Git(ctx, worktree, nil, "merge-base", head, tip)
+	if err != nil {
+		return "", fmt.Errorf("the head %s and the integration tip %s have no merge base: %w", head, tip, err)
+	}
+	return strings.TrimSpace(base), nil
 }
 
 // ---- crw.review ----
@@ -240,16 +265,28 @@ func (o *reviewOp) Run(_ context.Context, req engine.OpRequest) (engine.OpResult
 	}
 	res := ReviewResult{Verdict: json.RawMessage(`null`), Findings: []FindingRef{}, Head: head.Commit, CriteriaDigest: criteria, Call: call.brief(), Retried: opts.Retried}
 	var v ReviewVerdict
+	detail := ""
 	switch call.Status {
 	case "completed":
 		var err error
 		if v, err = DecodeVerdict(call.Output); err != nil {
 			res.State, res.Reason = StateNullModel, "verdict_invalid"
+			detail = err.Error()
 			break
 		}
-		if why := independent(call.Meta.ConfiguredPair.Model, rows(req.Journal.Events()).authorModels(node)); why != "" {
+		jr := rows(req.Journal.Events())
+		if why := independent(call.Meta.ConfiguredPair.Model, jr.authorModels(node)); why != "" {
 			res.State, res.Reason = StateRefused, why
 			break
+		}
+		// a verified verdict evaluated every criterion of the node's plan once: the criteria it names are the ones the premerge
+		// record will hold, and the digest the acceptance compares is that of the whole set
+		if v.Verdict == "verified" {
+			if err := CheckCoverage(v.Criteria, expectedCriteria(jr, node)); err != nil {
+				res.State, res.Reason = StateNullModel, "verdict_invalid"
+				detail = err.Error()
+				break
+			}
 		}
 		res.State, res.Verdict = StateVerdict, call.Output
 		for _, d := range v.Defects {
@@ -268,8 +305,22 @@ func (o *reviewOp) Run(_ context.Context, req engine.OpRequest) (engine.OpResult
 	}
 	return engine.OpResult{Result: result(res), Data: map[string]any{
 		"node": node, "head": head.Commit, "criteria_digest": criteria, "state": res.State, "reason": res.Reason, "verdict": v.Verdict,
-		"call": call.CallID, "reviewer_model": call.Meta.ConfiguredPair.Model, "defects": len(v.Defects), "retried": opts.Retried,
+		"call": call.CallID, "reviewer_model": call.Meta.ConfiguredPair.Model, "defects": len(v.Defects), "retried": opts.Retried, "detail": detail,
 	}}, nil
+}
+
+// expectedCriteria are the ids of the criteria of a node's plan, as the milestone row of the journal recorded the node: c1 to cn in
+// the plan's order (nil when the plan lists none).
+func expectedCriteria(r rows, node string) []string {
+	rel, ok := designRowOf(r, node)
+	if !ok {
+		return nil
+	}
+	n, ok := planNodeOf(r, dataStr(rel, "plan"), dataStr(rel, "milestone"), node)
+	if !ok {
+		return nil
+	}
+	return CriterionIDs(len(n.Criteria))
 }
 
 func (o *reviewOp) Proven(ctx context.Context, ev []engine.Event, row engine.Event) (bool, string, error) {

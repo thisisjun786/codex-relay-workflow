@@ -70,12 +70,17 @@ func (o *acceptOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 	if is, found, err := issueOf(r, rel, node); err == nil && found {
 		issue = is.Issue
 	}
-	tip, err := o.l.d.Relay.IntegrationTip(ctx, plan)
-	if err != nil {
-		return engine.OpResult{}, err
+	// The acceptance judges the head over the base its verification stood on: the commit the node's work grew from, an ancestor of
+	// the head that does not move when another node lands (the tip of the integration target, sampled now, is neither). A
+	// verification row that names none is judged over the base found now.
+	base := dataStr(ver, "base")
+	if base == "" {
+		if base, err = o.l.stableBase(ctx, plan, r.worktreeOf(node), head.Commit); err != nil {
+			return engine.OpResult{}, err
+		}
 	}
 	rec, err := AssemblePremerge(PremergeInput{
-		Issue: issue, Node: node, Head: head.Commit, Dev: tip, CriteriaDigest: rr.CriteriaDigest,
+		Issue: issue, Node: node, Head: head.Commit, Dev: base, CriteriaDigest: rr.CriteriaDigest, Expect: expectedCriteria(r, node),
 		Grader:   premerge.Grader{Model: str(prep.Data, "model"), Effort: str(prep.Data, "effort"), PromptDigest: str(prep.Data, "prompt_digest")},
 		GradedAt: o.l.d.Now(), Verdict: verdict, By: o.l.d.Actor,
 	})
@@ -93,7 +98,7 @@ func (o *acceptOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 	if s := dataStr(ver, "record"); s != "" {
 		record = json.RawMessage(s)
 	}
-	res, err := o.l.d.Relay.Accept(ctx, AcceptRequest{Plan: plan, Node: node, Actor: o.l.d.Actor, RunID: req.RunID, Head: head.Commit, Base: tip, Premerge: doc, Verification: record,
+	res, err := o.l.d.Relay.Accept(ctx, AcceptRequest{Plan: plan, Node: node, Actor: o.l.d.Actor, RunID: req.RunID, Head: head.Commit, Base: base, Premerge: doc, Verification: record,
 		CriteriaDigest: rr.CriteriaDigest, ReviewerCall: rr.Call.CallID, RequestID: req.RequestID})
 	if err != nil {
 		return engine.OpResult{}, err

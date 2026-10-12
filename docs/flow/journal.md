@@ -105,7 +105,9 @@ as such:
 - The proof is of the state of the files, not a flag: restoring the files restores the proof. Another actor moving the
   integration target does not touch a worktree and does not undo a call that ended.
 
-**Other effects.** Verify: a passing record of the same head and command (`crw.verify`). Review: a record of the same head and
+**Other effects.** Verify: a record of the same head and command that ran (`crw.verify`); a verification that could not run (the verifier is missing, it left no
+record) is asked again on a resume. The base it names is the merge-base of the head and the integration tip, the commit the node's
+work grew from, which the acceptance of the head uses too. A node released as a child or a split keeps its release row (`crw.release`). Review: a record of the same head and
 criteria digest (`crw.review`). Accept: the recorded acceptance is active, not stale, of the same head (the relay says which).
 Integrate: the recorded batch commit is an ancestor of the integration ref; the target moving on keeps it an ancestor. Gate: a
 passing record of the current integration head, the same command and the same range (`crw.gate`). Reviewer-final: a record of the

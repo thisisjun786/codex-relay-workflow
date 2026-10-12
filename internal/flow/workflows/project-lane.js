@@ -167,7 +167,7 @@ async function lane(n, rel) {
           return { node, state: 'escalated', reason: landed.reason, escalation: esc.id }
         }
         ev.review(tier, rv.call.callId, verdict.verdict, rv.findings.map((f) => f.digest))
-        const found = await crw.exploreEvidence(node, verdict, { tier, regions: plan.regions })
+        const found = await crw.exploreEvidence(node, verdict, { tier, regions: plan.regions, head: head.commit })
         if (found.failed) {
           await crw.hold(node, { reason: found.failed.reason || found.failed.status, call: found.failed.callId, source: 'explorer' })
           return { node, state: 'held', reason: found.failed.reason, call: found.failed.callId }
@@ -194,7 +194,12 @@ async function lane(n, rel) {
 }
 
 phase('build')
-const lanes = await crw.dag(args.plan, lane, { nodes: ms.nodes, milestone: ms.id, cap: args.cap })
+// A node is admitted by the regions of the plan and of the approved DESIGN together (crw.admissionRegions): the executor of a node
+// edits the DESIGN's edit_regions, so the nodes that run at once must not overlap in those either.
+const designed = {}
+for (const is of arch.output.issues) designed[is.node] = is.edit_regions
+const admitted = ms.nodes.map((n) => Object.assign({}, n, { regions: crw.admissionRegions(n.regions, designed[n.id]) }))
+const lanes = await crw.dag(args.plan, lane, { nodes: admitted, milestone: ms.id, cap: args.cap })
 if (!lanes.every((l) => l && l.state === 'landed')) return { state: 'incomplete', milestone: ms.id, lanes }
 
 phase('milestone')

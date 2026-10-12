@@ -37,6 +37,17 @@ export function regionsOverlap(a, b) {
   return false
 }
 
+// admissionRegions are the regions the lane admits a node by: the plan's declared regions together with the edit regions of the
+// approved DESIGN. The executor of a node is scoped to the DESIGN's edit_regions and the scheduler's own gate reads the plan's, so
+// two nodes run at once only when neither pair overlaps. A node with no regions on either side is undeclared, and an undeclared node
+// overlaps every other.
+export function admissionRegions(planRegions, editRegions) {
+  if (!planRegions || planRegions.length === 0 || !editRegions || editRegions.length === 0) return []
+  const out = planRegions.slice()
+  for (const r of editRegions) if (!out.includes(r)) out.push(r)
+  return out
+}
+
 // dag runs the lane function of every node of a milestone: in the order the scheduler offers the nodes (the order of
 // opts.nodes), a node starting as soon as the nodes it waits for have landed, no more than opts.cap nodes at once, and never two
 // nodes whose edit regions overlap. There is no barrier: a node starts when it can, not when a wave ends. Each node runs on a
@@ -125,7 +136,7 @@ export async function explore(kind, questions, ctx) {
   let failed = null
   for (const wave of chunks(spawn, EXPLORER_CONCURRENCY)) {
     const calls = await parallel(wave.map((r) => () => agent.call(explorerPacket(kind, r, ctx), {
-      agentType: 'explorer', node: ctx.node || undefined, schema: FINDINGS, label: 'explore:' + (ctx.node || ctx.milestone) + ':' + r.digest.slice(0, 12),
+      agentType: 'explorer', node: ctx.node || undefined, head: ctx.head || undefined, schema: FINDINGS, label: 'explore:' + (ctx.node || ctx.milestone) + ':' + r.digest.slice(0, 12),
     })), { keys: wave.map((r) => r.digest.slice(0, 12)), label: 'explore' })
     wave.forEach((r, i) => {
       const call = calls[i]
@@ -168,7 +179,8 @@ export async function explore(kind, questions, ctx) {
 
 // exploreEvidence is SP-EXPL-3: a verdict with a defect of kind evidence_missing sends its evidence_question to an explorer
 // before the node's next round; its FINDINGS go to the next fix packet and the next reviewer packet. A verdict with no such defect
-// records the skip. The finding is never interpreted again by a model.
+// records the skip. The finding is never interpreted again by a model. ctx.head is the committed head the reviewer judged: the
+// explorer's read-only worktree is made at it, so the evidence is about the revision the question was asked of.
 export async function exploreEvidence(node, verdict, ctx) {
   const questions = verdict.defects
     .filter((d) => d.kind === 'evidence_missing' && d.evidence_question)
@@ -253,7 +265,8 @@ async function land(node, o) {
 async function tierStep(mint, node, ev) {
   const step = await mint(node, ev)
   const recorded = await crw.stepRecord(node, step, { from: ev.tier, to: 'executor-t1', letter: ev.letter, evidence: ev })
-  return { id: step.id, checkpoint: recorded.checkpoint }
+  // the id of the stored decision: the engine's id, or the one the record gave it when that id stood on another checkpoint
+  return { id: recorded.id, checkpoint: recorded.checkpoint }
 }
 
 // install makes the composites members of crw. The operation the host registered as crw.review is the record of a review, and the
@@ -263,6 +276,7 @@ export function install(host) {
   const mint = host.tierStep
   host.tierStep = (node, ev) => tierStep(mint, node, ev)
   host.dag = dag
+  host.admissionRegions = admissionRegions
   host.explore = explore
   host.exploreEvidence = exploreEvidence
   host.review = (node, plan, head, ci, opts) => review(record, node, plan, head, ci, opts || {})

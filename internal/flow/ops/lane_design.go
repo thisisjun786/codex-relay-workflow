@@ -329,6 +329,12 @@ func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRes
 // released and built again on a resume - the escalation is the node's decision until crw.decide answers it.
 func (o *releaseOp) Proven(ctx context.Context, ev []engine.Event, row engine.Event) (bool, string, error) {
 	if !dataBool(row, "released") {
+		// a node the architect sized for a child or a split was not released to an executor on purpose: the row is the decision
+		// of the ledger revision it names, which does not change, and the child's start has a row of its own (crw.releaseChild).
+		// Asking again would start the child again.
+		if k := dataStr(row, "kind"); k == "child" || k == "split" {
+			return true, "", nil
+		}
 		// a node the scheduler held back may be releasable now: the position asks again
 		return false, "the release did not happen", nil
 	}

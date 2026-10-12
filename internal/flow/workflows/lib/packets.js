@@ -14,6 +14,11 @@ function list(items, empty) {
   return items.map((s) => '- ' + s)
 }
 
+// criteriaList labels the criteria of a plan c1, c2, ...: the ids a verdict answers by, one entry for each (ops.CriterionIDs).
+function criteriaList(criteria) {
+  return list((criteria || []).map((c, i) => 'c' + (i + 1) + ': ' + c))
+}
+
 function section(title, lines) {
   return [title + ':'].concat(lines).join('\n')
 }
@@ -69,7 +74,7 @@ export function packet(node, plan, checkpoint, notes) {
     section('EDIT REGIONS', list(plan.regions, 'undeclared')),
     section('TESTS FIRST', list(plan.tests_first)),
     section('DONE CONDITION', [plan.done_condition]),
-    section('CRITERIA', list(plan.criteria)),
+    section('CRITERIA', criteriaList(plan.criteria)),
     section('DECISIONS', plan.decisions.map((d) => '- ' + d.id + ': ' + d.change)),
   ]
   if (plan.answers && plan.answers.length) parts.push(section('ANSWERS TO THE OPEN QUESTIONS OF THE DESIGN', plan.answers.map((a) => '- ' + a.question + (a.answer ? '\n  ' + a.answer : ''))))
@@ -107,7 +112,7 @@ export function fixPacket(node, verdict, ci, notes, receipt) {
 export function reviewPacket(node, plan, head, ci, opts) {
   const parts = [
     'ROLE: reviewer. Review the head ' + head.commit + ' of node ' + node + ' (' + plan.issue + ') against its criteria; round ' + (opts.round || 1) + '.',
-    section('CRITERIA', list(plan.criteria)),
+    section('CRITERIA', criteriaList(plan.criteria)),
     section('DONE CONDITION', [plan.done_condition]),
     section('EDIT REGIONS', list(plan.regions, 'undeclared')),
     section('CHANGED PATHS', list(head.changed)),
@@ -116,6 +121,6 @@ export function reviewPacket(node, plan, head, ci, opts) {
   ]
   const n = notesSection(opts.notes)
   if (n) parts.push(n)
-  parts.push('Answer with VERDICT. verified means every criterion is met and no defect of P0 to P2 stands. A defect you cannot judge from the head is of kind evidence_missing and carries an evidence_question.')
+  parts.push('Answer with VERDICT. verified means every criterion is met and no defect of P0 to P2 stands. Answer one entry of criteria for each criterion c1, c2, ... above, each once, under its id. A defect you cannot judge from the head is of kind evidence_missing and carries an evidence_question.')
   return parts.join('\n\n')
 }

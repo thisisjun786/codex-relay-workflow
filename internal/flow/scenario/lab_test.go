@@ -59,8 +59,9 @@ type Lab struct {
 	lane    *ops.Lane
 	cancel  context.CancelFunc
 
-	mu    sync.Mutex
-	rules []*rule
+	mu        sync.Mutex
+	advanceMu sync.Mutex
+	rules     []*rule
 	// Decisions are the rows of flow_spawn_decisions and flow_step_decisions, read through the store.
 	decisions ops.Decisions
 }

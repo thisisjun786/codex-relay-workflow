@@ -3,6 +3,7 @@ package ops
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -608,5 +609,135 @@ func TestCloseReasonsAreTheOnesOfAgentClose(t *testing.T) {
 	}
 	if holdDispatchUnknown != dagsched.AgentHoldDispatchUnknown || holdHostFailure != dagsched.AgentHoldHostFailure {
 		t.Errorf("hold reasons %q %q, AgentClose holds for %q %q", holdDispatchUnknown, holdHostFailure, dagsched.AgentHoldDispatchUnknown, dagsched.AgentHoldHostFailure)
+	}
+}
+
+// ---- the correction round after the evaluation of bb50b215 ----
+
+// d2: a verification that never ran is not an effect to replay: the row is not proven, so a resume asks the verifier again.
+func TestVerifyRowThatDidNotRunIsNotProven(t *testing.T) {
+	w := newWorld(t)
+	op := w.lane.Ops()[NameVerify]
+	for _, tc := range []struct {
+		ran  bool
+		want bool
+	}{{false, false}, {true, true}} {
+		ok, why, err := op.Proven(context.Background(), nil, engine.Event{Data: map[string]any{"node": "A", "head": "h", "ran": tc.ran, "ok": false}})
+		if err != nil || ok != tc.want {
+			t.Errorf("ran=%v: proven %v (%s) %v, want %v", tc.ran, ok, why, err, tc.want)
+		}
+	}
+}
+
+// d4: the release row of a node sized for a child or a split is a decision that stands, not a release that did not happen.
+func TestChildAndSplitReleaseRowsStayProven(t *testing.T) {
+	w := newWorld(t)
+	op := w.lane.Ops()[NameRelease]
+	for kind, want := range map[string]bool{"child": true, "split": true, "executor": false} {
+		ok, why, err := op.Proven(context.Background(), nil, engine.Event{Data: map[string]any{"node": "A", "plan": "p", "released": false, "kind": kind, "reason": "x"}})
+		if err != nil || ok != want {
+			t.Errorf("kind %s: proven %v (%s) %v, want %v", kind, ok, why, err, want)
+		}
+	}
+}
+
+// d5: a verdict names an id once.
+func TestDecodeVerdictRefusesARepeatedCriterion(t *testing.T) {
+	raw := `{"verdict":"verified","criteria":[{"id":"c1","met":true,"evidence":"a"},{"id":"c1","met":true,"evidence":"b"}],"defects":[],"summary":"s"}`
+	if _, err := DecodeVerdict(json.RawMessage(raw)); err == nil {
+		t.Error("a verdict that names c1 twice was taken")
+	}
+}
+
+// d7: a step id that is stored with another checkpoint is a conflict, never a silent success, in memory and in the relay store;
+// the lane's record then keeps both decisions under ids that say which checkpoint each describes.
+func TestStepRecordKeepsTheCheckpointOfEveryRun(t *testing.T) {
+	h1, h2 := strings.Repeat("a", 40), strings.Repeat("b", 40)
+	mem := &MemoryDecisions{}
+	one := StepRow{StepID: "step_1", RunID: "run-1", NodeID: "A", FromTier: "executor", ToTier: "executor-t1", RuleID: RuleTier1, Evidence: map[string]any{"letter": "a"}, CheckpointHead: h1, CheckpointTree: "t1"}
+	two := one
+	two.CheckpointHead, two.CheckpointTree = h2, "t2"
+	if err := mem.AppendStep(context.Background(), one); err != nil {
+		t.Fatal(err)
+	}
+	if err := mem.AppendStep(context.Background(), one); err != nil {
+		t.Errorf("the same decision again: %v", err)
+	}
+	if err := mem.AppendStep(context.Background(), two); !errors.Is(err, ErrStepConflict) {
+		t.Errorf("another checkpoint under the same id: %v", err)
+	}
+	st, err := store.Open(context.Background(), filepath.Join(t.TempDir(), "relay.sqlite3"), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+	runRow(t, st)
+	db := StoreDecisions{DB: st.DB}
+	one.RunID, two.RunID = nRun, nRun
+	if err := db.AppendStep(context.Background(), one); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.AppendStep(context.Background(), one); err != nil {
+		t.Errorf("the same decision again (store): %v", err)
+	}
+	if err := db.AppendStep(context.Background(), two); !errors.Is(err, ErrStepConflict) {
+		t.Errorf("another checkpoint under the same id (store): %v", err)
+	}
+
+	// the lane: the same step position recorded twice with a different last commit
+	w := newWorld(t)
+	commit := func(c, tree string) {
+		w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "c_commit" + c[:4], Op: OpCommit, Event: engine.EvCompleted, Data: map[string]any{"node": "A", "commit": c, "tree": tree}})
+	}
+	type recorded struct {
+		ID         string `json:"id"`
+		Checkpoint struct{ Head string }
+	}
+	step := map[string]any{"id": "step_same"}
+	info := map[string]any{"from": "executor", "to": "executor-t1", "letter": "a", "evidence": map[string]any{"tier": "executor"}}
+	commit(h1, "t1")
+	var first, second recorded
+	if err := json.Unmarshal(w.must("stepRecord", "A", step, info), &first); err != nil {
+		t.Fatal(err)
+	}
+	commit(h2, "t2")
+	if err := json.Unmarshal(w.must("stepRecord", "A", step, info), &second); err != nil {
+		t.Fatal(err)
+	}
+	if first.Checkpoint.Head != h1 || second.Checkpoint.Head != h2 {
+		t.Fatalf("checkpoints %q %q", first.Checkpoint.Head, second.Checkpoint.Head)
+	}
+	if first.ID == second.ID {
+		t.Errorf("both runs answer the step id %s: the decision row stores one checkpoint and the second executor-t1 would carry an id that describes the first", first.ID)
+	}
+	m := w.lane.d.Decisions.(*MemoryDecisions)
+	byID := map[string]string{}
+	for _, r := range m.Step {
+		byID[r.StepID] = r.CheckpointHead
+	}
+	if byID[first.ID] != h1 || byID[second.ID] != h2 {
+		t.Errorf("rows %v: each answered id must stand on the checkpoint it answered with", byID)
+	}
+}
+
+// d7: a spawn decision made at the same position with other inputs is another decision.
+func TestSpawnDecisionIDFollowsItsContent(t *testing.T) {
+	w := newWorld(t)
+	op := w.lane.Ops()[NameSpawnDecision]
+	run := func(inputs map[string]any) {
+		raw, _ := json.Marshal([]any{"EXEC_1", "spawn", map[string]any{"node": "A", "role": "executor", "inputs": inputs}})
+		if _, err := op.Run(context.Background(), engine.OpRequest{RunID: "run-1", CallID: "c_000000000001", RequestID: "r", Args: raw, Journal: w.j}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	run(map[string]any{"label": "build:A:executor"})
+	run(map[string]any{"label": "build:A:executor"})
+	m := w.lane.d.Decisions.(*MemoryDecisions)
+	if len(m.Spawn) != 1 {
+		t.Fatalf("the same decision twice is %d rows", len(m.Spawn))
+	}
+	run(map[string]any{"label": "rebuild:A:executor:r1"})
+	if len(m.Spawn) != 2 {
+		t.Errorf("a decision with other inputs at the same position was dropped: %d rows", len(m.Spawn))
 	}
 }

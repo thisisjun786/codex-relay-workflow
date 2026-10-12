@@ -290,7 +290,9 @@ phase that did not complete is never read as an approval or as a design (`held` 
 
 **The lane of a node.** `crw.dag` starts a node when the nodes it waits for (a dependency or an order edge; the members of a
 group are chained by order edges) have landed, in the scheduler's order, at most `cap` nodes at once and never two nodes whose
-edit regions overlap (an undeclared region overlaps every other); there is no barrier. A node whose predecessor did not land is
+edit regions overlap (an undeclared region overlaps every other); the regions of a node are those of the plan together with the
+`edit_regions` of the approved DESIGN (`crw.admissionRegions`), because the scheduler's own gate reads the plan's and the executor
+is scoped to the DESIGN's; there is no barrier. A node whose predecessor did not land is
 `blocked`. Each node runs on a path of its own (its id), and its first position is `crw.release`, which asks the relay for the
 slot and records the design revision and digest the node is released under. The lane builds its packet from that revision
 (`crw.issuePlan` reads the journal and nothing the script holds), and every call of the node carries the revision, the node's slice
@@ -312,13 +314,15 @@ started under `r0`.
 **Review.** `crw.review(node, plan, head, ci, opts)` is a fresh reviewer thread over the committed head (SP-REV-1), with the record
 of its answer (`crw.review` row: node, head, criteria digest, state). The state is `verdict` only for a completed, valid `VERDICT` of a
 reviewer whose model family differs from every author of the node (the node's executors and the architect); a `verified` verdict
-names no unmet criterion and no defect of P0 to P2, and a defect of kind `evidence_missing` carries its `evidence_question`. An
-answer that breaks those rules is `null_model` (`verdict_invalid`). The other states - `held`, `unknown`, `refused`
+names no unmet criterion and no defect of P0 to P2, and a defect of kind `evidence_missing` carries its `evidence_question`. The
+criteria of a plan are `c1` to `cn` in the plan's order (the packets label them so); a `verified` verdict has one entry for each, once
+(`ops.CheckCoverage`), because the premerge record is made of the entries it names and the digest of the whole set is attached to it.
+An answer that breaks those rules is `null_model` (`verdict_invalid`). The other states - `held`, `unknown`, `refused`
 (`independence_refused` included), `null_model`, `superseded` - are the call's own status; a `null_model` reviewer is asked once more
 on a fresh thread, and only the second result is the result. `crw.reviewHalt` takes every state that is not a verdict: `held` and
 `unknown` hold the node, `refused` and a second `null_model` escalate, `superseded` stops; none of them is an executor fix or tier
 evidence. A `needs_changes` verdict with a defect of kind `evidence_missing` sends the question to an explorer (SP-EXPL-3, at most
-two a node) before the next round, and its `FINDINGS` go into the next fix packet and the next reviewer packet; a verdict without such
+two a node) before the next round, read at the committed head the reviewer judged (the call carries `head`), and its `FINDINGS` go into the next fix packet and the next reviewer packet; a verdict without such
 a defect records the skip.
 
 **Tier evidence (SP-TIER-1).** `crw:lib/evidence` keeps the evidence of one node and tier from the results the lane feeds it: (a)
@@ -326,7 +330,8 @@ a defect records the skip.
 the finding), (b) the required verification failing on two consecutive committed heads, (c) `null_model` on two consecutive executor
 calls of the tier, (d) four reviewed rounds without a verified verdict. `crw.tierStep` then mints the step decision and
 `crw.stepRecord` appends the `flow_step_decisions` row (the rule, the letter of the evidence, the evidence ids, the head and tree of
-the node's last commit as the checkpoint); only then does a fresh `executor-t1` call start, in a new worktree at that commit,
+the node's last commit as the checkpoint; the step id is the engine's, or that id with a digest of the decision when the stored row of
+that id describes another checkpoint, which a suffix that runs again at the same position can reach); only then does a fresh `executor-t1` call start, in a new worktree at that commit,
 carrying the id. The same evidence on `executor-t1` is SP-TIER-2: the node escalates as `tiers_exhausted`, the relay closes its
 execution and returns its slot. A self-reported failure, `needs_research`, `blocked_scope`, a single `null_model`, `null_unknown` and
 every held, refused or superseded result are never evidence.
