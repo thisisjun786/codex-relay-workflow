@@ -55,6 +55,7 @@ Its `offlineCommands` and `hostRequiredCommands` lists are curated capability GU
 exhaustive index. `hostRequiredCommands` is the authoritative set; `offlineCommands` currently
 omits `assignment-find`, `assignment-mark` and all ten synchronisation commands, every one of
 which works from the store alone. Treat anything outside `hostRequiredCommands` as store-only.
+A child's `emit`, `intent-claim` and `intent-disposition` are the exception: they report only through the relay daemon's `control.sock`, which a sandbox without network access cannot reach (exit 3).
 
 On the host and profile measured during JUN-92, a workspace-write task could not write the default
 state directory under the user state home and could not connect to the App Server control socket,
