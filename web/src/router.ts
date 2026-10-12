@@ -37,6 +37,13 @@ export const ROUTES: readonly Route[] = [
     topic: "status",
   },
   {
+    path: "/runs",
+    label: "Runs",
+    subtitle: "Flow runs: phase, agents, threads, commits, reviews, tokens and recovery holds.",
+    icon: "cpu",
+    topic: "runs",
+  },
+  {
     path: "/policy",
     label: "Execution policy",
     subtitle: "The supervisor, parent and child model and effort pairs, and their exceptions.",

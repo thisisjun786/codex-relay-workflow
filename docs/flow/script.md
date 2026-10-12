@@ -550,6 +550,16 @@ A backend that places calls adds to a call's rows: the `allocation` member of `p
 `interrupt_requested` before a turn the engine interrupts. Flow rows named `escalation` carry a `reason` (`quota_or_rate`,
 `restore_snapshot_mismatch`, `dispatch_unknown`) with the call and node they stopped.
 
+The run surface (`crw flow`, [flow.md](../../plugins/crw/skills/crw-canon/references/flow.md#the-crw-flow-command-table)) adds the rows it writes
+and reads. A pause asked for from outside the engine (`crw flow pause`, a run deadline) is one `run_paused` flow row (`by`, `reason`)
+and then the calls that would send end held `engine_paused`. An answer to a wait is the `decision_applied` flow row `crw flow answer`
+appends under the run lock: `ask` (the question's id), `node`, `run`, `revision`, `attempt`, `plan_basis`, `scope`, `target`, `action`,
+`class` (`escalation` or `jun_decision`), `applied_by` and the `decision` (`id`, `option`, `text`, `by`, `via`, `answered_at`,
+`authority`, `authority_ref`); `crw.decide` reads `ask` and `node`. A run cancelled while no process held it ends with a `finished` row
+of error kind `cancelled` written by `crw flow cancel`. The state of a run (`running`, `paused`, `dead`, `held`, `completed`,
+`cancelled`, `failed`) is not a row: it is read from the run lock, the last `started` and `finished` rows, the calls' rows
+(`internal/flow/callstate`) and the questions no `decision_applied` row has answered.
+
 The intent rows say what a later process needs to find the request again. `thread_requested` and `fork_requested` carry the
 `cwd` the thread is to run in, the `send` ordinal of the request (1, then one more each time reconcile proved the previous
 request absent and sent it again), `at`, the wall time of the intent in milliseconds, and `owner`, the run process that

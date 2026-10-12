@@ -146,7 +146,7 @@ func resumeCmd(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	}
 	res, err := Run(ctx, prog, Config{
 		RunID: runID, Backend: setup.Backend, Policy: table, Journal: setup.Journal, Args: argsRaw, Pool: *pool, TokenBudget: *budget,
-		Resume: &ResumeOptions{}, Ops: setup.Ops, OmitSeq: true, Upward: setup.Upward,
+		Resume: &ResumeOptions{}, Ops: setup.Ops, OmitSeq: true, Control: controlOf(ctx), Upward: setup.Upward,
 		Workflows: func(name, scriptPath string) (*script.Program, error) {
 			return loadSibling(fs.FS(dir), name, scriptPath)
 		},

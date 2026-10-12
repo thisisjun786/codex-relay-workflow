@@ -301,15 +301,15 @@ func TestFlowAuditCommandAuditsARunFromItsStore(t *testing.T) {
 	if got := closeOf(t, l); got.State != "closed" || got.Audit.OK != 2 {
 		t.Fatalf("%+v", got)
 	}
-	prev := flowcli.Env
-	flowcli.Env = flowcli.OpenStore
-	t.Cleanup(func() { flowcli.Env = prev })
+	prev := flowcli.AuditEnv
+	flowcli.AuditEnv = flowcli.OpenAuditStore
+	t.Cleanup(func() { flowcli.AuditEnv = prev })
 	audit_ := func(args ...string) (int, map[string]any, string) {
 		// the command opens the store as a process of its own: the run's process is over, and so is its hold on the store
 		_ = l.Store.Close()
 		defer func() { l.Store = l.openStore() }()
 		var out, errOut bytes.Buffer
-		code := flowcli.RunCLI(context.Background(), append([]string{"audit", "--state", l.Root, "--json"}, args...), &out, &errOut)
+		code := flowcli.RunAudit(context.Background(), append([]string{"audit", "--state", l.Root, "--json"}, args...), &out, &errOut)
 		var rep map[string]any
 		_ = json.Unmarshal(out.Bytes(), &rep)
 		return code, rep, errOut.String()

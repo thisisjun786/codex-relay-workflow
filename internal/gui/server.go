@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io/fs"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -46,6 +47,7 @@ type Server struct {
 	token    string
 	env      *Env
 	routes   map[string]Handler
+	prefixes []prefixRoute
 	assets   fs.FS
 	shutdown time.Duration
 }
@@ -81,14 +83,21 @@ func New(opts Options) (*Server, error) {
 		shutdown = defaultShutdownTimeout
 	}
 	table := make(map[string]Handler, len(routes))
+	var prefixes []prefixRoute
 	for _, route := range sortRoutes(routes) {
 		table[route.Method+" "+route.Path] = route.Handler
+		if strings.HasSuffix(route.Path, "/") {
+			prefixes = append(prefixes, prefixRoute{method: route.Method, prefix: route.Path, handler: route.Handler})
+		}
 	}
+	// the longest prefix serves a path first
+	sort.SliceStable(prefixes, func(i, j int) bool { return len(prefixes[i].prefix) > len(prefixes[j].prefix) })
 	return &Server{
 		port:     opts.Port,
 		token:    token,
 		env:      &Env{Version: version},
 		routes:   table,
+		prefixes: prefixes,
 		assets:   assets,
 		shutdown: shutdown,
 	}, nil
@@ -111,10 +120,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.Handler()
 // dispatch runs the registered route for this method and path, or answers a JSON 404 for an
 // unregistered /api/ path, or serves the static tree. It runs after the guard.
 func (s *Server) dispatch(w http.ResponseWriter, r *http.Request) {
-	if handler, ok := s.routes[r.Method+" "+r.URL.Path]; ok {
+	if handler, ok := s.handlerFor(r); ok {
 		response, err := handler(s.env, r)
 		if err != nil {
 			writeError(w, r, http.StatusInternalServerError, codeInternal)
+			return
+		}
+		if response.Stream != nil {
+			response.Stream(w, r)
 			return
 		}
 		status := response.Status
@@ -143,4 +156,24 @@ func newToken() (string, error) {
 		return "", fmt.Errorf("gui: the write token cannot be generated: %w", err)
 	}
 	return base64.RawURLEncoding.EncodeToString(buf), nil
+}
+
+// prefixRoute is a route that serves the paths below its prefix.
+type prefixRoute struct {
+	method, prefix string
+	handler        Handler
+}
+
+// handlerFor is the handler of a request: the route registered for its method and exact path, else the prefix route of the longest
+// prefix the path is below. A prefix route serves the paths below it only, never the prefix itself.
+func (s *Server) handlerFor(r *http.Request) (Handler, bool) {
+	if handler, ok := s.routes[r.Method+" "+r.URL.Path]; ok {
+		return handler, true
+	}
+	for _, p := range s.prefixes {
+		if p.method == r.Method && len(r.URL.Path) > len(p.prefix) && strings.HasPrefix(r.URL.Path, p.prefix) {
+			return p.handler, true
+		}
+	}
+	return nil, false
 }

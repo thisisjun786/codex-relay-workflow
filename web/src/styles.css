@@ -468,3 +468,11 @@ h1, h2, h3, .card-title, .card-desc, .page-head .sub { text-wrap: balance; }
   .list-row { flex-wrap: wrap; }
   .row-actions { width: 100%; justify-content: flex-end; flex-wrap: wrap; }
 }
+
+/* The Runs page (CRW-1205): the list of runs, and the tree of the selected one. */
+.runs-screen { display: flex; flex-direction: column; gap: var(--s-3); }
+.run-pick { width: 100%; text-align: left; background: transparent; border: 0; cursor: pointer; font: inherit; color: inherit; }
+.run-pick.active { background: var(--panel-hover); }
+.run-tree { display: flex; flex-direction: column; gap: var(--s-3); }
+.tree-agent { padding-left: var(--s-4); }
+.spacer { flex: 1; }

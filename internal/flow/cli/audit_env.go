@@ -14,42 +14,42 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
-// OpenStore is Env of the shipped binary: it opens the relay store the journal of the run is persisted in (the state directory the
+// OpenAuditStore is AuditEnv of the shipped binary: it opens the relay store the journal of the run is persisted in (the state directory the
 // operator named, else the relay's own selection for the control socket) and connects to the App Server control socket the run's
 // host listens on, to read the reviewer threads. The store is opened for writing, because the result of the audit is a row of the
 // journal; a store that does not exist is an error, never a new empty store. An acceptance given without its run is looked up in
 // the store.
-func OpenStore(ctx context.Context, req Request) (Setup, error) {
+func OpenAuditStore(ctx context.Context, req AuditRequest) (AuditSetup, error) {
 	socket := req.Socket
 	if socket == "" {
 		var err error
 		if socket, err = store.DefaultSocket(); err != nil {
-			return Setup{}, err
+			return AuditSetup{}, err
 		}
 	}
 	selection, err := store.ResolveStateDir(req.State, socket)
 	if err != nil {
-		return Setup{}, err
+		return AuditSetup{}, err
 	}
 	db := selection.DBPath()
 	if _, err := os.Stat(db); err != nil {
-		return Setup{}, fmt.Errorf("there is no relay store at %s (%s): %w", db, selection.Detail, err)
+		return AuditSetup{}, fmt.Errorf("there is no relay store at %s (%s): %w", db, selection.Detail, err)
 	}
 	st, err := store.Open(ctx, db, socket)
 	if err != nil {
-		return Setup{}, err
+		return AuditSetup{}, err
 	}
 	run := req.RunID
 	if run == "" {
 		if run, err = RunOfAcceptance(ctx, st, req.AcceptanceID); err != nil {
 			_ = st.Close()
-			return Setup{}, err
+			return AuditSetup{}, err
 		}
 	}
 	j, err := journal.Open(ctx, st, run, journal.Identity{}, journal.Options{})
 	if err != nil {
 		_ = st.Close()
-		return Setup{}, err
+		return AuditSetup{}, err
 	}
 	client := appserver.New(socket, appserver.DefaultBounds)
 	finished := false
@@ -58,7 +58,7 @@ func OpenStore(ctx context.Context, req Request) (Setup, error) {
 			finished = true
 		}
 	}
-	return Setup{RunID: run, Journal: j, Reader: audit.BusReader{Bus: client.Bus()}, Finished: finished, Close: func() error {
+	return AuditSetup{RunID: run, Journal: j, Reader: audit.BusReader{Bus: client.Bus()}, Finished: finished, Close: func() error {
 		return errors.Join(j.Close(), client.Close(), st.Close())
 	}}, nil
 }

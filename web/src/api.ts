@@ -818,3 +818,61 @@ export function effortFallbackNotice(supported: readonly string[] | null | undef
     ? "This model advertises no effort the helper-role store accepts; the role uses the session effort."
     : `This model advertises no effort the helper-role store accepts; the saved effort ${savedEffort} is kept.`;
 }
+
+/* ---- the Runs page (CRW-1205) ---- */
+
+import type { RunDetail, RunsDocument } from "./runs-state.ts";
+
+/** GET /api/runs: the runs of the relay store, or the reason they could not be read. */
+export function getRuns(signal?: AbortSignal): Promise<RunsDocument> {
+  return request<RunsDocument>("/api/runs", signal ? { signal } : {});
+}
+
+/** GET /api/runs/<id>: the tree of one run. */
+export function getRun(id: string, signal?: AbortSignal): Promise<RunDetail> {
+  return request<RunDetail>(`/api/runs/${encodeURIComponent(id)}`, signal ? { signal } : {});
+}
+
+/** What a control POST answers: whether the command did what was asked, and its words. */
+export interface RunControlResult {
+  ok: boolean;
+  message?: string;
+  reply?: unknown;
+}
+
+/**
+ * POST /api/runs/<id>/pause or /cancel. A refusal (a run that is over, a run no process holds) is a
+ * 409 whose body carries the command's own words; it is returned, not thrown, so the page can show it.
+ */
+export async function controlRun(id: string, verb: "pause" | "cancel"): Promise<RunControlResult> {
+  return postRun(`/api/runs/${encodeURIComponent(id)}/${verb}`, {});
+}
+
+/** The record and the question an answer is for. */
+export interface RunAnswer {
+  decision: string;
+  node: string;
+  question: string;
+  revision: number;
+}
+
+/** POST /api/runs/<id>/answer: apply the manager's answer record to a wait of the run. */
+export async function answerRun(id: string, answer: RunAnswer): Promise<RunControlResult> {
+  return postRun(`/api/runs/${encodeURIComponent(id)}/answer`, answer);
+}
+
+async function postRun(path: string, body: unknown): Promise<RunControlResult> {
+  try {
+    const result = await request<RunControlResult>(path, { method: "POST", body: JSON.stringify(body) });
+    return result;
+  } catch (err) {
+    const e = err as Partial<ApiError>;
+    if (e.status === 409 || e.status === 400) return { ok: false, message: e.error ?? `refused (${e.status})` };
+    throw err;
+  }
+}
+
+/** The URL of a run's event stream. */
+export function runEventsUrl(id: string): string {
+  return `/api/runs/${encodeURIComponent(id)}/events`;
+}

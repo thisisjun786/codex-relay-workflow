@@ -1,9 +1,9 @@
-// The audit command (CRW-1206, F13): the audit of the reviews behind the acceptances of a flow run, read back from the reviewer
+package cli
+
+// `crw flow audit` (CRW-1206, F13): the audit of the reviews behind the acceptances of a flow run, read back from the reviewer
 // threads on the host (internal/flow/audit). The audit a run makes at a milestone close is the same audit; this command makes it
 // again whenever somebody asks - after a close, from another process, on a run that is over - and leaves its result in the journal
 // beside the rows of the run.
-
-package cli
 
 import (
 	"context"
@@ -22,8 +22,11 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 )
 
-// Request is what `crw flow audit` asks the environment to open.
-type Request struct {
+// auditUsage is the usage line of `crw flow audit` (Usage holds it among the other commands).
+const auditUsage = `usage: crw flow audit (--run RUN | --acceptance ID) [--milestone M] [--state DIR] [--socket PATH] [--json] [--no-record]`
+
+// AuditRequest is what `crw flow audit` asks the environment to open.
+type AuditRequest struct {
 	// RunID is the run named with --run; an acceptance given alone is searched for in the store.
 	RunID, AcceptanceID string
 	// State and Socket are the relay state directory and the App Server control socket the operator named; empty takes the relay's
@@ -31,9 +34,9 @@ type Request struct {
 	State, Socket string
 }
 
-// Setup is what the environment opened: the journal of the run, the reader of the host, and the close that ends them (it commits
+// AuditSetup is what the environment opened: the journal of the run, the reader of the host, and the close that ends them (it commits
 // the rows still buffered).
-type Setup struct {
+type AuditSetup struct {
 	RunID   string
 	Journal engine.Journal
 	Reader  audit.Reader
@@ -43,25 +46,25 @@ type Setup struct {
 	Close    func() error
 }
 
-// Env opens the journal of a run and the host it ran on. The binary installs it (OpenStore); a build that installs nothing cannot
+// AuditEnv opens the journal of a run and the host it ran on. The binary installs it (OpenAuditStore); a build that installs nothing cannot
 // audit a run of another process.
-var Env func(ctx context.Context, req Request) (Setup, error)
+var AuditEnv func(ctx context.Context, req AuditRequest) (AuditSetup, error)
 
-// Now is the clock of the row the command appends; tests replace it.
-var Now = time.Now
+// AuditNow is the clock of the row the command appends; tests replace it.
+var AuditNow = time.Now
 
-// RunCLI serves `crw flow audit`. It prints the result of each acceptance - ok, mismatch or unobserved - and exits 0 when every
+// RunAudit serves `crw flow audit`. It prints the result of each acceptance - ok, mismatch or unobserved - and exits 0 when every
 // acceptance audited is ok, 1 when one is a mismatch or is unobserved (unobserved is not a pass), and 2 for a command line, a
 // store or a run it cannot use. The result is appended to the journal of the run as a crw.audit row (kind audit) unless
 // --no-record is given or the run has not finished.
-func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer) (code int) {
+func RunAudit(ctx context.Context, args []string, stdout, stderr io.Writer) (code int) {
 	if len(args) == 0 || args[0] != "audit" {
-		fmt.Fprintln(stderr, Usage)
+		fmt.Fprintln(stderr, auditUsage)
 		return 2
 	}
 	fs := flag.NewFlagSet("crw flow audit", flag.ContinueOnError)
 	fs.SetOutput(stderr)
-	fs.Usage = func() { fmt.Fprintln(stderr, Usage) }
+	fs.Usage = func() { fmt.Fprintln(stderr, auditUsage) }
 	run := fs.String("run", "", "audit every agent-path acceptance of this run")
 	acceptance := fs.String("acceptance", "", "audit this acceptance (its run is found in the store unless --run names it)")
 	milestone := fs.String("milestone", "", "audit the acceptances of this milestone only")
@@ -80,14 +83,14 @@ func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer) (code 
 		fmt.Fprintln(stderr, "crw flow audit: error: takes no positional argument")
 		return 2
 	case *run == "" && *acceptance == "":
-		fmt.Fprintln(stderr, Usage)
+		fmt.Fprintln(stderr, auditUsage)
 		fmt.Fprintln(stderr, "crw flow audit: error: one of --run and --acceptance is required")
 		return 2
-	case Env == nil:
+	case AuditEnv == nil:
 		fmt.Fprintln(stderr, "crw flow audit: error: this build installs no journal store and no host, so the run cannot be audited")
 		return 2
 	}
-	setup, err := Env(ctx, Request{RunID: *run, AcceptanceID: *acceptance, State: *state, Socket: *socket})
+	setup, err := AuditEnv(ctx, AuditRequest{RunID: *run, AcceptanceID: *acceptance, State: *state, Socket: *socket})
 	if err != nil {
 		fmt.Fprintf(stderr, "crw flow audit: error: %v\n", err)
 		return 2
@@ -175,7 +178,7 @@ func rowCallID(run string, results []audit.Result) string {
 		ids = append(ids, r.AcceptanceID+":"+r.State)
 	}
 	slices.Sort(ids)
-	sum := sha256.Sum256([]byte(run + "\x00" + strings.Join(ids, "\x00") + "\x00" + Now().UTC().Format(time.RFC3339Nano)))
+	sum := sha256.Sum256([]byte(run + "\x00" + strings.Join(ids, "\x00") + "\x00" + AuditNow().UTC().Format(time.RFC3339Nano)))
 	return "audit_" + hex.EncodeToString(sum[:])[:20]
 }
 

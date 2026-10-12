@@ -827,7 +827,7 @@ func Test47_PLG_20_ShippedHookDeclarationsPass(t *testing.T) {
 	}
 	m := doc(parse(t, f[manifestPath]))
 	hooks, _ := m["hooks"].([]any)
-	if len(hooks) != 34 {
+	if len(hooks) != 35 {
 		t.Fatalf("the manifest declares %d hook files", len(hooks))
 	}
 	for _, h := range hooks {
@@ -841,5 +841,5 @@ func Test47_PLG_20_ShippedHookDeclarationsPass(t *testing.T) {
 	if err := json.Unmarshal([]byte(got.stdout), &r); err != nil || got.code != 0 {
 		t.Fatalf("the shipped package: %v: %+v", err, got)
 	}
-	expectEqual(t, "stopHooks", r["stopHooks"], float64(3))
+	expectEqual(t, "stopHooks", r["stopHooks"], float64(4))
 }

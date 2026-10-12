@@ -18,9 +18,9 @@ import (
 
 func fixedClock(t *testing.T) {
 	t.Helper()
-	prev := Now
-	Now = func() time.Time { return time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC) }
-	t.Cleanup(func() { Now = prev })
+	prev := AuditNow
+	AuditNow = func() time.Time { return time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC) }
+	t.Cleanup(func() { AuditNow = prev })
 }
 
 // acceptedWithNoReview is a journal of a run with one acceptance whose review is not in it: an audit finds a mismatch.
@@ -34,24 +34,24 @@ func acceptedWithNoReview(finished bool) *engine.MemoryJournal {
 	return j
 }
 
-func useEnv(t *testing.T, j engine.Journal, finished bool, err error) *Request {
+func useEnv(t *testing.T, j engine.Journal, finished bool, err error) *AuditRequest {
 	t.Helper()
-	var got Request
-	prev := Env
-	Env = func(_ context.Context, req Request) (Setup, error) {
+	var got AuditRequest
+	prev := AuditEnv
+	AuditEnv = func(_ context.Context, req AuditRequest) (AuditSetup, error) {
 		got = req
 		if err != nil {
-			return Setup{}, err
+			return AuditSetup{}, err
 		}
-		return Setup{RunID: "run-1", Journal: j, Finished: finished}, nil
+		return AuditSetup{RunID: "run-1", Journal: j, Finished: finished}, nil
 	}
-	t.Cleanup(func() { Env = prev })
+	t.Cleanup(func() { AuditEnv = prev })
 	return &got
 }
 
-func run(args ...string) (code int, out, errOut string) {
+func auditCmd(args ...string) (code int, out, errOut string) {
 	var o, e bytes.Buffer
-	code = RunCLI(context.Background(), append([]string{"audit"}, args...), &o, &e)
+	code = RunAudit(context.Background(), append([]string{"audit"}, args...), &o, &e)
 	return code, o.String(), e.String()
 }
 
@@ -65,23 +65,23 @@ func TestAuditCommandLine(t *testing.T) {
 		"an unknown flag":          {"--run", "r", "--nope"},
 	} {
 		useEnv(t, acceptedWithNoReview(true), true, nil)
-		if code, _, errOut := run(args...); code != 2 {
+		if code, _, errOut := auditCmd(args...); code != 2 {
 			t.Errorf("%s: exit %d, stderr %q", name, code, errOut)
 		}
 	}
-	prev := Env
-	Env = nil
-	if code, _, errOut := run("--run", "r"); code != 2 || !strings.Contains(errOut, "installs no journal store") {
+	prev := AuditEnv
+	AuditEnv = nil
+	if code, _, errOut := auditCmd("--run", "r"); code != 2 || !strings.Contains(errOut, "installs no journal store") {
 		t.Errorf("no environment: %d %q", code, errOut)
 	}
-	Env = prev
+	AuditEnv = prev
 	useEnv(t, nil, false, errors.New("there is no relay store at /nowhere"))
-	if code, _, errOut := run("--run", "r"); code != 2 || !strings.Contains(errOut, "no relay store") {
+	if code, _, errOut := auditCmd("--run", "r"); code != 2 || !strings.Contains(errOut, "no relay store") {
 		t.Errorf("a store that does not open: %d %q", code, errOut)
 	}
 	// the request carries what the operator named
 	req := useEnv(t, acceptedWithNoReview(true), true, nil)
-	run("--acceptance", "acc-1", "--state", "/state", "--socket", "/sock", "--no-record")
+	auditCmd("--acceptance", "acc-1", "--state", "/state", "--socket", "/sock", "--no-record")
 	if req.AcceptanceID != "acc-1" || req.State != "/state" || req.Socket != "/sock" || req.RunID != "" {
 		t.Errorf("request %+v", req)
 	}
@@ -93,7 +93,7 @@ func TestAuditCommandExitCodesAndRecording(t *testing.T) {
 	fixedClock(t)
 	j := acceptedWithNoReview(true)
 	useEnv(t, j, true, nil)
-	code, out, errOut := run("--run", "run-1", "--json")
+	code, out, errOut := auditCmd("--run", "run-1", "--json")
 	if code != 1 || errOut != "" {
 		t.Fatalf("exit %d, stderr %q", code, errOut)
 	}
@@ -124,7 +124,7 @@ func TestAuditCommandExitCodesAndRecording(t *testing.T) {
 	// text output names the acceptance and the state
 	j2 := acceptedWithNoReview(true)
 	useEnv(t, j2, true, nil)
-	if code, out, _ := run("--run", "run-1"); code != 1 || !strings.Contains(out, "mismatch") || !strings.Contains(out, "acc-1") || !strings.Contains(out, "recorded in the journal") {
+	if code, out, _ := auditCmd("--run", "run-1"); code != 1 || !strings.Contains(out, "mismatch") || !strings.Contains(out, "acc-1") || !strings.Contains(out, "recorded in the journal") {
 		t.Errorf("text: %d %q", code, out)
 	}
 	// --no-record, and a run that has not finished: the result is printed and nothing is appended
@@ -135,7 +135,7 @@ func TestAuditCommandExitCodesAndRecording(t *testing.T) {
 		j3 := acceptedWithNoReview(c.finished)
 		useEnv(t, j3, c.finished, nil)
 		before := len(j3.Events())
-		code, out, _ := run(append([]string{"--run", "run-1", "--json"}, c.args...)...)
+		code, out, _ := auditCmd(append([]string{"--run", "run-1", "--json"}, c.args...)...)
 		var r struct {
 			Recorded bool   `json:"recorded"`
 			Why      string `json:"not_recorded_because"`
@@ -147,10 +147,10 @@ func TestAuditCommandExitCodesAndRecording(t *testing.T) {
 	}
 	// an acceptance or a milestone that matches nothing is a command line that cannot be used
 	useEnv(t, acceptedWithNoReview(true), true, nil)
-	if code, _, errOut := run("--run", "run-1", "--acceptance", "acc-other"); code != 2 || !strings.Contains(errOut, "acc-other") {
+	if code, _, errOut := auditCmd("--run", "run-1", "--acceptance", "acc-other"); code != 2 || !strings.Contains(errOut, "acc-other") {
 		t.Errorf("another acceptance: %d %q", code, errOut)
 	}
-	if code, _, _ := run("--run", "run-1", "--milestone", "M9"); code != 2 {
+	if code, _, _ := auditCmd("--run", "run-1", "--milestone", "M9"); code != 2 {
 		t.Errorf("another milestone: %d", code)
 	}
 }
@@ -166,18 +166,43 @@ func TestAuditCommandReportsACloseError(t *testing.T) {
 	}{
 		"an audit with a mismatch": {acceptedWithNoReview(true), 2},
 	} {
-		prev := Env
+		prev := AuditEnv
 		closed := 0
-		Env = func(_ context.Context, req Request) (Setup, error) {
-			return Setup{RunID: "run-1", Journal: c.journal, Finished: true, Close: func() error {
+		AuditEnv = func(_ context.Context, req AuditRequest) (AuditSetup, error) {
+			return AuditSetup{RunID: "run-1", Journal: c.journal, Finished: true, Close: func() error {
 				closed++
 				return errors.New("the store did not close")
 			}}, nil
 		}
-		code, _, errOut := run("--run", "run-1", "--no-record")
-		Env = prev
+		code, _, errOut := auditCmd("--run", "run-1", "--no-record")
+		AuditEnv = prev
 		if closed != 1 || code != c.wantCode || !strings.Contains(errOut, "the store did not close") {
 			t.Errorf("%s: closed %d times, exit %d, stderr %q", name, closed, code, errOut)
 		}
+	}
+}
+
+// The run surface serves `crw flow audit` (one package after the merge with CRW-1206): Handles and RunWith take it, Usage lists it
+// beside the other commands, and RunWith hands it to RunAudit, which needs the AuditEnv the binary installs.
+func TestRunSurfaceServesAudit(t *testing.T) {
+	if !Handles([]string{"audit"}) || !Handles([]string{"start"}) {
+		t.Error("Handles does not take audit and start")
+	}
+	if !strings.Contains(Usage, "crw flow audit (--run RUN | --acceptance ID)") || !strings.Contains(Usage, "crw flow start WORKFLOW") {
+		t.Errorf("Usage: %s", Usage)
+	}
+	prev := AuditEnv
+	AuditEnv = nil
+	t.Cleanup(func() { AuditEnv = prev })
+	var out, errOut bytes.Buffer
+	if code := RunWith(context.Background(), &Deps{}, []string{"audit", "--run", "r"}, strings.NewReader(""), &out, &errOut); code != 2 || !strings.Contains(errOut.String(), "installs no journal store") {
+		t.Errorf("RunWith audit without an environment: exit %d, stderr %q", code, errOut.String())
+	}
+	fixedClock(t)
+	useEnv(t, acceptedWithNoReview(true), true, nil)
+	out.Reset()
+	errOut.Reset()
+	if code := RunWith(context.Background(), &Deps{}, []string{"audit", "--run", "run-1", "--no-record"}, strings.NewReader(""), &out, &errOut); code != 1 || !strings.Contains(out.String(), "mismatch") {
+		t.Errorf("RunWith audit: exit %d, stdout %q, stderr %q", code, out.String(), errOut.String())
 	}
 }

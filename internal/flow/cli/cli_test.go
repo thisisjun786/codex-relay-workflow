@@ -18,8 +18,6 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
-var ctx = context.Background()
-
 type fakeSender struct {
 	supervisor []report.SupervisorSend
 	reply      report.SendResult
@@ -95,7 +93,8 @@ func TestHandlesTheReachUpCommands(t *testing.T) {
 			t.Errorf("%s is not handled", c)
 		}
 	}
-	for _, c := range []string{"run", "resume", "lint", "roles", "compile", "export", ""} {
+	// resume and recover are the run surface's too (under the run lock, cli.go); the engine keeps run, lint, roles and compile
+	for _, c := range []string{"run", "lint", "roles", "compile", "export", ""} {
 		if Handles([]string{c}) {
 			t.Errorf("%s is handled", c)
 		}
@@ -284,7 +283,7 @@ func TestRunServesTheAuditCommand(t *testing.T) {
 		t.Fatal("audit is not handled")
 	}
 	var out, errOut bytes.Buffer
-	if code := Run(ctx, []string{"audit", "--run", "run-1", "--no-record"}, &out, &errOut); code != 1 || !strings.Contains(out.String(), "1 mismatch") {
+	if code := Run(ctx, []string{"audit", "--run", "run-1", "--no-record"}, strings.NewReader(""), &out, &errOut); code != 1 || !strings.Contains(out.String(), "1 mismatch") {
 		t.Errorf("exit %d stdout %q stderr %q", code, out.String(), errOut.String())
 	}
 }

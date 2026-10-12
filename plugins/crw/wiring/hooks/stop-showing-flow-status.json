@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$HOME/.local/share/crw-runtime/current/bin/crw\" hook stop --leg stop-showing-flow-status",
+            "timeout": 10,
+            "statusMessage": "(crw) Reading the flow runs of this thread"
+          }
+        ]
+      }
+    ]
+  }
+}

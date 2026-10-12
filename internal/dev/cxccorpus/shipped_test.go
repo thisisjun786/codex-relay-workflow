@@ -93,7 +93,7 @@ func TestShippedHooks_match_K1(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(manifest.Hooks) != 34 || len(entries) != 34 || manifest.Hooks[0] != "./wiring/hooks/stop-recording-completion.json" {
+	if len(manifest.Hooks) != 35 || len(entries) != 35 || manifest.Hooks[0] != "./wiring/hooks/stop-recording-completion.json" {
 		t.Fatalf("manifest names %d hook files, the directory holds %d: %q", len(manifest.Hooks), len(entries), manifest.Hooks)
 	}
 	for _, e := range entries {

@@ -181,8 +181,8 @@ func TestDueHooks_isTheDeclarationsTheEventsMatch(t *testing.T) {
 	for _, n := range due {
 		total += n
 	}
-	// nine SessionStart, five UserPromptSubmit, three PreToolUse for the shell, one PostToolUse for the viewer, three Stop
-	if total != 21 || due[hookKey("pre-tool-use-guarding-github-post", "PreToolUse", "Bash")] != 1 ||
+	// nine SessionStart, five UserPromptSubmit, three PreToolUse for the shell, one PostToolUse for the viewer, four Stop
+	if total != 22 || due[hookKey("pre-tool-use-guarding-github-post", "PreToolUse", "Bash")] != 1 ||
 		due[hookKey("post-tool-use-tracking-render-observations", "PostToolUse", "view_image")] != 1 ||
 		due[hookKey(CompletionLeg, "Stop", "")] != 1 || due[hookKey("pre-tool-use-attaching-skills", "PreToolUse", "Bash")] != 0 {
 		t.Errorf("%d due: %v", total, due)

@@ -21,7 +21,7 @@ The parent holds no goal and runs no loop. A session that starts (the first one,
 4. For an accepted pull request: `dag-merge-request`, the merge lane's own commands, `assignment-mark merged`, `dag-integration-observe` (which also runs the conflict sweep the landing owes), and `dag-landing-result-record` once the dev run of the merge commit has been read (green, red or reverted: [Release policy](#release-policy)). The merge order is read from the reading's `merge_order` ([The merge-order constraint](#the-merge-order-constraint)).
 5. For the plan's Linear summary: `dag-summary-status --plan P`; when a document is owed or out of date, `dag-summary-enqueue` and the claim, write, read back and confirm of [the summary outbox](dag-outbox.md). It writes the summary table only, so it never
    re-runs a child or re-sends a correction.
-6. End the turn. Nothing is resident: the scheduler is a library the relay's commands call over the relay's one store; it adds no daemon, no listener and no database of its own
+6. End the turn. The scheduler stays a library; a flow run is a process that lives for one run and loses nothing when it dies. The scheduler is a library the relay's commands call over the relay's one store; it adds no daemon, no listener and no database of its own
    (`TestNoNewStoreOrDaemon`, `TestForkJoinLeavesNoStoreOfItsOwn`).
 
 The scheduler re-implements no I-17 loop or skill, and contract section 10 names no I-17 output that this issue needs.
@@ -983,7 +983,7 @@ The rows a decision leaves carry the epoch of the session that decided it (the r
 
 ## Restart and adoption
 
-Nothing is resident, so a restart loses nothing: the plan, the releases, the executions, the acceptances and the merge records are in the store, and `dag-ready --plan P` answers what may start from the store alone. `dag-restart --plan P --actor A` is the picture a parent that starts again needs first. It reads, writes nothing and reads no clock: the same store gives the same answer, and a lease, a heartbeat or a deadline that ran out never makes an owned node ready again or reassigns it. For the newest claim it says whether the actor holds it, and for every node somebody owns what to do:
+The scheduler stays a library, and a flow run is a process that lives for one run and loses nothing when it dies, so a restart loses nothing: the plan, the releases, the executions, the acceptances and the merge records are in the store, and `dag-ready --plan P` answers what may start from the store alone. `dag-restart --plan P --actor A` is the picture a parent that starts again needs first. It reads, writes nothing and reads no clock: the same store gives the same answer, and a lease, a heartbeat or a deadline that ran out never makes an owned node ready again or reassigns it. For the newest claim it says whether the actor holds it, and for every node somebody owns what to do:
 
 | Resume | Meaning |
 | --- | --- |
@@ -994,6 +994,8 @@ Nothing is resident, so a restart loses nothing: the plan, the releases, the exe
 | `none` | nothing is outstanding (a node with an acceptance: the acceptance is the node's value and belongs to no session) |
 
 An agent node is reported with the same resume values and an `agent` object ([The life of an agent node](#the-life-of-an-agent-node-r07)): `adopt_needed` is the node another orchestrator holds, `adopt` the node this actor holds (`crw flow resume`, or `dag-integrate` for an accepted head), `reconcile` a node with an unresolved call (`crw flow recover` when its outcome is unknown and not cleared, `crw flow resume` for any other unresolved call).
+
+The values of the Resume table (`adopt`, `adopt_needed`, `reconcile`, `needs_operator`, `none`) mean the same when the process that restarts is a flow run process and not a parent session: the reading is of the store, which a run process only writes to, so a restart of the run process changes no value and no row of this table presumes a resident daemon.
 
 A managed start that was released before it created a child is `needs_operator` first (the reading derives it as releasing). A node whose relationship was replaced is judged before its derived state, which reads the replaced relationship as closed.
 
@@ -1006,6 +1008,7 @@ What each kind of restart recovers:
 | a new session of the same parent task | every boundary: before the intent, after the intent, the creation response lost, started and not bound, bound, the result stored, the ruling stored, accepted. One child and one release row per node; the pending effect is reconciled by replaying the same request; results and rulings stored before the crash are used. `dag-restart` says `reconcile` up to the bind, `adopt` from the bind to the ruling and `none` once accepted |
 | a replacement parent task | a bound child whose result is not accepted, by `dag-adopt`. The previous parent's writes are refused |
 | a replacement parent task | not recovered, and said so (`needs_operator`, no child created): a release that never bound its child (the managed start is frozen under the previous parent), a result accepted and not landed (its merge turn and merged mark belong to the previous parent), and results stored under the replaced relationship (the child reports under the successor) |
+| a flow run process that died | the run, from its journal. The run lock is released when the process dies, and [`crw flow resume`](../../plugins/crw/skills/crw-canon/references/flow.md#crw-flow-resume) or [`crw flow recover`](../../plugins/crw/skills/crw-canon/references/flow.md#crw-flow-recover) takes the run again from there: `crw flow resume` goes on with every call that is not settled and not in recovery hold, `crw flow recover` settles a call whose outcome is unknown. An effect whose outcome is not known is compared by replaying the same request (the idempotent request id of the call), never done again. A run process that was cancelled or paused is resumed the same way |
 
 An unknown merge turn stays unknown until the head is observed; the merge lane answers the holder's repeated request with the turn it already has or refuses it, and no second turn exists. Elapsed time is not an observation.
 
