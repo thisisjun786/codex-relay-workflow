@@ -241,6 +241,7 @@ func (c *command) execute(spec Spec, state string, resume bool, sigs <-chan os.S
 	cfg := engine.Config{
 		RunID: spec.RunID, Backend: world.Backend, Policy: table, Journal: world.Journal, Args: args, Pool: spec.Pool, TokenBudget: spec.TokenBudget,
 		Ops: world.Ops, Prover: world.Prover, InputSnapshot: world.InputSnapshot, Workflows: src.Workflows, Control: ctl, OmitSeq: true,
+		Upward: world.Upward,
 	}
 	if resume {
 		cfg.Resume = &engine.ResumeOptions{}

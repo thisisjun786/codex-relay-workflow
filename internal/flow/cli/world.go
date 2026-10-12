@@ -25,8 +25,9 @@ var OpsFor func(ctx context.Context, req WorldRequest, j engine.Journal) (map[st
 
 // ProductionWorld is the World of the shipped binary: the relay store the run's journal is persisted in, the App Server
 // connection of its host, and the allocator of its working directories (<state>/flow/<run>/...). The backend binds every engine
-// turn to the run before it starts it, as a resumed run does (agent.BoundConfig). The store is opened for writing; a store that
-// does not exist is an error, never a new empty store.
+// turn to the run before it starts it, as a resumed run does (agent.BoundConfig), and the run hands what goes up from it to the
+// hook journal.UpwardFactory makes, when the binary installed one. The store is opened for writing; a store that does not exist
+// is an error, never a new empty store.
 func ProductionWorld(ctx context.Context, req WorldRequest) (World, error) {
 	spec := req.Spec
 	socket := spec.Socket
@@ -36,9 +37,9 @@ func ProductionWorld(ctx context.Context, req WorldRequest) (World, error) {
 			return World{}, err
 		}
 	}
-	db := filepath.Join(req.State, "relay.sqlite3")
+	db, statePath := filepath.Join(req.State, "relay.sqlite3"), req.State
 	if sel, err := store.ResolveStateDir(req.State, socket); err == nil {
-		db = sel.DBPath()
+		db, statePath = sel.DBPath(), sel.Path
 	}
 	if _, err := os.Stat(db); err != nil {
 		return World{}, fmt.Errorf("there is no relay store at %s: %w", db, err)
@@ -81,6 +82,11 @@ func ProductionWorld(ctx context.Context, req WorldRequest) (World, error) {
 		return World{}, err
 	}
 	w := World{Journal: j, Backend: backend, Policy: table}
+	if journal.UpwardFactory != nil {
+		// what goes up from the run (CRW-1204) is handed to the hook the binary installs, as the engine's resume command does
+		// (journal.ResumeEnv): the relay is the one the run is in
+		w.Upward = journal.UpwardFactory(st, j, spec.RunID, statePath, socket)
+	}
 	if OpsFor != nil {
 		if w.Ops, w.Prover, w.InputSnapshot, err = OpsFor(ctx, req, j); err != nil {
 			backend.Close()

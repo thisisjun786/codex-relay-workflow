@@ -574,16 +574,23 @@ func readCallsLimited(ctx context.Context, st queryer, where string, limit int, 
 }
 
 func readEvents(ctx context.Context, st queryer, runID string) ([]engine.Event, error) {
-	return readEventsAfter(ctx, st, runID, 0, 0)
+	return readEventsAfter(ctx, st, runID, 0, 0, false)
 }
 
-// readEventsAfter reads the flow rows of a run after the sequence number after, in order, at most limit of them (0: all).
-func readEventsAfter(ctx context.Context, st queryer, runID string, after, limit int) ([]engine.Event, error) {
+// readEventsAfter reads the flow rows of a run after the sequence number after, in order, at most limit of them (0: all). own
+// leaves out the rows a command wrote into the run (engine.ForeignSeqBase and above).
+func readEventsAfter(ctx context.Context, st queryer, runID string, after, limit int, own bool) ([]engine.Event, error) {
 	order := ` ORDER BY seq`
 	if limit > 0 {
 		order += ` LIMIT ` + strconv.Itoa(limit)
 	}
-	rows, err := st.QueryContext(ctx, `SELECT run_id, seq, kind, call_id, payload_json FROM flow_events WHERE run_id = ? AND seq > ?`+order, runID, after)
+	where := ` WHERE run_id = ? AND seq > ?`
+	args := []any{runID, after}
+	if own {
+		where += ` AND seq < ?`
+		args = append(args, engine.ForeignSeqBase)
+	}
+	rows, err := st.QueryContext(ctx, `SELECT run_id, seq, kind, call_id, payload_json FROM flow_events`+where+order, args...)
 	if err != nil {
 		return nil, fmt.Errorf("journal: %w", err)
 	}
@@ -682,6 +689,10 @@ type PageRead struct {
 // while the page is being read is seen completely or not at all, so the cursor (the seq of the last row) never passes a
 // committed row, and a state summed from Lean is the state at the page's own moment. A reader that holds no transaction between
 // two pages (a wait) reads each page this way again.
+//
+// A page holds the run's own rows only. The rows a command wrote into the run (CRW-1204: crw flow apply, report-up, report-ack,
+// report-delivered) are numbered from engine.ForeignSeqBase while the run, alive, goes on numbering its own below it: a cursor
+// that took one of their numbers would pass every row the run writes after. `crw flow reports` lists them; Lean holds them.
 func ReadPage(ctx context.Context, st *store.Store, runID string, after, limit int, lean bool) (PageRead, error) {
 	if limit < 1 {
 		return PageRead{}, errors.New("journal: a page holds at least one row")
@@ -706,7 +717,7 @@ func ReadPage(ctx context.Context, st *store.Store, runID string, after, limit i
 	if testAfterCallsRead != nil {
 		testAfterCallsRead()
 	}
-	flows, err := readEventsAfter(ctx, tx, runID, after, limit+1)
+	flows, err := readEventsAfter(ctx, tx, runID, after, limit+1, true)
 	if err != nil {
 		return PageRead{}, err
 	}

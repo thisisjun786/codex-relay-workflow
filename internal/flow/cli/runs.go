@@ -264,7 +264,10 @@ func Summarize(rec RunRecord, events []engine.Event, live bool, pid int) RunInfo
 	info := RunInfo{RunRecord: rec, Live: live, PID: pid}
 	lastStart, lastFinish := -1, -1
 	for i, e := range events {
-		info.LastSeq = max(info.LastSeq, e.Seq)
+		if int64(e.Seq) < engine.ForeignSeqBase {
+			// the cursor of the tree is the run's own last row: a command's row (CRW-1204) is numbered apart (journal.ReadPage)
+			info.LastSeq = max(info.LastSeq, e.Seq)
+		}
 		if e.Kind == engine.KindRun {
 			switch e.Event {
 			case "started":
