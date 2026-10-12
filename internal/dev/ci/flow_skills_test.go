@@ -138,9 +138,6 @@ func TestFlowControlOwnershipTableWording(t *testing.T) {
 	})
 }
 
-// regexpFirst is the first match of the pattern in the text ("" when there is none); the checks below use it to name what they found.
-func regexpFirst(pattern, text string) string { return regexp.MustCompile(pattern).FindString(text) }
-
 // relayCommandNames is the name of every command of the relay's argument table.
 func relayCommandNames(t *testing.T) map[string]bool {
 	t.Helper()
@@ -532,11 +529,7 @@ func skillFlowSubcommands(texts map[string]string) map[string][]string {
 			scan := line
 			if fence == "" {
 				// outside a fence only the inline code spans count
-				var spans []string
-				for _, m := range inlineCode.FindAllString(line, -1) {
-					spans = append(spans, m)
-				}
-				scan = strings.Join(spans, " ")
+				scan = strings.Join(inlineCode.FindAllString(line, -1), " ")
 			}
 			for _, m := range skillFlowCommand.FindAllStringSubmatch(scan, -1) {
 				if !slices.Contains(found[m[1]], file) {
