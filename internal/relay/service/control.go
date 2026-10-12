@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // Control is bound only while the caller holds daemon and scope ownership.
@@ -28,6 +29,10 @@ var acceptControl = (*net.UnixListener).Accept
 
 func ListenControl(ctx context.Context, state string) (*Control, error) {
 	return ListenControlWake(ctx, state, nil)
+}
+
+func ListenControlStore(ctx context.Context, state string, owner *store.Store, wake func(string)) (*Control, error) {
+	return ListenControlWake(store.WithBorrowedStore(ctx, owner), state, wake)
 }
 
 // ListenControlWake is ListenControl for the daemon's own process: wake is told the thread of every
@@ -140,9 +145,6 @@ func (c *Control) Close() error {
 	return errors.Join(err, <-c.done)
 }
 
-// control.sock serves guard-evaluate only, as Python's GuardServer does. Decision-25 ingress
-// is the queued command's own file publication, never a socket method. Delegate exactly to
-// todo 33, including shared state-selection refusals; the handler reads the one request line.
 func dispatchControl(ctx context.Context, conn net.Conn, state string, wake func(thread string)) error {
 	return hook.HandleControlWake(ctx, conn, state, wake)
 }

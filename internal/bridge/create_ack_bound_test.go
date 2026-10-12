@@ -66,6 +66,7 @@ func slowCreateScript(host *fakehost.Server, cwd string, delay time.Duration) {
 	host.Respond("plugin/installed", fakehost.Reply{Result: map[string]any{"marketplaces": []any{map[string]any{"name": "openai-bundled", "plugins": []any{map[string]any{"id": "cua@openai-bundled", "installed": true, "enabled": true}}}}}, Delay: delay})
 	start := startReply(cwd)
 	start.Result["model"], start.Result["reasoningEffort"] = pyModel, pyEffort
+	start.Result["sandbox"] = map[string]any{"type": "dangerFullAccess"}
 	start.Delay = delay
 	host.Respond("thread/start", start)
 	host.Respond("thread/name/set", fakehost.Reply{Delay: delay})

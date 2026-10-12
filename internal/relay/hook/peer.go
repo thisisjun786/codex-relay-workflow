@@ -20,7 +20,7 @@ type peerIdentity struct {
 	directoryMode                    os.FileMode
 }
 
-func authenticatePeer(ctx context.Context, conn net.Conn) error {
+func authenticatePeer(ctx context.Context, conn net.Conn, endpoint ...string) error {
 	refuse := func(detail string) error { return &peerAuthError{detail: detail} }
 	unixConn, ok := conn.(*net.UnixConn)
 	if !ok {
@@ -31,6 +31,9 @@ func authenticatePeer(ctx context.Context, conn net.Conn) error {
 		return refuse("peer credentials unavailable: " + err.Error())
 	}
 	path := conn.RemoteAddr().String()
+	if len(endpoint) > 0 {
+		path = endpoint[0]
+	}
 	info, err := os.Lstat(path)
 	if err != nil {
 		return refuse("socket ownership unavailable: " + err.Error())

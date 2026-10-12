@@ -144,6 +144,18 @@ func Names() []string {
 
 const parserExit = 2 // the exit status of a command line the parser cannot read
 
+var ForwardChild func(context.Context, string, string, []string) (any, error)
+
+type childOwnerKey struct{}
+
+func ChildCommand(name string) bool {
+	return name == "emit" || name == "intent-claim" || name == "intent-disposition"
+}
+
+func ExecuteOwnedChild(ctx context.Context, argv0 string, argv []string, stdout, stderr io.Writer) int {
+	return Execute(context.WithValue(ctx, childOwnerKey{}, true), argv0, argv, stdout, stderr)
+}
+
 // Execute is the relay CLI for one command line; argv0 is how the CLI was invoked (its base
 // name is the program the usage lines name, and Services.Program spells the recovery commands
 // with it). The root options come before the command, the command's own after it.
@@ -221,6 +233,14 @@ func Execute(ctx context.Context, argv0 string, argv []string, stdout, stderr io
 	}
 	if values := root.Values["socket"]; len(values) > 0 {
 		global.socket = values[0]
+	}
+	if ForwardChild != nil && ChildCommand(name) && ctx.Value(childOwnerKey{}) != true {
+		selection, err := store.ResolveStateDir(global.state, global.socket)
+		if err != nil {
+			return emit(stdout, stderr, nil, Host("the state directory cannot be resolved: "+Detail(err)), command.family)
+		}
+		result, err := ForwardChild(ctx, selection.Path, argv0, argv)
+		return emit(stdout, stderr, result, err, command.family)
 	}
 	result, err := command.run(ctx, global, Args{Parsed: parsed, Positionals: positionals, Defaults: command.Defaults})
 	return emit(stdout, stderr, result, err, command.family)

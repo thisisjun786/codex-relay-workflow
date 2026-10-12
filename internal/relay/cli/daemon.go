@@ -366,7 +366,7 @@ func runDaemon(ctx context.Context, services dispatch.Services, args dispatch.Ar
 	// through an in-process channel, not a socket method (decision 25, CRW-1210). The poll interval stays as
 	// the backstop.
 	waker := daemon.NewWaker()
-	control, e := service.ListenControlWake(ctx, services.Selection.Path, waker.Wake)
+	control, e := service.ListenControlStore(ctx, services.Selection.Path, db, waker.Wake)
 	if e != nil {
 		return nil, e
 	}

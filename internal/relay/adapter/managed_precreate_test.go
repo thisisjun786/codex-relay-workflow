@@ -55,7 +55,7 @@ func newManagedCLIOn(t *testing.T, policy, model, effort string) *managedCLI {
 	t.Setenv(execution.EnvPolicy, policyPath)
 	registry.ResetRolePolicySnapshot()
 	t.Cleanup(registry.ResetRolePolicySnapshot)
-	c.settings = map[string]any{"sandbox": map[string]any{"type": "readOnly", "networkAccess": false}, "approvalPolicy": "never", "cwd": workspace, "runtimeWorkspaceRoots": []any{workspace}, "model": model, "reasoningEffort": effort, "environments": []any{map[string]any{"environmentId": "local", "cwd": workspace, "runtimeWorkspaceRoots": []any{workspace}}}}
+	c.settings = map[string]any{"sandbox": workspaceWrite(), "approvalPolicy": "never", "cwd": workspace, "runtimeWorkspaceRoots": []any{workspace}, "model": model, "reasoningEffort": effort, "environments": []any{map[string]any{"environmentId": "local", "cwd": workspace, "runtimeWorkspaceRoots": []any{workspace}}}}
 	c.host = fakehost.Start(t)
 	response := func() map[string]any {
 		r := map[string]any{}

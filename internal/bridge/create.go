@@ -147,6 +147,9 @@ func (b *Bridge) CreateThread(ctx context.Context, in CreateThread) (receipt led
 		if err != nil {
 			return err
 		}
+		if in.Role == "child" && (in.Sandbox == "read-only" || in.Policy["type"] == "readOnly") {
+			return &Invalid{"a relay child cannot work in a readOnly sandbox; recreate it with a writable sandbox (workspace-write or danger-full-access); settings are never silently changed"}
+		}
 		contract = settings.Contract{CWD: cwd, Sandbox: in.Sandbox, Model: authorized.Model, ReasoningEffort: authorized.Effort, Roots: in.Roots, ExpectedPolicy: in.Policy, AutoCompactTokenLimit: authorized.AutoCompactTokenLimit}
 		if err := contract.Validate(); err != nil {
 			return err

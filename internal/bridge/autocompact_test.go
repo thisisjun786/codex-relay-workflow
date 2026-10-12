@@ -68,10 +68,13 @@ func autoCompactListed(value any, field string) bool {
 func TestCreateThreadSendsThePairsAutoCompactLimit(t *testing.T) {
 	b, host := policyBridge(t, autoCompactPolicy)
 	cwd := t.TempDir()
-	host.Respond("thread/start", startReply(cwd))
+	started := startReply(cwd)
+	started.Result["sandbox"] = map[string]any{"type": "dangerFullAccess"}
+	host.Respond("thread/start", started)
 	host.Respond("turn/start", fakehost.Reply{Result: map[string]any{"turn": map[string]any{"id": "turn-1"}}})
 	input := createInput(cwd, "auto-compact-create")
 	input.Role = "child"
+	input.Sandbox = "danger-full-access"
 	receipt, err := b.CreateThread(context.Background(), input)
 	if err != nil || receipt["status"] != "accepted" {
 		t.Fatalf("receipt=%v err=%v", receipt, err)

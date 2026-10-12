@@ -12,7 +12,7 @@ source in this package changes none of those.
 
 ## Where the state lives
 
-Every participant of one assignment must read and write the same SQLite store. The
+Every participant of one assignment must select the same SQLite store. The
 directory is chosen by the first rule that applies:
 
 | Precedence | Source | Notes |
@@ -50,6 +50,29 @@ the flag splits the relay store from the ledger that carries send idempotency. S
 
 Status: implemented. `resolve_state_dir` returns the winning rule and `doctor` reports it with
 the resolved database and the measured access.
+
+### Child reports use the daemon
+
+`crw relay emit`, `intent-claim` and `intent-disposition` submit their commands through
+the selected state's `control.sock`. The child process does not open a writable store or
+publish its claim or disposition marker. The daemon executes the command against its
+already-owned store, preserving receipt admission, replay identity and parent delivery.
+The socket client checks the daemon's peer UID and the ownership of the socket and its
+directory. The daemon accepts only these child commands, its own store and its own marker
+root; a marker naming another store is refused before publication.
+
+An unavailable daemon is an explicit host error (exit 3), not success and not a fallback
+to a local writer or a bridge MCP call. A lost answer after submission is reported as an
+unknown report outcome: retry the same receipt identity, not a new receipt. A writable
+child needs the daemon too. A child whose filesystem is read-only can still report
+`blocked_needs_input` when the socket is accessible.
+
+Bridge `create_thread` refuses a `child` role with a `read-only` sandbox or an explicit
+`readOnly` policy, before starting a thread. Recreate that child with an explicitly
+authorized writable sandbox (`workspace-write` or `danger-full-access`); the bridge never
+silently changes its sandbox. Read-only threads without the child role remain supported.
+
+Status: implemented in source. Installation and live delivery are separate operations.
 
 ### When the rules cannot pick a store
 

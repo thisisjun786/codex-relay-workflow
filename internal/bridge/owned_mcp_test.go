@@ -35,8 +35,11 @@ func mcpHost(host *fakehost.Server, cwd string, configured []string, applied boo
 	host.Respond("plugin/installed", fakehost.Reply{Result: map[string]any{"marketplaces": []any{map[string]any{"name": "openai-bundled", "plugins": []any{map[string]any{"id": "cua@openai-bundled", "installed": true, "enabled": true}}}}}})
 	start := startReply(cwd)
 	start.Result["model"], start.Result["reasoningEffort"] = pyModel, pyEffort
-	host.Respond("thread/start", start)
 	host.Respond("thread/resume", start)
+	creation := startReply(cwd)
+	creation.Result["model"], creation.Result["reasoningEffort"] = pyModel, pyEffort
+	creation.Result["sandbox"] = map[string]any{"type": "dangerFullAccess"}
+	host.Respond("thread/start", creation)
 	host.Respond("thread/name/set", fakehost.Reply{})
 	host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{"status": map[string]any{"type": "idle"}}}})
 	host.Respond("turn/start", fakehost.Reply{Result: map[string]any{"turn": map[string]any{"id": "turn-1"}}})
@@ -88,6 +91,7 @@ func mcpBridge(t *testing.T, applied bool) (*Bridge, *fakehost.Server, string) {
 func mcpCreate(cwd, id, profile string) CreateThread {
 	in := createInput(cwd, id)
 	in.Role, in.Model, in.Effort, in.MCPProfile, in.Prompt = "child", pyModel, pyEffort, profile, "work"
+	in.Sandbox = "danger-full-access"
 	return in
 }
 
@@ -197,10 +201,14 @@ func TestACreationWithoutProfilesAsksTheHostNothingExtra(t *testing.T) {
 			if name == "a role that declares none" {
 				role, model, effort = "child", pyModel, pyEffort
 				start.Result["model"], start.Result["reasoningEffort"] = model, effort
+				start.Result["sandbox"] = map[string]any{"type": "dangerFullAccess"}
 			}
 			host.Respond("thread/start", start)
 			in := createInput(cwd, "create-plain")
 			in.Role, in.Model, in.Effort = role, model, effort
+			if role == "child" {
+				in.Sandbox = "danger-full-access"
+			}
 			receipt, err := b.CreateThread(context.Background(), in)
 			config := pyjson.Map(hostParams(t, host, "thread/start")["config"])
 			if err != nil || receipt["status"] != "accepted" || config["mcp_servers"] != nil || config["plugins"] != nil {
