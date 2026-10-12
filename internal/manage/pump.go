@@ -692,6 +692,9 @@ func pumpDeliver(ctx context.Context, e *Env, cfg *Config, st *pumpState, batch 
 		}
 	}
 	attempt := *st.Attempt
+	// The attempts the outbox holds before the call tell, afterwards, whether its last answer is this
+	// call's own (pumpDeliverReason).
+	attemptsBefore := pumpOutboxAttempts(cfg, attempt.LogicalID)
 	out, err := Deliver(ctx, e, cfg, Message{
 		LogicalID: attempt.LogicalID, Thread: cfg.ManagementThread, Text: attempt.Text,
 		Settings: cfg.Settings.Management,
@@ -704,7 +707,7 @@ func pumpDeliver(ctx context.Context, e *Env, cfg *Config, st *pumpState, batch 
 	if out.Class != deliverClassAccepted {
 		// The bridge's answer rides on the line, in one line: the outbox holds it too, but a person
 		// reading the pump log sees why a batch did not go (CRW-1273).
-		line += " reason=" + pumpDeliverReason(cfg, attempt.LogicalID, err)
+		line += " reason=" + pumpDeliverReason(cfg, attempt.LogicalID, attemptsBefore, err)
 	}
 	pumpLog(cfg, line)
 	if out.Class != deliverClassAccepted {
@@ -712,13 +715,20 @@ func pumpDeliver(ctx context.Context, e *Env, cfg *Config, st *pumpState, batch 
 			// The attempt stays frozen so the next round reconciles it under the same id.
 			return 0, err
 		}
-		// A refusal is terminal and nothing was sent, so the freeze lifts: a later batch may carry
-		// these events again under the next ordinal of its id. A refusal the ledger proves is
-		// counted against the batch; the pumpQueueRefusalLimit-th refusal of one id parks its events.
-		st.Attempt = nil
-		if pumpReview776QueueRefusalSettled(cfg, attempt.LogicalID) {
-			pumpMgmtRefusalCount(cfg, st, attempt)
+		// A refusal clears the freeze only when the ledger proves the frozen attempt itself was
+		// refused (the parent queue's rule for its pin). The delivery core reports a local refusal (an
+		// unset execution policy, for example) before it reads the ledger, and a terminal refusal
+		// whose outbox write failed leaves the record unsettled: neither says anything about an
+		// attempt that may already have gone, so the attempt stays frozen and the next round
+		// reconciles the same id and body.
+		if !pumpReview776QueueRefusalSettled(cfg, attempt.LogicalID) {
+			return 0, err
 		}
+		// A refusal the ledger proves is terminal and nothing was sent, so the freeze lifts: a later
+		// batch may carry these events again under the next ordinal of its id. It is counted against
+		// the batch; the pumpQueueRefusalLimit-th refusal of one id parks its events.
+		st.Attempt = nil
+		pumpMgmtRefusalCount(cfg, st, attempt)
 		if err := st.pumpSave(cfg); err != nil {
 			return 1, err
 		}
@@ -748,15 +758,27 @@ func pumpDeliver(ctx context.Context, e *Env, cfg *Config, st *pumpState, batch 
 	return 0, nil
 }
 
-// pumpDeliverReason is why a batch did not go, on one line for the pump log: the bridge's last
-// answer the ledger keeps for the logical id, else the delivery core's own error (a refusal before
-// any bridge call, such as an unset execution policy), cut short.
-func pumpDeliverReason(cfg *Config, logicalID string, cause error) string {
+// pumpOutboxAttempts is how many attempts the outbox holds for a logical id, zero when there is no
+// record.
+func pumpOutboxAttempts(cfg *Config, logicalID string) int {
+	record, known, err := deliverLoad(cfg, logicalID)
+	if err != nil || !known {
+		return 0
+	}
+	return len(record.Attempts)
+}
+
+// pumpDeliverReason is why a batch did not go, on one line for the pump log: the bridge's last answer
+// the ledger keeps for the logical id when this call added one (or answered a settled record from it),
+// else the delivery core's own error for this call (a refusal before any bridge call, such as an unset
+// execution policy, or a bridge that did not start), cut short. The ledger's older excerpt is never
+// the reason of a call that did not write one.
+func pumpDeliverReason(cfg *Config, logicalID string, attemptsBefore int, cause error) string {
 	reason := pumpQueueRefusalReason(cfg, logicalID)
-	if reason == "no receipt excerpt" || reason == "refused" {
-		if cause != nil {
-			reason = strings.Join(strings.Fields(cause.Error()), " ")
-		}
+	if cause != nil && pumpOutboxAttempts(cfg, logicalID) <= attemptsBefore {
+		reason = strings.Join(strings.Fields(cause.Error()), " ")
+	} else if (reason == "no receipt excerpt" || reason == "refused") && cause != nil {
+		reason = strings.Join(strings.Fields(cause.Error()), " ")
 	}
 	if len(reason) > 200 {
 		reason = strings.ToValidUTF8(reason[:200], "") + "..."
