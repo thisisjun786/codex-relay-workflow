@@ -25,7 +25,6 @@ func (w *world) escalate(id, reason, node, detail string) {
 func TestEscalationViaSendParentQueuedWithoutPreflight(t *testing.T) {
 	w := newWorld(t)
 	h := w.hook()
-	probes := 0
 	w.escalate("esc_1", "tiers_exhausted", "A", "the executor-t1 tier ended with the same finding twice")
 	if err := h.BatchCommitted(ctx, testRun); err != nil {
 		t.Fatal(err)
@@ -39,8 +38,10 @@ func TestEscalationViaSendParentQueuedWithoutPreflight(t *testing.T) {
 			t.Errorf("the notice lacks %q: %s", want, sent[0].Text)
 		}
 	}
-	if probes != 0 || len(w.sender.supervisorSent()) != 0 {
-		t.Errorf("the thread was looked at (%d) or a supervisor was told (%d)", probes, len(w.sender.supervisorSent()))
+	// the hook has no Wake here, so it queues; that the real send-parent --queue path makes no get_active_turn call is pinned end to end by
+	// TestSendParentQueueWritesTheNoticeAndSendsNothing (internal/manage), which reads the fake bridge's log
+	if len(w.sender.supervisorSent()) != 0 {
+		t.Errorf("a supervisor was told (%d)", len(w.sender.supervisorSent()))
 	}
 	rows := w.rows(KindEscalationNotice)
 	if len(rows) != 1 || rows[0].Str("escalation_id") != "esc_1" || rows[0].Str("result") != "queued" {
@@ -63,6 +64,7 @@ func TestEscalationViaSendParentQueuedWithoutPreflight(t *testing.T) {
 		t.Errorf("distinct %v", got)
 	}
 	// the wake-up proven: the notice is sent, not queued
+	probes := 0
 	h.Wake = func(context.Context, string) bool { probes++; return true }
 	w.escalate("esc_3", "size_split", "C", "")
 	if err := h.BatchCommitted(ctx, testRun); err != nil {

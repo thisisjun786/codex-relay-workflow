@@ -334,6 +334,11 @@ func pumpSupervisorDeliver(ctx context.Context, e *Env, cfg *Config, st *pumpSta
 		return false, nil
 	}
 	attempt := st.Supervisor.Attempts[n.LogicalID]
+	if n.LoadRetry > 0 {
+		// send-parent --role supervisor met the unloaded-thread refusal and queued the notice with the next ordinal: the lead's thread is
+		// reported undelivered once here too, whether or not this attempt delivers
+		pumpSupervisorUndelivered(cfg, st, n, "notLoaded", waited)
+	}
 	id := attempt.attemptID(n.LogicalID, n.LoadRetry)
 	out, derr := Deliver(ctx, e, cfg, Message{LogicalID: id, Thread: n.Thread, Text: n.Text, Role: supervisorRole, Settings: settings})
 	if derr != nil && out.Class == "" {

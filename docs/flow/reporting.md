@@ -30,13 +30,21 @@ same way when the run finishes, as a `completion_notice` row.
 The manager hears the same escalations from the pump: a source reads the escalation rows of the relay store, read-only, and raises the
 urgent kind `run_escalation`. The first read only notes where the rows end, so the history of a store is not sent. A run that started,
 did not finish and has written no row of its own for `run_dead_seconds` (default 1800; rows a command wrote into it do not count) is the
-urgent kind `run_dead`; it is told again only when it was resumed and stopped again.
+urgent kind `run_dead`; it is told again only when it was resumed and stopped again. An agent turn writes no row of the run while it is in
+flight, so a run with an open agent call (a call that began and has no terminal row) is judged by the longer of `run_dead_seconds` and six
+hours.
+
+The run's escalations go to the run's actor. For the project run that is the orchestrator thread. A child's issue-lane run is resumed with
+the child task as its actor, so its escalations go to the child's thread; the orchestrator learns of that child's trouble from the receipt
+and from `crw flow apply` (a refusal of integrity is also an `escalation` row of the child's run), and the manager hears it from the pump
+whichever thread the run told.
 
 ## The plan summary
 
 A run that was started with `crw flow run --summary-document D` records the document in its journal (a `summary_document` row). It keeps
 the plan summary of its plan in that document, in the order of work below, which it repeats when it starts (a resume too) and after every
-committed batch, and which `crw flow apply` repeats after every verdict:
+committed batch, and which `crw flow apply` repeats every time it runs on an event the relay holds, whatever it came to (a verdict recorded, a
+refusal, or a wait that ended first):
 
 1. If the newest entry of the plan's stream for the document is not up to date (`SummaryStatus`, judged by the subject digest of the
    relay: the stage, the newest verdict and its revision, the findings, the acceptance and the integration of every issue), the run asks
@@ -93,9 +101,11 @@ seconds, for a completed `crw.review` row that ruled `verdict` on the head of th
 
 With the checks done apply writes the verdict file and runs `crw relay receive` (claim, acknowledgement proved from the orchestrator's own
 turn, verdict) once. A `needs_changes` verdict carries the `dag-correct --prepare` instruction line (with the dispatch request id) as the
-restoration block of one finding; `--manifest-request` is the document that command takes. After the relay recorded the verdict the plan
-summary is brought up to date (the section above), and an `apply_applied` row is written into the child's run. A wait that ends before the
-verdict is journaled writes nothing and answers `next_turn`: apply it again in a later turn. The exit status is 0 for an applied verdict,
+restoration block of one finding; `--manifest-request` is the document that command takes. After the relay recorded the verdict an
+`apply_applied` row is written into the child's run. A wait that ends before the verdict is journaled writes no row of the application
+and answers `next_turn`: apply it again in a later turn. Every time apply runs on an event the relay holds, whichever of these it comes to,
+it then brings the plan summary up to date (the section above); a failure of that is told in `summary_error` and changes neither the state
+nor the exit status. The exit status is 0 for an applied verdict,
 1 for a refusal, 3 for `next_turn` and 2 for a command line or a failure of the store or the relay.
 
 A commit the child thread makes itself is refused by the second check. An issue that is not oversized takes the executor path of the

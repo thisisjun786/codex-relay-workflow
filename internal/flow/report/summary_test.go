@@ -414,7 +414,45 @@ func TestOrchestratorDrainsSummaryAndManagerClaimRefused(t *testing.T) {
 	}
 }
 
-// `crw flow apply` is a process of its own: after a verdict it finds the run that keeps the summary of the plan for the orchestrator (the
+// The live run and a concurrent `crw flow apply` can each have written the intent of one summary id (the run's check and its flush are
+// not one transaction): the duplicate row neither sends twice nor settles twice.
+func TestSummaryDuplicateIntentRowsSendAndSettleOnce(t *testing.T) {
+	w := newWorld(t)
+	w.agentNode("A")
+	w.documentRow()
+	w.verdict("A", "needs_changes", "the guard is missing")
+	env := SummaryEnv{Store: w.st, Sched: w.sched, Rows: ForeignAppender{Store: w.st, Run: testRun, Now: fixedNow}, Run: testRun, Plan: testPlan, Document: testDocument, Actor: testOrch, Sender: w.sender}
+	// the first reconcile writes the intent and gets no answer: no settlement
+	w.sender.replyParent = func(ParentSend) (SendResult, error) { return SendResult{}, errors.New("no answer") }
+	if out, err := ReconcileSummary(ctx, env); err != nil || out.Intents != 1 || out.Settled != 0 {
+		t.Fatalf("first outcome %+v %v", out, err)
+	}
+	intents := w.rows(KindSummaryNotice)
+	if len(intents) != 1 {
+		t.Fatalf("intents %+v", intents)
+	}
+	// the other writer's copy of the same intent
+	if _, err := (ForeignAppender{Store: w.st, Run: testRun, Now: fixedNow}).Append(ctx, NewRow{Kind: KindSummaryNotice, Payload: map[string]any{
+		"summary_id": intents[0].Str("summary_id"), "plan": testPlan, "document": testDocument, "logical_id": intents[0].Str("logical_id"), "run": testRun}}); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(w.rows(KindSummaryNotice)); n != 2 {
+		t.Fatalf("%d intent rows", n)
+	}
+	w.sender.replyParent = nil
+	before := len(w.sender.parentSent())
+	if out, err := ReconcileSummary(ctx, env); err != nil || out.Sent != 1 || out.Settled != 1 {
+		t.Fatalf("second outcome %+v %v", out, err)
+	}
+	if sent := len(w.sender.parentSent()) - before; sent != 1 {
+		t.Errorf("%d sends for one summary id", sent)
+	}
+	if n := len(w.rows(KindSummarySettled)); n != 1 {
+		t.Errorf("%d settlements", n)
+	}
+}
+
+// `crw flow apply` is a process of its own: each time it runs it finds the run that keeps the summary of the plan for the orchestrator (the
 // run that recorded the document), reconciles the stream under the orchestrator's task id and writes its rows into that run - from the
 // range commands use, so the live run's own numbers are never met.
 func TestApplyPathReconcilesTheSummaryOfTheOrchestratorsRun(t *testing.T) {
@@ -446,7 +484,7 @@ func TestApplyPathReconcilesTheSummaryOfTheOrchestratorsRun(t *testing.T) {
 	if err := w.journal.Flush(); err != nil || w.journal.Err() != nil {
 		t.Fatalf("the run's journal met the command's rows: %v %v", err, w.journal.Err())
 	}
-	// the verdict changes again: the next verdict's reconcile asks for the next entry
+	// the verdict changes again: the next reconcile asks for the next entry
 	w.verdict("A", "needs_changes", "the guard is missing", "and the loop")
 	if out, err = ReconcileSummary(ctx, env); err != nil || !out.Enqueued || out.Intents != 1 || len(w.entries()) != 2 {
 		t.Fatalf("second outcome %+v %v", out, err)

@@ -109,8 +109,9 @@ type Deps struct {
 	Receive func(ctx context.Context, in ReceiveInput) (json.RawMessage, error)
 	// Correct prepares the correction of a needs_changes verdict (relay dag-correct --prepare) and answers the instruction line.
 	Correct func(ctx context.Context, in CorrectionInput) (string, error)
-	// AfterVerdict is called once the verdict is recorded (the summary of the plan is brought up to date); its failure is reported, not fatal.
-	AfterVerdict func(ctx context.Context, ev EventInfo, run string) error
+	// Reconcile brings the summary of the plan up to date. Apply calls it every time it runs on an event the relay holds, with the child's
+	// run ("" when none was found), whatever the outcome; its failure is reported in the result, not fatal.
+	Reconcile func(ctx context.Context, ev EventInfo, run string) error
 	// Repo is the git repository the commits are listed in.
 	Repo string
 	// Dir is where the verdict file is written (default: the temporary directory).
@@ -201,8 +202,12 @@ func (d Deps) sleep(ctx context.Context, dur time.Duration) error {
 
 // Apply applies the receipt of an oversized child. An error is an infrastructure failure (the store, the relay command); a check that
 // fails is a Result that is refused.
-func Apply(ctx context.Context, d Deps, req Request) (Result, error) {
-	res := Result{Event: req.Event, Override: strings.TrimSpace(req.Override)}
+//
+// Whatever the application comes to once the relay holds the event (applied, refused, or the wait ended first), the plan summary is
+// reconciled before Apply returns: a run that died after its last batch is recovered by the next apply, not only by one that records a
+// verdict.
+func Apply(ctx context.Context, d Deps, req Request) (res Result, err error) {
+	res = Result{Event: req.Event, Override: strings.TrimSpace(req.Override)}
 	if !eventPattern.MatchString(req.Event) {
 		return res, errors.New("apply: --event is a 32 character lowercase hex event id")
 	}
@@ -219,6 +224,14 @@ func Apply(ctx context.Context, d Deps, req Request) (Result, error) {
 	if err != nil {
 		return res, err
 	}
+	defer func() {
+		if err != nil || d.Reconcile == nil {
+			return
+		}
+		if rerr := d.Reconcile(ctx, ev, res.Run); rerr != nil {
+			res.SummaryError = rerr.Error()
+		}
+	}()
 	res.Head = ev.Head
 	if !headPattern.MatchString(ev.Head) {
 		return refuse(res, ReasonVerdictInvalid, fmt.Sprintf("the event reports %q as its head, not a commit id", ev.Head)), nil
@@ -444,11 +457,6 @@ func (d Deps) judge(ctx context.Context, req Request, ev EventInfo, v runView, r
 		"reviewer_call": res.ReviewerCall, "criteria_digest": saw, "override": res.Override, "commits": len(commits),
 	}}, "apply_key"); err != nil {
 		return res, err
-	}
-	if d.AfterVerdict != nil {
-		if err := d.AfterVerdict(ctx, ev, v.run); err != nil {
-			res.SummaryError = err.Error()
-		}
 	}
 	return res, nil
 }

@@ -28,6 +28,10 @@ const (
 	pumpFlowEscalationKey = "flow.escalation.rowid"
 
 	pumpFlowRunDeadDefault = 1800
+	// pumpFlowOpenCallGrace is how long a run with an open agent call (prepared or thread_started, no terminal row) may write no row
+	// before it is dead: a turn writes nothing of the run while it is in flight and can outlast run_dead_seconds. A longer
+	// run_dead_seconds still wins.
+	pumpFlowOpenCallGrace = 6 * time.Hour
 	// pumpFlowRunDeadWindow is how long after its last row a dead run is still reported: a run abandoned long ago is not news.
 	pumpFlowRunDeadWindow = 7 * 24 * time.Hour
 
@@ -46,7 +50,9 @@ type pumpFlowEscalation struct {
 type pumpFlowRunRow struct {
 	Run, Actor string
 	Finished   bool
-	Last       time.Time
+	// OpenCall is set when the run has an agent call that began and has no terminal row: a turn is (or was, if the process died) in flight.
+	OpenCall bool
+	Last     time.Time
 }
 
 // pumpFlowReport is one report with what happened to it.
@@ -114,7 +120,11 @@ func (pumpFlowRunsSource) Collect(ctx context.Context, e *Env, cfg *Config, st *
 			continue
 		}
 		idle := now.Sub(run.Last)
-		if idle < dead || idle > pumpFlowRunDeadWindow {
+		limit := dead
+		if run.OpenCall {
+			limit = max(dead, pumpFlowOpenCallGrace)
+		}
+		if idle < limit || idle > pumpFlowRunDeadWindow {
 			continue
 		}
 		events = append(events, pumpEvent{ID: fmt.Sprintf("run_dead:%s:%d", run.Run, run.Last.Unix()), Kind: pumpKindRunDead,
@@ -199,6 +209,7 @@ func pumpFlowReadAt(ctx context.Context, state string) (pumpFlowData, error) {
 		runs, err := q.QueryContext(ctx, `SELECT r.run_id, r.actor_task_id, r.started_at,
  EXISTS (SELECT 1 FROM flow_events e WHERE e.run_id = r.run_id AND e.kind = 'finished'),
  COALESCE((SELECT MAX(recorded_at) FROM flow_calls c WHERE c.run_id = r.run_id), ''),
+ EXISTS (SELECT 1 FROM flow_calls c WHERE c.run_id = r.run_id AND c.kind = 'agent' AND NOT EXISTS (SELECT 1 FROM flow_calls t WHERE t.run_id = c.run_id AND t.call_id = c.call_id AND t.event IN ('completed', 'null_model', 'held', 'refused', 'outcome_unknown', 'superseded'))),
  COALESCE((SELECT MAX(recorded_at) FROM flow_events e WHERE e.run_id = r.run_id AND e.seq < ?), '')
  FROM flow_runs r ORDER BY r.rowid`, pumpFlowForeignSeq)
 		if err != nil {
@@ -207,12 +218,12 @@ func pumpFlowReadAt(ctx context.Context, state string) (pumpFlowData, error) {
 		for runs.Next() {
 			var run pumpFlowRunRow
 			var started, calls, events string
-			var finished int
-			if err := runs.Scan(&run.Run, &run.Actor, &started, &finished, &calls, &events); err != nil {
+			var finished, open int
+			if err := runs.Scan(&run.Run, &run.Actor, &started, &finished, &calls, &open, &events); err != nil {
 				_ = runs.Close()
 				return err
 			}
-			run.Finished = finished != 0
+			run.Finished, run.OpenCall = finished != 0, open != 0
 			for _, stamp := range []string{started, calls, events} {
 				if t, err := time.Parse(time.RFC3339Nano, stamp); err == nil && t.After(run.Last) {
 					run.Last = t

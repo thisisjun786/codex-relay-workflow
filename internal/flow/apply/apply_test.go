@@ -447,13 +447,15 @@ func TestApplyRefusesBadRequestsAndUnknownEvents(t *testing.T) {
 	}
 }
 
-// Once the verdict is recorded the summary of the plan is brought up to date: the hook is called after the relay's steps, with the event
-// and the child's run, and its failure is told in the result without undoing the verdict. A refused application calls nothing.
-func TestApplyBringsTheSummaryUpToDateAfterTheVerdict(t *testing.T) {
+// The summary of the plan is brought up to date every time apply runs, whatever it came to: the hook is called with the event and the
+// child's run after the relay's steps, its failure is told in the result without undoing the verdict, and a wait that ended first or a
+// refusal reconciles too (a run that died after its last batch is recovered by the next apply). An event the relay does not hold calls
+// nothing.
+func TestApplyBringsTheSummaryUpToDateEveryTimeItRuns(t *testing.T) {
 	f := newFx(t)
 	f.goodRun()
 	var calls []string
-	f.deps.AfterVerdict = func(_ context.Context, ev EventInfo, run string) error {
+	f.deps.Reconcile = func(_ context.Context, ev EventInfo, run string) error {
 		calls = append(calls, ev.ID+"@"+run)
 		return nil
 	}
@@ -463,18 +465,46 @@ func TestApplyBringsTheSummaryUpToDateAfterTheVerdict(t *testing.T) {
 	if len(calls) != 1 || calls[0] != eventID+"@"+childRun || len(f.receives) != 1 {
 		t.Fatalf("calls %v receives %d", calls, len(f.receives))
 	}
-	f.deps.AfterVerdict = func(context.Context, EventInfo, string) error { return fmt.Errorf("the outbox is busy") }
+	f.deps.Reconcile = func(context.Context, EventInfo, string) error { return fmt.Errorf("the outbox is busy") }
 	if res := f.apply(Request{}); res.State != StateApplied || res.SummaryError != "the outbox is busy" {
 		t.Fatalf("result %+v", res)
 	}
+
+	// a refusal reconciles
 	g := newFx(t)
 	h := g.commit("a.txt", "work")
 	g.ev.Head = h
 	g.executor("ex-1", h, "claude-fake-haiku")
 	g.review("rv-1", h, "gpt-fake-sol", "verified", "other-digest")
-	called := false
-	g.deps.AfterVerdict = func(context.Context, EventInfo, string) error { called = true; return nil }
-	if res := g.apply(Request{}); res.State != StateRefused || called {
-		t.Errorf("a refusal called the hook: %+v", res)
+	var gcalls []string
+	g.deps.Reconcile = func(_ context.Context, ev EventInfo, run string) error {
+		gcalls = append(gcalls, ev.ID+"@"+run)
+		return nil
+	}
+	if res := g.apply(Request{}); res.State != StateRefused || len(gcalls) != 1 || gcalls[0] != eventID+"@"+childRun {
+		t.Errorf("a refusal: %+v calls %v", res, gcalls)
+	}
+
+	// a wait that ended before the verdict reconciles, and a failure of the hook is told without changing the state
+	n := newFx(t)
+	head := n.commit("a.txt", "work")
+	n.ev.Head = head
+	n.executor("ex-1", head, "claude-fake-haiku")
+	var ncalls []string
+	n.deps.Reconcile = func(_ context.Context, ev EventInfo, run string) error {
+		ncalls = append(ncalls, ev.ID+"@"+run)
+		return fmt.Errorf("the outbox is busy")
+	}
+	if res := n.apply(Request{Wait: 10 * time.Second}); res.State != StateNextTurn || res.SummaryError != "the outbox is busy" || len(ncalls) != 1 || ncalls[0] != eventID+"@"+childRun {
+		t.Errorf("a wait that expired: %+v calls %v", res, ncalls)
+	}
+
+	// an event the relay does not hold is no relationship to reconcile
+	u := newFx(t)
+	ucalled := false
+	u.deps.Reconcile = func(context.Context, EventInfo, string) error { ucalled = true; return nil }
+	u.deps.Events = eventsFunc(func() (EventInfo, error) { return EventInfo{}, ErrUnknownEvent })
+	if res := u.apply(Request{}); res.Reason != ReasonUnknownEvent || ucalled {
+		t.Errorf("unknown event: %+v called %v", res, ucalled)
 	}
 }

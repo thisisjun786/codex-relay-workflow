@@ -20,18 +20,28 @@ var applyDeps = func(ctx context.Context, env Env, state, socket, repo string) (
 	}
 	relay := apply.RelayCommand{Program: env.Program, State: statePath, Socket: socket}
 	deps := apply.Deps{Store: st, Events: apply.StoreEvents{Store: st}, Commits: apply.Git, Receive: relay.Receive, Correct: relay.Correct, Repo: repo}
-	// after each verdict the plan summary is brought up to date and the orchestrator thread is told what is owed
-	deps.AfterVerdict = func(ctx context.Context, ev apply.EventInfo, childRun string) error {
-		child, ok, err := report.ReadRun(ctx, st.DB, childRun)
-		if err != nil || !ok {
-			return err
+	// every time apply runs the plan summary is brought up to date and the orchestrator thread is told what is owed; the plan is the
+	// child's run's, else the relationship's
+	deps.Reconcile = func(ctx context.Context, ev apply.EventInfo, childRun string) error {
+		plan := ev.Plan
+		if childRun != "" {
+			child, ok, err := report.ReadRun(ctx, st.DB, childRun)
+			if err != nil {
+				return err
+			}
+			if ok {
+				plan = child.PlanID
+			}
 		}
-		run, document, found, err := report.SummaryTarget(ctx, st.DB, child.PlanID, ev.ParentTask)
+		if plan == "" {
+			return nil
+		}
+		run, document, found, err := report.SummaryTarget(ctx, st.DB, plan, ev.ParentTask)
 		if err != nil || !found {
 			return err
 		}
 		_, err = report.ReconcileSummary(ctx, report.SummaryEnv{Store: st, Sched: &dagsched.Scheduler{Store: st}, Rows: report.ForeignAppender{Store: st, Run: run}, Run: run,
-			Plan: child.PlanID, Document: document, Actor: ev.ParentTask, Sender: env.sender()})
+			Plan: plan, Document: document, Actor: ev.ParentTask, Sender: env.sender()})
 		return err
 	}
 	return deps, func() { _ = st.Close() }, nil

@@ -178,6 +178,42 @@ func TestSupervisorFlushUnloadRaceRetriesUnderNewID(t *testing.T) {
 	supervisorTestCheckDelivered(t, flowTestCalls(t, record), [][]string{{"flow", "report-delivered", "--report", "rep_1", "--result", "accepted", "--request-id", "run-1:M1:report-l1"}})
 }
 
+// The direct send-parent --role supervisor path met the unloaded-thread refusal and queued the notice with the next ordinal: the flush that
+// meets it raises the same report_undelivered once, even when the thread takes the notice then, and delivers it under the -l1 id.
+func TestSupervisorFlushRaisesUndeliveredForADirectPathUnloadRefusal(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	exe, record := flowTestCRW(t)
+	e.Executable = exe
+	supervisorTestSettings(t, coreSettings{Model: "gpt-supervisor", ReasoningEffort: "xhigh"})
+	loaded, loadedLog := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"observation": "idle"}},
+		{"payload": map[string]any{"status": "accepted", "delivery": "turn_started"}},
+	})
+	cfg := pumpTestConfig(t, loaded)
+	n := supervisorNotice{LogicalID: "run-1:M1:report", Thread: "lead-thread", BindingTask: "lead-thread", ReportID: "rep_1", Initiative: "I-23", Text: "report is ready", CreatedAt: now.Add(-2 * time.Hour).UTC().Format(time.RFC3339)}
+	if _, err := supervisorQueueWrite(cfg, withLoadRetry(n, 1)); err != nil {
+		t.Fatal(err)
+	}
+	st := pumpTestReadStatePtr(t, cfg)
+	supervisorTestFlush(t, e, cfg, st)
+	if k := countKind(st.Pending, pumpKindReportUndelivered); k != 1 {
+		t.Errorf("%d report_undelivered events, want 1", k)
+	}
+	if sends := supervisorTestCallsTo(t, loadedLog, deliverToolSend, "lead-thread"); len(sends) != 1 || sends[0]["args"].(map[string]any)["request_id"] != "run-1:M1:report-l1" {
+		t.Fatalf("the delivery: %v", sends)
+	}
+	supervisorTestCheckDelivered(t, flowTestCalls(t, record), [][]string{{"flow", "report-delivered", "--report", "rep_1", "--result", "accepted", "--request-id", "run-1:M1:report-l1"}})
+	// and a notice that was never refused raises none
+	other := pumpTestConfig(t, loaded)
+	supervisorTestQueue(t, other, "lead-thread", "run-2:M2:report", "rep_2", now.Add(-2*time.Hour))
+	st2 := pumpTestReadStatePtr(t, other)
+	supervisorTestFlush(t, e, other, st2)
+	if k := countKind(st2.Pending, pumpKindReportUndelivered); k != 0 {
+		t.Errorf("%d report_undelivered events for a notice that was never refused", k)
+	}
+}
+
 func countKind(events []pumpEvent, kind string) int {
 	n := 0
 	for _, ev := range events {

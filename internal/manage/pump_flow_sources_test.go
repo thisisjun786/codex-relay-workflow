@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/journal"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -88,6 +90,48 @@ func TestPumpRunDeadNotice(t *testing.T) {
 	}
 	if dead != 2 {
 		t.Fatalf("the second death was not told: %q", got)
+	}
+}
+
+// A turn of an agent writes no row of the run while it is in flight, so a run with an open agent call (prepared or thread_started, no
+// terminal row) is not dead after run_dead_seconds: it is dead only after the longer grace of an open call. A run whose call ended is
+// judged by run_dead_seconds again.
+func TestPumpRunDeadWaitsForAnOpenAgentCall(t *testing.T) {
+	now := time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)
+	e, cfg, st, log := pumpFlowTestSetup(t, &now, pumpFlowRunsSource{})
+	callRow := func(run, call, event string, at time.Time) {
+		t.Helper()
+		j, err := journal.Open(context.Background(), st, run, journal.Identity{PlanID: "plan-1", PlanRevision: 1, ActorTaskID: "orch-task", EpochNonce: "n"}, journal.Options{Now: func() time.Time { return at }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		j.Append(engine.Event{RunID: run, Kind: engine.KindCall, CallID: call, Path: "/", Position: 1, Op: "agent", Event: event, Data: map[string]any{"role": "executor", "thread_id": "t-" + call}})
+		if err := j.Flush(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	flowTestRun(t, st, "run-turn", "orch-task", now.Add(-3*time.Hour), false)
+	callRow("run-turn", "call-1", engine.EvPrepared, now.Add(-3*time.Hour))
+	callRow("run-turn", "call-1", engine.EvThreadStarted, now.Add(-3*time.Hour))
+	flowTestRun(t, st, "run-over", "orch-task", now.Add(-3*time.Hour), false)
+	callRow("run-over", "call-2", engine.EvPrepared, now.Add(-3*time.Hour))
+	callRow("run-over", "call-2", engine.EvCompleted, now.Add(-3*time.Hour))
+	pumpFlowTestRound(t, e, cfg)
+	msgs := pumpFlowTestMessages(t, log)
+	if len(msgs) != 1 || !strings.Contains(msgs[0], "run dead run=run-over") || strings.Contains(msgs[0], "run-turn") {
+		t.Fatalf("messages %q", msgs)
+	}
+	// the open call is quiet for longer than any turn: dead
+	now = now.Add(pumpFlowOpenCallGrace)
+	pumpFlowTestRound(t, e, cfg)
+	var turn int
+	for _, m := range pumpFlowTestMessages(t, log) {
+		if strings.Contains(m, "run dead run=run-turn") {
+			turn++
+		}
+	}
+	if turn != 1 {
+		t.Fatalf("the run with an open call was not told once: %q", pumpFlowTestMessages(t, log))
 	}
 }
 

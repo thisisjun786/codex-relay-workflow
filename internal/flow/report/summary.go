@@ -178,7 +178,9 @@ func streamOf(ctx context.Context, env SummaryEnv) (dagsched.SummaryStream, bool
 	return dagsched.SummaryStream{}, false, nil
 }
 
-// noticeRows are the summary ids of the stream that have an intent and those that have a settlement, from the rows of every run.
+// noticeRows are the summary ids of the stream that have an intent and those that have a settlement, from the rows of every run, each id
+// once: a live run and a concurrent `crw flow apply` can both have written the intent of one summary id (the journal's check and its later
+// flush are not one transaction), and a duplicate row must neither send twice nor settle twice.
 func noticeRows(ctx context.Context, env SummaryEnv) (notices, settled []string, err error) {
 	rows, err := ReadRows(ctx, env.Store.DB, "", KindSummaryNotice, KindSummarySettled)
 	if err != nil {
@@ -190,9 +192,13 @@ func noticeRows(ctx context.Context, env SummaryEnv) (notices, settled []string,
 		}
 		switch r.Kind {
 		case KindSummaryNotice:
-			notices = append(notices, r.Str("summary_id"))
+			if id := r.Str("summary_id"); !slices.Contains(notices, id) {
+				notices = append(notices, id)
+			}
 		case KindSummarySettled:
-			settled = append(settled, r.Str("summary_id"))
+			if id := r.Str("summary_id"); !slices.Contains(settled, id) {
+				settled = append(settled, id)
+			}
 		}
 	}
 	return notices, settled, nil
@@ -230,7 +236,7 @@ func firstError(errs ...error) error {
 
 // SummaryTarget finds the run that keeps the plan summary of a plan for an orchestrator: the newest run of the plan whose actor is the
 // orchestrator and that recorded a summary document (`crw flow run --summary-document`). `crw flow apply` reconciles the stream through
-// it after a verdict. ok is false when no run recorded one.
+// it every time it runs. ok is false when no run recorded one.
 func SummaryTarget(ctx context.Context, db DB, plan, actor string) (run, document string, ok bool, err error) {
 	var payload string
 	err = db.QueryRowContext(ctx, `SELECT e.run_id, e.payload_json FROM flow_events e JOIN flow_runs r ON r.run_id = e.run_id
