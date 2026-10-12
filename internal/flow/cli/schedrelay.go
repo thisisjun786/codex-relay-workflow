@@ -52,6 +52,9 @@ type SchedRelay struct {
 	mu      sync.Mutex
 	claimed string
 	input   *compile.Input
+	// testAfterBatch is a test seam: it runs after the integration batch and before its observation, and an error it answers is the
+	// integration's.
+	testAfterBatch func() error
 }
 
 var _ ops.Relay = (*SchedRelay)(nil)
@@ -515,20 +518,41 @@ func (r *SchedRelay) Integrate(ctx context.Context, req ops.IntegrateRequest) (o
 		}
 		return ops.IntegrateResult{}, epochLost(req.Plan, err)
 	}
-	tip, err := r.IntegrationTip(ctx, req.Plan)
-	if err != nil {
+	q := r.q(ctx)
+	if cur, found, err := dagsched.CurrentAcceptance(ctx, q, req.Plan, req.Node); err != nil {
 		return ops.IntegrateResult{}, err
+	} else if found && cur.Kind == dagsched.AcceptanceAgent && cur.AcceptanceID == req.AcceptanceID {
+		if landed, err := r.Sched.AgentAcceptanceIntegrated(ctx, q, cur.Agent); err != nil {
+			return ops.IntegrateResult{}, err
+		} else if landed {
+			// the integration landed and was observed: the replay of a call whose answer the run did not record
+			tip, err := r.IntegrationTip(ctx, req.Plan)
+			if err != nil {
+				return ops.IntegrateResult{}, err
+			}
+			out.Landed, out.Replayed, out.BatchCommit, out.Tip = true, true, tip, tip
+			return out, nil
+		}
 	}
-	if contained, err := isAncestor(ctx, checkout, req.Head, tip); err != nil {
-		return ops.IntegrateResult{}, err
-	} else if contained {
-		out.Landed, out.Replayed, out.BatchCommit, out.Tip = true, true, tip, tip
-	} else {
-		res, err := r.Sched.IntegrateBatch(ctx, dagsched.IntegrationBatchInput{Plan: req.Plan, Actor: r.Actor, Checkout: checkout, IntegrationRef: ref, BaseRef: ref, Nodes: []string{req.Node}},
-			dagsched.IntegrationDeps(r.Verify))
-		if err != nil {
+	// the batch completes the marks an earlier batch left pending and never merges a head the branch already holds again
+	res, err := r.Sched.IntegrateBatch(ctx, dagsched.IntegrationBatchInput{Plan: req.Plan, Actor: r.Actor, Checkout: checkout, IntegrationRef: ref, BaseRef: ref, Nodes: []string{req.Node}},
+		dagsched.IntegrationDeps(r.Verify))
+	if err != nil {
+		var rf *store.RefusedError
+		if !errors.As(err, &rf) || rf.Reason == string(contract.RefusalStaleCoordinatorEpoch) {
+			return ops.IntegrateResult{}, epochLost(req.Plan, err)
+		}
+		// a node a batch merged before the run recorded it is no candidate any more: the branch holds its head, and only the observation
+		// may be missing
+		tip, terr := r.IntegrationTip(ctx, req.Plan)
+		if terr != nil {
+			return ops.IntegrateResult{}, terr
+		}
+		if contained, cerr := isAncestor(ctx, checkout, req.Head, tip); cerr != nil || !contained {
 			return refused(err)
 		}
+		out.Landed, out.Replayed, out.BatchCommit, out.Tip = true, true, tip, tip
+	} else {
 		for _, m := range res.Merged {
 			if m.NodeID == req.Node {
 				out.Landed, out.BatchCommit, out.Tip = true, res.NewHead, res.NewHead
@@ -536,19 +560,28 @@ func (r *SchedRelay) Integrate(ctx context.Context, req ops.IntegrateRequest) (o
 		}
 		for _, c := range res.AlreadyContained {
 			if c.NodeID == req.Node && !out.Landed {
-				out.Landed, out.Replayed, out.BatchCommit, out.Tip = true, true, tip, tip
+				out.Landed, out.Replayed = true, true
+				if out.Tip, err = r.IntegrationTip(ctx, req.Plan); err != nil {
+					return ops.IntegrateResult{}, err
+				}
+				out.BatchCommit = out.Tip
 			}
 		}
-		for _, s := range res.Split {
-			if s.NodeID == req.Node && !out.Landed {
-				out.Reason, out.Detail = s.Reason, fmt.Sprintf("the batch %s left %s out: %s", res.BatchID, req.Node, s.Reason)
+		for _, sp := range res.Split {
+			if sp.NodeID == req.Node && !out.Landed {
+				out.Reason, out.Detail = sp.Reason, fmt.Sprintf("the batch %s left %s out: %s", res.BatchID, req.Node, sp.Reason)
 			}
 		}
 		if !out.Landed {
 			if out.Reason == "" {
-				out.Reason, out.Detail = "not_integrated", fmt.Sprintf("the batch %s did not merge %s (merged %d, left out %d)", res.BatchID, req.Node, len(res.Merged), len(res.Split))
+				out.Reason, out.Detail = "not_integrated", fmt.Sprintf("the batch %s did not merge %s (merged %d, left out %d, contained unverified %d)", res.BatchID, req.Node, len(res.Merged), len(res.Split), len(res.ContainedUnverified))
 			}
 			return out, nil
+		}
+	}
+	if r.testAfterBatch != nil {
+		if err := r.testAfterBatch(); err != nil {
+			return ops.IntegrateResult{}, err
 		}
 	}
 	if _, err := r.Sched.ObserveIntegration(ctx, req.Plan, req.Node, r.Actor, []dagsched.Target{{Repository: checkout, BaseRef: ref}}); err != nil {

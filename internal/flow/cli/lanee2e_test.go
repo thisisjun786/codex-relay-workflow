@@ -58,4 +58,18 @@ func TestProjectLaneTwoMilestonesOnTempStore(t *testing.T) {
 			l.effectsOnce("A-1", "A-2", "B-1")
 		})
 	}
+	// a process killed after an integration batch moved the branch and before the run observed the landing: the resumed process asks
+	// again, the relay merges nothing again, and the observation is made
+	t.Run("kill between the batch and its observation", func(t *testing.T) {
+		l := newLaneLab(t, twoMilestones()...)
+		l.killBetween = l.nodeOf["A-2"]
+		runMilestones(l, "M1", "M2")
+		if l.processes != 3 {
+			t.Fatalf("%d processes: %v", l.processes, l.effects)
+		}
+		l.effectsOnce("A-1", "A-2", "B-1")
+		if n := l.count("SELECT COUNT(*) FROM dag_integration_observations WHERE acceptance_id IN (SELECT acceptance_id FROM dag_agent_acceptances WHERE node_id = ?)", l.nodeOf["A-2"]); n == 0 {
+			t.Errorf("the landing of A-2 was never observed")
+		}
+	})
 }

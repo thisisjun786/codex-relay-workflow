@@ -63,6 +63,9 @@ type laneLab struct {
 	processes     int
 	// after is called after every effect-bearing call of the relay, with the relay of the process and the call's name.
 	after func(r *SchedRelay, effect string)
+	// killBetween kills the process once, between the batch of the integration of this node and its observation.
+	killBetween      string
+	pendingIntegrate string
 }
 
 const labOwner = "thread-owner"
@@ -170,7 +173,22 @@ func newLaneLab(t *testing.T, issues ...labIssue) *laneLab {
 	old := OpsFor
 	OpsFor = func(ctx context.Context, req LaneRequest) (LaneWorld, error) {
 		return BuildLane(ctx, req, LaneOptions{Verifier: labVerifier{l}, IntegrationVerify: l.verifyMerged, SkillsDigest: "sha256:lab-skills",
-			Relay: func(r *SchedRelay) ops.Relay { return &labRelay{SchedRelay: r, l: l} }})
+			Relay: func(r *SchedRelay) ops.Relay {
+				r.testAfterBatch = func() error {
+					l.mu.Lock()
+					hit := l.killBetween != "" && strings.HasPrefix(l.pendingIntegrate, l.killBetween)
+					if hit {
+						l.killBetween = ""
+					}
+					l.mu.Unlock()
+					if hit {
+						l.kill()
+						return errKilled
+					}
+					return nil
+				}
+				return &labRelay{SchedRelay: r, l: l}
+			}})
 	}
 	t.Cleanup(func() { OpsFor = old })
 	return l
@@ -351,6 +369,9 @@ func (r *labRelay) Accept(ctx context.Context, req ops.AcceptRequest) (out ops.A
 }
 
 func (r *labRelay) Integrate(ctx context.Context, req ops.IntegrateRequest) (out ops.IntegrateResult, err error) {
+	r.l.mu.Lock()
+	r.l.pendingIntegrate = req.Node
+	r.l.mu.Unlock()
 	err = r.effect("integrate:"+req.Node, func() (e error) { out, e = r.SchedRelay.Integrate(ctx, req); return })
 	return
 }
