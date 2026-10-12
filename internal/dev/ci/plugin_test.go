@@ -804,10 +804,11 @@ func Test47_PLG_11_InstalledPayloadModeIsRead(t *testing.T) {
 	expectEqual(t, "digest", payloadDigest(read), payloadDigest(executable))
 }
 
-// The package as this checkout ships it, with its 34 hook declarations (the completion Stop, the 32
-// K1 legs and the GitHub post guard, CRW-392), passes every payload rule: the K1 timeouts up to 20
-// seconds are within the cap, and the report counts the three Stop hooks a host runs. The version
-// is recorded for these bytes here, so the check does not depend on the manifest's version line.
+// The package as this checkout ships it, with its 36 hook declarations (the completion Stop, the 32
+// K1 legs, the GitHub post guard of CRW-392, the flow status line and the relay child push guard),
+// passes every payload rule: the K1 timeouts up to 20 seconds are within the cap, and the report
+// counts the four Stop hooks a host runs. The version is recorded for these bytes here, so the
+// check does not depend on the manifest's version line.
 func Test47_PLG_20_ShippedHookDeclarationsPass(t *testing.T) {
 	plugin := filepath.Join(repoRoot(), "plugins", "crw")
 	f := files{}
