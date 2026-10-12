@@ -65,7 +65,7 @@ func TestManagedStartSendsTheChildPairsAutoCompactLimit(t *testing.T) {
 		t.Fatal(err)
 	}
 	declared := func() map[string]any {
-		return map[string]any{"sandbox": workspaceWrite(), "approvalPolicy": "never", "cwd": workspace, "runtimeWorkspaceRoots": []any{workspace}, "model": "gpt-5.4", "reasoningEffort": "medium", "environments": []any{map[string]any{"environmentId": "local", "cwd": workspace, "runtimeWorkspaceRoots": []any{workspace}}}}
+		return map[string]any{"sandbox": relayChildSandbox(), "approvalPolicy": "never", "cwd": workspace, "runtimeWorkspaceRoots": []any{workspace}, "model": "gpt-5.4", "reasoningEffort": "medium", "environments": []any{map[string]any{"environmentId": "local", "cwd": workspace, "runtimeWorkspaceRoots": []any{workspace}}}}
 	}
 	request := map[string]any{"schema": managed.Schema, "requestId": "managed-auto-compact", "issueKey": "CRW-852", "parent": map[string]any{"taskId": "parent", "hostId": "host", "settings": declared()}, "child": map[string]any{"hostId": "host", "title": "Verify", "settings": declared()}, "artifactRoots": []any{workspace}, "allowedRecipients": []any{"parent"}, "criteria": []any{map[string]any{"id": "c1", "title": "preserve replay identity", "required": true}}, "criteriaSource": "issue:CRW-852", "baselineRevision": "baseline", "scopeRef": "issue:CRW-852", "prompt": "business-secret"}
 	host := fakehost.Start(t)

@@ -38,7 +38,7 @@ func Test28_ManagedStartRefusesAnUnboundProjectBeforeCreation(t *testing.T) {
 	t.Setenv(execution.EnvPolicy, policyPath)
 	registry.ResetRolePolicySnapshot()
 	t.Cleanup(registry.ResetRolePolicySnapshot)
-	settings := map[string]any{"sandbox": workspaceWrite(), "approvalPolicy": "never", "cwd": workspace, "runtimeWorkspaceRoots": []any{workspace}, "model": "gpt-5.4", "reasoningEffort": "medium", "environments": []any{map[string]any{"environmentId": "local", "cwd": workspace, "runtimeWorkspaceRoots": []any{workspace}}}}
+	settings := map[string]any{"sandbox": relayChildSandbox(), "approvalPolicy": "never", "cwd": workspace, "runtimeWorkspaceRoots": []any{workspace}, "model": "gpt-5.4", "reasoningEffort": "medium", "environments": []any{map[string]any{"environmentId": "local", "cwd": workspace, "runtimeWorkspaceRoots": []any{workspace}}}}
 	request := map[string]any{"schema": managed.Schema, "requestId": "managed-unbound", "issueKey": "REL-MANAGED", "projectKey": "P-SCOPE", "parent": map[string]any{"taskId": "parent", "hostId": "host", "settings": settings}, "child": map[string]any{"hostId": "host", "title": "Verify", "settings": settings}, "artifactRoots": []any{workspace}, "allowedRecipients": []any{"parent"}, "criteria": []any{map[string]any{"id": "c1", "title": "preserve replay identity", "required": true}}, "criteriaSource": "issue:REL-MANAGED", "baselineRevision": "baseline", "scopeRef": "issue:REL-MANAGED", "prompt": "business-secret"}
 	raw, err := json.Marshal(request)
 	if err != nil {
