@@ -188,6 +188,127 @@ func TestPumpSteerOnlyKeepsUnknownAttemptFrozen(t *testing.T) {
 	}
 }
 
+func pumpLedgerSetObservation(t *testing.T, dir, observation, turnID string) {
+	t.Helper()
+	raw, err := json.Marshal(map[string]any{"observation": observation, "activeTurnId": turnID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "observation.json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDeliverSteerOnlyUnmeasuredRaceKeepsWaitingWithoutRetries(t *testing.T) {
+	for _, observation := range []string{"active_without_in_progress_turn", "in_progress_turn_without_active_status", "notLoaded", "systemError", "unknown", "active"} {
+		t.Run(observation, func(t *testing.T) {
+			now := pumpTestNow
+			environment := pumpTestEnv(t, &now)
+			bridge, dir := pumpLedgerBridge(t)
+			configuration := pumpTestConfig(t, bridge)
+			message := Message{LogicalID: "waiting-message", Thread: "mgmt-thread", Text: "body", SteerOnly: true}
+			outcome, err := Deliver(context.Background(), environment, configuration, message)
+			if err != nil || outcome.Class != deliverClassUnknown || outcome.Receipt["status"] != deliverStateWaiting {
+				t.Fatalf("initial idle wait: %+v err %v", outcome, err)
+			}
+			pumpLedgerSetObservation(t, dir, observation, "")
+			for round := 0; round < pumpQueueRefusalLimit*(deliverRetryLimit+3); round++ {
+				outcome, err = Deliver(context.Background(), environment, configuration, message)
+				if err != nil || outcome.Class != deliverClassUnknown || outcome.RequestID != message.LogicalID || outcome.Receipt["status"] != deliverStateWaiting {
+					t.Errorf("observation round %d consumed a waiting request: %+v err %v", round, outcome, err)
+				}
+			}
+			for _, call := range deliverSendCallsOf(t, filepath.Join(dir, "calls.jsonl")) {
+				if call["tool"] != deliverToolActive {
+					t.Errorf("unsent observation caused reconciliation or dispatch: %+v", call)
+				}
+			}
+			record, known, err := deliverLoad(configuration, message.LogicalID)
+			if err != nil || !known || record.State != deliverStateWaiting || record.RequestID != message.LogicalID || len(record.Attempts) != 0 {
+				t.Fatalf("observations spent retries or refusals: record %+v known %v err %v", record, known, err)
+			}
+		})
+	}
+}
+
+func TestPumpSteerOnlyObservationWaitNeverParksAndRecovers(t *testing.T) {
+	harness := newPumpLedgerHarness(t)
+	harness.cfg.raw = map[string]json.RawMessage{"pump": json.RawMessage(`{"steer_only":true}`)}
+	harness.cfg.Settings.Management = coreSettings{}
+	activeBridge, activeLog := deliverFakeBridge(t, []map[string]any{
+		{"payload": map[string]any{"observation": "active", "activeTurnId": "turn-1"}},
+		{"payload": map[string]any{"status": "accepted", "delivery": "accepted_not_applied"}},
+	})
+	marker := filepath.Join(harness.dir, "probed")
+	bridge := filepath.Join(harness.dir, "race-bridge")
+	script := "#!/bin/sh\nif [ -e " + coreShellQuote(marker) + " ]; then\nexec " + coreShellQuote(harness.cfg.Bridge.Binary) +
+		"\nfi\ntouch " + coreShellQuote(marker) + "\nexec " + coreShellQuote(activeBridge) + "\n"
+	if err := os.WriteFile(bridge, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	harness.cfg.Bridge.Binary = bridge
+	state := harness.round()
+	if state.Attempt == nil || len(state.Pending) != 1 {
+		t.Fatalf("active-to-idle race did not freeze the unsent batch: %+v", state)
+	}
+	frozen := *state.Attempt
+	observations := []string{"active_without_in_progress_turn", "in_progress_turn_without_active_status", "idle"}
+	for round := 0; round < pumpQueueRefusalLimit*(deliverRetryLimit+4); round++ {
+		pumpLedgerSetObservation(t, harness.dir, observations[round%len(observations)], "")
+		if state.Attempt == nil {
+			if err := os.Remove(marker); err != nil {
+				t.Fatal(err)
+			}
+		}
+		state = harness.round()
+		t.Logf("round %d: pending=%d refused=%+v parked=%d", round, len(state.Pending), state.MgmtRefused, len(state.Parked))
+		if len(state.Pending) != 1 || len(state.Parked) != 0 || state.Sent["e1"] || state.MgmtRefused.Count != 0 || state.MgmtRefused.Ordinal != 0 || state.Attempt == nil || state.Attempt.LogicalID != frozen.LogicalID || state.Attempt.Text != frozen.Text {
+			t.Errorf("observation round %d spent a refusal or lost the frozen batch: %+v", round, state)
+		}
+	}
+	for _, log := range []string{activeLog, filepath.Join(harness.dir, "calls.jsonl")} {
+		for _, call := range deliverSendCallsOf(t, log) {
+			if call["tool"] != deliverToolActive {
+				t.Errorf("observation-only rounds attempted reconciliation or delivery: %+v", call)
+			}
+		}
+	}
+	record, known, err := deliverLoad(harness.cfg, frozen.LogicalID)
+	if err != nil || !known || record.State != deliverStateWaiting || record.RequestID != frozen.LogicalID || len(record.Attempts) != 0 {
+		t.Fatalf("unsent observations did not remain waiting: record %+v known %v err %v", record, known, err)
+	}
+	harness.addEvent("e2")
+	state = harness.round()
+	if len(state.Pending) != 2 || state.Attempt == nil || state.Attempt.Text != frozen.Text || len(state.Attempt.IDs) != 1 || state.Attempt.IDs[0] != "e1" {
+		t.Fatalf("waiting blocked collection or changed the frozen batch: %+v", state)
+	}
+	harness.cfg.Bridge.Binary = activeBridge
+	state = harness.round()
+	if !state.Sent["e1"] || state.Sent["e2"] || state.Attempt != nil || len(state.Pending) != 1 || len(state.Parked) != 0 {
+		t.Fatalf("active recovery did not settle only the frozen batch: %+v", state)
+	}
+	steers := 0
+	for _, call := range deliverSendCallsOf(t, activeLog) {
+		if call["tool"] == deliverToolSend {
+			t.Fatal("steer-only recovery started a turn")
+		}
+		if call["tool"] == deliverToolSteer {
+			steers++
+			args := call["args"].(map[string]any)
+			if args["request_id"] != frozen.LogicalID || args["message"] != frozen.Text || args["expected_turn_id"] != "turn-1" {
+				t.Fatalf("recovery changed the waiting dispatch: %+v", args)
+			}
+		}
+	}
+	if steers != 1 {
+		t.Fatalf("waiting batch received %d steers, want one", steers)
+	}
+	state = harness.round()
+	if !state.Sent["e2"] || state.Attempt != nil || len(state.Pending) != 0 || len(state.Parked) != 0 || state.MgmtRefused.Count != 0 {
+		t.Fatalf("subsequent collection did not drain after recovery: %+v", state)
+	}
+}
+
 func TestPumpManagementOrdinalReadsLegacyRefusalCount(t *testing.T) {
 	h := newPumpLedgerHarness(t)
 	st := pumpNewState()

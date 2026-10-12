@@ -103,6 +103,9 @@ func pumpLedgerAnswer(dir, tool string, args map[string]any) (string, bool) {
 	payload := func(v map[string]any) string { raw, _ := json.Marshal(v); return string(raw) }
 	switch tool {
 	case deliverToolActive:
+		if observation, err := os.ReadFile(filepath.Join(dir, "observation.json")); err == nil {
+			return string(observation), false
+		}
 		return payload(map[string]any{"observation": "idle"}), false
 	case deliverToolOperation:
 		requestID, _ := args["request_id"].(string)
