@@ -372,8 +372,13 @@ const ReasonPlanChanged = "plan_changed"
 
 // ReasonRelayPlanChanged is the reason of a pinned release the relay refused as plan_changed while the plan the flow reads again is
 // still the one the audited DESIGN stands on: the relay releases from a plan the flow does not read (a run reads its plan at the
-// revision it pinned), so no signal comes of the change and the lane does not ask again.
+// revision it pinned), so no signal comes of the change and the lane does not ask again. The release raises the run-level hold
+// plan_superseded (CRW-1291): the run does not follow the relay's new revision.
 const ReasonRelayPlanChanged = "relay_plan_changed"
+
+// ReasonPlanSuperseded is the run-level hold of CRW-1291, raised by a release answered relay_plan_changed, and the reason of every
+// release while the hold stands.
+const ReasonPlanSuperseded = "plan_superseded"
 
 // ReleaseOutcome is the answer of crw.release.
 type ReleaseOutcome struct {
@@ -384,6 +389,9 @@ type ReleaseOutcome struct {
 	Revision     string `json:"revision"`
 	DesignDigest string `json:"design_digest"`
 	ExecutionID  string `json:"execution_id"`
+	// Escalation is the hold this release raised, the question its node waits on; Hold the hold that stands (plan_superseded).
+	Escalation string `json:"escalation,omitempty"`
+	Hold       string `json:"hold,omitempty"`
 }
 
 func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResult, error) {
@@ -398,7 +406,22 @@ func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRes
 	data := map[string]any{"plan": plan, "node": node, "milestone": ms}
 	finish := func() (engine.OpResult, error) {
 		data["released"], data["reason"], data["kind"] = out.Released, out.Reason, out.Kind
+		if out.Hold != "" {
+			data["escalation"], data["hold"] = out.Escalation, out.Hold
+		}
 		return engine.OpResult{Result: result(out), Data: data}, nil
+	}
+	// a run under the hold plan_superseded releases nothing and asks the relay nothing until a decision lifts it (CRW-1291); the call
+	// that raised the hold and runs again answers it as its own
+	if hold, ok := standingHold(r); ok {
+		out.Reason, out.Hold = ReasonPlanSuperseded, dataStr(hold, "escalation_id")
+		if dataStr(hold, "release_call") == req.CallID {
+			out.Reason, out.Escalation = ReasonRelayPlanChanged, out.Hold
+			if err := o.returnSlot(ctx, req, hold, data); err != nil {
+				return engine.OpResult{}, err
+			}
+		}
+		return finish()
 	}
 	if !ok {
 		out.Reason = "design_missing"
@@ -497,10 +520,68 @@ func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRes
 		}
 		if digestOf(again) == pinnedPlan(r, ms) {
 			out.Reason = ReasonRelayPlanChanged
+			if err := o.hold(ctx, req, plan, node, res, &out, data); err != nil {
+				return engine.OpResult{}, err
+			}
 		}
 	}
 	data["execution_id"], data["slot_id"], data["request_id"] = res.ExecutionID, res.SlotID, req.RequestID
 	return finish()
+}
+
+// hold raises the run-level hold plan_superseded (CRW-1291): the relay refused the node for a plan revision past the one the run pinned,
+// which the run does not follow (CRW-1277 c). The hold is an escalation of the node that asks the parent (the run tells it, with the
+// pinned revision, the head revision, the node and the actions), written once for the call; while it stands no node of the run is
+// released and nothing restarts on its own. The execution the relay still holds for the node (a release the run never recorded) is
+// closed when it is this run's, which returns its slot, and recorded with its run when it is another run's.
+func (o *releaseOp) hold(ctx context.Context, req engine.OpRequest, plan, node string, res ReleaseResult, out *ReleaseOutcome, data map[string]any) error {
+	id := "esc_" + hashParts(req.RunID, req.CallID, ReasonPlanSuperseded)[:24]
+	out.Escalation, out.Hold = id, id
+	row, written := rows(req.Journal.Events()).flow(engine.EvEscalation).last(func(ev engine.Event) bool { return dataStr(ev, "escalation_id") == id })
+	if !written {
+		slot := "none"
+		switch {
+		case res.HeldExecution != "" && res.HeldRun == req.RunID:
+			slot = "returned"
+		case res.HeldExecution != "":
+			slot = "owned_by_run"
+		}
+		detail := fmt.Sprintf("plan_superseded: run %s pinned revision %d of plan %s; the relay's head revision %d gives node %s another slice, so the relay "+
+			"refused its release (plan_revision_conflict). The run does not follow the new revision and holds: no node of it is released while the hold stands, "+
+			"and nothing restarts on its own. Actions: end or cancel the run (crw flow cancel %s) and start a new run on revision %d, or answer this question "+
+			"to close node %s by escalation (crw flow answer, then crw flow resume).", req.RunID, res.PinnedRevision, plan, res.HeadRevision, node, req.RunID, res.HeadRevision, node)
+		evidence := map[string]any{"plan": plan, "node": node, "pinned_revision": res.PinnedRevision, "head_revision": res.HeadRevision, "held_execution": res.HeldExecution,
+			"held_run": res.HeldRun, "slot": slot}
+		row = req.Journal.Append(engine.Event{RunID: req.RunID, Kind: engine.KindFlow, CallID: req.CallID, Op: OpRelease, Event: engine.EvEscalation, Data: map[string]any{
+			"reason": ReasonPlanSuperseded, "class": escalationClass(ReasonPlanSuperseded), "node": node, "escalation_id": id, "detail": detail, "evidence": evidence,
+			"ask": ReasonPlanSuperseded, "release_call": req.CallID}})
+	}
+	return o.returnSlot(ctx, req, row, data)
+}
+
+// returnSlot closes the execution a hold recorded as the run's (plan_superseded, which returns its slot in the transaction that closes
+// it); the same close again is the relay's replay, so a call that raised the hold and runs again closes it again.
+func (o *releaseOp) returnSlot(ctx context.Context, req engine.OpRequest, hold engine.Event, data map[string]any) error {
+	evidence, _ := hold.Data["evidence"].(map[string]any)
+	held := func(k string) string { s, _ := evidence[k].(string); return s }
+	data["held_execution"], data["held_run"], data["slot"] = held("held_execution"), held("held_run"), held("slot")
+	if held("slot") != "returned" {
+		return nil
+	}
+	closed, err := o.l.d.Relay.Close(ctx, CloseRequest{Plan: held("plan"), Node: dataStr(hold, "node"), Actor: o.l.d.Actor, Reason: ReasonPlanSuperseded, RequestID: req.RequestID})
+	data["slot_released"] = closed.SlotReleased
+	return err
+}
+
+// standingHold is the newest plan_superseded hold of the run that no applied decision answered.
+func standingHold(r rows) (engine.Event, bool) {
+	return r.flow(engine.EvEscalation).last(func(ev engine.Event) bool {
+		if dataStr(ev, "reason") != ReasonPlanSuperseded || dataStr(ev, "ask") == "" {
+			return false
+		}
+		_, applied := appliedRow(r, dataStr(ev, "node"), dataStr(ev, "escalation_id"))
+		return !applied
+	})
 }
 
 // Proven: a release is proven while the relay says it stands. It is also proven when the run itself ended the execution after the
@@ -525,6 +606,17 @@ func (o *releaseOp) Proven(ctx context.Context, ev []engine.Event, row engine.Ev
 		// plan again after it, and the positions it went on with are what a resume replays
 		if dataStr(row, "reason") == ReasonPlanChanged {
 			return true, "", nil
+		}
+		// the release that raised the hold plan_superseded is its node's for good (the decision on the hold closes the node by
+		// escalation); a release the hold answered asks again once a decision lifted it - nothing restarts while it stands
+		if dataStr(row, "escalation") != "" {
+			return true, "", nil
+		}
+		if dataStr(row, "reason") == ReasonPlanSuperseded {
+			if _, standing := standingHold(rows(ev)); standing {
+				return true, "", nil
+			}
+			return false, "the hold plan_superseded was lifted", nil
 		}
 		// a node the scheduler held back may be releasable now: the position asks again
 		return false, "the release did not happen", nil

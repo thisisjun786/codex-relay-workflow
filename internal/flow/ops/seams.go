@@ -65,6 +65,13 @@ type ReleaseResult struct {
 	// SliceDigest is the node's slice of the plan the relay committed the release under (the frozen manifest's); a replayed
 	// release names the slice of the release it replays, which the relay answers only to a request that expects that slice.
 	SliceDigest string `json:"slice_digest"`
+	// PinnedRevision and HeadRevision are, for a release refused plan_changed, the plan revision the run pinned and the plan's head
+	// revision at the relay; HeldExecution and HeldRun name the node's current execution the relay still holds and the run it was
+	// released to ("" when there is none), which the run-level hold returns or records (CRW-1291).
+	PinnedRevision int64  `json:"pinned_revision,omitempty"`
+	HeadRevision   int64  `json:"head_revision,omitempty"`
+	HeldExecution  string `json:"held_execution,omitempty"`
+	HeldRun        string `json:"held_run,omitempty"`
 }
 
 // AcceptRequest asks the relay to accept an agent node's head (dag-accept on the agent path, R05): the premerge record the run
@@ -115,8 +122,9 @@ type IntegrateResult struct {
 }
 
 // CloseRequest ends or holds the current execution of an agent node (AgentClose, R07): a node given up (tiers_exhausted,
-// blocked_scope, size_split) or cancelled (flow_cancel) has its slot returned in the transaction that closes it; a recovery hold
-// (dispatch_unknown, host_failure) closes nothing.
+// blocked_scope, size_split), cancelled (flow_cancel) or left by a release the run never recorded when its plan was superseded
+// (plan_superseded, CRW-1291) has its slot returned in the transaction that closes it; a recovery hold (dispatch_unknown,
+// host_failure) closes nothing.
 type CloseRequest struct {
 	Plan, Node, Actor, Reason string
 	RequestID                 string

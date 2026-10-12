@@ -29,9 +29,11 @@ import (
 //
 // The writer of these is one run process (R10); nothing here is a table of its own: the rows are the executions and closures of R04.
 
-// The reasons AgentClose takes. AgentReasonFlowCancel is crw flow cancel; the three escalations give a node up; the two holds are recovery holds that keep the slot.
+// The reasons AgentClose takes. AgentReasonFlowCancel is crw flow cancel and AgentReasonPlanSuperseded the run-level hold of a run whose plan the relay's head moved past (CRW-1291), which
+// gives up the execution a release the run never recorded left; the three escalations give a node up; the two holds are recovery holds that keep the slot.
 const (
 	AgentReasonFlowCancel         = "flow_cancel"
+	AgentReasonPlanSuperseded     = "plan_superseded"
 	AgentEscalationTiersExhausted = "tiers_exhausted"
 	AgentEscalationBlockedScope   = "blocked_scope"
 	AgentEscalationSizeSplit      = "size_split"
@@ -126,7 +128,7 @@ func (s *Scheduler) adoptAgent(ctx context.Context, q store.Querier, plan, node,
 
 // AgentCloseInput says why an agent node's current execution is ended or held.
 type AgentCloseInput struct {
-	// Reason is one of AgentReasonFlowCancel (a cancel: state cancelled), AgentEscalationTiersExhausted, AgentEscalationBlockedScope and AgentEscalationSizeSplit (a node given up: state escalated),
+	// Reason is one of AgentReasonFlowCancel and AgentReasonPlanSuperseded (a cancel: state cancelled), AgentEscalationTiersExhausted, AgentEscalationBlockedScope and AgentEscalationSizeSplit (a node given up: state escalated),
 	// AgentHoldDispatchUnknown and AgentHoldHostFailure (a recovery hold: nothing is closed and the slot stays).
 	Reason string
 }
@@ -143,7 +145,7 @@ type AgentCloseResult struct {
 // closeKind is the class of a reason of AgentClose: the state of the closure and the reason the slot goes back with, or held.
 func closeKind(reason string) (state, slotReason string, held, ok bool) {
 	switch reason {
-	case AgentReasonFlowCancel:
+	case AgentReasonFlowCancel, AgentReasonPlanSuperseded:
 		return AgentClosureCancelled, slotCancelledReason, false, true
 	case AgentEscalationTiersExhausted, AgentEscalationBlockedScope, AgentEscalationSizeSplit:
 		return AgentClosureEscalated, slotEscalatedReason, false, true
@@ -161,8 +163,8 @@ func (s *Scheduler) AgentClose(ctx context.Context, plan, node, actor string, in
 	out := AgentCloseResult{PlanID: plan, NodeID: node, Reason: in.Reason}
 	state, slotReason, held, ok := closeKind(in.Reason)
 	if !ok {
-		return out, refuse(contract.RefusalMalformedReceipt, "the reason of a close is %s, %s, %s, %s (a node given up) or %s, %s (a hold), not %q", AgentReasonFlowCancel, AgentEscalationTiersExhausted,
-			AgentEscalationBlockedScope, AgentEscalationSizeSplit, AgentHoldDispatchUnknown, AgentHoldHostFailure, in.Reason)
+		return out, refuse(contract.RefusalMalformedReceipt, "the reason of a close is %s, %s, %s, %s, %s (a node given up) or %s, %s (a hold), not %q", AgentReasonFlowCancel, AgentReasonPlanSuperseded,
+			AgentEscalationTiersExhausted, AgentEscalationBlockedScope, AgentEscalationSizeSplit, AgentHoldDispatchUnknown, AgentHoldHostFailure, in.Reason)
 	}
 	q := s.Store.Q(ctx)
 	if err := s.fence(ctx, q, plan, actor); err != nil {

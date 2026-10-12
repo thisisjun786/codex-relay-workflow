@@ -8,7 +8,7 @@ the standing obligation of a relationship child and the fault notice ([superviso
 
 | What | From | To | By | Recorded as | Pump kind |
 | --- | --- | --- | --- | --- | --- |
-| an escalation of the run (`dispatch_unknown`, `tiers_exhausted`, `blocked_scope`, `size_split`, `restore_snapshot_mismatch`, a configuration fault) | the run | the orchestrator thread | `crw manage send-parent` | `escalation`, `escalation_notice` | `run_escalation` |
+| an escalation of the run (`dispatch_unknown`, `tiers_exhausted`, `blocked_scope`, `size_split`, `restore_snapshot_mismatch`, a configuration fault, the run-level hold `plan_superseded` with the pinned and head revisions and the node, CRW-1291) | the run | the orchestrator thread | `crw manage send-parent` | `escalation`, `escalation_notice` | `run_escalation` |
 | the completion digest | the run | the orchestrator thread | `crw manage send-parent` | `completion_notice` | |
 | a run that stopped writing | nobody | the manager thread | the pump | | `run_dead` |
 | the plan summary that is owed | the run, `crw flow apply` | the orchestrator thread | `crw manage send-parent` | `summary_document`, `summary_notice`, `summary_notice_settled` | |
