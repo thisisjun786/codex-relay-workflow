@@ -14,7 +14,7 @@ import (
 // the role, no approvals, a persistent thread and the role's prompt - and nothing that names the call. The prompt is the
 // only thing written to developerInstructions: the 0.154 Thread has no such member, so an identity put there could never
 // be read back.
-func (b *Backend) threadParams(role, cwd, sandbox string, pair engine.Pair, limit *int64) (map[string]any, error) {
+func (b *Backend) threadParams(role string, qa bool, cwd, sandbox string, pair engine.Pair, limit *int64) (map[string]any, error) {
 	if !filepath.IsAbs(cwd) {
 		return nil, &engine.RPCError{Message: "a thread starts in an absolute working directory, got " + cwd, CodexErrorInfo: "badRequest"}
 	}
@@ -22,7 +22,7 @@ func (b *Backend) threadParams(role, cwd, sandbox string, pair engine.Pair, limi
 	if err := contract.Validate(); err != nil {
 		return nil, &engine.RPCError{Message: err.Error(), CodexErrorInfo: "badRequest"}
 	}
-	prompt, err := b.cfg.Prompt(role)
+	prompt, err := b.cfg.Prompt(role, qa)
 	if err != nil {
 		return nil, &engine.RPCError{Message: err.Error(), CodexErrorInfo: "badRequest"}
 	}
@@ -36,7 +36,7 @@ func (b *Backend) threadParams(role, cwd, sandbox string, pair engine.Pair, limi
 
 // StartThread implements engine.Backend: thread/start, then thread/read for the pair the thread is configured with.
 func (b *Backend) StartThread(ctx context.Context, spec engine.ThreadSpec) (engine.ThreadInfo, error) {
-	params, err := b.threadParams(spec.Role, spec.Cwd, spec.Sandbox, spec.Pair, spec.AutoCompactTokenLimit)
+	params, err := b.threadParams(spec.Role, spec.QA, spec.Cwd, spec.Sandbox, spec.Pair, spec.AutoCompactTokenLimit)
 	if err != nil {
 		return engine.ThreadInfo{}, err
 	}

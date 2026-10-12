@@ -23,12 +23,13 @@ const Usage = `usage: crw flow start WORKFLOW [--args JSON | --args-file FILE] [
        crw flow recover [--run RUN] CALL (--adopt THREAD|TURN | --absent)
        crw flow status-line --thread T
        crw flow digest RUN [--out FILE]
+       crw flow audit (--run RUN | --acceptance ID) [--milestone M] [--json] [--no-record]
        (every command takes --state DIR and --socket PATH)`
 
 // commands are the first words of the commands this package serves; resume and recover are served here for the run lock and the
-// forms the engine's commands do not have, and hand the rest to the engine.
+// forms the engine's commands do not have, and hand the rest to the engine. audit is `crw flow audit` (audit.go).
 var commands = map[string]bool{"start": true, "ps": true, "show": true, "watch": true, "answer": true, "pause": true, "cancel": true,
-	"status-line": true, "digest": true, "resume": true, "recover": true, ProcessCommand: true}
+	"status-line": true, "digest": true, "resume": true, "recover": true, "audit": true, ProcessCommand: true}
 
 // Handles reports whether `crw flow args...` is one of the commands this package serves.
 func Handles(args []string) bool { return len(args) > 0 && commands[args[0]] }
@@ -43,6 +44,10 @@ func RunWith(ctx context.Context, d *Deps, args []string, stdin io.Reader, stdou
 	if len(args) == 0 || !commands[args[0]] {
 		fmt.Fprintln(stderr, Usage)
 		return 2
+	}
+	if args[0] == "audit" {
+		// the audit opens its store and its host through AuditEnv, which the binary installs (OpenAuditStore)
+		return RunAudit(ctx, args, stdout, stderr)
 	}
 	c := &command{Deps: d, ctx: ctx, stdin: stdin, stdout: stdout, stderr: stderr, name: args[0]}
 	switch args[0] {

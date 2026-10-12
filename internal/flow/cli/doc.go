@@ -1,6 +1,7 @@
 // Package cli is the run surface of the flow engine: `crw flow start`, `ps`, `show`, `watch`, `answer`, `pause`, `cancel`,
-// `status-line`, and the run process they start. The engine runs a script; this package is what starts a run as a process of
-// its own, finds it again in the relay store, follows and controls it, and applies an answer to a wait of it.
+// `status-line`, `digest`, the run process they start, and `crw flow audit` (CRW-1206), the audit of the reviews behind a run's
+// acceptances. The engine runs a script; this package is what starts a run as a process of its own, finds it again in the relay
+// store, follows and controls it, and applies an answer to a wait of it.
 //
 // A run is a process that lives for one run and loses nothing when it dies (docs/relay/dag-scheduler.md): its journal is in the
 // relay store (internal/flow/journal), its run lock is a file lock under <state>/flow/<run>/, and `crw flow resume` and

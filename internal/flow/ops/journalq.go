@@ -98,6 +98,30 @@ func (r rows) authorModels(node string) []string {
 	return out
 }
 
+// milestoneAuthorModels are the models of every author of a milestone as the journal records them - its architect and the
+// executors of all its nodes: the pair reviewer-final must be independent of.
+func (r rows) milestoneAuthorModels() []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, ev := range r.prepared() {
+		switch str(ev.Data, "role") {
+		case "architect", "executor", "executor-t1":
+		default:
+			continue
+		}
+		model := str(ev.Data, "configured_model")
+		if model == "" {
+			model = str(ev.Data, "model")
+		}
+		if model != "" && !seen[model] {
+			seen[model] = true
+			out = append(out, model)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // worktreeOf is the path of the node's current attempt worktree: the newest fresh or restore allocation of one of its calls,
 // or the newest restored worktree of a resume, whichever the journal wrote last.
 func (r rows) worktreeOf(node string) string {

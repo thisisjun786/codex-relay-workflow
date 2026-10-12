@@ -15,9 +15,10 @@ const AUDIT_ROUNDS = 3
 // the research continuations a node gets on one tier (SP-EXPL-2); after them the node escalates as a scope question
 const RESEARCH_PER_TIER = 2
 
-// A milestone that cannot go on: a call of the design phase that did not complete. held and unknown hold it (a resume goes on
-// when the cause is gone), refused and null_model escalate, superseded stops. A call that did not complete is never read as an
-// approval or as a design.
+// A milestone that cannot go on: a call of the design phase or of the close that did not complete, or a final gate that failed.
+// held and unknown hold it (a resume goes on when the cause is gone), superseded stops, and everything else - refused, null_model, a
+// gate that failed or cannot be settled, a QA that is INCONCLUSIVE - escalates. A call that did not complete is never read as an
+// approval, a design, a gate or a review.
 async function halt(ms, source, status, reason, callId) {
   const node = 'milestone:' + ms.id
   if (status === 'held' || status === 'unknown') {
@@ -203,6 +204,13 @@ const lanes = await crw.dag(args.plan, lane, { nodes: admitted, milestone: ms.id
 if (!lanes.every((l) => l && l.state === 'landed')) return { state: 'incomplete', milestone: ms.id, lanes }
 
 phase('milestone')
-const close = await crw.milestoneClose(ms.id)
-const report = await crw.reportUp(ms.id, close)
-return { state: 'closed', milestone: ms.id, lanes, tip: close.tip, report: report.report_id }
+// The close: the final gate over the integrated head (test evidence, and the QA receipt for a driven surface), reviewer-final over
+// the range with the passed gate as its input, and the close recorded over the tip it judged. A gate that fails or cannot be settled
+// ends the milestone here, and reviewer-final does not run (crw:lib/close).
+const closed = await crw.closeMilestone(ms)
+if (closed.state !== 'closed') return halt(ms, closed.source, closed.status, closed.reason, closed.call)
+// The reviews the acceptances rest on are audited against the reviewer threads on the host before any of them is archived.
+const settled = await crw.settleReviews(ms)
+const report = await crw.reportUp(ms.id, Object.assign({}, closed.close, { audit: settled.audit }))
+return { state: 'closed', milestone: ms.id, lanes, tip: closed.tip, report: report.report_id, gate: closed.gate.state, final: closed.final.alignment,
+  audit: { ok: settled.audit.ok, mismatch: settled.audit.mismatch, unobserved: settled.audit.unobserved }, archived: settled.archive.archived.length }

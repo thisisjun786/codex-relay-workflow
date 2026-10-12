@@ -18,7 +18,7 @@ import (
 // directory it was forked into, and its history - read to the end of every page, in full - ends at the through turn, by the
 // turn's id or by its operation marker. A fork that is anything else is archived and refused.
 func (b *Backend) ForkThread(ctx context.Context, spec engine.ForkSpec) (engine.ThreadInfo, error) {
-	params, err := b.threadParams(spec.Role, spec.Cwd, spec.Sandbox, spec.Pair, spec.AutoCompactTokenLimit)
+	params, err := b.threadParams(spec.Role, spec.QA, spec.Cwd, spec.Sandbox, spec.Pair, spec.AutoCompactTokenLimit)
 	if err != nil {
 		return engine.ThreadInfo{}, err
 	}

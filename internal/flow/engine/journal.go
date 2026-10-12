@@ -124,8 +124,10 @@ type CallInfo struct {
 	RunID, CallID, Path string
 	Role, Family        string
 	Node, StepDecision  string
-	Pair                Pair
-	ThreadID            string
+	// QA is set on the call of a QA capture thread (the option qa of the call that started it).
+	QA       bool
+	Pair     Pair
+	ThreadID string
 	// Configured is the pair the host read back for the thread (carried unchanged along a chain of continuations); a
 	// thread whose readback differs from its role's pair is never continued.
 	Configured Pair
@@ -158,6 +160,7 @@ func lookupCall(events []Event, callID string) (CallInfo, bool) {
 			info.Family, _ = d["family"].(string)
 			info.Node, _ = d["node"].(string)
 			info.StepDecision, _ = d["step_decision"].(string)
+			info.QA, _ = d["qa"].(bool)
 			info.Pair.Model, _ = d["model"].(string)
 			info.Pair.Effort, _ = d["effort"].(string)
 			if t, _ := d["thread_id"].(string); t != "" {

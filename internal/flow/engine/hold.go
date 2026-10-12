@@ -62,7 +62,7 @@ func (c *callRun) heldInPlace(rows []Event, prep Event) bool {
 	if m, ok := prep.Data["allocation"].(map[string]any); ok {
 		pl := placementFromMap(m)
 		c.placement = &pl
-		c.placeReq = PlaceRequest{RunID: e.runID, CallID: c.id, Role: c.plan.role, Family: c.plan.spec.Family, Node: c.plan.node, Head: c.plan.opts.Head, Continues: c.plan.resume, Journal: e.j}
+		c.placeReq = PlaceRequest{RunID: e.runID, CallID: c.id, Role: c.plan.role, Family: c.plan.spec.Family, Node: c.plan.node, Head: c.plan.opts.Head, QA: c.plan.qa, Continues: c.plan.resume, Journal: e.j}
 	}
 	e.j.Append(Event{RunID: e.runID, Kind: KindFlow, CallID: c.id, Path: c.path.id, Position: c.position, Op: "agent", Label: c.label, Event: EvHoldCleared,
 		Data: map[string]any{"call_id": c.id, "lineage": e.lineage, "reason": reason, "input_state": c.held.inputState}})

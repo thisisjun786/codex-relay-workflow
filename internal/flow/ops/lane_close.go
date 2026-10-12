@@ -10,11 +10,12 @@ import (
 
 // ---- crw.milestoneClose ----
 
-// milestoneCloseOp is crw.milestoneClose(milestone): the close of a milestone once every lane has landed. The final gate over the
-// integrated range and the review of reviewer-final are F13's; this issue records the call, the range it judges and the tip it
-// judged, and asks the Closer when one is wired. The row names the tip, and Proven holds only while the integration target is still
-// that tip: a lane that integrates a new head after the close (a resume that reran one lane's suffix) makes the recorded close a
-// close of a range that is gone, and the close runs live again.
+// milestoneCloseOp is crw.milestoneClose(milestone, evidence): the close of a milestone once every lane has landed, over the
+// evidence the close made: the final gate that passed on the head H it pinned (finalgate.go) and the review of reviewer-final that
+// took that gate as its input. The row names the range, the tip the close judged and whether that tip is still the head of the
+// gate: a target that moved on after the gate - another actor, or a lane that integrated a new head after a resume - makes the gate
+// a judgement of a head that is gone, and the answer says so (moved), so the close judges the new head again. Proven holds only
+// while the integration target is still the tip the row names.
 type milestoneCloseOp struct{ l *Lane }
 
 // CloseResultOutcome is the answer of crw.milestoneClose.
@@ -22,19 +23,26 @@ type CloseResultOutcome struct {
 	Milestone string          `json:"milestone"`
 	Base      string          `json:"base"`
 	Tip       string          `json:"tip"`
-	Wired     bool            `json:"wired"`
 	Gate      json.RawMessage `json:"gate"`
 	Final     json.RawMessage `json:"final"`
+	Audit     json.RawMessage `json:"audit"`
+	// GateHead is the head the gate in the evidence judged; Moved is whether the target is not at it any more.
+	GateHead string `json:"gate_head"`
+	Moved    bool   `json:"moved"`
 }
 
 func (o *milestoneCloseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResult, error) {
 	var ms string
-	if err := args(req.Args, &ms); err != nil {
+	var evidence struct {
+		Gate  json.RawMessage `json:"gate"`
+		Final json.RawMessage `json:"final"`
+	}
+	if err := args(req.Args, &ms, &evidence); err != nil {
 		var obj struct {
 			ID string `json:"id"`
 		}
 		if err2 := args(req.Args, &obj); err2 != nil || obj.ID == "" {
-			return engine.OpResult{}, fmt.Errorf("crw.milestoneClose(milestone): %w", err)
+			return engine.OpResult{}, fmt.Errorf("crw.milestoneClose(milestone, evidence): %w", err)
 		}
 		ms = obj.ID
 	}
@@ -48,25 +56,20 @@ func (o *milestoneCloseOp) Run(ctx context.Context, req engine.OpRequest) (engin
 	if led, ok := ledgerOf(r, ms, FirstRevision); ok {
 		base = dataStr(led, "base_tip")
 	}
-	out := CloseResultOutcome{Milestone: ms, Base: base, Tip: tip, Gate: json.RawMessage(`null`), Final: json.RawMessage(`null`)}
-	if o.l.d.Closer != nil {
-		var m Milestone
-		if row, ok := r.opRows(OpMilestone).last(func(ev engine.Event) bool { return dataStr(ev, "milestone") == ms }); ok {
-			_ = json.Unmarshal(resultOf(row), &m)
+	out := CloseResultOutcome{Milestone: ms, Base: base, Tip: tip, Gate: json.RawMessage(`null`), Final: json.RawMessage(`null`), Audit: json.RawMessage(`null`)}
+	if len(evidence.Gate) > 0 {
+		out.Gate = evidence.Gate
+		var g struct {
+			Head string `json:"head"`
 		}
-		res, err := o.l.d.Closer.Close(ctx, m, CloseRange{Base: base, Tip: tip})
-		if err != nil {
-			return engine.OpResult{}, err
-		}
-		out.Wired = res.Wired
-		if len(res.Gate) > 0 {
-			out.Gate = res.Gate
-		}
-		if len(res.Final) > 0 {
-			out.Final = res.Final
-		}
+		_ = json.Unmarshal(evidence.Gate, &g)
+		out.GateHead = g.Head
+		out.Moved = g.Head != "" && g.Head != tip
 	}
-	return engine.OpResult{Result: result(out), Data: map[string]any{"milestone": ms, "plan": plan, "base": base, "tip": tip, "wired": out.Wired}}, nil
+	if len(evidence.Final) > 0 {
+		out.Final = evidence.Final
+	}
+	return engine.OpResult{Result: result(out), Data: map[string]any{"milestone": ms, "plan": plan, "base": base, "tip": tip, "gate_head": out.GateHead, "moved": out.Moved}}, nil
 }
 
 func (o *milestoneCloseOp) Proven(ctx context.Context, _ []engine.Event, row engine.Event) (bool, string, error) {
@@ -98,7 +101,7 @@ func (o *reportUpOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRe
 	delivered := false
 	if o.l.d.Reporter != nil {
 		got, err := o.l.d.Reporter.ReportUp(ctx, Report{Plan: plan, Milestone: ms, Range: CloseRange{Base: closed.Base, Tip: closed.Tip},
-			Close: CloseOutcome{Wired: closed.Wired, Gate: closed.Gate, Final: closed.Final}, RequestID: req.RequestID})
+			Close: CloseOutcome{Gate: closed.Gate, Final: closed.Final, Audit: closed.Audit}, RequestID: req.RequestID})
 		if err != nil {
 			return engine.OpResult{}, err
 		}

@@ -3,6 +3,8 @@ package engine
 import (
 	"context"
 	"fmt"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/source"
 )
 
 // CallResult statuses.
@@ -68,6 +70,8 @@ type ThreadSpec struct {
 	// Send is the send ordinal of the creation request: 1 for the first, one more for each time reconcile proved the
 	// previous one absent and sent it again.
 	Send int
+	// QA is set on the thread of a QA capture call: the backend gives it the QA overlay and no native helper.
+	QA bool
 }
 
 // ThreadInfo is what the backend reads back about a created thread: its id and the pair it is configured with.
@@ -95,6 +99,8 @@ type TurnSpec struct {
 	// call's own: a backend decides whether a turn of the role may carry it (only an architect turn does).
 	Cwd    string
 	Repair bool
+	// QA is set on a turn of a QA capture call's thread (the capture turn and the turns that continue it).
+	QA bool
 	// Started is called once the host has accepted the turn and named it; the packet counts as delivered from then on.
 	Started func(turnID string)
 }
@@ -241,6 +247,9 @@ type Placement struct {
 // PlaceRequest is what a placer is asked about.
 type PlaceRequest struct {
 	RunID, CallID, Role, Family, Node, Head string
+	// QA is the QA capture call: an executor call that gets a call-private scratch worktree at Head, as the roles that do not
+	// write get one, and no node worktree.
+	QA bool
 	// Continues is the record of the handle a continuation resumes, nil for a call that creates a thread.
 	Continues *CallInfo
 	// Journal is the run's journal: the allocations of the node so far are read from it.
@@ -274,6 +283,15 @@ type Placer interface {
 	Snapshot(ctx context.Context, path string) (string, error)
 }
 
+// SourceReader is implemented by a backend that can say which source tree the directory of a call holds. The engine asks it when a
+// QA call (the capture call of a final gate, or a turn that continues it) completes: that call may edit its scratch worktree, so the
+// head it was started at is not what it exercised, and the identity of the tree it ended in is recorded on its completed row
+// (qa_source). head is the commit the call names. A backend without it records nothing, and the QA evidence made on it is
+// INCONCLUSIVE.
+type SourceReader interface {
+	SourceOf(ctx context.Context, cwd, head string) (source.Identity, error)
+}
+
 // ForkSpec is a thread/fork request of a continuation that runs in a restored worktree.
 type ForkSpec struct {
 	CallID, Role, Node string
@@ -282,6 +300,8 @@ type ForkSpec struct {
 	Cwd                string
 	SourceThreadID     string
 	ThroughTurnID      string
+	// QA is set when the forked thread is a QA capture call's.
+	QA bool
 	// ThroughOp is the operation marker of the through turn (`<call_id>/t<k>`), "" when the journal names none: the fork's
 	// history is checked to end at the turn by its id or by this marker.
 	ThroughOp             string

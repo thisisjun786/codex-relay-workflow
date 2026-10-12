@@ -275,7 +275,7 @@ func TestReviewerNullModelRetriesFreshReviewerThenEscalates(t *testing.T) {
 		if got.State != "closed" {
 			t.Fatalf("state %q", got.State)
 		}
-		if labels := l.Labels(); !slices.Equal(labels, []string{"architect", "design-audit:r1", "build:A:executor", "review:A:r1", "review:A:r1:retry"}) {
+		if labels := l.Labels(); !slices.Equal(labels, []string{"architect", "design-audit:r1", "build:A:executor", "review:A:r1", "review:A:r1:retry", "reviewer-final:M1"}) {
 			t.Fatalf("calls %v", labels)
 		}
 		noTierStep(t, l)
@@ -402,8 +402,9 @@ func TestUnreleasedNodeIsReleasedOnResume(t *testing.T) {
 		t.Fatalf("resume: %+v", final)
 	}
 	for _, ts := range turnsSince(l, before) {
-		if label := labelOf(l, ts.call); !strings.Contains(label, ":"+waiting+":") {
-			t.Errorf("the resume ran %q: only the lane of the node that was waiting runs", label)
+		// the lane of the node that was waiting, and the close of the milestone it lets go on: the final review
+		if label := labelOf(l, ts.call); !strings.Contains(label, ":"+waiting+":") && label != "reviewer-final:M1" {
+			t.Errorf("the resume ran %q: only the lane of the node that was waiting runs, and the close after it", label)
 		}
 	}
 	if !slices.Equal(l.Relay.Landed, []string{landed, waiting}) {

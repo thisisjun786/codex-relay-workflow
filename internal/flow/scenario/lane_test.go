@@ -58,11 +58,11 @@ func TestLaneHappyPath(t *testing.T) {
 	if got.State != "closed" {
 		t.Fatalf("state %q: %+v", got.State, got)
 	}
-	want := []string{"architect", "design-audit:r1", "build:A:executor", "review:A:r1", "build:B:executor", "review:B:r1"}
+	want := []string{"architect", "design-audit:r1", "build:A:executor", "review:A:r1", "build:B:executor", "review:B:r1", "reviewer-final:M1"}
 	if labels := l.Labels(); !slices.Equal(labels, want) {
 		t.Fatalf("calls %v, want %v", labels, want)
 	}
-	if roles := l.Roles(); !slices.Equal(roles, []string{"architect", "reviewer", "executor", "reviewer", "executor", "reviewer"}) {
+	if roles := l.Roles(); !slices.Equal(roles, []string{"architect", "reviewer", "executor", "reviewer", "executor", "reviewer", "reviewer-final"}) {
 		t.Fatalf("roles %v", roles)
 	}
 	if !slices.Equal(l.Relay.Landed, []string{"A", "B"}) {
@@ -191,7 +191,7 @@ func TestTwoNeedsChangesThenVerified(t *testing.T) {
 	if got.State != "closed" {
 		t.Fatalf("state %q", got.State)
 	}
-	want := []string{"architect", "design-audit:r1", "build:A:executor", "review:A:r1", "fix:A:executor:r1", "review:A:r2", "fix:A:executor:r2", "review:A:r3"}
+	want := []string{"architect", "design-audit:r1", "build:A:executor", "review:A:r1", "fix:A:executor:r1", "review:A:r2", "fix:A:executor:r2", "review:A:r3", "reviewer-final:M1"}
 	if labels := l.Labels(); !slices.Equal(labels, want) {
 		t.Fatalf("calls %v, want %v", labels, want)
 	}

@@ -94,7 +94,7 @@ func (c *callRun) resumePrior() bool {
 		if m, ok := prep.Data["allocation"].(map[string]any); ok {
 			pl := placementFromMap(m)
 			c.placement = &pl
-			c.placeReq = PlaceRequest{RunID: e.runID, CallID: c.id, Role: p.role, Family: p.spec.Family, Node: p.node, Head: p.opts.Head, Continues: p.resume, Journal: e.j}
+			c.placeReq = PlaceRequest{RunID: e.runID, CallID: c.id, Role: p.role, Family: p.spec.Family, Node: p.node, Head: p.opts.Head, QA: p.qa, Continues: p.resume, Journal: e.j}
 		}
 		// the call goes on in this process: it is not superseded, but the positions after it are the suffix
 		e.markLive(c.path, c.position+1)
