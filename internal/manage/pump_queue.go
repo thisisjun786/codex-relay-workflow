@@ -250,7 +250,7 @@ func pumpQueueSend(ctx context.Context, e *Env, cfg *Config, st *pumpState, dir,
 	// A batch the ledger refused under this id is tried again under the next ordinal of the id. The
 	// ledger's refusal of the id itself is final, so resending under it would only replay that refusal.
 	if refusal := st.QueueRefused[thread]; refusal.ID == base && refusal.Count > 0 {
-		logicalID = fmt.Sprintf("%s-r%d", base, refusal.Count)
+		logicalID = pumpMgmtOrdinalID(base, refusal.Count)
 	}
 	st.QueueAttempt[thread] = pumpReview776QueuePin{
 		LogicalID: logicalID, Base: base, Names: append([]string(nil), batch.names...), Body: batch.body,

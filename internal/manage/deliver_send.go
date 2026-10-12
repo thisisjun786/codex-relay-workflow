@@ -57,6 +57,8 @@ const (
 // deliverBridge is one bridge session, started for a single delivery and closed with it.
 type deliverBridge struct{ session *mcp.ClientSession }
 
+var deliverSteerOnlyIdle = errors.New("crw manage: steer-only delivery waits for an active turn")
+
 // deliverMessageSHA256 is the digest of one message's text, the value the record keeps so a
 // logical id cannot silently stand for two different messages.
 func deliverMessageSHA256(text string) string {
@@ -206,7 +208,7 @@ func Deliver(ctx context.Context, e *Env, cfg *Config, m Message) (Outcome, erro
 	// The retry ordinal comes from the record, so a restart continues the sequence it left rather
 	// than minting an id the bridge already holds a receipt for.
 	retries := deliverRetryCount(m.LogicalID, record.RequestID)
-	if known {
+	if known && record.State != deliverStateWaiting {
 		// The record is unsettled: read the bridge's own receipt before anything is sent, so an
 		// attempt that may already have gone out is never duplicated under a fresh id.
 		verdict, receipt := deliverReconcileReceipt(ctx, bridge, record)
@@ -252,7 +254,17 @@ func Deliver(ctx context.Context, e *Env, cfg *Config, m Message) (Outcome, erro
 		}
 	}
 	for {
+		if record.State == deliverStateWaiting {
+			record.State = deliverStatePending
+			if err := deliverSave(cfg, record); err != nil {
+				return Outcome{Class: deliverClassUnknown, RequestID: requestID}, err
+			}
+		}
 		reply, tool := deliverAttemptSend(ctx, bridge, m, requestID)
+		if errors.Is(reply.Err, deliverSteerOnlyIdle) {
+			record.State = deliverStateWaiting
+			return deliverSettled(cfg, record, Outcome{Class: deliverClassUnknown, RequestID: requestID, Receipt: map[string]any{"status": deliverStateWaiting}})
+		}
 		class := deliverClassify(tool, reply)
 		record.Tool, record.RequestID = tool, requestID
 		record.Attempts = append(record.Attempts, deliverAttempt{At: deliverNow(e), Class: class, ReceiptExcerpt: deliverExcerpt(reply)})
@@ -489,6 +501,9 @@ func deliverAttemptSend(ctx context.Context, b *deliverBridge, m Message, reques
 		default:
 			return deliverReply{Err: fmt.Errorf("crw manage: the thread is not confirmed idle (observation %q); nothing was sent", observation)}, deliverToolActive
 		}
+	}
+	if m.SteerOnly {
+		return deliverReply{Err: deliverSteerOnlyIdle}, deliverToolActive
 	}
 	args := map[string]any{"request_id": requestID, "thread_id": m.Thread, "message": m.Text}
 	if m.Settings.Model != "" || m.Settings.ReasoningEffort != "" {

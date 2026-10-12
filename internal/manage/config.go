@@ -351,9 +351,10 @@ func coreHomeDir(e *Env, variable, name string) string {
 // requires expected_settings on every send; Deliver attaches the settings only when the model or the
 // reasoning effort is there, so an empty settings.management makes every send fail in the bridge's
 // argument validation. The configuration is refused before any send is tried; a configuration with
-// no management thread delivers nothing to it and is not judged.
+// no management thread delivers nothing to it and is not judged. An explicit steer-only pump
+// cannot start a turn and needs no expected_settings.
 func coreDeliverSettingsProblem(c *Config) string {
-	if c.ManagementThread == "" {
+	if c.ManagementThread == "" || pumpSettingsFrom(c).SteerOnly {
 		return ""
 	}
 	var missing []string

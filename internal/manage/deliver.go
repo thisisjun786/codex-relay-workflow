@@ -28,6 +28,7 @@ const (
 	deliverStateAccepted = "accepted"
 	deliverStateRefused  = "refused"
 	deliverStateUnknown  = "unknown"
+	deliverStateWaiting  = "waiting"
 
 	deliverToolSend  = "send_message_to_thread"
 	deliverToolSteer = "steer_thread"
@@ -47,6 +48,7 @@ type Message struct {
 	Text      string
 	Role      string
 	Settings  coreSettings
+	SteerOnly bool
 }
 
 // Outcome is what a delivery settled on: its class, the request id it stands under, and the
