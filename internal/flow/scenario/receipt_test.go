@@ -114,3 +114,49 @@ func TestFakeOversizedReceiptApplyScenario(t *testing.T) {
 		t.Fatalf("a head with no verdict of the run: %+v %v", again, err)
 	}
 }
+
+// A child whose checks never pass in the rounds the lane gives returns verification_failed with a head and no reviewer verdict. The
+// orchestrator's apply does not wait for a verdict that run will never write: it answers the refusal at once, escalated, and the relay is
+// asked nothing. (post-evaluation d7)
+func TestFakeOversizedReceiptWithExhaustedVerificationIsRefusedByApply(t *testing.T) {
+	nodes := []NodeSpec{{ID: "A", Issue: "CRW-A", Title: "a big issue", Regions: []string{"a/"}, SizeFit: "child", SizeReason: "regions_gt3"}}
+	l := NewLab(t, nodes...)
+	l.Verify.Fail = map[string][]int{"A": {1, 2, 3}}
+	mustRunIncomplete(t, l)
+	child := l.NewChild("run-child-A", "child-task-A")
+	out := Value[struct {
+		State, Head string
+		Rounds      int
+	}](t, child.Run("A"))
+	if out.State != "verification_failed" || out.Head == "" || out.Rounds != 3 {
+		t.Fatalf("the child's run came to %+v", out)
+	}
+	var received int
+	plan := l.IssuePlan("A")
+	deps := apply.Deps{
+		Store:   l.Store,
+		Events:  receiptEvents{apply.EventInfo{ID: receiptEvent, Relationship: "rel-A", ChildTask: "child-task-A", ParentTask: "parent", Head: out.Head, CriteriaDigest: plan["criteria_digest"].(string), Plan: "plan-1", Node: "A"}},
+		Commits: apply.Git,
+		Receive: func(context.Context, apply.ReceiveInput) (json.RawMessage, error) {
+			received++
+			return json.RawMessage(`{}`), nil
+		},
+		Repo: l.Repo,
+		Now:  func() time.Time { return time.Date(2026, 10, 12, 9, 5, 0, 0, time.UTC) },
+		Sleep: func(context.Context, time.Duration) error {
+			t.Error("apply waited for a verdict the run will never write")
+			return nil
+		},
+	}
+	res, err := apply.Apply(context.Background(), deps, apply.Request{Event: receiptEvent, Turn: "turn-orchestrator-7", Wait: 10 * time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.State != apply.StateRefused || res.Reason != apply.ReasonRunEndedUnverified || !res.Escalated || received != 0 {
+		t.Fatalf("apply came to %+v (relay asked %d times)", res, received)
+	}
+	rows, err := report.ReadRows(context.Background(), l.Store.DB, "run-child-A", "escalation")
+	if err != nil || len(rows) != 1 || rows[0].Str("reason") != apply.ReasonRunEndedUnverified {
+		t.Fatalf("escalation rows %+v %v", rows, err)
+	}
+}

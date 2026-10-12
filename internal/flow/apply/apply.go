@@ -294,8 +294,8 @@ type runView struct {
 	detail  string
 	events  []engine.Event
 	review  engine.Event
-	// ended is set when the run returned from its process for good (finished as completed, not held, not resumed after) and journaled no
-	// verdict for the head: none will come.
+	// ended is set when the run returned from its process for good (finished as completed, not held, not resumed after), made the head
+	// itself (a completed crw.commit row names it) and journaled no verdict for it: none will come.
 	ended bool
 }
 
@@ -345,7 +345,8 @@ func (d Deps) findVerdict(ctx context.Context, req Request, ev EventInfo) (runVi
 		v.found, v.review = true, e
 		break
 	}
-	v.ended = !v.found && runEnded(events)
+	// a head the run did not make (a commit on top of its own, the head of a later run of the child) may still get a verdict: apply waits
+	v.ended = !v.found && runEnded(events) && commitCalls(events)[ev.Head] != ""
 	return v, nil
 }
 

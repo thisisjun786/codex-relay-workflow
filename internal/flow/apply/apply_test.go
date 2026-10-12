@@ -611,6 +611,15 @@ func TestApplyRunEndedWithoutVerdictIsRefusedAndEscalated(t *testing.T) {
 	if res := g.apply(Request{}); res.State != StateNextTurn {
 		t.Errorf("a resumed run: %+v", res)
 	}
+	// a head the finished run did not make is not its to judge: a later run of the child may still rule on it
+	n := newFx(t)
+	made := n.commit("a.txt", "work")
+	n.executor("ex-1", made, "claude-fake-haiku")
+	n.ev.Head = n.commit("b.txt", "a commit on top that the run did not make")
+	n.runRow("finished", map[string]any{"status": "completed"})
+	if res := n.apply(Request{}); res.State != StateNextTurn {
+		t.Errorf("a head the run did not make: %+v", res)
+	}
 	// a run held for the host ended its process too and waits for `crw flow resume`
 	k := newFx(t)
 	kh := k.commit("a.txt", "work")

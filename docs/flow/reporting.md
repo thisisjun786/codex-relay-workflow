@@ -90,10 +90,10 @@ is judged under), finds the child's newest `issue-lane` run (`--run` names it; a
 and of the relationship's plan when both name one, or the answer is `run_mismatch`: another child's journal that holds the same head and
 criteria digest is no proof of this receipt), and waits, reading the journal of that run every two seconds, for a completed `crw.review`
 row that ruled `verdict` on the head of the event. A run that returned for good without such a row (its newest run row is a finish with
-status `completed`, it holds no `crw.hold` since its last start, and it was not resumed after: the rounds of the lane ended in
+status `completed`, it holds no `crw.hold` since its last start, it was not resumed after, and a completed `crw.commit` row names the head of the event as its own commit: the rounds of the lane ended in
 `verification_failed`, or it escalated) will never write one, so the wait ends at once with the refusal `run_ended_unverified`; it is
 written as an `apply_refused` row and an `escalation` row (class `integrity`) of the run, which the manager hears as a `run_escalation`,
-and nothing is claimed. A held run waits for `crw flow resume`. It then checks, in this order:
+and nothing is claimed. A held run waits for `crw flow resume`, and a head the run did not make (a commit on top of its own, the head of a later run of the child) is waited for as before. It then checks, in this order:
 
 1. the criteria digest the reviewer saw is the digest of the relationship's criteria set (`criteria_digest_mismatch`);
 2. every commit of `base..head` was made by an executor call this run recorded: a completed `crw.commit` row names the commit and the
