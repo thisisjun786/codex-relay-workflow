@@ -283,6 +283,14 @@ type Placer interface {
 	Snapshot(ctx context.Context, path string) (string, error)
 }
 
+// DirRemover is implemented by a backend that can remove the directory it made for a call once the call has its terminal row. The
+// engine asks it for the directory of a continuation that runs at a head of its own (an architect turn that names `head`): the
+// directory is read while the turn runs, a resume that runs the same call again makes it again at the head the prepared row
+// records, and the path of a call is unique, so no other call's cwd overlaps it.
+type DirRemover interface {
+	RemoveDir(ctx context.Context, path string) error
+}
+
 // SourceReader is implemented by a backend that can say which source tree the directory of a call holds. The engine asks it when a
 // QA call (the capture call of a final gate, or a turn that continues it) completes: that call may edit its scratch worktree, so the
 // head it was started at is not what it exercised, and the identity of the tree it ended in is recorded on its completed row

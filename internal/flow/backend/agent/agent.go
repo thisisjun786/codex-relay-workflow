@@ -223,6 +223,14 @@ func (b *Backend) WorktreeExists(path string) bool {
 	return b.cfg.Allocator != nil && b.cfg.Allocator.WorktreeExists(path)
 }
 
+// RemoveDir implements engine.DirRemover.
+func (b *Backend) RemoveDir(ctx context.Context, path string) error {
+	if b.cfg.Allocator == nil {
+		return errNoAllocator
+	}
+	return b.cfg.Allocator.RemoveDir(ctx, path)
+}
+
 // ProveNode implements engine.Prover: the effects of a node's executor calls against its current worktree (internal/flow/ops).
 func (b *Backend) ProveNode(ctx context.Context, events []engine.Event, node string) (engine.NodeProof, error) {
 	if b.cfg.Allocator == nil {

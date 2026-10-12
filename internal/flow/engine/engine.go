@@ -201,6 +201,8 @@ type Engine struct {
 	claimedM   sync.Mutex
 	claimed    map[string]bool
 	superseded map[string]*supersedeOp
+	// facts are what crw.callFacts answers beyond the journal: the calls this process ran live (signal.go).
+	facts signalFacts
 	// escalated are the calls whose dispatch_unknown escalation was written by this run.
 	escalatedM sync.Mutex
 	escalated  map[string]bool
@@ -284,6 +286,7 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 			e.startSeq = seq + 1
 		}
 		e.prior = newPriorIndex(e.j, e.startSeq)
+		e.sweepOwnDirectories()
 	}
 	e.noteSummaryDocument()
 	if cfg.Upward != nil {

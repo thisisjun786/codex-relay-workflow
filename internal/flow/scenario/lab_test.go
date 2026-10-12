@@ -50,6 +50,8 @@ type Lab struct {
 	// Nodes are the issue nodes of the plan; Design is the architect's DESIGN (built from the nodes when nil).
 	Nodes  []NodeSpec
 	Design *ops.Design
+	// Cap is the executors the project lane runs at once (0: three).
+	Cap int
 
 	owner   string
 	client  *appserver.Client
@@ -282,7 +284,11 @@ func (l *Lab) Config(resume bool) engine.Config {
 
 // Args are the arguments of the project lane the lab runs.
 func (l *Lab) Args() json.RawMessage {
-	return json.RawMessage(`{"plan":"plan-1","milestone":"M1","cap":3}`)
+	cap := 3
+	if l.Cap > 0 {
+		cap = l.Cap
+	}
+	return json.RawMessage(fmt.Sprintf(`{"plan":"plan-1","milestone":"M1","cap":%d}`, cap))
 }
 
 // Run runs the project lane as a new run of the lab's journal.
@@ -705,6 +711,14 @@ func VerdictFinal(aligned bool) map[string]any {
 	return map[string]any{"verdict": "verified", "criteria": []any{map[string]any{"id": "c1", "met": true, "evidence": "read the range"}}, "defects": []any{}, "alignment": alignment, "summary": "reviewed the range"}
 }
 
+// Reflection is the answer of the architect's reflection at the close: ALIGNED, or MISALIGNED with the decision D1 departed from.
+func Reflection(aligned bool) map[string]any {
+	if aligned {
+		return map[string]any{"verdict": "ALIGNED", "misaligned": []any{}}
+	}
+	return map[string]any{"verdict": "MISALIGNED", "misaligned": []any{map[string]any{"decision_id": "D1", "observed": "the range departs from D1", "affected_nodes": []string{"A"}, "evidence": []string{"README.md"}}}}
+}
+
 // QACapture is the answer of the QA capture call: one screenshot.
 func QACapture() map[string]any {
 	return map[string]any{"captures": []any{map[string]any{"path": "/tmp/qa/shot-1.png", "kind": "screenshot", "shows": "the home screen at 1280px"}},
@@ -768,6 +782,8 @@ func nz(s []string) []string {
 // defaultPlan is what a role does when no rule answers.
 func (l *Lab) defaultPlan(c *Call) fakehost.TurnPlan {
 	switch {
+	case c.Role == "architect" && strings.HasPrefix(c.Label, "reflection:"):
+		return Say(Reflection(true))
 	case c.Role == "architect":
 		return Say(l.designFor())
 	case c.Role == "reviewer-final":

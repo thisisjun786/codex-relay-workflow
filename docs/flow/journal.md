@@ -135,12 +135,22 @@ digest (`crw.reviewerFinal`). The test evidence of the gate is a `crw.verify` ro
 which names the milestone), and the QA evidence a `crw.qaReceipt` row (it holds the identity of the tree the capture call ended in, which the completed row of a QA call records as `qa_source`); each is judged fresh by the identity of the head it stands on
 (`source.Compare`).
 
+**The design ledger and the signals.** A row `crw.designLedger` is a revision of the milestone's ledger (`revision`, `digest`, `design`, `answers`,
+`architect_call` and `architect_handle`, the `signal` that made it, `base_tip` - the head the DESIGN ran at: for `r0` the start commit of the architect's call-private checkout as the architect's `prepared` row records it (reached through `resume_of` from a design fix that went on in that directory), never the integration tip read after the audit, and `""` when no placement recorded one; for a later revision the head its re-plan pinned - and `slices`, the slice digest of every node of the plan it was made
+against: for a revision after the first the plan the architect and the auditor evaluated, as the decision read it). Revision ids are used once: the next is named after every ledger row of the milestone, the ones a resume superseded included. The ledger that stands is the newest
+row no `superseded` row came after; the handle of the architect thread is that of the newest row that stands among the revisions and the `crw.reflection` rows. A release is proven
+while its revision stands; a release under a revision a resume superseded is proven when the node's slice (`slice_digest`, the slice of the plan when the node was released) is the
+one the revision that stands was made against, and a flow row `release_rebind` (node, `from_revision`, `to_revision`) says the replay was kept. The flow row `revision_superseded`
+(milestone, revision, signal) names a revision whose signal a resume did not replay. A signal is the rows `crw.signalBind` (milestone, `k`, `prev`, `members` as (kind, call, node,
+digest), `attempt` (`live:<n>` for a recorded signal that could not replay, `n` one more than the attempt of the row it did not replay), `started` and `unstarted` nodes, `tip`, `plan_digest` and `revision_read`), `crw.signalDone` (`outcome`, `revision`, `reasons`, `digest`) and, at the end of the path,
+`crw.signalClose`. A member is a RECEIPT (kind `receipt`: its call and the digest of its result) or a plan revision a lane read before its release (kind `revision`: call `plan:<occurrence>:<digest>`, the digest; the row of `crw.planRead` with `changed`, `plan_digest`, `occurrence`, `base`, `judging`). `base` is the plan the audited DESIGN stands on: the plan the current revision was made for (its `milestone_digest`), or the plan a later `crw.replanSignals` row of a signal judged when that signal's `crw.signalDone` is `continue` (the signal kept the revision for it). A read whose plan is the one a bound and not yet decided signal read is no trigger: `judging` names that signal and the lane's release waits for it. An occurrence is `after:<seq>`: the journal sequence of the newest standing observation of another digest (`crw.planRead`, `crw.signalBind`, or the `milestone_digest` a `crw.replanSignals` row of a signal judged), or the first DESIGN ledger row when no such observation exists (`initial` without a ledger). Reads of the same uninterrupted occurrence coalesce even across a signal bind of the same digest; a return to an earlier digest after another observed digest has its own trigger and release wait. The recorded read preserves its occurrence on replay, and only a standing signal that took that occurrence proves a changed read. Older reads without an occurrence keep their recorded `plan:<digest>` key. The engine reads three things for the signal path and writes none of them: `crw.callFacts`, `crw.recordedSignal` and `crw.priorRelease` (script.md). Every release of a lane compares the plan with that plan in the flow, before `Relay.Release` (the relay's release commit does not compare the plan slice, so a change between the comparison and the commit is not caught there; CRW-1288 makes the relay compare the expected slice in its release transaction): the `crw.release` row of a pinned release records `plan_digest` (the plan the relay had when the flow read it for the comparison) and `pinned_plan`, and when they differ the node is not released (`released` false, `reason` `plan_changed`, no revision); that row is proven as the decision of its moment, and the lane's next positions are a new `crw.planRead` and a new release.
+
 **Audit.** A row `crw.audit` (the call row of the audit, written by `crw.audit` in a run and by `crw flow audit` beside it) holds the
 audit results of acceptances: `results`, each with the acceptance id, the node, the head, the reviewer call, the thread and turn it read,
 the checks and the state (`ok`, `mismatch`, `unobserved`). The newest row that audits an acceptance decides whether it passed
 (`audit.Passed`); a reviewer thread is archived only for an acceptance that passed (`crw.archive`).
 
-**Recording calls.** `releaseChild`, `escalate`, `reportUp`, `hold`, `tierStep`, `spawnDecision`, `stepRecord`, `exploreRoute`, `exploreRecord`, `designAudit`, `designLedger`, `qaReceipt`, `qaCapture`, `reviewerFinal`, `audit` and `archive` only record a fact. A call with a completed row
+**Recording calls.** `releaseChild`, `escalate`, `reportUp`, `hold`, `tierStep`, `spawnDecision`, `stepRecord`, `exploreRoute`, `exploreRecord`, `designAudit`, `designLedger`, `qaReceipt`, `qaCapture`, `reviewerFinal`, `audit`, `archive`, `replanSignals`, `currentDesign`, `reflection`, `signalBind`, `signalDone` and `signalClose` only record a fact. A call with a completed row
 of its own operation at its call id is not sent again (a completed call of another operation at the same position, such as an
 agent call of the earlier script, is not its record), whatever else is true; a call without one is executed live under the same call id and the same idempotent
 request id (`ops.RequestID`).
@@ -262,7 +272,23 @@ Every continuation of the suffix on a thread of the earlier process forks, not o
 restored one the first executor call adopted, so a later continuation's `prepared` row records the same path (`continued`, `fork`)
 and its thread is forked into it. A call that is not an executor's and runs again takes the next private directory of its own
 (`calls/<call_id>/wt`, then `wt-1`, `wt-2`): a path belongs to one allocation, and the directory of its earlier attempt is not
-made over.
+made over. The directory of an architect turn that names its `head` is the call's own and goes with the call's end: the terminal
+row of the call (any but `outcome_unknown`) names it (`own_directory`) - the rows of the call's own run and the `superseded` rows a
+resume writes for an attempt an earlier process left, decided by the same rule from the attempt's `prepared` row; reconcile writes
+only `outcome_unknown`, which names none - the engine removes it after that row with a context the
+run's cancellation does not end, and a removal that fails is a flow row `own_directory_kept` (call, path, error). A resume removes,
+before the script runs, every directory a terminal row of an earlier process names that is still there, except the one a call is
+still at work in (a call whose newest state is no terminal row or an unknown outcome).
+
+### The signals
+
+A signal replays under the rule of the walk above: its `crw.signalBind` position replays when its arguments are the recorded ones. The arguments are the signal's input - its triggers
+as (call, result digest) and the result digest of the signal before it - so a signal replays only when every trigger position replayed and answered the same result digest (the
+script hands the bind the recorded triggers only then, and marks any other bind of a recorded signal `live` so that its arguments are not the recorded ones even when every trigger answers the digest it answered; `crw.callFacts` says whether a call was replayed) and the signal before it replayed. The first signal that does not replay
+is the first position of a suffix of the path `signals:<milestone>`: the rows of that signal and of every later one - the calls they made and the revisions they recorded - are
+ended superseded, the revisions get a `revision_superseded` row, and the triggers that replayed re-enter the first signal that runs, in the order of the journal, with the number after
+the last signal that replayed. A lane released under such a revision waits for that signal to be decided and then keeps its replay (`release_rebind`), is released again, or is refused,
+by the slice of its node ([script.md](script.md#the-architects-continuity-and-the-re-plan)).
 
 ### Held calls
 

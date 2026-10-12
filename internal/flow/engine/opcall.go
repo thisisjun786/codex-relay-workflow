@@ -93,7 +93,7 @@ func (e *Engine) opRequestID(callID, op, digest string) string {
 }
 
 // builtinOps are the crw members the engine defines itself.
-var builtinOps = map[string]bool{"classify": true, "clock": true, "tierStep": true}
+var builtinOps = map[string]bool{"classify": true, "clock": true, "tierStep": true, "callFacts": true, "recordedSignal": true, "priorRelease": true}
 
 // opPrefix is the op name of a registered op's rows.
 const opPrefix = "crw."

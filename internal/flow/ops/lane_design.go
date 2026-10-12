@@ -23,10 +23,16 @@ func (o *milestoneOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpR
 	if plan == "" || id == "" {
 		return engine.OpResult{}, fmt.Errorf("crw.milestone(plan, milestone): a plan and a milestone are required")
 	}
-	ms, err := o.l.d.Relay.Milestone(ctx, plan, id)
+	ms, err := o.l.liveMilestone(ctx, plan, id)
 	if err != nil {
 		return engine.OpResult{}, err
 	}
+	return engine.OpResult{Result: result(ms), Data: map[string]any{"plan": plan, "milestone": id, "nodes": len(ms.Nodes), "digest": digestOf(ms)}}, nil
+}
+
+// normalizeMilestone gives every list of a milestone its empty value, so the JSON a script reads and the digest of the plan do not depend
+// on whether the relay answered null or an empty list.
+func normalizeMilestone(ms *Milestone) {
 	for i := range ms.Nodes {
 		n := &ms.Nodes[i]
 		if n.After == nil {
@@ -42,7 +48,6 @@ func (o *milestoneOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpR
 	if ms.Nodes == nil {
 		ms.Nodes = []PlanNode{}
 	}
-	return engine.OpResult{Result: result(ms), Data: map[string]any{"plan": plan, "milestone": id, "nodes": len(ms.Nodes), "digest": digestOf(ms)}}, nil
 }
 
 func (o *milestoneOp) Proven(ctx context.Context, ev []engine.Event, row engine.Event) (bool, string, error) {
@@ -171,20 +176,32 @@ func approvedAudit(r rows, ms, digest string) (engine.Event, bool) {
 
 // ---- crw.designLedger ----
 
-// FirstRevision is the one revision the ledger of this build holds. Revisions after it, and the signals that make them, are F09.
+// FirstRevision is the first revision of a milestone's ledger. Revisions after it are made by a re-plan (replan.go): the ledger adds
+// one for every architect delta that passed the design audit again.
 const FirstRevision = "r0"
 
-// designLedgerOp is crw.designLedger(milestone, entry): it journals the milestone's first DESIGN revision, r0: the DESIGN that
-// passed the audit with the answers of its open questions, the digest the packets and the input snapshots carry, and the handle
-// of the architect thread.
+// designLedgerOp is crw.designLedger(milestone, entry): it journals a revision of the milestone's design ledger - the DESIGN that
+// passed the audit with the answers of its open questions, the digest the packets and the input snapshots carry, the handle of the
+// architect thread (the thread goes on with every completed architect turn) and the slice digest of every node of the plan the
+// revision was made against. The first revision is r0; a revision after it is the architect's delta after a re-plan signal, and is
+// recorded only over an audit of its own that was approved after the revision before it.
 type designLedgerOp struct{ l *Lane }
 
 // LedgerEntry is what a script hands crw.designLedger.
 type LedgerEntry struct {
+	// Revision is the id of the revision the entry becomes; empty is the next one. A script that names one names the next.
 	Revision  string          `json:"revision"`
 	Design    json.RawMessage `json:"design"`
 	Answers   json.RawMessage `json:"answers"`
 	Architect CallRef         `json:"architect"`
+	// Signal is the number of the signal that made the revision (0 for the first design); Head is the head of the integration
+	// target the architect judged for a revision after the first.
+	Signal int    `json:"signal"`
+	Head   string `json:"head"`
+	// Plan is the plan the architect and the auditor evaluated for a revision after the first (the plan of crw.replanSignals): the
+	// revision records its slices, so that a plan revision made while the delta was architected or audited is a change against the
+	// revision, counted by the next signal, and not part of its baseline. Without it the revision records the plan as it is now.
+	Plan *PlanSnapshot `json:"plan"`
 }
 
 // Ledger is the answer of crw.designLedger and the shape of the revision a release reads back.
@@ -203,15 +220,20 @@ func (o *designLedgerOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 	if err := args(req.Args, &ms, &e); err != nil {
 		return engine.OpResult{}, fmt.Errorf("crw.designLedger(milestone, entry): %w", err)
 	}
-	if e.Revision == "" {
-		e.Revision = FirstRevision
-	}
-	if e.Revision != FirstRevision {
-		return engine.OpResult{}, fmt.Errorf("crw.designLedger: revision %s: this build holds %s only; revisions after it and the signals that make them belong to the re-plan issue (F09)", e.Revision, FirstRevision)
-	}
 	r := rows(req.Journal.Events())
-	if _, dup := r.opRows(OpDesignLedger).last(func(ev engine.Event) bool { return dataStr(ev, "milestone") == ms }); dup {
-		return engine.OpResult{}, fmt.Errorf("crw.designLedger: milestone %s has revision %s already", ms, FirstRevision)
+	next := nextRevision(r, ms)
+	if e.Revision == "" {
+		e.Revision = next
+	}
+	if e.Revision != next {
+		return engine.OpResult{}, fmt.Errorf("crw.designLedger: revision %s: the ledger of milestone %s adds %s next", e.Revision, ms, next)
+	}
+	prev, hasPrev := currentLedger(r, ms)
+	if e.Revision == FirstRevision && hasPrev {
+		return engine.OpResult{}, fmt.Errorf("crw.designLedger: milestone %s has revision %s already", ms, dataStr(prev, "revision"))
+	}
+	if e.Revision != FirstRevision && !hasPrev {
+		return engine.OpResult{}, fmt.Errorf("crw.designLedger: revision %s: milestone %s has no revision it could follow", e.Revision, ms)
 	}
 	design, err := DecodeDesign(e.Design)
 	if err != nil {
@@ -219,14 +241,54 @@ func (o *designLedgerOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 	}
 	cand := Candidate{Design: e.Design, Answers: e.Answers}
 	digest := cand.digest()
-	if _, ok := approvedAudit(r, ms, digest); !ok {
+	// the audit of a revision after the first is an audit of its own, made after the revision before it: the audit of an earlier
+	// DESIGN of the same digest stands in for nothing
+	after := 0
+	if hasPrev {
+		after = prev.Seq
+	}
+	if _, ok := approvedAuditAfter(r, ms, digest, after); !ok {
 		return engine.OpResult{}, fmt.Errorf("crw.designLedger: the DESIGN of milestone %s (%s) has no approved audit: executors start only on an audited revision", ms, short(digest))
 	}
-	tip, err := o.l.d.Relay.IntegrationTip(ctx, planOf(r, ms))
-	if err != nil {
-		return engine.OpResult{}, err
+	plan := planOf(r, ms)
+	// the slices are those of the plan the architect saw: the milestone as the run read it for the first revision, the plan the
+	// decision evaluated for the ones after (a re-plan after a plan revision starts counting the change from that revision, and a
+	// change made after the evaluation is counted by the next signal)
+	var mile Milestone
+	var sl map[string]string
+	var mileDigest string
+	switch {
+	case hasPrev && e.Plan != nil:
+		sl, mileDigest = e.Plan.Slices, e.Plan.Digest
+		if sl == nil {
+			sl = map[string]string{}
+		}
+	case hasPrev:
+		if mile, err = o.l.liveMilestone(ctx, plan, ms); err != nil {
+			return engine.OpResult{}, err
+		}
+		sl, mileDigest = liveSlices(mile), digestOf(mile)
+	default:
+		if mile, _, err = milestoneOf(r, ms); err != nil {
+			return engine.OpResult{}, err
+		}
+		sl, mileDigest = liveSlices(mile), digestOf(mile)
 	}
-	led := Ledger{Milestone: ms, Revision: e.Revision, Digest: digest, Handle: e.Architect.Handle, Nodes: []string{}, BaseTip: tip}
+	// the head the DESIGN ran at: for a revision after the first the head H the re-plan pinned, for the first the commit the
+	// architect's checkout was made at, as its prepared row records it - never the integration target sampled now, after the audit,
+	// which a lane that landed while the DESIGN was audited has moved past it
+	base := ""
+	switch {
+	case hasPrev && e.Head != "":
+		base = e.Head
+	case hasPrev:
+		if base, err = o.l.d.Relay.IntegrationTip(ctx, plan); err != nil {
+			return engine.OpResult{}, err
+		}
+	default:
+		base = designHead(r, e.Architect.CallID)
+	}
+	led := Ledger{Milestone: ms, Revision: e.Revision, Digest: digest, Handle: e.Architect.Handle, Nodes: []string{}, BaseTip: base}
 	for _, is := range design.Issues {
 		led.Nodes = append(led.Nodes, is.Node)
 	}
@@ -238,12 +300,39 @@ func (o *designLedgerOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 	_ = json.Unmarshal(e.Design, &designAny)
 	return engine.OpResult{Result: result(led), Data: map[string]any{
 		"milestone": ms, "revision": e.Revision, "digest": digest, "architect_call": e.Architect.CallID, "architect_handle": e.Architect.Handle,
-		"base_tip": tip, "design": designAny, "answers": answers,
+		"base_tip": base, "design": designAny, "answers": answers, "signal": e.Signal, "slices": sl, "milestone_digest": mileDigest,
 	}}, nil
 }
 
 func (o *designLedgerOp) Proven(ctx context.Context, ev []engine.Event, row engine.Event) (bool, string, error) {
 	return provenAlways(ctx, ev, row)
+}
+
+// designHead is the commit the DESIGN a call answered was written at: the start commit of the call-private checkout the architect's
+// thread worked in, read from the prepared row of the call or, for a continuation that made no directory of its own (a design fix
+// of the first audit goes on in the thread's directory), of the call it continued. "" when no placement recorded one (a backend
+// that places nothing): the packets then say the head is unknown rather than name a tip read later.
+func designHead(r rows, callID string) string {
+	seen := map[string]bool{}
+	for callID != "" && !seen[callID] {
+		seen[callID] = true
+		prep, ok := r.last(func(ev engine.Event) bool {
+			return ev.Kind == engine.KindCall && ev.Event == engine.EvPrepared && ev.CallID == callID
+		})
+		if !ok {
+			return ""
+		}
+		if m, ok := prep.Data["allocation"].(map[string]any); ok && str(m, "kind") == engine.PlaceCall {
+			if start := str(m, "start_commit"); start != "" {
+				return start
+			}
+		}
+		if head := dataStr(prep, "head"); head != "" {
+			return head
+		}
+		callID = dataStr(prep, "resume_of")
+	}
+	return ""
 }
 
 // ledgerOf is the ledger row of a milestone's revision.
@@ -255,12 +344,31 @@ func ledgerOf(r rows, ms, revision string) (engine.Event, bool) {
 
 // ---- crw.release ----
 
-// releaseOp is crw.release(plan, node, milestone): the release of an issue node to an executor of the run, under the milestone's
+// releaseOp is crw.release(plan, node, milestone, opts): the release of an issue node to an executor of the run, under the milestone's
 // ledger revision. It refuses to release a node whose DESIGN has no approved audit - the structural guarantee that no executor
 // starts before the audit passed - and a node whose issue the architect sized for a child or a split is not released to an
 // executor at all (the lane releases the child or escalates). The row it writes names the revision and the digest: the packet of
 // the lane is built from them, and the input snapshot of every call of the node carries them.
+//
+// With opts.pinned (crw.dag passes it on every release of a lane, CRW-1202) the release checks the plan the audited DESIGN stands on
+// (pinnedPlan): the plan the relay has now is compared with it in the flow, before the relay is asked and before the node's size is
+// read, and a node whose plan is another is not released (reason plan_changed). The lane then reads the plan again - a trigger of the
+// signal path - and asks again once the signal that comes of it re-planned and audited a delta for that plan (or judged it and kept
+// the revision). This is a check in the flow and not an atomic compare-and-swap: Relay.Release does not receive the plan slice that
+// was compared and its release commit does not compare it, so a plan that changes between this comparison and that commit is not caught
+// there and the node is released under the DESIGN of the plan it was audited for. CRW-1288 makes the relay compare the expected slice in
+// its release transaction.
 type releaseOp struct{ l *Lane }
+
+// ReleaseOpts are the options of crw.release.
+type ReleaseOpts struct {
+	// Pinned makes the release compare the live plan with the plan the audited DESIGN stands on in the flow, before Relay.Release (the
+	// relay's release commit does not compare the plan slice; CRW-1288).
+	Pinned bool `json:"pinned"`
+}
+
+// ReasonPlanChanged is the reason of a pinned release whose plan is not the one the audited DESIGN stands on.
+const ReasonPlanChanged = "plan_changed"
 
 // ReleaseOutcome is the answer of crw.release.
 type ReleaseOutcome struct {
@@ -275,11 +383,12 @@ type ReleaseOutcome struct {
 
 func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResult, error) {
 	var plan, node, ms string
-	if err := args(req.Args, &plan, &node, &ms); err != nil {
-		return engine.OpResult{}, fmt.Errorf("crw.release(plan, node, milestone): %w", err)
+	var opts ReleaseOpts
+	if err := args(req.Args, &plan, &node, &ms, &opts); err != nil {
+		return engine.OpResult{}, fmt.Errorf("crw.release(plan, node, milestone, opts): %w", err)
 	}
 	r := rows(req.Journal.Events())
-	led, ok := ledgerOf(r, ms, FirstRevision)
+	led, ok := currentLedger(r, ms)
 	out := ReleaseOutcome{Node: node, Kind: "executor"}
 	data := map[string]any{"plan": plan, "node": node, "milestone": ms}
 	finish := func() (engine.OpResult, error) {
@@ -303,6 +412,41 @@ func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRes
 		out.Reason = "node_not_designed"
 		return finish()
 	}
+	// the plan as the relay has it now: the comparison of a pinned release, and the slice the release records
+	var now *Milestone
+	readNow := func() (Milestone, error) {
+		if now == nil {
+			m, err := o.l.liveMilestone(ctx, plan, ms)
+			if err != nil {
+				return Milestone{}, err
+			}
+			now = &m
+		}
+		return *now, nil
+	}
+	// The release of a lane (crw:lib/lane, crw.dag) is the only release path of a node to an executor, a child or a split, and it always
+	// passes pinned: this comparison is therefore the one check every release goes through (the workflows' call sites are held to it by
+	// TestEveryWorkflowReleasePassesPinned). It happens here, in the flow, before Relay.Release below; the relay's release commit does
+	// not compare the plan slice, so a plan change between this comparison and that commit is not caught (CRW-1288). A call without
+	// pinned is the operation's own unit tests.
+	if opts.Pinned {
+		m, err := readNow()
+		if err != nil {
+			return engine.OpResult{}, err
+		}
+		live, pinned := digestOf(m), pinnedPlan(r, ms)
+		data["plan_digest"], data["pinned_plan"] = live, pinned
+		if live != pinned {
+			out.Reason = ReasonPlanChanged
+			return finish()
+		}
+	}
+	// A node that was released under a revision a resume superseded, whose slice of the plan is not the one the revision that stands
+	// was made against, and that a landed acceptance rests on, is not released again: the route is a plan revision with update_node
+	// or dag-correct, as for any accepted node whose spec changed.
+	if old, was := releaseRowOf(r, node); was && revisionSuperseded(r, ms, dataStr(old, "revision")) && ledgerSlices(led)[node] != dataStr(old, "slice_digest") && acceptedAfter(r, node, old) {
+		return engine.OpResult{}, &Refusal{"accepted_node_changed", fmt.Sprintf("node %s was accepted under revision %s, which a resume superseded, and its slice of the plan is not the one revision %s was made against: record a plan revision with update_node (the acceptance becomes stale) and run again, or correct an oversized child with dag-correct", node, dataStr(old, "revision"), out.Revision)}
+	}
 	data["revision"], data["design_digest"] = out.Revision, out.DesignDigest
 	switch entry.SizeFit {
 	case "child":
@@ -312,8 +456,22 @@ func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRes
 		out.Kind, out.Reason = "split", "size_split"
 		return finish()
 	}
-	mnode, _ := planNodeOf(r, plan, ms, node)
-	data["slice_digest"], data["criteria_digest"] = mnode.SliceDigest, mnode.CriteriaDigest
+	// the criteria are those of the plan the run read; the slice is the node's slice of the plan as it is when the node is released,
+	// the one a later revision of the ledger is compared with (a node whose slice another revision was not made against is not kept
+	// under it)
+	mnode, planned := planNodeOf(r, plan, ms, node)
+	m, err := readNow()
+	if err != nil {
+		return engine.OpResult{}, err
+	}
+	slice, live := liveSlices(m)[node]
+	if !live && planned {
+		// the plan the relay reads has dropped the node: nothing is released, and no slice of the plan the run read first stands in for
+		// the one the node no longer has
+		out.Reason = "node_not_in_plan"
+		return finish()
+	}
+	data["slice_digest"], data["criteria_digest"] = slice, mnode.CriteriaDigest
 	res, err := o.l.d.Relay.Release(ctx, ReleaseRequest{Plan: plan, Node: node, RunID: req.RunID, Revision: out.Revision, DesignDigest: out.DesignDigest, RequestID: req.RequestID})
 	if err != nil {
 		return engine.OpResult{}, err
@@ -327,6 +485,12 @@ func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRes
 // release: it gave the node up (a completed crw.escalate row of the node that closed the execution) or landed it (a completed
 // crw.integrate row of the node). A closed execution does not stand at the relay, and the lane that closed it must not be
 // released and built again on a resume - the escalation is the node's decision until crw.decide answers it.
+//
+// A release made under a revision a resume superseded (the signal that made the revision was not replayed) stands only for a node
+// whose slice of the plan is the one the revision that stands was made against: the replay of the lane is kept and a release_rebind
+// row says so. For any other node the position runs again under the revision that stands - a node that had not started gets the new
+// packet, and a node that had started and was not accepted runs again from its first position (the position is live, so is every
+// later one of the lane); one that was accepted is refused by Run.
 func (o *releaseOp) Proven(ctx context.Context, ev []engine.Event, row engine.Event) (bool, string, error) {
 	if !dataBool(row, "released") {
 		// a node the architect sized for a child or a split was not released to an executor on purpose: the row is the decision
@@ -335,10 +499,24 @@ func (o *releaseOp) Proven(ctx context.Context, ev []engine.Event, row engine.Ev
 		if k := dataStr(row, "kind"); k == "child" || k == "split" {
 			return true, "", nil
 		}
+		// a pinned release whose plan was not the one the audited DESIGN stood on is the decision of that moment: the lane read the
+		// plan again after it, and the positions it went on with are what a resume replays
+		if dataStr(row, "reason") == ReasonPlanChanged {
+			return true, "", nil
+		}
 		// a node the scheduler held back may be releasable now: the position asks again
 		return false, "the release did not happen", nil
 	}
-	if ended, how := endedByRun(rows(ev), row); ended {
+	r := rows(ev)
+	ms, rev, node := dataStr(row, "milestone"), dataStr(row, "revision"), dataStr(row, "node")
+	if revisionSuperseded(r, ms, rev) {
+		cur, ok := currentLedger(r, ms)
+		if !ok || ledgerSlices(cur)[node] == "" || ledgerSlices(cur)[node] != dataStr(row, "slice_digest") {
+			return false, "the release stands under revision " + rev + ", which a resume superseded, and the node's slice is not the one the revision that stands was made against", nil
+		}
+		o.l.rebind(r, row, cur)
+	}
+	if ended, how := endedByRun(r, row); ended {
 		return true, how, nil
 	}
 	ok, err := o.l.d.Relay.ReleaseStands(ctx, dataStr(row, "plan"), dataStr(row, "node"), dataStr(row, "execution_id"))

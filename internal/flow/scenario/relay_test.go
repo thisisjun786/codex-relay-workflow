@@ -76,8 +76,24 @@ func newRelay(l *Lab) *FakeRelay {
 	return &FakeRelay{lab: l, released: map[string]ops.ReleaseResult{}, held: map[string]bool{}, accepted: map[string]ops.AcceptRequest{}}
 }
 
+// ChangeNode changes a node of the plan the relay reads: the plan revision an orchestrator makes with update_node. The slice digest
+// of the node changes with its regions, its dependencies or its issue.
+func (r *FakeRelay) ChangeNode(id string, change func(*NodeSpec)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	nodes := append([]NodeSpec(nil), r.nodes...)
+	for i := range nodes {
+		if nodes[i].ID == id {
+			change(&nodes[i])
+		}
+	}
+	r.nodes = nodes
+}
+
 // Milestone implements ops.Relay.
 func (r *FakeRelay) Milestone(_ context.Context, plan, milestone string) (ops.Milestone, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	ms := ops.Milestone{ID: milestone, Plan: plan, Title: "milestone " + milestone, Criteria: []string{"the milestone is done"}, CriteriaDigest: sha("milestone " + milestone),
 		Surfaces: r.Surfaces, Grade: r.Grade, RequiredCommands: r.Commands}
 	for _, n := range r.nodes {

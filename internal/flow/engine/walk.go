@@ -173,8 +173,12 @@ func (e *Engine) supersedeSuffix(p *pathState, from int) {
 				continue
 			}
 		}
-		e.j.Append(Event{RunID: e.runID, Kind: KindCall, CallID: id, Path: first.Path, Position: first.Position, Op: first.Op, Label: first.Label, Event: EvSuperseded,
-			Data: map[string]any{"reason": ReasonSupersededByResume, "lineage": e.lineage, "last_event": last}})
+		data := map[string]any{"reason": ReasonSupersededByResume, "lineage": e.lineage, "last_event": last}
+		if first.Op == "agent" {
+			e.supersededRow(id, rowsOfOp(rows, "agent"), first, data)
+			continue
+		}
+		e.j.Append(Event{RunID: e.runID, Kind: KindCall, CallID: id, Path: first.Path, Position: first.Position, Op: first.Op, Label: first.Label, Event: EvSuperseded, Data: data})
 	}
 }
 

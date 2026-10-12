@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/dop251/goja"
 	"github.com/google/jsonschema-go/jsonschema"
@@ -180,7 +181,9 @@ func (s *scriptVM) agent(call goja.FunctionCall, plain bool) goja.Value {
 		s.e.inflight.Add(1)
 		go func() {
 			defer s.e.inflight.Done()
-			c.deliverNow(c.execute(s.e.ctx))
+			res := c.execute(s.e.ctx)
+			c.removeOwnDirectory(res)
+			c.deliverNow(res)
 		}()
 	}
 	return s.vm.ToValue(promise)
@@ -480,6 +483,13 @@ func (c *callRun) terminal(ev, status, reason string, data map[string]any) CallR
 	}
 	if _, ok := data["repair_used"]; !ok && c.repairUsed {
 		data["repair_used"] = true
+	}
+	// the directory of a pinned architect turn is the call's own and goes with its end: the terminal row names it, so its removal is
+	// decided by the row that ends the call - whatever happens after the row (a cancellation, a resume that replays the call), the
+	// journal says the directory is to go (removeOwnDirectory, sweepOwnDirectories). A call whose outcome is unknown names none: a turn
+	// of it may still be at work there.
+	if status != StatusUnknown && c.ownsDirectory() {
+		data[ownDirectoryKey] = c.placement.Path
 	}
 	row := c.event(ev, data)
 	return c.result(status, reason, row.Seq, data)
@@ -858,11 +868,9 @@ func (c *callRun) pairCheck(info ThreadInfo) (CallResult, bool) {
 // startThread creates the call's thread.
 func (c *callRun) startThread(ctx context.Context) (CallResult, bool) {
 	e, p := c.e, c.plan
-	if c.rec == nil || c.needEstablish {
-		// a creation sent again runs in the directory the first request was made for: it exists, and nothing is made
-		if res, stop := c.establish(ctx); stop {
-			return res, true
-		}
+	// a creation sent again runs in the directory the first request was made for: it exists, and nothing is made
+	if res, stop := c.creationDirectory(ctx); stop {
+		return res, true
 	}
 	cwd := p.opts.Cwd
 	var placement Placement
@@ -898,10 +906,8 @@ func (c *callRun) forkThread(ctx context.Context) (CallResult, bool) {
 	if !ok {
 		return c.terminal(EvRefused, StatusRefused, ReasonPolicyRefused, map[string]any{"detail": "the backend cannot fork a thread"}), true
 	}
-	if c.rec == nil || c.needEstablish {
-		if res, stop := c.establish(ctx); stop {
-			return res, true
-		}
+	if res, stop := c.creationDirectory(ctx); stop {
+		return res, true
 	}
 	cwd := c.placement.Path
 	send := max(1, c.send)
@@ -1154,6 +1160,9 @@ func (c *callRun) turnLoop(ctx context.Context, resolved *jsonschema.Resolved, k
 			if res, stop := c.gate(ctx); stop {
 				return res
 			}
+			if res, stop := c.ownDirectory(ctx); stop {
+				return res
+			}
 			if k == 1 && c.placement != nil && c.placement.Kind == PlaceRestore {
 				if placer, ok := e.cfg.Backend.(Placer); ok {
 					if err := placer.Recheck(ctx, *c.placement); err != nil {
@@ -1254,4 +1263,150 @@ func (c *callRun) validate(text string, resolved *jsonschema.Resolved) ([]byte, 
 		return nil, err
 	}
 	return json.Marshal(plain)
+}
+
+// ownsDirectory is whether the call is a continuation that runs in a directory of its own: an architect turn that names the head
+// it judges (the REFLECTION, a re-plan and the design fixes of its audit), for which the placement made a call-private directory at
+// that head, and whose turns name that directory as their cwd. Inside a resume's suffix such a turn runs on a fork of the thread of
+// the previous process, in the same kind of directory: it is the call's own as well (CRW-1202).
+func (c *callRun) ownsDirectory() bool {
+	pl, p := c.placement, c.plan
+	return pl != nil && ownsDirectoryAt(pl.Kind, pl.Path, p.role, p.opts.Head, p.resume != nil, p.qa)
+}
+
+// ownsDirectoryAt is the one rule of a directory of a call's own: a call-private placement of a continuation of the architect that names
+// the head it judges, not a QA turn. Every writer of a terminal row of an agent call decides by it (CRW-1202).
+func ownsDirectoryAt(kind, path, role, head string, continues, qa bool) bool {
+	return kind == PlaceCall && path != "" && continues && role == "architect" && head != "" && !qa
+}
+
+// ownDirectoryOfRows is the directory of its own that the newest attempt of a call made, read from the call's prepared row: the
+// terminal rows the engine writes outside the call's own run (a resume superseding an attempt an earlier process left) decide it by
+// the same rule as callRun.terminal. "" when the attempt has none.
+func ownDirectoryOfRows(rows []Event) string {
+	var prep Event
+	for _, ev := range rows {
+		if ev.Kind == KindCall && ev.Op == "agent" && ev.Event == EvPrepared {
+			prep = ev
+		}
+	}
+	m, ok := prep.Data["allocation"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	qa, _ := prep.Data["qa"].(bool)
+	if path := rowStr(m, "path"); ownsDirectoryAt(rowStr(m, "kind"), path, rowStr(prep.Data, "role"), rowStr(prep.Data, "head"), rowStr(prep.Data, "resume_of") != "", qa) {
+		return path
+	}
+	return ""
+}
+
+// supersededRow writes the superseded row the engine itself ends an agent call of an earlier process with, deciding the directory of
+// the call's own as callRun.terminal does - a superseded call is not an unknown outcome - and removes it after the row.
+func (e *Engine) supersededRow(callID string, rows []Event, first Event, data map[string]any) {
+	dir := ownDirectoryOfRows(rows)
+	if dir != "" {
+		data[ownDirectoryKey] = dir
+	}
+	e.j.Append(Event{RunID: e.runID, Kind: KindCall, CallID: callID, Path: first.Path, Position: first.Position, Op: "agent", Label: first.Label, Event: EvSuperseded, Data: data})
+	if dir != "" {
+		e.removeOwnDirectory(callID, dir)
+	}
+}
+
+// creationDirectory makes the directory a call's new thread (a start, a fork, a checkpoint thread) is created in. A directory of the
+// call's own is made when it is not there - a held fork that goes on, or whose creation is sent again, finds it removed with the
+// held row (removeOwnDirectory) - at the head its prepared row records; any other placement is made only by a first creation.
+func (c *callRun) creationDirectory(ctx context.Context) (CallResult, bool) {
+	if c.ownsDirectory() {
+		return c.ownDirectory(ctx)
+	}
+	if c.rec == nil || c.needEstablish {
+		return c.establish(ctx)
+	}
+	return CallResult{}, false
+}
+
+// ownDirectory makes the directory of a continuation that runs at a head of its own before the turn that needs it is sent, and
+// makes it the turn's cwd. A directory that is not there is made again at the head the call's prepared row records: a held call
+// that goes on, or a call a resume runs again, finds it removed (removeOwnDirectory), and a path belongs to one call.
+func (c *callRun) ownDirectory(ctx context.Context) (CallResult, bool) {
+	if !c.ownsDirectory() {
+		return CallResult{}, false
+	}
+	if w, ok := c.e.cfg.Backend.(interface{ WorktreeExists(string) bool }); !ok || !w.WorktreeExists(c.placement.Path) {
+		if placer, ok := c.e.cfg.Backend.(Placer); ok {
+			if err := placer.Establish(ctx, c.placeReq, *c.placement); err != nil {
+				return c.placementProblem(ctx, err), true
+			}
+		}
+	}
+	c.cwd = c.placement.Path
+	return CallResult{}, false
+}
+
+// ownDirectoryKey is the key of a terminal row that names the directory of the call's own it ends (CRW-1202).
+const ownDirectoryKey = "own_directory"
+
+// EvOwnDirectoryKept is the flow row of a directory a terminal row names that could not be removed: the next resume removes it again.
+const EvOwnDirectoryKept = "own_directory_kept"
+
+// ownDirectoryWait bounds the removal of a directory of a call's own: it does not depend on the run's context, which a cancellation
+// right after the terminal row ends.
+const ownDirectoryWait = 30 * time.Second
+
+// removeOwnDirectory removes the directory of a continuation that ran at a head of its own once the call has its terminal row, which
+// names it. A call that has none (its outcome is not known) may still have a turn at work in it and keeps the directory.
+func (c *callRun) removeOwnDirectory(res CallResult) {
+	if !c.ownsDirectory() || res.Status == StatusUnknown {
+		return
+	}
+	c.e.removeOwnDirectory(c.id, c.placement.Path)
+}
+
+// removeOwnDirectory removes a directory a terminal row names, with a context of its own; a removal that fails is journaled
+// (own_directory_kept) and is made again by the next resume. Removing a directory that is not there is nothing.
+func (e *Engine) removeOwnDirectory(callID, path string) {
+	r, ok := e.cfg.Backend.(DirRemover)
+	if !ok || path == "" {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(e.ctx), ownDirectoryWait)
+	defer cancel()
+	if err := r.RemoveDir(ctx, path); err != nil {
+		e.j.Append(Event{RunID: e.runID, Kind: KindFlow, CallID: callID, Op: "agent", Event: EvOwnDirectoryKept, Data: map[string]any{"call_id": callID, "path": path, "error": err.Error()}})
+	}
+}
+
+// sweepOwnDirectories is the part of a resume that removes the directories the terminal rows of the earlier processes name: a
+// cancellation right after the row, or a removal that failed, left it there, and a resume that replays the call, runs it again in a
+// directory of its own, or never reaches it again removes it all the same. The directory a call is still at work in - a call whose
+// newest state is not a terminal row, or an unknown outcome (a held call that went on in place uses the directory its held row named)
+// - is kept.
+func (e *Engine) sweepOwnDirectories() {
+	if _, ok := e.cfg.Backend.(DirRemover); !ok || e.prior == nil {
+		return
+	}
+	for _, id := range e.prior.order {
+		rows := e.prior.rowsOf(id, "agent")
+		inUse := ""
+		if term := lastTerminal(rows); term.Event == "" || term.Event == EvOutcomeUnknown {
+			for _, ev := range rows {
+				if ev.Event == EvPrepared {
+					if m, ok := ev.Data["allocation"].(map[string]any); ok {
+						inUse = rowStr(m, "path")
+					}
+				}
+			}
+		}
+		done := map[string]bool{}
+		for _, ev := range rows {
+			path := rowStr(ev.Data, ownDirectoryKey)
+			if !isTerminal(ev.Event) || path == "" || path == inUse || done[path] {
+				continue
+			}
+			done[path] = true
+			e.removeOwnDirectory(id, path)
+		}
+	}
 }
