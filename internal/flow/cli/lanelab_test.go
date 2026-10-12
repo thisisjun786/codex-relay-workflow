@@ -20,6 +20,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/compile"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/report"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -66,6 +67,8 @@ type laneLab struct {
 	// killBetween kills the process once, between the batch of the integration of this node and its observation.
 	killBetween      string
 	pendingIntegrate string
+	// reports are the milestone reports the runs sent up.
+	reports []string
 }
 
 const labOwner = "thread-owner"
@@ -172,7 +175,10 @@ func newLaneLab(t *testing.T, issues ...labIssue) *laneLab {
 	}
 	old := OpsFor
 	OpsFor = func(ctx context.Context, req LaneRequest) (LaneWorld, error) {
-		return BuildLane(ctx, req, LaneOptions{Verifier: labVerifier{l}, IntegrationVerify: l.verifyMerged, SkillsDigest: "sha256:lab-skills",
+		if _, ok := req.Reporter.(report.Reporter); !ok {
+			t.Errorf("the run's world hands the lane no reporter of F11: %T", req.Reporter)
+		}
+		return BuildLane(ctx, req, LaneOptions{Verifier: labVerifier{l}, IntegrationVerify: l.verifyMerged, SkillsDigest: "sha256:lab-skills", Reporter: &labReporter{l: l},
 			Relay: func(r *SchedRelay) ops.Relay {
 				r.testAfterBatch = func() error {
 					l.mu.Lock()
@@ -379,6 +385,17 @@ func (r *labRelay) Integrate(ctx context.Context, req ops.IntegrateRequest) (out
 func (r *labRelay) Close(ctx context.Context, req ops.CloseRequest) (out ops.CloseResult, err error) {
 	err = r.effect("close:"+req.Node, func() (e error) { out, e = r.SchedRelay.Close(ctx, req); return })
 	return
+}
+
+// labReporter is the delivery of the milestone report: it records the reports instead of telling a thread (report.Reporter sends
+// through `crw manage send-parent`, a process the test does not start).
+type labReporter struct{ l *laneLab }
+
+func (r *labReporter) ReportUp(_ context.Context, rep ops.Report) (string, error) {
+	r.l.mu.Lock()
+	defer r.l.mu.Unlock()
+	r.l.reports = append(r.l.reports, rep.Plan+"/"+rep.Milestone)
+	return "rep_" + rep.Milestone, nil
 }
 
 // ---- the verifications ----

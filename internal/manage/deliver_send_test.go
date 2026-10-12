@@ -71,6 +71,15 @@ func deliverFakeServe(path string) {
 		if next < len(steps) {
 			step = steps[next]
 		}
+		// A step that names a thread (when_thread) answers only a call about that thread; the steps before it that name another are
+		// passed over, so one bridge can serve two threads that behave differently.
+		for i := next; i < len(steps); i++ {
+			if want, ok := steps[i]["when_thread"].(string); ok && want != args["thread_id"] {
+				continue
+			}
+			step, next = steps[i], i
+			break
+		}
 		next++
 		if step["eof"] == true || step["die"] == true {
 			os.Exit(0)

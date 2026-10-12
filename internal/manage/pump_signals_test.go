@@ -365,14 +365,15 @@ func TestPumpSignalDagPartialReviewAddsButNeverDrops(t *testing.T) {
 // A test of the signal sources installs its own fake over it.
 func pumpSignalTestQuiet(t *testing.T) {
 	t.Helper()
-	savedDag, savedCapacity := pumpSignalDagReview, pumpSignalCapacity
+	savedDag, savedCapacity, savedFlow := pumpSignalDagReview, pumpSignalCapacity, pumpFlowRead
+	pumpFlowRead = func(context.Context, *Env, *Config) (pumpFlowData, error) { return pumpFlowData{}, nil }
 	pumpSignalDagReview = func(context.Context, *Env, *Config) (Review, error) {
 		return Review{Plans: []DagReviewPlan{}, Anomalies: []DagReviewAnomaly{}, Checks: []Check{}}, nil
 	}
 	pumpSignalCapacity = func(context.Context, *Env, *Config, bool) (CapacityReport, func() error, error) {
 		return CapacityReport{Plans: []CapacityPlan{}}, nil, nil
 	}
-	t.Cleanup(func() { pumpSignalDagReview, pumpSignalCapacity = savedDag, savedCapacity })
+	t.Cleanup(func() { pumpSignalDagReview, pumpSignalCapacity, pumpFlowRead = savedDag, savedCapacity, savedFlow })
 }
 
 // pumpSignalCapFake stands in for the capacity judgement: it records the order of evaluate and
@@ -800,13 +801,13 @@ func TestPumpSignalCapacityFailingDoesNotBlockDagAndAudit(t *testing.T) {
 	}
 }
 
-// The three sources are in the real registry, after the two the pump already had.
+// The three signal sources are in the real registry, after the two the pump already had, and the two flow sources of CRW-1204 follow.
 func TestPumpSignalSourcesAreRegistered(t *testing.T) {
 	var names []string
 	for _, source := range pumpSources {
 		names = append(names, source.Name())
 	}
-	want := "rollout,pr,signal_dag,signal_capacity,signal_audit"
+	want := "rollout,pr,signal_dag,signal_capacity,signal_audit,flow_runs,flow_reports"
 	if strings.Join(names, ",") != want {
 		t.Fatalf("sources = %v, want %s", names, want)
 	}

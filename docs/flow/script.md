@@ -6,7 +6,7 @@ the script format, the loader, the globals, call identity, the call result and t
 `internal/flow/script` (loader and runtime) and `internal/flow/engine` (calls, journal, paths) do.
 
 ```text
-crw flow run --backend fake [--args JSON | --args-file FILE] [--pool N] [--token-budget N] [--journal] <script.js>
+crw flow run --backend fake [--args JSON | --args-file FILE] [--pool N] [--token-budget N] [--journal] [--summary-document D] <script.js>
 crw flow run --script JS [--plan-only=false --backend fake] [--args JSON] [--journal]
 crw flow roles [--json]
 crw flow recover [--run RUN] CALL (--adopt THREAD|TURN | --absent)
@@ -14,6 +14,9 @@ crw flow resume [--state DIR] [--socket PATH] [--repo DIR] [--args JSON | --args
 crw flow lint [--args JSON | --args-file FILE] [--no-dry-run] [--json] <script.js>...
 crw flow audit (--run RUN | --acceptance ID) [--milestone M] [--state DIR] [--socket PATH] [--json] [--no-record]
 ```
+
+The commands that reach up from a run - `apply`, `report-up`, `reports`, `report-ack`, `report-delivered` - and the summary document
+`--summary-document` names are in [reporting.md](reporting.md).
 
 `--backend fake` runs the script against the in-process fake backend: every turn answers immediately with a value that
 satisfies the call's schema, including its numeric bounds, `multipleOf` and `pattern` (or a short sentence for a call without one). It is the only backend the
@@ -391,7 +394,8 @@ acceptance and integration, the close of an execution), `Verifier` (`CILocalVeri
 
 **The run process's scheduler (CRW-1277).** The shipped binary installs the lane's operations in the run process (`cmd/crw` assigns
 `cli.OpsFor = cli.SchedulerLane`): `ops.NewLane` over `cli.SchedRelay` (the `Relay` over `internal/relay/dagsched`), `CILocalVerifier`,
-`StoreDecisions` and the host's reviewer threads, with the run's owner thread as the actor; the report has no delivery until F11. The
+`StoreDecisions`, the host's reviewer threads and the reporter of F11 (`report.Reporter`: the report's rows in the run's journal, the notice
+through `crw manage send-parent` on the relay the run is in), with the run's owner thread as the actor. The
 milestone is the compiled milestone of the crw-plan handoff (`crw-flow-compile-input/1`) the run pinned with `crw flow start --handoff
 FILE` (a night batch pins the one its decision names): the nodes of the plan at the revision the run pinned (`flow_runs.plan_revision`)
 whose issues are the milestone's in the handoff, in the scheduler's offering order (`dagsched.OfferingOrder`: the longest chain below a

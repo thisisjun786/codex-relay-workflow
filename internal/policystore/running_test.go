@@ -242,3 +242,32 @@ func TestRunningDigestReportsTheObservationFailure(t *testing.T) {
 		t.Fatalf("resolver got %q/%q, want the relay the management command named", *state, *socket)
 	}
 }
+
+// TestRunningDigestReadsTheRelayOfAConfigurationWithEmptyManagementSettings is CRW-1273: crw manage
+// config refuses a configuration that names a management_thread and leaves settings.management empty
+// (every send would fail), but the running-digest reader only needs the relay block and never sends.
+// It reads the relay that file names, as it did before the refusal existed.
+func TestRunningDigestReadsTheRelayOfAConfigurationWithEmptyManagementSettings(t *testing.T) {
+	socket, _ := stubRunningSeams(t, "d")
+	runningSeams.readManage = manageRelaySettings
+	relaySocket := filepath.Join(t.TempDir(), "app.sock")
+	body := "{\"manage\":{\"management_thread\":\"01abc\",\"relay\":{\"socket\":\"" + relaySocket + "\"}}}\n"
+	manageConfigHost(t, body)
+
+	var stdout, stderr bytes.Buffer
+	if code := manage.Run(context.Background(), []string{"config"}, nil, &stdout, &stderr); code == 0 {
+		t.Fatal("crw manage config accepted the empty management settings; the premise of this test is gone")
+	}
+	got, err := manageRelaySettings(nil)
+	if err != nil || got.Socket != relaySocket {
+		t.Fatalf("manageRelaySettings = %+v, %v, want the relay %q the file names", got, err, relaySocket)
+	}
+	_, env := manageConfigHost(t, body)
+	running := RunningDigest(context.Background(), env)
+	if running.State != RunningObserved {
+		t.Fatalf("reading = %+v, want the digest observed", running)
+	}
+	if *socket != relaySocket {
+		t.Fatalf("socket = %q, want %q", *socket, relaySocket)
+	}
+}

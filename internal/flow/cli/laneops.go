@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -25,7 +26,7 @@ import (
 // The operations of the project lane as the shipped binary installs them (CRW-1277 h): cmd/crw/main.go assigns SchedulerLane to OpsFor,
 // so `crw flow start project-lane` and `crw flow start night-batch` run the lane over the relay's scheduler (SchedRelay), the repository's
 // CI (ops.CILocalVerifier), the decision tables of the store (ops.StoreDecisions) and the reviewer threads of the host (audit.BusReader);
-// the report of a milestone goes nowhere until F11 wires its delivery (ops.Deps.Reporter nil).
+// the report of a milestone goes up through F11's reporter (report.Reporter), which ProductionWorld builds over the run's store and journal.
 
 // LaneRequest is what the operations of a run's project lane are built for: the world's request, the store the run's journal is in, the
 // journal, the run record, the repository the worktrees are made from, the role table and the host as the milestone close reads it.
@@ -37,6 +38,8 @@ type LaneRequest struct {
 	Repo     string
 	Policy   *engine.Policy
 	Threads  ops.Threads
+	// Reporter sends the milestone report up (F11, CRW-1204); nil records the call and answers that nothing is wired.
+	Reporter ops.Reporter
 }
 
 // LaneWorld is what OpsFor installs in a run's World.
@@ -65,6 +68,8 @@ type LaneOptions struct {
 	Getenv func(string) (string, bool)
 	// Relay is a test seam: the relay the lane is given in place of the run's SchedRelay (a wrapper around it); nil is the SchedRelay.
 	Relay func(*SchedRelay) ops.Relay
+	// Reporter replaces the request's reporter; nil keeps it.
+	Reporter ops.Reporter
 }
 
 // SchedulerLane is the OpsFor of the shipped binary.
@@ -73,8 +78,8 @@ func SchedulerLane(ctx context.Context, req LaneRequest) (LaneWorld, error) {
 }
 
 // BuildLane builds the operations of a run's project lane over the relay's scheduler (CRW-1277 h): ops.NewLane over the SchedRelay of the
-// run, the verifier, the store's decision tables and the host's threads, with the actor the run's owner thread; it answers the
-// operations, the engine's prover and the lane's input snapshot.
+// run, the verifier, the store's decision tables, the host's threads and the reporter of F11, with the actor the run's owner thread; it
+// answers the operations, the engine's prover and the lane's input snapshot.
 func BuildLane(ctx context.Context, req LaneRequest, opt LaneOptions) (LaneWorld, error) {
 	spec := req.Spec
 	if req.Store == nil || req.Journal == nil || req.Policy == nil {
@@ -126,8 +131,12 @@ func BuildLane(ctx context.Context, req LaneRequest, opt LaneOptions) (LaneWorld
 	if opt.Relay != nil {
 		seam = opt.Relay(relay)
 	}
+	reporter := req.Reporter
+	if opt.Reporter != nil {
+		reporter = opt.Reporter
+	}
 	lane := ops.NewLane(ops.Deps{RunID: spec.RunID, Repo: req.Repo, Journal: journal, Relay: seam, Verifier: verifier, Decisions: ops.StoreDecisions{DB: req.Store.DB},
-		Threads: req.Threads, Reporter: nil, Actor: spec.Thread})
+		Threads: req.Threads, Reporter: reporter, Actor: spec.Thread})
 	out := LaneWorld{Ops: lane.Ops(), Prover: ops.NewProver(), InputSnapshot: lane.InputSnapshot, Journal: journal}
 	if plan := planOf(spec.Args); plan != "" && ref.Path != "" {
 		out.Base = func(string) (string, error) { return relay.IntegrationTip(ctx, plan) }
@@ -318,6 +327,10 @@ func runRecord(ctx context.Context, st *store.Store, run string) (journal.Identi
 	var id journal.Identity
 	err := st.DB.QueryRowContext(ctx, `SELECT COALESCE(plan_id, ''), COALESCE(plan_revision, 0), COALESCE(actor_task_id, ''), COALESCE(epoch_nonce, '') FROM flow_runs WHERE run_id = ?`, run).
 		Scan(&id.PlanID, &id.PlanRevision, &id.ActorTaskID, &id.EpochNonce)
+	if errors.Is(err, sql.ErrNoRows) {
+		// no process of the run stored its start: the run pins nothing yet
+		return journal.Identity{}, nil
+	}
 	if err != nil {
 		return journal.Identity{}, fmt.Errorf("the run record of %s: %w", run, err)
 	}

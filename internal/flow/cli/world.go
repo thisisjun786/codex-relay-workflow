@@ -15,6 +15,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/backend/agent"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/journal"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/report"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -26,8 +27,9 @@ var OpsFor func(ctx context.Context, req LaneRequest) (LaneWorld, error)
 
 // ProductionWorld is the World of the shipped binary: the relay store the run's journal is persisted in, the App Server
 // connection of its host, and the allocator of its working directories (<state>/flow/<run>/...). The backend binds every engine
-// turn to the run before it starts it, as a resumed run does (agent.BoundConfig). The store is opened for writing; a store that
-// does not exist is an error, never a new empty store.
+// turn to the run before it starts it, as a resumed run does (agent.BoundConfig), and the run hands what goes up from it to the
+// hook journal.UpwardFactory makes, when the binary installed one. The store is opened for writing; a store that does not exist
+// is an error, never a new empty store.
 func ProductionWorld(ctx context.Context, req WorldRequest) (World, error) {
 	spec := req.Spec
 	socket := spec.Socket
@@ -37,9 +39,9 @@ func ProductionWorld(ctx context.Context, req WorldRequest) (World, error) {
 			return World{}, err
 		}
 	}
-	db := filepath.Join(req.State, "relay.sqlite3")
+	db, statePath := filepath.Join(req.State, "relay.sqlite3"), req.State
 	if sel, err := store.ResolveStateDir(req.State, socket); err == nil {
-		db = sel.DBPath()
+		db, statePath = sel.DBPath(), sel.Path
 	}
 	if _, err := os.Stat(db); err != nil {
 		return World{}, fmt.Errorf("there is no relay store at %s: %w", db, err)
@@ -68,19 +70,26 @@ func ProductionWorld(ctx context.Context, req WorldRequest) (World, error) {
 		_ = st.Close()
 		return World{}, err
 	}
-	if req.Resume {
-		if id, err = runRecord(ctx, st, spec.RunID); err != nil {
-			_ = st.Close()
-			return World{}, err
-		}
-	}
 	threads := agent.NewThreads()
 	client := appserver.New(socket, appserver.DefaultBounds, agent.ClientOption(threads))
 	var backend *agent.Backend
 	lane := LaneWorld{}
 	if OpsFor != nil {
+		if req.Resume {
+			// the run record the first process stored: the plan revision the run pinned and the nonce of its epoch claim
+			if id, err = runRecord(ctx, st, spec.RunID); err != nil {
+				_ = client.Close()
+				_ = st.Close()
+				return World{}, err
+			}
+		}
 		host := hostThreads{BusReader: audit.BusReader{Bus: client.Bus()}, archive: func(ctx context.Context, id string) error { return backend.ArchiveThread(ctx, id) }}
-		if lane, err = OpsFor(ctx, LaneRequest{WorldRequest: req, Store: st, Journal: j, Identity: id, Repo: repo, Policy: table, Threads: host}); err != nil {
+		// the milestone report goes up as `crw flow report-up` sends one (F11): its rows in the run's journal, the notice through
+		// `crw manage send-parent` on the relay the run is in
+		program, _ := os.Executable()
+		reporter := report.Reporter{Run: spec.RunID, W: &report.Writer{Store: st, Rows: report.JournalAppender{Journal: j, RunID: spec.RunID, Store: st}, Resolver: report.StoreResolver{Store: st},
+			Sender: report.ManageSender{Program: program, State: statePath, Socket: socket}, ArtifactDir: filepath.Join(statePath, "flow", spec.RunID, "reports")}}
+		if lane, err = OpsFor(ctx, LaneRequest{WorldRequest: req, Store: st, Journal: j, Identity: id, Repo: repo, Policy: table, Threads: host, Reporter: reporter}); err != nil {
 			_ = client.Close()
 			_ = st.Close()
 			return World{}, err
@@ -99,6 +108,11 @@ func ProductionWorld(ctx context.Context, req WorldRequest) (World, error) {
 		return World{}, err
 	}
 	w := World{Journal: j, Backend: backend, Policy: table, Ops: lane.Ops, Prover: lane.Prover, InputSnapshot: lane.InputSnapshot}
+	if journal.UpwardFactory != nil {
+		// what goes up from the run (CRW-1204) is handed to the hook the binary installs, as the engine's resume command does
+		// (journal.ResumeEnv): the relay is the one the run is in
+		w.Upward = journal.UpwardFactory(st, j, spec.RunID, statePath, socket)
+	}
 	if lane.Journal != nil {
 		w.Journal = lane.Journal
 	}

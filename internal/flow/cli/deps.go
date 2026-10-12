@@ -84,6 +84,9 @@ type World struct {
 	InputSnapshot func(ctx context.Context, req engine.SnapshotRequest) (string, error)
 	// Policy is the role table; nil reads the execution policy file the environment names.
 	Policy *engine.Policy
+	// Upward is the hook the run hands what goes up from it to (the plan summary, its escalations, its completion digest;
+	// CRW-1204); nil hands nothing.
+	Upward engine.UpwardHook
 	// Close commits the rows still buffered and ends the connections.
 	Close func() error
 }

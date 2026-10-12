@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/report"
 )
 
 // seeded is a run with two phases: a completed executor on n1 that committed and was reviewed, an architect call in recovery_hold,
@@ -263,5 +264,71 @@ func TestStatusLineScopedToOwnerThread(t *testing.T) {
 	var quiet bytes.Buffer
 	if code := RunStopHook(ctx, strings.NewReader(`{"session_id":"thread-owner"}`), &quiet, &Deps{Reader: OpenReader}, t.TempDir(), "", time.Second); code != 0 || quiet.Len() != 0 {
 		t.Errorf("no store: %d %q", code, quiet.String())
+	}
+}
+
+// A command that writes into a run (CRW-1204: crw flow report-up, apply, report-ack, report-delivered) numbers its rows from
+// engine.ForeignSeqBase, while the run, alive, goes on numbering its own from where it was. The cursor of watch and of the GUI's
+// event stream is the seq of the run's own rows: it never jumps to a command's number, so the rows the run writes after a
+// command wrote into it are still read, and the tree's cursor (LastSeq) is the run's own last row.
+func TestWatchCursorStaysOnTheRunsOwnRowsWhenACommandWroteIntoIt(t *testing.T) {
+	w := newWorld(t)
+	r := w.newRun("run-f", "thread-owner")
+	r.phase("one")
+	if _, err := (report.ForeignAppender{Store: w.st, Run: "run-f"}).Append(ctx, report.NewRow{Kind: report.KindReport, Subject: "blocked", Payload: map[string]any{"report_kind": report.KindProjectBlocked}}); err != nil {
+		t.Fatal(err)
+	}
+	r.phase("two")
+	rd, err := OpenReader(ctx, w.state, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rd.Close()
+	d, err := rd.Detail(ctx, "run-f")
+	if err != nil {
+		t.Fatal(err)
+	}
+	own := r.j.Events()
+	last := 0
+	for _, e := range own {
+		if int64(e.Seq) < engine.ForeignSeqBase {
+			last = max(last, e.Seq)
+		}
+	}
+	if d.LastSeq != last {
+		t.Errorf("the tree's cursor is %d, the run's own last row %d", d.LastSeq, last)
+	}
+	// following from 0 reads every row the run wrote, and the cursor stays below the commands' numbers
+	cursor := 0
+	var seen []string
+	for {
+		page, err := rd.Tail(ctx, "run-f", cursor, 1, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, row := range page.Rows {
+			seen = append(seen, row.Event)
+		}
+		cursor = page.Cursor
+		if !page.More {
+			break
+		}
+	}
+	if int64(cursor) >= engine.ForeignSeqBase || cursor != last {
+		t.Fatalf("the cursor after the last page is %d (the run's own last row %d)", cursor, last)
+	}
+	// a row the run writes after the command's is read from that cursor and from the tree's
+	r.phase("three")
+	for _, from := range []int{cursor, d.LastSeq} {
+		page, err := rd.Tail(ctx, "run-f", from, 10, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(page.Rows) == 0 || page.Rows[len(page.Rows)-1].Data["title"] != "three" {
+			t.Errorf("from the cursor %d the page is %+v: the run's own row after the command's is lost", from, page.Rows)
+		}
+	}
+	if strings.Join(seen, ",") != "started,phase,phase" {
+		t.Errorf("the pages hold %v", seen)
 	}
 }

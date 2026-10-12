@@ -264,6 +264,16 @@ func dagReviewIssueByNode(facts dagReviewFacts) map[string]string {
 	return issue
 }
 
+// dagReviewCheckIsStandingGap is whether a check is unmeasured for good rather than for the round:
+// released_before_predecessor, which every review over a store that holds a plan carries because the
+// scheduler exports no edge reading. It says nothing about this round's reading, and no anomaly of
+// its kind can ever be in a set, so a consumer that holds back a clear for an unmeasured check does
+// not count it. Any other unmeasured check (a read that failed, a table the store predates, a
+// rollout that could not be read) is the round's own and still counts.
+func dagReviewCheckIsStandingGap(name string) bool {
+	return name == dagReviewKindReleasedBeforePredecessor
+}
+
 // dagReviewReleasedBeforePredecessor records that this review cannot take the reading. When an
 // edge became satisfied is known only to the scheduler's unexported edgeStatus and integratedAt,
 // and it exports no reading of that time yet, so the review names the gap as an unmeasured check

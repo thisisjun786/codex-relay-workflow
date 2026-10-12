@@ -32,6 +32,9 @@ func TestProjectLaneTwoMilestonesOnTempStore(t *testing.T) {
 	clean := newLaneLab(t, twoMilestones()...)
 	runMilestones(clean, "M1", "M2")
 	clean.effectsOnce("A-1", "A-2", "B-1")
+	if strings.Join(clean.reports, ",") != "plan-1/M1,plan-1/M2" {
+		t.Errorf("the milestone reports sent up: %v", clean.reports)
+	}
 	writes := clean.writes
 	if writes < 9 {
 		t.Fatalf("the clean run made %d effect-bearing relay calls: %v", writes, clean.effects)

@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -307,5 +309,107 @@ func TestResumeTakesTheRunFromItsSpec(t *testing.T) {
 	}
 	if code, _, errOut := pw.td.do("resume", "run-nospec", "--state", pw.state); code != 2 || !strings.Contains(errOut, "has no spec file") {
 		t.Errorf("a run without a spec: %d %q", code, errOut)
+	}
+}
+
+// upwardRecorder is an engine.UpwardHook that records the calls it is given.
+type upwardRecorder struct {
+	mu    sync.Mutex
+	calls []string
+}
+
+func (h *upwardRecorder) note(s string) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.calls = append(h.calls, s)
+}
+
+func (h *upwardRecorder) RunStarted(_ context.Context, run string) error {
+	h.note("started " + run)
+	return nil
+}
+
+func (h *upwardRecorder) BatchCommitted(_ context.Context, run string) error { return nil }
+
+func (h *upwardRecorder) RunFinished(_ context.Context, run, status string) error {
+	h.note("finished " + run + " " + status)
+	return nil
+}
+
+// The run process hands the run to the upward hook of its world (CRW-1204's journal.UpwardFactory, which the binary installs),
+// as the engine's own resume command does: when it starts, and when it finishes with the status the run came to - a fresh run
+// and one the process resumes alike.
+func TestRunProcessHandsTheRunToTheUpwardHook(t *testing.T) {
+	pw := newProcessWorld(t, twoCalls)
+	hook := &upwardRecorder{}
+	inner := pw.td.World
+	pw.td.World = func(ctx context.Context, req WorldRequest) (World, error) {
+		w, err := inner(ctx, req)
+		w.Upward = hook
+		return w, err
+	}
+	pw.handle = func(r engine.FakeRequest) engine.FakeReply {
+		return engine.FakeReply{Tokens: &engine.Tokens{Input: 10, Output: 5, Total: 15}}
+	}
+	spec := pw.spec("run-up", nil)
+	if code, errOut := pw.execute(spec, false, nil); code != 0 {
+		t.Fatalf("exit %d %s", code, errOut)
+	}
+	if code, errOut := pw.execute(spec, true, nil); code != 0 {
+		t.Fatalf("the resumed process: exit %d %s", code, errOut)
+	}
+	want := "started run-up|finished run-up completed|started run-up|finished run-up completed"
+	if got := strings.Join(hook.calls, "|"); got != want {
+		t.Errorf("the hook was called %q, want %q", got, want)
+	}
+}
+
+// ProductionWorld installs the upward hook journal.UpwardFactory makes (the binary installs the factory, internal/flow/cli
+// UpwardFactory) over the run's store and journal, with the state directory the run is in and the socket of its spec; without a
+// factory it installs none.
+func TestProductionWorldInstallsTheUpwardHook(t *testing.T) {
+	w := newWorld(t)
+	w.close()
+	repo := t.TempDir()
+	if out, err := exec.Command("git", "-C", repo, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v %s", err, out)
+	}
+	t.Setenv("CODEX_THREAD_BRIDGE_EXECUTION_POLICY", "")
+	t.Setenv("CODEX_THREAD_BRIDGE_EXECUTION_POLICY_DIGEST", "")
+	socket := filepath.Join(t.TempDir(), "app.sock")
+	spec := Spec{Schema: SpecSchema, RunID: "run-pw", Workflow: "two", Thread: "thread-owner", Repo: repo, Socket: socket}
+	hook := &upwardRecorder{}
+	var got []string
+	prev := journal.UpwardFactory
+	t.Cleanup(func() { journal.UpwardFactory = prev })
+	journal.UpwardFactory = func(st *store.Store, j *journal.Journal, runID, state, sock string) engine.UpwardHook {
+		got = append(got, runID, state, sock)
+		if st == nil || j == nil {
+			t.Error("the factory is given no store or journal")
+		}
+		return hook
+	}
+	world, err := ProductionWorld(ctx, WorldRequest{Spec: spec, State: w.state})
+	if err != nil {
+		t.Fatal(err)
+	}
+	upward := world.Upward
+	if err := world.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if upward != hook || strings.Join(got, "|") != "run-pw|"+w.state+"|"+socket {
+		t.Errorf("the world's hook is %v, the factory was called with %q", upward, got)
+	}
+	journal.UpwardFactory = nil
+	world, err = ProductionWorld(ctx, WorldRequest{Spec: spec, State: w.state, Resume: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	upward = world.Upward
+	if err := world.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if upward != nil {
+		t.Errorf("without a factory the world's hook is %v", upward)
 	}
 }

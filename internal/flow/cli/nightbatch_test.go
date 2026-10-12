@@ -3,9 +3,13 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/decisions"
 )
 
@@ -158,5 +162,95 @@ func TestNightBatchOverridesOnlyNarrowTheDecision(t *testing.T) {
 	// a plain start refuses a negative budget too
 	if code, _, errOut := td.do("start", "--preview", "--thread", "thread-owner", "--state", w.state, "--token-budget", "-5", "project-lane"); code == 0 || !strings.Contains(errOut, "token budget") {
 		t.Errorf("a negative budget on a plain start: %d %q", code, errOut)
+	}
+}
+
+// TestNightBatchResumeKeepsTheDecisionBudget: `crw flow resume RUN SCRIPT` of a run whose spec carries a decision and its budget
+// goes on under the spec's budget and deadline: a --token-budget of 0 (no ceiling), a negative one and one above the spec's are
+// refused before the run is taken, a lower one narrows it, no --token-budget takes the spec's, and the run pauses at the spec's
+// deadline. Without this the engine's command ran the run with no ceiling and no deadline.
+func TestNightBatchResumeKeepsTheDecisionBudget(t *testing.T) {
+	pw := newProcessWorld(t, twoCalls)
+	prev := engine.ResumeEnv
+	t.Cleanup(func() { engine.ResumeEnv = prev })
+	engine.ResumeEnv = func(ctx context.Context, req engine.ResumeEnvRequest) (engine.ResumeSetup, error) {
+		w, err := pw.td.World(ctx, WorldRequest{Spec: Spec{RunID: req.RunID}, State: req.State, Resume: true})
+		if err != nil {
+			return engine.ResumeSetup{}, err
+		}
+		return engine.ResumeSetup{Journal: w.Journal, Backend: w.Backend, Close: w.Close}, nil
+	}
+	// the script returns the status and the reason of its second call, which the resume prints in the run's result
+	resume := func(run string, extra ...string) (int, string, string) {
+		return pw.td.do(append([]string{"resume", run, pw.script, "--state", pw.state}, extra...)...)
+	}
+	heldBy := func(out, reason string) bool {
+		return strings.Contains(out, `"held"`) && strings.Contains(out, `"`+reason+`"`)
+	}
+
+	// a run paused at its first call by the operator; the resume sends that call again, and it spends more than the
+	// decision's budget, so under the budget the second call is held budget_exhausted, and with no ceiling it is sent
+	sigs := make(chan os.Signal, 2)
+	pausing := true
+	pw.handle = func(r engine.FakeRequest) engine.FakeReply {
+		if r.Kind == "turn" && strings.Contains(r.Prompt, "first") {
+			if pausing {
+				sigs <- syscall.SIGUSR1
+				time.Sleep(200 * time.Millisecond)
+				return engine.FakeReply{}
+			}
+			return engine.FakeReply{Tokens: &engine.Tokens{Input: 100, Output: 50, Total: 150}}
+		}
+		return engine.FakeReply{}
+	}
+	paused := func(id string, budget int64, deadline string) {
+		t.Helper()
+		pausing = true
+		defer func() { pausing = false }()
+		spec := pw.spec(id, func(s *Spec) { s.Decision, s.TokenBudget, s.Deadline = "ud-night", budget, deadline })
+		if code, errOut := pw.execute(spec, false, sigs); code != 0 {
+			t.Fatalf("the first process of %s: exit %d %s", id, code, errOut)
+		}
+		if info := pw.info(id); info.State != StateHeld || info.Processes != 1 {
+			t.Fatalf("the paused run %s: %+v", id, info)
+		}
+	}
+	paused("run-narrow", 100, "2026-10-13T06:00:00Z")
+	for _, budget := range []string{"0", "-1", "101"} {
+		if code, _, errOut := resume("run-narrow", "--token-budget", budget); code == 0 || !strings.Contains(errOut, "100") {
+			t.Errorf("--token-budget %s: exit %d %q", budget, code, errOut)
+		}
+	}
+	if info := pw.info("run-narrow"); info.Processes != 1 {
+		t.Errorf("a refused resume took the run: %+v", info)
+	}
+	if code, out, errOut := resume("run-narrow", "--token-budget", "50"); code != 0 || !heldBy(out, engine.ReasonBudgetExhausted) {
+		t.Errorf("a lower budget: exit %d %s %q", code, out, errOut)
+	}
+	paused("run-spec", 100, "2026-10-13T06:00:00Z")
+	if code, out, errOut := resume("run-spec"); code != 0 || !heldBy(out, engine.ReasonBudgetExhausted) {
+		t.Errorf("the run went on past the decision's budget: exit %d %s %q", code, out, errOut)
+	}
+
+	// the run pauses at the spec's deadline
+	paused("run-late", 750000, "2026-10-12T10:00:00Z")
+	now := pw.td.Now
+	pw.td.Now = func() time.Time { return time.Date(2026, 10, 12, 11, 0, 0, 0, time.UTC) }
+	defer func() { pw.td.Now = now }()
+	if code, out, errOut := resume("run-late"); code != 0 || !heldBy(out, engine.ReasonEnginePaused) {
+		t.Errorf("the run went on past the decision's deadline: exit %d %s %q", code, out, errOut)
+	}
+	events, _, err := loadRun(pw.world, "run-late")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var byDeadline bool
+	for _, e := range events {
+		if e.Kind == engine.KindFlow && e.Event == engine.EvRunPaused && e.Data["by"] == "deadline" {
+			byDeadline = true
+		}
+	}
+	if !byDeadline {
+		t.Errorf("no run_paused row of the deadline")
 	}
 }

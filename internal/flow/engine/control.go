@@ -1,6 +1,9 @@
 package engine
 
-import "sync"
+import (
+	"context"
+	"sync"
+)
 
 // EvRunPaused is the flow row of a pause the process was asked for from outside (an operator, a deadline): who asked and why.
 // A pause the run makes itself (a token budget, a quota) writes the rows of its own cause (budget_warning, escalation) and
@@ -60,4 +63,17 @@ func (e *Engine) pauseOnAsk(by, reason string) {
 	e.j.Append(Event{RunID: e.runID, Kind: KindFlow, Event: EvRunPaused, Data: map[string]any{"by": by, "reason": reason}})
 	e.pause(ReasonEnginePaused)
 	e.interruptTurns(ReasonEnginePaused)
+}
+
+type controlKey struct{}
+
+// WithControl hands the engine's resume command (`RunCLI` with "resume") the Control of the process that calls it: the run of
+// the command is bound to it, so the caller can pause that run (`crw flow resume RUN SCRIPT` at the deadline of the run's spec).
+func WithControl(ctx context.Context, c *Control) context.Context {
+	return context.WithValue(ctx, controlKey{}, c)
+}
+
+func controlOf(ctx context.Context) *Control {
+	c, _ := ctx.Value(controlKey{}).(*Control)
+	return c
 }
