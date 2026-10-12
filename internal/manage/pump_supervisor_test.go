@@ -394,3 +394,46 @@ func TestPumpQueueParentNoticesUnchanged(t *testing.T) {
 		t.Error("a notice that is no summary left a settlement")
 	}
 }
+
+// The bridge refused a send as unverified_pair_for_unloaded_thread, but the response was lost (or the pump died before it kept the retry
+// ordinal). The next flush reaches the delivery core with an unsettled record: the core reconciles it with the bridge's own receipt and
+// answers unknown. That receipt is the proof that nothing was delivered, so the supervisor path reads the refusal from it, advances the
+// ordinal and the following attempt goes out under <id>-l1 instead of reconciling the same id for ever. (post-evaluation d4)
+func TestSupervisorFlushRecoversAnUnloadRefusalWhoseOrdinalWasLost(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	exe, record := flowTestCRW(t)
+	e.Executable = exe
+	supervisorTestSettings(t, coreSettings{Model: "gpt-supervisor", ReasoningEffort: "xhigh"})
+	failed := map[string]any{"status": "failed", "rpcError": map[string]any{"code": "unverified_pair_for_unloaded_thread", "message": "Thread is not loaded"}}
+	race, _ := deliverFakeBridge(t, []map[string]any{{"payload": map[string]any{"observation": "idle"}}, {"payload": failed}})
+	cfg := pumpTestConfig(t, race)
+	supervisorTestQueue(t, cfg, "lead-thread", "run-1:M1:report", "rep_1", now.Add(-2*time.Hour))
+	st := pumpTestReadStatePtr(t, cfg)
+	supervisorTestFlush(t, e, cfg, st)
+	if got := st.Supervisor.Attempts["run-1:M1:report"]; got.Loaded != 1 {
+		t.Fatalf("the first refusal was not counted: %+v", got)
+	}
+	// the process died before the ordinal was kept: the next pump has no memory of the attempt
+	st.Supervisor.Attempts = map[string]pumpSupervisorAttempt{}
+	// every dial starts a new bridge process: the probe (about the thread) is answered idle, the delivery core's get_operation (about a
+	// request id) reads the receipt of the first attempt
+	reconcile, reconcileLog := deliverFakeBridge(t, []map[string]any{{"when_thread": "lead-thread", "payload": map[string]any{"observation": "idle"}}, {"payload": failed}})
+	cfg.Bridge.Binary = reconcile
+	supervisorTestFlush(t, e, cfg, st)
+	if sends := supervisorTestCallsTo(t, reconcileLog, deliverToolSend, "lead-thread"); len(sends) != 0 {
+		t.Fatalf("the reconciliation sent: %v", sends)
+	}
+	if got := st.Supervisor.Attempts["run-1:M1:report"]; got.Loaded != 1 || got.Refused != 0 {
+		t.Fatalf("the refusal in the bridge's receipt did not advance the ordinal: %+v", got)
+	}
+	// the thread is loaded: the notice goes out under the new id
+	loaded, loadedLog := deliverFakeBridge(t, []map[string]any{{"payload": map[string]any{"observation": "idle"}}, {"payload": map[string]any{"status": "accepted", "delivery": "turn_started"}}})
+	cfg.Bridge.Binary = loaded
+	supervisorTestFlush(t, e, cfg, st)
+	sends := supervisorTestCallsTo(t, loadedLog, deliverToolSend, "lead-thread")
+	if len(sends) != 1 || sends[0]["args"].(map[string]any)["request_id"] != "run-1:M1:report-l1" {
+		t.Fatalf("the attempt after the recovery: %v", sends)
+	}
+	supervisorTestCheckDelivered(t, flowTestCalls(t, record), [][]string{{"flow", "report-delivered", "--report", "rep_1", "--result", "accepted", "--request-id", "run-1:M1:report-l1"}})
+}

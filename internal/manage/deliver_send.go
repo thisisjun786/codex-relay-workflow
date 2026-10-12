@@ -205,7 +205,8 @@ func Deliver(ctx context.Context, e *Env, cfg *Config, m Message) (Outcome, erro
 	if known {
 		// The record is unsettled: read the bridge's own receipt before anything is sent, so an
 		// attempt that may already have gone out is never duplicated under a fresh id.
-		switch verdict := deliverReconcile(ctx, bridge, record); verdict {
+		verdict, receipt := deliverReconcileReceipt(ctx, bridge, record)
+		switch verdict {
 		case deliverReconcileAccepted:
 			record.State, record.Received, record.Applied = deliverStateAccepted, true, false
 			record.Attempts = append(record.Attempts, deliverAttempt{At: deliverNow(e), Class: deliverClassAccepted, ReceiptExcerpt: "reconciled with get_operation"})
@@ -241,7 +242,9 @@ func Deliver(ctx context.Context, e *Env, cfg *Config, m Message) (Outcome, erro
 		default:
 			record.State = deliverStateUnknown
 			record.Attempts = append(record.Attempts, deliverAttempt{At: deliverNow(e), Class: deliverClassUnknown, ReceiptExcerpt: "get_operation left the attempt undetermined; nothing was sent"})
-			return deliverSettled(cfg, record, Outcome{Class: deliverClassUnknown, RequestID: record.RequestID})
+			// the receipt the bridge holds is returned with the unknown: a caller that can place it (the supervisor path reads the unloaded-thread
+			// refusal from it) does not wait on this id for ever
+			return deliverSettled(cfg, record, Outcome{Class: deliverClassUnknown, RequestID: record.RequestID, Receipt: receipt})
 		}
 	}
 	for {
@@ -314,23 +317,29 @@ const (
 // verdict settles as a pre-dispatch refusal: the bridge writes the operation before any turn/start
 // or turn/steer, so an id it does not hold proves nothing was sent.
 func deliverReconcile(ctx context.Context, b *deliverBridge, record deliverRecord) deliverReconcileVerdict {
+	verdict, _ := deliverReconcileReceipt(ctx, b, record)
+	return verdict
+}
+
+// deliverReconcileReceipt is deliverReconcile with the receipt the bridge answered (nil when it answered none).
+func deliverReconcileReceipt(ctx context.Context, b *deliverBridge, record deliverRecord) (deliverReconcileVerdict, map[string]any) {
 	reply := b.call(ctx, deliverToolOperation, map[string]any{"request_id": record.RequestID})
 	if deliverUnknownRequestIDReply(reply) {
-		return deliverReconcileResendNew
+		return deliverReconcileResendNew, reply.Payload
 	}
 	switch deliverClassify(deliverReceiptTool(reply.Payload), reply) {
 	case deliverClassAccepted:
-		return deliverReconcileAccepted
+		return deliverReconcileAccepted, reply.Payload
 	case deliverClassRefused:
 		if status, _ := reply.Payload["status"].(string); status == "not_attempted" {
-			return deliverReconcileResendSame
+			return deliverReconcileResendSame, reply.Payload
 		}
 		if deliverRetryable(reply) {
-			return deliverReconcileResendNew
+			return deliverReconcileResendNew, reply.Payload
 		}
-		return deliverReconcileRefused
+		return deliverReconcileRefused, reply.Payload
 	default:
-		return deliverReconcileUnsettled
+		return deliverReconcileUnsettled, reply.Payload
 	}
 }
 
