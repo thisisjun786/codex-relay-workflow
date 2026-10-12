@@ -82,6 +82,12 @@ type Config struct {
 	InputSnapshot func(ctx context.Context, req SnapshotRequest) (string, error)
 	// Control, when set, is how the process that runs the script pauses it from outside (`crw flow pause`, a run deadline).
 	Control *Control
+	// Upward is the hook the things that go up from the run are handed to (the plan summary, the escalations, the completion digest;
+	// summary_hook.go). Nil hands nothing.
+	Upward UpwardHook
+	// SummaryDocument is the document the run keeps the plan summary in (crw flow run --summary-document): the run records it in a
+	// row of its journal before the script runs, and the hook reads it from there.
+	SummaryDocument string
 }
 
 // SnapshotRequest is a call as the input snapshot sees it.
@@ -158,8 +164,10 @@ type Engine struct {
 
 	spent  atomic.Int64
 	warned atomic.Bool
-	pauseM sync.Mutex
-	paused string
+	// hookSem holds the upward hook to one call at a time (summary_hook.go).
+	hookSem chan struct{}
+	pauseM  sync.Mutex
+	paused  string
 	// turns are the calls with a turn in flight; quotaEscalated is set once the run's quota escalation was written.
 	turnsM         sync.Mutex
 	turns          map[*callRun]struct{}
@@ -249,7 +257,7 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 	}
 	rctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	e := &Engine{cfg: cfg, j: cfg.Journal, runID: cfg.RunID, ctx: rctx, parent: ctx, cancel: cancel, pool: make(chan struct{}, cfg.Pool), loop: script.NewLoop(), byHandle: map[string]CallResult{}, undelivered: map[string]CallResult{}, turns: map[*callRun]struct{}{}, proofs: map[string]NodeProof{}, boundaries: map[string]*boundary{}, restored: map[string]bool{}}
+	e := &Engine{cfg: cfg, hookSem: make(chan struct{}, 1), j: cfg.Journal, runID: cfg.RunID, ctx: rctx, parent: ctx, cancel: cancel, pool: make(chan struct{}, cfg.Pool), loop: script.NewLoop(), byHandle: map[string]CallResult{}, undelivered: map[string]CallResult{}, turns: map[*callRun]struct{}{}, proofs: map[string]NodeProof{}, boundaries: map[string]*boundary{}, restored: map[string]bool{}}
 	// A run that resumes a journal read the policy under another digest before: the change is journaled before any live
 	// call, and only calls that start a thread afterwards take the new pairs.
 	prior, repinned := priorPolicy(e.j, e.runID, cfg.Policy)
@@ -272,10 +280,18 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 	if cfg.Resume != nil {
 		e.resume(ctx)
 		// what reconcile appended is the journal's state too: the calls are compared with every row written so far
-		if rows := e.j.Events(); len(rows) > 0 {
-			e.startSeq = rows[len(rows)-1].Seq + 1
+		if seq := lastRunSeq(e.j.Events()); seq > 0 {
+			e.startSeq = seq + 1
 		}
 		e.prior = newPriorIndex(e.j, e.startSeq)
+	}
+	e.noteSummaryDocument()
+	if cfg.Upward != nil {
+		if n, ok := e.j.(CommitNotifier); ok {
+			n.SetOnCommit(e.batchCommitted)
+			defer n.SetOnCommit(nil)
+		}
+		e.hookRun("started", func(h UpwardHook) error { return h.RunStarted(ctx, e.runID) })
 	}
 	root := &pathState{id: RootPath}
 	main, err := e.newScriptVM(prog, root, 0, args)
@@ -360,6 +376,13 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 	res.Phases = e.phases
 	res.Logs = e.logs
 	e.j.Append(Event{RunID: e.runID, Kind: KindRun, Event: "finished", Data: map[string]any{"status": res.Status, "error_kind": res.ErrorKind}})
+	if cfg.Upward != nil {
+		// the journal no longer notifies: the finish is the last point, and the hook reads the whole journal
+		if n, ok := e.j.(CommitNotifier); ok {
+			n.SetOnCommit(nil)
+		}
+		e.hookRun("finished", func(h UpwardHook) error { return h.RunFinished(ctx, e.runID, res.Status) })
+	}
 	// the finished row is written with the rows still buffered: when that write fails the run did not end on disk, and the
 	// caller is told so instead of getting a completed run
 	if err := journalErr(e.j); err != nil && res.Status == RunCompleted {

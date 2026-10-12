@@ -7,8 +7,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/report"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // Usage is the usage of the commands this package serves.
@@ -24,12 +28,33 @@ const Usage = `usage: crw flow start WORKFLOW [--args JSON | --args-file FILE] [
        crw flow status-line --thread T
        crw flow digest RUN [--out FILE]
        crw flow audit (--run RUN | --acceptance ID) [--milestone M] [--json] [--no-record]
+       crw flow apply --event E --turn T [--run RUN] [--base COMMIT] [--wait 10m] [--override REASON] [--manifest-request FILE] [--repo DIR]
+       crw flow report-up --kind project_blocked|project_decision_request|jun_decision_request --run RUN --evidence FILE [--subject TEXT]
+       crw flow reports [--initiative I] [--unread] [--json]
+       crw flow report-ack REPORT --turn T
+       crw flow report-delivered --report ID --result accepted|queued|refused|unknown --request-id R [--observation O]
        (every command takes --state DIR and --socket PATH)`
 
 // commands are the first words of the commands this package serves; resume and recover are served here for the run lock and the
-// forms the engine's commands do not have, and hand the rest to the engine. audit is `crw flow audit` (audit.go).
+// forms the engine's commands do not have, and hand the rest to the engine. audit is `crw flow audit` (audit.go); the reach-up
+// commands of Commands (apply.go, report.go) run over an Environment (RunEnv).
 var commands = map[string]bool{"start": true, "ps": true, "show": true, "watch": true, "answer": true, "pause": true, "cancel": true,
-	"status-line": true, "digest": true, "resume": true, "recover": true, "audit": true, ProcessCommand: true}
+	"status-line": true, "digest": true, "resume": true, "recover": true, "audit": true, ProcessCommand: true,
+	"apply": true, "report-up": true, "reports": true, "report-ack": true, "report-delivered": true}
+
+// Commands are the `crw flow` commands that work on the relay store's flow rows over an Environment: apply, report-up, reports,
+// report-ack and report-delivered reach up from a run (CRW-1204, F11), and audit (CRW-1206, F13, audit.go) reads the reviews behind
+// the acceptances of a run back from the reviewer threads on the host.
+var Commands = []string{"apply", "report-up", "reports", "report-ack", "report-delivered", "audit"}
+
+// The exit statuses of the commands of Commands: 0 an application or a record that was made, 1 a refusal, 2 a command line or an
+// infrastructure failure, 3 an application that waits for a later turn.
+const (
+	ExitOK       = 0
+	ExitRefused  = 1
+	ExitUsage    = 2
+	ExitNextTurn = 3
+)
 
 // Handles reports whether `crw flow args...` is one of the commands this package serves.
 func Handles(args []string) bool { return len(args) > 0 && commands[args[0]] }
@@ -45,9 +70,10 @@ func RunWith(ctx context.Context, d *Deps, args []string, stdin io.Reader, stdou
 		fmt.Fprintln(stderr, Usage)
 		return 2
 	}
-	if args[0] == "audit" {
-		// the audit opens its store and its host through AuditEnv, which the binary installs (OpenAuditStore)
-		return RunAudit(ctx, args, stdout, stderr)
+	if slices.Contains(Commands, args[0]) {
+		// the reach-up commands open the relay store themselves; the audit opens its store and its host through AuditEnv, which the
+		// binary installs (OpenAuditStore)
+		return RunEnv(ctx, args, Environment{Stdout: stdout, Stderr: stderr})
 	}
 	c := &command{Deps: d, ctx: ctx, stdin: stdin, stdout: stdout, stderr: stderr, name: args[0]}
 	switch args[0] {
@@ -187,4 +213,109 @@ func cell(s string) string {
 		return "-"
 	}
 	return s
+}
+
+// Environment is what the commands work through; the binary leaves it as it is and a test replaces what it needs.
+type Environment struct {
+	// Stdout and Stderr are the command's streams.
+	Stdout, Stderr io.Writer
+	// Program is the crw executable relay commands are run with ("" is the running one).
+	Program string
+	// Open opens the relay store: the state directory and socket the operator named, else the relay's own selection.
+	Open func(ctx context.Context, state, socket string) (*store.Store, string, error)
+	// Getenv reads the environment.
+	Getenv func(string) string
+	// Sender and Resolver replace the notices through `crw manage send-parent` and the linkage walk (tests).
+	Sender   report.Sender
+	Resolver report.Resolver
+}
+
+// RunEnv is `crw flow <command>` for a command of Commands, over the environment given.
+func RunEnv(ctx context.Context, args []string, env Environment) int {
+	if env.Open == nil {
+		env.Open = openStore
+	}
+	if env.Getenv == nil {
+		env.Getenv = os.Getenv
+	}
+	if env.Program == "" {
+		if exe, err := os.Executable(); err == nil {
+			env.Program = exe
+		}
+	}
+	if len(args) == 0 {
+		fmt.Fprintln(env.Stderr, Usage)
+		return ExitUsage
+	}
+	switch args[0] {
+	case "apply":
+		return applyCmd(ctx, args[1:], env)
+	case "report-up":
+		return reportUpCmd(ctx, args[1:], env)
+	case "reports":
+		return reportsCmd(ctx, args[1:], env)
+	case "report-ack":
+		return reportAckCmd(ctx, args[1:], env)
+	case "report-delivered":
+		return reportDeliveredCmd(ctx, args[1:], env)
+	case "audit":
+		return RunAudit(ctx, args, env.Stdout, env.Stderr)
+	}
+	fmt.Fprintln(env.Stderr, Usage)
+	return ExitUsage
+}
+
+// openStore opens the relay store for writing: --state, else the relay's own selection for the socket. A store that does not exist is an
+// error, never a new empty store.
+func openStore(ctx context.Context, state, socket string) (*store.Store, string, error) {
+	if socket == "" {
+		var err error
+		if socket, err = store.DefaultSocket(); err != nil {
+			return nil, "", err
+		}
+	}
+	selection, err := store.ResolveStateDir(state, socket)
+	if err != nil {
+		return nil, "", err
+	}
+	db := selection.DBPath()
+	if _, err := os.Stat(db); err != nil {
+		return nil, "", fmt.Errorf("there is no relay store at %s (%s): %w", db, selection.Detail, err)
+	}
+	st, err := store.Open(ctx, db, socket)
+	return st, selection.Path, err
+}
+
+// flags parses a command's flags, which may follow its positional arguments.
+func flags(name string, args []string, env Environment, define func(*flag.FlagSet)) (positional []string, code int, ok bool) {
+	fs := flag.NewFlagSet("crw flow "+name, flag.ContinueOnError)
+	fs.SetOutput(env.Stderr)
+	fs.Usage = func() { fmt.Fprintln(env.Stderr, Usage) }
+	define(fs)
+	rest := args
+	for {
+		if err := fs.Parse(rest); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return nil, ExitOK, false
+			}
+			return nil, ExitUsage, false
+		}
+		if fs.NArg() == 0 {
+			break
+		}
+		positional = append(positional, fs.Arg(0))
+		rest = fs.Args()[1:]
+	}
+	return positional, ExitOK, true
+}
+
+func usageErr(env Environment, name, format string, a ...any) int {
+	fmt.Fprintln(env.Stderr, Usage)
+	fmt.Fprintf(env.Stderr, "crw flow %s: error: %s\n", name, fmt.Sprintf(format, a...))
+	return ExitUsage
+}
+
+func failure(env Environment, name string, err error) int {
+	fmt.Fprintf(env.Stderr, "crw flow %s: error: %s\n", name, strings.TrimSpace(err.Error()))
+	return ExitUsage
 }

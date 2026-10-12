@@ -66,6 +66,9 @@ type Journal struct {
 	nodeExecution map[string]string
 	// loading is set while the rows the store already holds are read: they inherit nothing that was not recorded with them.
 	loading bool
+	// onCommit is told, outside mu, after a batch was committed (engine.CommitNotifier); committed is set under mu by the commit.
+	onCommit  func()
+	committed bool
 }
 
 // stored is a row that waits for its transaction, with what it inherits from the earlier rows of its call as of the moment it
@@ -111,7 +114,10 @@ func Open(ctx context.Context, st *store.Store, runID string, id Identity, opts 
 	j.loading = true
 	for _, e := range events {
 		j.noteContext(e)
-		j.seq = max(j.seq, e.Seq)
+		// the rows a command wrote into the run (engine.ForeignSeqBase) are not the run's own numbers
+		if int64(e.Seq) < engine.ForeignSeqBase {
+			j.seq = max(j.seq, e.Seq)
+		}
 	}
 	j.loading = false
 	j.events = events
@@ -167,6 +173,32 @@ func IsIntent(kind, event string) bool { return kind == engine.KindCall && inten
 // Append stores e, assigning its sequence number, and returns it. An intent is committed before Append returns; if it cannot
 // be, Err reports why and the engine sends nothing for it. After a failure rows are kept in memory only.
 func (j *Journal) Append(e engine.Event) engine.Event {
+	out := j.appendRow(e)
+	j.notifyCommit()
+	return out
+}
+
+// SetOnCommit installs the function that is called after each committed batch, outside the journal's lock (engine.CommitNotifier).
+func (j *Journal) SetOnCommit(notify func()) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.onCommit = notify
+}
+
+// notifyCommit tells the commit notifier that a batch was committed since the last notice.
+func (j *Journal) notifyCommit() {
+	j.mu.Lock()
+	fire, fn := j.committed, j.onCommit
+	j.committed = false
+	j.mu.Unlock()
+	if fire && fn != nil {
+		fn()
+	}
+}
+
+var _ engine.CommitNotifier = (*Journal)(nil)
+
+func (j *Journal) appendRow(e engine.Event) engine.Event {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if e.RunID != j.runID && j.err == nil {
@@ -228,9 +260,11 @@ func (j *Journal) Err() error {
 // Flush commits the rows that wait for a batch.
 func (j *Journal) Flush() error {
 	j.mu.Lock()
-	defer j.mu.Unlock()
 	j.flushLocked(len(j.batch))
-	return j.err
+	err := j.err
+	j.mu.Unlock()
+	j.notifyCommit()
+	return err
 }
 
 // Close commits what waits and reports the first failure. It does not close the store.
@@ -255,6 +289,7 @@ func (j *Journal) flushLocked(n int) {
 		return
 	}
 	j.batch = slices.Clone(j.batch[n:])
+	j.committed = true
 }
 
 // noteContext keeps what the later rows of a call inherit from this one.

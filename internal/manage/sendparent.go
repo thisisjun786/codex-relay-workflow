@@ -10,6 +10,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"io"
 	"os"
+	"slices"
 )
 
 // The exit status of crw manage send-parent, as the issue body fixes it: 0 for a delivery that
@@ -28,6 +29,13 @@ type sendParentArgs struct {
 	messageFile string
 	logicalID   string
 	queue       bool
+	// role is the role the message is sent with: parent, the default, or supervisor (CRW-1204: the initiative lead's thread, with the
+	// settings its supervision binding records). report and initiative name what a supervisor notice is about.
+	role       string
+	report     string
+	initiative string
+	// relayState and relaySocket name the relay a supervisor notice's report was written in (--state, --socket); empty: the configuration's.
+	relayState, relaySocket string
 }
 
 // sendParentConfig is where the command reads its configuration: the defaults today, and the crw
@@ -48,6 +56,9 @@ func sendParentRun(ctx context.Context, e *Env, args []string) int {
 	parsed, err := sendParentParse(args, e.Stderr)
 	if err != nil {
 		fmt.Fprintln(e.Stderr, "usage: crw manage send-parent --thread T --message-file F [--logical-id ID] [--queue]")
+		if slices.Contains(args, "--role") {
+			fmt.Fprintln(e.Stderr, sendParentRoleUsage)
+		}
 		fmt.Fprintf(e.Stderr, "crw manage send-parent: error: %v\n", err)
 		return usageExit
 	}
@@ -65,6 +76,13 @@ func sendParentDispatch(ctx context.Context, e *Env, cfg *Config, parsed sendPar
 	logicalID := parsed.logicalID
 	if logicalID == "" {
 		logicalID = sendParentLogicalID(text)
+	}
+	if parsed.role == supervisorRole {
+		return sendParentSupervisor(ctx, e, cfg, parsed, logicalID, text)
+	}
+	if parsed.queue && summaryIsLogical(logicalID) {
+		// the notice that a plan summary entry is owed (CRW-1204) is queued once, whatever the queue holds of it already
+		return sendParentSummaryQueue(e, cfg, parsed, logicalID, text)
 	}
 	if parsed.queue {
 		if err := sendParentQueueSafe(cfg, parsed.thread, logicalID); err != nil {
@@ -156,6 +174,11 @@ func sendParentParse(args []string, out io.Writer) (sendParentArgs, error) {
 	set.StringVar(&parsed.messageFile, "message-file", "", "the file holding the message text")
 	set.StringVar(&parsed.logicalID, "logical-id", "", "the logical message id (default: the message sha256, first 16 characters)")
 	set.BoolVar(&parsed.queue, "queue", false, "write the notice for the pump instead of sending it")
+	set.StringVar(&parsed.role, "role", "parent", "the role to send with: parent (default) or supervisor")
+	set.StringVar(&parsed.report, "report", "", "the flow report a supervisor notice is about (--role supervisor)")
+	set.StringVar(&parsed.initiative, "initiative", "", "the initiative a supervisor notice is for (--role supervisor)")
+	set.StringVar(&parsed.relayState, "state", "", "the relay state directory the report was written in (--role supervisor; default: the configuration's)")
+	set.StringVar(&parsed.relaySocket, "socket", "", "the App Server control socket of that relay (--role supervisor; default: the configuration's)")
 	if err := set.Parse(args); err != nil {
 		return sendParentArgs{}, err
 	}
@@ -164,6 +187,15 @@ func sendParentParse(args []string, out io.Writer) (sendParentArgs, error) {
 	}
 	if parsed.thread == "" || parsed.messageFile == "" {
 		return sendParentArgs{}, fmt.Errorf("--thread and --message-file are required")
+	}
+	if parsed.role != "parent" && parsed.role != supervisorRole {
+		return sendParentArgs{}, fmt.Errorf("--role is parent or supervisor, not %q", parsed.role)
+	}
+	if parsed.role == "parent" && (parsed.report != "" || parsed.initiative != "") {
+		return sendParentArgs{}, fmt.Errorf("--report and --initiative apply to --role supervisor")
+	}
+	if parsed.role == "parent" && (parsed.relayState != "" || parsed.relaySocket != "") {
+		return sendParentArgs{}, fmt.Errorf("--state and --socket apply to --role supervisor")
 	}
 	return parsed, nil
 }

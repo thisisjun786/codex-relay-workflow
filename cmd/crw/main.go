@@ -221,9 +221,11 @@ func modes() []mode {
 			// the relay store the run's journal is persisted in and the App Server connection of its host.
 			engine.RecoverEnv = journal.RecoverEnv
 			engine.ResumeEnv = journal.ResumeEnv
+			journal.UpwardFactory = flowcli.UpwardFactory
 			// start, ps, show, watch, answer, pause, cancel, status-line, digest, and resume and recover under the run lock, are the run
-			// surface (internal/flow/cli); the run process it starts is `crw flow _run`. audit reads the reviewer threads of a run from
-			// its host and leaves the result in its journal: the binary installs the store and host it opens.
+			// surface (internal/flow/cli); the run process it starts is `crw flow _run`. apply and the report commands work on the flow
+			// rows of the relay store. audit reads the reviewer threads of a run from its host and leaves the result in its journal: the
+			// binary installs the store and host it opens.
 			if flowcli.Handles(c.args) {
 				flowcli.AuditEnv = flowcli.OpenAuditStore
 				return flowcli.Run(c.ctx, c.args, os.Stdin, c.stdout, c.stderr)

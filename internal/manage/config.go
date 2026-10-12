@@ -346,6 +346,29 @@ func coreHomeDir(e *Env, variable, name string) string {
 	return crwconfig.JoinRoot(e.Getenv("HOME"), name)
 }
 
+// coreDeliverSettingsProblem is why a configuration cannot deliver to the management thread, or empty
+// when it can (CRW-1273). A configuration that names a management thread sends to it, and the bridge
+// requires expected_settings on every send; Deliver attaches the settings only when the model or the
+// reasoning effort is there, so an empty settings.management makes every send fail in the bridge's
+// argument validation. The configuration is refused before any send is tried; a configuration with
+// no management thread delivers nothing to it and is not judged.
+func coreDeliverSettingsProblem(c *Config) string {
+	if c.ManagementThread == "" {
+		return ""
+	}
+	var missing []string
+	if c.Settings.Management.Model == "" {
+		missing = append(missing, "model")
+	}
+	if c.Settings.Management.ReasoningEffort == "" {
+		missing = append(missing, "reasoning_effort")
+	}
+	if len(missing) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("manage.settings.management.%s is empty, but management_thread is set and every send to it needs both the model and the reasoning effort (the bridge refuses a send without expected_settings)", strings.Join(missing, " and "))
+}
+
 // coreConfigReport is what crw manage config writes: the configuration with the defaults
 // filled, and the file it came from with where that path came from.
 func coreConfigReport(c *Config) map[string]any {
@@ -375,6 +398,13 @@ func init() { Register(coreConfigCommand) }
 // product cannot use is exit 2, and an output write that fails is exit 1, because a
 // truncated report must not read as one.
 func coreRunConfig(_ context.Context, e *Env, args []string) int {
+	return coreConfigReportRun(e, args, true)
+}
+
+// coreConfigReportRun is the body of crw manage config. judgeDelivery says whether a configuration
+// that cannot deliver to the management thread (coreDeliverSettingsProblem) is refused: the command
+// refuses it, the reader of the report ConfigReport serves does not.
+func coreConfigReportRun(e *Env, args []string, judgeDelivery bool) int {
 	flagPath := ""
 	for i := 0; i < len(args); i++ {
 		switch {
@@ -424,6 +454,12 @@ func coreRunConfig(_ context.Context, e *Env, args []string) int {
 	if state.err != nil {
 		fmt.Fprintf(e.Stderr, "crw manage config: error: %v\n", state.err)
 		return usageExit
+	}
+	if judgeDelivery {
+		if problem := coreDeliverSettingsProblem(state.cfg); problem != "" {
+			fmt.Fprintf(e.Stderr, "crw manage config: error: %s\n", problem)
+			return usageExit
+		}
 	}
 	data, err := json.MarshalIndent(coreConfigReport(state.cfg), "", "  ")
 	if err != nil {
