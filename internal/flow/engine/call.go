@@ -860,11 +860,9 @@ func (c *callRun) pairCheck(info ThreadInfo) (CallResult, bool) {
 // startThread creates the call's thread.
 func (c *callRun) startThread(ctx context.Context) (CallResult, bool) {
 	e, p := c.e, c.plan
-	if c.rec == nil || c.needEstablish {
-		// a creation sent again runs in the directory the first request was made for: it exists, and nothing is made
-		if res, stop := c.establish(ctx); stop {
-			return res, true
-		}
+	// a creation sent again runs in the directory the first request was made for: it exists, and nothing is made
+	if res, stop := c.creationDirectory(ctx); stop {
+		return res, true
 	}
 	cwd := p.opts.Cwd
 	var placement Placement
@@ -900,10 +898,8 @@ func (c *callRun) forkThread(ctx context.Context) (CallResult, bool) {
 	if !ok {
 		return c.terminal(EvRefused, StatusRefused, ReasonPolicyRefused, map[string]any{"detail": "the backend cannot fork a thread"}), true
 	}
-	if c.rec == nil || c.needEstablish {
-		if res, stop := c.establish(ctx); stop {
-			return res, true
-		}
+	if res, stop := c.creationDirectory(ctx); stop {
+		return res, true
 	}
 	cwd := c.placement.Path
 	send := max(1, c.send)
@@ -1261,11 +1257,26 @@ func (c *callRun) validate(text string, resolved *jsonschema.Resolved) ([]byte, 
 	return json.Marshal(plain)
 }
 
-// ownsDirectory is whether the call is a continuation that runs in a directory of its own: the placement made one for it (an
-// architect turn that names the head it judges), and the turn names that directory as its cwd.
+// ownsDirectory is whether the call is a continuation that runs in a directory of its own: an architect turn that names the head
+// it judges (the REFLECTION, a re-plan and the design fixes of its audit), for which the placement made a call-private directory at
+// that head, and whose turns name that directory as their cwd. Inside a resume's suffix such a turn runs on a fork of the thread of
+// the previous process, in the same kind of directory: it is the call's own as well (CRW-1202).
 func (c *callRun) ownsDirectory() bool {
-	pl := c.placement
-	return pl != nil && pl.Kind == PlaceCall && !pl.Fork && pl.Path != "" && c.plan.resume != nil
+	pl, p := c.placement, c.plan
+	return pl != nil && pl.Kind == PlaceCall && pl.Path != "" && p.resume != nil && p.role == "architect" && p.opts.Head != "" && !p.qa
+}
+
+// creationDirectory makes the directory a call's new thread (a start, a fork, a checkpoint thread) is created in. A directory of the
+// call's own is made when it is not there - a held fork that goes on, or whose creation is sent again, finds it removed with the
+// held row (removeOwnDirectory) - at the head its prepared row records; any other placement is made only by a first creation.
+func (c *callRun) creationDirectory(ctx context.Context) (CallResult, bool) {
+	if c.ownsDirectory() {
+		return c.ownDirectory(ctx)
+	}
+	if c.rec == nil || c.needEstablish {
+		return c.establish(ctx)
+	}
+	return CallResult{}, false
 }
 
 // ownDirectory makes the directory of a continuation that runs at a head of its own before the turn that needs it is sent, and

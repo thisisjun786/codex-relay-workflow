@@ -560,3 +560,52 @@ func TestSignalBindAttempts(t *testing.T) {
 		}
 	}
 }
+
+// The first revision names the head the DESIGN ran at: the commit of the architect's call-private checkout as its prepared row
+// records it, reached from the design fix of the audit that continued the thread in that directory - not the tip of the integration
+// target when the ledger is written, after the audit, which another lane may have moved (CRW-1202, verifier rf2). A journal that
+// records no placement names no head, rather than a tip read later.
+func TestFirstRevisionRecordsTheHeadTheDesignRanAt(t *testing.T) {
+	designed := strings.Repeat("a", 40)
+	for _, c := range []struct {
+		name      string
+		prepared  []engine.Event
+		architect string
+		want      string
+	}{
+		{"design fix continues the architect's checkout", []engine.Event{
+			{RunID: "run-1", Kind: engine.KindCall, Op: "agent", CallID: "c_arch", Event: engine.EvPrepared, Data: map[string]any{"role": "architect",
+				"allocation": map[string]any{"kind": engine.PlaceCall, "path": "/state/flow/run-1/calls/c_arch/wt", "start_commit": designed}}},
+			{RunID: "run-1", Kind: engine.KindCall, Op: "agent", CallID: "c_fix", Event: engine.EvPrepared, Data: map[string]any{"role": "architect", "resume_of": "c_arch",
+				"allocation": map[string]any{"kind": engine.PlaceContinued}}},
+		}, "c_fix", designed},
+		{"the architect's own checkout", []engine.Event{
+			{RunID: "run-1", Kind: engine.KindCall, Op: "agent", CallID: "c_arch", Event: engine.EvPrepared, Data: map[string]any{"role": "architect",
+				"allocation": map[string]any{"kind": engine.PlaceCall, "path": "/state/flow/run-1/calls/c_arch/wt", "start_commit": designed}}},
+		}, "c_arch", designed},
+		{"no placement recorded", nil, "c_arch", ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := newWorld(t)
+			for _, ev := range c.prepared {
+				w.j.Append(ev)
+			}
+			w.must("milestone", "plan-1", "M")
+			design, _ := json.Marshal(designOf("A"))
+			cand := Candidate{Design: design, Answers: json.RawMessage(`[]`)}
+			w.must("designAudit", "M", 1, cand, call(c.architect, "completed", "claude-x", nil),
+				call("c_aud", "completed", "gpt-y", map[string]any{"verdict": "approved", "findings": []any{}, "summary": "ok"}))
+			// another lane landed while the DESIGN was audited
+			w.relay.tip = strings.Repeat("9", 40)
+			var led Ledger
+			_ = json.Unmarshal(w.must("designLedger", "M", map[string]any{"design": json.RawMessage(design), "answers": json.RawMessage(`[]`), "architect": call(c.architect, "completed", "claude-x", nil)}), &led)
+			if led.Revision != FirstRevision || led.BaseTip != c.want {
+				t.Errorf("revision %s records base_tip %q, want %q (the tip after the audit is %s)", led.Revision, led.BaseTip, c.want, w.relay.tip)
+			}
+			rows := rows(w.j.Events()).opRows(OpDesignLedger)
+			if len(rows) != 1 || dataStr(rows[0], "base_tip") != c.want {
+				t.Errorf("ledger rows %+v", rows)
+			}
+		})
+	}
+}

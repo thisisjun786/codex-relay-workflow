@@ -416,7 +416,8 @@ thread, and every completed architect turn moves it on: the DESIGN (and the fixe
 (the resume goes on with the same call as its next turn), `refused` and `null_model` escalate (`crw.milestoneHalt`). The REFLECTION turn
 (SP-ARCH-3) and the delta name the head they judge (`head`, above): the REFLECTION the integrated head the final gate pinned, a re-plan during the run
 the tip of the integration target that its signal row recorded when it decided to re-plan. The packet names the head, the range from the head the
-DESIGN ran at, and the head each node landed with.
+DESIGN ran at (for the first revision the commit the architect's checkout was made at, which a lane that lands during the audit does not move),
+and the head each node landed with.
 
 **Revisions.** The ledger holds revisions `r0`, `r1`, ...: a revision is recorded only over an approved audit of its own, made after the revision before it
 (the delta goes through the same audit rounds as a DESIGN, `needs_changes` returning it to the architect on the same thread), and the nodes that have not started are
@@ -810,7 +811,9 @@ There are two ways to get one, and the call's `prepared` row records which (`all
 
 The `cwd` and `worktree` options of a call are journaled in `prepared` but do not choose its directory: no two calls share one, so
 the allocator does. An architect turn that continues its thread and names a `head` gets a call-private detached worktree at that head
-(`calls/<call_id>/wt`, a later allocation of the same call `wt-1`, ...), named as the turn's cwd, and the backend removes it when the call has its terminal row. A continuation that runs in no restored worktree makes nothing and keeps the directory its thread started in. Every other role
+(`calls/<call_id>/wt`, a later allocation of the same call `wt-1`, ...), named as the turn's cwd, and the backend removes it when the call has its terminal row; inside a resume's suffix such a turn runs on a
+fork of the previous process's thread in the same kind of directory, which is its own as well (made again at its recorded head when a held fork
+goes on, removed after its terminal row, kept while its outcome is unknown). A continuation that runs in no restored worktree makes nothing and keeps the directory its thread started in. Every other role
 runs in `<state>/flow/<run>/calls/<call_id>/wt`, a detached worktree at the `head` option (else the node's base); a reviewer
 reads it through a read-only thread. The run commits and reads the head from git (`Allocator.Commit`, `Allocator.Head`); a model
 never does. Every git command of the allocator runs in the directory it is given: the variables that route git to a

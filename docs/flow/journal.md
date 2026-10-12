@@ -136,7 +136,7 @@ which names the milestone), and the QA evidence a `crw.qaReceipt` row (it holds 
 (`source.Compare`).
 
 **The design ledger and the signals.** A row `crw.designLedger` is a revision of the milestone's ledger (`revision`, `digest`, `design`, `answers`,
-`architect_call` and `architect_handle`, the `signal` that made it, `base_tip` - the head the DESIGN ran at - and `slices`, the slice digest of every node of the plan it was made
+`architect_call` and `architect_handle`, the `signal` that made it, `base_tip` - the head the DESIGN ran at: for `r0` the start commit of the architect's call-private checkout as the architect's `prepared` row records it (reached through `resume_of` from a design fix that went on in that directory), never the integration tip read after the audit, and `""` when no placement recorded one; for a later revision the head its re-plan pinned - and `slices`, the slice digest of every node of the plan it was made
 against: for a revision after the first the plan the architect and the auditor evaluated, as the decision read it). Revision ids are used once: the next is named after every ledger row of the milestone, the ones a resume superseded included. The ledger that stands is the newest
 row no `superseded` row came after; the handle of the architect thread is that of the newest row that stands among the revisions and the `crw.reflection` rows. A release is proven
 while its revision stands; a release under a revision a resume superseded is proven when the node's slice (`slice_digest`, the slice of the plan when the node was released) is the

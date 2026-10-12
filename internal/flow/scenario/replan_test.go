@@ -2236,3 +2236,197 @@ func TestReplanRegionsCoverTheNodesAdmittedButNotReleased(t *testing.T) {
 		t.Errorf("calls %v: the executor of %s started before the lane of %s ended although the revision gives both shared/", labels, second, first)
 	}
 }
+
+// The ledger's first revision names the head the DESIGN ran at, the commit the architect's checkout was made at, and not the tip of
+// the integration target when the ledger was written: a lane that lands while the DESIGN is audited is part of the range every later
+// REFLECTION, re-plan and correction packet names (CRW-1202, verifier rf2).
+func TestRF2ReflectionRangeStartsAtActualDesignHead(t *testing.T) {
+	lab := NewLab(t, twoNodes()...)
+	var designHead, externalHead string
+	lab.On("^architect$", func(call *Call) *fakehostPlan {
+		designHead = headIn(lab, call.Cwd)
+		return nil
+	})
+	lab.On("^design-audit:r1$", func(*Call) *fakehostPlan {
+		tree := lab.git(lab.Repo, "rev-parse", lab.Base+"^{tree}")
+		externalHead = lab.git(lab.Repo, "commit-tree", tree, "-p", lab.Base, "-m", "another lane landed during the initial DESIGN audit")
+		lab.git(lab.Repo, "update-ref", IntegrationRef, externalHead)
+		return nil
+	})
+	result := mustRun(t, lab)
+	if result.State != "closed" || designHead == "" || externalHead == "" || externalHead == designHead {
+		t.Fatalf("preconditions: state=%s DESIGN=%s external=%s", result.State, designHead, externalHead)
+	}
+	ledger := lab.Rows("crw.designLedger")
+	if len(ledger) != 1 {
+		t.Fatalf("expected r0 only: %+v", ledger)
+	}
+	if recorded := str(ledger[0].Data, "base_tip"); recorded != designHead {
+		t.Errorf("r0 says DESIGN ran at %s, but its actual checkout was %s; %s landed only during the audit", recorded, designHead, externalHead)
+	}
+	arch := callNamed(t, lab, "architect")
+	if alloc, _ := lab.Prepared(arch.ID).Data["allocation"].(map[string]any); str(alloc, "start_commit") != designHead {
+		t.Errorf("the architect's allocation %v does not record the head its checkout was made at (%s)", alloc, designHead)
+	}
+	reflection := callNamed(t, lab, "reflection:M1")
+	text := textOfCall(lab, reflection.ID)
+	wantRange := "RANGE: " + designHead + ".." + lab.Tip()
+	if !strings.Contains(text, wantRange) || !strings.Contains(text, "DESIGN RAN AT: "+designHead) {
+		t.Errorf("REFLECTION packet must include %q, so it includes the lane that landed after DESIGN; actual packet:\n%s", wantRange, text)
+	}
+}
+
+// A re-plan of a resume's suffix continues the architect thread of the previous process on a fork, in a call-private worktree at the
+// pinned head H: like every architect turn after the DESIGN, that worktree is removed once the call has its terminal row - completed,
+// or held and then gone on with, when it is made again at the H its prepared row records (CRW-1202, verifier rf2).
+func TestRF2ArchitectSuffixWorktreesRemovedAfterTerminal(t *testing.T) {
+	type forkRow struct {
+		call, label, path, head string
+	}
+	// suffixForks are the pinned architect calls after seq that run on a fork in a call-private directory
+	suffixForks := func(lab *Lab, since int) []forkRow {
+		var out []forkRow
+		for _, row := range rowsAfter(lab, since) {
+			if row.Kind != engine.KindCall || row.Event != engine.EvPrepared || str(row.Data, "role") != "architect" || str(row.Data, "head") == "" {
+				continue
+			}
+			allocation, _ := row.Data["allocation"].(map[string]any)
+			if fork, _ := allocation["fork"].(bool); !fork || str(allocation, "kind") != engine.PlaceCall {
+				continue
+			}
+			out = append(out, forkRow{call: row.CallID, label: row.Label, path: str(allocation, "path"), head: str(allocation, "start_commit")})
+		}
+		return out
+	}
+	lastTerminal := func(lab *Lab, callID string) string {
+		last := ""
+		for _, ev := range lab.Events() {
+			if ev.CallID != callID || ev.Kind != engine.KindCall {
+				continue
+			}
+			switch ev.Event {
+			case engine.EvCompleted, engine.EvHeld, engine.EvNullModel, engine.EvRefused, engine.EvSuperseded, engine.EvOutcomeUnknown:
+				last = ev.Event
+			}
+		}
+		return last
+	}
+	gone := func(t *testing.T, f forkRow, when string) {
+		t.Helper()
+		if _, err := os.Stat(f.path); !os.IsNotExist(err) {
+			t.Errorf("%s: the architect suffix turn %s at head %s retains its call-private worktree %s (stat=%v)", when, f.label, f.head, f.path, err)
+		}
+	}
+	// world: the review of A's fix is held until the build prompt of A is edited; the resume with the edit runs A's lane and the
+	// signals after it again, and the re-plan they make continues the architect thread of the first process on a fork
+	world := func(t *testing.T) (*Lab, *atomic.Bool) {
+		lab := NewLab(t, twoNodes()...)
+		var edited atomic.Bool
+		lab.On("^review:A:r2$", func(*Call) *fakehostPlan {
+			if edited.Load() {
+				return nil
+			}
+			plan := Fail("serverOverloaded")
+			return &plan
+		})
+		mismatchingWhile(lab, func() bool { return true }, "A")
+		fixedOnce(lab, "A")
+		if result := lab.Run(); result.Status != engine.RunCompleted {
+			t.Fatalf("first run: %s %s", result.Status, result.Error)
+		}
+		return lab, &edited
+	}
+
+	t.Run("completed", func(t *testing.T) {
+		lab, edited := world(t)
+		before := lab.LastSeq()
+		edited.Store(true)
+		lab.NewProcess("proc-2")
+		result := lab.execEdited(editBuildOf("A"), true)
+		if result.Status != engine.RunCompleted || Value[laneResult](t, result).State != "closed" {
+			t.Fatalf("resumed run: %s %s calls=%v", result.Status, result.Error, lab.Labels())
+		}
+		forks := suffixForks(lab, before)
+		if len(forks) == 0 {
+			t.Fatal("the resume made no pinned architect suffix fork")
+		}
+		for _, f := range forks {
+			if got := lastTerminal(lab, f.call); got != engine.EvCompleted {
+				t.Fatalf("pinned architect suffix fork %s ended %q", f.label, got)
+			}
+			gone(t, f, "completed")
+		}
+	})
+
+	t.Run("held", func(t *testing.T) {
+		lab, edited := world(t)
+		// the fork's turn is held in the second process and goes on in the third
+		var hold atomic.Bool
+		var seenCwd, seenHead atomic.Value
+		lab.On("^replan:", func(c *Call) *fakehostPlan {
+			if !edited.Load() {
+				return nil
+			}
+			if hold.Load() {
+				plan := Fail("serverOverloaded")
+				return &plan
+			}
+			seenCwd.Store(c.Cwd)
+			seenHead.Store(headIn(lab, c.Cwd))
+			return nil
+		})
+		before := lab.LastSeq()
+		requested := len(lab.turnReqs())
+		edited.Store(true)
+		hold.Store(true)
+		lab.NewProcess("proc-2")
+		result := lab.execEdited(editBuildOf("A"), true)
+		if result.Status != engine.RunCompleted || Value[laneResult](t, result).State != "incomplete" {
+			t.Fatalf("second process: %s %s %s calls=%v", result.Status, result.Error, result.Value, lab.Labels())
+		}
+		forks := suffixForks(lab, before)
+		if len(forks) != 1 {
+			t.Fatalf("pinned architect suffix forks of the second process: %+v; calls %v", forks, lab.Labels())
+		}
+		held := forks[0]
+		if got := lastTerminal(lab, held.call); got != engine.EvHeld {
+			t.Fatalf("the suffix fork %s ended %q, want held", held.label, got)
+		}
+		gone(t, held, "held")
+
+		hold.Store(false)
+		second := lab.LastSeq()
+		lab.NewProcess("proc-3")
+		result = lab.execEdited(editBuildOf("A"), true)
+		if result.Status != engine.RunCompleted || Value[laneResult](t, result).State != "closed" {
+			t.Fatalf("third process: %s %s %s calls=%v", result.Status, result.Error, result.Value, lab.Labels())
+		}
+		if cleared := lab.FlowRows(engine.EvHoldCleared); len(cleared) == 0 || str(cleared[len(cleared)-1].Data, "call_id") != held.call {
+			t.Fatalf("the held fork did not go on in place: hold_cleared %+v", cleared)
+		}
+		resent := 0
+		for _, ts := range turnsSince(lab, second) {
+			if ts.call == held.call {
+				resent++
+			}
+		}
+		if resent == 0 {
+			t.Fatalf("the held fork sent no turn in the third process")
+		}
+		for _, tr := range lab.turnReqs()[requested:] {
+			if tr.Call == held.call && tr.Cwd != held.path {
+				t.Errorf("a turn of %s named cwd %q, want the fork's own worktree %s", held.label, tr.Cwd, held.path)
+			}
+		}
+		if cwd, _ := seenCwd.Load().(string); cwd != held.path {
+			t.Errorf("the turn that went on ran in %q, want %s", cwd, held.path)
+		}
+		if head, _ := seenHead.Load().(string); head != held.head {
+			t.Errorf("the worktree made again is at %q, want the recorded H %s", head, held.head)
+		}
+		if got := lastTerminal(lab, held.call); got != engine.EvCompleted {
+			t.Fatalf("the fork that went on ended %q", got)
+		}
+		gone(t, held, "completed after the hold")
+	})
+}

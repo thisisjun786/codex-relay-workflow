@@ -251,10 +251,6 @@ func (o *designLedgerOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 		return engine.OpResult{}, fmt.Errorf("crw.designLedger: the DESIGN of milestone %s (%s) has no approved audit: executors start only on an audited revision", ms, short(digest))
 	}
 	plan := planOf(r, ms)
-	tip, err := o.l.d.Relay.IntegrationTip(ctx, plan)
-	if err != nil {
-		return engine.OpResult{}, err
-	}
 	// the slices are those of the plan the architect saw: the milestone as the run read it for the first revision, the plan the
 	// decision evaluated for the ones after (a re-plan after a plan revision starts counting the change from that revision, and a
 	// change made after the evaluation is counted by the next signal)
@@ -278,9 +274,19 @@ func (o *designLedgerOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 		}
 		sl, mileDigest = liveSlices(mile), digestOf(mile)
 	}
-	base := tip
-	if hasPrev && e.Head != "" {
+	// the head the DESIGN ran at: for a revision after the first the head H the re-plan pinned, for the first the commit the
+	// architect's checkout was made at, as its prepared row records it - never the integration target sampled now, after the audit,
+	// which a lane that landed while the DESIGN was audited has moved past it
+	base := ""
+	switch {
+	case hasPrev && e.Head != "":
 		base = e.Head
+	case hasPrev:
+		if base, err = o.l.d.Relay.IntegrationTip(ctx, plan); err != nil {
+			return engine.OpResult{}, err
+		}
+	default:
+		base = designHead(r, e.Architect.CallID)
 	}
 	led := Ledger{Milestone: ms, Revision: e.Revision, Digest: digest, Handle: e.Architect.Handle, Nodes: []string{}, BaseTip: base}
 	for _, is := range design.Issues {
@@ -300,6 +306,33 @@ func (o *designLedgerOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 
 func (o *designLedgerOp) Proven(ctx context.Context, ev []engine.Event, row engine.Event) (bool, string, error) {
 	return provenAlways(ctx, ev, row)
+}
+
+// designHead is the commit the DESIGN a call answered was written at: the start commit of the call-private checkout the architect's
+// thread worked in, read from the prepared row of the call or, for a continuation that made no directory of its own (a design fix
+// of the first audit goes on in the thread's directory), of the call it continued. "" when no placement recorded one (a backend
+// that places nothing): the packets then say the head is unknown rather than name a tip read later.
+func designHead(r rows, callID string) string {
+	seen := map[string]bool{}
+	for callID != "" && !seen[callID] {
+		seen[callID] = true
+		prep, ok := r.last(func(ev engine.Event) bool {
+			return ev.Kind == engine.KindCall && ev.Event == engine.EvPrepared && ev.CallID == callID
+		})
+		if !ok {
+			return ""
+		}
+		if m, ok := prep.Data["allocation"].(map[string]any); ok && str(m, "kind") == engine.PlaceCall {
+			if start := str(m, "start_commit"); start != "" {
+				return start
+			}
+		}
+		if head := dataStr(prep, "head"); head != "" {
+			return head
+		}
+		callID = dataStr(prep, "resume_of")
+	}
+	return ""
 }
 
 // ledgerOf is the ledger row of a milestone's revision.
