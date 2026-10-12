@@ -20,6 +20,7 @@ import (
 // made from.
 
 const batchUsage = "usage: crw manage batch plan --label LABEL [--issues FILE]\n" +
+	"       crw manage batch decide --plan FILE --flow-plan PLAN --milestone M --token-budget N --deadline RFC3339 [--cap N] [--by TASK]\n" +
 	"       crw manage batch report --digest FILE"
 
 const batchPlanUsage = "usage: crw manage batch plan --label LABEL [--issues FILE]"
@@ -87,11 +88,13 @@ func batchMain(ctx context.Context, e *Env, args []string) int {
 		return 0
 	case "plan":
 		return batchRunPlan(ctx, e, args[1:])
+	case "decide":
+		return batchRunDecide(ctx, e, args[1:])
 	case "report":
 		return batchRunReport(ctx, e, args[1:])
 	}
 	fmt.Fprintln(e.Stderr, batchUsage)
-	fmt.Fprintf(e.Stderr, "crw manage batch: error: invalid command %q (choose from 'plan', 'report')\n", args[0])
+	fmt.Fprintf(e.Stderr, "crw manage batch: error: invalid command %q (choose from 'plan', 'decide', 'report')\n", args[0])
 	return usageExit
 }
 
