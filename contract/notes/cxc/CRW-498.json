@@ -3,10 +3,6 @@
   "identical": [
     "hook__pre-tool-use-guarding-managed-worktree-deletion__baseline_empty_workspace",
     "hook__pre-tool-use-guarding-managed-worktree-deletion__benign_commands_allow",
-    "hook__pre-tool-use-guarding-managed-worktree-deletion__extra_root_and_symlinked_cwd_deny",
-    "hook__pre-tool-use-guarding-managed-worktree-deletion__git_worktree_remove_own_checkout_denies",
-    "hook__pre-tool-use-guarding-managed-worktree-deletion__rm_variants_deny",
-    "hook__pre-tool-use-guarding-managed-worktree-deletion__subagent_payload_still_denied",
     "hook__pre-tool-use-guarding-managed-worktree-deletion__unmanaged_and_malformed_fail_open"
   ],
   "intentionally-changed": []
