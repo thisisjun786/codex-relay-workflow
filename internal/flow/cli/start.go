@@ -246,9 +246,14 @@ func (c *command) start(args []string) int {
 		}
 		plan.Facts = probe.Facts(c.ctx, PreflightRequest{Reader: r, Thread: spec.Thread, Waits: Dispositions(src), Now: c.now()})
 	}
+	if c.Verifier != nil {
+		// the verifier's prerequisites do not depend on the store; a warning there never stops the start
+		tree, _ := repository(c.ctx, *repo)
+		plan.Facts = append(plan.Facts, c.Verifier(c.ctx, tree))
+	}
 	var failed []string
 	for _, f := range plan.Facts {
-		if !f.Pass {
+		if !f.Pass && f.Level != LevelWarn {
 			failed = append(failed, f.Name)
 		}
 	}
@@ -399,10 +404,16 @@ func (c *command) printPlan(p Plan) {
 	}
 	fmt.Fprintln(w, "  preflight:")
 	for _, f := range p.Facts {
-		mark := "pass"
-		if !f.Pass {
+		mark, text := "pass", f.Reading
+		switch {
+		case f.Level == LevelWarn:
+			mark = "warn"
+		case !f.Pass:
 			mark = "FAIL"
 		}
-		fmt.Fprintf(w, "    %s  %-18s %s\n", mark, f.Name, oneLine(f.Reading))
+		if f.Reason != "" {
+			text += "; " + f.Reason
+		}
+		fmt.Fprintf(w, "    %s  %-18s %s\n", mark, f.Name, oneLine(text))
 	}
 }

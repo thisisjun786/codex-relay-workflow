@@ -23,12 +23,23 @@ const (
 // Facts is the five facts in the order the preview lists them.
 var Facts = []string{FactAssignment, FactDelivery, FactReachable, FactWaits, FactIdleWake}
 
-// Fact is one preflight fact with the reading it was judged on.
+// Fact is one preflight fact with the reading it was judged on. A fact of the relay store is pass or fail (Pass). A fact with
+// Level warn (verifier_prerequisites) reports a prerequisite with the reason it may not hold: it is listed with its reason and
+// never stops the start.
 type Fact struct {
 	Name    string `json:"name"`
+	Level   string `json:"level,omitempty"`
 	Pass    bool   `json:"pass"`
 	Reading string `json:"reading"`
+	Reason  string `json:"reason,omitempty"`
 }
+
+// The levels a fact names in Level: pass, warn (listed with its reason, never a refusal) and fail.
+const (
+	LevelPass = "pass"
+	LevelWarn = "warn"
+	LevelFail = "fail"
+)
 
 // PreflightRequest is what the facts are judged for.
 type PreflightRequest struct {

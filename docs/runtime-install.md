@@ -357,15 +357,31 @@ the batch stops on a host error; both reasons name the setting to add. A `go_roo
 absolute path or a `crw_dev` that is neither `tree` nor an absolute path is refused where the file is
 read.
 
+In `tree` mode the node verifier runs the verified head's own `cmd/crw-dev` too, the same choice as
+for the merged tree: a head that changes the verification engine is verified by the engine it
+brings, as its merged tree is at integration, and that change is in the diff the reviewer reads. A
+host that wants every head verified by an engine the head cannot change sets `crw_dev` to an
+installed binary.
+
 The installation records the setting with `crw config verifier --go-root <dir> [--crw-dev tree|<path>]`
-(`--config` names another file than the default): it refuses a root whose `bin/go` is not an
-executable file, then rewrites the file with the section set and every other key kept (keys sorted,
-owner-only, a missing file created). Without a flag it prints the section (`config`, `go_root`,
-`crw_dev` and `mode`: `tree`, `binary` or `path`). The plain `crw doctor` report shows what a run
-would use as its `verifierTools` entry: the configuration file, the configured root, the `go` the
-verifier runs, where it came from (`config` or `path`) and its version, and `crwDev` (the mode, the
-command and whether it runs: its go runs in `tree` mode, `crw-dev help` exits 0 otherwise). A missing
-or broken tool, and a section that names nothing, are `warnings` there and never a fault.
+(`--config` names another file than the default; an empty value removes the key): it refuses a root
+whose `bin/go` is not an executable file, then rewrites the file with the section set and every
+other key kept, the section's own other keys included (keys sorted, owner-only, a missing file
+created). A configuration file that is a symbolic link is written through: the file the link names
+is replaced and the link stays. Without a flag it prints the section (`config`, `go_root`, `crw_dev`
+and `mode`: `tree`, `binary` or `path`). The plain `crw doctor` report shows what a run would use as
+its `verifierTools` entry: the configuration file, the configured root, the `go` the verifier runs,
+where it came from (`config` or `path`) and its version, and `crwDev` (the mode, the command and
+whether it runs: its go runs in `tree` mode, `crw-dev help` exits 0 otherwise). With no root
+configured the doctor looks for one and lists it in `goRootCandidates` with its version, newest
+first: the root of the `go` on `PATH` (`go env GOROOT`), `$HOME/.local/go/go`, `$HOME/.local/go`,
+`$HOME/sdk/go*`, `$HOME/go/go`, `/usr/local/go`, `/usr/lib/go` and `/opt/go`, leaving out a root below
+`/tmp` or `/var/tmp`, which a reboot removes; its warning names the `crw config verifier --go-root`
+command for the first. A missing or broken tool, and a section that names nothing, are `warnings`
+there and never a fault. `crw flow start` shows the same reading as the preflight fact
+`verifier_prerequisites`: `pass`, or `warn` with the reason (it also warns when the go is older than
+the repository's `go.mod` asks, and when a `tree` verification's repository has no `cmd/crw-dev`),
+and it never stops the start.
 
 ## Installing the runtime
 
