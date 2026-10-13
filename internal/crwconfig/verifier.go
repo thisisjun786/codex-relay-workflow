@@ -198,7 +198,22 @@ func runVerifier(getenv func(string) string, flagPath string, args []string, std
 				return usageExit
 			}
 		}
-		if err := file.writeSection("verifier", tools); err != nil {
+		// the section is rewritten key by key: the keys this command does not set stay as they are, and an emptied key is removed
+		section := map[string]json.RawMessage{}
+		if raw, ok := file.doc["verifier"]; ok {
+			_ = json.Unmarshal(raw, &section) // VerifierTools read it as an object already
+			if section == nil {
+				section = map[string]json.RawMessage{}
+			}
+		}
+		for key, value := range map[string]string{"go_root": tools.GoRoot, "crw_dev": tools.CrwDev} {
+			if value == "" {
+				delete(section, key)
+				continue
+			}
+			section[key], _ = json.Marshal(value)
+		}
+		if err := file.writeSection("verifier", section); err != nil {
 			fmt.Fprintf(stderr, "crw config verifier: error: %v\n", err)
 			return 1
 		}
@@ -207,7 +222,8 @@ func runVerifier(getenv func(string) string, flagPath string, args []string, std
 }
 
 // writeSection replaces the top-level key name of the configuration document with v and writes the file in place of the old one
-// (a temporary file in its directory, renamed over it), owner-only, its keys sorted; a file that is not there yet is created.
+// (a temporary file in its directory, renamed over it), owner-only, its keys sorted; a file that is not there yet is created. A
+// file that is a symbolic link is written through: the file the link names is replaced and the link stays.
 func (f *File) writeSection(name string, v any) error {
 	raw, err := json.Marshal(v)
 	if err != nil {
@@ -222,7 +238,11 @@ func (f *File) writeSection(name string, v any) error {
 	if err != nil {
 		return err
 	}
-	dir := filepath.Dir(f.path)
+	target, err := linkTarget(f.path)
+	if err != nil {
+		return err
+	}
+	dir := filepath.Dir(target)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
@@ -236,10 +256,31 @@ func (f *File) writeSection(name string, v any) error {
 		os.Remove(tmp.Name())
 		return err
 	}
-	if err := os.Rename(tmp.Name(), f.path); err != nil {
+	if err := os.Rename(tmp.Name(), target); err != nil {
 		os.Remove(tmp.Name())
 		return err
 	}
 	f.doc = doc
 	return nil
+}
+
+// linkTarget is the file a write of path replaces: path itself, or, when path is a symbolic link, the file at the end of its
+// links (which need not exist yet).
+func linkTarget(path string) (string, error) {
+	current := path
+	for range 40 {
+		info, err := os.Lstat(current)
+		if err != nil || info.Mode()&os.ModeSymlink == 0 {
+			return current, nil
+		}
+		dest, err := os.Readlink(current)
+		if err != nil {
+			return "", err
+		}
+		if !filepath.IsAbs(dest) {
+			dest = filepath.Join(filepath.Dir(current), dest)
+		}
+		current = dest
+	}
+	return "", fmt.Errorf("%s: too many levels of symbolic links", path)
 }
