@@ -748,7 +748,7 @@ publication keeps the same parts, and its TASK, DELIVERABLE and STOP WHEN name t
 
 ```text
 TASK
-<ISSUE-ID>: <the bounded result>. Deliver exactly one delivery, ready for the coordinator to integrate: a pull request into <integration branch> of <owner/name> from <branch> where the assignment names one, otherwise the pushed branch with its verification record.
+<ISSUE-ID>: <the bounded result>. Deliver exactly one delivery, ready for the coordinator to integrate: the pushed task branch with its local verification record, which the coordinator accepts by its commit; a pull request into <integration branch> of <owner/name> from <branch> only where the assignment names one.
 Context: <project and coordinator task; the execution mode: relay-managed with its state directory and exact issue identity, or
   explicitly direct with the reason>.
 Codex task title (not the pull request's title): <ISSUE-ID · short Korean title>

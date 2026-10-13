@@ -1569,3 +1569,7 @@ Program wrappers (`ionice`, `nice`, `env`, `timeout`) stay read by their option 
 ## CRW-1284 — a relay child pushes only its own branch
 
 A relay child pushed the integration branch (`git push origin HEAD:dev`, r2 S8 F0-1) and no hook stopped it; port: fixed (CRW's own guard, no CXC oracle) by the PreToolUse leg `pre-tool-use-guarding-child-push`, which refuses in a relay child session every push whose destination is not the child's own branch. The relay's observation of an integration target moved outside the integration path is split off. Details and limits are in [CRW-1284](known-defects/CRW-1284.md).
+
+## CRW-1306 — an implementation node is accepted by its commit, and no later step waits for a forge row
+
+The CXC relay accepts an implementation node only on its pull request and reads that pull request in every later step; port: fixed (Jun's decision of 10-13, no CXC oracle). The commit path with its local verification record is the default and a pull request is optional: the merge check, the predecessor rule and the base refresh proceed for a commit acceptance without a forge row, and the merge lane sends it to `dag-integrate`. Details are in [CRW-1306](known-defects/CRW-1306.md).
