@@ -23,6 +23,7 @@
           "at": "2026-10-12T09:00:02Z",
           "data": {
             "args_digest": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+            "backend": "app-server",
             "helpers": [
               {
                 "digest": "c6fe4ca37c19e316daf5143803de900df799b9f370a15eace36d842971af8a14",

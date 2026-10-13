@@ -80,6 +80,10 @@ func (c *callRun) resumePrior() bool {
 	case EvHeld:
 		return c.heldInPlace(rows, prep)
 	case "":
+		if e.cfg.Session != nil {
+			// a session call goes on in place from its own rows (§5): no reconcile, no resend, no new allocation
+			return c.sessionResumeOpen(rows, prep)
+		}
 		rec := e.recovery[c.id]
 		if rec == nil || rec.Action == RecoverUnknown {
 			return c.live()
@@ -262,7 +266,7 @@ func RestoreCallResult(runID, callID string, rows []Event, omitSeq bool) (CallRe
 // reopensCall is a non-terminal row that makes a call open again after a terminal one (see stateOf).
 func reopensCall(ev string) bool {
 	switch ev {
-	case EvThreadRequested, EvForkRequested, EvThreadStarted, EvForkStarted, EvTurnRequested, EvTurnStarted, EvRecoveryCleared:
+	case EvThreadRequested, EvForkRequested, EvThreadStarted, EvForkStarted, EvTurnRequested, EvTurnStarted, EvRecoveryCleared, EvStepPublished, EvSessionAttemptLost:
 		return true
 	}
 	return false
@@ -373,7 +377,11 @@ func (c *callRun) endOpenCalls(ctx context.Context) *supersedeFailure {
 			// A held call is not superseded (its P_held is kept with the old worktree), but a turn of it may still run: the
 			// host shows that none does, or the new attempt does not start. A call the resumed script took over proved it at
 			// its own position and goes on there.
-			if host != nil && (st.id == c.id || !e.claimedByScript(st.id)) {
+			if e.cfg.Session != nil && (st.id == c.id || !e.claimedByScript(st.id)) {
+				if err := e.sessionQuiesce(ctx, st.id, st.rows, false); err != nil {
+					return &supersedeFailure{detail: err.Error()}
+				}
+			} else if host != nil && (st.id == c.id || !e.claimedByScript(st.id)) {
 				if err := e.heldTurnsEnded(ctx, host, st.rows); err != nil {
 					return &supersedeFailure{detail: err.Error()}
 				}
@@ -399,7 +407,13 @@ func (c *callRun) endOpenCalls(ctx context.Context) *supersedeFailure {
 			}
 			continue
 		}
-		if host != nil && st.thread != "" && (st.last == EvTurnRequested || st.last == EvTurnStarted) {
+		if e.cfg.Session != nil {
+			// every subagent the call was bound to, or that took a step it published, runs nothing before the new attempt
+			if err := e.sessionQuiesce(ctx, st.id, st.rows, true); err != nil {
+				e.endSupersede(st.id, op, err)
+				return &supersedeFailure{detail: err.Error()}
+			}
+		} else if host != nil && st.thread != "" && (st.last == EvTurnRequested || st.last == EvTurnStarted) {
 			if err := c.interruptAndConfirm(ctx, host, st); err != nil {
 				e.endSupersede(st.id, op, err)
 				return &supersedeFailure{detail: err.Error()}

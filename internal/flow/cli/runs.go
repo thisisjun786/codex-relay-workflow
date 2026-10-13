@@ -206,7 +206,8 @@ func lastTerminal(rows []engine.Event) (status, reason string) {
 	status = "running"
 	for _, r := range rows {
 		switch r.Event {
-		case engine.EvPrepared, engine.EvThreadRequested, engine.EvForkRequested, engine.EvTurnRequested, engine.EvThreadStarted, engine.EvForkStarted, engine.EvTurnStarted, "recovery_cleared":
+		case engine.EvPrepared, engine.EvThreadRequested, engine.EvForkRequested, engine.EvTurnRequested, engine.EvThreadStarted, engine.EvForkStarted, engine.EvTurnStarted, "recovery_cleared",
+			engine.EvStepPublished, engine.EvSessionAttemptLost:
 			status, reason = "running", ""
 		case engine.EvCompleted, engine.EvNullModel, engine.EvHeld, engine.EvRefused, engine.EvOutcomeUnknown, engine.EvSuperseded:
 			status, reason = r.Event, str(r.Data, "reason")
