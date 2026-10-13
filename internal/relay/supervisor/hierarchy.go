@@ -49,8 +49,14 @@ type Refusal struct {
 func (r Refusal) Error() string { return r.Detail }
 
 func (c *Channel) Resolve(ctx context.Context, relationshipID string) (Resolution, error) {
-	if key, ok := strings.CutPrefix(relationshipID, "project:"); ok {
+	if key, ok := strings.CutPrefix(relationshipID, prefixProject); ok {
 		return c.resolveNoticeProject(ctx, key)
+	}
+	if key, ok := strings.CutPrefix(relationshipID, prefixInitiative); ok {
+		return c.resolveInitiative(ctx, key)
+	}
+	if id, ok := strings.CutPrefix(relationshipID, prefixRun); ok {
+		return c.resolveRun(ctx, id)
 	}
 	reading, err := c.hierarchyReading(ctx, relationshipID)
 	if err != nil {
@@ -158,13 +164,24 @@ func levelOwner(level map[string]any) string {
 	return ""
 }
 
+// resolveReading decides a report's sender and recipient from the walk above it. A management level
+// above the initiative (CRW-1333) is not a recipient of an issue's or a project's report: the switch
+// below names it nowhere, so the lead stays that report's recipient.
 func resolveReading(reading map[string]any, where string) (Resolution, error) {
-	refuse := func(reason, detail string) (Resolution, error) { return Resolution{}, Refusal{reason, detail} }
+	if err := settledReading(reading, where); err != nil {
+		return Resolution{}, err
+	}
+	return resolveLevels(reading, where, Resolution{Source: "linkage"})
+}
+
+// settledReading refuses a reading that cannot decide a recipient: unreadable, ambiguous, or
+// carrying a live contention (owner drift, competing parents, an instruction conflict).
+func settledReading(reading map[string]any, where string) error {
 	if reading["readable"] != true {
-		return refuse("relation_unreadable", "the linkage could not be read for "+where+", so who the level above is is unknown; nothing is staged and the obligation stays exactly where it was")
+		return Refusal{"relation_unreadable", "the linkage could not be read for " + where + ", so who the level above is is unknown; nothing is staged and the obligation stays exactly where it was"}
 	}
 	if reading["state"] == "ambiguous" {
-		return refuse("duplicate_scope_owner", "the linkage reports more than one candidate above "+where+"; this sender will not choose between them: "+pythonRepr(reading["contention"]))
+		return Refusal{"duplicate_scope_owner", "the linkage reports more than one candidate above " + where + "; this sender will not choose between them: " + pythonRepr(reading["contention"])}
 	}
 	if items, ok := reading["contention"].([]any); ok {
 		live := make([]any, 0, len(items))
@@ -184,10 +201,15 @@ func resolveReading(reading map[string]any, where string) (Resolution, error) {
 			if drift {
 				reason = "relation_owner_drift"
 			}
-			return refuse(reason, "the hierarchy above "+where+" is not settled: "+pythonRepr(live)+". A report waits for it to settle rather than being filed with whichever candidate happens to match")
+			return Refusal{reason, "the hierarchy above " + where + " is not settled: " + pythonRepr(live) + ". A report waits for it to settle rather than being filed with whichever candidate happens to match"}
 		}
 	}
-	result := Resolution{Source: "linkage"}
+	return nil
+}
+
+// resolveLevels is resolveReading after the reading was found settled.
+func resolveLevels(reading map[string]any, where string, result Resolution) (Resolution, error) {
+	refuse := func(reason, detail string) (Resolution, error) { return Resolution{}, Refusal{reason, detail} }
 	if levels, ok := reading["levels"].([]any); ok {
 		for _, v := range levels {
 			level, ok := v.(map[string]any)
