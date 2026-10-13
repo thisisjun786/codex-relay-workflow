@@ -30,7 +30,14 @@ func (c *Channel) render(p Packet, requestID, token string) string {
 	region := evidence.Item(map[string]any(p), "envelope")
 	field := func(key string) any { return evidence.Item(region, key) }
 	text := func(key string) string { return pyvalue.Str(field(key)) }
-	lines := []string{"[codex-session-relay] supervisor report", "requestId: " + requestID}
+	header := "[codex-session-relay] supervisor report"
+	if layer := text("layer"); layer != "" {
+		// A direct message's envelope names its layer and its sender's role (CRW-1333): the header
+		// says which layer the message is for and who sent it, rather than calling every message a
+		// supervisor report.
+		header = "[codex-session-relay] " + layer + " message from " + pyvalue.Str(evidence.Item(field("sender"), "role")) + " " + evidence.Shown(evidence.Item(field("sender"), "taskId"))
+	}
+	lines := []string{header, "requestId: " + requestID}
 	if token != "" {
 		lines = append(lines, "deliveryToken: "+token)
 	}
@@ -63,6 +70,13 @@ func (c *Channel) render(p Packet, requestID, token string) string {
 			lines = append(lines, "  pull request: "+pyvalue.Str(artifact["repository"])+" #"+pyvalue.Str(artifact["number"])+" at "+pyvalue.Str(artifact["headSha"]))
 		} else {
 			lines = append(lines, "  artifact: "+pyvalue.Str(artifact["path"])+" digest "+pyvalue.Str(artifact["digest"]))
+		}
+	}
+	if body, ok := p["body"].(string); ok && strings.TrimSpace(body) != "" {
+		// A direct message carries its text in the packet's body; every other packet's body is null.
+		lines = append(lines, "", "Message:")
+		for _, line := range strings.Split(body, "\n") {
+			lines = append(lines, "  "+line)
 		}
 	}
 	socket := c.Socket
