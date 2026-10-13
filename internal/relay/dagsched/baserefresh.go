@@ -156,12 +156,20 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 	if err := s.observableRelationship(ctx, q, acc, actor); err != nil {
 		return out, err
 	}
+	// a node accepted by its commit (CRW-965) has no pull request: the head it is refreshed to is the one the later generation's
+	// ruling fixed, and nothing is read from a forge (CRW-1306)
+	commit, err := commitAccepted(ctx, q, acc.AcceptanceID)
+	if err != nil {
+		return out, err
+	}
 	var forge string
 	var number int64
-	if has, err := queryOne(ctx, q, "SELECT forge_repository, pr_number FROM dag_acceptance_forge WHERE acceptance_id = ?", []any{acc.AcceptanceID}, &forge, &number); err != nil {
-		return out, err
-	} else if !has {
-		return out, refuse(contract.RefusalDispositionConflict, "acceptance %s has no forge identity recorded, so the pull request that carried the refresh cannot be read", acc.AcceptanceID)
+	if !commit {
+		if has, err := queryOne(ctx, q, "SELECT forge_repository, pr_number FROM dag_acceptance_forge WHERE acceptance_id = ?", []any{acc.AcceptanceID}, &forge, &number); err != nil {
+			return out, err
+		} else if !has {
+			return out, refuse(contract.RefusalDispositionConflict, "acceptance %s has no forge identity recorded, so the pull request that carried the refresh cannot be read", acc.AcceptanceID)
+		}
 	}
 	if landed, _, err := s.nodeIntegrated(ctx, q, plan, snap, acc); err != nil {
 		return out, err
@@ -204,35 +212,56 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 	if err != nil {
 		return out, err
 	}
-	if s.PRs == nil || s.Tips == nil {
-		return out, errors.New("this scheduler has no pull request reader or target reader, so it cannot read the head to refresh")
-	}
-	pr, err := s.PRs(ctx, forge, number)
-	if err != nil {
-		return out, err
-	}
-	if pr.State != "open" && pr.State != "merged" {
-		return out, refuse(contract.RefusalDispositionConflict, "pull request %s#%d is %s: a base refresh is read from a pull request that is open or merged", forge, number, pr.State)
-	}
-	// the reading is classified as every reader of a pull request classifies it; a merged pull request is readable by the rule in ClassifyPullRequest (forge.go)
-	if err := ClassifyPullRequest(pr); err != nil {
-		return out, err
-	}
-	if !refreshCommitPattern.MatchString(pr.HeadSHA) || pr.BaseRef == "" {
-		return out, refuse(contract.RefusalMergeTargetUnreadable, "the forge did not answer the head and the base branch of pull request %s#%d", forge, number)
-	}
-	if known, err := s.nodeTargets(ctx, q, snap, acc); err != nil {
-		return out, err
-	} else if len(known) > 0 {
-		onTarget := false
-		for _, t := range known {
-			onTarget = onTarget || (t.Repository == acc.Repository && t.BaseRef == pr.BaseRef)
+	// refreshed is the head the acceptance is proved onto and refreshBase the branch whose merges it may carry: a pull request's head and base
+	// from the forge, or, for a commit acceptance, the head the generation's ruling fixed and the base branch the node lands on
+	var refreshed, refreshBase, carrier string
+	if commit {
+		if s.Tips == nil {
+			return out, errors.New("this scheduler has no target reader, so it cannot read the tip of the base")
 		}
-		if !onTarget {
-			return out, refuse(contract.RefusalDispositionConflict, "pull request %s#%d is based on %s of %s, which is not one of the targets %s lands on", forge, number, pr.BaseRef, acc.Repository, node)
+		ruled, source, err := acceptance.RulingHead(ctx, q, head.EventID, "")
+		if err != nil {
+			return out, err
 		}
+		if source != "verified_heads" || !refreshCommitPattern.MatchString(ruled) {
+			return out, refuse(contract.RefusalHeadNotReceiptHead, "the ruling on event %s fixed no head commit, so there is no head of generation %d to refresh %s to", head.EventID, rel.Generation, node)
+		}
+		if refreshBase, err = s.commitRefreshBase(ctx, q, snap, acc); err != nil {
+			return out, err
+		}
+		refreshed, carrier = strings.ToLower(ruled), "the head the ruling of generation "+itoa64(rel.Generation)+" fixed"
+	} else {
+		if s.PRs == nil || s.Tips == nil {
+			return out, errors.New("this scheduler has no pull request reader or target reader, so it cannot read the head to refresh")
+		}
+		pr, err := s.PRs(ctx, forge, number)
+		if err != nil {
+			return out, err
+		}
+		if pr.State != "open" && pr.State != "merged" {
+			return out, refuse(contract.RefusalDispositionConflict, "pull request %s#%d is %s: a base refresh is read from a pull request that is open or merged", forge, number, pr.State)
+		}
+		// the reading is classified as every reader of a pull request classifies it; a merged pull request is readable by the rule in ClassifyPullRequest (forge.go)
+		if err := ClassifyPullRequest(pr); err != nil {
+			return out, err
+		}
+		if !refreshCommitPattern.MatchString(pr.HeadSHA) || pr.BaseRef == "" {
+			return out, refuse(contract.RefusalMergeTargetUnreadable, "the forge did not answer the head and the base branch of pull request %s#%d", forge, number)
+		}
+		if known, err := s.nodeTargets(ctx, q, snap, acc); err != nil {
+			return out, err
+		} else if len(known) > 0 {
+			onTarget := false
+			for _, t := range known {
+				onTarget = onTarget || (t.Repository == acc.Repository && t.BaseRef == pr.BaseRef)
+			}
+			if !onTarget {
+				return out, refuse(contract.RefusalDispositionConflict, "pull request %s#%d is based on %s of %s, which is not one of the targets %s lands on", forge, number, pr.BaseRef, acc.Repository, node)
+			}
+		}
+		refreshed, refreshBase, carrier = pr.HeadSHA, pr.BaseRef, "the head of the pull request"
 	}
-	tip, err := s.Tips.Tip(ctx, acc.Repository, pr.BaseRef)
+	tip, err := s.Tips.Tip(ctx, acc.Repository, refreshBase)
 	if err != nil {
 		return out, err
 	}
@@ -245,7 +274,7 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 		return out, refuse(contract.RefusalMergeTargetUnreadable, "%s is not a repository git can read: %v", checkout, err)
 	}
 	defer g.close()
-	for _, c := range []struct{ what, sha string }{{"the accepted head", acc.HeadSHA}, {"the head of the pull request", pr.HeadSHA}, {"the tip of " + pr.BaseRef, tip.SHA}} {
+	for _, c := range []struct{ what, sha string }{{"the accepted head", acc.HeadSHA}, {carrier, refreshed}, {"the tip of " + refreshBase, tip.SHA}} {
 		if !g.hasCommit(ctx, c.sha) {
 			return out, refuse(contract.RefusalMergeTargetUnreadable, "%s (%s) is not in %s: fetch it there first (git fetch) and record the refresh again", c.what, c.sha, checkout)
 		}
@@ -253,7 +282,11 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 	if sameGeneration {
 		// In the acceptance's own generation the report of that generation names the accepted head, which the refresh moves past by construction, so the proof from the accepted head stands in for the
 		// report's head. A pull request still at the accepted head has nothing to refresh, and the proof below is what decides the rest.
-		if pr.HeadSHA == acc.HeadSHA {
+		if refreshed == acc.HeadSHA {
+			if commit {
+				// the commit path's ruling fixed the accepted head itself, so its own generation never carries another head: dag-integrate merges the base onto it
+				return out, refuse(contract.RefusalDispositionConflict, "the relationship %s is still at generation %d, the one %s was accepted on by its commit, and that generation's head is the accepted head %s: there is nothing to refresh (dag-integrate merges the base itself; a head that merged the base comes from a later generation the parent rules verified)", rel.ID, rel.Generation, node, short(acc.HeadSHA))
+			}
 			return out, refuse(contract.RefusalDispositionConflict, "the relationship %s is still at generation %d, the one %s was accepted on, and pull request %s#%d is still at the accepted head %s: there is nothing to refresh", rel.ID, rel.Generation, node, forge, number, short(acc.HeadSHA))
 		}
 	} else {
@@ -262,11 +295,14 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 		if _, err := queryOne(ctx, q, "SELECT head_sha FROM work_reports WHERE event_id = ? AND relationship_id = ? ORDER BY submission_no DESC LIMIT 1", []any{head.EventID, rel.ID}, &reported); err != nil {
 			return out, err
 		}
-		if said := strings.ToLower(strings.TrimSpace(reported.String)); said != "" && !(len(said) >= 7 && strings.HasPrefix(pr.HeadSHA, said)) {
-			return out, refuse(contract.RefusalDispositionConflict, "the report of generation %d (event %s) names the head %s and pull request %s#%d is at %s now: the head that was verified is not the head to refresh", rel.Generation, head.EventID, said, forge, number, pr.HeadSHA)
+		if said := strings.ToLower(strings.TrimSpace(reported.String)); said != "" && !(len(said) >= 7 && strings.HasPrefix(refreshed, said)) {
+			if commit {
+				return out, refuse(contract.RefusalDispositionConflict, "the report of generation %d (event %s) names the head %s and its ruling fixed %s: the head that was verified is not the head to refresh", rel.Generation, head.EventID, said, refreshed)
+			}
+			return out, refuse(contract.RefusalDispositionConflict, "the report of generation %d (event %s) names the head %s and pull request %s#%d is at %s now: the head that was verified is not the head to refresh", rel.Generation, head.EventID, said, forge, number, refreshed)
 		}
 	}
-	proof, refusal, err := proveBaseRefresh(ctx, g, acc.HeadSHA, pr.HeadSHA, tip.SHA)
+	proof, refusal, err := proveBaseRefresh(ctx, g, acc.HeadSHA, refreshed, tip.SHA)
 	if err != nil {
 		return out, refuse(contract.RefusalMergeTargetUnreadable, "git could not answer for %s: %v", checkout, err)
 	}
@@ -282,7 +318,10 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 	if err != nil {
 		return out, err
 	}
-	names := []string{acc.Repository, forge}
+	names := []string{acc.Repository}
+	if forge != "" {
+		names = append(names, forge)
+	}
 	canonical, err := canonicalRepository(acc.Repository)
 	if err != nil {
 		return out, err
@@ -302,14 +341,14 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 	var recordedGeneration int64
 	var recordedRel, recordedRevision string
 	has, err := queryOne(ctx, q, "SELECT refresh_id, relationship_id, execution_generation, revision_hash, base_repository, base_ref, base_tip_sha, proof_json, resolved_paths_json FROM dag_base_refreshes WHERE acceptance_id = ? AND event_id = ? AND head_sha = ?",
-		[]any{acc.AcceptanceID, head.EventID, pr.HeadSHA}, &existing, &recordedRel, &recordedGeneration, &recordedRevision, &baseRepo, &baseRef, &baseTip, &storedProof, &storedResolved)
+		[]any{acc.AcceptanceID, head.EventID, refreshed}, &existing, &recordedRel, &recordedGeneration, &recordedRevision, &baseRepo, &baseRef, &baseTip, &storedProof, &storedResolved)
 	if err != nil {
 		return out, err
 	}
 	var resolved []string
 	var contributors map[string][][]Region
 	if has {
-		if existing != refreshDigest(acc.AcceptanceID, recordedRel, recordedGeneration, head.EventID, recordedRevision, pr.HeadSHA, baseRepo, baseRef, baseTip, storedProof, storedResolved) || recordedRel != rel.ID || recordedGeneration != rel.Generation || recordedRevision != head.RevisionHash {
+		if existing != refreshDigest(acc.AcceptanceID, recordedRel, recordedGeneration, head.EventID, recordedRevision, refreshed, baseRepo, baseRef, baseTip, storedProof, storedResolved) || recordedRel != rel.ID || recordedGeneration != rel.Generation || recordedRevision != head.RevisionHash {
 			return out, refuse(contract.RefusalDispositionConflict, "the stored base refresh for %s has invalid identity; nothing was replayed", node)
 		}
 		proof.Steps, resolved, err = decodeRefreshProof(storedProof, storedResolved)
@@ -334,11 +373,11 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 	sort.Strings(named)
 	if strings.Join(named, "\x00") != strings.Join(resolved, "\x00") {
 		return out, refuse(contract.RefusalDispositionConflict, "the merges between %s and %s resolved these files by hand: [%s]; no mechanical rule proved those resolutions. Name exactly them (--resolved) to accept them, after reading them; you named [%s]",
-			short(acc.HeadSHA), short(pr.HeadSHA), strings.Join(resolved, ", "), strings.Join(named, ", "))
+			short(acc.HeadSHA), short(refreshed), strings.Join(resolved, ", "), strings.Join(named, ", "))
 	}
 	proofJSON, resolvedJSON := refreshRecordJSON(acc.HeadSHA, proof, resolved)
-	out.RelationshipID, out.Generation, out.HeadSHA = rel.ID, rel.Generation, pr.HeadSHA
-	out.BaseRepository, out.BaseRef, out.BaseTipSHA, out.Steps, out.Resolved = acc.Repository, pr.BaseRef, tip.SHA, proof.Steps, resolved
+	out.RelationshipID, out.Generation, out.HeadSHA = rel.ID, rel.Generation, refreshed
+	out.BaseRepository, out.BaseRef, out.BaseTipSHA, out.Steps, out.Resolved = acc.Repository, refreshBase, tip.SHA, proof.Steps, resolved
 
 	if s.testBeforeRefreshTx != nil {
 		s.testBeforeRefreshTx()
@@ -415,11 +454,11 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 			return refuse(contract.RefusalDispositionConflict, "the accepted result of %s became stale (%s) while its base refresh was being proved", node, st.Reason())
 		}
 		out.EventID, out.RevisionHash = head.EventID, head.RevisionHash
-		out.RefreshID = refreshDigest(acc.AcceptanceID, rel.ID, rel.Generation, head.EventID, head.RevisionHash, pr.HeadSHA, acc.Repository, pr.BaseRef, tip.SHA, proofJSON, resolvedJSON)
+		out.RefreshID = refreshDigest(acc.AcceptanceID, rel.ID, rel.Generation, head.EventID, head.RevisionHash, refreshed, acc.Repository, refreshBase, tip.SHA, proofJSON, resolvedJSON)
 		var existing, baseRepo, baseRef, baseTip, storedProof, storedResolved string
 		var seq int64
 		if has, err := queryOne(txCtx, tx, "SELECT refresh_id, refresh_seq, base_repository, base_ref, base_tip_sha, proof_json, resolved_paths_json FROM dag_base_refreshes WHERE acceptance_id = ? AND event_id = ? AND head_sha = ?",
-			[]any{acc.AcceptanceID, head.EventID, pr.HeadSHA}, &existing, &seq, &baseRepo, &baseRef, &baseTip, &storedProof, &storedResolved); err != nil {
+			[]any{acc.AcceptanceID, head.EventID, refreshed}, &existing, &seq, &baseRepo, &baseRef, &baseTip, &storedProof, &storedResolved); err != nil {
 			return err
 		} else if has {
 			// the same generation head and pull request head recorded before: a replay, answered with what the first record holds (the tip of the base may have moved on since, and the record stays the first one)
@@ -438,10 +477,50 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 		out.Seq = last.Int64 + 1
 		_, err = tx.ExecContext(txCtx, "INSERT INTO dag_base_refreshes (refresh_id, acceptance_id, refresh_seq, relationship_id, execution_generation, event_id, revision_hash, head_sha, base_repository, base_ref, base_tip_sha,"+
 			" proof_json, resolved_paths_json, recorded_by_task_id, coordinator_epoch, recorded_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-			out.RefreshID, acc.AcceptanceID, out.Seq, rel.ID, rel.Generation, head.EventID, head.RevisionHash, pr.HeadSHA, acc.Repository, pr.BaseRef, tip.SHA, proofJSON, resolvedJSON, actor, s.ExpectedEpoch, s.now())
+			out.RefreshID, acc.AcceptanceID, out.Seq, rel.ID, rel.Generation, head.EventID, head.RevisionHash, refreshed, acc.Repository, refreshBase, tip.SHA, proofJSON, resolvedJSON, actor, s.ExpectedEpoch, s.now())
 		return err
 	})
 	return out, err
+}
+
+// commitRefreshBase is the base branch a commit acceptance is refreshed against (CRW-1306): the one base ref its outgoing integrated
+// and code-pinned edges name in the repository it was accepted on, else the base ref of the manifest it was released with (an
+// implementation node's manifest names the base it starts from). It is read from the plan and the store, never from the caller, and
+// a node whose edges name more than one base, or that has neither, is refused with the reason.
+func (s *Scheduler) commitRefreshBase(ctx context.Context, q store.Querier, snap dag.Snapshot, acc Acceptance) (string, error) {
+	refs := map[string]bool{}
+	for _, e := range snap.Edges {
+		if e.FromNodeID == acc.NodeID && e.TargetRepository == acc.Repository && e.TargetBaseRef != "" && (e.Kind == dag.EdgeIntegrated || (e.Kind == dag.EdgeArtifactVerified && e.PinsCodeHead)) {
+			refs[e.TargetBaseRef] = true
+		}
+	}
+	switch len(refs) {
+	case 1:
+		for ref := range refs {
+			return ref, nil
+		}
+	case 0:
+		var body string
+		found, err := queryOne(ctx, q, "SELECT body_json FROM dag_input_manifests WHERE manifest_digest = ?", []any{acc.ManifestDigest}, &body)
+		if err != nil {
+			return "", err
+		}
+		var manifest struct {
+			Base struct {
+				Ref string `json:"ref"`
+			} `json:"base"`
+		}
+		if found && json.Unmarshal([]byte(body), &manifest) == nil && manifest.Base.Ref != "" {
+			return manifest.Base.Ref, nil
+		}
+		return "", refuse(contract.RefusalDispositionConflict, "%s was accepted by its commit, and neither its outgoing edges nor the manifest it was released with name the base branch it lands on, so the base of the refresh cannot be read", acc.NodeID)
+	}
+	names := make([]string, 0, len(refs))
+	for ref := range refs {
+		names = append(names, ref)
+	}
+	sort.Strings(names)
+	return "", refuse(contract.RefusalMalformedReceipt, "the outgoing edges of %s name more than one base branch of %s (%s); one base refresh is proved against one", acc.NodeID, acc.Repository, strings.Join(names, ", "))
 }
 
 // refreshContributors freezes exact accepted and valid refresh heads of other
