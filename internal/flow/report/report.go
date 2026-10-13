@@ -238,8 +238,12 @@ func message(req UpRequest, res UpResult, digest string) string {
 		head += " subject=" + req.Subject
 	}
 	reports := "crw flow reports --unread"
-	if res.Recipient.InitiativeKey != "" {
+	switch {
+	case res.Recipient.InitiativeKey != "":
 		reports = "crw flow reports --initiative " + res.Recipient.InitiativeKey + " --unread"
+	case res.Recipient.State == RecipientManagement && res.Recipient.ProjectKey != "":
+		// A management session hears several projects of its own, and another session's projects are not its to read.
+		reports = "crw flow reports --project " + res.Recipient.ProjectKey + " --unread"
 	}
 	return fmt.Sprintf("%s\nreport: %s (body %s)\nRead it with `%s` and acknowledge it with `crw flow report-ack %s --turn <your turn id>`.\n\n%s%s",
 		head, res.ReportID, digest, reports, res.ReportID, body, cut)
@@ -361,6 +365,19 @@ type ReportView struct {
 
 // Reports lists the reports of the store, oldest first: those of one initiative when initiative is given, the unread ones when unread.
 func Reports(ctx context.Context, db DB, initiative string, unread bool) ([]ReportView, error) {
+	return ReportsMatching(ctx, db, ReportFilter{Initiative: initiative, Unread: unread})
+}
+
+// ReportFilter narrows a listing of reports: to the reports addressed for one initiative, to those of one project (the listing a
+// management session reads, so two management sessions do not read each other's reports), to the unread ones. An empty field does not
+// narrow.
+type ReportFilter struct {
+	Initiative, Project string
+	Unread              bool
+}
+
+// ReportsMatching lists the reports of the store the filter keeps, oldest first.
+func ReportsMatching(ctx context.Context, db DB, f ReportFilter) ([]ReportView, error) {
 	rows, err := ReadRows(ctx, db, "", KindReport, KindDelivery, KindRead)
 	if err != nil {
 		return nil, err
@@ -392,10 +409,13 @@ func Reports(ctx context.Context, db DB, initiative string, unread bool) ([]Repo
 	var out []ReportView
 	for _, id := range order {
 		v := byID[id]
-		if initiative != "" && v.Recipient.InitiativeKey != initiative {
+		if f.Initiative != "" && v.Recipient.InitiativeKey != f.Initiative {
 			continue
 		}
-		if unread && v.Read {
+		if f.Project != "" && v.Recipient.ProjectKey != f.Project {
+			continue
+		}
+		if f.Unread && v.Read {
 			continue
 		}
 		out = append(out, *v)

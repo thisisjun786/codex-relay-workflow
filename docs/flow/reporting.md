@@ -151,8 +151,9 @@ standing: it has a row and no delivery, and `crw flow reports --unread` and the 
 same management session when one stands above the project, and is delivered; otherwise it is addressed to the store seat, as it always
 was, and is never delivered through the bridge (a lead does not decide for Jun). A manager that registered its management seat (`crw
 manage supervisor register`) laid its store seat down, and the store seat is then read through that management seat
-([linkage](../relay/linkage.md#management-seats)), so the report still names the manager's thread. The notice of a report with no
-initiative names `crw flow reports --unread`.
+([linkage](../relay/linkage.md#management-seats)), so the report still names the manager's thread. The notice of a report to a
+management session names `crw flow reports --project P --unread` for its project, so two management sessions each read their own
+projects' reports and not the other's; the notice of any other report with no initiative names `crw flow reports --unread`.
 
 **The delivery** is `crw manage send-parent --role supervisor --thread <initiative lead's thread> --logical-id <run>:<milestone>:report
 --report <report id> --initiative <initiative>`. The role is an option of `crw manage`, not of the relay; the default role (parent) is not
@@ -186,7 +187,8 @@ same id and advances the ordinal. The unload race is not a refusal of the notice
 out under `<logical id>-l<n>`, so the settled refusal of the earlier id is not replayed. Any other refusal counts; the third moves the
 notice to `refused/` and tells the flow rows. The parent queue's flush is not changed.
 
-**Reading.** The initiative lead reads its reports when a turn starts, `crw flow reports --initiative I --unread`, and acknowledges each
+**Reading.** A management session reads the reports of each project it holds with `crw flow reports --project P --unread`. The
+initiative lead reads its reports when a turn starts, `crw flow reports --initiative I --unread`, and acknowledges each
 in that turn, `crw flow report-ack ID --turn T`, which appends a `report_read` row. A report nobody read for `low_priority_seconds` is
 raised to the manager as the low kind `report_unread` (the report, its age, the last delivery result). A decision for Jun is the urgent
 kind `jun_decision`; the manager records the question and Jun's answer with `crw manage decisions`.
@@ -218,7 +220,7 @@ that writes it, across runs.
 ```
 crw flow apply --event E --turn T [--run RUN] [--base COMMIT] [--wait 10m] [--override REASON] [--manifest-request FILE] [--repo DIR] [--state DIR] [--socket PATH]
 crw flow report-up --kind K --run RUN --evidence FILE [--subject TEXT] [--milestone M] [--state DIR] [--socket PATH]
-crw flow reports [--initiative I] [--unread] [--json] [--state DIR] [--socket PATH]
+crw flow reports [--initiative I] [--unread] [--json] [--project P] [--state DIR] [--socket PATH]
 crw flow report-ack REPORT --turn T [--state DIR] [--socket PATH]
 crw flow report-delivered --report ID --result accepted|queued|refused|unknown --request-id R [--observation O] [--state DIR] [--socket PATH]
 crw manage send-parent --role supervisor --thread T --message-file F --logical-id ID [--report ID] [--initiative I] [--state DIR] [--socket PATH] [--queue]
