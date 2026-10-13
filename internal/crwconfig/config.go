@@ -35,6 +35,11 @@ type File struct {
 // XDG_CONFIG_HOME is "env", and the built-in location is "default".
 func (f *File) Path() (string, Source) { return f.path, f.source }
 
+// Loaded reports whether a file was read at Path. The path always names a location, wherever it came from; Loaded
+// is the other half: true when a file was there and was read, false when the location holds none and the
+// defaults stand. The source says where the path came from, never whether a file exists (CRW-1324).
+func (f *File) Loaded() bool { return f.raw != nil }
+
 // Roots is every resolved root by name. The map is a copy, so a caller cannot change
 // what the file resolved.
 func (f *File) Roots() map[string]Root {
