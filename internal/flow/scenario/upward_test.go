@@ -90,14 +90,14 @@ func (l *Lab) wireUpward(t *testing.T, lead bool) *scenarioSender {
 
 // hookUpward installs the hook and the reporter on the lab's run over its current journal, as the binary does (flowcli.UpwardFactory): a
 // resumed process (NewProcess) is hooked again with the same sender. The hook reports a run that started no node with the reading of
-// `crw flow show` (flowcli.Blocked).
+// `crw flow show` over the run's record (flowcli.RunBlocked).
 func (l *Lab) hookUpward(t *testing.T, sender *scenarioSender) {
 	t.Helper()
 	rows := report.JournalAppender{Journal: l.journal, RunID: l.RunID, Store: l.Store}
 	w := &report.Writer{Store: l.Store, Rows: rows, Resolver: report.StoreResolver{Store: l.Store}, Sender: sender, ArtifactDir: t.TempDir()}
 	l.Reporter = report.Reporter{W: w, Run: l.RunID}
 	l.Upward = &report.RunHook{Store: l.Store, Sched: &dagsched.Scheduler{Store: l.Store}, Journal: l.journal, Rows: rows, Sender: sender, Run: l.RunID,
-		Reports: w, Blocked: flowcli.Blocked}
+		Reports: w, Blocked: flowcli.RunBlocked}
 	l.newLane()
 }
 

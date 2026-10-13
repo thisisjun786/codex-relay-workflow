@@ -77,7 +77,7 @@ func TestCRW1320_RunThatStartedNoNodeIsBlockedWithItsReasons(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reasons, blocked := Blocked(events)
+	reasons, blocked := Blocked(RunRecord{RunID: "run-b", Workflow: ProjectLaneWorkflow}, events)
 	if !blocked || len(reasons) != 2 || !strings.HasPrefix(reasons[0], "A: ") {
 		t.Errorf("Blocked: %v %q", blocked, reasons)
 	}
@@ -113,7 +113,7 @@ func TestCRW1320_StartedOrWaitingRunKeepsItsState(t *testing.T) {
 			if info.State != StateCompleted || len(info.ItemErrors) != 2 {
 				t.Errorf("state %q item errors %+v", info.State, info.ItemErrors)
 			}
-			if _, blocked := Blocked(events); blocked {
+			if _, blocked := Blocked(RunRecord{RunID: "run-k", Workflow: ProjectLaneWorkflow}, events); blocked {
 				t.Errorf("Blocked says blocked")
 			}
 		})

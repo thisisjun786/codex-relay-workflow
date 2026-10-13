@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/apply"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/callstate"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
@@ -273,10 +274,12 @@ func Questions(events []engine.Event) []Question {
 
 // Summarize reads the rows of a run: its state, its counts and its last phase. live says whether a process holds the run lock.
 //
-// A run whose last process finished completed with nothing left to go on with is blocked, not completed, when it started no node (no
-// crw.release released one, no crw.releaseChild released a child and nothing landed, in any process) and join items of its last process
-// threw (the releases of crw.dag that failed are such items). The engine's status of the run stays completed. A run whose last process has
-// a node the scheduler held back unreleased (a wait a resume asks again, CRW-1201) and a run where a node started keep the state completed.
+// A run meant to start the nodes of a plan (StartsNodes: a lane workflow, or a run whose arguments name a plan) whose last process finished
+// completed with nothing left to go on with is blocked, not completed, when it started no node (no crw.release released one, no
+// crw.releaseChild released a child and nothing landed, in any process) and join items of its last process threw (the releases of crw.dag
+// that failed are such items). The engine's status of the run stays completed. A run whose last process has a node the scheduler held back
+// unreleased (a wait a resume asks again, CRW-1201), a run where a node started and a run not meant to start one (a judge panel, a scout)
+// keep the state completed.
 func Summarize(rec RunRecord, events []engine.Event, live bool, pid int) RunInfo {
 	info := RunInfo{RunRecord: rec, Live: live, PID: pid}
 	lastStart, lastFinish := -1, -1
@@ -354,7 +357,7 @@ func Summarize(rec RunRecord, events []engine.Event, live bool, pid int) RunInfo
 		switch {
 		case info.Unsettled > 0 || info.Holds > 0 || info.Waiting > 0:
 			info.State = StateHeld
-		case len(info.ItemErrors) > 0 && !heldBack && !nodeStarted(events):
+		case len(info.ItemErrors) > 0 && !heldBack && !nodeStarted(events) && StartsNodes(rec, events):
 			info.State = StateBlocked
 		}
 	case lastFinish > lastStart && info.ErrorKind == engine.ErrKindCancelled:
@@ -401,10 +404,37 @@ func nodeStarted(events []engine.Event) bool {
 	return false
 }
 
-// Blocked is the reading report.RunHook asks for when a run finishes (CRW-1320): whether Summarize shows the run blocked, and the reason
-// of each item that failed (<item>: <error>). The report and the state `crw flow show` prints are this one reading.
-func Blocked(events []engine.Event) (reasons []string, blocked bool) {
-	info := Summarize(RunRecord{}, events, false, 0)
+// ProjectLaneWorkflow is the built-in workflow that runs the issue nodes of a milestone.
+const ProjectLaneWorkflow = "project-lane"
+
+// laneWorkflows are the built-in workflows whose run is meant to start the nodes of a plan: the project lane, the issue lane of a child and
+// the night batch.
+var laneWorkflows = map[string]bool{ProjectLaneWorkflow: true, apply.IssueLane: true, NightBatchWorkflow: true}
+
+// StartsNodes says whether a run is meant to start the nodes of a plan, so that a run of it that started none is blocked (CRW-1320): a run of
+// a lane workflow, or a run whose arguments name a plan (the record's plan). The workflow is the record's, else the one the run's first
+// started row names. Another script run (a judge panel, a scout) that fans out and has an item that threw never meant to start a node.
+func StartsNodes(rec RunRecord, events []engine.Event) bool {
+	if rec.PlanID != "" {
+		return true
+	}
+	workflow := rec.Workflow
+	for _, e := range events {
+		if workflow != "" {
+			break
+		}
+		if e.Kind == engine.KindRun && e.Event == "started" {
+			workflow = str(e.Data, "workflow")
+		}
+	}
+	return laneWorkflows[workflow]
+}
+
+// Blocked is the reading `crw flow show` prints and report.RunHook asks for when a run finishes (CRW-1320): whether Summarize shows the
+// run of this record blocked, and the reason of each item that failed (<item>: <error>). The report and the shown state are this one
+// reading.
+func Blocked(rec RunRecord, events []engine.Event) (reasons []string, blocked bool) {
+	info := Summarize(rec, events, false, 0)
 	if info.State != StateBlocked {
 		return nil, false
 	}

@@ -132,12 +132,14 @@ crw flow report-up --kind project_blocked|project_decision_request|jun_decision_
 What an agent node cannot do or decide is not reported by the node: its RECEIPT is classified by the run, the run escalates, the
 escalation reaches the orchestrator thread, and the orchestrator reports up.
 
-A run that finished `completed` and started no node is `blocked` in `crw flow show` and `ps` (no `crw.release` released a node, no child
-was released, nothing landed, and items of its joins threw: [script.md](script.md)). When it finishes so, the run itself reports
+A run meant to start the nodes of a plan (a run of `project-lane`, `issue-lane` or `night-batch`, or a run whose arguments name a `plan`)
+that finished `completed` and started no node is `blocked` in `crw flow show` and `ps` (no `crw.release` released a node, no child was
+released, nothing landed, and items of its joins threw: [script.md](script.md)). When it finishes so, the run itself reports
 `project_blocked` to the initiative lead, through the same writer, recipient and delivery as `crw flow report-up`: the subject is `no node
 started` and the body names each item that failed with its error. The report id comes from the run alone, so the run reports it once: a
 resume that ends the same way finds the report row and makes no other, and a delivery is asked again only as for any report. A run whose
-nodes the scheduler held back for capacity, or where a node started, makes no such report.
+nodes the scheduler held back for capacity, a run where a node started, and a script run that names no plan and is no lane workflow (a
+judge panel, a scout) make no such report.
 
 **The row comes first.** A report is a `report` row in the `flow_events` of the run (the report id, the kind, the run, the milestone, the
 subject, the digest of the body and the path of the body artifact, the recipient and the logical id of the delivery), written before any
