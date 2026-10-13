@@ -237,8 +237,12 @@ func message(req UpRequest, res UpResult, digest string) string {
 	if req.Subject != "" {
 		head += " subject=" + req.Subject
 	}
-	return fmt.Sprintf("%s\nreport: %s (body %s)\nRead it with `crw flow reports --initiative %s --unread` and acknowledge it with `crw flow report-ack %s --turn <your turn id>`.\n\n%s%s",
-		head, res.ReportID, digest, firstText(res.Recipient.InitiativeKey, "<initiative>"), res.ReportID, body, cut)
+	reports := "crw flow reports --unread"
+	if res.Recipient.InitiativeKey != "" {
+		reports = "crw flow reports --initiative " + res.Recipient.InitiativeKey + " --unread"
+	}
+	return fmt.Sprintf("%s\nreport: %s (body %s)\nRead it with `%s` and acknowledge it with `crw flow report-ack %s --turn <your turn id>`.\n\n%s%s",
+		head, res.ReportID, digest, reports, res.ReportID, body, cut)
 }
 
 func (w *Writer) writeBody(id string, body []byte) (string, error) {

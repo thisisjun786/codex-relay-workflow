@@ -110,8 +110,9 @@ func TestReportUpUnregisteredScopeStaysStanding(t *testing.T) {
 	}
 }
 
-// A project whose initiative has no supervisor but whose store has a seat: the walk folds the seat in, which is no initiative lead, and
-// no bridge delivery goes to it.
+// A project with no management seat and no initiative supervisor above it, in a store that has a seat: the walk folds the seat in, the
+// last of the fallback order (CRW-1314), and the report is recorded for the seat. No bridge delivery goes to it: the store seat is told by
+// the manager's pump, as for a decision only Jun can make.
 func TestReportUpStoreSeatFoldStaysStanding(t *testing.T) {
 	w := newWorld(t)
 	w.seat("manager-seat")
@@ -119,11 +120,11 @@ func TestReportUpStoreSeatFoldStaysStanding(t *testing.T) {
 	if len(w.sender.supervisorSent()) != 0 {
 		t.Fatalf("a report was sent to the seat: %+v", w.sender.supervisorSent())
 	}
-	if res.Recipient.State != RecipientUnregistered || !strings.Contains(res.Recipient.Detail, "store seat") && !strings.Contains(res.Recipient.Detail, "store") || !res.Standing {
+	if res.Recipient.State != RecipientStore || res.Recipient.Thread != "manager-seat" || res.Recipient.ProjectKey != testProject || !res.Standing {
 		t.Fatalf("result %+v", res)
 	}
 	rows := w.rows(KindReport)
-	if len(rows) != 1 || rows[0].Str("recipient_state") != RecipientUnregistered || rows[0].Str("recipient_thread") != "" {
+	if len(rows) != 1 || rows[0].Str("recipient_state") != RecipientStore || rows[0].Str("recipient_thread") != "manager-seat" {
 		t.Fatalf("rows %+v", rows)
 	}
 }
