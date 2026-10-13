@@ -246,7 +246,7 @@ func writeRaw(path string, doc *object, rename func(tmp, finalPath string) error
 // open is what a write starts with: the role checked, the store's path, the store's lock held (the caller releases it when the write
 // is done, whatever happens) and the store's parsed content.
 func open(env host.LookupEnv, role RoleName, sleep func(time.Duration)) (string, rawConfig, func(), error) {
-	if !validRole(role) {
+	if !storeRole(role) { // a helper role, or a flow-only key of the same roles object (CRW-1330)
 		return "", rawConfig{}, nil, fmt.Errorf("unknown role \"%s\"", role)
 	}
 	path, err := StorePath(env)
@@ -288,7 +288,11 @@ func setRoleSettings(env host.LookupEnv, role RoleName, patch RolePatch, rename 
 	// A set merges into what the file holds, so a role whose stored routing is not usable would be merged into a normalised copy
 	// and lose what the operator wrote; it is refused, and so is a set while another role is unusable, since the answer is the
 	// settings after the write. A reset is the repair (CRW-1119).
-	for _, r := range Roles() {
+	checked := Roles()
+	if flowOnlyRole(role) {
+		checked = append(checked, role) // the flow-only key being set is merged into too, so its own stored value must be usable (CRW-1330)
+	}
+	for _, r := range checked {
 		if value, ok := raw.roles.raw(string(r)); ok {
 			if _, reason := parseRole(value); reason != "" {
 				return Settings{}, fmt.Errorf("cannot update subagent config: %w", &UnusableSettingsError{Path: path, Role: r, Reason: reason})
