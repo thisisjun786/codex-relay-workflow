@@ -206,6 +206,9 @@ func (o *verifyOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 				res.Failures = out.Failures
 			}
 			record = out.Record
+			if out.Note != "" {
+				data["verifier_note"] = out.Note
+			}
 		}
 	}
 	res.Base = base

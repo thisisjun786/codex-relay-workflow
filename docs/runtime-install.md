@@ -331,6 +331,103 @@ A warning never stops anything, so a host short of space or sharing a directory 
 | `unknown_filesystem` | the file system under a root is not one the check can name |
 | `socket_path_too_long` | `temp_root` or `scratch_root` would leave no room for a test's socket |
 | `drift` | a root the file names differs from a placement in use that holds data (a registered relay store outside the configured `relay_state`, a pump or daemon log outside the configured `log_root`, a populated default or Go cache elsewhere), naming both paths, or `CODEX_SESSION_RELAY_STATE` takes the place of a configured `relay_state` |
+| `verifier_section` | the `verifier` section is one the verifier cannot use ([the verifier's tools](#the-verifiers-tools)); its `root` is `verifier` |
+
+### The verifier's tools
+
+A run's verifier (the node verifier `CILocalVerifier` and the verification of an integration batch's
+merged tree) starts `crw-dev ci local`, and every step of that command runs `go`. A process a bridge
+or a service starts has neither on its `PATH`, so the configuration file names them in its `verifier`
+section, and the run reads that section, not the login `PATH`:
+
+| `verifier` key | Value | What it decides |
+| --- | --- | --- |
+| `go_root` | an absolute Go toolchain root | `<go_root>/bin/go` is the go the verifier runs; the command runs with `<go_root>/bin` first on its `PATH` (so every step of `crw-dev ci local` runs that go), `GOROOT=<go_root>` and `GOTOOLCHAIN=local` (no other toolchain is selected or fetched) |
+| `crw_dev` | `tree`, or an absolute path to a `crw-dev` binary | `tree` runs the verified tree's own crw-dev, `<go> run -tags dev ./cmd/crw-dev ci local ...`, in that tree; a path runs that binary. Empty is `tree` when `go_root` is set |
+
+The merged tree of an integration batch verifies itself: in `tree` mode the batch runs the merged
+worktree's own `cmd/crw-dev`, so a change to the verification engine is verified by the engine it
+brings, and the engine check of `crw-dev ci local` ([CI](CI.md)) compares the tree it was built from
+with the verified commit. An installed binary is the choice for a project whose tree carries no
+`cmd/crw-dev`; a `tree` verification of such a tree does not start, and its reason names
+`verifier.crw_dev`. With nothing configured the verifier takes `crw-dev` and `go` from `PATH`
+(fail-open): the node verifier records the note on its `crw.verify` journal row (`verifier_note`) and
+the integration verifier writes it to standard error as a `[crw note]` line. A command that does not
+start is a verification that did not run, never a failed one: the node is held with the reason, and
+the batch stops on a host error; both reasons name the setting to add. A section the verifier cannot
+use (not an object, a `go_root` that is not an absolute path, a `crw_dev` that is neither `tree` nor an
+absolute path) stops no other reader of the file: the reading ignores it and records the warning
+`verifier_section` (`crw config check` lists it among its findings, `crw config show`, `paths` and
+`verifier` write it to standard error as a `crw config: warning:` line), the relay state selection,
+the tool roots and the lane read the file as before, and the verifier takes `crw-dev` and `go` from
+`PATH`, with a note that says the section was ignored and why. `crw doctor` and the preflight fact
+show it as a warning.
+
+In `tree` mode the node verifier runs the verified head's own `cmd/crw-dev` too, the same choice as
+for the merged tree: a head that changes the verification engine is verified by the engine it
+brings, as its merged tree is at integration, and that change is in the diff the reviewer reads. A
+host that wants every head verified by an engine the head cannot change sets `crw_dev` to an
+installed binary. The consequence: `crw-dev ci local` refuses, with `engine_differs_from_commit`,
+to verify a head whose engine source differs from the revision the binary was built from (and any head
+when the binary was built from a modified tree), so the node verifier holds such a head instead of
+verifying it with the older engine; a head that leaves the engine as the binary has it is verified.
+
+The installation records the setting with `crw config verifier --go-root <dir> [--crw-dev tree|<path>]`
+(`--config` names another file than the default; an empty value removes the key): it refuses a root
+whose `bin/go` is not an executable file, then rewrites the file with the keys it is given set and
+every other key kept, the section's own other keys included (keys sorted, owner-only, a missing file
+created); over a section the verifier cannot use it replaces the keys it sets, and a section that is
+no object is replaced by one. A configuration file that is a symbolic link is written through: the file the link names
+is replaced and the link stays. Without a flag it prints the section (`config`, `go_root`, `crw_dev`
+and `mode`: `tree`, `binary` or `path`). The plain `crw doctor` report shows what a run would use as
+its `verifierTools` entry: the configuration file, the configured root, the `go` the verifier runs,
+where it came from (`config` or `path`) and its version, and `crwDev` (the mode, the command and
+whether it runs: its go runs in `tree` mode, `crw-dev help` exits 0 otherwise). With no root
+configured the doctor looks for one and lists it in `goRootCandidates` with its version, newest
+first: the root of the `go` on `PATH` (`go env GOROOT`), `$HOME/.local/go/go`, `$HOME/.local/go`,
+`$HOME/sdk/go*`, `$HOME/go/go`, `/usr/local/go`, `/usr/lib/go` and `/opt/go`, leaving out a root below
+`/tmp` or `/var/tmp`, which a reboot removes; its warning names the `crw config verifier --go-root`
+command for the first. A missing or broken tool, and a section that names nothing, are `warnings`
+there and never a fault. `crw flow start` shows the same reading as the preflight fact
+`verifier_prerequisites`: `pass`, or `warn` with the reason (it also warns when the go is older than
+the repository's `go.mod` asks, and when a `tree` verification's repository has no `cmd/crw-dev`),
+and it never stops the start.
+
+### Where work tracking lives
+
+The `tracking` section of the configuration file names the repository that holds the work tracking,
+apart from the code repository (`manage.repository`):
+
+```json
+{"tracking": {"kind": "github", "repo": "OWNER/NAME"}}
+```
+
+| Key | Meaning |
+| --- | --- |
+| `kind` | `github`, the 1.0 path: the issues of `repo`. `linear` is a read-only archive setting for looking the old record up; nothing writes to it. A section that names a `repo` and no `kind` is `github`. |
+| `repo` | `OWNER/NAME`, spelled as GitHub spells a repository (no URL, no `.git`). `github` needs it; `linear` takes none. |
+
+The section is read where it is needed and nowhere else: loading the file never judges it, so a
+missing or malformed `tracking` section stops no other reader of the shared file (the relay state
+selection, the tool roots, `crw config paths` and `show`, the other sections). The reader that asks
+for it is told what to set. `crw config check` reports the setting under `tracking` and in its
+findings:
+
+| Check | Level | When |
+| --- | --- | --- |
+| `tracking_missing` | warning | the file has no `tracking` section; the message names the file and the section to add |
+| `tracking_invalid` | warning | the section is not an object, names an unknown `kind`, a `repo` that is not `OWNER/NAME`, a `github` kind without a repo or a `linear` kind with one; also reported in the `storage` entry of the plain `crw doctor` report and the preflight of `crw install`, which judge the spelling only |
+| `tracking_auth` | error | `kind` is `github` and `gh` is not installed or not signed in to github.com |
+| `tracking_access` | error | `kind` is `github` and the repository is not found, not visible to the login, or its access could not be read |
+| `tracking_issues` | error | `kind` is `github` and Issues are off (`has_issues`), the login cannot read issues, the repository is archived, or the login cannot write issues (it needs triage or write permission) |
+
+For a `github` setting the check asks `gh` two read-only questions: `gh auth status --hostname github.com`
+and `gh api repos/OWNER/NAME`, a GET that reads the repository's `permissions`, `has_issues` and `archived`.
+It never passes a method, field or input flag, so it writes nothing to GitHub, and no gh output but a short
+error text (with anything that looks like a token removed) reaches the report. `crw doctor storage` runs
+the same check; the plain `crw doctor` report and `crw install` never call `gh`. The `tracking` entry of the
+report carries `set`, `kind`, `repo` and, once `gh` answered, `access` (the login's permissions and the
+`issues_read` and `issues_write` verdicts).
 
 ## Installing the runtime
 
@@ -996,6 +1093,18 @@ Two read-only commands, each answering a different question:
   `--temporary` records the destination as a temporary one, so a proof taken there is never read as
   a claim about a host.
 
+The doctor report's `roleModels` entry reads the helper role store (`subagents.json`) and checks each
+model a role routes to (`model` of a role in model mode, and any `fallback.model`) against a model
+catalogue: the live catalogue the role helper and the GUI list from (OCX's `ocx models live`, else the
+native Codex catalogue), read without keeping the cache file that reader keeps, because the doctor writes
+nothing. `roleModels.catalogue` names the catalogue that was read (`state`, `source`, the number of
+`models` and a `detail` when it could not be read), `roleModels.roles` lists each role model with
+`listed` true or false, and `roleModels.warnings` holds one line for each model no catalogue lists, so a role
+that points at a model the provider does not serve is seen before a spawn on it fails. No catalogue is read
+while no role names a model, and a catalogue that could not be read (OCX not running, an OCX without the
+live command) lists nothing and condemns nothing: its state is recorded and `listed` is null. A warning
+changes no exit status and blocks nothing.
+
 None of them takes a lock across the whole reading, so a host changing underneath is described in
 pieces.
 
@@ -1268,6 +1377,17 @@ the policy file therefore has two consequences, and no longer needs the record t
 relay picks the edit up when its daemon restarts, and the record is re-registered so the next bridge
 starts under the new digest. The digest is what lets a changed file fail visibly instead of being
 enforced unregistered.
+
+A file and a record that disagree are said at the start of a session instead of being found from a failed
+handshake. The `SessionStart` hook reads the bridge record in the Codex home, and when it is a plugin-owned
+version-2 record whose policy file is missing, is not a regular file, or hashes to another digest than the
+record names, it adds a warning to the session's context at every start and resume. The warning names the
+policy path, the two digests (shortened) and the command that repairs it, `crw install register-mcp
+--re-register-policy --execution-policy <path>`, and points to the policy editor (`crw gui`), whose
+write edits the file and re-registers it in one operation, so an edit made there leaves no disagreement.
+The warning records and blocks nothing: the session starts, without the bridge's tools until the record is
+re-registered. A host with no bridge record, a record of another shape, or a policy file that cannot be read
+for another reason (the doctor judges those) gets no warning.
 
 A created record is reported only after the policy file has been hashed again, following the write,
 and still matched. A mismatch immediately before the write writes nothing and answers

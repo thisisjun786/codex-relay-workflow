@@ -75,3 +75,23 @@ func TestStoreSeatLimitDeclareSucceedsWithTheSeat(t *testing.T) {
 		t.Fatalf("execution_limits row %+v", row)
 	}
 }
+
+// TestManagementSeatLimitDeclareSucceeds (CRW-1333): a management session's own seat speaks for the
+// store as the store seat did, so the thread that laid the store seat down for its management seat
+// keeps stating the store-wide ceiling.
+func TestManagementSeatLimitDeclareSucceeds(t *testing.T) {
+	e := newEnv(t)
+	var stdout, stderr bytes.Buffer
+	line := []string{"--state", filepath.Dir(e.store.Path), "linkage-bind", "--role", "supervisor",
+		"--scope-kind", "management", "--scope", storeSeatTask, "--task", storeSeatTask, "--host", "host-s"}
+	if code := dispatch.Execute(ctx(), "codex-session-relay", line, &stdout, &stderr); code != 0 {
+		t.Fatalf("binding the management seat: exit %d stdout %q stderr %q", code, stdout.String(), stderr.String())
+	}
+	answer, err := e.cap.DeclareLimit(ctx(), storeSeatLimit())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := field(answer, "declaredBy"); got != storeSeatTask {
+		t.Fatalf("declaredBy %v", got)
+	}
+}

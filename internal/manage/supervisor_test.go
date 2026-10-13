@@ -196,8 +196,9 @@ const supervisorResolved = `{"state":"resolved","readable":true,"levels":[{"scop
 // supervisorUnregistered is the linkage-up answer of a store that holds no binding for the task.
 const supervisorUnregistered = `{"state":"unregistered","readable":true,"levels":[],"gaps":[],"contention":[]}`
 
-// C1: register binds the store scope first and records the settings pair second, with exactly the
-// decided argument vectors in the decided order.
+// C1: register binds the thread's management seat first (CRW-1333: with no --task and no
+// CODEX_THREAD_ID the configured section names the thread) and records the settings pair second,
+// with exactly the decided argument vectors in the decided order.
 func TestSupervisorRegisterBindsTheStoreScopeThenRecordsSettings(t *testing.T) {
 	exe, record := supervisorScript(t, map[string]string{
 		"linkage-bind":    `{"bindingId":"bnd-1","role":"supervisor","scopeKind":"store","scopeKey":"store"}`,
@@ -211,7 +212,7 @@ func TestSupervisorRegisterBindsTheStoreScopeThenRecordsSettings(t *testing.T) {
 	}
 	supervisorCheckCalls(t, record, [][]string{
 		{"relay", "--state", "/state", "--socket", "/socket", "linkage-bind", "--role", "supervisor",
-			"--scope-kind", "store", "--scope", "store", "--task", "task-supervisor", "--host", "host-supervisor",
+			"--scope-kind", "management", "--scope", "task-supervisor", "--task", "task-supervisor", "--host", "host-supervisor",
 			"--cwd", "/work/management"},
 		{"relay", "--state", "/state", "--socket", "/socket", "settings-record", "--task", "task-supervisor",
 			"--role", "supervisor", "--settings", "@/work/management/settings.json", "--source", "crw manage supervisor register"},
@@ -314,7 +315,7 @@ func TestSupervisorRegisterPassesASpacedCwdAsOneArgument(t *testing.T) {
 	}
 	supervisorCheckCalls(t, record, [][]string{
 		{"relay", "--state", "/state", "--socket", "/socket", "linkage-bind", "--role", "supervisor",
-			"--scope-kind", "store", "--scope", "store", "--task", "task-supervisor", "--host", "host-supervisor",
+			"--scope-kind", "management", "--scope", "task-supervisor", "--task", "task-supervisor", "--host", "host-supervisor",
 			"--cwd", "/work/management dir"},
 		{"relay", "--state", "/state", "--socket", "/socket", "settings-record", "--task", "task-supervisor",
 			"--role", "supervisor", "--settings", "@/work/management/settings.json", "--source", "crw manage supervisor register"},
@@ -336,7 +337,7 @@ func TestSupervisorRegisterOmitsCwdWhenNoneIsConfigured(t *testing.T) {
 	}
 	supervisorCheckCalls(t, record, [][]string{
 		{"relay", "--state", "/state", "--socket", "/socket", "linkage-bind", "--role", "supervisor",
-			"--scope-kind", "store", "--scope", "store", "--task", "task-supervisor", "--host", "host-supervisor"},
+			"--scope-kind", "management", "--scope", "task-supervisor", "--task", "task-supervisor", "--host", "host-supervisor"},
 		{"relay", "--state", "/state", "--socket", "/socket", "settings-record", "--task", "task-supervisor",
 			"--role", "supervisor", "--settings", "@/work/management/settings.json", "--source", "crw manage supervisor register"},
 	})

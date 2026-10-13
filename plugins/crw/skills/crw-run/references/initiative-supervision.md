@@ -20,7 +20,8 @@ holds one live role and one scope, a project has at most one live `execution` ed
 refused supervision leaves no state behind: the decision and the write share one transaction, so a contest that loses writes
 only its conflict row. A supervisor whose own level is not an initiative can hold the store-scope seat
 (`linkage-bind --role supervisor --scope-kind store --scope store`), which is what a session that manages the store holds
-rather than one tied to a single initiative's execution.
+rather than one tied to a single initiative's execution. `crw manage supervisor register` gives the calling management session
+its own management seat instead and lays down a store seat it held; the store seat is then read through that management seat.
 
 Keep four facts apart, because they are separate. This repository's source implements those commands and its tests pin them; an
 installed runtime may be older than that source; a task may or may not be currently registered for a scope; and an actual
