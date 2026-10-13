@@ -26,7 +26,7 @@ const (
 )
 
 // roleScopeOwner is linkage.ROLE_SCOPE_OWNER.
-var roleScopeOwner = map[string]string{scopeInitiative: "supervisor", scopeProject: "parent", scopeIssue: "child"}
+var roleScopeOwner = map[string]string{scopeManagement: "supervisor", scopeInitiative: "supervisor", scopeProject: "parent", scopeIssue: "child"}
 
 // peerLinkID is link_id(PEER, ...): symmetric, so both ends converge on one record.
 func peerLinkID(left, right string) string {
@@ -257,12 +257,23 @@ func (r *Registry) ContestedDirectives(ctx context.Context, kind, key string) ([
 
 // BindScopeAs is bind_scope with its status argument, on the role's own level.
 func (r *Registry) BindScopeAs(ctx context.Context, role, key string, endpoint Endpoint, status string) (contract.OrderedObject, error) {
-	return r.bindScopeKind(ctx, role, "", key, endpoint, status)
+	return r.bindScopeKind(ctx, role, "", key, endpoint, status, "")
 }
 
 // bindScopeKind is bind_scope with the scope kind named: --scope-kind store moves the supervisor
 // seat off its own Linear level onto the store, and no other binding may name one (CRW-450).
-func (r *Registry) bindScopeKind(ctx context.Context, role, requested, key string, endpoint Endpoint, status string) (contract.OrderedObject, error) {
+//
+// creator is the thread registering the binding (linkage-bind --creator, by default the caller's
+// CODEX_THREAD_ID). When an initiative supervisor (a lead) is registered by a thread that holds a
+// live management seat, the execution edge from that seat to the initiative is written in the same
+// transaction (CRW-1333), and so is the edge from that seat to the project when a project owner
+// (role parent at its project) is bound by such a thread (CRW-1314). An initiative or a project has
+// one upward execution edge: another seat's edge refuses the registration with link_conflict, because
+// a second management session takes it only by the handover of the seat above it. A project an
+// initiative lead already supervises (the legacy configuration) keeps that edge: the binding stands,
+// no management edge is written, and the answer and the journal carry the warning
+// (managementLinkSkipped, management_link_skipped). A creator with no management seat writes no edge.
+func (r *Registry) bindScopeKind(ctx context.Context, role, requested, key string, endpoint Endpoint, status, creator string) (contract.OrderedObject, error) {
 	kind, err := bindingScopeKind(role, requested, key)
 	if err != nil {
 		return nil, err
@@ -283,7 +294,25 @@ func (r *Registry) bindScopeKind(ctx context.Context, role, requested, key strin
 	}
 	defer release()
 	var refused *linkRefusal
+	var linked string
+	var skipped *managementEdge
+	bid := bindingID(role, kind, key, endpoint.TaskID)
 	err = r.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
+		if kind == scopeManagement && key == endpoint.TaskID {
+			// A session registering its own seat (the key is its own thread) that already holds a
+			// management seat it took over by handover is answered with that seat: one task holds one
+			// supervisor seat, and the seat keeps the id it was first registered under.
+			held, found, err := l.oneString(ctx, "SELECT binding_id FROM scope_bindings WHERE task_id = ? AND role = ? AND scope_kind = ?"+
+				"  AND scope_key != ? AND status IN ('active','paused') AND superseded_by IS NULL ORDER BY revision DESC, binding_id LIMIT 1",
+				endpoint.TaskID, role, scopeManagement, key)
+			if err != nil {
+				return err
+			}
+			if found {
+				bid = held
+				return nil
+			}
+		}
 		plan, refusal, err := l.bindingPlanKind(ctx, role, kind, key, endpoint, "")
 		if err != nil {
 			return err
@@ -292,7 +321,31 @@ func (r *Registry) bindScopeKind(ctx context.Context, role, requested, key strin
 			refused = refusal
 			return l.recordConflict(ctx, refusal, now)
 		}
-		return l.applyBindingPlan(ctx, plan, status, now)
+		var edge *managementEdge
+		if (kind == scopeInitiative && role == roleSupervisor) || (kind == scopeProject && role == roleParent) {
+			if edge, refusal, err = l.managementEdgePlan(ctx, creator, kind, key, endpoint.TaskID); err != nil {
+				return err
+			}
+			if refusal != nil {
+				refused = refusal
+				return l.recordConflict(ctx, refusal, now)
+			}
+		}
+		if err := l.retireStoreSeat(ctx, kind, endpoint.TaskID, plan.id, now); err != nil {
+			return err
+		}
+		if err := l.applyBindingPlan(ctx, plan, status, now); err != nil {
+			return err
+		}
+		if edge != nil {
+			if edge.action == "skip" {
+				skipped = edge
+			} else {
+				linked = edge.id
+			}
+			return l.applyManagementEdge(ctx, edge, now)
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -300,7 +353,144 @@ func (r *Registry) bindScopeKind(ctx context.Context, role, requested, key strin
 	if refused != nil {
 		return nil, refused.err()
 	}
-	return l.binding(ctx, bindingID(role, kind, key, endpoint.TaskID))
+	record, err := l.binding(ctx, bid)
+	if err != nil || record == nil {
+		return record, err
+	}
+	if skipped != nil {
+		return append(copyObject(record), contract.Field{Key: "managementLinkSkipped", Value: skipped.warning()}), nil
+	}
+	if linked == "" {
+		return record, nil
+	}
+	link, err := r.Link(ctx, linked)
+	if err != nil {
+		return nil, err
+	}
+	return append(copyObject(record), contract.Field{Key: "managementLink", Value: link}), nil
+}
+
+// managementEdge is the execution edge a binding writes from its creator's management seat to the
+// scope it binds (a lead's initiative, CRW-1333, or a project owner's project, CRW-1314): its link id,
+// the seat and the two tasks, and what to do with the row (insert, repoint, present when it already
+// stands as it should, or skip when a legacy initiative edge stands above the project).
+type managementEdge struct {
+	id, action, seat, creator, kind, key, owner string
+	// standing, upper and detail are the legacy edge a skip leaves in place and why.
+	standing, upperKind, upperKey, upperTask, detail string
+}
+
+// warning is the managementLinkSkipped member of a binding's answer.
+func (e *managementEdge) warning() contract.OrderedObject {
+	return contract.OrderedObject{{Key: "reason", Value: string(contract.RefusalLinkConflict)}, {Key: "detail", Value: e.detail},
+		{Key: "standing", Value: e.standing}, {Key: "seat", Value: e.seat}, {Key: "creator", Value: e.creator}}
+}
+
+// managementEdgePlan decides the edge a binding of owner at kind/key writes: nil when the creator is
+// empty, is the owner itself, or holds no live management seat; a link_conflict refusal when another
+// management seat's live execution edge already stands above the scope; a skip when the scope is a
+// project a legacy initiative edge stands above.
+func (l linkage) managementEdgePlan(ctx context.Context, creator, kind, key, owner string) (*managementEdge, *linkRefusal, error) {
+	creator = strings.TrimSpace(creator)
+	if creator == "" || creator == owner {
+		return nil, nil, nil
+	}
+	seat, found, err := l.oneString(ctx, "SELECT scope_key FROM scope_bindings WHERE task_id = ? AND role = ? AND scope_kind = ?"+
+		"  AND status IN ('active','paused') AND superseded_by IS NULL ORDER BY revision DESC, binding_id LIMIT 1", creator, roleSupervisor, scopeManagement)
+	if err != nil || !found {
+		return nil, nil, err
+	}
+	if err := encodedID(linkExec, scopeManagement, seat, kind, key); err != nil {
+		return nil, nil, err
+	}
+	lid := linkID(linkExec, scopeManagement, seat, kind, key)
+	other, err := l.r.Store.One(ctx, "SELECT link_id, upper_kind, upper_key, upper_task_id FROM scope_links"+
+		"  WHERE lower_kind = ? AND lower_key = ? AND link_kind = ? AND link_id != ?"+
+		"    AND status IN ('active','paused') AND superseded_by IS NULL ORDER BY link_id LIMIT 1", kind, key, linkExec, lid)
+	if err != nil {
+		return nil, nil, err
+	}
+	article := "a "
+	if kind == scopeInitiative {
+		article = "an "
+	}
+	if other != nil {
+		holder, upperKind, upperKey, standing := colString(other, "upper_task_id"), colString(other, "upper_kind"), colString(other, "upper_key"), colString(other, "link_id")
+		under := kind + " " + pyvalue.StrRepr(key) + " is already under " + upperKind + " " + pyvalue.StrRepr(upperKey) + " (" + pyvalue.StrRepr(holder) + ", " + standing + ")"
+		if kind == scopeProject && upperKind == scopeInitiative {
+			// The legacy configuration: an initiative lead supervises the project. The binding is a
+			// reversible record, so it stands with a warning rather than being refused, and the lead
+			// stays the project's level above until that edge is taken down.
+			return &managementEdge{id: lid, action: "skip", seat: seat, creator: creator, kind: kind, key: key, owner: owner,
+				standing: standing, upperKind: upperKind, upperKey: upperKey, upperTask: holder,
+				detail: under + "; a project has one upward execution edge, so no management edge was written and the initiative lead stays the level above it"}, nil, nil
+		}
+		return nil, &linkRefusal{reason: contract.RefusalLinkConflict,
+			detail: under + "; " + article + kind + " has one upward execution edge, so another management session " +
+				"takes it only by the handover of that seat (linkage-handover --role supervisor --scope-kind management)",
+			scopeKind: kind, scopeKey: key, incumbent: holder, challenger: creator}, nil
+	}
+	edge := &managementEdge{id: lid, action: "insert", seat: seat, creator: creator, kind: kind, key: key, owner: owner}
+	row, err := l.r.Store.One(ctx, "SELECT status, upper_task_id, lower_task_id, superseded_by FROM scope_links WHERE link_id = ?", lid)
+	if err != nil {
+		return nil, nil, err
+	}
+	if row != nil {
+		edge.action = "repoint"
+		if isLive(colString(row, "status")) && colString(row, "superseded_by") == "" && colString(row, "upper_task_id") == creator && colString(row, "lower_task_id") == owner {
+			edge.action = "present"
+		}
+	}
+	return edge, nil, nil
+}
+
+// applyManagementEdge writes the edge managementEdgePlan decided. A skip is recorded once as a
+// management_link_skipped journal row: a replay of the same binding finds the row and adds none.
+func (l linkage) applyManagementEdge(ctx context.Context, edge *managementEdge, at string) error {
+	switch edge.action {
+	case "insert":
+		return l.insertLink(ctx, edge.id, linkExec, end{scopeManagement, edge.seat, edge.creator}, end{edge.kind, edge.key, edge.owner}, at)
+	case "repoint":
+		if _, err := l.q(ctx).ExecContext(ctx, "UPDATE scope_links SET status = ?, upper_task_id = ?, lower_task_id = ?, revision = revision + 1,"+
+			" superseded_by = NULL, updated_at = ? WHERE link_id = ?", Active, edge.creator, edge.owner, at, edge.id); err != nil {
+			return err
+		}
+		return journal(ctx, l.r.Store, "scope_link_repointed", edge.id, contract.OrderedObject{{Key: "upperTaskId", Value: edge.creator},
+			{Key: "lowerTaskId", Value: edge.owner}}, at)
+	case "skip":
+		detail := pyjson.Dumps(contract.OrderedObject{{Key: "seat", Value: edge.seat}, {Key: "creator", Value: edge.creator},
+			{Key: "scopeKind", Value: edge.kind}, {Key: "scopeKey", Value: edge.key}, {Key: "ownerTaskId", Value: edge.owner},
+			{Key: "standing", Value: edge.standing}, {Key: "standingUpperKind", Value: edge.upperKind}, {Key: "standingUpperKey", Value: edge.upperKey},
+			{Key: "standingUpperTaskId", Value: edge.upperTask}, {Key: "reason", Value: string(contract.RefusalLinkConflict)}, {Key: "detail", Value: edge.detail}}, pyjson.Options{})
+		_, found, err := l.oneString(ctx, "SELECT subject FROM journal WHERE kind = 'management_link_skipped' AND subject = ? AND detail = ? LIMIT 1", edge.id, detail)
+		if err != nil || found {
+			return err
+		}
+		return journal(ctx, l.r.Store, "management_link_skipped", edge.id, detail, at)
+	}
+	return nil
+}
+
+// retireStoreSeat lays down the store seat task holds when it takes a management seat (CRW-1333):
+// one task holds one supervisor seat, so the store seat is archived, superseded by the management
+// binding, and the move is journalled as scope_seat_moved. Any other kind, or a task holding no
+// store seat, changes nothing.
+func (l linkage) retireStoreSeat(ctx context.Context, kind, task, successor, at string) error {
+	if kind != scopeManagement {
+		return nil
+	}
+	held, found, err := l.oneString(ctx, "SELECT binding_id FROM scope_bindings WHERE task_id = ? AND role = ? AND scope_kind = ? AND scope_key = ?"+
+		"  AND status IN ('active','paused') AND superseded_by IS NULL", task, roleSupervisor, scopeStore, scopeStore)
+	if err != nil || !found {
+		return err
+	}
+	if _, err := l.q(ctx).ExecContext(ctx, "UPDATE scope_bindings SET status = ?, superseded_by = ?, updated_at = ? WHERE binding_id = ?",
+		statusArchived, successor, at, held); err != nil {
+		return err
+	}
+	return journal(ctx, l.r.Store, "scope_seat_moved", successor, contract.OrderedObject{{Key: "from", Value: held},
+		{Key: "fromScopeKind", Value: scopeStore}, {Key: "to", Value: successor}, {Key: "toScopeKind", Value: scopeManagement},
+		{Key: "taskId", Value: task}, {Key: "reason", Value: "one task holds one supervisor seat, so the store seat is laid down when the thread takes its management seat"}}, at)
 }
 
 func (l linkage) insertBinding(ctx context.Context, bid, role, kind, key string, endpoint Endpoint, status string, revision int64, at string, supersedes, note sql.NullString) error {
@@ -889,6 +1079,9 @@ func (r *Registry) HandoverScopeKind(ctx context.Context, role, requested, key, 
 			if err := r.closeSettledIn(ctx, rid, actor, now); err != nil {
 				return err
 			}
+		}
+		if err := l.retireStoreSeat(ctx, kind, endpoint.TaskID, newID, now); err != nil {
+			return err
 		}
 		q := l.q(ctx)
 		currentID := pyjson.Text(current.Get("bindingId"))

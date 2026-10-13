@@ -232,12 +232,13 @@ func checkScopeKind(scopeKind, what string) error {
 // checkDeclarer is Capacity._check_declarer: the declarer owns the scope it speaks for. The
 // store scope is the one no Linear level owns, so it takes the store-scope supervisor binding
 // alone: an initiative supervisor's seat speaks for that initiative, not for the store, and
-// cannot state a bound for it (CRW-773).
+// cannot state a bound for it (CRW-773). A management seat (CRW-1333) speaks for the store as the
+// store seat did: the thread that held the store seat lays it down when it takes its management seat.
 func (c *Capacity) checkDeclarer(ctx context.Context, scopeKind, scopeKey, actor string) error {
 	if scopeKind == scopeStore {
 		var task string
 		err := c.Store.Querier(ctx).QueryRowContext(ctx, "SELECT task_id FROM scope_bindings"+
-			"  WHERE task_id = ? AND role = 'supervisor' AND scope_kind = 'store'"+
+			"  WHERE task_id = ? AND role = 'supervisor' AND scope_kind IN ('store', 'management')"+
 			"    AND status IN ('active','paused') AND superseded_by IS NULL", actor).Scan(&task)
 		if noRows(err) {
 			return refuse(contract.RefusalScopeRoleMismatch, "task "+strconv.Quote(actor)+" holds no live store-scope supervisor binding, and the store"+

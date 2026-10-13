@@ -49,8 +49,14 @@ type Refusal struct {
 func (r Refusal) Error() string { return r.Detail }
 
 func (c *Channel) Resolve(ctx context.Context, relationshipID string) (Resolution, error) {
-	if key, ok := strings.CutPrefix(relationshipID, "project:"); ok {
+	if key, ok := strings.CutPrefix(relationshipID, prefixProject); ok {
 		return c.resolveNoticeProject(ctx, key)
+	}
+	if key, ok := strings.CutPrefix(relationshipID, prefixInitiative); ok {
+		return c.resolveInitiative(ctx, key)
+	}
+	if id, ok := strings.CutPrefix(relationshipID, prefixRun); ok {
+		return c.resolveRun(ctx, id)
 	}
 	reading, err := c.hierarchyReading(ctx, relationshipID)
 	if err != nil {
@@ -83,17 +89,20 @@ func (c *Channel) hierarchyReading(ctx context.Context, relationshipID string) (
 	return c.withStoreSeat(ctx, reading, "relationship "+pyvalue.StrRepr(relationshipID))
 }
 
-// withStoreSeat folds the store seat into a readable walk that named a project owner and no
-// initiative supervisor. The order is the decided one: the initiative execution owner first, the
-// store-scope supervisor second, and unregistered_scope when neither exists. A walk that names an
-// initiative supervisor, or whose project owner is missing, is handed back untouched, so a seat
-// that could not answer for a report the initiative owns never decides one.
+// withStoreSeat folds the store seat into a readable walk that named a project owner and no level
+// above it. The order is the decided one (CRW-1314 §2): the management seat whose execution edge
+// stands directly above the project first, the initiative execution owner (the legacy lead) second,
+// the store-scope supervisor third, and unregistered_scope when none exists. A walk that names an
+// initiative supervisor or a management level above the project, or whose project owner is missing,
+// is handed back untouched, so a seat that could not answer for a report the level above owns never
+// decides one; a management level whose seat has no live owner is resolveLevels' refusal, not a fold.
 func (c *Channel) withStoreSeat(ctx context.Context, reading map[string]any, where string) (map[string]any, error) {
 	if c.Store == nil || reading["readable"] != true {
 		return reading, nil
 	}
 	levels, _ := reading["levels"].([]any)
-	project, initiative := false, false
+	project, initiative, managed := false, false, false
+	previous := ""
 	for _, raw := range levels {
 		level, ok := raw.(map[string]any)
 		if !ok {
@@ -104,9 +113,12 @@ func (c *Channel) withStoreSeat(ctx context.Context, reading map[string]any, whe
 			project = levelOwner(level) != ""
 		case "initiative":
 			initiative = levelOwner(level) != ""
+		case scopeKindManagement:
+			managed = managed || previous == "project"
 		}
+		previous, _ = level["scopeKind"].(string)
 	}
-	if initiative || !project {
+	if initiative || managed || !project {
 		return reading, nil
 	}
 	held, err := (&registry.Registry{Store: c.Store}).StoreScopeSupervisor(ctx)
@@ -126,7 +138,9 @@ func (c *Channel) withStoreSeat(ctx context.Context, reading map[string]any, whe
 	seat := held[0]
 	folded := make([]any, 0, len(levels)+1)
 	folded = append(folded, levels...)
-	folded = append(folded, map[string]any{"scopeKind": seat.Get("scopeKind"), "scopeKey": seat.Get("scopeKey"),
+	// The level is the store's even when the seat is held through the management seat that took it
+	// over (CRW-1333): the walk records the fallback it took, and resolveLevels reads a store level.
+	folded = append(folded, map[string]any{"scopeKind": scopeKindStore, "scopeKey": scopeKindStore,
 		"owner": map[string]any{"taskId": seat.Get("taskId")}, "depth": len(levels)})
 	out := make(map[string]any, len(reading)+1)
 	for key, value := range reading {
@@ -158,13 +172,25 @@ func levelOwner(level map[string]any) string {
 	return ""
 }
 
+// resolveReading decides a report's sender and recipient from the walk above it. A management level
+// directly above the project (CRW-1314: the management session bound the project owner) is the
+// recipient of the project's reports. A management level above an initiative (CRW-1333) is not: in
+// that walk the initiative stands between, so the lead stays the recipient.
 func resolveReading(reading map[string]any, where string) (Resolution, error) {
-	refuse := func(reason, detail string) (Resolution, error) { return Resolution{}, Refusal{reason, detail} }
+	if err := settledReading(reading, where); err != nil {
+		return Resolution{}, err
+	}
+	return resolveLevels(reading, where, Resolution{Source: "linkage"})
+}
+
+// settledReading refuses a reading that cannot decide a recipient: unreadable, ambiguous, or
+// carrying a live contention (owner drift, competing parents, an instruction conflict).
+func settledReading(reading map[string]any, where string) error {
 	if reading["readable"] != true {
-		return refuse("relation_unreadable", "the linkage could not be read for "+where+", so who the level above is is unknown; nothing is staged and the obligation stays exactly where it was")
+		return Refusal{"relation_unreadable", "the linkage could not be read for " + where + ", so who the level above is is unknown; nothing is staged and the obligation stays exactly where it was"}
 	}
 	if reading["state"] == "ambiguous" {
-		return refuse("duplicate_scope_owner", "the linkage reports more than one candidate above "+where+"; this sender will not choose between them: "+pythonRepr(reading["contention"]))
+		return Refusal{"duplicate_scope_owner", "the linkage reports more than one candidate above " + where + "; this sender will not choose between them: " + pythonRepr(reading["contention"])}
 	}
 	if items, ok := reading["contention"].([]any); ok {
 		live := make([]any, 0, len(items))
@@ -184,11 +210,18 @@ func resolveReading(reading map[string]any, where string) (Resolution, error) {
 			if drift {
 				reason = "relation_owner_drift"
 			}
-			return refuse(reason, "the hierarchy above "+where+" is not settled: "+pythonRepr(live)+". A report waits for it to settle rather than being filed with whichever candidate happens to match")
+			return Refusal{reason, "the hierarchy above " + where + " is not settled: " + pythonRepr(live) + ". A report waits for it to settle rather than being filed with whichever candidate happens to match"}
 		}
 	}
-	result := Resolution{Source: "linkage"}
+	return nil
+}
+
+// resolveLevels is resolveReading after the reading was found settled.
+func resolveLevels(reading map[string]any, where string, result Resolution) (Resolution, error) {
+	refuse := func(reason, detail string) (Resolution, error) { return Resolution{}, Refusal{reason, detail} }
+	managedBy, managed := "", false
 	if levels, ok := reading["levels"].([]any); ok {
+		previous := ""
 		for _, v := range levels {
 			level, ok := v.(map[string]any)
 			if !ok {
@@ -196,11 +229,18 @@ func resolveReading(reading map[string]any, where string) (Resolution, error) {
 			}
 			owner := levelOwner(level)
 			key, _ := level["scopeKey"].(string)
-			switch level["scopeKind"] {
+			kind, _ := level["scopeKind"].(string)
+			switch kind {
 			case "project":
 				result.ProjectKey, result.Sender = key, owner
 			case "initiative":
 				result.InitiativeKey, result.Recipient, result.RecipientScopeKind = key, owner, scopeKindInitiative
+			case scopeKindManagement:
+				// Only the seat directly above the project; one above an initiative is the lead's.
+				if previous == "project" {
+					managedBy, managed = key, true
+					result.Recipient, result.InitiativeKey, result.RecipientScopeKind = owner, "", scopeKindManagement
+				}
 			case scopeKindStore:
 				// The seat is not an initiative's. A walk that named an initiative level nobody
 				// holds still records that level's key, so the key is cleared with the recipient:
@@ -209,11 +249,16 @@ func resolveReading(reading map[string]any, where string) (Resolution, error) {
 				// recipient moving.
 				result.Recipient, result.InitiativeKey, result.RecipientScopeKind = owner, "", scopeKindStore
 			}
+			previous = kind
 		}
 	}
 	gaps := pythonRepr(reading["gaps"])
 	if result.Sender == "" {
 		return refuse("unregistered_scope", where+" has no live project owner, so there is nobody whose report this would be; gaps "+gaps)
+	}
+	if result.Recipient == "" && managed {
+		return refuse("unregistered_scope", "the management seat "+pyvalue.StrRepr(managedBy)+" above the project of "+where+
+			" has no live owner, so there is nobody to tell; the obligation stays standing and waits for the seat's handover")
 	}
 	if result.Recipient == "" {
 		return refuse("unregistered_scope", "no initiative supervises the project above "+where+", so there is nobody to report to; gaps "+gaps+". The obligation stays standing, which is the difference between having nowhere to send a report and not owing one")
