@@ -130,7 +130,13 @@ thread) is answered with the seat it holds; one task holds one supervisor seat. 
 holds the store seat lays it down when it takes its management seat: the store binding is archived
 with `superseded_by` naming the management binding, and a `scope_seat_moved` journal row records
 the move, in the same transaction. A management seat speaks for the store scope as the store seat
-does (`limit-declare --scope-kind store`).
+does (`limit-declare --scope-kind store`). Every reader of the store seat reads a seat laid down
+this way through the management seat that took it over: with no live store binding, the store
+seat's holder is the live owner of the management seat that superseded the most recently archived
+store binding, so it follows that seat's handovers. A user-grade or delegated-management-grade
+`decision-answer`, the recipient of a `jun_decision_request` and the store-seat fallback of a
+report or a message nobody above receives all keep finding the manager after it registers. A store
+seat bound again afterwards is live and answers for itself.
 
 A lead (an initiative supervisor) registered by a thread that holds a live management seat gets the
 execution edge from that seat to its initiative in the same transaction: `linkage-bind --role

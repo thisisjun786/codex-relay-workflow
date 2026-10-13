@@ -66,6 +66,7 @@ func runReportUp(ctx context.Context, services dispatch.Services, args dispatch.
 		}
 	}
 	digest := "sha256:" + pyvalue.SHA256Hex(text)
+	reported := text
 	report := strings.TrimSpace(args.Text("id"))
 	if report == "" {
 		report = leadReportID(kind, initiative, subject, digest)
@@ -77,6 +78,23 @@ func runReportUp(ctx context.Context, services dispatch.Services, args dispatch.
 	}
 	defer closeChannel()
 	at := delivery.ISOOf(clockNow())
+	// Who reports is not refused (a message is reversible: warn and record). A caller that is not
+	// the initiative's lead is named in the message the management seat reads, recorded on the
+	// report row and warned in the answer; an unknown caller is recorded and warned.
+	var reporterIsLead any
+	warning := ""
+	if lead, err := c.Resolve(ctx, "initiative:"+initiative); err == nil {
+		switch {
+		case reportedBy == "":
+			warning = "the calling thread is unknown (CODEX_THREAD_ID is not set), so whether the initiative's lead " + pyvalue.StrRepr(lead.Sender) + " made this report is not known; it is sent in the lead's name and recorded without a reporter"
+		case reportedBy != lead.Sender:
+			reporterIsLead = false
+			warning = "the calling thread " + pyvalue.StrRepr(reportedBy) + " is not the initiative's lead " + pyvalue.StrRepr(lead.Sender) + "; the report is sent in the lead's name, and the message and the report row say who reported it"
+			text = "Reported by thread " + reportedBy + ", which is not the initiative's lead (" + lead.Sender + ").\n\n" + text
+		default:
+			reporterIsLead = true
+		}
+	}
 	message := supervisor.DirectMessage{Kind: kind, Relationship: "initiative:" + initiative, Subject: report, Summary: subject, Text: text, Evidence: evidence, At: at}
 	record := func(ctx context.Context, staged map[string]any) (bool, error) {
 		var one int
@@ -88,8 +106,8 @@ func runReportUp(ctx context.Context, services dispatch.Services, args dispatch.
 			return false, err
 		}
 		detail := contract.OrderedObject{{Key: "reportId", Value: report}, {Key: "kind", Value: kind}, {Key: "initiative", Value: initiative},
-			{Key: "subject", Value: subject}, {Key: "text", Value: text}, {Key: "bodyDigest", Value: digest}, {Key: "evidence", Value: anyStrings(evidence)},
-			{Key: "reportedBy", Value: nullableText(reportedBy)}, {Key: "messageId", Value: nullableText(pyvalue.Str(staged["messageId"]))},
+			{Key: "subject", Value: subject}, {Key: "text", Value: reported}, {Key: "bodyDigest", Value: digest}, {Key: "evidence", Value: anyStrings(evidence)},
+			{Key: "reportedBy", Value: nullableText(reportedBy)}, {Key: "reporterIsLead", Value: reporterIsLead}, {Key: "messageId", Value: nullableText(pyvalue.Str(staged["messageId"]))},
 			{Key: "recipient", Value: nullableText(pyvalue.Str(staged["recipient"]))}, {Key: "staged", Value: staged["messageId"] != nil}}
 		_, err = c.Store.Q(ctx).ExecContext(ctx, "INSERT INTO journal (at, kind, subject, detail) VALUES (?,?,?,?)", at, leadReportKind, report,
 			pyjson.Dumps(detail, pyjson.Options{}))
@@ -124,7 +142,10 @@ func runReportUp(ctx context.Context, services dispatch.Services, args dispatch.
 	out := contract.OrderedObject{{Key: "ok", Value: true}, {Key: "schema", Value: reportUpSchema}, {Key: "reportId", Value: report}, {Key: "kind", Value: kind},
 		{Key: "initiative", Value: initiative}, {Key: "replayed", Value: replayed}, {Key: "staged", Value: answer["staged"]},
 		{Key: "messageId", Value: answer["messageId"]}, {Key: "sender", Value: answer["sender"]}, {Key: "recipient", Value: answer["recipient"]},
-		{Key: "recipientScopeKind", Value: answer["recipientScopeKind"]}}
+		{Key: "recipientScopeKind", Value: answer["recipientScopeKind"]}, {Key: "reportedBy", Value: nullableText(reportedBy)}}
+	if warning != "" {
+		out = append(out, contract.Field{Key: "warning", Value: warning})
+	}
 	if reason, ok := answer["reason"].(string); ok {
 		out = append(out, contract.Field{Key: "reason", Value: reason})
 	}

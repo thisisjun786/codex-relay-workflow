@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -118,5 +119,52 @@ func TestReportUpWithNobodyAboveKeepsTheReport(t *testing.T) {
 	// The kinds are the lead's three; anything else is a parser refusal.
 	if got := goCLI(t, "--state", s.state, "report-up", "--initiative", "INI-1", "--kind", "blocked", "--text", "x"); got.code != 2 || got.stdout != "" {
 		t.Fatalf("--kind blocked: exit %d %q", got.code, got.stdout)
+	}
+}
+
+// TestReportUpByAnotherThreadIsStagedWithAWarningAndARecord: report-up does not refuse a caller that
+// is not the initiative's lead (a reversible message: warn and record, Jun's standing rule). The
+// answer warns, the report row records that the reporter is not the lead, and the message the
+// management seat reads says who reported it, so nobody takes it for the lead's own report.
+func TestReportUpByAnotherThreadIsStagedWithAWarningAndARecord(t *testing.T) {
+	s := newReportUpStore(t)
+	t.Setenv("CODEX_THREAD_ID", "")
+	s.must("linkage-bind", "--role", "supervisor", "--scope-kind", "management", "--scope", "01mgmtA", "--task", "01mgmtA", "--host", "host")
+	s.must("linkage-bind", "--role", "supervisor", "--scope", "INI-1", "--task", "01lead", "--host", "host", "--creator", "01mgmtA")
+	t.Setenv("CODEX_THREAD_ID", "01someone")
+	answer := s.must("report-up", "--initiative", "INI-1", "--kind", "lead_report", "--text", "the delivery scope is complete")
+	warning, _ := answer["warning"].(string)
+	if answer["ok"] != true || answer["staged"] != true || answer["sender"] != "01lead" || answer["reportedBy"] != "01someone" || warning == "" {
+		t.Fatalf("report-up by another thread answered %v, want it staged with a warning", answer)
+	}
+	journal := s.rows("SELECT detail FROM journal WHERE kind = 'lead_report'")
+	if len(journal) != 1 {
+		t.Fatalf("lead_report rows %v", journal)
+	}
+	var detail map[string]any
+	if err := json.Unmarshal([]byte(journal[0].Text("detail")), &detail); err != nil {
+		t.Fatal(err)
+	}
+	if detail["reportedBy"] != "01someone" || detail["reporterIsLead"] != false || detail["text"] != "the delivery scope is complete" {
+		t.Fatalf("lead_report detail %v, want the reporter recorded as not the lead", detail)
+	}
+	packets := s.rows("SELECT packet FROM supervisor_messages")
+	if len(packets) != 1 {
+		t.Fatalf("supervisor messages %v", packets)
+	}
+	var packet map[string]any
+	if err := json.Unmarshal([]byte(packets[0].Text("packet")), &packet); err != nil {
+		t.Fatal(err)
+	}
+	body, _ := packet["body"].(string)
+	if !strings.Contains(body, "01someone") || !strings.Contains(body, "not the initiative's lead") || !strings.Contains(body, "the delivery scope is complete") {
+		t.Fatalf("packet body %q, want it to name the reporter that is not the lead", body)
+	}
+
+	// The lead's own report carries no warning and records the reporter as the lead.
+	t.Setenv("CODEX_THREAD_ID", "01lead")
+	own := s.must("report-up", "--initiative", "INI-1", "--kind", "lead_report", "--text", "the next scope starts")
+	if _, warned := own["warning"]; warned || own["reportedBy"] != "01lead" {
+		t.Fatalf("the lead's own report answered %v", own)
 	}
 }
