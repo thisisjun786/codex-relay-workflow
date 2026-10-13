@@ -257,10 +257,7 @@ func writeDivergenceMode(ctx context.Context, cwd string, in ModeInput, wall tim
 	if in.Now != nil {
 		mode.UpdatedAt = in.Now()
 	}
-	if _, err := crwdir.EnsureDir(cwd); err != nil {
-		return DivergenceMode{}, err
-	}
-	if err := os.MkdirAll(divergenceDir(cwd), 0o777); err != nil {
+	if _, err := crwdir.EnsureSubdir(cwd, DivergenceDir); err != nil { // a link at .crw or the divergence directory is refused (CRW-475)
 		return DivergenceMode{}, err
 	}
 	dir, err := os.Open(divergenceDir(cwd))
@@ -275,6 +272,9 @@ func writeDivergenceMode(ctx context.Context, cwd string, in ModeInput, wall tim
 		return DivergenceMode{}, cerr
 	}
 	finalPath := modePath(cwd, in.SessionID)
+	if err := crwdir.NotLink(finalPath); err != nil { // a link at the mode file is neither read nor replaced (CRW-475)
+		return DivergenceMode{}, err
+	}
 	if info, err := os.Stat(finalPath); err == nil && !info.Mode().IsRegular() { // a FIFO would block the read below
 		return DivergenceMode{}, fmt.Errorf("%s is not a regular file", finalPath)
 	}
@@ -376,10 +376,7 @@ func RecordDivergenceCandidateContext(ctx context.Context, cwd string, in Candid
 	if in.Note != "" {
 		c.Note = &in.Note
 	}
-	if _, err := crwdir.EnsureDir(cwd); err != nil {
-		return DivergenceCandidate{}, err
-	}
-	if err := os.MkdirAll(divergenceDir(cwd), 0o777); err != nil {
+	if _, err := crwdir.EnsureSubdir(cwd, DivergenceDir); err != nil { // a link at .crw or the divergence directory is refused (CRW-475)
 		return DivergenceCandidate{}, err
 	}
 	return c, appendCandidateRow(ctx, candidatesPath(cwd), EncodeCandidate(c))
@@ -387,7 +384,7 @@ func RecordDivergenceCandidateContext(ctx context.Context, cwd string, in Candid
 
 // appendCandidateRow is appendRow with the archive opened without following a symbolic link (the oracle's append writes into the target
 // of one) and refused unless it is a regular file (the oracle writes to a FIFO that has a reader, which would block here); the
-// security fix. metrics.go's appendRow, which this repeats, still follows a link. Like it, the wait for the archive lock ends with ctx
+// security fix. metrics.go's appendRow, which this repeats, refuses a link too (CRW-475). Like it, the wait for the archive lock ends with ctx
 // and the context is read once more after the lock is taken, before the row is written (CRW-632).
 func appendCandidateRow(ctx context.Context, path, row string) error {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE|unix.O_NOFOLLOW|unix.O_NONBLOCK, 0o666)

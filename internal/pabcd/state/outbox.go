@@ -178,13 +178,11 @@ func encodeLedgerEvent(ev LedgerEvent) ([]byte, error) {
 }
 
 // writeLedgerEvent publishes ev's file whole: a temp file beside it, fsynced and renamed over it, then the directory fsynced, so a
-// crash leaves the previous file or the new one, never a torn one.
+// crash leaves the previous file or the new one, never a torn one. A symbolic link at .crw, at the sessions directory or at the
+// outbox is refused (crwdir.EnsureSubdir; CRW-475).
 func writeLedgerEvent(cwd string, ev LedgerEvent) error {
-	if err := makeSessionsDir(cwd); err != nil {
-		return err
-	}
 	dir := ledgerOutboxDir(cwd, ev.SessionID)
-	if err := os.MkdirAll(dir, 0o777); err != nil {
+	if _, err := crwdir.EnsureSubdir(cwd, SessionsSubdir, filepath.Base(dir)); err != nil {
 		return err
 	}
 	body, err := encodeLedgerEvent(ev)
@@ -215,9 +213,13 @@ func writeLedgerEvent(cwd string, ev LedgerEvent) error {
 }
 
 // PrepareLedgerEvent records ev as pending, durably, before the state publication it describes. The caller holds the session
-// lock. A failure leaves nothing pending, and the caller must not publish.
+// lock. A failure leaves nothing pending, and the caller must not publish. A refused link is left as it is, and nothing is removed
+// through it.
 func PrepareLedgerEvent(cwd string, ev LedgerEvent) error {
 	if err := writeLedgerEvent(cwd, ev); err != nil {
+		if errors.Is(err, crwdir.ErrLink) {
+			return err
+		}
 		_ = removeFile(ledgerEventPath(cwd, ev))
 		removeEmptyOutbox(cwd, ev.SessionID)
 		return err

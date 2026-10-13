@@ -82,45 +82,16 @@ func flockUntil(f *os.File, deadline time.Time) (bool, error) {
 
 func stateDir(cwd string) string { return filepath.Join(cwd, crwdir.DirName) }
 
-// ensureStateDir is crwdir.EnsureDir that also refuses a link or a file at cwd/.crw.
-func ensureStateDir(cwd string) (string, error) {
-	dir, err := crwdir.EnsureDir(cwd)
-	if err == nil {
-		err = requireDirectory(dir)
-	}
-	return dir, err
-}
-
-// ensureRecordDir creates cwd/.crw (with its .gitignore) and the directories below it named by parts, one by one, and refuses a
-// link or anything that is not a directory at each of them, so no record of this package is written through a link planted in
-// the state tree. It returns the deepest directory.
-func ensureRecordDir(cwd string, parts ...string) (string, error) {
-	dir, err := ensureStateDir(cwd)
-	if err != nil {
-		return "", err
-	}
-	for _, part := range parts {
-		dir = filepath.Join(dir, part)
-		if err := os.Mkdir(dir, 0o777); err != nil && !errors.Is(err, os.ErrExist) {
-			return "", err
-		}
-		if err := requireDirectory(dir); err != nil {
-			return "", err
-		}
-	}
-	return dir, nil
-}
-
 // existingRecordDir is the directory below cwd/.crw named by parts when every step is a real directory, without creating
 // anything. A missing step is fs.ErrNotExist; a link or a file at a step is an error of its own.
 func existingRecordDir(cwd string, parts ...string) (string, error) {
 	dir := stateDir(cwd)
-	if err := requireDirectory(dir); err != nil {
+	if err := crwdir.RequireDir(dir); err != nil {
 		return "", err
 	}
 	for _, part := range parts {
 		dir = filepath.Join(dir, part)
-		if err := requireDirectory(dir); err != nil {
+		if err := crwdir.RequireDir(dir); err != nil {
 			return "", err
 		}
 	}

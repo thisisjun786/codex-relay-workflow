@@ -265,8 +265,9 @@ func recordObjectiveMetric(ctx context.Context, cwd string, in RecordInput) (Rec
 // The wait for the lock ends with ctx (metricLockWait): the file is closed without a write and the error is ctx's own. A lock the
 // wait took only after a refused attempt and a lock the first non-blocking attempt took at once are both checked once more before
 // the write, so a cancellation that landed while the context was ending leaves no row.
+// A symbolic link at the ledger is refused, not followed (crwdir.OpenFile; CRW-475).
 func appendRow(ctx context.Context, path, row string) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o666)
+	f, err := crwdir.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o666)
 	if err != nil {
 		return err
 	}
@@ -349,10 +350,7 @@ func WriteObjectiveKindContext(ctx context.Context, cwd, sessionID string, kind 
 }
 
 func writeObjectiveKind(ctx context.Context, cwd, sessionID string, kind ObjectiveKind, now time.Time, rename func(tmp, finalPath string) error) error {
-	if _, err := crwdir.EnsureDir(cwd); err != nil {
-		return err
-	}
-	if err := os.MkdirAll(objectiveKindDir(cwd), 0o777); err != nil {
+	if _, err := crwdir.EnsureSubdir(cwd, ObjectiveKindDir); err != nil { // a link at .crw or the kind directory is refused (CRW-475)
 		return err
 	}
 	dir, err := os.Open(objectiveKindDir(cwd))
@@ -367,6 +365,9 @@ func writeObjectiveKind(ctx context.Context, cwd, sessionID string, kind Objecti
 		return cerr
 	}
 	finalPath := objectiveKindPath(cwd, sessionID)
+	if err := crwdir.NotLink(finalPath); err != nil { // a link at the kind file is neither read nor replaced (CRW-475)
+		return err
+	}
 	if info, err := os.Stat(finalPath); err == nil && !info.Mode().IsRegular() { // a FIFO would block the read below
 		return fmt.Errorf("%s is not a regular file", finalPath)
 	}
