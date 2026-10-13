@@ -31,7 +31,13 @@ func (c *Channel) render(p Packet, requestID, token string) string {
 	field := func(key string) any { return evidence.Item(region, key) }
 	text := func(key string) string { return pyvalue.Str(field(key)) }
 	header := "[codex-session-relay] supervisor report"
-	if layer := text("layer"); layer != "" {
+	layer := ""
+	if envelope, ok := evidence.Object(region); ok {
+		if value, present := envelope.Lookup("layer"); present {
+			layer = pyvalue.Str(value)
+		}
+	}
+	if layer != "" {
 		// A direct message's envelope names its layer and its sender's role (CRW-1333): the header
 		// says which layer the message is for and who sent it, rather than calling every message a
 		// supervisor report.
