@@ -356,12 +356,16 @@ findings:
 | --- | --- | --- |
 | `tracking_missing` | warning | the file has no `tracking` section; the message names the file and the section to add |
 | `tracking_invalid` | warning | the section is not an object, names an unknown `kind`, a `repo` that is not `OWNER/NAME`, a `github` kind without a repo or a `linear` kind with one; also reported in the `storage` entry of the plain `crw doctor` report and the preflight of `crw install`, which judge the spelling only |
-| `tracking_auth` | error | `kind` is `github` and `gh` is not installed or not signed in to github.com |
+| `tracking_auth` | error | `kind` is `github` and `gh` is not installed or not signed in to its host (`GH_HOST`, else github.com) |
 | `tracking_access` | error | `kind` is `github` and the repository is not found, not visible to the login, or its access could not be read |
 | `tracking_issues` | error | `kind` is `github` and Issues are off (`has_issues`), the login cannot read issues, the repository is archived, or the login cannot write issues (it needs triage or write permission) |
+| `tracking_permissions` | warning | `kind` is `github` and the repository answer carries no `permissions` at all, so whether issues can be read and written is not known; the message names the likely causes (a fine-grained personal access token, a GitHub app token, a token without the repo scope). It is recorded (`access.permissions_unreported`, both verdicts false) and is not a failure: `crw config check` exits 0 |
 
-For a `github` setting the check asks `gh` two read-only questions: `gh auth status --hostname github.com`
-and `gh api repos/OWNER/NAME`, a GET that reads the repository's `permissions`, `has_issues` and `archived`.
+For a `github` setting the check asks `gh` two read-only questions on one host, `GH_HOST` (trimmed) or github.com:
+`gh auth status --hostname HOST` and `gh api --hostname HOST repos/OWNER/NAME`, a GET that reads the repository's
+`permissions`, `has_issues` and `archived`. `gh auth status` exits non-zero when any login of the host is broken, even
+when the active one works, so a failed `auth status` decides only when the repository read does not prove a login
+(its answer carries no `permissions`, or it fails): a broken second login does not turn a working one into `tracking_auth`.
 It never passes a method, field or input flag, so it writes nothing to GitHub, and no gh output but a short
 error text (with anything that looks like a token removed) reaches the report. `crw doctor storage` runs
 the same check; the plain `crw doctor` report and `crw install` never call `gh`. The `tracking` entry of the
