@@ -103,6 +103,12 @@ func (m *Start) begin(ctx context.Context, raw []byte) (*startRun, error) {
 		return nil, refusal("relationship_conflict", "managed request id belongs to different input or selectors")
 	}
 	run.row = row
+	if row.RequestID == "" {
+		// A request already reserved is a replay, judged by the reservation's comparison alone.
+		if err := m.requireOwnerMarkerRoot(identity); err != nil {
+			return nil, err
+		}
+	}
 	run.physical, err = m.Store.Locate(ctx)
 	if err != nil {
 		return nil, err

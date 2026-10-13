@@ -14,6 +14,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 )
@@ -96,7 +97,7 @@ func Test28_ManagedStartRefusesAnUnboundProjectBeforeCreation(t *testing.T) {
 		t.Helper()
 		var stdout, stderr bytes.Buffer
 		cmd := exec.Command(suiteBinary, "relay", "--state", state, "--socket", host.SocketPath, "managed-start", "--request", string(raw), "--marker-root", marker)
-		cmd.Env = append(os.Environ(), "CODEX_SESSION_RELAY_SCOPE_DIR="+scope)
+		cmd.Env = append(os.Environ(), "CODEX_SESSION_RELAY_SCOPE_DIR="+scope, delivery.MarkerEnv+"="+marker)
 		cmd.Stdout, cmd.Stderr = &stdout, &stderr
 		code := 0
 		if err := cmd.Run(); err != nil {

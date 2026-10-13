@@ -660,24 +660,45 @@ func managedStopThread(stop, verdict Object) (string, bool) {
 // the request's spelling. journalRoot and the other hook settings are not request parameters;
 // the adapter journals in its own process. refused is the host detail for any other path.
 func ownerPaths(ownerState string, params Object) (root, db, refused string, err error) {
-	selected, err := delivery.ResolveMarkerRoot("")
+	ownRoot, err := OwnerMarkerRoot()
 	if err != nil {
 		return "", "", "", err
 	}
 	requested, present := params.Lookup("markerRoot")
-	if !namesOwnPath(requested, selected.Path) {
-		return "", "", "control.sock evaluates Stops only under this owner's marker root " + selected.Path + "; the request named " + requestedPath(requested, present), nil
+	if !namesOwnPath(requested, ownRoot) {
+		return "", "", MarkerRootRefusal(ownRoot, requestedPath(requested, present)), nil
 	}
 	own := filepath.Join(ownerState, "relay.sqlite3")
 	requested, present = params.Lookup("dbPath")
 	if !present || requested == nil {
-		return selected.Path, "", "", nil
+		return ownRoot, "", "", nil
 	}
 	if !namesOwnPath(requested, own) {
 		return "", "", "control.sock reads only this owner's store " + own + "; the request named " + requestedPath(requested, present), nil
 	}
-	return selected.Path, own, "", nil
+	return ownRoot, own, "", nil
 }
+
+// OwnerMarkerRoot is the marker root this owner judges Stops under: the root the relay resolves
+// without --marker-root (the environment, then the state home), the one the installer records as the
+// hook's markerRoot. The control socket and managed-start both ask it, so there is one rule.
+func OwnerMarkerRoot() (string, error) {
+	selected, err := delivery.ResolveMarkerRoot("")
+	if err != nil {
+		return "", err
+	}
+	return selected.Path, nil
+}
+
+// MarkerRootRefusal is the host detail for a marker root that is not the owner's: the owner's root and
+// the root that was named.
+func MarkerRootRefusal(ownRoot, named string) string {
+	return "control.sock evaluates Stops only under this owner's marker root " + ownRoot + "; the request named " + named
+}
+
+// NamesOwnerMarkerRoot is whether requested names the owner's marker root as the control socket judges
+// it: the same normalized spelling, or the same existing directory (symlinks followed).
+func NamesOwnerMarkerRoot(requested, ownRoot string) bool { return namesOwnPath(requested, ownRoot) }
 
 // namesOwnPath is control.py _names: only an absolute path names anything, by the same
 // normalized spelling or by being the same existing file.

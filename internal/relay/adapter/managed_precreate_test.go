@@ -14,6 +14,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -31,6 +32,8 @@ type managedCLI struct {
 	// parentPair, when set (parentOn), is the model and effort the app-server reports for the parent thread; unset, the parent runs the child's pair.
 	mu         sync.Mutex
 	parentPair []string
+	// ownerMarker, when set, is the marker root the relay resolves for itself (its environment); unset, it is marker.
+	ownerMarker string
 }
 
 func newManagedCLI(t *testing.T) *managedCLI {
@@ -140,7 +143,11 @@ func (c *managedCLI) start(raw []byte) (stdout, stderr string, code int) {
 	c.t.Helper()
 	var out, errOut bytes.Buffer
 	cmd := exec.Command(suiteBinary, "relay", "--state", c.state, "--socket", c.host.SocketPath, "managed-start", "--request", string(raw), "--marker-root", c.marker)
-	cmd.Env = append(os.Environ(), "CODEX_SESSION_RELAY_SCOPE_DIR="+c.scope)
+	owner := c.marker
+	if c.ownerMarker != "" {
+		owner = c.ownerMarker
+	}
+	cmd.Env = append(os.Environ(), "CODEX_SESSION_RELAY_SCOPE_DIR="+c.scope, delivery.MarkerEnv+"="+owner)
 	cmd.Stdout, cmd.Stderr = &out, &errOut
 	if err := cmd.Run(); err != nil {
 		var exit *exec.ExitError

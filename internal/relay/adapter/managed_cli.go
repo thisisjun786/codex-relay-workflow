@@ -10,6 +10,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/service"
@@ -54,7 +55,11 @@ func (f hostFactory) managedStart(ctx context.Context, services dispatch.Service
 	}
 	defer func() { err = errors.Join(err, s.Close()) }()
 	marker, _ := args.String("marker-root")
-	engine := managed.Start{Store: s, Adapter: Managed{a}, Socket: services.SocketPath, MarkerRoot: marker, StateSelector: services.Selection.Path, Readiness: readiness}
+	owner, err := hook.OwnerMarkerRoot()
+	if err != nil {
+		return nil, err
+	}
+	engine := managed.Start{Store: s, Adapter: Managed{a}, Socket: services.SocketPath, MarkerRoot: marker, OwnerMarkerRoot: owner, StateSelector: services.Selection.Path, Readiness: readiness}
 	if delivery.CommandClock != nil {
 		engine.Now = delivery.CommandClock.ISO
 	}
