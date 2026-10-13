@@ -115,6 +115,15 @@ test("TestRunsPageRendersTree", async () => {
   assert.match(html, /following the run/);
 });
 
+test("TestCRW1320_RunsPageOffersNoControlOnABlockedRun: blocked is over, as crw flow pause and cancel refuse it", async () => {
+  const { RunsScreen } = await loadScreen();
+  assert.equal(isOver("blocked"), true);
+  const blocked = detail({ state: "blocked", live: false, recovery_holds: 0, waiting: 0 });
+  assert.deepEqual(controlsFor(blocked), { pause: false, cancel: false });
+  const html = renderToStaticMarkup(React.createElement(RunsScreen, { runs: [blocked], unknown: null, selected: "run-a1", detail: blocked, error: null, following: false, handlers }));
+  assert.match(html, /<button[^>]*disabled=""[^>]*>Cancel/);
+});
+
 test("TestRunsPageRendersTree: controls follow the run's state, and a store that cannot be read shows its reason", async () => {
   const { RunsScreen } = await loadScreen();
   const live = renderToStaticMarkup(React.createElement(RunsScreen, { runs: [info()], unknown: null, selected: "run-a1", detail: detail(), error: null, following: false, handlers }));
