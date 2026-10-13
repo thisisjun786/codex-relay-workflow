@@ -91,9 +91,14 @@ func (c *command) printDetail(d RunDetail) {
 	w := c.stdout
 	fmt.Fprintf(w, "run %s  %s  %s\n", d.RunID, d.Workflow, d.State)
 	fmt.Fprintf(w, "owner %s  plan %s@%d  started %s ago  tokens %d  calls %d\n", cell(d.Owner), cell(d.PlanID), d.PlanRevision, c.since(d.StartedAt), d.Tokens, d.Calls)
-	if d.PolicyPath == "" {
+	switch {
+	case d.PolicyPath == "" && d.PolicyUnrecorded && d.PolicyDigest != "":
+		fmt.Fprintln(w, "policy file not recorded  digest "+d.PolicyDigest+" (this run started before the policy file was journaled)")
+	case d.PolicyPath == "" && d.PolicyUnrecorded:
+		fmt.Fprintln(w, "policy not recorded (this run started before the policy file was journaled)")
+	case d.PolicyPath == "":
 		fmt.Fprintln(w, "policy none (placeholder table, no execution policy file)")
-	} else {
+	default:
 		line := "policy " + d.PolicyPath + "  digest " + d.PolicyDigest
 		if d.PolicyRepinnedFrom != "" {
 			line += "  repinned from " + d.PolicyRepinnedFrom

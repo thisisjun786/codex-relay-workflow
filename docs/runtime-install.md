@@ -1045,7 +1045,12 @@ nothing. `roleModels.catalogue` names the catalogue that was read (`state`, `sou
 `listed` true or false, and `roleModels.warnings` holds one line for each model no catalogue lists, so a role
 that points at a model the provider does not serve is seen before a spawn on it fails. No catalogue is read
 while no role names a model, and a catalogue that could not be read (OCX not running, an OCX without the
-live command) lists nothing and condemns nothing: its state is recorded and `listed` is null. A warning
+live command) lists nothing and condemns nothing: its state is recorded and `listed` is null. A native
+catalogue the role helper would not accept as authoritative (`role.CatalogAuthority`: the file is older than
+24 hours, is missing, or is dated after the clock) lists models but proves none absent, so it warns of
+nothing either: `roleModels.catalogue` records `authoritative` false and the reason in `freshness`
+(`native-stale`, `native-missing`, ...), a listed model is `listed` true and an unlisted one `listed` null.
+A fresh native catalogue and OCX's live one (`freshness` `authoritative`) still warn. A warning
 changes no exit status and blocks nothing.
 
 None of them takes a lock across the whole reading, so a host changing underneath is described in
@@ -1328,8 +1333,13 @@ record names, it adds a warning to the session's context at every start and resu
 policy path, the two digests (shortened) and the command that repairs it, `crw install register-mcp
 --re-register-policy --execution-policy <path>`, and points to the policy editor (`crw gui`), whose
 write edits the file and re-registers it in one operation, so an edit made there leaves no disagreement.
-The warning records and blocks nothing: the session starts, without the bridge's tools until the record is
-re-registered. A host with no bridge record, a record of another shape, or a policy file that cannot be read
+The Codex home is `CODEX_HOME` trimmed (a blank one is unset), else `.codex` below the user's home, as the
+installer reads it, and the path in the command is quoted as one shell word. The launcher also refuses to
+start under a `CODEX_THREAD_BRIDGE_EXECUTION_POLICY` or `CODEX_THREAD_BRIDGE_EXECUTION_POLICY_DIGEST` that names
+another policy or digest than the record, whatever the file holds (`internal/pluginwiring`, the comparison
+the launcher makes); the hook compares them with the same code and, before it looks at the file, says that
+variable and the way out: unset it, or register the file it names. The warning records and blocks nothing:
+the session starts, without the bridge's tools until the record is re-registered. A host with no bridge record, a record of another shape, or a policy file that cannot be read
 for another reason (the doctor judges those) gets no warning.
 
 A created record is reported only after the policy file has been hashed again, following the write,
