@@ -7,6 +7,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"os"
+	"path/filepath"
 )
 
 // UpwardFactory is journal.UpwardFactory of the shipped binary: the run hands the plan summary, its escalations and its completion digest
@@ -15,7 +16,13 @@ import (
 //
 // state and socket are the relay the run's store was selected by: the notices name it, so the pump and `crw manage send-parent` work on
 // that store and not on the one the manage configuration names.
+//
+// A run that finished completed and started no node (Blocked, the reading `crw flow show` prints) is reported to the initiative lead as
+// project_blocked, through the writer `crw flow report-up` and the milestone report work through.
 func UpwardFactory(st *store.Store, j *journal.Journal, runID, state, socket string) engine.UpwardHook {
 	program, _ := os.Executable()
-	return &report.RunHook{Store: st, Sched: &dagsched.Scheduler{Store: st}, Journal: j, Rows: report.JournalAppender{Journal: j, RunID: runID, Store: st}, Sender: report.ManageSender{Program: program, State: state, Socket: socket}, Run: runID}
+	rows := report.JournalAppender{Journal: j, RunID: runID, Store: st}
+	sender := report.ManageSender{Program: program, State: state, Socket: socket}
+	reports := &report.Writer{Store: st, Rows: rows, Resolver: report.StoreResolver{Store: st}, Sender: sender, ArtifactDir: filepath.Join(state, "flow", runID, "reports")}
+	return &report.RunHook{Store: st, Sched: &dagsched.Scheduler{Store: st}, Journal: j, Rows: rows, Sender: sender, Run: runID, Reports: reports, Blocked: Blocked}
 }
