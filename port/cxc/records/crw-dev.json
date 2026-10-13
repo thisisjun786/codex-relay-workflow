@@ -574,8 +574,17 @@
     },
     {
       "file": "references/skill-ownership.md",
-      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed CRW-1340: the synchronous Interview is retired with crw-interview; the async-questions row points at crw-define, which owns the questions settled before registration, instead of a separate Interview.",
       "hunks": [
+        {
+          "line": 14,
+          "old": [
+            "| Mid-work async user questions | `dev/references/async-questions.md` | `dev` §0, `loop`, structure 60; Interview remains separate |\n"
+          ],
+          "new": [
+            "| Mid-work async user questions | `dev/references/async-questions.md` | `dev` §0, `loop`, structure 60; questions before registration are `crw-define`'s |\n"
+          ]
+        },
         {
           "line": 31,
           "old": [

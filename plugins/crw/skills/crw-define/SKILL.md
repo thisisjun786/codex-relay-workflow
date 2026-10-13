@@ -41,8 +41,11 @@ lifts it as a decision request to the session above the project session
 
 ## Define the milestone
 
-Write the definition in the milestone's description and carry the part each issue needs
-into that issue. Keep a compact definition with:
+The definition is written in the milestone's description and the part each issue needs
+is carried into that issue. Until the milestone is registered there is no description to
+write: the definition is a draft returned to the caller, and crw-plan creates the
+milestone with it as its description. An existing milestone gets the definition in its
+own description. Keep a compact definition with:
 
 - The original idea, problem or opportunity, and why it matters.
 - The desired change and who benefits.
@@ -94,8 +97,10 @@ product demand. Real-use evaluation remains separate.
 ## Apply and hand off
 
 Advice, exploration and draft-only requests produce a proposal without Linear
-writes. A request to define/create/update the milestone in Linear covers that
+writes. A request to define or update an existing milestone in Linear covers that
 milestone's description, not automatic issues, projects or a separate definition document.
+A milestone that does not exist yet is not created here: a request to create it continues
+to crw-plan with the draft definition as the milestone's description.
 Create supporting documents only when the requested scope covers that detail.
 Respect an already accepted broader write request without asking at every level.
 Read current state before writing, preserve unrelated content and history, and

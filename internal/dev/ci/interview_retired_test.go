@@ -86,6 +86,21 @@ func TestDefineRegistersMilestonesAndIssues(t *testing.T) {
 	if strings.Contains(body, "crw-interview") {
 		t.Error("crw-define still links crw-interview")
 	}
+	// Post-evaluation d1: the step runs before the milestone exists, so the skill says where the
+	// definition lives until then and who creates the milestone.
+	for _, want := range []string{
+		"the definition is a draft returned to the caller",
+		"crw-plan creates the milestone with it as its description",
+		"A milestone that does not exist yet is not created here",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("crw-define does not say where a not yet registered milestone's definition lives: lacks %q", want)
+		}
+	}
+	// Post-evaluation d2: no ownership row points at a separate Interview owner.
+	if owners := flat(splitRead(t, "plugins/crw/skills/crw-dev/references/skill-ownership.md")); strings.Contains(owners, "Interview remains separate") {
+		t.Error("skill-ownership.md still points at a separate Interview owner")
+	}
 }
 
 func TestDefaultFlowRaisesDecisionRequests(t *testing.T) {
