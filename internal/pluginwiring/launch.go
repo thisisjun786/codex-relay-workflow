@@ -122,6 +122,27 @@ func inherited(env map[string]string, name string) (string, bool) {
 	return value, value != ""
 }
 
+// LauncherOverride is a variable the launcher inherits that names another policy than the record: the launcher refuses to start
+// the bridge under it, whatever the policy file's bytes are.
+type LauncherOverride struct {
+	// Variable is execution.EnvPolicy or execution.EnvDigest, empty when neither conflicts with the record.
+	Variable string
+	// Named is the value the variable carries, stripped as the bridge strips it.
+	Named string
+}
+
+// launcherOverride is policyEnvironment's two comparisons of the inherited variables with the record: the policy path (encoded as
+// open and exec use it) and then the digest, in that order.
+func launcherOverride(env map[string]string, encodedPath, digest string) LauncherOverride {
+	if named, set := inherited(env, execution.EnvPolicy); set && canonical(named) != canonical(encodedPath) {
+		return LauncherOverride{Variable: execution.EnvPolicy, Named: named}
+	}
+	if expected, set := inherited(env, execution.EnvDigest); set && expected != digest {
+		return LauncherOverride{Variable: execution.EnvDigest, Named: expected}
+	}
+	return LauncherOverride{}
+}
+
 func canonical(path string) string {
 	resolved, err := store.CanonicalSocket(path)
 	if err != nil {
@@ -142,15 +163,17 @@ func policyEnvironment(env map[string]string, record string, reference any) (str
 	// What open and exec use: the path's bytes, a surrogate-escaped byte (as the Python installer
 	// recorded one) that byte again.
 	encoded, _ := pyvalue.FSEncode(path)
-	if named, set := inherited(env, execution.EnvPolicy); set && canonical(named) != canonical(encoded) {
-		return "", "", fail("the record at " + record + " names the execution policy " + strconv.Quote(path) +
-			" and this process was started with " + execution.EnvPolicy + "=" + strconv.Quote(named) +
-			". Unset the variable, or register the other file")
-	}
-	if expected, set := inherited(env, execution.EnvDigest); set && expected != digest {
-		return "", "", fail("the record at " + record + " names the policy digest " + digest +
-			" and this process was started with " + execution.EnvDigest + "=" + expected +
-			". Unset the variable, or register the policy it names")
+	if override := launcherOverride(env, encoded, digest); override.Variable != "" {
+		switch override.Variable {
+		case execution.EnvPolicy:
+			return "", "", fail("the record at " + record + " names the execution policy " + strconv.Quote(path) +
+				" and this process was started with " + execution.EnvPolicy + "=" + strconv.Quote(override.Named) +
+				". Unset the variable, or register the other file")
+		default:
+			return "", "", fail("the record at " + record + " names the policy digest " + digest +
+				" and this process was started with " + execution.EnvDigest + "=" + override.Named +
+				". Unset the variable, or register the policy it names")
+		}
 	}
 	actual, _, err := PolicyDigest(path)
 	if errors.Is(err, ErrNotRegular) {
