@@ -358,7 +358,9 @@ everywhere a role question is asked before the file is edited.
 ### One policy snapshot per run
 
 A `crw flow run` process reads the file once when it starts and records its path and digest in the run record
-(`flow_runs`). A run keeps its snapshot: editing the file changes nothing for a run in progress. The `agent-roles`
+(`flow_runs`). `crw flow show RUN` prints the path and digest the run holds on a `policy` line (and `policy_path` and
+`policy_digest` in `--json`), the latest of its start and any `policy_repinned` event, with the digest a repin
+replaced; a run on the placeholder table, which reads no file, prints `policy none`. A run keeps its snapshot: editing the file changes nothing for a run in progress. The `agent-roles`
 section changes the digest like any other edit, so adding or changing a pair follows "Adding a pair to a role"
 (restart the relay daemon, replace the bridge processes, read the digest back with `get_capabilities` and
 `relay doctor`). A run process that resumes a run and reads another digest writes a `policy_repinned` event with
