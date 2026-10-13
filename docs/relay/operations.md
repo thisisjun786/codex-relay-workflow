@@ -117,14 +117,12 @@ The bridge's `report_child` tool is the route for a child created outside those 
 without the `child` role, or one created outside the bridge). The bridge runs outside the child's
 sandbox, so it connects to `control.sock` where the child cannot: the tool takes `command` (`emit`,
 `intent-claim` or `intent-disposition`) and the command's `arguments`, forwards them with the client a
-child's own command uses (`hook.ForwardChild`) and answers the daemon's output; a nonzero exit is an
-error result carrying the daemon's answer. It is the same daemon and the same checks as a direct
-report: the daemon alone decides where the record goes. The bridge finds the daemon from its own
-configuration, the App Server socket it was started with (scoped as `relay --socket` scopes it) and
-the relay state of its own environment (`CODEX_SESSION_RELAY_STATE` or the configured root); no tool
-argument and nothing of the child's argv, environment or working directory takes part. A bridge whose
-state has no daemon answers `relay daemon unavailable; child report was not submitted`, opens no store
-and records nothing; the tool is not a fallback of the child's own command.
+child's own command uses (`hook.ForwardChild`) and answers the daemon's output (a nonzero exit is an
+error result carrying the daemon's answer). The daemon alone decides where the record goes: the bridge
+finds it from its own configuration, the App Server socket it was started with and the relay state of
+its own environment, and nothing the call, the child's argv or its environment says takes part. With
+no daemon the tool answers `relay daemon unavailable; child report was not submitted`, opens no store
+and records nothing; it is not a fallback of the child's own command.
 
 Status: implemented in source. Installation and live delivery are separate operations.
 
