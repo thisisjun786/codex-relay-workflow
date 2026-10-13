@@ -13,9 +13,9 @@ the standing obligation of a relationship child and the fault notice ([superviso
 | a run that stopped writing | nobody | the manager thread | the pump | | `run_dead` |
 | the plan summary that is owed | the run, `crw flow apply` | the orchestrator thread | `crw manage send-parent` | `summary_document`, `summary_notice`, `summary_notice_settled` | |
 | the receipt of an oversized issue | the child | the orchestrator | relay delivery, then `crw flow apply` | `apply_applied`, `apply_refused`, `apply_override` | |
-| a milestone report | the run | the initiative lead | `crw flow report-up` through `send-parent --role supervisor` | `report`, `report_delivery`, `report_read` | `report_undelivered`, `report_unread` |
-| a project-level blocker or decision request | the orchestrator | the initiative lead | `crw flow report-up` | `report`, `report_delivery`, `report_read` | `report_undelivered`, `report_unread` |
-| a decision only Jun can make | the orchestrator | the store seat, then the manager | `crw flow report-up` | `report` | `jun_decision` |
+| a milestone report | the run | the management session above the project (else the initiative lead) | `crw flow report-up` through `send-parent --role supervisor` | `report`, `report_delivery`, `report_read` | `report_undelivered`, `report_unread` |
+| a project-level blocker or decision request | the orchestrator | the management session above the project (else the initiative lead) | `crw flow report-up` | `report`, `report_delivery`, `report_read` | `report_undelivered`, `report_unread` |
+| a decision only Jun can make | the orchestrator | the management session above the project (else the store seat, then the manager) | `crw flow report-up` | `report` | `jun_decision` |
 
 ## Escalations and the completion digest
 
@@ -140,14 +140,19 @@ report keeps the id its row records. The delivery follows as a `report_delivery`
 of the thread and the reason). A report whose row exists is not delivered again once a delivery row says `accepted`, `queued` or
 `refused`; an `unknown` delivery is asked again under the same logical id.
 
-**The recipient** is found when the report is made, by the supervisor package's linkage walk, read-only and with no new row: the live
-parent of the project, the initiative above it, the live supervisor of that initiative. A handover between two reports sends the second
-to the new lead. When no initiative supervises the project, when the walk can only name the store seat (a seat is not an initiative lead
-and is never sent a report through the bridge), or when the linkage cannot be read or is contested, the report stays standing: it has a
-row and no delivery, and `crw flow reports --unread` and the pump (below) show it. A `jun_decision_request` is addressed to the store seat
-and is never delivered through the bridge. A manager that registered its management seat (`crw manage supervisor register`) laid its store
-seat down, and the store seat is then read through that management seat ([linkage](../relay/linkage.md#management-seats)), so the
-report still names the manager's thread.
+**The recipient** is found when the report is made, by the supervisor package's linkage walk, read-only and with no new row, in the
+order [the supervisor channel](../relay/supervisor-channel.md#the-level-above-a-project) uses for a project: the owner of the management
+seat directly above the project's live parent (`recipient_state` `management`: the management session bound the project owner, see
+[linkage](../relay/linkage.md#management-seats)), else the live supervisor of the initiative above it (`initiative`, the legacy lead), else
+the single store seat (`store`, with its thread). A handover between two reports sends the second to the new owner. A report to the
+management session or to a lead is delivered; a report the store seat holds is not sent through the bridge, and when nobody stands above
+the project, when the management seat above it has no live owner, or when the linkage cannot be read or is contested, the report stays
+standing: it has a row and no delivery, and `crw flow reports --unread` and the pump (below) show it. A `jun_decision_request` goes to the
+same management session when one stands above the project, and is delivered; otherwise it is addressed to the store seat, as it always
+was, and is never delivered through the bridge (a lead does not decide for Jun). A manager that registered its management seat (`crw
+manage supervisor register`) laid its store seat down, and the store seat is then read through that management seat
+([linkage](../relay/linkage.md#management-seats)), so the report still names the manager's thread. The notice of a report with no
+initiative names `crw flow reports --unread`.
 
 **The delivery** is `crw manage send-parent --role supervisor --thread <initiative lead's thread> --logical-id <run>:<milestone>:report
 --report <report id> --initiative <initiative>`. The role is an option of `crw manage`, not of the relay; the default role (parent) is not
@@ -192,7 +197,7 @@ All of these are rows of `flow_events` (`kind` is the first column of the table,
 
 | kind | members |
 | --- | --- |
-| `report` | `report_id`, `report_kind`, `run`, `milestone`, `subject`, `plan`, `body_digest`, `body_path`, `logical_id`, `recipient_state` (`initiative`, `store`, `unregistered_scope`, `unreadable`), `recipient_thread`, `recipient_initiative`, `recipient_project`, `recipient_reason`, `recipient_detail` |
+| `report` | `report_id`, `report_kind`, `run`, `milestone`, `subject`, `plan`, `body_digest`, `body_path`, `logical_id`, `recipient_state` (`management`, `initiative`, `store`, `unregistered_scope`, `unreadable`), `recipient_thread`, `recipient_initiative`, `recipient_project`, `recipient_reason`, `recipient_detail` |
 | `report_delivery` | `report_id`, `result`, `request_id`, `observation`, `reason`, `logical_id` |
 | `report_read` | `report_id`, `turn` |
 | `summary_document` | `document` |

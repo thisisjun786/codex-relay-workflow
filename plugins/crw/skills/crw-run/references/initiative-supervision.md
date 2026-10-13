@@ -22,6 +22,10 @@ only its conflict row. A supervisor whose own level is not an initiative can hol
 (`linkage-bind --role supervisor --scope-kind store --scope store`), which is what a session that manages the store holds
 rather than one tied to a single initiative's execution. `crw manage supervisor register` gives the calling management session
 its own management seat instead and lays down a store seat it held; the store seat is then read through that management seat.
+A management session that binds a project owner itself (`linkage-bind --role parent --scope <project> --task <owner> --host ...
+--creator <its own thread>`, the creator by default `CODEX_THREAD_ID`) records the management -> project edge in the same
+transaction, and the project's upward messages and `crw flow report-up` reports then go to that session; a project an initiative
+lead already supervises keeps its lead, and the answer says so under `managementLinkSkipped`.
 
 Keep four facts apart, because they are separate. This repository's source implements those commands and its tests pin them; an
 installed runtime may be older than that source; a task may or may not be currently registered for a scope; and an actual
