@@ -224,6 +224,54 @@ func TestStartFirstRunOfANewThreadStartsWithWarnings(t *testing.T) {
 	}
 }
 
+// TestStartWarnsWhenThePlanKeyIsNotTheThreadsBinding (CRW-1317): before the run process (and so before any role call) starts, the
+// plan's project key is compared with the scope keys of the owner thread's live parent bindings. A key the thread holds no binding
+// of is a warning that names both keys, printed and recorded in the run's spec, and the run starts; a key the thread is bound to
+// prints nothing.
+func TestStartWarnsWhenThePlanKeyIsNotTheThreadsBinding(t *testing.T) {
+	w := newWorld(t)
+	td := w.deps()
+	at := td.Now().Format("2006-01-02T15:04:05.000000000Z07:00")
+	for _, q := range []string{
+		`INSERT INTO dag_plans (plan_id, project_key, created_by_task_id, created_at) VALUES ('plan-1','P-CRW-140','thread-owner','` + at + `')`,
+		`INSERT INTO scope_bindings (binding_id, role, scope_kind, scope_key, task_id, host_id, status, revision, created_at, updated_at) VALUES ('b1','parent','project','3b46bc6e-uuid','thread-owner','h','active',1,'` + at + `','` + at + `')`,
+	} {
+		if _, err := w.st.DB.ExecContext(ctx, q); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+	}
+	lane := []string{"--args", `{"plan":"plan-1","milestone":"M1"}`, "--handoff", defaultHandoff(t)}
+	code, out, errOut := td.do(append([]string{"start", "project-lane", "--thread", "thread-owner", "--state", w.state}, lane...)...)
+	if code != 0 || len(td.spawned) != 1 {
+		t.Fatalf("a plan under another key: exit %d, %d processes\n%s%s", code, len(td.spawned), out, errOut)
+	}
+	pre, _, _ := strings.Cut(out, "<<spawned>>")
+	if !strings.Contains(pre, "warn  "+FactProjectKey) || !strings.Contains(pre, "P-CRW-140") || !strings.Contains(pre, "3b46bc6e-uuid") {
+		t.Errorf("the warning before the run process starts names both keys:\n%s", pre)
+	}
+	if !strings.Contains(errOut, FactProjectKey+" warn") {
+		t.Errorf("stderr: %s", errOut)
+	}
+	var recorded *Fact
+	for _, f := range td.spawned[0].Spec.Preflight {
+		if f.Name == FactProjectKey {
+			recorded = &f
+		}
+	}
+	if recorded == nil || recorded.Level != LevelWarn || !strings.Contains(recorded.Reading, "P-CRW-140") || !strings.Contains(recorded.Reading, "3b46bc6e-uuid") || recorded.Reason == "" {
+		t.Errorf("the spec records the key warning: %+v", td.spawned[0].Spec.Preflight)
+	}
+
+	// the thread bound to the plan's key: nothing is printed of the comparison
+	if _, err := w.st.DB.ExecContext(ctx, `UPDATE scope_bindings SET scope_key = 'P-CRW-140' WHERE binding_id = 'b1'`); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut = td.do(append([]string{"start", "project-lane", "--thread", "thread-owner", "--state", w.state}, lane...)...)
+	if code != 0 || len(td.spawned) != 2 || strings.Contains(out, FactProjectKey) || strings.Contains(errOut, FactProjectKey) || len(td.spawned[1].Spec.Preflight) != 0 {
+		t.Errorf("a plan under the thread's key: exit %d\n%s%s %+v", code, out, errOut, td.spawned[1].Spec.Preflight)
+	}
+}
+
 func factNames(facts []Fact) string {
 	var out []string
 	for _, f := range facts {

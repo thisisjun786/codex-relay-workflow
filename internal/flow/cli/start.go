@@ -14,6 +14,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/workflows"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 )
 
 // PreviewNode is a node a run will work on.
@@ -249,6 +250,12 @@ func (c *command) start(args []string) int {
 			plan.Facts = append(plan.Facts, f.leveled())
 		}
 	}
+	// the plan's project key against the owner thread's parent bindings, before the run process and so before any role call
+	if rerr == nil {
+		if f, ok := projectKeyFact(c.ctx, r, planOf(spec.Args), spec.Thread); ok {
+			plan.Facts = append(plan.Facts, f)
+		}
+	}
 	// the facts that did not pass are printed with the preview and recorded in the run's spec; none of them stops the start
 	var short []Fact
 	var shortNames []string
@@ -332,6 +339,36 @@ func (c *command) start(args []string) int {
 	fmt.Fprintf(c.stdout, "run %s started (process %d)\n", spec.RunID, pid)
 	fmt.Fprintf(c.stdout, "follow it: crw flow watch %s --follow    look at it: crw flow show %s\n", spec.RunID, spec.RunID)
 	return 0
+}
+
+// projectKeyFact compares the project key of the plan the run's arguments name with the scope keys of the live parent bindings of
+// the owner thread (CRW-1317). The key a plan is put under is the scope_key of the orchestrator's parent binding (the project's UUID),
+// and a plan put under another key (a Linear identifier such as P-CRW-140) is refused only at the run's first claim
+// (scope_role_mismatch), after the design calls have spent their tokens. A key the thread is bound to answers no fact (nothing is
+// printed); another key is a warning naming both, which the start prints and records and does not refuse. A plan with no revision in
+// the store has no key to compare and answers none either.
+func projectKeyFact(ctx context.Context, r *Reader, plan, thread string) (Fact, bool) {
+	if plan == "" || thread == "" {
+		return Fact{}, false
+	}
+	key, found, err := dag.PlanProject(ctx, r.St.DB, plan)
+	var scopes []string
+	if err == nil && found {
+		scopes, err = dag.LiveParentScopes(ctx, r.St.DB, thread)
+	}
+	switch {
+	case err != nil:
+		return Fact{Name: FactProjectKey, Level: LevelFail, Reading: fmt.Sprintf("the plan %s or the bindings of thread %s cannot be read: %v", plan, thread, err), Reason: "the store cannot be read"}.leveled(), true
+	case !found || slices.Contains(scopes, key):
+		return Fact{}, false
+	}
+	holds := "thread " + thread + " holds no live parent binding"
+	if len(scopes) > 0 {
+		holds = "thread " + thread + " is the live parent of project " + strings.Join(scopes, ", ")
+	}
+	return Fact{Name: FactProjectKey, Level: LevelWarn,
+		Reading: fmt.Sprintf("plan %s is put under project key %s; %s", plan, key, holds),
+		Reason:  "a plan's project key is the scope_key of the orchestrator's parent binding (the project UUID), and the run's first claim is refused (scope_role_mismatch) under another key: put the plan again under the binding's key"}.leveled(), true
 }
 
 func isBuiltin(name string) bool {

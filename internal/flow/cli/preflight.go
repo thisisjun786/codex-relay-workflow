@@ -20,6 +20,10 @@ const (
 	FactIdleWake   = "idle_wake_observed"
 )
 
+// FactProjectKey is the comparison of the plan's project key with the owner thread's live parent bindings (CRW-1317). It is judged
+// by the start, not by a Prober, and it is listed after the five only when it is not a pass.
+const FactProjectKey = "project_key_bound"
+
 // Facts is the five facts in the order the preview lists them.
 var Facts = []string{FactAssignment, FactDelivery, FactReachable, FactWaits, FactIdleWake}
 
