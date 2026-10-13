@@ -48,3 +48,25 @@ func TestDoctorReportsTheVerifierTools(t *testing.T) {
 		t.Errorf("nothing configured, nothing on PATH:\n%s", golden.Canon(tools))
 	}
 }
+
+// CRW-1319 (evaluation a48fe518 d3): with no Go root configured the doctor looks for one (the root of the go on PATH and the usual
+// install locations, such as $HOME/.local/go/go), lists what it found with each version, and its warning names the command that
+// records the first one.
+func TestDoctorNamesAGoRootCandidate(t *testing.T) {
+	h := newHost(t)
+	empty := filepath.Join(h.home, "empty-path")
+	mkdir(t, empty)
+	h.env = h.env.With("PATH", empty)
+	root := filepath.Join(h.home, ".local", "go", "go")
+	write(t, filepath.Join(root, "bin", "go"), "#!/bin/sh\necho 'go version go1.27.1 linux/amd64'\n", 0o755)
+	write(t, filepath.Join(h.home, ".config", "crw", "config.json"), `{}`, 0o600)
+
+	tools := golden.Obj(record.Get(h.diagnose(t), "verifierTools"))
+	candidates := golden.Canon(record.Get(tools, "goRootCandidates"))
+	if !strings.Contains(candidates, root) || !strings.Contains(candidates, "go1.27.1") {
+		t.Fatalf("the Go root below the home is not a candidate:\n%s", golden.Canon(tools))
+	}
+	if !strings.Contains(golden.Canon(record.Get(tools, "warnings")), "crw config verifier --go-root ") {
+		t.Errorf("the warnings do not name the command that records a candidate:\n%s", golden.Canon(tools))
+	}
+}
