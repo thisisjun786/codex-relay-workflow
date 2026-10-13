@@ -261,17 +261,14 @@ function forget(argv, proc) {
   if (reused.get(key) === proc) reused.delete(key);
 }
 
-// The remembered answers, oldest first.
+// The remembered answers, oldest first, each as the JSON text of the reply's output.
 const memo = new Map();
 let memoBytes = 0;
 
-function remember(key, answer) {
-  const size = answer.stdout.length + answer.stderr.length;
-  if (key.length > MEMO_TEXT_LIMIT + 512 || size > MEMO_ANSWER_LIMIT) return;
-  if (memo.has(key)) return;
-  const stored = size > MEMO_PLAIN ? { gz: gzipSync(JSON.stringify(answer), { level: 1 }) } : { answer };
-  const bytes = stored.gz ? stored.gz.length : size;
-  stored.bytes = bytes + key.length;
+function remember(key, json) {
+  if (key.length > MEMO_TEXT_LIMIT + 512 || json.length > MEMO_ANSWER_LIMIT || memo.has(key)) return;
+  const stored = json.length > MEMO_PLAIN ? { gz: gzipSync(json, { level: 1 }) } : { json };
+  stored.bytes = (stored.gz ? stored.gz.length : json.length) + key.length;
   memo.set(key, stored);
   memoBytes += stored.bytes;
   while (memoBytes > MEMO_BYTES && memo.size > 1) {
@@ -286,10 +283,10 @@ function recall(key) {
   if (stored === undefined) return null;
   memo.delete(key);
   memo.set(key, stored);
-  return stored.gz ? JSON.parse(gunzipSync(stored.gz).toString("utf8")) : { ...stored.answer };
+  return stored.gz ? gunzipSync(stored.gz).toString("utf8") : stored.json;
 }
 
-// answer is the fresh process's answer to argv and text, by the cheapest path that gives it.
+// answer is the JSON text of the fresh process's answer to argv and text, by the cheapest path that gives it.
 async function answer(argv, text) {
   const key = argv.join("\u0000") + "\u0001" + text;
   const known = recall(key);
@@ -301,8 +298,9 @@ async function answer(argv, text) {
     if (result === null) forget(argv, proc);
   }
   if (result === null) result = fresh(argv, text);
-  remember(key, result);
-  return result;
+  const json = JSON.stringify(result);
+  remember(key, json);
+  return json;
 }
 
 // run puts the homes the case declared under its own root, so a shim never reads a real one.
@@ -312,7 +310,7 @@ async function run(request) {
   // the handshake must not pay for an oracle process per worker start.
   const handshake = request.input;
   if (handshake === null || typeof handshake !== "object" || Array.isArray(handshake)) {
-    return null;
+    return "null";
   }
   const root = typeof request.root === "string" ? request.root : "";
   if (root !== "") {
@@ -333,6 +331,16 @@ function reply(message) {
   process.stdout.write(JSON.stringify(message) + "\n");
 }
 
+// replyOutput writes the reply to a request whose output is already JSON text, the line reply({ id, output })
+// would write, without reading the text back.
+function replyOutput(id, json) {
+  if (id === undefined) {
+    reply({ id, output: JSON.parse(json) });
+    return;
+  }
+  process.stdout.write('{"id":' + JSON.stringify(id) + ',"output":' + json + "}\n");
+}
+
 // Requests run one at a time, in the order they arrive.
 let queue = Promise.resolve();
 
@@ -347,7 +355,7 @@ async function handle(line) {
     return;
   }
   try {
-    reply({ id: request.id, output: await run(request) });
+    replyOutput(request.id, await run(request));
   } catch (error) {
     if (error instanceof WorkerFailure) {
       // No reply: the pool reads the end of this worker as a dead worker and starts another.
