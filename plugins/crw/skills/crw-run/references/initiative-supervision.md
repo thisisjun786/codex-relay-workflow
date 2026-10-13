@@ -190,7 +190,8 @@ That reread narrows the window without closing it. Where the store is not reacha
 interleave a write, a read and a first handoff so that each sees only itself. Where it is reachable, the store's own refusal
 (`duplicate_scope_owner`, `role_already_bound`) closes that window because the record and the write are one atomic claim — but
 only once the relationship is actually registered: a reachable store refuses nothing about a supervision nobody has bound, so
-register the binding (`linkage-bind`, and `linkage-supervise` for the initiative-over-project edge) and read it back before
+register the binding (`linkage-bind`, and `linkage-supervise` for the initiative-over-project edge, run first when the thread
+also holds a management seat, whose owner binding would otherwise stand above the project and refuse it) and read it back before
 the first handoff, and keep the reread as the fallback wherever that record is absent or the registration could not be
 confirmed. So the parent is the
 second place a split is caught rather than the supervisor being the only one. A parent already

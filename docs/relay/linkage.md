@@ -166,7 +166,10 @@ the binding is not refused, no management edge is written, the answer carries th
 `managementLinkSkipped` (`reason` `link_conflict`, `detail`, the `standing` link id, the seat and the
 creator) and a `management_link_skipped` journal row records it once. In the other direction
 `linkage-supervise` refuses an initiative over a project a management edge already stands above
-(`duplicate_scope_owner`), because the project has its execution supervisor.
+(`duplicate_scope_owner`, naming the management seat), because the project has its execution
+supervisor. A thread that holds a management seat and still keeps a legacy initiative over a project
+therefore runs `linkage-supervise` before it binds the project owner: the binding then keeps the
+initiative's edge with the skip warning.
 
 The walk up from an issue or a project reaches whatever stands above the project. A management level
 directly above the project is the recipient of the project's upward messages: a relationship's

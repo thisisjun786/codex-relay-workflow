@@ -645,7 +645,7 @@ func (l linkage) supervisionRefusal(ctx context.Context, lid, initiative, projec
 				" over " + pyvalue.StrRepr(colString(replay, "lower_task_id")),
 			scopeKind: scopeProject, scopeKey: project, incumbent: colString(replay, "lower_task_id"), challenger: parent.TaskID}, nil
 	}
-	owning, err := l.r.Store.All(ctx, "SELECT link_id, upper_key, lower_task_id FROM scope_links"+
+	owning, err := l.r.Store.All(ctx, "SELECT link_id, upper_kind, upper_key, lower_task_id FROM scope_links"+
 		"  WHERE lower_kind = ? AND lower_key = ? AND link_kind = 'execution'"+
 		"    AND status IN ('active','paused') AND superseded_by IS NULL"+
 		"  ORDER BY link_id", scopeProject, project)
@@ -672,6 +672,14 @@ func (l linkage) supervisionRefusal(ctx context.Context, lid, initiative, projec
 	}
 	held := owning[0]
 	upper, lower, heldID := colString(held, "upper_key"), colString(held, "lower_task_id"), colString(held, "link_id")
+	if kind == linkExec && colString(held, "upper_kind") == scopeManagement {
+		// The 1.0 edge (a management session bound the project owner): name the seat, not an initiative of that name.
+		return &linkRefusal{reason: contract.RefusalDuplicateScopeOwner,
+			detail: "project " + pyvalue.StrRepr(project) + " already has its execution supervisor under " + heldID + " from management seat " + pyvalue.StrRepr(upper) +
+				" (a management session bound its owner); a project has one upward execution edge, so an initiative cannot supervise it as well. " +
+				"A legacy initiative over the project is registered with linkage-supervise before the project owner's binding",
+			scopeKind: scopeProject, scopeKey: project, incumbent: upper, challenger: initiative}, nil
+	}
 	if kind == linkExec {
 		return &linkRefusal{reason: contract.RefusalDuplicateScopeOwner,
 			detail: "project " + pyvalue.StrRepr(project) + " already has its execution supervisor under " + heldID + " from initiative " + pyvalue.StrRepr(upper) +
