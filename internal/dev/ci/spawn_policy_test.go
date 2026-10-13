@@ -181,6 +181,46 @@ func TestSpawnPolicyRulesMatchEngine(t *testing.T) {
 		}
 	})
 
+	// The inline route and the route of an out-of-authority question (CRW-1347): SP-INL-1 is a research question's, never an open
+	// question of a DESIGN's, in the page and in the description of rules.go, and the SP-EXPL-1 row names each scope notation the
+	// router reads (the authority:* constants of rules.go) and that such a question goes to the orchestrator and to no explorer.
+	t.Run("the inline and authority routes of the page are those of rules.go", func(t *testing.T) {
+		rules := readRepoText(t, spawnRulesGo)
+		desc := regexp.MustCompile(`(?m)^\s*RuleInl1\s*=\s*"SP-INL-1"\s*//(.*)$`).FindStringSubmatch(rules)
+		row := ""
+		expl := ""
+		for _, line := range lines(text) {
+			switch {
+			case strings.HasPrefix(strings.TrimSpace(line), "| `SP-INL-1` |"):
+				row = line
+			case strings.HasPrefix(strings.TrimSpace(line), "| `SP-EXPL-1` |"):
+				expl = line
+			}
+		}
+		for where, text := range map[string]string{"the RuleInl1 description of " + spawnRulesGo: func() string {
+			if desc == nil {
+				return ""
+			}
+			return desc[1]
+		}(), "the SP-INL-1 row of " + spawnPolicyRef: row} {
+			if !regexp.MustCompile(`(?i)a research question`).MatchString(text) || !regexp.MustCompile(`(?i)never (to )?an open question of a DESIGN`).MatchString(text) {
+				t.Errorf("%s does not say SP-INL-1 is a research question's and never an open question of a DESIGN's: %q", where, text)
+			}
+		}
+		notations := regexp.MustCompile(`"(authority:[a-z-]+)"`).FindAllStringSubmatch(rules, -1)
+		if len(notations) != 4 {
+			t.Fatalf("%s has %d authority notations, want 4: %v", spawnRulesGo, len(notations), notations)
+		}
+		for _, n := range notations {
+			if !strings.Contains(expl, "`"+n[1]+"`") {
+				t.Errorf("the SP-EXPL-1 row does not name the notation %s: %q", n[1], expl)
+			}
+		}
+		if !regexp.MustCompile(`(?i)orchestrator[^|]*no explorer|no explorer[^|]*orchestrator`).MatchString(expl) {
+			t.Errorf("the SP-EXPL-1 row does not say an out-of-authority question goes to the orchestrator and to no explorer: %q", expl)
+		}
+	})
+
 	// The judge itself: a missing id, a doubled row and an id the engine does not have are each reported.
 	t.Run("fixture: the comparison reports each difference", func(t *testing.T) {
 		engine := []string{"SP-A-1", "SP-B-1"}

@@ -136,7 +136,8 @@ func TestSpawnDecisionsRecorded(t *testing.T) {
 	same := Defect("d1", "correctness", "P1", "the guard is missing")
 	reviews(l, "A", Verdict(false, same), Verdict(false, same), Verdict(true))
 	d := l.designFor()
-	d.OpenQuestions = []ops.OpenQuestion{{ID: "q1", Question: "which flag turns it on?", Scope: "repo", FilesNeeded: []string{"a", "b", "c", "d"}}, {ID: "q2", Question: "is it documented?", Scope: "docs", FilesNeeded: []string{"README.md"}}}
+	d.OpenQuestions = []ops.OpenQuestion{{ID: "q1", Question: "which flag turns it on?", Scope: "repo", FilesNeeded: []string{"a", "b", "c", "d"}}, {ID: "q2", Question: "is it documented?", Scope: "docs", FilesNeeded: []string{"README.md"}},
+		{ID: "q3", Question: "may it skip the README rule?", Scope: "authority:repo-rule", FilesNeeded: []string{"README.md"}}}
 	l.Design = &d
 	mustRunIncomplete(t, l)
 	type key struct{ rule, decision, node string }
@@ -152,12 +153,16 @@ func TestSpawnDecisionsRecorded(t *testing.T) {
 		}
 	}
 	for _, k := range []key{
-		{ops.RuleArch1, "spawn", ""}, {ops.RuleAudit, "spawn", ""}, {ops.RuleExpl1, "spawn", ""}, {ops.RuleInl1, "inline", ""},
+		{ops.RuleArch1, "spawn", ""}, {ops.RuleAudit, "spawn", ""}, {ops.RuleExpl1, "spawn", ""}, {ops.RuleExpl1, "orchestrator", ""},
 		{ops.RuleExec1, "spawn", "A"}, {ops.RuleRev1, "spawn", "A"}, {ops.RuleExpl3, "skip", "A"}, {ops.RuleChild2, "spawn", "B"},
 	} {
 		if seen[k] == 0 {
 			t.Errorf("no decision %+v among %v", k, seen)
 		}
+	}
+	// an open question of a DESIGN is never the asker's (CRW-1347): the one with one file is the second explorer
+	if seen[key{ops.RuleExpl1, "spawn", ""}] != 2 || seen[key{ops.RuleInl1, "inline", ""}] != 0 {
+		t.Errorf("SP-EXPL-1 spawns %d, SP-INL-1 rows %d: want two explorers and no inline route", seen[key{ops.RuleExpl1, "spawn", ""}], seen[key{ops.RuleInl1, "inline", ""}])
 	}
 	if seen[key{ops.RuleExec1, "spawn", "A"}] != 2 {
 		t.Errorf("SP-EXEC-1 spawns of A: %d, want the executor and the executor-t1 (a fix continues a thread and spawns nothing)", seen[key{ops.RuleExec1, "spawn", "A"}])
