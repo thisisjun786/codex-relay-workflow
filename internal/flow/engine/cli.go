@@ -88,7 +88,7 @@ func LoadPolicy() (*Policy, execution.Policy, error) {
 		return FakePolicy(), policy, nil
 	}
 	table := PolicyFromRoleHelper(snap)
-	if _, declared := policy.AgentRoles(); declared {
+	if policy.DeclaresAgentRoles() {
 		table.Warnings = append(table.Warnings, fmt.Sprintf("the execution policy %s declares agent-roles: the flow no longer reads it (its pairs come from the helper role store %s); compare its pairs with crw flow roles, then remove the section", strings.TrimSpace(env[execution.EnvPolicy]), snap.Path))
 	}
 	return table, policy, nil

@@ -61,14 +61,20 @@ type Policy struct {
 	digest     string
 	// agentRoles is the agent-roles and agent-aliases sections; nil when the file declares none.
 	agentRoles *AgentRoles
-	// warnings are what the loader found wrong in a section nothing refuses the file for (CRW-1330: the agent-roles
-	// cross-checks).
+	// agentDeclared is whether the file has an agent-roles or an agent-aliases member, parsed or not.
+	agentDeclared bool
+	// warnings are what the loader found wrong in a section nothing refuses the file for (CRW-1330: agent-roles and
+	// agent-aliases, which the flow no longer reads).
 	warnings []string
 }
 
-// Warnings is what the loader reported instead of refusing the file: an agent-roles pair the allowed list does not
-// approve, and a reviewer role on an author's model family.
+// Warnings is what the loader reported instead of refusing the file: agent sections that do not parse and are ignored, an
+// agent-roles pair the allowed list does not approve, and a reviewer role on an author's model family.
 func (p Policy) Warnings() []string { return slices.Clone(p.warnings) }
+
+// DeclaresAgentRoles reports whether the file has an agent-roles or an agent-aliases member, whether or not it parses: the
+// flow reads neither (CRW-1330), and a reader that tells the operator to remove them asks this, not AgentRoles.
+func (p Policy) DeclaresAgentRoles() bool { return p.agentDeclared }
 
 // Input is one authorization request. Model and Effort are the raw argument values: nil is
 // "not supplied", and anything else that is not a non-empty string is invalid, as in Python.

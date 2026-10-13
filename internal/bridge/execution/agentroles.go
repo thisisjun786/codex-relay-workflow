@@ -92,7 +92,8 @@ func (a AgentRoles) Match(key, effort, isolation string) (AliasRow, bool) {
 	return best, found
 }
 
-// AgentRoles reports the agent roles the file declares; ok is false for a file without an agent-roles section.
+// AgentRoles reports the agent roles the file declares; ok is false for a file without an agent-roles section, and for one
+// whose agent sections do not parse (the loader ignored them with a warning; DeclaresAgentRoles still reports them).
 func (p Policy) AgentRoles() (AgentRoles, bool) {
 	if p.agentRoles == nil {
 		return AgentRoles{}, false
@@ -354,6 +355,12 @@ func (r AliasRow) describe() string {
 		parts = append(parts, "isolation "+repr(r.Isolation))
 	}
 	return strings.Join(parts, ", ")
+}
+
+// ignoredAgentSections is the warning for agent sections that do not parse: the loader's reason, and that the sections are
+// ignored because the flow reads its roles from the helper role store (CRW-1330).
+func ignoredAgentSections(err error) string {
+	return fmt.Sprintf("agent-roles/agent-aliases ignored: %v; the flow reads its six roles from the helper role store, not from this file, so the sections are not used and can be removed", err)
 }
 
 // checkAgentRoles applies the cross-role rules and answers what breaks them as warnings: the pairs the allowed list

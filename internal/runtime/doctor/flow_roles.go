@@ -53,7 +53,7 @@ func flowRolesCLI(args []string, stdout, stderr io.Writer, env host.LookupEnv) i
 		policyDetail, exit = err.Error(), 1
 	} else {
 		warnings = append(warnings, policy.Warnings()...)
-		if _, declared := policy.AgentRoles(); declared {
+		if policy.DeclaresAgentRoles() {
 			warnings = append(warnings, fmt.Sprintf("the execution policy %s declares agent-roles: the flow no longer reads it (its pairs come from the helper role store %s); compare its pairs with crw flow roles, then remove the section", source, snap.Path))
 		}
 	}

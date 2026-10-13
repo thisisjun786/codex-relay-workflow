@@ -55,3 +55,29 @@ func TestCRW1330_DoctorFlowRolesWarnsAboutAnUnreadAgentRolesSection(t *testing.T
 		t.Fatalf("exit %d: %s", code, text)
 	}
 }
+
+// CRW-1330 (evaluation 5a1a64c2 d1): a policy whose agent-roles does not parse loads; doctor flow-roles exits 0 and names the
+// section, that the flow no longer reads it, and why the loader ignored it.
+func TestCRW1330_DoctorFlowRolesWarnsAboutAMalformedAgentRolesSection(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "crw")
+	t.Setenv("CRW_HOME", dir)
+	policy := filepath.Join(t.TempDir(), "policy.json")
+	if err := os.WriteFile(policy, []byte(`{"agent-roles": {"architect": {"model": "anthropic/claude-opus-5-5", "reasoningEffort": "xhigh"}}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CODEX_THREAD_BRIDGE_EXECUTION_POLICY", policy)
+	var out, errOut strings.Builder
+	code := Run(context.Background(), []string{"flow-roles"}, &out, &errOut)
+	var report map[string]any
+	if err := json.Unmarshal([]byte(out.String()), &report); err != nil {
+		t.Fatalf("%v\n%s\n%s", err, out.String(), errOut.String())
+	}
+	if code != 0 || report["policyError"] != nil {
+		t.Fatalf("exit %d: %s", code, out.String())
+	}
+	for _, want := range []string{"no longer reads", "ignored", "executor-t1", policy} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("the report lacks %q:\n%s", want, out.String())
+		}
+	}
+}

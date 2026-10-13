@@ -84,10 +84,11 @@ func TestAgentRolesOnePairEach(t *testing.T) {
 		{"unknown key", withRole("executor", doc{"model": agentHaiku, "reasoningEffort": "xhigh", "temperature": 1}), "temperature"},
 		{"empty section", doc{}, "architect"},
 	}
+	// CRW-1330: the flow no longer reads the section, so what would have refused it is a warning naming the same mistake, the
+	// section ignored and the file loaded (agentsections_warn_test.go).
 	for _, row := range refusals {
 		t.Run(row.name, func(t *testing.T) {
-			_, err := load(t, agentPolicy(row.roles))
-			if message := policyError(t, err).Error(); !strings.Contains(message, row.want) {
+			if message := agentSectionWarning(t, agentPolicy(row.roles)); !strings.Contains(message, row.want) {
 				t.Fatalf("want %q in %q", row.want, message)
 			}
 		})
@@ -95,8 +96,8 @@ func TestAgentRolesOnePairEach(t *testing.T) {
 	// Every role is declared: a section that leaves one out names it.
 	missing := agentRolesDoc()
 	delete(missing, "reviewer-final")
-	if _, err := load(t, agentPolicy(missing)); err == nil || !strings.Contains(err.Error(), "reviewer-final") {
-		t.Fatalf("a missing role is refused by name: %v", err)
+	if message := agentSectionWarning(t, agentPolicy(missing)); !strings.Contains(message, "reviewer-final") {
+		t.Fatalf("a missing role is named: %v", message)
 	}
 	// An autoCompactTokenLimit belongs to the pair, as it does in a relay role.
 	limited := agentRolesDoc()
@@ -265,7 +266,8 @@ func TestAliasTableMapsEachPairToOneRole(t *testing.T) {
 		t.Fatalf("aliases %+v", aliases)
 	}
 
-	// A file states its own table; rows that overlap without one being more specific are refused when it is read.
+	// A file states its own table; rows that overlap without one being more specific are warned about when it is read, and the
+	// sections are ignored (CRW-1330).
 	own := func(rows ...any) doc {
 		policy := agentPolicy(agentRolesDoc())
 		policy["agent-aliases"] = rows
@@ -287,15 +289,30 @@ func TestAliasTableMapsEachPairToOneRole(t *testing.T) {
 		{"empty table", []any{}, "agent-aliases"},
 	} {
 		t.Run(row.name, func(t *testing.T) {
-			_, err := load(t, own(row.rows...))
-			if message := policyError(t, err).Error(); !strings.Contains(message, row.want) {
+			if message := agentSectionWarning(t, own(row.rows...)); !strings.Contains(message, row.want) {
 				t.Fatalf("want %q in %q", row.want, message)
 			}
 		})
 	}
 	// A table without the section it maps onto is a mistake.
-	_, err := load(t, doc{"allowed": agentAllowed(), "agent-aliases": []any{doc{"key": "opus", "role": "architect"}}})
-	policyError(t, err)
+	if message := agentSectionWarning(t, doc{"allowed": agentAllowed(), "agent-aliases": []any{doc{"key": "opus", "role": "architect"}}}); !strings.Contains(message, "agent-roles") {
+		t.Fatal(message)
+	}
+}
+
+// agentSectionWarning loads a document whose agent sections do not parse and answers the loader's warnings (CRW-1330): the file
+// loads, the sections are ignored and described as such.
+func agentSectionWarning(t *testing.T, document doc) string {
+	t.Helper()
+	p := mustLoad(t, document)
+	if _, ok := p.AgentRoles(); ok {
+		t.Fatalf("a section that does not parse is described as declared roles")
+	}
+	message := strings.Join(p.Warnings(), "\n")
+	if !strings.Contains(message, "ignored") {
+		t.Fatalf("no ignored-section warning: %q", message)
+	}
+	return message
 }
 
 // TestAgentRolesDigestAndSummary pins what a reader of the policy sees: the digest is the file's bytes and the

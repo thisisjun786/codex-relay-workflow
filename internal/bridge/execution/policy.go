@@ -43,17 +43,21 @@ func fromMapping(value any, digest string) (Policy, error) {
 	if err != nil {
 		return Policy{}, err
 	}
+	// A flow run no longer reads agent-roles or agent-aliases (CRW-1330: its pairs come from the helper role store), so a section
+	// that does not parse is ignored with a warning; it never refuses the policy the relay and the bridge run on.
+	agentDeclared := has(data, "agent-roles") || has(data, "agent-aliases")
+	var warnings []string
 	agentRoles, err := parseAgentSections(data)
 	if err != nil {
-		return Policy{}, err
+		warnings = append(warnings, ignoredAgentSections(err))
+		agentRoles = nil
 	}
-	allowed, err := parseAllowed(data.Get("allowed"), len(roles) > 0 || agentRoles != nil)
+	allowed, err := parseAllowed(data.Get("allowed"), len(roles) > 0 || agentDeclared)
 	if err != nil {
 		return Policy{}, err
 	}
-	var warnings []string
 	if agentRoles != nil {
-		warnings = checkAgentRoles(agentRoles.byName(), allowed)
+		warnings = append(warnings, checkAgentRoles(agentRoles.byName(), allowed)...)
 	}
 	if allowed != nil {
 		for _, name := range roleNames {
@@ -80,7 +84,7 @@ func fromMapping(value any, digest string) (Policy, error) {
 	if section, ok := data.Get("roles").(object); ok {
 		roleOrder = append(roleOrder, keys(section)...)
 	}
-	policy := Policy{allowed: allowed, roles: roles, roleOrder: roleOrder, exceptions: exceptions, digest: digest, agentRoles: agentRoles, warnings: warnings}
+	policy := Policy{allowed: allowed, roles: roles, roleOrder: roleOrder, exceptions: exceptions, digest: digest, agentRoles: agentRoles, agentDeclared: agentDeclared, warnings: warnings}
 	if err := policy.describable(); err != nil {
 		return Policy{}, err
 	}

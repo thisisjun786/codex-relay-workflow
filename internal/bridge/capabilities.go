@@ -45,11 +45,12 @@ func connectedVersion(agent, version string) bool {
 // withFlowAgentRoles is the policy description get_capabilities reports, with its agentRoles member describing the six roles a
 // flow run resolves calls against (CRW-1330): the helper role store's snapshot (its path, the canonical digest of the six pairs,
 // each role's pair and where it came from, the code's alias table and the snapshot's warnings), never the execution policy's
-// agent-roles section, which the flow no longer reads. A host with neither a store file nor a declared section describes none,
-// as before. The policy's own Summary (the relay's worker policy receipt) is not changed.
-func withFlowAgentRoles(summary map[string]any, env host.LookupEnv) map[string]any {
+// agent-roles section, which the flow no longer reads. A host with neither a store file nor a declared section (agentDeclared:
+// the file has agent-roles or agent-aliases, parsed or ignored) describes none, as before. The policy's own Summary (the
+// relay's worker policy receipt) is not changed.
+func withFlowAgentRoles(summary map[string]any, agentDeclared bool, env host.LookupEnv) map[string]any {
 	snap := role.ReadFlowSnapshot(env)
-	if _, declared := summary["agentRoles"]; !declared && !snap.Present {
+	if !agentDeclared && !snap.Present {
 		return summary
 	}
 	var roles []execution.AgentRole
@@ -77,6 +78,16 @@ func withFlowAgentRoles(summary map[string]any, env host.LookupEnv) map[string]a
 	return out
 }
 
+// declaresAgentRoles is whether the bridge's policy file has agent-roles or agent-aliases, parsed or ignored by the loader
+// (execution.Policy.DeclaresAgentRoles); a policy of another type declares them when its description lists agent roles.
+func declaresAgentRoles(p ExecutionPolicy) bool {
+	if d, ok := p.(interface{ DeclaresAgentRoles() bool }); ok {
+		return d.DeclaresAgentRoles()
+	}
+	_, listed := p.Summary()["agentRoles"]
+	return listed
+}
+
 // GetCapabilities reports bridge exposure separately from version-scoped host observations.
 // Connecting is the only host interaction; no capability probe is made.
 func (b *Bridge) GetCapabilities(ctx context.Context) (map[string]any, error) {
@@ -100,7 +111,7 @@ func (b *Bridge) GetCapabilities(ctx context.Context) (map[string]any, error) {
 		"server": server, "transport": "same-host Unix WebSocket", "socket": client.SocketPath(),
 		"capabilities":     map[string]any{"createThread": true, "sendMessage": true, "listReadWait": true, "goalRead": true, "bridgeManagedWorktrees": true, "projectImport": false, "clientSideToolsAndApprovals": false},
 		"capabilitiesNote": capabilitiesNote,
-		"executionPolicy":  withFlowAgentRoles(b.Policy.Summary(), host.LookupEnv(os.LookupEnv)),
+		"executionPolicy":  withFlowAgentRoles(b.Policy.Summary(), declaresAgentRoles(b.Policy), host.LookupEnv(os.LookupEnv)),
 		"approvals": map[string]any{
 			"declarable":              []any{"never", "on-request", "untrusted"},
 			"transmitsApprovalPolicy": false,
