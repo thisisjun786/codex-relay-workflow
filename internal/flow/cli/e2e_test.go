@@ -68,7 +68,7 @@ func TestStartRunsARealDetachedProcess(t *testing.T) {
 	st.open()
 	st.close()
 
-	code, out, errOut := run(append([]string{"start", script, "--thread", "thread-owner", "--force", "--repo", repo}, common...)...)
+	code, out, errOut := run(append([]string{"start", script, "--thread", "thread-owner", "--repo", repo}, common...)...)
 	if code != 0 {
 		t.Fatalf("start: exit %d\n%s\n%s", code, out, errOut)
 	}
@@ -104,7 +104,7 @@ func TestStartRunsARealDetachedProcess(t *testing.T) {
 		t.Errorf("the result: %+v %v", res, ok)
 	}
 	spec, err := ReadSpec(w.state, id)
-	if err != nil || spec.Thread != "thread-owner" || spec.Script != script || spec.Socket != host.SocketPath || strings.Join(spec.Forced, ",") != "assignment_routed,delivery_ticking,thread_reachable,idle_wake_observed" {
+	if err != nil || spec.Thread != "thread-owner" || spec.Script != script || spec.Socket != host.SocketPath || factNames(spec.Preflight) != "assignment_routed,delivery_ticking,thread_reachable,idle_wake_observed" {
 		t.Errorf("the spec: %+v %v", spec, err)
 	}
 	if _, ps, _ := run(append([]string{"ps", "--all"}, common...)...); !strings.Contains(ps, id) || !strings.Contains(ps, "completed") {

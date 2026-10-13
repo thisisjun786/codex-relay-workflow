@@ -62,6 +62,30 @@ func LiveParentBinding(ctx context.Context, q Queryer, project, task string) (id
 	return
 }
 
+// LiveParentScopes is the project keys of the live parent bindings task holds, in order: what a refusal names beside the plan's project
+// when the task is not that project's parent, and what `crw flow start` compares the plan's project key with (CRW-1317).
+func LiveParentScopes(ctx context.Context, q Queryer, task string) ([]string, error) {
+	rows, err := q.QueryContext(ctx, "SELECT DISTINCT scope_key FROM scope_bindings WHERE role = 'parent' AND scope_kind = 'project' AND task_id = ? AND status IN ('active','paused') AND superseded_by IS NULL ORDER BY scope_key", task)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, err
+		}
+		out = append(out, key)
+	}
+	return out, rows.Err()
+}
+
+// PlanProject is the project key of a plan's header, and whether the plan has one (a plan with no revision has none).
+func PlanProject(ctx context.Context, q Queryer, plan string) (string, bool, error) {
+	return loadHeader(ctx, q, plan)
+}
+
 // StaleEpoch is the refusal of a write from a session that does not hold the plan's epoch (decision D-02: the second reason this feature
 // adds to the relay's contract, beside plan_revision_conflict).
 func StaleEpoch(format string, args ...any) error {

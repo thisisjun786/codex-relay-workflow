@@ -238,6 +238,11 @@ func (c *Channel) ReadBack(ctx context.Context, id, turnID, proof, assertedBy st
 			if e != nil {
 				return e
 			}
+			// A verified readback shows the recipient reading its own thread: the busy_cap and
+			// attempt_cap holds of its other messages are released with it (CRW-1334, wake.go).
+			if _, e = c.releaseCappedHolds(tx, row.RecipientTaskID, now, at, contract.OrderedObject{{Key: "by", Value: "readback"}, {Key: "readMessageId", Value: id}, {Key: "readTurnId", Value: turnID}}); e != nil {
+				return e
+			}
 		}
 		if reconciled != nil {
 			journal := pyjson.Dumps(contract.OrderedObject{{Key: "from", Value: "held_uncertain"}, {Key: "by", Value: "readback"}, {Key: "requestId", Value: attempt.RequestID}, {Key: "attemptNo", Value: attempt.AttemptNo}, {Key: "deliveredTurnId", Value: delivered["turnId"]}, {Key: "readTurnId", Value: turnID}}, pyjson.Options{})

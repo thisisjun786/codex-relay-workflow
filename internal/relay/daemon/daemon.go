@@ -281,6 +281,18 @@ func (d *Daemon) Tick(ctx context.Context) (Report, error) {
 				}
 			}
 		}
+		// The supervisor channel defers its busy messages in its own pass, after the hold above: the
+		// subscription for a recipient it found busy this tick is opened now, so that recipient's edge is
+		// seen from this tick on rather than from the next one, and a recipient whose last waiting message
+		// this pass sent is released (CRW-1334). Every hold already taken is kept as it is.
+		if err := d.idle.hold(ctx, &r, d.Host, now); err != nil {
+			r.Notes = append(r.Notes, d.idle.take()...)
+			if d.halted(ctx, &r, store.HaltSiteObservation, err) {
+				return r, nil
+			}
+			return r, err
+		}
+		r.Notes = append(r.Notes, d.idle.take()...)
 	}
 	return r, nil
 }
