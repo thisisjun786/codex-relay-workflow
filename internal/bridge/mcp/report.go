@@ -27,9 +27,11 @@ var (
 )
 
 // RegisterChildReports gives report_child its route to the relay daemon. It is called at executable composition time (the
-// relay adapter's Register), not when this package loads: the package imports no relay package but the leaf argparse, which keeps the relay's
-// own packages free to test against it (internal/relay/store's tests import it).
-func RegisterChildReports(forward ChildForward, state ChildState) { forwardChild, childState = forward, state }
+// relay adapter's Register), not when this package loads: the package imports no relay package but the leaf argparse,
+// which keeps the relay's own packages free to test against it (internal/relay/store's tests import it).
+func RegisterChildReports(forward ChildForward, state ChildState) {
+	forwardChild, childState = forward, state
+}
 
 // childReports is the bridge's route to the relay daemon (CRW-1297). The bridge runs outside the sandbox of the child
 // that calls report_child, so a child that cannot connect to control.sock (a readOnly sandbox, or a workspace-write one
