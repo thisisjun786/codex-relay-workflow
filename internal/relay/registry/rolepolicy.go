@@ -31,8 +31,15 @@ var roleScope = map[string]string{"supervisor": "initiative", "parent": "project
 // seat. One task holds one supervisor seat, so the seat is not additive.
 var storeScopeRoles = map[string]bool{"supervisor": true}
 
+// managementScopeRoles are the roles that may name the management scope with --scope-kind
+// (CRW-1333): a management session's own seat, one per session, keyed by the seat id (the thread
+// that first registered it) while task_id names its current owner. It is the supervisor's, like the
+// store seat, so the role's execution policy is the supervisor's and one task still holds one
+// supervisor seat.
+var managementScopeRoles = map[string]bool{"supervisor": true}
+
 // bindingScopeKind is the scope kind a binding of role takes: the role's own level unless the
-// caller names one, and the store seat is the only kind a caller may name.
+// caller names one, and the store seat and the management seat are the kinds a caller may name.
 func bindingScopeKind(role, requested, key string) (string, error) {
 	kind, known := roleScope[role]
 	if !known {
@@ -48,7 +55,10 @@ func bindingScopeKind(role, requested, key string) (string, error) {
 		}
 		return scopeStore, nil
 	}
-	return "", refuse(contract.RefusalScopeRoleMismatch, "--scope-kind %s is not a scope a %s takes; the store seat is the supervisor's and goes with --scope store",
+	if requested == scopeManagement && managementScopeRoles[role] {
+		return scopeManagement, nil
+	}
+	return "", refuse(contract.RefusalScopeRoleMismatch, "--scope-kind %s is not a scope a %s takes; the store seat is the supervisor's and goes with --scope store, and a management seat is the supervisor's and goes with --scope <seat id>",
 		pyvalue.StrRepr(requested), pyvalue.StrRepr(role))
 }
 

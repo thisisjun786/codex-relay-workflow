@@ -332,3 +332,57 @@ func TestWatchCursorStaysOnTheRunsOwnRowsWhenACommandWroteIntoIt(t *testing.T) {
 		t.Errorf("the pages hold %v", seen)
 	}
 }
+
+// CRW-1324 item 30(b): crw flow show names the execution policy file the run recorded when it started and the digest of
+// its bytes, so an operator sees from outside which policy the run is bound to. A resumed run that read another digest
+// records the change; show gives the policy the run holds now and the one it held before.
+func TestShowNamesTheRecordedPolicyPathAndDigest(t *testing.T) {
+	const (
+		path   = "/home/op/.codex/execution-policy.json"
+		first  = "1111111111111111111111111111111111111111111111111111111111111111"
+		second = "2222222222222222222222222222222222222222222222222222222222222222"
+	)
+	w := newWorld(t)
+	r := w.newRun("run-pol", "thread-owner")
+	r.j.Append(engine.Event{RunID: "run-pol", Kind: engine.KindRun, Event: "started", Data: map[string]any{"workflow": "project-lane", "policy_source": path, "policy_digest": first}})
+	td := w.deps() // doKeep: the test goes on appending to the run's journal, so the world's store stays open
+	code, out, errOut := td.doKeep("show", "run-pol", "--state", w.state)
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, errOut)
+	}
+	if want := "policy " + path + "  digest " + first; !strings.Contains(out, want) {
+		t.Errorf("show lacks %q:\n%s", want, out)
+	}
+	code, out, _ = td.doKeep("show", "run-pol", "--state", w.state, "--json")
+	var d map[string]any
+	if code != 0 || json.Unmarshal([]byte(out), &d) != nil {
+		t.Fatalf("show --json: %d %s", code, out)
+	}
+	if d["policy_path"] != path || d["policy_digest"] != first {
+		t.Errorf("show --json policy = %v %v, want %q %q", d["policy_path"], d["policy_digest"], path, first)
+	}
+
+	// A resume that read another digest journals the change; show gives the digest the run holds now and the earlier one.
+	r.j.Append(engine.Event{RunID: "run-pol", Kind: engine.KindRun, Event: engine.EvPolicyRepinned, Data: map[string]any{"old": first, "new": second, "old_source": path, "new_source": path}})
+	code, out, errOut = td.doKeep("show", "run-pol", "--state", w.state)
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, errOut)
+	}
+	if want := "policy " + path + "  digest " + second; !strings.Contains(out, want) || !strings.Contains(out, "repinned from "+first) {
+		t.Errorf("show after a repin lacks the new digest and the old one:\n%s", out)
+	}
+}
+
+// A run on the placeholder table (no policy file) says so rather than printing an empty path.
+func TestShowSaysARunHasNoPolicyFile(t *testing.T) {
+	w := newWorld(t)
+	r := w.newRun("run-fake", "thread-owner")
+	r.j.Append(engine.Event{RunID: "run-fake", Kind: engine.KindRun, Event: "started", Data: map[string]any{"workflow": "project-lane", "policy_source": "", "policy_digest": ""}})
+	code, out, errOut := w.deps().do("show", "run-fake", "--state", w.state)
+	if code != 0 {
+		t.Fatalf("exit %d\n%s", code, errOut)
+	}
+	if !strings.Contains(out, "policy none (placeholder table, no execution policy file)") {
+		t.Errorf("show does not say the run had no policy file:\n%s", out)
+	}
+}

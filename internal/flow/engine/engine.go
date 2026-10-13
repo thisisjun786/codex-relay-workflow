@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -284,10 +285,15 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 	// call, and only calls that start a thread afterwards take the new pairs.
 	prior, repinned := priorPolicy(e.j, e.runID, cfg.Policy)
 	e.lineage = lineageOf(e.j, e.runID)
-	started := e.j.Append(Event{RunID: e.runID, Kind: KindRun, Event: "started", Data: map[string]any{
+	startedData := map[string]any{
 		"workflow": workflow, "script_digest": prog.Digest, "helpers": helperDigests(prog), "args_digest": argsDigest,
 		"meta": json.RawMessage(prog.MetaJSON), "policy_source": cfg.Policy.Source, "policy_digest": cfg.Policy.Digest, "backend": backend,
-	}})
+	}
+	if len(cfg.Policy.Warnings) > 0 {
+		// what the table's reading warned about (CRW-1330): a run starts on it and keeps the warnings in its record
+		startedData["policy_warnings"] = slices.Clone(cfg.Policy.Warnings)
+	}
+	started := e.j.Append(Event{RunID: e.runID, Kind: KindRun, Event: "started", Data: startedData})
 	if repinned {
 		e.j.Append(Event{RunID: e.runID, Kind: KindRun, Event: EvPolicyRepinned, Data: map[string]any{
 			"old": prior.Digest, "new": cfg.Policy.Digest, "old_source": prior.Source, "new_source": cfg.Policy.Source,

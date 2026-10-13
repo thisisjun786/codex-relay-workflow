@@ -133,6 +133,45 @@ func edgesOf(p Plan) map[[2]string]dag.Edge {
 	return out
 }
 
+// TestCompileTargetFormWarnsAndNormalizes (CRW-1317): a target repository that is not an absolute path (OWNER/NAME) is a warning,
+// because a run integrates on a local checkout; a base_ref with the refs/heads/ prefix is the short branch name in the plan's edges,
+// with a warning, because the integration path adds the prefix itself. Neither refuses the handoff; the run-ready form warns nothing.
+func TestCompileTargetFormWarnsAndNormalizes(t *testing.T) {
+	in := project(iss("A"), iss("B", after("A")))
+	p := compileOne(t, in, nil)
+	rules := map[string]Warning{}
+	for _, w := range p.Warnings {
+		rules[w.Rule] = w
+	}
+	if w := rules["target_repository"]; len(p.Warnings) != 2 || w.Project != "PX" || w.Path != "target.repository" || !strings.Contains(w.Detail, `"acme/shop"`) || !strings.Contains(w.Detail, "absolute") {
+		t.Errorf("an OWNER/NAME repository: %+v", p.Warnings)
+	}
+	if w := rules["target_base_ref"]; w.Path != "target.base_ref" || !strings.Contains(w.Detail, `"refs/heads/dev"`) || !strings.Contains(w.Detail, `"dev"`) {
+		t.Errorf("a refs/heads/ base_ref: %+v", p.Warnings)
+	}
+	if e := edgesOf(p)[[2]string{"A", "B"}]; e.TargetBaseRef != "dev" || e.TargetRepository != "acme/shop" {
+		t.Errorf("the edge: %+v", e)
+	}
+	if target.BaseRef != "refs/heads/dev" {
+		t.Errorf("compile changed its input: %+v", target)
+	}
+
+	ready := Input{Schema: InputSchema, Projects: []Project{{Key: "PX", PlanID: "plan-px", Target: &Target{Repository: "/srv/acme/shop", BaseRef: "dev"}, Issues: []Issue{iss("A"), iss("B", after("A"))}}}}
+	if p := compileOne(t, ready, nil); len(p.Warnings) != 0 || edgesOf(p)[[2]string{"A", "B"}].TargetBaseRef != "dev" {
+		t.Errorf("the run-ready target: %+v", p.Warnings)
+	}
+
+	// the command prints the warnings on stderr and compiles
+	raw, err := json.Marshal(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, out, errOut := runCLI(t, string(raw), "-")
+	if code != 0 || !strings.Contains(out, `"warnings"`) || !strings.Contains(errOut, "crw flow compile: warning: [target_repository] PX target.repository: ") || !strings.Contains(errOut, "crw flow compile: warning: [target_base_ref] PX target.base_ref: ") {
+		t.Errorf("exit %d\n%s\n%s", code, errOut, out)
+	}
+}
+
 // TestCompileGoldenInitiativeFixture compiles an initiative of four projects and twenty issues, as a
 // planner's handoff holds it, to the plan revisions dag-plan-put takes. The bytes are held in a golden file;
 // CRW_UPDATE_GOLDEN=1 rewrites it.
@@ -567,7 +606,7 @@ func TestGroupBecomesOrderEdges(t *testing.T) {
 		if !ok {
 			t.Fatalf("no order edge %v in %v", pair, edges)
 		}
-		if e.Kind != dag.EdgeIntegrated || e.TargetRepository != "acme/shop" || e.TargetBaseRef != "refs/heads/dev" {
+		if e.Kind != dag.EdgeIntegrated || e.TargetRepository != "acme/shop" || e.TargetBaseRef != "dev" {
 			t.Errorf("edge %+v", e)
 		}
 	}
@@ -750,7 +789,8 @@ func TestBaseWithTwoEdgesOfOnePair(t *testing.T) {
 		return &dag.Node{NodeID: id, IssueKey: id, Kind: dag.NodeImplementation, Title: "issue " + id, CriteriaSetDigest: criteriaDigest([]string{"criterion of " + id})}
 	}
 	edge := func(id string) *dag.Edge {
-		return &dag.Edge{EdgeID: id, FromNodeID: "A", ToNodeID: "B", Kind: dag.EdgeIntegrated, TargetRepository: target.Repository, TargetBaseRef: target.BaseRef}
+		// the edge as compile writes it: the target's branch is its short name (CRW-1317)
+		return &dag.Edge{EdgeID: id, FromNodeID: "A", ToNodeID: "B", Kind: dag.EdgeIntegrated, TargetRepository: target.Repository, TargetBaseRef: target.Branch()}
 	}
 	seed := dag.Revision{PlanID: "plan-px", ProjectKey: "PX", RequestID: "seed", AuthorTaskID: "t", Changes: []dag.Change{
 		{Op: dag.OpAddNode, Node: node("A")}, {Op: dag.OpAddNode, Node: node("B")},

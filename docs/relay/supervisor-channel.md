@@ -137,8 +137,10 @@ carried by the envelope alone until somebody decides what an answer cannot do wi
    relationship's (CRW-259): a report is charged to the relationship it reports, toward the
    recipient it goes to, together with that relationship's parent-child deliveries to the same
    task, so one relationship's loop cannot wake a task more than the cap an hour through either
-   queue, and a parent with many children is not held to one count for all of them. The
-   consequence, said rather than implied: where one task is both a parent and a supervisor, a
+   queue, and a parent with many children is not held to one count for all of them. The upward
+   channel's `run:` and `initiative:` relationship ids are of the orchestrator class (60 an hour), as
+   the relationship of a project's live parent is; the minimum gap stays five seconds for every class.
+   The consequence, said rather than implied: where one task is both a parent and a supervisor, a
    report can wait behind parent-child traffic to that same task through the gap, and through the
    hour only when it is the same relationship's traffic. A transport counts toward the hour when
    its attempt may have gone (it sent something, or its retry was not shown safe), the same test
@@ -672,6 +674,44 @@ withholding, the busy backoff and caps, the recipient's send budget, one head pe
 staging order, uncertain sends held until a readback. The deliverer that reserves and settles it
 lives in `faultnotice` and is described in [faults](faults.md).
 
+### Direct messages
+
+`StageDirect` stages the messages the channel carries without an event behind them, the way a fault
+notification is staged: resolved before and again under the write lock (a hierarchy that moved in
+between refuses `relation_owner_drift` and writes nothing), one message per obligation under a
+deterministic id (`sha256(direction|relationship|kind|subject)[:32]`), re-addressed or restated on a
+later staging only while none of its attempts can have sent, and left as it is once one may have.
+The kinds, the relationship each one goes through and the two ends are:
+
+| obligation_kind | relationship | from | to |
+| --- | --- | --- | --- |
+| `lead_report`, `lead_decision_request`, `lead_blocked`, `jun_decision_request` | `initiative:<key>` | the initiative's lead | the management seat above it (the store seat when no management edge stands) |
+| `flow_milestone_report`, `flow_project_blocked`, `flow_project_decision_request`, `flow_escalation`, `flow_completion`, `flow_no_node_started` | `project:<key>` | the project's owner (the orchestrator) | the lead |
+| `session_step_waiting` | `run:<id>` | the run | its owner, `flow_runs.actor_task_id` |
+
+`blocked` and `decision_request` are not among them: those are the event path's kinds, re-derived
+from their event at every claim. The packet is relay-envelope/1 with the roles named by the kind
+(`lead`, `management`, `orchestrator`, `run`), the envelope's `layer` (the layer the message is for)
+and the text in the packet's `body`; the rendered message's header is `[codex-session-relay] <layer>
+message from <sender role> <sender>` and the text follows the fields. A decision kind names the
+decision in `decision` and who owes the answer (the recipient, or the user for
+`jun_decision_request`). Sending is the channel's own: the daemon's supervisor pass picks the row up,
+opens a turn in an idle or unloaded recipient and retries a busy one, and a readback is what it is
+for any message. A recipient needs recorded authorized settings and a role policy, as any recipient
+of this channel does; a management session that is not a Codex App Server thread cannot be woken
+this way.
+
+`crw relay report-up --initiative <key> --kind lead_report|lead_decision_request|lead_blocked
+[--subject ...] [--text ...|@FILE] [--evidence ...]` is a lead's report upward: a `lead_report`
+journal row (the report id, kind, initiative, subject, text, its digest, the evidence and the
+reporting thread, `CODEX_THREAD_ID`) and the direct message, in one transaction. A report with
+nobody above to tell is still recorded and the refusal (exit 2) carries the report id with
+`standing: true`; the same report again answers `replayed: true` and stages nothing more. The
+message goes in the lead's name, and a caller is not refused for not being the lead: a calling
+thread that is not the initiative's lead is named at the top of the message text, recorded on the
+row (`reporterIsLead: false`) and warned in the answer (`warning`); a caller with no
+`CODEX_THREAD_ID` is recorded without a reporter and warned.
+
 ## The surface
 
 ```bash
@@ -729,6 +769,28 @@ skipped by every later attempt, so recording it as a hold would mean recovering 
 never released the report. A busy one is deferred with a backoff that grows and a cap that is
 counted in the journal, because the attempt counter only moves inside the claim a busy
 recipient never reaches.
+
+The backoff is not the only thing that ends a busy wait (CRW-1334, CRW-1314 design section 3). While a
+message waits on a busy recipient, the relay daemon holds a subscription on the recipient's thread, as it
+does for a delivery head (see [subscriptions](subscriptions.md), the busy hold), and the recipient's
+`idle` or `notLoaded` report makes the message due at once: `next_eligible_at` is set to the report's
+tick and a `supervisor_message_woken` journal row names the thread, the status and both deadlines. The
+same tick's supervisor pass attempts it, and the lifecycle read still decides busy before any transport
+call; a `notLoaded` recipient is loaded by the transport's `thread/resume` and given the report by
+`turn/start`. A message held at `busy_cap` (forty busy answers) or `attempt_cap` (its attempts kept ending
+before a send) is released by the recipient's edge, or by a verified readback (`host_read`) of another
+message to the same recipient, which shows the recipient reading its own thread; the hold is lifted, the
+message is due at once, and a `supervisor_message_released` journal row names the hold and what released
+it (`idle_edge` with the status, or `readback` with the message and turn read back). Nothing else about
+the holds changes: the busy count is not reset, so a released message that meets the recipient busy past
+the cap again is held again and waits for the next edge or readback, and the holds staging owns
+(`superseded_by_report`, `hierarchy_unresolved`) are never released this way.
+
+The relay can only wake a recipient that is a Codex App Server thread on the relay's host, with
+authorized settings recorded and a role policy this process can read: without them the attempt is
+withheld before the send (`withheld_pre_send`, `settings_unavailable` or `role_policy_unconfigured`). A
+management or lead session that is not an App Server thread - a Claude Code session, for example - is
+not woken by the relay; its messages stay staged and readable with `supervisor-show`.
 
 A supervisor the host has unloaded is loaded, not skipped. Its pair is the user's own selection,
 so it is never transmitted: a resume can apply what it transmits while the host materializes a

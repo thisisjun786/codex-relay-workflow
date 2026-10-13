@@ -765,3 +765,150 @@ func TestActivityRevalidationPremergeRecordIsEvidence(t *testing.T) {
 		t.Errorf("the record of the refreshed head names generation %d (%v) and event %s, want the refresh's generation 2 and event %s", e.Generation, e.HasGeneration, e.EventID, s.event2)
 	}
 }
+
+// TestHeadIdentity verifies that headIdentity resolves unique identities, detects ambiguity when multiple
+// generations or events point at the same head, and deduplicates identical identities.
+func TestHeadIdentity(t *testing.T) {
+	tests := []struct {
+		name           string
+		head           string
+		ownHead        string
+		own            refreshRow
+		refreshes      []refreshRow
+		wantGeneration int64
+		wantEvent      string
+		wantOK         bool
+	}{
+		{
+			name:           "the head of the acceptance",
+			head:           "head-own",
+			ownHead:        "head-own",
+			own:            refreshRow{acceptanceID: "acc-1", generation: 1, eventID: "evt-own"},
+			wantGeneration: 1,
+			wantEvent:      "evt-own",
+			wantOK:         true,
+		},
+		{
+			name:    "the refreshed head",
+			head:    "head-ref",
+			ownHead: "head-own",
+			own:     refreshRow{acceptanceID: "acc-1", generation: 1, eventID: "evt-own"},
+			refreshes: []refreshRow{
+				{acceptanceID: "acc-1", head: "head-ref", generation: 2, eventID: "evt-ref"},
+			},
+			wantGeneration: 2,
+			wantEvent:      "evt-ref",
+			wantOK:         true,
+		},
+		{
+			name:    "a head neither names",
+			head:    "head-unknown",
+			ownHead: "head-own",
+			own:     refreshRow{acceptanceID: "acc-1", generation: 1, eventID: "evt-own"},
+			refreshes: []refreshRow{
+				{acceptanceID: "acc-1", head: "head-ref", generation: 2, eventID: "evt-ref"},
+			},
+			wantGeneration: 0,
+			wantEvent:      "",
+			wantOK:         false,
+		},
+		{
+			name:    "same head pointed at by two different generations",
+			head:    "head-1",
+			ownHead: "head-1",
+			own:     refreshRow{acceptanceID: "acc-1", generation: 1, eventID: "evt-1"},
+			refreshes: []refreshRow{
+				{acceptanceID: "acc-1", head: "head-1", generation: 2, eventID: "evt-1"},
+			},
+			wantGeneration: 0,
+			wantEvent:      "",
+			wantOK:         false,
+		},
+		{
+			name:    "same head pointed at by two different generations across refreshes",
+			head:    "head-2",
+			ownHead: "head-1",
+			own:     refreshRow{acceptanceID: "acc-1", generation: 1, eventID: "evt-1"},
+			refreshes: []refreshRow{
+				{acceptanceID: "acc-1", head: "head-2", generation: 2, eventID: "evt-2"},
+				{acceptanceID: "acc-1", head: "head-2", generation: 3, eventID: "evt-2"},
+			},
+			wantGeneration: 0,
+			wantEvent:      "",
+			wantOK:         false,
+		},
+		{
+			name:    "same head pointed at by two different events",
+			head:    "head-1",
+			ownHead: "head-1",
+			own:     refreshRow{acceptanceID: "acc-1", generation: 1, eventID: "evt-1"},
+			refreshes: []refreshRow{
+				{acceptanceID: "acc-1", head: "head-1", generation: 1, eventID: "evt-2"},
+			},
+			wantGeneration: 0,
+			wantEvent:      "",
+			wantOK:         false,
+		},
+		{
+			name:    "same head pointed at by two different events across refreshes",
+			head:    "head-2",
+			ownHead: "head-1",
+			own:     refreshRow{acceptanceID: "acc-1", generation: 1, eventID: "evt-1"},
+			refreshes: []refreshRow{
+				{acceptanceID: "acc-1", head: "head-2", generation: 2, eventID: "evt-2a"},
+				{acceptanceID: "acc-1", head: "head-2", generation: 2, eventID: "evt-2b"},
+			},
+			wantGeneration: 0,
+			wantEvent:      "",
+			wantOK:         false,
+		},
+		{
+			name:    "the same identity repeated (counted once)",
+			head:    "head-1",
+			ownHead: "head-1",
+			own:     refreshRow{acceptanceID: "acc-1", generation: 1, eventID: "evt-1"},
+			refreshes: []refreshRow{
+				{acceptanceID: "acc-1", head: "head-1", generation: 1, eventID: "evt-1"},
+			},
+			wantGeneration: 1,
+			wantEvent:      "evt-1",
+			wantOK:         true,
+		},
+		{
+			name:    "the same identity repeated across refreshes (counted once)",
+			head:    "head-2",
+			ownHead: "head-1",
+			own:     refreshRow{acceptanceID: "acc-1", generation: 1, eventID: "evt-1"},
+			refreshes: []refreshRow{
+				{acceptanceID: "acc-1", head: "head-2", generation: 2, eventID: "evt-2"},
+				{acceptanceID: "acc-1", head: "head-2", generation: 2, eventID: "evt-2"},
+			},
+			wantGeneration: 2,
+			wantEvent:      "evt-2",
+			wantOK:         true,
+		},
+		{
+			name:    "refresh from a different acceptance is ignored",
+			head:    "head-ref",
+			ownHead: "head-own",
+			own:     refreshRow{acceptanceID: "acc-1", generation: 1, eventID: "evt-own"},
+			refreshes: []refreshRow{
+				{acceptanceID: "acc-other", head: "head-ref", generation: 2, eventID: "evt-ref"},
+			},
+			wantGeneration: 0,
+			wantEvent:      "",
+			wantOK:         false,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			gotGeneration, gotEvent, gotOK := headIdentity(tc.head, tc.ownHead, tc.own, tc.refreshes)
+			if gotGeneration != tc.wantGeneration || gotEvent != tc.wantEvent || gotOK != tc.wantOK {
+				t.Fatalf("headIdentity(%q, %q, %+v, %+v) = (%d, %q, %v), want (%d, %q, %v)",
+					tc.head, tc.ownHead, tc.own, tc.refreshes,
+					gotGeneration, gotEvent, gotOK, tc.wantGeneration, tc.wantEvent, tc.wantOK)
+			}
+		})
+	}
+}

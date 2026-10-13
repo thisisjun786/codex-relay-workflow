@@ -84,11 +84,20 @@ type Milestone struct {
 // Surfaces are the surfaces a milestone's criteria may name.
 var Surfaces = []string{"logic", "web", "tui", "desktop"}
 
-// Target is where the project's issues integrate: the repository and the base ref an order edge names.
+// Target is where the project's issues integrate: the repository, the absolute path of the local checkout a run integrates on, and
+// the base ref, the short name of the branch (a refs/heads/ prefix is read as the short name, with a warning).
 type Target struct {
 	Repository string `json:"repository"`
 	BaseRef    string `json:"base_ref"`
 }
+
+// branchPrefix is the prefix a full branch ref carries; the integration path adds it to the short name itself.
+const branchPrefix = "refs/heads/"
+
+// Branch is the target's branch as a run integrates on it: the short name, with a refs/heads/ prefix removed (CRW-1317). Every
+// reader of the target takes the branch through it, so the plan's edges, the integration request and the observations name the
+// same ref.
+func (t Target) Branch() string { return strings.TrimPrefix(t.BaseRef, branchPrefix) }
 
 // Issue is one issue line.
 type Issue struct {

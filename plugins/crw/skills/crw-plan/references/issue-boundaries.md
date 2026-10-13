@@ -241,7 +241,9 @@ changes what the next one sees.
    ordering step 3 asks for), `group_cap` (a group of more than four issues), `after_unknown` (a prerequisite that is no
    issue of the handoff), `size_value` (a `size_fit`, `size_reason` or `issue_size` outside its closed set) and
    `milestone` (a milestone entry the issues and the run cannot use). Repair at the step that owns the defect and run the
-   steps from there again; the plan is not closed with a refusal. The preview lists `size_unreviewed` for an issue that
+   steps from there again; the plan is not closed with a refusal. A warning on stderr (`target_repository`, a repository that is not
+   the checkout's absolute path; `target_base_ref`, a base ref written with `refs/heads/`) is not a refusal: correct the
+   target to the form the run needs before the run. The preview lists `size_unreviewed` for an issue that
    answered `over_line` with neither a bundle reason nor a split; that is not a refusal, and the plan is not closed until
    the size check has judged each such issue.
 

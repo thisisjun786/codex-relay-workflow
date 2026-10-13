@@ -116,6 +116,17 @@ func (w *idleWake) idle(ctx context.Context, r *Report, host Host, now float64) 
 		if wrote {
 			w.woken++
 		}
+		if w.daemon.Channel == nil {
+			continue
+		}
+		// The supervisor channel takes the same edge (CRW-1334): its messages that wait on this recipient
+		// are made due, and a busy_cap or attempt_cap hold of theirs is released. It is the same pass's own
+		// write, so a store failure ends the tick the same way.
+		count, err := w.daemon.Channel.WakeBusyRecipient(ctx, report.ThreadID, report.Status, now)
+		if err != nil {
+			return fmt.Errorf("idle report for %s not applied to the supervisor channel: %w", report.ThreadID, err)
+		}
+		w.woken += count.Woken + count.Released
 	}
 	return nil
 }
@@ -140,11 +151,29 @@ func (w *idleWake) hold(ctx context.Context, r *Report, host Host, now float64) 
 		// does: the delivery pass ran before it, and the supervisor channel does not write after it (CRW-904 d1).
 		return fmt.Errorf("busy heads not read: %w", err)
 	}
+	if w.daemon.Channel != nil {
+		// A supervisor message waiting on a busy recipient, or held at busy_cap or attempt_cap, needs the
+		// same subscription for its recipient's edge to be seen (CRW-1334). The read is the same kind of
+		// failure as the delivery heads' read above.
+		waiting, err := w.daemon.Channel.IdleWakeRecipients(ctx, now)
+		if err != nil {
+			return fmt.Errorf("busy supervisor recipients not read: %w", err)
+		}
+		heads = append(heads, waiting...)
+	}
 	wanted := map[string]string{}
 	deadlines := map[string]float64{}
 	for _, head := range heads {
-		if head.RecipientThreadID != "" {
+		if head.RecipientThreadID == "" {
+			continue
+		}
+		// One recipient may wait in both channels: the subscription is one, on the thread the first
+		// (the delivery path's) names, and the earliest deadline either channel has for it is the one a
+		// refused hold waits for. A deadline of zero (a message only an edge releases) gives no time.
+		if _, seen := wanted[head.RecipientTaskID]; !seen {
 			wanted[head.RecipientTaskID] = head.RecipientThreadID
+			deadlines[head.RecipientTaskID] = head.Deadline
+		} else if earlier := deadlines[head.RecipientTaskID]; head.Deadline > 0 && (earlier <= 0 || head.Deadline < earlier) {
 			deadlines[head.RecipientTaskID] = head.Deadline
 		}
 	}
