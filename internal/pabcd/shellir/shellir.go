@@ -142,6 +142,10 @@ type Context struct {
 	wrapRedirs bool
 }
 
+// PipeID names the pipeline the command is a stage of, 0 outside one: the stages of one pipeline share it (CRW-1307, the GitHub post
+// guard reads the text the stages before a post write into its standard input).
+func (c Context) PipeID() int { return c.pipeID }
+
 // Inline is the program text an interpreter receives on its command line or
 // standard input. Language is python, node, perl, ruby, awk or sed.
 type Inline struct {

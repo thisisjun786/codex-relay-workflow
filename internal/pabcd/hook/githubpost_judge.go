@@ -124,14 +124,12 @@ func githubPostJudgeTextOnly(command, cwd string, depth int, outer *githubPostWr
 func githubPostJudgeExecs(execs []shellir.Exec, depth int, outer *githubPostWrites, layout bool, layoutLine int) (site githubPostSite, denied bool) {
 	failLine := 0
 	defer func() {
-		// A refusal that warns does not hide a secret a later post of the same text carries inline: that one is the answer, since
-		// it stays a block (CRW-1307).
+		// A refusal that warns does not hide a secret a post of the same text carries (inline, in a body or field file, on standard
+		// input the command shows, or in a body file the text writes first): that one is the answer, since it stays a block
+		// (CRW-1307, githubpost_carried.go).
 		if denied && site.rule != githubPostRuleSecret {
-			for _, e := range execs {
-				if place, found := githubPostInlineSecret(githubPostWordsOf(e)); githubPostProgram(e.Name) == "gh" && found {
-					site, failLine = githubPostSite{rule: githubPostRuleSecret, place: place, post: true}, e.Line
-					break
-				}
+			if secret, line, found := githubPostCarriedSecret(execs); found {
+				site, failLine = secret, line
 			}
 		}
 		if denied && site.line == 0 {

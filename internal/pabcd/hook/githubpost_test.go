@@ -246,7 +246,8 @@ func TestGitHubPostGuardJudgements(t *testing.T) {
 		{"directory", "gh pr comment 1 --body-file adir", githubPostRuleUnread, "adir"},
 		{"clean quoted heredoc", "gh pr comment 1 --body-file - <<'EOF'\na clean body\nEOF\n", githubPostRuleInline, githubPostWhereCommand},
 		{"clean double quoted heredoc", "gh pr comment 1 -F - <<\"EOF\"\na clean body\nEOF\n", githubPostRuleInline, githubPostWhereCommand},
-		{"dirty quoted heredoc", "gh pr comment 1 --body-file - <<'EOF'\nclean\n" + githubPostFake("xoxb-", 12) + "\nEOF\n", githubPostRuleInline, githubPostWhereCommand},
+		// CRW-1307 (evaluation of 0a58638f, d2): the body on standard input that the command shows is scanned, so its secret is the refusal (a block).
+		{"dirty quoted heredoc", "gh pr comment 1 --body-file - <<'EOF'\nclean\n" + githubPostFake("xoxb-", 12) + "\nEOF\n", githubPostRuleSecret, githubPostWhereCommand},
 		{"no heredoc", "echo hi | gh pr comment 1 --body-file -", githubPostRuleInline, githubPostWhereCommand},
 		{"unquoted heredoc", "gh pr comment 1 --body-file - <<EOF\na clean body\nEOF\n", githubPostRuleInline, githubPostWhereCommand},
 		{"heredoc bound to another line", "echo x <<'EOF'\nclean\nEOF\ncat secret.md | gh pr comment 1 --body-file -", githubPostRuleInline, githubPostWhereCommand},
@@ -285,7 +286,8 @@ func TestGitHubPostGuardJudgements(t *testing.T) {
 		{"fill mode", "gh pr create --fill", githubPostRuleUnread, githubPostWhereCommand},
 		{"template mode", "gh pr create --title Plain --template secret.md", githubPostRuleUnread, githubPostWhereCommand},
 		{"rewritten body file", "printf x > clean.md && gh pr comment 1 --body-file clean.md", githubPostRuleUnread, githubPostWhereCommand},
-		{"second heredoc", "cat <<'LEFT' | gh pr comment 1 --body-file - <<'RIGHT'\nclean\nLEFT\n" + githubPostFake("xoxb-", 12) + "\nRIGHT\n", githubPostRuleInline, githubPostWhereCommand},
+		// CRW-1307 (evaluation of 0a58638f, d2): the body on standard input that the command shows is scanned, so its secret is the refusal (a block).
+		{"second heredoc", "cat <<'LEFT' | gh pr comment 1 --body-file - <<'RIGHT'\nclean\nLEFT\n" + githubPostFake("xoxb-", 12) + "\nRIGHT\n", githubPostRuleSecret, githubPostWhereCommand},
 		{"wrapper option value", "env -u OLD gh pr comment 1 -b plain", githubPostRuleInline, githubPostWhereCommand},
 		{"wrapper option value with a secret", "env -u OLD gh pr comment 1 -b \"shows `env`\"", githubPostRuleInline, githubPostWhereCommand},
 		{"sudo user option value", "sudo -u root gh pr comment 1 -b plain", githubPostRuleInline, githubPostWhereCommand},
@@ -326,7 +328,8 @@ func TestGitHubPostGuardJudgements(t *testing.T) {
 		{"heredoc program with a variable", "bash <<'EOF'\ngh pr comment 1 -b \"$TOKEN\"\nEOF\n", githubPostRuleInline, githubPostWhereCommand},
 		// CRW-1307: the inline body is scanned, so the secret in it is the refusal (it stays a block; an inline body only warns).
 		{"heredoc program with a secret", "bash <<'EOF'\ngh pr comment 1 -b " + githubPostFake("sk-", 16) + "\nEOF\n", githubPostRuleSecret, githubPostWhereCommand},
-		{"herestring with a secret", "gh pr comment 1 --body-file - <<< " + githubPostFake("sk-", 16), githubPostRuleInline, githubPostWhereCommand},
+		// CRW-1307 (evaluation of 0a58638f, d2): the body on standard input that the command shows is scanned, so its secret is the refusal (a block).
+		{"herestring with a secret", "gh pr comment 1 --body-file - <<< " + githubPostFake("sk-", 16), githubPostRuleSecret, githubPostWhereCommand},
 		{"expanded command word", "G=gh; $G pr comment 1 --body x", githubPostRuleInline, githubPostWhereCommand},
 		// The generation-7 rules read this text through rule 2's canonical words, so the body it spells is
 		// the inline-body rule now, where generation 6 named the expanded program word instead.
