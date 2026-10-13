@@ -200,7 +200,7 @@ the seam builds a few tests need (a link-time clock, a build tag, an overlay) th
 package's `TestMain` is `testsupport.Main`, which points the homes, the XDG directories and the
 relay's roots at one temporary tree (`crw-relay-test-*` in `TMPDIR`), keeps `CRW_REFUSE_LIVE_STATE=1`, and
 removes the tree and every binary the process built after the tests. The tree's crw configuration (`xdg-config/crw/config.json`, `testsupport.SandboxConfig`) names `TMPDIR` as
-`paths.sandbox_root`, so the sandbox-root rule (CRW-1265) judges the directories a test makes the same
+`paths.sandbox_root`, so the sandbox-root rule (CRW-1265; a warning and a record since CRW-1308) judges the directories a test makes the same
 whatever `TMPDIR` is; a harness that starts a process with an environment of its own passes that file as
 `CRW_CONFIG` or writes the same document into the configuration home it chose; `crw-dev parity fire` and
 `latency`, which isolate nothing, write it for their `--scratch` directory and hand it to every case. The fake
