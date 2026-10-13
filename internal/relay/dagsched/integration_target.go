@@ -15,14 +15,17 @@ import (
 
 // The integration target that moved outside the integration path (CRW-1301, decision A + D(i)). dag-integrate-push already
 // reads the remote branch before it pushes; that head is compared with the heads the relay recorded for the integration ref:
-// the base of every recorded intent and every head a ref_moved stage moved the ref onto. The heads recorded for the store's
-// other integration refs count as well, because no record says which remote branch a ref is pushed to (CRW-1304) and their
-// push to the same remote branch is the integration path too (evaluation d1). A remote head outside every recorded set means
-// something other than the relay moved the target (r2 F0-1: a child pushed its own commit to dev). The push records a broken
+// the base of every recorded intent and every head a ref_moved stage moved the ref onto. When no target is recorded for the
+// push's integration ref, remote and remote ref, the heads recorded for the store's other integration refs count as well,
+// because nothing says which remote branch a ref is pushed to and their push to the same remote branch is the integration path
+// too (evaluation d1). When the target is recorded (integration_target_record.go, CRW-1304), the ref's own heads are the whole
+// set: another ref's head on the target's remote branch is not on its path. A remote head outside the set means something other
+// than the relay moved the target (r2 F0-1: a child pushed its own commit to dev). The push records a broken
 // integration_target_moved fault in the fault ledger, whose blocking notice the daemon carries to the supervisor, and names
 // it to the calling parent in its output. What the push does is unchanged: nothing is reverted, and a remote the branch does
-// not contain is still refused with merge_base_mismatch. There is no periodic check and no other remote read (CRW-1304); a
-// remote that cannot be read, or a remote branch that does not exist yet, is compared with nothing and records nothing.
+// not contain is still refused with merge_base_mismatch. The periodic read of the remote is the separate one-shot checker
+// (integration_target_check.go); a remote that cannot be read, or a remote branch that does not exist yet, is compared with
+// nothing and records nothing.
 
 // ClassIntegrationTargetMoved is the fault class of a remote integration target that moved outside the integration path.
 const ClassIntegrationTargetMoved = "integration_target_moved"
@@ -40,10 +43,21 @@ type TargetMoved struct {
 	// Expected are the recorded heads of the integration ref, newest first, at most expectedShown of ExpectedTotal.
 	Expected      []string
 	ExpectedTotal int
+	// Strict says the integration ref has a recorded target, so Expected is the ref's own heads and no other ref's head counts as on its path.
+	Strict bool
+	// Source is what read the remote head: SourcePush, SourceCheck or SourceReceive.
+	Source string
 	// FaultID is the fault the ledger recorded; FaultError is why it could not be recorded, when it could not.
 	FaultID    string
 	FaultError string
 }
+
+// The sources of an integration_target_moved observation, kept in the fault's evidence.
+const (
+	SourcePush    = "push"
+	SourceCheck   = "check"
+	SourceReceive = "receive"
+)
 
 // TargetCheck compares the remote head a push read with the heads the relay recorded for the integration refs. It answers nil
 // when the head is one of them.
@@ -58,10 +72,17 @@ func (s *Scheduler) CheckIntegrationTarget(ctx context.Context, checkout, remote
 	if err != nil {
 		return nil, err
 	}
+	strict, err := store.IntegrationTargetRecorded(ctx, s.Store, checkout, integrationRef, remote, remoteRef)
+	if err != nil {
+		return nil, err
+	}
+	if strict {
+		recorded = headSet(expected)
+	}
 	if len(expected) == 0 || recorded[remoteHead] {
 		return nil, nil
 	}
-	out := &TargetMoved{IntegrationRef: integrationRef, RemoteHead: remoteHead, Expected: expected[:min(len(expected), expectedShown)], ExpectedTotal: len(expected)}
+	out := &TargetMoved{IntegrationRef: integrationRef, RemoteHead: remoteHead, Expected: expected[:min(len(expected), expectedShown)], ExpectedTotal: len(expected), Strict: strict, Source: SourcePush}
 	signature := map[string]any{"checkout": checkout, "remote": remote, "remoteRef": remoteRef}
 	if id, err := s.recordTargetMoved(ctx, out, signature, plan); err != nil {
 		out.FaultError = err.Error()
@@ -135,7 +156,7 @@ func (s *Scheduler) recordTargetMoved(ctx context.Context, m *TargetMoved, signa
 	} else if has {
 		scope["projectKey"] = project
 	}
-	detail := fmt.Sprintf("%s on %s holds %s, which is not a head the relay recorded for %s or any other integration ref (newest recorded for %s: %s); something outside the integration path moved it", signature["remoteRef"], signature["remote"], m.RemoteHead, m.IntegrationRef, m.IntegrationRef, strings.Join(m.Expected, ", "))
+	detail := fmt.Sprintf("%s on %s holds %s, which is not a head the relay recorded for %s%s (newest recorded for %s: %s); something outside the integration path moved it", signature["remoteRef"], signature["remote"], m.RemoteHead, m.IntegrationRef, m.otherRefs(), m.IntegrationRef, strings.Join(m.Expected, ", "))
 	shown := make([]any, len(m.Expected))
 	for i, head := range m.Expected {
 		shown[i] = head
@@ -143,7 +164,7 @@ func (s *Scheduler) recordTargetMoved(ctx context.Context, m *TargetMoved, signa
 	ledger := &faults.Ledger{Store: s.Store, Clock: delivery.SystemClock{}}
 	_, err := ledger.Record(ctx, faults.Observation{Product: targetProduct, FaultClass: ClassIntegrationTargetMoved, Severity: faults.Broken, Signature: signature,
 		OccurrenceKey: "head:" + m.RemoteHead, Scope: scope, Detail: detail,
-		Evidence: []any{map[string]any{"integrationRef": m.IntegrationRef, "remoteHead": m.RemoteHead, "expected": shown, "expectedTotal": int64(m.ExpectedTotal), "plan": plan}}})
+		Evidence: []any{map[string]any{"integrationRef": m.IntegrationRef, "remoteHead": m.RemoteHead, "expected": shown, "expectedTotal": int64(m.ExpectedTotal), "plan": plan, "source": m.Source}}})
 	if err != nil {
 		return "", err
 	}
@@ -161,6 +182,23 @@ func nameTargetMoved(err error, m *TargetMoved, remote, remoteRef string) error 
 	if m.FaultID == "" {
 		recorded = "the fault could not be recorded: " + m.FaultError
 	}
-	refused.Detail += fmt.Sprintf("; %s: %s on %s held %s, not a head the relay recorded for %s or any other integration ref (%s)", ClassIntegrationTargetMoved, remoteRef, remote, m.RemoteHead, m.IntegrationRef, recorded)
+	refused.Detail += fmt.Sprintf("; %s: %s on %s held %s, not a head the relay recorded for %s%s (%s)", ClassIntegrationTargetMoved, remoteRef, remote, m.RemoteHead, m.IntegrationRef, m.otherRefs(), recorded)
 	return err
+}
+
+// otherRefs is the words that say the heads of the store's other integration refs count as on the path too: they do until the target is recorded.
+func (m *TargetMoved) otherRefs() string {
+	if m.Strict {
+		return ""
+	}
+	return " or any other integration ref"
+}
+
+// headSet is the set of the heads in a list.
+func headSet(heads []string) map[string]bool {
+	set := make(map[string]bool, len(heads))
+	for _, h := range heads {
+		set[h] = true
+	}
+	return set
 }
