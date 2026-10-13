@@ -69,7 +69,21 @@ func componentHooks() []componentHook {
 		}},
 		// Spawn attach hook: the recursion and final-gate leg, with its own stdin policy and answer.
 		{"pre-tool-use-attaching-skills", "pre-tool-use", func(c invocation, in io.Reader) int {
-			return spawn.RunHook(c.ctx, in, c.stdout, os.LookupEnv)
+			// The leg's refusals warn (CRW-1307): its answer goes through the mode table before it is written. What it read names
+			// the session of the record.
+			var read, answer bytes.Buffer
+			code := spawn.RunHook(c.ctx, io.TeeReader(io.LimitReader(in, harness.MaxStdinBytes+1), &read), &answer, os.LookupEnv)
+			if code != 0 {
+				return code
+			}
+			out := harness.SettleGuard(attachingSkillsLeg, read.String(), answer.String(), "", os.LookupEnv)
+			if out == "" {
+				return 0
+			}
+			if _, err := io.WriteString(c.stdout, out); err != nil {
+				return 2
+			}
+			return 0
 		}},
 		// GitHub post guard: CRW's own protection (no CXC oracle), with its own stdin policy and answer.
 		{"pre-tool-use-guarding-github-post", "pre-tool-use", func(c invocation, in io.Reader) int {
@@ -78,20 +92,24 @@ func componentHooks() []componentHook {
 				defer githubPostGuardReaderDone()
 				raw, over, ok := pabcdhook.GitHubPostInput(in)
 				if !ok {
-					done <- pabcdhook.GitHubPostCancelledAnswer()
+					done <- harness.ReleaseGuard(githubPostLeg, "", "a read error", os.LookupEnv)
 					return
 				}
-				// Input that arrives once the leg has been cancelled finds a leg that already answered the deny: nothing is recorded
-				// or judged for it (the answer here is the same deny, so which of the two reaches the select first does not matter).
+				// Input that arrives once the leg has been cancelled finds a leg that already answered: nothing is recorded or judged for it.
 				if c.ctx.Err() != nil {
-					done <- pabcdhook.GitHubPostCancelledAnswer()
+					done <- ""
 					return
 				}
 				// Like every other leg, the record is left before the judgment; it is metadata-only and an over-bound payload leaves none.
 				if !over {
 					harness.RecordInvocation(raw, harness.Component, "pre-tool-use-github-post", os.LookupEnv)
 				}
-				done <- pabcdhook.GitHubPostJudge(raw, over)
+				if over {
+					done <- harness.ReleaseGuard(githubPostLeg, "", "over 1048576 bytes", os.LookupEnv)
+					return
+				}
+				answer, rule := pabcdhook.GitHubPostDecision(raw, false)
+				done <- harness.SettleGuard(githubPostLeg, raw, answer, rule, os.LookupEnv)
 			}()
 			select {
 			case answer := <-done:
@@ -100,9 +118,8 @@ func componentHooks() []componentHook {
 				}
 				return 0
 			case <-c.ctx.Done():
-				// A cancelled guard still answers, with the deny of an unreadable command, and exits as an ordinary deny does: never silence,
-				// so the post is not let through.
-				_, _ = io.WriteString(c.stdout, pabcdhook.GitHubPostCancelledAnswer())
+				// A cancelled guard lets the call through with a warning and a record (fail-open, CRW-1307): the command was not read.
+				_, _ = io.WriteString(c.stdout, harness.ReleaseGuard(githubPostLeg, "", "the leg was cancelled", os.LookupEnv))
 				return 0
 			}
 		}},
@@ -113,12 +130,16 @@ func componentHooks() []componentHook {
 			done := make(chan string, 1)
 			go func() {
 				raw, over, ok := pabcdhook.GitHubPostInput(in)
-				if !ok || over || c.ctx.Err() != nil {
-					done <- pabcdhook.ChildPushInputUnreadAnswer()
+				switch {
+				case c.ctx.Err() != nil:
+					done <- ""
+					return
+				case !ok || over:
+					done <- harness.ReleaseGuard(childPushLeg, "", "a read error or over 1048576 bytes", os.LookupEnv)
 					return
 				}
 				harness.RecordInvocation(raw, harness.Component, "pre-tool-use-child-push", os.LookupEnv)
-				done <- pabcdhook.HandleChildPushGuard(raw, func(session, cwd string) pabcdhook.ChildPushBinding {
+				answer, rule := pabcdhook.ChildPushDecision(raw, func(session, cwd string) pabcdhook.ChildPushBinding {
 					child, parent, err := hook.ChildBinding(c.ctx, session)
 					switch {
 					case err != nil:
@@ -128,12 +149,13 @@ func componentHooks() []componentHook {
 					}
 					return pabcdhook.ChildPushBinding{Child: true, Own: pabcdhook.ChildPushOwnBranch(c.ctx, cwd, parent)}
 				})
+				done <- harness.SettleGuard(childPushLeg, raw, answer, rule, os.LookupEnv)
 			}()
 			select {
 			case answer := <-done:
 				_, _ = io.WriteString(c.stdout, answer)
 			case <-c.ctx.Done():
-				_, _ = io.WriteString(c.stdout, pabcdhook.ChildPushInputUnreadAnswer())
+				_, _ = io.WriteString(c.stdout, harness.ReleaseGuard(childPushLeg, "", "the leg was cancelled", os.LookupEnv))
 			}
 			return 0
 		}},
@@ -160,6 +182,13 @@ func componentHooks() []componentHook {
 		{"post-compact-injecting-bg-terminal-affordance.user-prompt-submit", "user-prompt-submit", aff("user-prompt-submit")},
 	}
 }
+
+// The component rows that are PreToolUse guards, by their registration names (the mode table's keys).
+const (
+	githubPostLeg      = "pre-tool-use-guarding-github-post"
+	childPushLeg       = "pre-tool-use-guarding-child-push"
+	attachingSkillsLeg = "pre-tool-use-attaching-skills"
+)
 
 // githubPostGuardReaderDone runs when the GitHub post guard's input goroutine has finished, recorded and judged or not; a test
 // waits on it instead of on a sleep.

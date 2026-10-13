@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
 )
 
 // spawnLegEnv points every home and the plugin root at temporary directories: this leg can reach
@@ -58,11 +61,23 @@ func spawnLegRun(t *testing.T, input string) (int, string, string) {
 	return code, out.String(), errOut.String()
 }
 
+// CRW-1307: the leg's refusals warn: the recorded deny's reason reaches the session as a warning and the spawn passes.
+func spawnLegWarned(deny string) string {
+	var a struct {
+		Output struct {
+			Reason string `json:"permissionDecisionReason"`
+		} `json:"hookSpecificOutput"`
+	}
+	_ = json.Unmarshal([]byte(deny), &a)
+	b, _ := json.Marshal(a.Output.Reason)
+	return `{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"` + harness.WarningPrefix + string(b[1:])
+}
+
 func TestSpawnLegAnswersTheRecordedDenyEnvelopes(t *testing.T) {
 	spawnLegEnv(t)
 	for _, c := range []struct{ name, input, want string }{
-		{"a subagent spawn is denied before anything else", `{"hook_event_name":"PreToolUse","session_id":"s","cwd":"/tmp","tool_name":"spawn_agent","agent_id":"child-1","agent_type":"explorer","tool_input":{"message":"spawn a helper"},"tool_use_id":"call-1"}`, spawnLegRecursionDeny},
-		{"an input over 4 MiB is refused", `{"hook_event_name":"PreToolUse","session_id":"s","cwd":"/tmp","tool_name":"spawn_agent","tool_input":{"message":"big","agent_type":"explorer"}}` + strings.Repeat(" ", 4194305), spawnLegOversizeDeny},
+		{"a subagent spawn is denied before anything else", `{"hook_event_name":"PreToolUse","session_id":"s","cwd":"/tmp","tool_name":"spawn_agent","agent_id":"child-1","agent_type":"explorer","tool_input":{"message":"spawn a helper"},"tool_use_id":"call-1"}`, spawnLegWarned(spawnLegRecursionDeny) + "}}\n"},
+		{"an input over 4 MiB is refused", `{"hook_event_name":"PreToolUse","session_id":"s","cwd":"/tmp","tool_name":"spawn_agent","tool_input":{"message":"big","agent_type":"explorer"}}` + strings.Repeat(" ", 4194305), spawnLegWarned(spawnLegOversizeDeny) + "}}\n"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			code, out, errOut := spawnLegRun(t, c.input)

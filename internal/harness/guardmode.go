@@ -89,7 +89,7 @@ func warnAnswer(warning string) string {
 	return string(b) + "\n"
 }
 
-// guardDeny is the reason of a PreToolUse deny answer, and whether the answer is one.
+// guardDeny is the text of a PreToolUse deny answer, and whether the answer is one.
 func guardDeny(answer string) (string, bool) {
 	var a struct {
 		Output struct {
@@ -101,10 +101,11 @@ func guardDeny(answer string) (string, bool) {
 	if json.Unmarshal([]byte(strings.TrimSpace(answer)), &a) != nil || a.Output.Decision != "deny" {
 		return "", false
 	}
-	if a.Output.Reason == "" {
-		return a.Output.Context, true
+	// The context is what the session saw of the refusal; some legs put more in it than in the reason (goal-active=unreadable).
+	if a.Output.Context == "" {
+		return a.Output.Reason, true
 	}
-	return a.Output.Reason, true
+	return a.Output.Context, true
 }
 
 var (
