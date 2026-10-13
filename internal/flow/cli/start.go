@@ -260,6 +260,11 @@ func (c *command) start(args []string) int {
 			plan.Facts = append(plan.Facts, f)
 		}
 	}
+	if c.Verifier != nil {
+		// the verifier's prerequisites (CRW-1319) do not depend on the store; the fact is a pass or a warning with its reason
+		tree, _ := repository(c.ctx, *repo)
+		plan.Facts = append(plan.Facts, c.Verifier(c.ctx, tree).leveled())
+	}
 	// the facts that did not pass are printed with the preview and recorded in the run's spec; none of them stops the start
 	var short []Fact
 	var shortNames []string
