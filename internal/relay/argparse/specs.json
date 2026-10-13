@@ -85,7 +85,8 @@
   {"flag":"--task","required":true},
   {"flag":"--host","required":true},
   {"flag":"--cwd"},
-  {"flag":"--cxc-session"}]},
+  {"flag":"--cxc-session"},
+  {"flag":"--creator","help":"the thread registering this binding; default the caller's CODEX_THREAD_ID. When an initiative supervisor (a lead) is registered by a thread that holds a live management seat, the execution edge from that seat to the initiative is written in the same transaction. An initiative has one upward execution edge, so another seat's edge refuses the registration (link_conflict): a second management session takes the initiative only by the handover of the seat above it"}]},
 {"name":"linkage-supervise","options":[
   {"flag":"--initiative","required":true},
   {"flag":"--project","required":true},

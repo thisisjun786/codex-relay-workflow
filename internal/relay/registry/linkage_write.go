@@ -257,12 +257,19 @@ func (r *Registry) ContestedDirectives(ctx context.Context, kind, key string) ([
 
 // BindScopeAs is bind_scope with its status argument, on the role's own level.
 func (r *Registry) BindScopeAs(ctx context.Context, role, key string, endpoint Endpoint, status string) (contract.OrderedObject, error) {
-	return r.bindScopeKind(ctx, role, "", key, endpoint, status)
+	return r.bindScopeKind(ctx, role, "", key, endpoint, status, "")
 }
 
 // bindScopeKind is bind_scope with the scope kind named: --scope-kind store moves the supervisor
 // seat off its own Linear level onto the store, and no other binding may name one (CRW-450).
-func (r *Registry) bindScopeKind(ctx context.Context, role, requested, key string, endpoint Endpoint, status string) (contract.OrderedObject, error) {
+//
+// creator is the thread registering the binding (linkage-bind --creator, by default the caller's
+// CODEX_THREAD_ID). When an initiative supervisor (a lead) is registered by a thread that holds a
+// live management seat, the execution edge from that seat to the initiative is written in the same
+// transaction (CRW-1333). An initiative has one upward execution edge: another seat's edge refuses
+// the registration with link_conflict, because a second management session takes an initiative only
+// by the handover of the seat above it. A creator with no management seat writes no edge.
+func (r *Registry) bindScopeKind(ctx context.Context, role, requested, key string, endpoint Endpoint, status, creator string) (contract.OrderedObject, error) {
 	kind, err := bindingScopeKind(role, requested, key)
 	if err != nil {
 		return nil, err
@@ -283,6 +290,7 @@ func (r *Registry) bindScopeKind(ctx context.Context, role, requested, key strin
 	}
 	defer release()
 	var refused *linkRefusal
+	var linked string
 	bid := bindingID(role, kind, key, endpoint.TaskID)
 	err = r.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
 		if kind == scopeManagement && key == endpoint.TaskID {
@@ -308,10 +316,27 @@ func (r *Registry) bindScopeKind(ctx context.Context, role, requested, key strin
 			refused = refusal
 			return l.recordConflict(ctx, refusal, now)
 		}
+		var edge *managementEdge
+		if kind == scopeInitiative && role == roleSupervisor {
+			if edge, refusal, err = l.managementEdgePlan(ctx, creator, key, endpoint.TaskID); err != nil {
+				return err
+			}
+			if refusal != nil {
+				refused = refusal
+				return l.recordConflict(ctx, refusal, now)
+			}
+		}
 		if err := l.retireStoreSeat(ctx, kind, endpoint.TaskID, plan.id, now); err != nil {
 			return err
 		}
-		return l.applyBindingPlan(ctx, plan, status, now)
+		if err := l.applyBindingPlan(ctx, plan, status, now); err != nil {
+			return err
+		}
+		if edge != nil {
+			linked = edge.id
+			return l.applyManagementEdge(ctx, edge, now)
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -319,7 +344,83 @@ func (r *Registry) bindScopeKind(ctx context.Context, role, requested, key strin
 	if refused != nil {
 		return nil, refused.err()
 	}
-	return l.binding(ctx, bid)
+	record, err := l.binding(ctx, bid)
+	if err != nil || linked == "" || record == nil {
+		return record, err
+	}
+	link, err := r.Link(ctx, linked)
+	if err != nil {
+		return nil, err
+	}
+	return append(copyObject(record), contract.Field{Key: "managementLink", Value: link}), nil
+}
+
+// managementEdge is the execution edge a lead registration writes from its creator's management
+// seat to the initiative: its link id, the seat and the two tasks, and what to do with the row
+// (insert, repoint, or present when it already stands as it should).
+type managementEdge struct {
+	id, action, seat, creator, initiative, lead string
+}
+
+// managementEdgePlan decides the edge a lead registration writes: nil when the creator is empty, is
+// the lead itself, or holds no live management seat; a link_conflict refusal when another live
+// execution edge already stands above the initiative.
+func (l linkage) managementEdgePlan(ctx context.Context, creator, initiative, lead string) (*managementEdge, *linkRefusal, error) {
+	creator = strings.TrimSpace(creator)
+	if creator == "" || creator == lead {
+		return nil, nil, nil
+	}
+	seat, found, err := l.oneString(ctx, "SELECT scope_key FROM scope_bindings WHERE task_id = ? AND role = ? AND scope_kind = ?"+
+		"  AND status IN ('active','paused') AND superseded_by IS NULL ORDER BY revision DESC, binding_id LIMIT 1", creator, roleSupervisor, scopeManagement)
+	if err != nil || !found {
+		return nil, nil, err
+	}
+	if err := encodedID(linkExec, scopeManagement, seat, scopeInitiative, initiative); err != nil {
+		return nil, nil, err
+	}
+	lid := linkID(linkExec, scopeManagement, seat, scopeInitiative, initiative)
+	other, err := l.r.Store.One(ctx, "SELECT link_id, upper_kind, upper_key, upper_task_id FROM scope_links"+
+		"  WHERE lower_kind = ? AND lower_key = ? AND link_kind = ? AND link_id != ?"+
+		"    AND status IN ('active','paused') AND superseded_by IS NULL ORDER BY link_id LIMIT 1", scopeInitiative, initiative, linkExec, lid)
+	if err != nil {
+		return nil, nil, err
+	}
+	if other != nil {
+		holder := colString(other, "upper_task_id")
+		return nil, &linkRefusal{reason: contract.RefusalLinkConflict,
+			detail: "initiative " + pyvalue.StrRepr(initiative) + " is already under " + colString(other, "upper_kind") + " " + pyvalue.StrRepr(colString(other, "upper_key")) +
+				" (" + pyvalue.StrRepr(holder) + ", " + colString(other, "link_id") + "); an initiative has one upward execution edge, so another management session " +
+				"takes it only by the handover of that seat (linkage-handover --role supervisor --scope-kind management)",
+			scopeKind: scopeInitiative, scopeKey: initiative, incumbent: holder, challenger: creator}, nil
+	}
+	edge := &managementEdge{id: lid, action: "insert", seat: seat, creator: creator, initiative: initiative, lead: lead}
+	row, err := l.r.Store.One(ctx, "SELECT status, upper_task_id, lower_task_id, superseded_by FROM scope_links WHERE link_id = ?", lid)
+	if err != nil {
+		return nil, nil, err
+	}
+	if row != nil {
+		edge.action = "repoint"
+		if isLive(colString(row, "status")) && colString(row, "superseded_by") == "" && colString(row, "upper_task_id") == creator && colString(row, "lower_task_id") == lead {
+			edge.action = "present"
+		}
+	}
+	return edge, nil, nil
+}
+
+// applyManagementEdge writes the edge managementEdgePlan decided.
+func (l linkage) applyManagementEdge(ctx context.Context, edge *managementEdge, at string) error {
+	switch edge.action {
+	case "insert":
+		return l.insertLink(ctx, edge.id, linkExec, end{scopeManagement, edge.seat, edge.creator}, end{scopeInitiative, edge.initiative, edge.lead}, at)
+	case "repoint":
+		if _, err := l.q(ctx).ExecContext(ctx, "UPDATE scope_links SET status = ?, upper_task_id = ?, lower_task_id = ?, revision = revision + 1,"+
+			" superseded_by = NULL, updated_at = ? WHERE link_id = ?", Active, edge.creator, edge.lead, at, edge.id); err != nil {
+			return err
+		}
+		return journal(ctx, l.r.Store, "scope_link_repointed", edge.id, contract.OrderedObject{{Key: "upperTaskId", Value: edge.creator},
+			{Key: "lowerTaskId", Value: edge.lead}}, at)
+	}
+	return nil
 }
 
 // retireStoreSeat lays down the store seat task holds when it takes a management seat (CRW-1333):
