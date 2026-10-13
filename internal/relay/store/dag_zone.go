@@ -129,7 +129,7 @@ func installDAGZoneTx(ctx context.Context, db *sql.DB) (err error) {
 	return nil
 }
 
-var dagZone = []string{
+var dagZone = slices.Concat([]string{
 	// The plan: its identity and the Linear project it belongs to, written once with revision 1. The
 	// head revision is MAX(revision_no) of the log, never a column here, so nothing about a plan is updated.
 	`CREATE TABLE IF NOT EXISTS dag_plans (
@@ -1866,7 +1866,7 @@ BEGIN SELECT RAISE(ABORT, 'UNIQUE constraint failed: dag_agent_integration_stage
 	`CREATE TRIGGER IF NOT EXISTS dag_agent_integration_stages_acceptance_check BEFORE INSERT ON dag_agent_integration_stages
 WHEN EXISTS (SELECT 1 FROM dag_agent_acceptances a WHERE a.acceptance_id = NEW.acceptance_id AND NOT (a.plan_id = NEW.plan_id AND a.node_id = NEW.node_id AND a.execution_id = NEW.execution_id AND a.head = NEW.head))
 BEGIN SELECT RAISE(ABORT, 'dag_agent_integration_stages.acceptance_id must name the acceptance of the same plan, node, execution and head'); END`,
-}
+}, integrationTargetZone)
 
 // zoneKeyGuardName finds the key guards among the zone's triggers: a guard's name ends in _guard (CRW-974).
 var zoneKeyGuardName = regexp.MustCompile(`(?is)^\s*CREATE\s+TRIGGER\s+IF\s+NOT\s+EXISTS\s+([A-Za-z_][A-Za-z_0-9]*_guard)\s`)
