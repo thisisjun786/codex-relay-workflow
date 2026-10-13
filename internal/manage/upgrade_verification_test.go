@@ -96,10 +96,10 @@ func upgradeAssertRefusal(t *testing.T, h *upgradeEnv, args []string, reason str
 	if got := h.recordOf(t).Reason; got != reason {
 		t.Errorf("reason %q, want %q", got, reason)
 	}
-	joined := strings.Join(append(h.crwCalls(), h.ghCallLines()...), " ")
 	for _, needle := range []string{"install", "service"} {
-		if strings.Contains(joined, needle) {
-			t.Errorf("a call after the refusal carried %q: %s", needle, joined)
+		if upgradeLaterStepCalled(t, h, needle) {
+			got := strings.Join(append(h.callArgs(), h.ghCallLines()...), " | ")
+			t.Errorf("a call after the refusal carried %q: %s", needle, got)
 		}
 	}
 }

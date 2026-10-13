@@ -117,10 +117,9 @@ func TestUpgradeDryRunCallsNoServiceCommand(t *testing.T) {
 	if code := h.run("--release-dir", h.release, "--dry-run"); code != 0 {
 		t.Fatalf("exit %d", code)
 	}
-	for _, line := range append(h.crwCalls(), h.ghCallLines()...) {
-		if strings.Contains(line, "service") {
-			t.Errorf("a dry run called a service command: %q", line)
-		}
+	if upgradeLaterStepCalled(t, h, "service") {
+		got := strings.Join(append(h.callArgs(), h.ghCallLines()...), " | ")
+		t.Errorf("a dry run called a service command: %s", got)
 	}
 	record := h.recordOf(t)
 	if !record.DryRun || record.Outcome != "ok" {
@@ -146,6 +145,26 @@ func TestUpgradeDryRunCallsNoServiceCommand(t *testing.T) {
 			t.Errorf("the run directories are %v, want two", got)
 		}
 	})
+}
+
+// A temp path that contains the letters "service" is part of the doctor arguments on a dry run,
+// not a service call; the dry-run and verification-refusal checks must still hold.
+func TestUpgradeDryRunCallsNoServiceCommandWhenTheTempPathContainsService(t *testing.T) {
+	dir, err := os.MkdirTemp("", "it-service-spee-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(dir); err != nil {
+			t.Errorf("removing %s: %v", dir, err)
+		}
+	})
+	if !strings.Contains(dir, "service") {
+		t.Fatalf("temp path %s does not contain service", dir)
+	}
+	t.Setenv("TMPDIR", dir)
+	TestUpgradeDryRunCallsNoServiceCommand(t)
+	TestUpgradeRefusesMissingVerificationRecord(t)
 }
 
 // C2: start is called even when the update fails, and the service comes back on the runtime the
