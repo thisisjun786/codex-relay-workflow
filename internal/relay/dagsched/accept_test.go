@@ -393,7 +393,7 @@ func (k *releaseKit) acceptTargetForgeRows() int {
 
 const (
 	// acceptTargetRemedy is the refusal of an absolute path (decision 77): the forge is the target, the checkout belongs to dag-base-refresh. acceptTargetLandsOn is every other target that is not the forge.
-	acceptTargetRemedy  = "the outgoing edges of I name local checkout %s as their target; an implementation node is accepted on its pull request's forge repository owner/repo. Set target_repository to owner/repo and use --checkout for dag-base-refresh when local Git objects are needed"
+	acceptTargetRemedy  = "the outgoing edges of I name local checkout %[1]s as their target; an implementation node accepted on a pull request is accepted on its pull request's forge repository owner/repo. Set target_repository to owner/repo and use --checkout for dag-base-refresh when local Git objects are needed, or accept the node by its commit (--commit) on the checkout %[1]s, which needs no pull request"
 	acceptTargetLandsOn = "the outgoing edges of I land on %s and the pull request is in owner/repo"
 )
 

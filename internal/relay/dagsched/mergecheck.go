@@ -87,7 +87,9 @@ type pinnedPredecessor struct {
 }
 
 // pinnedPredecessors are the predecessors of a node's code-pinned incoming edges that have an active acceptance with a forge row, in edge order. A pinned edge whose
-// acceptance has no forge row is not here: the reading already says blocked:acceptance_incomplete for it, so it can never drop out of freshness checking silently.
+// acceptance has no forge row is not here: a commit acceptance (CRW-965) stands on a commit the ruling fixed, which no push can move, so there is no pull request to read
+// again and the release proceeds on it (CRW-1306); any other acceptance without one reads blocked:acceptance_incomplete on the edge, so it never drops out of freshness
+// checking silently.
 func (s *Scheduler) pinnedPredecessors(ctx context.Context, q store.Querier, plan string, edges []dag.SnapEdge) ([]pinnedPredecessor, error) {
 	var out []pinnedPredecessor
 	seen := map[string]bool{}

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/capacity"
@@ -26,15 +27,15 @@ type VerifierRule struct {
 	Effort       string `json:"effort"`
 }
 
-// AcceptInput is what a parent supplies to accept a node's result. Nothing in it names a head: for an implementation node the head is the one the relay reads from the forge, so a child's
-// statement can never become the accepted head (P-AV-2).
+// AcceptInput is what a parent supplies to accept a node's result. An implementation node is accepted by its commit with a local verification-record/1 (Commit, the default path) or,
+// optionally, on its pull request (PullRequest): GitHub is external storage, not a gate (CRW-1306). Neither path takes a head the caller states: the commit has to be the head the
+// generation's ruling fixed, and a pull request's head is the one the relay reads from the forge, so a child's statement can never become the accepted head (P-AV-2).
 type AcceptInput struct {
 	Event       string // the event the parent verified; the current head of the generation when empty
-	PullRequest *PRRef // required for an implementation node, forbidden for a non_pr node
-	// Commit is the pull-request-less half (CRW-965): the commit to accept, the base it descends from,
-	// the local checkout that holds both, and the verification-record/1 the parent supplied. It is
-	// required for an implementation node accepted without a pull request and forbidden together with
-	// PullRequest. Every check and write it needs lives in accept_commit.go; the guards below only pick
+	PullRequest *PRRef // optional for an implementation node (the pull-request path), forbidden for a non_pr node
+	// Commit is the default path of an implementation node (CRW-965, CRW-1306): the commit to accept, the
+	// base it descends from, the local checkout that holds both, and the verification-record/1 the parent
+	// supplied. An implementation node names Commit or PullRequest, never both. Every check and write it needs lives in accept_commit.go; the guards below only pick
 	// the path, so the pull-request path keeps its own reading and its own writes.
 	Commit *CommitRef
 	// Premerge is the premerge-record/1 document the parent supplies (CRW-952): required for an implementation node's new
@@ -209,7 +210,7 @@ func (s *Scheduler) verifiedHead(ctx context.Context, q store.Querier, rel relRo
 }
 
 // Accept records that the parent accepted a node's result (contract 4.3). It is written only when P-AV-1 holds now at the current head and criteria digest, and for an implementation node
-// only on the head the relay itself read from the forge. An acceptance is idempotent per output: the same output accepted again is a replay, and the same output re-ruled under re-registered
+// only on the head the generation's ruling fixed (the commit path, the default) or the head the relay itself read from the forge (the optional pull-request path). An acceptance is idempotent per output: the same output accepted again is a replay, and the same output re-ruled under re-registered
 // criteria is a revalidation of the same acceptance (contract E-11), never a second acceptance, a new generation or a new child.
 func (s *Scheduler) Accept(ctx context.Context, plan, node, actor string, in AcceptInput) (AcceptResult, error) {
 	out, err := s.accept(ctx, plan, node, actor, in)
@@ -274,7 +275,7 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 	var refreshProof *acceptRefreshProof
 	if implementation && !commitPath {
 		if in.PullRequest == nil || in.PullRequest.Repository == "" || in.PullRequest.Number < 1 {
-			return out, refuse(contract.RefusalMalformedReceipt, "an implementation node is accepted on its pull request: name its repository (owner/name) and number")
+			return out, refuse(contract.RefusalMalformedReceipt, "an implementation node is accepted by its commit with its local verification record (--commit, --base, --checkout and --verification); a pull request is optional, and when the node is accepted on one, name its repository (owner/name) and number")
 		}
 		if s.PRs == nil {
 			return out, errors.New("this scheduler has no pull request reader, so it cannot read the head to accept")
@@ -411,7 +412,21 @@ func (s *Scheduler) accept(ctx context.Context, plan, node, actor string, in Acc
 					if err != nil {
 						return err
 					}
-					if !found || stored.Head != prepared.ref.Head || stored.Tree != prepared.tree {
+					if !found {
+						return refuse(contract.RefusalDispositionConflict, "the output of %s was accepted with another verification record; accept a new output instead", node)
+					}
+					// after a recorded base refresh the acceptance stands on the refreshed head, the head the later generation's ruling
+					// fixed: the commit named is that head, as a pull request is read at it on the pull-request path (sameForgeReading),
+					// so the record of the refreshed head can be given (CRW-1306)
+					stand, err := s.standOf(txCtx, tx, a)
+					if err != nil {
+						return err
+					}
+					if stand.RefreshID != "" {
+						if !strings.EqualFold(stand.Head, prepared.ref.Head) {
+							return refuseCandidateMoved("the acceptance of %s stands on head %s after base refresh %s and the call names %s", node, stand.Head, stand.RefreshID, prepared.ref.Head)
+						}
+					} else if stored.Head != prepared.ref.Head || stored.Tree != prepared.tree {
 						return refuse(contract.RefusalDispositionConflict, "the output of %s was accepted with another verification record; accept a new output instead", node)
 					}
 				} else {
@@ -631,7 +646,7 @@ func (s *Scheduler) acceptTarget(ctx context.Context, q store.Querier, snap dag.
 	case 1:
 		for t := range targets {
 			if filepath.IsAbs(t) {
-				return "", refuse(contract.RefusalDispositionConflict, "the outgoing edges of %s name local checkout %s as their target; an implementation node is accepted on its pull request's forge repository %s. Set target_repository to %s and use --checkout for dag-base-refresh when local Git objects are needed", node, t, forge, forge)
+				return "", refuse(contract.RefusalDispositionConflict, "the outgoing edges of %s name local checkout %s as their target; an implementation node accepted on a pull request is accepted on its pull request's forge repository %s. Set target_repository to %s and use --checkout for dag-base-refresh when local Git objects are needed, or accept the node by its commit (--commit) on the checkout %s, which needs no pull request", node, t, forge, forge, t)
 			}
 			if t != forge {
 				return "", refuse(contract.RefusalDispositionConflict, "the outgoing edges of %s land on %s and the pull request is in %s", node, t, forge)

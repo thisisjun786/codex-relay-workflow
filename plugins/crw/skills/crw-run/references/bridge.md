@@ -177,8 +177,8 @@ a Desktop project. Nothing deletes or archives it automatically, and retention
 belongs to the parent that asked for it.
 
 Creating a worktree does not change what the task inside it may do. A child
-created with the capability to commit owns its branch, its commits, its push and
-its pull request. Where a running task cannot write git metadata, the coordinator
+created with the capability to commit owns its branch, its commits, its push and,
+where the assignment names one, its pull request. Where a running task cannot write git metadata, the coordinator
 prepares the branch before dispatch and makes the commits while that child edits
 source and returns a frozen diff. Neither path widens a running task's
 permissions. Capability at creation is OPS-5.5 and delivery ownership is OPS-9 in

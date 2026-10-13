@@ -122,6 +122,13 @@ func (s *Scheduler) Judge(ctx context.Context, plan, node, actor string, in Judg
 	}
 	judged := atStand(acc, stand)
 	out.HeadSHA = stand.Head
+	// a node accepted by its commit (CRW-965) has no pull request and no forge row: it is judged on the relay's own records and
+	// never waits for a forge (CRW-1306)
+	if commit, err := commitAccepted(ctx, q, acc.AcceptanceID); err != nil {
+		return out, err
+	} else if commit {
+		return s.judgeCommit(ctx, plan, node, actor, in, acc, stand, out)
+	}
 	var forge string
 	var number int64
 	if has, err := queryOne(ctx, q, "SELECT forge_repository, pr_number FROM dag_acceptance_forge WHERE acceptance_id = ?", []any{acc.AcceptanceID}, &forge, &number); err != nil {
@@ -277,6 +284,82 @@ func (s *Scheduler) Judge(ctx context.Context, plan, node, actor string, in Judg
 	return out, err
 }
 
+// judgeCommit is the merge check of a node accepted by its commit (CRW-1306). Its head is the commit the ruling fixed and the
+// verification record judged at acceptance is its check, so there is no pull request, no forge reading, no required check and
+// no base tip to read: dag-integrate merges the head onto the integration branch and verifies the merged tree itself. The rules
+// that do not read a forge apply as they apply to a pull request, in the same order: a stale result is refused, criteria that
+// moved are stale_criteria, a result under correction is refused, and a predecessor that has not landed is
+// predecessor_not_landed; otherwise the head is eligible. The judgement writes no merge check row (that table is the history of
+// what the forge showed), so a repeat answers the same from the same records.
+func (s *Scheduler) judgeCommit(ctx context.Context, plan, node, actor string, in JudgeInput, acc Acceptance, stand acceptanceStand, out JudgeResult) (JudgeResult, error) {
+	if in.PullRequest != nil {
+		return out, refuse(contract.RefusalDispositionConflict, "node %s was accepted by its commit (acceptance %s) and has no pull request; the call names %s#%d", node, acc.AcceptanceID, in.PullRequest.Repository, in.PullRequest.Number)
+	}
+	err := s.Store.Compose(ctx, func(txCtx context.Context, _ *sql.Conn) error {
+		tx := s.Store.Q(txCtx)
+		if err := s.fence(txCtx, tx, plan, actor); err != nil {
+			return err
+		}
+		current, cn, err := stillLive(txCtx, tx, plan, node)
+		if err != nil {
+			return err
+		}
+		still, found, err := mergeAcceptanceOf(txCtx, tx, plan, node)
+		if err != nil {
+			return err
+		}
+		if !found || still.AcceptanceID != acc.AcceptanceID {
+			return refuse(contract.RefusalDispositionConflict, "the accepted result of %s changed while it was being judged", node)
+		}
+		if err := mergeable(txCtx, tx, acc, actor); err != nil {
+			return err
+		}
+		if now, err := s.standOf(txCtx, tx, still); err != nil {
+			return err
+		} else if now != stand {
+			return refuseCandidateMoved("a base refresh of %s was recorded while it was being judged: judge it again", node)
+		}
+		if err := s.refuseStale(txCtx, tx, plan, current, cn); err != nil {
+			return err
+		}
+		out.Round = 1
+		fresh, err := s.criteriaCurrent(txCtx, tx, cn, acc)
+		if err != nil {
+			return err
+		}
+		if !fresh {
+			out.Outcome, out.Reason = OutcomeStaleCriteria, "the criteria of the plan or of the relationship are no longer the ones the acceptance stands on"
+			return nil
+		}
+		if under, live, standGeneration, err := acceptance.UnderCorrection(txCtx, tx, still.RelationshipID); err != nil {
+			return err
+		} else if under {
+			return refuseUnderCorrection(node, live, standGeneration)
+		}
+		landed, why, err := s.predecessorsLanded(txCtx, tx, plan, current, node)
+		if err != nil {
+			return err
+		}
+		if !landed {
+			out.Outcome, out.Reason = OutcomePredecessor, why
+			return nil
+		}
+		out.Outcome = OutcomeEligible
+		out.Reason = "accepted by its commit with a passing verification record: there is no pull request to read; dag-integrate merges the head onto the integration branch and verifies the merged tree"
+		if stand.RefreshID != "" {
+			out.Reason += "; the head is the one base refresh " + stand.RefreshID + " names"
+		}
+		return nil
+	})
+	return out, err
+}
+
+// refuseCommitMergeTurn is the answer to a merge turn asked for a node accepted by its commit (CRW-1306): the merge lane carries
+// pull requests, and such a node lands through dag-integrate, so it is sent there and never held on a missing forge row.
+func refuseCommitMergeTurn(node, acceptanceID string) error {
+	return refuse(contract.RefusalDispositionConflict, "node %s was accepted by its commit (acceptance %s): it lands through dag-integrate, which merges and verifies it on the integration branch, and takes no merge turn", node, acceptanceID)
+}
+
 // judgementVersion is the newest judgement row any acceptance of the node has: it changes whenever a judgement of the node is recorded.
 func judgementVersion(ctx context.Context, q store.Querier, plan, node string) (int64, error) {
 	var version int64
@@ -311,12 +394,44 @@ func (s *Scheduler) predecessorsLanded(ctx context.Context, q store.Querier, pla
 		if !found {
 			return false, "predecessor " + e.FromNodeID + " of edge " + e.EdgeID + " has no accepted result", nil
 		}
+		// a predecessor accepted by its commit lands on the integration branches its batches moved, not on the base ref the edge
+		// names (CRW-965, D4); reading it at the edge's base ref would leave its successor waiting for a landing that never comes (CRW-1306)
+		if commit, err := commitAccepted(ctx, q, pred.AcceptanceID); err != nil {
+			return false, "", err
+		} else if commit {
+			if landed, why, err := s.commitPredecessorLanded(ctx, q, plan, pred, e); err != nil || !landed {
+				return landed, why, err
+			}
+			continue
+		}
 		at, err := s.integratedAt(ctx, q, plan, pred, e.TargetRepository, e.TargetBaseRef)
 		if err != nil {
 			return false, "", err
 		}
 		if !at.Satisfied {
 			return false, "predecessor " + e.FromNodeID + " of edge " + e.EdgeID + " has not landed in " + e.TargetRepository + " " + e.TargetBaseRef, nil
+		}
+	}
+	return true, "", nil
+}
+
+// commitPredecessorLanded is rule 3 for a predecessor accepted by its commit: its head is integrated on every integration branch
+// its batches moved in the edge's target, which is what the integrated edge out of it reads (commitIntegratedEdge).
+func (s *Scheduler) commitPredecessorLanded(ctx context.Context, q store.Querier, plan string, pred Acceptance, e dag.SnapEdge) (bool, string, error) {
+	refs, err := integrationRefsOf(ctx, q, pred.AcceptanceID)
+	if err != nil {
+		return false, "", err
+	}
+	if len(refs) == 0 {
+		return false, "predecessor " + e.FromNodeID + " of edge " + e.EdgeID + " was accepted by its commit and no dag-integrate batch has moved it onto an integration branch of " + e.TargetRepository, nil
+	}
+	for _, ref := range refs {
+		at, err := s.integratedAt(ctx, q, plan, pred, e.TargetRepository, ref)
+		if err != nil {
+			return false, "", err
+		}
+		if !at.Satisfied {
+			return false, "predecessor " + e.FromNodeID + " of edge " + e.EdgeID + " has not landed in " + e.TargetRepository + " " + ref, nil
 		}
 	}
 	return true, "", nil
@@ -337,6 +452,13 @@ type MergeRequestInput struct {
 func (s *Scheduler) RequestMergeTurn(ctx context.Context, plan, node, actor string, in MergeRequestInput) (JudgeResult, map[string]any, error) {
 	if in.Host == "" {
 		return JudgeResult{PlanID: plan, NodeID: node}, nil, refuse(contract.RefusalMalformedReceipt, "a merge turn is requested for the host the holder runs on")
+	}
+	if acc, found, err := mergeAcceptanceOf(ctx, s.Store.Q(ctx), plan, node); err == nil && found {
+		if commit, err := commitAccepted(ctx, s.Store.Q(ctx), acc.AcceptanceID); err != nil {
+			return JudgeResult{PlanID: plan, NodeID: node}, nil, err
+		} else if commit {
+			return JudgeResult{PlanID: plan, NodeID: node, AcceptanceID: acc.AcceptanceID}, nil, refuseCommitMergeTurn(node, acc.AcceptanceID)
+		}
 	}
 	res, err := s.Judge(ctx, plan, node, actor, JudgeInput{PullRequest: in.PullRequest})
 	if err != nil {
