@@ -76,7 +76,13 @@ func componentHooks() []componentHook {
 			if code != 0 {
 				return code
 			}
-			out := harness.SettleGuard(attachingSkillsLeg, read.String(), answer.String(), "", os.LookupEnv)
+			var out string
+			if read.Len() > harness.MaxStdinBytes {
+				// An input over the bound is unread input, released with a record as in every guard leg, not a refusal that warns.
+				out = harness.ReleaseGuard(attachingSkillsLeg, "", "over 4194304 bytes", os.LookupEnv)
+			} else {
+				out = harness.SettleGuard(attachingSkillsLeg, read.String(), answer.String(), "", os.LookupEnv)
+			}
 			if out == "" {
 				return 0
 			}

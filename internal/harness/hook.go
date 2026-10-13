@@ -113,10 +113,11 @@ func dispatch(ctx context.Context, leg Leg, in io.Reader, stdout, stderr io.Writ
 		return Interrupted
 	}
 	if input.Failed() {
+		recorded := false
 		if leg.InputFailure == InputRecord {
-			RecordDecision("", leg.ID, RuleUnreadableInput, DecisionRelease, env)
+			recorded = RecordDecision("", leg.ID, RuleUnreadableInput, DecisionRelease, env)
 		}
-		io.WriteString(stdout, leg.InputFailureOutput(input))
+		io.WriteString(stdout, leg.InputFailureOutput(input, recorded))
 		return 0
 	}
 	raw := input.Raw

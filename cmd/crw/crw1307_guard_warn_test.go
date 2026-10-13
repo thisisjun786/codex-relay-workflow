@@ -8,7 +8,8 @@ import (
 )
 
 // guardWarning is the warning of a guard's warn answer (CRW-1307): a PreToolUse answer with additionalContext only, which lets the
-// call through. ok is false for any other answer.
+// call through, with either prefix (the record written or not: these entry tests mostly run outside a plugin; the harness tests pin
+// which prefix goes with which). ok is false for any other answer.
 func guardWarning(out string) (string, bool) {
 	var a struct {
 		Output map[string]any `json:"hookSpecificOutput"`
@@ -17,8 +18,10 @@ func guardWarning(out string) (string, bool) {
 		return "", false
 	}
 	ctx, _ := a.Output["additionalContext"].(string)
-	if !strings.HasPrefix(ctx, harness.WarningPrefix) {
-		return "", false
+	for _, prefix := range []string{harness.WarningPrefix, harness.WarningPrefixUnrecorded} {
+		if strings.HasPrefix(ctx, prefix) {
+			return strings.TrimPrefix(ctx, prefix), true
+		}
 	}
-	return strings.TrimPrefix(ctx, harness.WarningPrefix), true
+	return "", false
 }

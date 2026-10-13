@@ -42,7 +42,7 @@ func TestCRW1307HarnessLegsWarnAndRecord(t *testing.T) {
 	for _, c := range []struct {
 		leg, raw, warning, rule, decision string
 	}{
-		{"pre-tool-use-guarding-interview-in-goal", gatePayload(t, h.cwd, "gate-2", "request_user_input", `{"questions":[]}`), "goal-active=unreadable", "", harness.DecisionWarn},
+		{"pre-tool-use-guarding-interview-in-goal", gatePayload(t, h.cwd, "gate-2", "request_user_input", `{"questions":[]}`), "goal-active=unreadable", harness.RuleInterviewInGoal, harness.DecisionWarn},
 		{"pre-tool-use-guarding-goal-complete", gatePayload(t, h.cwd, "gate-bad", "update_goal", `{"status":"complete"}`), "state is unreadable", "goal-complete-gate-01", harness.DecisionWarn},
 		{"pre-tool-use-guarding-automation-ownership", gatePayload(t, h.cwd, "gate-4", "automation_update", `{"mode":"delete","id":"`+marker+`"}`), "Cannot verify automation ownership", "", harness.DecisionWarn},
 		{"pre-tool-use-linting-apply-patch", gatePayload(t, h.cwd, "gate-5", "apply_patch", `{"command":"+debugger; // `+marker+`"}`), "[crw comment-lint]", "comment-lint", harness.DecisionWarn}, // justified: lint fixture

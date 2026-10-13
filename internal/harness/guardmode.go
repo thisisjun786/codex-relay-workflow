@@ -50,6 +50,8 @@ const (
 	RuleResolvedDeletion = "resolved-deletion"
 	// RuleUnreadableInput names a hook input that could not be read whole.
 	RuleUnreadableInput = "unreadable-input"
+	// RuleInterviewInGoal names the goal-mode refusal of a blocking interview (request_user_input); it warns.
+	RuleInterviewInGoal = "interview-in-goal"
 )
 
 // guardBlocks is the mode table: per leg, the rules that stay at block. Every other rule of every PreToolUse leg warns.
@@ -69,19 +71,28 @@ func Mode(leg, rule string) GuardMode {
 	return GuardWarn
 }
 
-// WarningPrefix starts every warning a guard leaves in place of a refusal.
-const WarningPrefix = "[crw warning] Not blocked (recorded): "
+// WarningPrefix starts a warning a guard leaves in place of a refusal when its decision record was written; WarningPrefixUnrecorded
+// starts it when no record was written (a hook outside a plugin, or a home the record cannot be written to).
+const (
+	WarningPrefix           = "[crw warning] Not blocked (recorded): "
+	WarningPrefixUnrecorded = "[crw warning] Not blocked (no record written): "
+)
 
 // warnAnswer is the PreToolUse answer that lets the call through and gives the session the warning: additionalContext only, no
-// permissionDecision (the host refuses a bare allow), so the host's own approval rules stay as they are.
-func warnAnswer(warning string) string {
+// permissionDecision (the host refuses a bare allow), so the host's own approval rules stay as they are. recorded is whether the
+// decision record was written; the warning says which.
+func warnAnswer(warning string, recorded bool) string {
+	prefix := WarningPrefix
+	if !recorded {
+		prefix = WarningPrefixUnrecorded
+	}
 	type output struct {
 		HookEventName     string `json:"hookEventName"`
 		AdditionalContext string `json:"additionalContext"`
 	}
 	b, err := jsnode.Stringify(struct {
 		Output output `json:"hookSpecificOutput"`
-	}{output{"PreToolUse", WarningPrefix + warning}}, "")
+	}{output{"PreToolUse", prefix + warning}}, "")
 	if err != nil {
 		return ""
 	}
@@ -111,10 +122,15 @@ var (
 	ruleCode  = regexp.MustCompile(`\b[A-Z][A-Z0-9]*(?:-[A-Z0-9]+)+\b`)
 	ruleTag   = regexp.MustCompile(`\[crw[: ]+([a-z][a-z0-9-]*)\]`)
 	ruleCause = regexp.MustCompile(`\(([a-z][a-z0-9]*(?:-[a-z0-9]+)+)\)`)
+	// ruleTitle is a tag of words after a dash ([crw — final gate]) and ruleLead a lead of one to three lower-case words and a colon
+	// at the very start (managed dispatch:): the spawn leg's refusals name their cause this way.
+	ruleTitle = regexp.MustCompile(`^\[crw (?:—|-|:) ?([a-z][a-z0-9]*(?: [a-z0-9]+){0,3})\]`)
+	ruleLead  = regexp.MustCompile(`^([a-z][a-z0-9]*(?: [a-z][a-z0-9]*){0,2}): `)
 )
 
 // RuleOf names the rule of a refusal from its text when the leg did not name it: a [crw tag] (comment-lint), else a code
-// (GOAL-COMPLETE-GATE-01), else a cause in parentheses, read from the head of the reason only, where the guards put them and before
+// (GOAL-COMPLETE-GATE-01), else a cause in parentheses, else a titled tag ([crw — final gate]: final-gate) or a lead of lower-case
+// words and a colon (managed dispatch: managed-dispatch), read from the head of the reason only, where the guards put them and before
 // any part of the command a reason may quote. The name is a slug of at most 64 characters; "refusal" when there is none.
 func RuleOf(reason string) string {
 	head := reason
@@ -128,6 +144,10 @@ func RuleOf(reason string) string {
 		name = strings.ToLower(m)
 	} else if m := ruleCause.FindStringSubmatch(head); m != nil {
 		name = m[1]
+	} else if m := ruleTitle.FindStringSubmatch(head); m != nil {
+		name = strings.ReplaceAll(m[1], " ", "-")
+	} else if m := ruleLead.FindStringSubmatch(head); m != nil {
+		name = strings.ReplaceAll(m[1], " ", "-")
 	}
 	if name == "" || len(name) > 64 {
 		return "refusal"
@@ -150,20 +170,18 @@ func SettleGuard(leg, raw, answer, rule string, env host.LookupEnv) string {
 	if rule == "" {
 		rule = RuleOf(reason)
 	}
-	RecordDecision(raw, leg, rule, DecisionWarn, env)
-	return warnAnswer(reason)
+	return warnAnswer(reason, RecordDecision(raw, leg, rule, DecisionWarn, env))
 }
 
 // ReleaseGuard is a PreToolUse leg's answer for a hook input it could not read whole: the call passes with a warning and the
 // release is recorded (fail-open). raw is what was read, if anything; it only names the session.
 func ReleaseGuard(leg, raw, cause string, env host.LookupEnv) string {
-	RecordDecision(raw, leg, RuleUnreadableInput, DecisionRelease, env)
-	return releaseAnswer(cause)
+	return releaseAnswer(cause, RecordDecision(raw, leg, RuleUnreadableInput, DecisionRelease, env))
 }
 
 // releaseAnswer is the warning of a released hook input.
-func releaseAnswer(cause string) string {
-	return warnAnswer("the hook input could not be read (" + cause + "), so the guard did not check this call.")
+func releaseAnswer(cause string, recorded bool) string {
+	return warnAnswer("the hook input could not be read ("+cause+"), so the guard did not check this call.", recorded)
 }
 
 // RecordDecision leaves the record of one guard decision: the leg, the rule, the decision, the time and the session (and the

@@ -131,7 +131,12 @@ func Legs() []Leg {
 			return pabcdhook.HandleAgentThreadPermissionRequest(c.Raw, os.LookupEnv)
 		}},
 		{"pre-tool-use-guarding-interview-in-goal", "pre-tool-use", "pre-tool-use", FailClosed, InputRecord, false, false, false, func(c Call) string {
-			return pabcdhook.GoalGateHandlePreToolUseFailClosed(c.Raw, os.LookupEnv, c.PabcdEnabled)
+			answer := pabcdhook.GoalGateHandlePreToolUseFailClosed(c.Raw, os.LookupEnv, c.PabcdEnabled)
+			// The goal-mode interview refusal carries no code: the record names it (a rule the table does not keep, so it warns).
+			if reason, deny := guardDeny(answer); deny && RuleOf(reason) == "refusal" {
+				c.NameRule(RuleInterviewInGoal)
+			}
+			return answer
 		}},
 		{"pre-tool-use-guarding-goal-complete", "pre-tool-use", "pre-tool-use", FailClosed, InputRecord, false, false, false, func(c Call) string {
 			return pabcdhook.GoalGateHandlePreToolUseFailClosed(c.Raw, os.LookupEnv, c.PabcdEnabled)

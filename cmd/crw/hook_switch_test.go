@@ -75,8 +75,8 @@ func TestHookSwitchGatesThePortedLegs(t *testing.T) {
 				want string
 			}{
 				{[]string{"hook", "stop", "--leg", "stop-checking-pabcd-continuation"}, `"decision":"block"`},
-				// CRW-1307: the guard releases an input it cannot read, with a warning (it denied it before).
-				{[]string{"hook", "pre-tool-use", "--leg=pre-tool-use-guarding-github-post"}, harness.WarningPrefix + "the hook input could not be read"},
+				// CRW-1307: the guard releases an input it cannot read, with a warning (it denied it before); no plugin root, so no record.
+				{[]string{"hook", "pre-tool-use", "--leg=pre-tool-use-guarding-github-post"}, harness.WarningPrefixUnrecorded + "the hook input could not be read"},
 			} {
 				f, err := os.Open(over)
 				if err != nil {

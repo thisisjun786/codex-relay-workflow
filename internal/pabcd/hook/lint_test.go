@@ -162,6 +162,7 @@ func TestEditLegLintPrecedenceAndPabcdOff(t *testing.T) {
 	t.Setenv("CODEX_SQLITE_HOME", t.TempDir())
 	t.Setenv("CRW_HOME", t.TempDir())
 	t.Setenv("CRW_BIN", "crw")
+	t.Setenv("PLUGIN_ROOT", "") // outside a plugin: the warning says no record was written (CRW-1307)
 	s := state.DefaultState("s1", "")
 	s.LoopArmSeen = true
 	if err := state.WriteState(cwd, s); err != nil {
@@ -179,7 +180,7 @@ func TestEditLegLintPrecedenceAndPabcdOff(t *testing.T) {
 		b, _ := json.Marshal(map[string]any{"hook_event_name": "PreToolUse", "tool_name": "apply_patch", "session_id": "s1", "cwd": cwd, "tool_input": map[string]any{"command": tc.patch}})
 		var out, stderr bytes.Buffer
 		code := harness.Hook(context.Background(), []string{"pre-tool-use", "--leg", "pre-tool-use-linting-apply-patch"}, strings.NewReader(string(b)), &out, &stderr, os.LookupEnv, harness.Legs())
-		warned := strings.Contains(out.String(), `"additionalContext":"`+harness.WarningPrefix+`[crw comment-lint]`) && !strings.Contains(out.String(), "permissionDecision")
+		warned := strings.Contains(out.String(), `"additionalContext":"`+harness.WarningPrefixUnrecorded+`[crw comment-lint]`) && !strings.Contains(out.String(), "permissionDecision")
 		if code != 0 || stderr.Len() != 0 || (tc.decision == "" && out.Len() != 0) || (tc.decision == "warn" && !warned) ||
 			(tc.decision == "allow" && !strings.Contains(out.String(), `"permissionDecision":"`+tc.decision+`"`)) {
 			t.Fatalf("code=%d out=%q err=%q", code, out.String(), stderr.String())

@@ -30,7 +30,7 @@ func TestInputFailurePolicyMatchesLegSemantics(t *testing.T) {
 		if l.Event == "pre-tool-use" && (l.Stage == Guard || l.Stage == FailClosed) && l.InputFailure != InputRecord {
 			t.Errorf("%s lacks the guard ingress release with a record", l.ID)
 		}
-		if got := l.InputFailureOutput(Input{Overflow: true}); got != oversizedWant()[l.Slug] {
+		if got := l.InputFailureOutput(Input{Overflow: true}, true); got != oversizedWant()[l.Slug] {
 			t.Errorf("%s: %q", l.ID, got)
 		}
 	}

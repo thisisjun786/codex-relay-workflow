@@ -115,6 +115,10 @@ func TestRuleOfNamesTheRuleNeverTheCommand(t *testing.T) {
 		"[crw comment-lint] `as any` cast (line: const X-RAY-01 = y as any)": "comment-lint",
 		strings.Repeat("x", 70) + " (quoted-command-word)":                   "refusal",
 		"": "refusal",
+		// Evaluation of 0a58638f (d4): the spawn leg's refusals name their cause too.
+		"[crw — final gate] This spawn is marked as the final gate, but its prerequisites are not met": "final-gate",
+		"managed dispatch: attempt already issued to another native call; reconcile before retry":      "managed-dispatch",
+		"Goal mode denies blocking Interview / request_user_input, also when goal state is unreadable": "refusal",
 	} {
 		if got := RuleOf(reason); got != want {
 			t.Errorf("%q: %q, want %q", reason, got, want)
@@ -143,4 +147,40 @@ func assertNoCommandText(t *testing.T, home string) {
 		}
 		return nil
 	})
+}
+
+// TestGuardWarningSaysWhetherTheDecisionWasRecorded (evaluation of 0a58638f, d4): the warning claims "(recorded)" only when the
+// decision record was written; a hook outside a plugin (PLUGIN_ROOT unset) or a home it cannot write says no record was written.
+func TestGuardWarningSaysWhetherTheDecisionWasRecorded(t *testing.T) {
+	raw := `{"hook_event_name":"PreToolUse","session_id":"s1","tool_name":"Bash","tool_input":{}}`
+	deny := denyOf("[crw comment-lint] a refusal")
+	env, home, _ := hookEnv(t)
+	if got := SettleGuard("pre-tool-use-guarding-memory-write", raw, deny, "", lookup(env)); !strings.Contains(got, `"additionalContext":"`+WarningPrefix) {
+		t.Fatalf("recorded warn: %q", got)
+	}
+	if got := ReleaseGuard("pre-tool-use-guarding-memory-write", raw, "a read error", lookup(env)); !strings.Contains(got, `"additionalContext":"`+WarningPrefix) {
+		t.Fatalf("recorded release: %q", got)
+	}
+	if n := len(ReadDecisions(home)); n != 2 {
+		t.Fatalf("records: %d", n)
+	}
+	unplugged := map[string]string{"CODEX_HOME": filepath.Join(t.TempDir(), "codex")}
+	blocked := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(blocked, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	unwritable := map[string]string{"CODEX_HOME": blocked, "PLUGIN_ROOT": env["PLUGIN_ROOT"]}
+	for name, e := range map[string]map[string]string{"no plugin root": unplugged, "unwritable home": unwritable} {
+		for _, got := range []string{
+			SettleGuard("pre-tool-use-guarding-memory-write", raw, deny, "", lookup(e)),
+			ReleaseGuard("pre-tool-use-guarding-memory-write", raw, "a read error", lookup(e)),
+		} {
+			if !strings.Contains(got, `"additionalContext":"`+WarningPrefixUnrecorded) || strings.Contains(got, "(recorded)") {
+				t.Errorf("%s: %q", name, got)
+			}
+		}
+	}
+	if len(ReadDecisions(unplugged["CODEX_HOME"])) != 0 {
+		t.Fatal("a record without a plugin root")
+	}
 }

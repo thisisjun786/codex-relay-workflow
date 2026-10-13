@@ -77,7 +77,8 @@ func TestSpawnLegAnswersTheRecordedDenyEnvelopes(t *testing.T) {
 	spawnLegEnv(t)
 	for _, c := range []struct{ name, input, want string }{
 		{"a subagent spawn is denied before anything else", `{"hook_event_name":"PreToolUse","session_id":"s","cwd":"/tmp","tool_name":"spawn_agent","agent_id":"child-1","agent_type":"explorer","tool_input":{"message":"spawn a helper"},"tool_use_id":"call-1"}`, spawnLegWarned(spawnLegRecursionDeny) + "}}\n"},
-		{"an input over 4 MiB is refused", `{"hook_event_name":"PreToolUse","session_id":"s","cwd":"/tmp","tool_name":"spawn_agent","tool_input":{"message":"big","agent_type":"explorer"}}` + strings.Repeat(" ", 4194305), spawnLegWarned(spawnLegOversizeDeny) + "}}\n"},
+		// CRW-1307 (evaluation of 0a58638f, d4): an input over 4 MiB is unread input, released with a record as in every guard leg.
+		{"an input over 4 MiB is released", `{"hook_event_name":"PreToolUse","session_id":"s","cwd":"/tmp","tool_name":"spawn_agent","tool_input":{"message":"big","agent_type":"explorer"}}` + strings.Repeat(" ", 4194305), spawnLegReleased},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			code, out, errOut := spawnLegRun(t, c.input)
@@ -85,6 +86,24 @@ func TestSpawnLegAnswersTheRecordedDenyEnvelopes(t *testing.T) {
 				t.Fatalf("exit %d stderr %q\n got %q\nwant %q", code, errOut, out, c.want)
 			}
 		})
+	}
+}
+
+// spawnLegReleased is the leg's answer for an input over the bound (CRW-1307): the release warning, the record written.
+const spawnLegReleased = `{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"` + harness.WarningPrefix +
+	`the hook input could not be read (over 4194304 bytes), so the guard did not check this call."}}` + "\n"
+
+// TestSpawnLegReleasesAnOversizedInputWithARecord: the over-bound input is recorded as a release of unreadable input, not as a
+// warned refusal.
+func TestSpawnLegReleasesAnOversizedInputWithARecord(t *testing.T) {
+	spawnLegEnv(t)
+	code, out, errOut := spawnLegRun(t, `{"hook_event_name":"PreToolUse","tool_name":"spawn_agent","tool_input":{}}`+strings.Repeat(" ", 4194305))
+	if code != 0 || errOut != "" || out != spawnLegReleased {
+		t.Fatalf("exit %d stderr %q out %q", code, errOut, out)
+	}
+	d := harness.ReadDecisions(os.Getenv("CODEX_HOME"))
+	if len(d) != 1 || d[0]["leg"] != "pre-tool-use-attaching-skills" || d[0]["rule"] != harness.RuleUnreadableInput || d[0]["decision"] != harness.DecisionRelease {
+		t.Fatalf("records: %v", d)
 	}
 }
 
