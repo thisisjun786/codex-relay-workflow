@@ -14,7 +14,8 @@ package tracking
 
 import (
 	"context"
-	"errors"
+	"fmt"
+	"strings"
 )
 
 // Tracker is the work tracking adapter. Every method takes the identifier of what it touches as a
@@ -89,4 +90,17 @@ type SubIssue struct {
 	State State
 }
 
-var errNotImplemented = errors.New("tracking: not implemented")
+// checkHeader accepts one line "[layer · session]": brackets around two non-blank parts split by the
+// middle dot, with no bracket or line break inside.
+func checkHeader(header string) error {
+	inner, ok := strings.CutPrefix(header, "[")
+	if ok {
+		inner, ok = strings.CutSuffix(inner, "]")
+	}
+	layer, session, dot := strings.Cut(inner, "·")
+	if !ok || !dot || strings.ContainsAny(inner, "[]\r\n") ||
+		strings.TrimSpace(layer) == "" || strings.TrimSpace(session) == "" {
+		return fmt.Errorf("%w: %q is not one line [layer · session]", ErrInvalidHeader, header)
+	}
+	return nil
+}

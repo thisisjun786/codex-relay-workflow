@@ -1,5 +1,11 @@
 package tracking
 
+import (
+	"fmt"
+	"regexp"
+	"strconv"
+)
+
 // Ref names an issue or milestone as "<repo>#N": Repo is "owner/name" and Number is the issue or
 // milestone number.
 type Ref struct {
@@ -8,13 +14,36 @@ type Ref struct {
 }
 
 // String is the identifier "<repo>#N".
-func (r Ref) String() string { return "" }
+func (r Ref) String() string { return r.Repo + "#" + strconv.Itoa(r.Number) }
+
+var refPattern = regexp.MustCompile(`^([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#([1-9][0-9]*)$`)
 
 // ParseRef reads "<owner>/<name>#N".
-func ParseRef(s string) (Ref, error) { return Ref{}, errNotImplemented }
+func ParseRef(s string) (Ref, error) {
+	m := refPattern.FindStringSubmatch(s)
+	if m == nil || !validRepo(m[1]) {
+		return Ref{}, fmt.Errorf("%w: %q is not <owner>/<name>#N", ErrInvalidRef, s)
+	}
+	n, err := strconv.Atoi(m[2])
+	if err != nil {
+		return Ref{}, fmt.Errorf("%w: %q has a number out of range", ErrInvalidRef, s)
+	}
+	return Ref{Repo: m[1], Number: n}, nil
+}
 
-// ParseBlockedBy returns the issues named on the "Blocked by:" lines of an issue body, in order and
-// once each. A bare "#N" means issue N of repo, the repository of the issue the body belongs to.
-func ParseBlockedBy(repo, body string) []Ref { return nil }
+var repoPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 
-func checkHeader(header string) error { return errNotImplemented }
+// validRepo reports whether s is "owner/name" with neither part "." or "..".
+func validRepo(s string) bool {
+	if !repoPattern.MatchString(s) {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] == '/' {
+			return !dots(s[:i]) && !dots(s[i+1:])
+		}
+	}
+	return false
+}
+
+func dots(s string) bool { return s == "." || s == ".." }

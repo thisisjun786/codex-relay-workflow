@@ -32,7 +32,8 @@ var (
 	ErrNotIssue = errors.New("tracking: not an issue")
 )
 
-// APIError is an HTTP answer GitHub gave that is not a success.
+// APIError is an HTTP answer GitHub gave that is not a success. Message is GitHub's own text with
+// the token, should it echo it, removed.
 type APIError struct {
 	Op      string
 	Status  int
@@ -40,12 +41,28 @@ type APIError struct {
 	DocURL  string
 }
 
-func (e *APIError) Error() string { return fmt.Sprintf("%s: HTTP %d", e.Op, e.Status) }
+func (e *APIError) Error() string {
+	if e.Message == "" {
+		return fmt.Sprintf("%s: HTTP %d", e.Op, e.Status)
+	}
+	return fmt.Sprintf("%s: HTTP %d: %s", e.Op, e.Status, e.Message)
+}
 
-// Is matches the sentinel errors by status.
-func (e *APIError) Is(target error) bool { return false }
+// Is matches ErrNotFound (404, 410), ErrUnauthorized (401) and ErrForbidden (403) by status.
+func (e *APIError) Is(target error) bool {
+	switch target {
+	case ErrNotFound:
+		return e.Status == 404 || e.Status == 410
+	case ErrUnauthorized:
+		return e.Status == 401
+	case ErrForbidden:
+		return e.Status == 403
+	}
+	return false
+}
 
-// RateLimitError is a 429 answer or a 403 answer that says the rate limit is used up.
+// RateLimitError is a 429 answer, or a 403 answer that says the rate limit is used up. It matches
+// ErrRateLimited and nothing else.
 type RateLimitError struct {
 	APIError
 	// Reset is when the primary limit resets, zero when GitHub did not say.
@@ -54,5 +71,13 @@ type RateLimitError struct {
 	RetryAfter time.Duration
 }
 
+func (e *RateLimitError) Error() string {
+	s := fmt.Sprintf("%s: HTTP %d: rate limited", e.Op, e.Status)
+	if e.Message != "" {
+		s += ": " + e.Message
+	}
+	return s
+}
+
 // Is matches ErrRateLimited only.
-func (e *RateLimitError) Is(target error) bool { return false }
+func (e *RateLimitError) Is(target error) bool { return target == ErrRateLimited }

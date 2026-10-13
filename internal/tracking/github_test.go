@@ -240,7 +240,7 @@ func TestAddLabelPostsOneLabelAndKeepsTheOthers(t *testing.T) {
 		t.Fatal(err)
 	}
 	reqs := f.requests()
-	if len(reqs) != 1 || reqs[0].Method != "POST" || reqs[0].Body != `{"labels":["blocks-real-use"]}`+"\n" && reqs[0].Body != `{"labels":["blocks-real-use"]}` {
+	if len(reqs) != 1 || reqs[0].Method != "POST" || strings.TrimSpace(reqs[0].Body) != `{"labels":["blocks-real-use"]}` {
 		t.Errorf("requests = %+v", reqs)
 	}
 	for _, l := range []string{"", "  ", "a\nb"} {
