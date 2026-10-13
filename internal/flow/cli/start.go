@@ -44,9 +44,10 @@ type Plan struct {
 	Decision    string              `json:"decision,omitempty"`
 	// Handoff is the sha256 of the crw-plan handoff the run reads its compiled milestone from ("" when it names none).
 	Handoff string `json:"handoff,omitempty"`
-	Facts   []Fact `json:"facts"`
-	Refused bool   `json:"refused,omitempty"`
-	// Blocked says why the run cannot start whatever the facts are (--force does not override it).
+	// Facts are the preflight facts, each pass, warn or fail with its reading. They never stop the start: the ones that did not
+	// pass are printed and recorded in the run's spec.
+	Facts []Fact `json:"facts"`
+	// Blocked says why the run cannot start (a build without the lane operations, a lane without its compiled milestone).
 	Blocked string `json:"blocked,omitempty"`
 }
 
@@ -71,7 +72,7 @@ func (c *command) start(args []string) int {
 	repo := fs.String("repo", "", "the git repository the run's worktrees are made from (default: the working directory's)")
 	handoff := fs.String("handoff", "", "the crw-plan handoff (crw-flow-compile-input/1) that produced the plan's current revision: the run reads its compiled milestone from a copy of it")
 	previewOnly := fs.Bool("preview", false, "show the preview and the preflight facts and start nothing")
-	force := fs.Bool("force", false, "start although a preflight fact failed")
+	_ = fs.Bool("force", false, "accepted and without effect: a preflight fact never stops the start")
 	asJSON := fs.Bool("json", false, "print the answer as JSON")
 	positional, code, ok := parse(fs, args)
 	if !ok {
@@ -237,22 +238,25 @@ func (c *command) start(args []string) int {
 
 	if rerr != nil {
 		for _, name := range Facts {
-			plan.Facts = append(plan.Facts, Fact{Name: name, Reading: "the relay store cannot be read: " + rerr.Error()})
+			plan.Facts = append(plan.Facts, Fact{Name: name, Level: LevelFail, Reading: "the relay store cannot be read: " + rerr.Error(), Reason: "the store cannot be read"}.leveled())
 		}
 	} else {
 		probe := c.Probe
 		if probe == nil {
 			probe = StoreProber{}
 		}
-		plan.Facts = probe.Facts(c.ctx, PreflightRequest{Reader: r, Thread: spec.Thread, Waits: Dispositions(src), Now: c.now()})
-	}
-	var failed []string
-	for _, f := range plan.Facts {
-		if !f.Pass {
-			failed = append(failed, f.Name)
+		for _, f := range probe.Facts(c.ctx, PreflightRequest{Reader: r, Thread: spec.Thread, Waits: Dispositions(src), Now: c.now()}) {
+			plan.Facts = append(plan.Facts, f.leveled())
 		}
 	}
-	plan.Refused = len(failed) > 0 && !*force && !*previewOnly
+	// the facts that did not pass are printed with the preview and recorded in the run's spec; none of them stops the start
+	var short []Fact
+	var shortNames []string
+	for _, f := range plan.Facts {
+		if f.Level != LevelPass {
+			short, shortNames = append(short, f), append(shortNames, f.Name+" "+f.Level)
+		}
+	}
 
 	if c.LaneOps != nil && !c.LaneOps() {
 		if need := LaneOperations(src); len(need) > 0 {
@@ -277,16 +281,7 @@ func (c *command) start(args []string) int {
 		if *asJSON {
 			_, _ = c.stdout.Write(JSON(answer))
 		}
-		if len(failed) > 0 {
-			return 1
-		}
 		return 0
-	case plan.Refused:
-		if *asJSON {
-			_, _ = c.stdout.Write(JSON(answer))
-		}
-		fmt.Fprintf(c.stderr, "crw flow start: the run is not started: %s failed (--force starts it anyway)\n", strings.Join(failed, ", "))
-		return 1
 	}
 
 	sel, err := ResolveState(cm.state, cm.socket)
@@ -306,7 +301,7 @@ func (c *command) start(args []string) int {
 			return c.fail("%v", err)
 		}
 	}
-	spec.Forced = failed
+	spec.Preflight = short
 	if resolved, err := repository(c.ctx, *repo); err == nil {
 		spec.Repo = resolved
 	} else if *repo != "" {
@@ -314,6 +309,9 @@ func (c *command) start(args []string) int {
 	}
 	if err := WriteSpec(sel.Path, spec); err != nil {
 		return c.fail("the run's spec cannot be written: %v", err)
+	}
+	if len(short) > 0 {
+		fmt.Fprintf(c.stderr, "crw flow start: warning: the run starts with preflight facts that did not pass: %s (recorded in the run's spec)\n", strings.Join(shortNames, ", "))
 	}
 	dir, _ := os.Getwd()
 	spawned := c.now()
@@ -399,10 +397,14 @@ func (c *command) printPlan(p Plan) {
 	}
 	fmt.Fprintln(w, "  preflight:")
 	for _, f := range p.Facts {
-		mark := "pass"
-		if !f.Pass {
+		mark := f.Level
+		if f.Level == LevelFail {
 			mark = "FAIL"
 		}
-		fmt.Fprintf(w, "    %s  %-18s %s\n", mark, f.Name, oneLine(f.Reading))
+		text := f.Reading
+		if f.Reason != "" {
+			text += "; " + f.Reason
+		}
+		fmt.Fprintf(w, "    %s  %-18s %s\n", mark, f.Name, oneLine(text))
 	}
 }
