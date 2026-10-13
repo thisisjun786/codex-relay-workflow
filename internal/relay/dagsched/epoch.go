@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"regexp"
+	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
@@ -94,7 +95,16 @@ func (s *Scheduler) ClaimEpoch(ctx context.Context, plan string, in ClaimInput) 
 			return err
 		}
 		if !live {
-			return refuse(contract.RefusalScopeRoleMismatch, "task %s is not the live parent of project %s, so it cannot claim the coordinator epoch of plan %s", in.Actor, project, plan)
+			// the refusal names the plan's key and the keys the task is the parent of, so a plan put under the wrong key is read off it (CRW-1317)
+			scopes, err := dag.LiveParentScopes(txCtx, tx, in.Actor)
+			if err != nil {
+				return err
+			}
+			holds := "it holds no live parent binding"
+			if len(scopes) > 0 {
+				holds = "the live parent bindings it holds are of project " + strings.Join(scopes, ", ")
+			}
+			return refuse(contract.RefusalScopeRoleMismatch, "task %s is not the live parent of project %s (the plan's project key), so it cannot claim the coordinator epoch of plan %s; %s", in.Actor, project, plan, holds)
 		}
 		latest, claimed, err := dag.LatestClaim(txCtx, tx, plan)
 		if err != nil {

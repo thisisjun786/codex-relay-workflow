@@ -1,0 +1,74 @@
+{
+  "backwardsCursor": "{\"requestedThreadId\":\"01a13587-5221-76c0-bbb4-44e8411968fa\",\"rolloutOrdinal\":1,\"includeAnchor\":true,\"scope\":{\"kind\":\"turns\"}}",
+  "data": [
+    {
+      "completedAt": 1791899587,
+      "durationMs": 164162,
+      "error": null,
+      "id": "01a13587-52a7-7d90-b1cc-d1c34f56b0db",
+      "items": [
+        {
+          "clientId": null,
+          "content": [
+            {
+              "text": "TASK: Read-only design feasibility audit (text shortened in the fixture)",
+              "text_elements": [],
+              "type": "text"
+            }
+          ],
+          "id": "01a13587-574e-7472-b999-504e4cf390d3",
+          "type": "userMessage"
+        },
+        {
+          "content": [],
+          "id": "rs_08213fdcedda4310986c5b444234fea3",
+          "summary": [],
+          "type": "reasoning"
+        },
+        {
+          "delivery": null,
+          "id": "msg_95aa1c576362425fba7a01a9fe841737",
+          "memoryCitation": null,
+          "phase": "commentary",
+          "questions": null,
+          "text": "(commentary message, text shortened in the fixture)",
+          "type": "agentMessage"
+        },
+        {
+          "aggregatedOutput": "(output shortened in the fixture)",
+          "command": "rg -n example",
+          "commandActions": [],
+          "cwd": "/home/user/.local/state/codex-session-relay/e4f02742e7163a2a/flow/run-39ba54c04cc5/calls/c_bf3498ca537a/wt",
+          "durationMs": 0,
+          "exitCode": 0,
+          "id": "exec-32dc5a1b-f7a1-42ce-acaa-ef20fbdecb1b",
+          "pluginId": null,
+          "processId": "14844",
+          "scriptPath": null,
+          "source": "unifiedExecStartup",
+          "status": "completed",
+          "type": "commandExecution"
+        },
+        {
+          "content": [],
+          "id": "rs_0c5c51da11fa4869a3d9592131bcb2c5",
+          "summary": [],
+          "type": "reasoning"
+        },
+        {
+          "delivery": null,
+          "id": "msg_da2d3260348b435993031dc963f02f06",
+          "memoryCitation": null,
+          "phase": "final_answer",
+          "questions": null,
+          "text": "(final_answer message, text shortened in the fixture)",
+          "type": "agentMessage"
+        }
+      ],
+      "itemsView": "full",
+      "startedAt": 1791899423,
+      "status": "completed"
+    }
+  ],
+  "nextCursor": null
+}

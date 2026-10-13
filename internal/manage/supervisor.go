@@ -85,13 +85,13 @@ type supervisorRefusal struct {
 
 const (
 	supervisorUsage         = "usage: crw manage supervisor {register,show} ..."
-	supervisorRegisterUsage = "usage: crw manage supervisor register"
+	supervisorRegisterUsage = "usage: crw manage supervisor register [--task THREAD] [--host HOST]"
 	supervisorShowUsage     = "usage: crw manage supervisor show"
 )
 
 var supervisorCommand = Command{
 	Name:    "supervisor",
-	Summary: "bind the management thread as the store supervisor and read the pair back",
+	Summary: "bind the calling management thread as its own management seat and read the pair back",
 	Run:     supervisorRun,
 }
 
@@ -107,7 +107,7 @@ func supervisorRun(ctx context.Context, e *Env, args []string) int {
 	switch args[0] {
 	case "-h", "--help", "help":
 		return supervisorUsageWrite(e, supervisorUsage,
-			"  register\tbind the management thread as the store supervisor and record its pair",
+			"  register\tbind the calling management thread (--task, else CODEX_THREAD_ID, else the configured one) as its own management seat and record its pair",
 			"  show\t\tprint the recorded binding and the recorded settings")
 	case "register":
 		return supervisorRegister(ctx, e, args[1:])
@@ -128,6 +128,23 @@ func supervisorSectionOf(e *Env, cfg *Config) (supervisorSection, int) {
 		return section, usageExit
 	}
 	return section, 0
+}
+
+// supervisorSeat is the thread and host a run binds: the command line first (--task, --host), then
+// the calling thread (CODEX_THREAD_ID) for the task, then the configuration's supervisor section,
+// which stays the fallback for both (CRW-1333). The section's cwd and settings file are kept.
+func supervisorSeat(e *Env, section supervisorSection, task, host string) supervisorSection {
+	seat := section
+	switch {
+	case task != "":
+		seat.TaskID = task
+	case e.Getenv != nil && strings.TrimSpace(e.Getenv("CODEX_THREAD_ID")) != "":
+		seat.TaskID = strings.TrimSpace(e.Getenv("CODEX_THREAD_ID"))
+	}
+	if host != "" {
+		seat.HostID = host
+	}
+	return seat
 }
 
 // supervisorConfigured refuses a run whose configuration names no thread or no host, before any
@@ -163,36 +180,50 @@ func supervisorHostValueOptionNamed(arg string) (string, bool) {
 // supervisorRegisterArgs reads register's own arguments, and the order is the contract: an option
 // that names a host value is refused first, with the note that says where host values come from,
 // even when -h or --help is present; then a help request prints the usage and stops the run there;
-// then anything left is an unexpected argument. Every refusal happens here, before any relay call,
-// so a run that passes a removed option neither binds nor records anything. help is reported
-// separately from the status, because a run that asked for the usage must not fall through to the
-// bind: the caller returns before the configuration is even read.
-func supervisorRegisterArgs(e *Env, args []string) (help bool, code int) {
+// then --task and --host (separate or assigned form) name the seat's thread and host; anything left
+// is an unexpected argument. Every refusal happens here, before any relay call, so a run that passes
+// a removed option neither binds nor records anything. help is reported separately from the status,
+// because a run that asked for the usage must not fall through to the bind: the caller returns
+// before the configuration is even read.
+func supervisorRegisterArgs(e *Env, args []string) (task, host string, help bool, code int) {
 	for _, arg := range args {
 		if _, removed := supervisorHostValueOptionNamed(arg); removed {
 			supervisorNote(e, supervisorRegisterUsage+"\n")
 			supervisorNote(e, fmt.Sprintf("crw manage supervisor: error: %s\n", supervisorHostValuesNote))
-			return false, usageExit
+			return "", "", false, usageExit
 		}
 	}
 	for _, arg := range args {
 		if arg == "-h" || arg == "--help" {
-			return true, supervisorUsageWrite(e, supervisorRegisterUsage)
+			return "", "", true, supervisorUsageWrite(e, supervisorRegisterUsage)
 		}
 	}
-	if len(args) > 0 {
-		supervisorNote(e, supervisorRegisterUsage+"\n")
-		supervisorNote(e, fmt.Sprintf("crw manage supervisor: error: unexpected argument %q\n", args[0]))
-		return false, usageExit
+	values := map[string]*string{"--task": &task, "--host": &host}
+	for i := 0; i < len(args); i++ {
+		name, value, assigned := strings.Cut(args[i], "=")
+		target, known := values[name]
+		if known && !assigned && i+1 < len(args) {
+			i++
+			value, assigned = args[i], true
+		}
+		if !known || !assigned || strings.TrimSpace(value) == "" {
+			supervisorNote(e, supervisorRegisterUsage+"\n")
+			supervisorNote(e, fmt.Sprintf("crw manage supervisor: error: unexpected argument %q\n", args[i]))
+			return "", "", false, usageExit
+		}
+		*target = strings.TrimSpace(value)
 	}
-	return false, 0
+	return task, host, false, 0
 }
 
-// supervisorRegister is crw manage supervisor register: the store-scope supervisor binding first,
-// the settings pair second. A refused bind is reported as the relay's own refusal and the pair is
-// not recorded.
+// supervisorRegister is crw manage supervisor register: the calling thread's management seat first
+// (linkage-bind --role supervisor --scope-kind management --scope <thread>; a thread that inherited
+// a seat by handover is answered with that seat, and a thread that held the store seat lays it down
+// with a record), the settings pair second (CRW-1333). A refused bind is reported as the relay's own
+// refusal and the pair is not recorded.
 func supervisorRegister(ctx context.Context, e *Env, args []string) int {
-	if help, code := supervisorRegisterArgs(e, args); help || code != 0 {
+	task, host, help, code := supervisorRegisterArgs(e, args)
+	if help || code != 0 {
 		return code
 	}
 	cfg := supervisorConfig(e)
@@ -200,6 +231,7 @@ func supervisorRegister(ctx context.Context, e *Env, args []string) int {
 	if code != 0 {
 		return code
 	}
+	section = supervisorSeat(e, section, task, host)
 	if !supervisorConfigured(e, section) {
 		return usageExit
 	}
@@ -208,7 +240,7 @@ func supervisorRegister(ctx context.Context, e *Env, args []string) int {
 		supervisorNote(e, "crw manage supervisor: error: the supervisor section names no settings_file, so the pair record has nothing to cite\n")
 		return usageExit
 	}
-	bind := []string{"linkage-bind", "--role", "supervisor", "--scope-kind", "store", "--scope", "store",
+	bind := []string{"linkage-bind", "--role", "supervisor", "--scope-kind", "management", "--scope", section.TaskID,
 		"--task", section.TaskID, "--host", section.HostID}
 	if section.Cwd != "" {
 		bind = append(bind, "--cwd", section.Cwd)
@@ -229,7 +261,7 @@ func supervisorRegister(ctx context.Context, e *Env, args []string) int {
 	if code != 0 {
 		// The bind stands and the pair does not. Re-running register converges: the seat keeps one
 		// live owner, so the bind is a no-op and only the pair is written.
-		supervisorNote(e, "crw manage supervisor: the store binding was recorded and the pair was not; re-running register completes the pair\n")
+		supervisorNote(e, "crw manage supervisor: the management seat was recorded and the pair was not; re-running register completes the pair\n")
 		return supervisorRelayStatus(e, recorded, code)
 	}
 	boundValue, ok := supervisorAnswer(bound)
@@ -285,6 +317,7 @@ func supervisorShow(ctx context.Context, e *Env, args []string) int {
 	if code != 0 {
 		return code
 	}
+	section = supervisorSeat(e, section, "", "")
 	if !supervisorConfigured(e, section) {
 		return usageExit
 	}
@@ -445,12 +478,13 @@ func supervisorLinkageOf(linkage []byte) (supervisorLinkage, bool) {
 	return answer, answer.Readable
 }
 
-// supervisorStoreBinding is the store-scope supervisor binding out of a linkage-up answer's levels:
-// the owner of the level whose scope is the store seat. A task with no such level is null, because
-// a store that answered and holds no binding for the task has answered.
+// supervisorStoreBinding is the supervisor seat binding out of a linkage-up answer's levels: the
+// owner of the level whose scope is the store seat or a management seat (CRW-1333). A task with no
+// such level is null, because a store that answered and holds no binding for the task has answered.
 func supervisorStoreBinding(levels []supervisorLevel) json.RawMessage {
 	for _, level := range levels {
-		if level.ScopeKind == "store" && level.ScopeKey == "store" && len(level.Owner) > 0 && string(level.Owner) != "null" {
+		seat := level.ScopeKind == "store" && level.ScopeKey == "store" || level.ScopeKind == "management"
+		if seat && len(level.Owner) > 0 && string(level.Owner) != "null" {
 			return level.Owner
 		}
 	}

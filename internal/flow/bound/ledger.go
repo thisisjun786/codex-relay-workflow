@@ -53,6 +53,10 @@ type Decision struct {
 	AppliedEffort string `json:"applied_effort"`
 	// Detail is the guidance or detail the refusal gave.
 	Detail string `json:"detail,omitempty"`
+	// Op is the operation the spawn message names on its first line (`crw-flow-op: <call>/t<k>-a<n>`), empty when the
+	// message names none or the hook did not record it. A session run joins it with the owner turn's collabAgentToolCall
+	// items to find the subagent of a published step (internal/flow/sessionhost FindByMarker).
+	Op string `json:"op,omitempty"`
 }
 
 // maxLedger bounds a ledger that is read.

@@ -51,7 +51,7 @@ func (l StoreLinkage) Up(ctx context.Context, relationshipID string) (map[string
 		}
 		levels = append(levels, map[string]any{"scopeKind": kind, "scopeKey": key, "owner": owner, "depth": len(levels)})
 		if owner == nil && len(owners) == 0 {
-			role := map[string]string{"issue": "child", "project": "parent", "initiative": "supervisor"}[kind]
+			role := map[string]string{"issue": "child", "project": "parent", "initiative": "supervisor", "management": "supervisor"}[kind]
 			gaps = append(gaps, map[string]any{"gap": kind + "_without_" + role, "scopeKind": kind, "scopeKey": key})
 		}
 		conflicts, err := l.Store.LinkageConflicts(ctx, kind, key)

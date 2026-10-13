@@ -826,3 +826,16 @@ func TestBuildLaneOfAWorkflowWithoutLaneOperations(t *testing.T) {
 		t.Errorf("a workflow with lane operations and a role table without pairs: %v", err)
 	}
 }
+
+// TestSchedRelayTargetIsTheShortBranch (CRW-1317): the branch an agent node integrates on is the target's short name, as compile puts
+// it in the plan's edges: a handoff that writes refs/heads/dev integrates on dev, never on refs/heads/refs/heads/dev.
+func TestSchedRelayTargetIsTheShortBranch(t *testing.T) {
+	for _, ref := range []string{"refs/heads/dev", "dev"} {
+		in := compile.Input{Schema: compile.InputSchema, Projects: []compile.Project{{Key: "P", PlanID: "plan-1", Target: &compile.Target{Repository: "/srv/shop", BaseRef: ref}}}}
+		r := &SchedRelay{input: &in}
+		checkout, branch, err := r.target("plan-1")
+		if err != nil || checkout != "/srv/shop" || branch != "dev" {
+			t.Errorf("base_ref %q: %q %q %v", ref, checkout, branch, err)
+		}
+	}
+}

@@ -382,7 +382,10 @@ fallbacks and every other member of the store are outside it. A run keeps its sn
 nothing for a run in progress. A run process that resumes a run and reads another digest writes a
 `policy_repinned` event with the old and the new digest to the journal before its first live call. From then on
 only the calls that start a new thread take the new pairs; a continuation keeps the pair of the thread in its
-handle, since the pair of a thread never changes. A call's input digest holds its role, model and effort, so a
+handle, since the pair of a thread never changes. `crw flow show RUN` prints the path and digest the run holds on a
+`policy` line (and `policy_path` and `policy_digest` in `--json`), the latest of its start and any `policy_repinned`
+event, with the digest a repin replaced; a run on the placeholder table, which reads no store file, prints `policy
+none`. A call's input digest holds its role, model and effort, so a
 pair that did not change keeps a completed call's digest valid. The spawn hook does not read the store for an
 engine thread: the run writes the helper pairs (`explorer`, `reviewer`) and the digest of its own snapshot to the
 flow binding file and the hook uses that.

@@ -21,6 +21,8 @@ type Plan struct {
 	ProjectKey   string `json:"project_key"`
 	Status       string `json:"status"`        // "changes": a revision follows; "unchanged": the plan already holds this handoff
 	BaseRevision int64  `json:"base_revision"` // the revision the handoff was compared with; 0 for a plan that does not exist yet
+	// Warnings are what compile read in the form a run needs and did not refuse (CRW-1317).
+	Warnings []Warning `json:"warnings,omitempty"`
 	// Revision is the dag-plan-revision/1 document `crw relay dag-plan-put --request @file` takes. It is left out of a dry run.
 	Revision json.RawMessage `json:"revision,omitempty"`
 	Preview  Preview         `json:"preview"`
@@ -106,6 +108,16 @@ type ExternalAfter struct {
 // Refusal is one reason the handoff is refused. Rule is a compile rule (input, over_64, group_cap, region_order_missing, after_unknown, size_value)
 // or a rule of the DAG (cycle, limit_exceeded, ...), exactly as dag-plan-put would name it.
 type Refusal struct {
+	Project string `json:"project"`
+	Rule    string `json:"rule"`
+	Path    string `json:"path,omitempty"`
+	Detail  string `json:"detail"`
+}
+
+// Warning is one thing the handoff states in a form a run does not take as written, which compile reads as a run needs it and
+// does not refuse: Rule is target_repository (a repository that is not an absolute path) or target_base_ref (a refs/heads/ prefix
+// removed).
+type Warning struct {
 	Project string `json:"project"`
 	Rule    string `json:"rule"`
 	Path    string `json:"path,omitempty"`
