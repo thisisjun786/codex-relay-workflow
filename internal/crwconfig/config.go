@@ -223,6 +223,10 @@ func Run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 		return writeJSON(stdout, stderr, pathsReport(file))
 	case "check":
 		report := Check(file, getenv, runProbe)
+		// The work-tracking setting: its spelling, and through the probe gh and the repository.
+		var findings []Finding
+		report.Tracking, findings = CheckTracking(file, runTrackingProbe, true)
+		report.Findings = append(report.Findings, findings...)
 		if code := writeJSON(stdout, stderr, report); code != 0 {
 			return code
 		}
@@ -313,5 +317,5 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "usage: crw config [-h] {paths,show,check} ...")
 	fmt.Fprintln(w, "  paths\tprint every named root, its path and where the path came from")
 	fmt.Fprintln(w, "  show\tprint the configuration file's path, where it came from and its document")
-	fmt.Fprintln(w, "  check\tcheck every root: it exists or can be made, is writable, its file system and space, a socket path's length, state kept together, drift from the placement in use; exit 1 on a fault")
+	fmt.Fprintln(w, "  check\tcheck every root: it exists or can be made, is writable, its file system and space, a socket path's length, state kept together, drift from the placement in use, and the tracking setting (gh signed in, the repository's issues readable and writable); exit 1 on a fault")
 }
