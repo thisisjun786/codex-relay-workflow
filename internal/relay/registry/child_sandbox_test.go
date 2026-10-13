@@ -38,10 +38,10 @@ func registerWithSandboxes(t *testing.T, parentSandbox, childSandbox string) (co
 // the refusal names the two sandboxes that reach it.
 func TestRegisterRefusesAChildSandboxThatCannotReachTheDaemon(t *testing.T) {
 	for name, sandbox := range map[string]string{
-		"read-only":                          `{"type": "readOnly"}`,
-		"read-only-with-network":             `{"type": "readOnly", "networkAccess": true}`,
-		"workspace-write-no-network":         `{"type": "workspaceWrite", "networkAccess": false}`,
-		"workspace-write-network-defaulted":  `{"type": "workspaceWrite"}`,
+		"read-only":                         `{"type": "readOnly"}`,
+		"read-only-with-network":            `{"type": "readOnly", "networkAccess": true}`,
+		"workspace-write-no-network":        `{"type": "workspaceWrite", "networkAccess": false}`,
+		"workspace-write-network-defaulted": `{"type": "workspaceWrite"}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			code, out, state := registerWithSandboxes(t, `{"type": "dangerFullAccess"}`, sandbox)
