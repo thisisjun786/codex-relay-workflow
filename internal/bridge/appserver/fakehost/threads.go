@@ -130,6 +130,9 @@ type ThreadView struct {
 	Archived              bool
 	CreatedAt             int64
 	Turns                 []TurnView
+	// Subagent marks a thread Spawn made; AgentRole, Nickname and RolloutPath are its agentRole, agentNickname and path.
+	Subagent                         bool
+	AgentRole, Nickname, RolloutPath string
 }
 
 // TurnView is a copy of a turn the model holds.
@@ -155,6 +158,9 @@ type turnState struct {
 	interrupt chan struct{}
 	// detached keeps the turn running when the connection it was started on ends.
 	detached bool
+	// cut is closed when an App Server restart loses the turn (Restart); lost marks such a turn, which never ends after it.
+	cut  chan struct{}
+	lost bool
 }
 
 type threadState struct {
@@ -175,6 +181,16 @@ type threadState struct {
 	turns     []*turnState
 	active    *turnState
 	used      int64
+	// The subagent fields (subagents.go): a thread Spawn made, its agentRole, agentNickname, rollout path (Thread.path) and
+	// spawn depth. unloadIdle makes the thread notLoaded when its turn ends; unloaded is that state (a restart sets it for
+	// every thread, a resume or a new turn clears it).
+	subagent    bool
+	agentRole   string
+	nickname    string
+	rolloutPath string
+	depth       int
+	unloadIdle  bool
+	unloaded    bool
 }
 
 // Threads is the thread model of one fake Server.
@@ -203,6 +219,8 @@ type Threads struct {
 	handled      map[string]int
 	detachNext   bool
 	drops        map[string][]func(n int, params map[string]any) bool
+	// lostStatus is the status a turn cut by Restart reads afterwards ("" is interrupted).
+	lostStatus string
 }
 
 // Threads installs (once) and returns the thread model of the server.
@@ -380,7 +398,8 @@ func (t *Threads) Interrupts() []string {
 func (th *threadState) view() ThreadView {
 	v := ThreadView{ID: th.id, Cwd: th.cwd, Model: th.model, Effort: th.effort, Sandbox: th.sandbox, Ephemeral: th.ephemeral,
 		DeveloperInstructions: th.dev, Config: th.config, StartParams: th.start, ForkedFromID: th.forkedOf,
-		ParentThreadID: th.parent, Source: th.source, Archived: th.archived, CreatedAt: th.created}
+		ParentThreadID: th.parent, Source: th.source, Archived: th.archived, CreatedAt: th.created,
+		Subagent: th.subagent, AgentRole: th.agentRole, Nickname: th.nickname, RolloutPath: th.rolloutPath}
 	for _, tu := range th.turns {
 		v.Turns = append(v.Turns, TurnView{ID: tu.id, Status: tu.status, Text: tu.text, ClientID: tu.clientID, Params: tu.params})
 	}
@@ -513,16 +532,23 @@ func (t *Threads) threadObject(th *threadState, withTurns bool) map[string]any {
 		parent = th.parent
 	}
 	status := map[string]any{"type": "idle"}
-	if th.active != nil {
+	switch {
+	case th.active != nil:
 		status = map[string]any{"type": "active", "activeFlags": []any{}}
+	case th.unloaded:
+		status = map[string]any{"type": "notLoaded"}
 	}
-	return map[string]any{
+	object := map[string]any{
 		"id": th.id, "cliVersion": CLIVersion, "createdAt": th.created, "updatedAt": th.created + int64(len(th.turns)),
 		"cwd": th.cwd, "ephemeral": th.ephemeral, "modelProvider": "openai", "model": model, "reasoningEffort": effort,
 		"preview": preview, "projectId": nil, "sessionId": "session-" + th.id, "source": th.source,
 		"status": status, "turns": turns, "forkedFromId": forked, "parentThreadId": parent,
 		"name": nil, "path": nil, "threadSource": nil,
 	}
+	if th.subagent {
+		subagentFields(th, object)
+	}
+	return object
 }
 
 func (tu *turnState) object(withItems bool) map[string]any {
@@ -575,6 +601,7 @@ func (t *Threads) handleResume(c *Conn, raw json.RawMessage) Reply {
 		return errorReply(map[string]any{"code": -32600, "message": "thread not found: " + str(params, "threadId")})
 	}
 	t.subscribe(th.id, c)
+	th.unloaded = false
 	exclude, _ := params["excludeTurns"].(bool)
 	return Reply{Result: t.startResponse(th, !exclude)}
 }
@@ -635,7 +662,7 @@ func (t *Threads) handleFork(c *Conn, raw json.RawMessage) Reply {
 	th.forkedOf = source.id
 	for _, tu := range source.turns[:keep] {
 		cp := *tu
-		cp.interrupt = nil
+		cp.interrupt, cp.cut = nil, nil
 		th.turns = append(th.turns, &cp)
 	}
 	exclude, _ := params["excludeTurns"].(bool)
@@ -710,6 +737,10 @@ func (t *Threads) handleList(c *Conn, raw json.RawMessage) Reply {
 		if th.archived != wantArchived {
 			continue
 		}
+		// a listing that names no source kind shows the interactive sources only, which a subagent is not
+		if len(kinds) == 0 && th.subagent {
+			continue
+		}
 		matched = append(matched, th)
 	}
 	if t.listPage > 0 {
@@ -773,6 +804,9 @@ func (t *Threads) handleTurnsList(c *Conn, raw json.RawMessage) Reply {
 		o := tu.object(full)
 		if tu.plan.SummaryOnly {
 			o["itemsView"] = "summary"
+		} else if th.subagent && !full && !tu.plan.NotLoaded {
+			// a subagent's summary is the live host's: the first user message and the last agent message
+			o["itemsView"], o["items"] = "summary", summaryItems(tu.items)
 		}
 		data = append(data, o)
 	}
@@ -839,6 +873,7 @@ func (t *Threads) handleTurnStart(c *Conn, raw json.RawMessage) Reply {
 	tu := &turnState{
 		id: fmt.Sprintf("turn-%s-%d", th.id, req.N), status: "inProgress", plan: plan, params: params, text: req.Text,
 		clientID: req.ClientID, startedAt: t.tick(), interrupt: make(chan struct{}), detached: t.detachNext || plan.Detached,
+		cut: make(chan struct{}),
 	}
 	user := map[string]any{"type": "userMessage", "id": "u-" + tu.id, "content": []any{map[string]any{"type": "text", "text": req.Text, "text_elements": []any{}}}}
 	if req.ClientID != "" {
@@ -849,6 +884,7 @@ func (t *Threads) handleTurnStart(c *Conn, raw json.RawMessage) Reply {
 	tu.items = append(tu.items, user)
 	th.turns = append(th.turns, tu)
 	th.active = tu
+	th.unloaded = false
 	object := tu.object(false)
 	t.mu.Unlock()
 	return Reply{Result: map[string]any{"turn": object}, After: func(conn *Conn) { go t.run(conn, th, tu) }}
@@ -873,24 +909,33 @@ func (t *Threads) handleInterrupt(c *Conn, raw json.RawMessage) Reply {
 	return Reply{Result: map[string]any{}}
 }
 
-// run plays a turn's timeline after turn/start was answered.
+// run plays a turn's timeline after turn/start was answered. conn is nil for a turn no connection started (a subagent's,
+// subagents.go), which runs like a detached one. A turn an App Server restart cut (Restart) ends nothing afterwards.
 func (t *Threads) run(conn *Conn, th *threadState, tu *turnState) {
 	plan := tu.plan
-	connDone := conn.Done()
-	if tu.detached {
-		connDone = nil
+	var connDone <-chan struct{}
+	if conn != nil && !tu.detached {
+		connDone = conn.Done()
 	}
-	t.notify(th.id, plan.Silent, Notification{Method: "turn/started", Params: map[string]any{"threadId": th.id, "turn": tu.object(false)}})
+	t.mu.Lock() // a Restart may cut the turn at any time
+	started := tu.object(false)
+	t.mu.Unlock()
+	t.notify(th.id, plan.Silent, Notification{Method: "turn/started", Params: map[string]any{"threadId": th.id, "turn": started}})
 	interrupted := plan.Interrupted
 	if plan.Hang {
 		if plan.IgnoreInterrupt {
-			<-connDone
+			select {
+			case <-connDone:
+			case <-tu.cut:
+			}
 			return
 		}
 		select {
 		case <-tu.interrupt:
 			interrupted = true
 		case <-connDone:
+			return
+		case <-tu.cut:
 			return
 		}
 	} else if plan.Gate != nil {
@@ -899,6 +944,8 @@ func (t *Threads) run(conn *Conn, th *threadState, tu *turnState) {
 		case <-tu.interrupt:
 			interrupted = true
 		case <-connDone:
+			return
+		case <-tu.cut:
 			return
 		}
 	} else if plan.Delay > 0 {
@@ -910,12 +957,18 @@ func (t *Threads) run(conn *Conn, th *threadState, tu *turnState) {
 			interrupted = true
 		case <-connDone:
 			return
+		case <-tu.cut:
+			return
 		}
 	}
 	if interrupted && plan.FinishDespiteInterrupt {
 		interrupted = false
 	}
 	t.mu.Lock()
+	if tu.lost {
+		t.mu.Unlock()
+		return
+	}
 	tu.endedAt = t.tick()
 	var failure *Failure
 	var commentary map[string]any
@@ -941,6 +994,9 @@ func (t *Threads) run(conn *Conn, th *threadState, tu *turnState) {
 		tu.items = append(tu.items, item)
 	}
 	th.active = nil
+	if th.unloadIdle {
+		th.unloaded = true
+	}
 	final := tu.object(false)
 	tokens := plan.Tokens
 	if tokens == 0 {

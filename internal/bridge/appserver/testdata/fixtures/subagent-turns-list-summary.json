@@ -1,0 +1,38 @@
+{
+  "backwardsCursor": "{\"requestedThreadId\":\"01a13587-5221-76c0-bbb4-44e8411968fa\",\"rolloutOrdinal\":1,\"includeAnchor\":true,\"scope\":{\"kind\":\"turns\"}}",
+  "data": [
+    {
+      "completedAt": 1791899587,
+      "durationMs": 164162,
+      "error": null,
+      "id": "01a13587-52a7-7d90-b1cc-d1c34f56b0db",
+      "items": [
+        {
+          "clientId": null,
+          "content": [
+            {
+              "text": "TASK: Read-only design feasibility audit (text shortened in the fixture)",
+              "text_elements": [],
+              "type": "text"
+            }
+          ],
+          "id": "01a13587-574e-7472-b999-504e4cf390d3",
+          "type": "userMessage"
+        },
+        {
+          "delivery": null,
+          "id": "msg_da2d3260348b435993031dc963f02f06",
+          "memoryCitation": null,
+          "phase": "final_answer",
+          "questions": null,
+          "text": "(final_answer message, text shortened in the fixture)",
+          "type": "agentMessage"
+        }
+      ],
+      "itemsView": "summary",
+      "startedAt": 1791899423,
+      "status": "completed"
+    }
+  ],
+  "nextCursor": null
+}
