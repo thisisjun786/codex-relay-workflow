@@ -299,7 +299,7 @@ func Summarize(rec RunRecord, events []engine.Event, live bool, pid int) RunInfo
 			info.Phase = str(e.Data, "title")
 		}
 	}
-	waiting := false
+	heldBack := false
 	for i := lastStart + 1; i < len(events); i++ {
 		e := events[i]
 		switch {
@@ -309,7 +309,7 @@ func Summarize(rec RunRecord, events []engine.Event, live bool, pid int) RunInfo
 			info.ItemErrors = append(info.ItemErrors, ItemError{Item: itemKey(e.Path), Path: e.Path, Error: str(e.Data, "error")})
 		case e.Kind == engine.KindCall && e.Op == ops.OpRelease && e.Event == engine.EvCompleted && !releasedRow(e) && str(e.Data, "kind") == "executor" && str(e.Data, "hold") == "":
 			// a node the scheduler held back (no slot, no memory, a region in use, ...): unreleased, and asked again by a resume (CRW-1201)
-			waiting = true
+			heldBack = true
 		}
 	}
 	order, rows := callRows(events)
@@ -354,7 +354,7 @@ func Summarize(rec RunRecord, events []engine.Event, live bool, pid int) RunInfo
 		switch {
 		case info.Unsettled > 0 || info.Holds > 0 || info.Waiting > 0:
 			info.State = StateHeld
-		case len(info.ItemErrors) > 0 && !waiting && !nodeStarted(events):
+		case len(info.ItemErrors) > 0 && !heldBack && !nodeStarted(events):
 			info.State = StateBlocked
 		}
 	case lastFinish > lastStart && info.ErrorKind == engine.ErrKindCancelled:
