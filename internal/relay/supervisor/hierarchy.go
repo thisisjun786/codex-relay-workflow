@@ -132,7 +132,9 @@ func (c *Channel) withStoreSeat(ctx context.Context, reading map[string]any, whe
 	seat := held[0]
 	folded := make([]any, 0, len(levels)+1)
 	folded = append(folded, levels...)
-	folded = append(folded, map[string]any{"scopeKind": seat.Get("scopeKind"), "scopeKey": seat.Get("scopeKey"),
+	// The level is the store's even when the seat is held through the management seat that took it
+	// over (CRW-1333): the walk records the fallback it took, and resolveLevels reads a store level.
+	folded = append(folded, map[string]any{"scopeKind": scopeKindStore, "scopeKey": scopeKindStore,
 		"owner": map[string]any{"taskId": seat.Get("taskId")}, "depth": len(levels)})
 	out := make(map[string]any, len(reading)+1)
 	for key, value := range reading {

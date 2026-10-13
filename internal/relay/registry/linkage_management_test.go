@@ -227,3 +227,61 @@ func TestLeadRegistrationSecondManagementTakesOnlyByHandover(t *testing.T) {
 		t.Fatalf("after the handover the edge is %v, want the same link with upper_task_id 01mgmtNew", moved)
 	}
 }
+
+// storeSeatHolders is what StoreScopeSupervisor answers over this test's store: the task of each
+// record, and the scope the record is.
+func (s *storeSeat) storeSeatHolders() []string {
+	s.t.Helper()
+	held, err := store.Open(context.Background(), filepath.Join(s.state, "relay.sqlite3"), "")
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	defer held.Close()
+	seats, err := (&Registry{Store: held}).StoreScopeSupervisor(context.Background())
+	if err != nil {
+		s.t.Fatal(err)
+	}
+	out := make([]string, len(seats))
+	for i, seat := range seats {
+		out[i] = seat.Get("taskId").(string) + "@" + seat.Get("scopeKind").(string)
+	}
+	return out
+}
+
+// TestStoreScopeSupervisorFollowsTheSeatThatTookItOver: the store seat a thread laid down when it
+// registered its management seat is read through that management seat. The readers of the store
+// seat (user-grade decision-answer, the jun_decision_request recipient, the fallback for a project
+// or initiative nobody above supervises) keep finding the manager after it registers, and follow a
+// handover of the management seat; a live store seat bound again afterwards is the seat itself.
+func TestStoreScopeSupervisorFollowsTheSeatThatTookItOver(t *testing.T) {
+	s := newStoreSeat(t)
+	s.mustBind("01mgmtA", storeSeatKind)
+	if got := s.storeSeatHolders(); len(got) != 1 || got[0] != "01mgmtA@store" {
+		t.Fatalf("store seat before registration %v", got)
+	}
+	s.mustBindManagement("01mgmtA", "01mgmtA")
+	if got := s.storeSeatHolders(); len(got) != 1 || got[0] != "01mgmtA@management" {
+		t.Fatalf("store seat after the manager registered %v, want the management seat that took it over", got)
+	}
+	// Another manager's seat is not the store seat's successor.
+	s.mustBindManagement("01mgmtB", "01mgmtB")
+	s.mustHandover("supervisor", "01mgmtA", managementKind, "01mgmtA", "01mgmtNew")
+	if got := s.storeSeatHolders(); len(got) != 1 || got[0] != "01mgmtNew@management" {
+		t.Fatalf("store seat after the management seat's handover %v, want its new owner", got)
+	}
+	// A store seat bound again is live and answers for itself.
+	s.mustBind("01store", storeSeatKind)
+	if got := s.storeSeatHolders(); len(got) != 1 || got[0] != "01store@store" {
+		t.Fatalf("store seat after a new store binding %v, want the live store seat", got)
+	}
+}
+
+// TestStoreScopeSupervisorWithoutASuccessorIsEmpty: a store with no store seat ever bound, or only
+// management seats that never took a store seat over, has no store seat.
+func TestStoreScopeSupervisorWithoutASuccessorIsEmpty(t *testing.T) {
+	s := newStoreSeat(t)
+	s.mustBindManagement("01mgmtA", "01mgmtA")
+	if got := s.storeSeatHolders(); len(got) != 0 {
+		t.Fatalf("store seat %v, want none: no store seat was ever laid down", got)
+	}
+}
