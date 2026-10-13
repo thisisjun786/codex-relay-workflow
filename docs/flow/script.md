@@ -299,7 +299,8 @@ and a string that is no handle of a result of this run. Like every `crw.*` call,
 `internal/flow/workflows/project-lane.js` is the built-in workflow that runs the issues of a milestone (`args`: `plan`, `milestone`,
 and `cap`, the executors at once, default 3). Its steps, in order: `crw.milestone` reads the nodes of the milestone in the order the
 scheduler offers them; the architect answers `DESIGN` once for the milestone (SP-ARCH-1); the open questions of the DESIGN go to
-explorers (SP-EXPL-1); a reviewer of another model family than the architect audits the DESIGN (`DESIGN_AUDIT`, recorded by
+explorers (SP-EXPL-1), and the ones whose scope carries an out-of-authority notation, or beyond the explorer cap, to the orchestrator
+thread in one non-blocking `design_question` escalation once the DESIGN is approved; a reviewer of another model family than the architect audits the DESIGN (`DESIGN_AUDIT`, recorded by
 `crw.designAudit`), and `needs_changes` returns the DESIGN to the architect on its own thread; only an approved DESIGN becomes revision
 `r0` of the design ledger (`crw.designLedger`); `crw.dag` runs one lane for each node and the signal path of the milestone
 ([The architect's continuity and the re-plan](#the-architects-continuity-and-the-re-plan)); when every lane landed, `crw.closeMilestone` closes the milestone over

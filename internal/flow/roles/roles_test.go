@@ -265,9 +265,10 @@ func TestArchitectOverlayExecutorContract(t *testing.T) {
 	}
 }
 
-// TestArchitectOverlayAuthorityBoundary (CRW-1321): exceptions to repository rules, other issues' records, policy decisions
-// and execution-environment prerequisites are not the architect's to decide. The overlay says they are raised as open
-// questions, that a question does not stop the run (no hold), and describes the path an open question takes today.
+// TestArchitectOverlayAuthorityBoundary (CRW-1321, CRW-1347): exceptions to repository rules, other issues' records, policy
+// decisions and execution-environment prerequisites are not the architect's to decide. The overlay says they are raised as open
+// questions with the scope notation of their kind, that a question does not stop the run (no hold), and describes the route an
+// open question takes: never back to the architect, to the orchestrator for a notation of the four kinds, to an explorer otherwise.
 func TestArchitectOverlayAuthorityBoundary(t *testing.T) {
 	overlay, err := Overlay("architect", Options{})
 	if err != nil {
@@ -290,21 +291,32 @@ func TestArchitectOverlayAuthorityBoundary(t *testing.T) {
 		"`design_question`",
 		"the orchestrator",
 		"`assumptions`",
-		// the route as ops.exploreRoute takes it (lane_decisions.go): an empty files_needed is one of the at most three files,
-		// and the open questions of a DESIGN carry no edit regions, so the count alone sends a question inline
-		"at most three files, an empty list among them",
-		"carry no edit regions",
-		"reaches the audit with no answer",
-		// what is handed above the run today, and what is not (the route that hands such a question up is CRW-1316's)
-		"no route today hands it to a layer above the run",
-		"beyond the explorer cap",
+		// the notation the router reads (ops.AuthorityScope): at the start of the scope, the token as given
+		"`scope` that starts with the notation of its kind",
+		"`authority:repo-rule`", "`authority:other-record`", "`authority:policy`", "`authority:environment`",
+		// the route as ops.exploreRoute takes it (lane_decisions.go): no open question is the architect's to answer
+		"What the run does with an open question:",
+		"None is left to you to answer",
+		"whatever `files_needed` lists",
+		"goes to no explorer",
+		"non-blocking ask",
+		"a missing or unknown notation among them",
+		"beyond that cap",
+		"and again before the audit of a re-plan",
+		"each question's route and what it got",
 	} {
 		if !strings.Contains(boundary, want) {
 			t.Errorf("the authority boundary section lacks %q:\n%s", want, boundary)
 		}
 	}
-	// The section does not tell the architect that a question it raises goes to the layers above the run: only the questions
-	// beyond the explorer cap do.
+	// The section no longer says a question of the DESIGN is the architect's to answer or reaches the audit unanswered for that.
+	for _, claim := range []string{"is the asker's to answer", "reaches the audit with no answer", "no route today hands it to a layer above the run", "open question today"} {
+		if strings.Contains(boundary, claim) {
+			t.Errorf("the authority boundary section says %q, which the route no longer does:\n%s", claim, boundary)
+		}
+	}
+	// The section says plainly which questions go to the layers above the run: those with a notation and those beyond the explorer
+	// cap, not every question the architect raises.
 	for _, claim := range []string{"since it is a question for the layers above the run", "(none included)"} {
 		if strings.Contains(boundary, claim) {
 			t.Errorf("the authority boundary section says %q, which the route does not do or does not say plainly:\n%s", claim, boundary)

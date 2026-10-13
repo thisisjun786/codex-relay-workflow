@@ -26,7 +26,7 @@ A signal adds a call only when its threshold is crossed; the run reads the numbe
 
 | Rule | Signal | Threshold | Action |
 |---|---|---|---|
-| `SP-EXPL-1` | the open questions of the architect's DESIGN | one explorer for each question, at most 3 explorers at once and at most 6 explorers for each milestone; the questions beyond 6 go to the orchestrator thread as design questions | spawn the explorer; the answers are appended to the packets they affect |
+| `SP-EXPL-1` | the open questions of the architect's DESIGN, at the design audit and at the audit of a re-plan | one explorer for each question whatever its files needed, at most 3 explorers at once and at most 6 explorers for each milestone; the questions beyond 6 go to the orchestrator thread as design questions. A question whose scope starts with the notation of an out-of-authority kind (`authority:repo-rule`, `authority:other-record`, `authority:policy`, `authority:environment`, compared without regard to case) goes to the orchestrator thread as a design question and to no explorer; a missing or unknown notation goes to an explorer | spawn the explorer; the answers are appended to the packets they affect; the design audit packet shows each question's route and what it got, and the design questions go up in one non-blocking `design_question` escalation once the DESIGN is approved |
 | `SP-EXPL-2` | an executor's receipt that needs research and carries a research question | one explorer for each distinct question digest of a node, at most 2 research continuations on a tier, then the node escalates as a scope question | spawn the explorer or reuse the answered digest, then continue the same executor thread with the answer; never a tier step |
 | `SP-EXPL-3` | a reviewer's defect of kind `evidence_missing` | one explorer for each distinct evidence question before the next round, at most 2 explorers for each node | its findings go to the executor's fix packet and to the next reviewer's packet; no such defect is a recorded skip |
 | `SP-TIER-1` | independent failure evidence on the current tier | any of: `needs_changes` in two consecutive rounds with a repeated finding; the required verification failing on two consecutive committed heads; a null result on two consecutive executor calls of the tier; 4 reviewed rounds without a verified verdict | the run appends a step decision with the evidence ids and a checkpoint; only then does a fresh executor of the next tier start, in a new worktree at the last head. One step for each node |
@@ -44,7 +44,7 @@ Work that is cheaper to do than to ask is done by code or by the asker, and reco
 
 | Rule | Work |
 |---|---|
-| `SP-INL-1` | A research question inside the asking agent's declared edit regions, or with at most 3 files needed, is answered by the asker itself (recorded as inline) |
+| `SP-INL-1` | A research question of an executor inside its declared edit regions, or with at most 3 files needed, is answered by the asker itself (recorded as inline); never an open question of a DESIGN, whose architect's turn has ended |
 | `SP-INL-2` | A question whose digest was already answered in the run reuses that answer (recorded as reuse) |
 | `SP-INL-3` | Compile, the commit and the worktree, the verification command, the assembly of the pre-merge record from the verdict, the Linear summary, accept and integrate are code steps of the run, never agents |
 | `SP-INL-4` | The orchestrator thread is never spawned or woken for an ordinary issue |
