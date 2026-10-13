@@ -191,10 +191,6 @@ func spawnHookManagedCiphertext(a *spawnHookAssembly) (deny string, stopped bool
 		return "", false
 	}
 	selection, source, err := role.NewManagedSpawnResolver(a.cwd).Named(a.sessionID, task, a.toolUseID, spawnCiphertextRoles(a.toolInput.Get("agent_type")))
-	if role.IsManagedSpawnRootRefusal(err) {
-		// CRW-1265: the call names a dispatch, and its child would run where a sandboxed Codex may not; not unmanaged, refused.
-		return DenyEnvelope("managed dispatch: " + spawnParityNodeError(err)), true
-	}
 	if err == nil && selection != nil {
 		a.managed, a.dispatchSource = selection, source
 	}

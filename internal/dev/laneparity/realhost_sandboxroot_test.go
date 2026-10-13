@@ -38,25 +38,28 @@ func recordedCalls(t *testing.T, record string) string {
 }
 
 // CRW-1265. Every cell of a real-host run starts a sandboxed Codex (read-only) in a work directory
-// below the run's scratch directory. A scratch in the account home, or anywhere outside the sandbox
-// base, is refused before any Codex exec: the stand-in sees `--version` and nothing else.
+// below the run's scratch directory. CRW-1265 refused a scratch in the account home, or anywhere
+// outside the sandbox base, before any Codex exec; since CRW-1308 the cell runs Codex there and the
+// rule's verdict is a recorded warning.
 func TestRealhostRefusesScratchAtHomeBeforeCodex(t *testing.T) {
 	w := sandboxroottest.Fake(t)
 	root := repoRoot(t)
 	_, crw := fakeHost(t, root, fakeUnsupported, false)
 	for name, scratch := range map[string]string{"the account home": w.Home, "outside the sandbox base": w.Mkdir(t, w.Root, "elsewhere")} {
 		t.Run(name, func(t *testing.T) {
+			w.ClearWarnings(t)
 			codex, record := recordingCodex(t)
 			_, err := RealHost(RealHostOptions{Root: root, CRW: crw, Plugin: filepath.Join(root, "plugins", "crw"), Codex: codex, Scratch: scratch,
 				Timeout: 30 * time.Second, Only: regexp.MustCompile("^turn/crw$")})
-			if err == nil || !strings.Contains(err.Error(), sandboxroot.Code) {
-				t.Fatalf("scratch %s: want a sandbox_root_refused error, got %v", scratch, err)
+			if err != nil && strings.Contains(err.Error(), sandboxroot.Code) {
+				t.Fatalf("scratch %s: the rule refused: %v", scratch, err)
 			}
-			calls := recordedCalls(t, record)
-			if strings.Contains(calls, "exec") || strings.Contains(calls, "features") {
-				t.Fatalf("Codex was run past --version:\n%s", calls)
+			if calls := recordedCalls(t, record); !strings.Contains(calls, "exec") {
+				t.Fatalf("scratch %s never reached Codex:\n%s", scratch, calls)
 			}
-			// What the run made inside the refused scratch is gone with it.
+			// The run's own directory (rh-*) below the scratch and the cell's work directory are outside every dedicated root.
+			w.Warned(t, "laneparity/realhost", sandboxroot.RuleOutsideDedicatedRoot, "")
+			// What the run made inside the scratch is gone with it.
 			if leftovers, _ := filepath.Glob(filepath.Join(scratch, "rh-*")); len(leftovers) != 0 {
 				t.Fatalf("the run left %v", leftovers)
 			}

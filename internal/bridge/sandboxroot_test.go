@@ -2,7 +2,6 @@ package bridge
 
 import (
 	"context"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,44 +13,51 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/sandboxroot/sandboxroottest"
 )
 
-// CRW-1265. A sandboxed Codex never starts or resumes in the account home, above it, or above a
-// project root: every path that hands a cwd to the App Server asks internal/sandboxroot first, and a
-// refusal leaves the fake host with no call at all.
+// CRW-1265 kept a sandboxed Codex out of the account home, the directories above it and the directories above a project
+// root. CRW-1308 (Jun, 10-13) removes that restriction: every path that hands a cwd to the App Server still asks
+// internal/sandboxroot, and its verdict is a recorded warning; the host is called as for any other root.
 
-func refusalOf(t *testing.T, err error, rule string) *sandboxroot.Refusal {
-	t.Helper()
-	var refusal *sandboxroot.Refusal
-	if !errors.As(err, &refusal) || refusal.Rule != rule {
-		t.Fatalf("want a %s refusal, got %v", rule, err)
-	}
-	return refusal
+// createReply is the host's answer to a creation in cwd under a sandbox policy type.
+func createReply(cwd, sandboxType string) fakehost.Reply {
+	return fakehost.Reply{Result: map[string]any{"thread": map[string]any{"id": "thread-1", "cwd": cwd}, "cwd": cwd, "model": "explicit-model", "reasoningEffort": "high", "approvalPolicy": "never", "sandbox": map[string]any{"type": sandboxType}}}
 }
 
 func TestCreateThreadRefusesHomeCwdBeforeHostCall(t *testing.T) {
 	w := sandboxroottest.Fake(t)
 	b, host := testBridge(t)
-	for _, sandbox := range []string{"read-only", "workspace-write"} {
+	host.Respond("turn/start", fakehost.Reply{Result: map[string]any{"turn": map[string]any{"id": "turn-1"}}})
+	for sandbox, kind := range map[string]string{"read-only": "readOnly", "workspace-write": "workspaceWrite"} {
 		id := "home-" + sandbox
-		_, err := b.CreateThread(context.Background(), CreateThread{RequestID: id, CWD: w.Home, Sandbox: sandbox, Prompt: "hi", Model: "explicit-model", Effort: "high"})
-		refusalOf(t, err, sandboxroot.RuleAccountHome)
-		if methods := hostMethods(host); len(methods) != 0 {
-			t.Fatalf("%s: the host was called: %v", sandbox, methods)
+		host.Respond("thread/start", createReply(w.Home, kind))
+		receipt, err := b.CreateThread(context.Background(), CreateThread{RequestID: id, CWD: w.Home, Sandbox: sandbox, Prompt: "hi", Model: "explicit-model", Effort: "high"})
+		if err != nil || receipt["status"] != "accepted" {
+			t.Fatalf("%s: receipt=%v err=%v calls=%v", sandbox, receipt, err, hostMethods(host))
 		}
-		if receipt, err := b.GetOperation(context.Background(), id); err == nil {
-			t.Fatalf("%s: a refused creation left a receipt: %v", sandbox, receipt)
-		}
+		w.Warned(t, "bridge/create_thread", sandboxroot.RuleAccountHome, w.Home)
 	}
-	// The home's parent and a link to the home are refused the same way.
+	if host.Count("thread/start") != 2 || host.Count("turn/start") != 2 {
+		t.Fatalf("the host was not called for each creation: %v", hostMethods(host))
+	}
+	// The home's parent and a link to the home pass the same way, each with its warning.
 	link := filepath.Join(w.Sandbox, "to-home")
 	if err := os.Symlink(w.Home, link); err != nil {
 		t.Fatal(err)
 	}
 	for cwd, rule := range map[string]string{filepath.Dir(w.Home): sandboxroot.RuleHomeAncestor, link: sandboxroot.RuleAccountHome} {
-		_, err := b.CreateThread(context.Background(), CreateThread{RequestID: "other-" + rule, CWD: cwd, Sandbox: "workspace-write", Model: "explicit-model", Effort: "high"})
-		refusalOf(t, err, rule)
+		// The bridge runs the thread at the cwd's real path, and asks the rule about that path.
+		real, err := filepath.EvalSymlinks(cwd)
+		if err != nil {
+			t.Fatal(err)
+		}
+		host.Respond("thread/start", createReply(real, "workspaceWrite"))
+		receipt, err := b.CreateThread(context.Background(), CreateThread{RequestID: "other-" + rule, CWD: cwd, Sandbox: "workspace-write", Model: "explicit-model", Effort: "high"})
+		if err != nil || receipt["status"] != "accepted" {
+			t.Fatalf("%s: receipt=%v err=%v", cwd, receipt, err)
+		}
+		w.Warned(t, "bridge/create_thread", rule, real)
 	}
-	if methods := hostMethods(host); len(methods) != 0 {
-		t.Fatalf("the host was called: %v", methods)
+	if host.Count("thread/start") != 4 {
+		t.Fatalf("the host was not called for each creation: %v", hostMethods(host))
 	}
 }
 
@@ -60,20 +66,25 @@ func TestCreateThreadRefusesProjectAncestorCwd(t *testing.T) {
 	project := w.Mkdir(t, w.Home, "code", "aas")
 	w.Project(t, project)
 	b, host := testBridge(t)
-	_, err := b.CreateThread(context.Background(), CreateThread{RequestID: "above-project", CWD: filepath.Dir(project), Sandbox: "workspace-write", Model: "explicit-model", Effort: "high"})
-	if refusal := refusalOf(t, err, sandboxroot.RuleProjectAncestor); refusal.Project != project {
-		t.Fatalf("project %q, want %q", refusal.Project, project)
+	host.Respond("thread/start", createReply(filepath.Dir(project), "workspaceWrite"))
+	receipt, err := b.CreateThread(context.Background(), CreateThread{RequestID: "above-project", CWD: filepath.Dir(project), Sandbox: "workspace-write", Model: "explicit-model", Effort: "high"})
+	if err != nil || receipt["status"] != "accepted" || host.Count("thread/start") != 1 {
+		t.Fatalf("receipt=%v err=%v calls=%v", receipt, err, hostMethods(host))
 	}
-	if methods := hostMethods(host); len(methods) != 0 {
-		t.Fatalf("the host was called: %v", methods)
+	if record := w.Warned(t, "bridge/create_thread", sandboxroot.RuleProjectAncestor, filepath.Dir(project)); record.Project != project {
+		t.Fatalf("project %q, want %q", record.Project, project)
 	}
-	// The project itself and a directory under the sandbox base run as before.
+	before := len(w.Warnings())
+	// The project itself and a directory under the sandbox base run as before, with no warning.
 	for _, cwd := range []string{project, w.Mkdir(t, w.Sandbox, "run")} {
 		host.Respond("thread/start", fakehost.Reply{Result: map[string]any{"thread": map[string]any{"id": "thread-1"}, "cwd": cwd, "model": "explicit-model", "reasoningEffort": "high", "approvalPolicy": "never", "sandbox": map[string]any{"type": "readOnly"}}})
 		receipt, err := b.CreateThread(context.Background(), CreateThread{RequestID: "ok-" + filepath.Base(cwd), CWD: cwd, Sandbox: "read-only", Model: "explicit-model", Effort: "high"})
 		if err != nil || receipt["status"] != "accepted" {
 			t.Fatalf("%s: receipt=%v err=%v", cwd, receipt, err)
 		}
+	}
+	if records := w.Warnings(); len(records) != before {
+		t.Fatalf("an allowed root was warned about: %+v", records[before:])
 	}
 }
 
@@ -118,46 +129,46 @@ func TestCreateWorktreeThreadAllowsCodexHomeWorktree(t *testing.T) {
 	}
 }
 
+// A destination in the account home or outside every base is made and its thread started (CRW-1308); the preflight and the
+// finished worktree each leave a warning.
 func TestCreateWorktreeThreadRefusesHomeDestination(t *testing.T) {
 	w := sandboxroottest.Fake(t)
 	for _, destination := range []string{filepath.Join(w.Home, "isolated"), filepath.Join(w.Root, "elsewhere", "isolated")} {
 		w.Mkdir(t, filepath.Dir(destination))
 		b, host, input := worktreeAt(t, destination)
 		receipt, err := b.CreateWorktreeThread(context.Background(), input)
-		if err != nil || receipt["status"] != "failed" || pyjson.Map(receipt["rpcError"])["code"] != sandboxroot.Code {
-			t.Fatalf("%s: receipt=%v err=%v", destination, receipt, err)
+		if err != nil || receipt["status"] != "accepted" || host.Count("thread/start") != 1 {
+			t.Fatalf("%s: receipt=%v err=%v calls=%v", destination, receipt, err, hostMethods(host))
 		}
-		if methods := hostMethods(host); len(methods) != 0 {
-			t.Fatalf("%s: the host was called: %v", destination, methods)
+		if _, err := os.Lstat(filepath.Join(destination, ".git")); err != nil {
+			t.Fatalf("%s: the worktree was not made: %v", destination, err)
 		}
-		if _, err := os.Lstat(destination); !os.IsNotExist(err) {
-			t.Fatalf("%s: the destination was made: %v", destination, err)
+		if strings.Count(gitAt(t, input.Source, "worktree", "list", "--porcelain"), "worktree ") != 2 {
+			t.Fatalf("%s: the worktree was not registered", destination)
 		}
-		if effects, _ := receipt["attemptedEffects"].([]string); len(effects) != 0 {
-			t.Fatalf("%s: effects %v (reserved or created)", destination, effects)
-		}
-		if strings.Count(gitAt(t, input.Source, "worktree", "list", "--porcelain"), "worktree ") != 1 {
-			t.Fatalf("%s: a worktree was registered", destination)
-		}
+		w.Warned(t, "bridge/create_worktree_thread:preflight", sandboxroot.RuleOutsideDedicatedRoot, destination)
+		w.Warned(t, "bridge/create_worktree_thread:check", sandboxroot.RuleOutsideDedicatedRoot, destination)
 	}
 }
 
+// A thread the host reports in the account home is resumed there and the message delivered (CRW-1308), with a warning.
 func TestSendMessageRefusesRecordedHomeCwdBeforeResume(t *testing.T) {
 	w := sandboxroottest.Fake(t)
-	for _, sandbox := range []map[string]any{nil, {"sandbox": "workspace-write"}} {
+	for kind, sandbox := range map[string]map[string]any{"readOnly": nil, "workspaceWrite": {"sandbox": "workspace-write"}} {
 		b, host := testBridge(t)
 		host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{"status": map[string]any{"type": "notLoaded"}, "cwd": w.Home}}})
+		host.Respond("thread/resume", createReply(w.Home, kind))
+		host.Respond("turn/start", fakehost.Reply{Result: map[string]any{"turn": map[string]any{"id": "turn-1"}}})
 		expected := map[string]any{"model": "explicit-model", "reasoning_effort": "high"}
 		for k, v := range sandbox {
 			expected[k] = v
 		}
 		receipt, err := b.SendMessageToThread(context.Background(), SendMessage{RequestID: "recorded-home", ThreadID: "thread-1", Message: "work", Expected: expected})
-		if err != nil || receipt["status"] != "failed" || pyjson.Map(receipt["rpcError"])["code"] != sandboxroot.Code || receipt["delivery"] != "not_delivered" {
-			t.Fatalf("expected=%v receipt=%v err=%v", expected, receipt, err)
+		if err != nil || receipt["status"] != "accepted" || host.Count("thread/resume") != 1 || host.Count("turn/start") != 1 {
+			t.Fatalf("expected=%v receipt=%v err=%v calls=%v", expected, receipt, err, hostMethods(host))
 		}
-		if host.Count("thread/resume") != 0 || host.Count("turn/start") != 0 {
-			t.Fatalf("a refused send resumed or started a turn: %v", hostMethods(host))
-		}
+		w.Warned(t, "bridge/send_message_to_thread", sandboxroot.RuleAccountHome, w.Home)
+		w.Warned(t, "bridge/send_message_to_thread:thread/resume", sandboxroot.RuleAccountHome, w.Home)
 	}
 	// A request that names another cwd is judged by that cwd, a thread without a sandbox mode that
 	// the host reports counts as sandboxed, and a thread that reports danger-full-access is outside the rule.
@@ -181,7 +192,7 @@ func TestSendMessageRefusesRecordedHomeCwdBeforeResume(t *testing.T) {
 }
 
 // The roots the host reports for a thread are the ones a resume that names none keeps: a safe cwd
-// with the account home among them is refused before thread/resume.
+// with the account home among them is warned about before thread/resume, and the send goes on (CRW-1308).
 func TestSendMessageRefusesReportedHomeWritableRoots(t *testing.T) {
 	w := sandboxroottest.Fake(t)
 	run := w.Mkdir(t, w.Sandbox, "run")
@@ -196,21 +207,21 @@ func TestSendMessageRefusesReportedHomeWritableRoots(t *testing.T) {
 				result[k] = v
 			}
 			host.Respond("thread/read", fakehost.Reply{Result: result})
+			host.Respond("thread/resume", createReply(run, "workspaceWrite"))
+			host.Respond("turn/start", fakehost.Reply{Result: map[string]any{"turn": map[string]any{"id": "turn-1"}}})
 			receipt, err := b.SendMessageToThread(context.Background(), SendMessage{RequestID: "reported-roots", ThreadID: "thread-1", Message: "work", Expected: map[string]any{"model": "explicit-model", "reasoning_effort": "high"}})
-			if err != nil || receipt["status"] != "failed" || pyjson.Map(receipt["rpcError"])["code"] != sandboxroot.Code || receipt["delivery"] != "not_delivered" {
-				t.Fatalf("receipt=%v err=%v", receipt, err)
+			if err != nil || receipt["status"] != "accepted" || host.Count("thread/resume") != 1 || host.Count("turn/start") != 1 {
+				t.Fatalf("receipt=%v err=%v calls=%v", receipt, err, hostMethods(host))
 			}
-			if host.Count("thread/resume") != 0 || host.Count("turn/start") != 0 {
-				t.Fatalf("a refused send resumed or started a turn: %v", hostMethods(host))
-			}
+			w.Warned(t, "bridge/send_message_to_thread", sandboxroot.RuleAccountHome, w.Home)
 		})
 	}
 }
 
 // CRW-1265 (verification of d90085b2): a send that states no policy resumes the thread under the roots
 // the host's configuration gives it, and the host reports them in its thread/resume answer, not in
-// thread/read. The answer is judged before turn/start: an account home among its roots withholds the
-// message (the thread stays resumed), for a notLoaded and an idle thread alike; a safe answer goes on.
+// thread/read. The answer is judged before turn/start: an account home among its roots is warned about
+// and the turn starts (CRW-1308), for a notLoaded and an idle thread alike; a safe answer goes on.
 func TestSendMessageRefusesHomeRootsOnlyTheResumeAnswerReports(t *testing.T) {
 	w := sandboxroottest.Fake(t)
 	run := w.Mkdir(t, w.Sandbox, "run")
@@ -235,16 +246,10 @@ func TestSendMessageRefusesHomeRootsOnlyTheResumeAnswerReports(t *testing.T) {
 				host.Respond("thread/resume", answer(extra))
 				host.Respond("turn/start", fakehost.Reply{Result: map[string]any{"turn": map[string]any{"id": "turn-1"}}})
 				receipt, err := b.SendMessageToThread(context.Background(), SendMessage{RequestID: "resume-home", ThreadID: "thread-1", Message: "work", Expected: map[string]any{"model": "explicit-model", "reasoning_effort": "high"}})
-				rpc := pyjson.Map(receipt["rpcError"])
-				if err != nil || receipt["status"] != "failed" || rpc["code"] != sandboxroot.Code || receipt["delivery"] != "not_delivered" {
+				if err != nil || receipt["status"] != "accepted" || host.Count("turn/start") != 1 {
 					t.Fatalf("receipt=%v err=%v calls=%v", receipt, err, hostMethods(host))
 				}
-				if !strings.Contains(pyjson.Text(rpc["message"]), "the thread was resumed but no turn was started; message withheld") {
-					t.Fatalf("message=%v", rpc["message"])
-				}
-				if host.Count("turn/start") != 0 {
-					t.Fatalf("a turn was started: %v", hostMethods(host))
-				}
+				w.Warned(t, "bridge/send_message_to_thread:thread/resume", sandboxroot.RuleAccountHome, "")
 			})
 		}
 		t.Run(status+"/a safe answer goes on", func(t *testing.T) {
@@ -262,45 +267,24 @@ func TestSendMessageRefusesHomeRootsOnlyTheResumeAnswerReports(t *testing.T) {
 
 // CRW-1265 (pre-merge evaluation of f0691fdd, d2): a creation that states no policy and no roots leaves
 // the writable roots to the host's configuration, and the host answers thread/start with the roots the
-// thread got. An account home among them withholds the title and the initial prompt (the thread stays
-// retained, the receipt records the refusal); a safe answer goes on as before.
+// thread got. An account home among them is warned about and the title and the initial prompt go out
+// (CRW-1308); a safe answer goes on as before.
 func TestCreateThreadsWithholdPromptWhenHostAnswersWithHomeWritableRoot(t *testing.T) {
 	w := sandboxroottest.Fake(t)
 	cwd := w.Mkdir(t, w.Sandbox, "run")
 	answer := func(roots ...any) fakehost.Reply {
 		return fakehost.Reply{Result: map[string]any{"thread": map[string]any{"id": "thread-1", "cwd": cwd}, "cwd": cwd, "model": "explicit-model", "reasoningEffort": "high", "approvalPolicy": "never", "sandbox": map[string]any{"type": "workspaceWrite", "writableRoots": roots}}}
 	}
-	refused := func(t *testing.T, receipt map[string]any, err error, host *fakehost.Server) {
-		t.Helper()
-		var code any
-		if err != nil {
-			var refusal *sandboxroot.Refusal
-			if !errors.As(err, &refusal) {
-				var rpc interface{ Error() string }
-				if !errors.As(err, &rpc) || !strings.Contains(err.Error(), sandboxroot.Code) {
-					t.Fatalf("err=%v", err)
-				}
-			}
-			code = sandboxroot.Code
-		} else {
-			code = pyjson.Map(receipt["rpcError"])["code"]
-		}
-		if code != sandboxroot.Code {
-			t.Fatalf("receipt=%v err=%v", receipt, err)
-		}
-		if host.Count("turn/start") != 0 || host.Count("thread/name/set") != 0 {
-			t.Fatalf("the title or the prompt went out: %v", hostMethods(host))
-		}
-	}
 	t.Run("create_thread", func(t *testing.T) {
 		b, host := testBridge(t)
 		host.Respond("thread/start", answer(w.Home))
+		host.Respond("thread/name/set", fakehost.Reply{})
 		host.Respond("turn/start", fakehost.Reply{Result: map[string]any{"turn": map[string]any{"id": "turn-1"}}})
 		receipt, err := b.CreateThread(context.Background(), CreateThread{RequestID: "inherited-home", CWD: cwd, Sandbox: "workspace-write", Prompt: "hi", Title: "t", Model: "explicit-model", Effort: "high"})
-		refused(t, receipt, err, host)
-		if host.Count("thread/start") != 1 {
-			t.Fatalf("calls %v", hostMethods(host))
+		if err != nil || receipt["status"] != "accepted" || host.Count("thread/start") != 1 || host.Count("thread/name/set") != 1 || host.Count("turn/start") != 1 {
+			t.Fatalf("receipt=%v err=%v calls=%v", receipt, err, hostMethods(host))
 		}
+		w.Warned(t, "bridge/create_thread:thread/start", sandboxroot.RuleAccountHome, w.Home)
 	})
 	t.Run("create_worktree_thread", func(t *testing.T) {
 		// A worktree thread states its whole policy, so a root the host adds is a finding that withholds the prompt already.

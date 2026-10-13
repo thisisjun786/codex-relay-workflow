@@ -138,11 +138,11 @@ func resumeLookupEnv(e *Env) host.LookupEnv {
 }
 
 // resumeExit is the status a refusal ends with: the recorded settings or the stopped-server list
-// are what the operator must fix (2; so is a recorded cwd the sandbox-root rule refuses), a disagreement with the host about what the child runs is
+// are what the operator must fix (2), a disagreement with the host about what the child runs is
 // not something this command may resolve (4), and everything else is the relay or the host (3).
 func resumeExit(f *resumeFailure) int {
 	switch f.Reason {
-	case resumeSettingsUnavailable, resumeDisabledServersUnset, sandboxroot.Code:
+	case resumeSettingsUnavailable, resumeDisabledServersUnset:
 		return usageExit
 	case resumeSettingsMismatch, resumeMCPNotDisabled, stateroot.Code:
 		return 4
@@ -341,9 +341,10 @@ func resumeSandboxConfig(config, sandbox map[string]any) map[string]any {
 	return config
 }
 
-// resumeRootRefusal asks the sandbox-root rule about the cwd, the runtime workspace roots and the
-// policy's writable roots a resume would carry, under the sandbox mode it would carry.
-func resumeRootRefusal(settings *resumeSettings, mode string) *resumeFailure {
+// warnResumeRoot asks the sandbox-root rule about the cwd, the runtime workspace roots and the
+// policy's writable roots a resume would carry, under the sandbox mode it would carry, and warns about
+// its verdict (CRW-1308): the resume goes on.
+func warnResumeRoot(settings *resumeSettings, mode string) {
 	var writable []string
 	if settings.RuntimeWorkspaceRoots != nil {
 		writable = append(writable, *settings.RuntimeWorkspaceRoots...)
@@ -355,19 +356,16 @@ func resumeRootRefusal(settings *resumeSettings, mode string) *resumeFailure {
 			}
 		}
 	}
-	err := sandboxroot.CheckAll(settings.CWD, writable, mode)
-	if err == nil {
-		return nil
-	}
-	return &resumeFailure{Reason: sandboxroot.Code, Detail: err.Error() + "; nothing was sent"}
+	sandboxroot.Warn("manage/child-resume", sandboxroot.CheckAll(settings.CWD, writable, mode))
 }
 
-// resumeLiveRefusal asks the sandbox-root rule about what the host says a thread runs with now (CRW-1265): the cwd, the
+// warnLiveRoot asks the sandbox-root rule about what the host says a thread runs with now (CRW-1265): the cwd, the
 // runtime workspace roots, the sandbox policy's writable roots and the config's sandbox_workspace_write.writable_roots of its
 // thread/read or thread/resume answer. A loaded thread keeps the settings it had, so the record's own are not the whole
 // picture. The sandbox judged is the one the host reports, and for a thread/read, which a resume then sets, the recorded mode
-// too; one that cannot be told counts as on (mode is never empty). after names the step for the detail.
-func resumeLiveRefusal(object map[string]any, mode string, beforeResume bool, after string) *resumeFailure {
+// too; one that cannot be told counts as on (mode is never empty). A verdict is a warning, never a refusal (CRW-1308); step names
+// the answer it was made on.
+func warnLiveRoot(object map[string]any, mode string, beforeResume bool, step string) {
 	thread, _ := object["thread"].(map[string]any)
 	cwd, _ := thread["cwd"].(string)
 	if cwd == "" {
@@ -388,11 +386,10 @@ func resumeLiveRefusal(object map[string]any, mode string, beforeResume bool, af
 		modes = append(modes, mode)
 	}
 	for _, one := range modes {
-		if err := sandboxroot.CheckAll(cwd, roots, one); err != nil {
-			return &resumeFailure{Reason: sandboxroot.Code, Detail: "the host reports a thread that runs where a sandboxed Codex may not: " + err.Error() + "; " + after}
+		if sandboxroot.Warn("manage/child-resume:"+step, sandboxroot.CheckAll(cwd, roots, one)) != "" {
+			return
 		}
 	}
-	return nil
 }
 
 // resumeRun is one child-resume: two relay reads, then one App Server connection carrying
@@ -419,13 +416,9 @@ func resumeRun(ctx context.Context, e *Env, cfg *Config, opts resumeOptions) (*r
 	if err != nil {
 		return nil, err
 	}
-	// CRW-1265: the resume runs the child at the recorded cwd with the recorded roots and sandbox, and a
-	// sandboxed child is not run in the account home, above it or above a project root. A child made
-	// there before the rule existed is refused here too, the dry run included, before the App Server is
-	// contacted.
-	if refusal := resumeRootRefusal(settings, mode); refusal != nil {
-		return nil, refusal
-	}
+	// CRW-1265: the resume runs the child at the recorded cwd with the recorded roots and sandbox; the
+	// rule is asked about them, the dry run included, and its verdict is a warning (CRW-1308).
+	warnResumeRoot(settings, mode)
 	limit, err := resumeAutoCompactLimit(e, cfg, *settings)
 	if err != nil {
 		return nil, err
@@ -500,9 +493,7 @@ func resumeRun(ctx context.Context, e *Env, cfg *Config, opts resumeOptions) (*r
 	if err := json.Unmarshal(raw, &live); err != nil {
 		return nil, &resumeFailure{Reason: string(hostReadHostError), Detail: "thread/read result: " + err.Error()}
 	}
-	if refusal := resumeLiveRefusal(live, mode, true, "nothing was sent"); refusal != nil {
-		return nil, refusal
-	}
+	warnLiveRoot(live, mode, true, "thread/read")
 	// CRW-1140: the child's PABCD state lives at the cwd the host reports for it now, not at the
 	// recorded cwd, which a later settings record may have changed. A record that would resume the
 	// child elsewhere while that state is in flight is refused before anything is sent, the dry run
@@ -565,9 +556,7 @@ func resumeRun(ctx context.Context, e *Env, cfg *Config, opts resumeOptions) (*r
 	if err := json.Unmarshal(resumed, &resumedLive); err != nil {
 		return nil, &resumeFailure{Reason: string(hostReadHostError), Detail: "thread/resume result: " + err.Error()}
 	}
-	if refusal := resumeLiveRefusal(resumedLive, mode, false, "the child was resumed but no turn was started"); refusal != nil {
-		return nil, refusal
-	}
+	warnLiveRoot(resumedLive, mode, false, "thread/resume")
 	if err := stateroot.Moved(rootEnv, read.Thread.Cwd, resumedSettings.Cwd, child); err != nil {
 		return nil, &resumeFailure{Reason: stateroot.CodeOf(err), Detail: err.Error() + "; the child was resumed but no turn was started"}
 	}

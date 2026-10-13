@@ -17,7 +17,8 @@ import (
 
 // CRW-1265. A relay delivery resumes a thread and starts a turn in it. The thread's cwd, sandbox and
 // writable roots come from the resume parameters, from what the host reports, or from the recorded
-// settings, and a sandboxed run in the account home is refused before thread/resume is sent.
+// settings. CRW-1265 refused a sandboxed run in the account home before thread/resume was sent; since
+// CRW-1308 the rule's verdict is a recorded warning and the resume goes out.
 
 // sandboxSettings is a recorded settings row for a workspace-write thread at cwd.
 func sandboxSettings(cwd string, roots []string, sandbox map[string]any) map[string]any {
@@ -88,19 +89,24 @@ func idleThread(cwd string) map[string]any {
 	return thread
 }
 
-func refusedNothingSent(t *testing.T, receipt delivery.Obj, methods []string, rule string) {
+// warnedAndResumed checks a send the rule's verdict did not stop (CRW-1308): no sandbox_root_refused in the receipt, the
+// resume went out after thread/read, and the verdict is in the warning record.
+func warnedAndResumed(t *testing.T, w *sandboxroottest.World, receipt delivery.Obj, methods []string, rule string) {
 	t.Helper()
-	rpcError, _ := receipt.Get("rpcError").(contract.OrderedObject)
 	text, _ := json.Marshal(receipt)
-	if receipt.Get("status") != "not_attempted" || rpcError.Get("code") != sandboxroot.Code || receipt.Get("retrySafe") != true {
-		t.Fatalf("want a nothing-sent %s refusal, got %s", rule, text)
+	if strings.Contains(string(text), sandboxroot.Code) || len(methods) < 2 || methods[0] != "thread/read" || methods[1] != "thread/resume" {
+		t.Fatalf("want the resume sent with a %s warning; calls %v; receipt %s", rule, methods, text)
 	}
-	if message, _ := rpcError.Get("message").(string); !strings.Contains(message, rule) {
-		t.Fatalf("the refusal does not name %s: %s", rule, message)
-	}
-	if fmt.Sprint(methods) != "[thread/read]" {
-		t.Fatalf("calls after the refusal: %v", methods)
-	}
+	w.Warned(t, "relay/send_message_to_thread", rule, "")
+}
+
+// warnedSend is sandboxedSend with the host's answers to the resume and the turn.
+// The warning record is emptied first, so the send's own verdict is the one checked.
+func warnedSend(t *testing.T, w *sandboxroottest.World, settings map[string]any, settingsFree bool, hostCwd string, hostTop map[string]any) (delivery.Obj, []string) {
+	t.Helper()
+	w.ClearWarnings(t)
+	return sandboxedSend(t, settings, settingsFree, idleThread(hostCwd), hostTop,
+		resumeAt(settings, hostCwd, workspaceWrite()), map[string]any{"turn": map[string]any{"id": "fake-turn-1"}})
 }
 
 func TestGuardedSendRefusesSandboxedHomeResume(t *testing.T) {
@@ -126,8 +132,8 @@ func TestGuardedSendRefusesSandboxedHomeResume(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			receipt, methods := sandboxedSend(t, c.settings, c.settingsFree, idleThread(c.hostCwd), c.hostTop)
-			refusedNothingSent(t, receipt, methods, c.rule)
+			receipt, methods := warnedSend(t, w, c.settings, c.settingsFree, c.hostCwd, c.hostTop)
+			warnedAndResumed(t, w, receipt, methods, c.rule)
 		})
 	}
 }
@@ -173,7 +179,7 @@ func resumeAt(settings map[string]any, cwd string, sandbox map[string]any) map[s
 
 // A settings-free resume sends no settings, but the thread keeps the roots it was recorded with and
 // the ones the host reports for it: a safe cwd with the account home among the writable roots is
-// refused before thread/resume, from the record or from the host's answer.
+// warned about before thread/resume, from the record or from the host's answer, and the resume goes out (CRW-1308).
 func TestGuardedSendRefusesInheritedHomeWritableRoots(t *testing.T) {
 	w := sandboxroottest.Fake(t)
 	run := w.Mkdir(t, w.Sandbox, "run")
@@ -190,8 +196,8 @@ func TestGuardedSendRefusesInheritedHomeWritableRoots(t *testing.T) {
 	for _, c := range cases {
 		for _, free := range []bool{true, false} {
 			t.Run(fmt.Sprintf("%s, settings-free=%v", c.name, free), func(t *testing.T) {
-				receipt, methods := sandboxedSend(t, c.settings, free, idleThread(run), c.hostTop)
-				refusedNothingSent(t, receipt, methods, sandboxroot.RuleAccountHome)
+				receipt, methods := warnedSend(t, w, c.settings, free, run, c.hostTop)
+				warnedAndResumed(t, w, receipt, methods, sandboxroot.RuleAccountHome)
 			})
 		}
 	}

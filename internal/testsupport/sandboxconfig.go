@@ -6,12 +6,12 @@ import (
 	"path/filepath"
 )
 
-// CRW-1265: the sandbox-root rule (internal/sandboxroot) keeps a sandboxed Codex in the crw configuration's
-// paths.sandbox_root, a known project root or a linked worktree. A test makes its workspaces, fake homes and
+// CRW-1265: the sandbox-root rule (internal/sandboxroot) counts the crw configuration's paths.sandbox_root, a
+// known project root and a linked worktree as dedicated roots, and warns about any other (CRW-1308). A test makes its workspaces, fake homes and
 // worktrees under the temporary directory (t.TempDir, os.MkdirTemp), so the isolation names that directory as
 // the sandbox root in the isolated crw configuration, the file at the configuration home's default location
 // (XDG_CONFIG_HOME/crw/config.json) that every process the test starts with its environment reads. Without it the
-// rule's default (crwconfig.DefaultSandboxRoot) decided, and a test passed or failed by where the host's TMPDIR lay. The rule
+// rule's default (crwconfig.DefaultSandboxRoot) decided, and a test was warned about or not by where the host's TMPDIR lay. The rule
 // itself is unchanged: the configuration is the product's own, and a test judges its paths exactly as a host
 // whose sandbox_root is the temporary directory would.
 

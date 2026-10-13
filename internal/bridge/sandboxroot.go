@@ -1,28 +1,15 @@
 package bridge
 
 import (
-	"errors"
 	"path/filepath"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/sandboxroot"
 )
 
-// rootRefusal turns a sandbox-root refusal (CRW-1265) into the error a receipt records: an RPC-shaped
-// failure whose object carries the refusal's code and fields, so a refused request names the path,
-// the real path, the rule and the allowed bases. Any other error is returned as it is.
-func rootRefusal(method string, err error) error {
-	var refusal *sandboxroot.Refusal
-	if !errors.As(err, &refusal) {
-		return err
-	}
-	object := map[string]any{"code": refusal.Code(), "message": refusal.Error(), "path": refusal.Path, "resolved": refusal.Resolved, "rule": refusal.Rule, "allowed": anyStrings(refusal.Allowed)}
-	if refusal.Project != "" {
-		object["project"] = refusal.Project
-	}
-	return &appserver.RPCError{Method: method, Message: refusal.Error(), Object: object}
-}
+// The sandbox-root rule (CRW-1265) no longer refuses anything here (CRW-1308): every path that hands a cwd or a writable root to
+// the App Server asks the rule and hands its verdict to sandboxroot.Warn, which records it and leaves a warning line; the request
+// goes on as it would for an allowed root.
 
 // policyWritableRoots are the writable roots a sandbox policy lists.
 func policyWritableRoots(policy map[string]any) []string {
@@ -86,38 +73,23 @@ func reportedRoots(state map[string]any) []string {
 	return append(sandboxroot.RootsOf(pyjson.Map(state["thread"])), sandboxroot.RootsOf(state)...)
 }
 
-// createdRefusal judges the writable roots the host's answer to thread/start says the new thread got
-// (CRW-1265). A creation that states no policy and no roots leaves them to the host's configuration, which may
-// hold the account home; the roots the request names were judged before the host was called, these are the ones
-// it added. A refusal withholds the title and the initial prompt; the thread stays retained.
-func createdRefusal(created map[string]any, sandbox string) error {
+// warnCreated asks the rule about the writable roots the host's answer to thread/start says the new thread got (CRW-1265), and
+// warns about a verdict (CRW-1308). A creation that states no policy and no roots leaves them to the host's configuration, which
+// may hold the account home; the roots the request names were asked about before the host was called, these are the ones it added.
+func warnCreated(created map[string]any, sandbox string) {
 	roots := append(sandboxroot.RootsOf(created), sandboxroot.RootsOf(pyjson.Map(created["thread"]))...)
-	err := rootRefusal("thread/start", sandboxroot.CheckAll("", roots, effectiveSandbox(sandbox, nil, reportedSandbox(created)...)))
-	var rpc *appserver.RPCError
-	if errors.As(err, &rpc) {
-		rpc.Message += "; initial prompt withheld. Inspect creation receipt. The thread remains retained."
-		rpc.Object["message"] = rpc.Message
-	}
-	return err
+	sandboxroot.Warn("bridge/create_thread:thread/start", sandboxroot.CheckAll("", roots, effectiveSandbox(sandbox, nil, reportedSandbox(created)...)))
 }
 
-// resumedRefusal judges the cwd and the writable roots the host's answer to thread/resume says the
-// thread now runs with (CRW-1265), the way createdRefusal judges thread/start. A resume that states no
-// policy and no roots keeps the host's configured ones, which may hold the account home; the thread/read
-// answer and the request were judged before the host was called, these are the ones the resume picked up.
-// A refusal withholds the message; the thread stays resumed and no turn is started.
-func resumedRefusal(resumed map[string]any, sandbox string, policy map[string]any) error {
+// warnResumed asks the rule about the cwd and the writable roots the host's answer to thread/resume says the thread now runs with
+// (CRW-1265), the way warnCreated asks about thread/start, and warns about a verdict (CRW-1308). A resume that states no policy and
+// no roots keeps the host's configured ones, which may hold the account home.
+func warnResumed(resumed map[string]any, sandbox string, policy map[string]any) {
 	thread := pyjson.Map(resumed["thread"])
 	roots := append(sandboxroot.RootsOf(resumed), sandboxroot.RootsOf(thread)...)
 	cwd := pyjson.Text(resumed["cwd"])
 	if cwd == "" {
 		cwd = pyjson.Text(thread["cwd"])
 	}
-	err := rootRefusal("thread/resume", sandboxroot.CheckAll(cwd, roots, effectiveSandbox(sandbox, policy, reportedSandbox(resumed)...)))
-	var rpc *appserver.RPCError
-	if errors.As(err, &rpc) {
-		rpc.Message += "; the thread was resumed but no turn was started; message withheld"
-		rpc.Object["message"] = rpc.Message
-	}
-	return err
+	sandboxroot.Warn("bridge/send_message_to_thread:thread/resume", sandboxroot.CheckAll(cwd, roots, effectiveSandbox(sandbox, policy, reportedSandbox(resumed)...)))
 }

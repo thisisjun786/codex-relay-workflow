@@ -151,11 +151,9 @@ func (b *Bridge) CreateThread(ctx context.Context, in CreateThread) (receipt led
 		if err != nil {
 			return err
 		}
-		// CRW-1265: a sandboxed thread never starts in the account home, above it or above a project
-		// root. Nothing has been written or sent yet, so the request ID stays usable.
-		if err := sandboxroot.CheckAll(cwd, absolute(writableRoots(in.Roots, in.Policy)), effectiveSandbox(in.Sandbox, in.Policy)); err != nil {
-			return err
-		}
+		// CRW-1265's rule is asked about the cwd and the roots, and its verdict is a warning, never a refusal (CRW-1308): a
+		// sandboxed thread may start in the account home, a folder under it or above a project root.
+		sandboxroot.Warn("bridge/create_thread", sandboxroot.CheckAll(cwd, absolute(writableRoots(in.Roots, in.Policy)), effectiveSandbox(in.Sandbox, in.Policy)))
 		authorized, err = b.Policy.Authorize(execution.Input{Model: execution.Optional(in.Model), Effort: execution.Optional(in.Effort), CWD: cwd, Exception: in.Exception, Role: in.Role})
 		if err != nil {
 			return err
@@ -221,9 +219,7 @@ func (b *Bridge) CreateThread(ctx context.Context, in CreateThread) (receipt led
 		if _, err = b.Ledger.Save(ctx, receipt); err != nil {
 			return err
 		}
-		if err = createdRefusal(observed, in.Sandbox); err != nil {
-			return err
-		}
+		warnCreated(observed, in.Sandbox)
 		if findings := contract.Findings(observed); len(findings) > 0 {
 			first := findings[0]
 			message := findingText(first.Code, first.Field, first.Returned, first.Expected) + "; initial prompt withheld. Inspect creation receipt. The thread remains retained."

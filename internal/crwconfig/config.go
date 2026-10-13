@@ -61,8 +61,9 @@ type sandboxSection struct {
 	ProjectRoots []string `json:"project_roots"`
 }
 
-// SandboxProjectRoots is the sandbox.project_roots list: the project roots a sandboxed Codex may run
-// in or below, wherever they are (CRW-1265). A file without the section has none.
+// SandboxProjectRoots is the sandbox.project_roots list: the project roots the sandbox-root rule counts
+// as dedicated, wherever they are (CRW-1265; its verdict is a warning, CRW-1308). A file without the
+// section has none.
 func (f *File) SandboxProjectRoots() ([]string, error) {
 	var section sandboxSection
 	if err := f.Section("sandbox", &section); err != nil {

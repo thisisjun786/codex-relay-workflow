@@ -22,8 +22,9 @@ const (
 	RootTemp     = "temp_root"
 	RootData     = "data_root"
 	RootManage   = "manage_state"
-	// RootSandbox is the base path a sandboxed Codex runs in (CRW-1265, internal/sandboxroot). It is a
-	// directory the product names, not one it derives from the cache root: moving scratch_root would
+	// RootSandbox is the base path the sandbox-root rule counts as dedicated (CRW-1265,
+	// internal/sandboxroot); a sandboxed Codex outside it runs with a recorded warning (CRW-1308). It is
+	// a directory the product names, not one it derives from the cache root: moving scratch_root would
 	// move every harness that uses it.
 	RootSandbox = "sandbox_root"
 
