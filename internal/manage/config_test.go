@@ -421,3 +421,51 @@ func TestSectionDecodesAKeyAndLeavesAMissingOne(t *testing.T) {
 		t.Errorf("Section changed a value for an absent key: %v", untouched)
 	}
 }
+
+// CRW-1324 item 20: config.source names where the path came from, and config.loaded says
+// whether a file was read there. A file at the default location reads as loaded=true
+// while source stays default; no file reads as loaded=false.
+func TestConfigLoadedReportsWhetherAFileWasRead(t *testing.T) {
+	home, _, _ := coreTempHome(t)
+
+	// No file anywhere: the built-in location is only a path, nothing was read.
+	report, code, errOut := coreConfigReportOf(t)
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut)
+	}
+	source := coreConfigSourceOf(t, report)
+	if source["loaded"] != false {
+		t.Errorf("config = %v, want loaded=false with no file", source)
+	}
+
+	// A file at the default location (no env, no flag): source is default and it was read.
+	t.Setenv("CRW_CONFIG", "")
+	path := coreConfigWrite(t, filepath.Join(home, ".config", "crw", "config.json"), coreConfigDocument(t, map[string]any{"state_dir": "/from/default"}))
+	report, code, errOut = coreConfigReportOf(t)
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut)
+	}
+	source = coreConfigSourceOf(t, report)
+	if source["source"] != "default" || source["path"] != path || source["loaded"] != true {
+		t.Errorf("config = %v, want path %q from default with loaded=true", source, path)
+	}
+
+	// A file named by --config is loaded too.
+	flagFile := coreConfigWrite(t, filepath.Join(t.TempDir(), "flag.json"), coreConfigDocument(t, map[string]any{"state_dir": "/from/flag"}))
+	report, code, errOut = coreConfigReportOf(t, "--config", flagFile)
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut)
+	}
+	if source = coreConfigSourceOf(t, report); source["loaded"] != true {
+		t.Errorf("config = %v, want loaded=true for the --config file", source)
+	}
+
+	// --config naming a path with no file there: the path is reported, nothing was read.
+	report, code, errOut = coreConfigReportOf(t, "--config", filepath.Join(t.TempDir(), "absent.json"))
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut)
+	}
+	if source = coreConfigSourceOf(t, report); source["loaded"] != false {
+		t.Errorf("config = %v, want loaded=false for a --config path with no file", source)
+	}
+}

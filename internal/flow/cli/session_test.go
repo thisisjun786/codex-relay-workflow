@@ -345,6 +345,8 @@ func TestSessionFactsWarnAndNeverBlockTheStart(t *testing.T) {
 		}
 		return "", false
 	}
+	h := newVerifierHost(t, "module example.com/p\n\ngo 1.27\n")
+	td.Verifier = func(ctx context.Context, repo string) Fact { return VerifierPrerequisites(ctx, h.env, repo) }
 	code, out, errOut := td.do("start", helloScript(t), "--thread", "thread-owner", "--state", w.state, "--socket", filepath.Join(t.TempDir(), "no.sock"), "--json")
 	if code != 0 || len(td.spawned) != 1 {
 		t.Fatalf("the start was blocked: %d %s %s", code, out, errOut)
@@ -355,7 +357,7 @@ func TestSessionFactsWarnAndNeverBlockTheStart(t *testing.T) {
 	for _, f := range ans.Plan.Facts {
 		levels[f.Name] = f
 	}
-	for _, name := range []string{FactOwnerBound, FactOwnerWritable, FactSubagentSlots, FactMultiAgentV1, FactVerifierPrereqs} {
+	for _, name := range []string{FactOwnerBound, FactOwnerWritable, FactSubagentSlots, FactMultiAgentV1, FactVerifier} {
 		if f := levels[name]; f.Level != LevelWarn || f.Reason == "" {
 			t.Errorf("%s: %+v", name, f)
 		}
@@ -363,8 +365,12 @@ func TestSessionFactsWarnAndNeverBlockTheStart(t *testing.T) {
 	if f := levels[FactRoleModels]; f.Level != LevelPass {
 		t.Errorf("role_models of the fake table: %+v", f)
 	}
-	if !strings.Contains(levels[FactMultiAgentV1].Reason, "stops") || !strings.Contains(levels[FactVerifierPrereqs].Reading, "crw-dev") {
-		t.Errorf("readings %+v %+v", levels[FactMultiAgentV1], levels[FactVerifierPrereqs])
+	if !strings.Contains(levels[FactMultiAgentV1].Reason, "stops") || !strings.Contains(levels[FactVerifier].Reading, "crw-dev") {
+		t.Errorf("readings %+v %+v", levels[FactMultiAgentV1], levels[FactVerifier])
+	}
+	// the session facts come after the store's and before the verifier's, which every run has
+	if got := factNames(ans.Plan.Facts); !strings.HasSuffix(got, strings.Join(SessionFacts, ",")+","+FactVerifier) {
+		t.Errorf("the order of the facts: %s", got)
 	}
 	if spec := td.spawned[0].Spec; spec.Pool != 1 || !strings.Contains(factNames(spec.Preflight), FactSubagentSlots) {
 		t.Errorf("the spec: pool %d, preflight %s", spec.Pool, factNames(spec.Preflight))

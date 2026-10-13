@@ -35,9 +35,21 @@ func TestStartRunsARealDetachedProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	crw := testsupport.CRW(t)
+	// the verifier's tools are named by a configuration of the test's own (a crw-dev that runs, go from the test's PATH), so the
+	// fact verifier_prerequisites does not depend on the host's configuration
+	tools := t.TempDir()
+	crwDev := filepath.Join(tools, "crw-dev")
+	config := filepath.Join(tools, "config.json")
+	if err := os.WriteFile(crwDev, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(config, []byte(`{"verifier":{"crw_dev":"`+crwDev+`"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	common := []string{"--state", w.state, "--socket", host.SocketPath}
 	run := func(args ...string) (int, string, string) {
 		cmd := exec.Command(crw, append([]string{"flow"}, args...)...)
+		cmd.Env = append(os.Environ(), "CRW_CONFIG="+config)
 		var out, errOut bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &out, &errOut
 		err := cmd.Run()
@@ -59,6 +71,9 @@ func TestStartRunsARealDetachedProcess(t *testing.T) {
 	code, out, errOut := run(append([]string{"start", script, "--thread", "thread-owner", "--repo", repo, "--backend", "app-server"}, common...)...)
 	if code != 0 {
 		t.Fatalf("start: exit %d\n%s\n%s", code, out, errOut)
+	}
+	if !strings.Contains(out, "pass  "+FactVerifier) {
+		t.Errorf("the preview does not pass the verifier's prerequisites:\n%s", out)
 	}
 	var id string
 	for _, line := range strings.Split(out, "\n") {

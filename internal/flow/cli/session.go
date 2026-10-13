@@ -136,18 +136,18 @@ func bindWarning(res bound.BindResult, err error, thread, run string) string {
 }
 
 // The preflight facts a session run adds (CRW-1316 §11). Each is pass or warn: a session run starts whatever they read (CRW-1318).
+// The sixth fact of the design, verifier_prerequisites, is judged for every run (FactVerifier, CRW-1319) and is listed after them.
 const (
 	FactOwnerBound       = "owner_bound"
 	FactRoleModels       = "role_models"
 	FactOwnerWritable    = "owner_state_writable"
 	FactSubagentSlots    = "subagent_slots"
 	FactMultiAgentV1     = "multi_agent_v1"
-	FactVerifierPrereqs  = "verifier_prerequisites"
 	sessionProtocolStops = "a warning: the run starts, and the session protocol stops at the first step this blocks"
 )
 
 // SessionFacts are the session facts in the order the preview lists them.
-var SessionFacts = []string{FactOwnerBound, FactRoleModels, FactOwnerWritable, FactSubagentSlots, FactMultiAgentV1, FactVerifierPrereqs}
+var SessionFacts = []string{FactOwnerBound, FactRoleModels, FactOwnerWritable, FactSubagentSlots, FactMultiAgentV1}
 
 // sessionFactRequest is what the session facts are judged on.
 type sessionFactRequest struct {
@@ -156,7 +156,7 @@ type sessionFactRequest struct {
 	Getenv                      func(string) string
 }
 
-// sessionFacts judges the six session facts.
+// sessionFacts judges the five session facts.
 func sessionFacts(req sessionFactRequest) []Fact {
 	var out []Fact
 	add := func(name, level, reason, reading string) {
@@ -199,7 +199,7 @@ func sessionFacts(req sessionFactRequest) []Fact {
 	}
 	switch reading := strings.Join(pairs, ", "); {
 	case len(missing) > 0:
-		add(FactRoleModels, LevelWarn, "a role without a pair is spawned with the host's default and its dispatched report is not checked against a pair", "no pair for "+strings.Join(missing, ", ")+"; "+reading)
+		add(FactRoleModels, LevelWarn, "an undecided role (no pair) is spawned with the host's default and its dispatched report is not checked against a pair", "no pair for "+strings.Join(missing, ", ")+"; "+reading)
 	case len(overlap) > 0:
 		add(FactRoleModels, LevelWarn, "a review is independent only from another family than the author's: relay acceptance refuses it (independence_refused)", strings.Join(overlap, "; ")+"; "+reading)
 	default:
@@ -261,19 +261,6 @@ func sessionFacts(req sessionFactRequest) []Fact {
 		add(FactMultiAgentV1, LevelPass, "", "multi-agent V1 (features.multi_agent_v2 is off)")
 	}
 
-	// verifier_prerequisites: what the run's verifier runs (CRW-1319 gives it a configured place; until then the PATH)
-	var absent []string
-	for _, name := range []string{"crw-dev", "go"} {
-		if !onPath(name, req.Getenv("PATH")) {
-			absent = append(absent, name)
-		}
-	}
-	if len(absent) > 0 {
-		add(FactVerifierPrereqs, LevelWarn, "the run's verifier runs crw-dev ci local from the PATH (CRW-1319): a verification does not start without it",
-			strings.Join(absent, " and ")+" not on the PATH")
-	} else {
-		add(FactVerifierPrereqs, LevelPass, "", "crw-dev and go are on the PATH")
-	}
 	return out
 }
 
@@ -294,19 +281,6 @@ func writableDir(dir string) error {
 			return err
 		}
 	}
-}
-
-// onPath reports whether an executable file of the name is in a directory of the PATH.
-func onPath(name, path string) bool {
-	for _, dir := range filepath.SplitList(path) {
-		if dir == "" {
-			continue
-		}
-		if info, err := os.Stat(filepath.Join(dir, name)); err == nil && info.Mode().IsRegular() && info.Mode()&0o111 != 0 {
-			return true
-		}
-	}
-	return false
 }
 
 // spawnFormat is how the owner spawns a role's subagent: the spawn_agent arguments of a step of the role, with the message the

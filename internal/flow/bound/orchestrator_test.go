@@ -42,6 +42,13 @@ func TestOrchestratorLineCarriesTheSixRolePairs(t *testing.T) {
 			t.Errorf("a line whose %s pair has no effort validates", role)
 		}
 	}
+	// an undecided role (CRW-1330) has the empty pair
+	undecided := good
+	undecided.HelperPairs = sixPairs("m")
+	undecided.HelperPairs["executor-t1"] = Pair{}
+	if err := undecided.Validate(threadA); err != nil {
+		t.Fatalf("a line with an undecided role: %v", err)
+	}
 	// the two pairs an orchestrator line of the App Server path had are not enough
 	two := Line{RunID: "run-1", ThreadID: threadA, Kind: KindOrchestrator, HelperPairs: map[string]Pair{HelperExplorer: {"m", "high"}, HelperReviewer: {"r", "high"}}}
 	if err := two.Validate(threadA); err == nil {

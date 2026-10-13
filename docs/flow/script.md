@@ -33,12 +33,15 @@ the fake backend only, with no backend named, and the result says `"planOnly": t
 backend names it and turns plan-only off (`--plan-only=false --backend fake`); `--plan-only` on a script file is a usage
 error. An ad-hoc script has no workflows directory: it imports `crw:lib/<name>` only and nests no workflow.
 
-`crw flow run` reads the execution policy file `CODEX_THREAD_BRIDGE_EXECUTION_POLICY` names once, when it starts, and
-resolves every call against its `agent-roles` and `agent-aliases` sections (see
-[role-execution-policy.md](../role-execution-policy.md#the-agent-roles-of-a-flow-run)). The run record keeps the file's
-path and digest. Without the variable the fake backend's placeholder table applies; a file that does not load, or that
-declares no `agent-roles`, is a usage error and never replaced by the placeholders. `crw flow roles` prints the table,
-the source and the digest.
+`crw flow run` (like every `crw flow` command that resolves calls) reads its role table once, when it starts, from
+the helper role store `CRW_HOME/subagents.json`: the pairs of `architect`, `executor`, `executor-t1`, `reviewer`,
+`reviewer-final` and `explorer`, with the code's alias table (see
+[role-execution-policy.md](../role-execution-policy.md#the-agent-roles-of-a-flow-run)). The execution policy's
+`agent-roles` and `agent-aliases` sections are not read; a file that still declares them is a warning, and one whose
+sections do not parse still loads, with the sections ignored and the loader's reason as another warning. The run record
+keeps the store's path and the canonical digest of the six pairs, and the warnings of the table (a flow-only key at
+its compiled default, an undecided role, a reviewer on an author's model family). A test with no store runs on the
+fake backend's placeholder table. `crw flow roles` prints the table, the source, the digest and the warnings.
 
 ## File format
 
@@ -160,8 +163,8 @@ do not write), no pending tree (what the call edits there is discarded; it is ne
 A fresh call names a role with `agentType`. A role has a fixed model and effort (its pair), a role family (`executor` and
 `executor-t1` form one, `reviewer` and `reviewer-final` form one, `architect` and `explorer` are alone) and a sandbox:
 `workspace-write` for `executor` and `executor-t1`, the only roles that write (to their call's own cwd), `read-only` for
-the others. The role table is the operator's execution policy file, loaded once per run; the fake backend runs against
-placeholder pairs and the same alias table.
+the others. The role table is the helper role store's six pairs, read once per run (see the policy paragraph of the
+run options above); a test with no store runs on the fake backend's placeholder pairs and the same alias table.
 
 - With a role key as `agentType`, a `model` option must be absent, the role's model or an alias of its model family
   (`haiku`: `executor` and `explorer`; `sonnet`: `executor-t1`; `opus`: `architect`; `ocx-gpt-6-1-sol`: `reviewer` and
@@ -403,7 +406,7 @@ inline (SP-INL-1), reuse an answer (SP-INL-2), skip, refuse or hand a question t
 The composites (`crw:lib/lane` and `crw:lib/close`, made members of `crw` by `install(crw)`; they take no position of their own): `crw.dag`,
 `crw.review`, `crw.reviewHalt`, `crw.explore`, `crw.exploreEvidence`, `crw.land`, `crw.tierStep`, `crw.evidence`, `crw.skip`,
 `crw.closeMilestone`, `crw.settleReviews` and `crw.milestoneHalt`. `crw.dag` takes an `onSignal` function (below). The seams the operations are built on - `Relay` (the scheduler: milestone, release, agent
-acceptance and integration, the close of an execution), `Verifier` (`CILocalVerifier` runs `crw-dev ci local`), `Decisions`
+acceptance and integration, the close of an execution), `Verifier` (`CILocalVerifier` runs `crw-dev ci local` through the verifier's tools of the configuration, [the verifier's tools](../runtime-install.md#the-verifiers-tools)), `Decisions`
 (`StoreDecisions` writes the relay store), `Threads` (the host the close reads the reviewer threads from and archives them on) and
 `Reporter` (F11) - are interfaces in `internal/flow/ops/seams.go`; the dagsched-backed `Relay` belongs to the run process.
 
@@ -476,7 +479,7 @@ the reading's reason; the host memory bound is the one `dag-release` reads from 
 worktree before it asks, the run's buffered rows are stored first, and the run's journal stamps the release's execution on the
 node's calls and the reviewer's input criteria digest on the reviewer's completed row, which the acceptance reads. `integrate` names the node's current acceptance and the head it accepted (anything else is refused before the batch, `acceptance_not_current` or `head_not_accepted`) and is one
 `IntegrateBatch` of the node with the wiring of `crw relay dag-integrate` (`dagsched.IntegrationDeps`: `crw-dev ci local` over the
-merged tree, git's compare-and-swap of the branch) onto the plan's target branch, followed by the observation of the landing there;
+merged tree, the merged tree's own crw-dev when the configuration names a Go root, git's compare-and-swap of the branch) onto the plan's target branch, followed by the observation of the landing there;
 `close` is `AgentClose`. `releaseChild` is refused (`refused:child_release_unwired:`): a managed child start needs host settings the
 run does not hold.
 
@@ -627,7 +630,9 @@ A held row records whether the
 call's packet reached the host (`input_state`: `delivered` or `not_delivered`) and the `codexErrorInfo` verbatim; on a backend
 that places calls an executor's held row also carries `p_held`, the working snapshot of its worktree when the failure was
 classified, and its completed row `pending_tree`, the working snapshot when the turn ended. The run record holds the workflow name, the script digest, the helper digests, the digest of `args`, the meta, and
-the path and digest of the execution policy file, and the `backend` the run's calls run on (`session` or `app-server`).
+the path of the helper role store with the canonical digest of the six role pairs (`policy_source`, `policy_digest`),
+the role table's warnings (`policy_warnings`) when it has any, and the `backend` the run's calls run on (`session` or
+`app-server`).
 
 The `prepared` row also carries what the resume walk compares: `input_digest` (the prompt, schema, role, pair, node, options,
 context boundary and the joins before the position), `prompt_digest`, `context` and, with `Config.InputSnapshot`, `input_snapshot`.
@@ -945,8 +950,8 @@ run's directory `<state>/flow/<run>/` and none writes the journal, which only th
 - The session facts of the preview are warnings, never a refusal (CRW-1318): `owner_bound` (the owner can be bound: a thread id, a
   readable binding, no other live run), `role_models` (the six pairs, a role without one, a reviewer of an author's model family),
   `owner_state_writable` (the run directory, the flow-bound directory, the control socket and the repository), `subagent_slots`
-  (`agents.max_threads` leaves a slot for a call), `multi_agent_v1` (`features.multi_agent_v2` is off: under V2 the protocol stops)
-  and `verifier_prerequisites` (`crw-dev` and `go` on the PATH, until CRW-1319 gives the verifier a configured place).
+  (`agents.max_threads` leaves a slot for a call) and `multi_agent_v1` (`features.multi_agent_v2` is off: under V2 the protocol
+  stops); `verifier_prerequisites`, the sixth, is judged for every run (CRW-1319).
 
 ## The App Server backend
 

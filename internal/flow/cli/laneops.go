@@ -7,12 +7,14 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/journal"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
@@ -57,7 +59,7 @@ type LaneOptions struct {
 	// Verifier verifies a node's head and the final gate's commands; nil is ops.CILocalVerifier.
 	Verifier ops.Verifier
 	// IntegrationVerify verifies the merged tree of an integration batch; nil runs `crw-dev ci local` over it with the record path the
-	// batch gives (CRW_VERIFY_HEAD, CRW_VERIFY_BASE, CRW_VERIFY_RECORD).
+	// batch gives (CRW_VERIFY_HEAD, CRW_VERIFY_BASE, CRW_VERIFY_RECORD), through the verifier's tools of the configuration.
 	IntegrationVerify dagsched.IntegrationBatchVerifier
 	// SkillsDigest is the digest of the skills the run's agents load; "" is the installed crw plugin's (PluginSkillsDigest).
 	SkillsDigest string
@@ -108,9 +110,15 @@ func BuildLane(ctx context.Context, req LaneRequest, opt LaneOptions) (LaneWorld
 	for _, h := range src.Program.Helpers {
 		prompt += ";" + h.Spec + "@" + h.Digest
 	}
+	var tools crwconfig.VerifierTools
+	if opt.IntegrationVerify == nil || opt.Verifier == nil {
+		if tools, err = laneVerifierTools(getenv); err != nil {
+			return LaneWorld{}, err
+		}
+	}
 	verify := opt.IntegrationVerify
 	if verify == nil {
-		verify = CILocalIntegration("crw-dev")
+		verify = CILocalIntegration(tools, os.Stderr)
 	}
 	sched := &dagsched.Scheduler{Store: req.Store, Tips: mergeturn.TargetReader{}, Ancestry: dagsched.GitAncestry{}.Ancestry}
 	if opt.Now != nil {
@@ -128,7 +136,7 @@ func BuildLane(ctx context.Context, req LaneRequest, opt LaneOptions) (LaneWorld
 		Verifier: dagsched.VerifierRule{SkillsDigest: skills, Model: review.Model, Effort: review.Effort}}
 	verifier := opt.Verifier
 	if verifier == nil {
-		verifier = ops.CILocalVerifier{}
+		verifier = ops.CILocalVerifier{Tools: tools}
 		// the shipped verifier runs crw-dev ci local only: a milestone that requires another command is refused when the run reads it
 		relay.RunnableCommand = func(command string) string {
 			if command != ops.CILocalCommand {
@@ -157,9 +165,23 @@ func BuildLane(ctx context.Context, req LaneRequest, opt LaneOptions) (LaneWorld
 	return out, nil
 }
 
+// laneVerifierTools is the verifier section of the run's configuration file (CRW-1319). A section the verifier cannot use is the
+// PATH fallback, and the verifier's note says it was ignored (fail-open); only a file the configuration's reading refuses as a
+// whole refuses the lane.
+func laneVerifierTools(getenv func(string) (string, bool)) (crwconfig.VerifierTools, error) {
+	tools, err := crwconfig.LoadVerifierTools(func(k string) string { v, _ := getenv(k); return v }, "")
+	if err != nil {
+		return crwconfig.VerifierTools{}, fmt.Errorf("the verifier's tools: %w", err)
+	}
+	return tools, nil
+}
+
 // CILocalIntegration is the verification of an integration batch's merged tree by `crw-dev ci local`: the command the relay documents for
 // dag-integrate --verify (docs/relay/dag-scheduler.md), run through the same command verifier with the batch's head, base and record.
-func CILocalIntegration(binary string) dagsched.IntegrationBatchVerifier {
+// The command is the one the verifier's tools name (crwconfig.VerifierTools.Command): with a Go root configured it is the merged tree's
+// own crw-dev, so the merged tree verifies itself. A command that comes from PATH because nothing configured it writes its note to notes,
+// and one that cannot start is a host error that names the setting.
+func CILocalIntegration(tools crwconfig.VerifierTools, notes io.Writer) dagsched.IntegrationBatchVerifier {
 	return func(ctx context.Context, dir string, env []string) error {
 		vars := map[string]string{}
 		for _, kv := range env {
@@ -167,8 +189,20 @@ func CILocalIntegration(binary string) dagsched.IntegrationBatchVerifier {
 				vars[k] = v
 			}
 		}
-		argv := []string{binary, "ci", "local", "--commit", vars["CRW_VERIFY_HEAD"], "--base", vars["CRW_VERIFY_BASE"], "--record", vars["CRW_VERIFY_RECORD"], "--runner", "local"}
-		return dagsched.CommandVerifier(argv)(ctx, dir, env)
+		command, err := tools.Command(dir, os.Getenv("PATH"))
+		if err != nil {
+			return &dagsched.IntegrationVerifierHostError{Detail: err.Error()}
+		}
+		if command.Note != "" && notes != nil {
+			fmt.Fprintf(notes, "[crw note] integration verification: %s\n", command.Note)
+		}
+		argv := append(append([]string{}, command.Argv...), "ci", "local", "--commit", vars["CRW_VERIFY_HEAD"], "--base", vars["CRW_VERIFY_BASE"], "--record", vars["CRW_VERIFY_RECORD"], "--runner", "local")
+		err = dagsched.CommandVerifier(argv)(ctx, dir, append(append([]string{}, command.Env...), env...))
+		var host *dagsched.IntegrationVerifierHostError
+		if errors.As(err, &host) {
+			return &dagsched.IntegrationVerifierHostError{Detail: host.Detail + "; " + command.Hint}
+		}
+		return err
 	}
 }
 

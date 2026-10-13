@@ -181,3 +181,25 @@ func TestFlowBoundRoleHeaderTakesTheSixRoles(t *testing.T) {
 		t.Errorf("the oracle parser: %q", got)
 	}
 }
+
+// An undecided role of the run's table (CRW-1330: the helper role store leaves it to the host) has the empty pair on the line: its
+// spawn is allowed as it was sent, and the ledger says why.
+func TestSessionOrchestratorUndecidedRoleKeepsTheHostDefault(t *testing.T) {
+	r := newFBRig(t)
+	line := strings.Replace(orchestratorLine(fbThreadA), `"executor-t1":`+fbPairJSON(fbExecutorT1), `"executor-t1":{"model":"","effort":""}`, 1)
+	r.write(fbThreadA, line, 0o600)
+	if got := bound.Lookup(fbThreadA); got.State != bound.Orchestrator {
+		t.Fatalf("a line with an undecided role: %+v", got)
+	}
+	if out := r.spawn(fbThreadA, "tool-u", spawnInput("executor", stepMessage("c_1/t1-a1", "executor-t1"), "")); out != "" {
+		t.Fatalf("an undecided role's spawn was changed: %q", out)
+	}
+	d := r.decisions(fbThreadA)
+	if len(d) != 1 || d[0].Decision != bound.DecisionAllowed || d[0].Role != "executor-t1" || d[0].Op != "c_1/t1-a1" || !strings.HasPrefix(d[0].Warning, "role_undecided") || d[0].AppliedModel != "" {
+		t.Fatalf("ledger %+v", d)
+	}
+	// a decided role of the same line keeps its pair
+	if got := fbPairOf(r.expectAllowed(r.spawn(fbThreadA, "tool-d", spawnInput("executor", stepMessage("c_2/t1-a1", "executor"), "")))); got != fbExecutor {
+		t.Fatalf("a decided role: %+v", got)
+	}
+}

@@ -22,6 +22,9 @@ type Deps struct {
 	Spawn func(ctx context.Context, req SpawnRequest) (int, error)
 	// Probe judges the five preflight facts.
 	Probe Prober
+	// Verifier judges the preflight fact verifier_prerequisites for a run whose worktrees come from repo ("" when the start names
+	// no repository it can resolve); nil leaves the fact out.
+	Verifier func(ctx context.Context, repo string) Fact
 	// Nodes lists the nodes a run will work on, for the preview; nil lists none (a workflow that reads its plan when it runs).
 	Nodes func(ctx context.Context, spec Spec, src Source) (Preview, error)
 	// Signal sends a signal to the process that holds a run lock.
@@ -39,6 +42,12 @@ type Deps struct {
 
 // Default is the Deps of the shipped binary.
 func Default() *Deps {
+	d := defaultDeps()
+	d.Verifier = func(ctx context.Context, repo string) Fact { return VerifierPrerequisites(ctx, os.Environ(), repo) }
+	return d
+}
+
+func defaultDeps() *Deps {
 	return &Deps{
 		Now:     time.Now,
 		Getenv:  os.LookupEnv,

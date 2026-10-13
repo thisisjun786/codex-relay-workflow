@@ -56,6 +56,10 @@ type Plan struct {
 	// Spawns are the spawn formats of the six roles a session run's steps are spawned with; Loop is how the owner takes them.
 	Spawns []RoleSpawn `json:"spawn_formats,omitempty"`
 	Loop   string      `json:"loop,omitempty"`
+	// PolicyWarnings are the role table's warnings (CRW-1330: a flow-only key at its compiled default, an undecided role, a
+	// reviewer on an author's family, an execution policy still declaring agent-roles); the run starts on the table and its
+	// started row records them. Absent when there are none.
+	PolicyWarnings []string `json:"policyWarnings,omitempty"`
 }
 
 // StartAnswer is the JSON answer of `crw flow start --json`.
@@ -240,14 +244,14 @@ func (c *command) start(args []string) int {
 		return c.fail("%v", err)
 	}
 	rep := engine.DescribePolicy(table, policy)
-	plan.Roles = rep.Roles
+	plan.Roles, plan.PolicyWarnings = rep.Roles, rep.Warnings
 	if session {
 		plan.Spawns, plan.Loop = roleSpawns(table), sessionLoop("<run>")
 	}
 	if rep.Source != nil {
 		plan.Policy = *rep.Source
 	} else {
-		plan.Policy = "placeholder table (no execution policy file)"
+		plan.Policy = "placeholder table (a test with no helper role store)"
 	}
 	nodes := c.Nodes
 	if nodes == nil {
@@ -292,6 +296,11 @@ func (c *command) start(args []string) int {
 		}
 		req.Repo, _ = repository(c.ctx, *repo)
 		plan.Facts = append(plan.Facts, sessionFacts(req)...)
+	}
+	if c.Verifier != nil {
+		// the verifier's prerequisites (CRW-1319) do not depend on the store; the fact is a pass or a warning with its reason
+		tree, _ := repository(c.ctx, *repo)
+		plan.Facts = append(plan.Facts, c.Verifier(c.ctx, tree).leveled())
 	}
 	// the facts that did not pass are printed with the preview and recorded in the run's spec; none of them stops the start
 	var short []Fact
@@ -474,6 +483,9 @@ func (c *command) printPlan(p Plan) {
 	fmt.Fprintf(w, "  role pairs (%s):\n", p.Policy)
 	for _, r := range p.Roles {
 		fmt.Fprintf(w, "    %-15s %s at %s\n", r.Role, r.Model, r.ReasoningEffort)
+	}
+	for _, warning := range p.PolicyWarnings {
+		fmt.Fprintf(w, "    warning: %s\n", warning)
 	}
 	if len(p.Spawns) > 0 {
 		fmt.Fprintln(w, "  spawn formats of the role subagents:")

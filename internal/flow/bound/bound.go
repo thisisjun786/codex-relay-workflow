@@ -136,10 +136,15 @@ func (l Line) Validate(thread string) error {
 		if l.NativeAllowance != nil {
 			return errors.New("an orchestrator line has no nativeAllowance")
 		}
-		// the pair of each of the six roles the hook overwrites a role subagent's spawn with (CRW-1316 §9)
+		// the pair of each of the six roles the hook overwrites a role subagent's spawn with (CRW-1316 §9); an undecided role of the
+		// helper role store (CRW-1330) has the empty pair, and its spawns keep the host's default
 		for _, role := range OrchestratorRoles {
-			if err := pair(role); err != nil {
-				return err
+			p, ok := l.HelperPairs[role]
+			switch {
+			case !ok:
+				return fmt.Errorf("the line has no %s helper pair", role)
+			case (p.Model == "") != (p.Effort == ""):
+				return fmt.Errorf("the %s pair of the line names a model or an effort without the other", role)
 			}
 		}
 		return nil

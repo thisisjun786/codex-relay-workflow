@@ -54,6 +54,7 @@ const (
 	flowBoundWarnUnrecordedAuthor = "unrecorded_author"
 	flowBoundWarnUnknownType      = "unknown_agent_type"
 	flowBoundWarnInputUnrecorded  = "input_unrecorded"
+	flowBoundWarnRoleUndecided    = "role_undecided"
 )
 
 // flowBoundWarn writes a warning of the hook to stderr, where the host logs it; the hook's answer is its stdout. A test replaces it.
@@ -244,9 +245,14 @@ func (e *flowBoundEvent) orchestrator() string {
 	}
 	pair := e.line().HelperPairs[role]
 	answer, orig, err := "", pyjson.Object(nil), error(nil)
-	if e.inText == "" {
+	switch {
+	case pair == (bound.Pair{}):
+		// an undecided role (CRW-1330): the spawn keeps what it was sent, the host's default when it names no pair
+		warnings = append(warnings, fmt.Sprintf("%s: the run's role table leaves %s undecided, so the spawn keeps the host's default", flowBoundWarnRoleUndecided, role))
+		_, orig, _ = answerFrom(e.inText, pair)
+	case e.inText == "":
 		err = errors.New("tool_input is no object that can be recorded")
-	} else {
+	default:
 		answer, orig, err = answerFrom(e.inText, pair)
 	}
 	if err != nil {
