@@ -51,18 +51,20 @@ type Leg struct {
 
 // Own registrations: the completion Stop the shipped plugin declares today, the GitHub post guard
 // (the component row of cmd/crw/component_hooks.go that no hook JSON declares yet) and the Stop that prints the status line of the
-// flow runs a thread owns (CRW-1205).
+// flow runs a thread owns (CRW-1205), and the relay child push guard (CRW-1284).
 const (
 	CompletionLeg  = "stop-recording-completion"
 	GitHubPostLeg  = "pre-tool-use-guarding-github-post"
 	FlowStatusLeg  = "stop-showing-flow-status"
+	ChildPushLeg   = "pre-tool-use-guarding-child-push"
 	completionFile = "wiring/hooks/stop-recording-completion.json"
 	githubPostFile = "wiring/hooks/pre-tool-use-guarding-github-post.json"
 	flowStatusFile = "wiring/hooks/stop-showing-flow-status.json"
+	childPushFile  = "wiring/hooks/pre-tool-use-guarding-child-push.json"
 )
 
 // ExpectedLegs is what a CRW plugin root must declare: the 32 registrations of K1 with the
-// statusMessage rename (R24) and the file moved under wiring/, then the three own registrations.
+// statusMessage rename (R24) and the file moved under wiring/, then the four own registrations.
 func ExpectedLegs(root string) ([]Leg, error) {
 	file, _, err := cxccorpus.LoadDeclarations(root)
 	if err != nil {
@@ -100,6 +102,8 @@ func ExpectedLegs(root string) ([]Leg, error) {
 			Timeout: cxccorpus.GitHubPostGuard.Timeout, Status: cxccorpus.GitHubPostGuard.Status, Own: true},
 		Leg{Leg: FlowStatusLeg, File: flowStatusFile, Event: cxccorpus.FlowStatus.Event, Matcher: cxccorpus.FlowStatus.Matcher,
 			Timeout: cxccorpus.FlowStatus.Timeout, Status: cxccorpus.FlowStatus.Status, Own: true},
+		Leg{Leg: ChildPushLeg, File: childPushFile, Event: cxccorpus.ChildPushGuard.Event, Matcher: cxccorpus.ChildPushGuard.Matcher,
+			Timeout: cxccorpus.ChildPushGuard.Timeout, Status: cxccorpus.ChildPushGuard.Status, Own: true},
 	)
 	return legs, nil
 }

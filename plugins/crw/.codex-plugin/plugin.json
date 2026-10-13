@@ -52,7 +52,8 @@
     "./wiring/hooks/session-start-adopting-background-completions.json",
     "./wiring/hooks/pre-tool-use-guarding-automation-ownership.json",
     "./wiring/hooks/pre-tool-use-guarding-github-post.json",
-    "./wiring/hooks/stop-showing-flow-status.json"
+    "./wiring/hooks/stop-showing-flow-status.json",
+    "./wiring/hooks/pre-tool-use-guarding-child-push.json"
   ],
   "mcpServers": "./wiring/mcp.json",
   "interface": {

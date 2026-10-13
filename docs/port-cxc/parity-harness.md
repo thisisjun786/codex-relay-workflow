@@ -1,8 +1,8 @@
 # Hook parity harness (`crw-dev parity`)
 
 CRW-203. The harness answers one question about the hook surface of a CRW plugin root: for each of the
-35 legs (the 32 registrations of CXC v0.2.40, contract K1, and CRW's own completion Stop, GitHub post
-guard and flow status line), is the leg declared, does the declared command run when the host starts it, does it do what the
+36 legs (the 32 registrations of CXC v0.2.40, contract K1, and CRW's own completion Stop, GitHub post
+guard, flow status line and relay child push guard), is the leg declared, does the declared command run when the host starts it, does it do what the
 corpus says it should, and is it as fast as the Node original. Each is a cell of its own in the report,
 so a pass in one is never read as a pass in another.
 
@@ -67,9 +67,9 @@ crw-dev parity plugin-root --crw "$TMPDIR/crw" --out /path/to/new-root/crw
 ```
 
 The plugin root and the oracle path are arguments; nothing is hard-coded. Without `--plugin`, `all` fires the plugin that
-ships (`plugins/crw` of the repository), whose 35 declarations (CRW-392, CRW-1205) start the runtime through
+ships (`plugins/crw` of the repository), whose 36 declarations (CRW-392, CRW-1205, CRW-1284) start the runtime through
 `$HOME/.local/share/crw-runtime/current/bin/crw`. `--generated` fires a root generated from K1 instead (`plugin-root`): the
-files of `plugins/crw` with a manifest and hook files that declare the 35 legs, each command starting the crw under test
+files of `plugins/crw` with a manifest and hook files that declare the 36 legs, each command starting the crw under test
 by its path as `crw hook <event> --leg <leg>`.
 
 ## Evidence and cleanup
@@ -96,7 +96,7 @@ The model is a stub: `StubProvider` serves `POST /v1/responses` on `127.0.0.1` w
 that makes the host compact), and the host is pointed at it by `model_provider` in the home's `config.toml`.
 
 The plugin is placed as the host's plugin cache holds it (`plugins/cache/<marketplace>/crw/<version>`), enabled in
-`config.toml` (the manifest's name and version must each be one plain directory name, and the cache entry must stay below the run's home, or the run is refused before any cell is prepared), and its 35 hooks are trusted by running the built `crw doctor retrust --bootstrap-ok` against that home. No run
+`config.toml` (the manifest's name and version must each be one plain directory name, and the cache entry must stay below the run's home, or the run is refused before any cell is prepared), and its 36 hooks are trusted by running the built `crw doctor retrust --bootstrap-ok` against that home. No run
 passes `--dangerously-bypass-hook-trust` or any other flag that skips trust, approvals or the sandbox (the report's
 `bypassHookTrust` is false and `codexArgs` lists the arguments), and a fired hook that needed one would not count. The installed
 runtime path the declarations start holds a recorder, which keeps the arguments, the payload on stdin, the answer, the exit

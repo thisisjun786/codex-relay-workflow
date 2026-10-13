@@ -54,7 +54,8 @@ func readShipped(t *testing.T, path string) []shippedDeclaration {
 // event, matcher and timeout as K1 records them, its statusMessage with "(codexclaw) " made
 // "(crw) " (R24) and nothing else, and the command the runtime pointer's crw hook <event> --leg
 // <leg>. The GitHub post guard ships beside them, and the manifest names the completion Stop and
-// the 33 generated files, 34 declarations in all.
+// the 35 generated files (the 32 K1 legs, the GitHub post guard, the flow status line and the relay
+// child push guard), 36 declarations in all.
 func TestShippedHooks_match_K1(t *testing.T) {
 	root := repoRoot(t)
 	decls, _, err := LoadDeclarations(root)
@@ -93,7 +94,7 @@ func TestShippedHooks_match_K1(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(manifest.Hooks) != 35 || len(entries) != 35 || manifest.Hooks[0] != "./wiring/hooks/stop-recording-completion.json" {
+	if len(manifest.Hooks) != 36 || len(entries) != 36 || manifest.Hooks[0] != "./wiring/hooks/stop-recording-completion.json" {
 		t.Fatalf("manifest names %d hook files, the directory holds %d: %q", len(manifest.Hooks), len(entries), manifest.Hooks)
 	}
 	for _, e := range entries {

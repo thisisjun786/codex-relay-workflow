@@ -50,8 +50,15 @@ var FlowStatus = ShippedHook{
 	Leg: "stop-showing-flow-status", Event: "Stop", Timeout: 10, Status: "(crw) Reading the flow runs of this thread",
 }
 
+// ChildPushGuard is CRW's own PreToolUse guard over the shell tools (CRW-1284): a relay child pushes only its own branch. It is
+// declared after the flow status line, with the GitHub post guard's matcher.
+var ChildPushGuard = ShippedHook{
+	Leg: "pre-tool-use-guarding-child-push", Event: "PreToolUse", Matcher: GitHubPostGuard.Matcher,
+	Timeout: 10, Status: "(crw) Guarding relay child pushes",
+}
+
 // OwnHooks are CRW's own declarations, in manifest order after the K1 legs.
-var OwnHooks = []ShippedHook{GitHubPostGuard, FlowStatus}
+var OwnHooks = []ShippedHook{GitHubPostGuard, FlowStatus, ChildPushGuard}
 
 // File is the declaration's file name: the leg's name, so the leg split out of one oracle file
 // (post-compact-injecting-bg-terminal-affordance.<event>) has a file of its own.
@@ -90,7 +97,7 @@ func (h ShippedHook) Document() ([]byte, error) {
 }
 
 // ShippedHooks is every generated declaration in manifest order: the K1 legs in theirs, then CRW's
-// own (the GitHub post guard, the flow status line). A K1 leg keeps its event, matcher and timeout byte for byte; its statusMessage
+// own (the GitHub post guard, the flow status line, the child push guard). A K1 leg keeps its event, matcher and timeout byte for byte; its statusMessage
 // goes through R24 of the substitution table.
 func ShippedHooks(root string) ([]ShippedHook, error) {
 	decls, _, err := LoadDeclarations(root)
