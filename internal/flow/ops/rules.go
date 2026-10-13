@@ -29,7 +29,7 @@ const (
 	RuleNat1   = "SP-NAT-1"   // a native spawn of a flow-bound thread
 
 	// The work the run does itself.
-	RuleInl1 = "SP-INL-1" // a question inside the asker's regions, or with at most three files, is answered by the asker
+	RuleInl1 = "SP-INL-1" // a research question inside the asker's regions, or with at most three files, is answered by the asker; never an open question of a DESIGN
 	RuleInl2 = "SP-INL-2" // a question already answered in the run reuses its answer
 	RuleInl3 = "SP-INL-3" // compile, commit, verification, premerge assembly, accept and integrate are code steps
 	RuleInl4 = "SP-INL-4" // the orchestrator thread is never woken for an ordinary issue
@@ -107,7 +107,8 @@ const (
 	// ExplorersPerMilestone is the explorers a milestone spawns for the open questions of its architect; the rest go to the
 	// orchestrator thread as design questions.
 	ExplorersPerMilestone = 6
-	// InlineFiles is the files_needed at or below which a question is answered by the asker itself.
+	// InlineFiles is the files_needed at or below which a research question is answered by the asker itself (SP-INL-1; an open
+	// question of a DESIGN goes to an explorer whatever its files_needed).
 	InlineFiles = 3
 	// ResearchPerTier is the research continuations a node gets on one tier before it escalates as a scope question.
 	ResearchPerTier = 2
@@ -118,3 +119,17 @@ const (
 	// DesignAuditRounds is the audit rounds a milestone's DESIGN gets before the milestone escalates.
 	DesignAuditRounds = 3
 )
+
+// The scope notations of the four kinds of open question that are outside the architect's authority (the architect overlay,
+// internal/flow/roles/architect.md, gives them to the architect). An open question of a DESIGN whose scope starts with one goes to
+// the orchestrator as a non-blocking ask and to no explorer (crw.exploreRoute, AuthorityScope); the scope stays a free string of
+// the DESIGN schema.
+const (
+	ScopeRepoRule    = "authority:repo-rule"    // an exception to a rule of the repository
+	ScopeOtherRecord = "authority:other-record" // the record of another issue
+	ScopePolicy      = "authority:policy"       // a policy decision
+	ScopeEnvironment = "authority:environment"  // a prerequisite of the execution environment
+)
+
+// AuthorityScopes are the four notations, in the order the overlay names their kinds.
+var AuthorityScopes = []string{ScopeRepoRule, ScopeOtherRecord, ScopePolicy, ScopeEnvironment}

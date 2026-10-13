@@ -169,9 +169,10 @@ func maxOpen(l *Lab, role string) int {
 	return most
 }
 
-// The thresholds of the explorer signals: a question with at most three files, or one repeated in the milestone, costs no
-// explorer; the rest run at most three at a time, at most six for the milestone, and the questions beyond the sixth go to the
-// orchestrator thread as a design question.
+// The thresholds of the explorer signals: a question repeated in the milestone costs no explorer; every other open question, one
+// with at most three files among them (an open question of a DESIGN is never the asker's to answer, CRW-1347), goes to an explorer,
+// at most three at a time and at most six for the milestone, and the questions beyond the sixth go to the orchestrator thread as a
+// design question.
 func TestExplorerSignalAndInlineThresholds(t *testing.T) {
 	l := NewLab(t, oneNode()...)
 	d := l.designFor()
@@ -202,7 +203,7 @@ func TestExplorerSignalAndInlineThresholds(t *testing.T) {
 			counts[r.Rule+"/"+r.Decision]++
 		}
 	}
-	want := map[string]int{"SP-EXPL-1/spawn": 6, "SP-EXPL-1/orchestrator": 2, "SP-INL-1/inline": 2, "SP-INL-2/reuse": 1}
+	want := map[string]int{"SP-EXPL-1/spawn": 6, "SP-EXPL-1/orchestrator": 4, "SP-INL-1/inline": 0, "SP-INL-2/reuse": 1}
 	for k, n := range want {
 		if counts[k] != n {
 			t.Errorf("decisions %s = %d, want %d (all: %v)", k, counts[k], n, counts)
@@ -214,8 +215,148 @@ func TestExplorerSignalAndInlineThresholds(t *testing.T) {
 			asked = str(ev.Data, "detail")
 		}
 	}
-	if !strings.Contains(asked, "module number 7") || !strings.Contains(asked, "module number 8") || strings.Contains(asked, "module number 6") {
+	if !strings.Contains(asked, "module number 7") || !strings.Contains(asked, "module number 8") || strings.Contains(asked, "module number 6") ||
+		!strings.Contains(asked, "is the flag documented?") || !strings.Contains(asked, "what does the helper return?") {
 		t.Errorf("the design questions for the orchestrator: %q", asked)
+	}
+}
+
+// The open questions of a DESIGN on the whole stack (CRW-1347): a question with one file goes to an explorer, not to the architect
+// whose turn has ended; a question whose scope carries the notation of an out-of-authority kind goes to no explorer and is asked
+// of the orchestrator in the design_question escalation, with its scope, while the milestone goes on to its close; a question
+// with an unknown notation goes to an explorer. The design audit packet shows each question's route and what it got, and the
+// audit of a re-plan routes its open questions the same way, reusing the answer an explorer gave in the run.
+func TestOpenQuestionRoutesThroughDesignAudit(t *testing.T) {
+	l := NewLab(t, twoNodes()...)
+	d := l.designFor()
+	d.OpenQuestions = []ops.OpenQuestion{
+		{ID: "small", Question: "is the flag documented?", Scope: "docs", FilesNeeded: []string{"README.md"}},
+		{ID: "policy", Question: "does the project ship the flag in 1.0?", Scope: "authority:policy: the release scope", FilesNeeded: []string{}},
+		{ID: "odd", Question: "who pays for the runner?", Scope: "authority:budget", FilesNeeded: []string{"ci.yml"}},
+	}
+	l.Design = &d
+	explained := map[string]string{"is the flag documented?": "yes, README.md says so", "who pays for the runner?": "the repository does not say"}
+	l.On("^explore:", func(c *Call) *fakehostPlan {
+		for q, a := range explained {
+			if strings.Contains(c.Text, "QUESTION: "+q) {
+				p := Say(map[string]any{"answer": a, "evidence": []string{"README.md"}, "verified": []string{}, "inferred": []string{}, "unknown": []string{}})
+				return &p
+			}
+		}
+		t.Errorf("an explorer was asked another question:\n%s", c.Text)
+		return nil
+	})
+	l.On("^reviewer-final:M1$", func(*Call) *fakehostPlan { p := Say(VerdictFinal(false)); return &p })
+	got := runReplan(t, l)
+	if got.State != "replanned" {
+		t.Fatalf("%+v; calls %v", got, l.Labels())
+	}
+	// two explorers, both before the first audit: the small question and the one with an unknown notation; none for the authority
+	// question, and none in the re-plan, whose questions were answered in the run or go to the orchestrator again
+	explorers := l.CallsOf("explorer")
+	if len(explorers) != 2 {
+		t.Errorf("%d explorer calls, want 2: %v", len(explorers), l.Labels())
+	}
+	for _, c := range explorers {
+		if text := textOfCall(l, c.ID); strings.Contains(text, "ship the flag") {
+			t.Errorf("an explorer was asked the authority question:\n%s", text)
+		}
+	}
+	for _, r := range l.SpawnRows() {
+		if r.Rule == ops.RuleInl1 {
+			t.Errorf("an open question of the DESIGN took the inline route: %+v", r)
+		}
+	}
+	type key struct{ decision, reason string }
+	counts := map[key]int{}
+	for _, r := range spawnRowsOf(l, ops.RuleExpl1, "spawn") {
+		counts[key{r.Decision, r.Reason}]++
+	}
+	for _, r := range spawnRowsOf(l, ops.RuleExpl1, "orchestrator") {
+		counts[key{r.Decision, r.Reason}]++
+	}
+	for _, r := range spawnRowsOf(l, ops.RuleInl2, "reuse") {
+		counts[key{r.Decision, r.Reason}]++
+	}
+	if want := map[key]int{{"spawn", ""}: 2, {"orchestrator", "out_of_authority"}: 2, {"reuse", "answered_in_run"}: 2}; !reflect.DeepEqual(counts, want) {
+		t.Errorf("the routes of the open questions %v, want %v (the first audit and the re-plan)", counts, want)
+	}
+	// each audit packet shows every question with its route and what it got
+	for _, label := range []string{"design-audit:r1", "design-audit:replan-close:r1"} {
+		text := textOfCall(l, callNamed(t, l, label).ID)
+		answers := text[strings.Index(text, "ANSWERS TO THE OPEN QUESTIONS"):]
+		for _, want := range []string{
+			"policy: does the project ship the flag in 1.0?\n  route: asked of the orchestrator (out_of_authority, authority:policy)",
+			"design_question escalation",
+			"the milestone goes on",
+		} {
+			if !strings.Contains(answers, want) {
+				t.Errorf("%s: the answers lack %q:\n%s", label, want, answers)
+			}
+		}
+		explorerRoute := "route: an explorer answered it (call "
+		if label != "design-audit:r1" {
+			explorerRoute = "route: reused: the answer an earlier question of the run got"
+		}
+		for _, want := range []string{
+			"small: is the flag documented?\n  " + explorerRoute, "answer: yes, README.md says so",
+			"odd: who pays for the runner?\n  " + explorerRoute, "answer: the repository does not say",
+		} {
+			if !strings.Contains(answers, want) {
+				t.Errorf("%s: the answers lack %q:\n%s", label, want, answers)
+			}
+		}
+		if strings.Contains(answers, "inline") || strings.Contains(answers, `"answer":""`) {
+			t.Errorf("%s: a question reached the audit with an empty answer and no route:\n%s", label, answers)
+		}
+	}
+	// the authority question is asked of the orchestrator, with its scope, once for each approved DESIGN; nothing stops the
+	// milestone, which closed and re-planned
+	var asked []string
+	for _, ev := range l.FlowRows(engine.EvEscalation) {
+		if str(ev.Data, "reason") == "design_question" {
+			asked = append(asked, str(ev.Data, "detail"))
+		}
+	}
+	if len(asked) != 2 {
+		t.Fatalf("design_question escalations %q, want one for the DESIGN and one for the re-plan", asked)
+	}
+	for _, detail := range asked {
+		if detail != "[authority:policy: the release scope] does the project ship the flag in 1.0?" {
+			t.Errorf("the design question for the orchestrator: %q", detail)
+		}
+	}
+	if holds := l.Rows(ops.OpHold); len(holds) != 0 {
+		t.Errorf("an open question made a hold: %+v", holds)
+	}
+}
+
+// The scope notations the router reads (ops.AuthorityScopes) are the ones the architect overlay gives the architect and the design
+// audit packet gives the auditor, each beside its kind.
+func TestAuthorityNotationsMatchTheRouter(t *testing.T) {
+	l := NewLab(t, oneNode()...)
+	mustRun(t, l)
+	overlay, err := roles.Overlay("architect", roles.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	audit := textOfCall(l, callNamed(t, l, "design-audit:r1").ID)
+	kinds := []string{"an exception to a rule of the repository", "the record of another issue", "a policy decision", "a prerequisite of the execution environment"}
+	if len(kinds) != len(ops.AuthorityScopes) {
+		t.Fatalf("%d notations for %d kinds", len(ops.AuthorityScopes), len(kinds))
+	}
+	for where, text := range map[string]string{"the architect overlay": overlay, "the design audit packet": audit} {
+		for i, n := range ops.AuthorityScopes {
+			line := ""
+			for _, ln := range strings.Split(text, "\n") {
+				if strings.Contains(ln, kinds[i]) && strings.HasPrefix(strings.TrimSpace(ln), "- ") {
+					line = ln
+				}
+			}
+			if !strings.Contains(line, "`"+n+"`") {
+				t.Errorf("%s does not give the notation `%s` beside %q: %q", where, n, kinds[i], line)
+			}
+		}
 	}
 }
 
@@ -449,5 +590,50 @@ func TestResumeAfterPromptTextChange(t *testing.T) {
 	}
 	if res.Status == engine.RunCompleted || !strings.Contains(res.Error, "crw.designLedger") || !slices.Equal(labels, []string{"design-audit:r1"}) {
 		t.Errorf("the starting binary after a resume by the new one: %s %q, live calls %v; want design-audit:r1 live and the ledger's refusal", res.Status, res.Error, labels)
+	}
+}
+
+// A run whose open questions were routed by the binary before CRW-1347 (crw.explore handed crw.exploreRecord answers without the
+// reason, the scope and the notation of their routes) and that a binary of CRW-1347 resumes (the header of crw:lib/packets): the
+// crw.exploreRoute rows and the explorer calls replay as recorded, crw.exploreRecord runs again with the answers of the new
+// binary, design-audit:r1 is the one agent call that runs live, and crw.designLedger refuses the first revision again.
+func TestResumeAfterOpenQuestionRoutingChange(t *testing.T) {
+	l := NewLab(t, oneNode()...)
+	d := l.designFor()
+	d.OpenQuestions = []ops.OpenQuestion{
+		{ID: "small", Question: "is the flag documented?", Scope: "docs", FilesNeeded: []string{"README.md"}},
+		{ID: "policy", Question: "does the project ship the flag in 1.0?", Scope: "authority:policy", FilesNeeded: []string{}},
+	}
+	l.Design = &d
+	l.Lib = libWith(t, "lane.js", "route: r.route, reason: r.reason || '', scope: r.scope || '', authority: r.authority || '', answer,", "route: r.route, answer,")
+	if got := mustRun(t, l); got.State != "closed" {
+		t.Fatalf("state %q", got.State)
+	}
+	before := l.LastSeq()
+	l.Lib = nil
+	l.NewProcess("proc-2")
+	res := l.Resume()
+	var labels []string
+	for _, c := range l.LiveCalls(before) {
+		labels = append(labels, c.Label)
+	}
+	if !slices.Equal(labels, []string{"design-audit:r1"}) {
+		t.Errorf("live calls %v, want the design audit only", labels)
+	}
+	ran := map[string]int{}
+	refused := false
+	for _, ev := range rowsAfter(l, before) {
+		if ev.Kind == engine.KindCall && ev.Event == engine.EvCompleted {
+			ran[ev.Op]++
+		}
+		if ev.Kind == engine.KindCall && ev.Op == ops.OpDesignLedger && ev.Event == engine.EvRefused {
+			refused = true
+		}
+	}
+	if ran[ops.OpExploreRoute] != 0 || ran[ops.OpExploreRecord] != 1 {
+		t.Errorf("ops run again %v, want crw.exploreRecord and not crw.exploreRoute", ran)
+	}
+	if res.Status == engine.RunCompleted || !refused || !strings.Contains(res.Error, "crw.designLedger") {
+		t.Errorf("the resume: %s %q (ledger refused %v), want the ledger's refusal", res.Status, res.Error, refused)
 	}
 }
