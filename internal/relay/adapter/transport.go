@@ -346,12 +346,8 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 		// refusal is retry-safe and a repeated request ID is checked again once the conflict is gone;
 		// so is a resume whose native root could not be recorded for the thread's SessionStart.
 		target, _ := params["cwd"].(string)
-		// CRW-1265: a sandboxed Codex is not resumed in the account home, above it or above a project
-		// root. Nothing has been sent, so the refusal is retry-safe.
-		if refusal := resumeRootRefusal(state, th, params, send); refusal != nil {
-			refuse("thread/read", refusal, true)
-			return nil
-		}
+		// CRW-1265's rule is asked about the resume; its verdict is a warning, never a refusal (CRW-1308).
+		warnResumeRoot(state, th, params, send)
 		if refusal := stateroot.Guard(os.LookupEnv, pyjson.Text(th["cwd"]), target, thread); refusal != nil {
 			refuse("thread/read", contract.OrderedObject{{Key: "code", Value: stateroot.CodeOf(refusal)}, {Key: "message", Value: refusal.Error() + "; message withheld"}}, true)
 			return nil
@@ -530,14 +526,14 @@ func (a *Adapter) guardedSend(ctx context.Context, requestID, thread, message st
 	return a.receipt(context.WithoutCancel(ctx), requestID, false)
 }
 
-// resumeRootRefusal asks the sandbox-root rule about a resume (CRW-1265). The cwd is the resume
-// params' cwd, else (also for a settings-free resume) the one thread/read reported. The sandbox is
+// warnResumeRoot asks the sandbox-root rule about a resume (CRW-1265) and warns about its verdict
+// (CRW-1308): the resume goes on. The cwd is the resume params' cwd, else (also for a settings-free
+// resume) the one thread/read reported. The sandbox is
 // the params' sandbox, else the one the host reported for the thread, else the recorded settings'
 // sandbox, and a sandbox that cannot be told counts as on. The runtimeWorkspaceRoots and the writable
 // roots of the sandbox policy and config are writable roots, from the params, the recorded settings
 // and the host's thread answer alike (a settings-free resume sends none of them but inherits them).
-// It returns the refusal object a receipt records, nil when the resume may go out.
-func resumeRootRefusal(state, th map[string]any, params map[string]any, recorded *delivery.TaskSettings) contract.OrderedObject {
+func warnResumeRoot(state, th map[string]any, params map[string]any, recorded *delivery.TaskSettings) {
 	cwd, _ := params["cwd"].(string)
 	if cwd == "" {
 		cwd = pyjson.Text(th["cwd"])
@@ -563,17 +559,5 @@ func resumeRootRefusal(state, th map[string]any, params map[string]any, recorded
 			writable = append(writable, sandboxroot.RootsOf(object)...)
 		}
 	}
-	var refusal *sandboxroot.Refusal
-	if !errors.As(sandboxroot.CheckAll(cwd, writable, sandbox), &refusal) {
-		return nil
-	}
-	allowed := make([]any, len(refusal.Allowed))
-	for i, base := range refusal.Allowed {
-		allowed[i] = base
-	}
-	object := contract.OrderedObject{{Key: "code", Value: refusal.Code()}, {Key: "message", Value: refusal.Error() + "; message withheld"}, {Key: "path", Value: refusal.Path}, {Key: "resolved", Value: refusal.Resolved}, {Key: "rule", Value: refusal.Rule}}
-	if refusal.Project != "" {
-		object = append(object, contract.Field{Key: "project", Value: refusal.Project})
-	}
-	return append(object, contract.Field{Key: "allowed", Value: allowed})
+	sandboxroot.Warn("relay/send_message_to_thread", sandboxroot.CheckAll(cwd, writable, sandbox))
 }

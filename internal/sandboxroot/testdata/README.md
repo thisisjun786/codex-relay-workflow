@@ -8,6 +8,9 @@ implementation builds the case in its own temporary directory and judges it ther
 the two implementations shows up as a case one of them fails. Nothing in a case names the real
 `/home/jun`, the real `~/.codex` or a real `codex`.
 
+A `refuse` verdict is the rule's judgement, not a refusal of any caller: every product path hands it to
+`sandboxroot.Warn`, which writes a warning line and a record and lets the path go on (CRW-1308).
+
 The top level is `{"schema": "crw-sandbox-root-cases/1", "cases": [ ... ]}`.
 
 ## Placeholders

@@ -336,9 +336,7 @@ func (h *hostEnv) control() (*hostControl, error) {
 	env := hostEnviron(home, codexHome, tmp, h.codex)
 	c := &hostControl{}
 	var out, stderr string
-	if err := h.checkSandboxRoots(work); err != nil {
-		return nil, err
-	}
+	h.warnSandboxRoots(work)
 	out, c.features = runHostCommand(h.opts.Timeout, dir, env, nil, h.codex, "features", "list")
 	c.featuresOut = firstLines(strings.TrimSpace(out), 3)
 	out, c.exit = runHostCommand(h.opts.Timeout, work, env, &stderr, h.codex, hostArgs(work)...)
@@ -352,18 +350,13 @@ func (h *hostEnv) control() (*hostControl, error) {
 // run is one the sandbox-root rule judges (CRW-1265).
 const hostSandbox = "read-only"
 
-// checkSandboxRoots asks the sandbox-root rule about the run's scratch root and the cell's work
-// directory, before Codex is started for the cell: a sandboxed Codex whose working root is the account
-// home, a directory above it or a directory above a project would make and remove <home>/.git. The
-// scratch default is the temporary directory; a host whose sandbox base is elsewhere names a scratch
-// below it (--scratch).
-func (h *hostEnv) checkSandboxRoots(work string) error {
+// warnSandboxRoots asks the sandbox-root rule about the run's scratch root and the cell's work
+// directory before Codex is started for the cell, and warns about its verdict (CRW-1308): the cell
+// runs Codex wherever the scratch is.
+func (h *hostEnv) warnSandboxRoots(work string) {
 	for _, root := range []string{h.scratch, work} {
-		if err := sandboxroot.Check(root, hostSandbox); err != nil {
-			return fmt.Errorf("the real-host run does not start Codex: %w (pass --scratch below the sandbox base)", err)
-		}
+		sandboxroot.Warn("laneparity/realhost", sandboxroot.Check(root, hostSandbox))
 	}
-	return nil
 }
 
 // stubProviderConfig is the part of a home's config.toml that points the host at the stub provider.
@@ -452,9 +445,7 @@ enabled = true
 		}
 	}
 	env := hostEnviron(home, r.codexHome, tmp, h.codex)
-	if err := h.checkSandboxRoots(work); err != nil {
-		return cell, err
-	}
+	h.warnSandboxRoots(work)
 	if spec.trusted {
 		out, code := runHostCommand(h.opts.Timeout, dir, env, nil, h.opts.CRW, "doctor", "retrust", "--bootstrap-ok")
 		cell.Trust = trustSummary(out)

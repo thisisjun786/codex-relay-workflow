@@ -80,6 +80,32 @@ func (w *World) Project(t testing.TB, dir string) {
 	}
 }
 
+// Warnings is the sandbox-root warning record of the fake Codex home (CRW-1308), in the order written.
+func (w *World) Warnings() []sandboxroot.Record { return sandboxroot.ReadRecords(w.CodexHome) }
+
+// ClearWarnings empties the warning record, so that a subtest sees only its own.
+func (w *World) ClearWarnings(t testing.TB) {
+	t.Helper()
+	if err := os.Remove(sandboxroot.RecordPath(w.CodexHome)); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+}
+
+// Warned is the last warning record that names caller and rule, and path unless path is "". It fails the test when there is
+// none.
+func (w *World) Warned(t testing.TB, caller, rule, path string) sandboxroot.Record {
+	t.Helper()
+	records := w.Warnings()
+	for i := len(records) - 1; i >= 0; i-- {
+		r := records[i]
+		if r.Caller == caller && r.Rule == rule && (path == "" || r.Path == path) && r.Decision == sandboxroot.DecisionWarn {
+			return r
+		}
+	}
+	t.Fatalf("no %s warning by %s for %q; the record holds %+v", rule, caller, path, records)
+	return sandboxroot.Record{}
+}
+
 // Mkdir makes a directory under Sandbox (or any path) and returns it.
 func (w *World) Mkdir(t testing.TB, parts ...string) string {
 	t.Helper()

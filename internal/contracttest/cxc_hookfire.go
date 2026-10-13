@@ -153,7 +153,7 @@ func FireHooks(in HookFireInput) ([]HookFireResult, error) {
 // temporary locations the long cases use are its project roots (testsupport.SandboxConfigDocument). A firing
 // runs in crw-dev, which isolates nothing, as well as in a test, so it does not rely on the configuration of
 // the process: without it a case read the rule's default sandbox base, and a scratch directory outside that
-// base refused the managed-dispatch fixtures. The file lies in a directory of its own in scratch, outside every
+// base was judged outside the rule in the managed-dispatch fixtures. The file lies in a directory of its own in scratch, outside every
 // case root; the returned function removes it.
 func (r *cxcReplayer) writeSandboxConfig(scratch string) (remove func(), err error) {
 	base := scratch

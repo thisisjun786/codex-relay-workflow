@@ -1,17 +1,18 @@
-// Package sandboxroot is the one rule that decides where a sandboxed Codex may run (CRW-1265,
-// decision C). The Codex linux sandbox (bubblewrap) makes and removes an empty .git mount target in
-// a working root that has no .git of its own, so a sandbox whose working root (or writable root) is
-// the account home, or a directory above other projects, makes <home>/.git appear and vanish and
-// every tool that walks the home reads the home as a git repository in that instant. The rule keeps
-// a sandboxed Codex in a dedicated root: the crwconfig sandbox_root (its default is crwconfig.DefaultSandboxRoot), a known
-// project root or a linked worktree, and never the account home, a directory above it, or a
-// directory above a known project root.
+// Package sandboxroot is the rule that judges where a sandboxed Codex runs (CRW-1265, decision C),
+// and the warning every caller gives its verdict (CRW-1308). The Codex linux sandbox (bubblewrap)
+// makes and removes an empty .git mount target in a working root that has no .git of its own, so a
+// sandbox whose working root (or writable root) is the account home, or a directory above other
+// projects, makes <home>/.git appear and vanish. The rule names the roots where that cannot happen: the
+// crwconfig sandbox_root (its default is crwconfig.DefaultSandboxRoot), a known project root or a
+// linked worktree, never the account home, a directory above it, or a directory above a known project
+// root.
 //
-// Every product path that starts or resumes a sandboxed Codex, or hands a cwd to the App Server,
-// calls Check (the working root), CheckWritable (a writable root) or CheckDestination (a worktree
-// that does not exist yet) before it calls Codex or the App Server. No path has a check of its own.
-// The coordinator's Python guard implements the same rule and runs the same table
-// (testdata/cases.json, described in testdata/README.md).
+// The verdict refuses nothing (CRW-1308, Jun 10-13): a tool that refuses to work when any directory
+// above it holds a .git is that tool's to fix (AAS-89). Every product path that starts or resumes a
+// sandboxed Codex, or hands a cwd to the App Server, asks Check (the working root), CheckWritable (a
+// writable root) or CheckDestination (a worktree that does not exist yet) and hands the verdict to
+// Warn, which writes one warning line and appends a record (warn.go); the path then goes on as for an
+// allowed root. testdata/cases.json (described in testdata/README.md) is the rule's table.
 package sandboxroot
 
 import (
@@ -31,7 +32,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/tomledit"
 )
 
-// Code is the error code of every refusal.
+// Code is the error code of every verdict that names a root outside the rule (a warning since CRW-1308).
 const Code = "sandbox_root_refused"
 
 // The rule names a Refusal carries, in the order Check applies them.
