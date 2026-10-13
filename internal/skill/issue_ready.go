@@ -20,12 +20,17 @@ import (
 // supplies it; an issue labelled design first, or one whose open decisions still list a question, is
 // held as design_first until the design result stands in the decided answer.
 //
-// The answer holds the release (exit 1). The one way past it is a recorded exception: the management
-// session's explicit approval, which the command cannot verify and only refuses to record without a name,
-// an issue, a date and a statement, the way the size check records its exception. crw-run owns what a
-// held answer does to a release; crw-plan owns the rule the items come from.
+// A held answer is a warning (exit 0, the reasons on stderr), never a refusal: the decision value says
+// not_ready or design_first and the caller records the reasons with the release (CRW-1318). A recorded
+// exception turns the answer into bypassed: the management session's explicit approval, which the command
+// cannot verify and only refuses to record (exit 2) without a name, an issue, a date and a statement, the
+// way the size check records its exception. crw-run owns what a held answer does to a release; crw-plan
+// owns the rule the items come from.
 
 const readySchema = "crw-issue-ready-check/1"
+
+// readyInputKeys is the input's JSON keys as the help states them.
+const readyInputKeys = `The input keys: id, title, description, labels (names, or objects with a name), and the optional exception {"issue", "approved_by", "approved_on", "statement"}: exception.issue is the issue's id, exception.approved_by who approved the release, exception.approved_on the date as YYYY-MM-DD and exception.statement the approval in one sentence.`
 
 // The items a ready issue carries, in the order the report lists them.
 const (
@@ -493,7 +498,7 @@ func runIssueReady(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 	if !ok {
 		return code
 	}
-	line := newCommandLine("issue-ready", name, "Read one issue as JSON, from the file named or stdin, and print whether it may be released.").takes("file", 0, 1)
+	line := newCommandLine("issue-ready", name, "Read one issue as JSON, from the file named or stdin, and print whether it may be released. "+readyInputKeys).takes("file", 0, 1)
 	positionals, code := line.parse(args[1:], stdout, stderr)
 	if code >= 0 {
 		return code
@@ -522,8 +527,12 @@ func runIssueReady(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 		return 2
 	}
 	_ = emit(stdout, report)
-	if report.Decision == "ready" || report.Decision == "bypassed" {
-		return 0
+	// a held answer is a warning, not a refusal (CRW-1318): the decision stays not_ready or design_first in the report, every reason
+	// is printed on stderr, and the caller records them and decides; only an input that cannot be read exits non-zero
+	if report.Decision == "not_ready" || report.Decision == "design_first" {
+		for _, reason := range report.Reasons {
+			fmt.Fprintf(stderr, "crw skill issue-ready: warning: %s is %s: %s\n", in.ID, report.Decision, reason)
+		}
 	}
-	return 1
+	return 0
 }

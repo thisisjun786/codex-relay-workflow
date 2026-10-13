@@ -164,7 +164,9 @@ var issueReady = family{name: "issue-ready", description: `Judge whether one iss
 
 The issue is read as the Linear tools give it (id, title, description, labels). An issue is ready when its body carries the five items: registered criteria, the edit regions, a decided answer with no design question left, the test cases to write first and see fail, and the end condition (which command must give which result). Each item is found by its section heading, in Korean or English, and the report names every missing item with the heading that supplies it. An issue that carries the design-first label, or whose open decisions section still lists a question, is held as design_first until the design result is in the decided answer and the label is gone.
 
-Exit 0: ready, or bypassed (a held issue released on an exception record: the management session's explicit approval, with the issue, the approver, the date and the statement). Exit 1: held, not_ready or design_first; the reasons say what to supply. Exit 2: an input that cannot be read, or an exception that names no approver. Exit 3: a file that cannot be read. The answer is a function of the issue text and labels: the same input is the same bytes. It reads nothing from Linear and writes nothing.`, commands: [][2]string{
+` + readyInputKeys + `
+
+Exit 0: an answer, whatever its decision: ready; bypassed (a held issue released on an exception record: the management session's explicit approval, with the issue, the approver, the date and the statement); not_ready or design_first, a warning: the decision says so, the reasons say what to supply and each is printed on stderr as a warning, and the caller records them with the release. Exit 2: an input that cannot be read, or an exception that names no approver, issue, date or statement. Exit 3: a file that cannot be read. The answer is a function of the issue text and labels: the same input is the same bytes. It reads nothing from Linear and writes nothing.`, commands: [][2]string{
 	{"check", "read one issue as JSON, from a file or stdin, and print the release answer"},
 }}
 

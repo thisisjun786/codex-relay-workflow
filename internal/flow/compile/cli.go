@@ -27,6 +27,10 @@ with dag-plan-put.
   --base FILE   the whole log (crw relay dag-plan-log --after 0, every page) of a plan that exists, so that the changes are
                 update_node, add_node and retire_node against it and no retired id is used again; repeat for each plan
 
+A project's target is the absolute path of the local checkout the run integrates on and the short name of its branch (dev): a
+repository that is not an absolute path is a warning, and a base_ref written refs/heads/BRANCH is read as BRANCH with a warning.
+Warnings are printed on stderr and kept in the plan's "warnings"; they do not refuse the handoff.
+
 Exit 0 compiled; 1 the handoff is refused (the reasons are printed on stderr and as JSON on stdout); 2 an input that cannot be used.
 `
 
@@ -130,6 +134,11 @@ func RunCLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr 
 	out, err := Marshal(res)
 	if err != nil {
 		return fail("%v", err)
+	}
+	for _, p := range res.Plans {
+		for _, w := range p.Warnings {
+			fmt.Fprintf(stderr, "crw flow compile: warning: [%s] %s: %s\n", w.Rule, strings.TrimSpace(w.Project+" "+w.Path), w.Detail)
+		}
 	}
 	_, _ = stdout.Write(out)
 	return 0
