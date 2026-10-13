@@ -60,24 +60,33 @@ func TestChildPushGuardLegReadsTheRelayStore(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(home, "crw-completion-hook.json"), []byte(settings), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// CRW-1307: the child's refusals warn (the push passes with the refusal as a warning), except a force, delete or --mirror
+	// push onto dev or main, which stays a deny.
 	for _, c := range []struct{ session, cwd, command, want string }{
 		{"kid", kid, "git push origin HEAD:dev", "통합은 부모·통합기 몫"}, {"kid", kid, "git push origin HEAD:r2-x", ""}, {"kid", kid, "git push -u origin HEAD", "names no destination"},
 		{"par", parent, "git push origin HEAD:dev", ""}, {"kid", parent, "git push origin HEAD:dev", "no branch of its own"},
 	} {
-		if out := answer(c.session, c.cwd, c.command); c.want == "" && out != "" || !strings.Contains(out, c.want) || c.want != "" && !strings.Contains(out, `"permissionDecision":"deny"`) {
+		_, warned := guardWarning(answer(c.session, c.cwd, c.command))
+		if out := answer(c.session, c.cwd, c.command); c.want == "" && out != "" || !strings.Contains(out, c.want) || c.want != "" && !warned {
 			t.Errorf("%s in %s: %s: %s", c.session, c.cwd, c.command, out)
+		}
+	}
+	for _, command := range []string{"git push -f origin HEAD:dev", "git push --delete origin main", "git push --mirror origin"} {
+		if out := answer("kid", kid, command); !strings.Contains(out, `"permissionDecision":"deny"`) || !strings.Contains(out, "통합은 부모·통합기 몫") {
+			t.Errorf("kid: %s: %s", command, out)
 		}
 	}
 	if err := os.WriteFile(filepath.Join(home, "crw-completion-hook.json"), []byte("{"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if out := answer("par", parent, "git push origin HEAD:dev"); !strings.Contains(out, "cannot be read") {
+	if out := answer("par", parent, "git push origin HEAD:dev"); !strings.Contains(out, "cannot be read") || strings.Contains(out, "permissionDecision") {
 		t.Errorf("settings that cannot be read: %s", out)
 	}
 }
 
 // TestChildPushGuardLegAnswersUnreadInput: the leg is behind the switch, and an input over the bound or one the host cancels before
-// it arrives whole is refused, as the GitHub post guard refuses it; a cancelled leg answers without waiting for its input.
+// it arrives whole is released with a warning and a record (CRW-1307, fail-open), as the GitHub post guard releases it; a cancelled
+// leg answers without waiting for its input.
 func TestChildPushGuardLegAnswersUnreadInput(t *testing.T) {
 	args := []string{"pre-tool-use", "--leg", "pre-tool-use-guarding-child-push"}
 	if leg, ok := switchedLeg(args, componentHooks()); !ok || leg != args[2] {
@@ -99,14 +108,14 @@ func TestChildPushGuardLegAnswersUnreadInput(t *testing.T) {
 		}
 		return out.String()
 	}
-	if out := run(context.Background(), strings.NewReader(strings.Repeat(" ", pabcdhook.GitHubPostMaxStdinBytes+1))); !strings.Contains(out, "cannot be read whole") {
+	if out := run(context.Background(), strings.NewReader(strings.Repeat(" ", pabcdhook.GitHubPostMaxStdinBytes+1))); !strings.Contains(out, "could not be read") || strings.Contains(out, "permissionDecision") {
 		t.Errorf("an input over the bound: %q", out)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	in, w := io.Pipe()
 	t.Cleanup(func() { w.Close() })
-	if out := run(ctx, in); !strings.Contains(out, "cannot be read whole") || !strings.Contains(out, `"permissionDecision":"deny"`) {
-		t.Errorf("a cancelled leg: %q", out)
+	if w, warned := guardWarning(run(ctx, in)); !warned || !strings.Contains(w, "the leg was cancelled") {
+		t.Errorf("a cancelled leg: %q", w)
 	}
 }

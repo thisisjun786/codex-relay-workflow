@@ -238,6 +238,25 @@ files from K1 (inside the selected repository only; it refuses a linked hooks di
 
 The GitHub post guard (`pre-tool-use-guarding-github-post`) is a `PreToolUse` hook on the shell
 tools (`^(Bash|shell|exec_command|local_shell)$`), 10 seconds, `(crw) Guarding GitHub posts`.
+It blocks a post whose title or body text carries a secret, in a body file or written inline (`--body`, `-b`, `--title`, `gh api`
+`-f`/`-F` fields), on standard input the command shows (a here-string, a here-document, a literal `echo` or `printf` piped in, a
+`<` file) or in a body file the same command writes first from text it shows; every gh execution of the command is scanned so,
+whatever else in it is refused. Every other refusal of it warns (see the guard modes below).
+
+The PreToolUse guards (CRW-1307) block only what loses data, destroys history or exposes a secret: a relay child's force, delete
+or `--mirror` push onto `dev` or `main`, a secret in GitHub post text, and a deletion (`rm -r`, `git worktree remove`, `find -delete`
+or `-exec rm`, `xargs rm`) whose resolved target is the session's managed worktree checkout, its slot or an ancestor. Everything else
+any PreToolUse guard refuses (child push, GitHub post, memory write, automation ownership, attaching skills, goal completion, the
+interview in goal mode, the apply_patch lint, rmdir, mv and what the worktree guard cannot place) passes: the answer is
+`{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"[crw warning] Not blocked (recorded): <the refusal>"}}`
+(`Not blocked (no record written): ` when the decision line below could not be written), with no `permissionDecision` (the host refuses a bare `allow`), so the session sees the warning and the host's own approval rules
+stay as they are. A hook input or command a guard cannot read passes the same way (fail-open), in every guard. The mode table is
+`internal/harness/guardmode.go`. Each warning, release and kept block appends one line to
+`<CODEX_HOME>/crw/hook-decisions/<sha256 of the session id's JSON>.jsonl`: `{"schemaVersion":1,"sessionId","agentId","leg","rule",
+"decision":"warn"|"block"|"release","decidedAt"}`, never the command text or a secret value, and only for a hook run inside a plugin
+(`PLUGIN_ROOT` set). The rule is the one the leg names, else the tag, code or cause at the head of the refusal (`comment-lint`,
+`goal-complete-gate-01`, `final-gate`, `managed-dispatch`, `interview-in-goal`), else `refusal`; an input a guard could not read is
+`unreadable-input` with decision `release`.
 
 The flow status line (`stop-showing-flow-status`, CRW-1205) is a `Stop` hook, 10 seconds, `(crw) Reading the flow runs of this thread`.
 It is declared for every thread and prints for one: the leg reads the thread id of the Stop payload and the flow runs of the relay
@@ -248,11 +267,11 @@ GUI Runs page and Linear show the progress; the line is not mirrored into a plan
 The relay child push guard (`pre-tool-use-guarding-child-push`, CRW-1284) is a `PreToolUse` hook on the same shell tools, 10
 seconds, `(crw) Guarding relay child pushes`. A relay child does not integrate: integration is the parent's and the integrator's
 (통합은 부모·통합기 몫). In a session the relay store names as the child of a relationship (the store the completion hook's
-settings select), the leg refuses every `git push` whose refspecs do not each name the child's own branch as their destination (the branch its
+settings select), the leg blocks a force (`-f`, `--force`, `--force-with-lease`, a `+` refspec), a delete (`-d`, `--delete`, `:dev`) whose destination is `dev` or `main`, and `--mirror`; it warns about every other `git push` whose refspecs do not each name the child's own branch as their destination (the branch its
 checkout has, when that is not `dev`, `main`, origin's HEAD branch or the parent's branch and does not begin with `refs/`, `heads/`, `tags/` or `remotes/`; `git push origin HEAD:<branch>`): `HEAD:dev`, `src:dev`, a pattern, `--all`,
 `--mirror`, `--tags`, a refspec without a destination (which `remote.<name>.push` can map onto `dev`), through any remote. It reads the command as the other guards do (program wrappers and readable scripts are read; a `"$@"`
-forwarder, a word or text the reader cannot read and a program that spells `push` are refused). While the relay record cannot be read,
-a push, and a command the reader cannot read that spells `push`, is refused in any session.
+forwarder, a word or text the reader cannot read and a program that spells `push` are warned about). While the relay record cannot be read,
+a push, and a command the reader cannot read that spells `push`, is warned about in any session.
 It reads the relay store only for a command that pushes or cannot be read, and judges nothing in any other session.
 
 Every ported leg, and the guard, reads the switch `<CODEX_HOME>/crw/switch.json`

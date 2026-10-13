@@ -10,26 +10,27 @@ import (
 
 const (
 	reason = "[crw] hook input exceeded 4194304 bytes; refusing to bypass policy enforcement"
-	deny   = `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"` + reason + `","additionalContext":"` + reason + `"}}` + "\n"
-	block  = `{"decision":"block","reason":"` + reason + `"}` + "\n"
+	// released is a PreToolUse guard's answer for an input over the limit: the call passes with a warning (CRW-1307, fail-open).
+	released = `{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"` + WarningPrefix + `the hook input could not be read (over 4194304 bytes), so the guard did not check this call."}}` + "\n"
+	block    = `{"decision":"block","reason":"` + reason + `"}` + "\n"
 )
 
 // oversizedWant maps recording slugs to the explicit registration policy (CRW-1101).
 func oversizedWant() map[string]string {
 	return map[string]string{
 		"session-start": "", "session-start-permission-advisory": "", "user-prompt-submit": "", "stop": block,
-		"pre-tool-use": deny, "permission-request": "", "post-tool-use": "", "subagent-stop": block, "subagent-stop-review": "",
+		"pre-tool-use": released, "permission-request": "", "post-tool-use": "", "subagent-stop": block, "subagent-stop-review": "",
 		"post-compact": "", "pre-tool-use-edit": "", "post-tool-use-render-observation": "", "worktree-guard": "",
-		"worktree-guard-pretool": deny, "pre-tool-use-memory-write": deny, "pre-tool-use-automation-ownership": deny,
+		"worktree-guard-pretool": released, "pre-tool-use-memory-write": released, "pre-tool-use-automation-ownership": released,
 	}
 }
 
 func TestInputFailurePolicyMatchesLegSemantics(t *testing.T) {
 	for _, l := range Legs() {
-		if l.Event == "pre-tool-use" && (l.Stage == Guard || l.Stage == FailClosed) && l.InputFailure != InputDeny {
-			t.Errorf("%s lacks guard ingress deny", l.ID)
+		if l.Event == "pre-tool-use" && (l.Stage == Guard || l.Stage == FailClosed) && l.InputFailure != InputRecord {
+			t.Errorf("%s lacks the guard ingress release with a record", l.ID)
 		}
-		if got := l.InputFailureOutput(Input{Overflow: true}); got != oversizedWant()[l.Slug] {
+		if got := l.InputFailureOutput(Input{Overflow: true}, true); got != oversizedWant()[l.Slug] {
 			t.Errorf("%s: %q", l.ID, got)
 		}
 	}

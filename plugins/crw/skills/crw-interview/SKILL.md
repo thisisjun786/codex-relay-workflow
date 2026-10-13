@@ -223,7 +223,7 @@ work-phase (loop-engineering §11.4).
 ## Closeout fork (INTERVIEW-FORK-01)
 
 In non-goal HITL Interview only (under an active goal the Interview is suppressed and
-`request_user_input` is hard-denied — see Goal firewall), after a scan round do not drift forward
+`request_user_input` is not called — the PABCD hook warns about and records such a call; see Goal firewall), after a scan round do not drift forward
 silently. Show the two-group summary from INTERVIEW-SCAN-01, then present a numbered choice and
 let the user pick: `1. Proceed to Plan` ·
 `2. Keep interviewing` · `3. Record assumptions and pause`. Do not offer a question BUDGET
@@ -274,7 +274,8 @@ The interview runtime provides:
 Goal firewall: the whole Interview is suppressed under an active goal — the explicit
 trigger path, the passive re-injection paths (`UserPromptSubmit` modes 2/3), AND the
 `Stop` continuation loop all check goal-active and refuse to drive the Interview, and
-`request_user_input` is hard-denied. The Interview is HITL-only; `handleStop` releases
+`request_user_input` is not called (the PABCD hook warns about and records such a call;
+it does not stop it, so the rule holds by this skill). The Interview is HITL-only; `handleStop` releases
 immediately at `phase === "I"` (it never blocks/continues an interview, even mid-cycle
 under an active goal). The `InterviewTracker` discipline still governs the four
 dimensions and OPEN ASSUMPTIONS.

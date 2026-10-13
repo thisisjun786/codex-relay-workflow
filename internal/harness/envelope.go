@@ -41,15 +41,19 @@ func ReadStdin(in io.Reader) (raw string, overflow bool) {
 	return input.Raw, input.Overflow
 }
 
-// InputFailureOutput uses registration policy, never a handler's recording slug.
-func (l Leg) InputFailureOutput(in Input) string {
+// InputFailureOutput uses registration policy, never a handler's recording slug. An InputRecord leg's answer is the release
+// warning; dispatch also records the release, and recorded (whether that record was written) sets what the warning says.
+func (l Leg) InputFailureOutput(in Input, recorded bool) string {
 	reason := oversizedReason
 	if !in.Overflow {
 		reason = "[crw] hook input could not be read; refusing to bypass policy enforcement"
 	}
 	switch l.InputFailure {
-	case InputDeny:
-		return `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"` + reason + `","additionalContext":"` + reason + `"}}` + "\n"
+	case InputRecord:
+		if in.Overflow {
+			return releaseAnswer("over 4194304 bytes", recorded)
+		}
+		return releaseAnswer("a read error", recorded)
 	case InputBlock:
 		if !in.Overflow {
 			return ""

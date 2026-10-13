@@ -113,18 +113,30 @@ func dispatch(ctx context.Context, leg Leg, in io.Reader, stdout, stderr io.Writ
 		return Interrupted
 	}
 	if input.Failed() {
-		io.WriteString(stdout, leg.InputFailureOutput(input))
+		recorded := false
+		if leg.InputFailure == InputRecord {
+			recorded = RecordDecision("", leg.ID, RuleUnreadableInput, DecisionRelease, env)
+		}
+		io.WriteString(stdout, leg.InputFailureOutput(input, recorded))
 		return 0
 	}
 	raw := input.Raw
-	call := Call{Raw: raw}
+	var rule string
+	call := Call{Raw: raw, rule: &rule}
+	// A PreToolUse leg's answer goes through the mode table: a refusal the table does not keep at block passes with a warning.
+	settle := func(out string) string {
+		if leg.Event != "pre-tool-use" {
+			return out
+		}
+		return SettleGuard(leg.ID, raw, out, rule, env)
+	}
 	if leg.Stage == Permission {
 		io.WriteString(stdout, leg.answer(call, true))
 		return 0
 	}
 	RecordInvocation(raw, Component, leg.Slug, env)
 	if leg.Stage == Guard {
-		io.WriteString(stdout, leg.answer(call, leg.Recover))
+		io.WriteString(stdout, settle(leg.answer(call, leg.Recover)))
 		return 0
 	}
 	if !leg.SubagentExempt && IsSubagentHookPayload(raw) {
@@ -134,6 +146,6 @@ func dispatch(ctx context.Context, leg Leg, in io.Reader, stdout, stderr io.Writ
 	if !call.PabcdEnabled && leg.Gated {
 		return 0
 	}
-	io.WriteString(stdout, leg.answer(call, leg.Stage != FailClosed))
+	io.WriteString(stdout, settle(leg.answer(call, leg.Stage != FailClosed)))
 	return 0
 }

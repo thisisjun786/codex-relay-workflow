@@ -31,6 +31,15 @@ type Call struct {
 	// (cli.ts:427), so for a Permission or Guard leg it is false because it was not read, and only for
 	// a FailClosed or Generic leg does false mean that PABCD is off.
 	PabcdEnabled bool
+	rule         *string // where NameRule leaves the rule of the answer; nil outside dispatch
+}
+
+// NameRule names the rule a PreToolUse leg's answer comes from, for the mode table (SettleGuard). A leg that names none has the
+// rule derived from its answer's text, which never blocks.
+func (c Call) NameRule(rule string) {
+	if c.rule != nil {
+		*c.rule = rule
+	}
 }
 
 // Handler is a leg's behaviour; its answer is written to stdout as it is.
@@ -40,7 +49,8 @@ type InputFailurePolicy int
 
 const (
 	InputRelease InputFailurePolicy = iota
-	InputDeny
+	// InputRecord releases the hook (fail-open) with a warning and a decision record (CRW-1307: every PreToolUse guard).
+	InputRecord
 	InputBlock
 )
 
@@ -114,16 +124,21 @@ func Legs() []Leg {
 			}
 			return answer.Stdout
 		}},
-		{"pre-tool-use-guarding-goal-budget", "pre-tool-use", "pre-tool-use", FailClosed, InputDeny, false, false, false, func(c Call) string {
+		{"pre-tool-use-guarding-goal-budget", "pre-tool-use", "pre-tool-use", FailClosed, InputRecord, false, false, false, func(c Call) string {
 			return pabcdhook.GoalGateHandlePreToolUseFailClosed(c.Raw, os.LookupEnv, c.PabcdEnabled)
 		}},
 		{"permission-request-allowing-agent-thread", "permission-request", "permission-request", Permission, InputRelease, false, false, false, func(c Call) string {
 			return pabcdhook.HandleAgentThreadPermissionRequest(c.Raw, os.LookupEnv)
 		}},
-		{"pre-tool-use-guarding-interview-in-goal", "pre-tool-use", "pre-tool-use", FailClosed, InputDeny, false, false, false, func(c Call) string {
-			return pabcdhook.GoalGateHandlePreToolUseFailClosed(c.Raw, os.LookupEnv, c.PabcdEnabled)
+		{"pre-tool-use-guarding-interview-in-goal", "pre-tool-use", "pre-tool-use", FailClosed, InputRecord, false, false, false, func(c Call) string {
+			answer := pabcdhook.GoalGateHandlePreToolUseFailClosed(c.Raw, os.LookupEnv, c.PabcdEnabled)
+			// The goal-mode interview refusal carries no code: the record names it (a rule the table does not keep, so it warns).
+			if reason, deny := guardDeny(answer); deny && RuleOf(reason) == "refusal" {
+				c.NameRule(RuleInterviewInGoal)
+			}
+			return answer
 		}},
-		{"pre-tool-use-guarding-goal-complete", "pre-tool-use", "pre-tool-use", FailClosed, InputDeny, false, false, false, func(c Call) string {
+		{"pre-tool-use-guarding-goal-complete", "pre-tool-use", "pre-tool-use", FailClosed, InputRecord, false, false, false, func(c Call) string {
 			return pabcdhook.GoalGateHandlePreToolUseFailClosed(c.Raw, os.LookupEnv, c.PabcdEnabled)
 		}},
 		{"post-tool-use-capturing-interview-answers", "post-tool-use", "post-tool-use", Generic, InputRelease, false, false, true, func(c Call) string {
@@ -184,13 +199,15 @@ func Legs() []Leg {
 		{"user-prompt-submit-guiding-worktree-rename", "user-prompt-submit", "worktree-guard", Generic, InputRelease, false, false, false, func(c Call) string {
 			return ContextOutput(pabcdhook.HandleWorktreeGuard(c.Raw, os.LookupEnv))
 		}},
-		{"pre-tool-use-guarding-managed-worktree-deletion", "pre-tool-use", "worktree-guard-pretool", Guard, InputDeny, true, false, false, func(c Call) string {
-			return pabcdhook.HandleWorktreeGuardPreTool(c.Raw, os.LookupEnv)
+		{"pre-tool-use-guarding-managed-worktree-deletion", "pre-tool-use", "worktree-guard-pretool", Guard, InputRecord, true, false, false, func(c Call) string {
+			answer, rule := pabcdhook.WorktreeGuardPreToolDecision(c.Raw, os.LookupEnv)
+			c.NameRule(rule)
+			return answer
 		}},
-		{"pre-tool-use-guarding-memory-write", "pre-tool-use", "pre-tool-use-memory-write", Guard, InputDeny, true, false, false, func(c Call) string {
+		{"pre-tool-use-guarding-memory-write", "pre-tool-use", "pre-tool-use-memory-write", Guard, InputRecord, true, false, false, func(c Call) string {
 			return pabcdhook.HandleMemoryWriteGate(c.Raw, os.LookupEnv)
 		}},
-		{"pre-tool-use-guarding-automation-ownership", "pre-tool-use", "pre-tool-use-automation-ownership", Guard, InputDeny, false, false, false, func(c Call) string {
+		{"pre-tool-use-guarding-automation-ownership", "pre-tool-use", "pre-tool-use-automation-ownership", Guard, InputRecord, false, false, false, func(c Call) string {
 			return pabcdhook.HandleAutomationOwnershipGate(c.Raw, os.LookupEnv)
 		}},
 	}
