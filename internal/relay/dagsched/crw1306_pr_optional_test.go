@@ -295,3 +295,93 @@ func TestCommitRefreshBaseIsReadFromTheEdgesOrTheManifest(t *testing.T) {
 		t.Fatalf("two edge bases = %v; want malformed_receipt", err)
 	}
 }
+
+// A retry of the original dag-accept --commit (the first generation's head and record) is a replay only while that generation
+// is the current one. The commit path takes the head the current generation's ruling fixed, so once the parent opens and rules a
+// later generation the original call is refused before any acceptance is read: without --event it names a head the current ruling
+// did not fix, and with the first generation's event it names an event of a generation that is no longer current. A recorded base
+// refresh changes neither answer (evaluation d7aac7e1 d1): the replay compare that reads the refreshed head is reached only by a
+// call naming the current generation's ruled head, and the record of the refreshed head stays a replay when given again.
+func TestTheOriginalCommitAcceptanceIsRefusedTheSameBeforeAndAfterABaseRefresh(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	ctx := context.Background()
+	k := newMixedKit(t, []batchNode{{name: "a", files: map[string]string{"a.txt": "a\n"}}, {name: "z", files: map[string]string{"z.txt": "z\n"}}},
+		func(k *batchKit) []doc {
+			return []doc{addEdge("az", "a", "z", dag.EdgeIntegrated, doc{"target_repository": k.repo.path, "target_base_ref": "dev"})}
+		})
+	k.sched.Tips, k.sched.Ancestry, k.sched.PRs = newLegacyLocalTipReader(t), GitAncestry{}.Ancestry, noForge(t)
+	original := k.heads["a"]
+	originalRecord := writeSealedRecord(t, k.repo.path, original, k.base, k.treeOf(original), "pass")
+	originalCall := func(event string) AcceptInput {
+		return premergeWithRecord(k.sched, ctx, "g", "a", "parent", AcceptInput{
+			Event:       event,
+			RuleVersion: VerifierRule{SkillsDigest: dig("skills"), Model: "m", Effort: "none"},
+			Commit:      &CommitRef{Head: original, Base: k.base, Checkout: k.repo.path, Record: originalRecord},
+		})
+	}
+	first, err := k.sched.Accept(ctx, "g", "a", "parent", originalCall(""))
+	if err != nil || first.Replayed {
+		t.Fatalf("accept a by its commit: %+v, %v", first, err)
+	}
+	acc, found, err := loadActiveAcceptance(ctx, k.s.Q(ctx), "g", "a")
+	if err != nil || !found {
+		t.Fatalf("the acceptance of a: %v %v", found, err)
+	}
+	// in the accepted generation the original call is a replay of the same acceptance
+	if again, err := k.sched.Accept(ctx, "g", "a", "parent", originalCall("")); err != nil || !again.Replayed || again.AcceptanceID != acc.AcceptanceID {
+		t.Fatalf("the original call in the accepted generation = %+v, %v; want a replay of %s", again, err, acc.AcceptanceID)
+	}
+
+	// the child merges dev in generation 2, which the parent rules verified
+	k.repo.commit("other.txt", "dev moved")
+	k.repo.git("checkout", "-q", "feature-a")
+	k.repo.git("merge", "-q", "--no-ff", "-m", "merge dev", "dev")
+	refreshed := k.repo.git("rev-parse", "HEAD")
+	k.repo.git("checkout", "-q", "dev")
+	n, _ := nodeOf(k.snapshot("g"), "a")
+	rvOpenByHand(t, k.releaseKit, acc.RelationshipID, "refresh-"+acc.RelationshipID, true)
+	event2 := k.rvReportGeneration(acc.RelationshipID, "a", 2, n.CriteriaSetDigest)
+	k.exec("INSERT INTO dag_verified_heads (event_id, relationship_id, execution_generation, verdict_turn_id, head_sha, recorded_by_task_id, recorded_at) VALUES (?,?,?,?,?,?,?)",
+		event2, acc.RelationshipID, 2, "verdict-turn-g2", refreshed, "parent", k.clock())
+
+	refusedLikeBefore := func(when string) {
+		t.Helper()
+		if _, err := k.sched.Accept(ctx, "g", "a", "parent", originalCall("")); refusalReasonOf(err) != "head_not_receipt_head" || !strings.Contains(err.Error(), refreshed) {
+			t.Fatalf("the original call %s = %v; want head_not_receipt_head naming the ruled head %s", when, err, refreshed)
+		}
+		if _, err := k.sched.Accept(ctx, "g", "a", "parent", originalCall(acc.EventID)); refusalReasonOf(err) != "stale_generation" {
+			t.Fatalf("the original call naming the first generation's event %s = %v; want stale_generation", when, err)
+		}
+	}
+	// before any refresh is recorded the retry is already refused: the current generation's ruling fixed another head
+	refusedLikeBefore("once generation 2 is ruled")
+
+	if _, err := k.sched.RecordBaseRefresh(ctx, "g", "a", "parent", RefreshInput{}); err != nil {
+		t.Fatalf("the base refresh of a commit acceptance: %v", err)
+	}
+	// the recorded refresh changes neither refusal, and nothing about the acceptance moved because of the refused calls
+	refusedLikeBefore("after the refresh")
+	stand, err := k.sched.standOf(ctx, k.s.Q(ctx), acc)
+	if err != nil || stand.Head != refreshed || stand.Generation != 2 {
+		t.Fatalf("the acceptance stands on %+v, %v; want the refreshed head of generation 2", stand, err)
+	}
+
+	// the call naming the refreshed head is the replay the refresh allows: the first one carries the pre-merge record of the
+	// refreshed head (appended as a re-validation, CRW-1033), and the same call again without a record is a pure replay. A pre-merge
+	// record is stored once, so naming it again is refused as a second attach, on this path as on the pull-request path.
+	devTip := k.repo.git("rev-parse", "dev")
+	refreshedRecord := writeSealedRecord(t, k.repo.path, refreshed, devTip, k.treeOf(refreshed), "pass")
+	refreshedCall := AcceptInput{
+		RuleVersion: VerifierRule{SkillsDigest: dig("skills"), Model: "m", Effort: "none"},
+		Commit:      &CommitRef{Head: refreshed, Base: devTip, Checkout: k.repo.path, Record: refreshedRecord},
+	}
+	if got, err := k.sched.Accept(ctx, "g", "a", "parent", premergeWithRecord(k.sched, ctx, "g", "a", "parent", refreshedCall)); err != nil || !got.Replayed || got.AcceptanceID != acc.AcceptanceID {
+		t.Fatalf("the record of the refreshed head = %+v, %v; want a replay of acceptance %s", got, err, acc.AcceptanceID)
+	}
+	if got, err := k.sched.Accept(ctx, "g", "a", "parent", refreshedCall); err != nil || !got.Replayed || got.AcceptanceID != acc.AcceptanceID {
+		t.Fatalf("the refreshed call again = %+v, %v; want a replay of acceptance %s", got, err, acc.AcceptanceID)
+	}
+	if _, err := k.sched.Accept(ctx, "g", "a", "parent", premergeWithRecord(k.sched, ctx, "g", "a", "parent", refreshedCall)); refusalReasonOf(err) != "disposition_conflict" || !strings.Contains(err.Error(), "second attach") {
+		t.Fatalf("the refreshed call naming a pre-merge record again = %v; want the second attach refused", err)
+	}
+}
