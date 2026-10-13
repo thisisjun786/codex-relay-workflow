@@ -12,6 +12,9 @@ import (
 // C1: a stop at each of steps 1 to 4 calls no later step, proven by the fakes' received calls.
 // The pointer is in place in every case, so a fall-through would really reach the snapshot's
 // install call and the service calls; the absence assertion is therefore not vacuous.
+// install and service are command words, and commits/ is the forge route
+// repos/<owner>/<repo>/commits/<ref>. A path argument is neither, so a temp directory
+// whose name contains those letters is not a later step.
 func TestUpgradeStopsBeforeTheNextStep(t *testing.T) {
 	commit := upgradeGoodCommit
 	badSums := func(t *testing.T, h *upgradeEnv) {
@@ -47,14 +50,61 @@ func TestUpgradeStopsBeforeTheNextStep(t *testing.T) {
 			if got := h.recordOf(t).Reason; got != tc.reason {
 				t.Errorf("reason %q, want %q", got, tc.reason)
 			}
-			joined := strings.Join(append(h.crwCalls(), h.ghCallLines()...), " ")
 			for _, needle := range tc.absent {
-				if strings.Contains(joined, needle) {
-					t.Errorf("a call after the stop carried %q: %s", needle, joined)
+				if upgradeLaterStepCalled(t, h, needle) {
+					got := strings.Join(append(h.callArgs(), h.ghCallLines()...), " | ")
+					t.Errorf("a call after the stop carried %q: %s", needle, got)
 				}
 			}
 		})
 	}
+}
+
+// The temp directory is part of the doctor arguments. A path that contains the
+// letters "install" is not an install call, and the stop above must still hold.
+func TestUpgradeStopsBeforeTheNextStepWhenTheTempPathContainsInstall(t *testing.T) {
+	dir, err := os.MkdirTemp("", "it-install-spee-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(dir); err != nil {
+			t.Errorf("removing %s: %v", dir, err)
+		}
+	})
+	if !strings.Contains(dir, "install") {
+		t.Fatalf("temp path %s does not contain install", dir)
+	}
+	t.Setenv("TMPDIR", dir)
+	TestUpgradeStopsBeforeTheNextStep(t)
+}
+
+// upgradeLaterStepCalled reports whether the fakes were asked for needle.
+// install and service match a crw or relay argument that is that word.
+// commits/ matches the forge commits route and not a filesystem path.
+func upgradeLaterStepCalled(t *testing.T, h *upgradeEnv, needle string) bool {
+	t.Helper()
+	switch needle {
+	case "install", "service":
+		for _, line := range h.callArgs() {
+			for _, token := range strings.Fields(line) {
+				if token == needle {
+					return true
+				}
+			}
+		}
+	case "commits/":
+		for _, line := range h.ghCallLines() {
+			for _, token := range strings.Fields(line) {
+				if strings.HasPrefix(token, "repos/") && strings.Contains(token, "/commits/") {
+					return true
+				}
+			}
+		}
+	default:
+		t.Errorf("unknown later-step marker %q", needle)
+	}
+	return false
 }
 
 // C4, C5 and C8: a dry run performs steps 1 to 4, calls no service command, and leaves its record
