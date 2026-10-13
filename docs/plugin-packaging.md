@@ -239,20 +239,24 @@ files from K1 (inside the selected repository only; it refuses a linked hooks di
 The GitHub post guard (`pre-tool-use-guarding-github-post`) is a `PreToolUse` hook on the shell
 tools (`^(Bash|shell|exec_command|local_shell)$`), 10 seconds, `(crw) Guarding GitHub posts`.
 It blocks a post whose title or body text carries a secret, in a body file or written inline (`--body`, `-b`, `--title`, `gh api`
-`-f`/`-F` fields); every other refusal of it warns (see the guard modes below).
+`-f`/`-F` fields), on standard input the command shows (a here-string, a here-document, a literal `echo` or `printf` piped in, a
+`<` file) or in a body file the same command writes first from text it shows; every gh execution of the command is scanned so,
+whatever else in it is refused. Every other refusal of it warns (see the guard modes below).
 
 The PreToolUse guards (CRW-1307) block only what loses data, destroys history or exposes a secret: a relay child's force, delete
 or `--mirror` push onto `dev` or `main`, a secret in GitHub post text, and a deletion (`rm -r`, `git worktree remove`, `find -delete`
 or `-exec rm`, `xargs rm`) whose resolved target is the session's managed worktree checkout, its slot or an ancestor. Everything else
 any PreToolUse guard refuses (child push, GitHub post, memory write, automation ownership, attaching skills, goal completion, the
 interview in goal mode, the apply_patch lint, rmdir, mv and what the worktree guard cannot place) passes: the answer is
-`{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"[crw warning] Not blocked (recorded): <the refusal>"}}`,
-with no `permissionDecision` (the host refuses a bare `allow`), so the session sees the warning and the host's own approval rules
+`{"hookSpecificOutput":{"hookEventName":"PreToolUse","additionalContext":"[crw warning] Not blocked (recorded): <the refusal>"}}`
+(`Not blocked (no record written): ` when the decision line below could not be written), with no `permissionDecision` (the host refuses a bare `allow`), so the session sees the warning and the host's own approval rules
 stay as they are. A hook input or command a guard cannot read passes the same way (fail-open), in every guard. The mode table is
 `internal/harness/guardmode.go`. Each warning, release and kept block appends one line to
 `<CODEX_HOME>/crw/hook-decisions/<sha256 of the session id's JSON>.jsonl`: `{"schemaVersion":1,"sessionId","agentId","leg","rule",
 "decision":"warn"|"block"|"release","decidedAt"}`, never the command text or a secret value, and only for a hook run inside a plugin
-(`PLUGIN_ROOT` set).
+(`PLUGIN_ROOT` set). The rule is the one the leg names, else the tag, code or cause at the head of the refusal (`comment-lint`,
+`goal-complete-gate-01`, `final-gate`, `managed-dispatch`, `interview-in-goal`), else `refusal`; an input a guard could not read is
+`unreadable-input` with decision `release`.
 
 The flow status line (`stop-showing-flow-status`, CRW-1205) is a `Stop` hook, 10 seconds, `(crw) Reading the flow runs of this thread`.
 It is declared for every thread and prints for one: the leg reads the thread id of the Stop payload and the flow runs of the relay
