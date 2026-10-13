@@ -306,16 +306,21 @@ role store, `CRW_HOME/subagents.json` (`~/.crw/subagents.json` when `CRW_HOME` i
       crw role helper set executor-t1 --mode model --model <model> --effort <effort>
       crw role helper set reviewer-final --mode model --model <model> --effort <effort>
 
-- **A missing flow-only key has a compiled default.** With no usable `executor-t1` entry the flow runs
-  `anthropic/claude-sonnet-5-5` at `xhigh`; with no usable `reviewer-final` entry, `gpt-6.1-sol` at `xhigh` (the
-  values the policy's `agent-roles` section held when the flow stopped reading it). The default is never the
-  executor's or the reviewer's pair, so a tier step or a final review still moves to another pair. Each default in
-  use is a warning.
-- **A role in mode default is undecided.** A helper role with no entry, in `mode: default`, or whose entry cannot
-  be used inherits the session's model: the flow has no pair for it, a call of the role names no model and no
-  effort, and the snapshot warns. A role with a model and no effort has an undecided effort, also warned. A store
-  that cannot be read leaves every role without a compiled default undecided, with the reason. Nothing here refuses
-  a run: each is a reversible setting, warned and recorded.
+- **A missing flow-only key has a compiled default.** With no `executor-t1` entry, or one that cannot be used, the
+  flow runs `anthropic/claude-sonnet-5-5` at `xhigh`; with no usable `reviewer-final` entry, `gpt-6.1-sol` at
+  `xhigh`. The default is never the executor's or the reviewer's pair, so a tier step or a final review still moves
+  to another pair. Each default in use is a warning, and `crw role helper reset` of the key brings it back.
+- **A role in mode default is undecided.** A role in `mode: default` (a helper role or a flow-only key), and a
+  helper role with no entry or whose entry cannot be used, inherits the session's model: the flow has no pair for
+  it, a call of the role names no model and no effort, and the snapshot warns. `crw role helper set executor-t1
+  --effort high` on a missing key stores `mode: default`, so the key is then undecided, and the answer says so
+  (`source: undecided`). A role with a model and no effort has an undecided effort, also warned. A store that
+  cannot be read leaves every role without a compiled default undecided, with the reason.
+- **What an undecided role stops.** Reading the store never refuses: the table is built and every gap is a
+  warning. Two uses need a decided pair and refuse without one, each with its reason: a workflow that calls a
+  `crw.*` lane operation needs the executor's and the reviewer's pairs (its lane stamps are made of them), and a run
+  on the agent backend needs the explorer's and the reviewer's pairs (it writes them to the flow binding the spawn
+  hook reads). A run that needs neither starts with the gaps recorded in its `policy_warnings`.
 - **A reviewer is not an author's family.** When `reviewer` or `reviewer-final` runs a model of the family of
   `architect`, `executor` or `executor-t1`, the table warns. The family of a model is its name without the provider
   prefix, up to the first dash (`anthropic/claude-haiku-5` and `claude-opus-5-5` are `claude`, `gpt-6.1-sol` is
@@ -351,18 +356,20 @@ role store, `CRW_HOME/subagents.json` (`~/.crw/subagents.json` when `CRW_HOME` i
 undecided), the alias table and every warning. `crw doctor flow-roles` prints the same snapshot as JSON with the
 warnings of the execution policy file beside it. `get_capabilities` describes the same snapshot under
 `executionPolicy.agentRoles` (its `source`, `digest`, `roles` with each role's `state`, `aliases` and `warnings`)
-when the store has a file or the policy file declares `agent-roles`; the rest of `executionPolicy`, and the worker
-policy receipt the relay publishes, describe the policy file as before.
+when the store has a file or the policy file declares `agent-roles` or `agent-aliases`; the rest of
+`executionPolicy`, and the worker policy receipt the relay publishes, describe the policy file as before.
 
 ### The agent-roles section of a policy file
 
-The loader still accepts `agent-roles` and `agent-aliases` in a policy file, and a structurally malformed section
-(a role missing, two pairs for one role, an unknown key) still refuses the file. What the section says is not used
-by a flow run, so its cross-checks are warnings, kept by the loader and shown by `crw flow roles` and `crw doctor
-flow-roles`: a pair the file's `allowed` list does not approve, and a reviewer on the model family of `executor` or
-`executor-t1`. A file that still declares `agent-roles` adds the warning "the flow no longer reads it" to the table
-of every flow command, to `crw flow roles` and to `crw doctor flow-roles`. Once `crw flow roles` shows the six pairs
-the section held, the section is removed from the file (back it up first; restoring it changes nothing for a flow
+The loader accepts `agent-roles` and `agent-aliases` in a policy file without refusing it. What the sections say
+is not used by a flow run, so what is wrong with them is a warning, kept by the loader and shown by `crw flow
+roles` and `crw doctor flow-roles`: a section that does not parse (a role missing, two pairs for one role, an
+unknown key, `agent-aliases` without `agent-roles`, alias rows that overlap) is ignored with the reason, and of a
+section that parses, a pair the file's `allowed` list does not approve and a reviewer on the model family of
+`executor` or `executor-t1` are warned about. The rest of the file (`roles`, `allowed`, `exceptions`) keeps its
+rules and its refusals. A file that still declares `agent-roles` or `agent-aliases`, parsed or ignored, adds the
+warning "the flow no longer reads it" to the table of every flow command, to `crw flow roles` and to `crw doctor
+flow-roles`. Once `crw flow roles` shows the six pairs the section held, the section is removed from the file (back it up first; restoring it changes nothing for a flow
 run, which never reads it).
 
 ### One role snapshot per run
