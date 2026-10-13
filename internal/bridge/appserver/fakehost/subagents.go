@@ -4,8 +4,8 @@ import "fmt"
 
 // This file models the subagent threads of multi-agent V1 (spawn_agent), as the host shows them to a client that reads
 // them: what a session run sees of the role subagents a project orchestrator spawns (CRW-1316, CRW-1332). Facts a live
-// 0.154.0 host gave on 2026-10-14 (a read-only probe of a finished subagent thread; evidence under
-// /state/crw/crw-lane-session-host-1316/evidence/probe):
+// 0.154.0 host gave on 2026-10-14 (a read-only probe of a finished subagent thread; docs/flow/session-host.md, "Host
+// facts", and the fixtures in ../testdata/fixtures/subagent-*.json):
 //
 //   - thread/read of a subagent names parentThreadId, threadSource "subagent", the source
 //     {"subAgent": {"thread_spawn": {parent_thread_id, depth, agent_path, agent_nickname, agent_role}}}, agentRole,
