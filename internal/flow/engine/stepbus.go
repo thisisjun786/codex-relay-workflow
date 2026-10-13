@@ -80,14 +80,16 @@ type DispatchReport struct {
 const (
 	// ReplyBound: the run bound the agent to the step; nothing more is to be done for it.
 	ReplyBound = "bound"
-	// ReplyClose: the step the report names has ended (an attempt that was answered, lost or superseded): close the agent.
+	// ReplyClose: the step the report names has ended (an attempt that was answered, lost or superseded), was never published
+	// (an early report) or is bound to another subagent: close the agent.
 	ReplyClose = "close"
 	// ReplyPairMismatch: the agent runs another pair than the role's: close it and spawn again with the pair the reply names;
 	// the step stays.
 	ReplyPairMismatch = "pair_mismatch"
 	// ReplyRetry: the run could not read what it must check yet (the host, the marker turn): report again.
 	ReplyRetry = "retry"
-	// ReplyRefused: the report names no step of the run, or an agent that is not the owner thread's subagent; the step stays.
+	// ReplyRefused: the report names another run, no subagent for a step the run did not publish, or an agent that is not the
+	// owner thread's subagent; the step stays.
 	ReplyRefused = "refused"
 )
 

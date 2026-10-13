@@ -133,8 +133,8 @@ func (e *Engine) routeReports(done chan struct{}) {
 }
 
 // route hands a report to the call that waits for its step, or answers it from the journal: a report for an attempt that is
-// bound already is answered bound (or close, for a second subagent), one for an attempt that ended is answered close, one that
-// names no published step is refused. A report for a step that is published and that no call waits for now stays in the inbox
+// bound already is answered bound (or close, for a second subagent), one for an attempt that ended is answered close, and so is
+// one that names no published step (an early report; refused when it names no subagent). A report for a step that is published and that no call waits for now stays in the inbox
 // until its call reaches it (a resumed run that has not reached the position yet).
 func (e *Engine) route(rep DispatchReport) {
 	r, bus := e.sessR, e.cfg.Session.Bus
@@ -192,6 +192,9 @@ func (e *Engine) judgeReport(rep DispatchReport) (DispatchReply, bool) {
 		}
 	}
 	switch {
+	case !published && rep.Agent != "":
+		// an early report (or one of an earlier prepared attempt): the subagent has no step to work on, so it is closed
+		return DispatchReply{Status: ReplyClose, Close: rep.Agent, Detail: fmt.Sprintf("close %s: run %s published no step %s/t%d-a%d", rep.Agent, e.runID, rep.Call, rep.K, rep.Attempt)}, false
 	case !published:
 		return DispatchReply{Status: ReplyRefused, Detail: fmt.Sprintf("run %s published no step %s/t%d-a%d", e.runID, rep.Call, rep.K, rep.Attempt)}, false
 	case ended:
@@ -764,7 +767,10 @@ func (c *callRun) sessionHarvest(turnCtx, ctx context.Context) (TurnOutcome, *se
 					return out, nil, nil
 				}
 			case turn != nil && (turn.Status == "failed" || turn.Status == "interrupted") && turn.ErrorInfo == "" && hostGone(status):
-				return TurnOutcome{}, &sessionLoss{reason: fmt.Sprintf("the turn ended %s on a thread the host shows %s", turn.Status, status), hostStatus: status, turnStatus: turnStatus}, nil
+				// confirmed once more: a thread the host shows again is judged on that read, not lost
+				if again, t2, ok := c.sessionRead(turnCtx); ok && hostGone(again) && (t2 == nil || t2.Status != "completed") {
+					return TurnOutcome{}, &sessionLoss{reason: fmt.Sprintf("the turn ended %s on a thread the host shows %s", turn.Status, status), hostStatus: status, turnStatus: turnStatus}, nil
+				}
 			case turn != nil && turn.Status == "failed":
 				return TurnOutcome{TurnID: turn.ID, Failed: &TurnFailure{CodexErrorInfo: turn.ErrorInfo, Message: turn.ErrorMessage}}, nil, nil
 			case turn != nil && turn.Status == "interrupted":

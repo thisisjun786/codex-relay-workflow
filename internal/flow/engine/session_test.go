@@ -326,8 +326,57 @@ return [a.status, b.status]`)
 	}
 }
 
-// A dispatch report for an attempt that ended (it was lost) is answered close; a report that names no published step is
-// refused; a second subagent reported for an attempt that is bound already is answered close. None of them is bound.
+// A turn that ended interrupted without an error on a thread the host shows notLoaded is lost only when a second read still shows
+// the thread gone: a thread the host has back on that read is not lost (its interrupted turn is the call's held outcome), and one
+// that stays gone is lost and spawns the next attempt.
+func TestSessionLostNeedsASecondRead(t *testing.T) {
+	k := newSessionKit(t)
+	k.orch.answer = func(st Step, _ string, _ int) orchAnswer {
+		if st.Attempt == 1 {
+			return orchAnswer{hang: true}
+		}
+		return orchAnswer{}
+	}
+	k.orch.onSpawn = func(st Step, agent string) {
+		if st.Attempt != 1 {
+			return
+		}
+		back := 0
+		if agent == "agent-1" {
+			back = 1
+		}
+		go func() {
+			for i := 0; i < 5000; i++ {
+				for _, r := range rowsNamed(k.h.journal.Events(), EvTurnStarted) {
+					if rowStr(r.Data, "turn_id") == agent+"-turn1" {
+						k.host.set(agent, func(a *fakeAgent, t *SessionTurn) {
+							a.Status, a.back = "notLoaded", back
+							t.Status, t.UpdatedAt = "interrupted", time.Now()
+						})
+						return
+					}
+				}
+				time.Sleep(time.Millisecond)
+			}
+		}()
+	}
+	res := k.h.run(`const a = await agent.call('blip', { agentType: 'explorer', label: 'blip' })
+const b = await agent.call('gone', { agentType: 'explorer', label: 'gone' })
+return [a.status, a.reason, b.status]`)
+	if got := value[[]any](t, res); fmt.Sprint(got) != "[held host_interrupted_external completed]" {
+		t.Fatalf("results %v", got)
+	}
+	if got := eventsOf(k.rowsOf("blip")); got != "prepared,step_published,thread_started,turn_started,held" {
+		t.Errorf("a thread the host had back on the second read was lost: %s", got)
+	}
+	if got := eventsOf(k.rowsOf("gone")); got != "prepared,step_published,thread_started,turn_started,session_attempt_lost,step_published,thread_started,turn_started,completed" {
+		t.Errorf("a thread that stayed gone was not lost: %s", got)
+	}
+}
+
+// A dispatch report for an attempt that ended (it was lost) is answered close; a report that names no published step (an early
+// one) is answered close too; a second subagent reported for an attempt that is bound already is answered close. None of them is
+// bound.
 func TestSessionStaleAndEarlyReports(t *testing.T) {
 	k := newSessionKit(t)
 	var once sync.Once
@@ -357,7 +406,7 @@ return r.status`)
 	if got := value[string](t, res); got != "completed" {
 		t.Fatalf("status %s", got)
 	}
-	for id, want := range map[string]string{"late-a1": ReplyClose, "nostep": ReplyRefused, "twice": ReplyClose} {
+	for id, want := range map[string]string{"late-a1": ReplyClose, "nostep": ReplyClose, "twice": ReplyClose} {
 		var r DispatchReply
 		waitFor(t, "the reply to "+id, func() bool {
 			var ok bool
@@ -366,6 +415,9 @@ return r.status`)
 		})
 		if r.Status != want {
 			t.Errorf("%s: reply %+v, want %s", id, r, want)
+		}
+		if id == "nostep" && r.Close != "agent-x" {
+			t.Errorf("the early report's reply names no subagent to close: %+v", r)
 		}
 	}
 	if ts := rowsNamed(k.rowsOf("w"), EvThreadStarted); len(ts) != 2 || rowStr(ts[1].Data, "thread_id") != "agent-2" {

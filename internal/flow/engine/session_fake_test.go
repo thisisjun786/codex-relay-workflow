@@ -25,6 +25,9 @@ type fakeAgent struct {
 	turns  []*SessionTurn // oldest first
 	closed bool
 	gone   bool
+	// back is the number of reads a notLoaded thread still shows notLoaded before it shows idle again (a host that lost the
+	// thread for a moment).
+	back int
 }
 
 type fakeSessionHost struct {
@@ -51,7 +54,13 @@ func (h *fakeSessionHost) ReadAgent(_ context.Context, id string) (SessionAgent,
 	if !ok || a.gone {
 		return SessionAgent{}, fmt.Errorf("thread %s: %w", id, ErrSessionAgentNotFound)
 	}
-	return a.SessionAgent, nil
+	out := a.SessionAgent
+	if a.back > 0 && a.Status == "notLoaded" {
+		if a.back--; a.back == 0 {
+			a.Status = "idle"
+		}
+	}
+	return out, nil
 }
 
 func (h *fakeSessionHost) Turns(_ context.Context, id string, limit int, full bool) ([]SessionTurn, error) {

@@ -808,8 +808,8 @@ any row is written. `crw flow shadow` replays either from the trace and names th
   | `bound` | the subagent is the step's; its rows are written |
   | `pair_mismatch` | the subagent runs another pair: close it and spawn again with the role's pair (named); the step stays |
   | `retry` | the host or the marker turn cannot be read yet |
-  | `refused` | no such step of the run, or not a subagent of the owner thread |
-  | `close` | the report names an attempt that ended (answered, lost) or a second subagent for a bound attempt |
+  | `refused` | another run, a report without a subagent for a step the run did not publish, or not a subagent of the owner thread |
+  | `close` | the report names an attempt that ended (answered, lost), a step the run did not publish (an early report), or a second subagent for a bound attempt |
 
   A role whose pair the role table leaves to the host is bound without the pair check (`pair_unchecked`); an `agentRole` other
   than the expected agent type is recorded (`session_agent_role_mismatch`) and bound. While a step waits, the run also looks the
