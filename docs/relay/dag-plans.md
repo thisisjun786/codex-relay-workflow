@@ -9,8 +9,12 @@ DAG execution contract (CRW-182, sections 1, 2, 4, 5 and 6.2); where this page r
 
 ## The model
 
-* A **plan** has an id and belongs to one project (the Linear project key). The relay's log is the canonical plan;
-  Linear is a projection of it and a difference is drift (decision D-13).
+* A **plan** has an id and belongs to one project. Its project key is the `scope_key` of the project's parent binding,
+  the Linear project's UUID, not its identifier (such as `P-CRW-140`): a coordinator claim is made under the live parent
+  binding of that key, so a plan put under another key is refused at the claim (`scope_role_mismatch`, naming the plan's
+  key and the keys the task is the parent of), and `crw flow start` warns before the run when the owner thread holds no
+  parent binding of the plan's key. The relay's log is the canonical plan; Linear is a projection of it and a difference is
+  drift (decision D-13).
 * A **node** is one deliverable: an issue key, a kind, a title, and the digest of its completion criteria. Kind
   `implementation` is one issue, one child, one PR; kind `non_pr` is research, design, verification or operation with no
   PR. Node ids are plan-local.

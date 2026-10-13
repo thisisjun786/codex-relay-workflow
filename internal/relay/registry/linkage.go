@@ -20,9 +20,12 @@ const (
 	scopeIssue   = "issue"
 	scopeProject = "project"
 	scopeStore   = "store"
-	roleChild    = "child"
-	roleParent   = "parent"
-	linkExec     = "execution"
+	// scopeManagement is a management session's own seat (CRW-1333): the supervisor's, keyed by the
+	// seat id, above the initiatives that session registered.
+	scopeManagement = "management"
+	roleChild       = "child"
+	roleParent      = "parent"
+	linkExec        = "execution"
 )
 
 // linkRefusal is linkage._Refusal: decided, then recorded in the transaction that decided it.
@@ -341,9 +344,15 @@ func (l linkage) bindingRefusal(ctx context.Context, role, kind, key string, end
 		return nil, err
 	}
 	// The same role at another SCOPE, not merely another key: a supervisor's seats are one per
-	// Linear level, and an initiative whose key happens to be "store" is not the store seat.
+	// Linear level, and an initiative whose key happens to be "store" is not the store seat. A
+	// management seat is the exception for the store seat only: the thread that held the store seat
+	// lays it down when it takes its management seat (retireStoreSeat), so that seat is not a rival.
+	exempt := ""
+	if kind == scopeManagement {
+		exempt = "    AND NOT (scope_kind = '" + scopeStore + "' AND scope_key = '" + scopeStore + "')"
+	}
 	err = l.q(ctx).QueryRowContext(ctx, "SELECT scope_kind, scope_key FROM scope_bindings  WHERE task_id = ? AND role = ?"+
-		"    AND NOT (scope_kind = ? AND scope_key = ?)"+
+		"    AND NOT (scope_kind = ? AND scope_key = ?)"+exempt+
 		"    AND status IN ('active','paused') AND superseded_by IS NULL", endpoint.TaskID, role, kind, key).Scan(&other.kind, &other.key)
 	if err == nil {
 		return &linkRefusal{reason: contract.RefusalRoleAlreadyBound,

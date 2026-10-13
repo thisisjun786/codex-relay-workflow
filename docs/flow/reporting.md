@@ -155,7 +155,9 @@ parent of the project, the initiative above it, the live supervisor of that init
 to the new lead. When no initiative supervises the project, when the walk can only name the store seat (a seat is not an initiative lead
 and is never sent a report through the bridge), or when the linkage cannot be read or is contested, the report stays standing: it has a
 row and no delivery, and `crw flow reports --unread` and the pump (below) show it. A `jun_decision_request` is addressed to the store seat
-and is never delivered through the bridge.
+and is never delivered through the bridge. A manager that registered its management seat (`crw manage supervisor register`) laid its store
+seat down, and the store seat is then read through that management seat ([linkage](../relay/linkage.md#management-seats)), so the
+report still names the manager's thread.
 
 **The delivery** is `crw manage send-parent --role supervisor --thread <initiative lead's thread> --logical-id <run>:<milestone>:report
 --report <report id> --initiative <initiative>`. The role is an option of `crw manage`, not of the relay; the default role (parent) is not

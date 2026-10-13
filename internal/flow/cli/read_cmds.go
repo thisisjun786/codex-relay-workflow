@@ -91,6 +91,15 @@ func (c *command) printDetail(d RunDetail) {
 	w := c.stdout
 	fmt.Fprintf(w, "run %s  %s  %s\n", d.RunID, d.Workflow, d.State)
 	fmt.Fprintf(w, "owner %s  plan %s@%d  started %s ago  tokens %d  calls %d\n", cell(d.Owner), cell(d.PlanID), d.PlanRevision, c.since(d.StartedAt), d.Tokens, d.Calls)
+	if d.PolicyPath == "" {
+		fmt.Fprintln(w, "policy none (placeholder table, no execution policy file)")
+	} else {
+		line := "policy " + d.PolicyPath + "  digest " + d.PolicyDigest
+		if d.PolicyRepinnedFrom != "" {
+			line += "  repinned from " + d.PolicyRepinnedFrom
+		}
+		fmt.Fprintln(w, line)
+	}
 	var notes []string
 	if d.Live {
 		notes = append(notes, fmt.Sprintf("process %d holds the run lock", d.PID))

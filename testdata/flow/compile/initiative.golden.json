@@ -7,6 +7,20 @@
       "project_key": "PAPI",
       "status": "changes",
       "base_revision": 0,
+      "warnings": [
+        {
+          "project": "PAPI",
+          "rule": "target_repository",
+          "path": "target.repository",
+          "detail": "the repository \"acme/shop\" is not an absolute path: a run integrates its nodes on a local checkout and refuses another target (give the checkout's absolute path, the run's --repo)"
+        },
+        {
+          "project": "PAPI",
+          "rule": "target_base_ref",
+          "path": "target.base_ref",
+          "detail": "the base_ref \"refs/heads/dev\" is read as the branch \"dev\": the integration path adds refs/heads/ itself (write the short name)"
+        }
+      ],
       "revision": {
         "author_task_id": "crw-plan-checkout",
         "changes": [
@@ -75,7 +89,7 @@
               "edge_id": "e:API-1:API-2",
               "from_node_id": "API-1",
               "kind": "integrated",
-              "target_base_ref": "refs/heads/dev",
+              "target_base_ref": "dev",
               "target_repository": "acme/shop",
               "to_node_id": "API-2"
             },
@@ -86,7 +100,7 @@
               "edge_id": "e:API-2:API-3",
               "from_node_id": "API-2",
               "kind": "integrated",
-              "target_base_ref": "refs/heads/dev",
+              "target_base_ref": "dev",
               "target_repository": "acme/shop",
               "to_node_id": "API-3"
             },
@@ -97,7 +111,7 @@
               "edge_id": "e:API-3:API-4",
               "from_node_id": "API-3",
               "kind": "integrated",
-              "target_base_ref": "refs/heads/dev",
+              "target_base_ref": "dev",
               "target_repository": "acme/shop",
               "to_node_id": "API-4"
             },
@@ -116,7 +130,7 @@
         "expected_parent_revision": 0,
         "plan_id": "plan-papi",
         "project_key": "PAPI",
-        "request_id": "flow-compile-892ac2f882a0ca75",
+        "request_id": "flow-compile-190e2ffef53b36cf",
         "schema": "dag-plan-revision/1"
       },
       "preview": {
@@ -273,7 +287,7 @@
         "size_unreviewed": [],
         "external_after": [],
         "retired": [],
-        "request_id": "flow-compile-892ac2f882a0ca75",
+        "request_id": "flow-compile-190e2ffef53b36cf",
         "expected_parent_revision": 0
       }
     },
@@ -340,8 +354,8 @@
               "edge_id": "e:WEB-1:WEB-2",
               "from_node_id": "WEB-1",
               "kind": "integrated",
-              "target_base_ref": "refs/heads/dev",
-              "target_repository": "acme/shop",
+              "target_base_ref": "dev",
+              "target_repository": "/srv/acme/shop",
               "to_node_id": "WEB-2"
             },
             "op": "add_edge"
@@ -351,8 +365,8 @@
               "edge_id": "e:WEB-2:WEB-3",
               "from_node_id": "WEB-2",
               "kind": "integrated",
-              "target_base_ref": "refs/heads/dev",
-              "target_repository": "acme/shop",
+              "target_base_ref": "dev",
+              "target_repository": "/srv/acme/shop",
               "to_node_id": "WEB-3"
             },
             "op": "add_edge"
@@ -362,8 +376,8 @@
               "edge_id": "e:WEB-3:WEB-4",
               "from_node_id": "WEB-3",
               "kind": "integrated",
-              "target_base_ref": "refs/heads/dev",
-              "target_repository": "acme/shop",
+              "target_base_ref": "dev",
+              "target_repository": "/srv/acme/shop",
               "to_node_id": "WEB-4"
             },
             "op": "add_edge"
@@ -373,8 +387,8 @@
               "edge_id": "e:WEB-3:WEB-5",
               "from_node_id": "WEB-3",
               "kind": "integrated",
-              "target_base_ref": "refs/heads/dev",
-              "target_repository": "acme/shop",
+              "target_base_ref": "dev",
+              "target_repository": "/srv/acme/shop",
               "to_node_id": "WEB-5"
             },
             "op": "add_edge"
@@ -383,7 +397,7 @@
         "expected_parent_revision": 0,
         "plan_id": "plan-pweb",
         "project_key": "PWEB",
-        "request_id": "flow-compile-3f2cc92c43fbdf77",
+        "request_id": "flow-compile-258ecc3e18eb1682",
         "schema": "dag-plan-revision/1"
       },
       "preview": {
@@ -527,7 +541,7 @@
           }
         ],
         "retired": [],
-        "request_id": "flow-compile-3f2cc92c43fbdf77",
+        "request_id": "flow-compile-258ecc3e18eb1682",
         "expected_parent_revision": 0
       }
     },
@@ -594,8 +608,8 @@
               "edge_id": "e:DATA-1:DATA-2",
               "from_node_id": "DATA-1",
               "kind": "integrated",
-              "target_base_ref": "refs/heads/dev",
-              "target_repository": "acme/shop",
+              "target_base_ref": "dev",
+              "target_repository": "/srv/acme/shop",
               "to_node_id": "DATA-2"
             },
             "op": "add_edge"
@@ -605,8 +619,8 @@
               "edge_id": "e:DATA-1:DATA-3",
               "from_node_id": "DATA-1",
               "kind": "integrated",
-              "target_base_ref": "refs/heads/dev",
-              "target_repository": "acme/shop",
+              "target_base_ref": "dev",
+              "target_repository": "/srv/acme/shop",
               "to_node_id": "DATA-3"
             },
             "op": "add_edge"
@@ -616,8 +630,8 @@
               "edge_id": "e:DATA-2:DATA-4",
               "from_node_id": "DATA-2",
               "kind": "integrated",
-              "target_base_ref": "refs/heads/dev",
-              "target_repository": "acme/shop",
+              "target_base_ref": "dev",
+              "target_repository": "/srv/acme/shop",
               "to_node_id": "DATA-4"
             },
             "op": "add_edge"
@@ -627,8 +641,8 @@
               "edge_id": "e:DATA-2:DATA-5",
               "from_node_id": "DATA-2",
               "kind": "integrated",
-              "target_base_ref": "refs/heads/dev",
-              "target_repository": "acme/shop",
+              "target_base_ref": "dev",
+              "target_repository": "/srv/acme/shop",
               "to_node_id": "DATA-5"
             },
             "op": "add_edge"
@@ -638,8 +652,8 @@
               "edge_id": "e:DATA-3:DATA-4",
               "from_node_id": "DATA-3",
               "kind": "integrated",
-              "target_base_ref": "refs/heads/dev",
-              "target_repository": "acme/shop",
+              "target_base_ref": "dev",
+              "target_repository": "/srv/acme/shop",
               "to_node_id": "DATA-4"
             },
             "op": "add_edge"
@@ -648,7 +662,7 @@
         "expected_parent_revision": 0,
         "plan_id": "plan-pdata",
         "project_key": "PDATA",
-        "request_id": "flow-compile-006a6c755f41fb5d",
+        "request_id": "flow-compile-d57748c1549dabfe",
         "schema": "dag-plan-revision/1"
       },
       "preview": {
@@ -776,7 +790,7 @@
         "size_unreviewed": [],
         "external_after": [],
         "retired": [],
-        "request_id": "flow-compile-006a6c755f41fb5d",
+        "request_id": "flow-compile-d57748c1549dabfe",
         "expected_parent_revision": 0
       }
     },
@@ -833,8 +847,8 @@
               "edge_id": "e:OPS-1:OPS-2",
               "from_node_id": "OPS-1",
               "kind": "integrated",
-              "target_base_ref": "refs/heads/dev",
-              "target_repository": "acme/shop",
+              "target_base_ref": "dev",
+              "target_repository": "/srv/acme/shop",
               "to_node_id": "OPS-2"
             },
             "op": "add_edge"
@@ -844,8 +858,8 @@
               "edge_id": "e:OPS-1:OPS-4",
               "from_node_id": "OPS-1",
               "kind": "integrated",
-              "target_base_ref": "refs/heads/dev",
-              "target_repository": "acme/shop",
+              "target_base_ref": "dev",
+              "target_repository": "/srv/acme/shop",
               "to_node_id": "OPS-4"
             },
             "op": "add_edge"
@@ -855,8 +869,8 @@
               "edge_id": "e:OPS-2:OPS-3",
               "from_node_id": "OPS-2",
               "kind": "integrated",
-              "target_base_ref": "refs/heads/dev",
-              "target_repository": "acme/shop",
+              "target_base_ref": "dev",
+              "target_repository": "/srv/acme/shop",
               "to_node_id": "OPS-3"
             },
             "op": "add_edge"
@@ -865,7 +879,7 @@
         "expected_parent_revision": 0,
         "plan_id": "plan-pops",
         "project_key": "POPS",
-        "request_id": "flow-compile-ff6694fd22e1b18a",
+        "request_id": "flow-compile-bfb126ba20adcfe7",
         "schema": "dag-plan-revision/1"
       },
       "preview": {
@@ -975,7 +989,7 @@
         "size_unreviewed": [],
         "external_after": [],
         "retired": [],
-        "request_id": "flow-compile-ff6694fd22e1b18a",
+        "request_id": "flow-compile-bfb126ba20adcfe7",
         "expected_parent_revision": 0
       }
     }

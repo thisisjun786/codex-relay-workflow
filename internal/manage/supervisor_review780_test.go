@@ -233,9 +233,9 @@ func TestSupervisorReview780HelpPipeEpipeExitsOne(t *testing.T) {
 // to catch.
 var supervisorReview780ExpectedUsage = map[string]string{
 	"supervisor --help": "usage: crw manage supervisor {register,show} ...\n" +
-		"  register\tbind the management thread as the store supervisor and record its pair\n" +
+		"  register\tbind the calling management thread (--task, else CODEX_THREAD_ID, else the configured one) as its own management seat and record its pair\n" +
 		"  show\t\tprint the recorded binding and the recorded settings\n",
-	"supervisor register --help": "usage: crw manage supervisor register\n",
+	"supervisor register --help": "usage: crw manage supervisor register [--task THREAD] [--host HOST]\n",
 }
 
 // The contrast: with the pipe's read end open the same child writes the whole usage and exits 0.

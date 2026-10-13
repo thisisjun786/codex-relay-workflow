@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -472,5 +473,28 @@ func TestCapBasisAndTheEpoch(t *testing.T) {
 	wider := CapBasis{LimitID: "lim-store-runs", Revision: 1, WMinutes: 30, WSource: "measured", SMinutes: 5, SSource: "measured", DecidedBy: "parent", Plan: "rp"}
 	if err := s1.RecordCapBasis(ctx, wider); refusalReason(err) != "malformed_receipt" {
 		t.Fatalf("a plan named for a limit of the store scope = %v", err)
+	}
+}
+
+// TestClaimEpochRefusalNamesBothKeys (CRW-1317): the scope_role_mismatch refusal of a claim names the plan's project key and the
+// project keys of the live parent bindings the task holds, so a plan put under the wrong key is read off the refusal.
+func TestClaimEpochRefusalNamesBothKeys(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	k := newReleaseKit(t)
+	releasePlan(k.fixture, "rp")
+	now := k.clock()
+	if err := storeseed.InsertScopeBinding(ctx, k.s, store.ScopeBindingsRow{BindingID: "bind-other", Role: "parent", ScopeKind: "project", ScopeKey: "3b46bc6e-other",
+		TaskID: "other-parent", HostID: "host", Status: "active", Revision: 1, CreatedAt: now, UpdatedAt: now}); err != nil {
+		t.Fatal(err)
+	}
+	_, err := k.sched.ClaimEpoch(ctx, "rp", ClaimInput{Actor: "other-parent", SessionNonce: "session-1"})
+	var refused *store.RefusedError
+	if !errors.As(err, &refused) || refused.Reason != "scope_role_mismatch" || !strings.Contains(refused.Detail, "P-TEST") || !strings.Contains(refused.Detail, "3b46bc6e-other") {
+		t.Fatalf("a parent of another project claims the plan: %v", err)
+	}
+	_, err = k.sched.ClaimEpoch(ctx, "rp", ClaimInput{Actor: "nobody", SessionNonce: "session-2"})
+	if !errors.As(err, &refused) || refused.Reason != "scope_role_mismatch" || !strings.Contains(refused.Detail, "P-TEST") || !strings.Contains(refused.Detail, "holds no live parent binding") {
+		t.Fatalf("a task with no binding claims the plan: %v", err)
 	}
 }

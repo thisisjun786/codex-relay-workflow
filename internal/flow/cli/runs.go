@@ -141,9 +141,15 @@ type NodeInfo struct {
 // RunDetail is `crw flow show`: the reading of a run and its tree.
 type RunDetail struct {
 	RunInfo
-	Phases    []PhaseNode `json:"phases"`
-	Nodes     []NodeInfo  `json:"nodes"`
-	Questions []Question  `json:"questions"`
+	// PolicyPath and PolicyDigest are the execution policy file the run recorded when it started and the digest of its bytes
+	// (the run's last start or repin), both empty for a run on the placeholder table, which reads no file. PolicyRepinnedFrom
+	// is the digest the run held before a resume read another one, empty if no resume did (CRW-1324).
+	PolicyPath         string      `json:"policy_path"`
+	PolicyDigest       string      `json:"policy_digest"`
+	PolicyRepinnedFrom string      `json:"policy_repinned_from,omitempty"`
+	Phases             []PhaseNode `json:"phases"`
+	Nodes              []NodeInfo  `json:"nodes"`
+	Questions          []Question  `json:"questions"`
 }
 
 func str(m map[string]any, key string) string {
@@ -444,10 +450,28 @@ func Blocked(rec RunRecord, events []engine.Event) (reasons []string, blocked bo
 	return reasons, true
 }
 
+// recordedPolicy is the policy the run holds: what its latest start recorded, replaced by what a repin recorded after it, and the
+// digest a repin replaced.
+func recordedPolicy(events []engine.Event) (path, digest, repinnedFrom string) {
+	for _, e := range events {
+		if e.Kind != engine.KindRun {
+			continue
+		}
+		switch e.Event {
+		case "started":
+			path, digest = str(e.Data, "policy_source"), str(e.Data, "policy_digest")
+		case engine.EvPolicyRepinned:
+			path, digest, repinnedFrom = str(e.Data, "new_source"), str(e.Data, "new"), str(e.Data, "old")
+		}
+	}
+	return path, digest, repinnedFrom
+}
+
 // Detail builds the tree of a run: its phases with the agent calls made in each, what each plan node has so far, and the
 // questions it asked.
 func Detail(rec RunRecord, events []engine.Event, live bool, pid int) RunDetail {
 	d := RunDetail{RunInfo: Summarize(rec, events, live, pid), Phases: []PhaseNode{}, Nodes: []NodeInfo{}, Questions: Questions(events)}
+	d.PolicyPath, d.PolicyDigest, d.PolicyRepinnedFrom = recordedPolicy(events)
 	order, rows := callRows(events)
 	// the phase a call was made in is the last phase row before its first row
 	phaseOf := map[string]string{}

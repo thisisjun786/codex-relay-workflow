@@ -2,13 +2,19 @@ package scenario
 
 import (
 	"fmt"
+	"io/fs"
+	"reflect"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
+	"testing/fstest"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/roles"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/workflows/lib"
 )
 
 // seqOf is the sequence number of the first row the function accepts.
@@ -251,4 +257,197 @@ func TestEvidenceMissingSpawnsExplorerThenReviewerPacket(t *testing.T) {
 		t.Errorf("no SP-EXPL-3 spawn decision: %+v", l.SpawnRows())
 	}
 	noTierStep(t, l)
+}
+
+// ---- the executor contract and the authority boundary of the DESIGN (CRW-1321) ----
+
+// The architect overlay and the design audit packet both state the executor contract the run enforces, and the facts they state
+// are the run's: the commit of a node is made by the run with the message `crw <node> <call>`, a blank line and the request id,
+// and a RECEIPT has exactly the fields each names - no field for a commit, a commit message or an exception's reason. Both copies
+// are held to ops.Receipt and to the run's commit, so neither can drift from the run or from the other.
+func TestArchitectContractMatchesTheRun(t *testing.T) {
+	l := NewLab(t, oneNode()...)
+	mustRun(t, l)
+	overlay, err := roles.Overlay("architect", roles.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	commits := l.Rows(ops.OpCommit)
+	if len(commits) == 0 {
+		t.Fatal("no commit row")
+	}
+	row := commits[0]
+	call := str(row.Data, "call")
+	msg := strings.TrimRight(l.Git("log", "-1", "--format=%B", str(row.Data, "commit")), "\n")
+	head, reqID, ok := strings.Cut(msg, "\n\n")
+	short := call
+	if len(short) > 12 {
+		short = short[:12]
+	}
+	if !ok || head != "crw A "+short || reqID == "" || strings.ContainsAny(reqID, "\n ") {
+		t.Errorf("the run's commit message is %q, not `crw <node> <call>`, a blank line and the request id", msg)
+	}
+	audit := textOfCall(l, callNamed(t, l, "design-audit:r1").ID)
+	for where, text := range map[string]string{"the architect overlay": overlay, "the design audit packet": audit} {
+		if !strings.Contains(text, "fixed message `crw <node> <call>`") || !strings.Contains(text, "request id") {
+			t.Errorf("%s does not state the run's commit message (`crw <node> <call>` and the request id)", where)
+		}
+	}
+	// The sentence of each that lists the fields names each field of ops.Receipt and nothing the RECEIPT does not have.
+	named := regexp.MustCompile("RECEIPT has exactly these fields: ([^.\n]*)").FindStringSubmatch(overlay)
+	if named == nil {
+		t.Fatalf("the architect overlay does not list the RECEIPT fields:\n%s", overlay)
+	}
+	receiptNames(t, "the architect overlay", named[1], regexp.MustCompile("`([a-z_]+)`"))
+	listed := regexp.MustCompile(`reports a RECEIPT \(([^)]*)\)`).FindStringSubmatch(audit)
+	if listed == nil {
+		t.Fatalf("the design audit packet does not list the RECEIPT fields:\n%s", audit)
+	}
+	receiptNames(t, "the design audit packet", listed[1], regexp.MustCompile(`([a-z_]+)`))
+}
+
+// receiptNames holds the field list a text gives for the RECEIPT to the json fields of ops.Receipt: each named, nothing else.
+func receiptNames(t *testing.T, where, list string, name *regexp.Regexp) {
+	t.Helper()
+	fields := reflect.TypeOf(ops.Receipt{})
+	want := map[string]bool{}
+	for i := 0; i < fields.NumField(); i++ {
+		tag, _, _ := strings.Cut(fields.Field(i).Tag.Get("json"), ",")
+		want[tag] = true
+	}
+	got := map[string]bool{}
+	for _, m := range name.FindAllStringSubmatch(list, -1) {
+		got[m[1]] = true
+		if !want[m[1]] {
+			t.Errorf("%s names %s, which is no RECEIPT field: %s", where, m[1], list)
+		}
+	}
+	for tag := range want {
+		if !got[tag] {
+			t.Errorf("%s does not name the RECEIPT field %s: %s", where, tag, list)
+		}
+	}
+}
+
+// The design audit checks every done condition against the executor contract and every decision against the architect's
+// authority, and either failing is a needs_changes finding: the packet of the audit says so in words the reviewer acts on.
+func TestDesignAuditPacketChecksExecutabilityAndAuthority(t *testing.T) {
+	l := NewLab(t, oneNode()...)
+	mustRun(t, l)
+	text := textOfCall(l, callNamed(t, l, "design-audit:r1").ID)
+	for _, want := range []string{
+		"EXECUTOR CONTRACT",
+		"the executor never commits",
+		"the run commits",
+		"`crw <node> <call>`",
+		"RECEIPT",
+		"at the committed HEAD",
+		"state of the worktree",
+		"generation command and its verification command",
+		"every done condition",
+		"OUT-OF-AUTHORITY DECISIONS",
+		"an exception to a rule of the repository",
+		"the record of another issue",
+		"a policy decision",
+		"a prerequisite of the execution environment",
+		"open question",
+		"also when it reaches this audit unanswered",
+		"needs_changes",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the design audit packet lacks %q:\n%s", want, text)
+		}
+	}
+	approve := regexp.MustCompile(`approved only when[^.]*every done condition[^.]*executor contract[^.]*no decision[^.]*outside the architect's authority`)
+	if !approve.MatchString(text) {
+		t.Errorf("approval is not conditioned on executable done conditions and no out-of-authority decision:\n%s", text)
+	}
+}
+
+// libWith is the embedded helper library with one replacement in one file: the library of a binary whose packet text differs.
+func libWith(t *testing.T, file, old, new string) fs.FS {
+	t.Helper()
+	out := fstest.MapFS{}
+	err := fs.WalkDir(lib.FS, ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		b, err := fs.ReadFile(lib.FS, p)
+		if err != nil {
+			return err
+		}
+		if p == file {
+			if !strings.Contains(string(b), old) {
+				t.Fatalf("%s has no %q", file, old)
+			}
+			b = []byte(strings.Replace(string(b), old, new, 1))
+		}
+		out[p] = &fstest.MapFile{Data: b}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// What a change of prompt text does to a run that resumes over a journal recorded with the earlier text (CRW-1321, the header of
+// crw:lib/packets). A role overlay is the developer instructions of a thread and part of no input digest: a resume under other
+// overlay text replays every call and runs nothing live. A packet's text is part of the input digest of its call: a resume under
+// another design audit packet runs design-audit:r1 again live, and the rest of its path with it, and crw.designLedger then
+// refuses to add the first revision a second time, so the resumed run ends in that refusal. That resume supersedes the recorded
+// audit and the first revision with it, so the binary that started the run refuses it afterwards too: a run past its design audit
+// is finished by the binary that started it only while no process of the new one has resumed it, and is otherwise started anew.
+func TestResumeAfterPromptTextChange(t *testing.T) {
+	l := NewLab(t, twoNodes()...)
+	if got := mustRun(t, l); got.State != "closed" {
+		t.Fatalf("state %q", got.State)
+	}
+	before := l.LastSeq()
+	l.Prompt = func(role string, qa bool) (string, error) {
+		p, err := roles.Prompt(role, roles.Options{QA: qa})
+		return p + "\n\nAnother sentence of the overlay.", err
+	}
+	l.NewProcess("proc-2")
+	if res := l.Resume(); res.Status != engine.RunCompleted {
+		t.Fatalf("resume under another overlay: %s: %s", res.Status, res.Error)
+	}
+	if live := l.LiveCalls(before); len(live) != 0 {
+		t.Errorf("a resume under another overlay text ran calls live: %+v", live)
+	}
+
+	before = l.LastSeq()
+	l.Lib = libWith(t, "packets.js", "before any executor starts.", "before any executor starts. Another sentence of the packet.")
+	l.NewProcess("proc-3")
+	res := l.Resume()
+	var labels []string
+	for _, c := range l.LiveCalls(before) {
+		labels = append(labels, c.Label)
+	}
+	if !slices.Equal(labels, []string{"design-audit:r1"}) {
+		t.Errorf("live calls %v, want the design audit whose packet changed", labels)
+	}
+	refused := false
+	for _, ev := range rowsAfter(l, before) {
+		if ev.Kind == engine.KindCall && ev.Op == ops.OpDesignLedger && ev.Event == engine.EvRefused {
+			refused = true
+		}
+	}
+	if res.Status == engine.RunCompleted || !refused || !strings.Contains(res.Error, "crw.designLedger") {
+		t.Errorf("the resume under another audit packet: %s %q (ledger refused %v), want it to end in the ledger's refusal", res.Status, res.Error, refused)
+	}
+
+	// The binary that started the run, after that resume: its audit packet is the recorded one, but the recorded audit and r0 were
+	// superseded, so design-audit:r1 runs live once more and the ledger refuses again - there is no way back to the earlier binary.
+	before = l.LastSeq()
+	l.Lib = nil
+	l.NewProcess("proc-4")
+	res = l.Resume()
+	labels = nil
+	for _, c := range l.LiveCalls(before) {
+		labels = append(labels, c.Label)
+	}
+	if res.Status == engine.RunCompleted || !strings.Contains(res.Error, "crw.designLedger") || !slices.Equal(labels, []string{"design-audit:r1"}) {
+		t.Errorf("the starting binary after a resume by the new one: %s %q, live calls %v; want design-audit:r1 live and the ledger's refusal", res.Status, res.Error, labels)
+	}
 }

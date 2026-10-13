@@ -20,7 +20,7 @@ func runCLI(t testing.TB, stdin string, args ...string) (int, string, string) {
 func TestCLICompileAndDryRun(t *testing.T) {
 	file := fixtureDir + "initiative.input.json"
 	code, out, errOut := runCLI(t, "", file)
-	if code != 0 || errOut != "" {
+	if code != 0 || !onlyTargetWarnings(errOut, "PAPI") {
 		t.Fatalf("exit %d, stderr %q", code, errOut)
 	}
 	golden, err := os.ReadFile(fixtureDir + "initiative.golden.json")
@@ -32,7 +32,7 @@ func TestCLICompileAndDryRun(t *testing.T) {
 	}
 
 	code, dry, errOut := runCLI(t, "", "--dry-run", file)
-	if code != 0 || errOut != "" {
+	if code != 0 || !onlyTargetWarnings(errOut, "PAPI") {
 		t.Fatalf("dry run: exit %d, stderr %q", code, errOut)
 	}
 	var res Result
@@ -51,6 +51,15 @@ func TestCLICompileAndDryRun(t *testing.T) {
 	if code, again, _ := runCLI(t, string(raw), "-"); code != 0 || again != out {
 		t.Errorf("stdin: exit %d, same bytes %v", code, again == out)
 	}
+}
+
+// onlyTargetWarnings: the stderr of the fixture's compile is the two target warnings of the one project that keeps the old target
+// form (OWNER/NAME and refs/heads/BRANCH), and nothing else.
+func onlyTargetWarnings(errOut, project string) bool {
+	lines := strings.Split(strings.TrimSuffix(errOut, "\n"), "\n")
+	return len(lines) == 2 &&
+		strings.HasPrefix(lines[0], "crw flow compile: warning: [target_repository] "+project+" target.repository: ") &&
+		strings.HasPrefix(lines[1], "crw flow compile: warning: [target_base_ref] "+project+" target.base_ref: ")
 }
 
 func TestCLIRefusalsAndUsage(t *testing.T) {
