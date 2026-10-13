@@ -14,6 +14,26 @@ import (
 type GuardVerdict struct {
 	Deny   bool
 	Reason string
+	// Rule is WorktreeRuleResolvedDeletion for a deletion whose target the guard resolved (rm -r, git worktree remove, find
+	// -delete or -exec rm, xargs rm): the one refusal of this guard that stays a block (CRW-1307). Every other refusal (rmdir,
+	// mv, an inline program's words, a command or target it cannot read) has no rule and warns.
+	Rule string
+}
+
+// WorktreeRuleResolvedDeletion is the rule of a resolved deletion of the managed checkout, its slot or an ancestor.
+const WorktreeRuleResolvedDeletion = "resolved-deletion"
+
+// worktreeDelBlock is the refusal of a resolved deletion.
+func worktreeDelBlock(what string, id WorktreeIdentity) GuardVerdict {
+	return GuardVerdict{Deny: true, Reason: denyReason(what, id), Rule: WorktreeRuleResolvedDeletion}
+}
+
+// worse is the verdict that matters more of two: a resolved deletion over any other refusal, then the first refusal.
+func (v GuardVerdict) worse(w GuardVerdict) GuardVerdict {
+	if w.Rule != "" && v.Rule == "" || !v.Deny {
+		return w
+	}
+	return v
 }
 
 // basename is what follows the last slash once every backslash is a slash.
@@ -83,22 +103,28 @@ func denyReason(what string, id WorktreeIdentity) string {
 // without a cwd or a command, and anything that is not one JSON object all pass. The guard sits above the subagent exit,
 // so a subagent's turn is checked too.
 func HandleWorktreeGuardPreTool(raw string, env host.LookupEnv) string {
+	answer, _ := WorktreeGuardPreToolDecision(raw, env)
+	return answer
+}
+
+// WorktreeGuardPreToolDecision is HandleWorktreeGuardPreTool's answer with the rule it comes from ("" for a refusal that warns).
+func WorktreeGuardPreToolDecision(raw string, env host.LookupEnv) (answer, rule string) {
 	payload := parseRaw(raw)
 	if payload["hook_event_name"] != "PreToolUse" {
-		return ""
+		return "", ""
 	}
 	if tool, _ := payload["tool_name"].(string); tool != "" && tool != "Bash" {
-		return ""
+		return "", ""
 	}
 	cwd, _ := payload["cwd"].(string)
 	input, _ := payload["tool_input"].(map[string]any)
 	command, _ := input["command"].(string)
 	if cwd == "" || command == "" {
-		return ""
+		return "", ""
 	}
 	verdict := evaluateCommand(command, shellirPayloadCwd(cwd), detectManagedWorktree(cwd, env))
 	if !verdict.Deny {
-		return ""
+		return "", ""
 	}
-	return editAnswer("deny", verdict.Reason, verdict.Reason)
+	return editAnswer("deny", verdict.Reason, verdict.Reason), verdict.Rule
 }

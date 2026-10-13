@@ -11,6 +11,8 @@ import (
 	"testing/iotest"
 )
 
+// A guard's input that cannot be read is released before any handler or observation, with a warning and a decision record
+// (CRW-1307: fail-open in every PreToolUse guard; this test asserted the deny of CRW-1101 before).
 func TestGuardInputFailuresDenyBeforeEffects(t *testing.T) {
 	for _, id := range []string{
 		"pre-tool-use-guarding-managed-worktree-deletion",
@@ -44,11 +46,15 @@ func TestGuardInputFailuresDenyBeforeEffects(t *testing.T) {
 					var out, errOut strings.Builder
 					code := Hook(context.Background(), argsOf(legs[0]), in, &out, &errOut, lookup(env), legs)
 					var answer struct {
-						HookSpecificOutput struct{ HookEventName, PermissionDecision string }
+						HookSpecificOutput struct{ HookEventName, PermissionDecision, AdditionalContext string }
 					}
 					err := json.Unmarshal([]byte(out.String()), &answer)
-					if code != 0 || err != nil || answer.HookSpecificOutput.HookEventName != "PreToolUse" || answer.HookSpecificOutput.PermissionDecision != "deny" || ran || len(records(t, home)) != 0 || errOut.Len() != 0 {
+					if code != 0 || err != nil || answer.HookSpecificOutput.HookEventName != "PreToolUse" || answer.HookSpecificOutput.PermissionDecision != "" ||
+						!strings.HasPrefix(answer.HookSpecificOutput.AdditionalContext, WarningPrefix) || ran || len(records(t, home)) != 0 || errOut.Len() != 0 {
 						t.Fatalf("code=%d answer=%q error=%v handler=%v records=%d stderr=%q", code, out.String(), err, ran, len(records(t, home)), errOut.String())
+					}
+					if d := ReadDecisions(home); len(d) != 1 || d[0]["leg"] != id || d[0]["rule"] != RuleUnreadableInput || d[0]["decision"] != DecisionRelease || d[0]["sessionId"] != nil {
+						t.Fatalf("decision records: %v", d)
 					}
 				})
 			}

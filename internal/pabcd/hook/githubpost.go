@@ -60,11 +60,21 @@ func GitHubPostInput(in io.Reader) (raw string, over, ok bool) {
 
 // GitHubPostJudge is the guard's answer for a payload GitHubPostInput read, or the deny envelope when it was over the bound.
 func GitHubPostJudge(raw string, over bool) string {
-	if over {
-		return githubPostDeny(githubPostRuleUnread, githubPostWhereCommand)
-	}
-	return HandleGitHubPostGuard(raw)
+	answer, _ := GitHubPostDecision(raw, over)
+	return answer
 }
+
+// GitHubPostDecision is GitHubPostJudge's answer with the rule it comes from: GitHubPostRuleSecret for a secret in the text a post
+// carries, the one refusal of this guard that stays a block (CRW-1307), else the rule the answer names.
+func GitHubPostDecision(raw string, over bool) (answer, rule string) {
+	if over {
+		return githubPostDeny(githubPostRuleUnread, githubPostWhereCommand), githubPostRuleUnread
+	}
+	return githubPostGuard(raw)
+}
+
+// GitHubPostRuleSecret is the rule of a secret in a GitHub post's title or body text.
+const GitHubPostRuleSecret = githubPostRuleSecret
 
 // GitHubPostAnswer is the guard's answer for the payload: the two steps above in one. A read that fails is refused without judging partial input.
 func GitHubPostAnswer(in io.Reader) string {
@@ -285,6 +295,62 @@ func githubPostPost(args []string, cwd githubPostDir) (githubPostSite, bool, boo
 		}
 	}
 	return githubPostSite{}, false, true
+}
+
+// githubPostInlineSecret is whether a gh command's words carry a secret in a text it posts inline: the value of --body, -b, --title,
+// -t, --notes, -n, --subject or --comment, and for gh api the value of a -f, --raw-field, -F or --field that is not @file. An inline
+// body is no longer refused whole (CRW-1307: it warns), so its text is scanned as a body file's is, and a secret in it stays refused.
+// words[0] is gh; a word the reader could not evaluate is not scanned. place is where the secret is: the title or the command.
+func githubPostInlineSecret(words []string) (place string, found bool) {
+	if len(words) < 2 || githubPostProgram(words[0]) != "gh" {
+		return "", false
+	}
+	api := githubPostProgram(words[1]) == "api"
+	secret := func(v string) bool {
+		if strings.Contains(v, githubPostUnknownMark) {
+			return false
+		}
+		_, found := githubPostRawSecretLine(v)
+		return found
+	}
+	for i := 2; i < len(words); i++ {
+		name, value, attached := strings.Cut(words[i], "=")
+		if !strings.HasPrefix(name, "-") {
+			continue
+		}
+		text := false
+		switch name {
+		case "--body", "-b", "--title", "-t", "--notes", "-n", "--subject", "--comment":
+			text = !api || name == "-t"
+		case "-f", "--raw-field", "-F", "--field":
+			text = api
+		}
+		if !text {
+			continue
+		}
+		if !attached {
+			if i+1 >= len(words) {
+				continue
+			}
+			i++
+			value = words[i]
+		}
+		if api {
+			if _, v, ok := strings.Cut(value, "="); ok {
+				value = v
+			}
+			if strings.HasPrefix(value, "@") {
+				continue
+			}
+		}
+		if secret(value) {
+			if name == "--title" || name == "-t" {
+				return githubPostWhereTitle, true
+			}
+			return githubPostWhereCommand, true
+		}
+	}
+	return "", false
 }
 
 // githubPostJSONText is the text of one JSON document: every key and string value, with its escapes decoded, one per line. A key

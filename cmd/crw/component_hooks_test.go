@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
 	"io"
 	"os"
 	"path/filepath"
@@ -15,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/job"
 )
 
@@ -308,8 +308,8 @@ func TestFallbackHookObservationAndErrorOrder(t *testing.T) {
 }
 
 // TestGitHubPostGuardLegAnswersDenyWhenCancelled: a GitHub post guard leg cancelled while it still waits for its input answers
-// with the deny envelope that names the post, and exits 0 as an ordinary deny does, never silence (CRW-917 S7; this replaces
-// the interrupted status CRW-1028 d17 asked for).
+// and exits 0, never silence (CRW-917 S7). Since CRW-1307 the answer lets the call through with a warning that the command was
+// not checked (fail-open), where it was the deny of an unreadable command.
 func TestGitHubPostGuardLegAnswersDenyWhenCancelled(t *testing.T) {
 	in, w := io.Pipe()
 	t.Cleanup(func() { w.Close() })
@@ -320,8 +320,8 @@ func TestGitHubPostGuardLegAnswersDenyWhenCancelled(t *testing.T) {
 	if !claimed || code != 0 {
 		t.Fatalf("claimed %v, status %d, want the leg claimed with status 0, as an ordinary deny", claimed, code)
 	}
-	if !strings.Contains(out.String(), `"permissionDecision":"deny"`) || !strings.Contains(out.String(), "(unreadable-github-post) at command") {
-		t.Errorf("a cancelled GitHub post guard did not answer the deny for the command: %q", out.String())
+	if w, ok := guardWarning(out.String()); !ok || !strings.Contains(w, "the leg was cancelled") {
+		t.Errorf("a cancelled GitHub post guard did not answer the release warning: %q", out.String())
 	}
 }
 
@@ -351,11 +351,12 @@ func TestGitHubPostGuardLegLeavesObservation(t *testing.T) {
 			}
 			var out bytes.Buffer
 			claimed, code := runComponentHook(invocation{ctx: context.Background(), args: []string{"pre-tool-use", "--leg", "pre-tool-use-guarding-github-post"}, stdout: &out}, bytes.NewReader(payload), componentHooks())
-			if !claimed || code != 0 || strings.Contains(out.String(), `"permissionDecision":"deny"`) != tc.deny {
+			// CRW-1307: the inline body is refused no longer; the call passes with the refusal as a warning and a decision record.
+			if _, warned := guardWarning(out.String()); !claimed || code != 0 || strings.Contains(out.String(), "permissionDecision") || warned != tc.deny {
 				t.Fatalf("claimed=%v code=%d out=%q want deny=%v", claimed, code, out.String(), tc.deny)
 			}
 			var records []map[string]any
-			if err := filepath.WalkDir(home, func(p string, d os.DirEntry, err error) error {
+			if err := filepath.WalkDir(filepath.Join(home, "crw", "hook-observations"), func(p string, d os.DirEntry, err error) error {
 				if err != nil || d.IsDir() || !strings.HasSuffix(p, ".json") {
 					return err
 				}
@@ -377,6 +378,9 @@ func TestGitHubPostGuardLegLeavesObservation(t *testing.T) {
 			}
 			if _, has := records[0]["decision"]; has {
 				t.Fatalf("the record carries a decision: %v", records[0])
+			}
+			if d := harness.ReadDecisions(home); tc.deny != (len(d) == 1) || tc.deny && (d[0]["leg"] != githubPostLeg || d[0]["rule"] != "inline-github-body" || d[0]["decision"] != "warn") {
+				t.Fatalf("decision records %v", d)
 			}
 		})
 	}
@@ -412,8 +416,8 @@ func TestGitHubPostGuardLegLeavesNoObservationForInputThatArrivesAfterCancel(t *
 	cancel()
 	select {
 	case code := <-answered:
-		if code != 0 || !strings.Contains(out.String(), `"permissionDecision":"deny"`) {
-			t.Fatalf("code %d, out %q: the cancelled guard did not answer the deny", code, out.String())
+		if _, warned := guardWarning(out.String()); code != 0 || !warned {
+			t.Fatalf("code %d, out %q: the cancelled guard did not answer the release warning", code, out.String())
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("the cancelled guard did not return")
@@ -432,12 +436,13 @@ func TestGitHubPostGuardLegLeavesNoObservationForInputThatArrivesAfterCancel(t *
 	case <-time.After(10 * time.Second):
 		t.Fatal("the guard's input goroutine did not finish after its input arrived")
 	}
+	// The one record is the release the cancelled leg made when it answered (CRW-1307); the late input adds nothing.
 	var files []string
 	if err := filepath.WalkDir(home, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		if !d.IsDir() && strings.HasSuffix(p, ".json") {
+		if !d.IsDir() && strings.HasSuffix(p, ".json") && !strings.Contains(p, string(filepath.Separator)+"hook-decisions"+string(filepath.Separator)) {
 			files = append(files, p)
 		}
 		return nil
@@ -445,7 +450,10 @@ func TestGitHubPostGuardLegLeavesNoObservationForInputThatArrivesAfterCancel(t *
 		t.Fatalf("reading the observation store: %v", err)
 	}
 	if len(files) != 0 {
-		t.Fatalf("the cancelled leg created a late observation after returning the deny: %v", files)
+		t.Fatalf("the cancelled leg created a late observation after returning its answer: %v", files)
+	}
+	if d := harness.ReadDecisions(home); len(d) != 1 || d[0]["decision"] != "release" || d[0]["sessionId"] != nil {
+		t.Fatalf("decision records %v, want the one release of the cancelled leg", d)
 	}
 }
 

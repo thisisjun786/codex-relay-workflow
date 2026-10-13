@@ -59,7 +59,8 @@ func TestHookSwitchDamagedEntryRunsTheGuard(t *testing.T) {
 			}()
 			select {
 			case code := <-got:
-				if code != 0 || errOut.Len() != 0 || !strings.Contains(out.String(), `"permissionDecision":"deny"`) {
+				// CRW-1307: the guard runs and its inline-body refusal warns.
+				if _, warned := guardWarning(out.String()); code != 0 || errOut.Len() != 0 || !warned {
 					t.Fatalf("%d %q %q", code, out.String(), errOut.String())
 				}
 			case <-time.After(5 * time.Second):

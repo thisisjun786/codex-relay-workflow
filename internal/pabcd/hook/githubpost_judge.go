@@ -34,17 +34,23 @@ const githubPostMaxScriptDepth = 4
 // HandleGitHubPostGuard is the guard's PreToolUse leg: the deny envelope for a GitHub post these rules
 // stop, else empty. Another tool or event, and a command unrelated to GitHub, pass.
 func HandleGitHubPostGuard(raw string) string {
+	answer, _ := githubPostGuard(raw)
+	return answer
+}
+
+// githubPostGuard is HandleGitHubPostGuard's answer with the rule of its refusal.
+func githubPostGuard(raw string) (string, string) {
 	p := editObject(raw)
 	if p["hook_event_name"] != "PreToolUse" {
-		return ""
+		return "", ""
 	}
 	tool, _ := p["tool_name"].(string)
 	if !memoryGateShellTool(tool) {
-		return ""
+		return "", ""
 	}
 	input, _ := p["tool_input"].(map[string]any)
 	if input == nil {
-		return ""
+		return "", ""
 	}
 	cwd, _ := p["cwd"].(string)
 	cwd = shellirPayloadCwd(cwd)
@@ -56,9 +62,9 @@ func HandleGitHubPostGuard(raw string) string {
 		site, denied = githubPostJudgeText(command, cwd)
 	}
 	if !denied {
-		return ""
+		return "", ""
 	}
-	return githubPostDenyPayload(site, p)
+	return githubPostDenyPayload(site, p), site.rule
 }
 
 // githubPostJudgeArgv judges an argv array as the text that runs it: each word is quoted, so the reader
@@ -118,6 +124,14 @@ func githubPostJudgeTextOnly(command, cwd string, depth int, outer *githubPostWr
 func githubPostJudgeExecs(execs []shellir.Exec, depth int, outer *githubPostWrites, layout bool, layoutLine int) (site githubPostSite, denied bool) {
 	failLine := 0
 	defer func() {
+		// A refusal that warns does not hide a secret a post of the same text carries (inline, in a body or field file, on standard
+		// input the command shows, or in a body file the text writes first): that one is the answer, since it stays a block
+		// (CRW-1307, githubpost_carried.go).
+		if denied && site.rule != githubPostRuleSecret {
+			if secret, line, found := githubPostCarriedSecret(execs); found {
+				site, failLine = secret, line
+			}
+		}
 		if denied && site.line == 0 {
 			site.line = failLine
 		}
@@ -538,6 +552,9 @@ func githubPostReadScript(name, cwd string) (string, bool) {
 
 // githubPostJudgeWords is the rule for one gh command whose words the reader gave.
 func githubPostJudgeWords(words []string, cwd githubPostDir) (githubPostSite, bool) {
+	if place, found := githubPostInlineSecret(words); found {
+		return githubPostSite{rule: githubPostRuleSecret, place: place, line: 0}, true
+	}
 	expansion := githubPostSite{rule: githubPostRuleExpand, place: githubPostWhereCommand, line: 0}
 	unread := githubPostSite{rule: githubPostRuleUnread, place: githubPostWhereCommand, line: 0}
 	site, denied, handled := githubPostForm(words, cwd)

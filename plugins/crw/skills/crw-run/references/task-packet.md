@@ -416,8 +416,8 @@ Execution:
   you. Report it naming the owner the lookup returned, preserve your artifact, and write
   nothing into that relationship; the coordinator reconciles your work with that owner.
 - If you need something only a person can give, such as a decision, a credential or an
-  approval this packet does not carry, do not ask with `request_user_input`: the PABCD hook denies it
-  while your goal is active. Write the question out in a blocked file, record `blocked_needs_input` on your
+  approval this packet does not carry, do not ask with `request_user_input`: while your goal is active the PABCD
+  hook only warns about it and records it, and the call waits for a person who is not there. Write the question out in a blocked file, record `blocked_needs_input` on your
   turn and, where a relay holds the assignment, emit that outcome without `--artifact` (it
   carries no file) and put the question and the blocked file's path in your final message;
   where none does, return the status the case takes (BLOCKED, UNSAFE or NEEDS_HUMAN)
@@ -891,8 +891,8 @@ STOP WHEN carries five principles in place of the Launch packet's longer rules a
 
 - Do not stop to ask for permission for what the packet already grants. A decision, a credential or an approval it does not carry
   is the one route for a question: write the question out, emit `blocked_needs_input` (where no relay holds the assignment, return the
-  status the case takes, BLOCKED, UNSAFE or NEEDS_HUMAN, with the question) and end the turn. Never call `request_user_input`, which the PABCD hook
-  denies while a goal is active.
+  status the case takes, BLOCKED, UNSAFE or NEEDS_HUMAN, with the question) and end the turn. Never call `request_user_input`: while a goal is active the PABCD
+  hook only warns about it and records it, and the call waits for a person who is not there.
 - Do not stop at a partial fix or a proof of concept: deliver the whole DELIVERABLE, or report blocked.
 - Make no refactor and add no feature the TASK did not ask for. An edit outside SCOPE is a defect even when it improves something.
 - After three failed attempts at the same thing, revert your own changes for it to the last good state and report it as blocked.

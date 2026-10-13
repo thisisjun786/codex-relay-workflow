@@ -37,14 +37,16 @@ func TestMemoryGuardDecodedBytes(t *testing.T) {
 					t.Fatalf("hook: %d %q %q", code, out, stderr)
 				}
 				if deny {
+					// The ungranted write is still judged, and since CRW-1307 it passes with the refusal as a warning.
 					var response struct {
 						Output struct {
 							Decision string `json:"permissionDecision"`
-							Reason   string `json:"permissionDecisionReason"`
+							Context  string `json:"additionalContext"`
 						} `json:"hookSpecificOutput"`
 					}
-					if json.Unmarshal([]byte(out), &response) != nil || response.Output.Decision != "deny" || !strings.Contains(response.Output.Reason, "MEMORY-WRITE-GATE") {
-						t.Fatalf("ungranted write was allowed: %q", out)
+					if json.Unmarshal([]byte(out), &response) != nil || response.Output.Decision != "" || !strings.HasPrefix(response.Output.Context, WarningPrefix) ||
+						!strings.Contains(response.Output.Context, "MEMORY-WRITE-GATE") {
+						t.Fatalf("ungranted write was not warned about: %q", out)
 					}
 				} else if out != "" {
 					t.Fatalf("granted write was refused: %q", out)
