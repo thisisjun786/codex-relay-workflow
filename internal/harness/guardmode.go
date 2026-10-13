@@ -7,7 +7,6 @@ package harness
 // read is released with a record too (fail-open), in every leg.
 
 import (
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -168,9 +167,10 @@ func releaseAnswer(cause string) string {
 }
 
 // RecordDecision leaves the record of one guard decision: the leg, the rule, the decision, the time and the session (and the
-// subagent, when the input names one), never the command text or any other part of the payload. One file per decision under
-// <CODEX_HOME>/crw/hook-decisions/<sha256 of the session>/. Like RecordInvocation it is a diagnostic: it never disturbs the hook,
-// writes nothing for a hook outside a plugin (PLUGIN_ROOT unset), and reports only whether it wrote a record.
+// subagent, when the input names one), never the command text or any other part of the payload. A line is appended to the session's
+// file <CODEX_HOME>/crw/hook-decisions/<sha256 of the session's JSON>.jsonl ("null" for an input that names none). Like
+// RecordInvocation it is a diagnostic: it never disturbs the hook, writes nothing for a hook outside a plugin (PLUGIN_ROOT unset),
+// and reports only whether it wrote a record.
 func RecordDecision(raw, leg, rule, decision string, env host.LookupEnv) (recorded bool) {
 	defer func() {
 		if recover() != nil {
@@ -203,54 +203,42 @@ func RecordDecision(raw, leg, rule, decision string, env host.LookupEnv) (record
 		}
 		home = filepath.Join(h, ".codex")
 	}
-	digest := sha256.Sum256([]byte(session))
-	dir := filepath.Join(home, "crw", "hook-decisions", hex.EncodeToString(digest[:]))
+	dir := filepath.Join(home, "crw", "hook-decisions")
 	if os.MkdirAll(dir, 0o700) != nil {
 		return false
 	}
-	now := time.Now().UTC()
+	digest := sha256.Sum256([]byte(session))
 	record := `{"schemaVersion":1,"sessionId":` + session + `,"agentId":` + agent + `,"leg":` + jsnode.JSString(leg) + `,"rule":` + jsnode.JSString(rule) +
-		`,"decision":` + jsnode.JSString(decision) + `,"decidedAt":"` + now.Format("2006-01-02T15:04:05.000Z") + `"}` + "\n"
-	suffix := make([]byte, 8)
-	if _, err := rand.Read(suffix); err != nil {
-		return false
-	}
-	name := now.Format("20060102T150405.000000000Z") + "-" + hex.EncodeToString(suffix)
-	tmp := filepath.Join(dir, "."+name+".tmp")
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		`,"decision":` + jsnode.JSString(decision) + `,"decidedAt":"` + time.Now().UTC().Format("2006-01-02T15:04:05.000Z") + `"}` + "\n"
+	f, err := os.OpenFile(filepath.Join(dir, hex.EncodeToString(digest[:])+".jsonl"), os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o600)
 	if err != nil {
 		return false
 	}
-	_, werr := f.WriteString(record)
-	if err := f.Close(); werr != nil || err != nil || os.Rename(tmp, filepath.Join(dir, name+".json")) != nil {
-		_ = os.Remove(tmp)
-		return false
-	}
-	return true
+	_, werr := f.WriteString(record) // one write of one line: O_APPEND keeps concurrent hooks' lines whole
+	return f.Close() == nil && werr == nil
 }
 
-// ReadDecisions is every decision record under codexHome, oldest first, for a test or a diagnostic reader.
+// ReadDecisions is every decision record under codexHome, oldest first (lines of one session in their order), for a test or a
+// diagnostic reader.
 func ReadDecisions(codexHome string) []map[string]any {
-	paths, _ := filepath.Glob(filepath.Join(codexHome, "crw", "hook-decisions", "*", "*.json"))
-	type rec struct {
-		name string
-		v    map[string]any
-	}
-	var recs []rec
+	paths, _ := filepath.Glob(filepath.Join(codexHome, "crw", "hook-decisions", "*.jsonl"))
+	var out []map[string]any
 	for _, p := range paths {
 		b, err := os.ReadFile(p)
 		if err != nil {
 			continue
 		}
-		var v map[string]any
-		if json.Unmarshal(b, &v) == nil {
-			recs = append(recs, rec{filepath.Base(p), v})
+		for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+			var v map[string]any
+			if json.Unmarshal([]byte(line), &v) == nil {
+				out = append(out, v)
+			}
 		}
 	}
-	slices.SortFunc(recs, func(a, b rec) int { return strings.Compare(a.name, b.name) })
-	out := make([]map[string]any, 0, len(recs))
-	for _, r := range recs {
-		out = append(out, r.v)
-	}
+	slices.SortStableFunc(out, func(a, b map[string]any) int {
+		x, _ := a["decidedAt"].(string)
+		y, _ := b["decidedAt"].(string)
+		return strings.Compare(x, y)
+	})
 	return out
 }

@@ -53,7 +53,15 @@ func TestCRW1307HarnessLegsWarnAndRecord(t *testing.T) {
 		{"pre-tool-use-guarding-goal-budget", strings.Repeat(" ", harness.MaxStdinBytes+1), "could not be read", harness.RuleUnreadableInput, harness.DecisionRelease},
 	} {
 		t.Run(c.leg+"/"+c.rule, func(t *testing.T) {
-			before := len(harness.ReadDecisions(codexHome))
+			of := func() (out []map[string]any) {
+				for _, r := range harness.ReadDecisions(codexHome) {
+					if r["leg"] == c.leg {
+						out = append(out, r)
+					}
+				}
+				return out
+			}
+			before := len(of())
 			out, code := gateRun(t, c.leg, c.raw)
 			var a struct {
 				Output map[string]any `json:"hookSpecificOutput"`
@@ -65,7 +73,7 @@ func TestCRW1307HarnessLegsWarnAndRecord(t *testing.T) {
 			if !strings.HasPrefix(ctx, harness.WarningPrefix) || !strings.Contains(ctx, c.warning) {
 				t.Fatalf("warning %q, want %q", ctx, c.warning)
 			}
-			d := harness.ReadDecisions(codexHome)
+			d := of()
 			if len(d) != before+1 {
 				t.Fatalf("records %v", d)
 			}
@@ -76,13 +84,20 @@ func TestCRW1307HarnessLegsWarnAndRecord(t *testing.T) {
 		})
 	}
 	// The resolved deletion stays a deny, and its block is recorded.
-	before := len(harness.ReadDecisions(codexHome))
 	out, code := gateRun(t, "pre-tool-use-guarding-managed-worktree-deletion", bash(checkout, "rm -rf "+checkout+" # "+marker))
 	if code != 0 || !strings.Contains(out, `"permissionDecision":"deny"`) || !strings.Contains(out, "WORKTREE-GUARD-03") {
 		t.Fatalf("resolved deletion: %d %q", code, out)
 	}
-	if d := harness.ReadDecisions(codexHome); len(d) != before+1 || d[len(d)-1]["rule"] != harness.RuleResolvedDeletion || d[len(d)-1]["decision"] != harness.DecisionBlock {
-		t.Fatalf("records %v", d)
+	blocks := 0
+	for _, r := range harness.ReadDecisions(codexHome) {
+		if r["decision"] == harness.DecisionBlock {
+			if blocks++; r["rule"] != harness.RuleResolvedDeletion || r["leg"] != "pre-tool-use-guarding-managed-worktree-deletion" || r["sessionId"] != "gate-w" {
+				t.Fatalf("block record %v", r)
+			}
+		}
+	}
+	if blocks != 1 {
+		t.Fatalf("%d block records", blocks)
 	}
 	// No record holds the command text.
 	_ = filepath.WalkDir(filepath.Join(codexHome, "crw", "hook-decisions"), func(p string, e os.DirEntry, err error) error {
