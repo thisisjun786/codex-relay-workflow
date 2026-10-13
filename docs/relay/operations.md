@@ -106,6 +106,13 @@ granting `networkAccess` (it travels in the start config and the created thread 
 against it). The bridge never silently changes its sandbox. Read-only threads without the
 child role remain supported.
 
+`crw relay register --child-settings` judges the child's recorded sandbox by the same rule
+(`internal/bridge/settings` `RelayChildReaches`): a `readOnly` policy, or a `workspaceWrite` one whose
+`networkAccess` is not true, is refused as `unsupported_sandbox_type` (exit 2) before anything is
+written, naming `danger-full-access` and `workspace-write` with network access. `--parent-settings`
+is not judged. `doctor` lists the three child commands in `actorReachability.daemonRequiredCommands`,
+and in neither `offlineCommands` nor `hostRequiredCommands`.
+
 Status: implemented in source. Installation and live delivery are separate operations.
 
 ### When the rules cannot pick a store

@@ -27,8 +27,7 @@ const createAckBound = 60 * time.Second
 // without network access, where Codex refuses that connect (EPERM, codex-cli 0.154.0). A workspace-write child passes
 // only with an expected policy granting networkAccess, which travels in the start config and is checked on creation.
 func refuseReadOnlyChild(role, sandbox string, policy map[string]any) error {
-	reaches := (sandbox == "danger-full-access" && policy == nil) || policy["type"] == "dangerFullAccess" || (policy["type"] == "workspaceWrite" && policy["networkAccess"] == true)
-	if role == "child" && (sandbox == "read-only" || !reaches) {
+	if role == "child" && !settings.RelayChildReaches(sandbox, policy) {
 		return &Invalid{"a relay child reports through the relay daemon's socket, which a readOnly sandbox or a workspace-write sandbox without network access cannot reach; recreate it with a writable sandbox that reaches it (danger-full-access, or workspace-write with an expected_sandbox_policy granting networkAccess); settings are never silently changed"}
 	}
 	return nil
