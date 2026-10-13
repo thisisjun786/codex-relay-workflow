@@ -263,7 +263,7 @@ func AckCommand(ctx context.Context, ack *Ack, rc *Reconciler, adapter Adapter, 
 	} else if pyjson.Text(record.Get("_verified")) != "verified" {
 		record = append(record, F{Key: "_note", Value: "recorded as the parent's authored intent; this turn is not established yet, so it does not close the attempt and cannot yet produce a verdict. Run verify-acks from a process with host access."})
 	}
-	return record, nil
+	return withTargetNotice(ctx, ack, event, record), nil
 }
 
 // VerifyAcksCommand is cmd_verify_acks: kept acknowledgements have their delivery confirmed
