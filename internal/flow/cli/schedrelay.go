@@ -113,7 +113,7 @@ func (r *SchedRelay) target(plan string) (checkout, ref string, err error) {
 	if err != nil {
 		return "", "", err
 	}
-	if p.Target == nil || p.Target.Repository == "" || p.Target.BaseRef == "" {
+	if p.Target == nil || p.Target.Repository == "" || p.Target.Branch() == "" {
 		return "", "", fmt.Errorf("the project %s of the run's handoff names no target {repository, base_ref}: the run integrates its nodes there", p.Key)
 	}
 	if !filepath.IsAbs(p.Target.Repository) {
@@ -122,7 +122,8 @@ func (r *SchedRelay) target(plan string) (checkout, ref string, err error) {
 	if r.Repo != "" && !sameDirectory(r.Repo, p.Target.Repository) {
 		return "", "", fmt.Errorf("the target repository %s of project %s is not the repository %s the run's worktrees are made from: the relay reads a node's commits in the target (start the run with --repo %s)", p.Target.Repository, p.Key, r.Repo, p.Target.Repository)
 	}
-	return p.Target.Repository, p.Target.BaseRef, nil
+	// the short branch name, as compile put it in the plan's edges: the integration path adds refs/heads/ itself (CRW-1317)
+	return p.Target.Repository, p.Target.Branch(), nil
 }
 
 // claim takes the plan's coordinator epoch for the run, once, before its first fenced write (CRW-1277 e): the claim of the run's nonce
