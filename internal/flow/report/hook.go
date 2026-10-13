@@ -19,7 +19,11 @@ import (
 //   - the escalations of the run (dispatch_unknown, tiers_exhausted, blocked_scope, size_split, restore_snapshot_mismatch, a configuration
 //     fault, ...) are told to the orchestrator thread with `crw manage send-parent`, once each, queued unless the wake-up of the thread is
 //     proven (the run cannot prove it, so it does not probe the thread first);
-//   - the completion digest is told the same way when the run finishes.
+//   - the completion digest is told the same way when the run finishes;
+//   - a run meant to start nodes that finished completed and started none (Blocked over the run's record, the reading of `crw flow show`,
+//     CRW-1320) is reported to the initiative lead as project_blocked through Reports, the writer `crw flow report-up` works through, once
+//     for the run: the report id comes from the run, so a resume that ends the same way finds the report row and makes no other. A run not
+//     meant to start nodes (a script run that names no plan) is never blocked and reports nothing.
 //
 // A failing step does not fail the run: the next call does it again.
 type RunHook struct {
@@ -31,6 +35,11 @@ type RunHook struct {
 	Run     string
 	// Wake proves that a send wakes the orchestrator thread; nil proves nothing and every notice is queued.
 	Wake func(ctx context.Context, thread string) bool
+	// Reports writes the run's upward reports to the initiative lead; Blocked reads, from the run's record (flow_runs) and rows, whether a
+	// finished run meant to start nodes started none, and the reason of each item that failed. With either nil no project_blocked report
+	// is made.
+	Reports *Writer
+	Blocked func(run RunInfo, events []engine.Event) (reasons []string, blocked bool)
 
 	mu sync.Mutex
 }
@@ -49,6 +58,13 @@ func (h *RunHook) RunFinished(ctx context.Context, _, status string) error {
 	defer h.mu.Unlock()
 	err := h.reconcileLocked(ctx)
 	run, ok, rerr := ReadRun(ctx, h.Store.DB, h.Run)
+	if rerr == nil {
+		rec := run
+		if !ok {
+			rec = RunInfo{RunID: h.Run}
+		}
+		err = errors.Join(err, h.reportBlocked(ctx, rec, status))
+	}
 	if rerr != nil || !ok {
 		return firstError(err, rerr)
 	}
@@ -66,6 +82,28 @@ func (h *RunHook) RunFinished(ctx context.Context, _, status string) error {
 		_, _, aerr := h.Rows.AppendOnce(ctx, NewRow{Kind: KindCompletionNotice, Payload: map[string]any{"notice_key": key, "status": status, "result": res.Class, "request_id": res.RequestID}}, "notice_key")
 		err = firstError(err, aerr)
 	}
+	return err
+}
+
+// BlockedReportID is the id of the project_blocked report of a run that started no node: one for the run, whatever process finished it.
+func BlockedReportID(run string) string { return "rep_" + shortHash(run, KindProjectBlocked) }
+
+// reportBlocked reports a run meant to start nodes that finished completed and started none to the initiative lead (project_blocked).
+func (h *RunHook) reportBlocked(ctx context.Context, run RunInfo, status string) error {
+	if status != engine.RunCompleted || h.Reports == nil || h.Blocked == nil {
+		return nil
+	}
+	reasons, blocked := h.Blocked(run, h.Journal.Events())
+	if !blocked {
+		return nil
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Run %s finished without starting a node: no crw.release released a node and nothing landed.\n\nThe items that failed:\n", h.Run)
+	for _, r := range reasons {
+		fmt.Fprintf(&b, "- %s\n", r)
+	}
+	fmt.Fprintf(&b, "\n`crw flow show %s` reads the run.\n", h.Run)
+	_, err := h.Reports.Up(ctx, UpRequest{ID: BlockedReportID(h.Run), Kind: KindProjectBlocked, Run: h.Run, Subject: "no node started", Body: []byte(b.String())})
 	return err
 }
 

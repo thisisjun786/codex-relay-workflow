@@ -50,6 +50,10 @@ type FakeRelay struct {
 	Slots int
 	// RefuseAccept makes the relay refuse an acceptance with this reason.
 	RefuseAccept string
+	// ReleaseErr, when it answers an error for a node, makes the release of that node fail with it (a refusal the release op raises, as
+	// the scheduler's stale coordinator epoch is); HoldBack holds every release back unreleased with this reason (CRW-1320).
+	ReleaseErr func(node string) error
+	HoldBack   string
 	// Surfaces, Grade and Commands are what the plan says of the milestone: the surfaces of its criteria, the work grade and the
 	// required verification commands (CRW-1206).
 	Surfaces []string
@@ -116,6 +120,14 @@ func (r *FakeRelay) Release(_ context.Context, req ops.ReleaseRequest) (ops.Rele
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.Releases = append(r.Releases, req)
+	if r.ReleaseErr != nil {
+		if err := r.ReleaseErr(req.Node); err != nil {
+			return ops.ReleaseResult{}, err
+		}
+	}
+	if r.HoldBack != "" {
+		return ops.ReleaseResult{Reason: r.HoldBack}, nil
+	}
 	if prior, ok := r.released[req.Node]; ok && r.held[req.Node] {
 		if req.SliceDigest != "" && req.SliceDigest != prior.SliceDigest {
 			return ops.ReleaseResult{Reason: ops.ReasonPlanChanged}, nil
