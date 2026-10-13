@@ -108,9 +108,9 @@ export interface RunRow {
   data?: Record<string, unknown>;
 }
 
-/** The states a run is over in; the page offers no control for these. */
+/** The states a run is over in (flowcli.Over); the page offers no control for these, as crw flow pause and cancel refuse them. */
 export function isOver(state: string): boolean {
-  return state === "completed" || state === "cancelled" || state === "failed";
+  return state === "completed" || state === "blocked" || state === "cancelled" || state === "failed";
 }
 
 /** What the page can ask of a run in this state. A run no process holds cannot be paused. */

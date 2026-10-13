@@ -650,8 +650,15 @@ appends under the run lock: `ask` (the question's id), `node`, `run`, `revision`
 `class` (`escalation` or `jun_decision`), `applied_by` and the `decision` (`id`, `option`, `text`, `by`, `via`, `answered_at`,
 `authority`, `authority_ref`); `crw.decide` reads `ask` and `node`. A run cancelled while no process held it ends with a `finished` row
 of error kind `cancelled` written by `crw flow cancel`. The state of a run (`running`, `paused`, `dead`, `held`, `completed`,
-`cancelled`, `failed`) is not a row: it is read from the run lock, the last `started` and `finished` rows, the calls' rows
-(`internal/flow/callstate`) and the questions no `decision_applied` row has answered.
+`blocked`, `cancelled`, `failed`) is not a row: it is read from the run lock, the last `started` and `finished` rows, the calls' rows
+(`internal/flow/callstate`), the questions no `decision_applied` row has answered and, for `blocked`, the lane's own rows. A run meant
+to start the nodes of a plan (a run of `project-lane`, `issue-lane` or `night-batch`, or a run whose arguments name a `plan`) whose last
+process finished `completed` with nothing left to go on with is `blocked` when no process of it started a node (no completed
+`crw.release` row released one, no `crw.releaseChild` row released a child, no `crw.integrate` row landed one) and items of its joins threw
+in its last process (`item_error` rows: a lane of `crw.dag` whose `crw.release` failed is one). The engine's status of the run stays
+`completed`. A node the scheduler held back unreleased in the last process (capacity, a region in use: a wait a resume asks again) keeps the
+run `completed`, and so does a node that started. Another script run (a judge panel, a scout) that names no plan never meant to start a
+node: an item of it that threw is shown, and the run stays `completed`.
 
 The intent rows say what a later process needs to find the request again. `thread_requested` and `fork_requested` carry the
 `cwd` the thread is to run in, the `send` ordinal of the request (1, then one more each time reconcile proved the previous
