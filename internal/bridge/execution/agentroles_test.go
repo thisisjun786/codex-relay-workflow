@@ -84,10 +84,11 @@ func TestAgentRolesOnePairEach(t *testing.T) {
 		{"unknown key", withRole("executor", doc{"model": agentHaiku, "reasoningEffort": "xhigh", "temperature": 1}), "temperature"},
 		{"empty section", doc{}, "architect"},
 	}
+	// CRW-1330: the flow no longer reads the section, so what would have refused it is a warning naming the same mistake, the
+	// section ignored and the file loaded (agentsections_warn_test.go).
 	for _, row := range refusals {
 		t.Run(row.name, func(t *testing.T) {
-			_, err := load(t, agentPolicy(row.roles))
-			if message := policyError(t, err).Error(); !strings.Contains(message, row.want) {
+			if message := agentSectionWarning(t, agentPolicy(row.roles)); !strings.Contains(message, row.want) {
 				t.Fatalf("want %q in %q", row.want, message)
 			}
 		})
@@ -95,8 +96,8 @@ func TestAgentRolesOnePairEach(t *testing.T) {
 	// Every role is declared: a section that leaves one out names it.
 	missing := agentRolesDoc()
 	delete(missing, "reviewer-final")
-	if _, err := load(t, agentPolicy(missing)); err == nil || !strings.Contains(err.Error(), "reviewer-final") {
-		t.Fatalf("a missing role is refused by name: %v", err)
+	if message := agentSectionWarning(t, agentPolicy(missing)); !strings.Contains(message, "reviewer-final") {
+		t.Fatalf("a missing role is named: %v", message)
 	}
 	// An autoCompactTokenLimit belongs to the pair, as it does in a relay role.
 	limited := agentRolesDoc()
@@ -125,8 +126,12 @@ func TestAgentRolesOnePairEach(t *testing.T) {
 func TestAgentRolesPairsMustBeAllowed(t *testing.T) {
 	document := agentPolicy(agentRolesDoc())
 	document["allowed"] = agentAllowed()
-	mustLoad(t, document)
+	if warnings := mustLoad(t, document).Warnings(); len(warnings) != 0 {
+		t.Fatalf("agreeing sections warn: %q", warnings)
+	}
 
+	// CRW-1330: a flow run no longer reads agent-roles, so a disagreement with the allowed list is a warning the
+	// loader keeps (crw flow roles and crw doctor flow-roles show it), never a refusal of the whole policy.
 	for _, row := range []struct{ role, model, effort string }{
 		{"architect", agentOpus, "high"},            // an allowed model at an effort the list does not approve
 		{"executor", "openai/gpt-6-astra", "xhigh"}, // a model the list does not name
@@ -135,14 +140,15 @@ func TestAgentRolesPairsMustBeAllowed(t *testing.T) {
 		roles := withRole(row.role, pairDoc(row.model, row.effort))
 		policy := agentPolicy(roles)
 		policy["allowed"] = agentAllowed()
-		_, err := load(t, policy)
-		message := policyError(t, err).Error()
+		message := strings.Join(mustLoad(t, policy).Warnings(), "\n")
 		if !strings.Contains(message, row.role) || !strings.Contains(message, "allowed") {
 			t.Fatalf("%+v: %s", row, message)
 		}
 	}
 	// Without an allowlist nothing is compared, as for the relay roles.
-	mustLoad(t, agentPolicy(withRole("executor", pairDoc("inferhub/deepseek-v4.1-flash", "xhigh"))))
+	if warnings := mustLoad(t, agentPolicy(withRole("executor", pairDoc("inferhub/deepseek-v4.1-flash", "xhigh")))).Warnings(); len(warnings) != 0 {
+		t.Fatalf("%q", warnings)
+	}
 }
 
 func TestReviewerFamilyDiffersFromExecutor(t *testing.T) {
@@ -156,8 +162,8 @@ func TestReviewerFamilyDiffersFromExecutor(t *testing.T) {
 		{"reviewer under a bare name of the executor's family", withRole("reviewer", pairDoc("claude-opus-5-5", "high"))},
 	} {
 		t.Run(row.name, func(t *testing.T) {
-			_, err := load(t, agentPolicy(row.roles))
-			message := policyError(t, err).Error()
+			// CRW-1330: a warning, not a PolicyError; the runtime independence gate judges each review.
+			message := strings.Join(mustLoad(t, agentPolicy(row.roles)).Warnings(), "\n")
 			if !strings.Contains(message, "reviewer") || !strings.Contains(message, "family") {
 				t.Fatal(message)
 			}
@@ -166,7 +172,9 @@ func TestReviewerFamilyDiffersFromExecutor(t *testing.T) {
 	// The architect and the explorer are not authors of a reviewed change: they may share a family with a reviewer.
 	roles := agentRolesDoc()
 	roles["architect"] = pairDoc(agentSol, "xhigh")
-	mustLoad(t, agentPolicy(roles))
+	if warnings := mustLoad(t, agentPolicy(roles)).Warnings(); len(warnings) != 0 {
+		t.Fatalf("%q", warnings)
+	}
 
 	for model, family := range map[string]string{
 		"anthropic/claude-haiku-5": "claude", "claude-opus-5-5": "claude", "gpt-6.1-sol": "gpt", "openai/gpt-5.6-sol": "gpt",
@@ -258,7 +266,8 @@ func TestAliasTableMapsEachPairToOneRole(t *testing.T) {
 		t.Fatalf("aliases %+v", aliases)
 	}
 
-	// A file states its own table; rows that overlap without one being more specific are refused when it is read.
+	// A file states its own table; rows that overlap without one being more specific are warned about when it is read, and the
+	// sections are ignored (CRW-1330).
 	own := func(rows ...any) doc {
 		policy := agentPolicy(agentRolesDoc())
 		policy["agent-aliases"] = rows
@@ -280,15 +289,30 @@ func TestAliasTableMapsEachPairToOneRole(t *testing.T) {
 		{"empty table", []any{}, "agent-aliases"},
 	} {
 		t.Run(row.name, func(t *testing.T) {
-			_, err := load(t, own(row.rows...))
-			if message := policyError(t, err).Error(); !strings.Contains(message, row.want) {
+			if message := agentSectionWarning(t, own(row.rows...)); !strings.Contains(message, row.want) {
 				t.Fatalf("want %q in %q", row.want, message)
 			}
 		})
 	}
 	// A table without the section it maps onto is a mistake.
-	_, err := load(t, doc{"allowed": agentAllowed(), "agent-aliases": []any{doc{"key": "opus", "role": "architect"}}})
-	policyError(t, err)
+	if message := agentSectionWarning(t, doc{"allowed": agentAllowed(), "agent-aliases": []any{doc{"key": "opus", "role": "architect"}}}); !strings.Contains(message, "agent-roles") {
+		t.Fatal(message)
+	}
+}
+
+// agentSectionWarning loads a document whose agent sections do not parse and answers the loader's warnings (CRW-1330): the file
+// loads, the sections are ignored and described as such.
+func agentSectionWarning(t *testing.T, document doc) string {
+	t.Helper()
+	p := mustLoad(t, document)
+	if _, ok := p.AgentRoles(); ok {
+		t.Fatalf("a section that does not parse is described as declared roles")
+	}
+	message := strings.Join(p.Warnings(), "\n")
+	if !strings.Contains(message, "ignored") {
+		t.Fatalf("no ignored-section warning: %q", message)
+	}
+	return message
 }
 
 // TestAgentRolesDigestAndSummary pins what a reader of the policy sees: the digest is the file's bytes and the

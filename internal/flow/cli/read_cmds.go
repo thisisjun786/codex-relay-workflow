@@ -118,8 +118,15 @@ func (c *command) printDetail(d RunDetail) {
 	if d.Holds > 0 {
 		notes = append(notes, fmt.Sprintf("%d call(s) in recovery_hold: crw flow recover", d.Holds))
 	}
-	if d.Unsettled-d.Holds > 0 {
+	if d.Unsettled-d.Holds > 0 && !d.Live {
+		// while a process holds the run lock the run goes on by itself, and a resume is refused
 		notes = append(notes, fmt.Sprintf("%d call(s) to go on with: crw flow resume %s", d.Unsettled-d.Holds, d.RunID))
+	}
+	if d.State == StateBlocked {
+		notes = append(notes, "no node started: no crw.release released a node and nothing landed")
+	}
+	for _, ie := range d.ItemErrors {
+		notes = append(notes, fmt.Sprintf("item %s failed: %s", cell(ie.Item), oneLine(ie.Error)))
 	}
 	if d.State == StateDead {
 		notes = append(notes, "no process holds the run: crw flow resume "+d.RunID)

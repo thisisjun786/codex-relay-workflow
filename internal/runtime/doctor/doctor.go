@@ -67,6 +67,8 @@ type Options struct {
 	// installs, and skill links are a developer-checkout concern (crw-dev skills link, todo 39)
 	// that no release archive or installer makes, so they say nothing about this install.
 	AppServer func(ctx context.Context, bridge string) *string
+	// VerifierProbe are the seams of the verifierTools entry's probe (crwconfig.ProbeOptions); the zero value is the host's rule.
+	VerifierProbe crwconfig.ProbeOptions
 	// ModelCatalog reads the model catalogue the helper roles' models are checked against (CRW-1324). It is called once, and only
 	// when some helper role names a model. nil reads the live catalogue the role helper and the GUI use (OCX's, else the native
 	// one) without keeping a cache; a test supplies the answer, so no OCX process runs and no network is reached.
@@ -867,6 +869,7 @@ func Diagnose(ctx context.Context, o Options) Object {
 		{Key: "scopeReadings", Value: readings},
 		{Key: "checks", Value: checks},
 		{Key: "storage", Value: StorageReport(o.Env)},
+		{Key: "verifierTools", Value: VerifierToolsReport(ctx, o.Env, o.VerifierProbe)},
 		{Key: "roleModels", Value: RoleModels(ctx, o)},
 		{Key: "doctorBinary", Value: Object{{Key: "path", Value: self()}, {Key: "target", Value: record.Target()}, {Key: "source", Value: record.Source()}}},
 	}

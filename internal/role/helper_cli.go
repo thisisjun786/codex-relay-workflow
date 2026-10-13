@@ -75,13 +75,13 @@ func helperCLIProjectArgs(args []string) HelperArgs {
 	role := RoleName(helperCLIArg(args, 1))
 	switch sub {
 	case "reset":
-		if !validRole(role) || len(args) != 2 {
+		if !storeRole(role) || len(args) != 2 {
 			parsed.Err = "reset requires exactly one valid role"
 		} else {
 			parsed.Role = role
 		}
 	case "get", "set":
-		if !validRole(role) {
+		if !storeRole(role) {
 			parsed.Err = fmt.Sprintf("unknown role '%s' (expected %s)", role, helperCLIRoles("|"))
 			return parsed
 		}
@@ -229,6 +229,9 @@ func RunHelper(parsed HelperArgs, env host.LookupEnv, nativeHome ...string) Help
 	if parsed.Action == "register" {
 		return helperCLIRegister(parsed.Role, env, nativeHome)
 	}
+	if flowOnlyRole(parsed.Role) {
+		return helperCLIFlowRole(parsed, env)
+	}
 	var cfg Config
 	var err error
 	switch parsed.Action {
@@ -255,6 +258,30 @@ func RunHelper(parsed HelperArgs, env host.LookupEnv, nativeHome ...string) Help
 		value = cfg.Roles[parsed.Role]
 	}
 	encoded, err := jsnode.Stringify(value, "  ")
+	if err != nil {
+		return helperCLIFailure(err.Error())
+	}
+	return HelperResult{Output: string(encoded)}
+}
+
+// helperCLIFlowRole is get, set and reset of a flow-only key (CRW-1330): the store's write path, and an answer that shows the
+// role as the flow reads it (the stored settings, or the compiled default the flow uses when the store holds none).
+func helperCLIFlowRole(parsed HelperArgs, env host.LookupEnv) HelperResult {
+	var err error
+	switch parsed.Action {
+	case "set":
+		_, err = SetRole(env, parsed.Role, parsed.Patch)
+	case "reset":
+		_, err = ResetRoleReport(env, parsed.Role)
+	}
+	if err != nil {
+		return helperCLIFailure(err.Error())
+	}
+	view, err := flowRoleView(env, parsed.Role)
+	if err != nil {
+		return helperCLIFailure(err.Error())
+	}
+	encoded, err := jsnode.Stringify(view, "  ")
 	if err != nil {
 		return helperCLIFailure(err.Error())
 	}

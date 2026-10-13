@@ -227,6 +227,29 @@ type Route struct {
 	Files    []string `json:"files_needed"`
 	// SameAs is the index of the first question of the round with this digest when this one repeats it (-1 for none).
 	SameAs int `json:"same_as"`
+	// Scope is the scope the asker gave the question, and Authority the notation of an out-of-authority kind it starts with ("" for
+	// none, AuthorityScope).
+	Scope     string `json:"scope"`
+	Authority string `json:"authority"`
+}
+
+// AuthorityScope is the notation of an out-of-authority kind (AuthorityScopes) a scope starts with, compared without regard to
+// case and only as a whole token, or "" when the scope starts with none.
+func AuthorityScope(scope string) string {
+	s := strings.ToLower(strings.TrimSpace(scope))
+	for _, n := range AuthorityScopes {
+		rest, ok := strings.CutPrefix(s, n)
+		if !ok {
+			continue
+		}
+		if rest == "" {
+			return n
+		}
+		if c := rest[0]; !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
+			return n
+		}
+	}
+	return ""
 }
 
 // normalizeQuestion is the text a question's digest is made of: the words, lower case, one space apart.
@@ -239,10 +262,14 @@ func QuestionDigest(q string) string { return textDigest(normalizeQuestion(q)) }
 // thresholds of the signals and records every decision:
 //
 //   - a question whose digest was answered in the run reuses the answer (SP-INL-2);
-//   - a question inside the asker's declared edit regions, or that needs at most InlineFiles files, is answered by the asker (SP-INL-1);
+//   - a research question inside the asker's declared edit regions, or that needs at most InlineFiles files, is answered by the
+//     asker (SP-INL-1). An open question of a DESIGN never is: the architect's turn that asked it has ended;
+//   - an open question whose scope starts with the notation of an out-of-authority kind (AuthorityScope) goes to the orchestrator
+//     thread as a design question and to no explorer (reason out_of_authority); the milestone goes on;
 //   - otherwise an explorer is spawned (SP-EXPL-1/2/3) - for the open questions at most ExplorersPerMilestone in the milestone, the
-//     rest go to the orchestrator thread as design questions; for a research question at most ResearchPerTier continuations a
-//     tier, then the node escalates as a scope question; for an evidence question at most EvidenceExplorersPerNode a node.
+//     rest go to the orchestrator thread as design questions (reason explorer_cap); for a research question at most
+//     ResearchPerTier continuations a tier, then the node escalates as a scope question; for an evidence question at most
+//     EvidenceExplorersPerNode a node.
 //
 // A call without a question that is due (an evidence round with no evidence_missing defect) records the skip.
 type exploreRouteOp struct{ l *Lane }
@@ -298,14 +325,17 @@ func (o *exploreRouteOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 	plan := RoutePlan{Kind: kind, Routes: []Route{}}
 	first := map[string]int{} // the first question of this call by digest: a repeat of it is the same question
 	for i, q := range qs {
-		rt := Route{Index: i, ID: q.ID, Question: q.Question, Digest: QuestionDigest(q.Question), Rule: rule, Files: q.FilesNeeded, SameAs: -1}
+		rt := Route{Index: i, ID: q.ID, Question: q.Question, Digest: QuestionDigest(q.Question), Rule: rule, Files: q.FilesNeeded, SameAs: -1, Scope: q.Scope}
+		if kind == ExploreOpen {
+			rt.Authority = AuthorityScope(q.Scope)
+		}
 		if kind == ExploreEvidence && ec.Head != "" {
 			rt.Digest = textDigest(normalizeQuestion(q.Question) + "\x00" + ec.Head)
 		}
 		if rt.Files == nil {
 			rt.Files = []string{}
 		}
-		inlineOK := kind != ExploreEvidence && q.FilesNeeded != nil && (len(q.FilesNeeded) <= InlineFiles || inRegions(q.FilesNeeded, ec.Regions))
+		inlineOK := kind == ExploreResearch && q.FilesNeeded != nil && (len(q.FilesNeeded) <= InlineFiles || inRegions(q.FilesNeeded, ec.Regions))
 		switch {
 		case answered[rt.Digest] != nil:
 			rt.Route, rt.Rule, rt.Answer, rt.Reason = RouteReuse, RuleInl2, *answered[rt.Digest], "answered_in_run"
@@ -313,6 +343,8 @@ func (o *exploreRouteOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 			rt.Route, rt.Rule, rt.Reason, rt.SameAs = RouteReuse, RuleInl2, "same_question_in_round", first[rt.Digest]-1
 		case inlineOK:
 			rt.Route, rt.Rule, rt.Reason = RouteInline, RuleInl1, "asker_answers"
+		case rt.Authority != "":
+			rt.Route, rt.Reason = RouteOrchestrator, "out_of_authority"
 		case kind == ExploreOpen && spawnedMilestone >= ExplorersPerMilestone:
 			rt.Route, rt.Reason = RouteOrchestrator, "explorer_cap"
 		case kind == ExploreResearch && spawnedTier >= ResearchPerTier:
@@ -339,7 +371,8 @@ func (o *exploreRouteOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 			decision = DecisionRefused
 		}
 		info := DecisionInfo{Node: ec.Node, Role: "explorer", Tier: ec.Tier, Reason: rt.Reason, Inputs: map[string]any{
-			"kind": kind, "digest": rt.Digest, "files_needed": len(q.FilesNeeded), "milestone": ec.Milestone, "spawned_in_milestone": spawnedMilestone, "spawned_for_node": spawnedNode}}
+			"kind": kind, "digest": rt.Digest, "files_needed": len(q.FilesNeeded), "milestone": ec.Milestone, "spawned_in_milestone": spawnedMilestone, "spawned_for_node": spawnedNode,
+			"scope_notation": rt.Authority}}
 		if err := o.l.d.Decisions.AppendSpawn(ctx, o.l.spawnRow(req, rt.Rule, decision, info, fmt.Sprintf("q%d", i))); err != nil {
 			return engine.OpResult{}, err
 		}
@@ -352,7 +385,7 @@ func (o *exploreRouteOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 	}
 	routes := make([]map[string]any, 0, len(plan.Routes))
 	for _, rt := range plan.Routes {
-		routes = append(routes, map[string]any{"digest": rt.Digest, "route": rt.Route})
+		routes = append(routes, map[string]any{"digest": rt.Digest, "route": rt.Route, "reason": rt.Reason, "scope_notation": rt.Authority})
 	}
 	return engine.OpResult{Result: result(plan), Data: map[string]any{"kind": kind, "node": ec.Node, "milestone": ec.Milestone, "tier": ec.Tier, "routes": routes}}, nil
 }
@@ -387,13 +420,16 @@ func inRegions(files, regions []string) bool {
 
 // Answer is the answer to a question as the run recorded it.
 type Answer struct {
-	Digest   string   `json:"digest"`
-	ID       string   `json:"id"`
-	Question string   `json:"question"`
-	Answer   string   `json:"answer"`
-	Route    string   `json:"route"`
-	Call     string   `json:"call"`
-	Evidence []string `json:"evidence"`
+	Digest   string `json:"digest"`
+	ID       string `json:"id"`
+	Question string `json:"question"`
+	Answer   string `json:"answer"`
+	Route    string `json:"route"`
+	// Reason is the reason of the route (Route.Reason), and Authority the scope notation of an out-of-authority question.
+	Reason    string   `json:"reason"`
+	Authority string   `json:"authority"`
+	Call      string   `json:"call"`
+	Evidence  []string `json:"evidence"`
 	// Findings is the explorer's FINDINGS as it answered, when an explorer did: exploreRecord reads it as a consumer of the schema.
 	Findings json.RawMessage `json:"findings"`
 }
@@ -416,7 +452,7 @@ func (o *exploreRecordOp) Run(_ context.Context, req engine.OpRequest) (engine.O
 				return engine.OpResult{}, fmt.Errorf("crw.exploreRecord: the answer to %q is no FINDINGS: %w", a.Question, err)
 			}
 		}
-		list = append(list, map[string]any{"digest": a.Digest, "id": a.ID, "question": a.Question, "answer": a.Answer, "route": a.Route, "call": a.Call})
+		list = append(list, map[string]any{"digest": a.Digest, "id": a.ID, "question": a.Question, "answer": a.Answer, "route": a.Route, "reason": a.Reason, "scope_notation": a.Authority, "call": a.Call})
 	}
 	return engine.OpResult{Result: result(map[string]any{"recorded": len(answers)}), Data: map[string]any{"kind": kind, "node": ec.Node, "milestone": ec.Milestone, "answers": list}}, nil
 }
@@ -425,7 +461,8 @@ func (o *exploreRecordOp) Proven(ctx context.Context, ev []engine.Event, row eng
 	return provenAlways(ctx, ev, row)
 }
 
-// answeredDigests are the answers the run recorded, by question digest. An inline route carries no answer and is not one.
+// answeredDigests are the answers the run recorded, by question digest. An inline route carries no answer and is not one, and
+// neither is an empty answer (a repeat of a question that went to the orchestrator in its round).
 func answeredDigests(r rows) map[string]*string {
 	out := map[string]*string{}
 	for _, row := range r.opRows(OpExploreRecord) {
@@ -441,6 +478,9 @@ func answeredDigests(r rows) map[string]*string {
 				continue
 			}
 			a := str(m, "answer")
+			if a == "" {
+				continue
+			}
 			out[d] = &a
 		}
 	}

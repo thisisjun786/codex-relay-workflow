@@ -324,20 +324,23 @@ func writeFile(t *testing.T, path, text string) {
 }
 
 func TestPolicyLoadedFromEnvironmentIsRecordedInTheRun(t *testing.T) {
+	// CRW-1330: the execution policy file is still loaded and returned, but the role table is the helper role store's
+	// (roles_source_test.go); under the test isolation with no store it is the placeholder table.
+	withRoleStore(t, "")
 	dir := t.TempDir()
 	path := dir + "/policy.json"
 	writeFile(t, path, policyFile("claude-haiku", "xhigh"))
 	t.Setenv(execution.EnvPolicy, path)
-	table, _, err := LoadPolicy()
+	table, exec, err := LoadPolicy()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if table.Source != path || table.Digest != loadPolicy(t, policyFile("claude-haiku", "xhigh")).Digest {
-		t.Fatalf("%q %q", table.Source, table.Digest)
+	if exec.Digest() != loadPolicy(t, policyFile("claude-haiku", "xhigh")).Digest || table.Source != "" || table.Roles["executor"].Pair.Model != "claude-fake-haiku" {
+		t.Fatalf("%q %q %+v", exec.Digest(), table.Source, table.Roles["executor"])
 	}
-	// A file that is not a flow policy is refused, never replaced by placeholders.
-	writeFile(t, path, `{"allowed": [{"model": "m", "efforts": ["high"]}]}`)
-	if _, _, err := LoadPolicy(); err == nil || !strings.Contains(err.Error(), "agent-roles") {
+	// A file that does not load is refused, never replaced by placeholders.
+	writeFile(t, path, `{"allowed": []}`)
+	if _, _, err := LoadPolicy(); err == nil || !strings.Contains(err.Error(), "allowed") {
 		t.Fatalf("%v", err)
 	}
 	// No variable: the fake backend's placeholders.
@@ -348,11 +351,13 @@ func TestPolicyLoadedFromEnvironmentIsRecordedInTheRun(t *testing.T) {
 }
 
 func TestFlowRolesShowsPolicyAndDigest(t *testing.T) {
+	// CRW-1330: the source and the digest are the helper role store's path and the canonical digest of its six pairs.
+	store := withRoleStore(t, roleStore("anthropic/claude-haiku-5", "gpt-6.1-sol"))
 	dir := t.TempDir()
 	path := dir + "/policy.json"
 	writeFile(t, path, policyFile("claude-haiku", "xhigh"))
 	t.Setenv(execution.EnvPolicy, path)
-	digest := loadPolicy(t, policyFile("claude-haiku", "xhigh")).Digest
+	digest := snapshotDigest(t)
 
 	code, out, errOut := runFlow(t, "roles", "--json")
 	if code != 0 || errOut != "" {
@@ -362,7 +367,7 @@ func TestFlowRolesShowsPolicyAndDigest(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &report); err != nil {
 		t.Fatal(err)
 	}
-	if report.Source == nil || *report.Source != path || *report.Digest != digest || report.Placeholder || report.Mode != "presence_only" {
+	if report.Source == nil || *report.Source != store || *report.Digest != digest || report.Placeholder || report.Mode != "presence_only" {
 		t.Fatalf("%+v", report)
 	}
 	if len(report.Roles) != 6 || report.Roles[0].Role != "architect" || report.Roles[1].Sandbox != SandboxWorkspaceWrite || len(report.Aliases) != 6 {
@@ -372,7 +377,7 @@ func TestFlowRolesShowsPolicyAndDigest(t *testing.T) {
 	if code != 0 || !strings.Contains(out, "digest: "+digest) || !strings.Contains(out, "haiku -> refused (alias_ambiguous)") {
 		t.Fatalf("exit %d\n%s", code, out)
 	}
-	t.Setenv(execution.EnvPolicy, "")
+	withRoleStore(t, "")
 	if code, out, _ = runFlow(t, "roles"); code != 0 || !strings.Contains(out, "placeholder") {
 		t.Fatalf("exit %d\n%s", code, out)
 	}

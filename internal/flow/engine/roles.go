@@ -17,6 +17,9 @@ type RoleReport struct {
 	Aliases         []string `json:"aliases"`
 	// AutoCompactTokenLimit is the pair's model_auto_compact_token_limit, absent when the pair declares none.
 	AutoCompactTokenLimit *int64 `json:"autoCompactTokenLimit,omitempty"`
+	// State is where the pair came from in a table read from the helper role store: store, compiled_default or undecided
+	// (CRW-1330); absent for the placeholder table.
+	State string `json:"state,omitempty"`
 }
 
 // AliasReport is one row of the alias table in a PolicyReport.
@@ -29,8 +32,9 @@ type AliasReport struct {
 	Detail    string `json:"detail,omitempty"`
 }
 
-// PolicyReport is what `crw flow roles` shows: where the policy was read from, its digest, and the pair of each role
-// and the alias table a call is resolved against.
+// PolicyReport is what `crw flow roles` shows: where the role table was read from (the helper role store), its digest (the
+// canonical digest of the six pairs the run pins), the pair of each role, the alias table a call is resolved against, and
+// the warnings of the table and of the execution policy file.
 type PolicyReport struct {
 	// Source and Digest are null for the placeholder table of the fake backend.
 	Source      *string       `json:"source"`
@@ -39,6 +43,8 @@ type PolicyReport struct {
 	Placeholder bool          `json:"placeholder"`
 	Roles       []RoleReport  `json:"roles"`
 	Aliases     []AliasReport `json:"aliases"`
+	// Warnings are the table's warnings and then the execution policy loader's (CRW-1330); absent when there are none.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // DescribePolicy reports the role table of a flow run. exec is the execution policy it was built from (the zero value
@@ -54,8 +60,9 @@ func DescribePolicy(table *Policy, exec execution.Policy) PolicyReport {
 		if !ok {
 			continue
 		}
-		report.Roles = append(report.Roles, RoleReport{Role: name, Family: spec.Family, Model: spec.Pair.Model, ReasoningEffort: spec.Pair.Effort, Sandbox: spec.Sandbox, Aliases: spec.ModelAliases, AutoCompactTokenLimit: spec.AutoCompactTokenLimit})
+		report.Roles = append(report.Roles, RoleReport{Role: name, Family: spec.Family, Model: spec.Pair.Model, ReasoningEffort: spec.Pair.Effort, Sandbox: spec.Sandbox, Aliases: spec.ModelAliases, AutoCompactTokenLimit: spec.AutoCompactTokenLimit, State: table.States[name]})
 	}
+	report.Warnings = append(append(report.Warnings, table.Warnings...), exec.Warnings()...)
 	for _, row := range table.Aliases {
 		report.Aliases = append(report.Aliases, AliasReport{Key: row.Key, Effort: row.Effort, Isolation: row.Isolation, Role: row.Role, Refuse: row.Cause, Detail: row.Detail})
 	}
@@ -66,17 +73,28 @@ func DescribePolicy(table *Policy, exec execution.Policy) PolicyReport {
 func (r PolicyReport) Text() string {
 	var b strings.Builder
 	if r.Placeholder {
-		b.WriteString("policy: placeholder table of the fake backend (CODEX_THREAD_BRIDGE_EXECUTION_POLICY names no file)\n")
+		b.WriteString("roles: placeholder table of the fake backend (a test with no helper role store)\n")
 	} else {
-		fmt.Fprintf(&b, "policy: %s\ndigest: %s\n", *r.Source, *r.Digest)
+		fmt.Fprintf(&b, "roles: %s\ndigest: %s\n", *r.Source, *r.Digest)
 	}
-	fmt.Fprintf(&b, "mode: %s\n\nroles:\n", r.Mode)
+	fmt.Fprintf(&b, "mode: %s\n\npairs:\n", r.Mode)
 	for _, role := range r.Roles {
 		limit := ""
 		if role.AutoCompactTokenLimit != nil {
 			limit = fmt.Sprintf(" autoCompactTokenLimit %d", *role.AutoCompactTokenLimit)
 		}
-		fmt.Fprintf(&b, "  %-15s %s at %s (%s, %s)%s aliases: %s\n", role.Role, role.Model, role.ReasoningEffort, role.Family, role.Sandbox, limit, strings.Join(role.Aliases, ", "))
+		pair := role.Model + " at " + role.ReasoningEffort
+		switch {
+		case role.State == "undecided":
+			pair = "undecided (inherits the session)"
+		case role.ReasoningEffort == "":
+			pair = role.Model + " at an undecided effort"
+		}
+		state := ""
+		if role.State == "compiled_default" {
+			state = " [compiled default]"
+		}
+		fmt.Fprintf(&b, "  %-15s %s (%s, %s)%s%s aliases: %s\n", role.Role, pair, role.Family, role.Sandbox, limit, state, strings.Join(role.Aliases, ", "))
 	}
 	b.WriteString("\naliases:\n")
 	for _, row := range r.Aliases {
@@ -91,6 +109,12 @@ func (r PolicyReport) Text() string {
 			fmt.Fprintf(&b, "  %s -> %s\n", call, row.Role)
 		} else {
 			fmt.Fprintf(&b, "  %s -> refused (%s)\n", call, row.Refuse)
+		}
+	}
+	if len(r.Warnings) > 0 {
+		b.WriteString("\nwarnings:\n")
+		for _, w := range r.Warnings {
+			fmt.Fprintf(&b, "  warning: %s\n", w)
 		}
 	}
 	return b.String()

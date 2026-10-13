@@ -17,7 +17,8 @@ const RESEARCH_PER_TIER = 2
 
 const ms = await crw.milestone(args.plan, args.milestone)
 
-// The design audit of a DESIGN of the architect: its open questions go to explorers, a reviewer of another model family audits the
+// The design audit of a DESIGN of the architect: its open questions go to explorers or, when out of the architect's authority or
+// beyond the explorer cap, to the orchestrator (crw.exploreRoute), a reviewer of another model family audits the
 // DESIGN with the answers, and needs_changes sends it back to the architect on its own thread, for AUDIT_ROUNDS rounds. tag names
 // the labels of a re-plan's rounds. The answer is {ok, arch, answers}, or {ok: false, result} with what the milestone came to when
 // the design could not be approved.
@@ -45,10 +46,11 @@ async function auditedDesign(first, tag, context) {
   return { ok: false, result: { state: 'escalated', source: 'design_audit', reason: 'design_audit_rounds', escalation: esc.id } }
 }
 
-// The questions beyond the explorer cap of the milestone are design questions for the orchestrator thread; the milestone goes on.
+// The open questions out of the architect's authority and the questions beyond the explorer cap of the milestone are design
+// questions for the orchestrator thread, each with its scope: one non-blocking ask, and the milestone goes on.
 async function askOrchestrator(answers) {
   const asked = answers.filter((a) => a.route === 'orchestrator')
-  if (asked.length > 0) await crw.escalate(null, { reason: 'design_question', detail: asked.map((a) => a.question).join(' | '), ask: 'design' })
+  if (asked.length > 0) await crw.escalate(null, { reason: 'design_question', detail: asked.map((a) => (a.scope ? '[' + a.scope + '] ' : '') + a.question).join(' | '), ask: 'design' })
 }
 
 // A re-plan (SP-ARCH-2): the architect's DESIGN delta is the next turn of its thread (the handle the ledger holds), asked at the head
