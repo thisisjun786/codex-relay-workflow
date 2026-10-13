@@ -704,7 +704,11 @@ this way.
 journal row (the report id, kind, initiative, subject, text, its digest, the evidence and the
 reporting thread, `CODEX_THREAD_ID`) and the direct message, in one transaction. A report with
 nobody above to tell is still recorded and the refusal (exit 2) carries the report id with
-`standing: true`; the same report again answers `replayed: true` and stages nothing more.
+`standing: true`; the same report again answers `replayed: true` and stages nothing more. The
+message goes in the lead's name, and a caller is not refused for not being the lead: a calling
+thread that is not the initiative's lead is named at the top of the message text, recorded on the
+row (`reporterIsLead: false`) and warned in the answer (`warning`); a caller with no
+`CODEX_THREAD_ID` is recorded without a reporter and warned.
 
 ## The surface
 
