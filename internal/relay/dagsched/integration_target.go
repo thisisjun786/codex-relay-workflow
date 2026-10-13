@@ -15,7 +15,9 @@ import (
 
 // The integration target that moved outside the integration path (CRW-1301, decision A + D(i)). dag-integrate-push already
 // reads the remote branch before it pushes; that head is compared with the heads the relay recorded for the integration ref:
-// the base of every recorded intent and every head a ref_moved stage moved the ref onto. A remote head outside that set means
+// the base of every recorded intent and every head a ref_moved stage moved the ref onto. The heads recorded for the store's
+// other integration refs count as well, because no record says which remote branch a ref is pushed to (CRW-1304) and their
+// push to the same remote branch is the integration path too (evaluation d1). A remote head outside every recorded set means
 // something other than the relay moved the target (r2 F0-1: a child pushed its own commit to dev). The push records a broken
 // integration_target_moved fault in the fault ledger, whose blocking notice the daemon carries to the supervisor, and names
 // it to the calling parent in its output. What the push does is unchanged: nothing is reverted, and a remote the branch does
@@ -31,7 +33,7 @@ const targetProduct = "crw"
 // expectedShown bounds how many recorded heads a push names; ExpectedTotal says how many there are.
 const expectedShown = 8
 
-// TargetMoved is what a push found when the remote branch held a head the relay never recorded for the integration ref.
+// TargetMoved is what a push found when the remote branch held a head the relay never recorded for an integration ref.
 type TargetMoved struct {
 	IntegrationRef string
 	RemoteHead     string
@@ -43,20 +45,20 @@ type TargetMoved struct {
 	FaultError string
 }
 
-// TargetCheck compares the remote head a push read with the heads the relay recorded for the integration ref. It answers nil
+// TargetCheck compares the remote head a push read with the heads the relay recorded for the integration refs. It answers nil
 // when the head is one of them.
 type TargetCheck func(ctx context.Context, checkout, remote, remoteRef, integrationRef, remoteHead string) (*TargetMoved, error)
 
-// CheckIntegrationTarget is the TargetCheck dag-integrate-push runs: a head outside the recorded set is recorded as an
-// integration_target_moved fault, identified by the checkout, the remote and the remote ref, one occurrence per remote head,
-// scoped to the project of the plan that recorded the newest head. An error means the recorded heads could not be read; a
-// ledger that refuses the fault is named in FaultError, and neither stops the push.
+// CheckIntegrationTarget is the TargetCheck dag-integrate-push runs: a head the relay recorded for no integration ref of the
+// store is recorded as an integration_target_moved fault, identified by the checkout, the remote and the remote ref, one
+// occurrence per remote head, scoped to the project of the plan that recorded the integration ref's newest head. An error means
+// the recorded heads could not be read; a ledger that refuses the fault is named in FaultError, and neither stops the push.
 func (s *Scheduler) CheckIntegrationTarget(ctx context.Context, checkout, remote, remoteRef, integrationRef, remoteHead string) (*TargetMoved, error) {
-	expected, plan, err := s.recordedTargetHeads(ctx, integrationRef)
+	expected, plan, recorded, err := s.recordedTargetHeads(ctx, integrationRef)
 	if err != nil {
 		return nil, err
 	}
-	if len(expected) == 0 || slices.Contains(expected, remoteHead) {
+	if len(expected) == 0 || recorded[remoteHead] {
 		return nil, nil
 	}
 	out := &TargetMoved{IntegrationRef: integrationRef, RemoteHead: remoteHead, Expected: expected[:min(len(expected), expectedShown)], ExpectedTotal: len(expected)}
@@ -71,11 +73,11 @@ func (s *Scheduler) CheckIntegrationTarget(ctx context.Context, checkout, remote
 
 // recordedTargetHeads reads the heads the relay recorded for an integration ref, newest first and each once, and the plan of
 // the newest: the base of every intent of the ref and every head a ref_moved stage of its batches names. The ref is matched
-// by name, as VerifiedMoveOnto matches it.
-func (s *Scheduler) recordedTargetHeads(ctx context.Context, integrationRef string) ([]string, string, error) {
+// by name, as VerifiedMoveOnto matches it. recorded holds the same heads of every integration ref of the store.
+func (s *Scheduler) recordedTargetHeads(ctx context.Context, integrationRef string) (heads []string, plan string, recorded map[string]bool, err error) {
 	rows, err := s.Store.Q(ctx).QueryContext(ctx, "SELECT stage, batch_id, plan_id, detail FROM dag_integration_stages WHERE node_id = '' AND stage IN ('intent', 'ref_moved') ORDER BY recorded_at, rowid")
 	if err != nil {
-		return nil, "", err
+		return nil, "", nil, err
 	}
 	defer rows.Close()
 	type stageRow struct{ stage, batch, plan, detail string }
@@ -84,7 +86,7 @@ func (s *Scheduler) recordedTargetHeads(ctx context.Context, integrationRef stri
 	for rows.Next() {
 		var r stageRow
 		if err := rows.Scan(&r.stage, &r.batch, &r.plan, &r.detail); err != nil {
-			return nil, "", err
+			return nil, "", nil, err
 		}
 		if r.stage == "intent" {
 			var intent map[string]string
@@ -98,13 +100,16 @@ func (s *Scheduler) recordedTargetHeads(ctx context.Context, integrationRef stri
 		all = append(all, r)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, "", err
+		return nil, "", nil, err
 	}
-	var heads []string
-	plan := ""
+	recorded = map[string]bool{}
 	for i := len(all) - 1; i >= 0; i-- {
 		r := all[i]
-		if batchRef[r.batch] != integrationRef || r.detail == "" {
+		if batchRef[r.batch] == "" || r.detail == "" {
+			continue
+		}
+		recorded[r.detail] = true
+		if batchRef[r.batch] != integrationRef {
 			continue
 		}
 		if plan == "" {
@@ -114,7 +119,7 @@ func (s *Scheduler) recordedTargetHeads(ctx context.Context, integrationRef stri
 			heads = append(heads, r.detail)
 		}
 	}
-	return heads, plan, nil
+	return heads, plan, recorded, nil
 }
 
 // recordTargetMoved records one occurrence of the fault through the ledger, which raises its blocking notice when it opens, and
@@ -130,7 +135,7 @@ func (s *Scheduler) recordTargetMoved(ctx context.Context, m *TargetMoved, signa
 	} else if has {
 		scope["projectKey"] = project
 	}
-	detail := fmt.Sprintf("%s on %s holds %s, which is not a head the relay recorded for %s (newest recorded: %s); something outside the integration path moved it", signature["remoteRef"], signature["remote"], m.RemoteHead, m.IntegrationRef, strings.Join(m.Expected, ", "))
+	detail := fmt.Sprintf("%s on %s holds %s, which is not a head the relay recorded for %s or any other integration ref (newest recorded for %s: %s); something outside the integration path moved it", signature["remoteRef"], signature["remote"], m.RemoteHead, m.IntegrationRef, m.IntegrationRef, strings.Join(m.Expected, ", "))
 	shown := make([]any, len(m.Expected))
 	for i, head := range m.Expected {
 		shown[i] = head
@@ -156,6 +161,6 @@ func nameTargetMoved(err error, m *TargetMoved, remote, remoteRef string) error 
 	if m.FaultID == "" {
 		recorded = "the fault could not be recorded: " + m.FaultError
 	}
-	refused.Detail += fmt.Sprintf("; %s: %s on %s held %s, not a head the relay recorded for %s (%s)", ClassIntegrationTargetMoved, remoteRef, remote, m.RemoteHead, m.IntegrationRef, recorded)
+	refused.Detail += fmt.Sprintf("; %s: %s on %s held %s, not a head the relay recorded for %s or any other integration ref (%s)", ClassIntegrationTargetMoved, remoteRef, remote, m.RemoteHead, m.IntegrationRef, recorded)
 	return err
 }

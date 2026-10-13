@@ -66,7 +66,7 @@ type PushResult struct {
 	// The list only informs: it never blocks the push. StaleNodesError is why it could not be read, when it could not.
 	StaleNodes      []StaleNode
 	StaleNodesError string
-	// TargetMoved is set when the remote branch held a head the relay never recorded for the integration ref (CRW-1301); it
+	// TargetMoved is set when the remote branch held a head the relay never recorded for an integration ref (CRW-1301); it
 	// never changes what is pushed. TargetCheckError is why the comparison could not be made, when it could not.
 	TargetMoved      *TargetMoved
 	TargetCheckError string
@@ -84,7 +84,7 @@ func PushIntegration(ctx context.Context, checkout, remote, remoteRef, integrati
 }
 
 // PushIntegrationChecked is PushIntegration with the target check of CRW-1301: target, when given, is asked once the remote
-// branch is read and names a head the relay never recorded for the integration ref. Neither its answer nor its failure
+// branch is read and names a head the relay never recorded for an integration ref. Neither its answer nor its failure
 // changes what is pushed; a refusal after a moved target names it in its detail.
 func PushIntegrationChecked(ctx context.Context, checkout, remote, remoteRef, integrationRef string, moved MovedHeadCheck, stale StaleNodesCheck, target TargetCheck) (PushResult, error) {
 	out := PushResult{Remote: remote, RemoteRef: remoteRef}

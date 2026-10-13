@@ -186,3 +186,47 @@ func TestIntegrationTargetUnreadableRemoteRecordsNoFault(t *testing.T) {
 		t.Fatalf("an unreadable remote recorded %d faults", len(faults))
 	}
 }
+
+// A second integration ref that pushes to the same remote branch is on the integration path too (evaluation d1): once
+// dev-int moved origin/dev onto its verified head, the push of other-int finds that head, which the relay recorded for
+// dev-int, and records no fault. The push answers what it answered before: other-int does not contain dev-int's head, so it is
+// refused with merge_base_mismatch and nothing moves. A head no integration ref recorded is still named.
+func TestIntegrationTargetAnotherRefOnPathRecordsNoFault(t *testing.T) {
+	testsupport.SandboxAccountHomes(t)
+	k := newBatchKit(t, batchNode{name: "a", files: map[string]string{"a.txt": "a\n"}}, batchNode{name: "b", files: map[string]string{"b.txt": "b\n"}})
+	remote := bareRemote(t)
+	k.pushRepo(t, remote)
+	k.repo.git("push", "-q", remote, k.base+":refs/heads/dev")
+	headA := k.integrateNodes(t, "dev-int", "a")
+	k.integrateNodes(t, "other-int", "b")
+	if first, err := checkedPush(k); err != nil || first.Outcome != PushPushed || first.TargetMoved != nil {
+		t.Fatalf("push of dev-int: %+v, %v; want pushed and no moved target", first, err)
+	}
+	other := func() (PushResult, error) {
+		return PushIntegrationChecked(context.Background(), k.repo.path, "origin", "dev", "other-int", k.sched.VerifiedMoveOnto, k.sched.StaleIntegratedNodes, k.sched.CheckIntegrationTarget)
+	}
+	refused, err := other()
+	if refusalReasonOf(err) != "merge_base_mismatch" || strings.Contains(err.Error(), ClassIntegrationTargetMoved) || refused.TargetMoved != nil || refused.TargetCheckError != "" {
+		t.Fatalf("push of other-int over dev-int's head: %+v, %v; want merge_base_mismatch as before and no moved target", refused, err)
+	}
+	if got := remoteBranch(t, remote, "dev"); got != headA {
+		t.Fatalf("remote dev is %s; want dev-int's head %s", got, headA)
+	}
+	if faults := targetFaults(t, k); len(faults) != 0 {
+		t.Fatalf("another integration ref's push recorded %d faults", len(faults))
+	}
+	// a head neither ref recorded is still named: a child's own commit on dev-int's head, pushed straight to dev
+	k.repo.git("checkout", "-q", "-B", "child", headA)
+	k.repo.write("child.txt", "child\n")
+	k.repo.git("add", "child.txt")
+	k.repo.git("commit", "-q", "-m", "child")
+	child := k.repo.git("rev-parse", "HEAD")
+	k.repo.git("checkout", "-q", "dev")
+	k.repo.git("push", "-q", remote, child+":refs/heads/dev")
+	if moved, err := other(); refusalReasonOf(err) != "merge_base_mismatch" || moved.TargetMoved == nil || moved.TargetMoved.RemoteHead != child {
+		t.Fatalf("push of other-int over a child's commit: %+v, %v; want merge_base_mismatch and a moved target", moved, err)
+	}
+	if faults := targetFaults(t, k); len(faults) != 1 {
+		t.Fatalf("%d faults after a move outside the path; want 1", len(faults))
+	}
+}
