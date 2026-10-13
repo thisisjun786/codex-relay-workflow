@@ -261,9 +261,10 @@ func TestEvidenceMissingSpawnsExplorerThenReviewerPacket(t *testing.T) {
 
 // ---- the executor contract and the authority boundary of the DESIGN (CRW-1321) ----
 
-// The architect overlay states the executor contract the run enforces, and the facts it states are the run's: the commit of a
-// node is made by the run with the message `crw <node> <call>`, a blank line and the request id, and a RECEIPT has exactly the
-// fields the overlay names - no field for a commit, a commit message or an exception's reason.
+// The architect overlay and the design audit packet both state the executor contract the run enforces, and the facts they state
+// are the run's: the commit of a node is made by the run with the message `crw <node> <call>`, a blank line and the request id,
+// and a RECEIPT has exactly the fields each names - no field for a commit, a commit message or an exception's reason. Both copies
+// are held to ops.Receipt and to the run's commit, so neither can drift from the run or from the other.
 func TestArchitectContractMatchesTheRun(t *testing.T) {
 	l := NewLab(t, oneNode()...)
 	mustRun(t, l)
@@ -286,26 +287,44 @@ func TestArchitectContractMatchesTheRun(t *testing.T) {
 	if !ok || head != "crw A "+short || reqID == "" || strings.ContainsAny(reqID, "\n ") {
 		t.Errorf("the run's commit message is %q, not `crw <node> <call>`, a blank line and the request id", msg)
 	}
-	if !strings.Contains(overlay, "fixed message `crw <node> <call>`") {
-		t.Error("the architect overlay does not state the run's commit message")
+	audit := textOfCall(l, callNamed(t, l, "design-audit:r1").ID)
+	for where, text := range map[string]string{"the architect overlay": overlay, "the design audit packet": audit} {
+		if !strings.Contains(text, "fixed message `crw <node> <call>`") || !strings.Contains(text, "request id") {
+			t.Errorf("%s does not state the run's commit message (`crw <node> <call>` and the request id)", where)
+		}
 	}
-	// The sentence that lists the fields names each field of ops.Receipt and nothing the RECEIPT does not have.
+	// The sentence of each that lists the fields names each field of ops.Receipt and nothing the RECEIPT does not have.
 	named := regexp.MustCompile("RECEIPT has exactly these fields: ([^.\n]*)").FindStringSubmatch(overlay)
 	if named == nil {
 		t.Fatalf("the architect overlay does not list the RECEIPT fields:\n%s", overlay)
 	}
+	receiptNames(t, "the architect overlay", named[1], regexp.MustCompile("`([a-z_]+)`"))
+	listed := regexp.MustCompile(`reports a RECEIPT \(([^)]*)\)`).FindStringSubmatch(audit)
+	if listed == nil {
+		t.Fatalf("the design audit packet does not list the RECEIPT fields:\n%s", audit)
+	}
+	receiptNames(t, "the design audit packet", listed[1], regexp.MustCompile(`([a-z_]+)`))
+}
+
+// receiptNames holds the field list a text gives for the RECEIPT to the json fields of ops.Receipt: each named, nothing else.
+func receiptNames(t *testing.T, where, list string, name *regexp.Regexp) {
+	t.Helper()
 	fields := reflect.TypeOf(ops.Receipt{})
 	want := map[string]bool{}
 	for i := 0; i < fields.NumField(); i++ {
 		tag, _, _ := strings.Cut(fields.Field(i).Tag.Get("json"), ",")
 		want[tag] = true
-		if !strings.Contains(named[1], "`"+tag+"`") {
-			t.Errorf("the executor contract does not name the RECEIPT field %s: %s", tag, named[1])
+	}
+	got := map[string]bool{}
+	for _, m := range name.FindAllStringSubmatch(list, -1) {
+		got[m[1]] = true
+		if !want[m[1]] {
+			t.Errorf("%s names %s, which is no RECEIPT field: %s", where, m[1], list)
 		}
 	}
-	for _, m := range regexp.MustCompile("`([a-z_]+)`").FindAllStringSubmatch(named[1], -1) {
-		if !want[m[1]] {
-			t.Errorf("the executor contract names %s, which is no RECEIPT field", m[1])
+	for tag := range want {
+		if !got[tag] {
+			t.Errorf("%s does not name the RECEIPT field %s: %s", where, tag, list)
 		}
 	}
 }
