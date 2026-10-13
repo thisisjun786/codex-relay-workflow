@@ -21,7 +21,7 @@ func TestStartPreviewThenDetached(t *testing.T) {
 		t.Fatalf("a night batch without a readable decision started: %s", out)
 	}
 	handoff := defaultHandoff(t)
-	code, out, errOut := td.do("start", "project-lane", "--thread", "thread-owner", "--state", w.state, "--args", `{ "plan": "plan-1", "milestone": "M1" }`, "--token-budget", "5000", "--handoff", handoff)
+	code, out, errOut := td.do("start", "project-lane", "--backend", "app-server", "--thread", "thread-owner", "--state", w.state, "--args", `{ "plan": "plan-1", "milestone": "M1" }`, "--token-budget", "5000", "--handoff", handoff)
 	if code != 0 {
 		t.Fatalf("exit %d\n%s\n%s", code, out, errOut)
 	}
@@ -50,7 +50,7 @@ func TestStartPreviewThenDetached(t *testing.T) {
 	}
 
 	// --json is one document: the preview and the run
-	code, out, _ = td.do("start", "project-lane", "--thread", "thread-owner", "--state", w.state, "--json", "--args", `{"plan":"plan-1","milestone":"M1"}`, "--handoff", handoff)
+	code, out, _ = td.do("start", "project-lane", "--backend", "app-server", "--thread", "thread-owner", "--state", w.state, "--json", "--args", `{"plan":"plan-1","milestone":"M1"}`, "--handoff", handoff)
 	var ans StartAnswer
 	if code != 0 || json.Unmarshal([]byte(strings.TrimPrefix(out, "<<spawned>>\n")), &ans) != nil || ans.Run == "" || ans.PID != 4242 || len(ans.Plan.Facts) != 5 {
 		t.Errorf("start --json: exit %d %s", code, out)
@@ -87,13 +87,14 @@ func TestStartPreviewThenDetached(t *testing.T) {
 // TestStartPreviewListsFivePreflightFacts: the preview lists the five facts in their order with their level (pass, warn or fail)
 // and the reading each was judged on. A fact never stops the start (CRW-1318): a run whose fact failed is started without --force,
 // the fact is printed and recorded in the run's spec, --force is accepted and changes nothing, and --preview starts nothing. The
-// facts of the store prober are judged on what the relay records.
+// facts of the store prober are judged on what the relay records. The runs start on the App Server backend: a session run adds the
+// six session facts after them (TestSessionFactsWarnAndNeverBlockTheStart).
 func TestStartPreviewListsFivePreflightFacts(t *testing.T) {
 	w := newWorld(t)
 	td := w.deps()
 	td.facts[3] = Fact{Name: FactWaits, Pass: false, Reading: "crw.decide waits and nothing delivers"}
 	lane := []string{"--args", `{"plan":"plan-1","milestone":"M1"}`, "--handoff", defaultHandoff(t)}
-	code, out, errOut := td.do(append([]string{"start", "project-lane", "--thread", "thread-owner", "--state", w.state, "--preview", "--json"}, lane...)...)
+	code, out, errOut := td.do(append([]string{"start", "project-lane", "--backend", "app-server", "--thread", "thread-owner", "--state", w.state, "--preview", "--json"}, lane...)...)
 	if code != 0 || len(td.spawned) != 0 {
 		t.Fatalf("a preview with a failed fact: exit %d, %d processes\n%s%s", code, len(td.spawned), out, errOut)
 	}
@@ -111,7 +112,7 @@ func TestStartPreviewListsFivePreflightFacts(t *testing.T) {
 	if ans.Plan.Facts[3].Pass || ans.Plan.Facts[3].Level != LevelFail || !ans.Plan.Facts[0].Pass || ans.Plan.Facts[0].Level != LevelPass {
 		t.Errorf("pass and fail: %+v", ans.Plan.Facts)
 	}
-	code, out, errOut = td.do(append([]string{"start", "project-lane", "--thread", "thread-owner", "--state", w.state}, lane...)...)
+	code, out, errOut = td.do(append([]string{"start", "project-lane", "--backend", "app-server", "--thread", "thread-owner", "--state", w.state}, lane...)...)
 	if code != 0 || len(td.spawned) != 1 || !strings.Contains(out, "FAIL  waits_deliverable") || !strings.Contains(errOut, "waits_deliverable") {
 		t.Fatalf("a failed fact did not start the run with the fact printed: exit %d, %d processes\n%s%s", code, len(td.spawned), out, errOut)
 	}
@@ -121,7 +122,7 @@ func TestStartPreviewListsFivePreflightFacts(t *testing.T) {
 	if spec, err := ReadSpec(w.state, td.spawned[0].Spec.RunID); err != nil || len(spec.Preflight) != 1 || spec.Preflight[0].Name != FactWaits {
 		t.Errorf("the stored spec: %+v %v", spec.Preflight, err)
 	}
-	code, out, errOut = td.do(append([]string{"start", "project-lane", "--thread", "thread-owner", "--state", w.state, "--force"}, lane...)...)
+	code, out, errOut = td.do(append([]string{"start", "project-lane", "--backend", "app-server", "--thread", "thread-owner", "--state", w.state, "--force"}, lane...)...)
 	if code != 0 || len(td.spawned) != 2 || len(td.spawned[1].Spec.Preflight) != 1 || td.spawned[1].Spec.Preflight[0].Name != FactWaits {
 		t.Fatalf("--force is accepted and changes nothing: exit %d, spawned %+v\n%s%s", code, td.spawned, out, errOut)
 	}
@@ -241,7 +242,7 @@ func TestStartWarnsWhenThePlanKeyIsNotTheThreadsBinding(t *testing.T) {
 		}
 	}
 	lane := []string{"--args", `{"plan":"plan-1","milestone":"M1"}`, "--handoff", defaultHandoff(t)}
-	code, out, errOut := td.do(append([]string{"start", "project-lane", "--thread", "thread-owner", "--state", w.state}, lane...)...)
+	code, out, errOut := td.do(append([]string{"start", "project-lane", "--backend", "app-server", "--thread", "thread-owner", "--state", w.state}, lane...)...)
 	if code != 0 || len(td.spawned) != 1 {
 		t.Fatalf("a plan under another key: exit %d, %d processes\n%s%s", code, len(td.spawned), out, errOut)
 	}
@@ -266,7 +267,7 @@ func TestStartWarnsWhenThePlanKeyIsNotTheThreadsBinding(t *testing.T) {
 	if _, err := w.st.DB.ExecContext(ctx, `UPDATE scope_bindings SET scope_key = 'P-CRW-140' WHERE binding_id = 'b1'`); err != nil {
 		t.Fatal(err)
 	}
-	code, out, errOut = td.do(append([]string{"start", "project-lane", "--thread", "thread-owner", "--state", w.state}, lane...)...)
+	code, out, errOut = td.do(append([]string{"start", "project-lane", "--backend", "app-server", "--thread", "thread-owner", "--state", w.state}, lane...)...)
 	if code != 0 || len(td.spawned) != 2 || strings.Contains(out, FactProjectKey) || strings.Contains(errOut, FactProjectKey) || len(td.spawned[1].Spec.Preflight) != 0 {
 		t.Errorf("a plan under the thread's key: exit %d\n%s%s %+v", code, out, errOut, td.spawned[1].Spec.Preflight)
 	}

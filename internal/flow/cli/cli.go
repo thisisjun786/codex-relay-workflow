@@ -16,7 +16,9 @@ import (
 )
 
 // Usage is the usage of the commands this package serves.
-const Usage = `usage: crw flow start WORKFLOW [--args JSON | --args-file FILE] [--thread T] [--token-budget N] [--pool N] [--decision D] [--preview] [--force]
+const Usage = `usage: crw flow start WORKFLOW [--args JSON | --args-file FILE] [--thread T] [--backend session|app-server] [--token-budget N] [--pool N] [--decision D] [--preview] [--force]
+       crw flow next RUN [--wait S] [--json]
+       crw flow dispatched RUN CALL --agent ID --k K --attempt N [--wait S] [--json]
        crw flow ps [--all] [--json]
        crw flow show RUN [--json]
        crw flow watch RUN [--after SEQ] [--wait N] [--limit M] [--follow] [--json]
@@ -36,10 +38,11 @@ const Usage = `usage: crw flow start WORKFLOW [--args JSON | --args-file FILE] [
        (every command takes --state DIR and --socket PATH)`
 
 // commands are the first words of the commands this package serves; resume and recover are served here for the run lock and the
-// forms the engine's commands do not have, and hand the rest to the engine. audit is `crw flow audit` (audit.go); the reach-up
+// forms the engine's commands do not have, and hand the rest to the engine; next and dispatched are the owner thread's side of a
+// session run's steps (next.go). audit is `crw flow audit` (audit.go); the reach-up
 // commands of Commands (apply.go, report.go) run over an Environment (RunEnv).
 var commands = map[string]bool{"start": true, "ps": true, "show": true, "watch": true, "answer": true, "pause": true, "cancel": true,
-	"status-line": true, "digest": true, "resume": true, "recover": true, "audit": true, ProcessCommand: true,
+	"status-line": true, "digest": true, "resume": true, "recover": true, "audit": true, ProcessCommand: true, "next": true, "dispatched": true,
 	"apply": true, "report-up": true, "reports": true, "report-ack": true, "report-delivered": true}
 
 // Commands are the `crw flow` commands that work on the relay store's flow rows over an Environment: apply, report-up, reports,
@@ -99,6 +102,10 @@ func RunWith(ctx context.Context, d *Deps, args []string, stdin io.Reader, stdou
 		return c.resume(args[1:])
 	case "recover":
 		return c.recoverCall(args[1:])
+	case "next":
+		return c.next(args[1:])
+	case "dispatched":
+		return c.dispatched(args[1:])
 	case ProcessCommand:
 		return c.process(args[1:])
 	}

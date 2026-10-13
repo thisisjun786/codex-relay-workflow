@@ -241,10 +241,25 @@ func (c *command) execute(spec Spec, state string, resume bool, sigs <-chan os.S
 	cfg := engine.Config{
 		RunID: spec.RunID, Backend: world.Backend, Policy: table, Journal: world.Journal, Args: args, Pool: spec.Pool, TokenBudget: spec.TokenBudget,
 		Ops: world.Ops, Prover: world.Prover, InputSnapshot: world.InputSnapshot, Workflows: src.Workflows, Control: ctl, OmitSeq: true,
-		Upward: world.Upward,
+		Upward: world.Upward, Session: world.Session,
 	}
 	if resume {
 		cfg.Resume = &engine.ResumeOptions{}
+	}
+	if s := world.Session; s != nil {
+		// a session run keeps at most agents.max_threads - 1 calls in flight (the owner's own helper takes a slot), and its owner
+		// thread holds the run's orchestrator line while the run lives: the start wrote it, a resume writes it again when it is not
+		// the last line, after closing the open line of a run whose process is gone (CRW-1316 §9)
+		cfg.Pool = sessionPool(spec.Pool, readCodexAgents(c.getenv).MaxThreads)
+		res, err := bindOwner(state, spec.RunID, s.Owner, table)
+		if w := bindWarning(res, err, s.Owner, spec.RunID); w != "" {
+			fmt.Fprintf(c.stderr, "crw flow %s: warning: %s\n", c.name, w)
+		}
+		defer func() {
+			if _, err := closeOwner(spec.RunID, s.Owner); err != nil {
+				fmt.Fprintf(c.stderr, "crw flow %s: warning: the orchestrator line of thread %s could not be closed: %v\n", c.name, s.Owner, err)
+			}
+		}()
 	}
 	res, err := engine.Run(ctx, src.Program, cfg)
 	if err != nil {

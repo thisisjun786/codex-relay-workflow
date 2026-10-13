@@ -42,6 +42,10 @@ type Spec struct {
 	Deadline string `json:"deadline,omitempty"`
 	// Decision is the decision record a night batch was started from.
 	Decision string `json:"decision,omitempty"`
+	// Backend is the backend the run is started on: session (the default of `crw flow start`: the calls are role subagents of the
+	// owner thread) or app-server; empty in a spec written before the field, which names the App Server backend. A resume takes the
+	// backend the run's started row records.
+	Backend string `json:"backend,omitempty"`
 	// Preflight is the preflight facts that did not pass (warn or fail) when the run started, as they were read: a fact never
 	// stops the start, so the run's record is where its warnings stay.
 	Preflight []Fact `json:"preflight,omitempty"`

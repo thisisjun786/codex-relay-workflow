@@ -202,11 +202,11 @@ func newLaneLab(t *testing.T, issues ...labIssue) *laneLab {
 
 // ---- the run ----
 
-// start is `crw flow start` with the lab's state and host; it answers the spec of the run it started (the process is not run yet).
+// start is `crw flow start` with the lab's state and host, on the App Server backend the lab's scripted model answers; it answers the spec of the run it started (the process is not run yet).
 func (l *laneLab) start(argv ...string) Spec {
 	l.t.Helper()
 	before := len(l.td.spawned)
-	code, out, errOut := l.td.do(append(argv, "--thread", labOwner, "--state", l.w.state, "--socket", l.host.SocketPath, "--repo", l.repo, "--force")...)
+	code, out, errOut := l.td.do(append(argv, "--thread", labOwner, "--state", l.w.state, "--socket", l.host.SocketPath, "--repo", l.repo, "--force", "--backend", "app-server")...)
 	if code != 0 || len(l.td.spawned) != before+1 {
 		l.t.Fatalf("start %v: exit %d\n%s%s", argv, code, out, errOut)
 	}
