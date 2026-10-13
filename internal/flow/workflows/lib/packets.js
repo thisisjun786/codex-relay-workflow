@@ -6,11 +6,12 @@
 // over a journal recorded with the earlier text runs that call live again, and with it the rest of its path. The design audit
 // packet is the case of CRW-1321: a run that recorded its design audit under the earlier text runs design-audit:r1 again on a
 // resume, and crw.designLedger then refuses the first revision again (the ledger has r0 and adds r1 next), so the resumed run ends in
-// that refusal - a run past its design audit is finished by the binary that started it, or started anew. A run that had not reached
-// its design audit is not affected. The role overlays (internal/flow/roles/*.md) are no packet: they are the developer instructions
-// a thread starts with, part of no input digest, so a change of them re-runs nothing; a turn on a thread started earlier runs under
-// the instructions that thread was started with, and a new thread or a fork takes the new text. TestResumeAfterPromptTextChange
-// pins both.
+// that refusal. That resume supersedes the recorded audit and r0 with it, so the binary that started the run refuses the run
+// afterwards as well: a run past its design audit is finished by the binary that started it only while no process of a binary with
+// other audit text has resumed it, and is otherwise started anew. A run that had not reached its design audit is not affected. The
+// role overlays (internal/flow/roles/*.md) are no packet: they are the developer instructions a thread starts with, part of no input
+// digest, so a change of them re-runs nothing; a turn on a thread started earlier runs under the instructions that thread was
+// started with, and a new thread or a fork takes the new text. TestResumeAfterPromptTextChange pins both.
 
 // canon renders a value with its keys in sorted order, so the text does not depend on the order an object was built in.
 export function canon(value) {

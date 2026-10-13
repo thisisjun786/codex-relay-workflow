@@ -395,8 +395,9 @@ func libWith(t *testing.T, file, old, new string) fs.FS {
 // crw:lib/packets). A role overlay is the developer instructions of a thread and part of no input digest: a resume under other
 // overlay text replays every call and runs nothing live. A packet's text is part of the input digest of its call: a resume under
 // another design audit packet runs design-audit:r1 again live, and the rest of its path with it, and crw.designLedger then
-// refuses to add the first revision a second time, so the resumed run ends in that refusal - a run past its design audit is
-// finished by the binary that started it, or started anew.
+// refuses to add the first revision a second time, so the resumed run ends in that refusal. That resume supersedes the recorded
+// audit and the first revision with it, so the binary that started the run refuses it afterwards too: a run past its design audit
+// is finished by the binary that started it only while no process of the new one has resumed it, and is otherwise started anew.
 func TestResumeAfterPromptTextChange(t *testing.T) {
 	l := NewLab(t, twoNodes()...)
 	if got := mustRun(t, l); got.State != "closed" {
@@ -434,5 +435,19 @@ func TestResumeAfterPromptTextChange(t *testing.T) {
 	}
 	if res.Status == engine.RunCompleted || !refused || !strings.Contains(res.Error, "crw.designLedger") {
 		t.Errorf("the resume under another audit packet: %s %q (ledger refused %v), want it to end in the ledger's refusal", res.Status, res.Error, refused)
+	}
+
+	// The binary that started the run, after that resume: its audit packet is the recorded one, but the recorded audit and r0 were
+	// superseded, so design-audit:r1 runs live once more and the ledger refuses again - there is no way back to the earlier binary.
+	before = l.LastSeq()
+	l.Lib = nil
+	l.NewProcess("proc-4")
+	res = l.Resume()
+	labels = nil
+	for _, c := range l.LiveCalls(before) {
+		labels = append(labels, c.Label)
+	}
+	if res.Status == engine.RunCompleted || !strings.Contains(res.Error, "crw.designLedger") || !slices.Equal(labels, []string{"design-audit:r1"}) {
+		t.Errorf("the starting binary after a resume by the new one: %s %q, live calls %v; want design-audit:r1 live and the ledger's refusal", res.Status, res.Error, labels)
 	}
 }
