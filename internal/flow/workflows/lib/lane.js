@@ -424,7 +424,8 @@ async function superseded(node, rel) {
   return { node, state: 'held', reason: 'plan_superseded', hold: rel.hold }
 }
 
-// explore routes the questions of an asker (crw.exploreRoute decides: reuse, inline, spawn, hand to the orchestrator, skip),
+// explore routes the questions of an asker (crw.exploreRoute decides: reuse, inline for a research question, spawn, hand to the
+// orchestrator - an open question of the DESIGN beyond the explorer cap or with an out-of-authority scope notation -, skip),
 // runs the explorers it spawned at most EXPLORER_CONCURRENCY at a time, and records the answers (crw.exploreRecord), so a
 // question of the same digest asked again in the run reuses the answer. The result lists an answer for each question, the
 // questions that went to the orchestrator thread or that exhausted the asker's research, and the call that failed when an
@@ -463,7 +464,7 @@ export async function explore(kind, questions, ctx) {
       if (sib && found[sib.digest]) answer = found[sib.digest].answer
       else if (sib) answer = sib.answer || ''
     }
-    return { digest: r.digest, id: r.id, question: r.question, route: r.route, answer, call, evidence: ev, findings }
+    return { digest: r.digest, id: r.id, question: r.question, route: r.route, reason: r.reason || '', scope: r.scope || '', authority: r.authority || '', answer, call, evidence: ev, findings }
   })
   await crw.exploreRecord(kind, ctx, answers)
   return {

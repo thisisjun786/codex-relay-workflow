@@ -236,6 +236,12 @@ func stoppedWhy(info RunInfo, in DigestInput) string {
 	case info.State == StateHeld:
 		sort.Strings(info.HeldReasons)
 		return "held: " + cell(strings.Join(info.HeldReasons, ", "))
+	case info.State == StateBlocked:
+		var failed []string
+		for _, ie := range info.ItemErrors {
+			failed = append(failed, ie.Item+": "+oneLine(ie.Error))
+		}
+		return "blocked: no node started (" + strings.Join(failed, "; ") + ")"
 	}
 	return "every selected issue was worked on and the run completed"
 }
