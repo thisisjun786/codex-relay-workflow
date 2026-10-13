@@ -180,8 +180,10 @@ type Engine struct {
 	// the node has an outcome nobody can prove).
 	stoppedM sync.Mutex
 	stopped  map[string]string
-	// sessR routes the dispatch reports of a session run (Config.Session) to the calls that wait for them.
+	// sessR routes the dispatch reports of a session run (Config.Session) to the calls that wait for them; sessW is what the run
+	// knows of its waiting steps, to wake the owner thread (sessionwake.go).
 	sessR *sessionRouter
+	sessW *sessionWaker
 	// recovery is what reconcile decided for the calls of a resumed run; startSeq is the first row this run's calls write,
 	// and every row before it belongs to a process that no longer exists (or to the reconcile pass that read them).
 	recovery map[string]*Recovery
@@ -308,11 +310,16 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 		e.prior = newPriorIndex(e.j, e.startSeq)
 		e.sweepOwnDirectories()
 	}
-	var routed chan struct{}
+	var routed, woken chan struct{}
 	if cfg.Session != nil {
 		e.sessR = newSessionRouter()
 		routed = make(chan struct{})
 		go e.routeReports(routed)
+		if cfg.Session.Wake != nil {
+			e.sessW = newSessionWaker()
+			woken = make(chan struct{})
+			go e.wakeLoop(woken)
+		}
 	}
 	e.noteSummaryDocument()
 	if cfg.Upward != nil {
@@ -388,6 +395,9 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 	e.inflight.Wait()
 	if routed != nil {
 		<-routed
+	}
+	if woken != nil {
+		<-woken
 	}
 	if err := journalErr(e.j); err != nil && res.Status == RunCompleted {
 		res.Status, res.ErrorKind, res.Error = RunScriptError, ErrKindEngine, journalError(err).Error()

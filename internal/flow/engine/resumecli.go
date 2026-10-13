@@ -34,7 +34,10 @@ type ResumeSetup struct {
 	// Upward is the hook the resumed run hands what goes up from it to (the plan summary, the escalations, the completion digest); nil
 	// hands nothing.
 	Upward UpwardHook
-	Close  func() error
+	// Session is the session environment of a run its started row records on the session backend (CRW-1316); nil for one of the
+	// App Server backend.
+	Session *SessionConfig
+	Close   func() error
 }
 
 // ResumeEnv opens what `crw flow resume` works on for a run.
@@ -146,7 +149,7 @@ func resumeCmd(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	}
 	res, err := Run(ctx, prog, Config{
 		RunID: runID, Backend: setup.Backend, Policy: table, Journal: setup.Journal, Args: argsRaw, Pool: *pool, TokenBudget: *budget,
-		Resume: &ResumeOptions{}, Ops: setup.Ops, OmitSeq: true, Control: controlOf(ctx), Upward: setup.Upward,
+		Resume: &ResumeOptions{}, Ops: setup.Ops, OmitSeq: true, Control: controlOf(ctx), Upward: setup.Upward, Session: setup.Session,
 		Workflows: func(name, scriptPath string) (*script.Program, error) {
 			return loadSibling(fs.FS(dir), name, scriptPath)
 		},
