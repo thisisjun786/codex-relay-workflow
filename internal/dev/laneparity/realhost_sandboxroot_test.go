@@ -3,6 +3,7 @@
 package laneparity
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -45,14 +46,28 @@ func TestRealhostRefusesScratchAtHomeBeforeCodex(t *testing.T) {
 	w := sandboxroottest.Fake(t)
 	root := repoRoot(t)
 	_, crw := fakeHost(t, root, fakeUnsupported, false)
+	// A scratch below the sandbox base is judged fine: the cell goes on to run Codex. Its outcome is what
+	// a scratch the rule warns about must end with too.
+	codex, record := recordingCodex(t)
+	allowed, err := RealHost(RealHostOptions{Root: root, CRW: crw, Plugin: filepath.Join(root, "plugins", "crw"), Codex: codex, Scratch: w.Mkdir(t, w.Sandbox, "scratch"),
+		Timeout: 30 * time.Second, Only: regexp.MustCompile("^turn/crw$")})
+	if err != nil || len(allowed.Cells) != 1 {
+		t.Fatalf("an allowed scratch: err %v, cells %+v", err, allowed.Cells)
+	}
+	if calls := recordedCalls(t, record); !strings.Contains(calls, "exec") {
+		t.Fatalf("an allowed scratch never reached Codex:\n%s", calls)
+	}
 	for name, scratch := range map[string]string{"the account home": w.Home, "outside the sandbox base": w.Mkdir(t, w.Root, "elsewhere")} {
 		t.Run(name, func(t *testing.T) {
 			w.ClearWarnings(t)
 			codex, record := recordingCodex(t)
-			_, err := RealHost(RealHostOptions{Root: root, CRW: crw, Plugin: filepath.Join(root, "plugins", "crw"), Codex: codex, Scratch: scratch,
+			rep, err := RealHost(RealHostOptions{Root: root, CRW: crw, Plugin: filepath.Join(root, "plugins", "crw"), Codex: codex, Scratch: scratch,
 				Timeout: 30 * time.Second, Only: regexp.MustCompile("^turn/crw$")})
-			if err != nil && strings.Contains(err.Error(), sandboxroot.Code) {
-				t.Fatalf("scratch %s: the rule refused: %v", scratch, err)
+			if err != nil {
+				t.Fatalf("scratch %s: the run failed: %v", scratch, err)
+			}
+			if got, want := cellOutcomes(rep), cellOutcomes(allowed); got != want {
+				t.Fatalf("scratch %s: the cells ended %s, an allowed scratch's %s", scratch, got, want)
 			}
 			if calls := recordedCalls(t, record); !strings.Contains(calls, "exec") {
 				t.Fatalf("scratch %s never reached Codex:\n%s", scratch, calls)
@@ -65,11 +80,14 @@ func TestRealhostRefusesScratchAtHomeBeforeCodex(t *testing.T) {
 			}
 		})
 	}
-	// A scratch below the sandbox base is judged fine: the cell goes on to run Codex.
-	codex, record := recordingCodex(t)
-	_, _ = RealHost(RealHostOptions{Root: root, CRW: crw, Plugin: filepath.Join(root, "plugins", "crw"), Codex: codex, Scratch: w.Mkdir(t, w.Sandbox, "scratch"),
-		Timeout: 30 * time.Second, Only: regexp.MustCompile("^turn/crw$")})
-	if calls := recordedCalls(t, record); !strings.Contains(calls, "exec") {
-		t.Fatalf("an allowed scratch never reached Codex:\n%s", calls)
+}
+
+// cellOutcomes is how each cell of a report ended: its name, Codex's exit, whether a turn was driven,
+// whether it is verified and whether it passed.
+func cellOutcomes(rep RealHostReport) string {
+	var out []string
+	for _, c := range rep.Cells {
+		out = append(out, fmt.Sprintf("%s exit=%d driven=%v unverified=%v ok=%v", c.Name, c.Exit, c.Driven, c.Unverified != "", c.OK))
 	}
+	return "[" + strings.Join(out, "; ") + "]"
 }

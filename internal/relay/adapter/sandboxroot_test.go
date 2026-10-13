@@ -90,12 +90,21 @@ func idleThread(cwd string) map[string]any {
 }
 
 // warnedAndResumed checks a send the rule's verdict did not stop (CRW-1308): no sandbox_root_refused in the receipt, the
-// resume went out after thread/read, and the verdict is in the warning record.
-func warnedAndResumed(t *testing.T, w *sandboxroottest.World, receipt delivery.Obj, methods []string, rule string) {
+// resume went out after thread/read, the verdict is in the warning record, and the send ended as ends says. An empty ends
+// is a started turn; otherwise it is the code of the later check, outside the rule, that stopped the send after the resume
+// (the host's answer does not keep the recorded settings, or a loaded thread differs from its record).
+func warnedAndResumed(t *testing.T, w *sandboxroottest.World, receipt delivery.Obj, methods []string, rule, ends string) {
 	t.Helper()
 	text, _ := json.Marshal(receipt)
-	if strings.Contains(string(text), sandboxroot.Code) || len(methods) < 2 || methods[0] != "thread/read" || methods[1] != "thread/resume" {
-		t.Fatalf("want the resume sent with a %s warning; calls %v; receipt %s", rule, methods, text)
+	want, code := "[thread/read thread/resume turn/start]", ""
+	if ends != "" {
+		want = "[thread/read thread/resume]"
+	}
+	if rpc, ok := receipt.Get("rpcError").(delivery.Obj); ok {
+		code = fmt.Sprint(rpc.Get("code"))
+	}
+	if strings.Contains(string(text), sandboxroot.Code) || fmt.Sprint(methods) != want || code != ends {
+		t.Fatalf("want the calls %s and the end %q after a %s warning; calls %v, end %q; receipt %s", want, ends, rule, methods, code, text)
 	}
 	w.Warned(t, "relay/send_message_to_thread", rule, "")
 }
@@ -119,21 +128,22 @@ func TestGuardedSendRefusesSandboxedHomeResume(t *testing.T) {
 		hostCwd      string
 		hostTop      map[string]any
 		rule         string
+		ends         string // "" when the turn starts, else the later settings check that stops the send
 	}{
-		{"recorded cwd in the home, resume carries cwd and sandbox", false, sandboxSettings(w.Home, []string{w.Home}, nil), run, nil, sandboxroot.RuleAccountHome},
-		{"cwd override in the home, host thread elsewhere", false, sandboxSettings(w.Home, []string{run}, nil), run, nil, sandboxroot.RuleAccountHome},
-		{"cwd override above the home", false, sandboxSettings(filepath.Dir(w.Home), []string{run}, nil), run, nil, sandboxroot.RuleHomeAncestor},
-		{"runtimeWorkspaceRoots holds the home", false, sandboxSettings(run, []string{run, w.Home}, nil), run, nil, sandboxroot.RuleAccountHome},
-		{"policy writable root is the home", false, sandboxSettings(run, []string{run}, workspaceWrite(w.Home)), run, nil, sandboxroot.RuleAccountHome},
-		{"settings-free, host reports the home cwd", true, sandboxSettings(run, []string{run}, nil), w.Home, nil, sandboxroot.RuleAccountHome},
-		{"settings-free, home cwd, host reports a sandbox", true, sandboxSettings(run, []string{run}, nil), w.Home, map[string]any{"sandbox": map[string]any{"type": "workspaceWrite"}}, sandboxroot.RuleAccountHome},
-		{"settings-free, home cwd, sandbox from the record", true, sandboxSettings(w.Home, []string{w.Home}, workspaceWrite()), w.Home, nil, sandboxroot.RuleAccountHome},
-		{"read-only record in the home", false, sandboxSettings(w.Home, []string{w.Home}, map[string]any{"type": "readOnly", "networkAccess": false}), w.Home, nil, sandboxroot.RuleAccountHome},
+		{"recorded cwd in the home, resume carries cwd and sandbox", false, sandboxSettings(w.Home, []string{w.Home}, nil), run, nil, sandboxroot.RuleAccountHome, "settings_not_preserved"},
+		{"cwd override in the home, host thread elsewhere", false, sandboxSettings(w.Home, []string{run}, nil), run, nil, sandboxroot.RuleAccountHome, "settings_not_preserved"},
+		{"cwd override above the home", false, sandboxSettings(filepath.Dir(w.Home), []string{run}, nil), run, nil, sandboxroot.RuleHomeAncestor, "settings_not_preserved"},
+		{"runtimeWorkspaceRoots holds the home", false, sandboxSettings(run, []string{run, w.Home}, nil), run, nil, sandboxroot.RuleAccountHome, ""},
+		{"policy writable root is the home", false, sandboxSettings(run, []string{run}, workspaceWrite(w.Home)), run, nil, sandboxroot.RuleAccountHome, ""},
+		{"settings-free, host reports the home cwd", true, sandboxSettings(run, []string{run}, nil), w.Home, nil, sandboxroot.RuleAccountHome, "settings_differ_after_load"},
+		{"settings-free, home cwd, host reports a sandbox", true, sandboxSettings(run, []string{run}, nil), w.Home, map[string]any{"sandbox": map[string]any{"type": "workspaceWrite"}}, sandboxroot.RuleAccountHome, "settings_differ_after_load"},
+		{"settings-free, home cwd, sandbox from the record", true, sandboxSettings(w.Home, []string{w.Home}, workspaceWrite()), w.Home, nil, sandboxroot.RuleAccountHome, ""},
+		{"read-only record in the home", false, sandboxSettings(w.Home, []string{w.Home}, map[string]any{"type": "readOnly", "networkAccess": false}), w.Home, nil, sandboxroot.RuleAccountHome, "settings_not_preserved"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			receipt, methods := warnedSend(t, w, c.settings, c.settingsFree, c.hostCwd, c.hostTop)
-			warnedAndResumed(t, w, receipt, methods, c.rule)
+			warnedAndResumed(t, w, receipt, methods, c.rule, c.ends)
 		})
 	}
 }
@@ -197,7 +207,7 @@ func TestGuardedSendRefusesInheritedHomeWritableRoots(t *testing.T) {
 		for _, free := range []bool{true, false} {
 			t.Run(fmt.Sprintf("%s, settings-free=%v", c.name, free), func(t *testing.T) {
 				receipt, methods := warnedSend(t, w, c.settings, free, run, c.hostTop)
-				warnedAndResumed(t, w, receipt, methods, sandboxroot.RuleAccountHome)
+				warnedAndResumed(t, w, receipt, methods, sandboxroot.RuleAccountHome, "")
 			})
 		}
 	}
