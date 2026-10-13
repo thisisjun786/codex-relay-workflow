@@ -32,8 +32,11 @@ type managedCLI struct {
 	// parentPair, when set (parentOn), is the model and effort the app-server reports for the parent thread; unset, the parent runs the child's pair.
 	mu         sync.Mutex
 	parentPair []string
-	// ownerMarker, when set, is the marker root the relay resolves for itself (its environment); unset, it is marker.
+	// ownerMarker, when set, is the marker root managed-start's own environment resolves; unset, it is marker; "-" leaves the
+	// variable unset for the process. A daemon (daemon below) does not read it: it judges Stops under its own environment.
 	ownerMarker string
+	// markerFlag, when set, is the --marker-root the start is given; unset, it is marker.
+	markerFlag string
 }
 
 func newManagedCLI(t *testing.T) *managedCLI {
@@ -142,12 +145,26 @@ func (c *managedCLI) request(change func(map[string]any)) []byte {
 func (c *managedCLI) start(raw []byte) (stdout, stderr string, code int) {
 	c.t.Helper()
 	var out, errOut bytes.Buffer
-	cmd := exec.Command(suiteBinary, "relay", "--state", c.state, "--socket", c.host.SocketPath, "managed-start", "--request", string(raw), "--marker-root", c.marker)
+	flag := c.marker
+	if c.markerFlag != "" {
+		flag = c.markerFlag
+	}
+	cmd := exec.Command(suiteBinary, "relay", "--state", c.state, "--socket", c.host.SocketPath, "managed-start", "--request", string(raw), "--marker-root", flag)
 	owner := c.marker
 	if c.ownerMarker != "" {
 		owner = c.ownerMarker
 	}
-	cmd.Env = append(os.Environ(), "CODEX_SESSION_RELAY_SCOPE_DIR="+c.scope, delivery.MarkerEnv+"="+owner)
+	// The process starts from the test's environment less the marker variable (a test that runs a daemon sets it for the
+	// daemon), so what managed-start resolves is what the test says.
+	cmd.Env = []string{"CODEX_SESSION_RELAY_SCOPE_DIR=" + c.scope}
+	for _, entry := range os.Environ() {
+		if !strings.HasPrefix(entry, delivery.MarkerEnv+"=") && !strings.HasPrefix(entry, "CODEX_SESSION_RELAY_SCOPE_DIR=") {
+			cmd.Env = append(cmd.Env, entry)
+		}
+	}
+	if owner != "-" {
+		cmd.Env = append(cmd.Env, delivery.MarkerEnv+"="+owner)
+	}
 	cmd.Stdout, cmd.Stderr = &out, &errOut
 	if err := cmd.Run(); err != nil {
 		var exit *exec.ExitError

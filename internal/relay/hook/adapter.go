@@ -591,6 +591,9 @@ func HandleControlWake(ctx context.Context, conn net.Conn, ownerState string, wa
 	if request.Get("protocol") == int64(1) && request.Get("method") == "child-command" {
 		return handleChildCommand(ctx, conn, ownerState, request, wake)
 	}
+	if request.Get("protocol") == int64(1) && request.Get("method") == MarkerRootMethod {
+		return answerMarkerRoot(conn, request)
+	}
 	if request.Get("method") != "guard-evaluate" || request.Get("protocol") != int64(1) {
 		return rejectControl(conn)
 	}

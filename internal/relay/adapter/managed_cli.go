@@ -55,11 +55,21 @@ func (f hostFactory) managedStart(ctx context.Context, services dispatch.Service
 	}
 	defer func() { err = errors.Join(err, s.Close()) }()
 	marker, _ := args.String("marker-root")
-	owner, err := hook.OwnerMarkerRoot()
+	// The root the relay judges Stops under is the daemon's to say: it resolves it in its own environment, which a
+	// parent's need not share (CRW-1309). Only a daemon that cannot be asked leaves this process's own resolution,
+	// and a refusal then says whose root it names and why the daemon was not asked.
+	owner, err := hook.AskOwnerMarkerRoot(ctx, services.Selection.Path)
+	unasked := ""
 	if err != nil {
-		return nil, err
+		if !errors.Is(err, hook.ErrOwnerMarkerRootUnanswered) {
+			return nil, err
+		}
+		unasked = err.Error()
+		if owner, err = hook.OwnerMarkerRoot(); err != nil {
+			return nil, err
+		}
 	}
-	engine := managed.Start{Store: s, Adapter: Managed{a}, Socket: services.SocketPath, MarkerRoot: marker, OwnerMarkerRoot: owner, StateSelector: services.Selection.Path, Readiness: readiness}
+	engine := managed.Start{Store: s, Adapter: Managed{a}, Socket: services.SocketPath, MarkerRoot: marker, OwnerMarkerRoot: owner, OwnerMarkerRootUnasked: unasked, StateSelector: services.Selection.Path, Readiness: readiness}
 	if delivery.CommandClock != nil {
 		engine.Now = delivery.CommandClock.ISO
 	}
