@@ -41,11 +41,26 @@ type VerifierProbe struct {
 	Notes      []string
 }
 
+// defaultTemporaryDirs are the directories a reboot clears: a Go root below one is never offered as a candidate.
+var defaultTemporaryDirs = []string{"/tmp", "/var/tmp"}
+
+// ProbeOptions are the seams of a probe of the verifier's tools. The zero value is the host's rule.
+type ProbeOptions struct {
+	// TemporaryDirs are the directories below which a Go root found on the host is left out of the candidates; nil is /tmp and
+	// /var/tmp, which a reboot clears. A test whose temporary directory may be below /tmp names a directory of its own.
+	TemporaryDirs []string
+}
+
 // ProbeVerifierTools reads the verifier section the way a run with env reads it (flagPath as --config) and probes the tools: the
 // go's version (`go version`, GOTOOLCHAIN=local, so no other toolchain is selected or fetched) and, for a crw-dev binary,
 // `crw-dev help`. Each probe runs bounded in time, in a home of its own that is removed afterwards, so it writes nothing of the
 // host's. In tree mode crw-dev is runnable when its go runs: the tree is the one verified.
 func ProbeVerifierTools(ctx context.Context, env []string, flagPath string) VerifierProbe {
+	return ProbeVerifierToolsWith(ctx, env, flagPath, ProbeOptions{})
+}
+
+// ProbeVerifierToolsWith is ProbeVerifierTools with the seams of opts.
+func ProbeVerifierToolsWith(ctx context.Context, env []string, flagPath string, opts ProbeOptions) VerifierProbe {
 	getenv := envGetter(env)
 	p := VerifierProbe{}
 	tools, err := LoadVerifierTools(getenv, flagPath)
@@ -106,7 +121,7 @@ func ProbeVerifierTools(ctx context.Context, env []string, flagPath string) Veri
 		}
 	}
 	if tools.GoRoot == "" && err == nil {
-		p.Candidates = goRootCandidates(ctx, env, p.Go)
+		p.Candidates = goRootCandidates(ctx, env, p.Go, opts.TemporaryDirs)
 		// the hint goes with the problems when the verifier cannot start, else with the notes of what works only through PATH
 		if len(p.Candidates) > 0 {
 			c := p.Candidates[0]
@@ -125,9 +140,10 @@ func ProbeVerifierTools(ctx context.Context, env []string, flagPath string) Veri
 
 // goRootCandidates are the Go toolchain roots found on the host: the root of the go on PATH (`go env GOROOT`), then the usual
 // install locations ($HOME/.local/go/go, $HOME/.local/go, $HOME/sdk/go*, $HOME/go/go, /usr/local/go, /usr/lib/go, /opt/go),
-// each a directory whose bin/go runs and reports a version; a root below /tmp or /var/tmp is left out (a reboot removes it). They
-// are ordered by version, newest first, the earlier location first on a tie.
-func goRootCandidates(ctx context.Context, env []string, pathGo string) []GoRootCandidate {
+// each a directory whose bin/go runs and reports a version; a root below a temporary directory (temporaryDirs, nil for /tmp and
+// /var/tmp, which a reboot clears) is left out, by its path and by the path its links resolve to. They are ordered by version,
+// newest first, the earlier location first on a tie.
+func goRootCandidates(ctx context.Context, env []string, pathGo string, temporaryDirs []string) []GoRootCandidate {
 	getenv := envGetter(env)
 	var roots []string
 	if pathGo != "" {
@@ -149,7 +165,7 @@ func goRootCandidates(ctx context.Context, env []string, pathGo string) []GoRoot
 	for _, root := range roots {
 		root = filepath.Clean(root)
 		real, err := filepath.EvalSymlinks(root)
-		if err != nil || seen[real] || temporaryRoot(root) || temporaryRoot(real) {
+		if err != nil || seen[real] || temporaryRoot(root, temporaryDirs) || temporaryRoot(real, temporaryDirs) {
 			continue
 		}
 		seen[real] = true
@@ -168,9 +184,13 @@ func goRootCandidates(ctx context.Context, env []string, pathGo string) []GoRoot
 	return out
 }
 
-// temporaryRoot says whether root is below a directory a reboot clears (/tmp, /var/tmp).
-func temporaryRoot(root string) bool {
-	for _, dir := range []string{"/tmp", "/var/tmp"} {
+// temporaryRoot says whether root is one of dirs or below one; nil dirs are the directories a reboot clears (/tmp, /var/tmp).
+func temporaryRoot(root string, dirs []string) bool {
+	if dirs == nil {
+		dirs = defaultTemporaryDirs
+	}
+	for _, dir := range dirs {
+		dir = filepath.Clean(dir)
 		if root == dir || strings.HasPrefix(root, dir+"/") {
 			return true
 		}

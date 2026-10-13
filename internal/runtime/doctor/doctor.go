@@ -67,6 +67,8 @@ type Options struct {
 	// installs, and skill links are a developer-checkout concern (crw-dev skills link, todo 39)
 	// that no release archive or installer makes, so they say nothing about this install.
 	AppServer func(ctx context.Context, bridge string) *string
+	// VerifierProbe are the seams of the verifierTools entry's probe (crwconfig.ProbeOptions); the zero value is the host's rule.
+	VerifierProbe crwconfig.ProbeOptions
 }
 
 // environ is env as os.environ.get reads it: the last spelling of a key wins, and a key set to
@@ -863,7 +865,7 @@ func Diagnose(ctx context.Context, o Options) Object {
 		{Key: "scopeReadings", Value: readings},
 		{Key: "checks", Value: checks},
 		{Key: "storage", Value: StorageReport(o.Env)},
-		{Key: "verifierTools", Value: VerifierToolsReport(ctx, o.Env)},
+		{Key: "verifierTools", Value: VerifierToolsReport(ctx, o.Env, o.VerifierProbe)},
 		{Key: "doctorBinary", Value: Object{{Key: "path", Value: self()}, {Key: "target", Value: record.Target()}, {Key: "source", Value: record.Source()}}},
 	}
 }

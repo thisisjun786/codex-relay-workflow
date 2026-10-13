@@ -1,10 +1,13 @@
 package doctor_test
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
+	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/golden"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 )
@@ -51,7 +54,8 @@ func TestDoctorReportsTheVerifierTools(t *testing.T) {
 
 // CRW-1319 (evaluation a48fe518 d3): with no Go root configured the doctor looks for one (the root of the go on PATH and the usual
 // install locations, such as $HOME/.local/go/go), lists what it found with each version, and its warning names the command that
-// records the first one.
+// records the first one. The test's home is below TMPDIR, which may be below /tmp, so the probe's temporary-directory rule points at
+// a directory of the test's own, and a root that resolves below it is not offered.
 func TestDoctorNamesAGoRootCandidate(t *testing.T) {
 	h := newHost(t)
 	empty := filepath.Join(h.home, "empty-path")
@@ -60,11 +64,23 @@ func TestDoctorNamesAGoRootCandidate(t *testing.T) {
 	root := filepath.Join(h.home, ".local", "go", "go")
 	write(t, filepath.Join(root, "bin", "go"), "#!/bin/sh\necho 'go version go1.27.1 linux/amd64'\n", 0o755)
 	write(t, filepath.Join(h.home, ".config", "crw", "config.json"), `{}`, 0o600)
+	cleared, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	gone := filepath.Join(cleared, "go-sdk")
+	write(t, filepath.Join(gone, "bin", "go"), "#!/bin/sh\necho 'go version go1.28.0 linux/amd64'\n", 0o755)
+	link(t, gone, filepath.Join(h.home, "sdk", "go1.28.0"))
 
-	tools := golden.Obj(record.Get(h.diagnose(t), "verifierTools"))
+	options := h.options()
+	options.VerifierProbe = crwconfig.ProbeOptions{TemporaryDirs: []string{cleared}}
+	tools := golden.Obj(record.Get(doctor.Diagnose(context.Background(), options), "verifierTools"))
 	candidates := golden.Canon(record.Get(tools, "goRootCandidates"))
 	if !strings.Contains(candidates, root) || !strings.Contains(candidates, "go1.27.1") {
 		t.Fatalf("the Go root below the home is not a candidate:\n%s", golden.Canon(tools))
+	}
+	if strings.Contains(candidates, "go1.28.0") {
+		t.Errorf("a root that resolves below the temporary directory is a candidate:\n%s", candidates)
 	}
 	if !strings.Contains(golden.Canon(record.Get(tools, "warnings")), "crw config verifier --go-root ") {
 		t.Errorf("the warnings do not name the command that records a candidate:\n%s", golden.Canon(tools))
