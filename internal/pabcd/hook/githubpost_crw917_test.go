@@ -40,7 +40,8 @@ func TestCRW917ShellWordsAreNormalised(t *testing.T) {
 	githubPostWrite(t, cwd, "secret.md", "MY_API_KEY=sentinel\n")
 	githubPostWrite(t, cwd, "clean.md", "a clean body\n")
 	cases := []struct{ label, command, rule, place string }{
-		{"quoted --body and value", "gh pr comment 1 '--body' 'MY_API_KEY=sentinel'", githubPostRuleInline, githubPostWhereCommand},
+		// CRW-1307: an inline body warns now, so its text is scanned: the secret in it is the refusal that stays a block.
+		{"quoted --body and value", "gh pr comment 1 '--body' 'MY_API_KEY=sentinel'", githubPostRuleSecret, githubPostWhereCommand},
 		{"quoted --body-file names a secret file", "gh pr comment 1 '--body-file' secret.md", githubPostRuleSecret, "secret.md:1"},
 		{"redirect glued to the subcommand", "gh pr</dev/null comment 1 --body-file secret.md", githubPostRuleSecret, "secret.md:1"},
 		{"quoted program name", "g\"\"h pr comment 1 --body 'x'", githubPostRuleInline, githubPostWhereCommand},

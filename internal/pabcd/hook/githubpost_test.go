@@ -324,7 +324,8 @@ func TestGitHubPostGuardJudgements(t *testing.T) {
 		{"split string with a variable", "env -S 'gh pr comment 1 -b \"$TOKEN\"'", githubPostRuleUnread, githubPostWhereCommand},
 		{"su command with a variable", "su -c 'gh pr comment 1 -b \"$TOKEN\"' root", githubPostRuleUnread, githubPostWhereCommand},
 		{"heredoc program with a variable", "bash <<'EOF'\ngh pr comment 1 -b \"$TOKEN\"\nEOF\n", githubPostRuleInline, githubPostWhereCommand},
-		{"heredoc program with a secret", "bash <<'EOF'\ngh pr comment 1 -b " + githubPostFake("sk-", 16) + "\nEOF\n", githubPostRuleInline, githubPostWhereCommand},
+		// CRW-1307: the inline body is scanned, so the secret in it is the refusal (it stays a block; an inline body only warns).
+		{"heredoc program with a secret", "bash <<'EOF'\ngh pr comment 1 -b " + githubPostFake("sk-", 16) + "\nEOF\n", githubPostRuleSecret, githubPostWhereCommand},
 		{"herestring with a secret", "gh pr comment 1 --body-file - <<< " + githubPostFake("sk-", 16), githubPostRuleInline, githubPostWhereCommand},
 		{"expanded command word", "G=gh; $G pr comment 1 --body x", githubPostRuleInline, githubPostWhereCommand},
 		// The generation-7 rules read this text through rule 2's canonical words, so the body it spells is

@@ -66,6 +66,8 @@ func worktreeDelJudgeText(command, cwd string, id WorktreeIdentity, depth int, o
 		return worktreeDelUnreadable(id)
 	}
 	var written *githubPostTextWrites
+	// The first refusal is kept, but the rest of the text is still judged: a resolved deletion after it is the answer (CRW-1307).
+	var first GuardVerdict
 	for i, e := range res.Execs {
 		var v GuardVerdict
 		if e.Kind == shellir.KindScriptFile {
@@ -74,9 +76,10 @@ func worktreeDelJudgeText(command, cwd string, id WorktreeIdentity, depth int, o
 				written = githubPostWritesOf(res.Execs, outer)
 			}
 			if written.stale(i, e.Script.Value, e.Dir) {
-				return worktreeDelUnreadable(id)
+				v = worktreeDelUnreadable(id)
+			} else {
+				v = worktreeDelJudgeScript(e, id, depth, written.at(i).as(githubPostBodyKey(e.Script.Value, e.Dir)))
 			}
-			v = worktreeDelJudgeScript(e, id, depth, written.at(i).as(githubPostBodyKey(e.Script.Value, e.Dir)))
 		} else {
 			v = worktreeDelJudgeExec(e, id)
 			// A shell file run by its path that forwards "$@" is read, so that the forward refuses it (CRW-1283 plan C).
@@ -85,20 +88,20 @@ func worktreeDelJudgeText(command, cwd string, id WorktreeIdentity, depth int, o
 					written = githubPostWritesOf(res.Execs, outer)
 				}
 				if written.stale(i, e.Program.Value, e.Dir) {
-					return worktreeDelUnreadable(id)
+					v = worktreeDelUnreadable(id)
+				} else if body, kind := githubPostReadDirect(e.Program.Value, e.Dir.Path); kind != githubPostFileShell || depth >= worktreeDelMaxScriptDepth {
+					v = worktreeDelUnreadable(id)
+				} else {
+					v = worktreeDelJudgeText(body, e.Dir.Path, id, depth+1, written.at(i).as(githubPostBodyKey(e.Program.Value, e.Dir)), e.Cdpath, true)
 				}
-				body, kind := githubPostReadDirect(e.Program.Value, e.Dir.Path)
-				if kind != githubPostFileShell || depth >= worktreeDelMaxScriptDepth {
-					return worktreeDelUnreadable(id)
-				}
-				v = worktreeDelJudgeText(body, e.Dir.Path, id, depth+1, written.at(i).as(githubPostBodyKey(e.Program.Value, e.Dir)), e.Cdpath, true)
 			}
 		}
-		if v.Deny {
+		if v.Rule != "" {
 			return v
 		}
+		first = first.worse(v)
 	}
-	return GuardVerdict{}
+	return first
 }
 
 // worktreeDelJudgeScript reads the script file a shell runs and judges its text in the script's directory.
@@ -121,10 +124,11 @@ func worktreeDelJudgeScript(e shellir.Exec, id WorktreeIdentity, depth int, writ
 
 // worktreeDelJudgeExec is the verdict for one program the reader shows.
 func worktreeDelJudgeExec(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
-	if v := worktreeDelJudgeFeed(e, id); v.Deny {
+	v := worktreeDelJudgeFeed(e, id)
+	if v.Rule != "" {
 		return v
 	}
-	if v := worktreeDelOwn(e, id); v.Deny {
+	if v = v.worse(worktreeDelOwn(e, id)); v.Deny {
 		return v
 	}
 	if e.Inline != nil && !worktreeDelNamed(e) {
@@ -195,6 +199,9 @@ func worktreeDelJudgeFindStarts(starts []shellir.Word, guarded func(string) bool
 		}
 		ancestor, self := worktreeDelTargetKind(s.Value, e.Dir, id)
 		if ancestor || self && !guarded(s.Value) {
+			if (action == "-delete" || action == "-exec rm" || action == "-exec git worktree remove") && worktreeDelResolved(s.Value, e.Dir) {
+				return worktreeDelBlock("find "+s.Value+" "+action, id)
+			}
 			return GuardVerdict{Deny: true, Reason: denyReason("find "+s.Value+" "+action, id)}
 		}
 	}
@@ -277,12 +284,10 @@ func worktreeDelJudgeFeed(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
 			if f.FollowLinks {
 				return worktreeDelUnreadable(id)
 			}
-			if v = worktreeDelJudgeFindWords(f, e, deleter, id); v.Deny {
-				return v
-			}
+			words := worktreeDelJudgeFindWords(f, e, deleter, id)
 			at := e
 			at.Dir = f.Dir
-			if v = worktreeDelJudgeFindStarts(f.Starts, f.GuardedFor, at, id, "-exec "+deleter); v.Deny {
+			if v = words.worse(worktreeDelJudgeFindStarts(f.Starts, f.GuardedFor, at, id, "-exec "+deleter)); v.Deny {
 				return v
 			}
 			// The paths find found resolve from the directory the program runs in only where one of its words holds them ({}); a
@@ -389,20 +394,21 @@ func worktreeDelJudgeXargs(f *shellir.Feed, e shellir.Exec, id WorktreeIdentity)
 			endOfOptions = true
 		}
 	}
+	var first GuardVerdict
 	for _, item := range f.Items {
 		e2 := e
 		e2.Args = append(append([]shellir.Word{}, e.Args...), shellir.Word{Known: true, Value: item})
 		if !endOfOptions && strings.HasPrefix(item, "-") && deleter != "git worktree remove" {
-			return GuardVerdict{Deny: true, Reason: denyReason("xargs "+deleter+" "+item+" (a name that begins with - is an option)", id)}
+			first = first.worse(GuardVerdict{Deny: true, Reason: denyReason("xargs "+deleter+" "+item+" (a name that begins with - is an option)", id)})
+			continue
 		}
-		if v := worktreeDelJudgeOperands([]string{item}, dir, id, "xargs "+deleter+" "); v.Deny {
+		if v := worktreeDelJudgeOperands([]string{item}, dir, id, "xargs "+deleter+" ").worse(worktreeDelOwn(e2, id)); v.Rule != "" {
 			return v
-		}
-		if v := worktreeDelOwn(e2, id); v.Deny {
-			return v
+		} else {
+			first = first.worse(v)
 		}
 	}
-	return GuardVerdict{}
+	return first
 }
 
 // worktreeDelOperands are the words a removal program takes as the things to remove: all its words for rm, rmdir, unlink and
@@ -427,6 +433,9 @@ func worktreeDelJudgeOperands(operands []string, dir shellir.Dir, id WorktreeIde
 			continue
 		}
 		if worktreeDelNameProtected(a, dir, id) {
+			if (what == "xargs rm " || what == "xargs git worktree remove ") && worktreeDelResolved(a, dir) {
+				return worktreeDelBlock(what+a, id)
+			}
 			return GuardVerdict{Deny: true, Reason: denyReason(what+a, id)}
 		}
 	}
@@ -505,7 +514,10 @@ func worktreeDelJudgeRm(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
 	}
 	for _, t := range targets {
 		if worktreeDelTargetProtected(t, e, id) {
-			return GuardVerdict{Deny: true, Reason: denyReason("rm -r "+t, id)}
+			if !worktreeDelResolved(t, e.Dir) {
+				return GuardVerdict{Deny: true, Reason: denyReason("rm -r "+t, id)}
+			}
+			return worktreeDelBlock("rm -r "+t, id)
 		}
 	}
 	return GuardVerdict{}
@@ -579,7 +591,10 @@ func worktreeDelJudgeGit(e shellir.Exec, id WorktreeIdentity) GuardVerdict {
 		}
 	}
 	if target != "" && worktreeDelTargetProtected(target, shellir.Exec{Dir: dir}, id) {
-		return GuardVerdict{Deny: true, Reason: denyReason("git worktree remove "+target, id)}
+		if !worktreeDelResolved(target, dir) {
+			return GuardVerdict{Deny: true, Reason: denyReason("git worktree remove "+target, id)}
+		}
+		return worktreeDelBlock("git worktree remove "+target, id)
 	}
 	return GuardVerdict{}
 }
@@ -669,6 +684,12 @@ func mvSources(args []string, stopAtOperand bool) (sources []string, ok bool) {
 
 // worktreeDelTargetProtected says whether a removal target, taken from the program's directory, is protected. A
 // relative target from an unknown directory cannot be placed, so it is protected.
+// worktreeDelResolved is whether a target is placed: an absolute path, or a relative one in a directory the reader knows. A
+// protected target that is not placed is refused because it may be the checkout; that refusal warns (CRW-1307).
+func worktreeDelResolved(target string, dir shellir.Dir) bool {
+	return dir.Known || filepath.IsAbs(target)
+}
+
 func worktreeDelTargetProtected(target string, e shellir.Exec, id WorktreeIdentity) bool {
 	if !e.Dir.Known {
 		// An absolute target is independent of a failed cd. Relative targets

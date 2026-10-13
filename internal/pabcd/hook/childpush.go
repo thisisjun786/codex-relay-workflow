@@ -30,11 +30,21 @@ type ChildPushBinding struct {
 // While the relay's record cannot be read the session may be a child, so a push is refused in any session, and so is a command the
 // reader cannot read that spells push; one that spells no push passes, as it does in a session that is no child.
 func HandleChildPushGuard(raw string, bind func(session, cwd string) ChildPushBinding) string {
+	answer, _ := ChildPushDecision(raw, bind)
+	return answer
+}
+
+// ChildPushRuleSharedHistory is the rule of a relay child's push that forces, deletes or mirrors onto dev or main: the one refusal
+// of this guard that stays a block (CRW-1307); every other refusal warns.
+const ChildPushRuleSharedHistory = "shared-branch-history"
+
+// ChildPushDecision is HandleChildPushGuard's answer with the rule it comes from ("" for a refusal that warns).
+func ChildPushDecision(raw string, bind func(session, cwd string) ChildPushBinding) (string, string) {
 	p := editObject(raw)
 	tool, _ := p["tool_name"].(string)
 	input, _ := p["tool_input"].(map[string]any)
 	if p["hook_event_name"] != "PreToolUse" || !memoryGateShellTool(tool) || input == nil {
-		return ""
+		return "", ""
 	}
 	cwd, _ := p["cwd"].(string)
 	cwd = shellirPayloadCwd(cwd)
@@ -48,22 +58,29 @@ func HandleChildPushGuard(raw string, bind func(session, cwd string) ChildPushBi
 		}(), "' '") + "'"
 	}
 	if text.Trim(command) == "" {
-		return ""
+		return "", ""
 	}
 	var s childPushScan
 	s.text(command, cwd, 0, nil, false)
 	if s.why == "" && len(s.pushes) == 0 {
-		return ""
+		return "", ""
 	}
 	session, _ := p["session_id"].(string)
 	b := bind(session, cwd)
 	switch {
 	case b.Unreadable != "" && len(s.pushes) == 0 && !childPushSpells(command):
-		return ""
+		return "", ""
 	case b.Unreadable != "":
 		s.why = "the relay's record of this session cannot be read (" + unreadableLabel(b.Unreadable) + ")"
 	case !b.Child:
-		return ""
+		return "", ""
+	}
+	rule := ""
+	for _, push := range s.pushes {
+		if why := childPushDestroys(push); why != "" && b.Child {
+			s.why, rule = why, ChildPushRuleSharedHistory
+			break
+		}
 	}
 	for _, push := range s.pushes {
 		if s.why == "" {
@@ -71,7 +88,7 @@ func HandleChildPushGuard(raw string, bind func(session, cwd string) ChildPushBi
 		}
 	}
 	if s.why == "" {
-		return ""
+		return "", ""
 	}
 	own := b.Own
 	if own == "" {
@@ -79,7 +96,68 @@ func HandleChildPushGuard(raw string, bind func(session, cwd string) ChildPushBi
 	}
 	reason := "[crw CHILD-PUSH-GUARD] 통합은 부모·통합기 몫 (integration is the parent's and the integrator's): a relay child pushes only its own branch, " +
 		"named as the destination of a direct git push (git push origin HEAD:" + own + "). Refused: " + s.why + "."
-	return editAnswer("deny", reason, reason)
+	return editAnswer("deny", reason, reason), rule
+}
+
+// childPushDestroys is why a push rewrites or deletes dev or main on the remote, or "": a force (-f, --force, --force-with-lease, a +
+// refspec), a delete (-d, --delete, a refspec with an empty source) whose destination is dev or main, or a --mirror. A push whose
+// words cannot all be read is not proven to, and is judged by the other rules (it warns).
+func childPushDestroys(p childPush) string {
+	force, del := false, false
+	var operands []string
+	options := true
+	for i := 0; i < len(p.args); i++ {
+		if !p.args[i].Known {
+			return ""
+		}
+		v := p.args[i].Value
+		switch {
+		case !options || v == "-" || !strings.HasPrefix(v, "-"):
+			operands = append(operands, v)
+		case v == "--":
+			options = false
+		case v == "--mirror":
+			return "git push --mirror overwrites and deletes the remote's branches, dev and main among them"
+		case v == "--force" || v == "--force-with-lease" || strings.HasPrefix(v, "--force-with-lease="):
+			force = true
+		case v == "--delete":
+			del = true
+		case v == "--push-option" || v == "-o" || v == "--repo" || v == "--receive-pack" || v == "--exec":
+			i++
+		case strings.HasPrefix(v, "--"):
+		default:
+			for j := 1; j < len(v) && v[j] != 'o'; j++ {
+				force = force || v[j] == 'f'
+				del = del || v[j] == 'd'
+			}
+			if strings.HasSuffix(v, "o") && strings.Count(v, "o") == 1 {
+				i++
+			}
+		}
+	}
+	if len(operands) < 2 {
+		return ""
+	}
+	shared := func(ref string) bool {
+		ref = strings.TrimPrefix(strings.TrimPrefix(ref, "refs/"), "heads/")
+		return strings.EqualFold(ref, "dev") || strings.EqualFold(ref, "main")
+	}
+	for _, ref := range operands[1:] {
+		plus := strings.HasPrefix(ref, "+")
+		src, dst, colon := strings.Cut(strings.TrimPrefix(ref, "+"), ":")
+		target := src
+		if colon {
+			target = dst
+		}
+		switch {
+		case !shared(target):
+		case del || colon && src == "":
+			return "git push deletes " + target + " on the remote"
+		case force || plus:
+			return "git push forces " + target + " on the remote, which rewrites its history"
+		}
+	}
+	return ""
 }
 
 // ChildPushInputUnreadAnswer is the deny of a leg whose input could not be read whole: the command it carries is not known.
