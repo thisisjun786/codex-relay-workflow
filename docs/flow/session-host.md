@@ -52,10 +52,12 @@ thread it created in `receiverThreadIds` and carries the spawn message in `promp
 | No allowed decision covers the tool use; the prompt names the op | `unrecorded` | `no_ledger_line`, or `refused_decision` when the hook recorded a refusal |
 | The ledger cannot be read | the prompts still decide (`unrecorded`) | `ledger_unreadable` |
 | Several spawns name the op | the newest, ledger-tied spawns first; the rest in `Others` | `several_spawns` |
+| No spawn names the op and the owner has turns older than the window | not found, `WindowEnded` | `window_ended` |
 
 A warning is recorded, never a refusal: a binding that went missing does not hide a subagent that runs. A spawn that created no
-thread is skipped with `no_receiver`. An op that is not an operation is an input error, and an owner the host does not have
-wraps `ErrNotFound`.
+thread is skipped with `no_receiver`. `WindowEnded` says the owner has turns older than the searched window whether or not
+the spawn is found; only a search that finds nothing warns about it, since then the spawn may be older than the window. An op
+that is not an operation is an input error, and an owner the host does not have wraps `ErrNotFound`.
 
 ## Host facts
 

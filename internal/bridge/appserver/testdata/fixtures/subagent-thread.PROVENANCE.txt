@@ -7,7 +7,8 @@ subagent-thread-read.json, subagent-turns-list-full.json and subagent-turns-list
   thread/turns/list  {"threadId": ..., "limit": 2, "itemsView": "summary"} -> subagent-turns-list-summary.json
 
 No thread was started, no turn sent, nothing resumed, archived or written (CRW-1332). Changed for the fixture: /home/jun reads
-/home/user; message, reasoning and command texts are shortened; the full turn keeps its first four and its last two items of 43
+/home/user; the thread's preview and the message, reasoning and command texts are shortened (no task prompt of the
+session is kept, TestLiveFixturesKeepNoSessionText); the full turn keeps its first four and its last two items of 43
 (the dropped ones are commandExecution, reasoning and commentary agentMessage items of the same shapes). Everything else is the host's
 answer as given, including the Thread members the 0.154.0 schema copy does not list (canAcceptDirectInput, daybreakEnabled,
 environments, extra). The frame's id is left out, as the other fixtures do.

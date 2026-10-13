@@ -197,7 +197,7 @@ const (
 // message and the last agent message). A full read that the host answers without the items is completed with
 // thread/items/list.
 func (h *Host) Turns(ctx context.Context, threadID string, limit int, full bool) ([]Turn, error) {
-	wires, err := h.listTurns(ctx, threadID, limit, full)
+	wires, _, err := h.listTurns(ctx, threadID, limit, full)
 	if err != nil {
 		return nil, err
 	}
@@ -217,7 +217,9 @@ func (h *Host) Turns(ctx context.Context, threadID string, limit int, full bool)
 	return out, nil
 }
 
-func (h *Host) listTurns(ctx context.Context, threadID string, limit int, full bool) ([]turnWire, error) {
+// listTurns lists up to limit turns newest first (every turn when limit is 0 or less); more says the thread has turns older
+// than the ones returned (only a limited listing can stop before the thread's first turn).
+func (h *Host) listTurns(ctx context.Context, threadID string, limit int, full bool) (turns []turnWire, more bool, err error) {
 	view := "summary"
 	if full {
 		view = "full"
@@ -226,7 +228,7 @@ func (h *Host) listTurns(ctx context.Context, threadID string, limit int, full b
 	cursor := ""
 	for page := 0; ; page++ {
 		if page >= maxPages {
-			return nil, fmt.Errorf("sessionhost: thread/turns/list of %s: more than %d pages", threadID, maxPages)
+			return nil, false, fmt.Errorf("sessionhost: thread/turns/list of %s: more than %d pages", threadID, maxPages)
 		}
 		params := map[string]any{"threadId": threadID, "itemsView": view, "sortDirection": "desc", "limit": pageSize}
 		if limit > 0 {
@@ -237,21 +239,22 @@ func (h *Host) listTurns(ctx context.Context, threadID string, limit int, full b
 		}
 		raw, err := h.call(ctx, "thread/turns/list", params)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		var answer struct {
 			Data       []turnWire `json:"data"`
 			NextCursor *string    `json:"nextCursor"`
 		}
 		if err := json.Unmarshal(raw, &answer); err != nil {
-			return nil, fmt.Errorf("sessionhost: thread/turns/list of %s: %w", threadID, err)
+			return nil, false, fmt.Errorf("sessionhost: thread/turns/list of %s: %w", threadID, err)
 		}
 		out = append(out, answer.Data...)
+		last := answer.NextCursor == nil || *answer.NextCursor == "" || len(answer.Data) == 0
 		if limit > 0 && len(out) >= limit {
-			return out[:limit], nil
+			return out[:limit], len(out) > limit || !last, nil
 		}
-		if answer.NextCursor == nil || *answer.NextCursor == "" || len(answer.Data) == 0 {
-			return out, nil
+		if last {
+			return out, false, nil
 		}
 		cursor = *answer.NextCursor
 	}

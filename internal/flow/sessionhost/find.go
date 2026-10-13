@@ -66,6 +66,7 @@ const (
 	WarnSeveralReceivers = "several_receivers"
 	WarnNoReceiver       = "no_receiver"
 	WarnTurnUnreadable   = "owner_turn_unreadable"
+	WarnWindowEnded      = "window_ended"
 )
 
 // Spawn is one spawn of the owner that names the op.
@@ -89,6 +90,8 @@ type MarkerSearch struct {
 	Others []Spawn
 	// Warnings say what the search could not tie as it should: they are recorded, never a refusal.
 	Warnings []string
+	// WindowEnded says the owner has turns older than the searched window (Host.OwnerTurns), which were not searched.
+	WindowEnded bool
 }
 
 // FindByMarker finds the subagent the owner thread spawned for a published step (CRW-1316 design 5, step_published
@@ -97,8 +100,10 @@ type MarkerSearch struct {
 // id names the created thread in receiverThreadIds), the same join ops.ImportNativeSpawns makes. A spawn whose decision
 // records no op is tied by the op its message names (the item's prompt); a spawn no allowed decision covers is still found
 // by its message and warned about (warn and record: a binding that went missing never hides a subagent that runs). A
-// ledger that cannot be read is a warning too. Searched are the owner's Host.OwnerTurns most recent turns, read in full.
-// An op that is no operation is an error, as is an owner the host cannot list.
+// ledger that cannot be read is a warning too. Searched are the owner's Host.OwnerTurns most recent turns, read in full;
+// when the owner has older turns, WindowEnded says so, and a search that finds nothing warns window_ended, so a spawn
+// older than the window is not taken for one that never happened. An op that is no operation is an error, as is an owner
+// the host cannot list.
 func (h *Host) FindByMarker(ctx context.Context, ownerThread, op string) (MarkerSearch, error) {
 	if _, ok := ParseOp(op); !ok {
 		return MarkerSearch{}, fmt.Errorf("sessionhost: %q is not an operation <call>/t<k>-a<n>", op)
@@ -123,10 +128,11 @@ func (h *Host) FindByMarker(ctx context.Context, ownerThread, op string) (Marker
 	if window <= 0 {
 		window = DefaultOwnerTurns
 	}
-	turns, err := h.listTurns(ctx, ownerThread, window, true)
+	turns, older, err := h.listTurns(ctx, ownerThread, window, true)
 	if err != nil {
 		return MarkerSearch{}, err
 	}
+	out.WindowEnded = older
 	var tied, untied []Spawn
 	seen := map[string]bool{}
 	for _, turn := range turns { // newest first
@@ -196,6 +202,9 @@ func (h *Host) FindByMarker(ctx context.Context, ownerThread, op string) (Marker
 	}
 	all := append(tied, untied...)
 	if len(all) == 0 {
+		if older {
+			out.Warnings = append(out.Warnings, fmt.Sprintf("%s: no spawn of %s in the %d most recent turns of %s; its older turns were not searched", WarnWindowEnded, op, window, ownerThread))
+		}
 		return out, nil
 	}
 	out.Found, out.Spawn, out.Others = true, all[0], all[1:]

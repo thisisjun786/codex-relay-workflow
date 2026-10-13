@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -435,6 +436,94 @@ func TestFindByMarker(t *testing.T) {
 	// an owner the host does not have
 	if _, err := e.host.FindByMarker(ctx, "01a1ffff-0000-7000-8000-000000000000", "c_rev/t1-a1"); !errors.Is(err, sessionhost.ErrNotFound) {
 		t.Errorf("an unknown owner: %v", err)
+	}
+}
+
+// FindByMarker searches the owner's OwnerTurns most recent turns. When the owner has older turns than that window, a search
+// that finds nothing says so (WindowEnded and the window_ended warning), so "not spawned" and "spawned before the window"
+// differ; an owner whose whole history fits the window ends no window.
+func TestFindByMarkerSaysWhenTheWindowEnds(t *testing.T) {
+	e := newEnv(t)
+	ctx := context.Background()
+	old := e.spawn(fakehost.SubagentSpec{ToolUseID: "exec-old", AgentType: "explorer", Message: message("c_old/t1-a1", "explorer", "q")})
+	e.decide(bound.Decision{ToolUseID: "exec-old", Op: "c_old/t1-a1"})
+	close(e.release)
+	e.waitLast(e.owner, "completed")
+	e.threads.OnTurn(func(fakehost.TurnRequest) fakehost.TurnPlan { return fakehost.TurnPlan{Message: "owner"} })
+	for i := 0; i < 3; i++ { // three later owner turns: four in all, the spawn in the oldest
+		if _, err := e.client.Call(ctx, "turn/start", map[string]any{"threadId": e.owner, "input": []any{map[string]any{"type": "text", "text": "poll"}}}); err != nil {
+			t.Fatal(err)
+		}
+		e.waitLast(e.owner, "completed")
+	}
+
+	e.host.OwnerTurns = 2
+	got, err := e.host.FindByMarker(ctx, e.owner, "c_old/t1-a1")
+	if err != nil || got.Found || !got.WindowEnded || !hasWarning(got, sessionhost.WarnWindowEnded) {
+		t.Errorf("a spawn older than the window: %+v %v", got, err)
+	}
+	// an op nobody spawned reads the same while older turns exist: the search cannot tell, and says so
+	if got, err := e.host.FindByMarker(ctx, e.owner, "c_none/t1-a1"); err != nil || got.Found || !got.WindowEnded || !hasWarning(got, sessionhost.WarnWindowEnded) {
+		t.Errorf("an unspawned op beyond a window that ended: %+v %v", got, err)
+	}
+	// the window holds the whole history: the spawn is found and no window ended
+	e.host.OwnerTurns = 4
+	got, err = e.host.FindByMarker(ctx, e.owner, "c_old/t1-a1")
+	if err != nil || !got.Found || got.Spawn.ThreadID != old || got.Spawn.Via != sessionhost.ViaLedger || got.WindowEnded || len(got.Warnings) != 0 {
+		t.Errorf("a window that holds every turn: %+v %v", got, err)
+	}
+	if got, err := e.host.FindByMarker(ctx, e.owner, "c_none/t1-a1"); err != nil || got.Found || got.WindowEnded || len(got.Warnings) != 0 {
+		t.Errorf("an unspawned op with the whole history searched: %+v %v", got, err)
+	}
+	// a window larger than the history, and a found spawn while older turns exist (WindowEnded tells, no warning)
+	e.host.OwnerTurns = 10
+	if got, err := e.host.FindByMarker(ctx, e.owner, "c_none/t1-a1"); err != nil || got.Found || got.WindowEnded {
+		t.Errorf("a window larger than the history: %+v %v", got, err)
+	}
+	newer := e.spawn(fakehost.SubagentSpec{ToolUseID: "exec-new", AgentType: "explorer", Message: message("c_new/t1-a1", "explorer", "q")})
+	e.decide(bound.Decision{ToolUseID: "exec-new", Op: "c_new/t1-a1"})
+	e.host.OwnerTurns = 1
+	got, err = e.host.FindByMarker(ctx, e.owner, "c_new/t1-a1")
+	if err != nil || !got.Found || got.Spawn.ThreadID != newer || !got.WindowEnded || hasWarning(got, sessionhost.WarnWindowEnded) {
+		t.Errorf("a spawn in the window while older turns exist: %+v %v", got, err)
+	}
+}
+
+// The fixtures from the live host keep no session history (AGENTS.md): every message-like text the probe answered with is
+// shortened in the fixture, so no task prompt, issue key or commit of a real session is vendored.
+func TestLiveFixturesKeepNoSessionText(t *testing.T) {
+	fixtures := filepath.Join("..", "..", "bridge", "appserver", "testdata", "fixtures")
+	issueKey := regexp.MustCompile(`\b[A-Z]{2,6}-\d+\b`)
+	for _, name := range []string{"subagent-thread-read.json", "subagent-turns-list-full.json", "subagent-turns-list-summary.json"} {
+		raw, err := os.ReadFile(filepath.Join(fixtures, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var v any
+		if err := json.Unmarshal(raw, &v); err != nil {
+			t.Fatal(err)
+		}
+		var walk func(path string, v any)
+		walk = func(path string, v any) {
+			switch x := v.(type) {
+			case map[string]any:
+				for k, c := range x {
+					walk(path+"."+k, c)
+				}
+			case []any:
+				for i, c := range x {
+					walk(fmt.Sprintf("%s[%d]", path, i), c)
+				}
+			case string:
+				if len(x) > 200 {
+					t.Errorf("%s %s: a %d-byte text is vendored; shorten it as the other texts are", name, path, len(x))
+				}
+				if k := issueKey.FindString(x); k != "" {
+					t.Errorf("%s %s names the issue %s of a real session", name, path, k)
+				}
+			}
+		}
+		walk("", v)
 	}
 }
 
