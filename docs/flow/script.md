@@ -406,7 +406,7 @@ inline (SP-INL-1), reuse an answer (SP-INL-2), skip, refuse or hand a question t
 The composites (`crw:lib/lane` and `crw:lib/close`, made members of `crw` by `install(crw)`; they take no position of their own): `crw.dag`,
 `crw.review`, `crw.reviewHalt`, `crw.explore`, `crw.exploreEvidence`, `crw.land`, `crw.tierStep`, `crw.evidence`, `crw.skip`,
 `crw.closeMilestone`, `crw.settleReviews` and `crw.milestoneHalt`. `crw.dag` takes an `onSignal` function (below). The seams the operations are built on - `Relay` (the scheduler: milestone, release, agent
-acceptance and integration, the close of an execution), `Verifier` (`CILocalVerifier` runs `crw-dev ci local`), `Decisions`
+acceptance and integration, the close of an execution), `Verifier` (`CILocalVerifier` runs `crw-dev ci local` through the verifier's tools of the configuration, [the verifier's tools](../runtime-install.md#the-verifiers-tools)), `Decisions`
 (`StoreDecisions` writes the relay store), `Threads` (the host the close reads the reviewer threads from and archives them on) and
 `Reporter` (F11) - are interfaces in `internal/flow/ops/seams.go`; the dagsched-backed `Relay` belongs to the run process.
 
@@ -479,7 +479,7 @@ the reading's reason; the host memory bound is the one `dag-release` reads from 
 worktree before it asks, the run's buffered rows are stored first, and the run's journal stamps the release's execution on the
 node's calls and the reviewer's input criteria digest on the reviewer's completed row, which the acceptance reads. `integrate` names the node's current acceptance and the head it accepted (anything else is refused before the batch, `acceptance_not_current` or `head_not_accepted`) and is one
 `IntegrateBatch` of the node with the wiring of `crw relay dag-integrate` (`dagsched.IntegrationDeps`: `crw-dev ci local` over the
-merged tree, git's compare-and-swap of the branch) onto the plan's target branch, followed by the observation of the landing there;
+merged tree, the merged tree's own crw-dev when the configuration names a Go root, git's compare-and-swap of the branch) onto the plan's target branch, followed by the observation of the landing there;
 `close` is `AgentClose`. `releaseChild` is refused (`refused:child_release_unwired:`): a managed child start needs host settings the
 run does not hold.
 

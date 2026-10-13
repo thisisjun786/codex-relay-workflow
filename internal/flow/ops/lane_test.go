@@ -488,7 +488,7 @@ func (f *fakeVerifier) Verify(context.Context, VerifyRequest) (VerifyOutcome, er
 func TestCILocalVerifier(t *testing.T) {
 	dir := t.TempDir()
 	run := func(code int, record string, ok bool) RunCommand {
-		return func(_ context.Context, wt, name string, args ...string) (int, []byte, error) {
+		return func(_ context.Context, wt string, _ []string, name string, args ...string) (int, []byte, error) {
 			if wt != "/wt" || name != "crw-dev" || !slices.Equal(args[:2], []string{"ci", "local"}) {
 				t.Errorf("ran %s %v in %s", name, args, wt)
 			}
