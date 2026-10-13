@@ -14,6 +14,7 @@ the standing obligation of a relationship child and the fault notice ([superviso
 | the plan summary that is owed | the run, `crw flow apply` | the orchestrator thread | `crw manage send-parent` | `summary_document`, `summary_notice`, `summary_notice_settled` | |
 | the receipt of an oversized issue | the child | the orchestrator | relay delivery, then `crw flow apply` | `apply_applied`, `apply_refused`, `apply_override` | |
 | a milestone report | the run | the initiative lead | `crw flow report-up` through `send-parent --role supervisor` | `report`, `report_delivery`, `report_read` | `report_undelivered`, `report_unread` |
+| a run that started no node (`project_blocked`, CRW-1320) | the run | the initiative lead | the writer of `crw flow report-up` through `send-parent --role supervisor` | `report`, `report_delivery`, `report_read` | `report_undelivered`, `report_unread` |
 | a project-level blocker or decision request | the orchestrator | the initiative lead | `crw flow report-up` | `report`, `report_delivery`, `report_read` | `report_undelivered`, `report_unread` |
 | a decision only Jun can make | the orchestrator | the store seat, then the manager | `crw flow report-up` | `report` | `jun_decision` |
 
@@ -130,6 +131,13 @@ crw flow report-up --kind project_blocked|project_decision_request|jun_decision_
 
 What an agent node cannot do or decide is not reported by the node: its RECEIPT is classified by the run, the run escalates, the
 escalation reaches the orchestrator thread, and the orchestrator reports up.
+
+A run that finished `completed` and started no node is `blocked` in `crw flow show` and `ps` (no `crw.release` released a node, no child
+was released, nothing landed, and items of its joins threw: [script.md](script.md)). When it finishes so, the run itself reports
+`project_blocked` to the initiative lead, through the same writer, recipient and delivery as `crw flow report-up`: the subject is `no node
+started` and the body names each item that failed with its error. The report id comes from the run alone, so the run reports it once: a
+resume that ends the same way finds the report row and makes no other, and a delivery is asked again only as for any report. A run whose
+nodes the scheduler held back for capacity, or where a node started, makes no such report.
 
 **The row comes first.** A report is a `report` row in the `flow_events` of the run (the report id, the kind, the run, the milestone, the
 subject, the digest of the body and the path of the body artifact, the recipient and the logical id of the delivery), written before any
