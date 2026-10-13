@@ -14,8 +14,8 @@ import (
 // CRW-1207 correction round: what the pre-merge evaluation found in the first build.
 
 // d1: under native multi-agent V2 the task is ciphertext, so the hook cannot read a CRW-ROLE header in it. The orchestrator's role
-// is then established by the plaintext task_name (the role, or the role and an underscore suffix); a ciphertext call whose role
-// cannot be established, or is architect, is refused instead of getting the explorer pair.
+// is then the one the plaintext task_name names (one of the six roles, or a role and an underscore suffix). Since CRW-1348 a name
+// that names no role is no refusal: the spawn gets its agent_type's pair, with the ledger's unrecorded warning.
 func TestOrchestratorCiphertextRoleFromTaskName(t *testing.T) {
 	r := newFBRig(t)
 	r.bindOrchestrator(fbThreadA)
@@ -30,33 +30,23 @@ func TestOrchestratorCiphertextRoleFromTaskName(t *testing.T) {
 	cases := []struct {
 		name, taskName string
 		want           bound.Pair
-		refuse         string
+		role           string
 	}{
-		{"reviewer", "reviewer", fbReviewer, ""},
-		{"reviewer with a suffix", "reviewer_diff_2", fbReviewer, ""},
-		{"explorer", "explorer", fbExplorer, ""},
-		{"explorer with a suffix", "explorer_parser", fbExplorer, ""},
-		{"a name that says no role", "helper", bound.Pair{}, bound.ReasonNativeTypeRefused},
-		{"no task_name", "-", bound.Pair{}, bound.ReasonNativeTypeRefused},
-		{"role glued to a word", "reviewers", bound.Pair{}, bound.ReasonNativeTypeRefused},
-		{"role in capitals", "REVIEWER", bound.Pair{}, bound.ReasonNativeTypeRefused},
-		{"architect", "architect", bound.Pair{}, bound.ReasonNativeTypeRefused},
-		{"architect with a suffix", "architect_plan", bound.Pair{}, bound.ReasonNativeTypeRefused},
+		{"reviewer", "reviewer", fbReviewer, "reviewer"},
+		{"reviewer with a suffix", "reviewer_diff_2", fbReviewer, "reviewer"},
+		{"explorer", "explorer", fbExplorer, "explorer"},
+		{"explorer with a suffix", "explorer_parser", fbExplorer, "explorer"},
+		{"a name that says no role", "helper", fbExplorer, "explorer"},
+		{"no task_name", "-", fbExplorer, "explorer"},
+		{"role glued to a word", "reviewers", fbExplorer, "explorer"},
+		{"role in capitals", "REVIEWER", fbExplorer, "explorer"},
+		{"architect", "architect", fbArchitect, "architect"},
+		{"architect with a suffix", "architect_plan", fbArchitect, "architect"},
+		{"reviewer-final", "reviewer-final_gate", fbReviewerFinal, "reviewer-final"},
 	}
 	for i, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			out := r.spawn(fbThreadA, fmt.Sprintf("tool-%d", i), input(c.taskName))
-			if c.refuse != "" {
-				reason := r.expectRefused(out, c.refuse)
-				want := "task_name"
-				if strings.HasPrefix(c.taskName, "architect") {
-					want = "crw flow"
-				}
-				if !strings.Contains(reason, want) {
-					t.Errorf("the refusal does not say %q: %q", want, reason)
-				}
-				return
-			}
 			updated := r.expectAllowed(out)
 			if got := fbPairOf(updated); got != c.want {
 				t.Fatalf("pair %+v, want %+v", got, c.want)
@@ -66,14 +56,14 @@ func TestOrchestratorCiphertextRoleFromTaskName(t *testing.T) {
 			}
 		})
 	}
-	// the decisions say which role each allowed spawn was
+	// the decisions say which role each spawn was
 	var roles []string
 	for _, d := range r.decisions(fbThreadA) {
 		if d.Decision == bound.DecisionAllowed {
-			roles = append(roles, d.HelperRole)
+			roles = append(roles, d.Role)
 		}
 	}
-	if strings.Join(roles, ",") != "reviewer,reviewer,explorer,explorer" {
+	if strings.Join(roles, ",") != "reviewer,reviewer,explorer,explorer,explorer,explorer,explorer,explorer,architect,architect,reviewer-final" {
 		t.Fatalf("allowed roles %v", roles)
 	}
 	// an engine thread ignores the name: its helper is the explorer pair whatever it is called

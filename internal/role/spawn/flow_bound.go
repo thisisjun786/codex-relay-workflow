@@ -2,6 +2,8 @@ package spawn
 
 import (
 	"errors"
+	"fmt"
+	"os"
 	"slices"
 	"strings"
 
@@ -11,33 +13,51 @@ import (
 
 // F14 (CRW-1207): the native spawn of a thread that a flow run has bound. The binding is the run's file for the thread
 // (internal/flow/bound); the hook only reads it and makes claim files. Nothing here opens the relay store or reads a policy file:
-// the helper pairs are in the binding line.
+// the pairs are in the binding line.
 //
 // The standalone path is not touched: a session id that is not a thread id, no flow-bound directory, a thread no run registered
 // and a closed run are all answered by the code before this file, byte for byte. What this file decides:
 //
-//   - a directory or file that cannot be trusted refuses every spawn of a thread-shaped session (flow_bound_unavailable);
-//   - an engine thread (a thread of an engine call) may spawn one native helper per call, agent_type explorer, with the explorer
-//     pair of the run's policy whatever the caller sent or inherited (native_type_refused, native_limit_refused); the limit is a
-//     claim made by link(2), a delivery of the same event again gets the stored answer, and CRW-SUBSPAWN-ALLOWED mints no grant;
-//   - the thread that orchestrates an open run may spawn explorer helpers only, with the pair its message header names
-//     (CRW-ROLE: reviewer, else explorer), no count limit but the host's;
-//   - a full-history fork keeps the parent's pair, which cannot be set, so it is refused with the way out (a new explorer
-//     with a question packet);
-//   - every decision goes to the thread's ledger (bound.AppendDecision): the pair the caller sent, the pair applied, the reason.
+//   - a directory or file that cannot be trusted is read as no binding: the spawn is decided as an ordinary thread's, with a
+//     warning on stderr (CRW-1348: no flow_bound_unavailable refusal of every spawn; the run's import still finds an engine
+//     thread's spawn that no ledger line covers, unbound_spawn);
+//   - an engine thread (a thread of an engine call of the App Server backend) may spawn one native helper per call, agent_type
+//     explorer, with the explorer pair of the run's policy whatever the caller sent or inherited (native_type_refused,
+//     native_limit_refused); the limit is a claim made by link(2), a delivery of the same event again gets the stored answer, and
+//     CRW-SUBSPAWN-ALLOWED mints no grant;
+//   - the thread that orchestrates an open session run (CRW-1316 §9) spawns the role subagents of the run's steps. Two spawns are
+//     refused: a spawn by a subagent (a leaf, as anywhere) and a full-history fork (it keeps the parent's pair, which cannot be
+//     set). Every other spawn is allowed with the pair of its role overwritten from the line's six pairs: the role the step's
+//     CRW-ROLE: header names (the flow-bound parser, which takes exactly the six values), else the role of its agent_type. A role
+//     that does not pair with the agent_type, and a spawn that names no step (no crw-flow-op: marker), are allowed with a warning
+//     in the ledger (role_agent_type_mismatch, unrecorded_spawn, unrecorded_author for an author's type). A ledger that cannot be
+//     written allows with a warning on stderr;
+//   - every decision goes to the thread's ledger (bound.AppendDecision): the pair the caller sent, the pair applied, the reason or
+//     the warning, and for an orchestrator the role and the op, which a session run joins with the owner turn's items to find the
+//     subagent of a published step (internal/flow/sessionhost FindByMarker).
 //
 // The helper gets the pair and nothing else: no guard block, skills, evidence assignment or prompt override (the managed
 // dispatch and the settings store are the ordinary path's, not read here).
 
 const (
 	flowBoundTypeGuidanceEngine = "the helper of an engine call is a native explorer: agent_type \"explorer\" (got %s). Do other work yourself, or report the need in your final answer"
-	flowBoundTypeGuidanceOrch   = "only an explorer helper can be spawned natively from this thread (got %s); send other work to run(crw flow)"
-	flowBoundArchitectGuidance  = "CRW-ROLE: architect is not a native helper role of a thread bound to a flow run; send it to run(crw flow)"
 	flowBoundForkGuidance       = "a full-history fork keeps the parent's model and effort, so its role pair cannot be set; spawn a new explorer with a question packet (the task and what it needs to know, fork_context false or fork_turns \"none\") instead"
+	flowBoundStepForkGuidance   = "a full-history fork keeps the parent's model and effort, so its role pair cannot be set; spawn the step with fork_context false (crw flow next names the spawn_agent arguments)"
 	flowBoundLimitGuidance      = "this engine call has used its native helper (one per call); do the rest yourself or report it in your final answer"
-	flowBoundCiphertextGuidance = "the task of a native V2 spawn is ciphertext, so the hook cannot read its CRW-ROLE header; name the role in task_name: reviewer or explorer, or the role and an underscore and more (reviewer_diff, explorer_parser)"
 	flowBoundNoneGuidance       = "this engine call may spawn no native helper; do the work yourself or report the need in your final answer"
 )
+
+// The warnings of an orchestrator's allowed spawn (bound.Decision.Warning starts with one).
+const (
+	flowBoundWarnRoleMismatch     = "role_agent_type_mismatch"
+	flowBoundWarnUnrecordedSpawn  = "unrecorded_spawn"
+	flowBoundWarnUnrecordedAuthor = "unrecorded_author"
+	flowBoundWarnUnknownType      = "unknown_agent_type"
+	flowBoundWarnInputUnrecorded  = "input_unrecorded"
+)
+
+// flowBoundWarn writes a warning of the hook to stderr, where the host logs it; the hook's answer is its stdout. A test replaces it.
+var flowBoundWarn = func(msg string) { fmt.Fprintln(os.Stderr, msg) }
 
 // flowBoundReason is the deny text of a refusal: it starts with the code.
 func flowBoundReason(code, detail string) string {
@@ -51,24 +71,31 @@ func spawnFlowBound(payload pyjson.Object) (out string, handled bool) {
 		return "", false
 	}
 	session, _ := payload.Get("session_id").(string)
-	// The hook's own recovery (RunSpawnAttachHook) prints nothing, which allows the spawn; a failure here must not: a session whose
-	// id has the form of a thread id may be a bound one, and it is refused.
+	// The hook's own recovery (RunSpawnAttachHook) prints nothing, which allows the spawn; a failure here must not for an engine
+	// thread, whose helper count and type the binding limits: a session whose id has the form of a thread id may be a bound one, and
+	// it is refused. An orchestrator's spawn goes through untouched with a warning (CRW-1348: fail open).
+	state := bound.Unavailable
 	defer func() {
 		if recover() != nil {
-			if bound.ValidThreadID(session) {
+			switch {
+			case state == bound.Orchestrator:
+				flowBoundWarn("crw flow-bound: warning: the hook failed while deciding a spawn of the orchestrator thread " + session + "; the spawn goes through as it was sent")
+				out, handled = "", true
+			case bound.ValidThreadID(session):
 				out, handled = DenyEnvelope(flowBoundReason(bound.ReasonFlowBoundUnavailable, "the hook failed while deciding this spawn")), true
-			} else {
+			default:
 				out, handled = "", false
 			}
 		}
 	}()
 	res := bound.Lookup(session)
+	state = res.State
 	switch res.State {
 	case bound.Standalone:
 		return "", false
 	case bound.Unavailable:
-		return DenyEnvelope(flowBoundReason(bound.ReasonFlowBoundUnavailable, "the flow binding of this thread cannot be read ("+res.Err.Error()+
-			"); no native spawn is allowed until the flow-bound directory is repaired")), true
+		flowBoundWarn("crw flow-bound: warning: the flow binding of thread " + session + " cannot be read (" + res.Err.Error() + "); the spawn is decided as an ordinary thread's. `crw doctor` checks the flow-bound directory")
+		return "", false
 	}
 	e := &flowBoundEvent{res: res, payload: payload, thread: session}
 	return e.decide(), true
@@ -103,26 +130,21 @@ func (e *flowBoundEvent) decide() string {
 	if e.input != nil && !deep {
 		e.inText = spawnHookRouteStringify(e.input)
 	}
+	if e.line().Kind == bound.KindOrchestrator {
+		return e.orchestrator()
+	}
 	agentType, _ := e.input.Get("agent_type").(string)
-	orchestrator := e.line().Kind == bound.KindOrchestrator
 	switch {
 	case agentType != "explorer":
 		got := "none"
 		if v := e.input.Get("agent_type"); v != nil {
 			got = spawnHookRouteStringify(v)
 		}
-		guidance := flowBoundTypeGuidanceEngine
-		if orchestrator {
-			guidance = flowBoundTypeGuidanceOrch
-		}
-		return e.refuse(bound.ReasonNativeTypeRefused, strings.Replace(guidance, "%s", got, 1), "")
+		return e.refuse(bound.ReasonNativeTypeRefused, strings.Replace(flowBoundTypeGuidanceEngine, "%s", got, 1), "")
 	case IsFullHistoryFork(spawnHookView(e.input)):
 		return e.refuse(bound.ReasonFullHistoryFork, flowBoundForkGuidance, "")
 	case deep:
 		return e.refuse(bound.ReasonFlowBoundUnavailable, "tool_input nests too deeply to be recorded", "")
-	}
-	if orchestrator {
-		return e.orchestrator()
 	}
 	return e.engine()
 }
@@ -178,39 +200,98 @@ func (e *flowBoundEvent) allow(helper string, pair bound.Pair, answer string, or
 	return answer
 }
 
-// orchestrator answers a spawn of the thread that orchestrates an open run: the pair is the one the producer named, and keywords
-// never choose. A plaintext message names it in its header; the task of a native V2 spawn is ciphertext, whose header the hook
-// cannot read, so it names it in the plaintext task_name, and a call whose role cannot be established is refused: it never gets
-// the explorer pair by default.
+// orchestrator answers a spawn of the thread that orchestrates an open session run (CRW-1316 §9): a full-history fork is refused,
+// every other spawn is allowed with the pair of its role. The role is the one the step's CRW-ROLE: header names (exactly one of the
+// six), else the one its agent_type names, else explorer; the op is the step's crw-flow-op: marker. A native V2 task is ciphertext,
+// whose header the hook cannot read: its role is the one its plaintext task_name names. What does not match the step form is
+// allowed with a warning in the ledger, and a ledger that cannot be written allows with a warning on stderr.
 func (e *flowBoundEvent) orchestrator() string {
-	role, readable := e.headerRole(), true
-	if e.ciphertext() {
-		role, readable = taskNameRole(e.input.Get("task_name")), false
+	if IsFullHistoryFork(spawnHookView(e.input)) {
+		return e.refuse(bound.ReasonFullHistoryFork, flowBoundStepForkGuidance, "")
 	}
-	helper := bound.HelperExplorer
-	switch role {
-	case "reviewer":
-		helper = bound.HelperReviewer
-	case "architect":
-		return e.refuse(bound.ReasonNativeTypeRefused, flowBoundArchitectGuidance, "")
-	case "":
-		if !readable {
-			return e.refuse(bound.ReasonNativeTypeRefused, flowBoundCiphertextGuidance, "")
+	agentType, _ := e.input.Get("agent_type").(string)
+	shown := "none"
+	if v := e.input.Get("agent_type"); v != nil {
+		shown = spawnHookRouteStringify(v)
+	}
+	role, op := "", ""
+	if packet, ciphertext := e.packet(); ciphertext {
+		role = flowBoundTaskNameRole(e.input.Get("task_name"))
+	} else {
+		message := StripControlMarkers(packet, false)
+		role, op = flowBoundRoleHeader(message), bound.MarkerOp(message)
+	}
+	typeRole := bound.RoleOfAgentType(agentType)
+	var warnings []string
+	if op == "" {
+		code := flowBoundWarnUnrecordedSpawn
+		if role == "" {
+			role = typeRole
 		}
+		if t := bound.AgentTypeOf(role); t == "executor" || t == "architect" {
+			code = flowBoundWarnUnrecordedAuthor
+		}
+		warnings = append(warnings, code+": the spawn names no step of the run (no crw-flow-op: line), so the run records no call for it")
 	}
-	pair := e.line().HelperPairs[helper]
-	answer, orig, err := answerFrom(e.inText, pair)
+	switch {
+	case role != "" && typeRole != bound.AgentTypeOf(role):
+		warnings = append(warnings, fmt.Sprintf("%s: CRW-ROLE: %s is spawned as agent_type %s, not %s; the %s pair is applied", flowBoundWarnRoleMismatch, role, shown, bound.AgentTypeOf(role), role))
+	case role == "" && typeRole != "":
+		role = typeRole
+	case role == "":
+		role = bound.HelperExplorer
+		warnings = append(warnings, fmt.Sprintf("%s: agent_type %s names no role and the spawn no CRW-ROLE:; the explorer pair is applied", flowBoundWarnUnknownType, shown))
+	}
+	pair := e.line().HelperPairs[role]
+	answer, orig, err := "", pyjson.Object(nil), error(nil)
+	if e.inText == "" {
+		err = errors.New("tool_input is no object that can be recorded")
+	} else {
+		answer, orig, err = answerFrom(e.inText, pair)
+	}
 	if err != nil {
-		return e.unavailable(err)
+		// the input cannot be given the pair: it goes through as it was sent, inheriting the orchestrator's pair
+		warnings = append(warnings, flowBoundWarnInputUnrecorded+": "+err.Error()+"; the spawn goes through as it was sent")
+		answer, pair = "", bound.Pair{}
 	}
-	return e.allow(helper, pair, answer, orig)
+	d := e.decision(bound.DecisionAllowed, role, orig, pair)
+	d.Role, d.Op, d.Warning = role, op, strings.Join(warnings, "; ")
+	if err := bound.AppendDecision(e.res.Dir, d); err != nil {
+		flowBoundWarn(fmt.Sprintf("crw flow-bound: warning: the spawn ledger of thread %s cannot be written (%v); the spawn is allowed with the %s pair and is not recorded", e.thread, err, role))
+	}
+	return answer
 }
 
-// taskNameRole is the role a V2 task_name names: the role itself, or the role and an underscore and more ("reviewer_diff"); ""
-// for any other name. Only the three roles of the header are known, and the case is exact.
-func taskNameRole(v any) string {
+// flowBoundRoleHeader is the role a step's header names: the first line that starts with "CRW-ROLE:" among the lines before the
+// first blank line or TASK: line, when its value is exactly one of the six roles of an orchestrator line; "" otherwise. It is the
+// flow-bound parser: the ordinary path's (spawnClassifyRoleMarker, the oracle's three values) is not used here and is unchanged.
+func flowBoundRoleHeader(message string) string {
+	header := message
+	if at := spawnClassifyTaskStart(header); at >= 0 {
+		header = header[:at]
+	}
+	for _, line := range strings.Split(header, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.TrimSpace(line) == "" {
+			return ""
+		}
+		value, ok := strings.CutPrefix(line, "CRW-ROLE:")
+		if !ok {
+			continue
+		}
+		if value = strings.TrimSpace(value); bound.IsOrchestratorRole(value) {
+			return value
+		}
+		return ""
+	}
+	return ""
+}
+
+// flowBoundTaskNameRole is the role a V2 task_name names: one of the six roles itself, or a role and an underscore and more
+// ("reviewer_diff"); "" for any other name. The case is exact.
+func flowBoundTaskNameRole(v any) string {
 	name, _ := v.(string)
-	for _, role := range []string{"reviewer", "explorer", "architect"} {
+	for _, role := range []string{"reviewer-final", "executor-t1", "architect", "executor", "reviewer", "explorer"} {
 		if name == role || strings.HasPrefix(name, role+"_") {
 			return role
 		}
@@ -223,23 +304,6 @@ func (e *flowBoundEvent) packet() (text string, ciphertext bool) {
 	v2 := IsCollaborationToolName(e.payload.Get("tool_name")) || IsV2SpawnInput(spawnHookView(e.input))
 	text = spawnHookPacketText(e.input, v2)
 	return text, v2 && IsFernetTokenShape(text)
-}
-
-func (e *flowBoundEvent) ciphertext() bool {
-	_, c := e.packet()
-	return c
-}
-
-// headerRole is the CRW-ROLE value of the producer header of a plaintext message (the lines before the first line-start TASK:),
-// "" for none.
-func (e *flowBoundEvent) headerRole() string {
-	packet, _ := e.packet()
-	message := StripControlMarkers(packet, false)
-	header := message
-	if at := spawnClassifyTaskStart(message); at >= 0 {
-		header = message[:at]
-	}
-	return spawnClassifyRoleMarker(header)
 }
 
 // engine answers a spawn of an engine thread: one helper per call, the explorer pair.
