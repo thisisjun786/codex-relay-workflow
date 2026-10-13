@@ -181,6 +181,10 @@ func Check(file *File, getenv func(string) string, probe Probe) Report {
 	add := func(level Level, root, check, format string, args ...any) {
 		report.Findings = append(report.Findings, Finding{Level: level, Root: root, Check: check, Message: fmt.Sprintf(format, args...)})
 	}
+	if !probe.structuralOnly {
+		// what the reading of the file did not refuse, such as a verifier section the verifier cannot use
+		report.Findings = append(report.Findings, file.Warnings()...)
+	}
 	var checked []RootStatus
 	for _, name := range RootNames() {
 		if len(only) > 0 && !only[name] {

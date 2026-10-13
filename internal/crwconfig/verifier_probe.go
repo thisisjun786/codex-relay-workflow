@@ -67,6 +67,9 @@ func ProbeVerifierToolsWith(ctx context.Context, env []string, flagPath string, 
 	if err != nil {
 		p.Problems = append(p.Problems, "the verifier section could not be read: "+err.Error())
 	}
+	if tools.Ignored != "" {
+		p.Problems = append(p.Problems, "the verifier section is ignored ("+tools.Ignored+"): the verifier takes crw-dev and go from PATH (fail-open)")
+	}
 	p.Tools = tools
 	pathEnv := getenv("PATH")
 	if goBin := tools.GoBinary(pathEnv); goBin != "" {
@@ -84,7 +87,7 @@ func ProbeVerifierToolsWith(ctx context.Context, env []string, flagPath string, 
 	} else {
 		p.Problems = append(p.Problems, "no go: verifier.go_root is not set and go is not on PATH; the verifier cannot build or run crw-dev ci local")
 	}
-	if tools.GoRoot == "" && err == nil {
+	if tools.GoRoot == "" && err == nil && tools.Ignored == "" {
 		if tools.CrwDev == "" {
 			p.Notes = append(p.Notes, "verifier.go_root and verifier.crw_dev are not set: the verifier takes crw-dev and go from PATH (fail-open)")
 		} else if p.Go != "" {

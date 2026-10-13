@@ -50,6 +50,16 @@ func TestDoctorReportsTheVerifierTools(t *testing.T) {
 		!strings.Contains(warnings, "verifier.go_root") || !strings.Contains(warnings, "go") {
 		t.Errorf("nothing configured, nothing on PATH:\n%s", golden.Canon(tools))
 	}
+
+	// a section the verifier cannot use is ignored with a warning (final verification d4ed9281): the report is read, the verifier's
+	// reading is the PATH fallback, and the warning names the setting
+	write(t, config, `{"verifier":{"go_root":"~/.local/go/go"}}`, 0o600)
+	tools = golden.Obj(record.Get(h.diagnose(t), "verifierTools"))
+	crwDev = golden.Obj(record.Get(tools, "crwDev"))
+	warnings = golden.Canon(record.Get(tools, "warnings"))
+	if record.Get(tools, "config") != config || record.Get(crwDev, "mode") != "path" || !strings.Contains(warnings, "ignored") || !strings.Contains(warnings, "verifier.go_root") {
+		t.Errorf("a malformed section:\n%s", golden.Canon(tools))
+	}
 }
 
 // CRW-1319 (evaluation a48fe518 d3): with no Go root configured the doctor looks for one (the root of the go on PATH and the usual

@@ -165,8 +165,9 @@ func BuildLane(ctx context.Context, req LaneRequest, opt LaneOptions) (LaneWorld
 	return out, nil
 }
 
-// laneVerifierTools is the verifier section of the run's configuration file (CRW-1319); a section the verifier could not use
-// refuses the lane.
+// laneVerifierTools is the verifier section of the run's configuration file (CRW-1319). A section the verifier cannot use is the
+// PATH fallback, and the verifier's note says it was ignored (fail-open); only a file the configuration's reading refuses as a
+// whole refuses the lane.
 func laneVerifierTools(getenv func(string) (string, bool)) (crwconfig.VerifierTools, error) {
 	tools, err := crwconfig.LoadVerifierTools(func(k string) string { v, _ := getenv(k); return v }, "")
 	if err != nil {

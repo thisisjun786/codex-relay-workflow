@@ -16,11 +16,35 @@ const CrwDevTree = "tree"
 // VerifierTools is the verifier section of the configuration (CRW-1319): the tools a verification of a head or of an integration
 // batch's merged tree runs. GoRoot is the Go toolchain root (its bin/go is the go the verifier and every step of `crw-dev ci
 // local` run); CrwDev is how crw-dev runs: "tree" for the verified tree's own, an absolute path for an installed binary, empty
-// for "tree" when a Go root is set. Config is the file the section was read from, for a message; it is not part of the section.
+// for "tree" when a Go root is set. Config is the file the section was read from, for a message; Ignored is why a section the
+// verifier cannot use was ignored (LoadVerifierTools), so the tools are the PATH fallback. Neither is part of the section.
 type VerifierTools struct {
-	GoRoot string `json:"go_root,omitempty"`
-	CrwDev string `json:"crw_dev,omitempty"`
-	Config string `json:"-"`
+	GoRoot  string `json:"go_root,omitempty"`
+	CrwDev  string `json:"crw_dev,omitempty"`
+	Config  string `json:"-"`
+	Ignored string `json:"-"`
+}
+
+// CheckVerifierSection is the warning of a verifier section the verifier cannot use: the reading of the file ignores it, so it
+// stops no other reader, and the verifier takes its tools from PATH (fail-open).
+const CheckVerifierSection = "verifier_section"
+
+// SectionVerifier is the Root a finding about the verifier section names.
+const SectionVerifier = "verifier"
+
+// verifierWarning is the warning a file's reading records for a verifier section the verifier cannot use, nil for a usable one.
+func (f *File) verifierWarning() *Finding {
+	if _, err := f.VerifierTools(); err != nil {
+		return &Finding{Level: LevelWarning, Root: SectionVerifier, Check: CheckVerifierSection,
+			Message: err.Error() + "; the section is ignored and the verifier takes crw-dev and go from PATH (fail-open); record it with crw config verifier --go-root <dir>"}
+	}
+	return nil
+}
+
+// Warnings are what the reading of the file found and did not refuse (a verifier section the verifier cannot use). The slice is
+// a copy.
+func (f *File) Warnings() []Finding {
+	return append([]Finding(nil), f.warnings...)
 }
 
 // VerifierTools is the file's verifier section. A file without it names no tool; a section whose go_root is not an absolute path,
@@ -48,13 +72,18 @@ func (t VerifierTools) validate() error {
 }
 
 // LoadVerifierTools reads the configuration the way every command does and returns its verifier section. A host whose default
-// configuration location cannot be named gets the zero value, as LoadToolRoots does.
+// configuration location cannot be named gets the zero value, as LoadToolRoots does. A section the verifier cannot use is no
+// error: the answer names no tool (the PATH fallback) and Ignored says why, so the verifier's note and the probe report it.
 func LoadVerifierTools(getenv func(string) string, flagPath string) (VerifierTools, error) {
 	file, err := loadOptional(getenv, flagPath)
 	if err != nil || file == nil {
 		return VerifierTools{}, err
 	}
-	return file.VerifierTools()
+	tools, err := file.VerifierTools()
+	if err != nil {
+		return VerifierTools{Config: file.path, Ignored: err.Error()}, nil
+	}
+	return tools, nil
 }
 
 // Mode is how crw-dev runs: "tree" (the verified tree's own, by go run), "binary" (the configured crw-dev) or "path" (crw-dev on
@@ -142,6 +171,10 @@ func (t VerifierTools) Command(tree, pathEnv string) (VerifierCommand, error) {
 		cmd.Argv = []string{"crw-dev"}
 		cmd.Note = fmt.Sprintf("%s names no verifier.go_root or verifier.crw_dev: crw-dev and go come from PATH (fail-open)", where)
 		cmd.Hint = fmt.Sprintf("crw-dev and go come from PATH because %s names no verifier.go_root or verifier.crw_dev; set verifier.go_root to the Go toolchain root (crw config verifier --go-root <dir>)", where)
+		if t.Ignored != "" {
+			cmd.Note = fmt.Sprintf("the verifier section is ignored (%s): crw-dev and go come from PATH (fail-open)", t.Ignored)
+			cmd.Hint = fmt.Sprintf("crw-dev and go come from PATH because the verifier section is ignored (%s); record a Go toolchain root with crw config verifier --go-root <dir>", t.Ignored)
+		}
 	}
 	return cmd, nil
 }
@@ -171,13 +204,14 @@ func runVerifier(getenv func(string) string, flagPath string, args []string, std
 		return usageExit
 	}
 	file, err := Load(getenv, flagPath)
-	var tools VerifierTools
-	if err == nil {
-		tools, err = file.VerifierTools()
-	}
 	if err != nil {
 		fmt.Fprintf(stderr, "crw config: error: %v\n", err)
 		return usageExit
+	}
+	// a section the verifier cannot use is shown as the PATH fallback it is, with the warning; a record repairs the keys it sets
+	tools, terr := file.VerifierTools()
+	if terr != nil {
+		tools = VerifierTools{}
 	}
 	set := map[string]bool{}
 	flags.Visit(func(f *flag.Flag) { set[f.Name] = true })
@@ -198,15 +232,22 @@ func runVerifier(getenv func(string) string, flagPath string, args []string, std
 				return usageExit
 			}
 		}
-		// the section is rewritten key by key: the keys this command does not set stay as they are, and an emptied key is removed
+		// the section is rewritten key by key: the keys this command does not set stay as they are, and an emptied key is removed;
+		// a section that is no object is replaced by one
 		section := map[string]json.RawMessage{}
 		if raw, ok := file.doc["verifier"]; ok {
-			_ = json.Unmarshal(raw, &section) // VerifierTools read it as an object already
-			if section == nil {
+			if json.Unmarshal(raw, &section) != nil || section == nil {
 				section = map[string]json.RawMessage{}
 			}
 		}
-		for key, value := range map[string]string{"go_root": tools.GoRoot, "crw_dev": tools.CrwDev} {
+		for flagName, key := range map[string]string{"go-root": "go_root", "crw-dev": "crw_dev"} {
+			if !set[flagName] {
+				continue
+			}
+			value := tools.GoRoot
+			if key == "crw_dev" {
+				value = tools.CrwDev
+			}
 			if value == "" {
 				delete(section, key)
 				continue
@@ -217,6 +258,16 @@ func runVerifier(getenv func(string) string, flagPath string, args []string, std
 			fmt.Fprintf(stderr, "crw config verifier: error: %v\n", err)
 			return 1
 		}
+		file.warnings = nil
+		if w := file.verifierWarning(); w != nil {
+			file.warnings = append(file.warnings, *w)
+		}
+		if tools, terr = file.VerifierTools(); terr != nil {
+			tools = VerifierTools{}
+		}
+	}
+	for _, w := range file.Warnings() {
+		fmt.Fprintf(stderr, "crw config: warning: %s\n", w.Message)
 	}
 	return writeJSON(stdout, stderr, verifierReport{Config: file.path, GoRoot: tools.GoRoot, CrwDev: tools.CrwDev, Mode: tools.Mode()})
 }

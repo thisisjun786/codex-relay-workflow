@@ -23,7 +23,8 @@ func fakeGoRoot(t *testing.T) string {
 }
 
 // CRW-1319: the verifier section names the verifier's tools, the Go toolchain root and how crw-dev runs; a file without it
-// names none, and a section the verifier could not use is refused where the file is read.
+// names none, and a section the verifier could not use is refused by the section's reader, while the file's reading only records
+// a warning for it (TestAMalformedVerifierSectionStopsNoOtherReader).
 func TestVerifierToolsSection(t *testing.T) {
 	_, env := rootsHome(t)
 	path := configWrite(t, `{"paths":{}}`)
@@ -46,8 +47,16 @@ func TestVerifierToolsSection(t *testing.T) {
 		`{"verifier":{"go_root":["/opt/go"]}}`:     "verifier is not an object",
 		`{"verifier":{"crw_dev":"./bin/crw-dev"}}`: "verifier.crw_dev",
 	} {
-		if _, err := Load(env, configWrite(t, document)); err == nil || !strings.Contains(err.Error(), want) {
+		file, err := Load(env, configWrite(t, document))
+		if err != nil {
+			t.Errorf("%s: the file's reading refused it: %v", document, err)
+			continue
+		}
+		if _, err := file.VerifierTools(); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s: %v, want an error naming %q", document, err, want)
+		}
+		if w := file.Warnings(); len(w) != 1 || w[0].Check != CheckVerifierSection || !strings.Contains(w[0].Message, want) {
+			t.Errorf("%s: the warning %+v, want one naming %q", document, w, want)
 		}
 	}
 }

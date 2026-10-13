@@ -119,7 +119,7 @@ func TestVerifierPrerequisitesFact(t *testing.T) {
 	// a section the verifier cannot use is a warning too, never a refusal of the start
 	h.writeConfig(t, `{"verifier":{"go_root":"go"}}`)
 	f = VerifierPrerequisites(context.Background(), h.env, h.repo)
-	if f.Level != LevelWarn || !strings.Contains(f.Reason, "verifier.go_root") {
+	if f.Level != LevelWarn || !strings.Contains(f.Reason, "verifier.go_root") || !strings.Contains(f.Reason, "ignored") {
 		t.Errorf("a malformed section: %+v", f)
 	}
 }

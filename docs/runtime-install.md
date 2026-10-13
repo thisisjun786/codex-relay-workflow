@@ -331,6 +331,7 @@ A warning never stops anything, so a host short of space or sharing a directory 
 | `unknown_filesystem` | the file system under a root is not one the check can name |
 | `socket_path_too_long` | `temp_root` or `scratch_root` would leave no room for a test's socket |
 | `drift` | a root the file names differs from a placement in use that holds data (a registered relay store outside the configured `relay_state`, a pump or daemon log outside the configured `log_root`, a populated default or Go cache elsewhere), naming both paths, or `CODEX_SESSION_RELAY_STATE` takes the place of a configured `relay_state` |
+| `verifier_section` | the `verifier` section is one the verifier cannot use ([the verifier's tools](#the-verifiers-tools)); its `root` is `verifier` |
 
 ### The verifier's tools
 
@@ -353,21 +354,30 @@ with the verified commit. An installed binary is the choice for a project whose 
 (fail-open): the node verifier records the note on its `crw.verify` journal row (`verifier_note`) and
 the integration verifier writes it to standard error as a `[crw note]` line. A command that does not
 start is a verification that did not run, never a failed one: the node is held with the reason, and
-the batch stops on a host error; both reasons name the setting to add. A `go_root` that is not an
-absolute path or a `crw_dev` that is neither `tree` nor an absolute path is refused where the file is
-read.
+the batch stops on a host error; both reasons name the setting to add. A section the verifier cannot
+use (not an object, a `go_root` that is not an absolute path, a `crw_dev` that is neither `tree` nor an
+absolute path) stops no other reader of the file: the reading ignores it and records the warning
+`verifier_section` (`crw config check` lists it among its findings, `crw config show`, `paths` and
+`verifier` write it to standard error as a `crw config: warning:` line), the relay state selection,
+the tool roots and the lane read the file as before, and the verifier takes `crw-dev` and `go` from
+`PATH`, with a note that says the section was ignored and why. `crw doctor` and the preflight fact
+show it as a warning.
 
 In `tree` mode the node verifier runs the verified head's own `cmd/crw-dev` too, the same choice as
 for the merged tree: a head that changes the verification engine is verified by the engine it
 brings, as its merged tree is at integration, and that change is in the diff the reviewer reads. A
 host that wants every head verified by an engine the head cannot change sets `crw_dev` to an
-installed binary.
+installed binary. The consequence: `crw-dev ci local` refuses, with `engine_differs_from_commit`,
+to verify a head whose engine source differs from the revision the binary was built from (and any head
+when the binary was built from a modified tree), so the node verifier holds such a head instead of
+verifying it with the older engine; a head that leaves the engine as the binary has it is verified.
 
 The installation records the setting with `crw config verifier --go-root <dir> [--crw-dev tree|<path>]`
 (`--config` names another file than the default; an empty value removes the key): it refuses a root
-whose `bin/go` is not an executable file, then rewrites the file with the section set and every
-other key kept, the section's own other keys included (keys sorted, owner-only, a missing file
-created). A configuration file that is a symbolic link is written through: the file the link names
+whose `bin/go` is not an executable file, then rewrites the file with the keys it is given set and
+every other key kept, the section's own other keys included (keys sorted, owner-only, a missing file
+created); over a section the verifier cannot use it replaces the keys it sets, and a section that is
+no object is replaced by one. A configuration file that is a symbolic link is written through: the file the link names
 is replaced and the link stays. Without a flag it prints the section (`config`, `go_root`, `crw_dev`
 and `mode`: `tree`, `binary` or `path`). The plain `crw doctor` report shows what a run would use as
 its `verifierTools` entry: the configuration file, the configured root, the `go` the verifier runs,

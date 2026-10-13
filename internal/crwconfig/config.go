@@ -28,6 +28,8 @@ type File struct {
 	paths  map[string]string // the document's paths section, verbatim
 	doc    map[string]json.RawMessage
 	raw    []byte
+	// warnings are what the reading found and did not refuse (Warnings)
+	warnings []Finding
 }
 
 // Path is the configuration file's path and where that path came from: the file named
@@ -144,9 +146,10 @@ func load(getenv func(string) string, flagPath string, strict bool) (*File, erro
 			return nil, fmt.Errorf("%s: sandbox.project_roots %q: not an absolute path", file.path, path)
 		}
 	}
-	// so is a verifier section the verifier could not use (CRW-1319)
-	if _, err := file.VerifierTools(); err != nil {
-		return nil, err
+	// A verifier section the verifier cannot use is not refused: only the verifier reads it, and it takes crw-dev and go from PATH
+	// then (fail-open), so the reading records a warning (CRW-1319) and every other reader of the file goes on.
+	if w := file.verifierWarning(); w != nil {
+		file.warnings = append(file.warnings, *w)
 	}
 	return file, nil
 }
@@ -224,6 +227,11 @@ func Run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 	if err != nil {
 		fmt.Fprintf(stderr, "crw config: error: %v\n", err)
 		return usageExit
+	}
+	if verb != "check" { // check reports the warnings among its findings
+		for _, w := range file.Warnings() {
+			fmt.Fprintf(stderr, "crw config: warning: %s\n", w.Message)
+		}
 	}
 	switch verb {
 	case "paths":

@@ -65,7 +65,8 @@ func TestCILocalIntegrationWithNothingConfiguredIsAHostError(t *testing.T) {
 }
 
 // CRW-1319: the lane reads the verifier's tools from the run's configuration file; a file that names none is the PATH fallback,
-// and a verifier section the verifier could not use refuses the lane.
+// and so is a verifier section the verifier could not use: the lane starts, and the verifier's note says the section was ignored
+// (final verification d4ed9281: a reversible setting warns and fails open).
 func TestLaneVerifierToolsComeFromTheConfiguration(t *testing.T) {
 	home := t.TempDir()
 	config := filepath.Join(home, "crw.json")
@@ -80,8 +81,12 @@ func TestLaneVerifierToolsComeFromTheConfiguration(t *testing.T) {
 	if err := os.WriteFile(config, []byte(`{"verifier":{"go_root":"go"}}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := laneVerifierTools(getenv); err == nil || !strings.Contains(err.Error(), "verifier.go_root") {
-		t.Errorf("a relative go root: %v", err)
+	tools, err := laneVerifierTools(getenv)
+	if err != nil || tools.GoRoot != "" || tools.Mode() != "path" || !strings.Contains(tools.Ignored, "verifier.go_root") {
+		t.Errorf("a relative go root: %+v %v", tools, err)
+	}
+	if cmd, err := tools.Command(t.TempDir(), ""); err != nil || !strings.Contains(cmd.Note, "ignored") {
+		t.Errorf("the note of a relative go root: %+v %v", cmd, err)
 	}
 	delete(env, "CRW_CONFIG")
 	if tools, err := laneVerifierTools(getenv); err != nil || tools.GoRoot != "" || tools.CrwDev != "" {
