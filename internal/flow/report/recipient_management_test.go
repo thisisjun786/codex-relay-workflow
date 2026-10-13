@@ -43,7 +43,7 @@ func TestReportUpReachesTheManagementSeat(t *testing.T) {
 	}
 	sent := w.sender.supervisorSent()
 	if len(sent) != 1 || sent[0].Thread != testManagement || sent[0].Initiative != "" || !strings.Contains(sent[0].Text, "milestone M1 is closed") ||
-		strings.Contains(sent[0].Text, "<initiative>") || !strings.Contains(sent[0].Text, "crw flow reports --unread") {
+		strings.Contains(sent[0].Text, "<initiative>") || !strings.Contains(sent[0].Text, "crw flow reports --project "+testProject+" --unread") {
 		t.Fatalf("sent %+v", sent)
 	}
 	if res.Delivery != ResultAccepted || res.Standing {
@@ -129,5 +129,33 @@ func (w *world) putPlanOf(plan, project string) {
 	}
 	if _, err := w.repo.Put(ctx, rev); err != nil {
 		w.t.Fatal(err)
+	}
+}
+
+// TestReportsOfOneProjectForItsManagementSession: the notice to a management session names the
+// listing of its own project's reports, and that listing holds no other project's report, so with
+// two management sessions neither is pointed at (or lists) the other's reports.
+func TestReportsOfOneProjectForItsManagementSession(t *testing.T) {
+	w := newWorld(t)
+	w.manage(testManagement)
+	res := w.up(KindProjectBlocked, "", "blocked on the schema decision")
+	sent := w.sender.supervisorSent()
+	if len(sent) != 1 || !strings.Contains(sent[0].Text, "crw flow reports --project "+testProject+" --unread") {
+		t.Fatalf("the notice does not name the project's own listing: %+v", sent)
+	}
+	if _, err := w.writer().Rows.Append(ctx, NewRow{Kind: KindReport, Payload: map[string]any{"report_id": "rep-other", "report_kind": KindProjectBlocked, "run": testRun,
+		"recipient_state": RecipientManagement, "recipient_thread": testOtherManagement, "recipient_project": "PRJ-2"}}); err != nil {
+		t.Fatal(err)
+	}
+	own, err := ReportsMatching(ctx, w.st.DB, ReportFilter{Project: testProject, Unread: true})
+	if err != nil || len(own) != 1 || own[0].ID != res.ReportID {
+		t.Fatalf("the reports of %s: %+v (%v)", testProject, own, err)
+	}
+	other, err := ReportsMatching(ctx, w.st.DB, ReportFilter{Project: "PRJ-2", Unread: true})
+	if err != nil || len(other) != 1 || other[0].ID != "rep-other" {
+		t.Fatalf("the reports of PRJ-2: %+v (%v)", other, err)
+	}
+	if all, err := Reports(ctx, w.st.DB, "", true); err != nil || len(all) != 2 {
+		t.Fatalf("every unread report: %+v (%v)", all, err)
 	}
 }

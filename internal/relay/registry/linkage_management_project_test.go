@@ -2,6 +2,7 @@ package registry
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -185,5 +186,34 @@ func TestProjectOwnerBindingUnderALegacyInitiativeKeepsIt(t *testing.T) {
 	}
 	if conflicts := s.rows("SELECT reason FROM linkage_conflicts WHERE scope_kind = 'project' AND scope_key = 'P-L'"); len(conflicts) != 0 {
 		t.Fatalf("a skip is no refusal, yet conflicts %v", conflicts)
+	}
+}
+
+// TestLinkageSuperviseOverAManagementLinkedProjectNamesTheSeat: an initiative supervision over a
+// project a management edge already stands above is refused duplicate_scope_owner (one upward
+// execution edge), and the refusal names the management seat that holds the project, not an
+// initiative of that name, and how to keep the legacy order (supervise before the owner binding).
+func TestLinkageSuperviseOverAManagementLinkedProjectNamesTheSeat(t *testing.T) {
+	s := newStoreSeat(t)
+	t.Setenv("CODEX_THREAD_ID", "")
+	s.mustBindManagement("01mgmtA", "01mgmtA")
+	s.mustBindProjectOwner("P-A", "01ownerA", "01mgmtA")
+	code, out := s.run("linkage-supervise", "--initiative", "INI-A", "--project", "P-A", "--supervisor-task", "01leadA", "--supervisor-host", "host",
+		"--parent-task", "01ownerA", "--parent-host", "host")
+	if code == 0 {
+		t.Fatalf("linkage-supervise over a management-linked project succeeded: %q", out)
+	}
+	var answer map[string]any
+	if err := json.Unmarshal([]byte(out), &answer); err != nil {
+		t.Fatalf("refusal is not JSON: %v (%q)", err, out)
+	}
+	raw, _ := json.Marshal(answer)
+	text := string(raw)
+	if !strings.Contains(text, "duplicate_scope_owner") || !strings.Contains(text, "management seat '01mgmtA'") ||
+		strings.Contains(text, "from initiative '01mgmtA'") || !strings.Contains(text, "before the project owner's binding") {
+		t.Fatalf("refusal %s does not name the management seat and the legacy order", text)
+	}
+	if edges := s.projectEdges("P-A"); len(edges) != 1 || edges[0].Text("upper_kind") != "management" {
+		t.Fatalf("edges above P-A %v, want the management edge alone", edges)
 	}
 }
