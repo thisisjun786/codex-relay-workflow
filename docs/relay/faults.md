@@ -694,6 +694,12 @@ The domain is the recipient. The individual deliveries are its occurrences.
 | `observation_unmeasured` | relationship and turn | `unmeasured:<relationship>:<turn>` | a later reading of the same turn that establishes something | notice |
 | `delivery_refused` | relationship and refusal reason | `refused:<journal seq>` | the streak ending: a send, the delivery settling, a pause, or another reason | degraded |
 | `managed_start_failed` | issue key and the answer (the registry's non-accepted receipt status, else the newest creation answer journaled) | `managed:<request>:<answer>` | the request recording an accepted receipt or attaching, or its newest creation-stage answer saying something else | broken |
+| `integration_target_moved` | checkout, remote and remote ref | `head:<remote head>` | the fix and reverification loop once the target is back on a recorded head or the move is accepted; a later push does not clear it | broken |
+
+`integration_target_moved` is not swept. `dag-integrate-push` records it when the remote head it
+has already read is not one the relay recorded for any integration ref ([CRW-1301](dag-scheduler.md)).
+The process that records it registers it, as routing registers the product classes, so the ledger
+itself still reads no git ref and makes no network call.
 
 A notice recorded per relationship before notices were per turn is still answered: any
 establishing reading of that relationship clears it, under one constant key, so the clear is

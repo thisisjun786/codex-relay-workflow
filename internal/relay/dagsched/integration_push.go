@@ -66,6 +66,10 @@ type PushResult struct {
 	// The list only informs: it never blocks the push. StaleNodesError is why it could not be read, when it could not.
 	StaleNodes      []StaleNode
 	StaleNodesError string
+	// TargetMoved is set when the remote branch held a head the relay never recorded for an integration ref (CRW-1301); it
+	// never changes what is pushed. TargetCheckError is why the comparison could not be made, when it could not.
+	TargetMoved      *TargetMoved
+	TargetCheckError string
 }
 
 // MovedHeadCheck answers whether the relay verified a commit and moved an integration ref onto it.
@@ -76,6 +80,13 @@ type MovedHeadCheck func(ctx context.Context, integrationRef, commit string) (bo
 // parent decision D6). stale, when given, lists the integrated nodes of that head whose acceptance is no longer current; it is
 // read once the head is known to be the relay's, and neither its answer nor its failure changes what is pushed (CRW-1026, d2).
 func PushIntegration(ctx context.Context, checkout, remote, remoteRef, integrationRef string, moved MovedHeadCheck, stale StaleNodesCheck) (PushResult, error) {
+	return PushIntegrationChecked(ctx, checkout, remote, remoteRef, integrationRef, moved, stale, nil)
+}
+
+// PushIntegrationChecked is PushIntegration with the target check of CRW-1301: target, when given, is asked once the remote
+// branch is read and names a head the relay never recorded for an integration ref. Neither its answer nor its failure
+// changes what is pushed; a refusal after a moved target names it in its detail.
+func PushIntegrationChecked(ctx context.Context, checkout, remote, remoteRef, integrationRef string, moved MovedHeadCheck, stale StaleNodesCheck, target TargetCheck) (PushResult, error) {
 	out := PushResult{Remote: remote, RemoteRef: remoteRef}
 	// a name that starts with a dash would be read by git as an option (CRW-965 review): refused before git runs
 	if strings.HasPrefix(remote, "-") || strings.HasPrefix(remoteRef, "-") {
@@ -113,31 +124,49 @@ func PushIntegration(ctx context.Context, checkout, remote, remoteRef, integrati
 		return out, refuse(contract.RefusalMergeTargetUnreadable, "git could not read %s of %s: %v", remoteRef, remote, err)
 	}
 	out.RemoteHead = remoteHead
+	// the remote head just read against the heads the relay recorded (CRW-1301): an absent branch is compared with nothing
+	if target != nil && remoteHead != "" {
+		if moved, err := target(ctx, checkout, remote, remoteRef, integrationRef, remoteHead); err != nil {
+			out.TargetCheckError = err.Error()
+		} else {
+			out.TargetMoved = moved
+		}
+	}
+	if err := pushRead(ctx, checkout, remote, remoteRef, integrationRef, pushTarget, local, &out); err != nil {
+		return out, nameTargetMoved(err, out.TargetMoved, remote, remoteRef)
+	}
+	return out, nil
+}
+
+// pushRead finishes a push once the remote head is read: an equal remote is up to date, a remote the branch contains is
+// advanced, any other is refused, and an unreachable push is deferred.
+func pushRead(ctx context.Context, checkout, remote, remoteRef, integrationRef, pushTarget, local string, out *PushResult) error {
+	remoteHead := out.RemoteHead
 	if remoteHead == local {
 		out.Outcome = PushUpToDate
-		return out, nil
+		return nil
 	}
 	if remoteHead != "" {
 		if !hasCommitIn(ctx, checkout, remoteHead) {
-			return out, refuse(contract.RefusalMergeBaseMismatch, "%s on %s points at %s, which %s does not hold: nothing is pushed", remoteRef, remote, remoteHead, checkout)
+			return refuse(contract.RefusalMergeBaseMismatch, "%s on %s points at %s, which %s does not hold: nothing is pushed", remoteRef, remote, remoteHead, checkout)
 		}
 		ancestor, err := isAncestorIn(ctx, checkout, remoteHead, local)
 		if err != nil {
-			return out, refuse(contract.RefusalMergeTargetUnreadable, "git could not compare %s with %s: %v", remoteHead, local, err)
+			return refuse(contract.RefusalMergeTargetUnreadable, "git could not compare %s with %s: %v", remoteHead, local, err)
 		}
 		if !ancestor {
-			return out, refuse(contract.RefusalMergeBaseMismatch, "%s on %s points at %s, which %s does not contain: nothing is pushed", remoteRef, remote, remoteHead, integrationRef)
+			return refuse(contract.RefusalMergeBaseMismatch, "%s on %s points at %s, which %s does not contain: nothing is pushed", remoteRef, remote, remoteHead, integrationRef)
 		}
 	}
 	if err := pushCommit(ctx, checkout, pushTarget, local, remoteRef); err != nil {
 		if _, ok := err.(*pushUnreachable); ok {
 			out.Outcome, out.Detail = PushDeferred, err.Error()
-			return out, nil
+			return nil
 		}
-		return out, refuse(contract.RefusalMergeTargetUnreadable, "git could not push %s to %s: %v", local, remote, err)
+		return refuse(contract.RefusalMergeTargetUnreadable, "git could not push %s to %s: %v", local, remote, err)
 	}
 	out.Outcome, out.RemoteHead = PushPushed, local
-	return out, nil
+	return nil
 }
 
 // fullCommitPattern is the shape of a full object name this package accepts: 40 hex digits, or 64 for a sha256 repository.
