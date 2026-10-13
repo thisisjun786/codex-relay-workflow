@@ -332,6 +332,42 @@ A warning never stops anything, so a host short of space or sharing a directory 
 | `socket_path_too_long` | `temp_root` or `scratch_root` would leave no room for a test's socket |
 | `drift` | a root the file names differs from a placement in use that holds data (a registered relay store outside the configured `relay_state`, a pump or daemon log outside the configured `log_root`, a populated default or Go cache elsewhere), naming both paths, or `CODEX_SESSION_RELAY_STATE` takes the place of a configured `relay_state` |
 
+### Where work tracking lives
+
+The `tracking` section of the configuration file names the repository that holds the work tracking,
+apart from the code repository (`manage.repository`):
+
+```json
+{"tracking": {"kind": "github", "repo": "OWNER/NAME"}}
+```
+
+| Key | Meaning |
+| --- | --- |
+| `kind` | `github`, the 1.0 path: the issues of `repo`. `linear` is a read-only archive setting for looking the old record up; nothing writes to it. A section that names a `repo` and no `kind` is `github`. |
+| `repo` | `OWNER/NAME`, spelled as GitHub spells a repository (no URL, no `.git`). `github` needs it; `linear` takes none. |
+
+The section is read where it is needed and nowhere else: loading the file never judges it, so a
+missing or malformed `tracking` section stops no other reader of the shared file (the relay state
+selection, the tool roots, `crw config paths` and `show`, the other sections). The reader that asks
+for it is told what to set. `crw config check` reports the setting under `tracking` and in its
+findings:
+
+| Check | Level | When |
+| --- | --- | --- |
+| `tracking_missing` | warning | the file has no `tracking` section; the message names the file and the section to add |
+| `tracking_invalid` | warning | the section is not an object, names an unknown `kind`, a `repo` that is not `OWNER/NAME`, a `github` kind without a repo or a `linear` kind with one; also reported in the `storage` entry of the plain `crw doctor` report and the preflight of `crw install`, which judge the spelling only |
+| `tracking_auth` | error | `kind` is `github` and `gh` is not installed or not signed in to github.com |
+| `tracking_access` | error | `kind` is `github` and the repository is not found, not visible to the login, or its access could not be read |
+| `tracking_issues` | error | `kind` is `github` and Issues are off (`has_issues`), the login cannot read issues, the repository is archived, or the login cannot write issues (it needs triage or write permission) |
+
+For a `github` setting the check asks `gh` two read-only questions: `gh auth status --hostname github.com`
+and `gh api repos/OWNER/NAME`, a GET that reads the repository's `permissions`, `has_issues` and `archived`.
+It never passes a method, field or input flag, so it writes nothing to GitHub, and no gh output but a short
+error text (with anything that looks like a token removed) reaches the report. `crw doctor storage` runs
+the same check; the plain `crw doctor` report and `crw install` never call `gh`. The `tracking` entry of the
+report carries `set`, `kind`, `repo` and, once `gh` answered, `access` (the login's permissions and the
+`issues_read` and `issues_write` verdicts).
+
 ## Installing the runtime
 
 `crw install` needs a `crw` to run it. The archive carries one, so unpack it anywhere temporary and
