@@ -33,12 +33,14 @@ the fake backend only, with no backend named, and the result says `"planOnly": t
 backend names it and turns plan-only off (`--plan-only=false --backend fake`); `--plan-only` on a script file is a usage
 error. An ad-hoc script has no workflows directory: it imports `crw:lib/<name>` only and nests no workflow.
 
-`crw flow run` reads the execution policy file `CODEX_THREAD_BRIDGE_EXECUTION_POLICY` names once, when it starts, and
-resolves every call against its `agent-roles` and `agent-aliases` sections (see
-[role-execution-policy.md](../role-execution-policy.md#the-agent-roles-of-a-flow-run)). The run record keeps the file's
-path and digest. Without the variable the fake backend's placeholder table applies; a file that does not load, or that
-declares no `agent-roles`, is a usage error and never replaced by the placeholders. `crw flow roles` prints the table,
-the source and the digest.
+`crw flow run` (like every `crw flow` command that resolves calls) reads its role table once, when it starts, from
+the helper role store `CRW_HOME/subagents.json`: the pairs of `architect`, `executor`, `executor-t1`, `reviewer`,
+`reviewer-final` and `explorer`, with the code's alias table (see
+[role-execution-policy.md](../role-execution-policy.md#the-agent-roles-of-a-flow-run)). The execution policy's
+`agent-roles` and `agent-aliases` sections are not read; a file that still declares them is a warning. The run record
+keeps the store's path and the canonical digest of the six pairs, and the warnings of the table (a flow-only key at
+its compiled default, an undecided role, a reviewer on an author's model family). A test with no store runs on the
+fake backend's placeholder table. `crw flow roles` prints the table, the source, the digest and the warnings.
 
 ## File format
 

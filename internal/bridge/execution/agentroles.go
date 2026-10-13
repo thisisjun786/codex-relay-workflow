@@ -356,24 +356,55 @@ func (r AliasRow) describe() string {
 	return strings.Join(parts, ", ")
 }
 
-// checkAgentRoles applies the cross-role rules: the pairs the allowed list approves, and a reviewer family that is not
-// an author's.
-func checkAgentRoles(roles map[string]AgentRole, allowed map[string][]string) error {
+// checkAgentRoles applies the cross-role rules and answers what breaks them as warnings: the pairs the allowed list
+// approves, and a reviewer family that is not an author's. A flow run no longer reads agent-roles (CRW-1330: its pairs come
+// from the helper role store), so a disagreement in a section nothing runs on is reported, never a refusal of the policy
+// the relay and the bridge run on; the runtime independence gate still judges every review.
+func checkAgentRoles(roles map[string]AgentRole, allowed map[string][]string) []string {
+	var warnings []string
 	for _, name := range AgentRoleNames {
 		role := roles[name]
 		if allowed != nil && !slices.Contains(allowed[role.Pair.Model], role.Pair.Effort) {
-			return &PolicyError{fmt.Sprintf("agent role %s is declared to run %s at %s, which this file's allowed list does not approve; no such task could be created, so the two sections disagree rather than one narrowing the other", repr(name), repr(role.Pair.Model), repr(role.Pair.Effort))}
+			warnings = append(warnings, fmt.Sprintf("agent role %s is declared to run %s at %s, which this file's allowed list does not approve; no such task could be created, so the two sections disagree rather than one narrowing the other", repr(name), repr(role.Pair.Model), repr(role.Pair.Effort)))
 		}
 	}
+	pairs := map[string]string{}
+	for name, role := range roles {
+		pairs[name] = role.Pair.Model
+	}
+	return append(warnings, FamilyOverlaps(pairs, AgentExecutor, AgentExecutorT1)...)
+}
+
+// FamilyOverlaps describes each reviewer role (reviewer, reviewer-final) whose model is of the family of one of the author
+// roles named, in a table of role -> model; a role with no model is not compared. A review is independent only when it comes
+// from another family than the author's, so each overlap is a warning for whoever decided the pairs.
+func FamilyOverlaps(models map[string]string, authors ...string) []string {
+	var out []string
 	for _, reviewer := range [...]string{AgentReviewer, AgentReviewerFinal} {
-		for _, author := range [...]string{AgentExecutor, AgentExecutorT1} {
-			family := ModelFamily(roles[reviewer].Pair.Model)
-			if family == ModelFamily(roles[author].Pair.Model) {
-				return &PolicyError{fmt.Sprintf("agent role %s runs %s, the same model family (%s) as agent role %s on %s; a review is independent only when it comes from another family than the author's", repr(reviewer), repr(roles[reviewer].Pair.Model), repr(family), repr(author), repr(roles[author].Pair.Model))}
+		for _, author := range authors {
+			if models[reviewer] == "" || models[author] == "" {
+				continue
+			}
+			family := ModelFamily(models[reviewer])
+			if family == ModelFamily(models[author]) {
+				out = append(out, fmt.Sprintf("agent role %s runs %s, the same model family (%s) as agent role %s on %s; a review is independent only when it comes from another family than the author's", repr(reviewer), repr(models[reviewer]), repr(family), repr(author), repr(models[author])))
 			}
 		}
 	}
-	return nil
+	return out
+}
+
+// DefaultModelAliases is the model aliases of an agent role a file states none for, and of every role of a table the flow
+// builds from the helper role store.
+func DefaultModelAliases(role string) []string { return slices.Clone(defaultAliasOf[role]) }
+
+// DefaultAliasRows is the design's alias table: the one a file that declares agent-roles and no agent-aliases has, and the
+// only one a flow run reads (CRW-1330).
+func DefaultAliasRows() []AliasRow { return defaultAliasRows() }
+
+// SummaryOf describes roles and rows as get_capabilities carries them under executionPolicy.agentRoles.
+func SummaryOf(roles []AgentRole, rows []AliasRow) map[string]any {
+	return AgentRoles{Roles: roles, Aliases: rows}.summary()
 }
 
 // summary describes the agent roles as the policy description carries them.

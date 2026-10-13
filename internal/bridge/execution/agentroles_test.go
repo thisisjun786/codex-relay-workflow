@@ -125,8 +125,12 @@ func TestAgentRolesOnePairEach(t *testing.T) {
 func TestAgentRolesPairsMustBeAllowed(t *testing.T) {
 	document := agentPolicy(agentRolesDoc())
 	document["allowed"] = agentAllowed()
-	mustLoad(t, document)
+	if warnings := mustLoad(t, document).Warnings(); len(warnings) != 0 {
+		t.Fatalf("agreeing sections warn: %q", warnings)
+	}
 
+	// CRW-1330: a flow run no longer reads agent-roles, so a disagreement with the allowed list is a warning the
+	// loader keeps (crw flow roles and crw doctor flow-roles show it), never a refusal of the whole policy.
 	for _, row := range []struct{ role, model, effort string }{
 		{"architect", agentOpus, "high"},            // an allowed model at an effort the list does not approve
 		{"executor", "openai/gpt-6-astra", "xhigh"}, // a model the list does not name
@@ -135,14 +139,15 @@ func TestAgentRolesPairsMustBeAllowed(t *testing.T) {
 		roles := withRole(row.role, pairDoc(row.model, row.effort))
 		policy := agentPolicy(roles)
 		policy["allowed"] = agentAllowed()
-		_, err := load(t, policy)
-		message := policyError(t, err).Error()
+		message := strings.Join(mustLoad(t, policy).Warnings(), "\n")
 		if !strings.Contains(message, row.role) || !strings.Contains(message, "allowed") {
 			t.Fatalf("%+v: %s", row, message)
 		}
 	}
 	// Without an allowlist nothing is compared, as for the relay roles.
-	mustLoad(t, agentPolicy(withRole("executor", pairDoc("inferhub/deepseek-v4.1-flash", "xhigh"))))
+	if warnings := mustLoad(t, agentPolicy(withRole("executor", pairDoc("inferhub/deepseek-v4.1-flash", "xhigh")))).Warnings(); len(warnings) != 0 {
+		t.Fatalf("%q", warnings)
+	}
 }
 
 func TestReviewerFamilyDiffersFromExecutor(t *testing.T) {
@@ -156,8 +161,8 @@ func TestReviewerFamilyDiffersFromExecutor(t *testing.T) {
 		{"reviewer under a bare name of the executor's family", withRole("reviewer", pairDoc("claude-opus-5-5", "high"))},
 	} {
 		t.Run(row.name, func(t *testing.T) {
-			_, err := load(t, agentPolicy(row.roles))
-			message := policyError(t, err).Error()
+			// CRW-1330: a warning, not a PolicyError; the runtime independence gate judges each review.
+			message := strings.Join(mustLoad(t, agentPolicy(row.roles)).Warnings(), "\n")
 			if !strings.Contains(message, "reviewer") || !strings.Contains(message, "family") {
 				t.Fatal(message)
 			}
@@ -166,7 +171,9 @@ func TestReviewerFamilyDiffersFromExecutor(t *testing.T) {
 	// The architect and the explorer are not authors of a reviewed change: they may share a family with a reviewer.
 	roles := agentRolesDoc()
 	roles["architect"] = pairDoc(agentSol, "xhigh")
-	mustLoad(t, agentPolicy(roles))
+	if warnings := mustLoad(t, agentPolicy(roles)).Warnings(); len(warnings) != 0 {
+		t.Fatalf("%q", warnings)
+	}
 
 	for model, family := range map[string]string{
 		"anthropic/claude-haiku-5": "claude", "claude-opus-5-5": "claude", "gpt-6.1-sol": "gpt", "openai/gpt-5.6-sol": "gpt",

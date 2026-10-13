@@ -16,6 +16,8 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/compile"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
+	"github.com/thisisjun786/codex-relay-workflow/internal/role"
 )
 
 const flowUsage = `usage: crw flow run --backend fake [--args JSON | --args-file FILE] [--pool N] [--token-budget N] [--journal] [--summary-document D] (<script.js> | --script JS [--plan-only=false])
@@ -58,10 +60,18 @@ func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	return 2
 }
 
-// LoadPolicy is the role table of the process: the execution policy file CODEX_THREAD_BRIDGE_EXECUTION_POLICY names
-// (read once, with its path and digest), or the fake backend's placeholder table when the variable names no file. The
-// execution policy is returned too (the zero value for the placeholder table). A file that does not load, or declares no
-// agent-roles section, is an error: a flow run never falls back to placeholders over a file it was told to read.
+// isolationRootEnv is testsupport.IsolationRootEnv: the isolation root a test binary exports to itself and to every process it
+// starts. The engine names it here so it does not import testsupport.
+const isolationRootEnv = "CRW_TEST_ISOLATION_ROOT"
+
+// LoadPolicy is the role table of every production flow command (CRW-1330, CRW-1316 design section 8): the helper role
+// store's snapshot of the six roles (PolicyFromRoleHelper), whose path is the table's Source and whose canonical digest of the
+// six pairs is its Digest. The execution policy file CODEX_THREAD_BRIDGE_EXECUTION_POLICY names is still loaded and returned
+// (its mode, its loader warnings); a file that does not load is an error, as for the bridge. Its agent-roles and agent-aliases
+// sections are not read: a file that still declares them adds a warning to the table.
+//
+// The fake backend's placeholder table (FakePolicy) is the table of a test only: a process under the test isolation
+// (isolationRootEnv) whose role store has no file. A test that writes a store reads it like production.
 func LoadPolicy() (*Policy, execution.Policy, error) {
 	env := map[string]string{}
 	for _, name := range []string{execution.EnvPolicy, execution.EnvDigest} {
@@ -73,13 +83,13 @@ func LoadPolicy() (*Policy, execution.Policy, error) {
 	if err != nil {
 		return nil, execution.Policy{}, err
 	}
-	source := strings.TrimSpace(env[execution.EnvPolicy])
-	if source == "" {
-		return FakePolicy(), execution.Policy{}, nil
+	snap := role.ReadFlowSnapshot(host.LookupEnv(lookupEnv))
+	if root, _ := lookupEnv(isolationRootEnv); root != "" && !snap.Present {
+		return FakePolicy(), policy, nil
 	}
-	table, err := PolicyFromExecution(policy, source)
-	if err != nil {
-		return nil, execution.Policy{}, err
+	table := PolicyFromRoleHelper(snap)
+	if _, declared := policy.AgentRoles(); declared {
+		table.Warnings = append(table.Warnings, fmt.Sprintf("the execution policy %s declares agent-roles: the flow no longer reads it (its pairs come from the helper role store %s); compare its pairs with crw flow roles, then remove the section", strings.TrimSpace(env[execution.EnvPolicy]), snap.Path))
 	}
 	return table, policy, nil
 }

@@ -51,10 +51,9 @@ func fromMapping(value any, digest string) (Policy, error) {
 	if err != nil {
 		return Policy{}, err
 	}
+	var warnings []string
 	if agentRoles != nil {
-		if err := checkAgentRoles(agentRoles.byName(), allowed); err != nil {
-			return Policy{}, err
-		}
+		warnings = checkAgentRoles(agentRoles.byName(), allowed)
 	}
 	if allowed != nil {
 		for _, name := range roleNames {
@@ -81,7 +80,7 @@ func fromMapping(value any, digest string) (Policy, error) {
 	if section, ok := data.Get("roles").(object); ok {
 		roleOrder = append(roleOrder, keys(section)...)
 	}
-	policy := Policy{allowed: allowed, roles: roles, roleOrder: roleOrder, exceptions: exceptions, digest: digest, agentRoles: agentRoles}
+	policy := Policy{allowed: allowed, roles: roles, roleOrder: roleOrder, exceptions: exceptions, digest: digest, agentRoles: agentRoles, warnings: warnings}
 	if err := policy.describable(); err != nil {
 		return Policy{}, err
 	}

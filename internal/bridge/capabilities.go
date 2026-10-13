@@ -2,11 +2,15 @@ package bridge
 
 import (
 	"context"
+	"os"
 	"regexp"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/role"
 )
 
 var hostVersionToken = regexp.MustCompile(`/([0-9]+(?:\.[0-9]+)+[^\s()/;,]*)`)
@@ -38,6 +42,41 @@ func connectedVersion(agent, version string) bool {
 	return false
 }
 
+// withFlowAgentRoles is the policy description get_capabilities reports, with its agentRoles member describing the six roles a
+// flow run resolves calls against (CRW-1330): the helper role store's snapshot (its path, the canonical digest of the six pairs,
+// each role's pair and where it came from, the code's alias table and the snapshot's warnings), never the execution policy's
+// agent-roles section, which the flow no longer reads. A host with neither a store file nor a declared section describes none,
+// as before. The policy's own Summary (the relay's worker policy receipt) is not changed.
+func withFlowAgentRoles(summary map[string]any, env host.LookupEnv) map[string]any {
+	snap := role.ReadFlowSnapshot(env)
+	if _, declared := summary["agentRoles"]; !declared && !snap.Present {
+		return summary
+	}
+	var roles []execution.AgentRole
+	states := map[string]string{}
+	for _, r := range snap.Roles {
+		name := string(r.Role)
+		roles = append(roles, execution.AgentRole{Name: name, Pair: execution.RolePair{Model: r.Model, Effort: r.Effort}, Aliases: execution.DefaultModelAliases(name)})
+		states[name] = string(r.State)
+	}
+	section := execution.SummaryOf(roles, execution.DefaultAliasRows())
+	for _, entry := range section["roles"].([]any) {
+		described := entry.(map[string]any)
+		described["state"] = states[described["role"].(string)]
+	}
+	warnings := make([]any, len(snap.Warnings))
+	for i, w := range snap.Warnings {
+		warnings[i] = w
+	}
+	section["source"], section["digest"], section["warnings"] = snap.Path, snap.Digest(), warnings
+	out := make(map[string]any, len(summary)+1)
+	for k, v := range summary {
+		out[k] = v
+	}
+	out["agentRoles"] = section
+	return out
+}
+
 // GetCapabilities reports bridge exposure separately from version-scoped host observations.
 // Connecting is the only host interaction; no capability probe is made.
 func (b *Bridge) GetCapabilities(ctx context.Context) (map[string]any, error) {
@@ -61,7 +100,7 @@ func (b *Bridge) GetCapabilities(ctx context.Context) (map[string]any, error) {
 		"server": server, "transport": "same-host Unix WebSocket", "socket": client.SocketPath(),
 		"capabilities":     map[string]any{"createThread": true, "sendMessage": true, "listReadWait": true, "goalRead": true, "bridgeManagedWorktrees": true, "projectImport": false, "clientSideToolsAndApprovals": false},
 		"capabilitiesNote": capabilitiesNote,
-		"executionPolicy":  b.Policy.Summary(),
+		"executionPolicy":  withFlowAgentRoles(b.Policy.Summary(), host.LookupEnv(os.LookupEnv)),
 		"approvals": map[string]any{
 			"declarable":              []any{"never", "on-request", "untrusted"},
 			"transmitsApprovalPolicy": false,
