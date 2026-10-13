@@ -256,9 +256,11 @@ function reusedFor(argv) {
   return proc;
 }
 
+// forget drops a reused process that gave no clean answer and lets it end: it reads end of input, or is already gone.
 function forget(argv, proc) {
   const key = argv.join("\u0000");
   if (reused.get(key) === proc) reused.delete(key);
+  proc.retire();
 }
 
 // The remembered answers, oldest first, each as the JSON text of the reply's output.
