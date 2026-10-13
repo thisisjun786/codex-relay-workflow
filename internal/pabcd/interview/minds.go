@@ -72,7 +72,9 @@ Return ONLY a JSON array of contradictions. Each item:
 Empty array [] means you found no contradiction. Do NOT ask questions, edit files, call the user,
 choose options, write state, or edit the plan. Evidence must be real (no unsupported guesses).`
 
-// MindDispatchDirective is the main-session dispatch pointer, copied under the name table.
+// MindDispatchDirective is the oracle's main-session dispatch pointer, copied under the name table. It
+// stays as the record the K5 extraction and testdata/minds/dispatch.txt pin; since CRW-1340 retired the
+// Interview no hook emits it, and the crw-interview reference it names is gone.
 const MindDispatchDirective = `[crw: INTERVIEW — Mind dispatch]
 You (the main session) OWN this interview loop: select Minds, dispatch contradiction workers,
 triage contradictions, ask the user if needed, edit the plan, update state, and re-question.

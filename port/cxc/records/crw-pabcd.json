@@ -50,7 +50,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Distinguish task implementation P/C from Linear plan/check ownership and exclude the crw-run parent from implementation PABCD. Disambiguate task host-goal execution from crw-run parent goal mode beside the goal firewall. Remove the nonexistent orchestrate skill stub; keep the human chat command and the CRW CLI. CRW-1102: one delivery-authority definition in crw-dev (an applicable user grant, the repository's standing grant, or a scope packet carrying one; a packet is evidence, not consent; no-push and force-push, tag, integration-branch, release and deployment limits kept); the delivery path of the repository is chosen before a PR stack, and PABCD points at the definition instead of restating the approval. Oracle: plugins/codexclaw/skills/dev/SKILL.md:443-446 and pabcd/SKILL.md:87-88. CRW-1130 (post-evaluation): the Delegation model starts from the CRW binding (DISPATCH-MANAGED-01 is applied before any dispatch of an independent lane; a Linear issue or DAG node is a relay child through crw-run, never a create_thread lane) and the thread and subagent choice is scoped to unmanaged work; the dispatch-surfaces reference is read before every authorized dispatch. Oracle: pabcd/SKILL.md Delegation model and pabcd/references/dispatch-surfaces.md:25-31. CRW-1151: the hook hint names the condition DetectTrigger applies (PABCD marker plus request verb; phase patterns choose I/P/A/B/C, with P as the fallback only for a crw-pabcd or pabcd로 request) instead of a bare interview word, and separates the detector result from what the handler injects (the un-armed loop-arm mandate before the hint, the interview-entry policy, the goal-mode drop of an I hint and the P-to-interview promotion, the un-armed loop-arm mandate, the interview-entry policy, passive re-injection in an armed session). CRW-1219: the description drops the plan and requirements triggers (crw-plan, crw-define and crw-interview own them), and the parent-exclusion paragraph is one pointer to hierarchy.md. CRW-1222: the Delegation model names the flow executor call as the second managed surface, and the spawn paragraph points to the spawn policy.",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Distinguish task implementation P/C from Linear plan/check ownership and exclude the crw-run parent from implementation PABCD. Disambiguate task host-goal execution from crw-run parent goal mode beside the goal firewall. Remove the nonexistent orchestrate skill stub; keep the human chat command and the CRW CLI. CRW-1102: one delivery-authority definition in crw-dev (an applicable user grant, the repository's standing grant, or a scope packet carrying one; a packet is evidence, not consent; no-push and force-push, tag, integration-branch, release and deployment limits kept); the delivery path of the repository is chosen before a PR stack, and PABCD points at the definition instead of restating the approval. Oracle: plugins/codexclaw/skills/dev/SKILL.md:443-446 and pabcd/SKILL.md:87-88. CRW-1130 (post-evaluation): the Delegation model starts from the CRW binding (DISPATCH-MANAGED-01 is applied before any dispatch of an independent lane; a Linear issue or DAG node is a relay child through crw-run, never a create_thread lane) and the thread and subagent choice is scoped to unmanaged work; the dispatch-surfaces reference is read before every authorized dispatch. Oracle: pabcd/SKILL.md Delegation model and pabcd/references/dispatch-surfaces.md:25-31. CRW-1151: the hook hint names the condition DetectTrigger applies (PABCD marker plus request verb; phase patterns choose I/P/A/B/C, with P as the fallback only for a crw-pabcd or pabcd로 request) instead of a bare interview word, and separates the detector result from what the handler injects (the un-armed loop-arm mandate before the hint, the interview-entry policy, the goal-mode drop of an I hint and the P-to-interview promotion, the un-armed loop-arm mandate, the interview-entry policy, passive re-injection in an armed session). CRW-1219: the description drops the plan and requirements triggers (crw-plan, crw-define and crw-interview own them), and the parent-exclusion paragraph is one pointer to hierarchy.md. CRW-1222: the Delegation model names the flow executor call as the second managed surface, and the spawn paragraph points to the spawn policy. CRW-1340: the synchronous Interview is retired with crw-interview; an unclear milestone or issue goes back to its registration (crw-define) and ambiguity during a run goes up as a decision request, so the routes to the Interview are dropped.",
       "hunks": [
         {
           "line": 3,
@@ -89,7 +89,11 @@
             "- **Hook hint (narrow):** `UserPromptSubmit` detects `interview` / `인터뷰`\n",
             "  and other existing lexical phase hints and injects scoped advice only. Natural\n",
             "  hints never enter or advance a phase. A line-anchored `orchestrate i` command\n",
-            "  instead takes the existing explicit-command parser path.\n"
+            "  instead takes the existing explicit-command parser path.\n",
+            "- **Agent judgment (broad):** for unclear requirements phrased otherwise, select\n",
+            "  `crw-interview` and its applicable references. Loading a skill is not a state\n",
+            "  transition. When phase entry is authorized, use `crw pabcd orchestrate I --session <id>`\n",
+            "  with the current SessionStart binding; explicit user commands are also supported.\n"
           ],
           "new": [
             "- **Hook hint (narrow):** `UserPromptSubmit` injects scoped advice only. The\n",
@@ -115,14 +119,14 @@
             "     (`crw-loop`, `goalplan`, `hotl`) or a bare `pabcd` / `ipabcd` word (not the one\n",
             "     inside `crw-pabcd`) plus an action word makes the hook answer the arming mandate\n",
             "     (ORCH-MANDATE-01) instead of any phase hint, including a P hint.\n",
-            "  3. Phase hint: the phase directive plus the trigger-authority note. A P hint is\n",
-            "     delivered as the interview directive under the default interview-entry policy\n",
-            "     (`new-unit`: not once a cycle is running; `always` also inside a cycle; `off`\n",
-            "     never) unless step 1 applies.\n",
+            "  3. Phase hint: the phase directive plus the trigger-authority note. A P hint stays\n",
+            "     the P directive under the default interview-entry policy `off`; a project\n",
+            "     `crw.json` that names `new-unit` (not once a cycle is running) or `always` (also\n",
+            "     inside a cycle) delivers it as the I directive instead, unless step 1 applies.\n",
             "  - Without a goal, in a fresh un-armed session: `pabcd로 시작해줘`, `pabcd로 인터뷰\n",
             "    해줘`, `Start pabcd phase` and `Start pabcd phase i` get the mandate; `Use\n",
-            "    crw-pabcd` and `Use crw-pabcd to start the interview` get a phase hint (the\n",
-            "    interview directive for both); `인터뷰 먼저 해줘` and `interview me first` get\n",
+            "    crw-pabcd` and `Use crw-pabcd to start the interview` get a phase hint (the P\n",
+            "    directive and the I directive); `인터뷰 먼저 해줘` and `interview me first` get\n",
             "    nothing.\n",
             "  - With an active goal, in a fresh un-armed session: `Use crw-pabcd` gets the plain P\n",
             "    directive (not the interview); `Use crw-pabcd to start the interview` and `Start\n",
@@ -134,7 +138,33 @@
             "    already carries the stage marker or shows context pressure; in phase I under an\n",
             "    active goal nothing is re-injected.\n",
             "  Natural hints never enter or advance a phase. A line-anchored `orchestrate i`\n",
-            "  command instead takes the existing explicit-command parser path.\n"
+            "  command instead takes the existing explicit-command parser path.\n",
+            "- **Agent judgment (broad):** unclear requirements open no interview. An issue too\n",
+            "  unclear to plan goes back to its registration ([crw-define](../crw-define/SKILL.md),\n",
+            "  at the top session (today Sion) or the parent (repository session)). Ambiguity during\n",
+            "  a run is a decision request to the session above the project session, lifted with\n",
+            "  `crw flow report-up` and the evidence file; the work it does not block continues on\n",
+            "  recorded assumptions. The I phase stays for an explicit\n",
+            "  `crw pabcd orchestrate I --session <id>` or user command; the CRW default flow never\n",
+            "  enters it.\n"
+          ]
+        },
+        {
+          "line": 36,
+          "old": [
+            "**I — Interview**: HITL-only requirements discovery. Canonical rules (four dimensions, contradiction scanning, readiness gating, Q/A capture) live in `crw-interview`; PABCD owns the phase edge I->P and the return-to-Interview affordance from any phase.\n"
+          ],
+          "new": [
+            "**I — Interview**: kept in the state machine for an explicit command and the CXC contract. CRW holds no synchronous interview (CRW-1340), so no skill owns interview rules; the I directive states the decision-request path above. PABCD owns the phase edge I->P.\n"
+          ]
+        },
+        {
+          "line": 40,
+          "old": [
+            "PABCD is a forward progression with Interview return.\n"
+          ],
+          "new": [
+            "PABCD is a forward progression; the return edge to I stays for an explicit command.\n"
           ]
         },
         {
@@ -143,7 +173,7 @@
             "You can return to Interview (I) from any phase to clarify requirements; the plan and audit context are preserved. Phases P, A, B pause for confirmation in interactive use; C and D proceed once their work is genuinely done. In goal mode the agent must explicitly run `crw pabcd orchestrate P --session <id>` to start each PABCD cycle; nothing self-advances into P automatically, but the P->D sequence is never skipped. Goal mode is PABCD-only: while a goal is active the Interview NEVER fires — entry is suppressed and `request_user_input` is hard-denied, so the Interview is HITL-only and runs only with no active goal.\n"
           ],
           "new": [
-            "With no active host goal, you can return to Interview (I) from any phase to clarify requirements; the plan and audit context are preserved. Phases P, A, B pause for confirmation in interactive use; C and D proceed once their work is genuinely done. In goal mode the agent must explicitly run `crw pabcd orchestrate P --session <id>` to start each PABCD cycle; nothing self-advances into P automatically, but the P->D sequence is never skipped. Here goal mode means a task host goal. Task goal mode is PABCD-only: while a goal is active the Interview NEVER fires — entry is suppressed and `request_user_input` is hard-denied, so the Interview is HITL-only and runs only with no active goal. The CLI holds the same line: `crw pabcd orchestrate I` is refused while a host goal is active (or the goals database cannot be read, which fails closed) and names the goal-mode next command, `crw pabcd orchestrate P --session <id>` from IDLE or the current phase mid-cycle; leaving I is never refused.\n"
+            "With no active host goal, an explicit command can return to I from any phase with the plan and audit context preserved; the default flow never takes that edge. Phases P, A, B pause for confirmation in interactive use; C and D proceed once their work is genuinely done. In goal mode the agent must explicitly run `crw pabcd orchestrate P --session <id>` to start each PABCD cycle; nothing self-advances into P automatically, but the P->D sequence is never skipped. Here goal mode means a task host goal. Task goal mode is PABCD-only: while a goal is active the Interview NEVER fires — entry is suppressed and `request_user_input` is hard-denied, so the Interview is HITL-only and runs only with no active goal. The CLI holds the same line: `crw pabcd orchestrate I` is refused while a host goal is active (or the goals database cannot be read, which fails closed) and names the goal-mode next command, `crw pabcd orchestrate P --session <id>` from IDLE or the current phase mid-cycle; leaving I is never refused.\n"
           ]
         },
         {
@@ -162,6 +192,15 @@
           ],
           "new": [
             "phase work, use [native execution](../crw-dev/references/native-execution.md).\n"
+          ]
+        },
+        {
+          "line": 71,
+          "old": [
+            "| I | crw-interview; no active host goal |\n"
+          ],
+          "new": [
+            "| I | none: the I directive's decision-request text; no active host goal |\n"
           ]
         },
         {
@@ -239,6 +278,17 @@
             "(an executor, a reviewer, an explorer, the architect) are decided by the\n",
             "[spawn policy](../crw-canon/references/spawn-policy.md), not by this procedure.\n"
           ]
+        },
+        {
+          "line": 161,
+          "old": [
+            "\n",
+            "## Catalog Discovery routing\n",
+            "\n",
+            "Interview sub-modes and Catalog Discovery rules live in `$crw-interview`\n",
+            "(INTERVIEW-CATALOG-01, CATALOG-DESIGN-FIRST-01). The option ontology YAML lives at\n",
+            "`references/catalog-discovery.yaml` in this skill directory.\n"
+          ]
         }
       ]
     },
@@ -256,15 +306,8 @@
     },
     {
       "file": "references/catalog-discovery.yaml",
-      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
-      "hunks": [
-        {
-          "line": 15,
-          "old": [
-            "last-verified: 2026-07-04\n"
-          ]
-        }
-      ]
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed CRW-1340: the synchronous Interview is retired with crw-interview; an unclear milestone or issue goes back to its registration (crw-define) and ambiguity during a run goes up as a decision request, so the routes to the Interview are dropped.",
+      "remove": true
     },
     {
       "file": "references/delegation.md",
@@ -713,14 +756,16 @@
     },
     {
       "file": "references/phase-plan.md",
-      "reason": "CRW-1102: one delivery-authority definition in crw-dev (an applicable user grant, the repository's standing grant, or a scope packet carrying one; a packet is evidence, not consent; no-push and force-push, tag, integration-branch, release and deployment limits kept); the delivery path of the repository is chosen before a PR stack, and PABCD points at the definition instead of restating the approval. Oracle: plugins/codexclaw/skills/dev/SKILL.md:443-446 and pabcd/SKILL.md:87-88.",
+      "reason": "CRW-1102: one delivery-authority definition in crw-dev (an applicable user grant, the repository's standing grant, or a scope packet carrying one; a packet is evidence, not consent; no-push and force-push, tag, integration-branch, release and deployment limits kept); the delivery path of the repository is chosen before a PR stack, and PABCD points at the definition instead of restating the approval. Oracle: plugins/codexclaw/skills/dev/SKILL.md:443-446 and pabcd/SKILL.md:87-88. CRW-1340: the synchronous Interview is retired with crw-interview; an unclear milestone or issue goes back to its registration (crw-define) and ambiguity during a run goes up as a decision request, so the routes to the Interview are dropped.",
       "hunks": [
         {
-          "line": 35,
+          "line": 34,
           "old": [
+            "0. **I — Interview**: HITL-only requirements discovery; canonical rules live in `crw-interview`. PABCD owns I->P and return-to-Interview phase edges.\n",
             "1. **P — Plan**: Explore first (read real code, configs, docs). **Slice and order phases by dependency/architecture structure (STRICT, PHASE-SPLIT-01)** — the orthodox unlimited-time build order: foundations (schema, contracts, core data flow) → core capabilities → integration → hardening/polish — so each phase consumes the verified output of the previous one. Effort-based bucketing is FORBIDDEN: never split or order phases by estimated effort or payoff speed — no \"quick win vs heavy\" buckets, no impact/effort matrices, no time-boxed slices. Phase boundaries encode the system's build order, not the schedule. DB/API/UI/test work inside a phase are subtasks, not top-level phases by default, and every phase must still close with something independently verifiable (build, tests, or a demonstrable surface). Write a diff-level plan: file change map, scope boundary (IN/OUT), and testable accept criteria. For every planned conditional path (error handler, fallback, guard, gated branch, threshold behavior), the accept criteria name its **activation scenario** — how C will trigger it and what observable effect proves it ran (C-ACTIVATION-GROUNDING-01). For C2+ plans, including plan-only requests, begin with the loop-spec header required by [Plan output](plan-output.md). For open-ended optimization, include the divergence plan, deterministic selection rule, and telemetry schema; if the verifier only reports scalar outcome, instrumentation is B's first work item before candidates. Ground every decision in code you have read. No implementation yet. For broad or unfamiliar repos, include a compact tree, detected conventions, which existing logs/docs you will reuse, and the SoT sync target (SOT-SYNC-01): which general source-of-truth doc (architecture/INDEX docs, or equivalent) this unit will patch in C — or, if the repo has none, the plan recommends creating one (dev-scaffolding §2.1). **A dependency-ordered phase map may be publishable as a PR stack (`DEV-STACK-01`).** When the unit will produce dependent branches too large to review as one diff, P decides whether to stack and records it. Rules: `crw-dev` `../../dev/references/stacked-prs.md`.\n"
           ],
           "new": [
+            "0. **I — Interview**: kept only for an explicit command; CRW holds no synchronous interview, and an open question goes up as a decision request ([SKILL.md](../SKILL.md#interview-trigger)). PABCD owns the I->P edge.\n",
             "1. **P — Plan**: Explore first (read real code, configs, docs). **Slice and order phases by dependency/architecture structure (STRICT, PHASE-SPLIT-01)** — the orthodox unlimited-time build order: foundations (schema, contracts, core data flow) → core capabilities → integration → hardening/polish — so each phase consumes the verified output of the previous one. Effort-based bucketing is FORBIDDEN: never split or order phases by estimated effort or payoff speed — no \"quick win vs heavy\" buckets, no impact/effort matrices, no time-boxed slices. Phase boundaries encode the system's build order, not the schedule. DB/API/UI/test work inside a phase are subtasks, not top-level phases by default, and every phase must still close with something independently verifiable (build, tests, or a demonstrable surface). Write a diff-level plan: file change map, scope boundary (IN/OUT), and testable accept criteria. For every planned conditional path (error handler, fallback, guard, gated branch, threshold behavior), the accept criteria name its **activation scenario** — how C will trigger it and what observable effect proves it ran (C-ACTIVATION-GROUNDING-01). For C2+ plans, including plan-only requests, begin with the loop-spec header required by [Plan output](plan-output.md). For open-ended optimization, include the divergence plan, deterministic selection rule, and telemetry schema; if the verifier only reports scalar outcome, instrumentation is B's first work item before candidates. Ground every decision in code you have read. No implementation yet. For broad or unfamiliar repos, include a compact tree, detected conventions, which existing logs/docs you will reuse, and the SoT sync target (SOT-SYNC-01): which general source-of-truth doc (architecture/INDEX docs, or equivalent) this unit will patch in C — or, if the repo has none, the plan recommends creating one (dev-scaffolding §2.1). **A dependency-ordered phase map may be publishable as a PR stack where the repository's delivery path uses pull requests (`DEV-STACK-01`).** When the unit will produce dependent branches too large to review as one diff, P decides whether to stack and records it; CRW internal work is delivered as a task branch to the integrator and is not stacked. Rules: `crw-dev` `../../dev/references/stacked-prs.md`.\n"
           ]
         }

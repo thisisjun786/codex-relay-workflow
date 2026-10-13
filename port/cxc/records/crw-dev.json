@@ -62,7 +62,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Route Linear-level work to its CRW owner and distinguish task modes from parent coordination. Drop the deprecated skill-hub notice: the port has no former-name guidance. CRW-1102: one delivery-authority definition in crw-dev (an applicable user grant, the repository's standing grant, or a scope packet carrying one; a packet is evidence, not consent; no-push and force-push, tag, integration-branch, release and deployment limits kept); the delivery path of the repository is chosen before a PR stack, and PABCD points at the definition instead of restating the approval. Oracle: plugins/codexclaw/skills/dev/SKILL.md:443-446 and pabcd/SKILL.md:87-88. CRW-1218: the polling budget aggregate is owned by the project orchestrator, with a link to crw-run's resource accounting. CRW-1220: the description is the classifier and router without a catch-all or neighbour triggers; the C4 row names the flow-managed high-risk lane and the design audit; the router has an executor row that loads crw-dev-star skills only; the family invariants move to crw-canon skill-family; the stub sections become links; requesting and receiving review move here from crw-dev-code-reviewer; the governance owner files are crw-canon files",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Route Linear-level work to its CRW owner and distinguish task modes from parent coordination. Drop the deprecated skill-hub notice: the port has no former-name guidance. CRW-1102: one delivery-authority definition in crw-dev (an applicable user grant, the repository's standing grant, or a scope packet carrying one; a packet is evidence, not consent; no-push and force-push, tag, integration-branch, release and deployment limits kept); the delivery path of the repository is chosen before a PR stack, and PABCD points at the definition instead of restating the approval. Oracle: plugins/codexclaw/skills/dev/SKILL.md:443-446 and pabcd/SKILL.md:87-88. CRW-1218: the polling budget aggregate is owned by the project orchestrator, with a link to crw-run's resource accounting. CRW-1220: the description is the classifier and router without a catch-all or neighbour triggers; the C4 row names the flow-managed high-risk lane and the design audit; the router has an executor row that loads crw-dev-star skills only; the family invariants move to crw-canon skill-family; the stub sections become links; requesting and receiving review move here from crw-dev-code-reviewer; the governance owner files are crw-canon files CRW-1340: the synchronous Interview is retired with crw-interview; an unclear milestone or issue goes back to its registration (crw-define) and ambiguity during a run goes up as a decision request, so the routes to the Interview are dropped.",
       "hunks": [
         {
           "line": 3,
@@ -80,20 +80,25 @@
         {
           "line": 32,
           "old": [
-            "| C4 | High-Risk | Auth, payments, data deletion, migration, release, permission model, security boundary | Full PABCD (mandatory) + full relevant gates + durable risk/evidence record |\n"
+            "| C4 | High-Risk | Auth, payments, data deletion, migration, release, permission model, security boundary | Full PABCD (mandatory) + full relevant gates + durable risk/evidence record |\n",
+            "| C5 | Research/Ambiguous | Unclear requirements, ambiguous user value, unknown territory after one §0 clarification round | Interview-first via the `pabcd` skill, then reclassify |\n"
           ],
           "new": [
-            "| C4 | High-Risk | Auth, payments, data deletion, migration, release, permission model, security boundary | Full PABCD (mandatory) + full relevant gates + durable risk/evidence record; in a flow-managed run the run's high-risk lane is this process (architect DESIGN, independent pre-build design audit by a reviewer of a different model family before any executor starts, per-issue candidate review, final gate and reviewer-final with full verification and risk record) and the executor starts no FSM |\n"
+            "| C4 | High-Risk | Auth, payments, data deletion, migration, release, permission model, security boundary | Full PABCD (mandatory) + full relevant gates + durable risk/evidence record; in a flow-managed run the run's high-risk lane is this process (architect DESIGN, independent pre-build design audit by a reviewer of a different model family before any executor starts, per-issue candidate review, final gate and reviewer-final with full verification and risk record) and the executor starts no FSM |\n",
+            "| C5 | Research/Ambiguous | Unclear requirements, ambiguous user value, unknown territory after one §0 clarification round | No interview: back to its registration ([crw-define](../crw-define/SKILL.md)) or, in a run, a decision request to the session above the project session; then reclassify |\n",
+            "\n",
+            "**C5 is temporary** — it cannot enter implementation until the registration step or the\n",
+            "answer to the decision request resolves the ambiguity and the task is reclassified as one\n",
+            "of C0 through C4.\n"
           ]
         },
         {
-          "line": 36,
+          "line": 35,
           "old": [
+            "**C5 is temporary** — it cannot enter implementation until Interview resolves ambiguity\n",
             "and the task is reclassified C0-C4.\n"
           ],
           "new": [
-            "and the task is reclassified as one of C0 through C4.\n",
-            "\n",
             "In a flow-managed run, reviewer-final does not replace the pre-build design audit. The executor and an\n",
             "oversized child start no PABCD state machine; the standalone PABCD rules above are unchanged.\n"
           ]
@@ -101,8 +106,9 @@
         {
           "line": 114,
           "new": [
-            "Linear initiative definition, goal decomposition, delivery checks and project\n",
-            "coordination route to crw-define, crw-plan, crw-check and crw-run respectively.\n",
+            "Settling a milestone and its issues before registration, goal decomposition, delivery\n",
+            "checks and project coordination route to crw-define, crw-plan, crw-check and crw-run\n",
+            "respectively.\n",
             "The PABCD and task host-goal modes above govern a task's implementation; crw-run\n",
             "parent goal mode creates no implementation goalplan or FSM.\n",
             "\n"
@@ -219,6 +225,16 @@
           ]
         },
         {
+          "line": 302,
+          "old": [
+            "for schema, pending-answer handling and fallback. Interview keeps its existing flow.\n"
+          ],
+          "new": [
+            "for schema, pending-answer handling and fallback; in a run an open question is a\n",
+            "decision request instead.\n"
+          ]
+        },
+        {
           "line": 325,
           "old": [
             "For non-obvious defects or repeated failed repairs load crw-dev-debugging.\n",
@@ -328,15 +344,81 @@
     },
     {
       "file": "references/async-questions.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments.",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. CRW-1340: the synchronous Interview is retired with crw-interview; an unclear milestone or issue goes back to its registration (crw-define) and ambiguity during a run goes up as a decision request, so the routes to the Interview are dropped.",
       "hunks": [
         {
-          "line": 83,
+          "line": 9,
           "old": [
-            "automatically captured by that path. See the [Interview owner](../../interview/SKILL.md)\n"
+            "goals, whenever the tool is exposed and the host permits it. No Interview entry\n",
+            "or phase change is needed. SessionStart announces this policy. PostCompact only\n"
           ],
           "new": [
-            "automatically captured by that path. See the [Interview owner](../../crw-interview/SKILL.md)\n"
+            "goals, whenever the tool is exposed and the host permits it. No phase change is\n",
+            "needed. SessionStart announces this policy. PostCompact only\n"
+          ]
+        },
+        {
+          "line": 15,
+          "new": [
+            "## In a run: a decision request\n",
+            "\n",
+            "In a run nobody asks the user and no session opens an interview. An open question\n",
+            "that changes scope or design is a decision request to the session above the project\n",
+            "session: lift it with `crw flow report-up` and the evidence file, continue the work it\n",
+            "does not block on recorded assumptions, and take the answer when it arrives. A\n",
+            "milestone or issue that is unclear before it runs goes back to its registration\n",
+            "([crw-define](../../crw-define/SKILL.md)). The async questions below are for a main\n",
+            "agent outside a run.\n",
+            "\n"
+          ]
+        },
+        {
+          "line": 23,
+          "old": [
+            "  that tool for its existing authorized workflow (such as Interview). Never invent an async tool,\n"
+          ],
+          "new": [
+            "  that tool for a workflow the host authorizes for it. Never invent an async tool,\n"
+          ]
+        },
+        {
+          "line": 71,
+          "old": [
+            "Interview retains its existing blocking question flow; do not migrate it to async.\n"
+          ]
+        },
+        {
+          "line": 73,
+          "old": [
+            "## Goal and Interview boundaries\n"
+          ],
+          "new": [
+            "## Goal boundaries\n"
+          ]
+        },
+        {
+          "line": 78,
+          "old": [
+            "turn async questions into a blocking Interview. Subagents return question candidates to the main agent;\n"
+          ],
+          "new": [
+            "turn async questions into a blocking question round. Subagents return question candidates to the main agent;\n"
+          ]
+        },
+        {
+          "line": 81,
+          "old": [
+            "The persisted CRW Interview currently captures synchronous `request_user_input`\n",
+            "question IDs and returned answers. Async submission and later messages are not\n",
+            "automatically captured by that path. See the [Interview owner](../../interview/SKILL.md)\n",
+            "before using questions as readiness evidence; never mark a pending async question as\n",
+            "answered, manufacture ledger events, or assume the exact-name synchronous goal guard\n"
+          ],
+          "new": [
+            "The PostToolUse hook records synchronous `request_user_input` question IDs and\n",
+            "returned answers. Async submission and later messages are not automatically\n",
+            "captured by that path, and no recorded answer is readiness evidence: never mark a\n",
+            "pending async question as answered, manufacture ledger events, or assume the exact-name synchronous goal guard\n"
           ]
         }
       ]
