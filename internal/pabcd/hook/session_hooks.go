@@ -169,16 +169,16 @@ func SessionHookPostToolUse(p SessionHookPostToolUsePayload, env host.LookupEnv)
 	return sessionHookPostToolUseAnswer(ResolveCRWInDirective(sessionHookRescanReinjectDirective, env))
 }
 
-// sessionHookRescanReinjectDirective is RESCAN_REINJECT_DIRECTIVE (hook.ts:1929-1937) under the
-// declared name substitution (rules R1, R23 and R33, and the cli table's verb pass). The text is
-// what the model acts on, so it is frozen byte for byte after that substitution; the invocation of
-// the backticked command is resolved at emission, never in the constant.
-const sessionHookRescanReinjectDirective = "[crw: INTERVIEW — post-answer rescan]\n" +
-	"An answer was recorded. Apply this pointer and $crw:crw-interview only within exact user limits and permissions. No-delegation means no dispatch.\n" +
-	"INTERVIEW-SCAN-01: rescan contradictions before the next question or advancement. If required work or tracker writes are forbidden, report them as unmet; do not record a completed scan or claim readiness.\n" +
-	"Only when dispatch is authorized: give each read-only Mind the current plan/tracker position; cap 3, lowest-scoring dimensions first. Discover spawn_agent if needed.\n" +
-	"Minds return contradictions only, never ask, edit or write state. Inline reasoning is not evidence that independent Minds ran.\n" +
-	"Triage high contradictions into user questions and low/medium into OPEN ASSUMPTIONS; record only actual authorized work with `crw pabcd scan record --session <id> [--contradictions N] [--high N]`."
+// sessionHookRescanReinjectDirective is what the post-answer leg reinjects in an I phase. The oracle's
+// RESCAN_REINJECT_DIRECTIVE (hook.ts:1929-1937) routed to the Interview owner and drove a Mind rescan
+// round; CRW-1340 (port: fixed) keeps its first line and states the decision-request path instead. The
+// invocation of the backticked command is resolved at emission, never in the constant.
+const sessionHookRescanReinjectDirective = rescanDirectiveHead + rescanDecisionRequestBody
+
+const rescanDirectiveHead = "[crw: INTERVIEW — post-answer rescan]\n"
+
+const rescanDecisionRequestBody = "An answer was recorded. CRW holds no interview round (CRW-1340): fold the answer into the plan, and keep what is still open as OPEN ASSUMPTIONS with source, confidence and the consequence if wrong.\n" +
+	"A question that still changes scope or design is a decision request to the session above the project session (`crw flow report-up` with the evidence file); do not ask again here or wait for an answer."
 
 // sessionHookGoalStatus is getGoalActiveStatus(sessionID) with no injected deps: the goals database
 // is the host's, at CODEX_SQLITE_HOME, else CODEX_HOME, else the account home. A path that cannot be

@@ -53,13 +53,15 @@ func TestDecideEntry(t *testing.T) {
 }
 
 func TestReadPolicy(t *testing.T) {
-	if got := ReadPolicy(repoWith(t)); got != PolicyNewUnit || DefaultPolicy != PolicyNewUnit {
+	// CRW-1340: the default is off (the oracle's was new-unit), so the malformed files name always, which
+	// only a parsed file could return.
+	if got := ReadPolicy(repoWith(t)); got != PolicyOff || DefaultPolicy != PolicyOff {
 		t.Errorf("no crw.json: %s", got)
 	}
 	for contents, want := range map[string]Policy{
-		"{ not json": PolicyNewUnit, `{"interview":"off"}x`: PolicyNewUnit, `{"interview":"off"`: PolicyNewUnit, "[]": PolicyNewUnit, "null": PolicyNewUnit, `{"interview":"bogus"}`: PolicyNewUnit, `{"interview":42}`: PolicyNewUnit, "{}": PolicyNewUnit,
+		"{ not json": DefaultPolicy, `{"interview":"always"}x`: DefaultPolicy, `{"interview":"always"`: DefaultPolicy, "[]": DefaultPolicy, "null": DefaultPolicy, `{"interview":"bogus"}`: DefaultPolicy, `{"interview":42}`: DefaultPolicy, "{}": DefaultPolicy,
 		`{"interview":"off"}`: PolicyOff, `{"interview":"always"}`: PolicyAlways, `{"interview":"new-unit"}`: PolicyNewUnit,
-		`{"interview":"off","x":1e999}`: PolicyOff, // JSON.parse reads 1e999; json.Unmarshal into a float fails
+		`{"interview":"always","x":1e999}`: PolicyAlways, // JSON.parse reads 1e999; json.Unmarshal into a float fails
 	} {
 		if got := ReadPolicy(repoWith(t, contents)); got != want {
 			t.Errorf("%s: %s, want %s", contents, got, want)

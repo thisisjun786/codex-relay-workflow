@@ -42,8 +42,8 @@ func TestDetectTriggerSkillHintExamples(t *testing.T) {
 // un-armed loop-arm branch (a request DetectLoopArmRequest reads as a loop request answers the arming
 // mandate instead of a hint), then the hint. A prompt with no hint and no loop request stays silent.
 const (
-	skillAnswerHint    = "hint"    // the default-policy P hint: interview directive, trigger-authority note, footer
-	skillAnswerPlanP   = "plan-p"  // the P hint without the interview promotion: the P phase directive, note, footer
+	skillAnswerHint    = "hint"    // the I hint (or a P hint a crw.json policy promotes): the I directive, trigger-authority note, footer
+	skillAnswerPlanP   = "plan-p"  // the P hint without the interview promotion (the default policy since CRW-1340): the P phase directive, note, footer
 	skillAnswerMandate = "mandate" // the ORCH-MANDATE-01 arming mandate
 	skillAnswerSilent  = "silent"
 )
@@ -75,10 +75,11 @@ func checkSkillAnswers(t *testing.T, name string, cases []skillAnswerCase, answe
 	}
 }
 
-// A fresh session with no goal and the default interview-entry policy that has not armed PABCD.
+// A fresh session with no goal and the default interview-entry policy that has not armed PABCD. The
+// default is off (CRW-1340), so the P hint stays the P directive.
 func TestPromptSubmitSkillHintExamplesInAFreshSession(t *testing.T) {
 	cases := []skillAnswerCase{
-		{"Use crw-pabcd", skillAnswerHint},
+		{"Use crw-pabcd", skillAnswerPlanP},
 		{"Use crw-pabcd to start the interview", skillAnswerHint},
 		{"pabcd로 시작해줘", skillAnswerMandate},
 		{"pabcd로 인터뷰 해줘", skillAnswerMandate},
