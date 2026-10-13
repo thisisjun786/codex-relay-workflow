@@ -270,6 +270,9 @@ func decisionAnswerProvenance(ctx context.Context, opened *store.Store, record d
 		// is not recorded either way, so nothing is accepted.
 		return err
 	}
+	// The store seat a manager laid down when it registered its management seat is read through
+	// that management seat (registry.StoreScopeSupervisor, CRW-1333), so the manager keeps
+	// answering these grades after it registers, and its successor after a handover of the seat.
 	// Fail closed on every shape but one: no store-scope supervisor seat bound, a contested seat
 	// (more than one row, which the schema's per-role unique index should not allow), or a seat
 	// held by another task all refuse. The answer comes from the seat this grade is answered from
