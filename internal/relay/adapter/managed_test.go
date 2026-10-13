@@ -146,7 +146,7 @@ func Test28_ManagedSixMethodsRealSocket(t *testing.T) {
 	binary := suiteBinary
 	publishWorker(t, state, host.SocketPath, scope, filepath.Dir(binary))
 	cliCmd := exec.Command(binary, "relay", "--state", state, "--socket", host.SocketPath, "managed-start", "--request", string(raw), "--marker-root", marker)
-	cliCmd.Env = append(os.Environ(), "CODEX_SESSION_RELAY_SCOPE_DIR="+scope)
+	cliCmd.Env = append(os.Environ(), "CODEX_SESSION_RELAY_SCOPE_DIR="+scope, delivery.MarkerEnv+"="+marker)
 	built, err := cliCmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("managed CLI %v %s", err, built)
@@ -238,7 +238,7 @@ func Test28_ManagedStartEndsOnTheFirstInterrupt(t *testing.T) {
 	}
 	var stdout, stderr bytes.Buffer
 	cmd := exec.Command(suiteBinary, "relay", "--state", state, "--socket", host.SocketPath, "managed-start", "--request", string(raw), "--marker-root", marker)
-	cmd.Env = append(os.Environ(), "CODEX_SESSION_RELAY_SCOPE_DIR="+scope)
+	cmd.Env = append(os.Environ(), "CODEX_SESSION_RELAY_SCOPE_DIR="+scope, delivery.MarkerEnv+"="+marker)
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)

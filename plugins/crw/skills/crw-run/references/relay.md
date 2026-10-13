@@ -126,6 +126,14 @@ For new assignments, prefer the relay's `managed-start` entry when that installe
 it. It owns pre-creation reservation, standby creation, registration and business dispatch as one
 recoverable operation; see the [request and recovery contract](../../../../../docs/relay/README.md#recoverable-managed-start).
 Use the same request id, exact request contents and state/socket/marker paths when recovering.
+Pass `--marker-root` as the marker root the relay daemon judges Stops under (the daemon's own
+`CODEX_SESSION_RELAY_MARKER_ROOT`, else under its state home; managed-start asks the daemon for it,
+so your environment does not decide it): a new start naming another root is refused
+`marker_root_mismatch` at the start, with both roots in the reason, and creates no thread and
+dispatches nothing, instead of a child whose claims end `claim_uncorrelated`. Name the root the
+refusal gives. Another spelling of the same directory (dot segments, symlinks) starts; a relative
+path is refused as not absolute; a replay of a started request id is not judged by this check. When
+no daemon answers, the reason says so and names your own environment's root instead.
 A refused or incomplete result is not permission to create a replacement. `admitted` means
 dispatch only: the child's claim, actual hook firing, receipt and parent judgment still need
 their own evidence. Verify the installed command surface before selecting it; source presence

@@ -48,7 +48,7 @@ Objects the fence release adds, all owner-only (`0700` directories, `0600` files
 | `S/takeover.json` | durable transition record and admission mirror (atomic replace) |
 | `S/takeover-inbox/` | immutable, durable receipt/ACK requests awaiting application (historical: no Go reader or writer since decision 55) |
 | `S/takeover-inbox/.replay.lock` | permanent-inode exclusive lock held by an inbox replayer from reading an entry until after its unlink and directory fsync (historical, decision 55) |
-| `S/control.sock` | stable local control and `guard-evaluate` RPC address served by both runtimes; the Go daemon also serves a child's `emit`, `intent-claim` and `intent-disposition` there (`child-command`, CRW-1286) |
+| `S/control.sock` | stable local control and `guard-evaluate` RPC address served by both runtimes; the Go daemon also serves a child's `emit`, `intent-claim` and `intent-disposition` there (`child-command`, CRW-1286) and answers `marker-root`, the marker root it judges Stops under, to `managed-start` (CRW-1309) |
 | `S/takeover-backups/<transition-id>/` | SQLite backup plus inventory manifest; disaster-recovery evidence only, never rollback input (historical: no controller writes one since decision 54) |
 
 Rule that applies to every lock file, old or new: **never unlink it and never replace it

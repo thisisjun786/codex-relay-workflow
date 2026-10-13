@@ -309,6 +309,25 @@ roles must have explicit permitted pairs, the parent must be an allowed recipien
 local entry requires the same host, approval `never`, and existing absolute workspace paths.
 It does not select remote environments or approximate an unsupported sandbox.
 
+`--marker-root` must name the marker root the relay daemon judges Stops under: the root the daemon
+resolves in its own environment (its `CODEX_SESSION_RELAY_MARKER_ROOT`, else under `XDG_STATE_HOME`
+or the home; the root `control.sock` applies). managed-start asks the daemon for that root over the
+selected state's `control.sock` (the `marker-root` method), so the parent's own environment does not
+decide it: a parent that exports a different `CODEX_SESSION_RELAY_MARKER_ROOT`, or none, is judged
+against the daemon's root all the same. A new start whose `--marker-root` names another directory
+is refused at the start, `marker_root_mismatch` (exit 2), before anything is reserved, created or
+dispatched, with a reason that names both roots (`control.sock evaluates Stops only under this
+owner's marker root <the daemon's>; the request named <the given>`): a child's claim under another
+root is rejected by the daemon and its completion record would be silently lost. The roots are
+compared as absolute paths with symlinks resolved, so another spelling of the same directory
+starts; a relative `--marker-root` is refused earlier, by the request identity's rule that a path
+must be absolute. When the daemon cannot be asked (no daemon on the socket, or an older one that
+does not know the method), the root is the one managed-start's own environment resolves, and a
+refusal says so: it names the reason the daemon was not asked and that the root named is this
+process's. The check applies to a new request only; a replay of a request id already reserved is
+compared by the reservation alone (a replay naming another root is the reservation's
+`relationship_conflict`).
+
 Here is a request shape for a local workspace. Replace the task/host identities, existing
 paths, baseline and issue criteria with observations from your own authorized assignment.
 The role pairs below are examples; read your host's declared

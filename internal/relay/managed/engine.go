@@ -27,6 +27,12 @@ type Start struct {
 	Adapter                           Adapter
 	Now                               func() string
 	Socket, MarkerRoot, StateSelector string
+	// OwnerMarkerRoot is the marker root the relay daemon judges Stops under, as the daemon answered it
+	// (hook.AskOwnerMarkerRoot). A new request whose MarkerRoot does not name it is refused before anything is
+	// reserved or created, because the child's claims under any other root would never be correlated. Empty asks no
+	// such question. OwnerMarkerRootUnasked, when set, is why the daemon could not be asked: OwnerMarkerRoot is then
+	// the root this process's own environment resolves, and a refusal says so.
+	OwnerMarkerRoot, OwnerMarkerRootUnasked string
 	// Readiness returns the same worker policy refusal code as rolepolicy.worker_readiness,
 	// or empty when the role pair is ready; it is called again before each host effect.
 	Readiness func(context.Context, map[string]any) (string, error)
