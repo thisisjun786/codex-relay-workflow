@@ -1,0 +1,16 @@
+subagent-thread-read.json, subagent-turns-list-full.json and subagent-turns-list-summary.json: the answers the live App Server
+(codex-cli 0.154.0, the shared control socket of lina-os) gave on 2026-10-14 to a read-only probe of one finished subagent thread,
+01a13587-5221-76c0-bbb4-44e8411968fa (an explorer a flow engine thread spawned on 2026-10-13 22:50 KST with spawn_agent):
+
+  thread/read        {"threadId": ..., "includeTurns": false}            -> subagent-thread-read.json
+  thread/turns/list  {"threadId": ..., "itemsView": "full"}               -> subagent-turns-list-full.json
+  thread/turns/list  {"threadId": ..., "limit": 2, "itemsView": "summary"} -> subagent-turns-list-summary.json
+
+No thread was started, no turn sent, nothing resumed, archived or written (CRW-1332). Changed for the fixture: /home/jun reads
+/home/user; the thread's preview and the message, reasoning and command texts are shortened (no task prompt of the
+session is kept, TestLiveFixturesKeepNoSessionText); the full turn keeps its first four and its last two items of 43
+(the dropped ones are commandExecution, reasoning and commentary agentMessage items of the same shapes). Everything else is the host's
+answer as given, including the Thread members the 0.154.0 schema copy does not list (canAcceptDirectInput, daybreakEnabled,
+environments, extra). The frame's id is left out, as the other fixtures do.
+
+TestLiveSubagentAnswers in internal/flow/sessionhost reads them through ReadAgent and Turns and validates them against the schema copy.
