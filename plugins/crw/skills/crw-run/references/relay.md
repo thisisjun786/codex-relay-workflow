@@ -61,7 +61,10 @@ one of which works from the store alone. Treat anything outside `hostRequiredCom
 `control.sock`, which a sandbox without network access (readOnly, or workspace-write with
 `networkAccess` off) cannot reach (exit 3). The sandboxes that reach it are danger-full-access
 and workspace-write with network access, and `register --child-settings` refuses any other
-sandbox the child's settings state (`unsupported_sandbox_type`, exit 2, nothing written).
+sandbox the child's settings state (`unsupported_sandbox_type`, exit 2, nothing written). A child
+that runs in a sandbox that cannot reach it anyway (a thread created without the child role, or
+outside the bridge) reports through the bridge's `report_child` tool, which hands the same
+command to the same daemon from outside that sandbox.
 
 On the host and profile measured during JUN-92, a workspace-write task could not write the default
 state directory under the user state home and could not connect to the App Server control socket,
@@ -273,7 +276,9 @@ Commands that require the App Server and `--socket` include `managed-start`, `de
 `actorReachability.hostRequiredCommands` for the installed command inventory;
 `reporting-show` reads only the explicitly selected marker and store. A child's `emit`,
 `intent-claim` and `intent-disposition` (`actorReachability.daemonRequiredCommands`) run on the
-relay daemon through its `control.sock` and open no store of the child's own. Where a task cannot
+relay daemon through its `control.sock` and open no store of the child's own; `report_child`
+(`command` and the command's `arguments`, bridge MCP) carries them for a child that cannot connect,
+and the daemon alone decides where the record goes. Where a task cannot
 reach the App Server socket, it uses the store-only subset and a host-capable process owns delivery.
 
 `ack` sits between the two. It does not REQUIRE a socket, which is why it is not in that list, but
