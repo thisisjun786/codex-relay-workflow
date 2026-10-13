@@ -45,14 +45,17 @@ func OwnProbes() []OwnProbe {
 			if err != nil {
 				return err
 			}
+			// CRW-1307: the inline body is refused no longer: the post passes with the refusal as a warning (context only, no
+			// permissionDecision). The probe keeps its id.
 			var out struct {
 				Hook struct {
 					Decision string `json:"permissionDecision"`
-					Reason   string `json:"permissionDecisionReason"`
+					Context  string `json:"additionalContext"`
 				} `json:"hookSpecificOutput"`
 			}
-			if s.Exit != 0 || json.Unmarshal([]byte(s.StdoutBytes()), &out) != nil || out.Hook.Decision != "deny" || !strings.Contains(out.Hook.Reason, "inline-github-body") {
-				return fmt.Errorf("an inline GitHub post body was not denied by rule inline-github-body: exit %d, stdout %.200q", s.Exit, s.StdoutBytes())
+			if s.Exit != 0 || json.Unmarshal([]byte(s.StdoutBytes()), &out) != nil || out.Hook.Decision != "" ||
+				!strings.HasPrefix(out.Hook.Context, "[crw warning] Not blocked (recorded): ") || !strings.Contains(out.Hook.Context, "inline-github-body") {
+				return fmt.Errorf("an inline GitHub post body was not warned about by rule inline-github-body: exit %d, stdout %.200q", s.Exit, s.StdoutBytes())
 			}
 			return nil
 		},
