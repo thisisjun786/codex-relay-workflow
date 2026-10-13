@@ -24,6 +24,12 @@
       "threshold": null,
       "window": 21600.0
     },
+    "integration_target_moved": {
+      "component": "integration",
+      "clears": "the fix and reverification loop once the target is back on a head the relay recorded or the move is accepted; a later push does not clear it, so its blocking notice is not withdrawn before the supervisor is told",
+      "threshold": null,
+      "window": 21600.0
+    },
     "managed_start_failed": {
       "component": "managed_start",
       "clears": "the request recording an accepted receipt or attaching, or its newest creation-stage answer saying something else",

@@ -2,6 +2,7 @@ package integrate
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -78,5 +79,42 @@ func TestPushDocumentCarriesTheStaleNodes(t *testing.T) {
 	unread.StaleNodesError = "the store is busy"
 	if got := emit(unread); !bytes.Contains([]byte(got), []byte(`"stale_nodes_error": "the store is busy"`)) || !bytes.Contains([]byte(got), []byte(`"stale_nodes": []`)) {
 		t.Fatalf("an unreadable list is named and the list is empty:\n%s", got)
+	}
+}
+
+// CRW-1301: a push that found the remote on a head the relay never recorded for the integration ref names it after the stale
+// nodes: the fault class and id, the ref, the remote head and the newest recorded heads. A push on the integration path
+// prints neither key (TestPushDocumentCarriesTheStaleNodes holds that document byte for byte).
+func TestPushDocumentNamesTheMovedTarget(t *testing.T) {
+	r := dagsched.PushResult{Remote: "origin", RemoteRef: "dev", LocalHead: "ccc", RemoteHead: "ccc", Outcome: dagsched.PushPushed,
+		TargetMoved: &dagsched.TargetMoved{IntegrationRef: "dev-int", RemoteHead: "xxx", Expected: []string{"bbb", "aaa"}, ExpectedTotal: 2, FaultID: "f1"}}
+	var out bytes.Buffer
+	if err := contract.Emit(&out, pushObject(r)); err != nil {
+		t.Fatal(err)
+	}
+	if want := `  "stale_nodes_error": null,
+  "target_moved": {
+    "fault_class": "integration_target_moved",
+    "fault_id": "f1",
+    "fault_error": null,
+    "integration_ref": "dev-int",
+    "remote_head": "xxx",
+    "expected_heads": [
+      "bbb",
+      "aaa"
+    ],
+    "expected_total": 2
+  }
+}
+`; !bytes.HasSuffix(out.Bytes(), []byte(want)) {
+		t.Fatalf("moved target:\n%s\nwant the suffix\n%s", out.String(), want)
+	}
+	r.TargetMoved, r.TargetCheckError = nil, "the store is busy"
+	out.Reset()
+	if err := contract.Emit(&out, pushObject(r)); err != nil {
+		t.Fatal(err)
+	}
+	if got := out.String(); !strings.HasSuffix(got, "  \"target_check_error\": \"the store is busy\"\n}\n") || strings.Contains(got, "target_moved") {
+		t.Fatalf("an unreadable comparison is named and no moved target is:\n%s", got)
 	}
 }

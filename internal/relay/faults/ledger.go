@@ -64,6 +64,8 @@ var declaredClasses = map[string]classPolicy{
 	"observation_unmeasured": {"reporting", "a later reading of the same turn that establishes something"},
 	"record_sync_failed":     {"sync", "any synchronisation job on the same target confirming"},
 	"report_omitted":         {"reporting", "a reading of the same turn that no longer says unreported"},
+	// CRW-1301: registered by the process that records it (dag-integrate-push), not imported at start, as product classes are
+	"integration_target_moved": {"integration", "the fix and reverification loop once the target is back on a head the relay recorded or the move is accepted; a later push does not clear it, so its blocking notice is not withdrawn before the supervisor is told"},
 }
 
 // classes are declarations imported in this process. Python starts with the seven

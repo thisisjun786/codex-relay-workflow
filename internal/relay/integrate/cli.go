@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -102,7 +103,8 @@ func runPush(ctx context.Context, services dispatch.Services, args dispatch.Args
 	}
 	defer func() { _ = s.Close() }()
 	sched := &dagsched.Scheduler{Store: s}
-	result, err := dagsched.PushIntegration(ctx, args.Text("checkout"), args.Text("remote"), args.Text("remote-ref"), args.Text("integration-ref"), sched.VerifiedMoveOnto, sched.StaleIntegratedNodes)
+	// the remote head the push reads is compared with the heads the relay recorded for the integration ref (CRW-1301)
+	result, err := dagsched.PushIntegrationChecked(ctx, args.Text("checkout"), args.Text("remote"), args.Text("remote-ref"), args.Text("integration-ref"), sched.VerifiedMoveOnto, sched.StaleIntegratedNodes, sched.CheckIntegrationTarget)
 	if err != nil {
 		return nil, err
 	}
@@ -111,20 +113,37 @@ func runPush(ctx context.Context, services dispatch.Services, args dispatch.Args
 
 // pushObject is the document dag-integrate-push prints. stale_nodes is output only (CRW-1026, d2): the integrated nodes of the
 // pushed head whose acceptance the plan no longer stands behind, each named by plan, node and acceptance; the checkout and the
-// integration ref are the push's own fields. stale_nodes_error is null unless the list could not be read.
+// integration ref are the push's own fields. stale_nodes_error is null unless the list could not be read. target_moved is
+// present only when the remote held a head the relay never recorded for the integration ref, and target_check_error only when
+// the recorded heads could not be read (CRW-1301), so a push on the integration path prints what it printed before.
 func pushObject(result dagsched.PushResult) contract.OrderedObject {
 	stale := make([]any, len(result.StaleNodes))
 	for i, n := range result.StaleNodes {
 		stale[i] = contract.OrderedObject{{Key: "plan_id", Value: n.PlanID}, {Key: "node_id", Value: n.NodeID}, {Key: "acceptance_id", Value: n.AcceptanceID},
 			{Key: "reason", Value: n.Reason}, {Key: "accepted_criteria_digest", Value: nullableText(n.AcceptedCriteria)}, {Key: "current_criteria_digest", Value: nullableText(n.CurrentCriteria)}}
 	}
-	return contract.OrderedObject{
+	doc := contract.OrderedObject{
 		{Key: "ok", Value: result.Outcome != dagsched.PushDeferred}, {Key: "schema", Value: dagsched.SchemaIntegrationPush},
 		{Key: "remote", Value: result.Remote}, {Key: "remote_ref", Value: result.RemoteRef},
 		{Key: "local_head", Value: result.LocalHead}, {Key: "remote_head", Value: result.RemoteHead},
 		{Key: "outcome", Value: result.Outcome}, {Key: "detail", Value: result.Detail},
 		{Key: "stale_nodes", Value: stale}, {Key: "stale_nodes_error", Value: nullableText(result.StaleNodesError)},
 	}
+	if m := result.TargetMoved; m != nil {
+		expected := make([]any, len(m.Expected))
+		for i, head := range m.Expected {
+			expected[i] = head
+		}
+		doc = append(doc, pyjson.Field{Key: "target_moved", Value: contract.OrderedObject{
+			{Key: "fault_class", Value: dagsched.ClassIntegrationTargetMoved}, {Key: "fault_id", Value: nullableText(m.FaultID)}, {Key: "fault_error", Value: nullableText(m.FaultError)},
+			{Key: "integration_ref", Value: m.IntegrationRef}, {Key: "remote_head", Value: m.RemoteHead},
+			{Key: "expected_heads", Value: expected}, {Key: "expected_total", Value: m.ExpectedTotal},
+		}})
+	}
+	if result.TargetCheckError != "" {
+		doc = append(doc, pyjson.Field{Key: "target_check_error", Value: result.TargetCheckError})
+	}
+	return doc
 }
 
 // nullableText is a string that prints as null when empty.
