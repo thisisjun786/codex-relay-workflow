@@ -67,8 +67,9 @@ type Line struct {
 	Role   string `json:"role,omitempty"`
 	// NativeAllowance is how many native helpers the call may spawn (0 or 1); nil on an orchestrator or a closed line.
 	NativeAllowance *int `json:"nativeAllowance"`
-	// HelperPairs are the pairs the hook applies to an allowed helper: explorer for an engine line, explorer and reviewer for
-	// an orchestrator line, from the pinned policy of the run.
+	// HelperPairs are the pairs the hook applies to an allowed helper: explorer for an engine line, from the pinned policy of the
+	// run; for an orchestrator line the pairs of the six roles (OrchestratorRoles) the role subagents of a session run are spawned
+	// with.
 	HelperPairs  map[string]Pair `json:"helperPairs,omitempty"`
 	PolicyDigest string          `json:"policyDigest"`
 }
@@ -135,10 +136,13 @@ func (l Line) Validate(thread string) error {
 		if l.NativeAllowance != nil {
 			return errors.New("an orchestrator line has no nativeAllowance")
 		}
-		if err := pair(HelperExplorer); err != nil {
-			return err
+		// the pair of each of the six roles the hook overwrites a role subagent's spawn with (CRW-1316 §9)
+		for _, role := range OrchestratorRoles {
+			if err := pair(role); err != nil {
+				return err
+			}
 		}
-		return pair(HelperReviewer)
+		return nil
 	case KindClosed:
 		return nil
 	}

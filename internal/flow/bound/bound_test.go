@@ -182,7 +182,9 @@ func TestFlowBoundUnregisteredThreadStandaloneLookupStates(t *testing.T) {
 	if res := Lookup(other); res.State != Engine {
 		t.Fatalf("registered: %v", res.State)
 	}
-	orch := Line{RunID: "run-1", ThreadID: threadA, Kind: KindOrchestrator, HelperPairs: map[string]Pair{HelperExplorer: {"m", "high"}, HelperReviewer: {"r", "high"}}}
+	pairs := sixPairs("m")
+	pairs[HelperReviewer] = Pair{"r", "high"}
+	orch := Line{RunID: "run-1", ThreadID: threadA, Kind: KindOrchestrator, HelperPairs: pairs}
 	if err := w.Append(orch); err != nil {
 		t.Fatal(err)
 	}
