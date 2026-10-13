@@ -863,6 +863,7 @@ func Diagnose(ctx context.Context, o Options) Object {
 		{Key: "scopeReadings", Value: readings},
 		{Key: "checks", Value: checks},
 		{Key: "storage", Value: StorageReport(o.Env)},
+		{Key: "verifierTools", Value: VerifierToolsReport(ctx, o.Env)},
 		{Key: "doctorBinary", Value: Object{{Key: "path", Value: self()}, {Key: "target", Value: record.Target()}, {Key: "source", Value: record.Source()}}},
 	}
 }

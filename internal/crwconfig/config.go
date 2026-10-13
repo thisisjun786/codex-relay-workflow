@@ -144,6 +144,10 @@ func load(getenv func(string) string, flagPath string, strict bool) (*File, erro
 			return nil, fmt.Errorf("%s: sandbox.project_roots %q: not an absolute path", file.path, path)
 		}
 	}
+	// so is a verifier section the verifier could not use (CRW-1319)
+	if _, err := file.VerifierTools(); err != nil {
+		return nil, err
+	}
 	return file, nil
 }
 
@@ -190,10 +194,10 @@ func Run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 	case "-h", "--help", "help":
 		usage(stdout)
 		return 0
-	case "paths", "show", "check":
+	case "paths", "show", "check", "verifier":
 	default:
 		usage(stderr)
-		fmt.Fprintf(stderr, "crw config: error: invalid command %q (choose from 'paths', 'show', 'check')\n", verb)
+		fmt.Fprintf(stderr, "crw config: error: invalid command %q (choose from 'paths', 'show', 'check', 'verifier')\n", verb)
 		return usageExit
 	}
 	flagPath, rest, err := parseConfigFlag(args[1:])
@@ -207,6 +211,9 @@ func Run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 			usage(stdout)
 			return 0
 		}
+	}
+	if verb == "verifier" {
+		return runVerifier(getenv, flagPath, rest, stdout, stderr)
 	}
 	if len(rest) > 0 {
 		usage(stderr)
@@ -310,8 +317,9 @@ func writeJSON(stdout, stderr io.Writer, v any) int {
 
 // usage writes the usage line and one line per subcommand.
 func usage(w io.Writer) {
-	fmt.Fprintln(w, "usage: crw config [-h] {paths,show,check} ...")
+	fmt.Fprintln(w, "usage: crw config [-h] {paths,show,check,verifier} ...")
 	fmt.Fprintln(w, "  paths\tprint every named root, its path and where the path came from")
 	fmt.Fprintln(w, "  show\tprint the configuration file's path, where it came from and its document")
 	fmt.Fprintln(w, "  check\tcheck every root: it exists or can be made, is writable, its file system and space, a socket path's length, state kept together, drift from the placement in use; exit 1 on a fault")
+	fmt.Fprintln(w, "  verifier\tprint the verifier's tools (verifier.go_root, verifier.crw_dev); --go-root <dir> and --crw-dev tree|<path> record them in the file")
 }

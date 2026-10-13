@@ -332,6 +332,41 @@ A warning never stops anything, so a host short of space or sharing a directory 
 | `socket_path_too_long` | `temp_root` or `scratch_root` would leave no room for a test's socket |
 | `drift` | a root the file names differs from a placement in use that holds data (a registered relay store outside the configured `relay_state`, a pump or daemon log outside the configured `log_root`, a populated default or Go cache elsewhere), naming both paths, or `CODEX_SESSION_RELAY_STATE` takes the place of a configured `relay_state` |
 
+### The verifier's tools
+
+A run's verifier (the node verifier `CILocalVerifier` and the verification of an integration batch's
+merged tree) starts `crw-dev ci local`, and every step of that command runs `go`. A process a bridge
+or a service starts has neither on its `PATH`, so the configuration file names them in its `verifier`
+section, and the run reads that section, not the login `PATH`:
+
+| `verifier` key | Value | What it decides |
+| --- | --- | --- |
+| `go_root` | an absolute Go toolchain root | `<go_root>/bin/go` is the go the verifier runs; the command runs with `<go_root>/bin` first on its `PATH` (so every step of `crw-dev ci local` runs that go), `GOROOT=<go_root>` and `GOTOOLCHAIN=local` (no other toolchain is selected or fetched) |
+| `crw_dev` | `tree`, or an absolute path to a `crw-dev` binary | `tree` runs the verified tree's own crw-dev, `<go> run -tags dev ./cmd/crw-dev ci local ...`, in that tree; a path runs that binary. Empty is `tree` when `go_root` is set |
+
+The merged tree of an integration batch verifies itself: in `tree` mode the batch runs the merged
+worktree's own `cmd/crw-dev`, so a change to the verification engine is verified by the engine it
+brings, and the engine check of `crw-dev ci local` ([CI](CI.md)) compares the tree it was built from
+with the verified commit. An installed binary is the choice for a project whose tree carries no
+`cmd/crw-dev`; a `tree` verification of such a tree does not start, and its reason names
+`verifier.crw_dev`. With nothing configured the verifier takes `crw-dev` and `go` from `PATH`
+(fail-open): the node verifier records the note on its `crw.verify` journal row (`verifier_note`) and
+the integration verifier writes it to standard error as a `[crw note]` line. A command that does not
+start is a verification that did not run, never a failed one: the node is held with the reason, and
+the batch stops on a host error; both reasons name the setting to add. A `go_root` that is not an
+absolute path or a `crw_dev` that is neither `tree` nor an absolute path is refused where the file is
+read.
+
+The installation records the setting with `crw config verifier --go-root <dir> [--crw-dev tree|<path>]`
+(`--config` names another file than the default): it refuses a root whose `bin/go` is not an
+executable file, then rewrites the file with the section set and every other key kept (keys sorted,
+owner-only, a missing file created). Without a flag it prints the section (`config`, `go_root`,
+`crw_dev` and `mode`: `tree`, `binary` or `path`). The plain `crw doctor` report shows what a run
+would use as its `verifierTools` entry: the configuration file, the configured root, the `go` the
+verifier runs, where it came from (`config` or `path`) and its version, and `crwDev` (the mode, the
+command and whether it runs: its go runs in `tree` mode, `crw-dev help` exits 0 otherwise). A missing
+or broken tool, and a section that names nothing, are `warnings` there and never a fault.
+
 ## Installing the runtime
 
 `crw install` needs a `crw` to run it. The archive carries one, so unpack it anywhere temporary and

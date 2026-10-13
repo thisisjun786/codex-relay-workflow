@@ -198,6 +198,9 @@ type VerifyOutcome struct {
 	Record   json.RawMessage
 	Summary  string
 	Failures []string
+	// Note is what the verifier says about how it ran, such as tools taken from PATH because nothing configured them (CRW-1319);
+	// the crw.verify row records it as verifier_note.
+	Note string
 }
 
 // Verifier verifies a head. The real one runs `crw-dev ci local` (CILocalVerifier).
