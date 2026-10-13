@@ -137,8 +137,10 @@ carried by the envelope alone until somebody decides what an answer cannot do wi
    relationship's (CRW-259): a report is charged to the relationship it reports, toward the
    recipient it goes to, together with that relationship's parent-child deliveries to the same
    task, so one relationship's loop cannot wake a task more than the cap an hour through either
-   queue, and a parent with many children is not held to one count for all of them. The
-   consequence, said rather than implied: where one task is both a parent and a supervisor, a
+   queue, and a parent with many children is not held to one count for all of them. The upward
+   channel's `run:` and `initiative:` relationship ids are of the orchestrator class (60 an hour), as
+   the relationship of a project's live parent is; the minimum gap stays five seconds for every class.
+   The consequence, said rather than implied: where one task is both a parent and a supervisor, a
    report can wait behind parent-child traffic to that same task through the gap, and through the
    hour only when it is the same relationship's traffic. A transport counts toward the hour when
    its attempt may have gone (it sent something, or its retry was not shown safe), the same test
@@ -729,6 +731,28 @@ skipped by every later attempt, so recording it as a hold would mean recovering 
 never released the report. A busy one is deferred with a backoff that grows and a cap that is
 counted in the journal, because the attempt counter only moves inside the claim a busy
 recipient never reaches.
+
+The backoff is not the only thing that ends a busy wait (CRW-1334, CRW-1314 design section 3). While a
+message waits on a busy recipient, the relay daemon holds a subscription on the recipient's thread, as it
+does for a delivery head (see [subscriptions](subscriptions.md), the busy hold), and the recipient's
+`idle` or `notLoaded` report makes the message due at once: `next_eligible_at` is set to the report's
+tick and a `supervisor_message_woken` journal row names the thread, the status and both deadlines. The
+same tick's supervisor pass attempts it, and the lifecycle read still decides busy before any transport
+call; a `notLoaded` recipient is loaded by the transport's `thread/resume` and given the report by
+`turn/start`. A message held at `busy_cap` (forty busy answers) or `attempt_cap` (its attempts kept ending
+before a send) is released by the recipient's edge, or by a verified readback (`host_read`) of another
+message to the same recipient, which shows the recipient reading its own thread; the hold is lifted, the
+message is due at once, and a `supervisor_message_released` journal row names the hold and what released
+it (`idle_edge` with the status, or `readback` with the message and turn read back). Nothing else about
+the holds changes: the busy count is not reset, so a released message that meets the recipient busy past
+the cap again is held again and waits for the next edge or readback, and the holds staging owns
+(`superseded_by_report`, `hierarchy_unresolved`) are never released this way.
+
+The relay can only wake a recipient that is a Codex App Server thread on the relay's host, with
+authorized settings recorded and a role policy this process can read: without them the attempt is
+withheld before the send (`withheld_pre_send`, `settings_unavailable` or `role_policy_unconfigured`). A
+management or lead session that is not an App Server thread - a Claude Code session, for example - is
+not woken by the relay; its messages stay staged and readable with `supervisor-show`.
 
 A supervisor the host has unloaded is loaded, not skipped. Its pair is the user's own selection,
 so it is never transmitted: a resume can apply what it transmits while the host materializes a
