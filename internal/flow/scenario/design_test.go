@@ -351,6 +351,7 @@ func TestDesignAuditPacketChecksExecutabilityAndAuthority(t *testing.T) {
 		"a policy decision",
 		"a prerequisite of the execution environment",
 		"open question",
+		"also when it reaches this audit unanswered",
 		"needs_changes",
 	} {
 		if !strings.Contains(text, want) {

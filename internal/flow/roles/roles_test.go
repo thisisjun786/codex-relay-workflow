@@ -290,9 +290,24 @@ func TestArchitectOverlayAuthorityBoundary(t *testing.T) {
 		"`design_question`",
 		"the orchestrator",
 		"`assumptions`",
+		// the route as ops.exploreRoute takes it (lane_decisions.go): an empty files_needed is one of the at most three files,
+		// and the open questions of a DESIGN carry no edit regions, so the count alone sends a question inline
+		"at most three files, an empty list among them",
+		"carry no edit regions",
+		"reaches the audit with no answer",
+		// what is handed above the run today, and what is not (the route that hands such a question up is CRW-1316's)
+		"no route today hands it to a layer above the run",
+		"beyond the explorer cap",
 	} {
 		if !strings.Contains(boundary, want) {
 			t.Errorf("the authority boundary section lacks %q:\n%s", want, boundary)
+		}
+	}
+	// The section does not tell the architect that a question it raises goes to the layers above the run: only the questions
+	// beyond the explorer cap do.
+	for _, claim := range []string{"since it is a question for the layers above the run", "(none included)"} {
+		if strings.Contains(boundary, claim) {
+			t.Errorf("the authority boundary section says %q, which the route does not do or does not say plainly:\n%s", claim, boundary)
 		}
 	}
 }

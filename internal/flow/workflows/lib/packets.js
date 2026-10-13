@@ -63,7 +63,7 @@ const AUTHORITY = [
   '- the record of another issue;',
   '- a policy decision;',
   '- a prerequisite of the execution environment.',
-  'A DESIGN that decides one of these, or whose plan depends on one answer to such a question, is a finding. The same question raised as an open question, with the plan resting on an assumption the DESIGN states, is not: an open question does not stop the run.',
+  'A DESIGN that decides one of these, or whose plan depends on one answer to such a question, is a finding. The same question raised as an open question, with the plan resting on an assumption the DESIGN states, is not, also when it reaches this audit unanswered: an open question does not stop the run.',
 ]
 
 export function designAuditPacket(ms, cand, round) {
