@@ -476,6 +476,134 @@ return r.status`)
 	}
 }
 
+// Since the role helper snapshot (CRW-1330) a role can name a model and leave its effort undecided: the step names the model and
+// no effort, and the host runs the subagent at an effort of its own. That subagent is bound on its model alone: thread_started
+// records the effort the host applied as the call's pair with effort_unchecked (not pair_unchecked), and a continuation of the
+// call's handle is not refused for that effort.
+func TestSessionUndecidedEffortIsNotCompared(t *testing.T) {
+	k := newSessionKit(t)
+	pol := FakePolicy()
+	exp := pol.Roles["explorer"]
+	exp.Pair = Pair{Model: "claude-fake-haiku"}
+	pol.Roles["explorer"] = exp
+	k.h.cfg.Policy = pol
+	applied := Pair{"claude-fake-haiku", "medium"}
+	k.orch.answer = func(Step, string, int) orchAnswer { return orchAnswer{pair: &applied} }
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	var mu sync.Mutex
+	mismatch := ""
+	done := make(chan struct{})
+	defer func() {
+		cancel()
+		<-done
+	}()
+	// a pair_mismatch reply is never followed by another spawn here, so the first one ends the run at once
+	go func() {
+		defer close(done)
+		for ctx.Err() == nil {
+			k.orch.mu.Lock()
+			reps := append([]DispatchReport(nil), k.orch.reports...)
+			k.orch.mu.Unlock()
+			for _, rep := range reps {
+				if r, ok, _ := k.bus.ReadReply(rep.ID); ok && r.Status == ReplyPairMismatch {
+					mu.Lock()
+					mismatch = r.Detail
+					mu.Unlock()
+					cancel()
+					return
+				}
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	res, err := Run(ctx, k.h.load(`const r = await agent.call('look', { agentType: 'explorer', label: 'x' })
+const more = await agent.call('look again', { resume: r, label: 'more' })
+return [r.status, more.status]`), k.h.cfg)
+	mu.Lock()
+	detail := mismatch
+	mu.Unlock()
+	if detail != "" {
+		t.Fatalf("the undecided effort was compared: the report was answered %q", detail)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := value[[]string](t, res); strings.Join(got, ",") != "completed,completed" {
+		t.Fatalf("statuses %v (the continuation's rows: %v)", got, k.rowsOf("more"))
+	}
+	for _, label := range []string{"x", "more"} {
+		rows := k.rowsOf(label)
+		if got := eventsOf(rows); got != "prepared,step_published,thread_started,turn_started,completed" {
+			t.Errorf("%s: rows %s", label, got)
+			continue
+		}
+		step, ts := rows[1], rows[2]
+		if rowStr(step.Data, "model") != applied.Model || rowStr(step.Data, "effort") != "" {
+			t.Errorf("%s: step_published names %s/%s, want the role's model and no effort", label, rowStr(step.Data, "model"), rowStr(step.Data, "effort"))
+		}
+		if rowStr(ts.Data, "model") != applied.Model || rowStr(ts.Data, "effort") != applied.Effort || ts.Data["effort_unchecked"] != true || ts.Data["pair_unchecked"] != nil {
+			t.Errorf("%s: thread_started %v, want the host-read pair %v with effort_unchecked", label, ts.Data, applied)
+		}
+	}
+	if n := len(k.orch.spawned()); n != 2 {
+		t.Errorf("%d spawns, want one subagent per call", n)
+	}
+	if info, _ := LookupCall(k.h.journal, k.rowsOf("x")[0].CallID); info.Configured != applied {
+		t.Errorf("the call's pair %v, want the host-read %v", info.Configured, applied)
+	}
+}
+
+// A decided effort is compared as before: a subagent of the role's model at another effort is answered pair_mismatch with the
+// role's pair, the step stays, and the subagent spawned again with the role's pair is bound with no unchecked mark.
+func TestSessionDecidedEffortThatDiffersIsAMismatch(t *testing.T) {
+	k := newSessionKit(t)
+	other := Pair{"claude-fake-haiku", "medium"}
+	var spawnsM sync.Mutex
+	spawns := 0
+	k.orch.answer = func(st Step, _ string, _ int) orchAnswer {
+		spawnsM.Lock()
+		defer spawnsM.Unlock()
+		spawns++
+		if spawns == 1 {
+			return orchAnswer{pair: &other}
+		}
+		return orchAnswer{}
+	}
+	var mu sync.Mutex
+	retried := false
+	go func() {
+		for i := 0; i < 5000; i++ {
+			r, ok, _ := k.bus.ReadReply(firstReportID(k.orch))
+			if ok && r.Status == ReplyPairMismatch {
+				mu.Lock()
+				retried = true
+				mu.Unlock()
+				k.orch.forget()
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	res := k.h.run(`const r = await agent.call('look', { agentType: 'explorer', label: 'x' })
+return r.status`)
+	if got := value[string](t, res); got != "completed" {
+		t.Fatalf("status %s", got)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !retried {
+		t.Fatalf("no pair_mismatch reply for a decided effort that differs")
+	}
+	r, _, _ := k.bus.ReadReply(firstReportID(k.orch))
+	if r.Close != "agent-1" || !strings.Contains(r.Detail, "spawn again with claude-fake-haiku/high (it runs claude-fake-haiku/medium)") {
+		t.Errorf("pair_mismatch reply %+v", r)
+	}
+	ts := rowsNamed(k.rowsOf("x"), EvThreadStarted)
+	if len(ts) != 1 || rowStr(ts[0].Data, "thread_id") != "agent-2" || rowStr(ts[0].Data, "effort") != "high" || ts[0].Data["effort_unchecked"] != nil || ts[0].Data["pair_unchecked"] != nil {
+		t.Errorf("thread_started %v", ts)
+	}
+}
+
 func firstReportID(o *fakeOrch) string {
 	o.mu.Lock()
 	defer o.mu.Unlock()

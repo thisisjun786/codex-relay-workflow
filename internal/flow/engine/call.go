@@ -318,8 +318,13 @@ func (s *scriptVM) planResume(p *callPlan, refuse func(reason, detail string)) {
 		p.inherited = append(p.inherited, "stepDecision")
 	}
 	// A thread whose pair read back wrong when it started was refused then and stays refused: the handle it carries
-	// continues nothing.
-	if info.Configured != spec.Pair {
+	// continues nothing. A session run binds the subagent of a role whose effort is undecided on its model alone
+	// (effort_unchecked), so the effort the host applied is not compared here either.
+	held := info.Configured == spec.Pair
+	if e.cfg.Session != nil && spec.Pair.Model != "" && spec.Pair.Effort == "" {
+		held = info.Configured.Model == spec.Pair.Model
+	}
+	if !held {
 		refuse(ReasonPairRefused, fmt.Sprintf("the thread reads back %s/%s, the role's pair is %s/%s", info.Configured.Model, info.Configured.Effort, spec.Pair.Model, spec.Pair.Effort))
 	}
 }

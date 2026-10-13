@@ -693,7 +693,7 @@ func (c *callRun) sessionVerify(ctx context.Context, agent string, k int, op, ma
 	}
 	want := p.spec.Pair
 	got := Pair{Model: ag.Model, Effort: ag.Effort}
-	if action == StepSpawn && want.Model != "" && got != want {
+	if action == StepSpawn && !sessionPairBinds(want, got) {
 		return DispatchReply{Status: ReplyPairMismatch, Close: agent,
 			Detail: fmt.Sprintf("pair_mismatch: close %s and spawn again with %s/%s (it runs %s/%s)", agent, want.Model, want.Effort, got.Model, got.Effort)}, false
 	}
@@ -709,8 +709,11 @@ func (c *callRun) sessionVerify(ctx context.Context, agent string, k int, op, ma
 		}
 		data := map[string]any{"thread_id": agent, "model": ag.Model, "effort": ag.Effort, "cwd": c.cwd, "host_cwd": ag.Cwd, "parent_thread_id": ag.ParentThreadID,
 			"agent_role": ag.AgentRole, "attempt": s.attempt, "via": "session", "rollout_path": ag.RolloutPath, "marker": marker}
-		if want.Model == "" {
+		switch {
+		case want.Model == "":
 			data["pair_unchecked"] = true
+		case want.Effort == "":
+			data["effort_unchecked"] = true
 		}
 		if s.trace != nil {
 			data["trace"] = map[string]any{"workspace": s.trace.Workspace, "outside": s.trace.Outside, "shared": s.trace.Shared}
@@ -735,6 +738,19 @@ func (c *callRun) sessionVerify(ctx context.Context, agent string, k int, op, ma
 	s.turn, s.boundK = turn.ID, k
 	c.event(EvTurnStarted, map[string]any{"k": k, "op": op, "turn_id": turn.ID, "attempt": s.attempt, "marker": marker, "via": "session"})
 	return DispatchReply{Status: ReplyBound}, true
+}
+
+// sessionPairBinds is the pair rule of a bind: a role whose model the role table leaves to the host binds any subagent
+// (pair_unchecked), a role whose model is set and whose effort is undecided binds a subagent of its model at the effort the host
+// applied (effort_unchecked), and any other role binds a subagent of its pair only.
+func sessionPairBinds(want, got Pair) bool {
+	switch {
+	case want.Model == "":
+		return true
+	case want.Effort == "":
+		return got.Model == want.Model
+	}
+	return got == want
 }
 
 // sessionHarvest reads the bound subagent until its turn ends (§3.3) and returns the outcome, or the loss of the attempt (§5): the
