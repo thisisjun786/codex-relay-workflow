@@ -155,7 +155,7 @@
             "**I — Interview**: HITL-only requirements discovery. Canonical rules (four dimensions, contradiction scanning, readiness gating, Q/A capture) live in `crw-interview`; PABCD owns the phase edge I->P and the return-to-Interview affordance from any phase.\n"
           ],
           "new": [
-            "**I — Interview**: kept in the state machine for an explicit command and the CXC contract. CRW holds no synchronous interview (CRW-1340), so no skill owns interview rules; the I directive states the decision-request path above. PABCD owns the phase edge I->P.\n"
+            "**I — Interview**: kept in the state machine for an explicit command and the recorded contract fixtures. CRW holds no synchronous interview (CRW-1340), so no skill owns interview rules; the I directive states the decision-request path above. PABCD owns the phase edge I->P.\n"
           ]
         },
         {
