@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -20,6 +21,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/journal"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/workflows"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -73,6 +75,11 @@ type Lab struct {
 	// nil hands nothing.
 	Upward   engine.UpwardHook
 	Reporter ops.Reporter
+	// Lib, when set, is the helper library behind crw:lib/<name> the project lane loads in place of the embedded one, and Prompt the
+	// role prompt the backend of the next process starts threads with in place of roles.Prompt: what a process built from other
+	// packet or overlay text would run (CRW-1321).
+	Lib    fs.FS
+	Prompt func(role string, qa bool) (string, error)
 }
 
 // hookJournal wraps the run's journal: a process that dies writes no more rows, and a test can look at every row as it is written.
@@ -201,7 +208,7 @@ func (l *Lab) spawn(owner string) {
 	if err != nil {
 		l.t.Fatal(err)
 	}
-	l.backend, err = agent.New(agent.Config{Client: l.client, Allocator: l.alloc, Threads: l.owned, PollEvery: 25 * time.Millisecond, InterruptWait: 5 * time.Second, Owner: owner, OwnerAlive: alive})
+	l.backend, err = agent.New(agent.Config{Client: l.client, Allocator: l.alloc, Threads: l.owned, PollEvery: 25 * time.Millisecond, InterruptWait: 5 * time.Second, Owner: owner, OwnerAlive: alive, Prompt: l.Prompt})
 	if err != nil {
 		l.t.Fatal(err)
 	}
@@ -300,6 +307,13 @@ func (l *Lab) Resume() *engine.Result { l.t.Helper(); return l.exec(true, l.Args
 func (l *Lab) exec(resume bool, args json.RawMessage) *engine.Result {
 	l.t.Helper()
 	prog, err := workflows.Load("project-lane")
+	if l.Lib != nil {
+		text, serr := workflows.Source("project-lane")
+		if serr != nil {
+			l.t.Fatal(serr)
+		}
+		prog, err = script.Load(script.Source{Name: "project-lane.js", Text: text, Dir: workflows.FS, Lib: l.Lib})
+	}
 	if err != nil {
 		l.t.Fatal(err)
 	}
