@@ -11,7 +11,6 @@ import (
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 type forwarded struct {
@@ -20,18 +19,20 @@ type forwarded struct {
 	calls          int
 }
 
-// recordForward replaces the daemon client with one that records what the bridge sends and answers code and stdout.
-func recordForward(t *testing.T, code int, out string) *forwarded {
+// recordForward gives report_child a daemon client that records what the bridge sends and answers code and stdout, and a
+// state resolver that answers state whatever socket it is asked about, as the relay's resolver does from the bridge's own
+// environment.
+func recordForward(t *testing.T, state string, code int, out string) *forwarded {
 	t.Helper()
 	got := &forwarded{}
-	previous := forwardChild
-	forwardChild = func(_ context.Context, state, program string, argv []string, stdout, _ io.Writer) (int, error) {
+	previousForward, previousState := forwardChild, childState
+	RegisterChildReports(func(_ context.Context, state, program string, argv []string, stdout, _ io.Writer) (int, error) {
 		got.calls++
 		got.state, got.program, got.argv = state, program, slices.Clone(argv)
 		_, _ = io.WriteString(stdout, out)
 		return code, nil
-	}
-	t.Cleanup(func() { forwardChild = previous })
+	}, func(string) (string, error) { return state, nil })
+	t.Cleanup(func() { RegisterChildReports(previousForward, previousState) })
 	return got
 }
 
@@ -58,8 +59,7 @@ var childCommandArguments = map[string][]string{
 func TestReportChildForwardsToTheDaemonOnTheBridgesOwnState(t *testing.T) {
 	home, env := isolated(t)
 	state := filepath.Join(home, "relay-state")
-	t.Setenv(store.StateEnv, state)
-	got := recordForward(t, 0, `{"stage":"final"}`)
+	got := recordForward(t, state, 0, `{"stage":"final"}`)
 	s := serve(t, []string{"--socket", fakehost.SocketPath(t, "absent.sock"), "--state-dir", filepath.Join(home, "ledger")}, env)
 	arguments := childCommandArguments["emit"]
 	result := call(t, s, "report_child", map[string]any{"command": "emit", "arguments": arguments})
@@ -82,8 +82,7 @@ func TestReportChildForwardsToTheDaemonOnTheBridgesOwnState(t *testing.T) {
 func TestReportChildNeverTakesTheStateFromTheCall(t *testing.T) {
 	home, env := isolated(t)
 	state := filepath.Join(home, "relay-state")
-	t.Setenv(store.StateEnv, state)
-	got := recordForward(t, 0, `{}`)
+	got := recordForward(t, state, 0, `{}`)
 	s := serve(t, []string{"--socket", fakehost.SocketPath(t, "absent.sock"), "--state-dir", filepath.Join(home, "ledger")}, env)
 	elsewhere := filepath.Join(home, "elsewhere")
 	for _, extra := range [][]string{{"--state", elsewhere}, {"--state=" + elsewhere}, {"--socket", elsewhere}, {"--kind-module", "codex_session_relay.projects"}, {"--json"}, {"--help"}} {
@@ -109,8 +108,7 @@ func TestReportChildNeverTakesTheStateFromTheCall(t *testing.T) {
 // the daemon is asked, and so is a missing argument list.
 func TestReportChildAcceptsOnlyTheChildCommands(t *testing.T) {
 	home, env := isolated(t)
-	t.Setenv(store.StateEnv, filepath.Join(home, "relay-state"))
-	got := recordForward(t, 0, `{}`)
+	got := recordForward(t, filepath.Join(home, "relay-state"), 0, `{}`)
 	s := serve(t, []string{"--socket", fakehost.SocketPath(t, "absent.sock"), "--state-dir", filepath.Join(home, "ledger")}, env)
 	for _, command := range []string{"register", "deliver", "daemon", "--state", ""} {
 		result := call(t, s, "report_child", map[string]any{"command": command, "arguments": []string{}})
@@ -136,8 +134,7 @@ func TestReportChildAcceptsOnlyTheChildCommands(t *testing.T) {
 // child sees why its report was not recorded.
 func TestReportChildSaysWhyTheDaemonRefused(t *testing.T) {
 	home, env := isolated(t)
-	t.Setenv(store.StateEnv, filepath.Join(home, "relay-state"))
-	recordForward(t, 2, `{"error":"refused","reason":"scope_escape"}`)
+	recordForward(t, filepath.Join(home, "relay-state"), 2, `{"error":"refused","reason":"scope_escape"}`)
 	s := serve(t, []string{"--socket", fakehost.SocketPath(t, "absent.sock"), "--state-dir", filepath.Join(home, "ledger")}, env)
 	result := call(t, s, "report_child", map[string]any{"command": "emit", "arguments": childCommandArguments["emit"]})
 	s.finish(t)

@@ -5,18 +5,31 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/argparse"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
-// forwardChild is how report_child reaches the relay daemon: the client a child's own command uses (hook.ForwardChild),
-// which dials the selected state's control.sock, checks the daemon's peer and ownership, and returns the daemon's
-// answer byte for byte. There is no other route and no fallback to a store of the bridge's own.
-var forwardChild = hook.ForwardChild
+// ChildForward carries a child command to the relay daemon whose state directory is state and returns the daemon's answer
+// byte for byte: the client a child's own command uses (hook.ForwardChild), which dials the state's control.sock and checks
+// the daemon's peer and ownership. There is no other route and no fallback to a store of the bridge's own.
+type ChildForward func(ctx context.Context, state, program string, argv []string, stdout, stderr io.Writer) (int, error)
+
+// ChildState is the state directory of the relay daemon a bridge started on socket reaches, resolved the way the relay
+// resolves a state (store.ResolveStateDir): "" is the default socket.
+type ChildState func(socket string) (string, error)
+
+var (
+	forwardChild ChildForward
+	childState   ChildState
+)
+
+// RegisterChildReports gives report_child its route to the relay daemon. It is called at executable composition time (the
+// relay adapter's Register), not when this package loads: the package imports no relay package but the leaf argparse, which keeps the relay's
+// own packages free to test against it (internal/relay/store's tests import it).
+func RegisterChildReports(forward ChildForward, state ChildState) { forwardChild, childState = forward, state }
 
 // childReports is the bridge's route to the relay daemon (CRW-1297). The bridge runs outside the sandbox of the child
 // that calls report_child, so a child that cannot connect to control.sock (a readOnly sandbox, or a workspace-write one
@@ -46,8 +59,8 @@ type reportChildIn struct {
 }
 
 func (h handlers) reportChild(ctx context.Context, in reportChildIn) (map[string]any, error) {
-	if h.reports == nil {
-		return h.explained("report_child", nil, &bridge.Invalid{Reason: "this bridge was started without a route to the relay daemon, so it cannot carry a child report"})
+	if h.reports == nil || forwardChild == nil || childState == nil {
+		return h.explained("report_child", nil, &bridge.Invalid{Reason: "this bridge was built without a route to the relay daemon, so it cannot carry a child report"})
 	}
 	// The arguments are the command's own options and nothing else: the daemon reads them as it reads a child's
 	// command line and answers a line it cannot read only with a rejected request, so the reason is given here. A
@@ -60,12 +73,12 @@ func (h handlers) reportChild(ctx context.Context, in reportChildIn) (map[string
 		}
 		return h.explained("report_child", nil, &bridge.Invalid{Reason: fmt.Sprintf("arguments are not the options of `%s`: %s; the call names no state, socket or module: the relay daemon alone decides where a report is recorded", in.Command, reason)})
 	}
-	selection, err := store.ResolveStateDir("", h.reports.socket)
+	state, err := childState(h.reports.socket)
 	if err != nil {
 		return h.explained("report_child", nil, fmt.Errorf("the relay daemon's state directory cannot be resolved: %w", err))
 	}
 	var stdout, stderr bytes.Buffer
-	code, err := forwardChild(ctx, selection.Path, "crw", append([]string{in.Command}, in.Arguments...), &stdout, &stderr)
+	code, err := forwardChild(ctx, state, "crw", append([]string{in.Command}, in.Arguments...), &stdout, &stderr)
 	if err != nil {
 		return h.explained("report_child", nil, err)
 	}
