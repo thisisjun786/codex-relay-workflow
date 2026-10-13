@@ -147,8 +147,9 @@ func TestUpgradeDryRunCallsNoServiceCommand(t *testing.T) {
 	})
 }
 
-// A temp path that contains the letters "service" is part of the doctor arguments on a dry run,
-// not a service call; the dry-run and verification-refusal checks must still hold.
+// A temp path that contains the letters "service" is part of the doctor arguments, not a service
+// call. The dry-run check must still hold, and so must a refusal that comes after that doctor
+// call: an unreadable doctor answer stops the run only once the call has carried the temp path.
 func TestUpgradeDryRunCallsNoServiceCommandWhenTheTempPathContainsService(t *testing.T) {
 	dir, err := os.MkdirTemp("", "it-service-spee-")
 	if err != nil {
@@ -164,7 +165,15 @@ func TestUpgradeDryRunCallsNoServiceCommandWhenTheTempPathContainsService(t *tes
 	}
 	t.Setenv("TMPDIR", dir)
 	TestUpgradeDryRunCallsNoServiceCommand(t)
-	TestUpgradeRefusesMissingVerificationRecord(t)
+	TestUpgradeRefusesUnreadableDoctorContents(t)
+}
+
+// The doctor command's arguments carry the temp directory, and the refusal comes after that
+// command. install and service are command words; a path that contains those letters is neither.
+func TestUpgradeRefusesUnreadableDoctorContents(t *testing.T) {
+	h := upgradeHarness(t, upgradeHarnessOptions{gh: upgradeGhPaths(upgradeGoodCommit),
+		pointer: true, doctorUnavailable: true})
+	upgradeAssertRefusal(t, h, []string{"--release-dir", h.release}, upgradeReasonStoreRead)
 }
 
 // C2: start is called even when the update fails, and the service comes back on the runtime the
@@ -230,10 +239,9 @@ func TestUpgradeRefusesBeforeTheSteps(t *testing.T) {
 		if code := h.run("--release-dir", h.release); code != upgradeExitRefused {
 			t.Fatalf("exit %d, want %d", code, upgradeExitRefused)
 		}
-		for _, line := range h.callArgs() {
-			if strings.Contains(line, "service") {
-				t.Errorf("a missing pointer still touched the service: %q", line)
-			}
+		if upgradeLaterStepCalled(t, h, "service") {
+			got := strings.Join(append(h.callArgs(), h.ghCallLines()...), " | ")
+			t.Errorf("a missing pointer still touched the service: %s", got)
 		}
 	})
 }
