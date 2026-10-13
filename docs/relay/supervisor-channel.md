@@ -16,8 +16,10 @@ is a `scope_directives` row that linkage already owns, and nothing here sends on
 
 ### Who may emit one
 
-The live parent of the project, addressed to the live supervisor of the initiative above it,
-both read from the linkage walk rather than from a frozen row - the rule
+The live parent of the project, addressed to the level directly above the project (the owner of
+the management seat linked to it, else the live supervisor of the initiative above it, else the
+single store seat; see [the level above a project](#the-level-above-a-project)), both read from the
+linkage walk rather than from a frozen row - the rule
 `delivery.resolve_recipient` already applies to a completion, for the same reason: an
 assignment registered before a handover names the owner that stepped down.
 
@@ -26,7 +28,8 @@ one has said two things, and neither becomes a recipient. A caller may name the 
 believes in; a disagreement with the linkage is the finding and is refused, because substituting
 either value for the other files a report with the wrong task.
 
-A project no initiative supervises refuses as `unregistered_scope`. That is not the same as
+A project nothing stands above (no management seat, no initiative, no store seat), or whose
+management seat has no live owner, refuses as `unregistered_scope`. That is not the same as
 owing nothing: the obligation stays standing, and having nowhere to send a report is a different
 state from having none to send.
 
