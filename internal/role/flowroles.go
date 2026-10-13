@@ -33,9 +33,9 @@ func flowOnlyRole(r RoleName) bool { return r == ExecutorT1 || r == ReviewerFina
 // storeRole reports whether a write or a read by name may address the role: a helper role or a flow-only key.
 func storeRole(r RoleName) bool { return validRole(r) || flowOnlyRole(r) }
 
-// flowCompiledDefaults are the pairs a flow-only key takes when the store has no entry for it: the agent-roles values the
-// execution policy declared when the flow stopped reading it. They are never the executor's or the reviewer's pair, so a tier
-// step to executor-t1 or a final review stays a step to another pair.
+// flowCompiledDefaults are the pairs a flow-only key takes when the store holds no usable entry for it (an entry in mode default
+// is undecided instead). They are never the executor's or the reviewer's pair, so a tier step to executor-t1 or a final review
+// stays a step to another pair.
 var flowCompiledDefaults = map[RoleName][2]string{
 	ExecutorT1:    {"anthropic/claude-sonnet-5-5", "xhigh"},
 	ReviewerFinal: {"gpt-6.1-sol", "xhigh"},
@@ -47,7 +47,7 @@ type FlowRoleState string
 const (
 	// FlowRoleStored: the store's entry names the model (its effort may still be empty, which is undecided).
 	FlowRoleStored FlowRoleState = "store"
-	// FlowRoleCompiledDefault: a flow-only key the store does not hold usably; the compiled default applies.
+	// FlowRoleCompiledDefault: a flow-only key the store has no usable entry for; the compiled default applies.
 	FlowRoleCompiledDefault FlowRoleState = "compiled_default"
 	// FlowRoleUndecided: the role inherits the session's model (mode default, no entry, or an entry that cannot be used);
 	// the flow has no pair for it and a call of the role names no model and no effort.
@@ -115,7 +115,12 @@ func flowRoleOf(name RoleName, raw rawConfig, usable bool, path string) (FlowRol
 		}
 	}
 	setHint := fmt.Sprintf("set it with crw role helper set %s --mode model --model <id> --effort <level>", name)
-	if def, ok := flowCompiledDefaults[name]; ok && (!present || reason != "" || cfg.Mode != ModeModel) {
+	if _, flowOnly := flowCompiledDefaults[name]; flowOnly {
+		setHint += fmt.Sprintf(", or crw role helper reset %s for the compiled default", name)
+	}
+	// A flow-only key takes its compiled default only when the store holds no usable entry for it; an entry in mode default is
+	// the operator's decision to leave it undecided, as for a helper role.
+	if def, ok := flowCompiledDefaults[name]; ok && (!present || reason != "") {
 		role.Model, role.Effort, role.State = def[0], def[1], FlowRoleCompiledDefault
 		why := "has no " + string(name) + " entry"
 		switch {
@@ -123,8 +128,6 @@ func flowRoleOf(name RoleName, raw rawConfig, usable bool, path string) (FlowRol
 			why = "cannot be used"
 		case reason != "":
 			why = "cannot use its " + string(name) + " entry (" + reason + ")"
-		case present:
-			why = "holds " + string(name) + " in mode default"
 		}
 		return role, fmt.Sprintf("the helper role store %s %s: the flow uses the compiled default %s at %s for %s (%s)", path, why, def[0], def[1], name, setHint)
 	}
@@ -169,7 +172,8 @@ func (s FlowSnapshot) Digest() string {
 }
 
 // flowRoleView is what `crw role helper get|set|reset` answers for a flow-only key: the role's settings as the store holds them,
-// or the compiled default the flow uses when the store holds none, with the source named.
+// or the compiled default the flow uses when the store holds none, with the source named as the flow reads it (store,
+// compiled_default, or undecided for an entry in mode default).
 func flowRoleView(env host.LookupEnv, name RoleName) (object, error) {
 	path, err := StorePath(env)
 	if err != nil {
@@ -186,8 +190,10 @@ func flowRoleView(env host.LookupEnv, name RoleName) (object, error) {
 		if cfg, reason = parseRole(value); reason != "" {
 			return nil, &UnusableSettingsError{Path: path, Role: name, Reason: reason}
 		}
-	}
-	if !present || cfg.Mode != ModeModel {
+		if cfg.Mode != ModeModel {
+			source = FlowRoleUndecided // mode default: the flow has no pair for the role (a reset brings back the compiled default)
+		}
+	} else {
 		def := flowCompiledDefaults[name]
 		model, effort := def[0], EffortName(def[1])
 		cfg.Mode, cfg.Model, cfg.Effort, source = ModeModel, &model, &effort, FlowRoleCompiledDefault
