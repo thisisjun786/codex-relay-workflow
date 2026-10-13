@@ -26,7 +26,7 @@ const (
 )
 
 // roleScopeOwner is linkage.ROLE_SCOPE_OWNER.
-var roleScopeOwner = map[string]string{scopeInitiative: "supervisor", scopeProject: "parent", scopeIssue: "child"}
+var roleScopeOwner = map[string]string{scopeManagement: "supervisor", scopeInitiative: "supervisor", scopeProject: "parent", scopeIssue: "child"}
 
 // peerLinkID is link_id(PEER, ...): symmetric, so both ends converge on one record.
 func peerLinkID(left, right string) string {
@@ -283,7 +283,23 @@ func (r *Registry) bindScopeKind(ctx context.Context, role, requested, key strin
 	}
 	defer release()
 	var refused *linkRefusal
+	bid := bindingID(role, kind, key, endpoint.TaskID)
 	err = r.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
+		if kind == scopeManagement && key == endpoint.TaskID {
+			// A session registering its own seat (the key is its own thread) that already holds a
+			// management seat it took over by handover is answered with that seat: one task holds one
+			// supervisor seat, and the seat keeps the id it was first registered under.
+			held, found, err := l.oneString(ctx, "SELECT binding_id FROM scope_bindings WHERE task_id = ? AND role = ? AND scope_kind = ?"+
+				"  AND scope_key != ? AND status IN ('active','paused') AND superseded_by IS NULL ORDER BY revision DESC, binding_id LIMIT 1",
+				endpoint.TaskID, role, scopeManagement, key)
+			if err != nil {
+				return err
+			}
+			if found {
+				bid = held
+				return nil
+			}
+		}
 		plan, refusal, err := l.bindingPlanKind(ctx, role, kind, key, endpoint, "")
 		if err != nil {
 			return err
@@ -291,6 +307,9 @@ func (r *Registry) bindScopeKind(ctx context.Context, role, requested, key strin
 		if refusal != nil {
 			refused = refusal
 			return l.recordConflict(ctx, refusal, now)
+		}
+		if err := l.retireStoreSeat(ctx, kind, endpoint.TaskID, plan.id, now); err != nil {
+			return err
 		}
 		return l.applyBindingPlan(ctx, plan, status, now)
 	})
@@ -300,7 +319,29 @@ func (r *Registry) bindScopeKind(ctx context.Context, role, requested, key strin
 	if refused != nil {
 		return nil, refused.err()
 	}
-	return l.binding(ctx, bindingID(role, kind, key, endpoint.TaskID))
+	return l.binding(ctx, bid)
+}
+
+// retireStoreSeat lays down the store seat task holds when it takes a management seat (CRW-1333):
+// one task holds one supervisor seat, so the store seat is archived, superseded by the management
+// binding, and the move is journalled as scope_seat_moved. Any other kind, or a task holding no
+// store seat, changes nothing.
+func (l linkage) retireStoreSeat(ctx context.Context, kind, task, successor, at string) error {
+	if kind != scopeManagement {
+		return nil
+	}
+	held, found, err := l.oneString(ctx, "SELECT binding_id FROM scope_bindings WHERE task_id = ? AND role = ? AND scope_kind = ? AND scope_key = ?"+
+		"  AND status IN ('active','paused') AND superseded_by IS NULL", task, roleSupervisor, scopeStore, scopeStore)
+	if err != nil || !found {
+		return err
+	}
+	if _, err := l.q(ctx).ExecContext(ctx, "UPDATE scope_bindings SET status = ?, superseded_by = ?, updated_at = ? WHERE binding_id = ?",
+		statusArchived, successor, at, held); err != nil {
+		return err
+	}
+	return journal(ctx, l.r.Store, "scope_seat_moved", successor, contract.OrderedObject{{Key: "from", Value: held},
+		{Key: "fromScopeKind", Value: scopeStore}, {Key: "to", Value: successor}, {Key: "toScopeKind", Value: scopeManagement},
+		{Key: "taskId", Value: task}, {Key: "reason", Value: "one task holds one supervisor seat, so the store seat is laid down when the thread takes its management seat"}}, at)
 }
 
 func (l linkage) insertBinding(ctx context.Context, bid, role, kind, key string, endpoint Endpoint, status string, revision int64, at string, supersedes, note sql.NullString) error {
@@ -889,6 +930,9 @@ func (r *Registry) HandoverScopeKind(ctx context.Context, role, requested, key, 
 			if err := r.closeSettledIn(ctx, rid, actor, now); err != nil {
 				return err
 			}
+		}
+		if err := l.retireStoreSeat(ctx, kind, endpoint.TaskID, newID, now); err != nil {
+			return err
 		}
 		q := l.q(ctx)
 		currentID := pyjson.Text(current.Get("bindingId"))
