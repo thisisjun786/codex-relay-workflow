@@ -23,6 +23,13 @@ func unreadableDetail(err error) string { return store.StoredSQLiteError(err) }
 // The seat is the scope's SUPERVISOR binding: the store scope's unique index is per role, so a row
 // of another role at the same scope is admitted by the schema and is not an owner of it. This is
 // the same rule the store ceiling's declarer check applies.
+//
+// A store seat its holder laid down when it registered its management seat (CRW-1333,
+// retireStoreSeat: archived, superseded by the management binding) is held through that management
+// seat: with no live store-scope binding, the answer is the live owner of the management seat that
+// took the most recently laid-down store seat over, so it follows that seat's handovers. The record
+// is the management binding (scopeKind management); its taskId is the seat's holder. A store seat
+// bound again afterwards is live and answers for itself.
 func (r *Registry) StoreScopeSupervisor(ctx context.Context) ([]contract.OrderedObject, error) {
 	rows, err := r.Store.All(ctx, "SELECT * FROM scope_bindings"+
 		"  WHERE scope_kind = ? AND scope_key = ? AND role = ?"+
@@ -31,11 +38,36 @@ func (r *Registry) StoreScopeSupervisor(ctx context.Context) ([]contract.Ordered
 	if err != nil {
 		return nil, err
 	}
+	if len(rows) == 0 {
+		if rows, err = r.storeSeatSuccessor(ctx); err != nil {
+			return nil, err
+		}
+	}
 	out := make([]contract.OrderedObject, len(rows))
 	for i, row := range rows {
 		out[i] = bindingRecord(row)
 	}
 	return out, nil
+}
+
+// storeSeatSuccessor is the live binding of the management seat that took the store seat over: the
+// most recently laid-down store-scope supervisor binding whose successor is a management binding,
+// and the live supervisor of that management seat now (the successor itself, or whoever took the
+// seat by handover). None when no store seat was ever laid down for a management seat, or when that
+// seat has no live owner.
+func (r *Registry) storeSeatSuccessor(ctx context.Context) ([]store.Row, error) {
+	moved, err := r.Store.All(ctx, "SELECT m.scope_key AS seat FROM scope_bindings s JOIN scope_bindings m ON m.binding_id = s.superseded_by"+
+		"  WHERE s.scope_kind = ? AND s.scope_key = ? AND s.role = ? AND s.status = ?"+
+		"    AND m.scope_kind = ? AND m.role = ?"+
+		"  ORDER BY s.updated_at DESC, s.revision DESC, s.binding_id DESC LIMIT 1",
+		scopeStore, scopeStore, roleSupervisor, statusArchived, scopeManagement, roleSupervisor)
+	if err != nil || len(moved) == 0 {
+		return nil, err
+	}
+	return r.Store.All(ctx, "SELECT * FROM scope_bindings"+
+		"  WHERE scope_kind = ? AND scope_key = ? AND role = ?"+
+		"    AND status IN ('active','paused') AND superseded_by IS NULL"+
+		"  ORDER BY revision DESC, binding_id", scopeManagement, moved[0].Text("seat"), roleSupervisor)
 }
 
 // raised is the part of a reader's failure Python does not answer as unreadable: the

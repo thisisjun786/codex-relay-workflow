@@ -217,6 +217,24 @@ func (r *CatalogReader) ReadCatalog(o CatalogOptions) (LiveCatalog, error) {
 	return c, nil
 }
 
+// ReadCatalogReadOnly is a catalog read that keeps no cache: the same discovery as ReadCatalog (OCX's live catalog, else the native
+// one), with nothing written and no earlier answer shown in place of a failed one. A caller that must write nothing, such as the
+// doctor, reads the catalog through it (CRW-1324).
+func ReadCatalogReadOnly(o CatalogOptions) LiveCatalog {
+	environ := o.Environ
+	if environ == nil {
+		environ = os.Environ()
+	}
+	env := catalogEnv(environ)
+	src := resolveCatalogSource(env)
+	now := o.Now
+	if now == nil {
+		now = time.Now
+	}
+	return src.stamp(queryCatalog("", src.key(env), src, environ, env, now, o, nil))
+}
+
+// queryCatalog discovers the catalog; a path of "" keeps no cache.
 func queryCatalog(path, key string, src catalogSource, environ []string, env host.LookupEnv, now func() time.Time, o CatalogOptions, cached *LiveCatalog) LiveCatalog {
 	run := o.RunOcx
 	if run == nil {
@@ -247,7 +265,7 @@ func queryCatalog(path, key string, src catalogSource, environ []string, env hos
 		}
 		at := now().UTC().Format("2006-01-02T15:04:05.000Z")
 		c := LiveCatalog{Catalog: Catalog{State: state, Entries: entries}, Status: "fresh", Source: source, FetchedAt: &at}
-		if !persistCatalog(path, key, c, crwdir.Rename) {
+		if path != "" && !persistCatalog(path, key, c, crwdir.Rename) {
 			c.Message = "Model list loaded; its cache could not be saved."
 		}
 		return c

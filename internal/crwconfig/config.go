@@ -35,6 +35,11 @@ type File struct {
 // XDG_CONFIG_HOME is "env", and the built-in location is "default".
 func (f *File) Path() (string, Source) { return f.path, f.source }
 
+// Loaded reports whether a file was read at Path. The path always names a location, wherever it came from; Loaded
+// is the other half: true when a file was there and was read, false when the location holds none and the
+// defaults stand. The source says where the path came from, never whether a file exists (CRW-1324).
+func (f *File) Loaded() bool { return f.raw != nil }
+
 // Roots is every resolved root by name. The map is a copy, so a caller cannot change
 // what the file resolved.
 func (f *File) Roots() map[string]Root {
@@ -223,6 +228,10 @@ func Run(args []string, stdout, stderr io.Writer, getenv func(string) string) in
 		return writeJSON(stdout, stderr, pathsReport(file))
 	case "check":
 		report := Check(file, getenv, runProbe)
+		// The work-tracking setting: its spelling, and through the probe gh and the repository.
+		var findings []Finding
+		report.Tracking, findings = CheckTracking(file, runTrackingProbe, true)
+		report.Findings = append(report.Findings, findings...)
 		if code := writeJSON(stdout, stderr, report); code != 0 {
 			return code
 		}
@@ -313,5 +322,5 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, "usage: crw config [-h] {paths,show,check} ...")
 	fmt.Fprintln(w, "  paths\tprint every named root, its path and where the path came from")
 	fmt.Fprintln(w, "  show\tprint the configuration file's path, where it came from and its document")
-	fmt.Fprintln(w, "  check\tcheck every root: it exists or can be made, is writable, its file system and space, a socket path's length, state kept together, drift from the placement in use; exit 1 on a fault")
+	fmt.Fprintln(w, "  check\tcheck every root: it exists or can be made, is writable, its file system and space, a socket path's length, state kept together, drift from the placement in use, and the tracking setting (gh signed in, the repository's issues readable and writable); exit 1 on a fault")
 }

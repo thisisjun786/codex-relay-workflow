@@ -221,6 +221,9 @@ func mapAffordanceSessionStart(raw, fallbackCwd string, env host.LookupEnv, role
 	if command != "crw" {
 		banner = append(banner, harness.ContextSection{Text: "[crw] `crw` is not on PATH here; wherever docs say `crw`, run: " + command})
 	}
+	// CRW-1324: a policy file that no longer matches the bridge registration costs the session its bridge; like the PATH banner it is said
+	// at every start and resume, because it can change between them.
+	banner = append(banner, policyDriftSections(env)...)
 	given := strings.Join(identity, "\n\n")
 	// What a resume that was given the pointers before says is the binding and the PATH banner: the part of the answer that does not
 	// depend on the pointers.

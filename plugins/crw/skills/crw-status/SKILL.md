@@ -75,7 +75,7 @@ and name the candidates in that question.
 Read and report from the top down, in this order, and stop at the level the question reaches: the
 manager, then each initiative lead, then each project orchestrator, then each issue.
 
-1. **Manager.** The store seat: the capacity and caps it holds, the decisions waiting for Jun, and
+1. **Manager.** The store seat (held through its management seat once it registered): the capacity and caps it holds, the decisions waiting for Jun, and
    what it has handed to the initiative leads and project orchestrators.
 2. **Initiative lead.** Per initiative, its approved project set, the order across projects, the
    finish condition and whether it holds.
