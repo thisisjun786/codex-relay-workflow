@@ -56,6 +56,16 @@ the pacing rather than the 20-second tick. The backoff is the safety net either 
 the relay never saw, a host that reports no status, and a recipient that is busy again before the
 attempt lands.
 
+The supervisor channel takes the same hold and the same edge (CRW-1334). A supervisor message that
+found its recipient busy (`deferred_busy`, no hold), and one held at `busy_cap` or `attempt_cap`, keep
+the recipient in the set the relay holds a subscription for; the recipient's thread is its task id.
+The subscription is opened in the tick the supervisor pass deferred the message, by a second hold pass
+after that pass, so the edge is seen from that tick on. A report of `idle` or `notLoaded` for the thread
+makes every such unheld message due at once (`supervisor_message_woken`) and releases a `busy_cap` or
+`attempt_cap` hold of the recipient's unsent messages (`supervisor_message_released`), in the same tick
+as the delivery wake and before the supervisor pass runs. The subscription is released when no message
+waits on the recipient in either channel.
+
 The reader records successful creation and turn acknowledgements before caller
 cancellation can hide them. Matching terminals are retained independently of
 the public notification buffer, including completion before the start reply.
