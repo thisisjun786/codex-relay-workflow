@@ -674,6 +674,44 @@ withholding, the busy backoff and caps, the recipient's send budget, one head pe
 staging order, uncertain sends held until a readback. The deliverer that reserves and settles it
 lives in `faultnotice` and is described in [faults](faults.md).
 
+### Direct messages
+
+`StageDirect` stages the messages the channel carries without an event behind them, the way a fault
+notification is staged: resolved before and again under the write lock (a hierarchy that moved in
+between refuses `relation_owner_drift` and writes nothing), one message per obligation under a
+deterministic id (`sha256(direction|relationship|kind|subject)[:32]`), re-addressed or restated on a
+later staging only while none of its attempts can have sent, and left as it is once one may have.
+The kinds, the relationship each one goes through and the two ends are:
+
+| obligation_kind | relationship | from | to |
+| --- | --- | --- | --- |
+| `lead_report`, `lead_decision_request`, `lead_blocked`, `jun_decision_request` | `initiative:<key>` | the initiative's lead | the management seat above it (the store seat when no management edge stands) |
+| `flow_milestone_report`, `flow_project_blocked`, `flow_project_decision_request`, `flow_escalation`, `flow_completion`, `flow_no_node_started` | `project:<key>` | the project's owner (the orchestrator) | the lead |
+| `session_step_waiting` | `run:<id>` | the run | its owner, `flow_runs.actor_task_id` |
+
+`blocked` and `decision_request` are not among them: those are the event path's kinds, re-derived
+from their event at every claim. The packet is relay-envelope/1 with the roles named by the kind
+(`lead`, `management`, `orchestrator`, `run`), the envelope's `layer` (the layer the message is for)
+and the text in the packet's `body`; the rendered message's header is `[codex-session-relay] <layer>
+message from <sender role> <sender>` and the text follows the fields. A decision kind names the
+decision in `decision` and who owes the answer (the recipient, or the user for
+`jun_decision_request`). Sending is the channel's own: the daemon's supervisor pass picks the row up,
+opens a turn in an idle or unloaded recipient and retries a busy one, and a readback is what it is
+for any message. A recipient needs recorded authorized settings and a role policy, as any recipient
+of this channel does; a management session that is not a Codex App Server thread cannot be woken
+this way.
+
+`crw relay report-up --initiative <key> --kind lead_report|lead_decision_request|lead_blocked
+[--subject ...] [--text ...|@FILE] [--evidence ...]` is a lead's report upward: a `lead_report`
+journal row (the report id, kind, initiative, subject, text, its digest, the evidence and the
+reporting thread, `CODEX_THREAD_ID`) and the direct message, in one transaction. A report with
+nobody above to tell is still recorded and the refusal (exit 2) carries the report id with
+`standing: true`; the same report again answers `replayed: true` and stages nothing more. The
+message goes in the lead's name, and a caller is not refused for not being the lead: a calling
+thread that is not the initiative's lead is named at the top of the message text, recorded on the
+row (`reporterIsLead: false`) and warned in the answer (`warning`); a caller with no
+`CODEX_THREAD_ID` is recorded without a reporter and warned.
+
 ## The surface
 
 ```bash

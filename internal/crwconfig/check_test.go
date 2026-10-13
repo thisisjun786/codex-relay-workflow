@@ -407,7 +407,8 @@ func TestRunCheck(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &report); err != nil {
 		t.Fatalf("not JSON: %v\n%s", err, out)
 	}
-	if len(report.Roots) != len(RootNames()) || len(report.Findings) != 0 {
+	// the one finding of a clean HOME is the warning that no tracking section is set (CRW-1341)
+	if len(report.Roots) != len(RootNames()) || len(report.Findings) != 1 || report.Findings[0].Check != CheckTrackingMissing || report.Findings[0].Level != LevelWarning {
 		t.Errorf("clean HOME: %d roots, findings %+v", len(report.Roots), report.Findings)
 	}
 	plain := filepath.Join(home, "plain")

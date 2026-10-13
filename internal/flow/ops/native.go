@@ -13,6 +13,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/bound"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/sessionhost"
 )
 
 // This file is the run's import of the native spawns the hook decided on its bound threads (F14, CRW-1207). The hook records,
@@ -91,17 +92,8 @@ type NativeImport struct {
 	Escalations []NativeEscalation
 }
 
-// collabItem is the CollabAgentToolCall item of a turn.
-type collabItem struct {
-	Type            string   `json:"type"`
-	ID              string   `json:"id"`
-	Tool            string   `json:"tool"`
-	Status          string   `json:"status"`
-	SenderThreadID  string   `json:"senderThreadId"`
-	ReceiverThreads []string `json:"receiverThreadIds"`
-	Model           *string  `json:"model"`
-	ReasoningEffort *string  `json:"reasoningEffort"`
-}
+// collabItem is the CollabAgentToolCall item of a turn, decoded as the session host decodes it (sessionhost.CollabCall).
+type collabItem = sessionhost.CollabCall
 
 // ImportNativeSpawns joins the hook's ledger of the engine thread (under the flow-bound directory dir) with the items of the turn
 // and the configuration of the threads it created. The rows are deterministic (their ids depend on the facts only: for an
@@ -131,8 +123,8 @@ func ImportNativeSpawns(ctx context.Context, host NativeHost, dir string, turn N
 	}
 	seen := map[string]bool{}
 	for _, raw := range raws {
-		var item collabItem
-		if json.Unmarshal(raw, &item) != nil || item.Type != "collabAgentToolCall" || item.Tool != "spawnAgent" || item.ID == "" ||
+		item, ok := sessionhost.DecodeCollab(raw)
+		if !ok || item.Tool != sessionhost.ToolSpawnAgent || item.ID == "" ||
 			(item.SenderThreadID != "" && item.SenderThreadID != turn.ThreadID) || seen[item.ID] {
 			continue
 		}

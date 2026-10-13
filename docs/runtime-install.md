@@ -393,6 +393,42 @@ there and never a fault. `crw flow start` shows the same reading as the prefligh
 the repository's `go.mod` asks, and when a `tree` verification's repository has no `cmd/crw-dev`),
 and it never stops the start.
 
+### Where work tracking lives
+
+The `tracking` section of the configuration file names the repository that holds the work tracking,
+apart from the code repository (`manage.repository`):
+
+```json
+{"tracking": {"kind": "github", "repo": "OWNER/NAME"}}
+```
+
+| Key | Meaning |
+| --- | --- |
+| `kind` | `github`, the 1.0 path: the issues of `repo`. `linear` is a read-only archive setting for looking the old record up; nothing writes to it. A section that names a `repo` and no `kind` is `github`. |
+| `repo` | `OWNER/NAME`, spelled as GitHub spells a repository (no URL, no `.git`). `github` needs it; `linear` takes none. |
+
+The section is read where it is needed and nowhere else: loading the file never judges it, so a
+missing or malformed `tracking` section stops no other reader of the shared file (the relay state
+selection, the tool roots, `crw config paths` and `show`, the other sections). The reader that asks
+for it is told what to set. `crw config check` reports the setting under `tracking` and in its
+findings:
+
+| Check | Level | When |
+| --- | --- | --- |
+| `tracking_missing` | warning | the file has no `tracking` section; the message names the file and the section to add |
+| `tracking_invalid` | warning | the section is not an object, names an unknown `kind`, a `repo` that is not `OWNER/NAME`, a `github` kind without a repo or a `linear` kind with one; also reported in the `storage` entry of the plain `crw doctor` report and the preflight of `crw install`, which judge the spelling only |
+| `tracking_auth` | error | `kind` is `github` and `gh` is not installed or not signed in to github.com |
+| `tracking_access` | error | `kind` is `github` and the repository is not found, not visible to the login, or its access could not be read |
+| `tracking_issues` | error | `kind` is `github` and Issues are off (`has_issues`), the login cannot read issues, the repository is archived, or the login cannot write issues (it needs triage or write permission) |
+
+For a `github` setting the check asks `gh` two read-only questions: `gh auth status --hostname github.com`
+and `gh api repos/OWNER/NAME`, a GET that reads the repository's `permissions`, `has_issues` and `archived`.
+It never passes a method, field or input flag, so it writes nothing to GitHub, and no gh output but a short
+error text (with anything that looks like a token removed) reaches the report. `crw doctor storage` runs
+the same check; the plain `crw doctor` report and `crw install` never call `gh`. The `tracking` entry of the
+report carries `set`, `kind`, `repo` and, once `gh` answered, `access` (the login's permissions and the
+`issues_read` and `issues_write` verdicts).
+
 ## Installing the runtime
 
 `crw install` needs a `crw` to run it. The archive carries one, so unpack it anywhere temporary and
@@ -1057,6 +1093,18 @@ Two read-only commands, each answering a different question:
   `--temporary` records the destination as a temporary one, so a proof taken there is never read as
   a claim about a host.
 
+The doctor report's `roleModels` entry reads the helper role store (`subagents.json`) and checks each
+model a role routes to (`model` of a role in model mode, and any `fallback.model`) against a model
+catalogue: the live catalogue the role helper and the GUI list from (OCX's `ocx models live`, else the
+native Codex catalogue), read without keeping the cache file that reader keeps, because the doctor writes
+nothing. `roleModels.catalogue` names the catalogue that was read (`state`, `source`, the number of
+`models` and a `detail` when it could not be read), `roleModels.roles` lists each role model with
+`listed` true or false, and `roleModels.warnings` holds one line for each model no catalogue lists, so a role
+that points at a model the provider does not serve is seen before a spawn on it fails. No catalogue is read
+while no role names a model, and a catalogue that could not be read (OCX not running, an OCX without the
+live command) lists nothing and condemns nothing: its state is recorded and `listed` is null. A warning
+changes no exit status and blocks nothing.
+
 None of them takes a lock across the whole reading, so a host changing underneath is described in
 pieces.
 
@@ -1329,6 +1377,17 @@ the policy file therefore has two consequences, and no longer needs the record t
 relay picks the edit up when its daemon restarts, and the record is re-registered so the next bridge
 starts under the new digest. The digest is what lets a changed file fail visibly instead of being
 enforced unregistered.
+
+A file and a record that disagree are said at the start of a session instead of being found from a failed
+handshake. The `SessionStart` hook reads the bridge record in the Codex home, and when it is a plugin-owned
+version-2 record whose policy file is missing, is not a regular file, or hashes to another digest than the
+record names, it adds a warning to the session's context at every start and resume. The warning names the
+policy path, the two digests (shortened) and the command that repairs it, `crw install register-mcp
+--re-register-policy --execution-policy <path>`, and points to the policy editor (`crw gui`), whose
+write edits the file and re-registers it in one operation, so an edit made there leaves no disagreement.
+The warning records and blocks nothing: the session starts, without the bridge's tools until the record is
+re-registered. A host with no bridge record, a record of another shape, or a policy file that cannot be read
+for another reason (the doctor judges those) gets no warning.
 
 A created record is reported only after the policy file has been hashed again, following the write,
 and still matched. A mismatch immediately before the write writes nothing and answers

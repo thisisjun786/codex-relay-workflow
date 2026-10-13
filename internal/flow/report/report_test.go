@@ -6,6 +6,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
 )
 
 // The report row is written before the delivery is tried: when the sender is asked, the row is on record with the digest of the body and
@@ -355,5 +356,24 @@ func TestRevisedMilestoneReportGoesUnderItsOwnLogicalID(t *testing.T) {
 	}
 	if got := w.sender.supervisorSent(); got[len(got)-1].LogicalID != recorded || recorded == sent[0].LogicalID || recorded == sent[1].LogicalID {
 		t.Errorf("retry under %q, the row recorded %q", got[len(got)-1].LogicalID, recorded)
+	}
+}
+
+// CRW-1333: the manager that registers its management seat lays its store seat down (archived, superseded by the management binding).
+// A decision only Jun can make still reaches that manager: the store seat is read through the management seat that took it over.
+func TestJunDecisionReportFindsTheManagerAfterItRegistersItsManagementSeat(t *testing.T) {
+	w := newWorld(t)
+	w.supervise(testLead)
+	w.seat("manager-seat")
+	if err := storeseed.ArchiveScopeBinding(ctx, w.st, "bnd-seat-manager-seat", "archived", "bnd-mgmt-manager-seat", "t2"); err != nil {
+		t.Fatal(err)
+	}
+	w.bind("bnd-mgmt-manager-seat", "supervisor", "management", "manager-seat", "manager-seat")
+	res, err := w.writer().Up(ctx, UpRequest{Kind: KindJunDecisionRequest, Run: testRun, Subject: "ship before the review?", Body: []byte("evidence")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Recipient.State != RecipientStore || res.Recipient.Thread != "manager-seat" {
+		t.Fatalf("recipient %+v, want the manager through its management seat", res.Recipient)
 	}
 }

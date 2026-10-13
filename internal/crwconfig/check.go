@@ -96,9 +96,12 @@ type RootStatus struct {
 
 // Report is the result of Check: the configuration file, every checked root and the findings.
 type Report struct {
-	Config   ReportConfig `json:"config"`
-	Roots    []RootStatus `json:"roots"`
-	Findings []Finding    `json:"findings"`
+	Config ReportConfig `json:"config"`
+	Roots  []RootStatus `json:"roots"`
+	// Tracking is the work-tracking setting, present only when the file carries a tracking section
+	// (or crw config check, which also reports it missing).
+	Tracking *TrackingStatus `json:"tracking,omitempty"`
+	Findings []Finding       `json:"findings"`
 }
 
 // ReportConfig is the configuration file a report was made from.
@@ -637,7 +640,14 @@ func Preflight(getenv func(string) string) (Report, error) {
 	if file == nil {
 		return Report{Findings: []Finding{}}, nil
 	}
-	return Check(file, getenv, runProbe), file.Refusal(getenv)
+	report := Check(file, getenv, runProbe)
+	// The tracking section is judged for its spelling only, with no probe: this report is made on
+	// every doctor run and install, and a missing section is told by crw config check, not here. A
+	// section that is not usable is a warning and never part of the refusal.
+	status, findings := CheckTracking(file, nil, false)
+	report.Tracking = status
+	report.Findings = append(report.Findings, findings...)
+	return report, file.Refusal(getenv)
 }
 
 // Ordered is the report as an ordered JSON object, for a command whose report is written in that
@@ -655,11 +665,16 @@ func (r Report) Ordered() pyjson.Object {
 			{Key: "freeBytes", Value: int64(min(root.FreeBytes, 1<<62))}, {Key: "inUse", Value: inUse},
 		})
 	}
-	return pyjson.Object{
+	out := pyjson.Object{
 		{Key: "config", Value: pyjson.Object{{Key: "path", Value: r.Config.Path}, {Key: "source", Value: string(r.Config.Source)}}},
 		{Key: "roots", Value: roots},
-		{Key: "findings", Value: r.FindingsOrdered()},
 	}
+	if r.Tracking != nil {
+		out = append(out, pyjson.Field{Key: "tracking", Value: pyjson.Object{
+			{Key: "set", Value: r.Tracking.Set}, {Key: "kind", Value: r.Tracking.Kind}, {Key: "repo", Value: r.Tracking.Repo},
+		}})
+	}
+	return append(out, pyjson.Field{Key: "findings", Value: r.FindingsOrdered()})
 }
 
 // FindingsOrdered is the findings as ordered JSON objects.
