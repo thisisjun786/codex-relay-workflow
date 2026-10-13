@@ -879,6 +879,74 @@ any row is written. `crw flow shadow` replays either from the trace and names th
 | `interrupt_requested` | the engine's interrupt of the bound turn |
 | `session_attempt_lost` | an attempt whose subagent will not finish its turn |
 | terminal rows | as for any call |
+| `session_wake` (flow row) | a wake of the owner thread the run staged: `batch`, `wake_id`, `renotify`, `ops`, `owner`, `owner_status`, `waiting_seconds`, `staged` (and `error`) |
+| `escalation` (flow row) | `reason: session_unresponsive`: the steps waited `UnresponsiveAfter` without a dispatched report (`owner`, `ops`, `batch`, `waiting_seconds`); the run goes on |
+
+### The owner's commands
+
+A session run is started, stepped and resumed from its owner thread with the commands of `internal/flow/cli`; every one reads the
+run's directory `<state>/flow/<run>/` and none writes the journal, which only the run process writes.
+
+- `crw flow start WORKFLOW [--backend session|app-server]` starts a session run by default; `--backend app-server` opens a thread
+  per call, for the tests and shadow runs. The spec records the `backend`. A session run's pool is `min(pool, agents.max_threads - 1)`
+  (the owner keeps a slot for a helper of its own; `agents.max_threads` is read from `<CODEX_HOME>/config.toml`, default 6), the
+  preview lists the spawn format of each of the six roles (`spawn_agent(agent_type, message, model, reasoning_effort,
+  fork_context=false)`) and the six session facts below, and the answer names the command the steps are taken with
+  (`next`). Before the process starts the owner thread is bound (below).
+- `crw flow next RUN [--wait S] [--json]` answers the run's `state` (`running`, `waiting_session`, `waiting_decision`, `paused`,
+  `ended` with the `ended` status and state), its `steps`, the `slots` (`limit`: `agents.max_threads`, `open`: the subagents of
+  calls not ended and of close steps not taken), the `spawn_formats` and a `hint`; with `--wait` it waits up to S seconds for a
+  step or a change of state. Each step carries the step file's members (call, k, attempt, op, role, action, agent_type, model,
+  reasoning_effort, message, packet, workspace, agent_id) and the host call to make with the live argument names: a spawn step is
+  `spawn_agent` and then `crw flow dispatched`, a `send_input` step is `send_input(target, message)` and then `crw flow
+  dispatched`, a close step is `close_agent(target)`; the hint says to alternate `wait_agent(targets, timeout_ms)` with `next
+  --wait`, which subagents to close first and when the slots are full (`agent thread limit reached`; the step stays). A close
+  step's file is removed once next has handed it out. A run no process holds that is neither paused nor over is resumed as
+  `crw flow resume RUN --detach` does, and the hint says so (`resumed_pid`). While a process holds the run, next writes the
+  owner's binding again when it is missing, with a warning.
+- `crw flow dispatched RUN CALL --agent ID --k K --attempt N [--wait S] [--json]` writes the dispatch report into the inbox (a
+  temporary name and a rename), waits up to S seconds (120) for the run's reply and prints it (`bound` exits 0, the other replies
+  exit 1). A report of a run no process holds, or one the run has not answered in time, is answered `queued`: it stays in the inbox
+  and the run answers it when it reaches the step (a resumed run included).
+- A resume (`crw flow resume RUN`, the process `next` starts, and the engine's `crw flow resume RUN SCRIPT` through
+  `journal.ResumeEnv`) goes on with the backend the run's started row records (`engine.StartedBackend`): a session run gets its
+  session environment again (the session host adapter of `internal/flow/sessionhost`, the run's `FileStepBus`, the owner of its
+  record). A spec that names another backend than the started row is a mixed resume, refused with the reason as an input error
+  (exit 2); a run whose first process stored no started row goes on with its spec's.
+- The owner thread is bound to a session run by the orchestrator line of its flow-bound file (`internal/flow/bound`
+  `BindOrchestrator`: `kind: orchestrator`, `run_id`, the `policyDigest` of the role table and the `helperPairs` of the six roles
+  architect, executor, executor-t1, reviewer, reviewer-final, explorer; `Line.Validate` takes no orchestrator line without the six).
+  The start writes it, the run process writes it again when it starts or resumes and it is not the last line, and the process
+  closes it when the run ends (`CloseOrchestrator`). A live run is one whose process holds its run lock: the open line of a run
+  without the lock is closed before the new one is written, and a thread holds the line of one live run, so a second start while
+  the first lives warns and does not bind. A thread whose binding cannot be written is warned about; the run starts.
+- The spawn hook decides an orchestrator's spawns by that line. It refuses two: a spawn by a subagent (a leaf) and a full-history
+  fork (`full_history_fork_refused`: the fork keeps the parent's pair). Every other spawn is allowed with `model` and
+  `reasoning_effort` overwritten from the pair of its role: the role the first `CRW-ROLE:` line of the message header names when it
+  is exactly one of the six (a parser of the flow-bound path; the ordinary path's oracle parser is unchanged), else the role of
+  the `agent_type` (worker is executor), else explorer. The ledger line (`decisions/<owner>.jsonl`) records the `role`, the `op` of
+  the `crw-flow-op:` first line, and a `warning` where the table has one: `role_agent_type_mismatch` (the header role does not pair
+  with the agent_type: executor-t1 with executor, reviewer-final with reviewer, the others with their own name), `unrecorded_spawn`
+  (no step marker) or `unrecorded_author` (no marker, an executor's or architect's type). A ledger that cannot be written allows the
+  spawn and says so on stderr, and a flow-bound directory or file that cannot be trusted is read as no binding, with a stderr
+  warning: no spawn is refused for it. The run joins the ledger's `op` with the owner turn's `collabAgentToolCall` items to find the
+  subagent of a published step after a restart ([session-host.md](session-host.md)).
+- The run wakes its owner. When it publishes a step and the owner thread is idle or notLoaded (the host's `thread/read`), it stages
+  a `session_step_waiting` message through `run:<id>` (`journal.StageWake`), which the supervisor channel delivers to the run's
+  owner (`flow_runs.actor_task_id`): a new turn on an idle thread, a resume and a turn on a notLoaded one, after the turn on a busy
+  one. The logical id is `(run, batch)`, the batch being the set of waiting steps, so a wake of the same steps staged again is one
+  message. While steps wait without a dispatched report the run notifies again after `WakeAfter` (15 minutes), each interval twice
+  the one before up to `RenotifyMax` (an hour), whatever the owner's status; after `UnresponsiveAfter` (2 hours) it writes the
+  `session_unresponsive` escalation once and goes on waiting. Each wake is a `session_wake` row.
+- With `SessionConfig.Trace` (the session backend's `Trace`) the digests are: the workspace, P's `git status --porcelain` and
+  `HEAD`; outside, the owner's working directory's when it is a git checkout other than P; shared, the refs under `refs/crw/` of the
+  run's repository other than the run's own `refs/crw/flow/<run>/` (the run moves those itself) and the binding files of the
+  flow-bound directory (the hook's ledger and claims are left out: the owner's spawns write them while a subagent works).
+- The session facts of the preview are warnings, never a refusal (CRW-1318): `owner_bound` (the owner can be bound: a thread id, a
+  readable binding, no other live run), `role_models` (the six pairs, a role without one, a reviewer of an author's model family),
+  `owner_state_writable` (the run directory, the flow-bound directory, the control socket and the repository), `subagent_slots`
+  (`agents.max_threads` leaves a slot for a call), `multi_agent_v1` (`features.multi_agent_v2` is off: under V2 the protocol stops)
+  and `verifier_prerequisites` (`crw-dev` and `go` on the PATH, until CRW-1319 gives the verifier a configured place).
 
 ## The App Server backend
 
