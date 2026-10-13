@@ -53,7 +53,7 @@ export function designFixPacket(audit, context) {
     'ROLE: architect. The independent audit of your DESIGN found what follows. Answer with the DESIGN again, with every finding addressed.',
     section('FINDINGS', audit.findings.map((f) => '- [' + f.severity + '] ' + f.ref + ': ' + f.finding)),
     audit.summary ? 'AUDIT SUMMARY: ' + audit.summary : '',
-    context ? 'Your working directory is a read-only checkout of the pinned head.\nHEAD: ' + context.head + '\nDESIGN RAN AT: ' + (context.base_tip || 'unknown') + '\nRANGE: ' + (context.base_tip ? context.base_tip + '..' : '') + context.head : '',
+    context ? 'Your directory P is a read-only checkout of the pinned head: work only under the absolute path P.\nHEAD: ' + context.head + '\nDESIGN RAN AT: ' + (context.base_tip || 'unknown') + '\nRANGE: ' + (context.base_tip ? context.base_tip + '..' : '') + context.head : '',
     context ? section('LANDED HEADS', landedLines(context.landed)) : '',
   ].filter(Boolean).join('\n\n')
 }
@@ -72,7 +72,7 @@ function drivenDecisions(cur) {
 export function reflectionPacket(ms, cur, closed) {
   const rng = (cur.base_tip ? cur.base_tip + '..' : '') + closed.gate.head
   return [
-    'ROLE: architect. Reflection at the close of milestone ' + ms.id + ' (' + ms.title + '), on the thread of your DESIGN (revision ' + cur.revision + '). Your working directory is a read-only checkout of the integrated head.',
+    'ROLE: architect. Reflection at the close of milestone ' + ms.id + ' (' + ms.title + '), on the thread of your DESIGN (revision ' + cur.revision + '). Your directory P is a read-only checkout of the integrated head: work only under the absolute path P.',
     'HEAD: ' + closed.gate.head + '\nDESIGN RAN AT: ' + (cur.base_tip || 'unknown') + '\nRANGE: ' + rng,
     section('DECISIONS OF THE DESIGN (map each to the files and criteria of the integrated range)', drivenDecisions(cur)),
     section('LANDED HEADS', landedLines(cur.landed)),
@@ -87,7 +87,7 @@ export function replanPacket(ms, cur, due, head, misaligned) {
   const rng = (cur.base_tip ? cur.base_tip + '..' : '') + head
   const lines = due.reasons.map((r) => r)
   const parts = [
-    'ROLE: architect. Re-plan milestone ' + ms.id + ' (' + ms.title + '), on the thread of your DESIGN (revision ' + cur.revision + '). Your working directory is a read-only checkout of the head below.',
+    'ROLE: architect. Re-plan milestone ' + ms.id + ' (' + ms.title + '), on the thread of your DESIGN (revision ' + cur.revision + '). Your directory P is a read-only checkout of the head below: work only under the absolute path P.',
     'HEAD: ' + head + '\nDESIGN RAN AT: ' + (cur.base_tip || 'unknown') + '\nRANGE: ' + rng,
     section('WHY THE MILESTONE RE-PLANS', lines),
     'PLAN MISMATCHES OF THIS REVISION: ' + due.plan_mismatch + ' (calls ' + (due.plan_mismatch_calls.join(', ') || 'none') + ')',
@@ -131,7 +131,7 @@ export function packet(node, plan, checkpoint, notes) {
       '- head: ' + checkpoint.head, '- tree: ' + checkpoint.tree,
     ]))
   }
-  parts.push('Answer with RECEIPT when you are done. Edit files only inside your worktree.')
+  parts.push('Answer with RECEIPT when you are done. Edit files only under the absolute path P of your worktree.')
   return parts.join('\n\n')
 }
 
@@ -196,7 +196,7 @@ export function qaCapturePacket(ms, g) {
     'HEAD: ' + g.head,
     section('SURFACES', list(g.surfaces)),
     section('CRITERIA OF THE MILESTONE', list(ms.criteria)),
-    'Follow sections 1 to 4 of the crw-qa skill: state the surface and the invocation, drive it, capture the artifacts of every scenario, probe the adversarial classes, and tear down what you started. Your worktree is a scratch copy of the head; whatever you edit there is discarded. Do not start helpers: the run starts the reviewer passes itself.',
+    'Follow sections 1 to 4 of the crw-qa skill: state the surface and the invocation, drive it, capture the artifacts of every scenario, probe the adversarial classes, and tear down what you started. Your directory P is a scratch copy of the head: work only under the absolute path P, and whatever you edit there is discarded. Do not start helpers: the run starts the reviewer passes itself.',
     'Answer with QA_CAPTURE: every capture you made (path, kind, one line on what it shows), the scenarios you drove, and the teardown lines. A capture that is not listed does not exist for the gate. Do not judge the captures in this answer.',
   ].join('\n\n')
 }
