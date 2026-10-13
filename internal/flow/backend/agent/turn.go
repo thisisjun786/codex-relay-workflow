@@ -11,6 +11,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/sessionhost"
 )
 
 // MarkerPrefix starts the first line of a turn's input: `crw-flow-op: <call_id>/t<k>`.
@@ -165,7 +166,8 @@ func (b *Backend) ReadTurn(ctx context.Context, threadID, turnID, op string) (en
 }
 
 // message is an agent message of the turn seen on the bus.
-type message struct{ phase, text string }
+// message is an agent message of the turn; the session host reads the same shape (sessionhost.Message).
+type message = sessionhost.Message
 
 type turnWatch struct {
 	b      *Backend
@@ -218,7 +220,7 @@ func (w *turnWatch) observe(n appserver.Notification) (*turnState, bool) {
 	switch n.Method {
 	case "item/completed":
 		if params.TurnID == w.turnID && params.Item.Type == "agentMessage" {
-			w.messages = append(w.messages, message{phase: params.Item.Phase, text: params.Item.Text})
+			w.messages = append(w.messages, message{Phase: params.Item.Phase, Text: params.Item.Text})
 		}
 	case "thread/tokenUsage/updated":
 		if params.TurnID == w.turnID {
@@ -332,41 +334,20 @@ func (w *turnWatch) finish(ctx context.Context, state *turnState) (engine.TurnOu
 func (w *turnWatch) busAnswered() bool {
 	commentary := false
 	for _, m := range w.messages {
-		if m.phase == "final_answer" {
+		if m.Phase == "final_answer" {
 			return true
 		}
-		commentary = commentary || m.phase == "commentary"
+		commentary = commentary || m.Phase == "commentary"
 	}
-	return len(w.messages) > 0 && w.messages[len(w.messages)-1].phase == "" && !commentary
+	return len(w.messages) > 0 && w.messages[len(w.messages)-1].Phase == "" && !commentary
 }
 
-// pickMessage is the last final answer among the messages, else the last message.
-func pickMessage(messages []message) string {
-	text, final := "", false
-	for _, m := range messages {
-		isFinal := m.phase == "final_answer"
-		if isFinal || !final {
-			text, final = m.text, isFinal
-		}
-	}
-	return text
-}
+// pickMessage is the last final answer among the messages, else the last message (sessionhost.PickMessage, which the
+// session host shares).
+func pickMessage(messages []message) string { return sessionhost.PickMessage(messages) }
 
 // itemMessages are the agent messages among a turn's items.
-func itemMessages(items []json.RawMessage) []message {
-	var out []message
-	for _, raw := range items {
-		var item struct {
-			Type  string `json:"type"`
-			Phase string `json:"phase"`
-			Text  string `json:"text"`
-		}
-		if json.Unmarshal(raw, &item) == nil && item.Type == "agentMessage" {
-			out = append(out, message{phase: item.Phase, text: item.Text})
-		}
-	}
-	return out
-}
+func itemMessages(items []json.RawMessage) []message { return sessionhost.ItemMessages(items) }
 
 // outcome turns a terminal turn into what the engine takes: the last agent message of a completed turn, or the failure
 // of a failed or interrupted one. read is the host's reading of the turn when one was needed; its items must be
