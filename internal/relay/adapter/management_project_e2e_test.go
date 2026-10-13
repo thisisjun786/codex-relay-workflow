@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/faults"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
 )
 
@@ -121,5 +123,68 @@ func TestManagementProjectE2EStoreSeatFallback(t *testing.T) {
 	w.tick(3)
 	if got := w.turnsOf(storeSeat); len(got) != 1 || !strings.Contains(got[0], "owner C reports") {
 		t.Fatalf("the store seat's turns %q\n%s", got, w.dump())
+	}
+}
+
+// stageProjectNotice raises one open fault about project, anchored to no relationship, with one
+// notification reserved by the daemon's deliverer (a lease well past the ticks), and stages its
+// notice through the channel's notice staging; the ledger addresses it to project:<project> (the
+// resolveNoticeProject path).
+func (w *mgmtWorld) stageProjectNotice(project, fault, notification string) map[string]any {
+	w.t.Helper()
+	if _, err := w.s.DB.ExecContext(w.ctx, `INSERT INTO fault_ledger (fault_id,product,fault_class,component,severity,signature,scope,scope_key,state,first_seen_at,last_seen_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+		fault, "crw", "report_omitted", "component", "broken", `{"turn": "turn-1"}`, `{"projectKey": "`+project+`"}`, project, "open", "t", "t", "t"); err != nil {
+		w.t.Fatal(err)
+	}
+	if _, err := w.s.DB.ExecContext(w.ctx, `INSERT INTO fault_notifications (notification_id,fault_id,product,kind,cycle,state,token,owner,lease_until,attempts,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
+		notification, fault, "crw", "blocking", 1, "reserved", "token-1314", "relay-daemon", float64(1700003600.5), 1, "t", "t"); err != nil {
+		w.t.Fatal(err)
+	}
+	ledger := &faults.Ledger{Store: w.s, Clock: &delivery.FakeClock{T: 1700000000}}
+	notice, err := ledger.NoticeFacts(w.ctx, notification)
+	if err != nil || notice == nil {
+		w.t.Fatalf("notice facts %q: %v, %v", notification, notice, err)
+	}
+	if notice["anchor"] != "project:"+project {
+		w.t.Fatalf("the notice is about %v, want project:%s", notice["anchor"], project)
+	}
+	answer, err := supervisor.NoticeChannel{Channel: w.c, Ledger: ledger}.StageNotice(w.ctx, notice)
+	if err != nil {
+		w.t.Fatalf("staging the notice for %s: %v", project, err)
+	}
+	return answer
+}
+
+// TestManagementProjectE2EProjectNoticeReachesTheManagementSeat: a fault notice addressed to
+// project:<key> alone (no relationship) is staged for the management seat directly above the
+// project and opens a new turn in that idle management thread only, not in the other management
+// session or the project owner.
+func TestManagementProjectE2EProjectNoticeReachesTheManagementSeat(t *testing.T) {
+	w := newMgmtWorld(t)
+	w.relay("linkage-bind", "--role", "supervisor", "--scope-kind", "management", "--scope", mgmtA, "--task", mgmtA, "--host", "host")
+	w.relay("linkage-bind", "--role", "supervisor", "--scope-kind", "management", "--scope", mgmtB, "--task", mgmtB, "--host", "host")
+	if bound := w.bindOwner("P-A", ownerA, mgmtA); bound["managementLink"] == nil {
+		t.Fatalf("the project owner binding wrote no management link: %v", bound)
+	}
+	w.bindOwner("P-B", ownerB, mgmtB)
+	w.open(mgmtA, mgmtB)
+	staged := w.stageProjectNotice("P-A", "abc1314", "n-1314")
+	id, _ := staged["messageId"].(string)
+	if staged["staged"] != true || staged["recipient"] != mgmtA || id == "" {
+		t.Fatalf("the project notice was staged as %v, want it for %s", staged, mgmtA)
+	}
+	var scopeKind string
+	if err := w.s.DB.QueryRowContext(w.ctx, "SELECT json_extract(packet,'$.envelope.recipient.scopeKind') FROM supervisor_messages WHERE message_id = ?", id).Scan(&scopeKind); err != nil || scopeKind != "management" {
+		t.Fatalf("the notice's recipient scope kind is %q (%v), want management", scopeKind, err)
+	}
+	w.tick(3)
+	if got := w.turnsOf(mgmtA); len(got) != 1 || !strings.Contains(got[0], "abc1314") {
+		t.Fatalf("management A's turns %q\n%s", got, w.dump())
+	}
+	if len(w.turnsOf(mgmtB))+len(w.turnsOf(ownerA))+len(w.turnsOf(ownerB)) != 0 {
+		t.Fatalf("the notice reached another thread\n%s", w.dump())
+	}
+	if state := w.messageState(id); state != "dispatched" {
+		t.Fatalf("the notice %s is %s after the ticks, want it sent\n%s", id, state, w.dump())
 	}
 }
