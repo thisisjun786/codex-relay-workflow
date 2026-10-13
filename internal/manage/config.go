@@ -62,6 +62,7 @@ type Config struct {
 	logDir string                     // log_root when the file names it, else empty: logs stay in StateDir
 	path   string                     // the configuration file's path
 	source crwconfig.Source           // where that path came from: flag, env or default
+	loaded bool                       // whether a file was read at that path
 	raw    map[string]json.RawMessage // the manage object verbatim, for Section
 
 	// sources names, per reported value, whether the manage object carried it or the
@@ -163,7 +164,7 @@ func coreLoad(e *Env, flagPath string) coreConfigState {
 	}
 	path, source := file.Path()
 	cfg := coreDefaultConfig(e, file)
-	cfg.path, cfg.source = path, source
+	cfg.path, cfg.source, cfg.loaded = path, source, file.Loaded()
 	manage, err := coreManageSection(file, path)
 	if err != nil {
 		return coreConfigState{cfg: cfg, err: err}
@@ -371,7 +372,7 @@ func coreDeliverSettingsProblem(c *Config) string {
 }
 
 // coreConfigReport is what crw manage config writes: the configuration with the defaults
-// filled, and the file it came from with where that path came from.
+// filled, and the file it came from: its path, where that path came from, and whether a file was read there.
 func coreConfigReport(c *Config) map[string]any {
 	return map[string]any{
 		"management_thread": c.ManagementThread,
@@ -381,9 +382,11 @@ func coreConfigReport(c *Config) map[string]any {
 		"bridge":            c.Bridge,
 		"state_dir":         c.StateDir,
 		"settings":          c.Settings,
-		"config": map[string]string{
+		"config": map[string]any{
 			"path":   c.path,
 			"source": string(c.source),
+			// source is where the path came from; loaded is whether a file was read there.
+			"loaded": c.loaded,
 		},
 		"sources": c.sources,
 	}
@@ -395,7 +398,7 @@ var coreConfigCommand = Command{Name: "config", Summary: "print the configuratio
 func init() { Register(coreConfigCommand) }
 
 // coreRunConfig is crw manage config [--config <path>]: the configuration as JSON on
-// stdout, with the file it came from and where that path came from. A configuration this
+// stdout, with the file it came from, where that path came from and whether a file was read there. A configuration this
 // product cannot use is exit 2, and an output write that fails is exit 1, because a
 // truncated report must not read as one.
 func coreRunConfig(_ context.Context, e *Env, args []string) int {

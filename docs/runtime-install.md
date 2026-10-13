@@ -1032,6 +1032,18 @@ Two read-only commands, each answering a different question:
   `--temporary` records the destination as a temporary one, so a proof taken there is never read as
   a claim about a host.
 
+The doctor report's `roleModels` entry reads the helper role store (`subagents.json`) and checks each
+model a role routes to (`model` of a role in model mode, and any `fallback.model`) against a model
+catalogue: the live catalogue the role helper and the GUI list from (OCX's `ocx models live`, else the
+native Codex catalogue), read without keeping the cache file that reader keeps, because the doctor writes
+nothing. `roleModels.catalogue` names the catalogue that was read (`state`, `source`, the number of
+`models` and a `detail` when it could not be read), `roleModels.roles` lists each role model with
+`listed` true or false, and `roleModels.warnings` holds one line for each model no catalogue lists, so a role
+that points at a model the provider does not serve is seen before a spawn on it fails. No catalogue is read
+while no role names a model, and a catalogue that could not be read (OCX not running, an OCX without the
+live command) lists nothing and condemns nothing: its state is recorded and `listed` is null. A warning
+changes no exit status and blocks nothing.
+
 None of them takes a lock across the whole reading, so a host changing underneath is described in
 pieces.
 
@@ -1304,6 +1316,17 @@ the policy file therefore has two consequences, and no longer needs the record t
 relay picks the edit up when its daemon restarts, and the record is re-registered so the next bridge
 starts under the new digest. The digest is what lets a changed file fail visibly instead of being
 enforced unregistered.
+
+A file and a record that disagree are said at the start of a session instead of being found from a failed
+handshake. The `SessionStart` hook reads the bridge record in the Codex home, and when it is a plugin-owned
+version-2 record whose policy file is missing, is not a regular file, or hashes to another digest than the
+record names, it adds a warning to the session's context at every start and resume. The warning names the
+policy path, the two digests (shortened) and the command that repairs it, `crw install register-mcp
+--re-register-policy --execution-policy <path>`, and points to the policy editor (`crw gui`), whose
+write edits the file and re-registers it in one operation, so an edit made there leaves no disagreement.
+The warning records and blocks nothing: the session starts, without the bridge's tools until the record is
+re-registered. A host with no bridge record, a record of another shape, or a policy file that cannot be read
+for another reason (the doctor judges those) gets no warning.
 
 A created record is reported only after the policy file has been hashed again, following the write,
 and still matched. A mismatch immediately before the write writes nothing and answers
