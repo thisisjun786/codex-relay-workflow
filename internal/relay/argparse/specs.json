@@ -81,11 +81,12 @@
 {"name":"linkage-bind","options":[
   {"flag":"--role","required":true,"choices":["supervisor","parent","child"]},
   {"flag":"--scope","required":true},
-  {"flag":"--scope-kind","choices":["store"],"help":"the store seat, the one scope no Linear level owns: only the supervisor may name it, and its key is 'store'. Omit it and the binding takes the role's own level (supervisor initiative, parent project, child issue)"},
+  {"flag":"--scope-kind","choices":["store","management"],"help":"store: the store seat, the one scope no Linear level owns: only the supervisor may name it, and its key is 'store'. management: a management session's own seat, the supervisor's, keyed by the seat id (the thread that first registered it); a thread that holds the store seat lays it down, with a scope_seat_moved record, when it takes its management seat. Omit it and the binding takes the role's own level (supervisor initiative, parent project, child issue)"},
   {"flag":"--task","required":true},
   {"flag":"--host","required":true},
   {"flag":"--cwd"},
-  {"flag":"--cxc-session"}]},
+  {"flag":"--cxc-session"},
+  {"flag":"--creator","help":"the thread registering this binding; default the caller's CODEX_THREAD_ID. When an initiative supervisor (a lead) is registered by a thread that holds a live management seat, the execution edge from that seat to the initiative is written in the same transaction. An initiative has one upward execution edge, so another seat's edge refuses the registration (link_conflict): a second management session takes the initiative only by the handover of the seat above it"}]},
 {"name":"linkage-supervise","options":[
   {"flag":"--initiative","required":true},
   {"flag":"--project","required":true},
@@ -116,7 +117,7 @@
 {"name":"linkage-handover","options":[
   {"flag":"--role","required":true,"choices":["supervisor","parent"],"help":"a child is replaced by registering its successor with --supersedes, which moves the assignment and its issue scope together"},
   {"flag":"--scope","required":true},
-  {"flag":"--scope-kind","choices":["store"],"help":"the store seat, the one scope no Linear level owns: only the supervisor may name it, and its key is 'store'. Omit it and the handover takes the role's own level (supervisor initiative, parent project)"},
+  {"flag":"--scope-kind","choices":["store","management"],"help":"store: the store seat, the one scope no Linear level owns: only the supervisor may name it, and its key is 'store'. management: a management session's seat, keyed by its seat id; the handover moves the seat and every initiative edge under it to the new owner. Omit it and the handover takes the role's own level (supervisor initiative, parent project)"},
   {"flag":"--expect-task","required":true},
   {"flag":"--task","required":true},
   {"flag":"--host","required":true},
@@ -1071,6 +1072,13 @@
   {"flag":"--kinds","help":"only these journal kinds, comma separated"},
   {"flag":"--wait","type":"int","help":"seconds to wait for a row when there is none yet (0 to 3600; 0, the default, answers at once)"},
   {"flag":"--limit","type":"int","help":"at most this many rows (1 to 1000; 100 by default)"}]},
+{"name":"report-up","summary":"a lead's report upward (CRW-1333): the report row (a lead_report journal row) and the direct message to the management seat above --initiative (the store seat when no management edge stands), in one transaction. The message goes over the supervisor channel, so the daemon opens a turn in an idle or unloaded recipient and retries a busy one. A report with nobody above to tell is still recorded, and the refusal (exit 2) says it stands; the same report again converges on the same row and message","options":[
+  {"flag":"--initiative","required":true,"help":"the initiative whose lead reports; the sender is its live owner"},
+  {"flag":"--kind","required":true,"choices":["lead_report","lead_decision_request","lead_blocked"],"help":"lead_report: a milestone or the delivery scope is complete; lead_decision_request: a decision only the management session makes (--subject names it); lead_blocked: a real block"},
+  {"flag":"--subject","help":"one line that says what the report is about; for lead_decision_request, the decision asked for"},
+  {"flag":"--text","help":"the report's text, or @FILE to read it from a file"},
+  {"flag":"--evidence","kind":"append","help":"an evidence pointer (an issue, a file, a command); repeat for several"},
+  {"flag":"--id","help":"the report's id; default derived from the kind, the initiative, the subject and the digest of the text"}]},
 {"name":"receive","summary":"claim, ack and verdict in one process, each its own store transaction with the refusals and records of the claim, ack and verdict commands. The acknowledgement proof is derived from --ack-turn, the caller's own turn, and the verdict is ruled from that turn; with --socket the acknowledgement is verified against the host","options":[
   {"flag":"--event","required":true},
   {"flag":"--ack-turn","required":true,"help":"the caller's own turn id: the claim's turn, the acknowledgement's turn and the verdict's turn"},

@@ -76,6 +76,9 @@ func coreMain(m *testing.M) int {
 		"CRW_HOME":        filepath.Join(root, "crw"),
 		"CRW_CONFIG":      "",
 		"XDG_CONFIG_HOME": filepath.Join(root, "xdg-config"),
+		// CRW-1333: crw manage supervisor register binds the calling thread, so a run inside a
+		// Codex session does not lend the tests its own thread id.
+		"CODEX_THREAD_ID": "",
 	} {
 		if err := os.Setenv(key, path); err != nil {
 			fmt.Fprintln(os.Stderr, "crw manage tests:", err)

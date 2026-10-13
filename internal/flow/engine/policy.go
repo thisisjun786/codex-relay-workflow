@@ -5,6 +5,7 @@ import (
 	"slices"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
+	"github.com/thisisjun786/codex-relay-workflow/internal/role"
 )
 
 // Pair is the model and reasoning effort a role runs on. A role's pair is fixed: nothing changes it on a thread.
@@ -60,9 +61,19 @@ type Policy struct {
 	// Aliases are the rows of the alias table. Of the rows that match a call, the one that names the most of effort
 	// and isolation decides; the policy file's loader refuses rows that overlap without one being more specific.
 	Aliases []AliasRule
-	// Source is the policy file the table was read from and Digest the SHA-256 of its bytes; both are empty for the
-	// fake policy. A run records them when it starts and a resumed run that reads another digest records the change.
+	// Source is where the table was read from and Digest the digest the run pins; both are empty for the fake policy. For
+	// the table of a production flow command (LoadPolicy) Source is the helper role store's path and Digest the canonical
+	// digest of the six (model, effort) pairs (role.FlowSnapshot.Digest); for a table PolicyFromExecution built from a policy
+	// file they are the file's path and the SHA-256 of its bytes. A run records them when it starts and a resumed run that
+	// reads another digest records the change.
 	Source, Digest string
+	// Warnings are what the table's reading found and did not refuse (a flow-only key at its compiled default, an undecided
+	// role, a reviewer on an author's model family, an execution policy still declaring agent-roles). A run records them in
+	// its started row.
+	Warnings []string
+	// States is where each role's pair came from in a table built from the helper role store (store, compiled_default,
+	// undecided); nil for any other table.
+	States map[string]string
 }
 
 // Refusal is why a call is refused before any thread starts.
@@ -229,4 +240,27 @@ func PolicyFromExecution(p execution.Policy, source string) (*Policy, error) {
 		out.Aliases = append(out.Aliases, AliasRule{Key: row.Key, Effort: row.Effort, Isolation: row.Isolation, Role: row.Role, Cause: row.Refuse, Detail: row.Detail})
 	}
 	return out, nil
+}
+
+// PolicyFromRoleHelper is the role table of a production flow run (CRW-1330, CRW-1316 design section 8): each of the six
+// roles runs the pair of the helper role store's snapshot (an undecided role has the empty pair, so a call of it names no
+// model and no effort), with its family, its sandbox and the design's model aliases; the alias table is the code's
+// (execution.DefaultAliasRows), nothing of it read from a file. Source is the store's path and Digest the snapshot's
+// canonical digest of the six pairs. The snapshot's warnings are kept, and a reviewer or reviewer-final on the model
+// family of an author (architect, executor, executor-t1) adds one: the runtime independence gate judges each review, and
+// the table is never refused for it.
+func PolicyFromRoleHelper(snap role.FlowSnapshot) *Policy {
+	out := &Policy{Roles: map[string]RoleSpec{}, Source: snap.Path, Digest: snap.Digest(), Warnings: slices.Clone(snap.Warnings), States: map[string]string{}}
+	models := map[string]string{}
+	for _, r := range snap.Roles {
+		name := string(r.Role)
+		out.Roles[name] = RoleSpec{Family: roleFamily(name), Pair: Pair{Model: r.Model, Effort: r.Effort}, Sandbox: roleSandbox(name), ModelAliases: execution.DefaultModelAliases(name)}
+		out.States[name] = string(r.State)
+		models[name] = r.Model
+	}
+	for _, row := range execution.DefaultAliasRows() {
+		out.Aliases = append(out.Aliases, AliasRule{Key: row.Key, Effort: row.Effort, Isolation: row.Isolation, Role: row.Role, Cause: row.Refuse, Detail: row.Detail})
+	}
+	out.Warnings = append(out.Warnings, execution.FamilyOverlaps(models, execution.AgentArchitect, execution.AgentExecutor, execution.AgentExecutorT1)...)
+	return out
 }

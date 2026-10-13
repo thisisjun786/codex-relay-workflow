@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
@@ -106,7 +107,11 @@ func endpoint(p parsed, prefix string) Endpoint {
 var linkageCommands = []command{
 	{Command: dispatch.Command{Name: "linkage-bind"},
 		run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
-			return r.bindScopeKind(ctx, p.text("role"), p.text("scope-kind"), p.text("scope"), endpoint(p, ""), Active)
+			creator := p.text("creator")
+			if !p.set["creator"] {
+				creator = os.Getenv("CODEX_THREAD_ID")
+			}
+			return r.bindScopeKind(ctx, p.text("role"), p.text("scope-kind"), p.text("scope"), endpoint(p, ""), Active, creator)
 		}},
 	{Command: dispatch.Command{Name: "linkage-supervise", Defaults: map[string]any{"kind": linkExec}},
 		run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
