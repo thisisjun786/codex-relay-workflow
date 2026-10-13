@@ -83,8 +83,8 @@ func TestStartShowsTheVerifierPrerequisitesAsAWarnFact(t *testing.T) {
 		!strings.Contains(last.Reason, "verifier.go_root") {
 		t.Errorf("the verifier fact: %+v", ans.Plan.Facts)
 	}
-	if len(td.spawned[0].Spec.Forced) != 0 {
-		t.Errorf("a warning is recorded as a forced fact: %v", td.spawned[0].Spec.Forced)
+	if strings.Contains(errOut, "not started") || strings.Contains(errOut, "error") {
+		t.Errorf("a warning reads as a refusal: %s", errOut)
 	}
 }
 
