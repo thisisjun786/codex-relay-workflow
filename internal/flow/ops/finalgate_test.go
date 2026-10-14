@@ -50,6 +50,8 @@ type closeVerifier struct {
 	calls       []VerifyRequest
 	fail        bool
 	unavailable bool
+	// testPackages is the count of test packages the verifications ran (nil: unknown, CRW-1328)
+	testPackages *int
 }
 
 func (v *closeVerifier) Verify(_ context.Context, req VerifyRequest) (VerifyOutcome, error) {
@@ -63,7 +65,7 @@ func (v *closeVerifier) Verify(_ context.Context, req VerifyRequest) (VerifyOutc
 	if cmd == "" {
 		cmd = CILocalCommand
 	}
-	out := VerifyOutcome{Pass: !v.fail, Command: cmd, Digest: "sha256:" + req.Head[:8], Summary: "pass", Failures: []string{}}
+	out := VerifyOutcome{Pass: !v.fail, Command: cmd, Digest: "sha256:" + req.Head[:8], Summary: "pass", Failures: []string{}, TestPackagesRun: v.testPackages}
 	if v.fail {
 		out.Summary, out.Failures = "validate/tests: failed", []string{"validate/tests: failed"}
 	}

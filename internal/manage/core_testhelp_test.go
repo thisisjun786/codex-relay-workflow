@@ -50,6 +50,33 @@ func TestMain(m *testing.M) {
 // runs, so a test that drives Run without setting its own home reads no configuration file
 // and writes nothing under the real ones.
 func coreMain(m *testing.M) int {
+	// CRW-1262: the temporary root of the run is a memory-backed directory when one is fit (core_tmpfs_test.go); a helper started again
+	// takes the root its starter named, and only the process that made a root removes it, after m.Run.
+	base := os.Getenv(tmpfsBaseEnv)
+	if base == "" {
+		base = "/dev/shm"
+	}
+	tmpfs, owner := tmpfsRoot(base, tmpfsRealHost(), os.Getenv)
+	if tmpfs == "" && !tmpfsDeclinedByOwner(tmpfsRealHost(), os.Getenv(tmpfsRootEnv)) {
+		// No tmpfs is chosen: a helper started again follows this (the marker names no root) instead of choosing for itself.
+		if err := os.Setenv(tmpfsRootEnv, tmpfsDeclinedMarker(os.Getpid())); err != nil {
+			fmt.Fprintln(os.Stderr, "crw manage tests:", err)
+			return 1
+		}
+	}
+	if tmpfs != "" {
+		if owner {
+			defer func() { _ = os.RemoveAll(tmpfs) }()
+			if err := os.Setenv(tmpfsRootEnv, fmt.Sprintf("%d:%s", os.Getpid(), tmpfs)); err != nil {
+				fmt.Fprintln(os.Stderr, "crw manage tests:", err)
+				return 1
+			}
+		}
+		if err := os.Setenv("TMPDIR", tmpfs); err != nil {
+			fmt.Fprintln(os.Stderr, "crw manage tests:", err)
+			return 1
+		}
+	}
 	root, err := os.MkdirTemp("", "crw-manage-")
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "crw manage tests: the isolation root:", err)

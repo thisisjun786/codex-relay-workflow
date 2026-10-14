@@ -3,6 +3,7 @@ package ops
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
@@ -504,6 +505,12 @@ func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRes
 	data["slice_digest"], data["criteria_digest"] = slice, mnode.CriteriaDigest
 	res, err := o.l.d.Relay.Release(ctx, ReleaseRequest{Plan: plan, Node: node, RunID: req.RunID, Revision: out.Revision, DesignDigest: out.DesignDigest, RequestID: req.RequestID,
 		SliceDigest: slice, PlanDigest: digestOf(m)})
+	if errors.Is(err, ErrEpochLost) {
+		// the fenced write of a run whose plan another session claimed (CRW-1285): the node is not released, the row names the reason,
+		// and the lane ends on it; a resume asks again, and the relay refuses again while the other session holds the plan
+		out.Reason, data["detail"] = ReasonEpochLost, err.Error()
+		return finish()
+	}
 	if err != nil {
 		return engine.OpResult{}, err
 	}

@@ -26,6 +26,8 @@ async function auditedDesign(first, tag, context) {
   let arch = first
   for (let round = 1; round <= AUDIT_ROUNDS; round++) {
     const asked = await crw.explore('open_questions', arch.output.open_questions, { milestone: ms.id })
+    // the authority questions of the round are asked now, approved or not (CRW-1366): an answer is the next round's
+    await askOrchestrator(asked.answers, 'out_of_authority')
     if (asked.failed) return { ok: false, result: await crw.milestoneHalt(ms, 'explorer', asked.failed.status, asked.failed.reason, asked.failed.callId) }
     const answers = asked.answers
     const cand = { design: arch.output, answers }
@@ -46,11 +48,19 @@ async function auditedDesign(first, tag, context) {
   return { ok: false, result: { state: 'escalated', source: 'design_audit', reason: 'design_audit_rounds', escalation: esc.id } }
 }
 
-// The open questions out of the architect's authority and the questions beyond the explorer cap of the milestone are design
-// questions for the orchestrator thread, each with its scope: one non-blocking ask, and the milestone goes on.
-async function askOrchestrator(answers) {
-  const asked = answers.filter((a) => a.route === 'orchestrator')
-  if (asked.length > 0) await crw.escalate(null, { reason: 'design_question', detail: asked.map((a) => (a.scope ? '[' + a.scope + '] ' : '') + a.question).join(' | '), ask: 'design' })
+// The open questions routed to the orchestrator for reason are design questions for the orchestrator thread, each with its scope:
+// one non-blocking ask, and the milestone goes on. The ones out of the architect's authority are asked in the audit round that
+// routed them, the ones beyond the explorer cap of the milestone when the DESIGN is approved. The evidence names the digests asked:
+// a question the run asked already is routed asked_in_run (crw.exploreRoute) and raises no ask of its own. Only the latest design
+// ask of a run is current (the one crw flow answer accepts and the digest lists as waiting), so an ask carries, besides the
+// questions it raises, every question of this DESIGN the run asked already and no answer has reached: asked_in_run, and the
+// authority questions of the round when the approval asks the ones beyond the cap.
+async function askOrchestrator(answers, reason) {
+  const pending = (a) => a.route === 'orchestrator' && (a.reason === reason || a.reason === 'asked_in_run' || a.reason === 'out_of_authority')
+  if (!answers.some((a) => a.route === 'orchestrator' && a.reason === reason)) return
+  const asked = answers.filter(pending)
+  await crw.escalate(null, { reason: 'design_question', detail: asked.map((a) => (a.scope ? '[' + a.scope + '] ' : '') + a.question).join(' | '), ask: 'design',
+    evidence: { questions: asked.map((a) => a.digest) } })
 }
 
 // A re-plan (SP-ARCH-2): the architect's DESIGN delta is the next turn of its thread (the handle the ledger holds), asked at the head
@@ -66,7 +76,7 @@ async function replan(tag, signal, due, head, misaligned) {
   const audited = await auditedDesign(call, 'replan-' + tag + ':', { head, base_tip: cur.base_tip, landed: cur.landed })
   if (!audited.ok) return { state: 'halted', result: audited.result }
   const led = await crw.designLedger(ms.id, { design: audited.arch.output, answers: audited.answers, architect: audited.arch, signal, head, plan: due.plan })
-  await askOrchestrator(audited.answers)
+  await askOrchestrator(audited.answers, 'explorer_cap')
   return { state: 'revised', revision: led.revision }
 }
 
@@ -105,11 +115,24 @@ const designed0 = await auditedDesign(first, '')
 if (!designed0.ok) return designed0.result
 const arch = designed0.arch
 await crw.designLedger(ms.id, { design: arch.output, answers: designed0.answers, architect: arch })
-await askOrchestrator(designed0.answers)
+await askOrchestrator(designed0.answers, 'explorer_cap')
+
+// A fenced write after another session claimed the plan's coordinator epoch is refused epoch_lost (CRW-1285): the lane ends at that
+// write with the reason, and neither escalates nor writes anything more at the relay; the run ends stopped on it (below).
+const EPOCH_LOST = 'epoch_lost'
+const epochLost = (e) => /refused:epoch_lost:/.test((e && e.message) || '')
+async function lane(n, rel, sig) {
+  try {
+    return await nodeLane(n, rel, sig)
+  } catch (e) {
+    if (epochLost(e)) return { node: n.id, state: 'stopped', reason: EPOCH_LOST, detail: e.message }
+    throw e
+  }
+}
 
 // The lane of one issue node. It reads no variable of the script that another lane may have changed: its facts are the plan of
 // its release revision and the results of its own calls.
-async function lane(n, rel, sig) {
+async function nodeLane(n, rel, sig) {
   const node = n.id
   const plan = await crw.issuePlan(node)
   if (plan.size_fit === 'child') {
@@ -203,6 +226,7 @@ async function lane(n, rel, sig) {
         if (verdict.verdict === 'verified') {
           const landed = await crw.land(node, { head, ci, review: rv })
           if (landed.state === 'landed') return landed
+          if (landed.reason === EPOCH_LOST) return { node, state: 'stopped', reason: EPOCH_LOST, detail: landed.detail }
           const esc = await crw.escalate(node, { reason: landed.reason || 'land_refused', detail: landed.detail || '', ask: 'land' })
           return { node, state: 'escalated', reason: landed.reason, escalation: esc.id }
         }
@@ -240,6 +264,8 @@ const designed = {}
 for (const is of arch.output.issues) designed[is.node] = is.edit_regions
 const admitted = ms.nodes.map((n) => Object.assign({}, n, { regions: crw.admissionRegions(n.regions, designed[n.id]) }))
 const lanes = await crw.dag(args.plan, lane, { nodes: admitted, milestone: ms.id, cap: args.cap, onSignal })
+const lost = lanes.filter((l) => l && l.reason === EPOCH_LOST)
+if (lost.length > 0) return { state: 'stopped', reason: EPOCH_LOST, detail: (lost.find((l) => l.detail) || lost[0]).detail || '', milestone: ms.id, lanes }
 // the run-level hold plan_superseded (CRW-1291): the relay's plan moved past the revision the run pinned, and the run holds for its parent
 if (lanes.some((l) => l && l.state === 'held' && l.reason === 'plan_superseded')) return { state: 'held', reason: 'plan_superseded', milestone: ms.id, lanes }
 if (!lanes.every((l) => l && l.state === 'landed')) return { state: 'incomplete', milestone: ms.id, lanes }

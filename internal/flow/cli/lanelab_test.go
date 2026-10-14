@@ -121,8 +121,34 @@ func TestLaneLabIgnoresAShortHost(t *testing.T) {
 	}
 }
 
+// TestLaneLabIgnoresTheCallersHostThresholds (CRW-1369): the lab does not read the caller's thresholds of the host memory bound either.
+// The environment exports a floor of 100 GiB (over the fixture's 64 GiB) or a threshold that is not a number, for each variable
+// HostMemoryFromEnvironment reads, before the lab is made; the lab pins them, so A-1 is released and writes its execution.
+func TestLaneLabIgnoresTheCallersHostThresholds(t *testing.T) {
+	for _, c := range []struct{ name, value string }{
+		{"CRW_DAG_HOST_MIN_AVAILABLE_GIB", "100"},
+		{"CRW_DAG_HOST_MIN_AVAILABLE_GIB", "lots"},
+		{"CRW_DAG_HOST_MAX_SWAP_PERCENT", "lots"},
+		{"CRW_DAG_HOST_MAX_PRESSURE_SOME_AVG60", "lots"},
+		{"CRW_DAG_HOST_MAX_PRESSURE_FULL_AVG10", "lots"},
+	} {
+		t.Run(c.name+"="+c.value, func(t *testing.T) {
+			t.Setenv(c.name, c.value)
+			l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+			r := l.buildLane("run-thresholds1", l.handoffBytes(nil), LaneOptions{})
+			got, err := r.Release(ctx, ops.ReleaseRequest{Plan: l.plan, Node: l.nodeOf["A-1"], RunID: r.RunID, RequestID: "req-thresholds"})
+			if err != nil || !got.Released {
+				t.Fatalf("the release of A-1 with %s=%s in the caller's environment: %+v %v", c.name, c.value, got, err)
+			}
+			if n := l.count("SELECT COUNT(*) FROM dag_agent_executions"); n != 1 {
+				t.Errorf("%d executions written, want 1", n)
+			}
+		})
+	}
+}
+
 // labProcFixture writes a /proc of its own into a temporary directory: ample MemAvailable, no swap, and memory pressure far under the
-// bound's ceilings. newLaneLab points CRW_DAG_HOST_PROC_ROOT at it, so no lane-lab test reads the memory of the host it runs on.
+// bound's ceilings. newLaneLab points CRW_DAG_HOST_PROC_ROOT at it and clears the threshold variables, so no lane-lab test reads the memory or the thresholds of the host it runs on.
 func labProcFixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
@@ -143,12 +169,16 @@ func labProcFixture(t *testing.T) string {
 
 // newLaneLab makes the world: the repository with its target branch "integration", the plan of the issues put into the store at
 // revision 1, the project's parent binding of the owner thread, the fake host, and the lane's operations installed as the shipped
-// binary installs them with the lab's verifications, and the proc root of the host memory bound set to the lab's own fixture.
+// binary installs them with the lab's verifications, and the proc root of the host memory bound set to the lab's own fixture with its threshold variables cleared.
 func newLaneLab(t *testing.T, issues ...labIssue) *laneLab {
 	t.Helper()
 	isolateGit(t)
 	// the host memory bound reads this proc root, never the host's own /proc: a lab test does not depend on the memory of the machine
 	t.Setenv("CRW_DAG_HOST_PROC_ROOT", labProcFixture(t))
+	// and so do its thresholds (CRW-1369): an empty value is unset, so the bound judges the fixture by its defaults whatever the caller exported
+	for _, name := range []string{dagsched.EnvHostMinAvailableGiB, dagsched.EnvHostMaxSwapPercent, dagsched.EnvHostMaxPressure, dagsched.EnvHostMaxPressureFull} {
+		t.Setenv(name, "")
+	}
 	l := &laneLab{t: t, w: newWorld(t), plan: "plan-1", nodeOf: map[string]string{}, issue: map[string]string{}}
 	l.repo = filepath.Join(t.TempDir(), "repo")
 	if err := os.MkdirAll(l.repo, 0o755); err != nil {
