@@ -385,13 +385,21 @@ func normalize(verdict string, findings []Finding, security []bool) ([]Finding, 
 		}
 	}
 	if verdict == VerdictVerified {
-		for _, f := range out {
-			if premerge.Blocks(f.Severity, f.Impact) {
-				return nil, fmt.Errorf("the answer is verified over the blocking finding %s at %s:%d (severity %s, impact %q)", f.ID, f.File, f.Line, f.Severity, f.Impact)
-			}
+		if f, ok := firstBlocking(out); ok {
+			return nil, fmt.Errorf("the answer is verified over the blocking finding %s at %s:%d (severity %s, impact %q)", f.ID, f.File, f.Line, f.Severity, f.Impact)
 		}
 	}
 	return out, nil
+}
+
+// firstBlocking returns the first of findings that premerge.Blocks, the finding a verified verdict may not stand over.
+func firstBlocking(findings []Finding) (Finding, bool) {
+	for _, f := range findings {
+		if premerge.Blocks(f.Severity, f.Impact) {
+			return f, true
+		}
+	}
+	return Finding{}, false
 }
 
 // impactSafetyOrData is the impact a security finding that names none gets.

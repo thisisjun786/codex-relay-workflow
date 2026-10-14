@@ -165,6 +165,31 @@ func TestAdapterNormalizesToolOutputToTheSchema(t *testing.T) {
 			t.Fatalf("result = %+v\nwant needs_changes with %+v", res, want)
 		}
 	})
+	t.Run("a Bugbot table of P3 findings with a security one is needs_changes", func(t *testing.T) {
+		table := "Bugbot found 2 findings in the uncommitted changes.\n\n" +
+			"| Severity | Location (file:line) | Finding |\n| --- | --- | --- |\n" +
+			"| low | internal/quote/quote.go:12 | The helper name does not say what it returns. |\n" +
+			"| low security | internal/quote/token.go:30 | The token is written to the debug log. |"
+		res := check(t, BugbotProfile(), fakeRun{stdout: bugbotEnvelope(t, table)})
+		wantState(t, res, StateOK)
+		want := []Finding{
+			{ID: FindingID("internal/quote/quote.go", "The helper name does not say what it returns."), Severity: "P3", File: "internal/quote/quote.go", Line: 12, Text: "The helper name does not say what it returns."},
+			{ID: FindingID("internal/quote/token.go", "The token is written to the debug log."), Severity: "P3", Impact: "safety_or_data", File: "internal/quote/token.go", Line: 30, Text: "The token is written to the debug log."},
+		}
+		if res.Verdict != VerdictNeedsChanges || !slices.Equal(res.Findings, want) {
+			t.Fatalf("result = %+v\nwant needs_changes with %+v", res, want)
+		}
+	})
+	t.Run("a Bugbot table of plain P3 findings stays verified", func(t *testing.T) {
+		table := "Bugbot found 1 finding in the uncommitted changes.\n\n" +
+			"| Severity | Location (file:line) | Finding |\n| --- | --- | --- |\n" +
+			"| nit | internal/quote/quote.go:12 | The helper name does not say what it returns. |"
+		res := check(t, BugbotProfile(), fakeRun{stdout: bugbotEnvelope(t, table)})
+		wantState(t, res, StateOK)
+		if res.Verdict != VerdictVerified || len(res.Findings) != 1 || res.Findings[0].Impact != "" {
+			t.Fatalf("result = %+v, want verified with one finding without impact", res)
+		}
+	})
 	t.Run("Bugbot found no bugs", func(t *testing.T) {
 		res := check(t, BugbotProfile(), fakeRun{stdout: bugbotEnvelope(t, "I'll review only the uncommitted changes. Checking the Task tool schema, then launching Bugbot on that diff.Bugbot is available, so I'm launching it on the uncommitted diff only.Bugbot found no bugs.")})
 		wantState(t, res, StateOK)

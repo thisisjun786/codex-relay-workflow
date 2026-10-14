@@ -37,7 +37,8 @@ const (
 
 // BugbotProfile is Cursor's Bugbot through cursor-agent in ask mode, which prints a one-line JSON envelope whose result is prose.
 // The answer reader accepts two shapes of that prose: a markdown table "Severity | Location (file:line) | Finding" (verdict
-// needs_changes when a finding grades P0-P2, else verified), or no table and "found no bugs" (verified, no findings). Prose that
+// needs_changes when a finding blocks under premerge.Blocks once normalize has given it its impact: a P0-P2 grade, or a security
+// finding; else verified), or no table and "found no bugs" (verified, no findings). Prose that
 // says the review covered only part of the change or dropped a finding ("unchecked", "not clean", "removed"), and prose of any
 // other shape, is not an answer.
 //
@@ -106,10 +107,21 @@ func bugbotAnswer(stdout []byte) ([]byte, error) {
 	}{Verdict: VerdictVerified, Findings: []finding{}}
 	switch {
 	case found:
+		var graded []Finding
+		var security []bool
 		for _, r := range rows {
 			file, line := splitLocation(r[1])
 			doc.Findings = append(doc.Findings, finding{Severity: r[0], File: file, Line: line, Text: r[2]})
-			if g, _, _ := review.NormalizeGrade(r[0]); g != "" && g != review.P3 {
+			if g, sec, ok := review.NormalizeGrade(r[0]); ok {
+				graded = append(graded, Finding{ID: FindingID(file, r[2]), Severity: string(g), File: file, Line: line, Text: r[2]})
+				security = append(security, sec)
+			}
+		}
+		// The verdict follows the rule decodeAnswer applies to this document: needs_changes when a finding blocks once normalize
+		// has given it its impact (a P0-P2 grade, or a security finding's safety_or_data). A row no grade word reads is left to
+		// decodeAnswer, which refuses the document.
+		if norm, err := normalize(VerdictNeedsChanges, graded, security); err == nil {
+			if _, blocks := firstBlocking(norm); blocks {
 				doc.Verdict = VerdictNeedsChanges
 			}
 		}
