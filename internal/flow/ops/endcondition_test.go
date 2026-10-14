@@ -42,3 +42,20 @@ func TestExploreRecordWarnsOfTheEndCondition(t *testing.T) {
 		t.Errorf("an answer that was given no end condition records some: %v", second)
 	}
 }
+
+// TestFindingsOfTheEarlierBinaryDecode (CRW-1382, post-evaluation d4): a FINDINGS an explorer answered before CRW-1382 has no
+// end_conditions; it is still a FINDINGS (a run recorded then and resumed after it records its answers), and an explorer that was given
+// none answers that FINDINGS now. A FINDINGS with end_conditions decodes them; one with a malformed end condition is no FINDINGS.
+func TestFindingsOfTheEarlierBinaryDecode(t *testing.T) {
+	f, err := DecodeFindings([]byte(`{"answer":"a","evidence":["README.md"],"verified":[],"inferred":[],"unknown":[]}`))
+	if err != nil || f.Answer != "a" || f.EndConditions != nil {
+		t.Fatalf("an earlier FINDINGS: %+v %v", f, err)
+	}
+	f, err = DecodeFindings([]byte(`{"answer":"a","evidence":[],"verified":[],"inferred":[],"unknown":[],"end_conditions":[{"command":"go test ./a","exit_code":1,"tests":3,"summary":"FAIL"}]}`))
+	if err != nil || len(f.EndConditions) != 1 || f.EndConditions[0].ExitCode != 1 || f.EndConditions[0].Tests != 3 {
+		t.Fatalf("a FINDINGS with end_conditions: %+v %v", f, err)
+	}
+	if _, err := DecodeFindings([]byte(`{"answer":"a","evidence":[],"verified":[],"inferred":[],"unknown":[],"end_conditions":[{"command":"go test ./a"}]}`)); err == nil {
+		t.Fatal("a FINDINGS whose end condition has no exit code decoded")
+	}
+}

@@ -112,9 +112,19 @@ export const REFLECTION = obj({
   misaligned: list(obj({ decision_id: text, observed: text, affected_nodes: texts, evidence: texts })),
 })
 
-// FINDINGS: the explorer's answer. end_conditions are the end condition commands its packet gave it to run once, each with the exit
-// code and the number of tests it ran (CRW-1382); an explorer given none answers [].
+// FINDINGS: the explorer's answer.
 export const FINDINGS = obj({
+  answer: text,
+  evidence: texts,
+  verified: texts,
+  inferred: texts,
+  unknown: texts,
+})
+
+// FINDINGS_END: the answer of the explorer whose packet gave it the end condition commands to run once (CRW-1382): FINDINGS and
+// end_conditions, each command with its exit code and the number of tests it ran. Every other explorer answers FINDINGS as it did
+// before, so a run recorded before CRW-1382 replays its explorer calls on a resume.
+export const FINDINGS_END = obj({
   answer: text,
   evidence: texts,
   verified: texts,

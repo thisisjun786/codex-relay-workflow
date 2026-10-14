@@ -13,7 +13,7 @@
 // position of its path, and every position it uses is that of a call or of an operation it makes, so a resume replays it through
 // the journal like any other code of the script. It reads no variable outside its arguments.
 
-import { FINDINGS, VERDICT } from 'crw:lib/schemas'
+import { FINDINGS, FINDINGS_END, VERDICT } from 'crw:lib/schemas'
 import { evidence } from 'crw:lib/evidence'
 import { explorerPacket, reviewPacket } from 'crw:lib/packets'
 import { closeMilestone, settleReviews } from 'crw:lib/close'
@@ -443,9 +443,15 @@ export async function explore(kind, questions, ctx, opts) {
   const found = {}
   let failed = null
   for (const wave of chunks(spawn, EXPLORER_CONCURRENCY)) {
-    const calls = await parallel(wave.map((r) => () => agent.call(explorerPacket(kind, r, ctx, r.digest === endsFor ? ends : null), {
-      agentType: 'explorer', node: ctx.node || undefined, head: ctx.head || undefined, schema: FINDINGS, label: 'explore:' + (ctx.node || ctx.milestone) + ':' + r.digest.slice(0, 12),
-    })), { keys: wave.map((r) => r.digest.slice(0, 12)), label: 'explore' })
+    // the explorer given the end conditions answers FINDINGS_END; every other one is the call it was before CRW-1382 (its packet and
+    // its schema), so a run recorded then replays it
+    const calls = await parallel(wave.map((r) => () => r.digest === endsFor
+      ? agent.call(explorerPacket(kind, r, ctx, ends), {
+        agentType: 'explorer', node: ctx.node || undefined, head: ctx.head || undefined, schema: FINDINGS_END, label: 'explore:' + (ctx.node || ctx.milestone) + ':' + r.digest.slice(0, 12),
+      })
+      : agent.call(explorerPacket(kind, r, ctx), {
+        agentType: 'explorer', node: ctx.node || undefined, head: ctx.head || undefined, schema: FINDINGS, label: 'explore:' + (ctx.node || ctx.milestone) + ':' + r.digest.slice(0, 12),
+      })), { keys: wave.map((r) => r.digest.slice(0, 12)), label: 'explore' })
     wave.forEach((r, i) => {
       const call = calls[i]
       if (!call || call.status !== 'completed') {

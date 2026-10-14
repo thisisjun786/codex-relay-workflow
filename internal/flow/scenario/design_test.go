@@ -165,15 +165,16 @@ func TestDesignExplorerRunsTheEndConditionOnce(t *testing.T) {
 	l.Design = &d
 	given := 0
 	l.On("^explore:", func(c *Call) *fakehostPlan {
-		ran := []any{}
+		answer := map[string]any{"answer": "answer of the explorer", "evidence": []string{"README.md"}, "verified": []string{}, "inferred": []string{}, "unknown": []string{}}
 		if strings.Contains(c.Text, "END CONDITIONS") {
 			given++
 			if !strings.Contains(c.Text, cmd) || !strings.Contains(c.Text, "CRW-A") {
 				t.Errorf("the explorer packet does not name the command of CRW-A:\n%s", c.Text)
 			}
-			ran = append(ran, map[string]any{"command": cmd, "exit_code": 1, "tests": 0, "summary": "build failed"})
+			// FINDINGS_END: the explorer given the commands reports them
+			answer["end_conditions"] = []any{map[string]any{"command": cmd, "exit_code": 1, "tests": 0, "summary": "build failed"}}
 		}
-		p := Say(map[string]any{"answer": "answer of the explorer", "evidence": []string{"README.md"}, "verified": []string{}, "inferred": []string{}, "unknown": []string{}, "end_conditions": ran})
+		p := Say(answer)
 		return &p
 	})
 	auditText := ""
@@ -205,6 +206,88 @@ func TestDesignExplorerRunsTheEndConditionOnce(t *testing.T) {
 	if !strings.Contains(auditText, `"exit_code":1`) || !strings.Contains(auditText, `"tests":0`) {
 		t.Errorf("the design audit does not see the end condition's result:\n%s", auditText)
 	}
+}
+
+// The explorer calls and the milestone digest the base binary of CRW-1382 (origin/dev 1969b7ee) records for the run of
+// TestARunRecordedBeforeTheEndConditionResumesItsExplorers: one node, a DESIGN with two open questions, no end condition (read off that
+// binary's journal). A call replays on a resume only while its input digest is the one its prepared row records.
+var earlierExplorers = map[string][3]string{
+	"explore:M1:13486bb77ad4": {"bd32c348c06ce4100dc749d6b6568c138a71620a42d97b2412d6489b8b341fca", "ae712220b7cb50259b13312ca28f4094e3cc1e44d5f0128702b3597f79e52aa1", "4622313ad83109bc932879388798fc0cf3e1dbb2e00cac166a6f9043d23bf1b7"},
+	"explore:M1:1c52190881fd": {"13d9eff6a517f3c3e618fd22baa3245f3746131b24d83125af16e4fb87ae4635", "ae712220b7cb50259b13312ca28f4094e3cc1e44d5f0128702b3597f79e52aa1", "ab1c254f24407beedb15fe22f4abf5443d179e2f534b69e7d2a4259adfcac364"},
+}
+
+const earlierMilestoneDigest = "5cbd767ee536ad48e19c4c78d76960971b476e71271307c2b23bbe245ff25460"
+
+// TestARunRecordedBeforeTheEndConditionResumesItsExplorers (CRW-1382, post-evaluation d4): the end condition changes nothing a run
+// recorded before it replays. An explorer given no end condition is the call the earlier binary made - the same packet, the same FINDINGS
+// schema, the same input digest - so a run whose explorers were recorded before CRW-1382 replays them on a resume instead of running them
+// live again (and coming to the design ledger's refusal of a run past its design audit); only the explorer given the commands has the
+// packet section and the schema member end_conditions. The milestone's digest leaves the end condition out, so the plan a run pinned
+// before CRW-1382 is the plan the relay holds after it, whatever end condition the handoff's bodies carry.
+func TestARunRecordedBeforeTheEndConditionResumesItsExplorers(t *testing.T) {
+	check := func(t *testing.T, l *Lab, given string) {
+		t.Helper()
+		seen := 0
+		for _, ev := range l.Events() {
+			if ev.Kind != engine.KindCall || ev.Op != "agent" || ev.Event != engine.EvPrepared || str(ev.Data, "role") != "explorer" {
+				continue
+			}
+			want, ok := earlierExplorers[ev.Label]
+			if !ok {
+				t.Fatalf("an explorer %s the earlier run did not make", ev.Label)
+			}
+			seen++
+			got := [3]string{str(ev.Data, "prompt_digest"), str(ev.Data, "schema_digest"), str(ev.Data, "input_digest")}
+			if ev.Label == given {
+				if got[0] == want[0] || got[1] == want[1] {
+					t.Errorf("the explorer given the end condition has the earlier packet or schema: %v", got)
+				}
+				continue
+			}
+			if got != want {
+				t.Errorf("explorer %s: prompt, schema and input digests %v, the earlier binary's %v: a resume of a run recorded before CRW-1382 runs it live again", ev.Label, got, want)
+			}
+		}
+		if seen != 2 {
+			t.Fatalf("%d explorers, want 2", seen)
+		}
+		for _, row := range l.Rows("crw.milestone") {
+			if d := str(row.Data, "digest"); d != earlierMilestoneDigest {
+				t.Errorf("the milestone digest %s, the earlier binary's %s: a run pinned before CRW-1382 would see its plan changed", d, earlierMilestoneDigest)
+			}
+		}
+	}
+	t.Run("no end condition", func(t *testing.T) {
+		l := NewLab(t, oneNode()...)
+		d := l.designFor()
+		d.OpenQuestions = openQuestions(2)
+		l.Design = &d
+		mustRun(t, l)
+		check(t, l, "")
+	})
+	t.Run("an end condition", func(t *testing.T) {
+		nodes := oneNode()
+		nodes[0].EndCondition = []string{"go test ./a -run '^TestA$'"}
+		l := NewLab(t, nodes...)
+		d := l.designFor()
+		d.OpenQuestions = openQuestions(2)
+		l.Design = &d
+		given := ""
+		l.On("^explore:", func(c *Call) *fakehostPlan {
+			answer := map[string]any{"answer": "answer of the explorer", "evidence": []string{"README.md"}, "verified": []string{"README.md"}, "inferred": []string{}, "unknown": []string{}}
+			if strings.Contains(c.Text, "END CONDITIONS") {
+				given = c.Label
+				answer["end_conditions"] = []any{map[string]any{"command": "go test ./a -run '^TestA$'", "exit_code": 0, "tests": 1, "summary": "ok"}}
+			}
+			p := Say(answer)
+			return &p
+		})
+		mustRun(t, l)
+		if given == "" {
+			t.Fatal("no explorer was given the end condition")
+		}
+		check(t, l, given)
+	})
 }
 
 // maxOpen is the most calls of a role that were open at once (prepared and not yet ended).
@@ -240,7 +323,7 @@ func TestExplorerSignalAndInlineThresholds(t *testing.T) {
 		ops.OpenQuestion{ID: "dup", Question: "Who owns   module number 1?", Scope: "repo", FilesNeeded: []string{"a.go", "b.go", "c.go", "d.go", "e.go"}})
 	l.Design = &d
 	l.On("^explore:", func(c *Call) *fakehostPlan {
-		p := Say(map[string]any{"answer": "answer of the explorer", "evidence": []string{"README.md"}, "verified": []string{}, "inferred": []string{}, "unknown": []string{}, "end_conditions": []any{}})
+		p := Say(map[string]any{"answer": "answer of the explorer", "evidence": []string{"README.md"}, "verified": []string{}, "inferred": []string{}, "unknown": []string{}})
 		p.Delay = 40_000_000
 		return &p
 	})
@@ -297,7 +380,7 @@ func TestOpenQuestionRoutesThroughDesignAudit(t *testing.T) {
 	l.On("^explore:", func(c *Call) *fakehostPlan {
 		for q, a := range explained {
 			if strings.Contains(c.Text, "QUESTION: "+q) {
-				p := Say(map[string]any{"answer": a, "evidence": []string{"README.md"}, "verified": []string{}, "inferred": []string{}, "unknown": []string{}, "end_conditions": []any{}})
+				p := Say(map[string]any{"answer": a, "evidence": []string{"README.md"}, "verified": []string{}, "inferred": []string{}, "unknown": []string{}})
 				return &p
 			}
 		}
@@ -695,7 +778,7 @@ func TestEvidenceMissingSpawnsExplorerThenReviewerPacket(t *testing.T) {
 	l := NewLab(t, oneNode()...)
 	reviews(l, "A", Verdict(false, EvidenceDefect("e1", "does the retry loop stop at the deadline?", "retry.go", "deadline.go")), Verdict(true))
 	l.On("^explore:A:", func(*Call) *fakehostPlan {
-		p := Say(map[string]any{"answer": "the loop stops at the deadline in retry.go:44", "evidence": []string{"retry.go:44"}, "verified": []string{"retry.go"}, "inferred": []string{}, "unknown": []string{}, "end_conditions": []any{}})
+		p := Say(map[string]any{"answer": "the loop stops at the deadline in retry.go:44", "evidence": []string{"retry.go:44"}, "verified": []string{"retry.go"}, "inferred": []string{}, "unknown": []string{}})
 		return &p
 	})
 	got := mustRun(t, l)

@@ -813,7 +813,7 @@ func (l *Lab) defaultPlan(c *Call) fakehost.TurnPlan {
 	case c.Role == "reviewer":
 		return Say(Verdict(true))
 	case c.Role == "explorer":
-		return Say(map[string]any{"answer": "answer of the explorer", "evidence": []string{"README.md"}, "verified": []string{"README.md"}, "inferred": []string{}, "unknown": []string{}, "end_conditions": []any{}})
+		return Say(map[string]any{"answer": "answer of the explorer", "evidence": []string{"README.md"}, "verified": []string{"README.md"}, "inferred": []string{}, "unknown": []string{}})
 	case c.Role == "executor" || c.Role == "executor-t1":
 		c.Edit()
 		return Say(Receipt("ready_for_review"))

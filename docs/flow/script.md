@@ -312,8 +312,10 @@ next round on (`answered_by_orchestrator`): the part `crw flow answer --answer-f
 else the whole answer; a reused answer names the route it came from (`origin`, written only with a value); the first explorer of the first
 DESIGN's first audit round is also given the commands of the done conditions of the milestone's issues (`end_condition` of a node, read
 from the body the handoff carries), runs each once and reports its exit code and the tests it ran in the `end_conditions` of its
-`FINDINGS`, which the answer carries into the design audit, and a command that failed, ran no test or was not reported is a warning of the
-`crw.exploreRecord` row (CRW-1382; never a stop); a reviewer of another model family than the architect audits the DESIGN (`DESIGN_AUDIT`, recorded by
+answer (`FINDINGS_END`, the one explorer whose schema has the member; every other explorer answers `FINDINGS` with the packet it had
+before, and a milestone's digest leaves `end_condition` out, so a run recorded before CRW-1382 replays its explorer calls and keeps its
+pinned plan on a resume), which the answer carries into the design audit, and a command that failed, ran no test or was not reported is a
+warning of the `crw.exploreRecord` row (CRW-1382; never a stop); a reviewer of another model family than the architect audits the DESIGN (`DESIGN_AUDIT`, recorded by
 `crw.designAudit`), and `needs_changes` returns the DESIGN to the architect on its own thread; only an approved DESIGN becomes revision
 `r0` of the design ledger (`crw.designLedger`); `crw.dag` runs one lane for each node and the signal path of the milestone
 ([The architect's continuity and the re-plan](#the-architects-continuity-and-the-re-plan)); when every lane landed, `crw.closeMilestone` closes the milestone over

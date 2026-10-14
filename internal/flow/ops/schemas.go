@@ -29,6 +29,7 @@ const (
 	SchemaDesignAudit  = "DESIGN_AUDIT"
 	SchemaReflection   = "REFLECTION"
 	SchemaFindings     = "FINDINGS"
+	SchemaFindingsEnd  = "FINDINGS_END"
 	SchemaQACapture    = "QA_CAPTURE"
 	SchemaQAPass       = "QA_PASS"
 	SchemaQAReceipt    = "QA_RECEIPT"
@@ -76,7 +77,8 @@ var schemaTexts = map[string]string{
 		`"matrix":` + textsJSON + `,"teardown":` + textsJSON + `,"summary":{"type":"string"}},"required":["captures","matrix","teardown","summary"],"additionalProperties":false}`,
 	SchemaQAPass:    `{"type":"object","properties":{"pass":{"type":"string","enum":["A","B"]},"verdict":{"type":"string","enum":` + qaVerdicts + `},"findings":{"type":"array","items":` + qaFindingJS + `},"summary":{"type":"string"}},"required":["pass","verdict","findings","summary"],"additionalProperties":false}`,
 	SchemaQAReceipt: `{"type":"object","properties":{"verdict":{"type":"string","enum":` + qaVerdicts + `},"findings":{"type":"array","items":` + qaFindingJS + `},"summary":{"type":"string"}},"required":["verdict","findings","summary"],"additionalProperties":false}`,
-	SchemaFindings: `{"type":"object","properties":{"answer":{"type":"string"},"evidence":` + textsJSON + `,"verified":` + textsJSON + `,"inferred":` + textsJSON + `,"unknown":` + textsJSON + `,` +
+	SchemaFindings:  `{"type":"object","properties":{"answer":{"type":"string"},"evidence":` + textsJSON + `,"verified":` + textsJSON + `,"inferred":` + textsJSON + `,"unknown":` + textsJSON + `},"required":["answer","evidence","verified","inferred","unknown"],"additionalProperties":false}`,
+	SchemaFindingsEnd: `{"type":"object","properties":{"answer":{"type":"string"},"evidence":` + textsJSON + `,"verified":` + textsJSON + `,"inferred":` + textsJSON + `,"unknown":` + textsJSON + `,` +
 		`"end_conditions":{"type":"array","items":{"type":"object","properties":{"command":{"type":"string"},"exit_code":{"type":"integer"},"tests":{"type":"integer"},"summary":{"type":"string"}},"required":["command","exit_code","tests","summary"],"additionalProperties":false}}},` +
 		`"required":["answer","evidence","verified","inferred","unknown","end_conditions"],"additionalProperties":false}`,
 }
@@ -481,7 +483,7 @@ type Findings struct {
 	Inferred []string `json:"inferred"`
 	Unknown  []string `json:"unknown"`
 	// EndConditions are the end condition commands the explorer was given and ran once, each with its exit code and the tests it ran
-	// (CRW-1382); empty when it was given none.
+	// (FINDINGS_END, CRW-1382); nil for the FINDINGS of an explorer given none.
 	EndConditions []EndConditionRun `json:"end_conditions"`
 }
 
@@ -493,8 +495,17 @@ type EndConditionRun struct {
 	Summary  string `json:"summary"`
 }
 
-// DecodeFindings reads FINDINGS.
-func DecodeFindings(raw []byte) (Findings, error) { return decode[Findings](SchemaFindings, raw) }
+// DecodeFindings reads FINDINGS, or FINDINGS_END when the answer carries end_conditions (the explorer given the end condition commands,
+// CRW-1382). An answer of an explorer given none is the FINDINGS of the earlier binary, which a run recorded before CRW-1382 holds.
+func DecodeFindings(raw []byte) (Findings, error) {
+	var members map[string]json.RawMessage
+	if json.Unmarshal(raw, &members) == nil {
+		if _, ok := members["end_conditions"]; ok {
+			return decode[Findings](SchemaFindingsEnd, raw)
+		}
+	}
+	return decode[Findings](SchemaFindings, raw)
+}
 
 // Receipt is the report of an executor (RECEIPT).
 type Receipt struct {
