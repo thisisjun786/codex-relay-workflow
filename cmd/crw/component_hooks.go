@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"time"
@@ -147,6 +150,9 @@ func componentHooks() []componentHook {
 				harness.RecordInvocation(raw, harness.Component, "pre-tool-use-child-push", os.LookupEnv)
 				answer, rule := pabcdhook.ChildPushDecision(raw, func(session, cwd string) pabcdhook.ChildPushBinding {
 					child, parent, err := hook.ChildBinding(c.ctx, session)
+					if err == nil && !child {
+						child, parent, err = subagentLineageBinding(c.ctx, raw)
+					}
 					switch {
 					case err != nil:
 						return pabcdhook.ChildPushBinding{Unreadable: err.Error()}
@@ -187,6 +193,25 @@ func componentHooks() []componentHook {
 		{"post-compact-injecting-bg-terminal-affordance.post-compact", "post-compact", aff("post-compact")},
 		{"post-compact-injecting-bg-terminal-affordance.user-prompt-submit", "user-prompt-submit", aff("user-prompt-submit")},
 	}
+}
+
+// subagentLineageBinding is the child push guard's fallback for a sub-agent whose session_id the relay does not know as a child
+// (CRW-1370): when the input names an agent_id and a transcript_path, it follows the parent threads of the sub-agent's rollout, at most
+// hook.LineageDepthLimit of them, to a thread the relay holds as a child. An input that is no sub-agent's, or names no transcript, binds nothing
+// and reads nothing. A lineage that cannot be read is an error, which the guard answers with its warning and a decision record (fail-open).
+func subagentLineageBinding(ctx context.Context, raw string) (child bool, parentCwd string, err error) {
+	var input struct {
+		AgentID        string `json:"agent_id"`
+		TranscriptPath string `json:"transcript_path"`
+	}
+	if json.Unmarshal([]byte(raw), &input) != nil || input.AgentID == "" || input.TranscriptPath == "" {
+		return false, "", nil
+	}
+	child, parentCwd, unreadable := hook.ChildBindingByLineage(ctx, input.TranscriptPath, hook.ChildBinding)
+	if unreadable != "" {
+		return false, "", errors.New(unreadable)
+	}
+	return child, parentCwd, nil
 }
 
 // The component rows that are PreToolUse guards, by their registration names (the mode table's keys).
