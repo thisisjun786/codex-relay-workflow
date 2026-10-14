@@ -28,7 +28,8 @@ import (
 //
 // The pre-merge and verification bodies are stored in the acceptance row, because dag_acceptance_premerge and dag_acceptance_verifications reference dag_acceptances. A node without a head (a
 // non-implementation node) takes the reviewer, the execution and the actor, and returns its slot in the same transaction (dag_accepted), as the relationship path does. There is no pull request route and no
-// 'local CI only' route: the pull request landing of an agent node is CRW-1226's. Until it lands the design has the plan compile refuse an agent node on the pull request route (that compile is not part of this issue), and this path itself refuses a pull request for an agent node.
+// 'local CI only' route: an agent node lands on the plan's local target branch, and this path refuses a pull request for an agent node. A pull request carries agent nodes only as a
+// milestone's (PR-unit landing, CRW-1355): the nodes land on the milestone integration branch, whose one pull request the dev queue (internal/integrator) merges onto dev.
 //
 // What the run records, and what this path reads of it (the journal is written by the flow engine into flow_calls; these are the columns and keys the acceptance depends on):
 //
@@ -86,7 +87,7 @@ func (s *Scheduler) acceptAgent(ctx context.Context, snap dag.Snapshot, n dag.Sn
 	implementation := n.Kind == dag.NodeImplementation
 	switch {
 	case in.PullRequest != nil:
-		return out, refuse(contract.RefusalMalformedReceipt, "an agent node is accepted on its commit and never on a pull request: its pull request landing is not implemented (CRW-1226), so drop --repository and --pull-request")
+		return out, refuse(contract.RefusalMalformedReceipt, "an agent node is accepted on its commit and never on a pull request: it lands on the plan's target branch, and a milestone's pull request goes to dev through the dev queue (crw manage integrate), so drop --repository and --pull-request")
 	case implementation && in.Commit == nil:
 		return out, refuse(contract.RefusalMalformedReceipt, "node %s is an agent implementation node: it is accepted with --commit, --base, --verification and --checkout, and the relay reads its head from git", node)
 	case !implementation && in.Commit != nil:

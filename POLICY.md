@@ -29,6 +29,12 @@ External contributions may still arrive as pull requests against `dev`. The
 repository reads a contribution, verifies the tree it delivers and integrates it;
 a PR is how one is proposed, not a condition every change has to satisfy.
 
+A project session may land its milestone as one pull request from its milestone
+integration branch (PR-unit landing). The dev queue, which is this integrator, merges
+the pull request's head onto `dev` after the same verification of the merged tree and
+the repository's configured review command; the pull request is the place of the
+record and the review, and the verification-record stays the gate.
+
 The integrator re-reads the candidate and the destination tip immediately before the
 push and verifies the landed commit. Refresh invalidated evidence after either input
 changes. Serialize integrations into the same target. Never force-push, and never push

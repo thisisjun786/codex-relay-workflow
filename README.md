@@ -348,7 +348,16 @@ push-only procedure internal work integrates by one integrator, who merges the
 candidate into a local integration tree over `dev`, verifies that tree with the
 local full verification (`verification-record/1` with `result: pass`) and fast-forwards
 `dev` to it; the coordinator updates the Linear record and verifies the criteria
-against the delivered tree and confirms the landing. Release and deployment still
+against the delivered tree and confirms the landing. That is direct landing. PR-unit
+landing is the project session's way to land a milestone: its plan's target `base_ref`
+names the milestone integration branch, the run lands each node there as it would on
+`dev`, and the project session opens one pull request from that branch toward `dev`
+naming the issues it carries (`crw flow pr open`) and enqueues it (`crw manage integrate
+--enqueue-pr`). The dev queue merges the pull request's head onto `dev` in its own tree,
+verifies it, runs the repository's configured review command (the coordinator configures
+its Argon review there) and fast-forwards `dev`; the pull request holds the record and the
+review, nobody merges it on GitHub, and the `verification-record/1` stays the gate. See
+[the integration queue](docs/relay/integrator.md#pull-requests-pr-unit-landing). Release and deployment still
 require Jun. Skills, bridge and relay all deliver to this repository on base `dev`;
 an external contribution arrives as an ordinary pull request, and a dependent pull
 request may target its prerequisite branch. Releasing a verified dev commit and
