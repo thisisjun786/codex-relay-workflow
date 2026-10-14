@@ -45,8 +45,9 @@ type scriptedApp struct {
 	failures     map[string]error
 	noTurn       map[string]string
 	sendReceipts []map[string]any
-	age          time.Duration // how long ago a creation says it began
-	endless      bool          // the loaded listing never ends
+	saved        map[string]any // the receipt the outcome "bridge-saved" answers: a row a real bridge left in its ledger
+	age          time.Duration  // how long ago a creation says it began
+	endless      bool           // the loaded listing never ends
 }
 
 func (h *scriptedApp) addThread() string { return h.addThreadAs(fmt.Sprintf("t-%d", len(h.order)+1)) }
@@ -94,6 +95,15 @@ func (h *scriptedApp) CreateThread(_ context.Context, in CreateThreadRequest) (m
 	case "saved-title": // the process died after the title was saved: the bridge keeps no attemptedEffects yet
 		id := h.addThread()
 		receipt = map[string]any{"status": "in_progress_or_unknown", "threadId": id, "creation": h.creationRecord(id), "title": "Verify"}
+	case "bridge-saved": // the process died with the row h.saved in the bridge's ledger, for the thread the scripted host holds
+		id := h.addThread()
+		if pyjson.Text(h.saved["threadId"]) != id {
+			panic("the saved row names thread " + pyjson.Text(h.saved["threadId"]) + ", not " + id)
+		}
+		receipt = map[string]any{}
+		for k, v := range h.saved {
+			receipt[k] = v
+		}
 	default:
 		panic("unknown outcome " + outcome)
 	}

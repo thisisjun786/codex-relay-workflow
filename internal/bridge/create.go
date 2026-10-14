@@ -235,6 +235,10 @@ func (b *Bridge) CreateThread(ctx context.Context, in CreateThread) (receipt led
 				return err
 			}
 		}
+		// The save right before turn/start, with no other save between them: it carries the naming's outcome, the name
+		// (title) or the warning that the thread has none (titleWarning), and the reconciliation of an unknown managed
+		// creation reads either one as a receipt that may have sent turn/start (savedBeforeFirstTurn in
+		// internal/relay/managed/reconcile.go).
 		if receipt["title"] != nil || receipt["titleWarning"] != nil {
 			if _, err = b.Ledger.Save(ctx, receipt); err != nil {
 				return err
