@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/compile"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
@@ -260,5 +261,56 @@ func TestSchedRelayReleaseChildComparesTheExpectedSlice(t *testing.T) {
 	res, err := r.ReleaseChild(ctx, req)
 	if err != nil || !res.Started || res.Child == "" || slice == "" {
 		t.Fatalf("the child start under slice %s: %+v %v", slice, res, err)
+	}
+}
+
+// TestChildSizedIssueWithoutChildHostWarnsAtStart (CRW-1382 P3): an issue of the run's milestone that the handoff sizes for a child
+// (size_fit child) is released as an issue child, which needs the run's host settings; a run started without --child-host would learn it
+// only at that release (child_host_unset). The start warns of it: the warn fact child_host_unset, naming the issues, printed and recorded
+// in the run's spec, and the run starts. With --child-host, or with no issue sized for a child, there is no such fact.
+func TestChildSizedIssueWithoutChildHostWarnsAtStart(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"}, labIssue{Key: "A-2", Milestone: "M1"})
+	doc, _ := childHostDoc(t)
+	hostFile := filepath.Join(t.TempDir(), "child-host.json")
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(hostFile, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	start := func(mutate func(*compile.Input), extra ...string) Spec {
+		t.Helper()
+		file := filepath.Join(t.TempDir(), "handoff.json")
+		if err := os.WriteFile(file, l.handoffBytes(mutate), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		before := len(l.td.spawned)
+		argv := append([]string{"start", "project-lane", "--args", `{"plan":"plan-1","milestone":"M1"}`, "--handoff", file, "--thread", labOwner, "--state", l.w.state,
+			"--socket", l.host.SocketPath, "--repo", l.repo}, extra...)
+		code, out, errOut := l.td.do(argv...)
+		if code != 0 || len(l.td.spawned) != before+1 {
+			t.Fatalf("the start: exit %d\n%s%s", code, out, errOut)
+		}
+		return l.td.spawned[len(l.td.spawned)-1].Spec
+	}
+	factOf := func(spec Spec) *Fact {
+		for _, f := range spec.Preflight {
+			if f.Name == FactChildHostUnset {
+				return &f
+			}
+		}
+		return nil
+	}
+	child := func(in *compile.Input) { in.Projects[0].Issues[1].SizeFit, in.Projects[0].Issues[1].SizeReason = "child", "regions_gt3" }
+	f := factOf(start(child))
+	if f == nil || f.Level != LevelWarn || !strings.Contains(f.Reading, "A-2") || strings.Contains(f.Reading, "A-1") || !strings.Contains(f.Reason, "--child-host") {
+		t.Errorf("a child-sized issue without --child-host: %+v", f)
+	}
+	if f := factOf(start(child, "--child-host", hostFile)); f != nil {
+		t.Errorf("a child-sized issue with --child-host is a fact: %+v", f)
+	}
+	if f := factOf(start(nil)); f != nil {
+		t.Errorf("no child-sized issue is a fact: %+v", f)
 	}
 }
