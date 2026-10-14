@@ -1,15 +1,15 @@
 # Midpoint check
 
-One word from Jun, 중간점검 or '현재 어디까지 됐어?', arriving in a task that leads an
+One word from Jun, 중간점검 or '현재 어디까지 됐어?', arriving in the parent (repository session, relay role `supervisor`, [the level table](../../crw-canon/references/hierarchy.md#the-levels)) that leads an
 initiative. The answer is a short report covering everything that leadership holds and, where the
 execution approval is still in force, the approved work moved along. This file is the procedure
-of [crw-run-initiative](../../crw-run-initiative/SKILL.md), which owns the midpoint check. The
+of [the parent's section of crw-run](../SKILL.md#the-parent-the-repository-session), which owns the midpoint check. The
 roles it walks are the shared
 [scope of each level](../../crw-canon/references/hierarchy.md#scope-of-each-level),
 and the binding it reads is the one
 [Initiative supervision](initiative-supervision.md) established. The classification that decides
 between the reading branch and the checkpoint branch is
-[Answer a 중간점검 request](../../crw-run-initiative/SKILL.md#answer-a-중간점검-request); the reading
+[Answer a 중간점검 request](../SKILL.md#answer-a-중간점검-request); the reading
 branch is a [crw-status](../../crw-status/SKILL.md) report that wakes nothing, and the checkpoint
 branch, an execution approval still in force, is what this file is mostly about.
 

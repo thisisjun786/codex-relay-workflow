@@ -1,6 +1,7 @@
 # dots contact: how a Linna request reaches a repository manager
 
-This page records the control point between the Linna dots app and a repository management session.
+This page records the control point between the Linna dots app and a repository's parent (repository session, relay role `supervisor`,
+[the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels)).
 It states what is verified, what is unknown, and how a request is identified, admitted, converged
 and answered. It does not assume any dots API, webhook or internal extension.
 
@@ -10,7 +11,7 @@ round trip through dots is observed by this change. The live check is the manage
 ## Capabilities
 
 One path is confirmed, and it runs in one direction: a Linna thread delegates work to the
-repository management session, and the delegation carries a request id. The record is the CRW-549
+repository's parent, and the delegation carries a request id. The record is the CRW-549
 issue, which states it. The delegation itself runs outside this repository, so this change did not
 re-observe it. The repository side of that path is the receiving contract in `dotscontact.go`,
 which decides what an arrived request may do.

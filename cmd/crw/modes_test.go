@@ -15,13 +15,13 @@ import (
 	"time"
 )
 
-// The modes the usage line and the invalid-choice message advertise are the table's listed rows,
-// and pabcd is dispatched without being advertised until the switch lists it.
+// The modes the usage line and the invalid-choice message advertise are the table's listed rows: every
+// word of the table (CRW-1323), and only the option spellings -h, --help and --version are left out.
 func TestModeTableDrivesUsageAndDispatch(t *testing.T) {
 	var out, errOut strings.Builder
 	if code := run(context.Background(), "crw", []string{"nope"}, &out, &errOut); code != parserExit ||
-		!strings.Contains(errOut.String(), "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,gui,config,tools,help,version} ...") ||
-		!strings.Contains(errOut.String(), "(choose from 'relay', 'bridge', 'hook', 'skill', 'doctor', 'install', 'review', 'manage', 'gui', 'config', 'tools', 'help', 'version')") {
+		!strings.Contains(errOut.String(), "usage: crw [-h] [--version] {relay,bridge,hook,skill,doctor,install,review,manage,gui,config,tools,recall,pabcd,role,provider,map,flow,help,version} ...") ||
+		!strings.Contains(errOut.String(), "(choose from 'relay', 'bridge', 'hook', 'skill', 'doctor', 'install', 'review', 'manage', 'gui', 'config', 'tools', 'recall', 'pabcd', 'role', 'provider', 'map', 'flow', 'help', 'version')") {
 		t.Fatalf("unknown mode: %d %q", code, errOut.String())
 	}
 	out.Reset()

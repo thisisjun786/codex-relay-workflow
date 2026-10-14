@@ -66,8 +66,8 @@ Do not bundle:
 
 Nothing else splits an issue: not file count, diff size, directory or module boundaries,
 equal sizing between issues, the number of review rounds, or a wish to run work in
-parallel. A line count is only a rough reference, never a boundary; the [work-unit
-rules](../../../../../POLICY.md#work-units-review-and-integration) own that rule and this page
+parallel. A line count is only a rough reference, never a boundary; the work-unit
+rules (`POLICY.md#work-units-review-and-integration` in the CRW repository) own that rule and this page
 applies it. Real parallelism comes
 from the independence described above. If the only thing separating two candidate parts is
 that they touch different files, they are one delivery. A large single-landing change is one

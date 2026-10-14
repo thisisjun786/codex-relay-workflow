@@ -1,6 +1,6 @@
 # Spawn policy
 
-Which agent calls a flow run makes, which signal adds one, which work the run does itself, what is recorded for each decision, and the two kinds of refusal that no option overrides. A project orchestrator reads it to know why a run spawned or did not spawn; an initiative lead and the status readers use it to read a run's decisions. The commands are in [flow.md](flow.md), the script format is [docs/flow/script.md](../../../../../docs/flow/script.md), and the roles are named by policy key in [execution-roles.md](execution-roles.md), never by model.
+Which agent calls a flow run makes, which signal adds one, which work the run does itself, what is recorded for each decision, and the two kinds of refusal that no option overrides. A child reads it to know why a run spawned or did not spawn; the parent and the status readers use it to read a run's decisions. The commands are in [flow.md](flow.md), the script format is `docs/flow/script.md` in the CRW repository, and the roles are named by policy key in [execution-roles.md](execution-roles.md), never by model.
 
 The workflow decides the structural spawns. Signals with numeric thresholds decide the rest. Anything cheaper is done inline by code. Every decision (spawn, inline, reuse, skip, refused) and its outcome is an append-only relay record. A rule id is the reason a row gives for the decision it records. The ids are the constants of `internal/flow/ops/rules.go`, the one place the strings are written; a script names a rule by its key (`EXEC_1`, `TIER_1`) and the id is looked up there, so a rule renamed there is renamed here by the test that compares this page with that file.
 
@@ -63,7 +63,7 @@ The first kind is a refused agent call of the run. It holds the effort, verifica
 
 The second kind is a refused native spawn of a flow-bound thread, decided by the spawn hook from the run's binding: `native_type_refused` (a type other than the explorer), `native_limit_refused` (more than the thread's allowance), `full_history_fork_refused` (a spawn that forks the whole history) and `flow_bound_unavailable` (the binding cannot be trusted, so every spawn of the thread is refused). The `CRW-SUBSPAWN-ALLOWED` grant mints nothing on a flow-bound thread.
 
-`held`, `unknown`, `null_model` and `superseded` are host and engine states, not refusals: they follow the call-state table of [docs/flow/script.md](../../../../../docs/flow/script.md) and are never tier evidence.
+`held`, `unknown`, `null_model` and `superseded` are host and engine states, not refusals: they follow the call-state table of `docs/flow/script.md` in the CRW repository and are never tier evidence.
 
 ## The QA calls of the final gate
 

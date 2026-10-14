@@ -28,7 +28,7 @@ this default. This convention names issue children; the management task above th
 is named by [Set the app presentation and record](../../crw-plan/references/integrations.md#set-the-app-presentation-and-record),
 including the product-family prefix that no child title carries.
 Each implementation packet names its
-one issue and one intended delivery, which is today's operation under the [work-unit rules](../../../../../POLICY.md#work-units-review-and-integration);
+one issue and one intended delivery, which is today's operation under the work-unit rules (`POLICY.md#work-units-review-and-integration` in the CRW repository);
 several packets for one feature are allowed by policy and switch on when their support lands. A batch retains separate packets and issue/PR pairs;
 do not use a primary issue to hide a combined delivery. If no issue is linked,
 use the known project name instead of inventing an issue number and reconcile
@@ -309,7 +309,7 @@ Execution:
   the reading is wrong), and handle the remaining findings as
   [What each finding needs before the receipt](merge-readiness.md#what-each-finding-needs-before-the-receipt) says.
   A `partial`, `invalid` or `unavailable` run is not "no findings": say what the command reported
-  (outcome, status, `retryNotBefore` if any, the comment link) in the handoff. [crw review](../../../../../docs/review/crw-review.md)
+  (outcome, status, `retryNotBefore` if any, the comment link) in the handoff. crw review (`docs/review/crw-review.md` in the CRW repository)
   has the rules.
 - Finishing the review is part of finishing the work. Read every applicable review to the
   end of its pagination on the CURRENT head, judge each finding against the code, fix what
@@ -1209,7 +1209,7 @@ It is not a delivery channel: it carries no receipt, no acknowledgement and no v
 never instructs another parent's child. The handoff is the one kind here that assigns anything, and
 even it assigns only a project to the parent that owns it; that parent binding the project and
 returning its result are separate facts the message does not establish. The path and the rules it follows are
-[Direct coordination between project orchestrators](../../crw-canon/references/hierarchy.md#direct-coordination-between-project-orchestrators).
+[Direct coordination between children](../../crw-canon/references/hierarchy.md#direct-coordination-between-children).
 
 Keep it short. Name what identifies this message, and reference what the existing relationship
 already holds instead of recopying it, exactly as the restoration block carries pointers rather

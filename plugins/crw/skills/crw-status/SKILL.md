@@ -1,6 +1,6 @@
 ---
 name: crw-status
-description: "Read-only report of where work stands, by level from manager to issue, with the evidence, and the one next action when asked. Use for '현재 어디까지 됐어?', '상황 알려줘', '다음에 뭐 하지?'. crw-check audits delivery against criteria; crw-run and crw-run-initiative execute."
+description: "Read-only report of where work stands, by layer from the parent to each issue, with the evidence, and the one next action when asked. Use for '현재 어디까지 됐어?', '상황 알려줘', '다음에 뭐 하지?'. crw-check audits delivery against criteria; crw-run executes."
 ---
 
 # CRW Status
@@ -11,11 +11,12 @@ Jun asks for it. He asks for this as '현재 어디까지 됐어?', as '전체 �
 an audit, or a recommendation he did not ask for.
 
 This skill is read-only. It writes no Linear record, creates or resumes no task, sends no message,
-wakes no project orchestrator or issue child, installs nothing and changes no schedule, whatever
+wakes no child or issue child, installs nothing and changes no schedule, whatever
 the state of the work it reports on. Reporting that a project is behind does not authorize starting
-it. A one-word 중간점검 inside a task that leads an initiative is not a read: its owner is
-[crw-run-initiative](../crw-run-initiative/SKILL.md), and when this task holds no such binding the
-request is a status read and is answered here.
+it. A one-word 중간점검 inside the parent (repository session, relay role `supervisor`) is not a read: its owner is
+[the parent's section of crw-run](../crw-run/SKILL.md#the-parent-the-repository-session), and when this task is no parent the
+request is a status read and is answered here. The layers and their names are
+[the level table](../crw-canon/references/hierarchy.md#the-levels).
 
 ## Keep the read operations apart
 
@@ -60,7 +61,7 @@ ID, a Codex task ID, a Desktop project ID and a repository are four different id
 title, a folder or a branch is none of them.
 
 Reading another project because somebody asked about it changes no binding. That holds at every
-level: a temporary question does not repoint a project orchestrator, and a task that answers
+layer: a temporary question does not repoint a child (project session, relay role `parent`), and a task that answers
 one question about a neighbouring initiative still leads the initiative it was designated for.
 A binding changes only by an explicit designation or switch.
 
@@ -73,32 +74,32 @@ and name the candidates in that question.
 ## Report by level
 
 Read and report from the top down, in this order, and stop at the level the question reaches: the
-manager, then each initiative lead, then each project orchestrator, then each issue.
+parent, then each initiative it orders, then each child, then each issue.
 
-1. **Manager.** The store seat (held through its management seat once it registered): the capacity and caps it holds, the decisions waiting for Jun, and
-   what it has handed to the initiative leads and project orchestrators.
-2. **Initiative lead.** Per initiative, its approved project set, the order across projects, the
+1. **Parent.** The repository's management seat (with the store seat read through it): the capacity and caps it holds, the decisions waiting for Jun, and
+   what it has handed to its children.
+2. **Initiative.** Per initiative the parent orders, its approved project set, the order across projects, the
    finish condition and whether it holds.
-3. **Project orchestrator.** Per project, its state, its blocker, its schedule verdict and its
+3. **Child.** Per project, its state, its blocker, its schedule verdict and its
    evidence pointer.
-4. **Issue.** Per issue, its child or executor, its delivery and the evidence at the delivery level
+4. **Issue.** Per issue, its step, subagent or issue child, its delivery and the evidence at the delivery level
    its criteria require.
 
 A gap found at a level is reported there and sent one level down, to the owner of that level, never
-past it and never to the reader's own convenience: a gap in an issue goes to its project
-orchestrator, a gap that spans projects goes to the initiative lead that owns both, and a gap in an
-initiative's order goes to the manager. Where the projects answer to different initiative leads, a
-requirement for one of them goes to that project's own lead, and only a genuinely shared decision
-with no common owner goes to Jun. A standalone issue keeps its issue-scoped owner and no project
-orchestrator is invented for it. All of this follows the
+past it and never to the reader's own convenience: a gap in an issue goes to its child, a gap that
+spans projects goes to the parent that orders both, and a gap in the order across projects stays
+with that parent. Where the projects belong to different repositories, a requirement for one of them
+goes to that project's own parent, and only a genuinely shared decision with no common owner goes
+to Jun through the top session. A standalone issue keeps its issue-scoped owner and no child is
+invented for it. All of this follows the
 [scope of each level](../crw-canon/references/hierarchy.md#scope-of-each-level); reading a level does
 not give this skill that level's authority.
 
 ## Read a project's run
 
-A project orchestrator whose plan has a flow run is reported from the run's own records, which need no wake. `crw flow ps` lists the runs that are not over (`running`, `paused`, `dead` or `held`); `crw flow show RUN` gives the tree of one run (its phases, each agent call with its role, node, status and reason, the review verdicts, the acceptance, the integration and any `recovery_hold`); `crw flow watch RUN --after SEQ` gives the rows after a cursor; and `crw relay journal-tail` reads the relay's own journal the same way. The state of a run is taken from those records, never from the status line its owner thread prints.
+A child whose plan has a flow run is reported from the run's own records, which need no wake. `crw flow ps` lists the runs that are not over (`running`, `paused`, `dead` or `held`); `crw flow show RUN` gives the tree of one run (its phases, each agent call with its role, node, status and reason, the review verdicts, the acceptance, the integration and any `recovery_hold`); `crw flow watch RUN --after SEQ` gives the rows after a cursor; and `crw relay journal-tail` reads the relay's own journal the same way. The state of a run is taken from those records, never from the status line its owner thread prints.
 
-Read the reports that wait with `crw flow reports --unread`: an unread report is a milestone report or a blocker that has reached its initiative lead and not been read, and the status says to whom it went, how long it has waited and what the last delivery said. Status reads it and does not acknowledge it: `crw flow report-ack` appends a row of its own, so the mark is the initiative lead's act. It starts, answers, pauses and resumes no run. A gap the run's records show goes to the project orchestrator that owns the run, as any gap at that level does.
+Read the reports that wait with `crw flow reports --unread`: an unread report is a milestone report or a blocker that has reached its parent and not been read, and the status says to whom it went, how long it has waited and what the last delivery said. Status reads it and does not acknowledge it: `crw flow report-ack` appends a row of its own, so the mark is the parent's act. It starts, answers, pauses and resumes no run. A gap the run's records show goes to the child that owns the run, as any gap at that level does.
 
 ## Choose the depth before reading
 
@@ -190,17 +191,16 @@ and name the next result to observe.
 
 A "what next?" is advisory: selection launches no work and mutates no Linear. During an active
 authorized run, answer briefly and return control to the existing owner. When execution is also
-requested, hand the chosen action and evidence to [crw-run](../crw-run/SKILL.md) or
-[crw-run-initiative](../crw-run-initiative/SKILL.md) under the existing scope.
+requested, hand the chosen action and evidence to [crw-run](../crw-run/SKILL.md), the child's
+procedure or the parent's section in it, under the existing scope.
 
 ## Return control, and report what was done
 
 A status question that arrives during an authorized run is a question, not a cancellation. Answer
 it and return control to the task that owns the execution, which keeps every obligation it already
-had; an initiative lead or project orchestrator does not shed its continuing duties because someone
+had; a parent or a child does not shed its continuing duties because someone
 asked for a progress report. Where the user asks for action beyond what the standing approval
-covers, hand the scoped request to the owner that already has it: [crw-run](../crw-run/SKILL.md) or
-[crw-run-initiative](../crw-run-initiative/SKILL.md) for execution, [crw-check](../crw-check/SKILL.md)
+covers, hand the scoped request to the owner that already has it: [crw-run](../crw-run/SKILL.md) for execution, [crw-check](../crw-check/SKILL.md)
 for verification, [crw-plan](../crw-plan/SKILL.md) for a schedule or scope change.
 
 Do not set up recurring or background reporting. Each call is asked for and answered once.

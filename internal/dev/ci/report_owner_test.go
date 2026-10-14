@@ -213,7 +213,7 @@ func TestCheckActorSections(t *testing.T) {
 	}
 }
 
-// TestStatusReportsByLevel: crw-status reports manager, initiative, project, issue in that order, routes a gap
+// TestStatusReportsByLevel: crw-status reports the parent, initiative, child, issue in that order, routes a gap
 // one level down, chooses the next action and writes nothing.
 func TestStatusReportsByLevel(t *testing.T) {
 	status := splitRead(t, statusSkillFile)
@@ -222,7 +222,7 @@ func TestStatusReportsByLevel(t *testing.T) {
 		t.Fatalf("%s has no section \"Report by level\"", statusSkillFile)
 	}
 	last := -1
-	for _, level := range []string{"manager", "initiative lead", "project orchestrator", "issue"} {
+	for _, level := range []string{"**Parent.**", "**Initiative.**", "**Child.**", "**Issue.**"} {
 		i := strings.Index(section, level)
 		if i < 0 || i <= last {
 			t.Errorf("the level %q is missing or out of order in the report-by-level section", level)

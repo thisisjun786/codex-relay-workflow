@@ -1,6 +1,6 @@
 interface:
   display_name: "CRW Run"
-  short_description: "project orchestrator 목표 없이 프로젝트 이슈를 배정·병렬 실행·검증·머지하고, 이니셔티브는 기존 project orchestrator를 통해 감독. project orchestrator goal은 명시 요청의 goal mode에서만"
+  short_description: "프로젝트 세션으로 목표 없이 프로젝트 이슈를 배정·병렬 실행·검증·머지하고, 저장소 세션의 프로젝트 순서·결정·보고·중간점검도 맡음. goal은 명시 요청의 goal mode에서만"
   default_prompt: "$crw-run [Linear 프로젝트 링크]"
 policy:
   allow_implicit_invocation: true

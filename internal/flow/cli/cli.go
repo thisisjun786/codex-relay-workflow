@@ -62,6 +62,19 @@ const (
 // Handles reports whether `crw flow args...` is one of the commands this package serves.
 func Handles(args []string) bool { return len(args) > 0 && commands[args[0]] }
 
+// Words are the first words of the commands this package serves that a reader types, in sorted order: every one but the run
+// process's own entry (ProcessCommand).
+func Words() []string {
+	var words []string
+	for word := range commands {
+		if word != ProcessCommand {
+			words = append(words, word)
+		}
+	}
+	slices.Sort(words)
+	return words
+}
+
 // Run is `crw flow` for the commands of Handles, over the process's own environment.
 func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return RunWith(ctx, Default(), args, stdin, stdout, stderr)

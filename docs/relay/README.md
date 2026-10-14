@@ -357,7 +357,8 @@ The role pairs below are examples; read your host's declared
       "sandbox": {"type": "workspaceWrite", "writableRoots": [], "networkAccess": true},
       "cwd": "/workspace/issue-42", "runtimeWorkspaceRoots": ["/workspace/issue-42"],
       "environments": [{"environmentId": "local", "cwd": "/workspace/issue-42",
-                        "runtimeWorkspaceRoots": ["/workspace/issue-42"]}]
+                        "runtimeWorkspaceRoots": ["/workspace/issue-42"]}],
+      "mcpProfile": "minimal"
     }
   },
   "artifactRoots": ["/workspace/issue-42"],
@@ -367,6 +368,10 @@ The role pairs below are examples; read your host's declared
   "scopeRef": "issue:EXAMPLE-42", "prompt": "The complete authorized assignment goes here."
 }
 ```
+
+The child's `mcpProfile` names the MCP profile it starts under. A host whose policy declares profiles for the
+child role refuses a request that states none (`mcp_profile_required`) or one it does not declare
+(`mcp_profile_unknown`) before anything is created.
 
 The child's sandbox must reach the relay daemon's socket, which a sandbox without network
 access cannot: `dangerFullAccess`, or `workspaceWrite` with `networkAccess: true`. Creation
