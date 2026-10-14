@@ -43,6 +43,42 @@ type ResumeSetup struct {
 // ResumeEnv opens what `crw flow resume` works on for a run.
 var ResumeEnv func(ctx context.Context, req ResumeEnvRequest) (ResumeSetup, error)
 
+// ResumeHold is what the caller of the engine's `crw flow resume RUN SCRIPT` holds a resumed run to beyond its journal (CRW-1348):
+// the run process holds a session run the same way. Backend is the backend the run's spec names ("" for a spec written before the
+// field, or no spec): a run whose started row records the other backend is a mixed resume and is refused before it is taken.
+// Session, when set, is called for a session run once the script and the arguments are the run's and before the run goes on: it
+// gets the run's owner thread, the role table the run goes on under and the pool asked for, binds what it binds, and returns the
+// pool the run keeps in flight and the release called when the run ends (nil releases nothing).
+type ResumeHold struct {
+	Backend string
+	Session func(owner string, table *Policy, pool int) (int, func())
+}
+
+type resumeHoldKey struct{}
+
+// WithResumeHold hands the engine's resume command the hold of its caller.
+func WithResumeHold(ctx context.Context, h ResumeHold) context.Context {
+	return context.WithValue(ctx, resumeHoldKey{}, h)
+}
+
+func resumeHoldOf(ctx context.Context) ResumeHold {
+	h, _ := ctx.Value(resumeHoldKey{}).(ResumeHold)
+	return h
+}
+
+// mixed says why a run the setup resumes on its recorded backend is not the one the spec names ("" when it is, or when the spec
+// names none).
+func (h ResumeHold) mixed(runID string, session bool) string {
+	recorded := BackendAppServer
+	if session {
+		recorded = BackendSession
+	}
+	if h.Backend == "" || h.Backend == recorded {
+		return ""
+	}
+	return fmt.Sprintf("run %s was started on the %s backend and its spec names the %s backend: a resume goes on with the backend its started row records, and these disagree (a mixed resume is refused)", runID, recorded, h.Backend)
+}
+
 const resumeUsage = `usage: crw flow resume [--state DIR] [--socket PATH] [--repo DIR] [--args JSON | --args-file FILE] [--pool N] [--token-budget N] RUN SCRIPT`
 
 // ResumeCommand is the command a report names for a run that has calls to go on with.
@@ -147,8 +183,21 @@ func resumeCmd(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		fmt.Fprintf(stderr, "crw flow resume: error: %s\n", why)
 		return 2
 	}
+	hold := resumeHoldOf(ctx)
+	if why := hold.mixed(runID, setup.Session != nil); why != "" {
+		fmt.Fprintf(stderr, "crw flow resume: error: %s\n", why)
+		return 2
+	}
+	inFlight := *pool
+	if setup.Session != nil && hold.Session != nil {
+		var release func()
+		inFlight, release = hold.Session(setup.Session.Owner, table, inFlight)
+		if release != nil {
+			defer release()
+		}
+	}
 	res, err := Run(ctx, prog, Config{
-		RunID: runID, Backend: setup.Backend, Policy: table, Journal: setup.Journal, Args: argsRaw, Pool: *pool, TokenBudget: *budget,
+		RunID: runID, Backend: setup.Backend, Policy: table, Journal: setup.Journal, Args: argsRaw, Pool: inFlight, TokenBudget: *budget,
 		Resume: &ResumeOptions{}, Ops: setup.Ops, OmitSeq: true, Control: controlOf(ctx), Upward: setup.Upward, Session: setup.Session,
 		Workflows: func(name, scriptPath string) (*script.Program, error) {
 			return loadSibling(fs.FS(dir), name, scriptPath)

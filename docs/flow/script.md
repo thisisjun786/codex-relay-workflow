@@ -925,7 +925,9 @@ run's directory `<state>/flow/<run>/` and none writes the journal, which only th
   `journal.ResumeEnv`) goes on with the backend the run's started row records (`engine.StartedBackend`): a session run gets its
   session environment again (the session host adapter of `internal/flow/sessionhost`, the run's `FileStepBus`, the owner of its
   record). A spec that names another backend than the started row is a mixed resume, refused with the reason as an input error
-  (exit 2); a run whose first process stored no started row goes on with its spec's.
+  (exit 2); a run whose first process stored no started row goes on with its spec's. Every one of them holds a session run alike
+  (the foreground command through `engine.ResumeHold`): at most `agents.max_threads - 1` calls in flight whatever `--pool` says,
+  and the owner thread bound to the run while the resume runs and its line closed when the run ends.
 - The owner thread is bound to a session run by the orchestrator line of its flow-bound file (`internal/flow/bound`
   `BindOrchestrator`: `kind: orchestrator`, `run_id`, the `policyDigest` of the role table and the `helperPairs` of the six roles
   architect, executor, executor-t1, reviewer, reviewer-final, explorer; `Line.Validate` takes no orchestrator line without the six).

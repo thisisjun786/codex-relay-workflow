@@ -57,6 +57,7 @@ func (c *command) resume(args []string) int {
 			ctx = engine.WithControl(ctx, ctl.Control)
 			defer ctl.stop()
 		}
+		ctx = engine.WithResumeHold(ctx, c.sessionHold(sel.Path, run))
 		return engine.RunCLI(ctx, eargs, c.stdout, c.stderr)
 	}
 	if *argsJSON != "" || *argsFile != "" || *pool != 0 || *budget != 0 || *repo != "" {
@@ -88,6 +89,28 @@ func (c *command) resume(args []string) int {
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
 	defer signal.Stop(sigs)
 	return c.execute(spec, sel.Path, true, sigs)
+}
+
+// sessionHold holds a `crw flow resume RUN SCRIPT` the way the run process holds its run (CRW-1348): a spec that names another
+// backend than the one the run's started row records is a mixed resume, refused; a session run keeps at most agents.max_threads - 1
+// calls in flight whatever --pool says, and its owner thread holds the run's orchestrator line while the resume runs (the open line
+// of a run whose process is gone is closed first), which is closed when the run ends.
+func (c *command) sessionHold(state, run string) engine.ResumeHold {
+	hold := engine.ResumeHold{Session: func(owner string, table *engine.Policy, pool int) (int, func()) {
+		res, err := bindOwner(state, run, owner, table)
+		if w := bindWarning(res, err, owner, run); w != "" {
+			fmt.Fprintf(c.stderr, "crw flow %s: warning: %s\n", c.name, w)
+		}
+		return sessionPool(pool, readCodexAgents(c.getenv).MaxThreads), func() {
+			if _, err := closeOwner(run, owner); err != nil {
+				fmt.Fprintf(c.stderr, "crw flow %s: warning: the orchestrator line of thread %s could not be closed: %v\n", c.name, owner, err)
+			}
+		}
+	}}
+	if spec, err := ReadSpec(state, run); err == nil {
+		hold.Backend = spec.Backend
+	}
+	return hold
 }
 
 // deadlineControl is the Control a resume binds its run to, and the timer that pauses the run at the spec's deadline.
