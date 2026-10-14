@@ -44,6 +44,11 @@ func TestClassify(t *testing.T) {
 		{"a new attempt after an unknown outcome", append(unknown(DispatchUnknown, Prepared, ThreadRequested), Row{Event: Prepared}), Unsettled},
 		{"an interrupt request changes nothing", append(unknown(DispatchUnknown, Prepared, ThreadRequested, ThreadStarted, TurnRequested), Row{Event: Interrupt}), RecoveryHold},
 		{"no rows", nil, Settled},
+		{"a session step nobody bound", rows(Prepared, StepPublished), Unsettled},
+		{"a session call held, then going on in place with a new step", rows(Prepared, StepPublished, ThreadStarted, TurnStarted, Held, StepPublished), Unsettled},
+		{"a session call whose attempt was lost", rows(Prepared, StepPublished, ThreadStarted, TurnStarted, SessionAttemptLost), Unsettled},
+		{"a session call that completed after a lost attempt", rows(Prepared, StepPublished, ThreadStarted, TurnStarted, SessionAttemptLost, StepPublished, ThreadStarted, TurnStarted, Completed), Settled},
+		{"a session step after a refusal reopens the call", rows(Prepared, Refused, StepPublished), Unsettled},
 	}
 	for _, c := range cases {
 		if got := Classify(c.rows); got != c.want {

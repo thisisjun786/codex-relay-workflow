@@ -288,6 +288,9 @@ type attemptCall struct {
 	termSeq int
 	event   string
 	pending string
+	// strayHead and strayStart are the HEAD a session executor left at a commit of its own and the commit it started from, as its
+	// completed row records them (executor_head_moved).
+	strayHead, strayStart string
 }
 
 // Node proves the effects of the executor calls of one node against the worktree of its current attempt, and only that
@@ -373,6 +376,19 @@ func (p Prover) Node(ctx context.Context, events []engine.Event, node string) (*
 		np.LastCommit = chain[k]
 	}
 	onChain := k >= 0 && k == len(chain)-1 && np.Head == chain[k]
+	if !onChain && k >= 0 && k == len(chain)-1 {
+		// A session executor that committed left HEAD at a commit of its own, which its completed row records as a stray HEAD that
+		// grew from the last recorded commit: that HEAD is the call's state when its tree is the call's pending tree (CRW-1316 §6.3).
+		for _, c := range mine {
+			if c.strayHead != np.Head || c.strayStart != chain[k] || c.pending == "" {
+				continue
+			}
+			if tree, err := TreeOf(ctx, p.Git, np.Worktree, np.Head); err == nil && tree == c.pending {
+				onChain = true
+				break
+			}
+		}
+	}
 	// A recorded commit covers the calls whose state it carries. Its row names the tree it committed; that tree is the pending
 	// tree P (or P_held) of the latest call that recorded it before the commit, and the calls up to and including that one
 	// are in the commit (each later state of the worktree grew out of the earlier ones). A call recorded after that one, or
@@ -503,6 +519,10 @@ func nodeCalls(events []engine.Event, node string) []attemptCall {
 				c.termSeq, c.event, c.pending = ev.Seq, ev.Event, st
 			} else {
 				c.termSeq, c.event, c.pending = 0, "", ""
+			}
+			c.strayHead, c.strayStart = "", ""
+			if moved, ok := ev.Data["executor_head_moved"].(map[string]any); ok && ev.Event == engine.EvCompleted {
+				c.strayHead, c.strayStart = str(moved, "head"), str(moved, "start")
 			}
 		case engine.EvNullModel, engine.EvRefused, engine.EvSuperseded, engine.EvOutcomeUnknown:
 			if i, known := index[ev.CallID]; known {
