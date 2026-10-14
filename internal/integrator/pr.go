@@ -60,11 +60,11 @@ type Landing struct {
 	DevBefore string `json:"dev_before"`
 	DevAfter  string `json:"dev_after"`
 	// Merged is the merged tree's commit that was verified (and reviewed).
-	Merged       string             `json:"merged"`
-	Result       string             `json:"result"`
+	Merged       string              `json:"merged"`
+	Result       string              `json:"result"`
 	Verification LandingVerification `json:"verification"`
-	Review       reviewResult       `json:"review"`
-	Warnings     []string           `json:"warnings,omitempty"`
+	Review       LandingReview       `json:"review"`
+	Warnings     []string            `json:"warnings,omitempty"`
 	// Comment is "written" once the record is on the pull request as a comment, else why it is not.
 	Comment string `json:"comment"`
 }
@@ -77,8 +77,8 @@ type LandingVerification struct {
 	Status int    `json:"status"`
 }
 
-// reviewResult is what the review of a pull request's merged tree gave.
-type reviewResult struct {
+// LandingReview is what the review of a pull request's merged tree gave.
+type LandingReview struct {
 	Configured bool `json:"configured"`
 	// Verdict is accept or needs_changes, empty when the review gave none.
 	Verdict     string `json:"verdict,omitempty"`
@@ -199,13 +199,13 @@ func (r *Runner) checkPR(ctx context.Context, e Entry, rep *Report) (*tracking.P
 // review runs the review command on the verified merged tree and reads its verdict. Only a verdict file that says needs_changes
 // refuses; a review that is not configured, cannot start, or writes no readable verdict is recorded and warned, and the
 // verification-record stays the gate.
-func (r *Runner) review(ctx context.Context, tag, wt, merged, base, record string, pr tracking.PullRequest, head string, log io.Writer) reviewResult {
+func (r *Runner) review(ctx context.Context, tag, wt, merged, base, record string, pr tracking.PullRequest, head string, log io.Writer) LandingReview {
 	c := r.Cfg
 	if len(c.ReviewCommand) == 0 {
 		fmt.Fprintf(log, "%s: review not configured; dev moves on the verification-record alone\n", pr.Ref)
-		return reviewResult{Status: -1, Note: "review not configured"}
+		return LandingReview{Status: -1, Note: "review not configured"}
 	}
-	res := reviewResult{Configured: true, Status: -1, VerdictFile: filepath.Join(c.RunsDir, tag+".review.json"), Log: filepath.Join(c.RunsDir, tag+".review.log")}
+	res := LandingReview{Configured: true, Status: -1, VerdictFile: filepath.Join(c.RunsDir, tag+".review.json"), Log: filepath.Join(c.RunsDir, tag+".review.log")}
 	rlog, err := os.OpenFile(res.Log, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o664)
 	if err != nil {
 		res.Note = "review gave no verdict: " + err.Error()
@@ -287,9 +287,9 @@ func (r *Runner) recordLanding(ctx context.Context, pr tracking.PullRequest, out
 	case out.review != nil:
 		l.Review = *out.review
 	case out.verifyRC > 0 || out.verifyRC == 127:
-		l.Review = reviewResult{Configured: len(r.Cfg.ReviewCommand) > 0, Status: -1, Note: "not reviewed: the verification failed"}
+		l.Review = LandingReview{Configured: len(r.Cfg.ReviewCommand) > 0, Status: -1, Note: "not reviewed: the verification failed"}
 	default:
-		l.Review = reviewResult{Configured: len(r.Cfg.ReviewCommand) > 0, Status: -1, Note: "not reviewed: nothing was verified"}
+		l.Review = LandingReview{Configured: len(r.Cfg.ReviewCommand) > 0, Status: -1, Note: "not reviewed: nothing was verified"}
 	}
 	if l.Review.Verdict == "" && l.Review.Note != "" && !strings.HasPrefix(l.Review.Note, "not reviewed") {
 		l.Warnings = append(l.Warnings, l.Review.Note+": dev moves on the verification-record alone (CRW-1306)")

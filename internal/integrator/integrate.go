@@ -44,7 +44,7 @@ type Outcome struct {
 	// verifyRC is the verification command's status, -1 when it did not run; review is the review of a pull request's merged
 	// tree, nil when none ran.
 	verifyRC int
-	review   *reviewResult
+	review   *LandingReview
 }
 
 type leftOut struct {
