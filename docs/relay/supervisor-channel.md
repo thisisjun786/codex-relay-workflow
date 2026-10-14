@@ -716,7 +716,7 @@ The kinds, the relationship each one goes through and the two ends are:
 | obligation_kind | relationship | from | to |
 | --- | --- | --- | --- |
 | `lead_report`, `lead_decision_request`, `lead_blocked`, `jun_decision_request` | `initiative:<key>` | the initiative's lead | the management seat above it (the store seat when no management edge stands) |
-| `flow_milestone_report`, `flow_project_blocked`, `flow_project_decision_request`, `flow_escalation`, `flow_completion`, `flow_no_node_started` | `project:<key>` | the project's owner (the orchestrator) | [the level above the project](#the-level-above-a-project): its management seat, else a legacy lead, else the store seat |
+| `flow_milestone_report`, `flow_project_blocked`, `flow_project_decision_request`, `flow_jun_decision_request`, `flow_escalation`, `flow_completion`, `flow_no_node_started` | `project:<key>` | the project's owner (the orchestrator) | [the level above the project](#the-level-above-a-project): its management seat, else a legacy lead, else the store seat |
 | `session_step_waiting` | `run:<id>` | the run | its owner, `flow_runs.actor_task_id` |
 
 `blocked` and `decision_request` are not among them: those are the event path's kinds, re-derived
@@ -726,11 +726,19 @@ a project kind names `management` with the direction `orchestrator_to_management
 recipient role `lead` when a legacy lead is the recipient) and the text in the packet's `body`; the rendered message's header is `[codex-session-relay] <layer>
 message from <sender role> <sender>` and the text follows the fields. A decision kind names the
 decision in `decision` and who owes the answer (the recipient, or the user for
-`jun_decision_request`). Sending is the channel's own: the daemon's supervisor pass picks the row up,
+`jun_decision_request` and `flow_jun_decision_request`). Sending is the channel's own: the daemon's supervisor pass picks the row up,
 opens a turn in an idle or unloaded recipient and retries a busy one, and a readback is what it is
 for any message. A recipient needs recorded authorized settings and a role policy, as any recipient
 of this channel does; a management session that is not a Codex App Server thread cannot be woken
 this way.
+
+A flow run's message (a project kind or `session_step_waiting`) names its run in its subject,
+`<run>/<what it is>` (the report id, the notice's logical id, the wake id). The settle that moves
+such a message to `dispatched`, or holds it at a cap, appends the delivery to that run's
+`flow_events` in the same transaction: `report_delivery` (`accepted` or `refused`) for a report row
+of the run, `message_delivery` for any other, each once for its key and result. A row it cannot
+write is journaled as `flow_delivery_unrecorded` and the settle commits (CRW-1380,
+[reporting](../flow/reporting.md#through-the-supervisor-channel)).
 
 `crw relay report-up --initiative <key> --kind lead_report|lead_decision_request|lead_blocked
 [--subject ...] [--text ...|@FILE] [--evidence ...]` is a lead's report upward: a `lead_report`

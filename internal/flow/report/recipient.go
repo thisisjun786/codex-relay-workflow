@@ -19,8 +19,9 @@ const (
 	// management session bound the project owner); Thread names it. It hears every report kind of the project.
 	RecipientManagement = "management"
 	// RecipientStore: the store seat; the recipient of a decision only Jun can make when no management seat stands above the project, and of
-	// the project's other reports when neither a management seat nor an initiative lead does (the walk folded the seat in). No bridge
-	// delivery is made to it: the manager's pump tells it.
+	// the project's other reports when neither a management seat nor an initiative lead does (the walk folded the seat in). RelaySender
+	// delivers to it through the supervisor channel like any other recipient (CRW-1380, D1c d2); ManageSender leaves it to the manager's
+	// pump.
 	RecipientStore = "store"
 	// RecipientUnregistered: nobody stands above the project (no management seat, no initiative lead and no store seat), or the
 	// management seat above it has no live owner.
@@ -41,8 +42,8 @@ type Recipient struct {
 	Reason, Detail string
 }
 
-// Deliverable says whether the report goes to a thread through the bridge: the management session above the project, or a legacy
-// initiative lead.
+// Deliverable says whether the report goes to a thread through crw manage send-parent: the management session above the project, or a
+// legacy initiative lead. A sender that answers Delivers (RelaySender) decides for itself.
 func (r Recipient) Deliverable() bool {
 	return (r.State == RecipientManagement || r.State == RecipientInitiative) && r.Thread != ""
 }

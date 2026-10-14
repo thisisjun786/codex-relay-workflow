@@ -168,15 +168,31 @@ func (w *Writer) Up(ctx context.Context, req UpRequest) (UpResult, error) {
 			return res, nil
 		}
 	}
-	if !res.Recipient.Deliverable() {
+	deliverable := res.Recipient.Deliverable()
+	if d, ok := w.Sender.(interface{ Delivers(Recipient) bool }); ok {
+		// a sender over the supervisor channel delivers to the store seat too (CRW-1380, D1c d2)
+		deliverable = d.Delivers(res.Recipient)
+	}
+	if !deliverable {
 		return res, nil
 	}
 	if w.Sender == nil {
 		return res, errors.New("report: a sender is required to deliver")
 	}
-	sent, err := w.Sender.SendSupervisor(ctx, SupervisorSend{Thread: res.Recipient.Thread, LogicalID: res.LogicalID, Text: message(req, res, digest), ReportID: id, Initiative: res.Recipient.InitiativeKey})
+	project := res.Recipient.ProjectKey
+	if project == "" {
+		project, _ = ProjectOf(ctx, w.Store, plan)
+	}
+	sent, err := w.Sender.SendSupervisor(ctx, SupervisorSend{Thread: res.Recipient.Thread, LogicalID: res.LogicalID, Text: message(req, res, digest), ReportID: id,
+		Initiative: res.Recipient.InitiativeKey, Kind: req.Kind, Run: req.Run, Project: project, Subject: req.Subject})
 	if err != nil {
 		return res, err
+	}
+	if sent.Class == "" {
+		// nothing was staged (the channel refused it, or a lead would hear a decision only Jun can make): no row, the report stands and a
+		// replay stages it again
+		res.Reason, res.Observation = sent.Reason, sent.Observation
+		return res, nil
 	}
 	result := resultOf(sent.Class)
 	if _, err := w.Rows.Append(ctx, NewRow{Kind: KindDelivery, Payload: map[string]any{

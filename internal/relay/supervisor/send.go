@@ -894,6 +894,13 @@ func (a *attemptRun) settle(ctx context.Context, sent sentReceipt) (map[string]a
 		if err != nil {
 			return err
 		}
+		if moved {
+			// a flow run's message: its delivery row commits with this settle (CRW-1380)
+			if err := c.recordFlowDelivery(tx, a.row, flowDelivery{result: flowDeliveryResult(state, hold), requestID: requestID, state: state,
+				hold: hold.String, at: settledAt, turnID: facts.TurnID}); err != nil {
+				return err
+			}
+		}
 		standing, err := c.Get(tx, id)
 		if err != nil {
 			return err

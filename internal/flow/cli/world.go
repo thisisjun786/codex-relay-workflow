@@ -88,7 +88,7 @@ func ProductionWorld(ctx context.Context, req WorldRequest) (World, error) {
 		// `crw manage send-parent` on the relay the run is in
 		program, _ := os.Executable()
 		reporter := report.Reporter{Run: spec.RunID, W: &report.Writer{Store: st, Rows: report.JournalAppender{Journal: j, RunID: spec.RunID, Store: st}, Resolver: report.StoreResolver{Store: st},
-			Sender: report.ManageSender{Program: program, State: statePath, Socket: socket}, ArtifactDir: filepath.Join(statePath, "flow", spec.RunID, "reports")}}
+			Sender: report.RelaySender{Store: st, Fallback: report.ManageSender{Program: program, State: statePath, Socket: socket}}, ArtifactDir: filepath.Join(statePath, "flow", spec.RunID, "reports")}}
 		if lane, err = OpsFor(ctx, LaneRequest{WorldRequest: req, Store: st, Journal: j, Identity: id, Repo: repo, Policy: table, Threads: host, Reporter: reporter}); err != nil {
 			_ = client.Close()
 			_ = st.Close()
