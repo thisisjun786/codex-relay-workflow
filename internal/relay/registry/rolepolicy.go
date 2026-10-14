@@ -25,7 +25,7 @@ const RoleRecovery = "Re-record this task's authorized settings from a source at
 var roleScope = map[string]string{"supervisor": "initiative", "parent": "project", "child": "issue"}
 
 // storeScopeRoles is linkage.STORE_SCOPE_ROLES: the roles that may name the store scope with
-// --scope-kind. The store is the one scope no Linear level owns, and it is the supervisor's alone,
+// --scope-kind. The store is the one scope no tracking level owns, and it is the supervisor's alone,
 // so a task bound there holds a seat that is not an initiative execution binding: the initiative
 // supervisors stay one per initiative, while a session that manages the store itself still has a
 // seat. One task holds one supervisor seat, so the seat is not additive.

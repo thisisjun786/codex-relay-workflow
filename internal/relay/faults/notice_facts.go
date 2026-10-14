@@ -10,8 +10,28 @@ import (
 var noticeIdentifier = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
 var noticeIssue = regexp.MustCompile(`^(?:[A-Z][A-Z0-9_]{0,15}-[0-9]{1,9}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$`)
 var noticeLink = regexp.MustCompile(`^https://linear\.app/[a-z0-9][a-z0-9-]{0,63}/issue/[A-Z][A-Z0-9_]{0,15}-[0-9]{1,9}(?:/[a-z0-9-]{1,120})?$`)
+var noticeIssueURL = regexp.MustCompile(`^https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/issues/[1-9][0-9]{0,8}$`)
 var noticeHex = regexp.MustCompile(`^[0-9a-f]{1,64}$`)
 var noticeWrite = regexp.MustCompile(`^write:([A-Za-z0-9]+):(uncertain|failed)$`)
+
+// isNoticeLink reports whether s is the link of a published issue a notice may carry: a Linear issue
+// URL, or a GitHub one, https://github.com/<owner>/<name>/issues/<N>, whose owner and name are not
+// "." or "..". The ledger stays offline, so it reads the URL itself and imports no tracking client.
+func isNoticeLink(s string) bool {
+	if noticeLink.MatchString(s) {
+		return true
+	}
+	m := noticeIssueURL.FindStringSubmatch(s)
+	if m == nil {
+		return false
+	}
+	for _, part := range m[1:3] {
+		if part == "." || part == ".." {
+			return false
+		}
+	}
+	return true
+}
 
 // NoticeFacts is faults.notice_facts. Free-text evidence never enters a packet.
 func (l *Ledger) NoticeFacts(ctx context.Context, id string) (map[string]any, error) {
@@ -37,7 +57,7 @@ func (l *Ledger) NoticeFacts(ctx context.Context, id string) (map[string]any, er
 		}
 	}
 	ref := r.Text("external_ref")
-	if noticeIssue.MatchString(ref) || noticeLink.MatchString(ref) {
+	if noticeIssue.MatchString(ref) || isNoticeLink(ref) {
 		external = ref
 	}
 	raw := r.Text("reason")

@@ -344,7 +344,7 @@ func (l linkage) bindingRefusal(ctx context.Context, role, kind, key string, end
 		return nil, err
 	}
 	// The same role at another SCOPE, not merely another key: a supervisor's seats are one per
-	// Linear level, and an initiative whose key happens to be "store" is not the store seat. A
+	// tracking level, and an initiative whose key happens to be "store" is not the store seat. A
 	// management seat is the exception for the store seat only: the thread that held the store seat
 	// lays it down when it takes its management seat (retireStoreSeat), so that seat is not a rival.
 	exempt := ""
@@ -357,7 +357,7 @@ func (l linkage) bindingRefusal(ctx context.Context, role, kind, key string, end
 	if err == nil {
 		return &linkRefusal{reason: contract.RefusalRoleAlreadyBound,
 			detail: "task " + pyvalue.StrRepr(endpoint.TaskID) + " is already the " + role + " of " + other.kind + " " + pyvalue.StrRepr(other.key) +
-				"; one task is bound to one Linear level, so a second " + kind + " needs its own " + role,
+				"; one task is bound to one tracking level, so a second " + kind + " needs its own " + role,
 			scopeKind: kind, scopeKey: key, incumbent: other.key, challenger: endpoint.TaskID}, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {

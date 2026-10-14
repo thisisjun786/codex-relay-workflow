@@ -11,7 +11,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
-// The store declarer: the store scope has no Linear level of its own, so the seat that may state
+// The store declarer: the store scope has no tracking level of its own, so the seat that may state
 // its ceiling is the store-scope supervisor binding alone. An initiative-scope supervisor seat is
 // a seat for that initiative, not for the store, and cannot state a store-wide bound (CRW-773).
 

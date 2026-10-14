@@ -231,7 +231,7 @@ func checkScopeKind(scopeKind, what string) error {
 }
 
 // checkDeclarer is Capacity._check_declarer: the declarer owns the scope it speaks for. The
-// store scope is the one no Linear level owns, so it takes the store-scope supervisor binding
+// store scope is the one no tracking level owns, so it takes the store-scope supervisor binding
 // alone: an initiative supervisor's seat speaks for that initiative, not for the store, and
 // cannot state a bound for it (CRW-773).
 //

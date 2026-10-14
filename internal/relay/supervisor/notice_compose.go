@@ -30,7 +30,7 @@ func composeNotice(notice, live map[string]any, observedAt, evidence string) (ma
 		state, detail := "unmeasured", "nothing readable answered yet"
 		if stage != "transport_accepted" && stage != "received" {
 			state = "not_applicable"
-			detail = "a report upward is transported and read back, and nothing here records that a supervisor agreed, applied or verified anything; what became of it is read from the Linear record, confirmed"
+			detail = "a report upward is transported and read back, and nothing here records that a supervisor agreed, applied or verified anything; what became of it is read from the tracking record, confirmed"
 		}
 		reach[stage] = map[string]any{"state": state, "source": nil, "detail": detail}
 	}

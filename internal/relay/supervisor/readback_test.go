@@ -159,7 +159,7 @@ func Test24_SCH_20_ShowWholeRecord(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if shown["state"] != "read" || shown["recipient"] != "supervisor" || len(shown["attempts"].([]any)) != 1 || shown["readback"].(map[string]any)["verified"] != "host_read" || shown["packet"].(map[string]any)["version"] != packetVersion || !strings.Contains(shown["limits"].(string), "Linear record") {
+	if shown["state"] != "read" || shown["recipient"] != "supervisor" || len(shown["attempts"].([]any)) != 1 || shown["readback"].(map[string]any)["verified"] != "host_read" || shown["packet"].(map[string]any)["version"] != packetVersion || !strings.Contains(shown["limits"].(string), "tracking record") {
 		t.Fatalf("shown %v", shown)
 	}
 }

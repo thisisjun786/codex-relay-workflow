@@ -12,7 +12,7 @@ import (
 )
 
 // The store seat's handover (CRW-792). The seat CRW-450 lets the supervisor bind is the one
-// scope no Linear level owns, and until now linkage-handover derived its scope kind from the role
+// scope no tracking level owns, and until now linkage-handover derived its scope kind from the role
 // alone, so it looked for an initiative named "store" and refused unregistered_scope. These drive
 // the built linkage-handover line, so the argparse spec, the handler and the registry are exercised
 // together, and reuse the harness in linkage_store_test.go.

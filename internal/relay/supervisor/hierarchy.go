@@ -65,7 +65,7 @@ func (c *Channel) Resolve(ctx context.Context, relationshipID string) (Resolutio
 	return resolveReading(reading, "relationship "+pyvalue.StrRepr(relationshipID))
 }
 
-// scopeKindStore is the store scope's kind: the one supervisor seat no Linear level owns, which
+// scopeKindStore is the store scope's kind: the one supervisor seat no tracking level owns, which
 // CRW-450 made bindable (a supervisor's own scope is an initiative; the store seat is the one
 // exception). resolveReading recognises it so a recipient read from the seat is recorded as
 // coming from the store instead of being given an initiative key it does not have.
