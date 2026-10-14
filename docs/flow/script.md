@@ -955,7 +955,8 @@ any row is written. `crw flow shadow` replays either from the trace and names th
 - An executor's `HEAD` is compared with the commit its worktree is to be at (the node's last `crw.commit` after the allocation the
   worktree was made or restored for, else that allocation's start). A subagent that committed moved it: the commit is kept on `refs/crw/flow/<run>/stray/<node>/a<attempt>-<call>` (the
   executor calls of one allocation, a build and its fix rounds, each keep their own; the ref is created by a compare-and-swap
-  against no ref and never moved) and the
+  against no ref, and moved only by a fast-forward to a descendant, the same call's later `HEAD`, with the commit it holds as the
+  compare-and-swap's old value) and the
   completed row records `executor_head_moved` (`start`, `head`, `ref`); `crw.commit` commits the pending tree on `start` with the
   observed `HEAD` as the compare-and-swap's old value, and the proof takes the recorded stray `HEAD` whose tree is the pending tree
   as the call's state ([journal.md](journal.md#the-proofs)). The subagent is closed when the call has its terminal row.
