@@ -285,12 +285,20 @@ func withoutFrontmatter(text string) string {
 	return text
 }
 
-// bareLayerWordFirsts is the offset of the first bare use of each word in flatText, after the literal
-// non-layer phrases are blanked.
-func bareLayerWordFirsts(flatText string) map[string]int {
-	for _, phrase := range nonLayerUses {
-		flatText = strings.ReplaceAll(flatText, phrase, strings.Repeat("_", len(phrase)))
+// nonLayerUse matches any phrase of nonLayerUses in any case, as bareLayerWord matches the word, so a phrase that opens
+// a sentence is blanked too (Argon V5 K3).
+var nonLayerUse = func() *regexp.Regexp {
+	quoted := make([]string, len(nonLayerUses))
+	for i, phrase := range nonLayerUses {
+		quoted[i] = regexp.QuoteMeta(phrase)
 	}
+	return regexp.MustCompile(`(?i)` + strings.Join(quoted, "|"))
+}()
+
+// bareLayerWordFirsts is the offset of the first bare use of each word in flatText, after the literal
+// non-layer phrases are blanked, whatever their case; a blank keeps the length of what it covers.
+func bareLayerWordFirsts(flatText string) map[string]int {
+	flatText = nonLayerUse.ReplaceAllStringFunc(flatText, func(match string) string { return strings.Repeat("_", len(match)) })
 	firsts := map[string]int{}
 	for _, m := range bareLayerWord.FindAllStringSubmatchIndex(flatText, -1) {
 		word := strings.ToLower(flatText[m[2]:m[3]])
@@ -365,6 +373,8 @@ func TestLayerNamesLinkTheTable(t *testing.T) {
 			"[The parent](x/hierarchy.md#the-levels) (repository session, relay role `supervisor`) decides, and the parent's record holds it.",
 			"The parent (relay role `parent`) accepts what the child (relay role `child`) reports." + link,
 			"The child role and the child pair line, the parent-title replay, a HEAD that is no longer the parent refuses the commit.",
+			// Argon V5 K3: a phrase that is not a session reads the same at the start of a sentence or in another case.
+			"The parent render chain draws it. First, state the child's question. The Parent Direction holds.",
 		} {
 			if p := layerLinkProblems("docs/a.md", good); len(p) != 0 {
 				t.Errorf("good %q: %v", good, p)
