@@ -397,7 +397,20 @@ func settle(ws string, rec, next BgRecord, event Event, clock func() time.Time, 
 	if err != nil {
 		return rec, err
 	}
+	if IsTerminal(out.Status) && out.ExitCode == nil {
+		dropUnwrittenExitTemp(ws, rec.ID)
+	}
 	return out, nil
+}
+
+// dropUnwrittenExitTemp removes <id>.exit.tmp of a job that is over without an exit code while it is still the empty file the launcher
+// created for the shell (createShellTarget): no shell writes it any more, and the oracle's shell, which made the file only to write
+// the code, left none (CRW-1375). A file the shell has written, a link and anything else are left as they are.
+func dropUnwrittenExitTemp(ws, id string) {
+	path := ExitPath(ws, id) + ".tmp"
+	if info, err := os.Lstat(path); err == nil && info.Mode().IsRegular() && info.Size() == 0 {
+		_ = RemovePath(ws, path)
+	}
 }
 
 // samePID is whether two record pids are the same value.

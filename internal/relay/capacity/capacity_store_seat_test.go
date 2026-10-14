@@ -78,9 +78,10 @@ func TestStoreSeatLimitDeclareSucceedsWithTheSeat(t *testing.T) {
 
 // TestManagementSeatLimitDeclareSucceeds (CRW-1333): a management session's own seat speaks for the
 // store as the store seat did, so the thread that laid the store seat down for its management seat
-// keeps stating the store-wide ceiling.
+// keeps stating the store-wide ceiling, as the store's one declarer (CRW-1361: no warning).
 func TestManagementSeatLimitDeclareSucceeds(t *testing.T) {
 	e := newEnv(t)
+	bindStoreSeat(t, e)
 	var stdout, stderr bytes.Buffer
 	line := []string{"--state", filepath.Dir(e.store.Path), "linkage-bind", "--role", "supervisor",
 		"--scope-kind", "management", "--scope", storeSeatTask, "--task", storeSeatTask, "--host", "host-s"}
@@ -93,5 +94,8 @@ func TestManagementSeatLimitDeclareSucceeds(t *testing.T) {
 	}
 	if got := field(answer, "declaredBy"); got != storeSeatTask {
 		t.Fatalf("declaredBy %v", got)
+	}
+	if warning := field(answer, "declarerWarning"); warning != nil {
+		t.Fatalf("the store's own declarer was warned: %v", warning)
 	}
 }

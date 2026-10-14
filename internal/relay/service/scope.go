@@ -165,6 +165,43 @@ func ServedStore(socket string) Object {
 		"live", live(r), "scopeRecord", scope.path(socket, ".json"))
 }
 
+// BridgeStateDisagreement is whether a bridge started on socket ("" is the default App Server socket) and the live relay
+// daemon of that socket work on different relay states (CRW-1373). The bridge's state is the relay's own resolution without
+// a --state flag, from the bridge's environment (store.ResolveStateDir); the daemon's is the state directory of the scope
+// claim of a relay service that still runs. It reads only, creates nothing and says nothing (ok false) where either side
+// is unknown: no claim, a claim no process holds, or a state that cannot be resolved.
+func BridgeStateDisagreement(socket string) (bridgeState, daemonState string, ok bool) {
+	selection, err := store.ResolveStateDir("", socket)
+	if err != nil {
+		return "", "", false
+	}
+	claimed := socket
+	if claimed == "" {
+		if claimed, err = store.DefaultSocket(); err != nil {
+			return "", "", false
+		}
+	}
+	served := ServedStore(claimed)
+	if served == nil || served.Get("live") != true {
+		return "", "", false
+	}
+	daemon, _ := served.Get("stateDirectory").(string)
+	if daemon == "" || sameState(daemon, selection.Path) {
+		return "", "", false
+	}
+	return selection.Path, daemon, true
+}
+
+// sameState is whether two spellings name one directory, resolving symbolic links as the relay does.
+func sameState(a, b string) bool {
+	resolvedA, errA := store.ResolvePath(a)
+	resolvedB, errB := store.ResolvePath(b)
+	if errA != nil || errB != nil {
+		return a == b
+	}
+	return resolvedA == resolvedB
+}
+
 func live(r Object) bool {
 	pid := num(r.Get("pid"))
 	if pid == 0 {

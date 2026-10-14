@@ -1,8 +1,8 @@
 # Codex Relay Workflow (CRW)
 
-Codex skills for planning, delegating, and verifying work with Linear and CXC. Keep product decisions in Linear, implementation in Git, and delivery evidence connected to the issue and PR.
+Codex skills for planning, delegating, and verifying work with Linear. Keep product decisions in Linear, implementation in Git, and delivery evidence connected to the issue and PR.
 
-CRW is a community project designed to work with CXC; it is not an official
+CRW is a community project; it is not an official
 OpenAI or Codex product. Its workflow connects child-task delegation, PR review
 resolution, and parent-task verification and integration.
 
@@ -12,7 +12,8 @@ through (one Go binary serving the task bridge, the session relay and the comple
 hook) and a symlink installer for development. The two Python packages that runtime was
 ported from left the repository in todo 44, after the cutover; the bridge's upstream
 provenance and licence stay in [packages/codex-thread-bridge](packages/codex-thread-bridge/PROVENANCE.md).
-CXC remains a separate dependency. Having the source here
+CXC v0.2.40 is the origin of the port ([NOTICE](NOTICE),
+[docs/port-cxc/provenance.md](docs/port-cxc/provenance.md)), and CRW runs without it. Having the source here
 does not install or activate a runtime, and offline contract checks do not establish
 live Codex hook or Desktop compatibility.
 
@@ -21,8 +22,7 @@ live Codex hook or Desktop compatibility.
 | [crw-define](plugins/crw/skills/crw-define/SKILL.md) | Settle a milestone and its issues before they are registered: purpose, desired change, success evidence, scope and open decisions, and whether a question is really needed |
 | [crw-plan](plugins/crw/skills/crw-plan/SKILL.md) | Decompose an agreed goal into projects, milestones, and one-delivery issues |
 | [crw-add-issue](plugins/crw/skills/crw-add-issue/SKILL.md) | Turn one short request into one ready issue: criteria, edit regions, decided answer, tests to write first and done condition, with an open design question held as design first |
-| [crw-run](plugins/crw/skills/crw-run/SKILL.md) | Bind the parent and execute one project's agreed scope, including parallel issue delivery and successors, without a parent goal unless goal mode is explicitly requested |
-| [crw-run-initiative](plugins/crw/skills/crw-run-initiative/SKILL.md) | Lead an initiative's approved projects through their project orchestrators, and own the midpoint check |
+| [crw-run](plugins/crw/skills/crw-run/SKILL.md) | Bind the child (project session, relay role `parent`) and execute one project's agreed scope, including parallel issue delivery and successors, without a goal unless goal mode is explicitly requested; and the work of the parent (repository session, relay role `supervisor`): project order, decisions, reports and the midpoint check |
 | [crw-status](plugins/crw/skills/crw-status/SKILL.md) | Read-only report of where work stands by level, with progress against the agreed schedule, and the one next action when asked |
 | [crw-check](plugins/crw/skills/crw-check/SKILL.md) | Verify delivery, find contradictions with minimal counterexamples, judge the schedule, and return in-scope corrections to managed tasks |
 | [crw-refactor](plugins/crw/skills/crw-refactor/SKILL.md) | Diagnose post-cycle structural debt, read-only, and recommend bounded, behavior-preserving repairs; a chosen repair becomes a Linear issue through crw-add-issue |
@@ -45,7 +45,7 @@ from, what was deliberately left behind, and where their Go ports live.
 - Product repositories own implementation, executable configuration, and repository policy.
 - Private task locations hold raw receipts, logs, and sensitive verification evidence.
 
-The skills use installed CXC and the available Linear connector; they do not bundle those tools or install credentials.
+The skills use the available Linear connector; they do not bundle it or install credentials.
 
 ## Install
 
@@ -137,7 +137,6 @@ replaces its Python-era Stop settings, once).
 | Install the runtime | A release archive for Linux (amd64 or arm64); darwin/arm64 is built but unvalidated |
 | Run repository checks | The Go toolchain `go.mod` names |
 | Plan and verify Linear work | Codex with local skill support and a connected Linear workspace you can access |
-| Use the shared workflow | Separately installed CXC skills referenced by the [shared references](plugins/crw/skills/crw-canon/SKILL.md) |
 | Delegate independent tasks | A host exposing task creation and coordination tools, or an installed bridge |
 | Receive automatic completion reports | An installed runtime, a trusted Stop hook and verified host capability; installing these skills alone does not enable delivery |
 
@@ -156,14 +155,13 @@ contracts or passing offline fixtures as a supported turnkey runtime.
 
 ### Acquire external dependencies
 
-- CXC: follow the upstream [Codexclaw installation guide](https://github.com/lidge-jun/codexclaw#install).
 - Bridge, relay and completion hook: the `crw` runtime above, from a release that
   carries its archives. Without an installed bridge or host-native task tools,
   independent delegation is unavailable; without an installed relay and a trusted
   Stop hook, automatic completion reporting is unavailable.
 
 You can read, install, and validate the skill sources without these runtimes.
-With Linear and the referenced CXC skills configured, planning and
+With Linear configured, planning and
 manual delivery verification do not require relay delivery. The full unattended
 workflow is not available from this repository alone. There is no certified
 cross-component version matrix yet; inspect the installed interfaces against the
@@ -227,16 +225,16 @@ The bundled validator has its own dependencies. It checks skill structure, not t
 ## Usage
 
 ```text
-$crw-run [Linear project] 실행하지 말고 이 프로젝트의 project orchestrator로 연결만 해줘.
+$crw-run [Linear project] 실행하지 말고 이 프로젝트의 프로젝트 세션으로 연결만 해줘.
 $crw-status [Linear project or product repository] 다음에 뭐 하지? 시작할 단계인지 끝난 뒤인지 확인하고 다음 행동 하나를 골라줘.
-$crw-run-initiative [Linear initiative link] 승인된 프로젝트들을 기존 project orchestrator를 통해 끝까지 진행해줘.
+$crw-run [Linear initiative link] 저장소 세션으로서 승인된 프로젝트들을 기존 프로젝트 세션을 통해 끝까지 진행해줘.
 $crw-define [idea or milestone] 목적·성공 증거·범위·열린 결정을 정리해 Linear 마일스톤에 반영해줘.
 $crw-plan [defined initiative or existing project] 프로젝트·마일스톤·이슈와 의존성을 계획해 Linear에 반영해줘.
 $crw-run [Linear project link]
-$crw-run [Linear project link] project orchestrator goal을 열어서 끝까지 진행해줘. (goal mode)
+$crw-run [Linear project link] 프로젝트 세션의 goal을 열어서 끝까지 진행해줘. (goal mode)
 $crw-check [Linear project or issue] 기획대로 구현됐는지 확인해줘.
 $crw-status 지금 어디까지 됐는지, 막힌 이유와 내 결정이 필요한 부분을 근거와 함께 짧게 알려줘.
-$crw-run-initiative 중간점검. 승인된 프로젝트들을 확인하고 이미 승인된 범위의 대기 중인 일을 진행시킨 뒤 보고해줘.
+$crw-run 중간점검. 승인된 프로젝트들을 확인하고 이미 승인된 범위의 대기 중인 일을 진행시킨 뒤 보고해줘.
 $crw-check [Linear document or project] 설계와 계산 규칙의 모순을 찾아줘.
 $crw-refactor [initiative cycle or project] 완료 근거와 변경 코드를 확인하고 구조적 부채 후보를 3개 이내로 추천해줘. 진단과 계획까지만.
 $crw-refactor 추천한 1번을 crw-add-issue로 Linear 이슈로 만들어줘. 관련 없는 개선은 남겨두고 머지와 배포는 하지 마.
@@ -310,7 +308,7 @@ Designating the management task alone does not start project execution;
 an accompanying execution request continues within its authorized scope.
 
 `crw-define` settles a milestone and its issues before they are registered: the
-top session (today Sion) or the parent (repository session) organizes purpose,
+top session (today Sion) or [the parent](plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels) (repository session, relay role `supervisor`) organizes purpose,
 desired change, success evidence, scope and open decisions, and asks one question
 at a time only when one is really needed. `crw-plan` then decomposes the agreed goal into projects, useful
 milestones, and executable issues in one operation. A request for both chains
@@ -334,8 +332,8 @@ schedule using `crw-check`'s judgment, and reports what it could not verify. It 
 writes nothing and wakes nobody, standalone advice launches no work, and a question during an
 authorized run does not pause that run.
 
-`crw-run-initiative` owns the midpoint check. A bare 중간점검 in a task that leads an initiative
-walks the initiative binding down to its project orchestrators and moves the work that Jun's
+The parent's section of `crw-run` owns the midpoint check. A bare 중간점검 in the parent
+walks the initiative binding down to its children and moves the work that Jun's
 approval already covers, then reports what it actually did; under an explicit report-only,
 read-only, pause or no-contact limit, or without that binding, the request is a `crw-status`
 read. Either way it returns control to whoever is executing and starts nothing that was not

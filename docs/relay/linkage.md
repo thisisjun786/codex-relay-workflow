@@ -98,8 +98,8 @@ another key, is a named refusal rather than a second scope, and the seat writes 
 row, because a supervision edge joins an initiative to a project and the store has no initiative
 above it.
 
-The seat is for a session that manages the store rather than one project. The management session
-holds it, and LINA holds the same seat the same way — a task with one supervisor binding at the
+The seat is for a session that manages the store rather than one project. The parent (repository session, relay role
+`supervisor`, [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels)) holds it, and LINA holds the same seat the same way — a task with one supervisor binding at the
 store — so neither is tied to a single initiative's execution. One task holds one supervisor
 seat, so a session registered here cannot also supervise an initiative; that is the rule the role
 model already had, not a limit of the command. The seat is also what such a session needs to
@@ -110,7 +110,7 @@ The seat changes hands like any other: `linkage-handover --role supervisor --sco
 --scope store --expect-task <incumbent> --task <successor> ...` archives the incumbent's binding
 and binds the successor. The scope kind is the same `--scope-kind` decision `linkage-bind` makes,
 so it is accepted for the supervisor's store seat and no other combination; the handover rules are
-the ordinary ones, which is what makes the seat recoverable when the management session is
+the ordinary ones, which is what makes the seat recoverable when the parent is
 replaced. `--expect-task` must name the live owner, and a successor that already supervises an
 initiative is refused `role_already_bound`, because one task holds one supervisor seat. Without
 `--scope-kind` the handover takes the role's own level as it always did, so `--role supervisor
@@ -118,10 +118,10 @@ initiative is refused `role_already_bound`, because one task holds one superviso
 
 ## Management seats
 
-A management session holds a seat of its own: `linkage-bind --role supervisor --scope-kind
+A parent holds a seat of its own: `linkage-bind --role supervisor --scope-kind
 management --scope <seat id> --task <thread>` binds role `supervisor` at scope kind `management`,
 keyed by the seat id, which is the thread that first registered it; `task_id` names the seat's
-current owner. Two management sessions have two keys, so neither overwrites the other, and a third
+current owner. Two parents have two keys, so neither overwrites the other, and a third
 task asking for a seat another one holds is refused `duplicate_scope_owner`. `crw manage supervisor
 register` is that line for the calling thread (`--task`, else `CODEX_THREAD_ID`, else the
 configuration's supervisor section; `--host`, else the section) followed by the settings record.
@@ -129,54 +129,67 @@ A thread that inherited a seat by handover and registers its own seat again (`--
 thread) is answered with the seat it holds; one task holds one supervisor seat. A thread that
 holds the store seat lays it down when it takes its management seat: the store binding is archived
 with `superseded_by` naming the management binding, and a `scope_seat_moved` journal row records
-the move, in the same transaction. A management seat speaks for the store scope as the store seat
-does (`limit-declare --scope-kind store`). Every reader of the store seat reads a seat laid down
+the move, in the same transaction. The store scope's capacity has one declarer
+(`limit-declare --scope-kind store`, and `usage-observe` at the store scope): the holder
+`StoreScopeSupervisor` answers, that is the live store seat or the management seat that took it
+over. Any other live management seat holder still states a store-wide figure, because a declaration
+is reversible and fails open, but the answer warns under `declarerWarning` (`reason`
+`scope_role_mismatch`, `declaredBy`, `storeScopeSupervisor`, `detail`) and a
+`store_scope_declarer_warned` journal row records it; a task with no live store or management seat
+is refused `scope_role_mismatch`. Every reader of the store seat reads a seat laid down
 this way through the management seat that took it over: with no live store binding, the store
 seat's holder is the live owner of the management seat that superseded the most recently archived
 store binding, so it follows that seat's handovers. A user-grade or delegated-management-grade
 `decision-answer` on a record with no management ref (see below), the recipient of a
 `jun_decision_request` and the store-seat fallback of a report or a message nobody above receives
 all keep finding the manager after it registers. A store
-seat bound again afterwards is live and answers for itself.
+seat bound again afterwards is live and answers for itself; the thread that laid it down binding it
+again after handing its management seat over reactivates its old row with `superseded_by` cleared
+(`scope_rebound`), so that row is the store seat again.
 
 A lead (an initiative supervisor) registered by a thread that holds a live management seat gets the
 execution edge from that seat to its initiative in the same transaction: `linkage-bind --role
 supervisor --scope <INIT> --task <lead> --host ... --creator <management thread>`, where
 `--creator` defaults to the caller's `CODEX_THREAD_ID`. The answer is the lead's binding with the
 edge under `managementLink`. A creator that holds no management seat (a lead registering itself)
-writes no edge. An initiative has one upward execution edge: a registration whose creator holds
-another seat is refused `link_conflict`, the conflict row is the only thing it commits, and a
-second management session takes an initiative only by the handover of the seat above it. The edge's
+writes no edge. An initiative has one upward execution edge, and a second parent takes
+an initiative only by the handover of the seat above it. A registration is reversible, so one whose
+creator holds another seat is not refused: the lead's binding stands, the standing edge stays, no
+second edge is written, the answer carries the warning under `managementLinkSkipped` (`reason`
+`link_conflict`, `detail`, the `standing` link id, the creator's seat and the creator) and a
+`management_link_skipped` journal row records it once. The edge's
 link id is made from the two scopes, so `linkage-handover --role supervisor --scope-kind management
 --scope <seat id> --expect-task <old owner> --task <new owner> --evidence ...` keeps the edge and
 moves its `upper_task_id` to the new owner, archives the old binding (`superseded_by`), gives the new
 one the evidence as `handover_note`, and writes `scope_handover`.
 
-On the 1.0 path the sessions are two layers, management and project owner, and a management session
-binds its project owner itself. A project owner (role `parent` at its project) bound by a thread
+On the 1.0 path the sessions are two layers, the parent and the child ([the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels)),
+and a parent binds its child itself. A child (role `parent` at its project) bound by a thread
 that holds a live management seat gets the execution edge from that seat to the project in the same
 transaction: `linkage-bind --role parent --scope <PROJECT> --task <owner> --host ... --creator
 <management thread>`, `--creator` again defaulting to `CODEX_THREAD_ID`, answered with the edge under
-`managementLink`. The rules are the initiative's: a creator with no management seat (an owner binding
+`managementLink`. The rules are the initiative's: a creator with no management seat (a child binding
 itself) writes no edge; a project has one upward execution edge, so a binding whose creator holds
-another seat is refused `link_conflict` and commits only its conflict row; another owner is refused by
-the ordinary duplicate-owner rule; and the seat's handover moves the edge's `upper_task_id` with the
-`scope_handover` record, as a project owner's handover moves its `lower_task_id`. A project an
-initiative lead already supervises (the legacy configuration, `linkage-supervise`) keeps that edge:
+another seat writes no second edge and is warned and recorded the same way (`managementLinkSkipped`,
+`management_link_skipped`), not refused; another child is refused by the ordinary duplicate-owner rule,
+which is the store's own invariant (one live owner per scope and role); and the seat's handover moves
+the edge's `upper_task_id` with the
+`scope_handover` record, as a child's handover moves its `lower_task_id`. A project an
+initiative's supervisor already supervises (the legacy configuration, `linkage-supervise`) keeps that edge:
 the binding is not refused, no management edge is written, the answer carries the warning under
 `managementLinkSkipped` (`reason` `link_conflict`, `detail`, the `standing` link id, the seat and the
 creator) and a `management_link_skipped` journal row records it once. In the other direction
 `linkage-supervise` refuses an initiative over a project a management edge already stands above
 (`duplicate_scope_owner`, naming the management seat), because the project has its execution
 supervisor. A thread that holds a management seat and still keeps a legacy initiative over a project
-therefore runs `linkage-supervise` before it binds the project owner: the binding then keeps the
+therefore runs `linkage-supervise` before it binds the child: the binding then keeps the
 initiative's edge with the skip warning.
 
 The walk up from an issue or a project reaches whatever stands above the project. A management level
 directly above the project is the recipient of the project's upward messages: a relationship's
 report, a `project:<key>` notice and the direct project kinds go to the owner of that seat (see [the
 supervisor channel](supervisor-channel.md#the-level-above-a-project)). Without one, a legacy
-initiative lead is the recipient, and without that the single store seat. A management level above an
+initiative supervisor is the recipient, and without that the single store seat. A management level above an
 initiative is not a project's recipient: the lead stands between and stays the recipient of the
 project's reports, while the lead's own messages go to the management seat through
 `initiative:<key>` (see [direct messages](supervisor-channel.md#direct-messages)). An initiative with
@@ -209,13 +222,13 @@ and the answer carries `foldWarning` (`reason` `seat_differs`, the record it did
 journaled as a `decision_authority_warning` row (CRW-1378). A record raised before this rule reads
 and answers as it did.
 
-**A record whose seat has no owner** - the management session that held the seat ended or released
+**A record whose seat has no owner** - the parent that held the seat ended or released
 it, so `decision-answer` refuses every answerer `authority_unverified` - is recovered in one of three
 ways, none of which edits the record:
 
-1. a new management thread binds the seat's key again: `linkage-bind --role supervisor --scope-kind
+1. a new parent thread binds the seat's key again: `linkage-bind --role supervisor --scope-kind
    management --scope <seat id> --task <new thread> --host ...`; the seat's new owner answers;
-2. while the old session's binding is still live, `linkage-handover --role supervisor --scope-kind
+2. while the old parent's binding is still live, `linkage-handover --role supervisor --scope-kind
    management --scope <seat id> --expect-task <old owner> --task <new thread> --evidence ...` moves
    the seat, and its edges, to the new thread, which then answers;
 3. the question is withdrawn (`decision-withdraw --decision ID --reason ...`) and raised again from

@@ -684,7 +684,7 @@ A message from the project side - a report raised from one of the project's issu
 above the project, in this order:
 
 1. the owner of the management seat whose execution edge stands directly above the project (a
-   management session bound the project owner, see [linkage](linkage.md#management-seats));
+   parent bound the child, see [linkage](linkage.md#management-seats));
    `recipient.scopeKind` is `management`;
 2. without one, the live supervisor of the initiative above the project (the legacy lead);
    `initiative`;
@@ -699,8 +699,8 @@ edge's `upper_task_id`; a message never sent is re-addressed at its next staging
 The answer a decision request asks for belongs to the same seat (CRW-1371). A user-grade or
 delegated-management-grade decision raised from the project (`decision-raise --origin-project`)
 names that management seat in its `authority.ref`, and `decision-answer` accepts the answer only from
-the seat's current owner, so the management session a request woke is the one that answers it, the
-other management session is refused `authority_unverified`, and a handover moves the answer with the
+the seat's current owner, so the parent a request woke is the one that answers it, the
+other parent is refused `authority_unverified`, and a handover moves the answer with the
 seat. A record with no management ref keeps the store seat's rule. See
 [linkage](linkage.md#management-seats).
 
@@ -729,7 +729,7 @@ decision in `decision` and who owes the answer (the recipient, or the user for
 `jun_decision_request` and `flow_jun_decision_request`). Sending is the channel's own: the daemon's supervisor pass picks the row up,
 opens a turn in an idle or unloaded recipient and retries a busy one, and a readback is what it is
 for any message. A recipient needs recorded authorized settings and a role policy, as any recipient
-of this channel does; a management session that is not a Codex App Server thread cannot be woken
+of this channel does; a parent (repository session, relay role `supervisor`, [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels)) that is not a Codex App Server thread cannot be woken
 this way.
 
 A flow run's message (a project kind or `session_step_waiting`) names its run in its subject,
@@ -747,7 +747,18 @@ write is journaled as `flow_delivery_unrecorded` and the settle commits (CRW-138
 journal row (the report id, kind, initiative, subject, text, its digest, the evidence and the
 reporting thread, `CODEX_THREAD_ID`) and the direct message, in one transaction. A report with
 nobody above to tell is still recorded and the refusal (exit 2) carries the report id with
-`standing: true`; the same report again answers `replayed: true` and stages nothing more. The
+`standing: true`; the same report again answers `replayed: true` and stages nothing more. The same
+report id (`--id`) with a changed subject, evidence or text restates the report, and the row and the
+message never disagree: while its message has not been sent, the message is rewritten and the
+`lead_report` row is updated with it in the same transaction, recorded as a `lead_report_restated`
+journal row; when the channel refuses to stage (nobody above any more, or a hierarchy that moved)
+while the unsent message stands, neither is changed and the refusal warns; once the message may have
+gone, neither the message nor the row is changed, and the answer warns that the sent text stands
+(report it under a new `--id`). Whether it was sent is read from the report's message, so a row first
+recorded with nobody above and staged later by a replay (which then names the message on the row) is
+never restated after the send. One `--id` is one report of one kind for one initiative: the same id
+with another `--kind` or `--initiative` is refused `report_id_reused` (exit 2), naming the recorded
+and the given values, and nothing is written. The
 message goes in the lead's name, and a caller is not refused for not being the lead: a calling
 thread that is not the initiative's lead is named at the top of the message text, recorded on the
 row (`reporterIsLead: false`) and warned in the answer (`warning`); a caller with no

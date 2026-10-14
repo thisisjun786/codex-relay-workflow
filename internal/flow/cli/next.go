@@ -188,7 +188,7 @@ func (c *command) next(args []string) int {
 	// a close step is the owner's to do once it is handed out: its file goes, so it is handed out once
 	for _, st := range steps {
 		if st.Action == engine.StepClose {
-			if err := os.Remove(filepath.Join(bus.StepsDir(st.Call), engine.CloseName(st.Attempt))); err != nil && !errors.Is(err, os.ErrNotExist) {
+			if err := os.Remove(filepath.Join(bus.StepsDir(st.Call), st.File)); err != nil && !errors.Is(err, os.ErrNotExist) {
 				ans.Warnings = append(ans.Warnings, fmt.Sprintf("the close step of %s could not be removed: %v", st.AgentID, err))
 			}
 		}

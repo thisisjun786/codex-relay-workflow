@@ -24,9 +24,9 @@ An agreed change maps to verified too, but only once the registered criterion it
 
 An audit summary under an existing management assignment goes to the linked Linear coordination document ([crw-check](../../crw-check/SKILL.md#in-workflow-auditor)). Where a relay holds the assignment, it QUEUES that summary with the event, revision, and verdict it describes; the write itself is the coordinator's own connector operation, since the relay holds no credential. Confirm it by reading the document back and checking this job's own structured record rather than searching the text for words. A failed write is retried on its own and never re-runs the check or re-sends the correction.
 
-## A quiet project orchestrator is not a finding
+## A quiet child is not a finding
 
-A project orchestrator sitting idle with no goal is not a finding. Since the goal-free default a project orchestrator ends its turn when only waiting remains, so an idle orchestrator whose recorded start policy and wake-path readiness hold is operating normally and its quiet is the design working. What turns that into a finding is the delivery side: a readiness fact that no longer holds, a delivery held terminally, or a recipient whose own goal status the relay treats as blocking. Check those before reporting a stalled orchestrator, and keep its idleness and its delivery path as two readings rather than one.
+A child sitting idle with no goal is not a finding. Since the goal-free default a child ends its turn when only waiting remains, so an idle child whose recorded start policy and wake-path readiness hold is operating normally and its quiet is the design working. What turns that into a finding is the delivery side: a readiness fact that no longer holds, a delivery held terminally, or a recipient whose own goal status the relay treats as blocking. Check those before reporting a stalled child, and keep its idleness and its delivery path as two readings rather than one.
 
 ## Missing reach is not a failed criterion
 

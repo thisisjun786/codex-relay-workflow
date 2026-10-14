@@ -244,7 +244,7 @@ func TestCodeReviewerNoParentSessionWording(t *testing.T) {
 			}
 		}
 		debugging := skillText(t, root, devSkillsRoot+"crw-dev-debugging/SKILL.md")
-		for _, level := range []string{"project orchestrator", "issue child"} {
+		for _, level := range []string{"the child that released it", "issue child"} {
 			if !strings.Contains(debugging, level) {
 				errs = append(errs, "crw-dev-debugging: the escalation does not name the level "+level)
 			}

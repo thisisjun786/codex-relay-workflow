@@ -54,6 +54,7 @@ func TestMetricWritersRefuseALinkInTheStateTree(t *testing.T) {
 		{"WriteDivergenceMode", ".crw/" + DivergenceDir, false},
 		{"WriteDivergenceMode", ".crw/" + DivergenceDir + "/s1.mode.json", true},
 		{"RecordDivergenceCandidate", ".crw/" + DivergenceDir, false},
+		{"RecordDivergenceCandidate", ".crw/" + DivergenceDir + "/" + CandidatesFile, true},
 	}
 	for _, c := range cases {
 		t.Run(c.writer+" "+c.link, func(t *testing.T) {

@@ -10,13 +10,13 @@ Compare Linear records against the rules already agreed for writing and managing
 | Job | Who runs it | Writes |
 |---|---|---|
 | [Diagnose](#diagnose) | any actor | nothing |
-| [Supplement](#supplement) | the owner of the body being written; the manager's store-wide sweep sends each supplement to its owner | the one field being supplemented, in the owner's own record |
+| [Supplement](#supplement) | the owner of the body being written; the parent's store-wide sweep sends each supplement to its owner | the one field being supplemented, in the owner's own record |
 
 A request to check, review or diagnose stays at the first job. A request to find and tidy also carries the second, for the bodies the caller owns, without asking again for each clear gap.
 
 ## Diagnose
 
-Diagnose is read-only and any actor may run it: the user, the manager, an initiative lead, a project orchestrator, or a task asked to. It ends in a disposition for every judged item, the gaps written up as proposals, and a report.
+Diagnose is read-only and any actor may run it: the user, the top session, the parent, a child, or a task asked to ([the level table](../crw-canon/references/hierarchy.md#the-levels)). It ends in a disposition for every judged item, the gaps written up as proposals, and a report.
 
 ### Connect the sources
 
@@ -50,15 +50,15 @@ An exception is not a defect and is reported as the exception it is. A conflict 
 
 Supplement writes, and only the owner of the body being written runs it, under the levels' record ownership in [scope of each level](../crw-canon/references/hierarchy.md#scope-of-each-level):
 
-- the initiative lead for an initiative body;
-- the project orchestrator for a project or issue body (an issue child returns its proposal to it);
-- the manager runs a store-wide sweep, which is requested through `crw manage`: the manager holds the store seat and no Linear body, so it sends each supplement to the owner of that body through `crw manage` and writes none itself. A body with no owner bound stays a proposal in the sweep report for Jun.
+- the parent for an initiative body;
+- the child for a project or issue body (an issue child returns its proposal to it);
+- the parent runs a store-wide sweep, which is requested through `crw manage`: the parent holds the management seat, with the store seat read through it, and no Linear body, so it sends each supplement to the owner of that body through `crw manage` and writes none itself. A body with no owner bound stays a proposal in the sweep report for Jun.
 
 Any other actor that finds a gap hands the owner the proposal Diagnose produced, carrying the passage it proposes, and writes nothing, as [record writes and returned proposals](../crw-canon/references/linear-model.md#record-writes-and-returned-proposals) says.
 
 The request wording sets the authority. Check-only wording returns proposals and writes nothing at all. A request to find and tidy, or a tidy step inside an assignment that already authorizes record updates under [Completion follow-up](../crw-canon/references/delivery.md#completion-follow-up-in-an-existing-execution-workflow), authorizes the clear supplements across the pinned scope for the bodies its owner holds, so do not re-ask item by item for permission already given. Explicit read-only, report-only or narrower limits win. No wording extends tidy to closing, deleting or reorganising issues, or to introducing a rule.
 
-Every gap is either written or proposed, and none is dropped for being awkward. Write one only when its content is quotable from an accepted source and its target is a body its owner holds. Quotable but held by another level is a proposal rather than a write: a project orchestrator does not write the initiative's body, which belongs to its initiative lead. Content you would have to compose is a proposal too, carrying the passage you propose so its owner can accept it without starting over.
+Every gap is either written or proposed, and none is dropped for being awkward. Write one only when its content is quotable from an accepted source and its target is a body its owner holds. Quotable but held by another level is a proposal rather than a write: a child does not write the initiative's body, which belongs to its parent. Content you would have to compose is a proposal too, carrying the passage you propose so its owner can accept it without starting over.
 
 Write in this order, one item at a time. Read the record again immediately before the write and judge against that read; where the intended end state already holds, record that it conforms and write nothing. Change only the field being supplemented, preserving the body, the other labels, the relations and the history. Read the record back and confirm from the returned record rather than by searching its text. After an ambiguous result, read existing state before repeating a create, and report an unknown result as unknown. Re-running the same request over unchanged records therefore writes nothing and creates no duplicate label, comment or document. Where the pre-write read differs from the pinned scan someone else has moved the record: re-judge it on what you just read, and leave the field they touched alone for this pass rather than overwriting their change.
 

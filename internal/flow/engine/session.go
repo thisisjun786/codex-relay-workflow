@@ -58,6 +58,9 @@ type sessionStage struct {
 	pair        Pair
 	note, prev  string
 	intent      string
+	// seen and calls are what a send_input step's row records of the tokens counted before it: the subagent's rollout total the
+	// earlier turns counted and the call's tokens (a recovered repair turn counts only what it adds).
+	seen, calls Tokens
 }
 
 const (
@@ -291,7 +294,7 @@ func sessionStageOf(rows []Event) *sessionStage {
 		case EvStepPublished:
 			st = &sessionStage{kind: stagePublished, k: rowInt(d, "k"), attempt: rowInt(d, "attempt"), op: rowStr(d, "op"), input: rowStr(d, "input"),
 				repair: d["repair"] == true, action: rowStr(d, "action"), agent: rowStr(d, "agent_id"), note: rowStr(d, "note"), prev: rowStr(d, "previous_answer"),
-				rollout: st.rollout, pair: st.pair}
+				rollout: st.rollout, pair: st.pair, seen: rowTokens(d, "tokens_seen"), calls: rowTokens(d, "call_tokens")}
 			if st.action == StepSpawn {
 				st.agent = ""
 			}
@@ -311,6 +314,17 @@ func sessionStageOf(rows []Event) *sessionStage {
 		}
 	}
 	return st
+}
+
+// rowTokens reads the Tokens a row member holds (a struct in memory, a JSON object from the store).
+func rowTokens(d map[string]any, key string) Tokens {
+	var t Tokens
+	if v, ok := d[key]; ok && v != nil {
+		if raw, err := json.Marshal(v); err == nil {
+			_ = json.Unmarshal(raw, &t)
+		}
+	}
+	return t
 }
 
 // sessionResumeOpen is the resume walk of a session call the previous process left open: it goes on in place, in the allocation
@@ -349,6 +363,7 @@ func (c *callRun) sessionRecover(ctx context.Context) (res CallResult, stop bool
 		return res, true, 0, ""
 	}
 	s.intent = st.intent
+	bus := c.e.cfg.Session.Bus
 	switch st.kind {
 	case stagePrepared:
 		s.resume = nil
@@ -356,19 +371,29 @@ func (c *callRun) sessionRecover(ctx context.Context) (res CallResult, stop bool
 		return CallResult{}, false, 1, c.checkpointPreface() + p.prompt
 	case stageLost:
 		s.resume = nil
+		// the step of the lost attempt was taken: a file the dead process left of it is no step to take
+		_ = bus.Retract(c.id, st.k, st.attempt)
 		s.attempt = st.attempt + 1
 		s.note = c.lostNote(st.agent)
 		c.sessionClose(st.agent, st.attempt)
 		s.agent = ""
 	case stageBound:
 		s.resume = nil
+		// the bound step was taken: the call goes on with its subagent and never binds it again, so the step file the dead process
+		// left is retracted here (CRW-1367)
+		_ = bus.Retract(c.id, st.k, st.attempt)
 		s.attempt, s.agent, s.turn, s.boundK, s.rollout, s.pair = st.attempt, st.agent, st.turn, st.k, st.rollout, st.pair
 		s.dropCurrentPair()
+		if st.action == StepSendInput {
+			s.seen, c.tokens = st.seen, st.calls
+		}
 	case stagePublished:
 		s.attempt = st.attempt
 		if st.action == StepSendInput {
+			// a repair turn: the subagent it is for, and what the turns before it counted
 			s.agent, s.rollout, s.pair = st.agent, st.rollout, st.pair
 			s.dropCurrentPair()
+			s.seen, c.tokens = st.seen, st.calls
 		}
 		s.note, s.lastText = st.note, st.prev
 	}
@@ -602,6 +627,10 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 		if agent != "" {
 			data["agent_id"] = agent
 		}
+		if action == StepSendInput {
+			// what the turns before it counted: a process that recovers this turn counts only the tokens it adds
+			data["tokens_seen"], data["call_tokens"] = s.seen, c.tokens
+		}
 		if s.note != "" {
 			data["note"] = s.note
 		}
@@ -619,22 +648,30 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 	// the step waits for the owner from its publication to its bind (or the end of the turn): the waker reads it (§10)
 	bound := false
 	defer func() { e.sessW.taken(marker, bound, e.cfg.Now()) }()
-	if action == StepSpawn && recovered {
-		// a subagent the owner thread spawned for this marker before a process could bind it is the step's
-		if id, found, err := sc.Host.FindByMarker(turnCtx, sc.Owner, marker); err == nil && found {
-			if reply, ok := c.sessionVerify(turnCtx, id, k, op, marker, action); ok {
-				bound = true
-				return nil, CallResult{}, false, nil
-			} else if reply.Status == ReplyPairMismatch {
-				c.sessionClose(id, s.attempt)
-			}
+	if recovered && c.sessionTaken(turnCtx, w, k, op, marker, action) {
+		// the owner took the step before this process published it again: it is bound, never spawned or sent again
+		bound = true
+		return nil, CallResult{}, false, nil
+	}
+	// a step that cannot be written (a full disk) was sent to nobody: it is recorded as not dispatched and written again, and the
+	// call waits as for any step (CRW-1367; never an unknown outcome or a hold of the node)
+	for warned := false; ; {
+		_, err := sc.Bus.WriteFile(c.id, packetName, []byte(packet))
+		if err == nil {
+			err = sc.Bus.Publish(step)
 		}
-	}
-	if _, err := sc.Bus.WriteFile(c.id, packetName, []byte(packet)); err != nil {
-		return nil, CallResult{}, false, err
-	}
-	if err := sc.Bus.Publish(step); err != nil {
-		return nil, CallResult{}, false, err
+		if err == nil {
+			break
+		}
+		if !warned {
+			warned = true
+			e.j.Append(Event{RunID: e.runID, Kind: KindFlow, CallID: c.id, Path: c.path.id, Position: c.position, Op: "agent", Label: c.label, Event: EvStepUnwritten,
+				Data: map[string]any{"call_id": c.id, "node": p.node, "k": k, "attempt": s.attempt, "marker": marker, "action": action, "input_state": "not_delivered", "error": err.Error()}})
+		}
+		if sc.wait(turnCtx, sc.poll()) != nil && turnCtx.Err() != nil {
+			out, _, err := c.sessionStop(ctx)
+			return &out, CallResult{}, false, err
+		}
 	}
 	e.sessW.published(marker, e.cfg.Now())
 	find := time.NewTicker(6 * sc.poll())
@@ -650,20 +687,65 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 				return nil, CallResult{}, false, nil
 			}
 		case <-find.C:
-			if action != StepSpawn {
-				continue
-			}
-			if id, found, err := sc.Host.FindByMarker(turnCtx, sc.Owner, marker); err == nil && found {
-				if _, ok := c.sessionVerify(turnCtx, id, k, op, marker, action); ok {
-					bound = true
-					return nil, CallResult{}, false, nil
-				}
+			if c.sessionFind(turnCtx, k, op, marker, action, false) {
+				bound = true
+				return nil, CallResult{}, false, nil
 			}
 		case <-turnCtx.Done():
 			out, _, err := c.sessionStop(ctx)
 			return &out, CallResult{}, false, err
 		}
 	}
+}
+
+// sessionTaken looks for what took a step a dead process published before this process shows it again: a report the owner wrote
+// and the dead process never answered (it waits in the inbox), then the host (sessionFind). It is true when the step is bound.
+func (c *callRun) sessionTaken(ctx context.Context, w *sessionWaiter, k int, op, marker, action string) bool {
+	e, sc := c.e, c.e.cfg.Session
+	if reps, err := sc.Bus.Reports(); err == nil {
+		for _, rep := range reps {
+			if rep.Run == e.runID && rep.Call == c.id && rep.K == k && rep.Attempt == c.sess.attempt {
+				e.route(rep)
+			}
+		}
+	}
+	for drained := false; !drained; {
+		select {
+		case rep := <-w.ch:
+			reply, ok := c.sessionVerify(ctx, rep.Agent, k, op, marker, action)
+			_ = sc.Bus.Reply(rep, reply)
+			e.sessR.answered(rep.ID)
+			if ok {
+				return true
+			}
+		default:
+			drained = true
+		}
+	}
+	return c.sessionFind(ctx, k, op, marker, action, true)
+}
+
+// sessionFind looks a step up on the host: for a spawn, the owner thread's subagent whose turn carries the marker (a pair_mismatch
+// one is closed when closeMismatch is set); for a send_input (a repair), the marker turn on the subagent the input was for, so a
+// repair the subagent got is bound and never sent again (CRW-1367). It is true when the step is bound.
+func (c *callRun) sessionFind(ctx context.Context, k int, op, marker, action string, closeMismatch bool) bool {
+	sc := c.e.cfg.Session
+	switch action {
+	case StepSpawn:
+		id, found, err := sc.Host.FindByMarker(ctx, sc.Owner, marker)
+		if err != nil || !found {
+			return false
+		}
+		reply, ok := c.sessionVerify(ctx, id, k, op, marker, action)
+		if !ok && closeMismatch && reply.Status == ReplyPairMismatch {
+			c.sessionClose(id, c.sess.attempt)
+		}
+		return ok
+	case StepSendInput:
+		_, ok := c.sessionVerify(ctx, c.sess.agent, k, op, marker, action)
+		return ok
+	}
+	return false
 }
 
 // sessionAdopt goes on with an attempt whose subagent a process bound and then died before it wrote turn_started: the subagent its
@@ -1062,7 +1144,7 @@ func (c *callRun) sessionChecks(ctx context.Context, data map[string]any) {
 	if head == start {
 		return
 	}
-	ref := StrayRef(e.runID, c.plan.node, attempt)
+	ref := StrayRef(e.runID, c.plan.node, attempt, c.id)
 	moved := map[string]any{"start": start, "head": head, "ref": ref}
 	if err := keeper.KeepRef(ctx, ref, head); err != nil {
 		moved["ref_error"] = err.Error()

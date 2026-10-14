@@ -177,7 +177,7 @@ func TestPabcdPlanDocsAreLocalEvidence(t *testing.T) {
 	}
 }
 
-// TestRefactorHasNoWriteProcedure: crw-refactor diagnoses, read-only, for the manager and the initiative lead; a selected
+// TestRefactorHasNoWriteProcedure: crw-refactor diagnoses, read-only, for the parent and the top session; a selected
 // repair becomes a Linear issue through crw-add-issue and runs on the ordinary project path. The skill holds no execution
 // procedure and no crw-loop run.
 func TestRefactorHasNoWriteProcedure(t *testing.T) {
@@ -186,8 +186,8 @@ func TestRefactorHasNoWriteProcedure(t *testing.T) {
 	text := flat(skill)
 	for _, want := range []string{
 		"read-only",
-		"manager",
-		"initiative lead",
+		"the parent",
+		"the top session",
 		"](../crw-add-issue/SKILL.md)",
 	} {
 		if !strings.Contains(text, want) {
@@ -215,28 +215,28 @@ func TestRefactorHasNoWriteProcedure(t *testing.T) {
 	if handoff := flat(sectionOf(skill, "Hand a selected candidate to the project path")); !strings.Contains(handoff, "](../crw-add-issue/SKILL.md)") || !strings.Contains(handoff, "crw-run") {
 		t.Errorf("%s has no section that hands a selected candidate to crw-add-issue and the project path through crw-run", refactorSkillFile)
 	}
-	// The callers of crw-add-issue are the project orchestrator, which registers, the initiative lead, which hands a drafted
-	// body to it, and the user. A manager (or initiative lead) selecting a repair is therefore not a registrant: the handoff
-	// must route the drafted issue to the orchestrator of the project that owns the code.
+	// The callers of crw-add-issue are the child, which registers, the parent, which hands a drafted body to it, and the
+	// user. The parent selecting a repair is therefore not a registrant: the handoff must route the drafted issue to the
+	// child of the project that owns the code.
 	callers := flat(sectionOf(splitRead(t, "plugins/crw/skills/crw-add-issue/SKILL.md"), "Who calls"))
-	if !regexp.MustCompile(`(?i)project orchestrator[^.]*regist`).MatchString(callers) {
-		t.Fatal("crw-add-issue no longer names the project orchestrator as its registering caller; revisit this check")
+	if !regexp.MustCompile(`(?i)child[^.]*regist`).MatchString(callers) {
+		t.Fatal("crw-add-issue no longer names the child as its registering caller; revisit this check")
 	}
 	handoff := flat(sectionOf(skill, "Hand a selected candidate to the project path"))
 	routed := false
 	for _, s := range strings.SplitAfter(handoff, ". ") {
 		lower := strings.ToLower(s)
-		if !strings.Contains(lower, "manager") && !strings.Contains(lower, "initiative lead") {
+		if !strings.Contains(lower, "the parent") {
 			continue
 		}
-		if !strings.Contains(lower, "orchestrator") || !regexp.MustCompile(`regist|hand`).MatchString(lower) {
-			t.Errorf("%s: a sentence puts the manager or initiative lead on crw-add-issue without the project orchestrator that registers the issue: %q", refactorSkillFile, s)
+		if !strings.Contains(lower, "child") || !regexp.MustCompile(`regist|hand`).MatchString(lower) {
+			t.Errorf("%s: a sentence puts the parent on crw-add-issue without the child that registers the issue: %q", refactorSkillFile, s)
 			continue
 		}
 		routed = true
 	}
 	if !routed {
-		t.Errorf("%s does not hand the drafted issue of a manager-origin repair to the project's orchestrator", refactorSkillFile)
+		t.Errorf("%s does not hand the drafted issue of a parent-origin repair to the project's child", refactorSkillFile)
 	}
 	for _, gone := range []string{"direct implementation owner", "explicitly chosen by the user"} {
 		if strings.Contains(flat(record), gone) {
@@ -249,8 +249,8 @@ func TestRefactorHasNoWriteProcedure(t *testing.T) {
 }
 
 // TestTidyJobsSeparated: crw-tidy has two jobs under two headings. Diagnose reads and is open to any actor; Supplement writes,
-// and only the owner of the body written does: the initiative lead for an initiative body, the project orchestrator for a
-// project or issue body, the manager for a store-wide sweep.
+// and only the owner of the body written does: the parent for an initiative body, the child for a project or issue body, and
+// the parent's store-wide sweep sends each supplement to its owner.
 func TestTidyJobsSeparated(t *testing.T) {
 	skill := splitRead(t, tidySkillFile)
 	count := map[string]int{}
@@ -276,32 +276,31 @@ func TestTidyJobsSeparated(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		"initiative lead",
-		"project orchestrator",
-		"manager",
+		"the parent for an initiative body",
+		"the child for a project or issue body",
+		"store-wide sweep",
 		"Read the record again immediately before the write",
 	} {
 		if !strings.Contains(supplement, want) {
 			t.Errorf("the Supplement section lacks %q", want)
 		}
 	}
-	// hierarchy.md gives each Linear body to one level and the manager only the store seat, so the manager's store-wide
-	// sweep is requested through crw manage and sends every supplement to the owner of its body; it writes no other
-	// level's record itself.
+	// hierarchy.md gives each Linear body to one layer and the top session none, so the parent's store-wide sweep is requested
+	// through crw manage and sends every supplement to the owner of its body; it writes no other layer's record itself.
 	hierarchy := flat(splitRead(t, "plugins/crw/skills/crw-canon/references/hierarchy.md"))
-	if !strings.Contains(hierarchy, "the initiative, project and issue records belong to the levels below it") {
-		t.Fatal("hierarchy.md no longer keeps the initiative, project and issue records below the manager; revisit this check")
+	if !strings.Contains(hierarchy, "the initiative, project and issue records belong to the layers below it") {
+		t.Fatal("hierarchy.md no longer keeps the initiative, project and issue records below the top session; revisit this check")
 	}
-	managerBullet := ""
+	sweepBullet := ""
 	for _, line := range strings.Split(sectionOf(skill, "Supplement"), "\n") {
-		if strings.HasPrefix(line, "- ") && strings.Contains(line, "manager") {
-			managerBullet = flat(line)
+		if strings.HasPrefix(line, "- ") && strings.Contains(line, "store-wide sweep") {
+			sweepBullet = flat(line)
 		}
 	}
-	if managerBullet == "" {
-		t.Error("the Supplement section does not say what the manager's store-wide sweep does")
-	} else if !strings.Contains(managerBullet, "crw manage") || !strings.Contains(managerBullet, "owner") || !regexp.MustCompile(`send|hand|route`).MatchString(managerBullet) || regexp.MustCompile(`(?i)\bthe manager for\b`).MatchString(managerBullet) {
-		t.Errorf("the manager's store-wide sweep is not routed through crw manage to the owner of each body: %q", managerBullet)
+	if sweepBullet == "" {
+		t.Error("the Supplement section does not say what the parent's store-wide sweep does")
+	} else if !strings.Contains(sweepBullet, "crw manage") || !strings.Contains(sweepBullet, "owner") || !regexp.MustCompile(`send|hand|route`).MatchString(sweepBullet) || !strings.Contains(sweepBullet, "writes none itself") {
+		t.Errorf("the parent's store-wide sweep is not routed through crw manage to the owner of each body: %q", sweepBullet)
 	}
 	// The write order, the read-back and the authority rule are Supplement's, so they appear once, there.
 	if got := strings.Count(flat(skill), "Read the record again immediately before the write"); got != 1 {

@@ -100,11 +100,19 @@ func (a *Allocator) HeadOf(ctx context.Context, path string) (string, error) {
 }
 
 // KeepRef implements engine.HeadKeeper: it keeps a commit a session executor made in its worktree on a stray ref of this run
-// (engine.StrayRef, refs/crw/flow/<run>/stray/...), in the repository the worktrees are made from. Any other ref is refused.
+// (engine.StrayRef, refs/crw/flow/<run>/stray/...), in the repository the worktrees are made from. Any other ref is refused. The
+// ref is created with a compare-and-swap against no ref, so a record is never overwritten: a ref that holds the commit already
+// is kept as it is, and one that holds another commit is refused.
 func (a *Allocator) KeepRef(ctx context.Context, ref, commit string) error {
 	if !strings.HasPrefix(ref, engine.StrayRefPrefix(a.cfg.RunID)) || strings.Contains(ref, "..") {
 		return fmt.Errorf("agent: %s is not a stray ref of run %s", ref, a.cfg.RunID)
 	}
-	_, err := a.git(ctx, a.cfg.Repo, nil, "update-ref", "-m", "crw stray head", ref, commit)
+	if held, err := a.git(ctx, a.cfg.Repo, nil, "rev-parse", "--verify", "--quiet", ref); err == nil && held != "" {
+		if want, err := a.git(ctx, a.cfg.Repo, nil, "rev-parse", "--verify", "--quiet", commit+"^{commit}"); err == nil && want == held {
+			return nil
+		}
+		return fmt.Errorf("agent: %s already keeps %s: a stray ref is never moved", ref, held)
+	}
+	_, err := a.git(ctx, a.cfg.Repo, nil, "update-ref", "-m", "crw stray head", ref, commit, "")
 	return err
 }

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/golden"
@@ -19,15 +20,25 @@ import (
 // once it returned; only then does it let go of the lock (release). A command that honours its
 // context refuses on that wait, and nothing it would do once the lock frees has run. The signal
 // is the wait itself (record.Seam), not a time window, so a loaded host changes nothing.
+//
+// A command that ignores its context pauses for the same lock a second time. The test fails on
+// that second pause and the holder lets go there, so the command ends at once instead of at the
+// lock's timeout, and whatever it then does under the freed lock is what the caller's checks see.
 func interruptedWhileHeld(t *testing.T, lockPath string, release func(), command func(context.Context) (record.Object, int)) (record.Object, int) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	var interrupt sync.Once
+	var letGo sync.Once
+	var pauses atomic.Int32
 	ctx = record.WithSeam(ctx, record.Seam{Waiting: func(path string) {
-		if path == lockPath {
-			interrupt.Do(cancel)
+		if path != lockPath {
+			return
 		}
+		if pauses.Add(1) == 1 {
+			cancel()
+			return
+		}
+		letGo.Do(release)
 	}})
 	type answer struct {
 		result record.Object
@@ -36,7 +47,10 @@ func interruptedWhileHeld(t *testing.T, lockPath string, release func(), command
 	answers := make(chan answer, 1)
 	go func() { result, code := command(ctx); answers <- answer{result, code} }()
 	got := <-answers
-	release()
+	letGo.Do(release)
+	if n := pauses.Load(); n != 1 {
+		t.Errorf("the command paused %d times for %s; one that honours its context stops at the first pause", n, lockPath)
+	}
 	return got.result, got.code
 }
 

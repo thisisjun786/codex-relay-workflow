@@ -154,8 +154,8 @@ func TestPlanSizeRulesWording(t *testing.T) {
 	})
 }
 
-// addIssueCallers are the callers crw-add-issue names.
-var addIssueCallers = []string{`project orchestrator`, `initiative lead`, `user`}
+// addIssueCallers are the callers crw-add-issue names: the child, the parent (CRW-1352 names) and the user.
+var addIssueCallers = []string{`child`, `parent`, `user`}
 
 func TestAddIssueCallersNamed(t *testing.T) {
 	text := readRepoText(t, "plugins/crw/skills/crw-add-issue/SKILL.md")
@@ -211,27 +211,26 @@ func TestAddIssueAdvisoryLimitsWording(t *testing.T) {
 	}
 }
 
-// An initiative lead calls crw-add-issue but writes no project record: the project orchestrator owns
-// the project and its issues, so the initiative lead hands it the drafted body and the orchestrator
-// registers it.
+// The parent calls crw-add-issue but writes no project record: the child owns the project and its
+// issues, so the parent hands it the drafted body and the child registers it.
 func TestAddIssueInitiativeLeadHandsTheBodyToTheOwner(t *testing.T) {
 	text := readRepoText(t, "plugins/crw/skills/crw-add-issue/SKILL.md")
 	callers := normalized(sectionOf(text, "Who calls"))
-	if regexp.MustCompile(`(?i)initiative lead (registers|creates|writes) an issue`).MatchString(callers) {
-		t.Errorf("Who calls lets an initiative lead register an issue itself:\n%s", callers)
+	if regexp.MustCompile(`(?i)parent (registers|creates|writes) an issue`).MatchString(callers) {
+		t.Errorf("Who calls lets the parent register an issue itself:\n%s", callers)
 	}
 	missing := wordingMissing(callers, []string{
-		`(?i)initiative lead[^.]*writes nothing`,
-		`(?i)initiative lead[^.]*hands[^.]*body[^.]*project orchestrator`,
-		`(?i)project orchestrator[^.]*registers it`,
+		`(?i)the parent[^.]*writes nothing`,
+		`(?i)the parent hands[^.]*body[^.]*child`,
+		`(?i)child, which registers it`,
 		`\(\.\./crw-canon/references/hierarchy\.md#scope-of-each-level\)`,
 	})
 	if len(missing) > 0 {
 		t.Errorf("Who calls lacks: %s\n%s", strings.Join(missing, "\n  "), callers)
 	}
 	write := normalized(sectionOf(text, "Check, write, read back"))
-	if !regexp.MustCompile(`(?i)write intent[^.]*(from )?(a|the) project orchestrator or (a|the) user`).MatchString(write) {
-		t.Errorf("Check, write, read back does not limit the write to a project orchestrator or the user:\n%s", write)
+	if !regexp.MustCompile(`(?i)write intent[^.]*(from )?(a|the) child or (a|the) user`).MatchString(write) {
+		t.Errorf("Check, write, read back does not limit the write to a child or the user:\n%s", write)
 	}
 }
 

@@ -7,11 +7,14 @@
 // serves, because the oracle accepted any path (an id such as "../../x", or a record file naming another cwd, made atomicWrite and
 // removePath act outside .codexclaw/bg):
 //   - AtomicWrite and RemovePath take the workspace they act for and refuse (ErrOutsideStore) a path that is not a file directly inside
-//     its BGDir. The path is judged absolute and cleaned, and that path is the one used; BGDir must resolve, symlinks followed, to the
-//     workspace or below it (the judgment of the plan gate in internal/pabcd/attest). A caller passes the workspace it trusts, never
+//     its BGDir. The path is judged absolute and cleaned, and that path is the one used. A caller passes the workspace it trusts, never
 //     the cwd field of a record it has read.
-//   - EnsureDir makes the same judgment of .crw and bg, so the ledger and the spawn, which begin with it, stay inside the workspace.
-//   - AtomicWrite creates its temporary file exclusively, and the ledger is opened without following a link.
+//   - A symbolic link at .crw or at .crw/bg, wherever it leads, is refused by every writer and by the store lock with the error of the
+//     rest of the .crw tree (crwdir.ErrLink, naming the link; CRW-475, CRW-1375): EnsureDir makes the two directories through
+//     crwdir.EnsureSubdir, and AtomicWrite, RemovePath and the lock check them with crwdir.CheckTree. So the ledger and the spawn, which
+//     begin with EnsureDir, stay inside the workspace. The link is left as it is.
+//   - AtomicWrite creates its temporary file exclusively and refuses a link at the file it publishes (crwdir.NotLink) instead of
+//     replacing it, and the ledger is opened without following a link (crwdir.OpenFile).
 //
 // The store is private to its owner (CRW-1134): EnsureDir creates bg with mode 0700, and the records, the switch files and the ledger
 // are created 0600 from their first write; a bg directory, a ledger or a record that exists already keeps its mode (no chmod of the tree), so a store the oracle made stays as readable as it was. The privacy
@@ -73,64 +76,28 @@ func ExitPath(cwd, id string) string   { return filepath.Join(BGDir(cwd), id+".e
 func DisabledPath(cwd string) string  { return filepath.Join(BGDir(cwd), DisabledFile) }
 func EnabledAtPath(cwd string) string { return filepath.Join(BGDir(cwd), EnabledAtFile) }
 
-// EnsureDir creates .crw with its .gitignore when it is new, then bg, and returns bg (ensureDir). It judges .crw, then bg, before it
-// creates anything below them, and refuses one that resolves outside the workspace.
+// EnsureDir creates .crw with its .gitignore when it is new, then bg, and returns bg (ensureDir). A symbolic link at .crw or at bg is
+// refused naming it, whether it leads inside the workspace, outside it or nowhere, before anything is created below it (CRW-1375).
 func EnsureDir(cwd string) (string, error) {
-	crw, err := crwdir.EnsureDir(cwd)
-	if err != nil {
+	if _, err := crwdir.EnsureDir(cwd); err != nil {
 		return "", err
 	}
-	if err := inside(cwd, crw); err != nil {
+	// bg is made 0700 here, private from its creation (CRW-1134); EnsureSubdir then judges .crw and bg as for every writer of the tree.
+	if err := os.Mkdir(BGDir(cwd), 0o700); err != nil && !errors.Is(err, os.ErrExist) {
 		return "", err
 	}
-	dir := BGDir(cwd)
-	if err := inside(cwd, dir); err != nil {
-		return "", err
-	}
-	if err := os.MkdirAll(dir, 0o700); err != nil { // private from its creation (CRW-1134)
-		return "", err
-	}
-	return dir, nil
+	return crwdir.EnsureSubdir(cwd, BGDirName)
 }
 
-// inside is nil when dir, with its symlinks followed, is the workspace or lies below it. A directory that does not exist yet escapes
-// nothing; a path that cannot be resolved for any other reason is refused.
-func inside(cwd, dir string) error {
-	realDir, err := resolved(dir)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return ErrOutsideStore
-	}
-	realBase, err := resolved(cwd)
-	if err != nil {
-		return ErrOutsideStore
-	}
-	rel, err := filepath.Rel(realBase, realDir)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return ErrOutsideStore
-	}
-	return nil
-}
-
-// resolved is the absolute path with its symlinks followed.
-func resolved(path string) (string, error) {
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return "", err
-	}
-	return filepath.EvalSymlinks(abs)
-}
-
-// confined returns path, absolute and cleaned, when it is a file directly inside BGDir(cwd) and that directory is inside the workspace.
+// confined returns path, absolute and cleaned, when it is a file directly inside BGDir(cwd) and neither .crw nor bg is a symbolic link
+// (crwdir.CheckTree: a store that does not exist yet passes, and the caller's own open reports it).
 func confined(cwd, path string) (string, error) {
 	abs, err1 := filepath.Abs(path)
 	dir, err2 := filepath.Abs(BGDir(cwd))
 	if err1 != nil || err2 != nil || filepath.Dir(abs) != dir {
 		return "", ErrOutsideStore
 	}
-	if err := inside(cwd, dir); err != nil {
+	if err := crwdir.CheckTree(cwd, BGDirName); err != nil {
 		return "", err
 	}
 	return abs, nil
@@ -139,7 +106,8 @@ func confined(cwd, path string) (string, error) {
 // AtomicWrite publishes text at path through a temporary file beside it and a rename, so a reader never sees a torn file
 // (atomicWrite). The temporary file is <path>.tmp-<pid>-<ms>, created exclusively with mode 0600; a taken name (a write of the same
 // target in the same millisecond, a planted entry) is skipped for <path>.tmp-<pid>-<ms>-1 and on. A write or a rename that fails
-// removes the temporary file this call created, which the oracle left behind (CRW-1134); no other file is touched.
+// removes the temporary file this call created, which the oracle left behind (CRW-1134); no other file is touched. A symbolic link at
+// path is refused naming it and kept, not replaced (CRW-1375).
 func AtomicWrite(cwd, path, text string) error {
 	return atomicWrite(cwd, path, text, os.Getpid(), time.Now().UnixMilli())
 }
@@ -147,6 +115,9 @@ func AtomicWrite(cwd, path, text string) error {
 func atomicWrite(cwd, path, text string, pid int, ms int64) error {
 	path, err := confined(cwd, path)
 	if err != nil {
+		return err
+	}
+	if err := crwdir.NotLink(path); err != nil {
 		return err
 	}
 	tmp, err := writeTemp(path, text, pid, ms)
@@ -240,7 +211,7 @@ func appendLedger(cwd string, event Event, now func() time.Time) error {
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(filepath.Join(dir, LedgerFile), os.O_WRONLY|os.O_APPEND|os.O_CREATE|syscall.O_NOFOLLOW, 0o600)
+	f, err := crwdir.OpenFile(filepath.Join(dir, LedgerFile), os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o600) // a link is refused, naming it
 	if err != nil {
 		return err
 	}
