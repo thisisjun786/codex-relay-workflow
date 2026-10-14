@@ -141,7 +141,7 @@ func TestSchemasProducerConsumerPaired(t *testing.T) {
 		}
 	}
 	// the Go side validates what it decodes: a document that breaks the rules the JSON Schema cannot say is not a verdict
-	if _, err := DecodeVerdict([]byte(`{"verdict":"needs_changes","criteria":[],"defects":[{"ref":"d","kind":"evidence_missing","severity":"P2","introduced":false,"impact":"","inPromise":false,"file":"f","line":1,"finding":"x","evidence_question":null}],"summary":"s"}`)); err == nil {
+	if _, err := DecodeVerdict([]byte(`{"verdict":"needs_changes","criteria":[],"defects":[{"ref":"d","kind":"evidence_missing","severity":"P2","introduced":false,"impact":"minor_separable","inPromise":false,"file":"f","line":1,"finding":"x","evidence_question":null}],"summary":"s"}`)); err == nil {
 		t.Errorf("an evidence_missing defect without its evidence_question decoded")
 	}
 }

@@ -637,7 +637,7 @@ func TestAssemblePremergeDefaultsToBlocking(t *testing.T) {
 // The decoders hold the rules the JSON Schema cannot say.
 func TestDecodersHoldTheRulesOfTheSchemas(t *testing.T) {
 	good := func(kind, severity string, met bool, verdict string) []byte {
-		d := map[string]any{"ref": "d", "kind": kind, "severity": severity, "introduced": false, "impact": "", "inPromise": false, "file": "f", "line": 1, "finding": "x", "evidence_question": nil}
+		d := map[string]any{"ref": "d", "kind": kind, "severity": severity, "introduced": false, "impact": "minor_separable", "inPromise": false, "file": "f", "line": 1, "finding": "x", "evidence_question": nil}
 		if kind == "evidence_missing" {
 			d["evidence_question"] = map[string]any{"question": "q?", "files_needed": []string{}}
 		}
@@ -998,5 +998,80 @@ func TestSpawnDecisionIDFollowsItsContent(t *testing.T) {
 	run(map[string]any{"label": "rebuild:A:executor:r1"})
 	if len(m.Spawn) != 2 {
 		t.Errorf("a decision with other inputs at the same position was dropped: %d rows", len(m.Spawn))
+	}
+}
+
+// impactVerdicts are one answer of each verdict schema a reviewer writes, with one defect of the given impact.
+func impactVerdicts(verdict, severity, impact string) map[string][]byte {
+	d := map[string]any{"ref": "d1", "kind": "correctness", "severity": severity, "introduced": true, "impact": impact, "inPromise": false, "file": "f.go", "line": 3, "finding": "x", "evidence_question": nil}
+	fields := map[string]any{"verdict": verdict, "criteria": []any{map[string]any{"id": "c1", "met": true, "evidence": "e"}}, "defects": []any{d}, "summary": "s"}
+	block := map[string]any{"node": "A", "head": strings.Repeat("a", 40), "criteria_digest": strings.Repeat("c", 64)}
+	for k, v := range fields {
+		block[k] = v
+	}
+	final := map[string]any{"alignment": map[string]any{"verdict": "ALIGNED", "drift": []any{}}}
+	for k, v := range fields {
+		final[k] = v
+	}
+	one, _ := json.Marshal(fields)
+	batch, _ := json.Marshal(map[string]any{"nodes": []any{block}})
+	fin, _ := json.Marshal(final)
+	return map[string][]byte{SchemaVerdict: one, SchemaVerdictBatch: batch, SchemaVerdictFinal: fin}
+}
+
+// CRW-1438: the impact of a defect is one closed set, held once in premerge.Impacts. Every verdict schema a reviewer answers with
+// names exactly that set, so a word outside it (or an empty word) is not a verdict.
+func TestImpactIsAClosedSet(t *testing.T) {
+	var literal []string
+	if err := json.Unmarshal([]byte(impacts), &literal); err != nil {
+		t.Fatalf("the Go impact enum is not JSON: %v", err)
+	}
+	if !slices.Equal(literal, premerge.Impacts) {
+		t.Errorf("the Go impact enum %v differs from premerge.Impacts %v", literal, premerge.Impacts)
+	}
+	if !slices.Contains(premerge.Impacts, premerge.MinorSeparable) {
+		t.Errorf("premerge.Impacts %v leaves out %s", premerge.Impacts, premerge.MinorSeparable)
+	}
+	for _, bad := range []string{"cosmetic", ""} {
+		for name, raw := range impactVerdicts("needs_changes", "P3", bad) {
+			if err := Validate(name, raw); err == nil {
+				t.Errorf("%s accepted the impact %q", name, bad)
+			}
+		}
+	}
+	for _, good := range premerge.Impacts {
+		for name, raw := range impactVerdicts("needs_changes", "P3", good) {
+			if err := Validate(name, raw); err != nil {
+				t.Errorf("%s refused the impact %q: %v", name, good, err)
+			}
+		}
+	}
+}
+
+// CRW-1438: a verified verdict over a defect that blocks (premerge.Blocks: P0 to P2, or an impact other than minor_separable) says
+// what its own premerge record refuses, so it is no verdict (crw.review reads the error as verdict_invalid).
+func TestVerifiedWithABlockingImpactIsVerdictInvalid(t *testing.T) {
+	if _, err := DecodeVerdict(impactVerdicts("verified", "P3", "core_function")[SchemaVerdict]); err == nil {
+		t.Errorf("verified over a P3 core_function defect decoded")
+	}
+	if _, err := DecodeVerdict(impactVerdicts("verified", "P3", premerge.MinorSeparable)[SchemaVerdict]); err != nil {
+		t.Errorf("verified over a P3 minor_separable defect: %v", err)
+	}
+	if _, err := DecodeVerdict(impactVerdicts("needs_changes", "P3", "core_function")[SchemaVerdict]); err != nil {
+		t.Errorf("needs_changes over a P3 core_function defect: %v", err)
+	}
+	if _, err := DecodeVerdictBatch(impactVerdicts("verified", "P3", "core_function")[SchemaVerdictBatch]); err == nil {
+		t.Errorf("a batch block verified over a P3 core_function defect decoded")
+	}
+	if _, err := DecodeVerdictBatch(impactVerdicts("verified", "P3", premerge.MinorSeparable)[SchemaVerdictBatch]); err != nil {
+		t.Errorf("a batch block verified over a P3 minor_separable defect: %v", err)
+	}
+	for _, c := range []struct {
+		severity, impact string
+		blocks           bool
+	}{{"P0", "", true}, {"P2", premerge.MinorSeparable, true}, {"P3", "", false}, {"P3", premerge.MinorSeparable, false}, {"P3", "core_function", true}, {"P3", "cosmetic", true}} {
+		if got := premerge.Blocks(c.severity, c.impact); got != c.blocks {
+			t.Errorf("Blocks(%q, %q) = %v, want %v", c.severity, c.impact, got, c.blocks)
+		}
 	}
 }
