@@ -448,6 +448,17 @@ fixes nothing. Its steps:
   the relay's reason); a review that is not independent escalates as a configuration fault. An author whose pair is not read back, no
   author named and a path outside the node's regions are warnings of the release row (`land_author_unobserved`, `land_authors_unnamed`,
   `land_out_of_scope`). A lost epoch ends the run `stopped` with `epoch_lost`.
+- The gate-only lane fixes nothing: the child changes the head and lands it again, in a new run. A land that ends escalated gives its
+  release back - the escalation carries `end_land`, and `crw.escalate` asks the relay to close the node's execution with `land_ended`
+  (`cancelled`, the slot returned in the same transaction; a close the relay refuses, an accepted head whose integration may have moved
+  the target, is the row's `close_refused`) - so the next land is a new release: a new execution of its run, with its worktree and the
+  pair of the authors it names. A hold (a verifier or a reviewer the host cannot run now) keeps the release, and the run goes on with
+  `crw flow resume` or gives the release up with `crw flow cancel`. A node whose current execution another run holds is not released
+  to the land: `crw.release` answers `land_node_held` with that run and its execution, before the run claims the plan's coordinator
+  epoch, and no gate runs.
+- A land-head run is a run of the plan: its release claims the plan's coordinator epoch like any run's, so a run of the same plan that
+  is still going stops `epoch_lost` at its next fenced write (one run orchestrates one plan). A head made outside a run is landed when
+  no other run of its plan is going.
 
 ## The architect's continuity and the re-plan
 

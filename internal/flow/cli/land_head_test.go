@@ -139,3 +139,150 @@ func TestLandHeadKeepsTheIndependenceGate(t *testing.T) {
 		})
 	}
 }
+
+// outsideFix makes another head of the node's work outside any run, on a branch of its own: the child's change after a land that did not
+// pass its gates.
+func (l *laneLab) outsideFix(key, branch, text string) string {
+	l.t.Helper()
+	dir := filepath.Join(l.t.TempDir(), "outside-fix")
+	l.git(l.repo, "worktree", "add", "-q", "-b", branch, dir, "integration")
+	if err := os.WriteFile(filepath.Join(dir, "node-"+key+".txt"), []byte(text), 0o644); err != nil {
+		l.t.Fatal(err)
+	}
+	l.git(dir, "add", "-A")
+	l.git(dir, "commit", "-q", "-m", "outside fix: "+key)
+	return l.git(dir, "rev-parse", "HEAD")
+}
+
+// reviewerSays answers the reviewer calls of the lab with needs_changes while needs reports true, and the lab's model otherwise.
+func (l *laneLab) reviewerSays(needs func() bool) {
+	l.host.Threads().OnTurn(func(r fakehost.TurnRequest) fakehost.TurnPlan {
+		if c := l.callOf(r); c.Role == "reviewer" && needs() {
+			return labSay(map[string]any{"verdict": "needs_changes", "criteria": []any{map[string]any{"id": "c1", "met": false, "evidence": "read the head"}},
+				"defects": []any{map[string]any{"ref": "d1", "kind": "correctness", "severity": "P1", "introduced": true, "impact": "the file is wrong", "inPromise": true,
+					"file": "node-A-1.txt", "line": 1, "finding": "the work is incomplete", "evidence_question": nil}}, "summary": "needs changes"})
+		}
+		return l.onTurn(r)
+	})
+}
+
+// landValueOf is the value of a land-head run that ended without being killed.
+func landValueOf(t *testing.T, res Result) landValue {
+	t.Helper()
+	var v landValue
+	if res.Status != engine.RunCompleted || json.Unmarshal(res.Value, &v) != nil {
+		t.Fatalf("the land run: %s %s %s\n%s", res.Status, res.ErrorKind, res.Error, res.Value)
+	}
+	return v
+}
+
+// TestLandHeadLandsAgainAfterALandThatDidNotPass (CRW-1354, post-evaluation d1): the gate-only lane fixes nothing, so a head that does not
+// pass its gates is the child's to change and land again - in a new land-head run. A land that ends escalated gives its release back:
+// the relay closes the node's execution (land_ended, cancelled, the slot returned in the same transaction), so the next land of the
+// node is a new release - a new execution of the new run, its worktree and the pair of the authors it names - and lands through the same
+// gates. Two firsts: a review that needs changes, and authors the run could not read back (independence_unproven).
+func TestLandHeadLandsAgainAfterALandThatDidNotPass(t *testing.T) {
+	for _, c := range []struct {
+		name, reason string
+		needs        bool
+		authors      func(l *laneLab) []string
+	}{
+		{"review needs changes", "land_review_needs_changes", true, func(l *laneLab) []string { return []string{l.authorThread("claude-fake-sonnet", "high")} }},
+		{"authors not read back", "independence_unproven", false, func(l *laneLab) []string { return []string{"0190a000-0000-7000-8000-ffffffffffff"} }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+			needs := c.needs
+			l.reviewerSays(func() bool { return needs })
+			first := l.outsideHead("A-1", "outside-a1")
+			run1 := l.start("start", "land-head", "--args", landArgs(l, "A-1", "outside-a1", c.authors(l)...), "--handoff", l.file)
+			if v := landValueOf(t, l.runToEnd(run1.RunID)); v.State != "escalated" || v.Reason != c.reason || v.Head != first && c.needs {
+				t.Fatalf("the first land: %+v, want escalated %s", v, c.reason)
+			}
+			var exec1 string
+			if err := l.w.st.DB.QueryRow("SELECT execution_id FROM dag_agent_executions WHERE node_id = ?", l.nodeOf["A-1"]).Scan(&exec1); err != nil {
+				t.Fatal(err)
+			}
+			if n := l.count("SELECT COUNT(*) FROM dag_agent_closures WHERE subject_kind = 'execution' AND subject_id = ? AND state = 'cancelled' AND reason = 'land_ended' AND slot_released = 1", exec1); n != 1 {
+				t.Errorf("the escalated land did not give its release back: %d closures land_ended of %s", n, exec1)
+			}
+			if n := l.count("SELECT COUNT(*) FROM execution_slots WHERE subject_kind = 'dag_node' AND subject_key = ? AND state = 'held'", l.plan+"/"+l.nodeOf["A-1"]); n != 0 {
+				t.Errorf("the node still holds %d slots after the escalated land", n)
+			}
+
+			needs = false
+			second := l.outsideFix("A-1", "outside-a1-fix", "the work of A-1, changed after the land\n")
+			run2 := l.start("start", "land-head", "--args", landArgs(l, "A-1", "outside-a1-fix", l.authorThread("claude-fake-sonnet", "high")), "--handoff", l.file)
+			v := landValueOf(t, l.runToEnd(run2.RunID))
+			if v.State != "landed" || v.Head != second || v.Acceptance == "" {
+				for _, e := range l.events() {
+					if e.Kind == engine.KindFlow && e.Event == engine.EvEscalation {
+						t.Logf("escalation: %v", e.Data)
+					}
+				}
+				t.Fatalf("the second land of the node did not land: %+v", v)
+			}
+			var exec2, run, model, wt string
+			if err := l.w.st.DB.QueryRow("SELECT execution_id, run_id, author_model, worktree FROM dag_agent_executions WHERE node_id = ? AND supersedes_execution_id = ?", l.nodeOf["A-1"], exec1).Scan(&exec2, &run, &model, &wt); err != nil {
+				t.Fatalf("no execution of the second land follows the first: %v", err)
+			}
+			if run != run2.RunID || model != "claude-fake-sonnet" || !strings.Contains(wt, run2.RunID) {
+				t.Errorf("the second land's execution: run %q (want %s), author %q, worktree %q", run, run2.RunID, model, wt)
+			}
+			var accepted, execution string
+			if err := l.w.st.DB.QueryRow("SELECT head, execution_id FROM dag_agent_acceptances WHERE node_id = ?", l.nodeOf["A-1"]).Scan(&accepted, &execution); err != nil || accepted != second || execution != exec2 {
+				t.Errorf("the acceptance: head %q of %q (want %s of %s): %v", accepted, execution, second, exec2, err)
+			}
+			if out := l.git(l.repo, "merge-base", "--is-ancestor", second, "integration"); out != "" {
+				t.Errorf("merge-base: %s", out)
+			}
+		})
+	}
+}
+
+// TestLandHeadOfANodeAnotherRunHolds (CRW-1354, post-evaluation d1/d3): a land of a node whose current execution another run holds - a
+// run that has not ended - releases nothing: the relay would answer that run's execution again, whose head only a review of that run can
+// have accepted, so the land ends unreleased (land_node_held) naming the run and its execution, before any gate runs and with nothing
+// written at the relay. The run that holds the node lands it when it goes on (crw flow resume).
+func TestLandHeadOfANodeAnotherRunHolds(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+	l.outsideHead("A-1", "outside-a1")
+	author := l.authorThread("claude-fake-sonnet", "high")
+	// the first land's process dies right after the relay accepted its head, before it recorded the acceptance: the run has not ended
+	l.killAt = l.writes + 2
+	run1 := l.start("start", "land-head", "--args", landArgs(l, "A-1", "outside-a1", author), "--handoff", l.file)
+	if _, killed := l.process(run1.RunID, false); !killed {
+		t.Fatal("the first land was not killed")
+	}
+	l.killAt = 0
+	executions := l.count("SELECT COUNT(*) FROM dag_agent_executions")
+	run2 := l.start("start", "land-head", "--args", landArgs(l, "A-1", "outside-a1", author), "--handoff", l.file)
+	v := landValueOf(t, l.runToEnd(run2.RunID))
+	if v.State != "unreleased" || v.Reason != "land_node_held" {
+		t.Fatalf("a land of a node another run holds: %+v", v)
+	}
+	if res, _ := ReadResult(l.w.state, run2.RunID); !strings.Contains(string(res.Value), run1.RunID) {
+		t.Errorf("the land does not name the run that holds the node: %s", res.Value)
+	}
+	if n := l.count("SELECT COUNT(*) FROM dag_agent_executions"); n != executions {
+		t.Errorf("%d executions after the refused land, %d before", n, executions)
+	}
+	for _, e := range l.events() {
+		if e.Kind == engine.KindCall && e.Event == engine.EvCompleted && (e.Op == ops.OpVerify || e.Op == ops.OpReview || e.Op == ops.OpAccept) {
+			t.Errorf("a gate ran for a node another run holds: %s", e.Op)
+		}
+	}
+
+	// the run that holds the node goes on where it stopped and lands it
+	if code, killed := l.process(run1.RunID, true); code != 0 || killed {
+		t.Fatalf("the resume of %s: exit %d (killed %v)", run1.RunID, code, killed)
+	}
+	res, ok := ReadResult(l.w.state, run1.RunID)
+	if !ok {
+		t.Fatalf("run %s left no result", run1.RunID)
+	}
+	if v := landValueOf(t, res); v.State != "landed" {
+		t.Fatalf("the resumed land of the run that held the node: %+v", v)
+	}
+	l.effectsOnce("A-1")
+}

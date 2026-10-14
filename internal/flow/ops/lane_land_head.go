@@ -63,6 +63,7 @@ const (
 	ReasonLandHeadMissing      = "land_head_missing"
 	ReasonLandHeadUnresolved   = "land_head_unresolved"
 	ReasonLandAuthorsMixed     = "land_author_families_mixed"
+	ReasonLandNodeHeld         = "land_node_held"
 	WarnLandAuthorsUnnamed     = "land_authors_unnamed"
 	WarnLandAuthorUnobserved   = "land_author_unobserved"
 	WarnLandOutOfScope         = "land_out_of_scope"
@@ -182,7 +183,7 @@ func (o *releaseOp) landRelease(ctx context.Context, req engine.OpRequest, plan,
 		}
 	}
 	data["slice_digest"], data["criteria_digest"] = slice, criteria
-	rq := ReleaseRequest{Plan: plan, Node: node, RunID: req.RunID, RequestID: req.RequestID, SliceDigest: slice, PlanDigest: live}
+	rq := ReleaseRequest{Plan: plan, Node: node, RunID: req.RunID, RequestID: req.RequestID, SliceDigest: slice, PlanDigest: live, Land: true}
 	if pair != nil {
 		rq.AuthorModel, rq.AuthorEffort = pair.Model, pair.Effort
 	}
@@ -194,10 +195,25 @@ func (o *releaseOp) landRelease(ctx context.Context, req engine.OpRequest, plan,
 	if err != nil {
 		return engine.OpResult{}, err
 	}
+	held := func(run, execution string) (engine.OpResult, error) {
+		// the node's current execution is another run's (a run that has not ended, or one killed after its release): a head of it is
+		// accepted only on a review of that run, so this land releases nothing and runs no gate
+		out.Released, out.Reason, out.ExecutionID = false, ReasonLandNodeHeld, ""
+		out.Detail = fmt.Sprintf("node %s is held by run %s (execution %s), which has not given it up: crw flow resume %s goes on with what it holds, and a land of the "+
+			"node waits until that run has ended", node, run, execution, run)
+		data["held_run"], data["held_execution"], data["execution_id"] = run, execution, ""
+		return finish()
+	}
+	if res.Reason == ReasonLandNodeHeld {
+		return held(res.HeldRun, res.HeldExecution)
+	}
 	out.Released, out.Reason, out.ExecutionID = res.Released, res.Reason, res.ExecutionID
 	data["execution_id"], data["slot_id"], data["request_id"] = res.ExecutionID, res.SlotID, req.RequestID
 	if !res.Released {
 		return finish()
+	}
+	if res.Run != "" && res.Run != req.RunID {
+		return held(res.Run, res.ExecutionID)
 	}
 	data["slice_digest"] = res.SliceDigest
 	wt, err := o.l.landWorktree(ctx, node, commit)

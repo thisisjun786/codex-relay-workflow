@@ -10,7 +10,10 @@ export const meta = { name: 'land-head', description: 'Land a head made outside 
 // same family is independence_refused), crw.land (crw.accept, the relay's agent acceptance, then crw.integrate). The gates are the only
 // refusals: a verification that fails, a review that is not verified or not independent, an acceptance the relay refuses end the land with
 // an escalation for the child, and nothing else stops it (an author that cannot be read back or a path outside the node's regions is a
-// warning of the release row). No executor call is made: the gate-only lane fixes nothing, the child fixes outside and lands again.
+// warning of the release row). No executor call is made: the gate-only lane fixes nothing, the child fixes outside and lands again - in a
+// new run: a land that ends escalated gives its release back (endLand), and a node another run still holds is not released to this one
+// (crw.release answers land_node_held, naming the run). A hold (a verifier or a reviewer the host cannot run now) keeps the release: the
+// run is resumed (crw flow resume) or cancelled (crw flow cancel, which gives the release up).
 install(crw)
 
 const EPOCH_LOST = 'epoch_lost'
@@ -44,18 +47,25 @@ async function landHead(n) {
     return { node, state: 'held', reason: 'verify_unavailable', detail: ci.error }
   }
   if (!ci.pass) {
-    const esc = await crw.escalate(node, { reason: 'land_verification_failed', detail: ci.summary || '', evidence: { record: ci.digest, failures: ci.failures } })
-    return { node, state: 'escalated', reason: 'land_verification_failed', escalation: esc.id, head: head.commit }
+    return endLand(node, { reason: 'land_verification_failed', detail: ci.summary || '', evidence: { record: ci.digest, failures: ci.failures } }, { head: head.commit })
   }
   const rv = await crw.review(node, plan, head, ci, { round: 1, notes: [] })
-  if (rv.state !== 'verdict') return crw.reviewHalt(node, rv)
+  if (rv.state === 'held' || rv.state === 'unknown') return crw.reviewHalt(node, rv)
+  if (rv.state === 'refused') return endLand(node, { reason: rv.reason || 'reviewer_refused', call: rv.call.callId, ask: 'configuration' }, { call: rv.call.callId })
+  if (rv.state === 'null_model') return endLand(node, { reason: 'reviewer_null_model', call: rv.call.callId, detail: rv.reason || '' }, { call: rv.call.callId })
+  if (rv.state !== 'verdict') return endLand(node, { reason: 'land_review_superseded', call: rv.call.callId }, { call: rv.call.callId })
   if (rv.verdict.verdict !== 'verified') {
-    const esc = await crw.escalate(node, { reason: 'land_review_needs_changes', call: rv.call.callId, detail: rv.findings.map((f) => f.ref + ' ' + f.kind).join(', ') })
-    return { node, state: 'escalated', reason: 'land_review_needs_changes', escalation: esc.id, head: head.commit, call: rv.call.callId }
+    return endLand(node, { reason: 'land_review_needs_changes', call: rv.call.callId, detail: rv.findings.map((f) => f.ref + ' ' + f.kind).join(', ') }, { head: head.commit, call: rv.call.callId })
   }
   const landed = await crw.land(node, { head, ci, review: rv })
   if (landed.state === 'landed') return landed
   if (landed.reason === EPOCH_LOST) return { node, state: 'stopped', reason: EPOCH_LOST, detail: landed.detail, milestone: ms.id }
-  const esc = await crw.escalate(node, { reason: landed.reason || 'land_refused', detail: landed.detail || '', ask: 'land' })
-  return { node, state: 'escalated', reason: landed.reason, escalation: esc.id, head: head.commit }
+  return endLand(node, { reason: landed.reason || 'land_refused', detail: landed.detail || '', ask: 'land' }, { head: head.commit })
+}
+
+// endLand ends a land whose head did not pass its gates: the escalation for the child, with end_land, which gives the node's release
+// back (the relay closes the execution land_ended and returns its slot), so the child's next land of the node is a release of its own.
+async function endLand(node, info, out) {
+  const esc = await crw.escalate(node, Object.assign({}, info, { end_land: true }))
+  return Object.assign({ node, state: 'escalated', reason: info.reason, escalation: esc.id }, out)
 }

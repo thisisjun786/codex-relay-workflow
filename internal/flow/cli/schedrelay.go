@@ -327,6 +327,12 @@ func pathElement(s string) string {
 // (Released false, plan_changed), and so does the replay of a release committed under another slice. A release answers the slice of the
 // manifest it committed.
 func (r *SchedRelay) Release(ctx context.Context, req ops.ReleaseRequest) (ops.ReleaseResult, error) {
+	if req.Land {
+		// a land of a node another run holds is answered before the claim: the claim would supersede that run's session (CRW-1354)
+		if run, execution, err := r.heldByAnotherRun(ctx, req.Plan, req.Node); err != nil || run != "" {
+			return ops.ReleaseResult{Reason: ops.ReasonLandNodeHeld, HeldRun: run, HeldExecution: execution}, err
+		}
+	}
 	if err := r.claim(ctx, req.Plan); err != nil {
 		return ops.ReleaseResult{}, err
 	}
@@ -362,7 +368,27 @@ func (r *SchedRelay) Release(ctx context.Context, req ops.ReleaseRequest) (ops.R
 		return ops.ReleaseResult{}, errors.Join(err, fmt.Errorf("node %s was released under manifest %s, which the relay does not read back", req.Node, res.ManifestDigest))
 	}
 	slice, _ := body["node_slice_digest"].(string)
-	return ops.ReleaseResult{Released: true, ExecutionID: res.ExecutionID, SlotID: res.SlotID, Replayed: res.Replayed, SliceDigest: slice}, nil
+	run := r.RunID
+	if res.Replayed {
+		// the run of the execution the replay answers: this run's own on a resume, another run's when that run holds the node
+		run = ""
+		if cur, found, err := dagsched.CurrentExecution(ctx, r.q(ctx), req.Plan, req.Node); err != nil {
+			return ops.ReleaseResult{}, err
+		} else if found && cur.Kind == dagsched.ExecutionAgent && cur.Agent.ExecutionID == res.ExecutionID {
+			run = cur.Agent.RunID
+		}
+	}
+	return ops.ReleaseResult{Released: true, ExecutionID: res.ExecutionID, SlotID: res.SlotID, Replayed: res.Replayed, SliceDigest: slice, Run: run}, nil
+}
+
+// heldByAnotherRun is the run and the execution of the node's current agent execution when a run other than this one holds it ("" when
+// none does, or when this run does).
+func (r *SchedRelay) heldByAnotherRun(ctx context.Context, plan, node string) (run, execution string, err error) {
+	cur, found, err := dagsched.CurrentExecution(ctx, r.q(ctx), plan, node)
+	if err != nil || !found || cur.Kind != dagsched.ExecutionAgent || cur.Agent.RunID == r.RunID {
+		return "", "", err
+	}
+	return cur.Agent.RunID, cur.Agent.ExecutionID, nil
 }
 
 // releaseRequest is the dag-release-request/1 the run holds the inputs of for a node: the rule version, the criteria of the node's issue
