@@ -49,10 +49,6 @@ internal/pabcd/hook/memorygate_analysis.go	1
 internal/pabcd/source/git.go	2
 internal/policystore/check.go	3
 internal/relay/adapter/cli.go	1
-internal/relay/capacity/capacity.go	6
-internal/relay/capacity/editregion_read.go	2
-internal/relay/capacity/editregion_revision.go	1
-internal/relay/capacity/editregion_write.go	2
 internal/relay/childcleanup/clean.go	1
 internal/relay/childcleanup/gate.go	3
 internal/relay/cli/supervisor.go	2
@@ -85,13 +81,6 @@ internal/relay/mergeturn/movement.go	2
 internal/relay/mergeturn/pass.go	3
 internal/relay/reception/packet.go	3
 internal/relay/reception/store.go	1
-internal/relay/registry/dispositions.go	1
-internal/relay/registry/linkage.go	6
-internal/relay/registry/linkage_cli.go	2
-internal/relay/registry/linkage_write.go	16
-internal/relay/registry/registry.go	3
-internal/relay/registry/rolepolicy.go	4
-internal/relay/registry/settled.go	2
 internal/relay/service/supervise.go	1
 internal/relay/service/worker.go	2
 internal/relay/supervisor/autosend.go	4
