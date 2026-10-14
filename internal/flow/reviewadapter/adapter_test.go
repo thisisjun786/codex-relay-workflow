@@ -414,3 +414,74 @@ func TestExecRunRunsInTheWorktreeAndKillsOnTheLimit(t *testing.T) {
 		t.Fatalf("a missing binary: %v", err)
 	}
 }
+
+// TestVerifiedWithABlockingImpactIsVerdictInvalid pins the adapter to the one blocking predicate of the flow (premerge.Blocks,
+// CRW-1438): an impact outside the closed set is invalid, a security finding without an impact is safety_or_data, and a verified
+// answer over any blocking finding is invalid, the adapter's form of verdict_invalid.
+func TestVerifiedWithABlockingImpactIsVerdictInvalid(t *testing.T) {
+	cases := []struct {
+		name, verdict, severity, impact string
+		state                           State
+		wantImpact                      string
+	}{
+		{"verified over a P3 core_function finding", VerdictVerified, "low", "core_function", StateInvalid, ""},
+		{"verified over a P2 finding without impact", VerdictVerified, "medium", "", StateInvalid, ""},
+		{"verified over a P3 minor_separable finding", VerdictVerified, "low", "minor_separable", StateOK, "minor_separable"},
+		{"needs_changes over a P3 core_function finding", VerdictNeedsChanges, "low", "core_function", StateOK, "core_function"},
+		{"an impact outside the closed set", VerdictNeedsChanges, "low", "cosmetic", StateInvalid, ""},
+		{"verified over a security P3 finding without impact", VerdictVerified, "low security", "", StateInvalid, ""},
+		{"needs_changes over a security P3 finding without impact", VerdictNeedsChanges, "low security", "", StateOK, "safety_or_data"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			finding := map[string]any{"severity": c.severity, "file": "a.go", "line": 7, "text": "the finding"}
+			if c.impact != "" {
+				finding["impact"] = c.impact
+			}
+			answer, err := json.Marshal(map[string]any{"verdict": c.verdict, "findings": []any{finding}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			res := check(t, jsonProfile(), fakeRun{stdout: string(answer)})
+			wantState(t, res, c.state)
+			id := FindingID("a.go", "the finding")
+			if c.state == StateInvalid {
+				if res.Verdict != "" || len(res.Findings) != 0 {
+					t.Fatalf("an invalid record kept a judgment: %+v", res)
+				}
+				if c.verdict == VerdictVerified && c.impact != "cosmetic" && !strings.Contains(res.Detail, id) {
+					t.Fatalf("detail %q does not name the finding %s", res.Detail, id)
+				}
+				if c.impact == "cosmetic" && !strings.Contains(res.Detail, "cosmetic") {
+					t.Fatalf("detail %q does not name the impact", res.Detail)
+				}
+				return
+			}
+			if res.Verdict != c.verdict || len(res.Findings) != 1 || res.Findings[0].Impact != c.wantImpact || res.Findings[0].ID != id {
+				t.Fatalf("result = %+v, want verdict %s and one finding of impact %q", res, c.verdict, c.wantImpact)
+			}
+		})
+	}
+	t.Run("a collapsed security duplicate makes the kept finding safety_or_data", func(t *testing.T) {
+		res := check(t, jsonProfile(), fakeRun{stdout: `{"verdict":"verified","findings":[
+			{"severity":"low","file":"a.go","line":1,"text":"leak"},
+			{"severity":"low vuln","file":"a.go","line":9,"text":"leak"}]}`})
+		wantState(t, res, StateInvalid)
+		if !strings.Contains(res.Detail, FindingID("a.go", "leak")) {
+			t.Fatalf("detail %q does not name the finding", res.Detail)
+		}
+	})
+	t.Run("a blocking impact of a duplicate is not hidden by an earlier minor_separable", func(t *testing.T) {
+		res := check(t, jsonProfile(), fakeRun{stdout: `{"verdict":"verified","findings":[
+			{"severity":"low","impact":"minor_separable","file":"a.go","line":1,"text":"leak"},
+			{"severity":"low security","file":"a.go","line":9,"text":"leak"}]}`})
+		wantState(t, res, StateInvalid)
+		res = check(t, jsonProfile(), fakeRun{stdout: `{"verdict":"needs_changes","findings":[
+			{"severity":"low","impact":"minor_separable","file":"a.go","line":1,"text":"leak"},
+			{"severity":"low","impact":"core_function","file":"a.go","line":9,"text":"leak"}]}`})
+		wantState(t, res, StateOK)
+		if len(res.Findings) != 1 || res.Findings[0].Impact != "core_function" || res.Findings[0].Line != 1 {
+			t.Fatalf("findings = %+v, want one at line 1 of impact core_function", res.Findings)
+		}
+	})
+}
