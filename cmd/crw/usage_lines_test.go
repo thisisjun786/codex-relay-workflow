@@ -59,7 +59,8 @@ func TestFlowUsageLinesAreTheRegisteredCommands(t *testing.T) {
 		t.Fatalf("crw flow --help: %d %q", code, errOut.String())
 	}
 	want := flowUsageWords(out.String())
-	for _, w := range []string{"start", "show", "ps", "run", "compile", "lint", "reports", "trace"} {
+	// next and dispatched are the owner thread's side of a session run (CRW-1348); plan-input builds a handoff (CRW-1343).
+	for _, w := range []string{"start", "show", "ps", "run", "compile", "lint", "reports", "trace", "next", "dispatched", "plan-input"} {
 		if !slices.Contains(want, w) {
 			t.Fatalf("crw flow --help names %v, without %s", want, w)
 		}
@@ -97,7 +98,7 @@ func TestFlowUsageLinesAreTheRegisteredCommands(t *testing.T) {
 // TestFlowHelpIsTheDispatchTable: the commands `crw flow --help` names are the words the flow mode dispatches
 // (flowCommandWords: internal/flow/cli, internal/flow/shadow, lint and the engine), so a command added to a table
 // without a usage line, or a usage line for a command nobody serves, fails here. `crw flow next` and `crw flow
-// dispatched` (CRW-1348) join both when they land.
+// dispatched` (CRW-1348) are in both since that change landed.
 func TestFlowHelpIsTheDispatchTable(t *testing.T) {
 	var out, errOut strings.Builder
 	if code := run(context.Background(), "crw", []string{"flow", "--help"}, &out, &errOut); code != 0 {

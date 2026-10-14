@@ -18,7 +18,8 @@ const (
 	Engine
 	// Orchestrator: the thread that orchestrates an open run; Line is its last line.
 	Orchestrator
-	// Unavailable: the state cannot be trusted or read; the spawn is refused (fail closed).
+	// Unavailable: the state cannot be trusted or read, so the thread's kind is not known; the hook decides the spawn as an
+	// ordinary thread's with a warning (CRW-1348).
 	Unavailable
 )
 

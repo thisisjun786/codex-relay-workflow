@@ -29,7 +29,12 @@ func bindFlowCardThread(t *testing.T, kind string) {
 	pair := `{"model":"explorer-model","effort":"high"}`
 	line := `{"run_id":"run-1","thread_id":"` + flowCardThread + `","kind":"engine","call_id":"c_000000000001","role":"executor","nativeAllowance":1,"helperPairs":{"explorer":` + pair + `},"policyDigest":"d"}`
 	if kind == bound.KindOrchestrator {
-		line = `{"run_id":"run-1","thread_id":"` + flowCardThread + `","kind":"orchestrator","nativeAllowance":null,"helperPairs":{"explorer":` + pair + `,"reviewer":` + pair + `},"policyDigest":"d"}`
+		// an orchestrator line carries the pairs of the six roles (CRW-1348); a line without them is no binding the hook reads
+		pairs := []string{}
+		for _, role := range bound.OrchestratorRoles {
+			pairs = append(pairs, `"`+role+`":`+pair)
+		}
+		line = `{"run_id":"run-1","thread_id":"` + flowCardThread + `","kind":"orchestrator","nativeAllowance":null,"helperPairs":{` + strings.Join(pairs, ",") + `},"policyDigest":"d"}`
 	}
 	path := filepath.Join(dir, flowCardThread+bound.FileSuffix)
 	if err := os.WriteFile(path, []byte(line+"\n"), 0o600); err != nil {

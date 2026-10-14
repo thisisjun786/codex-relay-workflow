@@ -57,6 +57,12 @@ type Decision struct {
 	// message names none or the hook did not record it. A session run joins it with the owner turn's collabAgentToolCall
 	// items to find the subagent of a published step (internal/flow/sessionhost FindByMarker).
 	Op string `json:"op,omitempty"`
+	// Role is the role whose pair the hook applied to an orchestrator's spawn (one of OrchestratorRoles), empty when it applied
+	// none. FindByMarker and the run read it with Op.
+	Role string `json:"role,omitempty"`
+	// Warning is what the hook allowed with a warning (a role that does not pair with the agent_type, a spawn with no marker),
+	// "<code>: <detail>"; empty for a plain allow or a refusal.
+	Warning string `json:"warning,omitempty"`
 }
 
 // maxLedger bounds a ledger that is read.

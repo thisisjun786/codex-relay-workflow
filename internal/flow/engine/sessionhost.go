@@ -102,6 +102,12 @@ type SessionConfig struct {
 	// RoleText is the role section of a packet; nil uses the role's overlay of internal/flow/roles without its native-spawn
 	// section (a role subagent is a leaf).
 	RoleText func(role string, qa bool) (string, error)
+	// Wake stages a wake of the owner thread for the steps that wait for it (sessionwake.go, CRW-1316 §10); nil wakes nobody.
+	Wake func(ctx context.Context, w SessionWake) error
+	// WakeAfter is how long steps wait without a dispatch before the owner is notified again, RenotifyMax the longest interval
+	// between two notifications, and UnresponsiveAfter how long they wait before the run writes its session_unresponsive
+	// escalation (DefaultSessionWakeAfter, DefaultSessionRenotifyMax, DefaultSessionUnresponsiveAfter).
+	WakeAfter, RenotifyMax, UnresponsiveAfter time.Duration
 }
 
 // Session defaults.
@@ -162,6 +168,15 @@ func RecordedBackend(events []Event, runID string) string {
 	}
 	return backend
 }
+
+// StartedBackend is the backend the run's started rows record and whether the journal holds a started row of the run at all (a
+// run whose first process stored none goes on with the backend it was started for).
+func StartedBackend(events []Event, runID string) (string, bool) {
+	return RecordedBackend(events, runID), hasStarted(events, runID)
+}
+
+// IsTerminalEvent reports whether a call row ends the call (completed, null_model, held, refused, superseded, outcome_unknown).
+func IsTerminalEvent(event string) bool { return isTerminal(event) }
 
 // hasStarted is whether the journal holds a started row of the run.
 func hasStarted(events []Event, runID string) bool {
