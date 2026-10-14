@@ -936,13 +936,16 @@ run's directory `<state>/flow/<run>/` and none writes the journal, which only th
 - The owner thread is bound to a session run by the orchestrator line of its flow-bound file (`internal/flow/bound`
   `BindOrchestrator`: `kind: orchestrator`, `run_id`, the `policyDigest` of the role table and the `helperPairs` of the six roles
   architect, executor, executor-t1, reviewer, reviewer-final, explorer; `Line.Validate` takes no orchestrator line without the six).
+  A pair carries the decided parts of its role only: an undecided role has the empty pair, a role that names a model and leaves its
+  effort undecided has the empty effort, and an effort without a model is no role's pair.
   The start writes it, the run process writes it again when it starts or resumes and it is not the last line, and the process
   closes it when the run ends (`CloseOrchestrator`). A live run is one whose process holds its run lock: the open line of a run
   without the lock is closed before the new one is written, and a thread holds the line of one live run, so a second start while
   the first lives warns and does not bind. A thread whose binding cannot be written is warned about; the run starts.
 - The spawn hook decides an orchestrator's spawns by that line. It refuses two: a spawn by a subagent (a leaf) and a full-history
   fork (`full_history_fork_refused`: the fork keeps the parent's pair). Every other spawn is allowed with `model` and
-  `reasoning_effort` overwritten from the pair of its role: the role the first `CRW-ROLE:` line of the message header names when it
+  `reasoning_effort` overwritten from the decided parts of the pair of its role (an undecided effort keeps the `reasoning_effort` the
+  spawn was sent, and an undecided role keeps the whole spawn, with the warning `role_undecided`): the role the first `CRW-ROLE:` line of the message header names when it
   is exactly one of the six (a parser of the flow-bound path; the ordinary path's oracle parser is unchanged), else the role of
   the `agent_type` (worker is executor), else explorer. The ledger line (`decisions/<owner>.jsonl`) records the `role`, the `op` of
   the `crw-flow-op:` first line, and a `warning` where the table has one: `role_agent_type_mismatch` (the header role does not pair
@@ -963,7 +966,7 @@ run's directory `<state>/flow/<run>/` and none writes the journal, which only th
   run's repository other than the run's own `refs/crw/flow/<run>/` (the run moves those itself) and the binding files of the
   flow-bound directory (the hook's ledger and claims are left out: the owner's spawns write them while a subagent works).
 - The session facts of the preview are warnings, never a refusal (CRW-1318): `owner_bound` (the owner can be bound: a thread id, a
-  readable binding, no other live run), `role_models` (the six pairs, a role without one, a reviewer of an author's model family),
+  readable binding, no other live run), `role_models` (the six pairs, a role without one or without an effort, a reviewer of an author's model family),
   `owner_state_writable` (the run directory, the flow-bound directory, the control socket and the repository), `subagent_slots`
   (`agents.max_threads` leaves a slot for a call) and `multi_agent_v1` (`features.multi_agent_v2` is off: under V2 the protocol
   stops); `verifier_prerequisites`, the sixth, is judged for every run (CRW-1319).

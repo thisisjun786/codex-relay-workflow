@@ -187,7 +187,11 @@ func answerFrom(inputText string, pair bound.Pair) (string, pyjson.Object, error
 	if err != nil || !ok {
 		return "", nil, errors.New("the recorded input cannot be read")
 	}
-	updated := slices.Clone(orig).Set("model", pair.Model).Set("reasoning_effort", pair.Effort)
+	// only the decided parts of the pair are put in (CRW-1331): a role whose effort is undecided keeps the effort it was sent
+	updated := slices.Clone(orig).Set("model", pair.Model)
+	if pair.Effort != "" {
+		updated = updated.Set("reasoning_effort", pair.Effort)
+	}
 	output := pyjson.Object{{Key: "hookEventName", Value: "PreToolUse"}, {Key: "permissionDecision", Value: "allow"}, {Key: "updatedInput", Value: updated}}
 	return spawnHookRouteStringify(pyjson.Object{{Key: "hookSpecificOutput", Value: output}}) + "\n", orig, nil
 }

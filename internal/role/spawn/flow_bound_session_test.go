@@ -203,3 +203,34 @@ func TestSessionOrchestratorUndecidedRoleKeepsTheHostDefault(t *testing.T) {
 		t.Fatalf("a decided role: %+v", got)
 	}
 }
+
+// A role that names a model and leaves its effort undecided (CRW-1330) carries its model alone on the line, and only that decided
+// part is applied (CRW-1331's pair rule: the bind compares the model alone and records effort_unchecked): the spawn is given the
+// role's model and keeps the effort it was sent, which a step of the role leaves empty; the ledger's applied pair is what the hook
+// put in (the model alone), as an undecided role's is empty.
+func TestSessionOrchestratorUndecidedEffortAppliesTheModelOnly(t *testing.T) {
+	r := newFBRig(t)
+	line := strings.Replace(orchestratorLine(fbThreadA), `"executor-t1":`+fbPairJSON(fbExecutorT1), `"executor-t1":{"model":"executor-t1-model","effort":""}`, 1)
+	r.write(fbThreadA, line, 0o600)
+	if got := bound.Lookup(fbThreadA); got.State != bound.Orchestrator {
+		t.Fatalf("a line with a role whose effort is undecided: %+v", got)
+	}
+	cases := []struct {
+		name, tool, extra string
+		want              bound.Pair
+	}{
+		{"the step's empty effort", "tool-e1", `"model":"","reasoning_effort":""`, bound.Pair{Model: "executor-t1-model"}},
+		{"an effort the owner sent", "tool-e2", `"model":"other","reasoning_effort":"low"`, bound.Pair{Model: "executor-t1-model", Effort: "low"}},
+	}
+	for i, c := range cases {
+		out := r.spawn(fbThreadA, c.tool, spawnInput("executor", stepMessage(fmt.Sprintf("c_%d/t1-a1", i+1), "executor-t1"), c.extra))
+		if got := fbPairOf(r.expectAllowed(out)); got != c.want {
+			t.Fatalf("%s: spawned with %+v, want %+v", c.name, got, c.want)
+		}
+	}
+	d := r.decisions(fbThreadA)
+	if len(d) != 2 || d[1].Decision != bound.DecisionAllowed || d[1].Role != "executor-t1" || d[1].AppliedModel != "executor-t1-model" || d[1].AppliedEffort != "" ||
+		d[1].RequestedEffort != "low" || d[1].Warning != "" {
+		t.Fatalf("ledger %+v", d)
+	}
+}

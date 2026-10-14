@@ -26,8 +26,8 @@ import (
 var OpsFor func(ctx context.Context, req LaneRequest) (LaneWorld, error)
 
 // ProductionWorld is the World of the shipped binary: the relay store the run's journal is persisted in, the App Server
-// connection of its host, and the allocator of its working directories (<state>/flow/<run>/...). The backend binds every engine
-// turn to the run before it starts it, as a resumed run does (agent.BoundConfig), and the run hands what goes up from it to the
+// connection of its host, and the allocator of its working directories (<state>/flow/<run>/...). The backend of a run on the App
+// Server binds every engine turn to the run before it starts it, as a resumed run does (agent.BoundConfig), and the run hands what goes up from it to the
 // hook journal.UpwardFactory makes, when the binary installed one. The store is opened for writing; a store that does not exist
 // is an error, never a new empty store.
 func ProductionWorld(ctx context.Context, req WorldRequest) (World, error) {
@@ -101,20 +101,25 @@ func ProductionWorld(ctx context.Context, req WorldRequest) (World, error) {
 		_ = st.Close()
 		return World{}, err
 	}
-	backend, err = agent.New(agent.Config{Client: client, Allocator: alloc, Threads: threads, Bound: &agent.BoundConfig{RunID: spec.RunID, Policy: table}})
+	kind, err := worldBackend(spec, j.Events(), req.Resume)
+	if err != nil {
+		_ = client.Close()
+		_ = st.Close()
+		return World{}, err
+	}
+	// a run on the App Server binds every engine turn with the explorer pair (agent.BoundConfig); a session run starts no thread
+	// and no turn on that backend, so it is built whatever its explorer's and reviewer's pairs are (an undecided part, CRW-1331)
+	var binding *agent.BoundConfig
+	if kind != BackendSession {
+		binding = &agent.BoundConfig{RunID: spec.RunID, Policy: table}
+	}
+	backend, err = agent.New(agent.Config{Client: client, Allocator: alloc, Threads: threads, Bound: binding})
 	if err != nil {
 		_ = client.Close()
 		_ = st.Close()
 		return World{}, err
 	}
 	w := World{Journal: j, Backend: backend, Policy: table, Ops: lane.Ops, Prover: lane.Prover, InputSnapshot: lane.InputSnapshot}
-	kind, err := worldBackend(spec, j.Events(), req.Resume)
-	if err != nil {
-		backend.Close()
-		_ = client.Close()
-		_ = st.Close()
-		return World{}, err
-	}
 	if kind == BackendSession {
 		// a session run (CRW-1316): the steps on the run's bus, the subagents read through the session host adapter, the wakes staged
 		// in the store; the App Server backend stays for what the lane reads of the host (the milestone close's archive)

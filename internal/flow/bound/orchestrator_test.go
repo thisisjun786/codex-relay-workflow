@@ -36,10 +36,18 @@ func TestOrchestratorLineCarriesTheSixRolePairs(t *testing.T) {
 		if err := l.Validate(threadA); err == nil || !strings.Contains(err.Error(), role) {
 			t.Errorf("a line without the %s pair: %v", role, err)
 		}
+		// a role that names a model and leaves its effort undecided (CRW-1330, CRW-1331) has the empty effort, and only the
+		// decided part is carried: the line validates
 		l.HelperPairs = sixPairs("m")
 		l.HelperPairs[role] = Pair{Model: "m"}
+		if err := l.Validate(threadA); err != nil {
+			t.Errorf("a line whose %s pair names a model and an undecided effort: %v", role, err)
+		}
+		// an effort without a model is no decided part of any role pair
+		l.HelperPairs = sixPairs("m")
+		l.HelperPairs[role] = Pair{Effort: "high"}
 		if err := l.Validate(threadA); err == nil {
-			t.Errorf("a line whose %s pair has no effort validates", role)
+			t.Errorf("a line whose %s pair names an effort and no model validates", role)
 		}
 	}
 	// an undecided role (CRW-1330) has the empty pair

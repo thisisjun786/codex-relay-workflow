@@ -47,7 +47,7 @@ func ResumeEnv(ctx context.Context, req engine.ResumeEnvRequest) (engine.ResumeS
 	if err != nil {
 		return engine.ResumeSetup{}, err
 	}
-	// The run's turns go to the App Server, so the resumed process binds every engine turn as a run on the App Server does
+	// The turns of a run on the App Server go to the App Server, so the resumed process binds every engine turn as its first process does
 	// (CRW-1207 F14): the run id and the role table of the run (the one `crw flow resume` pins, read from the same policy
 	// source) make the binding, and a line that cannot be written holds the call host_config_flow_binding with nothing sent.
 	policy, _, err := engine.LoadPolicy()
@@ -70,7 +70,15 @@ func ResumeEnv(ctx context.Context, req engine.ResumeEnvRequest) (engine.ResumeS
 	}
 	threads := agent.NewThreads()
 	client := appserver.New(socket, appserver.DefaultBounds, agent.ClientOption(threads))
-	backend, err := agent.New(agent.Config{Client: client, Allocator: alloc, Threads: threads, Bound: &agent.BoundConfig{RunID: req.RunID, Policy: policy}})
+	// the backend the run's started row records (CRW-1316 S3): a session run goes on with its session environment, and its App
+	// Server backend starts no thread and no turn, so it writes no engine line and needs no explorer pair (an undecided part,
+	// CRW-1331)
+	recorded, _ := engine.StartedBackend(j.Events(), req.RunID)
+	var binding *agent.BoundConfig
+	if recorded != engine.BackendSession {
+		binding = &agent.BoundConfig{RunID: req.RunID, Policy: policy}
+	}
+	backend, err := agent.New(agent.Config{Client: client, Allocator: alloc, Threads: threads, Bound: binding})
 	if err != nil {
 		_ = client.Close()
 		_ = st.Close()
@@ -81,8 +89,7 @@ func ResumeEnv(ctx context.Context, req engine.ResumeEnvRequest) (engine.ResumeS
 		return errors.Join(j.Close(), client.Close(), st.Close())
 	}
 	setup := engine.ResumeSetup{Journal: j, Backend: backend, Close: closeAll}
-	// the backend the run's started row records (CRW-1316 S3): a session run goes on with its session environment
-	if recorded, _ := engine.StartedBackend(j.Events(), req.RunID); recorded == engine.BackendSession {
+	if recorded == engine.BackendSession {
 		owner, err := runOwner(ctx, st, req.RunID)
 		if err == nil {
 			cwd, _ := os.Getwd()

@@ -179,12 +179,18 @@ func sessionFacts(req sessionFactRequest) []Fact {
 		add(FactOwnerBound, LevelPass, "", fmt.Sprintf("thread %s is bound to no live run: the start binds it", req.Thread))
 	}
 
-	// role_models: the six pairs, a role without one, and a reviewer of an author's family
-	var missing, pairs, overlap []string
+	// role_models: the six pairs, a role without one or without an effort (only the decided parts are compared, CRW-1331), and a
+	// reviewer of an author's family
+	var missing, effortless, pairs, overlap []string
 	for _, role := range bound.OrchestratorRoles {
 		spec, ok := req.Table.Roles[role]
-		if !ok || spec.Pair.Model == "" || spec.Pair.Effort == "" {
+		switch {
+		case !ok || spec.Pair.Model == "":
 			missing = append(missing, role)
+			continue
+		case spec.Pair.Effort == "":
+			effortless = append(effortless, role)
+			pairs = append(pairs, role+" "+spec.Pair.Model)
 			continue
 		}
 		pairs = append(pairs, role+" "+spec.Pair.Model+"/"+spec.Pair.Effort)
@@ -198,8 +204,16 @@ func sessionFacts(req sessionFactRequest) []Fact {
 		}
 	}
 	switch reading := strings.Join(pairs, ", "); {
-	case len(missing) > 0:
-		add(FactRoleModels, LevelWarn, "an undecided role (no pair) is spawned with the host's default and its dispatched report is not checked against a pair", "no pair for "+strings.Join(missing, ", ")+"; "+reading)
+	case len(missing) > 0 || len(effortless) > 0:
+		var undecided []string
+		if len(missing) > 0 {
+			undecided = append(undecided, "no pair for "+strings.Join(missing, ", "))
+		}
+		if len(effortless) > 0 {
+			undecided = append(undecided, "no effort for "+strings.Join(effortless, ", "))
+		}
+		add(FactRoleModels, LevelWarn, "an undecided role (no pair) is spawned with the host's default and its dispatched report is not checked against a pair (pair_unchecked); a role whose effort is undecided is spawned at the host's effort and its report is checked against its model only (effort_unchecked)",
+			strings.Join(undecided, "; ")+"; "+reading)
 	case len(overlap) > 0:
 		add(FactRoleModels, LevelWarn, "a review is independent only from another family than the author's: relay acceptance refuses it (independence_refused)", strings.Join(overlap, "; ")+"; "+reading)
 	default:
