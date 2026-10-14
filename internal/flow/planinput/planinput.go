@@ -233,9 +233,14 @@ func keyWarning(key, ref string, b Binding) (Warning, bool) {
 	case b.Err != nil:
 		return Warning{Rule: "project_key_unchecked", Detail: fmt.Sprintf("the live parent bindings of thread %s cannot be read, so the project key %s (milestone %s) is not compared: %v", b.Thread, key, ref, b.Err)}, true
 	}
+	// exactly, as `crw flow start` and the coordinator's first claim compare it: a key that differs only by case is another key there
+	caseOnly := ""
 	for _, s := range b.Scopes {
-		if strings.EqualFold(s, key) {
+		switch {
+		case s == key:
 			return Warning{}, false
+		case caseOnly == "" && strings.EqualFold(s, key):
+			caseOnly = s
 		}
 	}
 	holds := "thread " + b.Thread + " holds no live parent binding"
@@ -249,5 +254,9 @@ func keyWarning(key, ref string, b Binding) (Warning, bool) {
 		}
 		holds = "thread " + b.Thread + " is the live parent of project " + strings.Join(shown, ", ")
 	}
-	return Warning{Rule: "project_key_bound", Detail: fmt.Sprintf("the plan's project key is %s (milestone %s); %s: a plan's project key is the scope_key of the orchestrator's parent binding, and the run's first claim is refused (scope_role_mismatch) under another key", key, ref, holds)}, true
+	hint := ""
+	if caseOnly != "" {
+		hint = fmt.Sprintf(" (the binding %s differs from %s only by case, and the keys are compared exactly: pass --milestone with the same spelling the binding was made under)", caseOnly, key)
+	}
+	return Warning{Rule: "project_key_bound", Detail: fmt.Sprintf("the plan's project key is %s (milestone %s); %s%s: a plan's project key is the scope_key of the orchestrator's parent binding, and the run's first claim is refused (scope_role_mismatch) under another key", key, ref, holds, hint)}, true
 }

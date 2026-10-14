@@ -370,9 +370,16 @@ func TestProjectKeyIsComparedWithTheOwnersBinding(t *testing.T) {
 	if len(res.Warnings) != 0 {
 		t.Errorf("bound key: warnings %+v", res.Warnings)
 	}
+	// `crw flow start` (slices.Contains) and the first claim (scope_key = ?) compare the key exactly, so a binding that differs only
+	// by case is not the plan's key: it is warned (not silent), and the warning says that the case is the difference
 	res = build(t, r(), Options{Binding: &Binding{Thread: "thread-owner", Scopes: []string{"other:repo:1", "O:R:3"}}})
-	if len(res.Warnings) != 0 {
-		t.Errorf("a repository is compared without regard to case: %+v", res.Warnings)
+	if len(res.Warnings) != 1 || res.Warnings[0].Rule != "project_key_bound" {
+		t.Fatalf("a binding that differs only by case is bound to another key: %+v", res.Warnings)
+	}
+	for _, want := range []string{"o:r:3", "O:R:3", "case"} {
+		if !strings.Contains(res.Warnings[0].Detail, want) {
+			t.Errorf("the case warning does not name %q: %s", want, res.Warnings[0].Detail)
+		}
 	}
 
 	res = build(t, r(), Options{Binding: &Binding{Thread: "thread-owner", Scopes: []string{"3b46bc6e-uuid", "o:r:4"}}})
