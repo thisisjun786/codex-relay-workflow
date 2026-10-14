@@ -59,7 +59,7 @@ func TestReleaseDeclaresAPlannedRegionInAnotherSpelling(t *testing.T) {
 			}
 			for _, rg := range held {
 				w, ok := want[rg.Kind+" "+rg.Path]
-				if !ok || rg.Key != w.Key || rg.Change != w.Change || (w.Exclusive && !rg.Exclusive) {
+				if !ok || rg.Key != w.Key || rg.Change != w.Change || rg.Exclusive != w.Exclusive {
 					t.Errorf("the node declares %+v, want %+v", rg, w)
 				}
 			}
