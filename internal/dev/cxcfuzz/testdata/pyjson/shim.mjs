@@ -42,7 +42,10 @@
 // A reused process that is killed or stops is a failure of the harness's worker, not an answer: the shim
 // exits without a reply when it finds a reused process ended by a signal, so the pool counts a dead
 // worker and starts another; a reused process that stops answering is a request that outlives the
-// pool's deadline, and the pool kills the worker and its process group.
+// pool's deadline, and the pool kills the worker and its process group. A reused process that ended
+// while no request waited on it is found the same way by the first request after its end, before that
+// request takes any path: a remembered answer, a fresh process, another option set, and the ending of
+// the oldest open process all meet the death first, so none of them lets it pass.
 import { createInterface } from "node:readline";
 import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -233,17 +236,13 @@ class Reused {
 
 const reused = new Map();
 
-// reusedFor is the open process for argv, a new one when there is none, and null-safe about the ones that ended:
-// a process that ended while idle was ended by something other than a refusal, which is a worker failure.
+// reusedFor is the open process for argv, a new one when there is none. It is the most recently used afterwards, and
+// the one used least recently ends when a new one needs a place.
 function reusedFor(argv) {
   const key = argv.join("\u0000");
   let proc = reused.get(key);
   if (proc !== undefined) {
     reused.delete(key);
-    if (proc.ended !== null) {
-      if (proc.ended.error) throw proc.ended.error;
-      throw new WorkerFailure(`a reused json.tool process ended between requests (${proc.ended.signal ?? "exit " + proc.ended.code})`);
-    }
   } else {
     proc = new Reused(argv);
     while (reused.size >= REUSED_LIMIT) {
@@ -254,6 +253,19 @@ function reusedFor(argv) {
   }
   reused.set(key, proc);
   return proc;
+}
+
+// failOnIdleDeath ends the request that finds a reused process dead: one that ended while no request waited on it was
+// ended by something other than a refusal, which is a worker failure. Every request calls it first, whatever path it
+// would take, so a process that died while idle is counted the first time it is seen and is never dropped unseen by
+// a remembered answer, a fresh process, another option set or the ending of the oldest process.
+function failOnIdleDeath() {
+  for (const [key, proc] of reused) {
+    if (proc.ended === null) continue;
+    reused.delete(key);
+    if (proc.ended.error) throw proc.ended.error;
+    throw new WorkerFailure(`a reused json.tool process ended between requests (${proc.ended.signal ?? "exit " + proc.ended.code})`);
+  }
 }
 
 // forget drops a reused process that gave no clean answer and lets it end: it reads end of input, or is already gone.
@@ -290,6 +302,7 @@ function recall(key) {
 
 // answer is the JSON text of the fresh process's answer to argv and text, by the cheapest path that gives it.
 async function answer(argv, text) {
+  failOnIdleDeath();
   const key = argv.join("\u0000") + "\u0001" + text;
   const known = recall(key);
   if (known !== null) return known;
