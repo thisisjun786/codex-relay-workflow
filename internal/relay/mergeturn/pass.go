@@ -50,11 +50,11 @@ func (s *Service) passRefusal(ctx context.Context, r store.MergeTurnsRow, actor 
 			return nil, nil
 		}
 	}
-	which := ", and that project has no readable supervisor"
+	which := ", and that project has no readable 부모"
 	if supervisor != "" {
 		which = ", which is " + pyvalue.StrRepr(supervisor)
 	}
-	return coordination(r, contract.RefusalScopeRoleMismatch, "task "+pyvalue.StrRepr(actor)+" is neither the supervisor above project "+pyvalue.StrRepr(r.ProjectKey)+which+" nor the parent of a waiting claim on target "+pyvalue.StrRepr(r.TargetKey)+" that still owns its project, so it cannot pass turn "+pyvalue.StrRepr(r.TurnID)+" on", r.HolderTaskID, actor), nil
+	return coordination(r, contract.RefusalScopeRoleMismatch, "task "+pyvalue.StrRepr(actor)+" is neither the 부모 above project "+pyvalue.StrRepr(r.ProjectKey)+which+" nor the 자식 of a waiting claim on target "+pyvalue.StrRepr(r.TargetKey)+" that still owns its project, so it cannot pass turn "+pyvalue.StrRepr(r.TurnID)+" on", r.HolderTaskID, actor), nil
 }
 
 // Pass takes a stalled holding turn from its silent holder and gives the target to the next
