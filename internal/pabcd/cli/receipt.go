@@ -111,6 +111,15 @@ func ParseReceiptCLIArgs(argv []string, cwd string) (ReceiptCLIArgs, error) {
 	return out, nil
 }
 
+// receiptDirParts names the directories between cwd/.crw and the receipt at path, one per element.
+func receiptDirParts(cwd, path string) []string {
+	rel, err := filepath.Rel(filepath.Join(cwd, crwdir.DirName), filepath.Dir(path))
+	if err != nil || rel == "." {
+		return nil
+	}
+	return strings.Split(rel, string(filepath.Separator))
+}
+
 // ReceiptPathFor is the fixed receipt name per sanitized session (receipt-cli.ts:69-71).
 func ReceiptPathFor(cwd, sessionID string) string {
 	return filepath.Join(cwd, crwdir.DirName, evidence.Subdir, state.SanitizeKey(sessionID), "test-receipt.json")
@@ -211,6 +220,12 @@ func RunReceiptCLI(args ReceiptCLIArgs, options ReceiptRunOptions) (ReceiptCLIRe
 		return refuse("receipt test: no check binding on this session. Step back with `crw pabcd orchestrate B` and re-enter `crw pabcd orchestrate C` to mint one (this cycle predates CHECK-BINDING-01).")
 	}
 	path := ReceiptPathFor(args.Cwd, sid)
+	// A symbolic link at .crw, at the evidence directories or at the receipt itself is refused before anything is removed or
+	// run, and again when the receipt's directory is made (CRW-475).
+	receiptDirs := receiptDirParts(args.Cwd, path)
+	if err := errors.Join(crwdir.CheckTree(args.Cwd, receiptDirs...), crwdir.NotLink(path)); err != nil {
+		return ReceiptCLIResult{}, err
+	}
 	if err := removeReceipt(path); err != nil {
 		return ReceiptCLIResult{}, err
 	}
@@ -257,10 +272,7 @@ func RunReceiptCLI(args ReceiptCLIArgs, options ReceiptRunOptions) (ReceiptCLIRe
 		return refuse(receiptInterrupted)
 	}
 	record := receiptRecord{Kind: "test", SourceIdentity: after, Command: strings.Join(args.Command, " "), ExitCode: 0, CreatedAt: time.Now().UTC().Format("2006-01-02T15:04:05.000Z"), OwnerSessionID: sid, CheckEpoch: *st.CheckEpoch, GeneratedPaths: args.Generated}
-	if _, err = crwdir.EnsureDir(args.Cwd); err != nil {
-		return ReceiptCLIResult{}, err
-	}
-	if err = os.MkdirAll(filepath.Dir(path), 0o777); err != nil {
+	if _, err = crwdir.EnsureSubdir(args.Cwd, receiptDirs...); err != nil {
 		return ReceiptCLIResult{}, err
 	}
 	data, err := encodeReceipt(record)

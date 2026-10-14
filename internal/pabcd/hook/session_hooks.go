@@ -13,6 +13,7 @@ import (
 	"os"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/interview/ledger"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
@@ -38,7 +39,8 @@ type SessionHookPostToolUsePayload struct {
 // SessionHookSessionStart is handleSessionStart (hook.ts:604-612): it bootstraps the
 // SessionStart-bound FSM by creating the session's state file, before an agent can invoke the
 // explicit-session CLI, and answers nothing. ensureState leaves an existing file, valid or corrupt,
-// untouched; a failure leaves no state and is silent, as the oracle's dispatch catch is.
+// untouched; a failure leaves no state and is silent, as the oracle's dispatch catch is, except the refusal of a symbolic link in
+// the .crw tree, which the answer names (CRW-475).
 //
 // CRW-1140 (port: fixed): the oracle bootstraps in whatever cwd the payload names, so a thread
 // resumed at another cwd gets an empty IDLE state beside the one it left in flight. A relay-managed
@@ -56,7 +58,12 @@ func sessionHookSessionStart(p SessionHookSessionStartPayload, env host.LookupEn
 	if refusal := stateroot.Bootstrap(env, p.Cwd, p.SessionID); refusal != nil {
 		return sessionHookAnswer("SessionStart", sessionHookStateRootContext(refusal))
 	}
-	_, _ = state.EnsureState(p.Cwd, p.SessionID)
+	if _, err := state.EnsureState(p.Cwd, p.SessionID); errors.Is(err, crwdir.ErrLink) {
+		// CRW-475: a link in the .crw tree refuses every state write of the session, so the hook fails open and says which link
+		// refused it, once, where the oracle's catch is silent; any other failure stays silent.
+		return sessionHookAnswer("SessionStart", "[crw: PABCD state]\n"+err.Error()+"\n"+
+			"No PABCD state was created for this session, and its PABCD writes are refused until a directory replaces the link. Nothing was written through it.")
+	}
 	return ""
 }
 

@@ -22,8 +22,10 @@ func read(t *testing.T, path string) string {
 	return string(data)
 }
 
+// A symbolic link in place of the folder was returned untouched here too, as the oracle does; it is refused now (port: fixed,
+// CRW-475; TestEnsureDirRefusesALinkOrANonDirectoryAtTheStateDirectory).
 func TestEnsureDirPublishesExactBytesAndLeavesAnExistingFolderAlone(t *testing.T) {
-	fresh, existing, linked, target := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
+	fresh, existing := t.TempDir(), t.TempDir()
 	dir, err := EnsureDir(fresh)
 	if err != nil || dir != filepath.Join(fresh, ".crw") || read(t, filepath.Join(dir, ".gitignore")) != GitignoreText {
 		t.Fatalf("EnsureDir = %q, %v", dir, err)
@@ -31,18 +33,11 @@ func TestEnsureDirPublishesExactBytesAndLeavesAnExistingFolderAlone(t *testing.T
 	if err := os.Mkdir(filepath.Join(existing, ".crw"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Symlink(target, filepath.Join(linked, ".crw")); err != nil {
+	if _, err := EnsureDir(existing); err != nil {
 		t.Fatal(err)
 	}
-	for _, cwd := range []string{existing, linked} { // an existing folder, and a symlink in its place
-		if _, err := EnsureDir(cwd); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for _, left := range []string{filepath.Join(existing, ".crw"), target} {
-		if entries, _ := os.ReadDir(left); len(entries) != 0 {
-			t.Fatalf("%s was written: %v", left, entries)
-		}
+	if entries, _ := os.ReadDir(filepath.Join(existing, ".crw")); len(entries) != 0 {
+		t.Fatalf("the existing folder was written: %v", entries)
 	}
 }
 

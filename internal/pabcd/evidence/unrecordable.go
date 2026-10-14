@@ -31,31 +31,12 @@ func unrecordableDir(cwd string) string {
 }
 
 // makeMarkerDir creates the state directory (with its .gitignore, as ensureCodexclawDir does) and the marker directory, and
-// refuses a symbolic link or anything that is not a directory at either. Changed from the oracle (a security fix): the oracle
-// follows a link planted there, so the marker and the probe were created and removed in the directory it leads to, outside the
-// workspace. The state directory is checked before the marker directory is created, so nothing is created through a link. A
-// link that is put in place after the check is not defended; that, and the rest of the state tree, belong to the state-root
-// hardening.
+// refuses a symbolic link or anything that is not a directory at either (crwdir.EnsureSubdir). Changed from the oracle (a security
+// fix): the oracle follows a link planted there, so the marker and the probe were created and removed in the directory it leads to,
+// outside the workspace. The state directory is checked before the marker directory is created, so nothing is created through a
+// link. A link that is put in place after the check is not defended.
 func makeMarkerDir(cwd string) error {
-	stateDir, err := crwdir.EnsureDir(cwd)
-	if err == nil {
-		err = requireDirectory(stateDir)
-	}
-	if err != nil {
-		return err
-	}
-	if err = os.MkdirAll(unrecordableDir(cwd), 0o777); err != nil {
-		return err
-	}
-	return requireDirectory(unrecordableDir(cwd))
-}
-
-// requireDirectory is Lstat, which does not follow a link: a link, a file and anything else that is not a directory are refused.
-func requireDirectory(path string) error {
-	info, err := os.Lstat(path)
-	if err == nil && !info.IsDir() {
-		err = fmt.Errorf("%s is not a directory (a symbolic link is refused)", path)
-	}
+	_, err := crwdir.EnsureSubdir(cwd, UnrecordableSubdir)
 	return err
 }
 
