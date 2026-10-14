@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -423,5 +424,105 @@ func TestRunBudgetNarrowsTheRemainder(t *testing.T) {
 	}
 	if got, err := runBudget(Spec{RunID: "run-n"}, 70, 30); err != nil || got != 100 {
 		t.Errorf("no spec budget, 30 asked: %d %v", got, err)
+	}
+}
+
+// pausedRun is a run of threeCalls whose first process spent first tokens on its first call and was paused (SIGUSR1) in its second;
+// a later process spends 40 on the second call and 10 on the third.
+func pausedRun(t *testing.T, pw *processWorld, run string, first int64, mutate func(*Spec)) Spec {
+	t.Helper()
+	sigs := make(chan os.Signal, 2)
+	var paused atomic.Bool
+	pw.handle = func(r engine.FakeRequest) engine.FakeReply {
+		switch {
+		case r.Kind != "turn":
+		case strings.Contains(r.Prompt, "first"):
+			return engine.FakeReply{Tokens: &engine.Tokens{Input: first - 10, Output: 10, Total: first}}
+		case strings.Contains(r.Prompt, "second") && paused.CompareAndSwap(false, true):
+			sigs <- syscall.SIGUSR1
+			time.Sleep(200 * time.Millisecond)
+			return engine.FakeReply{Tokens: &engine.Tokens{}}
+		case strings.Contains(r.Prompt, "second"):
+			return engine.FakeReply{Tokens: &engine.Tokens{Input: 30, Output: 10, Total: 40}}
+		}
+		return engine.FakeReply{Tokens: &engine.Tokens{Input: 5, Output: 5, Total: 10}}
+	}
+	spec := pw.spec(run, func(s *Spec) {
+		s.Script = pw.script
+		if mutate != nil {
+			mutate(s)
+		}
+	})
+	if code, errOut := pw.execute(spec, false, sigs); code != 0 {
+		t.Fatalf("the first process: exit %d %s", code, errOut)
+	}
+	if info := pw.info(run); info.State != StateHeld || info.Tokens != first || info.Processes != 1 {
+		t.Fatalf("the paused run: %+v", info)
+	}
+	return spec
+}
+
+// budgetWarnings are the budget_warning rows of a run.
+func budgetWarnings(t *testing.T, pw *processWorld, run string) []engine.Event {
+	t.Helper()
+	events, _, err := loadRun(pw.world, run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []engine.Event
+	for _, e := range events {
+		if e.Kind == engine.KindFlow && e.Event == "budget_warning" {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// TestScriptResumeWithoutASpecCountsTheRunsSpending (CRW-1278, Argon F3 on 2a082733): `crw flow resume RUN SCRIPT` of a run that has
+// no spec (no `crw flow start` made it, or its spec is gone) counts what the run's journal shows it spent, as the resume of a run with
+// a spec does: the result's tokensSpent is the run's figure, and a --token-budget is this resume's own, on top of what the run spent
+// (the ceiling is the spent 70 and the 30 asked).
+func TestScriptResumeWithoutASpecCountsTheRunsSpending(t *testing.T) {
+	for _, c := range []struct {
+		name  string
+		extra []string
+		spent int64
+		total int
+	}{
+		{name: "no budget", spent: 120},
+		{name: "token budget 30", extra: []string{"--token-budget", "30"}, spent: 110, total: 100},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			pw := newProcessWorld(t, threeCalls)
+			scriptResumeEnv(t, pw)
+			run := "run-nospec"
+			pausedRun(t, pw, run, 70, nil)
+			if err := os.Remove(specPath(pw.state, run)); err != nil {
+				t.Fatal(err)
+			}
+			code, out, errOut := pw.td.do(append([]string{"resume", run, pw.script, "--state", pw.state}, c.extra...)...)
+			if code != 0 {
+				t.Fatalf("the resume: exit %d %s %s", code, out, errOut)
+			}
+			var res struct {
+				Spent int64 `json:"tokensSpent"`
+			}
+			if err := json.Unmarshal([]byte(out), &res); err != nil {
+				t.Fatalf("%v: %s", err, out)
+			}
+			if res.Spent != c.spent {
+				t.Errorf("the resumed run's tokensSpent %d, want the run's %d (the first process's 70 included)", res.Spent, c.spent)
+			}
+			if info := pw.info(run); info.Tokens != c.spent || info.Processes != 2 {
+				t.Errorf("the resumed run: %+v", info)
+			}
+			warnings := budgetWarnings(t, pw, run)
+			switch {
+			case c.total == 0 && len(warnings) != 0:
+				t.Errorf("a run without a ceiling warned: %+v", warnings)
+			case c.total > 0 && (len(warnings) != 1 || num(warnings[0].Data, "total") != c.total || num(warnings[0].Data, "spent") != int(c.spent)):
+				t.Errorf("the budget warnings %+v, want one of %d spent of %d", warnings, c.spent, c.total)
+			}
+		})
 	}
 }

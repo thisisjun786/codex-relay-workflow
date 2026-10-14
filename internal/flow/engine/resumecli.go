@@ -52,7 +52,8 @@ var ResumeEnv func(ctx context.Context, req ResumeEnvRequest) (ResumeSetup, erro
 //
 // Budget, when set, holds the resume to the token budget of the run (CRW-1278): it gets what the run's journal shows it spent
 // (RunSpent) and the --token-budget of the command line, and returns the run's ceiling for this resume, or the error that refuses
-// it before the run goes on (a budget with nothing left). The run then counts what it spent before against that ceiling.
+// it before the run goes on (a budget with nothing left). The run counts what it spent before against that ceiling. Without it the
+// resume counts the same figure (Config.SpentBefore) and a --token-budget is what this resume may spend on top of it.
 type ResumeHold struct {
 	Backend string
 	Session func(owner string, table *Policy, pool int) (int, func())
@@ -193,13 +194,18 @@ func resumeCmd(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		fmt.Fprintf(stderr, "crw flow resume: error: %s\n", why)
 		return 2
 	}
-	ceiling, spentBefore := *budget, int64(0)
-	if hold.Budget != nil {
-		spentBefore = RunSpent(setup.Journal.Events(), runID).Total
+	// the run's figure is what its journal shows it spent, whatever holds the resume (CRW-1278): a hold with the run's spec judges the
+	// ceiling from it, and without one a --token-budget is what this resume may spend on top of it
+	spentBefore := RunSpent(setup.Journal.Events(), runID).Total
+	ceiling := *budget
+	switch {
+	case hold.Budget != nil:
 		if ceiling, err = hold.Budget(spentBefore, *budget); err != nil {
 			fmt.Fprintf(stderr, "crw flow resume: error: %v\n", err)
 			return 2
 		}
+	case *budget > 0:
+		ceiling = spentBefore + *budget
 	}
 	inFlight := *pool
 	if setup.Session != nil && hold.Session != nil {
