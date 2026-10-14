@@ -481,21 +481,22 @@ func (c *callRun) sessionResumeHeld(ctx context.Context) (res CallResult, stop b
 	c.repairUsed = h.repairUsed
 	st := sessionStageOf(rows)
 	lastK, maxAttempt := 0, 0
-	for _, ev := range rows {
+	var repairStep *Event
+	for i, ev := range rows {
 		if ev.Event == EvPrepared {
-			lastK, maxAttempt = 0, 0
+			lastK, maxAttempt, repairStep = 0, 0, nil
 		}
 		if ev.Event == EvStepPublished {
 			lastK, maxAttempt = max(lastK, rowInt(ev.Data, "k")), max(maxAttempt, rowInt(ev.Data, "attempt"))
+			if ev.Data["repair"] == true {
+				repairStep = &rows[i]
+			}
 		}
 	}
 	switch {
 	case h.inputState == "delivered":
 		k = lastK + 1
 		c.firstK = k
-		if h.repairUsed {
-			c.firstK = 1
-		}
 		s.attempt = maxAttempt + 1
 		s.note = c.heldNote(h.reason)
 		if st.agent != "" {
@@ -505,6 +506,13 @@ func (c *callRun) sessionResumeHeld(ctx context.Context) (res CallResult, stop b
 		task := s.task
 		if task == "" {
 			task = c.checkpointPreface() + p.prompt
+		}
+		if h.repairUsed && repairStep != nil {
+			// the call used its one repair (as resumeHeld counts it on the App Server path): the new subagent's turn is that repair
+			// again, so its packet names the task once, the answer the repair turn repaired and its instruction (CRW-1384)
+			c.firstK = 1
+			s.lastText = rowStr(repairStep.Data, "previous_answer")
+			return CallResult{}, false, k, rowStr(repairStep.Data, "input"), nil
 		}
 		return CallResult{}, false, k, task, nil
 	case st.kind == stagePublished:

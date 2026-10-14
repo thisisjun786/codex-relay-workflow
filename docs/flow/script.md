@@ -977,7 +977,8 @@ any row is written. `crw flow shadow` replays either from the trace and names th
 
 - A held session call goes on in place after the subagents of its held attempts are shown not running (a running turn is
   interrupted and the thread read until it is not active): a delivered turn is taken again by a new attempt whose packet says why
-  the previous one stopped; a step that was published and not bound is looked up by its marker first.
+  the previous one stopped (a call held in its repair turn goes on with that repair: the packet names the task once, the answer
+  repaired and the repair instruction, and the call has no second repair, as on the App Server path); a step that was published and not bound is looked up by its marker first.
 - A new attempt of a node supersedes the open session calls of the previous process only after every subagent they were bound to,
   or that took a step they published, runs nothing.
 - A continuation (`resume: handle`) runs on a new subagent and writes its own `thread_started` row, so the handle chain and the pair

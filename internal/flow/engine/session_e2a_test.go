@@ -222,3 +222,46 @@ func TestSessionRepairKeepsThePreviousAnswerAcrossARestart(t *testing.T) {
 		})
 	}
 }
+
+// B3: a held call whose repair turn was delivered goes on with a new subagent. The call has used its one repair (the App Server
+// path's rule, hold.go resumeHeld), so the new subagent's turn is the repair turn again: its packet names the task once, the answer
+// that is repaired and the repair instruction - never the task twice.
+func TestSessionHeldRepairGoesOnAsTheRepair(t *testing.T) {
+	k := newSessionKit(t)
+	var mu sync.Mutex
+	phase := 1
+	k.orch.answer = func(st Step, _ string, _ int) orchAnswer {
+		mu.Lock()
+		defer mu.Unlock()
+		switch {
+		case phase == 2:
+			return orchAnswer{edit: "P:" + st.Op}
+		case st.K == 1:
+			return orchAnswer{text: "this is not JSON"}
+		}
+		return orchAnswer{fail: "usageLimitExceeded"}
+	}
+	got := value[[]any](t, k.h.run(e2aBuild))
+	if got[0] != "held" {
+		t.Fatalf("the first run %v; rows %s", got, eventsOf(k.rowsOf("exe")))
+	}
+	mu.Lock()
+	phase = 2
+	mu.Unlock()
+	k.h.cfg.Resume = &ResumeOptions{}
+	got = value[[]any](t, k.h.run(e2aBuild))
+	if got[0] != "completed" {
+		t.Fatalf("the resumed call %v; rows %s", got, eventsOf(k.rowsOf("exe")))
+	}
+	spawns := k.orch.spawned()
+	last := spawns[len(spawns)-1]
+	packet, _ := os.ReadFile(last.Packet)
+	p := string(packet)
+	if n := strings.Count(p, "build node n1"); n != 1 {
+		t.Errorf("the packet names the task %d times, want once:\n%s", n, p)
+	}
+	_, now, _ := strings.Cut(p, "## What to do now\n\n")
+	if !strings.HasPrefix(now, "Your previous answer did not satisfy the output schema") || !strings.Contains(p, "## Your previous answer\n\nthis is not JSON\n") {
+		t.Errorf("the held repair does not go on as the repair of the answer it repairs:\n%s", p)
+	}
+}
