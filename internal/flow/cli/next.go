@@ -112,17 +112,11 @@ func (c *command) next(args []string) int {
 	if err != nil {
 		return c.fail("%v", err)
 	}
-	var pinWarnings []string
-	// the live run spawns with the pairs it pinned: the line and the spawn formats are those, and a role store that moved since is
-	// warned about and recorded, never written over the run's line (CRW-1372)
-	if pinned, digest, ok := pinnedPairs(c.runEvents(cm, run), run); ok {
-		if digest != table.Digest {
-			pinWarnings = append(pinWarnings, c.roleStoreMoved(cm, run, digest, table.Digest))
-		}
-		table = withPinnedPairs(table, pinned, digest)
-	}
+	// the run's rows as next found them, before any resume: the pairs the newest started row pinned and how many processes started
+	before := c.runEvents(cm, run)
 	bus := engine.NewFileStepBus(RunDir(sel.Path, run))
-	ans := NextAnswer{Run: run, Steps: []NextStep{}, Spawns: roleSpawns(table), Warnings: pinWarnings}
+	// a run no process holds spawns with the role store when it is resumed; the process that holds it, with its own table (below)
+	ans := NextAnswer{Run: run, Steps: []NextStep{}, Spawns: roleSpawns(table)}
 	deadline := time.Now().Add(time.Duration(*wait) * time.Second)
 	first, resumed, bindChecked := "", false, false
 	var steps []engine.Step
@@ -143,7 +137,14 @@ func (c *command) next(args []string) int {
 		}
 		if live && !bindChecked {
 			bindChecked = true
-			if w := c.checkBinding(sel.Path, spec, table); w != "" {
+			// the line and the spawn formats are those of the process that holds the run, the one next found or the one it resumed
+			// (CRW-1372)
+			held, warning := c.processTable(cm, run, table, before, ans.Resumed > 0)
+			if warning != "" {
+				ans.Warnings = append(ans.Warnings, warning)
+			}
+			ans.Spawns = roleSpawns(held)
+			if w := c.checkBinding(sel.Path, spec, held, ans.Resumed > 0); w != "" {
 				ans.Warnings = append(ans.Warnings, w)
 			}
 		}
@@ -273,9 +274,14 @@ func (c *command) detachResume(state string, spec Spec) (int, error) {
 	return pid, nil
 }
 
-// checkBinding writes the owner's orchestrator line again when it is missing (another line is last, or none), and says so.
-func (c *command) checkBinding(state string, spec Spec, table *engine.Policy) string {
-	res, err := bindOwner(state, spec.RunID, spec.Thread, table)
+// checkBinding writes the owner's orchestrator line again when it is missing (another line is last, or none), and says so. After
+// next resumed the run, a line of the run that is there stands: the resumed process binds it with the pairs it runs on.
+func (c *command) checkBinding(state string, spec Spec, table *engine.Policy, resumed bool) string {
+	bind := bindOwner
+	if resumed {
+		bind = bindResumedOwner
+	}
+	res, err := bind(state, spec.RunID, spec.Thread, table)
 	if w := bindWarning(res, err, spec.Thread, spec.RunID); w != "" {
 		return w
 	}
@@ -321,6 +327,49 @@ func openSubagents(events []engine.Event, steps []engine.Step) []string {
 	return out
 }
 
+// processTable is the role table of the process that holds the run, which next binds the owner's line with and prints the spawn
+// formats of (CRW-1372), and what next warns about it. A process next found live runs on the pairs it pinned (the newest started row
+// of before): a role store whose digest differs is warned about and recorded once (role_store_changed). A process next resumed reads
+// the role store as it is now and pins what it read in a started row of its own, which next takes once it is there; until then the
+// store as next read it is that table. A store that moved since the earlier process pinned is the resumed process's to record (its
+// started row and its policy_repinned row): next warns and records nothing of its own. A run that recorded no pairs takes the store's.
+func (c *command) processTable(cm *common, run string, store *engine.Policy, before []engine.Event, resumed bool) (*engine.Policy, string) {
+	pinned, digest, ok := pinnedPairs(before, run)
+	if !resumed {
+		if !ok {
+			return store, ""
+		}
+		warning := ""
+		if digest != store.Digest {
+			warning = c.roleStoreMoved(cm, run, digest, store.Digest)
+		}
+		return withPinnedPairs(store, pinned, digest), warning
+	}
+	table := store
+	if now := c.runEvents(cm, run); startedCount(now, run) > startedCount(before, run) {
+		if pairs, d, own := pinnedPairs(now, run); own {
+			table = withPinnedPairs(store, pairs, d)
+		}
+	}
+	if !ok || digest == table.Digest {
+		return table, ""
+	}
+	return table, fmt.Sprintf("run %s had no process and its resume runs on the role store as it reads now (%s), not on the pairs its earlier process pinned (%s): "+
+		"the resumed process records them in its started row and the change in a policy_repinned row; the owner's line and the spawn formats are the resumed process's",
+		run, cell(table.Digest), cell(digest))
+}
+
+// startedCount is how many processes of the run started (its started rows).
+func startedCount(events []engine.Event, run string) int {
+	n := 0
+	for _, ev := range events {
+		if ev.Kind == engine.KindRun && ev.Event == "started" && ev.RunID == run {
+			n++
+		}
+	}
+	return n
+}
+
 // pinnedPairs are the role pairs the run's newest started row pinned (a session run records them, CRW-1372) and the digest it pinned
 // them under; ok is false for a run that recorded none (it started before the pairs were recorded): the role store is read as before.
 func pinnedPairs(events []engine.Event, run string) (map[string]engine.Pair, string, bool) {
@@ -361,7 +410,8 @@ func withPinnedPairs(table *engine.Policy, pinned map[string]engine.Pair, digest
 }
 
 // roleStoreMoved records, once for the pair of digests, that the role store moved while the run lives (a role_store_changed row of the
-// run), and says so. A row that cannot be written leaves the warning.
+// run), and says so: next calls it for a process it found holding the run, never for one it resumed. A row that cannot be written
+// leaves the warning.
 func (c *command) roleStoreMoved(cm *common, run, pinned, now string) string {
 	warning := fmt.Sprintf("the role store changed while run %s lives (it pinned %s, the store now reads %s): the owner's line keeps the pairs the run pinned, "+
 		"and a resume takes the new ones", run, cell(pinned), cell(now))

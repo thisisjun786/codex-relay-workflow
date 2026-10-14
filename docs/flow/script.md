@@ -918,7 +918,7 @@ any row is written. `crw flow shadow` replays either from the trace and names th
 | terminal rows | as for any call |
 | `session_wake` (flow row) | a wake of the owner thread the run staged: `batch`, `wake_id`, `renotify`, `ops`, `owner`, `owner_status`, `waiting_seconds`, `staged` (and `error`, or `reason` when the relay already held the message and staged nothing) |
 | `session_host_warning` (flow row) | what the session host adapter's marker search could not tie as it should: `op`, `warnings` (`no_ledger_line`, `ledger_op_differs`, `several_spawns`, `window_ended`) |
-| `role_store_changed` (flow row, written by `crw flow next`) | the role store moved while the run lives: `pinned_digest`, `store_digest`, once for the pair |
+| `role_store_changed` (flow row, written by `crw flow next`) | the role store moved while the process that pinned the run's pairs holds it (not written for a run next resumed: that process records its own pairs): `pinned_digest`, `store_digest`, once for the pair |
 | `escalation` (flow row) | `reason: session_unresponsive`: the steps waited `UnresponsiveAfter` without a dispatched report (`owner`, `ops`, `batch`, `waiting_seconds`); the run goes on |
 
 ### The owner's commands
@@ -945,7 +945,12 @@ run's directory `<state>/flow/<run>/` and none writes the journal, which only th
   owner's binding again when it is missing, with a warning, and with the pairs the live run pinned (the `role_pairs` and
   `policy_digest` of its newest started row), not the role store read again; the spawn formats are those pairs too. A role store
   that moved since is warned about and recorded once as a `role_store_changed` row of the run, and the run's line stays; a resume
-  takes the new pairs. A run that recorded no pairs is bound with the store's, as before.
+  takes the new pairs. When next resumed the run itself, the process that holds it is the resumed one, which reads the role store
+  as it is now, binds the owner's line with it and pins it in its own started row (with a `policy_repinned` row when it moved since
+  the earlier process pinned): next prints the spawn formats of that process's started row once it is there, else of the role store
+  as next read it, writes the owner's line only when no line of the run is the thread's last (the resumed process's line stands),
+  warns when the resume takes other pairs than the earlier process pinned, and writes no `role_store_changed` row. A run that
+  recorded no pairs is bound with the store's, as before.
 - `crw flow dispatched RUN CALL --agent ID --k K --attempt N [--wait S] [--json]` writes the dispatch report into the inbox (a
   temporary name and a rename), waits up to S seconds (120) for the run's reply and prints it (`bound` exits 0, the other replies
   exit 1). A report of a run no process holds, or one the run has not answered in time, is answered `queued`: it stays in the inbox

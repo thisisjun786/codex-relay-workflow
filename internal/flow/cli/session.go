@@ -120,6 +120,13 @@ func bindOwner(state, run, thread string, table *engine.Policy) (bound.BindResul
 		Live: func(other string) bool { return validRunID(other) && runLive(state, other) }})
 }
 
+// bindResumedOwner is bindOwner for `crw flow next` after it resumed the run: a line of the run that is the thread's last stands (the
+// resumed process binds it with the pairs it runs on), and the line is written only when it is missing.
+func bindResumedOwner(state, run, thread string, table *engine.Policy) (bound.BindResult, error) {
+	return bound.BindOrchestrator(bound.OrchestratorBinding{RunID: run, Thread: thread, Digest: table.Digest, Pairs: ownerPairs(table), KeepRunLine: true,
+		Live: func(other string) bool { return validRunID(other) && runLive(state, other) }})
+}
+
 // closeOwner closes the run's orchestrator line when it is the owner thread's last (the run ended).
 func closeOwner(run, thread string) (bool, error) { return bound.CloseOrchestrator(nil, run, thread) }
 
