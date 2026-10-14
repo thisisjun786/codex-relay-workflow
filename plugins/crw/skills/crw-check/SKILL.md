@@ -1,13 +1,13 @@
 ---
 name: crw-check
-description: "Check delivered work against the canonical Linear documents and issue criteria, find contradictions between specifications and evidence, and judge progress against the schedule. Use for requirement drift, completion and invariant audits; crw-run executes, crw-qa drives a surface by hand."
+description: "Check delivered work against the canonical tracking documents and issue criteria, find contradictions between specifications and evidence, and judge progress against the schedule. Use for requirement drift, completion and invariant audits; crw-run executes, crw-qa drives a surface by hand."
 ---
 
 # CRW Check
 
 Here the parent (repository session, relay role `supervisor`) and the child (project session, relay role `parent`) are layers of [the level table](../crw-canon/references/hierarchy.md#the-levels).
 
-Check delivered work against what was agreed, using Linear as the canonical source of what was agreed, and find the
+Check delivered work against what was agreed, using the tracking repository as the canonical source of what was agreed, and find the
 claims or behaviors that cannot both hold. The check is read-only until an existing execution workflow authorizes
 more, and it runs in one of three ways. Read the section for the way this call is made; the sections before them are
 the rules all three share.
@@ -20,24 +20,24 @@ the rules all three share.
 
 ## Connect the workflow
 
-Read the shared [Linear model](../crw-canon/references/linear-model.md) and [delivery](../crw-canon/references/delivery.md), including its [completion-follow-up rule](../crw-canon/references/delivery.md#completion-follow-up-in-an-existing-execution-workflow). Use Linear tools for current documents and decisions, `crw-recall` for missing historical decisions, and `crw-dev` plus the relevant review/verification owner (`crw-dev-code-reviewer`, `crw-qa` for a driven surface) for code evidence. A standalone audit stays read-only; an existing execution task retains its authorized scope when this skill is used to check delivery.
+Read the shared [tracking model](../crw-canon/references/tracking-model.md) and [delivery](../crw-canon/references/delivery.md), including its [completion-follow-up rule](../crw-canon/references/delivery.md#completion-follow-up-in-an-existing-execution-workflow). Use `gh` for current issues and decisions, `crw-recall` for missing historical decisions, and `crw-dev` plus the relevant review/verification owner (`crw-dev-code-reviewer`, `crw-qa` for a driven surface) for code evidence. A standalone audit stays read-only; an existing execution task retains its authorized scope when this skill is used to check delivery.
 
-When the comparison is ambiguous, restate it and confirm the reading. Where documents state the same fact differently, [where each document type is canonical](../crw-canon/references/linear-model.md#where-each-document-type-is-canonical) decides which one is the rule. Check that acceptance evidence does not just confirm the implementation's own assumptions. For an actual contradiction, use [Find contradictions](#find-contradictions) below; it returns findings without replacing this requirement audit. When a substantial handoff needs a fresh reader, give it to a context-free reviewer through helper delegation (`crw role helper dispatch`).
+When the comparison is ambiguous, restate it and confirm the reading. Where documents state the same fact differently, [where each document type is canonical](../crw-canon/references/tracking-model.md#where-each-document-type-is-canonical) decides which one is the rule. Check that acceptance evidence does not just confirm the implementation's own assumptions. For an actual contradiction, use [Find contradictions](#find-contradictions) below; it returns findings without replacing this requirement audit. When a substantial handoff needs a fresh reader, give it to a context-free reviewer through helper delegation (`crw role helper dispatch`).
 
 ## Pin the comparison
 
-Identify the Linear project/milestone/issues, canonical documents, original intent, subsequently accepted changes, and implementation revision. Read full criteria and relevant decisions, not just list summaries. Record exact IDs, source dates/revisions, baseline/final commits or a frozen diff bundle, and the observed delivery environment.
+Identify the milestone and its issues, canonical documents, original intent, subsequently accepted changes, and implementation revision. Read full criteria and relevant decisions, not just list summaries. Record exact refs, source dates/revisions, baseline/final commits or a frozen diff bundle, and the observed delivery environment.
 
 Whether a relay holds the assignment is determined and recorded once, not decided again here: see [Whether a relay holds this assignment](../crw-canon/references/delivery.md#whether-a-relay-holds-this-assignment). Where one does, pin the comparison to the revision it reports as current and register the issue's criteria as the canonical set; [Check records in a relay store](../crw-run/references/check-records.md) holds how a review binds to a revision and to that set.
 
-Treat memory and assistant proposals as locators. A newer document does not automatically override a user decision. A later explicit user correction or accepted decision can supersede the original requirement; cite that evidence. If authority is unclear, preserve both readings as unresolved rather than selecting whichever matches the implementation. Which side is canonical for the fact being compared, and whether a disagreement is a requirements change or an implementation mismatch, follows [Keep the two sides consistent](../crw-canon/references/linear-model.md#keep-the-two-sides-consistent).
+Treat memory and assistant proposals as locators. A newer document does not automatically override a user decision. A later explicit user correction or accepted decision can supersede the original requirement; cite that evidence. If authority is unclear, preserve both readings as unresolved rather than selecting whichever matches the implementation. Which side is canonical for the fact being compared, and whether a disagreement is a requirements change or an implementation mismatch, follows [Keep the two sides consistent](../crw-canon/references/tracking-model.md#keep-the-two-sides-consistent).
 
 Inspect relevant code, tests, and result artifacts. Separate source existence, passing checks, integration, deployment, and observed behavior. If a live check is outside the authorized environment, leave that part unverified.
 
 When the claim includes PR readiness or integration, assess CI and review evidence using [Merge readiness](../crw-run/references/merge-readiness.md). Entering review and being merge ready are different states owned by OPS-9.1 in [Operations contract](../crw-run/references/operations.md); judge the claim against that clause rather than reading a pull request's draft or ready flag as a verdict. Reuse valid coordinator evidence and return any gaps to that owner; a bounded audit does not take over the merge.
 
 For implementation completion, use the shared
-[Implementation Done](../crw-canon/references/linear-model.md#implementation-done).
+[Implementation Done](../crw-canon/references/tracking-model.md#implementation-done).
 Match the issue to its current delivery, intended integration target and actual
 merge evidence, or the reconciled legacy PR set and its combined issue coverage.
 Preserve existing accepted operational criteria. Contrast partial, reference/replacement, wrong-branch and
@@ -70,22 +70,22 @@ The reviewer's `LAUNCH` and `VERDICT` lines are defined in `crw-dev-code-reviewe
 | needs_changes | `VERDICT: FAIL`, or `VERDICT: GO-WITH-FIXES (blockers=N)` for the criteria its N blockers name | An in-scope obligation is missing, regressed or outside the agreed scope; the criteria carrying no blocker stay verified |
 | unverified | no `VERDICT` line, or a reviewer that could not read the evidence | Access, authority or evidence is missing, or the obligation was deferred; it is never promoted to `VERDICT: PASS` |
 
-The schedule verdict is a separate field and never a row of this table. A code review's `VERDICT` does not certify Linear delivery: it is evidence this skill reads, as a `crw-qa` pass is.
+The schedule verdict is a separate field and never a row of this table. A code review's `VERDICT` does not certify delivery against the tracking issue: it is evidence this skill reads, as a `crw-qa` pass is.
 
 ## Find contradictions
 
 Actors: the top session, the parent, the child ([the level table](../crw-canon/references/hierarchy.md#the-levels)). Each reads and reports; a task that runs this as a sub-task returns its findings to its caller, which writes any record (see [Bounded helper](#bounded-helper)).
 
-Find claims or behaviors that cannot both hold under the same stated conditions. Anchor the rules and accepted decisions in canonical Linear documents, and return reproducible contradictions or precise evidence gaps, not a list of dislikes.
+Find claims or behaviors that cannot both hold under the same stated conditions. Anchor the rules and accepted decisions in canonical tracking documents, and return reproducible contradictions or precise evidence gaps, not a list of dislikes.
 
-If only a local file or pasted artifact is supplied, audit that bounded input and label its canonical Linear link unknown. Missing connector access can yield a partial audit; it cannot establish cross-document consistency. Do not create or migrate documents simply to run the check.
+If only a local file or pasted artifact is supplied, audit that bounded input and label its canonical tracking link unknown. Missing tracking access can yield a partial audit; it cannot establish cross-document consistency. Do not create or migrate documents simply to run the check.
 
 Run the checks that answer the question at hand:
 
 | Question | Check |
 |---|---|
 | Did we understand the request and its scope? | When materially ambiguous, restate the request and its scope from the conversation and records and confirm the reading before auditing; ask only when the evidence cannot settle it |
-| Do documents disagree about the same fact/rule? | List every document that states it, then settle which one is the rule by [where each document type is canonical](../crw-canon/references/linear-model.md#where-each-document-type-is-canonical); an accepted decision recorded on the item supersedes the body it changes, and the others are stale copies or a difference of scope. If two sources that are each canonical for their own scope still require incompatible behavior, that is the finding: report both sources and do not pick one |
+| Do documents disagree about the same fact/rule? | List every document that states it, then settle which one is the rule by [where each document type is canonical](../crw-canon/references/tracking-model.md#where-each-document-type-is-canonical); an accepted decision recorded on the item supersedes the body it changes, and the others are stale copies or a difference of scope. If two sources that are each canonical for their own scope still require incompatible behavior, that is the finding: report both sources and do not pick one |
 | Is a factual premise unsupported or false? | Trace the premise to its source and verify it there; use `crw-search` for current/public sources, and report an unverified premise as an evidence gap |
 | Does an evaluation independently test its claim? | Ask whether the implementation and the scorer could agree without any outside truth; acceptance evidence must come from something other than the implementation's own assumption |
 | Would a fresh reader recover the same rule? | When a blind comprehension check is needed and delegation is available, give the text without its surrounding context to a context-free reviewer through helper delegation (`crw role helper dispatch`) and compare the rule it recovers with the intended one |
@@ -96,7 +96,7 @@ Pin assumptions, units, time windows, population/scope, state/version and decisi
 
 Try to disprove the suspicion: find the smallest case that distinguishes a violation from a valid exception, inspect or run it in the authorized environment, and record input, expected relation, actual result and source or artifact. A static code proof may establish a violation but must not be reported as live execution. Keep diagnostic writes in a task-owned temporary location when permitted. Pair a suspected failure with a valid contrasting case, and consider whether a correction would reject normal retries, erase uncertainty, clamp unrelated quantities or change historical semantics. A passing pre-existing suite does not prove an untested invariant, and a second model agreeing with the first is not physical or business ground truth. If inputs, access or observations are missing, report the evidence gap and the cheapest resolving check; do not manufacture a failure to satisfy the audit.
 
-Report consequential findings ranked by impact, each with the conflicting rules and Linear source anchors, the shared conditions, the minimal counterexample, the valid contrast, the consequence and the smallest correction or next check. Mark the evidence as **reproduced violation**, **static contradiction** or **unverified hypothesis**, and keep these apart from an apparent contradiction resolved by a difference of scope or an accepted change. When none is found, state the examined scope and the remaining evidence limits: missing verification cannot become a universal pass. Stop when the bounded questions are answered; more loops need a new question or invalidated evidence.
+Report consequential findings ranked by impact, each with the conflicting rules and tracking source anchors, the shared conditions, the minimal counterexample, the valid contrast, the consequence and the smallest correction or next check. Mark the evidence as **reproduced violation**, **static contradiction** or **unverified hypothesis**, and keep these apart from an apparent contradiction resolved by a difference of scope or an accepted change. When none is found, state the examined scope and the remaining evidence limits: missing verification cannot become a universal pass. Stop when the bounded questions are answered; more loops need a new question or invalidated evidence.
 
 Reuse valid proof; do not rerun a broad suite just to make a report look thorough.
 
@@ -124,11 +124,11 @@ For a completion check in an established execution workflow, send evidence-backe
 
 Recheck the corrected revision against the original criteria and the reproduced failure. Missing evidence calls for a scoped verification request, not an invented defect or a speculative fix. Reuse valid evidence and keep the same correction scope until verified or a concrete blocker requires a decision. Lead the report with the verification result and the action actually taken: correction sent, awaiting delivery, recheck passed, integrated, or blocked.
 
-Under an existing management assignment, write the audit summary to the linked Linear coordination document and read it back; a separate audit document needs prior authorization or an explicit recording request, and authorization already granted is not asked for again. Where a relay holds the assignment, the summary is queued, the verdicts are recorded against its registered criteria and a quiet child is not a finding: all of that is in [Check records in a relay store](../crw-run/references/check-records.md).
+Under an existing management assignment, write the audit summary to the coordination issue of the milestone and read it back; a separate audit issue needs prior authorization or an explicit recording request, and authorization already granted is not asked for again. Where a relay holds the assignment, the summary is queued, the verdicts are recorded against its registered criteria and a quiet child is not a finding: all of that is in [Check records in a relay store](../crw-run/references/check-records.md).
 
 ## Bounded helper
 
-A sub-task or bounded helper called from here writes no Linear record itself: it returns the record ID, the revision it read, the reason, the smallest sufficient change and its evidence, and this assignment's own writer applies and reads it back, under [record writes and returned proposals](../crw-canon/references/linear-model.md#record-writes-and-returned-proposals). A bounded helper returns the correction packet to the coordinator, which owns dispatch, and returns its findings to its caller rather than contacting an owner itself.
+A sub-task or bounded helper called from here writes no tracking record itself: it returns the issue ref, the revision it read, the reason, the smallest sufficient change and its evidence, and this assignment's own writer applies and reads it back, under [record writes and returned proposals](../crw-canon/references/tracking-model.md#record-writes-and-returned-proposals). A bounded helper returns the correction packet to the coordinator, which owns dispatch, and returns its findings to its caller rather than contacting an owner itself.
 
 ## Report the result
 

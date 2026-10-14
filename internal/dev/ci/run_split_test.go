@@ -489,7 +489,7 @@ func TestRunSplitPinnedPathsResolve(t *testing.T) {
 	}
 	run := splitRead(t, runSkillFile)
 	cache := map[string]map[string]bool{}
-	for _, link := range []string{"references/relay.md#the-linear-summary-of-a-dag-plan", "references/region-grades.md#read-the-merge-order"} {
+	for _, link := range []string{"references/relay.md#the-coordination-summary-of-a-dag-plan", "references/region-grades.md#read-the-merge-order"} {
 		if !strings.Contains(run, "]("+link+")") {
 			t.Errorf("%s does not keep the link %s", runSkillFile, link)
 			continue

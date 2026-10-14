@@ -1,6 +1,6 @@
 ---
 name: crw-add-issue
-description: "Turn one short request into one ready Linear issue that passes the release gate. Use for 'add an issue', a one-paragraph bug or change request, or a finding to register; crw-plan decomposes a goal into projects and issues."
+description: "Turn one short request into one ready tracking issue that passes the release gate. Use for 'add an issue', a one-paragraph bug or change request, or a finding to register; crw-plan decomposes a goal into projects and issues."
 ---
 
 # CRW Add Issue
@@ -17,7 +17,7 @@ The callers are a child, the parent and the user ([the level table](../crw-canon
 
 ## Read before writing
 
-Read the shared [Linear model](../crw-canon/references/linear-model.md) for Linear access and document authority, and its [repository resolution](../crw-canon/references/linear-model.md#resolve-the-implementation-repository). Resolve the project from the request or the active project, and reuse it: never create a project to hold one issue. Search the project's open issues for the same problem first (paginate before concluding there is none). A duplicate is reported with its key, and the request becomes a comment proposal on the existing issue instead of a second issue.
+Read the shared [tracking model](../crw-canon/references/tracking-model.md) for tracking access and document authority, and its [repository resolution](../crw-canon/references/tracking-model.md#resolve-the-implementation-repository). Resolve the milestone from the request or the active milestone, and reuse it: never create a milestone to hold one issue. Search the milestone's open issues for the same problem first (paginate before concluding there is none). A duplicate is reported with its key, and the request becomes a comment proposal on the existing issue instead of a second issue.
 
 Inspect the repository read-only to ground the issue: where the behavior lives, the tests that already cover it, the contract or invariant it must keep, and the neighbouring owner of the same concept. A guess about a file is not an edit region, and a path the repository does not have is not written.
 
@@ -41,11 +41,11 @@ Beside the five items the issue carries `size_fit`, `size_reason`, the `issue_si
 
 ## When a design question remains
 
-Do not invent the answer to make the item look filled. A question the repository and the request cannot settle goes under `## 열린 결정`, the `정한 답` states what is already decided, and the issue gets the label `설계 먼저` so the state shows in Linear. Return the questions to the user or the parent as the design to obtain: an architect-role proposal that checks the repository's constraints, and the parent's decision. The issue is released only after that result stands in `정한 답`, the open decisions are empty and the label is removed. Choosing the model or role for the design is outside this skill.
+Do not invent the answer to make the item look filled. A question the repository and the request cannot settle goes under `## 열린 결정`, the `정한 답` states what is already decided, and the issue gets the label `설계 먼저` so the state shows in the tracking repository. Return the questions to the user or the parent as the design to obtain: an architect-role proposal that checks the repository's constraints, and the parent's decision. The issue is released only after that result stands in `정한 답`, the open decisions are empty and the label is removed. Choosing the model or role for the design is outside this skill.
 
 ## Tell the caller about the limits
 
-A plan revision holds at most 64 live nodes (the plan refuses more; a retired node leaves the count), and a milestone is split above 12 issues. Count the issues of the target project's plan that are live, not every issue the Linear project ever had, and the target milestone's issues, before writing. When the new issue would put the plan at more than 64 issues or the milestone at more than 12 issues, say so to the caller in the report and leave the choice of a split to the caller or to [crw-plan](../crw-plan/SKILL.md). This is advisory: a sentence of this procedure, not a warning of an executable, and it blocks nothing. The executable check of the same limit is `crw flow compile --dry-run` (`over_64`), which the [closing check](../crw-plan/references/issue-boundaries.md#close-the-plan) of the plan runs over the whole handoff.
+A plan revision holds at most 64 live nodes (the plan refuses more; a retired node leaves the count), and a milestone is split above 12 issues. Count the issues of the target project's plan that are live, not every issue the milestone ever had, and the target plan milestone's issues, before writing. When the new issue would put the plan at more than 64 issues or the milestone at more than 12 issues, say so to the caller in the report and leave the choice of a split to the caller or to [crw-plan](../crw-plan/SKILL.md). This is advisory: a sentence of this procedure, not a warning of an executable, and it blocks nothing. The executable check of the same limit is `crw flow compile --dry-run` (`over_64`), which the [closing check](../crw-plan/references/issue-boundaries.md#close-the-plan) of the plan runs over the whole handoff.
 
 ## Check, write, read back
 
@@ -55,4 +55,4 @@ When the done condition searches the whole tree (an `rg` or `grep` over the repo
 
 The done condition's `go test` command is not run when the issue is created. It is run once in the design stage, by the explorer (a subagent) that answers the design's open questions: the explorer runs the command at the base the design names and records the exit code and how many tests ran. A command that exits non-zero, or runs no test, is a warning that goes into the design answer and the issue's record. It never blocks the design or the release.
 
-With write intent from a child or the user, create the one issue (title naming the result, in the existing Korean title convention), then read it back from Linear and run the check on the returned record. Report the key and URL, the check's decision as the readback gave it, the open decisions, and anything the request left that this skill did not cover. After an uncertain write, look up the issue by title in the project before retrying, so a retry does not create a second one.
+With write intent from a child or the user, create the one issue with `gh issue create --repo OWNER/NAME --title TITLE --body-file FILE --milestone MILESTONE` (title naming the result, in the existing Korean title convention; the labels with `--label`), then read it back with `gh issue view` and run the check on the returned record, mapped as [Use the tracking access](../crw-canon/references/tracking-model.md#use-the-tracking-access) gives it. Report the key and URL, the check's decision as the readback gave it, the open decisions, and anything the request left that this skill did not cover. After an uncertain write, look up the issue by title in the milestone before retrying, so a retry does not create a second one.

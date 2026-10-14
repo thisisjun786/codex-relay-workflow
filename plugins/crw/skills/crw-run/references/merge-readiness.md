@@ -391,7 +391,7 @@ The two exceptions of that step are unchanged: a stale result whose reading says
 concerns the base only and is no way around a late thread.
 
 **After the merge.** A late thread inside this issue's scope reopens the same issue key: the finding belongs to
-what this issue promised, so the issue carries its own correction rather than a successor. The general [issue-to-PR mapping](../../crw-canon/references/linear-model.md#issue-to-pr-mapping) states the same exception for a defect inside the finished issue's promise. A late thread outside this issue's scope is new work: a separable one is replied to and
+what this issue promised, so the issue carries its own correction rather than a successor. The general [issue-to-PR mapping](../../crw-canon/references/tracking-model.md#issue-to-pr-mapping) states the same exception for a defect inside the finished issue's promise. A late thread outside this issue's scope is new work: a separable one is replied to and
 listed for the backlog with its own context, impact and outcome, a blocking one is raised at once as a correction
 issue for the area it touches, and a P0 or security one is fixed before the merge and raised as a correction
 issue if it arrives after it.
@@ -939,7 +939,7 @@ later refresh of the same candidate is a further step of its own, below):
 2. The forge reports no conflict: `pinned.mergeable` is true and the merge state is not `DIRTY`.
 3. Every criterion was ruled verified at P: the relay verdict on the report that names P is
    `verified` ([assignment-show](relay.md#verify-the-current-revision)), or, with no relay, the
-   parent's own check against the Linear criteria is recorded for P. That ruling includes the
+   parent's own check against the issue's criteria is recorded for P. That ruling includes the
    [disclosure checks](#what-the-handoff-discloses-checked-at-the-verdict) at P.
 
 Read the tip of the base from the forge immediately before the update and keep it: it is D, the dev

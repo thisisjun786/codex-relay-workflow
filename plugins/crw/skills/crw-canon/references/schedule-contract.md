@@ -6,7 +6,7 @@ The names, sources and value words that every operation uses when it records or 
 
 A recorded schedule creates facts that later operations read back: what a result was first
 expected by, what it is expected by now, what actually happened, and what it waits on. Those
-facts already live on Linear items and in the records around them, so this section fixes their
+facts already live on tracking items and in the records around them, so this section fixes their
 names, their sources and the checks over them rather than adding a second place to keep them.
 Nothing here computes a date: there is no schedule database and no scheduler in this model.
 `crw-plan` records these fields when a plan write is authorized, and any operation that later
@@ -17,16 +17,16 @@ operations that paraphrase them stop agreeing about the same item.
 
 | Field | What it holds, and where it is read from |
 | --- | --- |
-| Subject | The stable Linear ID and URL of one project, milestone or issue. A title, a branch or a checkout is not a subject. |
+| Subject | The stable ref (`OWNER/NAME#N`) and URL of one milestone or issue. A title, a branch or a checkout is not a subject. |
 | Schedule baseline | The target date that the earliest record established for this subject, including the record a plan write creates at the moment it sets that subject's first target. It is `unconfirmed` only where a target already exists and no record establishing it can be found, and it is never filled in from the item's current date field or its creation time. |
-| Baseline record | The record that set the schedule baseline, with its own timestamp: the identified project or initiative update, the planning record, or a dated decision comment. For a first target it is the dated record written alongside that target; for an older target whose establishing record cannot be found, its absence is what makes the schedule baseline `unconfirmed`. |
-| Planned start | The date the subject is scheduled to begin, where the item carries one, which today is the project's own start date. It is a plan rather than an observation, so it never stands in for an actual start, and moving it follows the same change rule as a target. |
-| Current target | The date the item carries now: the project's own target date, the milestone's target date, or the issue's due date. |
+| Baseline record | The record that set the schedule baseline, with its own timestamp: the identified edit of the milestone description, the planning record, or a dated decision comment. For a first target it is the dated record written alongside that target; for an older target whose establishing record cannot be found, its absence is what makes the schedule baseline `unconfirmed`. |
+| Planned start | The date the subject is scheduled to begin, where the item carries one, which a milestone does not: it is written in the description or the body. It is a plan rather than an observation, so it never stands in for an actual start, and moving it follows the same change rule as a target. |
+| Current target | The date the item carries now: the milestone's due date, or the target date written in the issue body, because an issue has no date field. |
 | Timezone | The IANA zone the dates were read and written in, stated rather than assumed. These targets are calendar dates, so a target means the end of that day in this zone and an evidence timestamp is compared in it. |
-| Target nature | One of `confirmed`, `provisional`, `undetermined` or `awaiting authority`, recorded in the subject's own description because no Linear field carries it. |
+| Target nature | One of `confirmed`, `provisional`, `undetermined` or `awaiting authority`, recorded in the subject's own description or body because no tracking field carries it. |
 | Actual start and finish | The real dates the work began and ended, each with the evidence that establishes it, and empty where no evidence does. |
 | Change source | For the most recent change: its time, whose decision it was, the reason, the scope it covered including the stable IDs added and canceled with it, and the before and after dates, written into the record's own text. |
-| Prerequisites | The subjects this one requires, each with the level it is recorded at, issue, milestone or project, and the relation or record line that carries it. |
+| Prerequisites | The subjects this one requires, each with the level it is recorded at, issue or milestone, and the `Blocked by:` line or record line that carries it. |
 | Delivery evidence | The same-class delivery records the item's target was last read from: their stable IDs and the times bounding each one, from assignment to the result that finished it, through the pull request and its review where that work had one and to the acceptance of its agreed artifact where it did not. It is `no sample` where no comparable record existed at that reading, and it holds those records rather than any figure derived from them. A change that reads the records again names them in its own entry and becomes the reading this field carries. A change that moves the date without reading them leaves the earlier reading here, and the change source is then what produced the date the item carries now. Records are never rewritten to claim a date they did not set, and `no sample` never stands for a date another source moved. |
 | Wait cause | What the subject waits on now, one of `none`, `prerequisite`, `shared surface`, `review`, `decision` or `host`, named together with the subject, region, pull request, decision or stated constraint it waits on and the observable event that ends it. |
 | Change reason | The word the most recent change's reason opens with, one of `pulled in`, `scope changed`, `blocked`, `critical path` or `authority`. It classifies the change the change source already records and replaces none of its text. |
@@ -74,22 +74,22 @@ Where the current target disagrees with the latest change record's after value, 
 unverified until the two are reconciled; neither side is silently preferred.
 
 A start and a finish take different evidence. An actual finish is evidenced by the landing of the
-delivering pull request under [Implementation Done](linear-model.md#implementation-done), by an explicit user
+delivering pull request under [Implementation Done](tracking-model.md#implementation-done), by an explicit user
 statement, or by a dated decision record. An actual start is evidenced only by a record of the work
 beginning: the subject's own start record, an explicit user statement, or a dated decision saying
 when it began. A landing dates the finish and says nothing about the beginning, so it never fills an
 actual start, and an actual start nothing evidences stays empty rather than borrowing the finish. A
 status timestamp that a status correction or a bulk edit produced evidences neither, because it
 records when someone fixed the register rather than when the work happened; where two admissible
-dates disagree the earlier evidenced one stands. A subject already Done or Canceled keeps the dates it
+dates disagree the earlier evidenced one stands. A subject already closed keeps the dates it
 has and is not given a new target.
 
-A prerequisite is recorded at the level that is actually true. A project-level prerequisite means
-the whole project must finish first. When a result needs only particular outputs, the prerequisite
-belongs on the issues that produce them or on the milestone that groups them, so the remaining
-work in both projects keeps running in parallel. Cross-project prerequisites travel by relation
-under [scope of each level](hierarchy.md#scope-of-each-level); one project does
-not absorb another's issues to express a date, and no finish-to-start relation is invented to make
+A prerequisite is recorded at the level that is actually true. A milestone-level prerequisite means
+the whole milestone must finish first. When a result needs only particular outputs, the prerequisite
+belongs on the issues that produce them, as a `Blocked by:` line, so the remaining
+work in both milestones keeps running in parallel. Cross-milestone prerequisites travel by `Blocked by:` line
+under [scope of each level](hierarchy.md#scope-of-each-level); one milestone does
+not absorb another's issues to express a date, and no finish-to-start line is invented to make
 a chart read better.
 
 Four defects are checked over the resulting graph, and each check reports what it found including
@@ -105,7 +105,7 @@ fields never acquire two meanings.
 
 Two report states are named, because an operation reading the result must classify the same fact
 the same way. `recorded in the data` means the dates, links and relations were written and read
-back. `not applied in the view` means a scale, an ordering or a connection line the connector does
+back. `not applied in the view` means a scale, an ordering or a connection line the tracking API does
 not expose was left alone. Neither stands for the other.
 
 Reading this contract grants nothing. Recording a schedule stays inside the plan write authority
@@ -116,7 +116,7 @@ installation or a restart. The Plan-side procedure that builds, checks and recor
 
 A consumer judges the result rather than its wording: every in-scope subject has a row or an
 explicit `undetermined`; what was read back equals what was written; running the same request again
-adds no milestone and no second record; a Done or Canceled subject's dates are unchanged; and a
+adds no milestone and no second record; a closed subject's dates are unchanged; and a
 target date that moved still shows the schedule baseline it moved from together with the change
 source that moved it. Every in-scope subject also carries a wait cause; a target that moved later
 carries one of the extension words with the scope, blocker or predecessor entry it names; a target

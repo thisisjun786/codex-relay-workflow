@@ -17,9 +17,9 @@ Use the requested method only within that scope. An operative bare crw-loop
 request selects scoped HOTL through crw-loop; ordinary PABCD use does not.
 crw-dev is canonical for work class, C0/C1 fast-path, proof, and safety.
 
-P here plans one task's implementation; crw-plan decomposes a goal into Linear
-projects, milestones and issues. C verifies this task's implementation; crw-check
-compares delivered work with canonical Linear documents and issue criteria.
+P here plans one task's implementation; crw-plan decomposes a goal into
+milestones (projects) and issues. C verifies this task's implementation; crw-check
+compares delivered work with canonical tracking documents and issue criteria.
 Which level runs this procedure, and what goal each level opens, is in [hierarchy](../crw-canon/references/hierarchy.md#scope-of-each-level), whose [level table](../crw-canon/references/hierarchy.md#the-levels) names the layers.
 
 ## Interview Trigger
@@ -172,12 +172,12 @@ See `dev` §0.0 for the full class definitions and tie-break rules.
 Choose the surface before dispatching, and start from the binding: before any
 dispatch of an independent lane, apply
 [DISPATCH-MANAGED-01](references/dispatch-surfaces.md#dispatch-managed-01-strict--start-from-the-binding-not-from-the-mechanism).
-A Linear issue or DAG node (also one the relay holds no assignment for yet) is an
+A tracking issue or DAG node (also one the relay holds no assignment for yet) is an
 independent relay child started and resumed through `crw-run`, or a flow executor call of the run of the child (project session, relay role `parent`) recorded in the relay, never a
 `create_thread` lane, and the relay's duplicate-assignment and capacity refusals are
 followed, not routed around by creating a thread by hand. An unresolved binding is
 not permission to take the unmanaged route. The thread and subagent choice below is
-for unmanaged work: standalone PABCD with no Linear issue and no CRW execution
+for unmanaged work: standalone PABCD with no tracking issue and no CRW execution
 binding, and bounded helper delegation inside any task.
 
 A **subagent** (`spawn_agent`) is a leaf

@@ -136,12 +136,12 @@ A request to explain or review is done when the explanation is delivered. Do not
 register or restart anything to make the answer better, and do not open work the request did not
 ask for.
 
-Where the request or the scope it already carries includes reflecting the outcome in Linear, do it
+Where the request or the scope it already carries includes reflecting the outcome in the tracking repository, do it
 in the same pass: update the canonical document and every plan item the explanation actually
 changed, read each one back after the write, and report what the read-back returned. Do not ask
 again for an approval already given, and do not leave a verbal agreement as the only record. The
 authority, the read-back duty and the ownership rules for those writes stay in
-[record writes and returned proposals](linear-model.md#record-writes-and-returned-proposals).
+[record writes and returned proposals](tracking-model.md#record-writes-and-returned-proposals).
 
 ## Worked example: a completion hook and a session relay
 
@@ -184,7 +184,7 @@ ledger and recovery reads a ledger that never saw the earlier attempts, so it ca
 or repeat one. Nothing rebuilds it, and nobody is responsible for restoring it, which is why the
 two settings are worth a sentence in any explanation of this system.
 
-The coordination summary is written by the parent into the Linear document, and Linear keeps and
+The coordination summary is written by the parent into the tracking repository, and GitHub keeps and
 restores it as its own service, which makes it the only piece here whose recovery is somebody
 else's job entirely. Raw run records are private receipts written by whoever ran the thing, kept
 outside this repository, and restored from no backup this explanation knows of. The defaults and

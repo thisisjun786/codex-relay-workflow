@@ -48,7 +48,7 @@ Work that is cheaper to do than to ask is done by code or by the asker, and reco
 |---|---|
 | `SP-INL-1` | A research question of an executor inside its declared edit regions, or with at most 3 files needed, is answered by the asker itself (recorded as inline); never an open question of a DESIGN, whose architect's turn has ended |
 | `SP-INL-2` | A question whose digest was already answered in the run reuses that answer (recorded as reuse) |
-| `SP-INL-3` | Compile, the commit and the worktree, the verification command, the assembly of the pre-merge record from the verdict, the Linear summary, accept and integrate are code steps of the run, never agents |
+| `SP-INL-3` | Compile, the commit and the worktree, the verification command, the assembly of the pre-merge record from the verdict, the coordination summary, accept and integrate are code steps of the run, never agents |
 | `SP-INL-4` | The child is never woken for one issue's event; it is woken for a step of its run (a step it has not dispatched) and for an escalation, and it spawns the run's role subagents only for the steps `crw flow next` hands it |
 
 ## Records

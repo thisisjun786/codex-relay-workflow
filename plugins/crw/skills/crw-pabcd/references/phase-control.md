@@ -47,10 +47,10 @@ sentence: plan/devlog paths, changed files, commands with exit codes, and eviden
 ledger paths when present. The runtime gate remains form-only for `did`; this is the
 agent discipline that makes later audit possible.
 
-The numbered documents `planUnit` names are workspace-local execution evidence: where the work has a Linear issue, each quotes the
-Linear issue and documents it implements, which stay canonical under
-[Linear holds canonical documents](../../crw-canon/references/linear-model.md#linear-holds-canonical-documents);
-standalone work with no Linear issue quotes the original request and the repository's own contract documents and creates no issue for it.
+The numbered documents `planUnit` names are workspace-local execution evidence: where the work has a tracking issue, each quotes the
+tracking issue and documents it implements, which stay canonical under
+[Tracking holds canonical documents](../../crw-canon/references/tracking-model.md#tracking-holds-canonical-documents);
+standalone work with no tracking issue quotes the original request and the repository's own contract documents and creates no issue for it.
 The gate checks that the unit exists and holds numbered documents, not what they decide; their
 format is [Implementation units](implementation-units.md).
 

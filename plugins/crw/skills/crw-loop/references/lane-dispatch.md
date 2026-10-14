@@ -1,7 +1,7 @@
 # Lane dispatch — tasks that run their own loop
 
 Read when a request fans unmanaged work out across parallel tasks, or when watching more lanes
-than one wait can hold. A Linear issue or DAG node is a flow executor call of the run of
+than one wait can hold. A tracking issue or DAG node is a flow executor call of the run of
 [the child](../../crw-canon/references/hierarchy.md#the-levels) (project session, relay role `parent`),
 recorded in the relay, whose step the child spawns as a role subagent (the default path), or an
 issue child started through `crw-run` (the exception, SP-CHILD-1), and is not handed to a

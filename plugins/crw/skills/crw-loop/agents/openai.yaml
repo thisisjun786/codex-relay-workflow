@@ -1,6 +1,6 @@
 interface:
   display_name: "crw-loop"
   short_description: "Scoped HOTL completion with explicit scope limits."
-  default_prompt: "Use $crw-loop to complete this task with a scoped PABCD loop; a Linear project request goes to crw-run."
+  default_prompt: "Use $crw-loop to complete this task with a scoped PABCD loop; a milestone request goes to crw-run."
 policy:
   allow_implicit_invocation: true

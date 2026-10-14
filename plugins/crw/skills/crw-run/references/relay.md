@@ -10,7 +10,7 @@ nothing below becomes a prerequisite.
 host the cutover has not moved still runs the Python fence release's console script, which left this
 repository in todo 44; move it through the cutover before relying on this page.) It
 records one issue's assignment durably: the relationship, its execution generations, each delivery attempt, the
-parent's acknowledgement and verdict, and the coordination summary owed to a Linear document. It owns none of that
+parent's acknowledgement and verdict, and the coordination summary owed to the coordination issue. It owns none of that
 workflow's authority. It does not read or write any task's `.crw/` PABCD state, and `crw-loop` startup and phase
 procedure stay with the `crw-loop` and `crw-pabcd` skills; this reference never restates
 them.
@@ -360,7 +360,7 @@ the workspace or project it belongs to in `--scope-ref`, which the relationship 
 For a standalone issue, the scope reference names its workspace and stable issue/document
 URL instead of a project. Project membership is absent, not fabricated; the real coordinator
 and child IDs and both allowed recipients remain required. `--scope-ref` is descriptive
-context, not a checked Linear project binding.
+context, not a checked milestone binding.
 Use that same issue string everywhere afterwards, including in the packet the child is given: a lookup
 by a different spelling of the same issue finds nothing, and a child that follows it reports a
 perfectly good completion as UNEMITTED.
@@ -1439,11 +1439,11 @@ includes the generation, so the receipt is a new event, its claim binds the CURR
 and a fresh verdict records against the obligations now in force. This is a new review context,
 not a duplicate delivery, and it needs no overwrite and no second verification path.
 
-## The Linear summary is the coordinator's own write
+## The coordination summary is the coordinator's own write
 
-The relay never calls Linear and holds no credential. There is no automatic Linear transport: the
+The relay never calls the tracking repository and holds no credential. There is no automatic tracking transport: the
 relay's automatic delivery is task-to-task only. A verdict enqueues the summary it owes, and the
-coordinator executes it with the connector it already has.
+coordinator executes it with the `gh` access it already has.
 
     codex-session-relay --state "$RELAY_STATE" sync-target --relationship <rel> --target-ref <doc id>
     codex-session-relay --state "$RELAY_STATE" sync-next
@@ -1451,20 +1451,20 @@ coordinator executes it with the connector it already has.
     codex-session-relay --state "$RELAY_STATE" sync-operation --sync <id>
 
 `sync-operation` returns the target, the identity, the container and block markers, the exact
-block, and the protocol. The connector's document save takes no idempotency key, so a write can
-succeed and lose its response. Therefore read the document first and locate this relationship's
+block, and the protocol. The target is one comment of the milestone's coordination issue. A comment edit takes no idempotency key and no compare-and-swap, so a write can
+succeed and lose its response. Therefore read the comment first (`gh api repos/OWNER/NAME/issues/comments/ID --jq .body`) and locate this relationship's
 CONTAINER markers.
 
-No container yet is initialisation, not a job write: create the container ONCE, with an empty body,
+No container yet is initialisation, not a job write: create the container ONCE, as the comment's body (`gh issue comment N --repo OWNER/NAME --body-file FILE`, a first line `[layer · session]` before the markers),
 before any job goes into it. If that response is lost, read again and reconcile rather than
 creating a second one, because a negative read is not proof of non-delivery while an earlier write
 can still land.
 
-With the container present, every job write, INCLUDING this job's first block, is a conditional
-replacement of the container's exact current text, end marker included, so a stale writer's edit no
-longer matches and is rejected. A bare append is never safe for a job block: an append is
-unconditional, so a slow writer whose lease expired can still land a second copy after another
-writer appended. Then read the document back and settle the job:
+With the container present, every job write, INCLUDING this job's first block, is a replacement of the
+container's exact current text, end marker included, made from the text you read just before
+(`gh api -X PATCH repos/OWNER/NAME/issues/comments/ID -F body=@FILE`). GitHub does not compare the comment with your read, so the claim token keeps two
+writers apart and the readback decides. A bare append is never safe for a job block: a slow writer whose lease expired
+can land a second copy after another writer appended. Then read the comment back and settle the job:
 
     codex-session-relay --state "$RELAY_STATE" sync-reconcile --sync <id> --observed @doc.txt
     codex-session-relay --state "$RELAY_STATE" sync-complete  --sync <id> --claim-token <token> \
@@ -1483,15 +1483,15 @@ A failed summary write is retried on its own and never re-runs a verification or
 correction; `sync-status` and `sync-retry` manage the queue, and
 `sync-progress --relationship <rel>` queues a progress summary between verdicts.
 
-## The Linear summary of a DAG plan
+## The coordination summary of a DAG plan
 
-A DAG plan's own Linear summary is a project-level queue that is separate from the relationship job above: `dag_summary_outbox`, one table of the relay's DAG zone, with seven commands
-(the relay's `docs/relay/dag-outbox.md` is the reference). The relay still holds no Linear credential and calls no Linear: the parent writes with its own connector. The queue is per plan and
+A DAG plan's own coordination summary is a project-level queue that is separate from the relationship job above: `dag_summary_outbox`, one table of the relay's DAG zone, with seven commands
+(the relay's `docs/relay/dag-outbox.md` is the reference). The relay still holds no tracking credential and makes no tracking call: the parent writes with its own `gh` access. The queue is per plan and
 document, and only the newest entry is ever written: when the plan has moved on, the entries not yet confirmed are superseded for you, so an older summary can never be put over a newer one. Every command
 below writes the summary table and nothing else, so recovering a summary re-runs no child, re-sends no correction and makes no second summary.
 
-You are the project's registered parent: every write command takes `--actor` with your task id, and a replaced parent is refused (`scope_role_mismatch`). Choose the Linear document that holds the plan's
-summary once and pass it as `--document` every time (its id or URL, one line).
+You are the project's registered parent: every write command takes `--actor` with your task id, and a replaced parent is refused (`scope_role_mismatch`). Choose the comment of the milestone's coordination issue that holds the plan's
+summary once and pass it as `--document` every time (its URL, one line).
 
 1. **Look.** `dag-summary-status --plan <plan>` lists each document with its newest entry, `owed` (that entry is not confirmed) and `up_to_date` (it states the plan as the store reads it now).
    Nothing owed and up to date: stop. The plan moved on, or there is no entry: `dag-summary-enqueue --plan <plan> --actor <you> --document <doc>`. The same state of the plan is the same entry, so asking again
@@ -1507,27 +1507,24 @@ summary once and pass it as `--document` every time (its id or URL, one line).
 
         codex-session-relay --state "$RELAY_STATE" dag-summary-claim --summary <id> --actor <you>
 
-3. **Read and reconcile.** Read the document (`get_document`) and keep that one text: everything below is judged on it and written only against it. Ask the relay what it holds, before any write:
+3. **Read and reconcile.** Read the comment (`gh api repos/OWNER/NAME/issues/comments/ID --jq .body`) and keep that one text: everything below is judged on it and written only against it. Ask the relay what it holds, before any write:
 
         codex-session-relay --state "$RELAY_STATE" dag-summary-reconcile --summary <id> --observed @doc.txt
 
-   Stop, write nothing, take the newest entry (`dag-summary-status`) when `writable` is false or `relation` is newer: the entry was overtaken, and a write now would pass the connector's condition and put an
+   Stop, write nothing, take the newest entry (`dag-summary-status`) when `writable` is false or `relation` is newer: the entry was overtaken, and a write now would put an
    older summary over a newer one. `already_written`: the block is there, so confirm (step 5) and write nothing. Otherwise `repair` says how to write:
 
    * `replace_container`: the document has the plan's container once: step 4.
-   * `initialize`: the document has no container. Add it with ONE `save_document` `patch` that replaces the WHOLE document text you read with that same text, a blank line and the `empty_container`:
-     `[{ "op": "replace", "old_string": <the document as you read it>, "new_string": <the document as you read it, a blank line, the empty_container> }]`. If anything changed since your read it is refused whole, so two sessions
-     cannot make two containers. Never an `append`, an `insert` or a `content` save for this (none is conditioned). Then read again and reconcile again. A document created for the summary is best created with the
-     `empty_container` as its content. If the whole document cannot be matched although nobody edited it, stop and ask a person to add the container.
+   * `initialize`: the document has no container. Add it with ONE `gh api -X PATCH` of the comment whose body is the text you read, a blank line and the `empty_container`. The claim token keeps two sessions from doing it at once, and a second container shows up as `manual` at the next reconcile.
+     Then read again and reconcile again. A comment created for the summary is best created with the
+     `empty_container` as its body. If the comment cannot be matched although nobody edited it, stop and ask a person to add the container.
    * `manual`: the document is malformed (a block or container that is not closed, two containers, a block outside its container). Write nothing: record it with `dag-summary-fail`, naming the document and what
      `detail` says, and report it to a person. The relay never confirms a corrupt document and one replacement cannot repair markers that appear twice.
 
-4. **Write.** One call, for `replace_container`: `save_document` on the document with `patch`, one operation:
-   `[{ "op": "replace", "old_string": <the container text from the read you reconciled, markers included>, "new_string": <operation.container> }]`. The connector applies a patch to the current content atomically and
-   refuses it whole unless `old_string` matches exactly once, so a write prepared before a newer summary landed, or before someone edited the container, is refused instead of overwriting it. Never write a summary
-   with `content` (whole-document replacement), an append, an insert or `replace_all`: none of them is conditioned on what the document holds.
+4. **Write.** One call, for `replace_container`: `gh api -X PATCH repos/OWNER/NAME/issues/comments/ID -F body=@new.txt`, where `new.txt` is the comment text you read with the container (markers included) replaced by `operation.container`. GitHub applies it
+   without comparing the comment with your read, so write at once after the reconcile of step 3 and never from a text read before another claim; the readback of step 5 shows whether a newer summary or an edit was overwritten. Never append a summary to the comment.
 
-5. **Read back and confirm.** Read the document again (`get_document`) and pass the whole text:
+5. **Read back and confirm.** Read the comment again (the same `gh api` read) and pass the whole text:
 
         codex-session-relay --state "$RELAY_STATE" dag-summary-complete --summary <id> --actor <you> --claim-token <token> \
           --document <doc> --readback @doc.txt
@@ -1535,7 +1532,7 @@ summary once and pass it as `--document` every time (its id or URL, one line).
    It confirms only when the plan's container holds this entry's block and nothing else (`readback_mismatch` names the difference and leaves the entry claimed: reconcile the readback and act on its
    `repair`, then read again). `replayed: true` means it was already confirmed.
 
-6. **Failure: retry only that entry.** A refused write (the container changed since you read it: a concurrent edit or a newer summary), a connector error, a lost response or a readback you cannot repair is recorded
+6. **Failure: retry only that entry.** A write the readback shows overwrote something (the container changed since you read it: a concurrent edit or a newer summary), a `gh` error, a lost response or a readback you cannot repair is recorded
    with `dag-summary-fail --summary <id> --actor <you> --claim-token <token> --error '<text>'`. Then claim the same entry again and start at step 3: after a lost response the reconcile finds the block in the
    document (`already_written`) and the entry is confirmed without a second write. Do not enqueue to retry; the entry is the unit. A failure the relay refuses with `sync_not_claimable` came after a newer summary
    superseded the entry: take the newest.
@@ -1554,7 +1551,7 @@ relay's own `docs/relay/envelope.md`, with the workflow rule in
 Two facts from it decide what a run may claim, so they are repeated here and nowhere else: the
 a report upward is transported and read back and nothing further is measured on that relation -
 a supervisor agreeing, acting or confirming is not a fact the relay holds; and what discharges a
-reporting obligation is the Linear record the supervisor reads, confirmed, rather than a report
+reporting obligation is the tracking record the supervisor reads, confirmed, rather than a report
 having been written, sent or even read.
 
 Three commands make that readable rather than remembered. None of them sends anything and none
@@ -1581,7 +1578,7 @@ codex-session-relay supervisor-report-recorded --observation <file> [--message <
 `supervisor-select` answers `report: false` with a reason far more often than it answers true,
 and the reason is the part to read: `no_meaningful_transition` for an ordinary event,
 `already_reported_under_this_obligation` for a fact already reported,
-`already_in_the_record_the_supervisor_reads` once Linear has it confirmed,
+`already_in_the_record_the_supervisor_reads` once the tracking record has it confirmed,
 `recipient_is_not_contactable` for a paused or archived supervisor, and
 `recipient_contactability_unmeasured` when nobody has looked recently. Every one of them
 preserves the obligation; none of them discards it.
@@ -1677,7 +1674,7 @@ to every candidate, including the turn the attempt names, because a send can ste
 turn rather than open one. Where the readback names the turn the send itself opened, the
 delivered bytes have to be in that same turn: what the token is in is where the message
 landed. It does not say the turn answered, who computed the proof, or that anybody acted, and
-it discharges nothing: the obligation stands until Linear confirms. For the turn the send
+it discharges nothing: the obligation stands until the tracking record confirms. For the turn the send
 opened (`turnOrigin: relay_opened`, the ordinary case) a readback needs nothing from the
 supervisor, since that turn's id is already in the store, so it shows the report arrived
 rather than that it was read. Staging and sending are automatic - the relay daemon stages and
@@ -1769,7 +1766,7 @@ never compared against a head, and it is never asked for a pull request to fill 
 
 The answer also carries the seven handover states as the store answers them for the packet's
 subject event, the states the packet claims that the store does not back (`unbackedClaims`)
-or cannot answer (`unmeasurableClaims`), and `coordinationSync` for the Linear summary block,
+or cannot answer (`unmeasurableClaims`), and `coordinationSync` for the coordination summary block,
 which is not the issue reaching Done. This check runs where the receiver runs it: no relay
 code path carries a parent-child packet, so a receiver that skips the step has checked
 nothing.

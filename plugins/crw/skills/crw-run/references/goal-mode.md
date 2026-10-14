@@ -11,7 +11,7 @@ request is Run's, not goal mode's.
 
 Two terms are kept apart throughout. A **loop** is the PABCD completion loop of one task, owned by
 `crw-loop` and `crw-pabcd`. **Goal mode** is this
-mode of the project parent. A request that says "loop" and names a Linear project to coordinate is
+mode of the project parent. A request that says "loop" and names a milestone to coordinate is
 goal mode's, not a loop's, and the answer says so: `$crw-loop` with a project scope and coordination
 intent starts no loop and hands the request to Run goal mode. A request that asks for goal mode in
 other words, such as a parent goal for the project, is the same request. The loop skills also say
@@ -49,7 +49,7 @@ another coordinator or recursively invoke skills.
 
 ## Enter or resume
 
-A submitted `$crw-run <Linear project link>` execution request that asks for a goal, or the `$crw-loop`
+A submitted `$crw-run <milestone link>` execution request that asks for a goal, or the `$crw-loop`
 handoff above, establishes the project parent's native goal and automatic execution of the agreed scope.
 That request is what opens the goal, since the parent default opens none, and it is also the only
 occasion for one. Designate or restore the fixed parent using
@@ -214,7 +214,7 @@ parent waits idle and a delivered event resumes it, and where they do not it kee
 and claims nothing. Where goal mode was explicitly requested, its goal cannot activate, and the user
 declines the default in its place, the mode is `blocked`, the unresolved blocker is cited against the
 issue that owns it, and no child is created first. For the goal and Stop-hook conflict that issue is
-[CRW-29](https://linear.app/jun786/issue/CRW-29); its resolution is what clears the blocker, and until it
+CRW-29 of the archive; its resolution is what clears the blocker, and until it
 is recorded there the blocker still stands.
 
 Disabling a hook, replaying hook events, manufacturing PABCD evidence and force-completing an existing

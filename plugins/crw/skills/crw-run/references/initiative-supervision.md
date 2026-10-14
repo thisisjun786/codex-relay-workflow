@@ -118,7 +118,7 @@ A task that already supervises this same initiative is the one that continues, a
 rather than a new binding. A task bound to a different scope does not become the supervisor by
 being handed a designation, and that holds for any such binding rather than a project's alone: a
 parent would leave its project without one and its children without an owner, and an issue-bound
-task would abandon or blur the implementation it owns. Each task is bound to one Linear level, so
+task would abandon or blur the implementation it owns. Each task is bound to one tracking level, so
 what decides this is whether the task is free, not which level happens to hold it. A user who does
 want that task to stop being a parent is making an ownership change, recorded and completed first
 rather than produced as a side effect of binding.
@@ -155,9 +155,9 @@ it.
 
 ### Where the record lives
 
-The record is the initiative's own, written by the supervisor under the
-[initiative body standard](../../crw-canon/references/linear-model.md#initiative-body-standard) and
-its comments and updates. The supervision record that makes recovery possible is in
+The record is the supervisor's own: the descriptions of the milestones it opens under the
+[milestone description standard](../../crw-canon/references/tracking-model.md#milestone-description-standard) and
+its decision comments. The supervision record that makes recovery possible is in
 [Coordination record](task-packet.md#coordination-record).
 
 ## Reuse before creating anything
@@ -302,7 +302,7 @@ Real delivery facts are read through the relationships that already hold them ra
 upward. Which pull request delivers an issue, which revision a verdict was recorded against and
 whether a merge actually landed are already recorded by the parent and, where an installation holds
 the assignment, by that record; the supervisor reads them there and treats
-[Implementation Done](../../crw-canon/references/linear-model.md#implementation-done) as the test for
+[Implementation Done](../../crw-canon/references/tracking-model.md#implementation-done) as the test for
 a landing. A green check, a parent's acceptance and a completed turn are not that evidence.
 
 The supervisor decides what a pair of parents cannot settle alone: a disagreement, a change that
@@ -317,7 +317,7 @@ claims, so a few projects marked done do not finish the initiative.
 After a compaction, a turn ending or a restart, read the supervision record first, then refresh
 only what can have moved: each parent's status and its last returned result, the state of the
 requests still outstanding, and the current head and checks of the pull requests already named.
-The investigation, the plan and the issue bodies are not regenerated; they are in Linear and in
+The investigation, the plan and the issue bodies are not regenerated; they are in the tracking repository and in
 each parent's record, and rewriting them from this task's view replaces those records with a guess.
 
 A child that is alive keeps its issue. Uncertain delivery, an unreadable record or an elapsed wait
@@ -337,7 +337,7 @@ nobody reported.
 | That task's native goal | none, complete, active, paused, blocked, a different unfinished goal, unreadable | its goal tool, under [Parent goal lifecycle](goal-mode.md#parent-goal-lifecycle) |
 | The task's lifecycle, set by a person | paused, cancelled, archived | [OPS-8.2](operations.md#ops-82-busy-paused-cancelled-and-archived-parents) |
 | The mode this run recorded when it started | `goal`, `goal-free-run`, `blocked` | the start-policy record, under [Record the start adjudication](goal-mode.md#record-the-start-adjudication) |
-| The project and the record | completed, and a dependency recorded as blocking | Linear and the supervision record |
+| The project and the record | completed, and a dependency recorded as blocking | The tracking repository and the supervision record |
 
 Label every reading with its register before anything acts on it. The fourth register is the one a
 restart is most likely to skip, and it is what makes the second readable: a project parent holds no
@@ -490,7 +490,7 @@ window; where the process cannot reach that store, the rereads above bound it in
 Observed: two projects in the approved set are complete, with their pull requests merged and their
 outcomes verified.
 Clauses: [OPS-7.1](operations.md#ops-71-what-an-assignment-binds); landing evidence per
-[Implementation Done](../../crw-canon/references/linear-model.md#implementation-done).
+[Implementation Done](../../crw-canon/references/tracking-model.md#implementation-done).
 Action: record the verified outcome and its evidence pointer, and execute only what remains. Do not
 reopen a finished project, re-verify a landing already verified at the same revision, or hand its
 parent a brief it has already delivered. Completing the initiative still needs its finish condition
