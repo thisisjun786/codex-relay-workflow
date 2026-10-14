@@ -984,7 +984,7 @@ any row is written. `crw flow shadow` replays either from the trace and names th
   | --- | --- |
   | `prepared` | publishes the first step (the directory an earlier process made is the call's) |
   | `step_published` | answers first a dispatch report the owner wrote that no process answered (it waits in the inbox), then looks the step up on the host - the subagent that carries the marker for a spawn, the marker turn on the subagent for a `send_input` (a repair is never sent twice) - and binds what it finds; else publishes the same step again |
-  | `thread_started` | adopts the subagent the row names and writes only its `turn_started` (nothing is spawned or published again; one the host does not know, or shows `notLoaded` or `systemError`, for `LostAfter` loses the attempt, and the gate decides the next), then reads it as after `turn_started` |
+  | `thread_started` | adopts the subagent the row names and writes only its `turn_started` (nothing is spawned or published again; one the host does not know, or shows `notLoaded` or `systemError`, for `LostAfter` loses the attempt, and the gate decides the next; a read the host cannot answer judges nothing and leaves that time as it is, as in the harvest), then reads it as after `turn_started` |
   | `turn_started` | retracts the step file the dead process left and reads the bound subagent: harvests a completed turn, waits for a running one, loses a lost one |
   | `session_attempt_lost` | closes the old subagent and spawns the next attempt |
 

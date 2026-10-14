@@ -127,6 +127,67 @@ func TestSessionAdoptLosesAGoneSubagentAfterLostAfter(t *testing.T) {
 	}
 }
 
+// flakyReads is a host whose reads of agent-1 fail every third time, as a control socket that does not answer for a moment.
+type flakyReads struct {
+	*goneClock
+	mu sync.Mutex
+	n  int
+}
+
+func (h *flakyReads) ReadAgent(ctx context.Context, id string) (SessionAgent, error) {
+	if id == "agent-1" {
+		h.mu.Lock()
+		h.n++
+		fail := h.n%3 == 0
+		h.mu.Unlock()
+		if fail {
+			return SessionAgent{}, errors.New("the control socket is not answering")
+		}
+	}
+	return h.goneClock.ReadAgent(ctx, id)
+}
+
+// A read of the recorded subagent the host cannot answer judges nothing, in the adoption as in the harvest: the time the subagent
+// has been gone stays as it is, so a subagent the host shows gone between failed reads is lost LostAfter after it was first shown
+// gone, and the next attempt completes the call.
+func TestSessionAdoptKeepsTheGoneTimeOverAFailedRead(t *testing.T) {
+	k := newE2aKit(t, deathAt(EvThreadStarted))
+	k.orch.answer = func(st Step, _ string, _ int) orchAnswer {
+		if k.phaseNow() == 1 {
+			return orchAnswer{hang: true}
+		}
+		return orchAnswer{edit: "P:" + st.Op}
+	}
+	k.die(e2aBuild)
+	k.host.set("agent-1", func(a *fakeAgent, _ *SessionTurn) { a.gone = true })
+	host := &flakyReads{goneClock: &goneClock{fakeSessionHost: k.host}}
+	var lostAt time.Time
+	res := k.resumeWithin(e2aBuild, 5*time.Second, func() {
+		k.cfg.Host = host
+		k.h.cfg.Journal = &onRow{Journal: k.mem, event: EvSessionAttemptLost, f: func(Event) { lostAt = time.Now() }}
+	})
+	rows := k.rowsOf("exe")
+	if res.Status != RunCompleted {
+		t.Fatalf("the resumed run %s %s: the gone subagent was never lost; rows %s", res.Status, res.Error, eventsOf(rows))
+	}
+	if got := value[[]any](t, res); got[0] != "completed" {
+		t.Fatalf("the resumed call %v; rows %s", got, eventsOf(rows))
+	}
+	lost := rowsNamed(rows, EvSessionAttemptLost)
+	if len(lost) != 1 || rowStr(lost[0].Data, "host_status") != "notFound" || rowInt(lost[0].Data, "attempt") != 1 {
+		t.Fatalf("session_attempt_lost %v, want attempt 1 lost with host_status notFound", lost)
+	}
+	host.mu.Lock()
+	failed := host.n / 3
+	host.mu.Unlock()
+	host.goneClock.mu.Lock()
+	first := host.goneClock.first
+	host.goneClock.mu.Unlock()
+	if failed == 0 || first.IsZero() || lostAt.Sub(first) < k.cfg.LostAfter {
+		t.Errorf("the attempt was lost %s after the host first showed its subagent gone (%d failed reads), want at least LostAfter %s", lostAt.Sub(first), failed, k.cfg.LostAfter)
+	}
+}
+
 // The adoption's lost path passes the gate before it binds the next attempt, as the harvest's does: a run that is paused (or a node
 // that was stopped) when the recorded subagent is lost publishes no step for the next attempt and holds the call.
 func TestSessionAdoptLossPassesTheGate(t *testing.T) {

@@ -877,16 +877,20 @@ func (c *callRun) sessionAdopt(turnCtx, ctx context.Context, k int, op, input st
 			return nil, CallResult{}, false, nil
 		}
 		// the subagent is gone as the harvest judges a bound one (hostGone): unknown to the host, or a thread it shows notLoaded or
-		// systemError (CRW-1392)
+		// systemError (CRW-1392). A read the host cannot answer judges nothing: the time it has been gone stays as it is, as in the
+		// harvest (sessionRead)
 		ag, err := sc.Host.ReadAgent(turnCtx, s.agent)
-		status := ""
+		status, judged := "", true
 		switch {
 		case errors.Is(err, ErrSessionAgentNotFound):
 			status = "notFound"
-		case err == nil && hostGone(ag.Status):
+		case err != nil:
+			judged = false
+		case hostGone(ag.Status):
 			status = ag.Status
 		}
 		switch {
+		case !judged:
 		case status == "":
 			gone = time.Time{}
 		case gone.IsZero():
