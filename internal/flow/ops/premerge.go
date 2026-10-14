@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/reviewadapter"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/acceptance/premerge"
 )
 
@@ -59,6 +61,39 @@ func AssemblePremerge(in PremergeInput) (premerge.Record, error) {
 		rec.Dispositions.Items = append(rec.Dispositions.Items, premerge.Item{Ref: need, Class: "blocking"})
 	}
 	return rec, nil
+}
+
+// UnitCheckVerdict is the verdict a unit check stands for when crw.accept assembles a premerge record from its record (CRW-1456):
+// a unit check judges the head and leaves findings, but no model judges the node's criteria one by one. Every criterion of the
+// node's plan (expect) passes on the evidence of the passing verification of the head (its digest) and of the check (its call)
+// that left no blocking finding; each finding is a defect named by its finding id. A check that gave no judgment, that did not
+// verify, or that verified over a finding that blocks is no verified verdict (an error). An empty expect gives a verdict with no
+// criterion, which AssemblePremerge refuses: a node whose plan names no criterion is never accepted on a unit check.
+func UnitCheckVerdict(res reviewadapter.Result, call, verification string, expect []string) (ReviewVerdict, error) {
+	switch {
+	case res.State != reviewadapter.StateOK:
+		return ReviewVerdict{}, fmt.Errorf("unit check %s gave no judgment (state %s)", call, res.State)
+	case res.Verdict != reviewadapter.VerdictVerified:
+		return ReviewVerdict{}, fmt.Errorf("unit check %s ruled %q, not verified", call, res.Verdict)
+	}
+	for _, f := range res.Findings {
+		if premerge.Blocks(f.Severity, f.Impact) {
+			return ReviewVerdict{}, fmt.Errorf("unit check %s is verified over finding %s (%s %s), which blocks", call, f.ID, f.Severity, f.Impact)
+		}
+	}
+	v := ReviewVerdict{Verdict: reviewadapter.VerdictVerified, Criteria: []Criterion{}, Defects: []Defect{}, Summary: "unit check " + call + ": verified"}
+	family := res.EngineFamily
+	if family == "" {
+		family = execution.ModelFamily(res.Model)
+	}
+	evidence := fmt.Sprintf("verification %s of the head passed; unit check %s (%s %s) left no blocking finding", verification, call, family, res.Model)
+	for _, id := range expect {
+		v.Criteria = append(v.Criteria, Criterion{ID: id, Met: true, Evidence: evidence})
+	}
+	for _, f := range res.Findings {
+		v.Defects = append(v.Defects, Defect{Ref: f.ID, Kind: "other", Severity: f.Severity, Impact: f.Impact, Introduced: true, File: f.File, Line: f.Line, Finding: f.Text})
+	}
+	return v, nil
 }
 
 // PremergeNeeds are the findings of a record the judgment asks a disposition for, in the order it asks.

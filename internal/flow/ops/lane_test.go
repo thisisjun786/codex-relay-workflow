@@ -1113,3 +1113,198 @@ func TestReviewPacketNamesTheImpactVocabulary(t *testing.T) {
 		}
 	}
 }
+
+// acceptCapture is the relay of a test that reads what crw.accept asked of it: it keeps every AcceptRequest and accepts it.
+type acceptCapture struct {
+	*stubRelay
+	got []AcceptRequest
+}
+
+func (c *acceptCapture) Accept(_ context.Context, r AcceptRequest) (AcceptResult, error) {
+	c.got = append(c.got, r)
+	return AcceptResult{Accepted: true, AcceptanceID: "acc-A"}, nil
+}
+
+// CRW-1456: crw.accept assembles the premerge record of a head from a unit-check record when no newer verified review stands on
+// it. The record's grader is the unit check's pair and prompt, every criterion of the node's plan passes on the evidence of the
+// passing verification and the clean check, and each finding is a defect named by its finding id. A check that is not verified,
+// that gave no judgment, or that saw another tree than the head's is no basis; a node whose plan names no criterion has none.
+func TestAcceptAssemblesPremergeFromAUnitCheckRecord(t *testing.T) {
+	head, base := strings.Repeat("a", 40), strings.Repeat("b", 40)
+	criteria, vdigest := strings.Repeat("c", 64), strings.Repeat("d", 64)
+	const findingID = "0123456789abcdef"
+	type world2 struct {
+		*world
+		relay *acceptCapture
+		git   *int
+	}
+	setup := func(criteriaOfA []string) world2 {
+		w := newWorld(t)
+		w.relay.plan = planOfNodes(map[string]string{"A": "a1"}, "A")
+		w.relay.plan.Nodes[0].Criteria = criteriaOfA
+		w.ledgered(true, designOf("A"))
+		w.must("release", "plan-1", "A", "M")
+		capture := &acceptCapture{stubRelay: w.relay}
+		w.lane.d.Relay = capture
+		calls := 0
+		w.lane.d.Git = func(context.Context, string, []string, ...string) (string, error) {
+			calls++
+			return "", errors.New("this test runs no git")
+		}
+		return world2{world: w, relay: capture, git: &calls}
+	}
+	appendRow := func(w world2, op, callID string, data map[string]any) {
+		b, _ := json.Marshal(data)
+		var round map[string]any
+		_ = json.Unmarshal(b, &round)
+		w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: callID, Op: op, Event: engine.EvCompleted, Data: round})
+	}
+	commitRow := func(w world2, tree string) {
+		appendRow(w, OpCommit, "c_commit", map[string]any{"node": "A", "commit": head, "parent": base, "tree": tree, "result": "{}"})
+	}
+	verifyRow := func(w world2) {
+		appendRow(w, OpVerify, "c_verify", map[string]any{"node": "A", "head": head, "ok": true, "base": base, "digest": vdigest, "result": "{}"})
+	}
+	finding := func(severity, impact string) map[string]any {
+		return map[string]any{"id": findingID, "severity": severity, "impact": impact, "file": "x.go", "line": 7, "text": "a nit"}
+	}
+	unitCheck := func(w world2, state, verdict string, findings []any, extra map[string]any) {
+		res, _ := json.Marshal(map[string]any{"state": state, "detail": "", "verdict": verdict, "findings": findings, "engine_family": "grok", "model": "grok-4.7-medium",
+			"effort": "medium", "guide_rev": "g1", "prompt_digest": "pd-unit", "fingerprint_before": "t-head", "fingerprint_after": "t-head", "elapsed_ms": 1})
+		data := map[string]any{"role": "unit-check", "node": "A", "execution_id": "exec-A", "tree": "t-head", "criteria_digest": criteria, "result": string(res)}
+		for k, v := range extra {
+			data[k] = v
+		}
+		appendRow(w, OpUnitCheck, "c_uc", data)
+	}
+	clean := func() []any { return []any{finding("P3", premerge.MinorSeparable)} }
+	refused := func(w world2, reason string) {
+		t.Helper()
+		_, err := w.op("accept", "A", head)
+		if err == nil || ReasonOf(err.Error()) != reason {
+			t.Errorf("crw.accept: %v, want refused %s", err, reason)
+		}
+		if len(w.relay.got) != 0 {
+			t.Errorf("the relay was asked to accept: %+v", w.relay.got)
+		}
+	}
+
+	// a pre-commit unit check of the head's tree, no review: the premerge record is the unit check's
+	w := setup([]string{"first", "second"})
+	commitRow(w, "t-head")
+	verifyRow(w)
+	unitCheck(w, "ok", "verified", clean(), nil)
+	if _, err := w.op("accept", "A", head); err != nil {
+		t.Fatalf("crw.accept on a unit check: %v", err)
+	}
+	if len(w.relay.got) != 1 {
+		t.Fatalf("the relay was asked %d times", len(w.relay.got))
+	}
+	got := w.relay.got[0]
+	if got.ReviewerCall != "c_uc" || got.CriteriaDigest != criteria || got.Head != head || got.Base != base {
+		t.Errorf("accept request %+v", got)
+	}
+	rec, err := premerge.Decode(got.Premerge)
+	if err != nil {
+		t.Fatalf("premerge: %v", err)
+	}
+	if rec.Grader != (premerge.Grader{Model: "grok-4.7-medium", Effort: "medium", PromptDigest: "pd-unit"}) || rec.CriteriaDigest != criteria || rec.Issue != "CRW-A" {
+		t.Errorf("premerge record %+v", rec)
+	}
+	if len(rec.Criteria) != 2 {
+		t.Errorf("criteria %+v, want c1 and c2", rec.Criteria)
+	}
+	for _, id := range []string{"c1", "c2"} {
+		c := rec.Criteria[id]
+		if c.Verdict != "PASS" || !strings.Contains(c.Evidence, vdigest) || !strings.Contains(c.Evidence, "c_uc") {
+			t.Errorf("criterion %s: %+v", id, c)
+		}
+	}
+	if len(rec.Defects) != 1 || rec.Defects[0].ID != findingID || rec.Defects[0].Severity != "P3" || rec.Defects[0].Impact != premerge.MinorSeparable || len(rec.Dispositions.Items) != 0 {
+		t.Errorf("defects %+v, dispositions %+v", rec.Defects, rec.Dispositions.Items)
+	}
+
+	// a verified record over a blocking finding is no verified check
+	w = setup([]string{"first", "second"})
+	commitRow(w, "t-head")
+	verifyRow(w)
+	unitCheck(w, "ok", "verified", []any{finding("P3", "core_function")}, nil)
+	refused(w, "reviewer_not_verified")
+
+	// a check that gave no judgment is no basis
+	w = setup([]string{"first", "second"})
+	commitRow(w, "t-head")
+	verifyRow(w)
+	unitCheck(w, "quota", "", []any{}, nil)
+	refused(w, "reviewer_missing")
+
+	// a unit check needs a passing verification as a review does
+	w = setup([]string{"first", "second"})
+	commitRow(w, "t-head")
+	unitCheck(w, "ok", "verified", clean(), nil)
+	refused(w, "verification_missing")
+
+	// the head's commit row names another tree than the one the check saw
+	w = setup([]string{"first", "second"})
+	commitRow(w, "t-other")
+	verifyRow(w)
+	unitCheck(w, "ok", "verified", clean(), nil)
+	refused(w, "reviewer_missing")
+
+	// no commit row and no worktree: the tree of the head is unknown, so a pre-commit check does not match, and git is not asked
+	w = setup([]string{"first", "second"})
+	verifyRow(w)
+	unitCheck(w, "ok", "verified", clean(), nil)
+	refused(w, "reviewer_missing")
+	if *w.git != 0 {
+		t.Errorf("git was asked %d times with no worktree", *w.git)
+	}
+
+	// a check that names the head as its commit needs no tree
+	w = setup([]string{"first", "second"})
+	verifyRow(w)
+	unitCheck(w, "ok", "verified", clean(), map[string]any{"commit": head})
+	if _, err := w.op("accept", "A", head); err != nil || len(w.relay.got) != 1 || w.relay.got[0].ReviewerCall != "c_uc" {
+		t.Errorf("a unit check on the head's commit: %v %+v", err, w.relay.got)
+	}
+
+	// a node whose plan names no criterion is never accepted on a unit check
+	w = setup(nil)
+	commitRow(w, "t-head")
+	verifyRow(w)
+	unitCheck(w, "ok", "verified", clean(), nil)
+	refused(w, "premerge_missing")
+
+	// a verified review newer than the unit check is the basis; an older one is not
+	reviewRow := func(w world2) {
+		verdict, _ := json.Marshal(map[string]any{"verdict": "verified", "criteria": []any{map[string]any{"id": "c1", "met": true, "evidence": "e1"}, map[string]any{"id": "c2", "met": true, "evidence": "e2"}},
+			"defects": []any{}, "summary": "s"})
+		w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "c_rev", Op: "agent", Event: engine.EvPrepared,
+			Data: map[string]any{"role": "reviewer", "node": "A", "model": "gpt-x", "effort": "high", "prompt_digest": "pd-rev"}})
+		rr, _ := json.Marshal(ReviewResult{State: StateVerdict, Verdict: verdict, Findings: []FindingRef{}, Head: head, CriteriaDigest: strings.Repeat("e", 64), Call: Brief{CallID: "c_rev"}})
+		appendRow(w, OpReview, "c_review", map[string]any{"node": "A", "head": head, "criteria_digest": strings.Repeat("e", 64), "state": StateVerdict, "verdict": "verified", "call": "c_rev", "result": string(rr)})
+	}
+	for _, reviewLast := range []bool{true, false} {
+		w = setup([]string{"first", "second"})
+		commitRow(w, "t-head")
+		verifyRow(w)
+		if reviewLast {
+			unitCheck(w, "ok", "verified", clean(), nil)
+			reviewRow(w)
+		} else {
+			reviewRow(w)
+			unitCheck(w, "ok", "verified", clean(), nil)
+		}
+		if _, err := w.op("accept", "A", head); err != nil || len(w.relay.got) != 1 {
+			t.Fatalf("review last %v: %v %+v", reviewLast, err, w.relay.got)
+		}
+		want, grader := "c_uc", "pd-unit"
+		if reviewLast {
+			want, grader = "c_rev", "pd-rev"
+		}
+		rec, err := premerge.Decode(w.relay.got[0].Premerge)
+		if err != nil || w.relay.got[0].ReviewerCall != want || rec.Grader.PromptDigest != grader {
+			t.Errorf("review last %v: basis %s grader %+v (%v), want %s", reviewLast, w.relay.got[0].ReviewerCall, rec.Grader, err, want)
+		}
+	}
+}
