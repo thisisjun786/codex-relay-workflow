@@ -526,3 +526,24 @@ func TestScriptResumeWithoutASpecCountsTheRunsSpending(t *testing.T) {
 		})
 	}
 }
+
+// TestResumedRunWarnsOfItsBudgetOnce (CRW-1278, Argon F4 on 2a082733): a run warns of its budget once. The first process spends 85 of the
+// spec's 100 tokens (past 80%) and writes the budget_warning row; the resume, which starts at 85, writes no second one when its first
+// call spends again, and is held budget_exhausted at the budget as before.
+func TestResumedRunWarnsOfItsBudgetOnce(t *testing.T) {
+	pw := newProcessWorld(t, threeCalls)
+	run := "run-warn-once"
+	pausedRun(t, pw, run, 85, func(s *Spec) { s.Decision, s.TokenBudget = "ud-night", 100 })
+	if w := budgetWarnings(t, pw, run); len(w) != 1 || num(w[0].Data, "spent") != 85 {
+		t.Fatalf("the first process's budget warnings %+v", w)
+	}
+	if code, out, errOut := pw.td.do("resume", run, "--state", pw.state); code != 0 {
+		t.Fatalf("the resume: exit %d %s %s", code, out, errOut)
+	}
+	if info := pw.info(run); info.Processes != 2 || info.Tokens != 125 || !contains(info.HeldReasons, engine.ReasonBudgetExhausted) {
+		t.Errorf("the resumed run: %+v", info)
+	}
+	if w := budgetWarnings(t, pw, run); len(w) != 1 {
+		t.Errorf("the run warned of its budget %d times: %+v", len(w), w)
+	}
+}

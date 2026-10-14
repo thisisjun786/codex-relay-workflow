@@ -314,6 +314,8 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 
 	e.startSeq = started.Seq
 	e.runBudget = StartedBudget(e.j.Events(), e.runID)
+	// a run warns of its budget once: a resumed run whose journal holds its budget_warning row writes no second one (CRW-1278)
+	e.warned.Store(budgetWarned(e.j.Events(), e.runID))
 	if cfg.SpentBefore > 0 {
 		e.spent.Store(cfg.SpentBefore)
 		if cfg.TokenBudget > 0 && cfg.SpentBefore >= cfg.TokenBudget {
@@ -573,7 +575,7 @@ func (e *Engine) pauseReason() string {
 }
 
 // addTokens accounts a turn's tokens against the run's ceiling: 80% gives an info event, 100% pauses the run. spent is the run's
-// figure, the earlier processes' included (Config.SpentBefore).
+// figure, the earlier processes' included (Config.SpentBefore), and the info event is the run's one (budgetWarned).
 func (e *Engine) addTokens(n int64) {
 	spent := e.spent.Add(n)
 	total := e.cfg.TokenBudget

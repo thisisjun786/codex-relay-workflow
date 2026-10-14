@@ -63,3 +63,15 @@ func StartedBudget(events []Event, runID string) int64 {
 	}
 	return 0
 }
+
+// budgetWarned reports whether the journal holds a budget_warning row of the run. A run warns of its budget once (CRW-1278): a resume
+// that starts at or past 80% of its ceiling after an earlier process warned writes no second row, and one whose earlier processes
+// never warned (they had no ceiling, or spent less) warns when it reaches 80% of its own.
+func budgetWarned(events []Event, runID string) bool {
+	for _, ev := range events {
+		if ev.Kind == KindFlow && ev.RunID == runID && ev.Event == "budget_warning" {
+			return true
+		}
+	}
+	return false
+}
