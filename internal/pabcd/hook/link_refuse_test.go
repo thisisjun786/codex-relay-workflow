@@ -46,7 +46,7 @@ func TestHooksFailOpenWithAWarningOnALinkedStateTree(t *testing.T) {
 	}
 
 	answer := SessionHookSessionStart(SessionHookSessionStartPayload{Cwd: cwd, SessionID: "fresh"})
-	if !strings.Contains(answer, `"hookEventName":"SessionStart"`) || !strings.Contains(answer, sessions+" is a symbolic link") ||
+	if !strings.Contains(answer, `"hookEventName":"SessionStart"`) || !strings.Contains(answer, sessions+" is a symlink (symbolic link)") ||
 		!strings.Contains(answer, "No PABCD state was created") {
 		t.Errorf("SessionStart answer %q", answer)
 	}
@@ -56,7 +56,7 @@ func TestHooksFailOpenWithAWarningOnALinkedStateTree(t *testing.T) {
 	unchanged("SessionStart")
 
 	a := PromptSubmitHandle(PromptSubmitPayload{Cwd: cwd, SessionID: stopSID, Prompt: "orchestrate A", TurnID: "t1", PabcdEnabled: true}, "linux", env)
-	if !strings.Contains(a, "was not applied") || !strings.Contains(a, sessions+" is a symbolic link") {
+	if !strings.Contains(a, "was not applied") || !strings.Contains(a, sessions+" is a symlink (symbolic link)") {
 		t.Errorf("orchestrate command answer %q", a)
 	}
 	unchanged("an orchestrate command")

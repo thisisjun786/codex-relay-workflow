@@ -27,7 +27,7 @@ var ErrLink = errors.New("symbolic link")
 
 // linkError names path as the refused link.
 func linkError(path string) error {
-	return fmt.Errorf("%s is a symbolic link; CRW does not write through a link in its state tree: %w", path, ErrLink)
+	return fmt.Errorf("%s is a symlink (symbolic link); CRW does not write through a link in its state tree: %w", path, ErrLink)
 }
 
 // RequireDir is nil when path is a directory itself, judged by Lstat, which does not follow a link. A symbolic link (dangling or
