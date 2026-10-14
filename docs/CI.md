@@ -422,15 +422,21 @@ so pass a larger `-timeout` to it.
 
 #### The memory-backed temporary root (CRW-1262)
 
-The `TestMain` of `internal/manage` (`core_tmpfs_test.go`) runs the package in `crw-manage-tmp-<pid>-*` under `/dev/shm` when that is fit,
+The `TestMain` of `internal/manage` (`core_tmpfs_test.go`) runs the package in `crw-manage-tmp-<pid>` under `/dev/shm` when that is fit,
 so the roughly 16,000 fsyncs of a run (a stalled disk made one test take 229 s and the package 591 s) do not wait for the disk. The
 production store and its fsync are not touched; the tests assert no durability a sync gives. The root is chosen only if the base has at
 least 2 GiB and 20,000 inodes free (`statfs`) **and** a script written in it runs; otherwise the tests stay on the `TMPDIR` the caller set. A
 test binary a test starts again (the supervisor child, any helper that goes through `TestMain`) reads the root its starter named in
-`CRW_MANAGE_TEST_TMPFS_ROOT` (`<pid>:<root>`; honoured only for a live pid and a directory of ours with the `crw-manage-tmp-` prefix),
+`CRW_MANAGE_TEST_TMPFS_ROOT` (`<pid>:<root>`; honoured only for a live pid and a directory of ours named `crw-manage-tmp-<that pid>`),
 uses it, and makes and removes none; the process that made the root removes it after `m.Run`. A run that a timeout or a signal killed
-leaves its root (it is memory), and the next run removes the `crw-manage-tmp-<pid>-*` roots whose pid is gone. To see them:
+leaves its root (it is memory), and the next run removes the `crw-manage-tmp-<pid>` roots whose pid is gone. To see them:
 `ls -d /dev/shm/crw-manage-tmp-*`. Pinned by the `TestTmpfsRoot*` tests.
+
+Measured on the shared host with `go test -count=1 ./internal/manage/` through `heavy_slot.sh` (one run each, at the same head apart from this
+change; the disk was not stalled, so this is the floor of the gain): 87.8 s on the disk `TMPDIR` at load5 24.7 to 21.8, and 61.9 s in the
+memory root at load5 18.6 to 16.8. `strace -f -c -e trace=fsync,fdatasync` on the test binary counts 21,857 `fsync` calls both ways (the
+production code still syncs; the calls go to memory), with 7.00 s spent in them on the disk and 0.68 s in memory. A stalled disk
+(229 s for one test, 591 s for the package) is the cost the memory root takes out, as the fsyncs no longer wait for it.
 
 ## Leftover isolation trees
 
