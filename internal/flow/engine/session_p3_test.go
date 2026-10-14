@@ -227,29 +227,39 @@ return [r.status, more.status, more.reason]`))
 
 // CRW-1392: a step the bus cannot write for good (EACCES on the steps directory) is still written again at the poll and never ends
 // the call (fail open), and the record shows how long: step_unwritten is written at the first failure and again at the 10th, the
-// 100th, ... failure, each with the count and the first and the last time, and a closing row when the step is written or the turn
-// ends.
+// 100th, ... failure, each with the count and the first and the last time, and a closing row whenever a failure row was written:
+// when the step is written (after any number of failures, a power of ten among them) or the turn ends.
 func TestSessionStepBusPermanentFailureIsCounted(t *testing.T) {
-	t.Run("written at last", func(t *testing.T) {
-		k := newSessionKit(t)
-		k.cfg.Bus = &failingBus{FileStepBus: k.bus, fails: 25}
-		got := value[string](t, k.h.run(`const r = await agent.call('build node n1', { agentType: 'executor', label: 'exe', node: 'n1', schema: RECEIPT })
+	for _, tc := range []struct {
+		name  string
+		fails int
+		want  string
+	}{
+		{name: "written at last", fails: 25, want: "1/<nil>,10/<nil>,25/true"},
+		{name: "written after exactly ten failures", fails: 10, want: "1/<nil>,10/<nil>,10/true"},
+		{name: "written after one failure", fails: 1, want: "1/<nil>,1/true"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			k := newSessionKit(t)
+			k.cfg.Bus = &failingBus{FileStepBus: k.bus, fails: tc.fails}
+			got := value[string](t, k.h.run(`const r = await agent.call('build node n1', { agentType: 'executor', label: 'exe', node: 'n1', schema: RECEIPT })
 return r.status`))
-		if got != "completed" {
-			t.Fatalf("status %s", got)
-		}
-		warn := flowRows(k.h.journal, EvStepUnwritten)
-		var counts []string
-		for _, w := range warn {
-			counts = append(counts, fmt.Sprintf("%d/%v", rowInt(w.Data, "failures"), w.Data["written"]))
-			if rowStr(w.Data, "first_at") == "" || rowStr(w.Data, "last_at") == "" || rowStr(w.Data, "input_state") != "not_delivered" {
-				t.Errorf("step_unwritten %v names no first and last time", w.Data)
+			if got != "completed" {
+				t.Fatalf("status %s", got)
 			}
-		}
-		if strings.Join(counts, ",") != "1/<nil>,10/<nil>,25/true" {
-			t.Errorf("step_unwritten counts %v, want the 1st, the 10th and the closing row of 25 failures, written", counts)
-		}
-	})
+			warn := flowRows(k.h.journal, EvStepUnwritten)
+			var counts []string
+			for _, w := range warn {
+				counts = append(counts, fmt.Sprintf("%d/%v", rowInt(w.Data, "failures"), w.Data["written"]))
+				if rowStr(w.Data, "first_at") == "" || rowStr(w.Data, "last_at") == "" || rowStr(w.Data, "input_state") != "not_delivered" {
+					t.Errorf("step_unwritten %v names no first and last time", w.Data)
+				}
+			}
+			if strings.Join(counts, ",") != tc.want {
+				t.Errorf("step_unwritten counts %v, want %s: the failure rows and the closing row of %d failures, written", counts, tc.want, tc.fails)
+			}
+		})
+	}
 	t.Run("never written", func(t *testing.T) {
 		k := newSessionKit(t)
 		bus := &failingBus{FileStepBus: k.bus, fails: 1 << 30}

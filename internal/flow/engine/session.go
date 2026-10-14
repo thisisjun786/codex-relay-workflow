@@ -765,9 +765,9 @@ func (c *callRun) sessionBindStopped(ctx context.Context, k int, op, marker stri
 }
 
 // stepUnwritten is the record of a step the bus could not write: step_unwritten flow rows (input_state not_delivered, nothing was
-// sent) at the 1st, 10th, 100th, ... failure, each with the failures so far and the first and last time, and a closing row: `written:
-// false` when the turn ends with the step unwritten, `written: true` when a step whose record had repeated (ten failures or more) is
-// written after a failure the rows did not show. A failure of a few polls is told by its first row.
+// sent) at the 1st, 10th, 100th, ... failure, each with the failures so far and the first and last time, and a closing row whenever
+// a failure row was written: `written: false` when the turn ends with the step unwritten, `written: true` when the step is written,
+// after any number of failures.
 type stepUnwritten struct {
 	c               *callRun
 	k, attempt      int
@@ -789,7 +789,7 @@ func (u *stepUnwritten) failed(err error, now time.Time) {
 }
 
 func (u *stepUnwritten) close(written bool) {
-	if !written && u.failures > 0 || written && u.shown >= 10 && u.failures > u.shown {
+	if u.shown > 0 {
 		u.row(&written)
 	}
 }

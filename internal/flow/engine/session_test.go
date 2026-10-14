@@ -844,8 +844,8 @@ func (b *failingBus) Publish(st Step) error {
 }
 
 // CRW-1367: a step that could not be written was sent to nobody. The run records it as not dispatched (a step_unwritten warning,
-// input_state not_delivered) and writes it again, and the call goes on: no outcome_unknown, no dispatch_unknown escalation and no
-// recovery hold of the node.
+// input_state not_delivered, and its closing row once the step is written, CRW-1392) and writes it again, and the call goes on: no
+// outcome_unknown, no dispatch_unknown escalation and no recovery hold of the node.
 func TestSessionStepBusWriteFailureIsNotDispatched(t *testing.T) {
 	k := newSessionKit(t)
 	bus := &failingBus{FileStepBus: k.bus, fails: 3}
@@ -859,9 +859,10 @@ return r.status`)
 		t.Errorf("rows %s, want %s", got, oneAttempt)
 	}
 	warn := flowRows(k.h.journal, "step_unwritten")
-	if len(warn) != 1 || rowStr(warn[0].Data, "input_state") != "not_delivered" || !strings.Contains(rowStr(warn[0].Data, "error"), "no space left") ||
-		rowStr(warn[0].Data, "marker") != k.rowsOf("exe")[0].CallID+"/t1-a1" {
-		t.Errorf("step_unwritten rows %v, want one not_delivered warning naming the marker and the error", warn)
+	if len(warn) != 2 || rowStr(warn[0].Data, "input_state") != "not_delivered" || !strings.Contains(rowStr(warn[0].Data, "error"), "no space left") ||
+		rowStr(warn[0].Data, "marker") != k.rowsOf("exe")[0].CallID+"/t1-a1" || warn[0].Data["written"] != nil ||
+		warn[1].Data["written"] != true || rowInt(warn[1].Data, "failures") != 3 {
+		t.Errorf("step_unwritten rows %v, want a not_delivered warning naming the marker and the error, and the closing row of its 3 failures, written", warn)
 	}
 	for _, e := range k.h.journal.Events() {
 		if e.Event == EvOutcomeUnknown || e.Event == "escalation" {

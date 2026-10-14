@@ -885,8 +885,8 @@ any row is written. `crw flow shadow` replays either from the trace and names th
   the run writes the flow warning `step_unwritten` (`marker`, `k`, `attempt`, `action`, `input_state: not_delivered`, `error`)
   and writes the step again at the poll until it can or the turn ends; the call is never ended unknown for it. A failure that does
   not pass shows how long in the record: the warning is written at the 1st, 10th, 100th, ... failure with `failures` and the
-  `first_at` and `last_at` times, and a closing one with `written: false` when the turn ends unwritten, or `written: true` when a
-  step whose warning repeated is written after a failure the rows did not show.
+  `first_at` and `last_at` times, and a closing one whenever a warning was written: `written: false` when the turn ends
+  unwritten, `written: true` when the step is written, after any number of failures.
 - The spawn message is short; the packet holds the rest:
 
   ```
