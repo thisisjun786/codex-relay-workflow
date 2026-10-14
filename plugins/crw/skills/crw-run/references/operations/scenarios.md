@@ -1,5 +1,7 @@
 # Scenarios
 
+Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../../crw-canon/references/hierarchy.md#the-levels).
+
 The situations the issue requires, each resolved against [the operations contract](../operations.md).
 Every scenario names what was observed, the clause that decides it, the required action, and what
 must survive. These are fixtures for the operations contract check, `crw-dev ci operations`, which

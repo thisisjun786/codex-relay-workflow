@@ -266,8 +266,8 @@ An explicit no-goal limit prevents goal mode; goal-free Run remains a separately
 authorized option. Keep narrower scope, pause and delivery limits in either mode.
 
 `crw-run` keeps implementation in the responsible independent child task for
-one issue, including that issue’s worktree and PR repairs. Each parent orchestrates
-one project and each child one issue. The coordinator selects scope,
+one issue, including that issue’s worktree and PR repairs. Each child (project session,
+relay role `parent`) runs one project and each issue child (relay role `child`) one issue. The coordinator selects scope,
 reviews results, checks CI, and performs authorized integration. Internal
 subagents assist within those tasks and do not replace the independent child.
 
@@ -322,7 +322,7 @@ repository label identifies its actual edit target. Project names need no produc
 and views remain the user's choice. See the shared
 [Linear operating model](plugins/crw/skills/crw-canon/references/linear-model.md#linear-operating-model).
 
-`crw-status` reports where the work actually is, by level from the manager down to the issue,
+`crw-status` reports where the work actually is, by level from the parent (repository session) down to the issue,
 and sends a gap one level down to its owner. When asked what to do next it distinguishes choosing
 a first step from choosing what follows a delivery, restates an ambiguous request to resolve
 intent and picks one evidence-backed action with a clear completion condition. A portfolio

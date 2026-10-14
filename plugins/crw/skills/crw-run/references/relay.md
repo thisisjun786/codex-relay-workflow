@@ -1,5 +1,7 @@
 # codex-session-relay
 
+Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../crw-canon/references/hierarchy.md#the-levels).
+
 Read when an assignment is actually HELD BY A RELAY. Ordinary `crw-run` does not need any of
 this: without a relay the existing dispatch, review, and correction rules stand unchanged, and
 nothing below becomes a prerequisite.

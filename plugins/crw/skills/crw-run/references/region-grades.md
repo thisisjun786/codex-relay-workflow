@@ -1,5 +1,7 @@
 # Release by region grade
 
+Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../crw-canon/references/hierarchy.md#the-levels).
+
 A DAG plan releases its nodes in parallel. This page says what a declared edit region means for that release, how to declare one, and what the parent does about an overlap once
 both branches exist. The scheduler's own description is `docs/relay/dag-scheduler.md` ("Edit regions"); this page is the procedure the parent follows around it.
 

@@ -1,5 +1,7 @@
 # Dispatch verification
 
+Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../crw-canon/references/hierarchy.md#the-levels).
+
 A dispatch can fail in four different places, and the four are routinely read as one.
 This reference holds the judgment cases that keep them apart: which fact establishes
 which verdict, what the recorded regression cases already decided, and what a missing

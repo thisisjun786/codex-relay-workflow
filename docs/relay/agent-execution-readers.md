@@ -1,5 +1,7 @@
 # Agent execution: the readers of the frozen tables
 
+Here the child (relay role `child`) is a relay role, read through [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+
 An agent node (R04) is released on the agent surface of `dag-release` and its rows are in `dag_agent_executions` and `dag_agent_closures` (and, from R05, `dag_agent_acceptances` and `dag_agent_integration_stages`). Nothing of it is ever written into a frozen table (`dag_releases`, `dag_node_executions`, `dag_acceptances`, `dag_verified_heads`, `dag_integration_stages`, `dag_acceptance_premerge`, `dag_acceptance_verifications`), so a reader of those tables that answers a question about a NODE sees only the relationship side of it. This page classifies every such reader, so the readers that look on both sides (`executionOf`, `releaseOf`, `acceptanceOf`, `agentIntegratedAt`, in `internal/relay/dagsched/agent_union.go`) have the list, and a reader that nobody classified fails a test.
 
 ## The set

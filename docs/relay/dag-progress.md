@@ -1,5 +1,7 @@
 # DAG progress
 
+Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+
 `dag-progress --plan P` answers how far a DAG plan has come: how many of its nodes stand in which stage, how much has been accepted and integrated, what the denominator was at every plan
 revision and whether it changed, why every node that is not moving is not moving, and where each node's relationship, thread and pull request are. It reads the relay store and nothing else, and
 it writes nothing. It follows the DAG execution contract (CRW-182) sections 1.3, 3.1, 7.4, 8 and 8.6; the plan is [the plan store](dag-plans.md) and the nodes' states are

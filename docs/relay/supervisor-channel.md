@@ -1,5 +1,7 @@
 # The supervisor channel, and what a readback is worth
 
+Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+
 Two relations carry messages here and they have never had the same machinery. A parent and its
 child exchange a completion and a correction, with a queue, a receipt, an acknowledgement and a
 verdict. A supervisor and a parent exchange instructions and reports, and until now the upward
@@ -141,7 +143,7 @@ carried by the envelope alone until somebody decides what an answer cannot do wi
    recipient it goes to, together with that relationship's parent-child deliveries to the same
    task, so one relationship's loop cannot wake a task more than the cap an hour through either
    queue, and a parent with many children is not held to one count for all of them. The upward
-   channel's `run:` and `initiative:` relationship ids are of the orchestrator class (60 an hour), as
+   channel's `run:` and `initiative:` relationship ids are of the `orchestrator` class (60 an hour), as
    the relationship of a project's live parent is; the minimum gap stays five seconds for every class.
    The consequence, said rather than implied: where one task is both a parent and a supervisor, a
    report can wait behind parent-child traffic to that same task through the gap, and through the
@@ -716,7 +718,7 @@ The kinds, the relationship each one goes through and the two ends are:
 | obligation_kind | relationship | from | to |
 | --- | --- | --- | --- |
 | `lead_report`, `lead_decision_request`, `lead_blocked`, `jun_decision_request` | `initiative:<key>` | the initiative's lead | the management seat above it (the store seat when no management edge stands) |
-| `flow_milestone_report`, `flow_project_blocked`, `flow_project_decision_request`, `flow_escalation`, `flow_completion`, `flow_no_node_started` | `project:<key>` | the project's owner (the orchestrator) | [the level above the project](#the-level-above-a-project): its management seat, else a legacy lead, else the store seat |
+| `flow_milestone_report`, `flow_project_blocked`, `flow_project_decision_request`, `flow_escalation`, `flow_completion`, `flow_no_node_started` | `project:<key>` | the project's owner (its owner thread) | [the level above the project](#the-level-above-a-project): its management seat, else a legacy lead, else the store seat |
 | `session_step_waiting` | `run:<id>` | the run | its owner, `flow_runs.actor_task_id` |
 
 `blocked` and `decision_request` are not among them: those are the event path's kinds, re-derived

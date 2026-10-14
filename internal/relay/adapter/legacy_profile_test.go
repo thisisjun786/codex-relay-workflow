@@ -15,14 +15,20 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
+// An armed request recorded before the role's policy required an MCP profile is replayed after it did, and the
+// replay is not refused with mcp_profile_required. The first start leaves the request create_armed by a creation
+// that fails after its thread started: the host refuses the standby turn, so the creation fails with the thread
+// retained (attemptedEffects holds no turn/start, so no standby recovery is tried) and the start ends
+// incomplete at creation_failed. It was a refused thread/name/set with a refused thread/resume for the standby
+// recovery until CRW-1313, which made a refused name a recorded warning and the creation accepted
+// (TestManagedStartReachesItsBusinessTurnWhenOnlyNamingIsRefused).
 func TestManagedLegacyProfileCLIReplay(t *testing.T) {
 	c := newManagedCLIOn(t, noMCPManagedPolicy, "gpt-5.4", "medium")
 	raw := c.request(nil)
-	c.host.Script("thread/name/set", fakehost.Reply{Error: &fakehost.RPCError{Code: -32000, Message: "name refused"}})
-	c.host.Script("thread/resume", fakehost.Reply{Error: &fakehost.RPCError{Code: -32000, Message: "temporarily refused"}})
+	c.host.Script("turn/start", fakehost.Reply{Error: &fakehost.RPCError{Code: -32000, Message: "standby turn refused"}})
 	out, _, code := c.start(raw)
 	var first map[string]any
-	if err := json.Unmarshal([]byte(out), &first); err != nil || code != contract.ExitRefused || first["reservationState"] != "create_armed" {
+	if err := json.Unmarshal([]byte(out), &first); err != nil || code != contract.ExitRefused || first["reservationState"] != "create_armed" || first["reason"] != "creation_failed" {
 		t.Fatalf("arm: %d %s", code, out)
 	}
 	if err := os.WriteFile(os.Getenv(execution.EnvPolicy), []byte(mcpManagedPolicy), 0600); err != nil {
@@ -53,6 +59,51 @@ func TestManagedLegacyProfileCLIReplay(t *testing.T) {
 	var replay map[string]any
 	if err := json.Unmarshal([]byte(out), &replay); err != nil || replay["reason"] == "mcp_profile_required" {
 		t.Fatalf("legacy preflight: %d %s", code, out)
+	}
+}
+
+// CRW-1313: a host that refuses only thread/name/set leaves the managed start's creation accepted with the naming
+// warning (titleWarning title_not_set) recorded on its receipt; the creation itself sends the standby turn, with no
+// standby recovery (no thread/resume before it), and the start reaches its business turn and is admitted.
+func TestManagedStartReachesItsBusinessTurnWhenOnlyNamingIsRefused(t *testing.T) {
+	c := newManagedCLIOn(t, noMCPManagedPolicy, "gpt-5.4", "medium")
+	c.host.Script("thread/name/set", fakehost.Reply{Error: &fakehost.RPCError{Code: -32000, Message: "name refused"}})
+	out, stderr, code := c.start(c.request(nil))
+	var answer map[string]any
+	if err := json.Unmarshal([]byte(out), &answer); err != nil || code != contract.ExitOk || answer["state"] != "admitted" || answer["stage"] != "business_accepted" || answer["reservationState"] != "attached" {
+		t.Fatalf("start: %d %s %s", code, out, stderr)
+	}
+	methods := []string{}
+	for _, request := range c.host.Requests() {
+		methods = append(methods, request.Method)
+	}
+	named, standby, resumed := -1, -1, -1
+	for i, method := range methods {
+		switch {
+		case method == "thread/name/set" && named < 0:
+			named = i
+		case method == "turn/start" && standby < 0:
+			standby = i
+		case method == "thread/resume" && resumed < 0:
+			resumed = i
+		}
+	}
+	if c.host.Count("thread/name/set") != 1 || c.host.Count("turn/start") != 2 || named < 0 || standby < named || resumed >= 0 && resumed < standby {
+		t.Fatalf("the creation did not send the standby turn itself, before any resume, and then the business turn: %v", methods)
+	}
+	a, err := Open(c.host.SocketPath, c.state, Options{Policy: registry.EnvironmentRolePolicy().BridgePolicy()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer a.Close()
+	create, _ := managed.OperationIDs("managed-pre")
+	receipt, err := (Managed{a}).GetOperation(context.Background(), create)
+	if err != nil {
+		t.Fatal(err)
+	}
+	warning, _ := receipt["titleWarning"].(map[string]any)
+	if receipt["status"] != "accepted" || receipt["title"] != nil || warning["code"] != "title_not_set" || receipt["turnId"] != "standby" {
+		t.Fatalf("creation receipt: %v", receipt)
 	}
 }
 

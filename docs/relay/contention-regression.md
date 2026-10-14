@@ -1,5 +1,7 @@
 # Contention and failure-recovery regression map
 
+Here the parent (relay role `parent`) is a relay role, read through [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+
 What each required scenario is proven by, which proof already existed, and which one
 this work added. A row that reuses earlier evidence names it so nobody re-derives it;
 a row that adds evidence names the new test. Clock provenance is a column because an

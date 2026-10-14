@@ -25,7 +25,7 @@ Records written under earlier names (the known-defects, the port records, the re
 
 Each layer is one Codex session bound by stable ID: the parent to its repository through its management seat, a child to one project ID, an issue child to one issue ID. That binding is what makes a layer. A title, a folder, a branch or a chat link is not, so identity stays on the stable IDs under [OPS-7.1](../../crw-run/references/operations.md#ops-71-what-an-assignment-binds) and [OPS-7.4](../../crw-run/references/operations.md#ops-74-three-levels-and-their-routing-identity). Each scope has one active execution owner. A subagent acquires no ownership by receiving a step, an internal helper agent (the helper role policy's) is no layer, and a service-management daemon of the operating system is a different thing that merely shares a name with the relay role `supervisor`.
 
-Writing the names down settles what they are called and nothing else. A display name in either language keys nothing, so no relationship id, assignment, goal, worktree or task title is regenerated because this section spells them out, and each layer keeps the title convention that already fixes it: a verified child follows [Set the app presentation and record](../../crw-plan/references/integrations.md#set-the-app-presentation-and-record), an issue child follows the [task titles of an issue child](../../crw-run/references/task-packet.md#child-task-titles), and a supervision task keeps its own name. A name is not a designation either: a request, a prompt, a title or a folder saying 부모, 자식, parent or child designates nobody, so what a session is stays something read from its binding rather than from what anyone called it.
+Writing the names down settles what they are called and nothing else. A display name in either language keys nothing, so no relationship id, assignment, goal, worktree or task title is regenerated because this section spells them out, and each layer's title is the one [Thread titles](#thread-titles) gives it. A name is not a designation either: a request, a prompt, a title or a folder saying 부모, 자식, parent or child designates nobody, so what a session is stays something read from its binding rather than from what anyone called it.
 
 | Layer | Bound to | Coordinates | Instructs |
 |---|---|---|---|
@@ -52,6 +52,28 @@ Bind each child by its stable project ID and each issue child by its issue ID. A
 Approvals and limits travel down without widening. The user's restrictions, approvals, settings and pause or cancel hold in the scope they were given, and being linked to a layer above is neither an expansion of authority nor a new goal ([OPS-7.3](../../crw-run/references/operations.md#ops-73-isolation-between-parents)). The role decides what goal a task opens, never the other way round. The parent opens none and runs no automatic loop, and an issue child keeps its own goal and its implementation loop. What a child opens is not this section's fact to hold: it is the decision [Start policy](../../crw-run/references/start-policy.md#roles-and-the-goal-each-one-opens) records, that record has already changed once, and it is read there rather than remembered. A coordination goal that does exist is its own and is never mixed with an issue child's implementation FSM, and an absent goal says what a task is waiting on rather than which role it is.
 
 This contract fixes the roles; it does not establish how a parent is instantiated. A session becomes the parent of a repository only by registering its management seat, and an initiative link by itself rebinds no existing child. The designation of the projects it orders, the completion boundary and the reuse of the children already running are in [Initiative supervision](../../crw-run/references/initiative-supervision.md). Start policy, creation authority and the limits that survive them stay where they already are in [crw-run](../../crw-run/SKILL.md#independent-implementation-tasks), and this section references them rather than keeping a second copy.
+
+## Thread titles
+
+Every Codex thread a layer runs in has a title, and this table is the one place each layer's title is fixed. The
+session that creates a thread names it right after `thread/start` with App Server `thread/name/set`, before the
+first turn, so the Codex app shows the title and never the first prompt sentence in its place.
+
+| Layer | Title | Rule | Who names it, and when |
+|---|---|---|---|
+| 총괄 (top session) | none | CRW does not create it, and keeps no rule for it | nobody in CRW |
+| 부모 (parent, the repository session) | `[CRW] 부모 · <owner>/<repo>` | the owner and name of the repository it represents, from its checkout's origin | its creator, `create_thread` with role `supervisor`, which takes the title from the checkout's origin when the caller gives none |
+| 자식 (child, the project session) | `[<product family>] <project summary>`, as `[CRW] 실사용 첫 시험 (P-CRW-140)` | [Set the app presentation and record](../../crw-plan/references/integrations.md#set-the-app-presentation-and-record) | its creator, `create_thread` with role `parent`, with the title the parent writes by that rule |
+| Issue child (the exception path, SP-CHILD-1) | `ISSUE-ID · <title>` | [Child task titles](../../crw-run/references/task-packet.md#child-task-titles) | the managed start, whose `create_thread` with role `child` puts the issue key in front of the title |
+| 서브에이전트 (subagents) | no title | the host lists no subagent thread in the app, and a step's marker identifies it | nobody |
+
+A creation that cannot name its thread by this table warns and records and goes on: the creation's receipt
+carries `titleWarning`, `title_unset` when no title was given or could be derived and `title_not_set` when the host
+refused `thread/name/set`, the bridge writes the same warning to its standard error, and the thread's first turn
+still starts. A creation is never refused for a name. A lost answer to `thread/name/set` is the creation's unknown
+outcome rather than a naming failure, and the replay of the same request settles it. A title is a display name: it
+keys nothing and designates nobody ([scope of each level](#scope-of-each-level)), and an explicit title the user
+gives a thread wins over this table.
 
 ## The message both relations are read by
 

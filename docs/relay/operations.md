@@ -1,5 +1,7 @@
 # Operating the relay
 
+Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+
 Who owns the state, who owns the daemon, and what an operator can ask it. The delivery
 contract itself is in [protocol-v1.md](protocol-v1.md) and the refusals that enforce it are
 in [invariants.md](invariants.md).
@@ -1078,10 +1080,10 @@ counted: a delivery attempt that failed before the send or found the recipient b
 transport that sent nothing and may be retried; a claim still in flight, or one whose outcome is
 unknown, counts until it settles. A relationship of class `orchestrator` - its parent holds the live
 parent binding of a project, the owner every reader of the linkage counts as the project's
-orchestrator, active or paused - has its own cap, `max_sends_per_orchestrator_relationship_per_hour`
-(60), because the orchestrator receives the results of every issue its project runs; the class is
+owner, active or paused - has its own cap, `max_sends_per_orchestrator_relationship_per_hour`
+(60), because the project's owner thread receives the results of every issue its project runs; the class is
 read from the binding, so a handover or a release changes it at once. The upward supervisor channel's
-`run:<id>` and `initiative:<key>` relationship ids (a run waking its orchestrator, a lead reporting to the
+`run:<id>` and `initiative:<key>` relationship ids (a run waking its owner thread, a lead reporting to the
 management seat above its initiative) have no relationships row to read a binding from and are of class
 `orchestrator` by their id: each carries everything below it through one id, so their cap is the 60 as
 well. The recipient's minimum gap of five seconds is the same for every class. The hour used to be one count per recipient, so a parent with ten children

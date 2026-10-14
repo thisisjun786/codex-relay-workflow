@@ -1,5 +1,7 @@
 # Managed marker, completion state, and hook adjudication
 
+Here the child (relay role `child`) is a relay role, read through [the level table](../../crw-canon/references/hierarchy.md#the-levels).
+
 Read when deciding whether a Codex hook may conclude that a managed assignment finished, or when
 implementing the marker, disposition, and blocking behaviour that later issues install. This
 reference DECIDES those rules; it installs nothing. No hook is registered by this contract, no PABCD

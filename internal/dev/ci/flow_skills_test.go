@@ -177,7 +177,7 @@ func runSectionProblems(section string, relay map[string]bool) []string {
 		`(?i)out-of-band [^.]*transition[^.]*(is )?(raised|goes) (to the manager )?as an escalation`,
 		`(?i)` + "`crw flow resume`",
 		// The run releases the child of an oversized issue; the thread sends it no task packet and no PABCD is armed.
-		`(?i)releases? the child of an oversized issue itself`,
+		`(?i)releases? the (issue )?child of an oversized issue itself`,
 		"`issue-lane`",
 		`(?i)sends? it no task packet`,
 	}) {

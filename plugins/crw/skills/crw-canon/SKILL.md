@@ -5,6 +5,8 @@ description: "Reference index for the rules that more than one CRW skill reads: 
 
 # CRW Canon
 
+Here the parent (repository session, relay role `supervisor`) is a layer of [the level table](references/hierarchy.md#the-levels).
+
 The shared library of the plugin. It is reference-only: it has no procedure of its own and is never loaded because a request sounds like it (`allow_implicit_invocation` is off). A skill reads a file here through a link, and a rule that lives here is stated here once and linked everywhere else, so a passage in another skill that disagrees with a file below is out of date.
 
 | File | What it decides | Read by |

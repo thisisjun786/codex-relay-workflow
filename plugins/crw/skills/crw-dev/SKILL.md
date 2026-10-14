@@ -485,7 +485,7 @@ its own active-skill context, so load only what the sub-task needs.
 Tokens are not the only shared resource. Parallel lanes and the task watching them
 typically use the same credentials and the same external API allowance, so polling
 competes with the work being polled. Before sustained observation, read the actual
-budget and reserve headroom for the workers; the child owns that
+budget and reserve headroom for the workers; [the child](../crw-canon/references/hierarchy.md#the-levels) (project session, relay role `parent`) owns that
 aggregate ([account for the resources](../crw-run/SKILL.md#account-for-the-resources-this-run-leaves-behind)).
 Rules: `crw-pabcd` `references/dispatch-surfaces.md` (DISPATCH-POLL-BUDGET-01) and
 `crw-loop` `references/waiting.md`.

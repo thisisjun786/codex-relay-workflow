@@ -1,5 +1,7 @@
 # Release gate
 
+Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](hierarchy.md#the-levels).
+
 The one rule for when an issue is released to an issue child. `crw-add-issue` fills the items, `crw-plan` applies them, `crw-tidy` supplements what is missing and `crw-run` checks the issue before any packet; each links here and restates nothing.
 
 ## The release gate

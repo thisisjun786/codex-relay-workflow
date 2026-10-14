@@ -1,5 +1,7 @@
 # What a message has to carry, once the envelope has said what it is
 
+Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+
 `relay-envelope/1` answers which relation a message belongs to, which direction it travels,
 what the recipient owes because it arrived, and how far it got. It stops there on purpose.
 It does not know that an assignment without a criteria digest is an instruction nobody can

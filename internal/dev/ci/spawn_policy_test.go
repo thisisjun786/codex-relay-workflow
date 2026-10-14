@@ -216,8 +216,9 @@ func TestSpawnPolicyRulesMatchEngine(t *testing.T) {
 				t.Errorf("the SP-EXPL-1 row does not name the notation %s: %q", n[1], expl)
 			}
 		}
-		if !regexp.MustCompile(`(?i)orchestrator[^|]*no explorer|no explorer[^|]*orchestrator`).MatchString(expl) {
-			t.Errorf("the SP-EXPL-1 row does not say an out-of-authority question goes to the orchestrator and to no explorer: %q", expl)
+		// CRW-1353: the owner thread is named by the level table, the child (project session).
+		if !regexp.MustCompile(`(?i)child[^|]*no explorer|no explorer[^|]*child`).MatchString(expl) {
+			t.Errorf("the SP-EXPL-1 row does not say an out-of-authority question goes to the child and to no explorer: %q", expl)
 		}
 	})
 

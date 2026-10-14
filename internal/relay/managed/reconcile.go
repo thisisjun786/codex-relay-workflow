@@ -482,13 +482,25 @@ func (r *startRun) orphanArchived(ctx context.Context) (bool, error) {
 }
 
 func creationMayHaveTurn(receipt map[string]any) bool {
-	effects, recorded := receipt["attemptedEffects"].([]any)
+	effects, _ := receipt["attemptedEffects"].([]any)
 	for _, effect := range effects {
 		if effect == "turn/start" {
 			return true
 		}
 	}
-	return receipt["turnId"] != nil || !recorded && receipt["title"] != nil
+	return receipt["turnId"] != nil || savedBeforeFirstTurn(receipt)
+}
+
+// savedBeforeFirstTurn reports whether the receipt is the one the bridge's create_thread saves right before it sends
+// turn/start, with no other save between them. That save comes after the naming (CRW-1313) and carries its outcome: the
+// name the host accepted (title), or the warning that the thread has none (titleWarning: thread/name/set was refused,
+// or the creation had no title to give). attemptedEffects is written only when the bridge's mutation ends, so a receipt
+// that kept no list and carries either one may have sent turn/start before its process stopped.
+func savedBeforeFirstTurn(receipt map[string]any) bool {
+	if _, recorded := receipt["attemptedEffects"].([]any); recorded {
+		return false
+	}
+	return receipt["title"] != nil || receipt["titleWarning"] != nil
 }
 
 // unreadableText is the one list of texts the host answers a read or a resume with when the thread
@@ -574,16 +586,17 @@ func (r *startRun) observe(ctx context.Context, base reconciliation, thread stri
 		if attemptedTurnStart(r.receipt) {
 			return base.stopped(reconTurnUnknown, "the creation sent turn/start and no answer came back (attemptedEffects); it is not sent again (I-473)"), nil
 		}
-	} else if r.receipt["title"] != nil {
-		// The bridge saves the title after thread/name/set and sends turn/start next without another save: a receipt that stopped here may have sent it.
-		return base.stopped(reconTurnUnknown, "the receipt saved the title, so turn/start may have been sent before the process stopped; it is not sent again (I-473)"), nil
+	} else if savedBeforeFirstTurn(r.receipt) {
+		// The bridge saves the naming's outcome, the title or its warning, and sends turn/start next without another save: a receipt that
+		// stopped here may have sent it.
+		return base.stopped(reconTurnUnknown, "the receipt saved the title or its naming warning, so turn/start may have been sent before the process stopped; it is not sent again (I-473)"), nil
 	}
 	base.state, base.detail = reconAdopted, fmt.Sprintf("thread %s exists and has no turn", thread)
 	return decision{action: "continue", thread: thread, rec: base}, nil
 }
 
 // attemptedTurnStart reports whether the creation's receipt recorded turn/start among the effects it tried. A receipt that kept no list has
-// not recorded it, which is what observe() reads as the title-only case.
+// not recorded it, which is what observe() reads as the save before the first turn (savedBeforeFirstTurn).
 func attemptedTurnStart(receipt map[string]any) bool {
 	effects, ok := receipt["attemptedEffects"].([]any)
 	if !ok {

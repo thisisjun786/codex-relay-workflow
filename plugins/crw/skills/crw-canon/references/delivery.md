@@ -1,5 +1,7 @@
 # Delivery
 
+Here the parent (repository session, relay role `supervisor`) and the child (project session, relay role `parent`) are layers of [the level table](hierarchy.md#the-levels).
+
 How work is delivered: which skill owns each operation, how an issue child starts, how a delivery is integrated, and what counts as evidence and handoff. The push authority itself stays in `crw-dev` (`DEV-GIT-PUSH-01`); this file points to it and does not restate it.
 
 ## Workflow ownership
