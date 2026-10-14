@@ -27,8 +27,8 @@ import (
 //
 // The refusals are input errors only (no head, a head git cannot resolve, authors of more than one model family, whose pairs one
 // execution row cannot hold): released false with the reason, nothing written at the relay. A named thread whose pair cannot be read back,
-// no named thread, and paths outside the node's regions are warnings of the row; the independence gate then refuses the review
-// (independence_unproven), and nothing else stops the land.
+// no named thread, and paths outside the node's regions are warnings of the row; with any named thread not read back, or none named, the
+// independence gate refuses the review (independence_unproven), and nothing else stops the land.
 
 // LandOpts are the head and the authors a land release names.
 type LandOpts struct {
@@ -277,26 +277,39 @@ func (l *Lane) landWorktree(ctx context.Context, node, commit string) (string, e
 	return wt, nil
 }
 
-// landAuthorModels are the observed author models a land release of the node recorded: its authors for crw.review.
+// landAuthorModels are the author models a land release of the node recorded: its authors for crw.review. A land one of whose named
+// authors was not read back has none (post-evaluation d2): that author may be of the reviewer's family, so the observed others do not
+// prove the review independent, and crw.review answers independence_unproven.
 func (r rows) landAuthorModels(node string) []string {
 	var out []string
 	for _, ev := range r.opRows(OpRelease) {
 		if dataStr(ev, "node") != node || dataStr(ev, "kind") != "land" || !dataBool(ev, "released") {
 			continue
 		}
+		var models []string
+		unobserved := false
 		list, _ := ev.Data["authors"].([]any)
 		for _, item := range list {
-			if a, ok := item.(map[string]any); ok && flag(a, "observed") && str(a, "model") != "" {
-				out = append(out, str(a, "model"))
+			if a, ok := item.(map[string]any); ok {
+				if flag(a, "observed") && str(a, "model") != "" {
+					models = append(models, str(a, "model"))
+				} else {
+					unobserved = true
+				}
 			}
 		}
 		// the authors of the data before the JSON round trip of a stored row
 		if typed, ok := ev.Data["authors"].([]LandAuthor); ok {
 			for _, a := range typed {
 				if a.Observed && a.Model != "" {
-					out = append(out, a.Model)
+					models = append(models, a.Model)
+				} else {
+					unobserved = true
 				}
 			}
+		}
+		if !unobserved {
+			out = append(out, models...)
 		}
 	}
 	return out

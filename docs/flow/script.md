@@ -440,7 +440,7 @@ fixes nothing. Its steps:
   records the commit, its tree, its base (the merge-base with the integration tip), the paths it changes and the authors with their pairs.
 - The gates are the lane's: `crw.verify` of that head (verification-record/1 of the exact tree), `crw.review` with a fresh reviewer whose
   model family has to differ from every author the release observed (`independence_refused` for one of the same family,
-  `independence_unproven` when no author pair was read back), and `crw.land` (`crw.accept`, the relay's agent acceptance, which judges the
+  `independence_unproven` when the pair of any author it names was not read back), and `crw.land` (`crw.accept`, the relay's agent acceptance, which judges the
   reviewer against the pair the execution records, then `crw.integrate`). They write the rows they write for a node of a project lane.
 - The only refusals are input errors (no head, a head git does not resolve, authors of more than one model family - one execution row
   records one author pair - and an issue that is not a node of the milestone) and the gates. A verification that fails, a review that is

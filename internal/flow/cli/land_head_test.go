@@ -104,8 +104,8 @@ func TestLandHeadLandsAHeadMadeOutsideARun(t *testing.T) {
 }
 
 // TestLandHeadKeepsTheIndependenceGate (CRW-1354): the same path with a subagent on the reviewer's model family (GPT) lands nothing: the
-// review is refused independence_refused (the gate, an escalation of the configuration), the relay is not asked to accept, and a head whose
-// authors the run cannot read back is independence_unproven. A gate refuses; nothing else does.
+// review is refused independence_refused (the gate, an escalation of the configuration), the relay is not asked to accept, and a head one
+// of whose authors the run cannot read back is independence_unproven. A gate refuses; nothing else does.
 func TestLandHeadKeepsTheIndependenceGate(t *testing.T) {
 	for _, c := range []struct {
 		name, reason string
@@ -113,6 +113,11 @@ func TestLandHeadKeepsTheIndependenceGate(t *testing.T) {
 	}{
 		{"same family", "independence_refused", func(l *laneLab) []string { return []string{l.authorThread("gpt-fake-worker", "high")} }},
 		{"no author read back", "independence_unproven", func(l *laneLab) []string { return []string{"0190a000-0000-7000-8000-ffffffffffff"} }},
+		// post-evaluation d2: an author of the head whose pair is not read back may be of the reviewer's family, so one observed author of
+		// another family does not prove the review independent
+		{"one author not read back", "independence_unproven", func(l *laneLab) []string {
+			return []string{l.authorThread("claude-fake-sonnet", "high"), "0190a000-0000-7000-8000-ffffffffffff"}
+		}},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
