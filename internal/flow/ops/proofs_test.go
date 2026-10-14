@@ -393,7 +393,7 @@ func TestRecordCallProofsNeverResend(t *testing.T) {
 	}
 	// a proof about the worktree is not consulted: a recording call whose row exists is never sent again
 	if !IsRecordOp("crw.tierStep") || IsRecordOp(OpCommit) || IsRecordOp("agent") {
-		t.Error("the record calls are releaseChild, escalate, reportUp, hold and tierStep")
+		t.Error("the record calls are escalate, reportUp, hold, tierStep and an old run's releaseChild")
 	}
 }
 

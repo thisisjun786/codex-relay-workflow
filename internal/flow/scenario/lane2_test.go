@@ -16,84 +16,55 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/workflows"
 )
 
-// A node the architect sized for a child is released as an issue child (a managed start of an issue-lane run), not to an
-// executor: no executor call is made for it, no agent slot is reserved, the child is recorded with the design revision, and the
-// other nodes of the milestone are not held up by it.
-func TestSizeFitChildReleasesIssueChild(t *testing.T) {
+// A node the architect sized for a child goes up as a size split (CRW-1415): the issue-child path is retired, so the lane escalates it
+// with reason size_split and detail child_retired, starts no child and calls no executor for it, closes its execution so no slot
+// stays held, and the other nodes of the milestone are not held up by it.
+func TestSizeFitChildEscalatesSizeSplitAndStartsNoChild(t *testing.T) {
 	nodes := []NodeSpec{
 		{ID: "A", Issue: "CRW-A", Title: "a big issue", Regions: []string{"a/"}, SizeFit: "child", SizeReason: "regions_gt3"},
 		{ID: "B", Issue: "CRW-B", Title: "issue B", Regions: []string{"b/"}},
 	}
 	l := NewLab(t, nodes...)
 	got := mustRunIncomplete(t, l)
-	if got.State != "incomplete" {
-		t.Fatalf("state %q: the child is not landed by this run", got.State)
-	}
-	if state, _ := laneOf(t, got, "A"); state != "child" {
-		t.Fatalf("lane A: %s", state)
+	if state, reason := laneOf(t, got, "A"); state != "escalated" || reason != "size_split" {
+		t.Fatalf("lane A: %s %s, want escalated size_split", state, reason)
 	}
 	if state, _ := laneOf(t, got, "B"); state != "landed" {
 		t.Fatalf("lane B: %s", state)
 	}
-	if len(l.Relay.Children) != 1 || l.Relay.Children[0].Node != "A" || l.Relay.Children[0].Reason != "regions_gt3" || l.Relay.Children[0].Revision != "r0" {
-		t.Fatalf("children %+v", l.Relay.Children)
+	var esc []engine.Event
+	for _, ev := range l.FlowRows(engine.EvEscalation) {
+		if str(ev.Data, "node") == "A" {
+			esc = append(esc, ev)
+		}
+	}
+	if len(esc) != 1 || esc[0].Op != ops.OpEscalate || str(esc[0].Data, "reason") != "size_split" || str(esc[0].Data, "detail") != "child_retired" {
+		t.Fatalf("escalations of A %+v, want one size_split with detail child_retired", esc)
+	}
+	if ev, _ := esc[0].Data["evidence"].(map[string]any); str(ev, "size_reason") != "regions_gt3" {
+		t.Errorf("the escalation of A carries evidence %v, want the size reason", esc[0].Data["evidence"])
+	}
+	if rows := l.Rows(ops.OpReleaseChild); len(rows) != 0 {
+		t.Errorf("a crw.releaseChild row: %+v", rows)
+	}
+	for _, r := range l.SpawnRows() {
+		if r.Rule == ops.RuleChild1 || r.Rule == ops.RuleChild2 {
+			t.Errorf("a decision under a retired child rule: %+v", r)
+		}
+		if r.Node == "A" && r.Rule == ops.RuleExec1 {
+			t.Errorf("an executor spawn for the child-sized node: %+v", r)
+		}
 	}
 	for _, c := range l.Calls() {
 		if c.Node == "A" {
-			t.Errorf("a call for the child node: %+v", c)
+			t.Errorf("a call for the child-sized node: %+v", c)
 		}
 	}
-	for _, r := range l.Relay.Releases {
-		if r.Node == "A" {
-			t.Errorf("the child node was released to an executor: %+v", r)
-		}
+	if !slices.Contains(l.Relay.CloseReasons(), "A:size_split") {
+		t.Errorf("closes %v: A's execution was not closed", l.Relay.CloseReasons())
 	}
 	if l.Relay.SlotHeld("A") {
-		t.Errorf("a slot is held for the child node")
-	}
-	seen := map[string]bool{}
-	for _, r := range l.SpawnRows() {
-		if r.Decision == "spawn" && r.Node == "A" {
-			seen[r.Rule] = true
-		}
-	}
-	if !seen[ops.RuleChild2] || !seen[ops.RuleChild1] || seen[ops.RuleExec1] {
-		t.Errorf("decisions of A: %v: want the signal (SP-CHILD-2) and the child's spawn (SP-CHILD-1), and no executor", seen)
-	}
-	if rows := l.Rows("crw.releaseChild"); len(rows) != 1 || str(rows[0].Data, "child") != "child-A" {
-		t.Errorf("releaseChild rows %+v", rows)
-	}
-}
-
-// TestChildStartRechecksThePlanSlice (CRW-1382 d3): the child start of a node sized for a child carries the node's slice of the plan
-// crw.release compared, as the release of an executor does (CRW-1288), so a plan revision that changes the node between that comparison
-// and the start is caught by the relay: no child starts, the releaseChild row records started false with plan_changed, and the lane
-// ends unreleased with the reason, not as a running child. A start whose slice still stands starts the child, carrying that slice.
-func TestChildStartRechecksThePlanSlice(t *testing.T) {
-	nodes := []NodeSpec{{ID: "A", Issue: "CRW-A", Title: "a big issue", Regions: []string{"a/"}, SizeFit: "child", SizeReason: "regions_gt3"}}
-	l := NewLab(t, nodes...)
-	l.Relay.BeforeChild = func(node string) {
-		l.Relay.ChangeNode(node, func(n *NodeSpec) { n.Regions = []string{"a/", "a2/"} })
-	}
-	got := mustRunIncomplete(t, l)
-	if state, reason := laneOf(t, got, "A"); state != "unreleased" || reason != ops.ReasonPlanChanged {
-		t.Fatalf("lane A: %s %s, want unreleased plan_changed", state, reason)
-	}
-	if len(l.Relay.Children) != 1 || l.Relay.Children[0].SliceDigest == "" {
-		t.Fatalf("the child start carries no slice: %+v", l.Relay.Children)
-	}
-	rel := l.Rows("crw.release")
-	if len(rel) != 1 || str(rel[0].Data, "slice_digest") != l.Relay.Children[0].SliceDigest {
-		t.Fatalf("the release row's slice is not the one the child start carried: %+v %+v", rel, l.Relay.Children)
-	}
-	if rows := l.Rows("crw.releaseChild"); len(rows) != 1 || flagOf(rows[0].Data, "started") || str(rows[0].Data, "reason") != ops.ReasonPlanChanged {
-		t.Fatalf("releaseChild rows %+v, want one with started false and plan_changed", rows)
-	}
-
-	kept := NewLab(t, nodes...)
-	ok := mustRunIncomplete(t, kept)
-	if state, _ := laneOf(t, ok, "A"); state != "child" || len(kept.Relay.Children) != 1 || kept.Relay.Children[0].SliceDigest != str(kept.Rows("crw.release")[0].Data, "slice_digest") {
-		t.Fatalf("a start whose slice stands: lane %s, children %+v", state, kept.Relay.Children)
+		t.Errorf("a slot is held for the child-sized node")
 	}
 }
 
@@ -171,7 +142,7 @@ func TestSpawnDecisionsRecorded(t *testing.T) {
 	d.OpenQuestions = []ops.OpenQuestion{{ID: "q1", Question: "which flag turns it on?", Scope: "repo", FilesNeeded: []string{"a", "b", "c", "d"}}, {ID: "q2", Question: "is it documented?", Scope: "docs", FilesNeeded: []string{"README.md"}},
 		{ID: "q3", Question: "may it skip the README rule?", Scope: "authority:repo-rule", FilesNeeded: []string{"README.md"}}}
 	l.Design = &d
-	mustRunIncomplete(t, l)
+	got := mustRunIncomplete(t, l)
 	type key struct{ rule, decision, node string }
 	seen := map[key]int{}
 	known := map[string]bool{}
@@ -186,11 +157,20 @@ func TestSpawnDecisionsRecorded(t *testing.T) {
 	}
 	for _, k := range []key{
 		{ops.RuleArch1, "spawn", ""}, {ops.RuleAudit, "spawn", ""}, {ops.RuleExpl1, "spawn", ""}, {ops.RuleExpl1, "orchestrator", ""},
-		{ops.RuleExec1, "spawn", "A"}, {ops.RuleRev1, "spawn", "A"}, {ops.RuleExpl3, "skip", "A"}, {ops.RuleChild2, "spawn", "B"},
+		{ops.RuleExec1, "spawn", "A"}, {ops.RuleRev1, "spawn", "A"}, {ops.RuleExpl3, "skip", "A"},
 	} {
 		if seen[k] == 0 {
 			t.Errorf("no decision %+v among %v", k, seen)
 		}
+	}
+	// B, sized for a child, goes up as a size split (CRW-1415): no decision under a retired child rule is written for it
+	for k := range seen {
+		if k.node == "B" && (k.rule == ops.RuleChild1 || k.rule == ops.RuleChild2) {
+			t.Errorf("a decision %+v under a retired child rule", k)
+		}
+	}
+	if state, reason := laneOf(t, got, "B"); state != "escalated" || reason != "size_split" {
+		t.Errorf("lane B: %s %s, want escalated size_split", state, reason)
 	}
 	// an open question of a DESIGN is never the asker's (CRW-1347): the one with one file is the second explorer
 	if seen[key{ops.RuleExpl1, "spawn", ""}] != 2 || seen[key{ops.RuleInl1, "inline", ""}] != 0 {

@@ -70,9 +70,6 @@ func (s *stubRelay) Release(_ context.Context, r ReleaseRequest) (ReleaseResult,
 func (s *stubRelay) ReleaseStands(context.Context, string, string, string) (bool, error) {
 	return true, nil
 }
-func (s *stubRelay) ReleaseChild(context.Context, ChildRequest) (ChildResult, error) {
-	return ChildResult{Started: true}, nil
-}
 func (s *stubRelay) Accept(context.Context, AcceptRequest) (AcceptResult, error) {
 	return AcceptResult{Accepted: true}, nil
 }

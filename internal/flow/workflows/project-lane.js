@@ -174,11 +174,9 @@ async function nodeLane(n, rel, sig) {
   const node = n.id
   const plan = await crw.issuePlan(node)
   if (plan.size_fit === 'child') {
-    await crw.spawnDecision('CHILD_2', 'spawn', { node, role: 'child', reason: plan.size_reason })
-    const child = await crw.releaseChild(node, plan)
-    // a plan that gave the node another slice before the start started no child (CRW-1382): the node is not released
-    if (!child.started) return { node, state: 'unreleased', reason: child.reason }
-    return { node, state: 'child', child: child.child }
+    // the issue-child path is retired (CRW-1415): a node sized for a child goes up as a size split, and no child is started
+    const esc = await crw.escalate(node, { reason: 'size_split', detail: 'child_retired', evidence: { size_reason: plan.size_reason } })
+    return { node, state: 'escalated', reason: 'size_split', escalation: esc.id }
   }
   if (plan.size_fit === 'split') {
     const esc = await crw.escalate(node, { reason: 'size_split', detail: plan.size_reason })

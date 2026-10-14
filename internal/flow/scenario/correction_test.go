@@ -268,8 +268,9 @@ func TestEvidenceExplorerReadsTheCommittedHead(t *testing.T) {
 	}
 }
 
-// d4: a node released as an issue child starts its child once: a resume that recovers another node does not release it again.
-func TestChildIsStartedOnceAcrossAResume(t *testing.T) {
+// d4: a node sized for a child escalates once (CRW-1415): a resume that recovers another node does not escalate it again, and no child
+// is started in either run.
+func TestChildSizedNodeEscalatesOnceAcrossAResume(t *testing.T) {
 	nodes := []NodeSpec{
 		{ID: "A", Issue: "CRW-A", Title: "a big issue", Regions: []string{"a/"}, SizeFit: "child", SizeReason: "regions_gt3"},
 		{ID: "B", Issue: "CRW-B", Title: "issue B", Regions: []string{"b/"}},
@@ -280,8 +281,20 @@ func TestChildIsStartedOnceAcrossAResume(t *testing.T) {
 	if state, reason := laneOf(t, got, "B"); state != "held" || reason != "verify_unavailable" {
 		t.Fatalf("lane B: %s %s", state, reason)
 	}
-	if len(l.Relay.Children) != 1 {
-		t.Fatalf("children after the first run: %+v", l.Relay.Children)
+	if state, reason := laneOf(t, got, "A"); state != "escalated" || reason != "size_split" {
+		t.Fatalf("lane A: %s %s, want escalated size_split", state, reason)
+	}
+	escalationsOfA := func() []engine.Event {
+		var out []engine.Event
+		for _, ev := range l.FlowRows(engine.EvEscalation) {
+			if str(ev.Data, "node") == "A" {
+				out = append(out, ev)
+			}
+		}
+		return out
+	}
+	if esc := escalationsOfA(); len(esc) != 1 || str(esc[0].Data, "detail") != "child_retired" {
+		t.Fatalf("escalations of A after the first run: %+v", esc)
 	}
 	l.Verify.Unavailable = nil
 	l.NewProcess("proc-2")
@@ -289,10 +302,10 @@ func TestChildIsStartedOnceAcrossAResume(t *testing.T) {
 	if state, _ := laneOf(t, Value[laneResult](t, res), "B"); state != "landed" {
 		t.Fatalf("lane B after the resume: %s", state)
 	}
-	if len(l.Relay.Children) != 1 {
-		t.Errorf("the child of A was started %d times: %+v", len(l.Relay.Children), l.Relay.Children)
+	if esc := escalationsOfA(); len(esc) != 1 || str(esc[0].Data, "detail") != "child_retired" {
+		t.Errorf("A escalated %d times across the resume: %+v", len(esc), esc)
 	}
-	if rows := l.Rows("crw.releaseChild"); len(rows) != 1 {
+	if rows := l.Rows(ops.OpReleaseChild); len(rows) != 0 {
 		t.Errorf("%d releaseChild rows", len(rows))
 	}
 }
