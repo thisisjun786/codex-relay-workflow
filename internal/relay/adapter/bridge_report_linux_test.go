@@ -3,6 +3,7 @@ package adapter
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -24,6 +25,7 @@ import (
 type bridgeProcess struct {
 	session *sdk.ClientSession
 	home    string
+	stderr  *bytes.Buffer // read only after the session closed and the process exited
 }
 
 func startBridge(t *testing.T, relayState, appServerSocket string) *bridgeProcess {
@@ -48,7 +50,7 @@ func startBridge(t *testing.T, relayState, appServerSocket string) *bridgeProces
 			t.Logf("crw bridge stderr:\n%s", stderr.String())
 		}
 	})
-	return &bridgeProcess{session: session, home: home}
+	return &bridgeProcess{session: session, home: home, stderr: &stderr}
 }
 
 // report calls report_child and returns the result's text and whether it is an error result.
@@ -181,5 +183,75 @@ func TestABridgeReportWithoutADaemonIsAnExplicitErrorWithNoLocalStore(t *testing
 	}
 	if countRows(t, database, "SELECT COUNT(*) FROM events") != 0 || !bridge.ownsNoStore() {
 		t.Fatal("a report with no daemon was recorded or opened a local store")
+	}
+}
+
+// scopeClaim records socket's scope claim as a relay service started on it registers one: the state directory it serves, held
+// by this test process while live is true and by no process otherwise.
+func scopeClaim(t *testing.T, socket, state string, live bool) {
+	t.Helper()
+	scope, err := service.ResolveScope()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.MkdirAll(scope.Root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	pid := os.Getpid()
+	record := map[string]any{"storeId": "served-store", "stateDir": state, "socketPath": socket, "scopeKey": scope.Key(socket), "scopeAuthority": scope.Authority}
+	if live {
+		record["pid"], record["startTicks"], record["bootId"] = pid, service.StartTicks(pid), service.BootID()
+	}
+	raw, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(filepath.Join(scope.Root, scope.Key(socket)+".json"), raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// CRW-1373: a bridge whose relay state is not the one the live relay daemon of its App Server socket serves says so on
+// stderr at start, naming both paths, and still serves (the report then ends with the explicit "relay daemon unavailable"
+// as before). A bridge on the daemon's own state, a stale claim and a socket with no claim say nothing.
+func TestABridgeWarnsAtStartWhenTheDaemonServesAnotherRelayState(t *testing.T) {
+	state, _, host := blockedChildWorld(t)
+	t.Setenv("CODEX_SESSION_RELAY_SCOPE_DIR", filepath.Join(t.TempDir(), "scopes"))
+	started := func(relayState string) string {
+		t.Helper()
+		bridge := startBridge(t, relayState, host.SocketPath)
+		if text, failed := bridge.report(t, "emit", blockedEmit[1:]...); relayState != state && (!failed || !strings.Contains(text, "relay daemon unavailable")) {
+			t.Fatalf("a bridge that warned must still fail its report explicitly, got failed=%v %s", failed, text)
+		}
+		if err := bridge.session.Close(); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(100 * time.Millisecond) // the process exits once its stdin closed; stderr is complete then
+		return bridge.stderr.String()
+	}
+	if log := started(filepath.Join(t.TempDir(), "bridge-state")); strings.Contains(log, "warning") {
+		t.Fatalf("no claim exists, so there is nothing to compare:\n%s", log)
+	}
+	scopeClaim(t, host.SocketPath, state, false)
+	if log := started(filepath.Join(t.TempDir(), "bridge-state")); strings.Contains(log, "warning") {
+		t.Fatalf("a claim no process holds is no running daemon:\n%s", log)
+	}
+	scopeClaim(t, host.SocketPath, state, true)
+	if log := started(state); strings.Contains(log, "warning") {
+		t.Fatalf("a bridge on the daemon's own state warned:\n%s", log)
+	}
+	other := filepath.Join(t.TempDir(), "bridge-state")
+	log := started(other)
+	lines := 0
+	for _, line := range strings.Split(log, "\n") {
+		if strings.HasPrefix(line, "crw bridge: warning: ") {
+			lines++
+			if !strings.Contains(line, other) || !strings.Contains(line, state) || !strings.Contains(line, "report_child") {
+				t.Fatalf("the warning must name the bridge's state %s and the daemon's %s: %s", other, state, line)
+			}
+		}
+	}
+	if lines != 1 {
+		t.Fatalf("want exactly one warning line, got %d:\n%s", lines, log)
 	}
 }

@@ -134,7 +134,7 @@ func TestReadOnlyChildClaimsAndDeclaresThroughTheDaemon(t *testing.T) {
 
 // CRW-1296: in a sandbox without network access (Codex's read-only and workspace-write ones) the child cannot connect
 // to the daemon's socket. Each child command then ends with the explicit exit 3, naming the sandbox as the reason and
-// the sandboxes that can report, records nothing and writes nothing locally, while the daemon is listening.
+// the sandboxes that can report and the report_child bridge tool as the way from a sandbox that cannot, records nothing and writes nothing locally, while the daemon is listening.
 func TestAChildWithoutNetworkAccessIsToldItsSandboxCannotReport(t *testing.T) {
 	state, database, host := blockedChildWorld(t)
 	marker, workspace := filepath.Join(filepath.Dir(state), "markers"), filepath.Dir(state)
@@ -155,7 +155,8 @@ func TestAChildWithoutNetworkAccessIsToldItsSandboxCannotReport(t *testing.T) {
 		detail := fmt.Sprint(result["detail"])
 		var exit *exec.ExitError
 		if !errors.As(err, &exit) || exit.ExitCode() != 3 || !strings.Contains(detail, "child report was not submitted") || !strings.Contains(detail, "operation not permitted") ||
-			!strings.Contains(detail, "sandbox") || !strings.Contains(detail, "danger-full-access") || !strings.Contains(detail, "network access") {
+			!strings.Contains(detail, "sandbox") || !strings.Contains(detail, "danger-full-access") || !strings.Contains(detail, "network access") ||
+			!strings.Contains(detail, "report_child bridge tool") {
 			t.Fatalf("%s: expected the explicit sandbox refusal (exit 3), got %v %v", command[0], err, result)
 		}
 	}
