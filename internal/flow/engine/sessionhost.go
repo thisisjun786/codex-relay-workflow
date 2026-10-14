@@ -146,8 +146,8 @@ func (s *SessionConfig) wait(ctx context.Context, d time.Duration) error {
 
 // HeadKeeper is implemented by a backend that can read a worktree's HEAD and keep a commit on a ref of the repository: the
 // executor HEAD check of a session call (§6.3) preserves a commit the subagent made on the stray ref of its call. KeepRef creates
-// the ref (a compare-and-swap against no ref), keeps a ref that already holds the commit, and refuses to move one that holds
-// another.
+// the ref (a compare-and-swap against no ref), keeps a ref that already holds the commit, moves one that holds an ancestor of the
+// commit by a fast-forward (a compare-and-swap against the commit it holds), and refuses to move one that holds any other.
 type HeadKeeper interface {
 	HeadOf(ctx context.Context, path string) (string, error)
 	KeepRef(ctx context.Context, ref, commit string) error

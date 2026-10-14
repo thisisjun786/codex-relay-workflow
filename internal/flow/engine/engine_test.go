@@ -192,30 +192,20 @@ return outs
 }
 
 // pipeline() has no barrier: an item that is past stage 1 moves on while another item is still in stage 1.
+//
+// Item 0 stays in stage 1 until the journal holds the completed rows of stage 2 of items 1 and 2 (CRW-1389): releasing it when their
+// turns were asked for raced with those rows under load, and its own completed row came first. A pipeline with a barrier never
+// runs stage 2 while item 0 is in stage 1, so item 0 is let go after ten seconds and the order check fails.
 func TestPipelineNoBarrier(t *testing.T) {
 	h := newHarness(t)
-	var mu sync.Mutex
-	stage2Seen := map[string]bool{}
 	release := make(chan struct{})
+	h.cfg.Journal = &completedRows{Journal: h.journal, labels: []string{"stage2:1", "stage2:2"}, all: release}
 	h.fake.Handler = func(r FakeRequest) FakeReply {
-		switch {
-		case r.Prompt == "s1-0":
-			// item 0 stays in stage 1 until items 1 and 2 have reached stage 2
+		if r.Prompt == "s1-0" {
 			select {
 			case <-release:
 			case <-time.After(10 * time.Second):
 			}
-		case strings.HasPrefix(r.Prompt, "s2-"):
-			mu.Lock()
-			stage2Seen[r.Prompt] = true
-			if stage2Seen["s2-1"] && stage2Seen["s2-2"] {
-				select {
-				case <-release:
-				default:
-					close(release)
-				}
-			}
-			mu.Unlock()
 		}
 		return FakeReply{}
 	}
@@ -237,6 +227,39 @@ return outs
 	if !(idx["stage2:1"] < idx["stage1:0"] && idx["stage2:2"] < idx["stage1:0"]) {
 		t.Errorf("stage 2 of items 1 and 2 must complete before stage 1 of item 0: %v", idx)
 	}
+}
+
+// completedRows is a journal that closes all once it stored a completed call row for every one of labels.
+type completedRows struct {
+	Journal
+	labels []string
+	all    chan struct{}
+	mu     sync.Mutex
+	seen   map[string]bool
+	closed bool
+}
+
+func (j *completedRows) Append(e Event) Event {
+	out := j.Journal.Append(e)
+	if e.Kind != KindCall || e.Event != EvCompleted {
+		return out
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.seen == nil {
+		j.seen = map[string]bool{}
+	}
+	j.seen[e.Label] = true
+	for _, l := range j.labels {
+		if !j.seen[l] {
+			return out
+		}
+	}
+	if !j.closed {
+		j.closed = true
+		close(j.all)
+	}
+	return out
 }
 
 func TestParallelThunkThrowIsNullAndJoinsSettle(t *testing.T) {

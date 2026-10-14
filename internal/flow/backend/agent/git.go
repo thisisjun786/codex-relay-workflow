@@ -102,16 +102,25 @@ func (a *Allocator) HeadOf(ctx context.Context, path string) (string, error) {
 // KeepRef implements engine.HeadKeeper: it keeps a commit a session executor made in its worktree on a stray ref of this run
 // (engine.StrayRef, refs/crw/flow/<run>/stray/...), in the repository the worktrees are made from. Any other ref is refused. The
 // ref is created with a compare-and-swap against no ref, so a record is never overwritten: a ref that holds the commit already
-// is kept as it is, and one that holds another commit is refused.
+// is kept as it is, one that holds an ancestor of the commit (the same call's later HEAD, after a crash) is moved by a
+// fast-forward whose compare-and-swap is against the commit it holds (CRW-1392), and one that holds any other commit is refused.
 func (a *Allocator) KeepRef(ctx context.Context, ref, commit string) error {
 	if !strings.HasPrefix(ref, engine.StrayRefPrefix(a.cfg.RunID)) || strings.Contains(ref, "..") {
 		return fmt.Errorf("agent: %s is not a stray ref of run %s", ref, a.cfg.RunID)
 	}
 	if held, err := a.git(ctx, a.cfg.Repo, nil, "rev-parse", "--verify", "--quiet", ref); err == nil && held != "" {
-		if want, err := a.git(ctx, a.cfg.Repo, nil, "rev-parse", "--verify", "--quiet", commit+"^{commit}"); err == nil && want == held {
+		want, err := a.git(ctx, a.cfg.Repo, nil, "rev-parse", "--verify", "--quiet", commit+"^{commit}")
+		switch {
+		case err != nil || want == "":
+			return fmt.Errorf("agent: %s already keeps %s, and %s is no commit", ref, held, commit)
+		case want == held:
 			return nil
 		}
-		return fmt.Errorf("agent: %s already keeps %s: a stray ref is never moved", ref, held)
+		if _, err := a.git(ctx, a.cfg.Repo, nil, "merge-base", "--is-ancestor", held, want); err != nil {
+			return fmt.Errorf("agent: %s already keeps %s, and %s does not descend from it: a stray ref is only moved forward", ref, held, want)
+		}
+		_, err = a.git(ctx, a.cfg.Repo, nil, "update-ref", "-m", "crw stray head", ref, want, held)
+		return err
 	}
 	_, err := a.git(ctx, a.cfg.Repo, nil, "update-ref", "-m", "crw stray head", ref, commit, "")
 	return err

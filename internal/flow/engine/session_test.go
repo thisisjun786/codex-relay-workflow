@@ -670,10 +670,30 @@ return r.handle`))
 			// a later run of the journal reads a role table that decides the part; the clock read takes the first call's position
 			k.h.cfg.Policy = explorerOn(tc.now)
 			k.h.cfg.Args = mustJSON(map[string]any{"handle": handle})
-			got := value[[]string](t, k.h.run(`await crw.clock()
+			// a continuation that is not refused publishes a step and waits for a subagent of the role's pair that the owner never
+			// spawns: the run is ended at that step and the assertions below say so, instead of the run's timeout (CRW-1392)
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			go func() {
+				for ctx.Err() == nil {
+					if len(rowsNamed(k.rowsOf("more"), EvStepPublished)) > 0 {
+						cancel()
+						return
+					}
+					time.Sleep(time.Millisecond)
+				}
+			}()
+			res, err := Run(ctx, k.h.load(`await crw.clock()
 const more = await agent.call('look again', { resume: args.handle, label: 'more' })
-return [more.status, more.reason]`))
+return [more.status, more.reason]`), k.h.cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
 			rows := k.rowsOf("more")
+			if n := len(rowsNamed(rows, EvStepPublished)); n > 0 {
+				t.Fatalf("the continuation was not refused: it published %d step(s), rows %s", n, eventsOf(rows))
+			}
+			got := value[[]string](t, res)
 			want := "the thread reads back claude-fake-haiku/high, the role's pair is " + tc.now.Model + "/" + tc.now.Effort
 			if strings.Join(got, ",") != "refused,pair_refused" || eventsOf(rows) != "prepared,refused" || rowStr(rows[1].Data, "detail") != want {
 				t.Errorf("continuation %v, rows %v; want refused pair_refused %q", got, rows, want)
@@ -824,8 +844,8 @@ func (b *failingBus) Publish(st Step) error {
 }
 
 // CRW-1367: a step that could not be written was sent to nobody. The run records it as not dispatched (a step_unwritten warning,
-// input_state not_delivered) and writes it again, and the call goes on: no outcome_unknown, no dispatch_unknown escalation and no
-// recovery hold of the node.
+// input_state not_delivered, and its closing row once the step is written, CRW-1392) and writes it again, and the call goes on: no
+// outcome_unknown, no dispatch_unknown escalation and no recovery hold of the node.
 func TestSessionStepBusWriteFailureIsNotDispatched(t *testing.T) {
 	k := newSessionKit(t)
 	bus := &failingBus{FileStepBus: k.bus, fails: 3}
@@ -839,9 +859,10 @@ return r.status`)
 		t.Errorf("rows %s, want %s", got, oneAttempt)
 	}
 	warn := flowRows(k.h.journal, "step_unwritten")
-	if len(warn) != 1 || rowStr(warn[0].Data, "input_state") != "not_delivered" || !strings.Contains(rowStr(warn[0].Data, "error"), "no space left") ||
-		rowStr(warn[0].Data, "marker") != k.rowsOf("exe")[0].CallID+"/t1-a1" {
-		t.Errorf("step_unwritten rows %v, want one not_delivered warning naming the marker and the error", warn)
+	if len(warn) != 2 || rowStr(warn[0].Data, "input_state") != "not_delivered" || !strings.Contains(rowStr(warn[0].Data, "error"), "no space left") ||
+		rowStr(warn[0].Data, "marker") != k.rowsOf("exe")[0].CallID+"/t1-a1" || warn[0].Data["written"] != nil ||
+		warn[1].Data["written"] != true || rowInt(warn[1].Data, "failures") != 3 {
+		t.Errorf("step_unwritten rows %v, want a not_delivered warning naming the marker and the error, and the closing row of its 3 failures, written", warn)
 	}
 	for _, e := range k.h.journal.Events() {
 		if e.Event == EvOutcomeUnknown || e.Event == "escalation" {
@@ -1136,8 +1157,11 @@ return [r.status, r.meta.threadId, r.meta.tokens.total]`
 	k.h.cfg.Resume = &ResumeOptions{}
 	// the resumed process counts what the run's journal shows it spent, as crw flow resume seeds it (CRW-1278)
 	k.h.cfg.SpentBefore = RunSpent(resumed.Events(), k.h.cfg.RunID).Total
+	// the orchestrator still runs: its hooks are swapped under its lock (CRW-1392)
+	k.orch.mu.Lock()
 	k.orch.answer = func(st Step, _ string, _ int) orchAnswer { return answer(st) }
 	k.orch.onSpawn, k.orch.onInput = nil, nil
+	k.orch.mu.Unlock()
 	res, err := Run(ctx, k.h.load(body), k.h.cfg)
 	if err != nil {
 		t.Fatal(err)

@@ -19,7 +19,9 @@ saw. A row is never updated.
 - Every other row is written by the one run process in a batch transaction. It waits in memory until the next intent, the end
   of a call (its terminal row), the run's `started` and `finished` rows, or `Flush`, and is committed then, in order. A crash
   loses at most the result rows after the last intent, and the reconcile pass finds those on the host from the intent that is
-  stored.
+  stored. A session call that stops a subagent's turn (a pause, a cancellation, a deadline) flushes before it sends the interrupt,
+  so the `turn_started` it bound after its `interrupt_requested` row (the turn that row decides on a resume) is stored before the
+  interrupt reaches the subagent.
 - A journal that cannot store a row keeps the first error (`Err`) and keeps its rows in memory only. The engine sends nothing
   whose intent row could not be stored, and ends the run with that error. The run's own `finished` row is written with the rows
   still buffered, so the error is read again after it: a run whose last write failed ends with the journal's error, not as completed.
@@ -48,6 +50,13 @@ saw. A row is never updated.
   under `<state>/flow/<run>/` (`engine.FileStepBus`), and the owner's binding and the spawn hook's ledger (with each spawn's `role`
   and `op`) are the flow-bound files of `internal/flow/bound`. What the relay reads of a session call is its rows: the newest
   `thread_started` (the subagent, the host-read pair, `cwd` P) and the terminal row.
+- A session call's `step_published` and `turn_started` rows record the turn's place in the call's conversation in `detail_json`
+  (no column holds it): `conversation_turn`, the conversation turn the turn is (the call's task turn 1, its repair 2), and for a turn
+  run again (the next attempt of a lost turn, the turn a held call goes on with in place) `replaces_turn`, the turn it replaces. The
+  checkpoint packet of a continuation reads the call's conversation from them, each conversation turn once. A row of a journal written
+  before the place was recorded carries neither: its turn takes the place its step recorded, the `repair` member every
+  `step_published` row has (the task turn 1, the repair 2), a later turn at that place replacing the earlier one, so an older journal
+  is read from recorded members too and never from its held rows or k ([script.md](script.md#attempts-restarts-and-continuations)).
 
 - A command that writes into a run which may be alive (`crw flow apply`, `report-up`, `report-ack`, `report-delivered`;
   [reporting.md](reporting.md)) is not the run's process and numbers its `flow_events` rows from `engine.ForeignSeqBase` (`1 << 40`).

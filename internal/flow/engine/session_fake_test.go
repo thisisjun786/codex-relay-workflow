@@ -177,6 +177,8 @@ type orchAnswer struct {
 	after time.Duration
 	// noDispatch spawns the subagent and reports nothing.
 	noDispatch bool
+	// skip leaves the step untaken: the owner never got to that file (a file a process publishes again is a new step it takes).
+	skip bool
 	// pair spawns with this pair instead of the step's.
 	pair *Pair
 	// edit sets the tree (and with head the HEAD) of the call's directory, as the subagent's edits would.
@@ -268,17 +270,23 @@ func (o *fakeOrch) take(st Step) {
 		return
 	}
 	packet, _ := os.ReadFile(st.Packet)
+	// the hooks are read under the lock: a test that swaps them while the orchestrator runs (runDeath, between its two processes) swaps
+	// them under it too (CRW-1392)
 	o.mu.Lock()
 	o.n++
 	n := o.n
+	answer, onSpawn, onInput := o.answer, o.onSpawn, o.onInput
 	o.mu.Unlock()
 	var ans orchAnswer
 	turns := 0
 	if st.Action == StepSendInput {
 		turns = len(o.host.agent(st.AgentID).turns)
 	}
-	if o.answer != nil {
-		ans = o.answer(st, string(packet), turns)
+	if answer != nil {
+		ans = answer(st, string(packet), turns)
+	}
+	if ans.skip {
+		return
 	}
 	if ans.text == "" && ans.fail == "" && !ans.hang && !ans.lose {
 		ans.text = defaultMessage(st.Message, packetSchema(string(packet)))
@@ -341,11 +349,11 @@ func (o *fakeOrch) take(st Step) {
 	} else {
 		finish()
 	}
-	if o.onSpawn != nil && st.Action == StepSpawn {
-		o.onSpawn(st, agent)
+	if onSpawn != nil && st.Action == StepSpawn {
+		onSpawn(st, agent)
 	}
-	if o.onInput != nil && st.Action == StepSendInput {
-		o.onInput(st, agent)
+	if onInput != nil && st.Action == StepSendInput {
+		onInput(st, agent)
 	}
 	if ans.noDispatch {
 		return
@@ -533,6 +541,14 @@ func (j *dyingJournal) Append(e Event) Event {
 func (j *dyingJournal) Err() error {
 	if f, ok := j.Journal.(FailingJournal); ok {
 		return f.Err()
+	}
+	return nil
+}
+
+// Flush commits what the journal batches while the process lives; a dead process commits nothing.
+func (j *dyingJournal) Flush() error {
+	if f, ok := j.Journal.(interface{ Flush() error }); ok && !j.sw.isDead() {
+		return f.Flush()
 	}
 	return nil
 }

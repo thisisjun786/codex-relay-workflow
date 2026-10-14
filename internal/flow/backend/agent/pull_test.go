@@ -210,6 +210,15 @@ func TestClientUserMessageIdMatchedFirst(t *testing.T) {
 	// the same rule on turns read from the host
 	e := newEnv(t)
 	e.threads.DropNotifications(true)
+	// the first turn ends a moment after turn/start answered, as under load: a thread takes one turn at a time (a turn/start beside
+	// an active turn is refused activeTurnNotSteerable), so the order of the two turns below is pinned by waiting for the first to
+	// end, not by the time the host takes (CRW-1392)
+	e.plan(func(r fakehost.TurnRequest) fakehost.TurnPlan {
+		if r.N == 1 {
+			return fakehost.TurnPlan{Message: passMessage, Delay: 30 * time.Millisecond}
+		}
+		return fakehost.TurnPlan{Message: passMessage}
+	})
 	info := startedThread(t, e, "explorer")
 	send := func(params map[string]any) string {
 		raw, err := e.client.Call(context.Background(), "turn/start", params)
@@ -223,21 +232,25 @@ func TestClientUserMessageIdMatchedFirst(t *testing.T) {
 		return started.Turn.ID
 	}
 	text := func(s string) []any { return []any{map[string]any{"type": "text", "text": s}} }
-	byClient := send(map[string]any{"threadId": info.ID, "input": text("crw-flow-op: c_other/t1\n\nx"), "clientUserMessageId": "c_x/t1"})
-	byLine := send(map[string]any{"threadId": info.ID, "input": text("crw-flow-op: c_y/t1\n\nx")})
-	// both turns are in progress or ended by now; wait until the host lists them as ended
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		_, e1 := e.backend.ReadTurn(context.Background(), info.ID, byClient, "")
-		_, e2 := e.backend.ReadTurn(context.Background(), info.ID, byLine, "")
-		if e1 == nil && e2 == nil {
-			break
+	// ended waits until the host lists a turn as ended
+	ended := func(turn string) {
+		t.Helper()
+		deadline := time.Now().Add(10 * time.Second)
+		for {
+			_, err := e.backend.ReadTurn(context.Background(), info.ID, turn, "")
+			if err == nil {
+				return
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("turn %s did not end: %v", turn, err)
+			}
+			time.Sleep(5 * time.Millisecond)
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("turns did not end: %v %v", e1, e2)
-		}
-		time.Sleep(10 * time.Millisecond)
 	}
+	byClient := send(map[string]any{"threadId": info.ID, "input": text("crw-flow-op: c_other/t1\n\nx"), "clientUserMessageId": "c_x/t1"})
+	ended(byClient)
+	byLine := send(map[string]any{"threadId": info.ID, "input": text("crw-flow-op: c_y/t1\n\nx")})
+	ended(byLine)
 	if _, err := e.backend.ReadTurn(context.Background(), info.ID, byClient, "c_x/t1"); err != nil {
 		t.Errorf("the clientId names the operation: %v", err)
 	}

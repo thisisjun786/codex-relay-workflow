@@ -39,9 +39,41 @@ type sessionCall struct {
 	// prior are the pairs earlier attempts of the call were bound with.
 	prior []Pair
 	// resume is the stage a call that a resumed run goes on with in place starts from; intent is the interrupt the previous
-	// process had asked for the turn it left running.
+	// process asked for, with the turn it was asked for.
 	resume *sessionStage
-	intent string
+	intent sessionIntent
+	// conv is the conversation turn of the step the call works on (conversationTurn) and replaces the turn of the call's conversation
+	// that step's turn replaces: the step_published and turn_started rows of the step record both (CRW-1384).
+	conv     int
+	replaces string
+}
+
+// conversationTurn is the turn of its call's conversation a session step's turn is: the call's task turn is 1 and its one repair 2,
+// on whatever subagent, attempt and k it runs. A turn run again - the next attempt of a lost turn, the turn a held call goes on with
+// in place on a new subagent - is the turn it replaces.
+func conversationTurn(repair bool) int {
+	if repair {
+		return 2
+	}
+	return 1
+}
+
+// sessionIntent is an interrupt the previous process asked for (its interrupt_requested row) and the turn it was asked for: the op
+// the row names, the attempt, and the subagent and turn the rows bound to that step - the turn the engine's interrupt reached, which
+// a stop binds before it interrupts it (sessionBindStopped). It decides that turn only: every other turn of the call - a new attempt,
+// a step published again, a turn the host started after the interrupt - starts with no intent (CRW-1384).
+type sessionIntent struct {
+	reason, op  string
+	attempt     int
+	agent, turn string
+}
+
+// of is the reason of the intent for the turn a call is on (its op, attempt, subagent and bound turn), "" for any other turn.
+func (i sessionIntent) of(op string, attempt int, agent, turn string) string {
+	if i.reason == "" || i.turn == "" || i.op != op || i.attempt != attempt || i.agent != agent || i.turn != turn {
+		return ""
+	}
+	return i.reason
 }
 
 // sessionStage is where a session call's rows say it stopped.
@@ -57,7 +89,8 @@ type sessionStage struct {
 	rollout     string
 	pair        Pair
 	note, prev  string
-	intent      string
+	// intent and intentOp are the reason and the op of the last interrupt_requested row among the step's rows
+	intent, intentOp string
 	// seen and calls are what a send_input step's row records of the tokens counted before it: the subagent's rollout total the
 	// earlier turns counted and the call's tokens (a recovered repair turn counts only what it adds).
 	seen, calls Tokens
@@ -310,10 +343,20 @@ func sessionStageOf(rows []Event) *sessionStage {
 		case EvSessionAttemptLost:
 			st.kind = stageLost
 		case EvInterruptRequested:
-			st.intent = rowStr(d, "reason")
+			st.intent, st.intentOp = rowStr(d, "reason"), rowStr(d, "op")
 		}
 	}
 	return st
+}
+
+// interrupt is the intent the stage's rows hold, with the turn it was asked for: the turn bound to the step and attempt of the stage
+// when its row names that step's op, else none (an interrupt of a turn whose step the rows never published).
+func (st *sessionStage) interrupt() sessionIntent {
+	in := sessionIntent{reason: st.intent, op: st.intentOp, attempt: st.attempt, agent: st.agent}
+	if st.intentOp == st.op {
+		in.turn = st.turn
+	}
+	return in
 }
 
 // rowTokens reads the Tokens a row member holds (a struct in memory, a JSON object from the store).
@@ -362,7 +405,8 @@ func (c *callRun) sessionRecover(ctx context.Context) (res CallResult, stop bool
 	if res, stop := c.sessionNeedsDirectory(); stop {
 		return res, true, 0, ""
 	}
-	s.intent = st.intent
+	// the interrupt the previous process asked for goes with the turn it was asked for, and decides that turn only (interrupted)
+	s.intent = st.interrupt()
 	bus := c.e.cfg.Session.Bus
 	switch st.kind {
 	case stagePrepared:
@@ -375,6 +419,7 @@ func (c *callRun) sessionRecover(ctx context.Context) (res CallResult, stop bool
 		_ = bus.Retract(c.id, st.k, st.attempt)
 		s.attempt = st.attempt + 1
 		s.note = c.lostNote(st.agent)
+		s.lastText = st.prev
 		c.sessionClose(st.agent, st.attempt)
 		s.agent = ""
 	case stageBound:
@@ -383,6 +428,7 @@ func (c *callRun) sessionRecover(ctx context.Context) (res CallResult, stop bool
 		// left is retracted here (CRW-1367)
 		_ = bus.Retract(c.id, st.k, st.attempt)
 		s.attempt, s.agent, s.turn, s.boundK, s.rollout, s.pair = st.attempt, st.agent, st.turn, st.k, st.rollout, st.pair
+		s.lastText = st.prev
 		s.dropCurrentPair()
 		if st.action == StepSendInput {
 			c.sessionBaseline(st)
@@ -472,21 +518,22 @@ func (c *callRun) sessionResumeHeld(ctx context.Context) (res CallResult, stop b
 	c.repairUsed = h.repairUsed
 	st := sessionStageOf(rows)
 	lastK, maxAttempt := 0, 0
-	for _, ev := range rows {
+	var repairStep *Event
+	for i, ev := range rows {
 		if ev.Event == EvPrepared {
-			lastK, maxAttempt = 0, 0
+			lastK, maxAttempt, repairStep = 0, 0, nil
 		}
 		if ev.Event == EvStepPublished {
 			lastK, maxAttempt = max(lastK, rowInt(ev.Data, "k")), max(maxAttempt, rowInt(ev.Data, "attempt"))
+			if ev.Data["repair"] == true {
+				repairStep = &rows[i]
+			}
 		}
 	}
 	switch {
 	case h.inputState == "delivered":
 		k = lastK + 1
 		c.firstK = k
-		if h.repairUsed {
-			c.firstK = 1
-		}
 		s.attempt = maxAttempt + 1
 		s.note = c.heldNote(h.reason)
 		if st.agent != "" {
@@ -496,6 +543,13 @@ func (c *callRun) sessionResumeHeld(ctx context.Context) (res CallResult, stop b
 		task := s.task
 		if task == "" {
 			task = c.checkpointPreface() + p.prompt
+		}
+		if h.repairUsed && repairStep != nil {
+			// the call used its one repair (as resumeHeld counts it on the App Server path): the new subagent's turn is that repair
+			// again, so its packet names the task once, the answer the repair turn repaired and its instruction (CRW-1384)
+			c.firstK = 1
+			s.lastText = rowStr(repairStep.Data, "previous_answer")
+			return CallResult{}, false, k, rowStr(repairStep.Data, "input"), nil
 		}
 		return CallResult{}, false, k, task, nil
 	case st.kind == stagePublished:
@@ -540,10 +594,6 @@ func (c *callRun) sessionTurn(ctx context.Context, k int, op, input string, repa
 	}
 	turnCtx, endTurn := c.beginTurn(ctx, op)
 	defer endTurn()
-	if s.intent != "" {
-		c.setIntent(s.intent)
-		s.intent = ""
-	}
 	for {
 		if s.agent == "" || s.boundK != k {
 			out, res, stop, err := c.sessionBind(turnCtx, ctx, k, op, input, repair)
@@ -609,6 +659,10 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 		action, agent = StepSendInput, s.agent
 	}
 	packetName := PacketName(k, s.attempt)
+	// the turn's place in the call's conversation, which its step and its turn record: the task turn or its repair, over the turn the
+	// conversation holds there (a lost attempt's turn, the turn a held call goes on from in place)
+	s.conv = conversationTurn(repair)
+	s.replaces = callConversation(CallEvents(e.j, c.id)).at(s.conv)
 	recovered := s.resume != nil && s.resume.kind == stagePublished && s.resume.k == k && s.resume.attempt == s.attempt
 	if recovered {
 		st := s.resume
@@ -633,7 +687,10 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 	if !recovered {
 		data := map[string]any{"k": k, "op": op, "marker": marker, "attempt": s.attempt, "action": action, "input": input, "repair": repair,
 			"input_digest": digestJSON([]byte(input)), "packet": step.Packet, "packet_digest": digestJSON([]byte(packet)), "role": p.role,
-			"agent_type": step.AgentType, "model": step.Model, "effort": step.ReasoningEffort, "workspace": c.cwd}
+			"agent_type": step.AgentType, "model": step.Model, "effort": step.ReasoningEffort, "workspace": c.cwd, "conversation_turn": s.conv}
+		if s.replaces != "" {
+			data["replaces_turn"] = s.replaces
+		}
 		if agent != "" {
 			data["agent_id"] = agent
 		}
@@ -644,7 +701,9 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 		if s.note != "" {
 			data["note"] = s.note
 		}
-		if action == StepSpawn && repair && s.lastText != "" {
+		if repair && s.lastText != "" {
+			// the answer a repair turn repairs, on a send_input too: a later attempt of the turn (a new subagent after a restart) names it
+			// in its packet (CRW-1384)
 			data["previous_answer"] = s.lastText
 		}
 		c.event(EvStepPublished, data)
@@ -665,20 +724,22 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 	}
 	// a step that cannot be written (a full disk) was sent to nobody: it is recorded as not dispatched and written again, and the
 	// call waits as for any step (CRW-1367; never an unknown outcome or a hold of the node)
-	for warned := false; ; {
+	// A failure that does not pass (EACCES on the steps directory) is still written again at the poll, and the record shows how long:
+	// the warning is written at the 1st, 10th, 100th, ... failure with the count and the first and last time, and a closing one when
+	// the step is written or the turn ends (CRW-1392).
+	unwritten := stepUnwritten{c: c, k: k, attempt: s.attempt, marker: marker, action: action}
+	for {
 		_, err := sc.Bus.WriteFile(c.id, packetName, []byte(packet))
 		if err == nil {
 			err = sc.Bus.Publish(step)
 		}
 		if err == nil {
+			unwritten.close(true)
 			break
 		}
-		if !warned {
-			warned = true
-			e.j.Append(Event{RunID: e.runID, Kind: KindFlow, CallID: c.id, Path: c.path.id, Position: c.position, Op: "agent", Label: c.label, Event: EvStepUnwritten,
-				Data: map[string]any{"call_id": c.id, "node": p.node, "k": k, "attempt": s.attempt, "marker": marker, "action": action, "input_state": "not_delivered", "error": err.Error()}})
-		}
+		unwritten.failed(err, e.cfg.Now())
 		if sc.wait(turnCtx, sc.poll()) != nil && turnCtx.Err() != nil {
+			unwritten.close(false)
 			out, _, err := c.sessionStop(ctx)
 			return &out, CallResult{}, false, err
 		}
@@ -702,10 +763,68 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 				return nil, CallResult{}, false, nil
 			}
 		case <-turnCtx.Done():
+			bound = c.sessionBindStopped(ctx, k, op, marker)
 			out, _, err := c.sessionStop(ctx)
 			return &out, CallResult{}, false, err
 		}
 	}
+}
+
+// sessionBindStopped binds, before a stop interrupts it, the turn that the subagent a step was for (a send_input's, an adopted
+// one's) started for the step, so the rows name the turn the engine's interrupt reaches: the one turn an interrupt_requested row
+// decides for a process that resumes the run (sessionIntent). A spawn step no subagent was bound to has none. It says whether it
+// bound one.
+func (c *callRun) sessionBindStopped(ctx context.Context, k int, op, marker string) bool {
+	s := c.sess
+	if s.agent == "" || s.boundK == k && s.turn != "" {
+		return false
+	}
+	vctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+	defer cancel()
+	_, ok := c.sessionVerify(vctx, s.agent, k, op, marker, StepSendInput)
+	return ok
+}
+
+// stepUnwritten is the record of a step the bus could not write: step_unwritten flow rows (input_state not_delivered, nothing was
+// sent) at the 1st, 10th, 100th, ... failure, each with the failures so far and the first and last time, and a closing row whenever
+// a failure row was written: `written: false` when the turn ends with the step unwritten, `written: true` when the step is written,
+// after any number of failures.
+type stepUnwritten struct {
+	c               *callRun
+	k, attempt      int
+	marker, action  string
+	failures, shown int
+	first, last     time.Time
+	lastErr         string
+}
+
+func (u *stepUnwritten) failed(err error, now time.Time) {
+	u.failures++
+	if u.failures == 1 {
+		u.first = now
+	}
+	u.last, u.lastErr = now, err.Error()
+	if u.failures == 1 || u.failures == u.shown*10 {
+		u.row(nil)
+	}
+}
+
+func (u *stepUnwritten) close(written bool) {
+	if u.shown > 0 {
+		u.row(&written)
+	}
+}
+
+func (u *stepUnwritten) row(written *bool) {
+	c := u.c
+	e := c.e
+	u.shown = u.failures
+	data := map[string]any{"call_id": c.id, "node": c.plan.node, "k": u.k, "attempt": u.attempt, "marker": u.marker, "action": u.action, "input_state": "not_delivered",
+		"error": u.lastErr, "failures": u.failures, "first_at": u.first.UTC().Format(time.RFC3339Nano), "last_at": u.last.UTC().Format(time.RFC3339Nano)}
+	if written != nil {
+		data["written"] = *written
+	}
+	e.j.Append(Event{RunID: e.runID, Kind: KindFlow, CallID: c.id, Path: c.path.id, Position: c.position, Op: "agent", Label: c.label, Event: EvStepUnwritten, Data: data})
 }
 
 // sessionTaken looks for what took a step a dead process published before this process shows it again: a report the owner wrote
@@ -760,8 +879,8 @@ func (c *callRun) sessionFind(ctx context.Context, k int, op, marker, action str
 
 // sessionAdopt goes on with an attempt whose subagent a process bound and then died before it wrote turn_started: the subagent its
 // thread_started row records is the attempt's, so nothing is spawned or published again and only turn_started is written, as a
-// send_input bind writes it (one thread_started per attempt). A recorded subagent the host does not know on reads LostAfter apart
-// loses the attempt, and the next attempt is spawned.
+// send_input bind writes it (one thread_started per attempt). A recorded subagent the host does not know, or shows notLoaded or
+// systemError, for LostAfter loses the attempt, as the harvest judges a bound one; the gate decides the next attempt, which spawns.
 func (c *callRun) sessionAdopt(turnCtx, ctx context.Context, k int, op, input string, repair bool, st *sessionStage) (*TurnOutcome, CallResult, bool, error) {
 	s, sc, now := c.sess, c.e.cfg.Session, c.e.cfg.Now
 	s.agent, s.rollout, s.pair, s.seen = st.agent, st.rollout, st.pair, Tokens{}
@@ -771,21 +890,39 @@ func (c *callRun) sessionAdopt(turnCtx, ctx context.Context, k int, op, input st
 	var gone time.Time
 	for {
 		if turnCtx.Err() != nil {
+			c.sessionBindStopped(ctx, k, op, marker)
 			out, _, err := c.sessionStop(ctx)
 			return &out, CallResult{}, false, err
 		}
 		if _, ok := c.sessionVerify(turnCtx, s.agent, k, op, marker, StepSendInput); ok {
 			return nil, CallResult{}, false, nil
 		}
-		_, err := sc.Host.ReadAgent(turnCtx, s.agent)
+		// the subagent is gone as the harvest judges a bound one (hostGone): unknown to the host, or a thread it shows notLoaded or
+		// systemError (CRW-1392). A read the host cannot answer judges nothing: the time it has been gone stays as it is, as in the
+		// harvest (sessionRead)
+		ag, err := sc.Host.ReadAgent(turnCtx, s.agent)
+		status, judged := "", true
 		switch {
-		case !errors.Is(err, ErrSessionAgentNotFound):
+		case errors.Is(err, ErrSessionAgentNotFound):
+			status = "notFound"
+		case err != nil:
+			judged = false
+		case hostGone(ag.Status):
+			status = ag.Status
+		}
+		switch {
+		case !judged:
+		case status == "":
 			gone = time.Time{}
 		case gone.IsZero():
 			gone = now()
 		case now().Sub(gone) >= sc.lostAfter():
 			s.boundK = k
-			c.sessionLose(&sessionLoss{reason: fmt.Sprintf("the subagent bound before the restart has been unknown to the host for %s", sc.lostAfter()), hostStatus: "notFound"})
+			c.sessionLose(&sessionLoss{reason: fmt.Sprintf("the subagent bound before the restart has been %s on the host for %s", status, sc.lostAfter()), hostStatus: status})
+			// the next attempt is a new request: the gate decides it, as after a loss the harvest found (CRW-1392)
+			if res, stop := c.gate(ctx); stop {
+				return nil, res, true, nil
+			}
 			return c.sessionBind(turnCtx, ctx, k, op, input, repair)
 		}
 		_ = sc.wait(turnCtx, sc.poll())
@@ -874,7 +1011,11 @@ func (c *callRun) sessionVerify(ctx context.Context, agent string, k int, op, ma
 	c.turnIDs = append(c.turnIDs, turn.ID)
 	c.delivered = true
 	s.turn, s.boundK = turn.ID, k
-	c.event(EvTurnStarted, map[string]any{"k": k, "op": op, "turn_id": turn.ID, "attempt": s.attempt, "marker": marker, "via": "session"})
+	data := map[string]any{"k": k, "op": op, "turn_id": turn.ID, "attempt": s.attempt, "marker": marker, "via": "session", "conversation_turn": s.conv}
+	if s.replaces != "" {
+		data["replaces_turn"] = s.replaces
+	}
+	c.event(EvTurnStarted, data)
 	return DispatchReply{Status: ReplyBound}, true
 }
 
@@ -1006,10 +1147,15 @@ func (c *callRun) sessionOutcome(ctx context.Context, turnID string) (TurnOutcom
 
 // sessionStop ends a turn the engine stopped (a pause, a cancellation, a deadline): the bound subagent's turn is interrupted and
 // the thread read until it is no longer active, so a held row is never written beside a subagent that still works. A turn that
-// was not bound yet has nothing to interrupt.
+// was not bound yet has nothing to interrupt. The rows before the interrupt are stored before it is sent: the turn_started a stop
+// binds (sessionBindStopped) or a bind wrote after the interrupt_requested row is the turn that row decides for a process that
+// resumes the run, and a journal that batches its rows would lose it with a process that dies once the interrupt is sent.
 func (c *callRun) sessionStop(ctx context.Context) (TurnOutcome, *sessionLoss, error) {
 	s, sc := c.sess, c.e.cfg.Session
 	if s.agent != "" {
+		if err := journalFlush(c.e.j); err != nil {
+			c.e.journalFailed(err)
+		}
 		ictx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
 		// every running turn of the subagent: the bound one, or the one a send_input step that was not bound yet started
 		if turns, err := sc.Host.Turns(ictx, s.agent, 0, false); err == nil {
@@ -1162,8 +1308,8 @@ func (c *callRun) sessionChecks(ctx context.Context, data map[string]any) {
 	data["executor_head_moved"] = moved
 }
 
-// startCommit is the commit an executor call's worktree is to be at when its turn ends: the result of the node's last crw.commit,
-// else the start commit of the allocation it works in; and that allocation's attempt.
+// startCommit is the commit an executor call's worktree is to be at when its turn ends: the result of the node's last crw.commit
+// after the allocation it works in was recorded, else that allocation's start commit; and that allocation's attempt.
 func (c *callRun) startCommit() (string, int) {
 	node := c.plan.node
 	start, attempt := "", 0
@@ -1178,8 +1324,11 @@ func (c *callRun) startCommit() (string, int) {
 			}
 		case ev.Kind == KindCall && ev.Op == "agent" && ev.Event == EvPrepared && rowStr(ev.Data, "node") == node:
 			if m, ok := ev.Data["allocation"].(map[string]any); ok && rowStr(m, "path") == c.cwd && (rowStr(m, "kind") == PlaceFresh || rowStr(m, "kind") == PlaceRestore) {
-				if start == "" {
-					start = rowStr(m, "start_commit")
+				// the allocation the worktree was made (or restored) for starts at its own start commit: a crw.commit of the node
+				// recorded before it (an earlier allocation's, a superseded process's past a suffix's boundary) is not its start,
+				// and only a commit after it moves it (CRW-1384)
+				if sc := rowStr(m, "start_commit"); sc != "" {
+					start = sc
 				}
 				attempt = rowInt(m, "attempt")
 			}

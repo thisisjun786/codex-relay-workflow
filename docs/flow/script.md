@@ -899,14 +899,20 @@ any row is written. `crw flow shadow` replays either from the trace and names th
   its parent's, and is recorded only as `host_cwd`.
 - A turn is a step. Its intent row `step_published` (k, `op` `<call>/t<k>`, `marker` `<call>/t<k>-a<n>`, `attempt` n, `action`,
   `input`, `input_digest`, `packet` and `packet_digest`, `role`, `agent_type`, `model`, `effort`, `workspace` P, `agent_id` of a
-  `send_input`, the `note` about earlier attempts, and for a `send_input` `tokens_seen` and `call_tokens`, what the turns before it
-  counted) is committed before the packet `steps/<call>/packet-t<k>-a<n>.md` and the step
+  `send_input`, the `note` about earlier attempts, `previous_answer`, the answer a repair turn repairs (a later attempt of the turn on a new
+  subagent names it in its packet, after a restart too), for a `send_input` `tokens_seen` and `call_tokens`, what the turns before it
+  counted, and the turn's place in the call's conversation: `conversation_turn`, the conversation turn it is (the call's task turn 1,
+  its repair 2, on whatever subagent, attempt and k it runs), and `replaces_turn`, the turn it replaces when it is a turn run again)
+  is committed before the packet `steps/<call>/packet-t<k>-a<n>.md` and the step
   `steps/<call>/t<k>-a<n>.json` are written under `<state>/flow/<run>/` (`engine.FileStepBus`). A step is `spawn` (a first turn, the
   attempt after a lost one, a continuation, a repair whose subagent is closed) or `send_input` (the repair turn on the open
   subagent); `close` steps (`steps/<call>/close-a<n>-<agent>.json`, one file per subagent, so two closes of one attempt never
   overwrite each other) name a subagent to close. A step whose packet or file cannot be written (a full disk) was sent to nobody:
   the run writes the flow warning `step_unwritten` (`marker`, `k`, `attempt`, `action`, `input_state: not_delivered`, `error`)
-  once and writes the step again until it can or the turn ends; the call is never ended unknown for it.
+  and writes the step again at the poll until it can or the turn ends; the call is never ended unknown for it. A failure that does
+  not pass shows how long in the record: the warning is written at the 1st, 10th, 100th, ... failure with `failures` and the
+  `first_at` and `last_at` times, and a closing one whenever a warning was written: `written: false` when the turn ends
+  unwritten, `written: true` when the step is written, after any number of failures.
 - The spawn message is short; the packet holds the rest:
 
   ```
@@ -940,12 +946,14 @@ any row is written. `crw flow shadow` replays either from the trace and names th
   effort undecided is bound on its model alone: `thread_started` records the effort the host applied, with `effort_unchecked`, as
   the call's pair. A continuation is judged by the same rule: only the decided parts of the role's pair are compared with the pair
   the call's subagent was bound with, so a call bound `pair_unchecked` or `effort_unchecked` continues on a new subagent whose bind
-  records the pair it runs, and a decided part that differs is refused (`pair_refused`). While a step waits, the run also looks the
+  records the pair it runs, and a decided part that differs is refused (`pair_refused`); an explicit `effort` on a continuation of a
+  role whose effort is undecided is compared with the effort the call's subagent ran. While a step waits, the run also looks the
   marker up on the host - the subagent that carries it for a spawn, the turn that carries it on the subagent for a `send_input` -
   so a subagent spawned, or a repair sent, and never reported is bound all the same.
 - A bind writes `thread_started` (the subagent's `thread_id`, the host-read `model` and `effort`, `cwd` P, `host_cwd`,
   `parent_thread_id`, `agent_role`, `attempt`, `via: session`, `rollout_path`, `marker`, and `prior_pairs`, the pairs earlier
-  attempts of the call were bound with when they differ) and `turn_started` (k, `op`, `turn_id`, `attempt`, `marker`) in one batch;
+  attempts of the call were bound with when they differ) and `turn_started` (k, `op`, `turn_id`, `attempt`, `marker`, and the
+  `conversation_turn` and `replaces_turn` of its step) in one batch;
   a `send_input` turn writes `turn_started` only. The relay reads the call's pair from its newest `thread_started` row and an
   author call's earlier pairs from `prior_pairs`.
 
@@ -967,14 +975,25 @@ any row is written. `crw flow shadow` replays either from the trace and names th
   `thread/tokenUsage/updated`. A rollout that cannot be read leaves the turn unmeasured: the `tokens_unmeasured` row says `pauses: false`,
   and a session run's token ceiling counts the calls it measured.
 - A pause, a cancellation or a deadline interrupts the bound subagent's running turns and reads the thread until it is no longer
-  active; only then is the call ended `held` (or `superseded`). A call that waited for a dispatch retracts its step.
+  active; only then is the call ended `held` (or `superseded`). A call that waited for a dispatch retracts its step. A step whose
+  subagent is known (a `send_input`, an adopted one) and was not bound yet has the turn that subagent started for it bound first
+  (`turn_started`), so the rows name the turn the interrupt reaches; a spawn step no subagent was bound to has no turn to interrupt.
+  The rows before an interrupt, that `turn_started` among them, are stored before it is sent: a journal that batches its rows
+  commits them first, so a process that dies once the interrupt is sent leaves the turn the `interrupt_requested` row decides.
+- An interrupt goes with the turn it was asked for. In the process that asked for it, that is the turn in flight. For a process
+  that resumes the run it is the turn the rows bound to the step and attempt of the `interrupt_requested` row (its `op`, the step
+  published last before it): that turn, if the resumed call goes on with it, ends `held` for the row's reason whatever it came to. Every
+  other turn starts with no intent: a new attempt after a lost one, a step the resumed process publishes again, a turn the host
+  started for a step after the interrupt (a `send_input` the owner had not taken). The intent is compared where the outcome is
+  read; it is never moved onto another turn.
 - Write isolation is recorded, never enforced (the host gives a subagent its parent's sandbox). With `SessionConfig.Trace` the run
   takes digests of P, of the owner's checkout and of the run's shared state when it binds and when it harvests, and writes a flow
   warning when they differ: `read_role_wrote` (a role that changes nothing), `executor_wrote_outside`, `shared_state_changed`.
-- An executor's `HEAD` is compared with the commit its worktree is to be at (the node's last `crw.commit`, else the allocation's
-  start). A subagent that committed moved it: the commit is kept on `refs/crw/flow/<run>/stray/<node>/a<attempt>-<call>` (the
+- An executor's `HEAD` is compared with the commit its worktree is to be at (the node's last `crw.commit` after the allocation the
+  worktree was made or restored for, else that allocation's start). A subagent that committed moved it: the commit is kept on `refs/crw/flow/<run>/stray/<node>/a<attempt>-<call>` (the
   executor calls of one allocation, a build and its fix rounds, each keep their own; the ref is created by a compare-and-swap
-  against no ref and never moved) and the
+  against no ref, and moved only by a fast-forward to a descendant, the same call's later `HEAD`, with the commit it holds as the
+  compare-and-swap's old value) and the
   completed row records `executor_head_moved` (`start`, `head`, `ref`); `crw.commit` commits the pending tree on `start` with the
   observed `HEAD` as the compare-and-swap's old value, and the proof takes the recorded stray `HEAD` whose tree is the pending tree
   as the call's state ([journal.md](journal.md#the-proofs)). The subagent is closed when the call has its terminal row.
@@ -994,33 +1013,42 @@ any row is written. `crw flow shadow` replays either from the trace and names th
   | --- | --- |
   | `prepared` | publishes the first step (the directory an earlier process made is the call's) |
   | `step_published` | answers first a dispatch report the owner wrote that no process answered (it waits in the inbox), then looks the step up on the host - the subagent that carries the marker for a spawn, the marker turn on the subagent for a `send_input` (a repair is never sent twice) - and binds what it finds; else publishes the same step again |
-  | `thread_started` | adopts the subagent the row names and writes only its `turn_started` (nothing is spawned or published again; one the host does not know for `LostAfter` loses the attempt), then reads it as after `turn_started` |
+  | `thread_started` | adopts the subagent the row names and writes only its `turn_started` (nothing is spawned or published again; one the host does not know, or shows `notLoaded` or `systemError`, for `LostAfter` loses the attempt, and the gate decides the next; a read the host cannot answer judges nothing and leaves that time as it is, as in the harvest), then reads it as after `turn_started` |
   | `turn_started` | retracts the step file the dead process left and reads the bound subagent: harvests a completed turn, waits for a running one, loses a lost one |
   | `session_attempt_lost` | closes the old subagent and spawns the next attempt |
 
 - A held session call goes on in place after the subagents of its held attempts are shown not running (a running turn is
   interrupted and the thread read until it is not active): a delivered turn is taken again by a new attempt whose packet says why
-  the previous one stopped; a step that was published and not bound is looked up by its marker first.
+  the previous one stopped (a call held in its repair turn goes on with that repair: the packet names the task once, the answer
+  repaired and the repair instruction, and the call has no second repair, as on the App Server path); a step that was published and not bound is looked up by its marker first.
 - A new attempt of a node supersedes the open session calls of the previous process only after every subagent they were bound to,
   or that took a step they published, runs nothing.
 - A continuation (`resume: handle`) runs on a new subagent and writes its own `thread_started` row, so the handle chain and the pair
   the relay reads name it. Inside a resume's suffix it never forks: it takes the checkpoint branch (`checkpoint_started`), and its
-  packet carries the journal's record of the handle's turns.
+  packet carries the journal's record of the handle's turns, each with the input of the step or request it took: for a session
+  subagent the conversation it goes on from, the turns of the calls its handle continues before its own and the call's conversation
+  before the turn its subagent started at. A session call's conversation is its turns at the conversation turn each records
+  (`conversation_turn` of its `turn_started` row), each conversation turn once: a turn run again (the next attempt of a lost turn;
+  the turn a held call goes on with in place on a new subagent, at the next k) is recorded at the conversation turn of the turn it
+  replaces and names that turn (`replaces_turn`), and supersedes it, and the packet is built from that list alone. The place is
+  recorded when the step is published and the turn bound, never read back from held rows or k; a `turn_started` row of a journal
+  written before the place was recorded (no `conversation_turn`) takes it from the `repair` member of the `step_published` row at
+  its k (the task turn 1, the repair 2), and a later such turn at that place replaces the earlier one. The continuation's input digest keeps the handle's own thread chain: a position replays only after every one before it.
 
 | Row | In a session call |
 | --- | --- |
 | `prepared` | as for any call, with `backend: session` and the allocation every attempt shares |
-| `step_published` | the intent of a step, committed before the step file and the packet |
+| `step_published` | the intent of a step, committed before the step file and the packet; `conversation_turn` and `replaces_turn` record the turn's place in the call's conversation |
 | `thread_started` | a subagent bound to an attempt (one row per attempt and per continuation) |
-| `turn_started` | the turn of a step the subagent took |
-| `interrupt_requested` | the engine's interrupt of the bound turn |
+| `turn_started` | the turn of a step the subagent took, with the place its step records (`conversation_turn`, `replaces_turn`) |
+| `interrupt_requested` | the engine's interrupt of the turn in flight (`reason`, `op`); a resumed process applies it only to the turn bound to that step and attempt |
 | `session_attempt_lost` | an attempt whose subagent will not finish its turn |
 | terminal rows | as for any call |
 | `session_wake` (flow row) | a wake of the owner thread the run staged: `batch`, `wake_id`, `renotify`, `ops`, `owner`, `owner_status`, `waiting_seconds`, `staged` (and `error`, or `reason` when the relay already held the message and staged nothing) |
 | `session_host_warning` (flow row) | what the session host adapter's marker search could not tie as it should: `op`, `warnings` (`no_ledger_line`, `ledger_op_differs`, `several_spawns`, `window_ended`) |
 | `role_store_changed` (flow row) | written by no command: the run's process is the one party that records the pairs a run runs on and their change (its started row, `policy_repinned`); the journal of an older run may hold one (`pinned_digest`, `store_digest`) |
 | `escalation` (flow row) | `reason: session_unresponsive`: the steps waited `UnresponsiveAfter` without a dispatched report (`owner`, `ops`, `batch`, `waiting_seconds`); the run goes on |
-| `step_unwritten` (flow row) | a step whose packet or file could not be written: nothing was sent (`input_state: not_delivered`, `marker`, `error`); the run writes it again |
+| `step_unwritten` (flow row) | a step whose packet or file could not be written: nothing was sent (`input_state: not_delivered`, `marker`, `error`, `failures`, `first_at`, `last_at`, and `written` on the closing row); the run writes it again |
 
 ### The owner's commands
 

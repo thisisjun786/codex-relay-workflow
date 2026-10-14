@@ -153,12 +153,26 @@ func runBudget(spec Spec, spent, asked int64) (int64, error) {
 	}
 	left := spec.TokenBudget - spent
 	if left <= 0 {
-		return 0, fmt.Errorf("%s: run %s spent %d of the %d tokens of its spec%s; it is not resumed, and more budget needs a new decision", engine.ReasonBudgetExhausted, spec.RunID, spent, spec.TokenBudget, decisionOf(spec))
+		return 0, fmt.Errorf("%s: run %s spent %d of the %d tokens of its spec%s; it is not resumed, and %s", engine.ReasonBudgetExhausted, spec.RunID, spent, spec.TokenBudget, decisionOf(spec), moreBudget(spec))
 	}
 	if asked <= 0 || asked > left {
 		asked = left
 	}
 	return spent + asked, nil
+}
+
+// moreBudget is what the refusal of a run whose budget is spent says gives more (CRW-1392): a night batch's budget is its decision's,
+// so more needs a new decision; a budget the operator gave at the start (crw flow start --token-budget) no command raises, so more
+// tokens need a new run with a budget of its own. The refusal stays: tokens spent over a budget cannot be taken back.
+func moreBudget(spec Spec) string {
+	if spec.Decision != "" {
+		return "more budget needs a new decision"
+	}
+	workflow := spec.Workflow
+	if workflow == "" {
+		workflow = "WORKFLOW"
+	}
+	return fmt.Sprintf("no command raises a run's budget: the budget was given at its start, so more tokens need a new run (crw flow start %s --token-budget N)", workflow)
 }
 
 // budgetLeft refuses the resume of a run whose spec's budget the run has spent (runBudget over the journal in st): `crw flow resume

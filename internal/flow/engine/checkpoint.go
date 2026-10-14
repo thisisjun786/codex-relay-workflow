@@ -65,11 +65,11 @@ func (c *callRun) sourceReadable(ctx context.Context) bool {
 	return false
 }
 
-// checkpointPacket is the conversation of a thread through a turn as the journal recorded it: each turn's input, and the
-// result of the call the turn ended.
+// checkpointPacket is the conversation of a thread through a turn as the journal recorded it, from the list conversationPrefix
+// gives alone (for a session subagent the conversation it continues too, each turn index once): each turn's input, and the result of
+// the call the turn ended.
 func checkpointPacket(j Journal, threadID, throughTurn string) string {
-	prefix := threadPrefix(j, threadID, throughTurn)
-	inputs := map[string]string{}
+	prefix := conversationPrefix(j, threadID, throughTurn)
 	results := map[string]string{}
 	for _, ev := range j.Events() {
 		if ev.Kind != KindCall || ev.Op != "agent" {
@@ -82,8 +82,6 @@ func checkpointPacket(j Journal, threadID, throughTurn string) string {
 					delete(results, k)
 				}
 			}
-		case EvTurnRequested, EvStepPublished:
-			inputs[rowStr(ev.Data, "op")] = rowStr(ev.Data, "input")
 		case EvCompleted:
 			results[ev.CallID] = rowStr(ev.Data, "result")
 		}
@@ -92,7 +90,7 @@ func checkpointPacket(j Journal, threadID, throughTurn string) string {
 	b.WriteString("This thread continues earlier work whose conversation can no longer be read. The record of that conversation follows, oldest turn first; the files in your working directory are the state it left.\n")
 	for i, t := range prefix {
 		op := rowStr(t, "op")
-		fmt.Fprintf(&b, "\n[turn %d] %s\n", i+1, strings.TrimSpace(inputs[op]))
+		fmt.Fprintf(&b, "\n[turn %d] %s\n", i+1, strings.TrimSpace(rowStr(t, "input")))
 		callID, _, _ := strings.Cut(op, "/t")
 		if i == len(prefix)-1 || !strings.HasPrefix(rowStr(prefix[i+1], "op"), callID+"/") {
 			if r, ok := results[callID]; ok {

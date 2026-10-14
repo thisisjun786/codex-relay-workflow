@@ -67,7 +67,8 @@ func TestAllocatorKeepsAStrayHead(t *testing.T) {
 }
 
 // CRW-1367: a stray ref is written with a compare-and-swap: KeepRef creates it, keeps it as it is when it already holds the commit,
-// and never moves it to another commit, so a second record of the same ref cannot overwrite the first.
+// and never moves it to a commit that does not descend from the one it holds (CRW-1392), so a second record of the same ref cannot
+// overwrite the first.
 func TestAllocatorKeepRefNeverOverwrites(t *testing.T) {
 	dir := t.TempDir()
 	repo := filepath.Join(dir, "repo")
@@ -102,10 +103,64 @@ func TestAllocatorKeepRefNeverOverwrites(t *testing.T) {
 	if err := alloc.KeepRef(ctx, ref, first); err != nil {
 		t.Errorf("keeping the commit the ref already holds: %v", err)
 	}
-	if err := alloc.KeepRef(ctx, ref, second); err == nil {
-		t.Errorf("the allocator moved %s to another commit", ref)
+	// a commit with no history in common with the record (CRW-1392: the descendant of the record is a fast-forward and moves it)
+	unrelated := run(repo, "commit-tree", second+"^{tree}", "-m", "unrelated")
+	if err := alloc.KeepRef(ctx, ref, unrelated); err == nil {
+		t.Errorf("the allocator moved %s to a commit that does not descend from its record", ref)
 	}
 	if got := run(repo, "rev-parse", ref); got != first {
 		t.Errorf("%s is %s, want the first record %s", ref, got, first)
+	}
+}
+
+// CRW-1392: the second HEAD of a call whose first was kept (the call's second turn after a crash) is kept on the same ref when it
+// descends from the first: KeepRef moves the ref by a fast-forward with the old value as the compare-and-swap's, and refuses a
+// commit that does not descend from the record and a fast-forward over a record that moved meanwhile.
+func TestAllocatorKeepRefFastForwards(t *testing.T) {
+	dir := t.TempDir()
+	repo := filepath.Join(dir, "repo")
+	run := func(cwd string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = cwd
+		cmd.Env = append(cmd.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	run(dir, "init", "-q", "-b", "main", repo)
+	writeFile(t, filepath.Join(repo, "a.txt"), "a\n")
+	run(repo, "add", "-A")
+	run(repo, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "first")
+	first := run(repo, "rev-parse", "HEAD")
+	writeFile(t, filepath.Join(repo, "a.txt"), "b\n")
+	run(repo, "-c", "commit.gpgsign=false", "commit", "-q", "-am", "second")
+	second := run(repo, "rev-parse", "HEAD")
+	sibling := run(repo, "commit-tree", second+"^{tree}", "-p", first, "-m", "a sibling of second")
+	alloc, err := agent.NewAllocator(agent.AllocatorConfig{Repo: repo, StateDir: filepath.Join(dir, "state"), RunID: "run-s"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	ref := "refs/crw/flow/run-s/stray/n1/a1-c_000000000001"
+	if err := alloc.KeepRef(ctx, ref, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := alloc.KeepRef(ctx, ref, second); err != nil {
+		t.Fatalf("a descendant of the record: %v", err)
+	}
+	if got := run(repo, "rev-parse", ref); got != second {
+		t.Fatalf("%s is %s, want the descendant %s", ref, got, second)
+	}
+	if err := alloc.KeepRef(ctx, ref, sibling); err == nil {
+		t.Errorf("the allocator moved %s to a commit beside its record", ref)
+	}
+	if err := alloc.KeepRef(ctx, ref, first); err == nil {
+		t.Errorf("the allocator moved %s back to an ancestor of its record", ref)
+	}
+	if got := run(repo, "rev-parse", ref); got != second {
+		t.Errorf("%s is %s, want %s", ref, got, second)
 	}
 }
