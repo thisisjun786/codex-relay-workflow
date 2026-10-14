@@ -36,6 +36,11 @@ const (
 var (
 	fbExplorer = bound.Pair{Model: "explorer-model", Effort: "high"}
 	fbReviewer = bound.Pair{Model: "reviewer-model", Effort: "xhigh"}
+	// the other four pairs of an orchestrator line (CRW-1348: the line carries the six roles)
+	fbArchitect     = bound.Pair{Model: "architect-model", Effort: "high"}
+	fbExecutor      = bound.Pair{Model: "executor-model", Effort: "xhigh"}
+	fbExecutorT1    = bound.Pair{Model: "executor-t1-model", Effort: "xhigh"}
+	fbReviewerFinal = bound.Pair{Model: "reviewer-final-model", Effort: "xhigh"}
 )
 
 // fbRig is a home with a flow-bound directory and the hook's environment.
@@ -85,7 +90,8 @@ func engineLine(thread, call, role string, allowance int) string {
 
 func orchestratorLine(thread string) string {
 	return `{"run_id":"run-fb","thread_id":"` + thread + `","kind":"orchestrator","nativeAllowance":null,"helperPairs":{"explorer":` + fbPairJSON(fbExplorer) +
-		`,"reviewer":` + fbPairJSON(fbReviewer) + `},"policyDigest":"sha256:fb"}` + "\n"
+		`,"reviewer":` + fbPairJSON(fbReviewer) + `,"architect":` + fbPairJSON(fbArchitect) + `,"executor":` + fbPairJSON(fbExecutor) +
+		`,"executor-t1":` + fbPairJSON(fbExecutorT1) + `,"reviewer-final":` + fbPairJSON(fbReviewerFinal) + `},"policyDigest":"sha256:fb"}` + "\n"
 }
 
 func closedLine(thread string) string {
@@ -369,9 +375,10 @@ func TestFlowBoundResumeKeepsRolePair(t *testing.T) {
 	}
 }
 
-// A directory or file under the flow-bound directory that cannot be trusted refuses the spawn: it never falls back to the
-// ordinary path, which would let a bound thread spawn at will.
-func TestFlowBoundLookupUnavailableDenies(t *testing.T) {
+// A directory or file under the flow-bound directory that cannot be trusted is read as no binding (CRW-1348: no
+// flow_bound_unavailable refusal of every spawn): the spawn gets the ordinary path's answer, byte for byte, and the hook says on
+// stderr why. The run's import still finds an engine thread's spawn that no ledger line covers (unbound_spawn).
+func TestFlowBoundLookupUnavailableIsAnOrdinaryThreadWithAWarning(t *testing.T) {
 	good := engineLine(fbThreadA, fbCall1, "executor", 1)
 	input := `{"agent_type":"explorer","message":"TASK: q"}`
 	cases := []struct {
@@ -426,25 +433,26 @@ func TestFlowBoundLookupUnavailableDenies(t *testing.T) {
 		}},
 		{"call id that cannot name a claim", bound.ReasonInvalid, func(r *fbRig) { r.write(fbThreadA, engineLine(fbThreadA, "../escape", "executor", 1), 0o600) }},
 	}
-	standalone := ""
-	{
-		r := newFBRig(t)
-		standalone = r.spawn(fbThreadA, "tool-1", input)
-	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			r := newFBRig(t)
 			c.setup(r)
-			// every kind of spawn is refused: an explorer, a worker and one without a tool use id
+			warnings := captureFlowBoundWarnings(t)
+			// every kind of spawn gets what a thread no run registered gets: an explorer, a worker and one without a tool use id
+			n := 0
 			for _, in := range []string{input, `{"agent_type":"worker","message":"go"}`, `{"message":"go"}`} {
 				for _, tool := range []string{"tool-1", ""} {
+					other := newFBRig(t)
+					want := other.normalize(other.spawn(fbThreadA, tool, in))
+					t.Setenv("HOME", r.home) // the other rig took HOME
 					out := r.spawn(fbThreadA, tool, in)
-					reason := r.expectRefused(out, bound.ReasonFlowBoundUnavailable)
-					if c.detail != "" && !strings.Contains(reason, c.detail) {
-						t.Errorf("the refusal does not name %s: %q", c.detail, reason)
+					if strings.Contains(out, bound.ReasonFlowBoundUnavailable) || r.normalize(out) != want {
+						t.Fatalf("not the ordinary path's answer:\n got %q\nwant %q", out, want)
 					}
-					if out == standalone {
-						t.Fatalf("the spawn fell through to the ordinary path")
+					n++
+					w := warnings()
+					if len(w) != n || !strings.Contains(w[n-1], fbThreadA) || c.detail != "" && !strings.Contains(w[n-1], c.detail) {
+						t.Fatalf("the stderr warnings do not say why (%s): %v", c.detail, w)
 					}
 				}
 			}
@@ -743,41 +751,34 @@ func TestFlowBoundRecursionTokenNotMinted(t *testing.T) {
 	}
 }
 
-// On the orchestrator thread of an open run only an explorer helper is allowed, and its role is the CRW-ROLE line of the message
-// header: reviewer gets the reviewer pair, explorer or no header the explorer pair, architect is refused. Keywords never choose.
-// A closed run's thread is an ordinary one.
+// On the orchestrator thread of an open session run every spawn but a full-history fork is allowed (CRW-1348, design §9): the role
+// is the step's CRW-ROLE header (the six values), else the agent_type's, and the pair is that role's; a worker is an executor.
+// Keywords never choose. A closed run's thread is an ordinary one.
 func TestOrchestratorHelperTypeMapping(t *testing.T) {
 	r := newFBRig(t)
 	r.bindOrchestrator(fbThreadA)
 	cases := []struct {
 		name, input string
 		want        bound.Pair
-		refuse      string
 	}{
-		{"reviewer header", `{"agent_type":"explorer","message":"CRW-ROLE: reviewer\nTASK: look at the diff"}`, fbReviewer, ""},
-		{"reviewer header after other header lines", `{"agent_type":"explorer","message":"scope: x\nCRW-ROLE: reviewer\nTASK: look"}`, fbReviewer, ""},
-		{"reviewer header in items", `{"agent_type":"explorer","items":[{"type":"text","text":"CRW-ROLE: reviewer\nTASK: look"}]}`, fbReviewer, ""},
-		{"reviewer header in a v2 spawn", `{"agent_type":"explorer","task_name":"t","fork_turns":"none","message":"CRW-ROLE: reviewer\nTASK: look"}`, fbReviewer, ""},
-		{"review keywords, no header", `{"agent_type":"explorer","message":"review this diff"}`, fbExplorer, ""},
-		{"review keywords after TASK", `{"agent_type":"explorer","message":"TASK: review this diff\nCRW-ROLE: reviewer"}`, fbExplorer, ""},
-		{"explorer header", `{"agent_type":"explorer","message":"CRW-ROLE: explorer\nTASK: review this diff"}`, fbExplorer, ""},
-		{"no header", `{"agent_type":"explorer","message":"TASK: where is it"}`, fbExplorer, ""},
-		{"architect header", `{"agent_type":"explorer","message":"CRW-ROLE: architect\nTASK: design it"}`, bound.Pair{}, bound.ReasonNativeTypeRefused},
-		{"worker", `{"agent_type":"worker","message":"CRW-ROLE: reviewer\nTASK: x"}`, bound.Pair{}, bound.ReasonNativeTypeRefused},
-		{"reviewer agent type", `{"agent_type":"reviewer","message":"TASK: x"}`, bound.Pair{}, bound.ReasonNativeTypeRefused},
-		{"no agent type", `{"message":"TASK: x"}`, bound.Pair{}, bound.ReasonNativeTypeRefused},
-		{"explorer with a model and effort of its own", `{"agent_type":"explorer","message":"CRW-ROLE: reviewer\nTASK: x","model":"m","reasoning_effort":"low"}`, fbReviewer, ""},
+		{"reviewer header", `{"agent_type":"explorer","message":"CRW-ROLE: reviewer\nTASK: look at the diff"}`, fbReviewer},
+		{"reviewer header after other header lines", `{"agent_type":"explorer","message":"scope: x\nCRW-ROLE: reviewer\nTASK: look"}`, fbReviewer},
+		{"reviewer header in items", `{"agent_type":"explorer","items":[{"type":"text","text":"CRW-ROLE: reviewer\nTASK: look"}]}`, fbReviewer},
+		{"reviewer header in a v2 spawn", `{"agent_type":"explorer","task_name":"t","fork_turns":"none","message":"CRW-ROLE: reviewer\nTASK: look"}`, fbReviewer},
+		{"review keywords, no header", `{"agent_type":"explorer","message":"review this diff"}`, fbExplorer},
+		{"review keywords after TASK", `{"agent_type":"explorer","message":"TASK: review this diff\nCRW-ROLE: reviewer"}`, fbExplorer},
+		{"explorer header", `{"agent_type":"explorer","message":"CRW-ROLE: explorer\nTASK: review this diff"}`, fbExplorer},
+		{"no header", `{"agent_type":"explorer","message":"TASK: where is it"}`, fbExplorer},
+		{"architect header", `{"agent_type":"explorer","message":"CRW-ROLE: architect\nTASK: design it"}`, fbArchitect},
+		{"worker", `{"agent_type":"worker","message":"CRW-ROLE: reviewer\nTASK: x"}`, fbReviewer},
+		{"worker without a header", `{"agent_type":"worker","message":"TASK: x"}`, fbExecutor},
+		{"reviewer agent type", `{"agent_type":"reviewer","message":"TASK: x"}`, fbReviewer},
+		{"no agent type", `{"message":"TASK: x"}`, fbExplorer},
+		{"explorer with a model and effort of its own", `{"agent_type":"explorer","message":"CRW-ROLE: reviewer\nTASK: x","model":"m","reasoning_effort":"low"}`, fbReviewer},
 	}
 	for i, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			out := r.spawn(fbThreadA, fmt.Sprintf("tool-%d", i), c.input)
-			if c.refuse != "" {
-				reason := r.expectRefused(out, c.refuse)
-				if !strings.Contains(reason, "crw flow") {
-					t.Errorf("the refusal does not send the work to run(crw flow): %q", reason)
-				}
-				return
-			}
 			if got := fbPairOf(r.expectAllowed(out)); got != c.want {
 				t.Fatalf("pair %+v, want %+v", got, c.want)
 			}

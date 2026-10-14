@@ -68,7 +68,7 @@ func TestStartRunsARealDetachedProcess(t *testing.T) {
 	st.open()
 	st.close()
 
-	code, out, errOut := run(append([]string{"start", script, "--thread", "thread-owner", "--repo", repo}, common...)...)
+	code, out, errOut := run(append([]string{"start", script, "--thread", "thread-owner", "--repo", repo, "--backend", "app-server"}, common...)...)
 	if code != 0 {
 		t.Fatalf("start: exit %d\n%s\n%s", code, out, errOut)
 	}

@@ -96,6 +96,9 @@ type World struct {
 	// Upward is the hook the run hands what goes up from it to (the plan summary, its escalations, its completion digest;
 	// CRW-1204); nil hands nothing.
 	Upward engine.UpwardHook
+	// Session makes the run a session run (CRW-1316): its calls are steps the owner thread takes and role subagents the run binds;
+	// nil runs them on Backend's threads.
+	Session *engine.SessionConfig
 	// Close commits the rows still buffered and ends the connections.
 	Close func() error
 }

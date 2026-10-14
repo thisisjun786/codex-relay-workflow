@@ -5,7 +5,8 @@
 // run) to ~/.local/state/crw/flow-bound/<thread_id>.jsonl before the turn is sent. The spawn hook reads the file of the
 // thread in whose name a native spawn is made (Lookup) and decides from its last line: no directory, a thread that has no
 // file, or a closed last line is an ordinary thread (Standalone); an unsafe directory or a file that cannot be trusted is
-// Unavailable, and every spawn is refused; anything else binds the thread to the run (Engine, Orchestrator). The hook never
+// Unavailable: the hook cannot tell whose thread it is, and decides the spawn as an ordinary thread's with a warning (CRW-1348:
+// no blanket refusal); anything else binds the thread to the run (Engine, Orchestrator). The hook never
 // opens the relay store and never reads the policy file: the helper pairs travel in the line.
 //
 // The location is computed here, once, from os.UserHomeDir and not from XDG_STATE_HOME, so that the run and the Codex host,
@@ -67,8 +68,9 @@ type Line struct {
 	Role   string `json:"role,omitempty"`
 	// NativeAllowance is how many native helpers the call may spawn (0 or 1); nil on an orchestrator or a closed line.
 	NativeAllowance *int `json:"nativeAllowance"`
-	// HelperPairs are the pairs the hook applies to an allowed helper: explorer for an engine line, explorer and reviewer for
-	// an orchestrator line, from the pinned policy of the run.
+	// HelperPairs are the pairs the hook applies to an allowed helper: explorer for an engine line, from the pinned policy of the
+	// run; for an orchestrator line the pairs of the six roles (OrchestratorRoles) the role subagents of a session run are spawned
+	// with.
 	HelperPairs  map[string]Pair `json:"helperPairs,omitempty"`
 	PolicyDigest string          `json:"policyDigest"`
 }
@@ -135,10 +137,20 @@ func (l Line) Validate(thread string) error {
 		if l.NativeAllowance != nil {
 			return errors.New("an orchestrator line has no nativeAllowance")
 		}
-		if err := pair(HelperExplorer); err != nil {
-			return err
+		// the pair of each of the six roles the hook overwrites a role subagent's spawn with (CRW-1316 §9), its decided parts only
+		// (CRW-1331): an undecided role of the helper role store (CRW-1330) has the empty pair, and its spawns keep the host's
+		// default; a role that names a model and leaves its effort undecided has the empty effort, and its spawns keep the effort
+		// they were sent. An effort without a model is no role's pair.
+		for _, role := range OrchestratorRoles {
+			p, ok := l.HelperPairs[role]
+			switch {
+			case !ok:
+				return fmt.Errorf("the line has no %s helper pair", role)
+			case p.Model == "" && p.Effort != "":
+				return fmt.Errorf("the %s pair of the line names an effort and no model", role)
+			}
 		}
-		return pair(HelperReviewer)
+		return nil
 	case KindClosed:
 		return nil
 	}
