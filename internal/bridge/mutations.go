@@ -209,6 +209,12 @@ func (b *Bridge) SendMessageToThread(ctx context.Context, in SendMessage) (ledge
 				return err
 			}
 		}
+		// What the host reported for the pair is recorded before the settings findings and before the record that precedes the turn are
+		// written, so a refusal by either, and a send that ends before the turn, still carry it (CRW-1398).
+		var reportedPair [2]string
+		if verifyPair != nil {
+			reportedPair = recordPairCheck(receipt, *verifyPair, observed)
+		}
 		receipt["settings"] = contract.Receipt(observed, "resume")
 		receipt["approvals"] = contract.Approvals(resumed)
 		if _, err = b.Ledger.Save(ctx, receipt); err != nil {
@@ -223,7 +229,7 @@ func (b *Bridge) SendMessageToThread(ctx context.Context, in SendMessage) (ledge
 			return &appserver.RPCError{Method: "thread/resume", Message: message, Object: map[string]any{"code": first.Code, "message": message}}
 		}
 		if verifyPair != nil {
-			if refusal := comparePair(receipt, *verifyPair, observed); refusal != nil {
+			if refusal := pairRefusal(*verifyPair, reportedPair); refusal != nil {
 				return refusal
 			}
 		}
@@ -246,27 +252,29 @@ func (b *Bridge) SendMessageToThread(ctx context.Context, in SendMessage) (ledge
 	return result, err
 }
 
-// comparePair is the check of a send to an unloaded thread of a role with several pairs (CRW-1311): the thread was resumed without a
-// pair, and the receipt records what the host reports for it as pairCheck. The turn may start (nil) only when the reported model and
-// effort equal the request's; any other answer, a field the host did not report included, refuses with unverified_pair_for_unloaded_thread
-// naming both pairs, and no turn is started.
-func comparePair(receipt ledger.Receipt, want [2]string, observed map[string]any) error {
-	reported := [2]string{}
+// recordPairCheck is the record of a send to an unloaded thread of a role with several pairs (CRW-1311): the thread was resumed without a
+// pair, and the receipt records what the host reports for it as pairCheck, a match or not. It returns the reported pair.
+func recordPairCheck(receipt ledger.Receipt, want [2]string, observed map[string]any) (reported [2]string) {
 	if model, ok := observed["model"].(string); ok {
 		reported[0] = model
 	}
 	if effort, ok := observed["reasoningEffort"].(string); ok {
 		reported[1] = effort
 	}
-	match := reported == want
 	receipt["pairCheck"] = map[string]any{
 		"requested":   map[string]any{"model": want[0], "reasoningEffort": want[1]},
 		"reported":    map[string]any{"model": nullableText(reported[0]), "reasoningEffort": nullableText(reported[1])},
 		"transmitted": false,
-		"match":       match,
+		"match":       reported == want,
 		"meaning":     "The thread was not loaded and its role declares several pairs, so it was resumed without a pair; the turn starts only when the host reports the request's pair for the resumed thread.",
 	}
-	if match {
+	return reported
+}
+
+// pairRefusal is the check of that send: the turn may start (nil) only when the reported model and effort equal the request's; any other
+// answer, a field the host did not report included, refuses with unverified_pair_for_unloaded_thread naming both pairs, and no turn is started.
+func pairRefusal(want, reported [2]string) error {
+	if reported == want {
 		return nil
 	}
 	shown := func(pair [2]string) string {

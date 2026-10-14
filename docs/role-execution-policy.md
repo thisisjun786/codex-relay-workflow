@@ -141,7 +141,8 @@ role that lists more than one pair is described differently:
   only when the model and effort the host reports for the resumed thread equal the request's. Any other
   answer, another pair or a field the host did not report, starts no turn and is refused as
   `unverified_pair_for_unloaded_thread`, naming both pairs; the receipt's `pairCheck` records what the host
-  reported. A supervisor's or an exception's pair, which no declared pair checks, is still withheld from
+  reported, in the record the ledger holds before the turn and in the failed receipt of a send that the
+  resume's settings findings (CRW-1398) refuse first too. A supervisor's or an exception's pair, which no declared pair checks, is still withheld from
   such a thread before anything is resumed, and a role that declares MCP profiles still needs
   `expected_settings.mcp_profile` first.
 - in practice a child finishes its turn and the host unloads it about a minute later (`notLoaded`), so
