@@ -279,3 +279,34 @@ func TestReceiveDoesNotGuessTheTargetOfAChildNothingTiesToTheRef(t *testing.T) {
 		t.Fatalf("%d faults; want none", len(faults))
 	}
 }
+
+// CRW-1373 evaluation d1: the refs found by the child's baseline widen the candidate set only where the plan's own targets name none. Two
+// integration refs taken off the same dev tip both record that tip as a base; a child of plan g whose plan-own target dev-int has an observation
+// is compared with it, as it was before the lookup by ref, although the other plan's target k-int has an observation too and its recorded
+// heads include the child's baseline.
+func TestReceiveKeepsThePlansOwnTargetWhenAnotherRefSharesTheBaseline(t *testing.T) {
+	r := newReceiveKit(t)
+	r.seed("dispatch-request-1", r.base)
+	r.putPlan("k", 0, "k-r1", addRelNode("c", dag.NodeImplementation))
+	r.exec("INSERT INTO dag_integration_stages (stage_id, batch_id, plan_id, stage, node_id, acceptance_id, event_id, revision_hash, generation, head_sha, detail, recorded_by, recorded_at)"+
+		" VALUES ('stage-k-1', 'batch-k-1', 'k', 'intent', '', '', '', '', 0, '', ?, 'parent', '2026-10-14T00:00:00+00:00')", `{"integration_ref":"k-int","base":"`+r.base+`"}`)
+	other := r.recordTarget(t, "k-int", "k")
+	if other.PlanID != "k" {
+		t.Fatalf("the other ref's target names plan %q; want k", other.PlanID)
+	}
+	if _, err := r.sched.ObserveTarget(context.Background(), other, r.heads["a"], "check", CheckActor); err != nil {
+		t.Fatal(err)
+	}
+	foreign := r.elsewhere()
+	r.observe(t, foreign)
+	notice := r.notice(t)
+	if notice == nil {
+		t.Fatal("a second ref sharing the child's baseline made the plan's own target compare nothing")
+	}
+	if pyjson.Text(notice.Get("integrationRef")) != "dev-int" || pyjson.Text(notice.Get("observedHead")) != foreign || pyjson.Text(notice.Get("faultId")) == "" {
+		t.Fatalf("notice %v; want the fault of dev-int's moved target, observed %s", notice, foreign)
+	}
+	if faults := targetFaults(t, r.batchKit); len(faults) != 1 {
+		t.Fatalf("%d faults; want one", len(faults))
+	}
+}
