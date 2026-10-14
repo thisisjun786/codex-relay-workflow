@@ -73,6 +73,7 @@ func (o *commitOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 		return engine.OpResult{}, err
 	}
 	out := CommitOutcome{Tree: tree, Changed: []string{}, OutOfScope: []string{}}
+	strayHead := ""
 	// An op that ran and did not write its row runs again under the same request id: the commit it made is the one this call
 	// makes (its message names the request), and nothing is committed twice.
 	if msg, err := g(ctx, wt, nil, "log", "-1", "--format=%B"); err == nil && strings.Contains(msg, req.RequestID) {
@@ -81,11 +82,20 @@ func (o *commitOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 			out.Parent = parent
 		}
 	} else {
-		made, err := Commit(ctx, g, wt, CommitRequest{Tree: tree, Parent: head, Message: fmt.Sprintf("crw %s %s\n\n%s", node, short(ex.CallID), req.RequestID)})
+		// A session executor that committed left HEAD at a stray commit, which its completed row records (executor_head_moved,
+		// kept on the attempt's stray ref): the pending tree is committed on the start it recorded, over the HEAD observed now.
+		parent, expect := head, ""
+		if moved, ok := term.Data["executor_head_moved"].(map[string]any); ok && str(moved, "start") != "" && str(moved, "start") != head {
+			parent, expect = str(moved, "start"), head
+		}
+		made, err := Commit(ctx, g, wt, CommitRequest{Tree: tree, Parent: parent, Expect: expect, Message: fmt.Sprintf("crw %s %s\n\n%s", node, short(ex.CallID), req.RequestID)})
 		if err != nil {
 			return engine.OpResult{}, err
 		}
 		out.Commit, out.Parent = made.Commit, made.Parent
+		if expect != "" {
+			strayHead = expect
+		}
 	}
 	scope, err := Scope(ctx, g, wt, out.Parent, out.Tree, regions)
 	if err != nil {
@@ -94,6 +104,9 @@ func (o *commitOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 	out.Changed, out.OutOfScope = scope.Changed, scope.OutOfScope
 	out.Empty = len(out.Changed) == 0
 	data := map[string]any{"node": node, "commit": out.Commit, "parent": out.Parent, "tree": out.Tree, "out_of_scope": out.OutOfScope, "call": ex.CallID, "empty": out.Empty}
+	if strayHead != "" {
+		data["stray_head"] = strayHead
+	}
 	// The receipt is the executor's report, not the judgement of its worktree: the commit row keeps what it said beside what the
 	// run committed - its outcome, and the plan mismatch the re-plan signal of the milestone counts (F09).
 	if len(ex.Output) > 0 && string(ex.Output) != "null" {

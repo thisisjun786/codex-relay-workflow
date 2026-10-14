@@ -151,13 +151,36 @@ link id is made from the two scopes, so `linkage-handover --role supervisor --sc
 moves its `upper_task_id` to the new owner, archives the old binding (`superseded_by`), gives the new
 one the evidence as `handover_note`, and writes `scope_handover`.
 
-The walk up from an issue or a project reaches the management level above the initiative and
-records it, and the supervisor channel ignores it for those reports: an issue's or a project's
-report still goes to the lead. A lead's own messages go to the management seat through
-`initiative:<key>` (see [the supervisor channel](supervisor-channel.md#direct-messages)). An
-initiative with no management edge falls back to the single store seat. No schema changes: the
-seats and edges are new values in `scope_bindings.scope_kind` and `scope_links.upper_kind`, which
-carry no CHECK.
+On the 1.0 path the sessions are two layers, management and project owner, and a management session
+binds its project owner itself. A project owner (role `parent` at its project) bound by a thread
+that holds a live management seat gets the execution edge from that seat to the project in the same
+transaction: `linkage-bind --role parent --scope <PROJECT> --task <owner> --host ... --creator
+<management thread>`, `--creator` again defaulting to `CODEX_THREAD_ID`, answered with the edge under
+`managementLink`. The rules are the initiative's: a creator with no management seat (an owner binding
+itself) writes no edge; a project has one upward execution edge, so a binding whose creator holds
+another seat is refused `link_conflict` and commits only its conflict row; another owner is refused by
+the ordinary duplicate-owner rule; and the seat's handover moves the edge's `upper_task_id` with the
+`scope_handover` record, as a project owner's handover moves its `lower_task_id`. A project an
+initiative lead already supervises (the legacy configuration, `linkage-supervise`) keeps that edge:
+the binding is not refused, no management edge is written, the answer carries the warning under
+`managementLinkSkipped` (`reason` `link_conflict`, `detail`, the `standing` link id, the seat and the
+creator) and a `management_link_skipped` journal row records it once. In the other direction
+`linkage-supervise` refuses an initiative over a project a management edge already stands above
+(`duplicate_scope_owner`, naming the management seat), because the project has its execution
+supervisor. A thread that holds a management seat and still keeps a legacy initiative over a project
+therefore runs `linkage-supervise` before it binds the project owner: the binding then keeps the
+initiative's edge with the skip warning.
+
+The walk up from an issue or a project reaches whatever stands above the project. A management level
+directly above the project is the recipient of the project's upward messages: a relationship's
+report, a `project:<key>` notice and the direct project kinds go to the owner of that seat (see [the
+supervisor channel](supervisor-channel.md#the-level-above-a-project)). Without one, a legacy
+initiative lead is the recipient, and without that the single store seat. A management level above an
+initiative is not a project's recipient: the lead stands between and stays the recipient of the
+project's reports, while the lead's own messages go to the management seat through
+`initiative:<key>` (see [direct messages](supervisor-channel.md#direct-messages)). An initiative with
+no management edge falls back to the single store seat. No schema changes: the seats and edges are
+new values in `scope_bindings.scope_kind` and `scope_links.upper_kind`, which carry no CHECK.
 
 ## The transaction protocol
 

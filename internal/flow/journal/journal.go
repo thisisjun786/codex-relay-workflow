@@ -2,8 +2,8 @@
 // R04). It is the engine.Journal the engine writes to in a run that must survive its process: the same events in the same
 // order as the in-memory journal, with the sequence numbers the engine reads.
 //
-// Every dispatch intent (prepared, thread_requested, fork_requested, turn_requested, interrupt_requested) is committed in a
-// transaction of its own before Append returns, and so before the request it announces is sent. Every other row (a thread
+// Every dispatch intent (prepared, thread_requested, fork_requested, turn_requested, interrupt_requested, and a session call's
+// step_published) is committed in a transaction of its own before Append returns, and so before the request it announces is sent. Every other row (a thread
 // or turn that started, a terminal row, a flow row) is written by this one process in a batch transaction: the rows wait in
 // memory until the next intent, the end of a call, the end of the run or Flush, and are then committed together in order. A
 // crash loses only result rows that a later intent would have followed, and the reconcile pass finds those on the host from
@@ -165,6 +165,8 @@ func (j *Journal) loadNodeExecutions(ctx context.Context) error {
 // intents are the events committed before the request they announce is sent.
 var intents = map[string]bool{
 	engine.EvPrepared: true, engine.EvThreadRequested: true, engine.EvForkRequested: true, engine.EvTurnRequested: true, engine.EvInterruptRequested: true,
+	// the step a session call publishes is its intent: the step file and the packet are written only after it is stored
+	engine.EvStepPublished: true,
 }
 
 // IsIntent reports whether an event is a dispatch intent.
