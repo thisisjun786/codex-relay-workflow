@@ -231,6 +231,9 @@ type Route struct {
 	// none, AuthorityScope).
 	Scope     string `json:"scope"`
 	Authority string `json:"authority"`
+	// Origin is, for a reuse, the route the reused answer came from (spawn: an explorer; orchestrator), "" when the record does not
+	// say (a row written before CRW-1366). Optional.
+	Origin string `json:"origin,omitempty"`
 }
 
 // AuthorityScope is the notation of an out-of-authority kind (AuthorityScopes) a scope starts with, compared without regard to
@@ -261,9 +264,13 @@ func QuestionDigest(q string) string { return textDigest(normalizeQuestion(q)) }
 // exploreRouteOp is crw.exploreRoute(kind, context, questions): it decides what happens to each question of an asker, applies the
 // thresholds of the signals and records every decision:
 //
-//   - a question whose digest was answered in the run reuses the answer (SP-INL-2);
+//   - a question whose digest was answered in the run reuses the answer (SP-INL-2), and a reuse names the route its answer came
+//     from (Origin);
 //   - a research question inside the asker's declared edit regions, or that needs at most InlineFiles files, is answered by the
 //     asker (SP-INL-1). An open question of a DESIGN never is: the architect's turn that asked it has ended;
+//   - an open question the run asked of the orchestrator already (its digest in the evidence of a design_question escalation row)
+//     is not asked again (reason asked_in_run) and, once the orchestrator's answer is applied (decision_applied), reuses that
+//     answer (reason answered_by_orchestrator); the rows are read, never rewritten;
 //   - an open question whose scope starts with the notation of an out-of-authority kind (AuthorityScope) goes to the orchestrator
 //     thread as a design question and to no explorer (reason out_of_authority); the milestone goes on;
 //   - otherwise an explorer is spawned (SP-EXPL-1/2/3) - for the open questions at most ExplorersPerMilestone in the milestone, the
@@ -300,6 +307,7 @@ func (o *exploreRouteOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 	}
 	r := rows(req.Journal.Events())
 	answered := answeredDigests(r)
+	asked := askedDigests(r)
 	spawnedMilestone, spawnedNode, spawnedTier := 0, 0, 0
 	for _, prior := range r.opRows(OpExploreRoute) {
 		pctx := routeContext(prior)
@@ -338,11 +346,23 @@ func (o *exploreRouteOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 		inlineOK := kind == ExploreResearch && q.FilesNeeded != nil && (len(q.FilesNeeded) <= InlineFiles || inRegions(q.FilesNeeded, ec.Regions))
 		switch {
 		case answered[rt.Digest] != nil:
-			rt.Route, rt.Rule, rt.Answer, rt.Reason = RouteReuse, RuleInl2, *answered[rt.Digest], "answered_in_run"
+			a := answered[rt.Digest]
+			rt.Route, rt.Rule, rt.Answer, rt.Reason, rt.Origin = RouteReuse, RuleInl2, a.answer, "answered_in_run", a.origin
 		case first[rt.Digest] != 0:
 			rt.Route, rt.Rule, rt.Reason, rt.SameAs = RouteReuse, RuleInl2, "same_question_in_round", first[rt.Digest]-1
+			if prev := plan.Routes[rt.SameAs]; prev.Route == RouteReuse {
+				rt.Origin = prev.Origin
+			} else {
+				rt.Origin = prev.Route
+			}
 		case inlineOK:
 			rt.Route, rt.Rule, rt.Reason = RouteInline, RuleInl1, "asker_answers"
+		case kind == ExploreOpen && len(asked[rt.Digest]) > 0:
+			if a, ok := orchestratorAnswer(r, asked[rt.Digest]); ok {
+				rt.Route, rt.Rule, rt.Answer, rt.Reason, rt.Origin = RouteReuse, RuleInl2, a, "answered_by_orchestrator", RouteOrchestrator
+			} else {
+				rt.Route, rt.Reason = RouteOrchestrator, "asked_in_run"
+			}
 		case rt.Authority != "":
 			rt.Route, rt.Reason = RouteOrchestrator, "out_of_authority"
 		case kind == ExploreOpen && spawnedMilestone >= ExplorersPerMilestone:
@@ -373,6 +393,9 @@ func (o *exploreRouteOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 		info := DecisionInfo{Node: ec.Node, Role: "explorer", Tier: ec.Tier, Reason: rt.Reason, Inputs: map[string]any{
 			"kind": kind, "digest": rt.Digest, "files_needed": len(q.FilesNeeded), "milestone": ec.Milestone, "spawned_in_milestone": spawnedMilestone, "spawned_for_node": spawnedNode,
 			"scope_notation": rt.Authority}}
+		if rt.Origin != "" {
+			info.Inputs["origin"] = rt.Origin
+		}
 		if err := o.l.d.Decisions.AppendSpawn(ctx, o.l.spawnRow(req, rt.Rule, decision, info, fmt.Sprintf("q%d", i))); err != nil {
 			return engine.OpResult{}, err
 		}
@@ -385,7 +408,7 @@ func (o *exploreRouteOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 	}
 	routes := make([]map[string]any, 0, len(plan.Routes))
 	for _, rt := range plan.Routes {
-		routes = append(routes, map[string]any{"digest": rt.Digest, "route": rt.Route, "reason": rt.Reason, "scope_notation": rt.Authority})
+		routes = append(routes, map[string]any{"digest": rt.Digest, "route": rt.Route, "reason": rt.Reason, "scope_notation": rt.Authority, "origin": rt.Origin})
 	}
 	return engine.OpResult{Result: result(plan), Data: map[string]any{"kind": kind, "node": ec.Node, "milestone": ec.Milestone, "tier": ec.Tier, "routes": routes}}, nil
 }
@@ -426,10 +449,12 @@ type Answer struct {
 	Answer   string `json:"answer"`
 	Route    string `json:"route"`
 	// Reason is the reason of the route (Route.Reason), and Authority the scope notation of an out-of-authority question.
-	Reason    string   `json:"reason"`
-	Authority string   `json:"authority"`
-	Call      string   `json:"call"`
-	Evidence  []string `json:"evidence"`
+	Reason    string `json:"reason"`
+	Authority string `json:"authority"`
+	// Origin is the route a reused answer came from (Route.Origin). Optional.
+	Origin   string   `json:"origin,omitempty"`
+	Call     string   `json:"call"`
+	Evidence []string `json:"evidence"`
 	// Findings is the explorer's FINDINGS as it answered, when an explorer did: exploreRecord reads it as a consumer of the schema.
 	Findings json.RawMessage `json:"findings"`
 }
@@ -452,7 +477,7 @@ func (o *exploreRecordOp) Run(_ context.Context, req engine.OpRequest) (engine.O
 				return engine.OpResult{}, fmt.Errorf("crw.exploreRecord: the answer to %q is no FINDINGS: %w", a.Question, err)
 			}
 		}
-		list = append(list, map[string]any{"digest": a.Digest, "id": a.ID, "question": a.Question, "answer": a.Answer, "route": a.Route, "reason": a.Reason, "scope_notation": a.Authority, "call": a.Call})
+		list = append(list, map[string]any{"digest": a.Digest, "id": a.ID, "question": a.Question, "answer": a.Answer, "route": a.Route, "reason": a.Reason, "scope_notation": a.Authority, "origin": a.Origin, "call": a.Call})
 	}
 	return engine.OpResult{Result: result(map[string]any{"recorded": len(answers)}), Data: map[string]any{"kind": kind, "node": ec.Node, "milestone": ec.Milestone, "answers": list}}, nil
 }
@@ -461,10 +486,13 @@ func (o *exploreRecordOp) Proven(ctx context.Context, ev []engine.Event, row eng
 	return provenAlways(ctx, ev, row)
 }
 
+// answered is an answer the run recorded and the route it came from.
+type answered struct{ answer, origin string }
+
 // answeredDigests are the answers the run recorded, by question digest. An inline route carries no answer and is not one, and
 // neither is an empty answer (a repeat of a question that went to the orchestrator in its round).
-func answeredDigests(r rows) map[string]*string {
-	out := map[string]*string{}
+func answeredDigests(r rows) map[string]*answered {
+	out := map[string]*answered{}
 	for _, row := range r.opRows(OpExploreRecord) {
 		list, _ := row.Data["answers"].([]any)
 		for _, item := range list {
@@ -481,8 +509,50 @@ func answeredDigests(r rows) map[string]*string {
 			if a == "" {
 				continue
 			}
-			out[d] = &a
+			origin := route
+			if route == RouteReuse {
+				origin = str(m, "origin")
+			}
+			out[d] = &answered{answer: a, origin: origin}
 		}
 	}
 	return out
+}
+
+// askedDigests are the questions the run asked of the orchestrator, by digest: the ids of the design_question escalation rows whose
+// evidence names the digest (crw:lib/lane's askOrchestrator writes it). An escalation row without that evidence names none.
+func askedDigests(r rows) map[string][]string {
+	out := map[string][]string{}
+	for _, ev := range r.flow(engine.EvEscalation) {
+		if dataStr(ev, "reason") != "design_question" {
+			continue
+		}
+		evidence, _ := ev.Data["evidence"].(map[string]any)
+		list, _ := evidence["questions"].([]any)
+		for _, d := range list {
+			if s, _ := d.(string); s != "" {
+				out[s] = append(out[s], dataStr(ev, "escalation_id"))
+			}
+		}
+	}
+	return out
+}
+
+// orchestratorAnswer is the answer the orchestrator gave to one of the asks: the text (or the option) of the decision_applied row
+// that answers it.
+func orchestratorAnswer(r rows, asks []string) (string, bool) {
+	for _, id := range asks {
+		row, ok := appliedRow(r, "", id)
+		if !ok {
+			continue
+		}
+		d, _ := row.Data["decision"].(map[string]any)
+		if a := str(d, "text"); a != "" {
+			return a, true
+		}
+		if a := str(d, "option"); a != "" {
+			return a, true
+		}
+	}
+	return "", false
 }

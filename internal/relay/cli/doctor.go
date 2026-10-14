@@ -143,6 +143,9 @@ func runDoctor(ctx context.Context, services dispatch.Services, args dispatch.Ar
 	if mismatch := dispatch.Mismatch(services); mismatch != nil {
 		add("socketMismatch", mismatch)
 	}
+	if reading := reportChildState(services); reading != nil {
+		add("reportChildState", reading)
+	}
 	asked := expectations.StoreIDGiven || expectations.InodeGiven || expectations.LogGiven || nonceGiven
 	if (asked && comparison.SameStore != store.Proven) || (requiredWorker && !ready) {
 		return nil, &dispatch.PayloadExit{Payload: report, Code: contract.ExitRefused}
@@ -188,6 +191,24 @@ func serviceStore(services dispatch.Services) (contract.OrderedObject, error) {
 			"  reads the store that service serves",
 		}},
 	), nil
+}
+
+// reportChildState is the state a bridge started in this environment on the selection's socket resolves (the relay's own
+// resolution without --state: CODEX_SESSION_RELAY_STATE, else discovery) beside the state the live relay daemon of that
+// socket serves, when they differ (CRW-1373): report_child finds the daemon by the bridge's own state only, so a bridge that
+// did not inherit the daemon's state ends every report with "relay daemon unavailable". nil, so no key, where they agree or
+// either is unknown. It warns and never changes doctor's answer.
+func reportChildState(services dispatch.Services) contract.OrderedObject {
+	bridgeState, daemonState, differ := service.BridgeStateDisagreement(services.SocketPath)
+	if !differ {
+		return nil
+	}
+	return contract.OrderedObject{
+		{Key: "bridgeState", Value: bridgeState},
+		{Key: "daemonState", Value: daemonState},
+		{Key: "agree", Value: false},
+		{Key: "detail", Value: "a crw bridge started in this environment reaches the relay daemon through bridgeState, but the live relay daemon registered for this App Server socket serves daemonState, so its report_child calls end with \"relay daemon unavailable\"; start the bridge with CODEX_SESSION_RELAY_STATE=" + quote.Shell(daemonState)},
+	}
 }
 
 // corruptionRecord is doctor's reading of the halt marker (CRW-848): present is always true here

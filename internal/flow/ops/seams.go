@@ -3,6 +3,7 @@ package ops
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
@@ -156,6 +157,14 @@ type ChildResult struct {
 	Child   string `json:"child"`
 }
 
+// ReasonEpochLost is the closed reason of a fenced write the run made after another session claimed the coordinator epoch of its plan
+// (CRW-1285): the run ends at that write with the reason, and writes nothing more at the relay.
+const ReasonEpochLost = "epoch_lost"
+
+// ErrEpochLost is the error kind of that write, as a Relay answers it. Its message opens with refused:epoch_lost:, so the script reads
+// the reason from the error of the op as it reads a refusal (crw:lib/lane), and errors.Is finds the kind through every wrap.
+var ErrEpochLost = errors.New("refused:" + ReasonEpochLost + ": the run lost the coordinator epoch of its plan")
+
 // Relay is the DAG scheduler of the relay as the lane uses it.
 type Relay interface {
 	// Milestone reads a milestone of a plan: its nodes in the order the scheduler offers them.
@@ -201,7 +210,14 @@ type VerifyOutcome struct {
 	// Note is what the verifier says about how it ran, such as tools taken from PATH because nothing configured them (CRW-1319);
 	// the crw.verify row records it as verifier_note.
 	Note string
+	// TestPackagesRun is the count of go test packages the verification ran tests in, as its record says (testPackagesRun of
+	// verification-record/1, CRW-1328); nil is a record that does not say, which is unknown, never zero. Zero is the warning
+	// no_tests_run of the crw.verify row and the final gate; Pass is the record's either way.
+	TestPackagesRun *int
 }
+
+// WarnNoTestsRun is the warning of a verification whose record says it ran no test (CRW-1328): recorded, never a failure.
+const WarnNoTestsRun = "no_tests_run"
 
 // Verifier verifies a head. The real one runs `crw-dev ci local` (CILocalVerifier).
 type Verifier interface {

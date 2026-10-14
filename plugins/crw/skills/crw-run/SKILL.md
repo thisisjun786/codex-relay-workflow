@@ -1,18 +1,21 @@
 ---
 name: crw-run
-description: "Coordinate one Linear project through independent issue children: bind, dispatch, observe, verify, correct, integrate and resume. The project orchestrator holds no goal by default and is resumed by a relay event; goal mode only on request. An initiative goes to crw-run-initiative."
+description: "Coordinate one Linear project as its child: bind, dispatch, observe, verify, correct, integrate and resume; no goal by default, resumed by a relay event. Also the parent's project order, decisions, reports and 중간점검."
 ---
 
 # CRW Run
 
 Use the selected Linear project as the planning source and keep this Codex task
-as its coordinator: this task is that project's parent, one parent per project and
-one child per issue. Follow the shared
+as its coordinator: this task is [the child](../crw-canon/references/hierarchy.md#the-levels)
+(project session, relay role `parent`), one per project. In this skill and its references the relay
+words keep their relay sense: "parent" is this task in its relay role `parent`, and "child" is an
+issue child (relay role `child`), one per oversized issue. Follow the shared
 [scope of each level](../crw-canon/references/hierarchy.md#scope-of-each-level),
-which fixes those three names and the ids they are recorded under and covers
-standalone issues and explicit current-task work. Where the initiative above this
-project has an initiative lead, it verifies this parent's reported outcome and instructs this
-task, never this task's children; where it has none, nothing changes. Each child owns its
+which fixes the names and the ids they are recorded under and covers
+standalone issues and explicit current-task work. The parent (repository session, relay role
+`supervisor`) above this project verifies this task's reported outcome and instructs this
+task, never this task's issue children; its own work is
+[the parent's section](#the-parent-the-repository-session) at the end of this skill. Each child owns its
 checkout and execution; this task owns scope, dependencies, dispatch receipts,
 review, and the decision to release the next work.
 
@@ -56,7 +59,7 @@ goal mode, Run returns progress and pending obligations to the same goal-mode pa
 another goal. An explicit no-goal or read-only limit agrees with the default and bars only goal mode,
 and existing scope and authorization survive skill routing.
 
-An initiative target is not run here: [crw-run-initiative](../crw-run-initiative/SKILL.md) takes an explicit designation to execute an initiative's projects, and a link merely cited as context rebinds nothing.
+An initiative target is not a project run: an explicit designation to execute an initiative's projects is the parent's, under [the parent's section](#the-parent-the-repository-session), and a link merely cited as context rebinds nothing.
 
 Explicit status, explanation, plan-only, batch, issue, no-create, no-goal,
 no-merge, or current-task limits override the default. An issue or milestone
@@ -124,7 +127,7 @@ work. If the host ends the turn, preserve the unfinished project and exact resum
 not a claim that the first batch completed the request. Where the recorded `observation_path`
 is `event-driven-idle`, the parent yields the turn and the delivery path resumes it on a real
 child event; where it is `active-observation` or `blocked`, Run alone promises no automatic
-future wake-up. A checkpoint handed down by the initiative lead is not a status read: it reaches
+future wake-up. A checkpoint handed down by the parent (repository session) is not a status read: it reaches
 this parent and is handled here as a resume of the authorized run, which re-evaluates outstanding
 child results, pending decision requests, cleared blockers and empty execution slots, then
 continues the successors that approval already covers. Reuse the same parent, children and
@@ -133,7 +136,7 @@ handoff is a manual push rather than automatic continuation, and an explicit sta
 report-only, read-only or pause limit on it still wins.
 
 A request from a peer parent is answered here, by this task, under
-[Direct coordination between project orchestrators](../crw-canon/references/hierarchy.md#direct-coordination-between-project-orchestrators):
+[Direct coordination between children](../crw-canon/references/hierarchy.md#direct-coordination-between-children):
 decide what this project's own issues and children do about it, never reach into the other
 project's children, and escalate to the supervisor only an unresolved disagreement, a scope
 change, new ownership, or a shared resource including the order into a shared target. Where the
@@ -154,13 +157,13 @@ avoid a guard. A parent holding its own goal does not alter the child `crw-loop`
 
 ## Run a milestone with a flow run
 
-A project orchestrator carries a project one milestone at a time, and starts one run of the built-in project lane for each milestone. The run does what the orchestrator would otherwise do issue by issue: the architect's DESIGN of the milestone and its audit, an executor for each issue node, the verification and the review of each head, the acceptance and the integration, and the close of the milestone with its final gate. The commands are in [the flow commands](../crw-canon/references/flow.md#the-crw-flow-command-table), and which agent calls the run makes, and why, are the [spawn policy](../crw-canon/references/spawn-policy.md). The issues the run releases are the nodes of the plan the project holds, which `crw flow compile` checks from the [crw-plan handoff](../crw-plan/references/issue-boundaries.md#close-the-plan) before it is put as a plan revision.
+The child carries a project one milestone at a time, and starts one run of the built-in project lane for each milestone. The run does what the child would otherwise do issue by issue: the architect's DESIGN of the milestone and its audit, an executor for each issue node, the verification and the review of each head, the acceptance and the integration, and the close of the milestone with its final gate. The commands are in [the flow commands](../crw-canon/references/flow.md#the-crw-flow-command-table), and which agent calls the run makes, and why, are the [spawn policy](../crw-canon/references/spawn-policy.md). The issues the run releases are the nodes of the plan the project holds, which `crw flow compile` checks from the [crw-plan handoff](../crw-plan/references/issue-boundaries.md#close-the-plan) before it is put as a plan revision.
 
 - **Start.** Run `crw flow start project-lane --handoff FILE --thread THIS_THREAD` with the plan and the milestone in `--args`. Read the preview first (`--preview` stops after it): it shows the nodes, the width, the role pairs, the budget and the five preflight facts, each `pass`, `warn` or `fail` with its reading. A fact never stops the start: the ones that did not pass are printed, recorded in the run's spec, and the run starts without `--force` (which is accepted and changes nothing). Read a `fail` before the run waits on you and report it with the run; a `warn` on a new thread's first run is expected. A preview that says `blocked` is not overridden. A milestone starts when its prerequisites have landed, and the next one starts after the one before has closed.
-- **What this thread handles.** The thread handles only two things that need judgment. The first is an escalation of the run: it arrives as a notice from the run, `crw flow show RUN` gives the cause, and the thread decides within its own authority, or hands the decision up (see *What goes up* below), and once the manager has recorded its answer in the relay's user-decision record (`crw relay decision-answer`) the thread applies that record with `crw flow answer`, which writes the answer to the run's journal. The second is the receipt of an oversized issue, an issue the architect sized for a child: the receipt arrives as a relay delivery, and in that turn the thread runs `crw flow apply --event E --turn T`. Exit 0 is an applied verdict, 1 a refusal (an integrity refusal is also an escalation), 3 `next_turn` (apply it again in a later turn). When the run says a Linear summary is owed, the thread drains it as a record write (claim, write with its own connector, read back, complete); that is not control of the run.
-- **What this thread does not do.** It does not release, correct, accept or integrate a node of a plan a run owns. It never claims the coordinator epoch of a plan a run holds: the run claims the epoch before its first fenced write, so a `dag-coordinator-claim` by this thread would raise the epoch past the run's, the run's next fenced write would be refused with `stale_coordinator_epoch`, and that milestone ends `incomplete`. An out-of-band `dag-*` transition (a release, an acceptance, an integration or a decision written by hand into a run's plan) is raised as an escalation to the manager, never made here.
+- **What this thread handles.** The thread handles only two things that need judgment. The first is an escalation of the run: it arrives as a notice from the run, `crw flow show RUN` gives the cause, and the thread decides within its own authority, or hands the decision up (see *What goes up* below), and once the parent (repository session) has recorded its answer in the relay's user-decision record (`crw relay decision-answer`) the thread applies that record with `crw flow answer`, which writes the answer to the run's journal. The second is the receipt of an oversized issue, an issue the architect sized for a child: the receipt arrives as a relay delivery, and in that turn the thread runs `crw flow apply --event E --turn T`. Exit 0 is an applied verdict, 1 a refusal (an integrity refusal is also an escalation), 3 `next_turn` (apply it again in a later turn). When the run says a Linear summary is owed, the thread drains it as a record write (claim, write with its own connector, read back, complete); that is not control of the run.
+- **What this thread does not do.** It does not release, correct, accept or integrate a node of a plan a run owns. It never claims the coordinator epoch of a plan a run holds: the run claims the epoch before its first fenced write, so a `dag-coordinator-claim` by this thread would raise the epoch past the run's, the run's next fenced write would be refused with `stale_coordinator_epoch`, and that milestone ends `incomplete`. An out-of-band `dag-*` transition (a release, an acceptance, an integration or a decision written by hand into a run's plan) is raised as an escalation to the parent (repository session), never made here.
 - **A run that stopped.** `crw flow ps` and `crw flow show` say whether it is `dead`, `held` or over. A run whose process died is taken again with `crw flow resume`, which keeps its claim; a call in `recovery_hold` is settled only with `crw flow recover`. `crw flow pause` and `crw flow cancel` follow an instruction, not a hunch.
-- **What goes up.** The run reports each closed milestone to the initiative lead itself. This thread lifts a project-level blocker or a decision request with `crw flow report-up`, with the evidence file, because an agent node reports nothing upward on its own.
+- **What goes up.** The run reports each closed milestone to the parent (repository session) itself. This thread lifts a project-level blocker or a decision request with `crw flow report-up`, with the evidence file, because an agent node reports nothing upward on its own.
 
 The run releases the child of an oversized issue itself (`crw.releaseChild`): that child runs the built-in `issue-lane` workflow and starts no PABCD state machine ([who owns control](../crw-canon/references/flow.md#who-owns-control-in-a-flow-managed-run)), so this thread sends it no task packet and arms no `crw-pabcd` for it. The rest of this skill, the dispatch of an issue child and its observation, verification and correction, is the path of a plan with no run.
 
@@ -318,7 +321,7 @@ increase concurrency; an issue the [size check](#check-the-size-before-dispatch)
 One issue runs as one packet and one delivery today (a task branch and its head for the
 integrator, or a pull request where one is named), and a batch keeps those
 separate pairs, under the shared [issue-to-PR mapping](../crw-canon/references/linear-model.md#issue-to-pr-mapping)
-and the [work-unit rules](../../../../POLICY.md#work-units-review-and-integration). Several
+and the work-unit rules (`POLICY.md#work-units-review-and-integration` in the CRW repository). Several
 packets for one feature are allowed by policy but are not switched on until their
 support lands. If one issue needs several PRs, or a proposed PR would deliver
 several issues, reconcile the plan through `crw-plan` before new dispatch;
@@ -544,7 +547,7 @@ Before an issue gets a packet, a task, a `managed-start` or a DAG release, run `
 
 - `ready` (exit 0): the release goes on under the checks below.
 - `not_ready` or `design_first` (exit 0, a warning): the decision says which, and each of the `reasons` is printed on stderr as a warning; it names the missing item and the heading that supplies it, and a `design_first` reason names the label or the open question. Write the reasons into the coordination record beside the launch record and report them to the issue's owner. What the parent can supply from the evidence at hand it supplies before the release and runs the check again: the content of a missing heading, and for a `design_first` issue the design (an architect-role proposal and the parent's decision, written into the decided answer, the label removed). Otherwise the release goes on (the packet, the task, the `managed-start` or the `dag-release`) with the warning recorded. A held issue never holds the rest of the ready set.
-- `bypassed` (exit 0): the input carried the management session's explicit approval (`exception`: `exception.issue`, `exception.approved_by`, `exception.approved_on` as YYYY-MM-DD, `exception.statement`) for this issue. Write the report's `exception_record` into the coordination record beside the launch record, then release. Your own judgment that the issue is small, a child's request and a sibling's earlier release are not that approval; without it the record of the release is the warning.
+- `bypassed` (exit 0): the input carried the parent's (repository session's) explicit approval (`exception`: `exception.issue`, `exception.approved_by`, `exception.approved_on` as YYYY-MM-DD, `exception.statement`) for this issue. Write the report's `exception_record` into the coordination record beside the launch record, then release. Your own judgment that the issue is small, a child's request and a sibling's earlier release are not that approval; without it the record of the release is the warning.
 - Exit 2 and 3 mean the issue was not read (exit 2 also for an `exception` that names no approver, issue, date or statement): correct the input and run the check again. An unread answer is not `ready`.
 
 The relay's release request does not carry the issue body, so the warning is this step and not a relay refusal. Where no issue-ready answer was recorded, the dispatch record says so. `crw-tidy` finds the unreleased issues that fall short and a missing `설계 먼저` label.
@@ -1147,12 +1150,13 @@ readers have exited. Existing dirty work, another task's cache or evidence, orig
 data, active worktrees and shared services stay as they are. `reset`, `clean`,
 `stash`, `rebase` and forced deletion are not cleanup here, and an old modification
 time, a scratch-looking name or a full disk is not proof that anything is
-disposable. Keep the three claims apart when reporting: what is proposed for
+disposable.
+Write scratch files under a `mktemp -d` directory outside the worktree and leave them there; the Codex exec policy refuses `rm -f`, so a file this run must take out of the worktree is deleted with an `apply_patch` `*** Delete File:` hunk. Keep the three claims apart when reporting: what is proposed for
 cleanup, what was actually deleted, and what capacity that actually returned.
 
 Observation spends a shared resource as well. Parallel children and the task watching them
 typically use the same credentials and the same external API allowance, so polling competes with
-the work being polled. This task, as the project orchestrator, owns that aggregate for its
+the work being polled. This task, as the child (project session), owns that aggregate for its
 project: before sustained observation it reads the actual budget and reserves headroom for the
 children ([the observer shares the lanes' quota](../crw-pabcd/references/dispatch-surfaces.md#the-observer-shares-the-lanes-quota-dispatch-poll-budget-01-default),
 [waiting on work](../crw-loop/references/waiting.md)).
@@ -1259,3 +1263,125 @@ still bound to their issues. None of them is replaced by something this task cre
 could not read an owner. Where management genuinely moves, the handoff is recorded — which task
 handed over, which took it, what moved and what did not — so the next restatement reads one owner
 instead of inferring two.
+
+## The parent: the repository session
+
+This section is the work of [the parent](../crw-canon/references/hierarchy.md#the-levels) (repository session, relay role `supervisor`): the one Codex session that represents a repository, above that repository's children. Everywhere else in this skill the task is a child and the word parent keeps its relay sense. The parent binds itself once with `crw manage supervisor register`, which gives it its management seat and lays a store seat down; it answers the top session above it and instructs its children below it, never their issue children or subagents. Its work is four things: it sets the project order, decides which children run together, answers a decision a child raises, and reads the reports the children send up. It never operates a run: a run belongs to its child, and the commands that start, answer, pause or resume one are the child's.
+
+| What the parent does | Commands it runs |
+|---|---|
+| Binds its seat and reads it back | `crw manage supervisor register` |
+| Orders the projects and starts children | `crw manage capacity` before a child is added; the [coordination message](references/task-packet.md#coordination-message) for each child's brief |
+| Answers a decision a child raises | `crw relay decision-answer`, or a decision only Jun takes handed up to the top session |
+| Reads the reports | `crw flow reports --unread`, `crw flow report-ack REPORT --turn TURN` |
+| Runs the midpoint check | `crw manage checkpoint`, `crw manage checkpoint record` |
+
+Read the shared [Linear model](../crw-canon/references/linear-model.md) for document authority and the [initiative body standard](../crw-canon/references/linear-model.md#initiative-body-standard) for what an initiative record holds. Settling a milestone and its issues belongs to [crw-define](../crw-define/SKILL.md) and the plan to [crw-plan](../crw-plan/SKILL.md).
+
+### Order the projects and group the children
+
+An initiative link by itself is not a target. Where a request merely cites one, resolve the project actually being executed under the shared target rules: the link is context and it rebinds no existing child. Where the request is an explicit designation to execute an initiative's agreed projects, the parent carries them through each project's own child under [Initiative supervision](references/initiative-supervision.md), which also settles which session holds that binding: the repository's parent, and not a session bound to a different scope, since a session holding another project or issue would leave that work without its owner. Planning, a status read, a citation, an explanation of how the entry works, a usage question and a quoted or unsubmitted example are none of them that designation, and that list is not closed: what makes one is the explicit request to execute, never the presence of a link. Explicit status, explanation, plan-only, no-create, no-goal, no-merge and current-task limits override the default and travel down to each project without widening.
+
+Fix the approved project set and the completion boundary, reuse the existing children and their issue children, and hand each child its project brief through the [coordination message](references/task-packet.md#coordination-message). The project order is the parent's decision: which project goes first, which children run together because their projects share nothing that needs an order, and which wait. A project's child starts only when its prerequisites hold and the cap on children that `crw manage capacity` judges allows it; a project waiting on either stays in the approved set and starts when both hold. Do not plan or dispatch another child's issues, and do not reach into any project's issue children or subagents.
+
+Hold the order in which projects reach a shared target, a shared resource and an unresolved disagreement between children as this layer's decisions ([direct coordination](../crw-canon/references/hierarchy.md#direct-coordination-between-children)). A project is finished on its child's verified outcome, corroborated per subject under [Implementation Done](../crw-canon/references/linear-model.md#implementation-done); the initiative is finished when its finish condition holds on those outcomes. Recovery and restatement of a supervision are in [Initiative supervision](references/initiative-supervision.md#recover-the-supervision). The parent runs without a native goal or an automatic loop; [goal mode](references/goal-mode.md) is a child's optional mode and never the parent's.
+
+### Answer what a child raises
+
+A child hands up an escalation it cannot decide within its own authority, a project blocker and a decision request. The parent answers within the approved scope by recording the answer in the relay's user-decision record (`crw relay decision-answer`), which the child then applies to its run, or by instructing the child through the coordination message. A decision only Jun takes is handed up to the top session with its reason and what each choice costs; the parent does not take it in his place. An answer widens no scope and approves nothing the assignment did not already carry.
+
+### Read the milestone reports
+
+A project's run reports each closed milestone to this layer, and a run that started no node of its milestone reports itself as `project_blocked` with the errors that stopped it; the child lifts a project-level blocker or a decision request the same way (`docs/flow/reporting.md` in the CRW repository says what goes up from a run). Run `crw flow reports --initiative INITIATIVE --unread` at the start of every turn, or `crw flow reports --unread` for every report waiting: a report sent to a thread that is not loaded waits in the supervisor queue until the thread loads, so the list is the place a report is not missed. The kinds are `milestone_report` (the integrated range with the evidence of the close), `project_blocked` and `project_decision_request`; a decision only Jun takes goes to the top session, not here.
+
+Judge each report with [crw-check](../crw-check/SKILL.md) against the project's finish condition and the milestone's criteria, then leave the read mark with `crw flow report-ack REPORT --turn TURN`, using this turn's id. This layer acknowledges a report only after it has judged it, and an unacknowledged report comes back after a while as `report_unread`. The mark records that the report was read; it does not accept the milestone, move a project or answer a blocker. A blocker or a decision request is answered as the subsection above says. This layer reads and acknowledges reports and never operates a run.
+
+### Long-run midpoint check
+
+A run that goes on for a long time drifts: a plan's boundaries stop matching what the work turned out to be, review keeps sending
+work back, and the backlog grows faster than it drains. A midpoint check is the periodic look that catches that while the run is
+still authorized, and it is separate from a user's status question, which reads and wakes nothing.
+
+**When one is due.** Any one of these signals is enough, counted over the initiative's approved projects:
+
+- every node of one milestone is integrated, counted once per milestone;
+- twenty merges, or eight continuous hours of execution, since the last check;
+- three or more needs-changes rulings or split decisions in the last two hours;
+- two or more P0 or P1 findings from post-merge evaluation of the initiative's merges since the last check;
+- the backlog's net increase exceeds fifteen issues in the last four hours.
+
+Each signal is a crossing, not a standing state: count every window and every milestone from the last recorded check, and
+record which crossing the check consumed, so a milestone that is already fully integrated, or a window that has already
+crossed its threshold, does not make every later idle turn due again. Where `crw manage checkpoint record` exists it holds
+that baseline; where it does not, the coordination record does.
+
+`crw manage checkpoint` reads one project at a time: one report per project, each counted from that project's own baseline,
+and no initiative aggregate. A project's `due` is therefore never the initiative's answer: two approved projects with the
+same baseline and ten landed merges each are both not due on merges while the initiative has reached twenty. Read the
+reports of every approved project and judge the initiative from them:
+
+- A report whose reasons name a signal other than `running_hours` and `backlog_net_4h` is a crossing inside the approved set, so the
+  initiative is due: those counts never fall, so the initiative's sum is at least that project's count.
+- Otherwise sum each of those counts over the approved projects' reports and compare the sum to the same threshold:
+  `merges_since_checkpoint`, `needs_changes_or_split_2h` and `pair_eval_p0p1_since_checkpoint`. A count that is `null` is
+  `unmeasured` for that project, and the sum of the measured ones is only a lower bound, so the signal is judged from the
+  coordination record instead. `milestone_integrated` is the number of milestones that crossed, so it is due when any
+  project's is above zero. The elapsed time is the smallest `running_hours` among the reports, the latest baseline in the set.
+- `backlog_net_4h` is a signed net change, issues created minus issues closed in the window, so one project's growth can be
+  another's drain and no project's backlog reason is the initiative's answer. Always sum the signed `backlog_net_4h` of every
+  approved project first, then compare that sum to the threshold: the backlog signal is due when it exceeds fifteen. A
+  project at +16 beside one at -16 is not due on the backlog; two at +10 and +6 are. When any approved project's count is
+  `null`, the measured sum bounds nothing in either direction, so the backlog signal is judged from the coordination record.
+
+Where the command is not installed, or a signal is `unmeasured` in a report, the parent judges the same signals from its own
+records rather than treating the missing tool as a reason to skip the check.
+
+**When to run it.** On a turn that is only waiting: no merge-lane turn is held, no child needs a decision now, and the next
+action would otherwise be idle observation. A midpoint check never interrupts a lane it does not own, and it is not a reason to
+stop one.
+
+**What it looks at.** Three things, in this order:
+
+1. A midpoint review of the goal against its criteria, using [crw-check](../crw-check/SKILL.md) and [crw-status](../crw-status/SKILL.md), so a plan that has quietly stopped
+   matching its goal is found before the run finishes against the wrong target.
+2. A midpoint refactor pass with `crw-refactor`, producing zero to three candidate improvements, judged on dead code,
+   duplication and pointless tests. Code the plan has not yet reached is not dead code: a connector or helper that a planned
+   node will use is left where it is.
+3. A midpoint optimization pass over the packet, the rules, the bundling and the test speed, changing only what the current
+   approval covers.
+
+**What it records.** Write the outcome into the coordination record. Where `crw manage checkpoint record` exists, run
+`crw manage checkpoint record --project <project> --summary-file <summary>` for every approved project with the same summary, since the
+command records one project per call and the next check sums counts that all start at this check. Record the crossings consumed in the
+coordination record as well. The midpoint check is a diagnosis: it
+records and proposes. Work worth fixing becomes an issue under the concept bundle rules, and anything not worth doing
+now goes to the sweep label Backlog, but both are Linear writes and need scope covering them: where the current authorization
+does not cover creating or relabeling issues, return the candidates as proposals with the check's evidence instead of writing
+them. The release schedule and the lanes do not stop: a midpoint check never pauses a lane or holds a release.
+
+### Answer a 중간점검 request
+
+A one-word 중간점검, or 'where are we', arriving in the parent is answered here; the
+procedure is [Midpoint check](references/midpoint-check.md). Decide first whether the call may move work or only read,
+from the records, in this order, stopping at the first step that decides.
+
+1. An explicit status-only, report-only, read-only, plan-only, pause or no-contact limit in force for this request settles it:
+   read the records, write nothing, wake nobody. No later step overrides a limit the user stated.
+2. Otherwise this is a checkpoint only if all four hold: this session holds the parent's designation for the same stable
+   initiative ID, its approved project set is not yet complete, the execution approval is still in force, and obligations remain
+   inside it. A designation and a binding are different things, and an initiative link is neither
+   ([Initiative supervision](references/initiative-supervision.md)).
+3. Anything else reads, as [crw-status](../crw-status/SKILL.md) does. A bare initiative link, a past assignment, a finished
+   execution, or authority you cannot establish from the records is the reading branch. Ambiguity resolves toward reading,
+   because a wake that should not have happened cannot be taken back and a report that should have acted can be followed up
+   in the next message.
+
+On the checkpoint branch Jun is not asking whether to continue; that was settled when he approved the execution. The call reads
+the responsible children, moves the work that approval already covers and that is already waiting on somebody, and
+reports what it did. What moves is only what the existing approval covers: a checkpoint starts no new project execution, widens
+no scope, and creates no installation, restart or wake authority the assignment did not already carry. Existing permissions,
+model, effort, ownership and task records are preserved exactly. The canonical statement of this classification is the shared
+bullet in [Default independent execution](../crw-canon/references/delivery.md#default-independent-execution), and it governs.
+
+A status question that arrives during an authorized run is a question, not a cancellation: answer it and return control to the
+session that owns the execution, which keeps every obligation it already had.

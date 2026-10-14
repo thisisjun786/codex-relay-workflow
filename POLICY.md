@@ -120,7 +120,7 @@ generated output is the GUI deployment build under `internal/gui/assets`: the sc
 are built with Node and embedded in the `crw` binary, so a Node-free checkout serves
 them. `node_modules`, dependency caches and installed runtimes are never committed, the
 lockfile stays pinned and the secret scan is unchanged. Source: within the GUI port's
-approval scope (Jun, 2026-10-06: Node for the build and CI only), the management session
+approval scope (Jun, 2026-10-06: Node for the build and CI only), the parent
 chose this layout; Jun did not pick it himself.
 
 ## Issues, dependencies and release scope

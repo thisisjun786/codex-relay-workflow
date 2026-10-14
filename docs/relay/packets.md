@@ -102,7 +102,7 @@ or with one it cannot read, leaves the callback a gap.
 **The policy.** Model, effort, workflow and **mode** (`loop`, `non_loop` or `coordination`),
 with sandbox and approval where stated. The mode is the machine-readable form of what the
 workflow means for activation; the workflow text is never parsed to infer one. It is read only
-to refuse a contradiction: a workflow naming CXC Loop with any mode but `loop` is refused.
+to refuse a contradiction: a workflow naming the loop (`crw-loop`, or the `CXC Loop` spelling that recorded packets and CXC hosts still carry) with any mode but `loop` is refused.
 
 **The first assignment.** Before creation there is no relationship to name, since its id is
 derived from the child's task id. The one identity that exists before creation and that

@@ -30,6 +30,9 @@ const (
 	// EvSessionAttemptLost is a session call's subagent that the host shows will not finish the turn it was bound to: the call
 	// goes on with a new attempt (a new subagent) in the same allocation.
 	EvSessionAttemptLost = "session_attempt_lost"
+	// EvStepUnwritten is a flow warning of a session run: a step (its packet or its file) could not be written, so nothing was sent
+	// for it (input_state not_delivered); the run writes it again.
+	EvStepUnwritten = "step_unwritten"
 
 	EvCompleted      = "completed"
 	EvNullModel      = "null_model"

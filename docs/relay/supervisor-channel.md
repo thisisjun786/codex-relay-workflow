@@ -684,7 +684,7 @@ A message from the project side - a report raised from one of the project's issu
 above the project, in this order:
 
 1. the owner of the management seat whose execution edge stands directly above the project (a
-   management session bound the project owner, see [linkage](linkage.md#management-seats));
+   parent bound the child, see [linkage](linkage.md#management-seats));
    `recipient.scopeKind` is `management`;
 2. without one, the live supervisor of the initiative above the project (the legacy lead);
    `initiative`;
@@ -699,8 +699,8 @@ edge's `upper_task_id`; a message never sent is re-addressed at its next staging
 The answer a decision request asks for belongs to the same seat (CRW-1371). A user-grade or
 delegated-management-grade decision raised from the project (`decision-raise --origin-project`)
 names that management seat in its `authority.ref`, and `decision-answer` accepts the answer only from
-the seat's current owner, so the management session a request woke is the one that answers it, the
-other management session is refused `authority_unverified`, and a handover moves the answer with the
+the seat's current owner, so the parent a request woke is the one that answers it, the
+other parent is refused `authority_unverified`, and a handover moves the answer with the
 seat. A record with no management ref keeps the store seat's rule. See
 [linkage](linkage.md#management-seats).
 
@@ -729,7 +729,7 @@ decision in `decision` and who owes the answer (the recipient, or the user for
 `jun_decision_request`). Sending is the channel's own: the daemon's supervisor pass picks the row up,
 opens a turn in an idle or unloaded recipient and retries a busy one, and a readback is what it is
 for any message. A recipient needs recorded authorized settings and a role policy, as any recipient
-of this channel does; a management session that is not a Codex App Server thread cannot be woken
+of this channel does; a parent (repository session, relay role `supervisor`, [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels)) that is not a Codex App Server thread cannot be woken
 this way.
 
 `crw relay report-up --initiative <key> --kind lead_report|lead_decision_request|lead_blocked

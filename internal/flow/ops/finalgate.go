@@ -69,6 +69,8 @@ type Evidence struct {
 	Call string `json:"call"`
 	// Why says why a stale piece of evidence is stale.
 	Why string `json:"why"`
+	// Warning is what a fresh piece warns of without failing: no_tests_run for a verification whose record says no test ran (CRW-1328).
+	Warning string `json:"warning,omitempty"`
 }
 
 // GateDecision is one decision of the approved DESIGN as the reviewer of the range sees it: its id, what it changes and the nodes
@@ -103,6 +105,8 @@ type GateOutcome struct {
 	// NeedTests are the commands whose test evidence is missing or stale, NeedQA whether the QA receipt is.
 	NeedTests []string `json:"need_tests"`
 	NeedQA    bool     `json:"need_qa"`
+	// Warnings are what the evidence warns of without changing the gate's state (CRW-1328); additive.
+	Warnings []string `json:"warnings,omitempty"`
 	// Decisions are the decisions of the approved DESIGN revision the milestone runs under (the ledger row): the comparison source
 	// of the alignment judgement of reviewer-final, which reads a checkout of the repository and not the journal.
 	Decisions []GateDecision `json:"decisions"`
@@ -166,6 +170,9 @@ func (o *finalGateOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpR
 		out.Evidence = append(out.Evidence, ev)
 		if ev.State != EvidenceFresh {
 			out.NeedTests = append(out.NeedTests, cmd)
+		} else if ev.Warning != "" {
+			// the gate passes or fails on the evidence as before; it says what the evidence warns of (CRW-1328)
+			out.Warnings = append(out.Warnings, fmt.Sprintf("%s: %s at %s (call %s)", ev.Warning, cmd, ev.Head, ev.Call))
 		}
 	}
 	if out.QARequired {
@@ -174,11 +181,15 @@ func (o *finalGateOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpR
 		out.NeedQA = ev.State != EvidenceFresh
 	}
 	out.State, out.Reason = judgeGate(out)
-	return engine.OpResult{Result: result(out), Data: map[string]any{
+	data := map[string]any{
 		"milestone": ms, "plan": plan, "head": head, "base": base, "range": out.Range, "command": strings.Join(out.Commands, ";"), "ok": out.State == GatePass,
 		"state": out.State, "reason": out.Reason, "qa_required": out.QARequired, "qa_passes": out.QAPasses, "grade": out.Grade,
 		"evidence": out.Evidence, "need_tests": out.NeedTests, "need_qa": out.NeedQA, "decisions": out.Decisions,
-	}}, nil
+	}
+	if len(out.Warnings) > 0 {
+		data["warnings"] = out.Warnings
+	}
+	return engine.OpResult{Result: result(out), Data: data}, nil
 }
 
 // gateDecisions are the decisions of the DESIGN revision the milestone runs under, read from the ledger row of the journal, each
@@ -246,7 +257,8 @@ func judgeTest(r rows, ms, command string, head source.Identity) Evidence {
 		return source.Compare(source.CommitIdentity(dataStr(row, "head"), nil), head).Kind == source.ComparisonSame
 	})
 	if ok {
-		return Evidence{Kind: EvidenceKindTest, Command: command, State: EvidenceFresh, Pass: dataBool(fresh, "ok"), Head: dataStr(fresh, "head"), Digest: dataStr(fresh, "digest"), Call: fresh.CallID}
+		return Evidence{Kind: EvidenceKindTest, Command: command, State: EvidenceFresh, Pass: dataBool(fresh, "ok"), Head: dataStr(fresh, "head"), Digest: dataStr(fresh, "digest"), Call: fresh.CallID,
+			Warning: dataStr(fresh, "warning")}
 	}
 	last := rowsOfCmd[len(rowsOfCmd)-1]
 	cmp := source.Compare(source.CommitIdentity(dataStr(last, "head"), nil), head)

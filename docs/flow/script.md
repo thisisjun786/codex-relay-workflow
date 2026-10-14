@@ -303,7 +303,11 @@ and a string that is no handle of a result of this run. Like every `crw.*` call,
 and `cap`, the executors at once, default 3). Its steps, in order: `crw.milestone` reads the nodes of the milestone in the order the
 scheduler offers them; the architect answers `DESIGN` once for the milestone (SP-ARCH-1); the open questions of the DESIGN go to
 explorers (SP-EXPL-1), and the ones whose scope carries an out-of-authority notation, or beyond the explorer cap, to the orchestrator
-thread in one non-blocking `design_question` escalation once the DESIGN is approved; a reviewer of another model family than the architect audits the DESIGN (`DESIGN_AUDIT`, recorded by
+thread in a non-blocking `design_question` escalation: an authority question in the audit round that routed it, approved or not, a
+question beyond the cap once the DESIGN is approved; the escalation's evidence names the question digests it asked, so a later round
+or a re-plan does not ask one again on its own (`asked_in_run`); because only the latest design ask of a run is current for `crw flow answer`,
+an ask carries the questions of the DESIGN the run asked already that no answer has reached, and an orchestrator answer applied to it is the answer of the question from the
+next round on (`answered_by_orchestrator`); a reused answer names the route it came from (`origin`); a reviewer of another model family than the architect audits the DESIGN (`DESIGN_AUDIT`, recorded by
 `crw.designAudit`), and `needs_changes` returns the DESIGN to the architect on its own thread; only an approved DESIGN becomes revision
 `r0` of the design ledger (`crw.designLedger`); `crw.dag` runs one lane for each node and the signal path of the milestone
 ([The architect's continuity and the re-plan](#the-architects-continuity-and-the-re-plan)); when every lane landed, `crw.closeMilestone` closes the milestone over
@@ -467,11 +471,16 @@ node, then the most nodes below it, then the node id), each waiting for the node
 criteria, regions and group of its issue; the milestone's title, criteria, surfaces, grade and required commands are its entry in
 `milestones[]`, which compile judges (an issue without an entry and an entry without an issue are refused) and the run judges again by the same
 entry rules (`compile.MilestoneEntryRefusals`) when it starts and when it reads the milestone; the verifier of the shipped lane runs
-`crw-dev ci local` only, so an entry that requires another command is refused when the run reads it. A handoff that is not the
+`crw-dev ci local` only, so an entry that requires another command is refused before the run starts (`CheckHandoff` with the shipped lane's
+predicate `cli.ShippedRunnableCommand`, applied by `crw flow start --handoff`, the start of a night batch and `crw manage batch decide --handoff`)
+and again when the run reads it; a verifier that runs other commands (`make e2e`) is the first real project's to decide (CRW-1209). A handoff that is not the
 one the pinned revision was compiled from (an issue with no node, criteria whose digest is not the node's) is refused with "compile and
 put the handoff first", and nothing is defaulted. Before its first fenced write the run claims the plan's coordinator epoch with its
 run id as the session nonce (a resumed process is the same claim); a write after another session claimed the plan is refused
-(`stale_coordinator_epoch`) and writes nothing; `project-lane.js` takes the refusal of the acceptance or of the close as the lane's `land_refused`, so that milestone ends `incomplete` with the reason in the journal (the run does not stop on the spot: a parallel lane's next fenced write is refused the same way). `release` is `ReleaseAgent` (dag-release-request/1: the base from
+(`stale_coordinator_epoch`), writes nothing and is the error kind `epoch_lost` (`ops.ErrEpochLost`, whose message opens `refused:epoch_lost:`,
+CRW-1285): a release answers it as `released: false` with the reason `epoch_lost`, and `project-lane.js` ends the lane whose fenced write it
+was (`stopped`, reason `epoch_lost`: no escalation and no further write) and, once its lanes have ended, the run with `{state: 'stopped', reason:
+'epoch_lost', detail}` (a parallel lane stops at its own next fenced write, refused the same way). `release` is `ReleaseAgent` (dag-release-request/1: the base from
 the plan's target, the criteria `c1..cn` of the issue, the pinned handoff as the volatile input, the run's directory as the artifact
 root, the rule version of the executor pair, the script and helper digests, the installed plugin's skills digest and the build, and
 `expected_slice_digest`, the node's slice the flow compared; the answer names the slice of the manifest the relay committed); a
@@ -481,8 +490,15 @@ worktree before it asks, the run's buffered rows are stored first, and the run's
 node's calls and the reviewer's input criteria digest on the reviewer's completed row, which the acceptance reads. `integrate` names the node's current acceptance and the head it accepted (anything else is refused before the batch, `acceptance_not_current` or `head_not_accepted`) and is one
 `IntegrateBatch` of the node with the wiring of `crw relay dag-integrate` (`dagsched.IntegrationDeps`: `crw-dev ci local` over the
 merged tree, the merged tree's own crw-dev when the configuration names a Go root, git's compare-and-swap of the branch) onto the plan's target branch, followed by the observation of the landing there;
-`close` is `AgentClose`. `releaseChild` is refused (`refused:child_release_unwired:`): a managed child start needs host settings the
-run does not hold.
+`close` is `AgentClose`. `releaseChild` (SP-CHILD-1, CRW-1285) is the managed start of `dag-release` with the host settings the run
+holds: `crw flow start --child-host FILE` checks a `crw-flow-child-host/1` document (`marker_root`, `parent {host_id, settings}`, `child
+{host_id, title, settings}`, one host) and pins it into the run's directory like the handoff (`child_host {path, sha256}` in the run's
+arguments). The request carries the parent's and the child's host and settings, the child's title (the managed start prefixes the node's issue key) and the instruction to
+run the issue-lane workflow, and the answer is the child the start admitted and bound to the node; the same release again answers the same
+child. A run with no host settings, or settings missing a field, refuses the node with the reason (`refused:child_host_unset:`,
+`refused:child_host_settings:`, an input error); a start the managed engine refused or left incomplete (`refused:child_not_started:`, its
+intent and slot stay and the same release continues it) and a node the scheduler holds back (`refused:child_held_back:`) are errors, never a
+child that is running (`crw.releaseChild` refuses a relay answer that started nothing, `child_not_started`).
 
 ## The milestone close
 
@@ -497,7 +513,10 @@ or on an identity git could not resolve: that verifies nothing); the identities 
 `internal/pabcd/source`, the rule of the native final gate (`source.CommitIdentity` is the identity of a pinned commit), and the
 judgement of every piece is in the `crw.finalGate` row (the call row of the gate). The gate is `pass` when every piece is fresh and
 passes, `failed` when a fresh piece does not pass (a verification that ran and failed, a receipt that is `REVISE`, `FAIL` or
-`INCONCLUSIVE`), and `pending` while a piece is missing or stale. The gate makes no evidence. The close makes it, at H: `crw.verify(null node)` for each
+`INCONCLUSIVE`), and `pending` while a piece is missing or stale. A verification whose record says no test package ran tests
+(`testPackagesRun` 0 in verification-record/1, CRW-1328; a record without the member is unknown, never zero) is recorded on its
+`crw.verify` row with the warning `no_tests_run`, and the gate lists it in `warnings` and on its evidence; its state is the evidence's as
+before. The gate makes no evidence. The close makes it, at H: `crw.verify(null node)` for each
 command named in `need_tests`, and the QA calls below when `need_qa`; then the gate is judged again. A verification that cannot run holds
 the milestone (`verify_unavailable`). A head that moves while evidence is made is judged again from the new head, at most three rounds.
 A gate that failed ends the close with an escalation (`final_gate_test_failed`, `qa_failed`, `qa_inconclusive`) and reviewer-final does not
@@ -774,7 +793,7 @@ condition outside the run still holds (the budget, the host's availability) ends
 ## Session calls
 
 A run whose configuration names a session host (`engine.Config.Session`: the host, the step bus, the run's owner thread) runs every
-agent call as a session call (CRW-1316). The owner thread - the project orchestrator - runs the call's turns on role subagents it
+agent call as a session call (CRW-1316). The owner thread - the child (project session, relay role `parent`, [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels)) - runs the call's turns on role subagents it
 spawns, and the engine starts no thread and no turn of its own: it publishes a step, binds the subagent the owner reports, reads
 its answer from the host and records it in the rows relay acceptance reads. Everything around a turn is the engine's as for any
 call: the `prepared` row and its allocation, the gate, the schema validation and its one repair, the terminal rows, the pending
@@ -792,10 +811,14 @@ any row is written. `crw flow shadow` replays either from the trace and names th
   its parent's, and is recorded only as `host_cwd`.
 - A turn is a step. Its intent row `step_published` (k, `op` `<call>/t<k>`, `marker` `<call>/t<k>-a<n>`, `attempt` n, `action`,
   `input`, `input_digest`, `packet` and `packet_digest`, `role`, `agent_type`, `model`, `effort`, `workspace` P, `agent_id` of a
-  `send_input`, the `note` about earlier attempts) is committed before the packet `steps/<call>/packet-t<k>-a<n>.md` and the step
+  `send_input`, the `note` about earlier attempts, and for a `send_input` `tokens_seen` and `call_tokens`, what the turns before it
+  counted) is committed before the packet `steps/<call>/packet-t<k>-a<n>.md` and the step
   `steps/<call>/t<k>-a<n>.json` are written under `<state>/flow/<run>/` (`engine.FileStepBus`). A step is `spawn` (a first turn, the
   attempt after a lost one, a continuation, a repair whose subagent is closed) or `send_input` (the repair turn on the open
-  subagent); `close` steps (`steps/<call>/close-a<n>.json`) name a subagent to close.
+  subagent); `close` steps (`steps/<call>/close-a<n>-<agent>.json`, one file per subagent, so two closes of one attempt never
+  overwrite each other) name a subagent to close. A step whose packet or file cannot be written (a full disk) was sent to nobody:
+  the run writes the flow warning `step_unwritten` (`marker`, `k`, `attempt`, `action`, `input_state: not_delivered`, `error`)
+  once and writes the step again until it can or the turn ends; the call is never ended unknown for it.
 - The spawn message is short; the packet holds the rest:
 
   ```
@@ -830,7 +853,8 @@ any row is written. `crw flow shadow` replays either from the trace and names th
   the call's pair. A continuation is judged by the same rule: only the decided parts of the role's pair are compared with the pair
   the call's subagent was bound with, so a call bound `pair_unchecked` or `effort_unchecked` continues on a new subagent whose bind
   records the pair it runs, and a decided part that differs is refused (`pair_refused`). While a step waits, the run also looks the
-  marker up on the host, so a subagent spawned and never reported is bound all the same.
+  marker up on the host - the subagent that carries it for a spawn, the turn that carries it on the subagent for a `send_input` -
+  so a subagent spawned, or a repair sent, and never reported is bound all the same.
 - A bind writes `thread_started` (the subagent's `thread_id`, the host-read `model` and `effort`, `cwd` P, `host_cwd`,
   `parent_thread_id`, `agent_role`, `attempt`, `via: session`, `rollout_path`, `marker`, and `prior_pairs`, the pairs earlier
   attempts of the call were bound with when they differ) and `turn_started` (k, `op`, `turn_id`, `attempt`, `marker`) in one batch;
@@ -846,7 +870,8 @@ any row is written. `crw flow shadow` replays either from the trace and names th
   one repair, `null_model`, `completed`.
 - A turn that ended `failed` or `interrupted` with an error is `TurnOutcome.Failed` with its `codexErrorInfo`: a usage or rate limit
   pauses the run, an exceeded context window is a `null_model`, a host failure holds the call, as for any call.
-- Tokens are the rollout's last `token_count` (thread/read `path`), less what the subagent's earlier turns counted. A rollout that
+- Tokens are the rollout's last `token_count` (thread/read `path`), less what the subagent's earlier turns counted (a recovered
+  `send_input` turn takes that and the call's tokens from its `step_published` row, so it counts only what it adds). A rollout that
   cannot be read leaves the turn unmeasured: the `tokens_unmeasured` row says `pauses: false`, and a session run's token ceiling
   counts the calls it measured.
 - A pause, a cancellation or a deadline interrupts the bound subagent's running turns and reads the thread until it is no longer
@@ -855,7 +880,9 @@ any row is written. `crw flow shadow` replays either from the trace and names th
   takes digests of P, of the owner's checkout and of the run's shared state when it binds and when it harvests, and writes a flow
   warning when they differ: `read_role_wrote` (a role that changes nothing), `executor_wrote_outside`, `shared_state_changed`.
 - An executor's `HEAD` is compared with the commit its worktree is to be at (the node's last `crw.commit`, else the allocation's
-  start). A subagent that committed moved it: the commit is kept on `refs/crw/flow/<run>/stray/<node>/a<attempt>` and the
+  start). A subagent that committed moved it: the commit is kept on `refs/crw/flow/<run>/stray/<node>/a<attempt>-<call>` (the
+  executor calls of one allocation, a build and its fix rounds, each keep their own; the ref is created by a compare-and-swap
+  against no ref and never moved) and the
   completed row records `executor_head_moved` (`start`, `head`, `ref`); `crw.commit` commits the pending tree on `start` with the
   observed `HEAD` as the compare-and-swap's old value, and the proof takes the recorded stray `HEAD` whose tree is the pending tree
   as the call's state ([journal.md](journal.md#the-proofs)). The subagent is closed when the call has its terminal row.
@@ -874,9 +901,9 @@ any row is written. `crw flow shadow` replays either from the trace and names th
   | Last row | The resumed call |
   | --- | --- |
   | `prepared` | publishes the first step (the directory an earlier process made is the call's) |
-  | `step_published` | looks the marker up on the host and binds the subagent it finds; else publishes the same step again |
+  | `step_published` | answers first a dispatch report the owner wrote that no process answered (it waits in the inbox), then looks the step up on the host - the subagent that carries the marker for a spawn, the marker turn on the subagent for a `send_input` (a repair is never sent twice) - and binds what it finds; else publishes the same step again |
   | `thread_started` | adopts the subagent the row names and writes only its `turn_started` (nothing is spawned or published again; one the host does not know for `LostAfter` loses the attempt), then reads it as after `turn_started` |
-  | `turn_started` | reads the bound subagent: harvests a completed turn, waits for a running one, loses a lost one |
+  | `turn_started` | retracts the step file the dead process left and reads the bound subagent: harvests a completed turn, waits for a running one, loses a lost one |
   | `session_attempt_lost` | closes the old subagent and spawns the next attempt |
 
 - A held session call goes on in place after the subagents of its held attempts are shown not running (a running turn is
@@ -899,6 +926,7 @@ any row is written. `crw flow shadow` replays either from the trace and names th
 | terminal rows | as for any call |
 | `session_wake` (flow row) | a wake of the owner thread the run staged: `batch`, `wake_id`, `renotify`, `ops`, `owner`, `owner_status`, `waiting_seconds`, `staged` (and `error`) |
 | `escalation` (flow row) | `reason: session_unresponsive`: the steps waited `UnresponsiveAfter` without a dispatched report (`owner`, `ops`, `batch`, `waiting_seconds`); the run goes on |
+| `step_unwritten` (flow row) | a step whose packet or file could not be written: nothing was sent (`input_state: not_delivered`, `marker`, `error`); the run writes it again |
 
 ### The owner's commands
 

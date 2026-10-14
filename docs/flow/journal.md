@@ -42,7 +42,8 @@ saw. A row is never updated.
   rebind a resumed run); `payload_json` is the Data plus the reserved members `_kind`, `_path`, `_position`, `_op` and `_label`.
   A member of Data never starts with an underscore. A session run adds two kinds there, with no call: `session_wake`, each wake of
   its owner thread it staged (the supervisor message itself is in `supervisor_messages`, obligation kind `session_step_waiting`), and
-  the `escalation` of `reason` `session_unresponsive` ([script.md](script.md#the-owners-commands)).
+  the `escalation` of `reason` `session_unresponsive` ([script.md](script.md#the-owners-commands)); and one with its call:
+  `step_unwritten`, a step whose packet or file could not be written, so nothing was sent for it (`input_state` `not_delivered`).
 - A session run's exchange with its owner thread is not in the store: the steps, packets, dispatch reports and replies are files
   under `<state>/flow/<run>/` (`engine.FileStepBus`), and the owner's binding and the spawn hook's ledger (with each spawn's `role`
   and `op`) are the flow-bound files of `internal/flow/bound`. What the relay reads of a session call is its rows: the newest

@@ -12,8 +12,8 @@ the rules all three share.
 
 | Actor | Called as | Section |
 |---|---|---|
-| The user, or an initiative lead or project orchestrator asking for an audit | a standalone check | [Standalone audit](#standalone-audit) |
-| A project orchestrator or initiative lead completing a delivery inside an authorized execution workflow | the in-workflow auditor | [In-workflow auditor](#in-workflow-auditor) |
+| The user, or a parent or child asking for an audit | a standalone check | [Standalone audit](#standalone-audit) |
+| A child or parent completing a delivery inside an authorized execution workflow | the in-workflow auditor | [In-workflow auditor](#in-workflow-auditor) |
 | A task that called this skill as a sub-task | a bounded helper | [Bounded helper](#bounded-helper) |
 
 ## Connect the workflow
@@ -72,7 +72,7 @@ The schedule verdict is a separate field and never a row of this table. A code r
 
 ## Find contradictions
 
-Actors: manager, initiative lead, orchestrator. Each reads and reports; a task that runs this as a sub-task returns its findings to its caller, which writes any record (see [Bounded helper](#bounded-helper)).
+Actors: the top session, the parent, the child ([the level table](../crw-canon/references/hierarchy.md#the-levels)). Each reads and reports; a task that runs this as a sub-task returns its findings to its caller, which writes any record (see [Bounded helper](#bounded-helper)).
 
 Find claims or behaviors that cannot both hold under the same stated conditions. Anchor the rules and accepted decisions in canonical Linear documents, and return reproducible contradictions or precise evidence gaps, not a list of dislikes.
 
@@ -118,11 +118,11 @@ Use a separate audit document only when prior authorization or an explicit recor
 
 ## In-workflow auditor
 
-For a completion check in an established execution workflow, send evidence-backed in-scope corrections to the existing responsible task through [crw-run](../crw-run/SKILL.md#return-corrections-to-the-existing-task). Include the violated criterion, reviewed revision, reproducible evidence, required outcome and recheck. Do not make Jun relay the packet or ask again whether to send it. A finding is returned by the caller's own level to the level below it, per [scope of each level](../crw-canon/references/hierarchy.md#scope-of-each-level): an initiative lead carries a project's finding in the [coordination message](../crw-run/references/task-packet.md#coordination-message) to that project's orchestrator and never to its issue children, a standalone issue keeps its existing owner, and a check never sends a correction into another project's issue children.
+For a completion check in an established execution workflow, send evidence-backed in-scope corrections to the existing responsible task through [crw-run](../crw-run/SKILL.md#return-corrections-to-the-existing-task). Include the violated criterion, reviewed revision, reproducible evidence, required outcome and recheck. Do not make Jun relay the packet or ask again whether to send it. A finding is returned by the caller's own level to the level below it, per [scope of each level](../crw-canon/references/hierarchy.md#scope-of-each-level): the parent carries a project's finding in the [coordination message](../crw-run/references/task-packet.md#coordination-message) to that project's child and never to its issue children, a standalone issue keeps its existing owner, and a check never sends a correction into another project's issue children.
 
 Recheck the corrected revision against the original criteria and the reproduced failure. Missing evidence calls for a scoped verification request, not an invented defect or a speculative fix. Reuse valid evidence and keep the same correction scope until verified or a concrete blocker requires a decision. Lead the report with the verification result and the action actually taken: correction sent, awaiting delivery, recheck passed, integrated, or blocked.
 
-Under an existing management assignment, write the audit summary to the linked Linear coordination document and read it back; a separate audit document needs prior authorization or an explicit recording request, and authorization already granted is not asked for again. Where a relay holds the assignment, the summary is queued, the verdicts are recorded against its registered criteria and a quiet project orchestrator is not a finding: all of that is in [Check records in a relay store](../crw-run/references/check-records.md).
+Under an existing management assignment, write the audit summary to the linked Linear coordination document and read it back; a separate audit document needs prior authorization or an explicit recording request, and authorization already granted is not asked for again. Where a relay holds the assignment, the summary is queued, the verdicts are recorded against its registered criteria and a quiet child is not a finding: all of that is in [Check records in a relay store](../crw-run/references/check-records.md).
 
 ## Bounded helper
 

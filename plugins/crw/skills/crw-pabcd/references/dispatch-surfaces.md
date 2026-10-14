@@ -14,12 +14,12 @@ the task packet, the assignment record the relay holds for it, or the DAG node
 
 - **Managed** — a Linear issue or a DAG node, whether the relay already holds an assignment for it
   or not. An issue with no assignment yet is not unmanaged: its first lane is a managed one. A
-  managed issue or node is one of two things, and the choice is the project orchestrator's plan,
+  managed issue or node is one of two things, and the choice is the child's plan,
   not this file's:
   - an independent relay child, started and resumed through `crw-run`: the managed start, the DAG
     release and their bridge recovery, pair/profile, capacity and receipt rules. An oversized issue
     is this one. It is never a desktop `create_thread` lane.
-  - a flow executor call of the project orchestrator's run, recorded in the relay: the run
+  - a flow executor call of the child's run, recorded in the relay: the run
     releases the node to the relay's DAG scheduler and starts the executor (an engine thread of its
     own, not a native helper of any task), and the call, its commits, its review and its acceptance
     are rows of the run's journal and the DAG records
@@ -27,7 +27,7 @@ the task packet, the assignment record the relay holds for it, or the DAG node
 
   Either way the relay refuses a second active or paused assignment of the same issue and a release
   past capacity; those answers are followed, not routed around by creating a thread by hand. A
-  project orchestrator's own thread uses read-only and review helpers only; the implementation of an
+  child's own thread uses read-only and review helpers only; the implementation of an
   issue is its independent relay child's or its run's executor call, and that child, or that executor
   within its stated allowance, may own bounded native helpers for its own task. The manifest of
   managed lanes is a read-only projection of the relay assignments and DAG records (and, for a run,

@@ -16,10 +16,13 @@ import (
 
 const lintUsage = `usage: crw flow lint [--args JSON | --args-file FILE] [--no-dry-run] [--json] <script.js>...`
 
+// Command is the first word of the command this package serves.
+const Command = "lint"
+
 // RunCLI is `crw flow`: `lint` here, every other command in the engine. It exits 0 when every script is clean, 1 when a
 // script has a finding or does not load, and 2 for a command line it cannot use.
 func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	if len(args) > 0 && args[0] == "lint" {
+	if len(args) > 0 && args[0] == Command {
 		return lintCmd(ctx, args[1:], stdout, stderr)
 	}
 	return engine.RunCLI(ctx, args, stdout, stderr)

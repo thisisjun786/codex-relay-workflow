@@ -17,7 +17,7 @@ import (
 //
 //   - the intent: the event's generation was started by managed-start, whose intent file under the marker root names a
 //     baselineRevision that is a full commit id (the baseline of a node without a base is an opaque string, "dag-input-manifest:...");
-//   - the plan: the child's issue key names live nodes of plans, and exactly one current target of those plans has an observation;
+//   - the plan: the child's issue key names live nodes of plans, and exactly one current target the child belongs to has an observation (the plans' own targets first, then the targets of the refs they integrate onto);
 //   - the observation: a head the push or the checker read on that target's remote branch;
 //   - the store rows: each of them readable.
 //
@@ -38,7 +38,7 @@ func ReceiveTargetNotice(ctx context.Context, st *store.Store, event string) (de
 		return nil, err
 	}
 	s := &Scheduler{Store: st}
-	target, observed, found, err := s.observedTargetOf(ctx, issue)
+	target, observed, found, err := s.observedTargetOf(ctx, issue, baseline)
 	if err != nil || !found || observed == baseline {
 		return nil, err
 	}
@@ -105,34 +105,54 @@ func childBaseline(ctx context.Context, st *store.Store, event string) (baseline
 	return text, issue, nil
 }
 
-// observedTargetOf finds the one current target of the plans whose live nodes carry the issue key that has an observed head, and the
-// newest head read there. Zero targets with an observation, or more than one, find none: the comparison does not guess which target
-// the child was started from.
-func (s *Scheduler) observedTargetOf(ctx context.Context, issue string) (store.IntegrationTargetRow, string, bool, error) {
+// observedTargetOf finds the one current target the child belongs to that has an observed head, and the newest head read there. It looks in
+// three steps and stops at the first that has a target with an observation: the targets the child's plans name themselves (the lookup before
+// CRW-1374), then the targets of the integration refs a batch of the child's plans was recorded for, then the targets of the refs whose
+// recorded heads include the child's baselineRevision (CRW-1374). The two later steps find a child of a later plan on the same integration ref
+// and remote branch, although the target row names the plan that recorded it first (a repeat of a recorded remote branch writes nothing). A step
+// with more than one observed target finds none, and a later step never widens an earlier one: a second ref that took the same dev tip as its
+// base does not turn a comparison the plan's own target made into no comparison (CRW-1373 evaluation d1). The lookup does not guess which
+// target the child was started from, and an issue no live node of a plan carries compares nothing.
+func (s *Scheduler) observedTargetOf(ctx context.Context, issue, baseline string) (store.IntegrationTargetRow, string, bool, error) {
 	rows, err := s.Store.Q(ctx).QueryContext(ctx, "SELECT DISTINCT plan_id FROM dag_nodes WHERE issue_key = ? AND retired_rev IS NULL ORDER BY plan_id", issue)
 	if err != nil {
 		return store.IntegrationTargetRow{}, "", false, err
 	}
-	var plans []string
+	plans := map[string]bool{}
 	for rows.Next() {
 		var plan string
 		if err := rows.Scan(&plan); err != nil {
 			_ = rows.Close()
 			return store.IntegrationTargetRow{}, "", false, err
 		}
-		plans = append(plans, plan)
+		plans[plan] = true
 	}
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return store.IntegrationTargetRow{}, "", false, err
 	}
-	var found []store.IntegrationTargetRow
-	var heads []string
-	for _, plan := range plans {
-		targets, err := store.IntegrationTargetsOfPlan(ctx, s.Store, plan)
-		if err != nil {
-			return store.IntegrationTargetRow{}, "", false, err
-		}
-		for _, t := range targets {
+	if len(plans) == 0 {
+		return store.IntegrationTargetRow{}, "", false, nil
+	}
+	batchRefs, baselineRefs, err := s.integrationRefsOfChild(ctx, plans, baseline)
+	if err != nil {
+		return store.IntegrationTargetRow{}, "", false, err
+	}
+	all, err := store.IntegrationTargets(ctx, s.Store)
+	if err != nil {
+		return store.IntegrationTargetRow{}, "", false, err
+	}
+	steps := []func(store.IntegrationTargetRow) bool{
+		func(t store.IntegrationTargetRow) bool { return plans[t.PlanID] },
+		func(t store.IntegrationTargetRow) bool { return batchRefs[t.IntegrationRef] },
+		func(t store.IntegrationTargetRow) bool { return baselineRefs[t.IntegrationRef] },
+	}
+	for _, belongs := range steps {
+		var found []store.IntegrationTargetRow
+		var heads []string
+		for _, t := range all {
+			if !belongs(t) {
+				continue
+			}
 			latest, has, err := store.LatestIntegrationObservation(ctx, s.Store, t)
 			if err != nil {
 				return store.IntegrationTargetRow{}, "", false, err
@@ -141,9 +161,37 @@ func (s *Scheduler) observedTargetOf(ctx context.Context, issue string) (store.I
 				found, heads = append(found, t), append(heads, latest.ObservedHead)
 			}
 		}
-	}
-	if len(found) != 1 {
+		switch len(found) {
+		case 0:
+			continue
+		case 1:
+			return found[0], heads[0], true, nil
+		}
 		return store.IntegrationTargetRow{}, "", false, nil
 	}
-	return found[0], heads[0], true, nil
+	return store.IntegrationTargetRow{}, "", false, nil
+}
+
+// integrationRefsOfChild are the integration refs a child belongs to besides the targets of its plans: the refs a batch of one of its plans was
+// recorded for, and the refs whose recorded heads (the bases of their batches and the heads their ref_moved stages name) include the child's
+// baseline, the commit the child was started from. Both are read from the stage rows alone, without a git or network call.
+func (s *Scheduler) integrationRefsOfChild(ctx context.Context, plans map[string]bool, baseline string) (batchRefs, baselineRefs map[string]bool, err error) {
+	all, batchRef, err := s.targetStageRows(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	batchRefs, baselineRefs = map[string]bool{}, map[string]bool{}
+	for _, r := range all {
+		ref := batchRef[r.batch]
+		if ref == "" {
+			continue
+		}
+		if plans[r.plan] {
+			batchRefs[ref] = true
+		}
+		if r.detail != "" && r.detail == baseline {
+			baselineRefs[ref] = true
+		}
+	}
+	return batchRefs, baselineRefs, nil
 }

@@ -1170,7 +1170,7 @@ settling how every operator-facing reader renders that terminal, which is not do
 **Which route this describes.** The repository's integration rule is the push-only procedure:
 one integrator merges the candidate into a local integration tree over `dev`, obtains the local
 full verification (`verification-record/1` with `result: pass`) for that tree and fast-forwards `dev` to
-it ([POLICY.md](../../../../../POLICY.md#branches-and-authority)). The pull-request route below is the
+it (`POLICY.md#branches-and-authority` in the CRW repository). The pull-request route below is the
 relay's own mechanism, which the installed relay still runs; while it does, these clauses describe
 the relay's path, and the child's obligations under them are the ones its packet carries. Where the
 relay refuses the push-only flow, that is missing official support to report.

@@ -124,6 +124,17 @@ its own environment, and nothing the call, the child's argv or its environment s
 no daemon the tool answers `relay daemon unavailable; child report was not submitted`, opens no store
 and records nothing; it is not a fallback of the child's own command.
 
+A bridge that did not inherit the state the daemon serves finds no daemon, and says so before the
+first report instead of at it. The relay service's scope claim for the App Server socket records the
+state directory of the daemon it runs. At start the bridge resolves its own state (the relay's
+resolution without `--state`: `CODEX_SESSION_RELAY_STATE`, else discovery) and, when the claim's
+process still runs and serves another directory, writes one line to stderr, `crw bridge: warning:
+report_child reaches the relay state "<bridge's>" ... serves "<daemon's>" ...`, naming both paths,
+and starts as usual. `doctor` shows the same reading as the trailing key `reportChildState`
+(`bridgeState`, `daemonState`, `agree: false`, `detail`) where it differs, with an unchanged exit
+code. Neither refuses anything, and neither says anything when no claim exists, the claim's process
+is gone, or the two agree (fail open).
+
 Status: implemented in source. Installation and live delivery are separate operations.
 
 ### When the rules cannot pick a store

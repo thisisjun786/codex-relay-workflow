@@ -138,15 +138,19 @@ func (s *SessionConfig) wait(ctx context.Context, d time.Duration) error {
 }
 
 // HeadKeeper is implemented by a backend that can read a worktree's HEAD and keep a commit on a ref of the repository: the
-// executor HEAD check of a session call (§6.3) preserves a commit the subagent made on the stray ref of its attempt.
+// executor HEAD check of a session call (§6.3) preserves a commit the subagent made on the stray ref of its call. KeepRef creates
+// the ref (a compare-and-swap against no ref), keeps a ref that already holds the commit, and refuses to move one that holds
+// another.
 type HeadKeeper interface {
 	HeadOf(ctx context.Context, path string) (string, error)
 	KeepRef(ctx context.Context, ref, commit string) error
 }
 
-// StrayRef is the ref a commit an executor subagent made in its worktree is kept on: refs/crw/flow/<run>/stray/<node>/a<attempt>.
-func StrayRef(runID, node string, attempt int) string {
-	return StrayRefPrefix(runID) + refPart(node) + "/a" + strconv.Itoa(attempt)
+// StrayRef is the ref a commit an executor subagent of call made in its worktree is kept on:
+// refs/crw/flow/<run>/stray/<node>/a<attempt>-<call>. The call is in the name because the executor calls of one allocation (the
+// build and its fix rounds) work in the same worktree: each keeps its own record, and the keeper never moves a ref it made.
+func StrayRef(runID, node string, attempt int, call string) string {
+	return StrayRefPrefix(runID) + refPart(node) + "/a" + strconv.Itoa(attempt) + "-" + refPart(call)
 }
 
 // StrayRefPrefix is the prefix of every stray ref of a run.

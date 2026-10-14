@@ -89,7 +89,7 @@ func ProductionWorld(ctx context.Context, req WorldRequest) (World, error) {
 		program, _ := os.Executable()
 		reporter := report.Reporter{Run: spec.RunID, W: &report.Writer{Store: st, Rows: report.JournalAppender{Journal: j, RunID: spec.RunID, Store: st}, Resolver: report.StoreResolver{Store: st},
 			Sender: report.ManageSender{Program: program, State: statePath, Socket: socket}, ArtifactDir: filepath.Join(statePath, "flow", spec.RunID, "reports")}}
-		if lane, err = OpsFor(ctx, LaneRequest{WorldRequest: req, Store: st, Journal: j, Identity: id, Repo: repo, Policy: table, Threads: host, Reporter: reporter}); err != nil {
+		if lane, err = OpsFor(ctx, LaneRequest{WorldRequest: req, Store: st, Journal: j, Identity: id, Repo: repo, Policy: table, Threads: host, Reporter: reporter, Socket: socket}); err != nil {
 			_ = client.Close()
 			_ = st.Close()
 			return World{}, err
