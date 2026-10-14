@@ -16,8 +16,10 @@ import (
 // production: the relay opens a turn on an idle thread, resumes a notLoaded one and waits for a busy one's turn to end, CRW-1334).
 // While steps wait and no subagent is dispatched for WakeAfter (15 minutes), the run notifies again, each interval twice the one
 // before up to RenotifyMax (an hour). After UnresponsiveAfter (2 hours) without a dispatch it writes an escalation row
-// (session_unresponsive) and goes on waiting: nothing is stopped. The logical id of a wake is (run, batch): the batch is the set of
-// steps that wait, so a wake of the same steps staged again is the same message, and a re-notification is its own.
+// (session_unresponsive) and goes on waiting: nothing is stopped. The logical id of a wake is (run, process, batch): the batch is the set
+// of steps that wait, so a wake of the same steps staged again is the same message, and a re-notification is its own; the process is the
+// run's n-th (its n-th started row), because the relay keeps a message id for good while a process counts its re-notifications from 0
+// again (CRW-1372): the n-th process wakes under <batch>/e<n> (the first under <batch>, as before), so a resume stages new messages.
 
 // Session wake defaults.
 const (
@@ -35,8 +37,8 @@ const (
 // SessionWake is one wake of the owner thread.
 type SessionWake struct {
 	Run, Owner string
-	// Batch names the steps that wait (a digest of their ops); ID is the wake's logical id: the batch, and /r<n> for the n-th
-	// re-notification of it.
+	// Batch names the steps that wait (a digest of their ops); ID is the wake's logical id: the batch, /e<n> for the run's n-th
+	// process after the first, and /r<n> for the n-th re-notification of it.
 	Batch, ID string
 	Renotify  int
 	// Ops are the steps that wait (their markers), oldest first.
@@ -194,7 +196,7 @@ func (e *Engine) wakeLook(ctx context.Context) {
 		// a busy owner is working through `crw flow next` and sees the new steps there; a re-notification goes to it anyway, and the
 		// relay delivers it after the turn
 		if renotify > 0 || status != "active" {
-			e.wake(ctx, SessionWake{Run: e.runID, Owner: s.Owner, Batch: batch, ID: wakeID(batch, renotify), Renotify: renotify, Ops: ops, Waiting: quiet, OwnerStatus: status})
+			e.wake(ctx, SessionWake{Run: e.runID, Owner: s.Owner, Batch: batch, ID: wakeID(e.epoch, batch, renotify), Renotify: renotify, Ops: ops, Waiting: quiet, OwnerStatus: status})
 		}
 	}
 	if escalate {
@@ -204,11 +206,26 @@ func (e *Engine) wakeLook(ctx context.Context) {
 	}
 }
 
-func wakeID(batch string, renotify int) string {
-	if renotify == 0 {
-		return batch
+func wakeID(epoch int, batch string, renotify int) string {
+	id := batch
+	if epoch > 1 {
+		id += "/e" + strconv.Itoa(epoch)
 	}
-	return batch + "/r" + strconv.Itoa(renotify)
+	if renotify == 0 {
+		return id
+	}
+	return id + "/r" + strconv.Itoa(renotify)
+}
+
+// startedRows is how many processes the run has had: its started rows (this process's included).
+func startedRows(events []Event, run string) int {
+	n := 0
+	for _, ev := range events {
+		if ev.Kind == KindRun && ev.Event == "started" && ev.RunID == run {
+			n++
+		}
+	}
+	return n
 }
 
 // wake stages one wake and records it (a wake that could not be staged is recorded with its error: the run goes on).
@@ -216,10 +233,19 @@ func (e *Engine) wake(ctx context.Context, wk SessionWake) {
 	s := e.cfg.Session
 	data := map[string]any{"batch": wk.Batch, "wake_id": wk.ID, "renotify": wk.Renotify, "ops": wk.Ops, "owner": wk.Owner, "owner_status": wk.OwnerStatus,
 		"waiting_seconds": int64(wk.Waiting / time.Second)}
-	if err := s.Wake(ctx, wk); err != nil {
+	var not WakeNotStaged
+	if err := s.Wake(ctx, wk); errors.As(err, &not) {
+		// the relay holds the message already (or holds it as it may have gone): nothing new was staged
+		data["staged"], data["reason"] = false, not.Reason
+	} else if err != nil {
 		data["staged"], data["error"] = false, err.Error()
 	} else {
 		data["staged"] = true
 	}
 	e.j.Append(Event{RunID: e.runID, Kind: KindFlow, Event: EvSessionWake, Data: data})
 }
+
+// WakeNotStaged is the answer of a wake that staged nothing new (the relay's reason): the session_wake row says staged:false with it.
+type WakeNotStaged struct{ Reason string }
+
+func (w WakeNotStaged) Error() string { return "the wake staged nothing: " + w.Reason }

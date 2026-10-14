@@ -124,7 +124,7 @@ func ProductionWorld(ctx context.Context, req WorldRequest) (World, error) {
 		// a session run (CRW-1316): the steps on the run's bus, the subagents read through the session host adapter, the wakes staged
 		// in the store; the App Server backend stays for what the lane reads of the host (the milestone close's archive)
 		cwd, _ := os.Getwd()
-		sb, sess, err := journal.SessionEnv(journal.SessionEnvRequest{Store: st, Client: client, Allocator: alloc, StateDir: req.State, RunID: spec.RunID, Owner: spec.Thread, OwnerCwd: cwd})
+		sb, sess, err := journal.SessionEnv(journal.SessionEnvRequest{Store: st, Client: client, Allocator: alloc, StateDir: req.State, RunID: spec.RunID, Owner: spec.Thread, OwnerCwd: cwd, Journal: j})
 		if err != nil {
 			backend.Close()
 			_ = client.Close()

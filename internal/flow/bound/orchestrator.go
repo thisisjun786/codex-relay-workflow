@@ -4,8 +4,10 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"os"
 	"regexp"
 	"strings"
+	"syscall"
 )
 
 // The orchestrator line of a session run (CRW-1316 design §9). The run's owner thread, the project orchestrator, spawns the role
@@ -100,6 +102,13 @@ func BindOrchestrator(o OrchestratorBinding) (BindResult, error) {
 		return BindResult{}, errors.New("bound: the orchestrator binding needs the run id")
 	}
 	w := o.Writer
+	// the read of the last line and the append are one step under a lock of the directory: two near-simultaneous starts of runs of
+	// one thread cannot both read no live line and both bind (CRW-1372); the second reads the first's line
+	unlock, err := lockBindings(w)
+	if err != nil {
+		return BindResult{}, err
+	}
+	defer unlock()
 	line := Line{RunID: o.RunID, ThreadID: o.Thread, Kind: KindOrchestrator, HelperPairs: maps.Clone(o.Pairs), PolicyDigest: o.Digest}
 	if err := line.Validate(o.Thread); err != nil {
 		return BindResult{}, fmt.Errorf("bound: %w", err)
@@ -135,6 +144,29 @@ func BindOrchestrator(o OrchestratorBinding) (BindResult, error) {
 	}
 	res.Bound = true
 	return res, nil
+}
+
+// lockBindings takes the exclusive lock of the flow-bound directory (made when it is not there) and returns its release.
+func lockBindings(w *Writer) (func(), error) {
+	dir, err := w.dir()
+	if err != nil {
+		return nil, err
+	}
+	if err := ensureDir(dir); err != nil {
+		return nil, err
+	}
+	d, err := os.Open(dir)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(d.Fd()), syscall.LOCK_EX); err != nil {
+		_ = d.Close()
+		return nil, fmt.Errorf("bound: the lock of %s: %w", dir, err)
+	}
+	return func() {
+		_ = syscall.Flock(int(d.Fd()), syscall.LOCK_UN)
+		_ = d.Close()
+	}, nil
 }
 
 // CloseOrchestrator appends the closed line to the owner thread's file when its last line is the run's open line; closed says

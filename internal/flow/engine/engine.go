@@ -152,6 +152,8 @@ type Engine struct {
 	cfg   Config
 	j     Journal
 	runID string
+	// epoch is which process of the run this is: its started rows, this one's included (the wake id carries it, CRW-1372).
+	epoch int
 	ctx   context.Context
 	// parent is the context the caller gave Run: when it is done, the run ends.
 	parent context.Context
@@ -295,7 +297,16 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 		// what the table's reading warned about (CRW-1330): a run starts on it and keeps the warnings in its record
 		startedData["policy_warnings"] = slices.Clone(cfg.Policy.Warnings)
 	}
+	if cfg.Session != nil {
+		// the pairs a session run pins: `crw flow next` binds the owner's line with them, not with the role store read again (CRW-1372)
+		pairs := map[string]any{}
+		for name, spec := range cfg.Policy.Roles {
+			pairs[name] = map[string]any{"model": spec.Pair.Model, "effort": spec.Pair.Effort}
+		}
+		startedData["role_pairs"] = pairs
+	}
 	started := e.j.Append(Event{RunID: e.runID, Kind: KindRun, Event: "started", Data: startedData})
+	e.epoch = startedRows(e.j.Events(), e.runID)
 	if repinned {
 		e.j.Append(Event{RunID: e.runID, Kind: KindRun, Event: EvPolicyRepinned, Data: map[string]any{
 			"old": prior.Digest, "new": cfg.Policy.Digest, "old_source": prior.Source, "new_source": cfg.Policy.Source,

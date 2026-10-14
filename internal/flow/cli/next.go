@@ -3,15 +3,19 @@ package cli
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/journal"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/report"
 )
 
 // `crw flow next` and `crw flow dispatched` (CRW-1316 §3.2, CRW-1348): the owner thread's side of a session run's step exchange
@@ -54,6 +58,8 @@ type NextEnd struct {
 type NextSlots struct {
 	Limit int `json:"limit"`
 	Open  int `json:"open"`
+	// Agents are the open subagents (wait_agent's targets).
+	Agents []string `json:"agents,omitempty"`
 }
 
 // NextAnswer is the JSON answer of `crw flow next --json`.
@@ -106,8 +112,17 @@ func (c *command) next(args []string) int {
 	if err != nil {
 		return c.fail("%v", err)
 	}
+	var pinWarnings []string
+	// the live run spawns with the pairs it pinned: the line and the spawn formats are those, and a role store that moved since is
+	// warned about and recorded, never written over the run's line (CRW-1372)
+	if pinned, digest, ok := pinnedPairs(c.runEvents(cm, run), run); ok {
+		if digest != table.Digest {
+			pinWarnings = append(pinWarnings, c.roleStoreMoved(cm, run, digest, table.Digest))
+		}
+		table = withPinnedPairs(table, pinned, digest)
+	}
 	bus := engine.NewFileStepBus(RunDir(sel.Path, run))
-	ans := NextAnswer{Run: run, Steps: []NextStep{}, Spawns: roleSpawns(table)}
+	ans := NextAnswer{Run: run, Steps: []NextStep{}, Spawns: roleSpawns(table), Warnings: pinWarnings}
 	deadline := time.Now().Add(time.Duration(*wait) * time.Second)
 	first, resumed, bindChecked := "", false, false
 	var steps []engine.Step
@@ -149,7 +164,8 @@ func (c *command) next(args []string) int {
 		ans.Ended = &NextEnd{Status: info.Status, State: info.State}
 	}
 	maxThreads := readCodexAgents(c.getenv).MaxThreads
-	ans.Slots = NextSlots{Limit: maxThreads, Open: openSubagents(c.runEvents(cm, run), steps)}
+	agents := openSubagents(c.runEvents(cm, run), steps)
+	ans.Slots = NextSlots{Limit: maxThreads, Open: len(agents), Agents: agents}
 	var closes []string
 	for _, st := range steps {
 		ns := NextStep{Step: st}
@@ -269,9 +285,9 @@ func (c *command) checkBinding(state string, spec Spec, table *engine.Policy) st
 	return ""
 }
 
-// openSubagents counts the subagent slots the run's subagents hold: the subagents bound to calls that have not ended, and those
+// openSubagents are the subagents that hold the owner's slots, sorted: the subagents bound to calls that have not ended, and those
 // whose close step waits.
-func openSubagents(events []engine.Event, steps []engine.Step) int {
+func openSubagents(events []engine.Event, steps []engine.Step) []string {
 	open := map[string]bool{}
 	agentOf := map[string][]string{}
 	for _, ev := range events {
@@ -297,8 +313,76 @@ func openSubagents(events []engine.Event, steps []engine.Step) int {
 			open[st.AgentID] = true
 		}
 	}
-	return len(open)
+	out := make([]string, 0, len(open))
+	for a := range open {
+		out = append(out, a)
+	}
+	sort.Strings(out)
+	return out
 }
+
+// pinnedPairs are the role pairs the run's newest started row pinned (a session run records them, CRW-1372) and the digest it pinned
+// them under; ok is false for a run that recorded none (it started before the pairs were recorded): the role store is read as before.
+func pinnedPairs(events []engine.Event, run string) (map[string]engine.Pair, string, bool) {
+	var pairs map[string]engine.Pair
+	digest := ""
+	for _, ev := range events {
+		if ev.Kind != engine.KindRun || ev.Event != "started" || ev.RunID != run {
+			continue
+		}
+		raw, ok := ev.Data["role_pairs"].(map[string]any)
+		if !ok {
+			continue
+		}
+		pairs = map[string]engine.Pair{}
+		for role, v := range raw {
+			p, _ := v.(map[string]any)
+			pairs[role] = engine.Pair{Model: str(p, "model"), Effort: str(p, "effort")}
+		}
+		digest = str(ev.Data, "policy_digest")
+	}
+	return pairs, digest, pairs != nil
+}
+
+// withPinnedPairs is the table with the pairs and the digest the run pinned in place of the store's.
+func withPinnedPairs(table *engine.Policy, pinned map[string]engine.Pair, digest string) *engine.Policy {
+	out := *table
+	out.Roles = maps.Clone(table.Roles)
+	if out.Roles == nil {
+		out.Roles = map[string]engine.RoleSpec{}
+	}
+	for role, pair := range pinned {
+		spec := out.Roles[role]
+		spec.Pair = pair
+		out.Roles[role] = spec
+	}
+	out.Digest = digest
+	return &out
+}
+
+// roleStoreMoved records, once for the pair of digests, that the role store moved while the run lives (a role_store_changed row of the
+// run), and says so. A row that cannot be written leaves the warning.
+func (c *command) roleStoreMoved(cm *common, run, pinned, now string) string {
+	warning := fmt.Sprintf("the role store changed while run %s lives (it pinned %s, the store now reads %s): the owner's line keeps the pairs the run pinned, "+
+		"and a resume takes the new ones", run, cell(pinned), cell(now))
+	open := c.Writer
+	if open == nil {
+		open = OpenWriter
+	}
+	st, _, err := open(c.ctx, cm.state, cm.socket)
+	if err != nil {
+		return warning + " (not recorded: " + err.Error() + ")"
+	}
+	defer st.Close()
+	if _, _, err := (report.ForeignAppender{Store: st, Run: run}).AppendOnce(c.ctx, report.NewRow{Kind: KindRoleStoreChanged, Payload: map[string]any{
+		"change_key": pinned + ">" + now, "pinned_digest": pinned, "store_digest": now}}, "change_key"); err != nil {
+		return warning + " (not recorded: " + err.Error() + ")"
+	}
+	return warning
+}
+
+// KindRoleStoreChanged is the row `crw flow next` writes when the role store moved while a run lives.
+const KindRoleStoreChanged = "role_store_changed"
 
 // nextHint says what to do next.
 func nextHint(ans NextAnswer, info RunInfo, closes []string) string {
@@ -332,7 +416,12 @@ func nextHint(ans NextAnswer, info RunInfo, closes []string) string {
 	if spawns > max(free, 0) {
 		parts = append(parts, fmt.Sprintf("%d of the %d subagent slots (agents.max_threads) are held: spawn_agent fails with `agent thread limit reached` until agents are closed; a step that could not be spawned stays and is shown again", ans.Slots.Open, ans.Slots.Limit))
 	}
-	return strings.Join(parts, ". ")
+	hint := strings.Join(parts, ". ")
+	if len(ans.Slots.Agents) > 0 {
+		targets, _ := json.Marshal(ans.Slots.Agents)
+		hint = strings.ReplaceAll(hint, "[<open agents>]", string(targets))
+	}
+	return hint
 }
 
 func (c *command) printNext(ans NextAnswer) {

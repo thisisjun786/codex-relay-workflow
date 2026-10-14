@@ -897,7 +897,9 @@ any row is written. `crw flow shadow` replays either from the trace and names th
 | `interrupt_requested` | the engine's interrupt of the bound turn |
 | `session_attempt_lost` | an attempt whose subagent will not finish its turn |
 | terminal rows | as for any call |
-| `session_wake` (flow row) | a wake of the owner thread the run staged: `batch`, `wake_id`, `renotify`, `ops`, `owner`, `owner_status`, `waiting_seconds`, `staged` (and `error`) |
+| `session_wake` (flow row) | a wake of the owner thread the run staged: `batch`, `wake_id`, `renotify`, `ops`, `owner`, `owner_status`, `waiting_seconds`, `staged` (and `error`, or `reason` when the relay already held the message and staged nothing) |
+| `session_host_warning` (flow row) | what the session host adapter's marker search could not tie as it should: `op`, `warnings` (`no_ledger_line`, `ledger_op_differs`, `several_spawns`, `window_ended`) |
+| `role_store_changed` (flow row, written by `crw flow next`) | the role store moved while the run lives: `pinned_digest`, `store_digest`, once for the pair |
 | `escalation` (flow row) | `reason: session_unresponsive`: the steps waited `UnresponsiveAfter` without a dispatched report (`owner`, `ops`, `batch`, `waiting_seconds`); the run goes on |
 
 ### The owner's commands
@@ -913,15 +915,18 @@ run's directory `<state>/flow/<run>/` and none writes the journal, which only th
   (`next`). Before the process starts the owner thread is bound (below).
 - `crw flow next RUN [--wait S] [--json]` answers the run's `state` (`running`, `waiting_session`, `waiting_decision`, `paused`,
   `ended` with the `ended` status and state), its `steps`, the `slots` (`limit`: `agents.max_threads`, `open`: the subagents of
-  calls not ended and of close steps not taken), the `spawn_formats` and a `hint`; with `--wait` it waits up to S seconds for a
+  calls not ended and of close steps not taken, `agents`: their ids), the `spawn_formats` and a `hint`; with `--wait` it waits up to S seconds for a
   step or a change of state. Each step carries the step file's members (call, k, attempt, op, role, action, agent_type, model,
   reasoning_effort, message, packet, workspace, agent_id) and the host call to make with the live argument names: a spawn step is
   `spawn_agent` and then `crw flow dispatched`, a `send_input` step is `send_input(target, message)` and then `crw flow
   dispatched`, a close step is `close_agent(target)`; the hint says to alternate `wait_agent(targets, timeout_ms)` with `next
-  --wait`, which subagents to close first and when the slots are full (`agent thread limit reached`; the step stays). A close
+  --wait` (its `targets` are the open subagents' ids), which subagents to close first and when the slots are full (`agent thread limit reached`; the step stays). A close
   step's file is removed once next has handed it out. A run no process holds that is neither paused nor over is resumed as
   `crw flow resume RUN --detach` does, and the hint says so (`resumed_pid`). While a process holds the run, next writes the
-  owner's binding again when it is missing, with a warning.
+  owner's binding again when it is missing, with a warning, and with the pairs the live run pinned (the `role_pairs` and
+  `policy_digest` of its newest started row), not the role store read again; the spawn formats are those pairs too. A role store
+  that moved since is warned about and recorded once as a `role_store_changed` row of the run, and the run's line stays; a resume
+  takes the new pairs. A run that recorded no pairs is bound with the store's, as before.
 - `crw flow dispatched RUN CALL --agent ID --k K --attempt N [--wait S] [--json]` writes the dispatch report into the inbox (a
   temporary name and a rename), waits up to S seconds (120) for the run's reply and prints it (`bound` exits 0, the other replies
   exit 1). A report of a run no process holds, or one the run has not answered in time, is answered `queued`: it stays in the inbox
@@ -941,7 +946,8 @@ run's directory `<state>/flow/<run>/` and none writes the journal, which only th
   The start writes it, the run process writes it again when it starts or resumes and it is not the last line, and the process
   closes it when the run ends (`CloseOrchestrator`). A live run is one whose process holds its run lock: the open line of a run
   without the lock is closed before the new one is written, and a thread holds the line of one live run, so a second start while
-  the first lives warns and does not bind. A thread whose binding cannot be written is warned about; the run starts.
+  the first lives warns and does not bind. The read of the thread's last line and the append are one step under a lock of the
+  flow-bound directory, so two near-simultaneous binds of one thread cannot both bind. A thread whose binding cannot be written is warned about; the run starts.
 - The spawn hook decides an orchestrator's spawns by that line. It refuses two: a spawn by a subagent (a leaf) and a full-history
   fork (`full_history_fork_refused`: the fork keeps the parent's pair). Every other spawn is allowed with `model` and
   `reasoning_effort` overwritten from the decided parts of the pair of its role (an undecided effort keeps the `reasoning_effort` the
@@ -957,10 +963,14 @@ run's directory `<state>/flow/<run>/` and none writes the journal, which only th
 - The run wakes its owner. When it publishes a step and the owner thread is idle or notLoaded (the host's `thread/read`), it stages
   a `session_step_waiting` message through `run:<id>` (`journal.StageWake`), which the supervisor channel delivers to the run's
   owner (`flow_runs.actor_task_id`): a new turn on an idle thread, a resume and a turn on a notLoaded one, after the turn on a busy
-  one. The logical id is `(run, batch)`, the batch being the set of waiting steps, so a wake of the same steps staged again is one
-  message. While steps wait without a dispatched report the run notifies again after `WakeAfter` (15 minutes), each interval twice
+  one. The logical id is `(run, process, batch)`, the batch being the set of waiting steps, so a wake of the same steps staged again
+  is one message: the run's n-th process (its n-th started row) wakes under `<batch>/e<n>` (the first under `<batch>`), because the
+  relay keeps a message id for good while a process counts its re-notifications from 0 again, so a resume stages new messages. A
+  wake the relay already held stages nothing, and its row says `staged: false` with the relay's `reason`. The message's delivery is
+  a `message_delivery` row the daemon's settle writes ([reporting.md](reporting.md#through-the-supervisor-channel)). While steps wait without a dispatched report the run notifies again after `WakeAfter` (15 minutes), each interval twice
   the one before up to `RenotifyMax` (an hour), whatever the owner's status; after `UnresponsiveAfter` (2 hours) it writes the
-  `session_unresponsive` escalation once and goes on waiting. Each wake is a `session_wake` row.
+  `session_unresponsive` escalation once and goes on waiting. Each wake is a `session_wake` row. A session run's started row pins
+  its role pairs (`role_pairs`), and the session host adapter's warnings are `session_host_warning` rows.
 - With `SessionConfig.Trace` (the session backend's `Trace`) the digests are: the workspace, P's `git status --porcelain` and
   `HEAD`; outside, the owner's working directory's when it is a git checkout other than P; shared, the refs under `refs/crw/` of the
   run's repository other than the run's own `refs/crw/flow/<run>/` (the run moves those itself) and the binding files of the
