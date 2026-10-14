@@ -249,7 +249,7 @@ func TestRefactorHasNoWriteProcedure(t *testing.T) {
 }
 
 // TestTidyJobsSeparated: crw-tidy has two jobs under two headings. Diagnose reads and is open to any actor; Supplement writes,
-// and only the owner of the body written does: the parent for an initiative body, the child for a project or issue body, and
+// and only the owner of the body written does: the parent for a milestone description it opened, the child for a project or issue body, and
 // the parent's store-wide sweep sends each supplement to its owner.
 func TestTidyJobsSeparated(t *testing.T) {
 	skill := splitRead(t, tidySkillFile)
@@ -276,7 +276,7 @@ func TestTidyJobsSeparated(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		"the parent for an initiative body",
+		"the parent for a milestone description it opened",
 		"the child for a project or issue body",
 		"store-wide sweep",
 		"Read the record again immediately before the write",
