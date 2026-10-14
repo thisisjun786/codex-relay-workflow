@@ -2,7 +2,6 @@ package cli
 
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -136,7 +135,7 @@ func TestLandHeadKeepsTheIndependenceGate(t *testing.T) {
 			if !reviewed {
 				t.Errorf("no crw.review row refused %s", c.reason)
 			}
-			t.Log(fmt.Sprintf("%s: %s", c.name, res.Value))
+			t.Logf("%s: %s", c.name, res.Value)
 		})
 	}
 }
