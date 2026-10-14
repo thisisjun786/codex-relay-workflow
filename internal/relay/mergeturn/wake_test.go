@@ -140,7 +140,7 @@ func Test26_queue_does_not_annotate_its_own_supersession(t *testing.T) {
 }
 func Test26_MTW_6_unaddressable_grant_has_exact_python_refusal(t *testing.T) {
 	w, d, r := queueFixture(t)
-	cases := []struct{ relationship, recipient, project, want string }{{"", alpha.TaskID, fxA, "the turn names no assignment"}, {r, beta.TaskID, fxA, "assignment 'rel-a' is addressed to parent 'task-alpha', not to 'task-beta'"}, {r, alpha.TaskID, fxB, "assignment 'rel-a' is attached to project 'PRJ-A', not to this turn's 'PRJ-B'"}}
+	cases := []struct{ relationship, recipient, project, want string }{{"", alpha.TaskID, fxA, "the turn names no assignment"}, {r, beta.TaskID, fxA, "assignment 'rel-a' is addressed to 자식 'task-alpha', not to 'task-beta'"}, {r, alpha.TaskID, fxB, "assignment 'rel-a' is attached to project 'PRJ-A', not to this turn's 'PRJ-B'"}}
 	_, err := w.s.Querier(w.ctx).ExecContext(w.ctx, "INSERT INTO relationship_scope (relationship_id,project_key,recorded_at) VALUES (?,?,?)", r, fxA, fxISO)
 	if err != nil {
 		t.Fatal(err)

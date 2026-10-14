@@ -172,7 +172,7 @@ func (s *Service) ownership(ctx context.Context, project, subject, actor string)
 		}
 	}
 	if len(parents) == 0 {
-		return "", &registry.CoordinationRefusal{Reason: contract.RefusalUnregisteredScope, Detail: "project " + pyvalue.StrRepr(project) + " has no registered parent, so nobody can claim a merge turn for it", Domain: registry.DomainMergeTarget, Subject: subject, Challenger: actor}, nil
+		return "", &registry.CoordinationRefusal{Reason: contract.RefusalUnregisteredScope, Detail: "project " + pyvalue.StrRepr(project) + " has no registered 자식, so nobody can claim a merge turn for it", Domain: registry.DomainMergeTarget, Subject: subject, Challenger: actor}, nil
 	}
 	if len(parents) > 1 {
 		slices.Sort(parents)
@@ -180,7 +180,7 @@ func (s *Service) ownership(ctx context.Context, project, subject, actor string)
 		for i, task := range parents {
 			quoted[i] = pyvalue.StrRepr(task)
 		}
-		return "", &registry.CoordinationRefusal{Reason: contract.RefusalDuplicateScopeOwner, Detail: "project " + pyvalue.StrRepr(project) + " has more than one live parent (" + strings.Join(quoted, ", ") + "), so there is no owner to hold a merge turn under; repair the store rather than letting one of them win", Domain: registry.DomainMergeTarget, Subject: subject, Incumbent: parents[0], Challenger: actor}, nil
+		return "", &registry.CoordinationRefusal{Reason: contract.RefusalDuplicateScopeOwner, Detail: "project " + pyvalue.StrRepr(project) + " has more than one live 자식 (" + strings.Join(quoted, ", ") + "), so there is no owner to hold a merge turn under; repair the store rather than letting one of them win", Domain: registry.DomainMergeTarget, Subject: subject, Incumbent: parents[0], Challenger: actor}, nil
 	}
 	return parents[0], nil, nil
 }
@@ -211,7 +211,7 @@ func (s *Service) Request(ctx context.Context, repository, base, project, holder
 		}
 		refusal = r
 		if refusal == nil && owner != holder {
-			refusal = &registry.CoordinationRefusal{Reason: contract.RefusalScopeRoleMismatch, Detail: "task " + pyvalue.StrRepr(holder) + " is not the registered parent of project " + pyvalue.StrRepr(project) + ", which is held by " + pyvalue.StrRepr(owner) + "; holding a merge turn is the project parent's, and saying it is your turn is not being its parent", Domain: registry.DomainMergeTarget, Subject: target, Incumbent: owner, Challenger: holder}
+			refusal = &registry.CoordinationRefusal{Reason: contract.RefusalScopeRoleMismatch, Detail: "task " + pyvalue.StrRepr(holder) + " is not the registered 자식 of project " + pyvalue.StrRepr(project) + ", which is held by " + pyvalue.StrRepr(owner) + "; holding a merge turn is the project 자식's, and saying it is your turn is not being its 자식", Domain: registry.DomainMergeTarget, Subject: target, Incumbent: owner, Challenger: holder}
 		}
 		if refusal != nil {
 			return s.Registry.RecordCoordinationConflict(tx, *refusal, at)

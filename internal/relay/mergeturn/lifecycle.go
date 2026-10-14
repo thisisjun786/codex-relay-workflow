@@ -372,11 +372,11 @@ func (s *Service) authority(ctx context.Context, r store.MergeTurnsRow, actor, w
 	if supervisor != "" && actor == supervisor {
 		return nil, nil
 	}
-	which := ", and that project has no readable supervisor"
+	which := ", and that project has no readable 부모"
 	if supervisor != "" {
 		which = ", which is " + pyvalue.StrRepr(supervisor)
 	}
-	return &registry.CoordinationRefusal{Reason: contract.RefusalScopeRoleMismatch, Detail: "task " + pyvalue.StrRepr(actor) + " is neither the holder of turn " + pyvalue.StrRepr(r.TurnID) + " nor the supervisor above project " + pyvalue.StrRepr(r.ProjectKey) + which + ", so it cannot " + what, Domain: registry.DomainMergeTarget, Subject: r.TargetKey, Incumbent: r.HolderTaskID, Challenger: actor}, nil
+	return &registry.CoordinationRefusal{Reason: contract.RefusalScopeRoleMismatch, Detail: "task " + pyvalue.StrRepr(actor) + " is neither the holder of turn " + pyvalue.StrRepr(r.TurnID) + " nor the 부모 above project " + pyvalue.StrRepr(r.ProjectKey) + which + ", so it cannot " + what, Domain: registry.DomainMergeTarget, Subject: r.TargetKey, Incumbent: r.HolderTaskID, Challenger: actor}, nil
 }
 
 // Withdraw is MergeTurn.withdraw: a waiting claim taken back by its claimant.
