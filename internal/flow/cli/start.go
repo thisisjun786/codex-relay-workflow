@@ -88,6 +88,7 @@ func (c *command) start(args []string) int {
 	deadline := fs.String("deadline", "", "an RFC 3339 time the run pauses at")
 	repo := fs.String("repo", "", "the git repository the run's worktrees are made from (default: the working directory's)")
 	handoff := fs.String("handoff", "", "the crw-plan handoff (crw-flow-compile-input/1) that produced the plan's current revision: the run reads its compiled milestone from a copy of it")
+	childHost := fs.String("child-host", "", "the host settings (crw-flow-child-host/1) a node sized for a child is started with (SP-CHILD-1): the run pins a copy of it")
 	previewOnly := fs.Bool("preview", false, "show the preview and the preflight facts and start nothing")
 	_ = fs.Bool("force", false, "accepted and without effect: a preflight fact never stops the start")
 	asJSON := fs.Bool("json", false, "print the answer as JSON")
@@ -200,6 +201,7 @@ func (c *command) start(args []string) int {
 		}
 	}
 	handoffSum := ""
+	var handoffIn *compile.Input
 	if handoffRaw != nil {
 		in, err := DecodeHandoff(handoffRaw)
 		if err != nil {
@@ -208,10 +210,26 @@ func (c *command) start(args []string) int {
 		if why := CheckHandoff(in, planOf(spec.Args), milestoneArg(spec.Args)); why != "" {
 			return c.fail("%s", why)
 		}
+		handoffIn = &in
 		if _, named := HandoffOf(spec.Args); named {
 			return c.usage("the args name a handoff of their own: the run's handoff is given with --handoff")
 		}
 		handoffSum = sha256Hex(handoffRaw)
+	}
+	// the host settings of a managed child start (CRW-1285): a document that cannot start a child is an input error the start refuses
+	var childHostRaw []byte
+	if *childHost != "" {
+		raw, err := os.ReadFile(*childHost)
+		if err != nil {
+			return c.fail("the child host settings cannot be read: %v", err)
+		}
+		if _, err := DecodeChildHost(raw); err != nil {
+			return c.fail("%v", err)
+		}
+		if _, named := ChildHostOf(spec.Args); named {
+			return c.usage("the args name child host settings of their own: the run's are given with --child-host")
+		}
+		childHostRaw = raw
 	}
 	src, err := spec.Load()
 	if err != nil {
@@ -285,6 +303,12 @@ func (c *command) start(args []string) int {
 			plan.Facts = append(plan.Facts, f)
 		}
 	}
+	// the release gate over the issues whose body the handoff carries (CRW-1328): a held issue is a warning, recorded, never a refusal
+	if handoffIn != nil {
+		if f, ok := issueReadyFact(*handoffIn, planOf(spec.Args), milestoneArg(spec.Args)); ok {
+			plan.Facts = append(plan.Facts, f)
+		}
+	}
 	// the facts of a session run (CRW-1316 §11): warnings, never a refusal
 	if session {
 		req := sessionFactRequest{Thread: spec.Thread, Table: table, Getenv: c.getenv, Socket: cm.socket, State: cm.state}
@@ -351,6 +375,15 @@ func (c *command) start(args []string) int {
 			return c.fail("the handoff cannot be pinned for run %s: %v", spec.RunID, err)
 		}
 		if spec.Args, err = withHandoff(spec.Args, ref); err != nil {
+			return c.fail("%v", err)
+		}
+	}
+	if childHostRaw != nil {
+		ref, err := PinChildHost(sel.Path, spec.RunID, childHostRaw)
+		if err != nil {
+			return c.fail("the child host settings cannot be pinned for run %s: %v", spec.RunID, err)
+		}
+		if spec.Args, err = withChildHost(spec.Args, ref); err != nil {
 			return c.fail("%v", err)
 		}
 	}

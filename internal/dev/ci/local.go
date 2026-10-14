@@ -502,7 +502,15 @@ func localExecute(opts localOptions, plan []localJob, current verificationRecord
 					// and records the rest as skipped, which is itself a failure (answer 5).
 					entry.Result, entry.Reason = localSkipped, "an earlier step of this job did not pass"
 				default:
-					entry.Result, entry.Reason = localRunStep(opts, step, worktree, leg, env, record.Jobs)
+					var tests localTests
+					entry.Result, entry.Reason, tests = localRunStep(opts, step, worktree, leg, env, record.Jobs)
+					if tests.saw {
+						n := tests.ran
+						if record.TestPackagesRun != nil {
+							n += *record.TestPackagesRun
+						}
+						record.TestPackagesRun = &n
+					}
 					if entry.Result != localPassed {
 						failed = true
 					}
@@ -532,26 +540,40 @@ func localExecute(opts localOptions, plan []localJob, current verificationRecord
 	return record, false, nil
 }
 
-// localRunStep performs one step and returns its result and reason. done is the record's jobs so
-// far, which the aggregate step judges.
-func localRunStep(opts localOptions, step localStep, worktree, leg string, env []string, done []recordJob) (string, string) {
+// localTests is what a step's output says of the go test packages it ran (localTestPackagesRun).
+type localTests struct {
+	ran int
+	saw bool
+}
+
+// localRunStep performs one step and returns its result and reason, and the go test packages its output reports. done is the
+// record's jobs so far, which the aggregate step judges.
+func localRunStep(opts localOptions, step localStep, worktree, leg string, env []string, done []recordJob) (string, string, localTests) {
+	result, reason, output := localRunStepOutput(opts, step, worktree, leg, env, done)
+	var tests localTests
+	tests.ran, tests.saw = localTestPackagesRun(output)
+	return result, reason, tests
+}
+
+// localRunStepOutput performs one step and returns its result, its reason and the output of its command ("" for an action).
+func localRunStepOutput(opts localOptions, step localStep, worktree, leg string, env []string, done []recordJob) (string, string, string) {
 	if step.tool != "" && !localToolPresent(step.tool, localPathEnv(env)) {
-		return localMissingTool, step.tool + " is not on PATH"
+		return localMissingTool, step.tool + " is not on PATH", ""
 	}
 	switch step.action {
 	case localCheckout:
-		return localPassed, "the clean worktree of " + shortHash(opts.Commit)
+		return localPassed, "the clean worktree of " + shortHash(opts.Commit), ""
 	case localGo, localNode:
-		return localPassed, step.tool + " " + localObserveTool(step.tool, localPathEnv(env), opts.HeavyGate)
+		return localPassed, step.tool + " " + localObserveTool(step.tool, localPathEnv(env), opts.HeavyGate), ""
 	case localAggregate:
 		// dev-gate: every prerequisite job must have succeeded, judged from the jobs already
 		// recorded rather than from a hosted needs object.
 		for _, job := range done {
 			if job.Result != localPassed {
-				return localFailed, "prerequisite job " + job.Name + " did not pass"
+				return localFailed, "prerequisite job " + job.Name + " did not pass", ""
 			}
 		}
-		return localPassed, "every prerequisite job succeeded"
+		return localPassed, "every prerequisite job succeeded", ""
 	}
 	command := step.command
 	dir := worktree
@@ -565,7 +587,7 @@ func localRunStep(opts localOptions, step localStep, worktree, leg string, env [
 	// handed, which would otherwise mangle a run text that uses a shell variable.
 	script, err := localWriteScript(opts, command)
 	if err != nil {
-		return localFailed, err.Error()
+		return localFailed, err.Error(), ""
 	}
 	argv := localGateArgv(opts.HeavyGate, step.heavy, script, dir, stepEnv)
 	shell := exec.Command(argv[0], argv[1:]...)
@@ -580,11 +602,11 @@ func localRunStep(opts localOptions, step localStep, worktree, leg string, env [
 			if strings.Contains(output.String(), localTimeoutMark) {
 				reason = "timeout: " + reason
 			}
-			return localFailed, reason
+			return localFailed, reason, output.String()
 		}
-		return localFailed, err.Error()
+		return localFailed, err.Error(), output.String()
 	}
-	return localPassed, ""
+	return localPassed, "", output.String()
 }
 
 // localIsolatedGoEnv is the record's goEnv: GOENV is unset in a step, so Go reads its default file

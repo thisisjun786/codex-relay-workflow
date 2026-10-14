@@ -19,6 +19,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/journal"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/buildinfo"
@@ -41,6 +42,8 @@ type LaneRequest struct {
 	Threads  ops.Threads
 	// Reporter sends the milestone report up (F11, CRW-1204); nil records the call and answers that nothing is wired.
 	Reporter ops.Reporter
+	// Socket is the App Server socket the run's world resolved: the managed start of an issue child is fingerprinted with it (CRW-1285).
+	Socket string
 }
 
 // LaneWorld is what OpsFor installs in a run's World.
@@ -71,6 +74,9 @@ type LaneOptions struct {
 	Relay func(*SchedRelay) ops.Relay
 	// Reporter replaces the request's reporter; nil keeps it.
 	Reporter ops.Reporter
+	// ChildStart replaces the managed-start engine an issue child of the run is started with (SP-CHILD-1); nil is dag-release's
+	// (dagsched.ProductionStarter over the run's state and socket).
+	ChildStart dagsched.Starter
 }
 
 // SchedulerLane is the OpsFor of the shipped binary.
@@ -137,12 +143,27 @@ func BuildLane(ctx context.Context, req LaneRequest, opt LaneOptions) (LaneWorld
 	verifier := opt.Verifier
 	if verifier == nil {
 		verifier = ops.CILocalVerifier{Tools: tools}
-		// the shipped verifier runs crw-dev ci local only: a milestone that requires another command is refused when the run reads it
-		relay.RunnableCommand = func(command string) string {
-			if command != ops.CILocalCommand {
-				return fmt.Sprintf("the shipped lane's verifier runs %q only", ops.CILocalCommand)
-			}
-			return ""
+		// the shipped verifier runs crw-dev ci local only: a milestone that requires another command is refused before the run starts
+		// (CheckHandoff) and again when the run reads it
+		relay.RunnableCommand = ShippedRunnableCommand
+	}
+	// the host settings of an issue child (SP-CHILD-1, CRW-1285): the document the start pinned, and dag-release's managed start over
+	// the run's explicit state and socket, fingerprinted with the document's marker root
+	if hostRef, ok := ChildHostOf(spec.Args); ok {
+		host, err := ReadChildHost(hostRef)
+		if err != nil {
+			return LaneWorld{}, err
+		}
+		sel, err := store.ResolveStateDir(req.State, req.Socket)
+		if err != nil {
+			return LaneWorld{}, err
+		}
+		relay.Child = &host
+		sched.Selectors = dagsched.Selectors{MarkerRoot: host.MarkerRoot, Socket: req.Socket, StateSelector: sel.Path}
+		sched.Start = opt.ChildStart
+		if sched.Start == nil {
+			sched.Start = dagsched.ProductionStarter(dispatch.Services{Selection: sel, SocketPath: req.Socket, Stderr: os.Stderr},
+				dispatch.Args{Defaults: map[string]any{"marker-root": host.MarkerRoot}})
 		}
 	}
 	relay.HostMemory = func() (*dagsched.HostMemoryBound, error) {
@@ -163,6 +184,18 @@ func BuildLane(ctx context.Context, req LaneRequest, opt LaneOptions) (LaneWorld
 		out.Base = func(string) (string, error) { return relay.IntegrationTip(ctx, plan) }
 	}
 	return out, nil
+}
+
+// ShippedRunnableCommand says why the shipped lane's verifier cannot run a required command of a milestone ("" when it can): the
+// verifier is ops.CILocalVerifier, which runs crw-dev ci local and refuses every other command. It is the one predicate of the shipped
+// lane, applied by CheckHandoff before a run starts (crw flow start --handoff, the start of a night batch, crw manage batch decide
+// --handoff) and by SchedRelay.Milestone when the run reads its milestone (CRW-1285). A verifier that runs other commands (make e2e)
+// is the first real project's to decide (CRW-1209); until then such a milestone is an input error the start refuses.
+func ShippedRunnableCommand(command string) string {
+	if command != ops.CILocalCommand {
+		return fmt.Sprintf("the shipped lane's verifier runs %q only", ops.CILocalCommand)
+	}
+	return ""
 }
 
 // laneVerifierTools is the verifier section of the run's configuration file (CRW-1319). A section the verifier cannot use is the

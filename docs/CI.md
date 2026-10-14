@@ -93,7 +93,10 @@ applies),
 `dependencies` (the sha256 of `go.sum` and
 `web/package-lock.json`), `os`, `arch`, `result`, `runner`, and `jobs`
 — one entry per GitHub check, each with its steps' `command`, `scope`,
-`result`, `seconds` and `reason`. `digest` is the sha256 of the
+`result`, `seconds` and `reason`, and `testPackagesRun` (CRW-1328, additive): the count of go test packages whose tests
+ran, read from the package result lines go test prints (`[no tests to run]`, `[no test files]` and a build failure ran none); it is
+absent when no step printed such a line and from every record written before it, which a reader takes as unknown, never as zero, and
+a count of 0 changes no result (the flow's gate warns `no_tests_run`). `digest` is the sha256 of the
 canonical serialization: the record as JSON with its keys sorted, no indentation and no HTML
 escaping, and the `digest` member removed. A tool whose observed version differs from its
 pin is named in `pinMismatch`, and such a record is never reused.
