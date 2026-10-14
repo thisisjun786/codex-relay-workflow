@@ -249,3 +249,37 @@ func TestTheBgCLIRefusesALinkedBgDirectory(t *testing.T) {
 		t.Errorf("the CLI wrote where the link leads: %s", left)
 	}
 }
+
+// A job over without an exit code (gone without one, or cancelled once its group is gone) leaves no <id>.exit.tmp when that is still
+// the empty file the launcher created for the shell: the oracle's shell made the file only to write the code, so its store has none
+// (corpus cli__bg__cancel_running_job_kills_group). A temporary file the shell has written is kept, and so is a link.
+func TestAJobOverWithoutAnExitCodeLeavesNoUnwrittenExitTemp(t *testing.T) {
+	pid := deadPID(t)
+	for _, status := range []BgStatus{StatusRunning, StatusCancelRequested} {
+		for _, body := range []string{"", "7"} {
+			ws := workspace(t)
+			r := mk(ws, "e")
+			r.Status, r.PID = status, &pid
+			save(t, ws, r)
+			tmp := ExitPath(ws, "e") + ".tmp"
+			put(t, tmp, body)
+			got, err := Reconcile(ws, r, noonClock)
+			if err != nil || !IsTerminal(got.Status) || got.ExitCode != nil {
+				t.Fatalf("%s %q: %+v %v", status, body, got, err)
+			}
+			if exists(tmp) != (body != "") {
+				t.Errorf("%s %q: the temporary exit file is there: %v", status, body, exists(tmp))
+			}
+		}
+	}
+	ws := workspace(t)
+	r := mk(ws, "e")
+	r.PID = &pid
+	save(t, ws, r)
+	victim := filepath.Join(workspace(t), "victim")
+	put(t, victim, "")
+	symlink(t, victim, ExitPath(ws, "e")+".tmp")
+	if got, err := Reconcile(ws, r, noonClock); err != nil || !IsTerminal(got.Status) || !exists(ExitPath(ws, "e")+".tmp") || !exists(victim) {
+		t.Errorf("a link at the temporary exit file: %+v %v", got, err)
+	}
+}

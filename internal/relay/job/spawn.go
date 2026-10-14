@@ -540,9 +540,10 @@ func cancel(ws string, input BgRecord, clock func() time.Time, kill func(pid int
 	return cur, nil
 }
 
-// finishCancel records cancelled over the record as it is on disk, when ok says it is still the one cancel acted on.
+// finishCancel records cancelled over the record as it is on disk, when ok says it is still the one cancel acted on, and then removes
+// the temporary exit file the shell never wrote (dropUnwrittenExitTemp).
 func finishCancel(ws string, rec BgRecord, now string, clock func() time.Time, ok func(BgRecord) bool) (BgRecord, error) {
-	return update(ws, rec.ID, clock, false, func(cur BgRecord) change {
+	out, err := update(ws, rec.ID, clock, false, func(cur BgRecord) change {
 		if IsTerminal(cur.Status) || !ok(cur) {
 			return change{}
 		}
@@ -553,6 +554,10 @@ func finishCancel(ws string, rec BgRecord, now string, clock func() time.Time, o
 		}
 		return change{next: next, event: Event{{"event", "cancelled"}, {"id", rec.ID}}, write: true}
 	})
+	if err == nil && out.Status == StatusCancelled && out.ExitCode == nil {
+		dropUnwrittenExitTemp(ws, rec.ID)
+	}
+	return out, err
 }
 
 // startsAt is whether the process with that pid started when the record says (ps prints it).
