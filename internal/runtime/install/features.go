@@ -16,7 +16,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/jsnode"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pluginwiring"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install/configguard"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/scope"
@@ -119,7 +119,7 @@ func runFeatures(ctx context.Context, args []string, env scope.Env, stdout, stde
 // The oracle's resolveCodexHome: trim CODEX_HOME, then os.homedir(). HOME="" is
 // different from absent HOME: joining the empty value yields a relative .codex.
 func resolveFeatureHome(env scope.Env) (string, error) {
-	if home := text.Trim(env.Get("CODEX_HOME")); home != "" {
+	if home := pluginwiring.CodexHomeNamed(env.Get("CODEX_HOME")); home != "" {
 		return home, nil
 	}
 	base, set := environOf(env)("HOME")

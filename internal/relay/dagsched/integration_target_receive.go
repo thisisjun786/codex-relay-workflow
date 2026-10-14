@@ -17,7 +17,7 @@ import (
 //
 //   - the intent: the event's generation was started by managed-start, whose intent file under the marker root names a
 //     baselineRevision that is a full commit id (the baseline of a node without a base is an opaque string, "dag-input-manifest:...");
-//   - the plan: the child's issue key names live nodes of plans, and exactly one current target the child belongs to has an observation (the plans' own targets first, then the targets of the refs they integrate onto);
+//   - the plan: the child's issue key names live nodes of plans, and exactly one current target the child belongs to has an observation (the plans' own targets first, then the targets of the refs they integrate onto; a target of an earlier step that has none yet stops the lookup with the warning targetUnobserved, CRW-1395);
 //   - the observation: a head the push or the checker read on that target's remote branch;
 //   - the store rows: each of them readable.
 //
@@ -30,6 +30,9 @@ import (
 
 func init() { delivery.AckTargetNotice = ReceiveTargetNotice }
 
+// TargetUnobservedWarning is the warning of a notice whose target has no observed head (CRW-1395).
+const TargetUnobservedWarning = "integration_target_unobserved"
+
 // ReceiveTargetNotice answers the notice an acknowledgement of event carries, or nil when the comparison finds nothing outside the
 // path or compares nothing. An error is an unreadable row; the acknowledgement does not read it.
 func ReceiveTargetNotice(ctx context.Context, st *store.Store, event string) (delivery.Obj, error) {
@@ -38,16 +41,21 @@ func ReceiveTargetNotice(ctx context.Context, st *store.Store, event string) (de
 		return nil, err
 	}
 	s := &Scheduler{Store: st}
-	target, observed, found, err := s.observedTargetOf(ctx, issue, baseline)
-	if err != nil || !found || observed == baseline {
+	target, observed, found, unobserved, err := s.observedTargetOf(ctx, issue, baseline)
+	if err != nil {
 		return nil, err
 	}
+	if len(unobserved) > 0 {
+		return unobservedNotice(unobserved, baseline), nil
+	}
+	if !found || observed == baseline {
+		return nil, nil
+	}
+	// The fault is the newest batch plan's on the ref (CRW-1395): the target row names the plan that recorded it first, and a later plan's
+	// child is compared through the same row.
 	expected, plan, _, err := s.recordedTargetHeads(ctx, target.IntegrationRef)
 	if err != nil || len(expected) == 0 || headSet(expected)[observed] {
 		return nil, err
-	}
-	if target.PlanID != "" {
-		plan = target.PlanID
 	}
 	moved := &TargetMoved{IntegrationRef: target.IntegrationRef, RemoteHead: observed, Expected: expected[:min(len(expected), expectedShown)], ExpectedTotal: len(expected), Strict: true, Source: SourceReceive}
 	signature := map[string]any{"checkout": target.Checkout, "remote": target.Remote, "remoteRef": target.RemoteRef}
@@ -63,6 +71,17 @@ func ReceiveTargetNotice(ctx context.Context, st *store.Store, event string) (de
 	return delivery.Obj{{Key: "faultClass", Value: ClassIntegrationTargetMoved}, {Key: "faultId", Value: nullableString(moved.FaultID)}, {Key: "faultError", Value: nullableString(moved.FaultError)},
 		{Key: "integrationRef", Value: target.IntegrationRef}, {Key: "remote", Value: target.Remote}, {Key: "remoteRef", Value: target.RemoteRef},
 		{Key: "observedHead", Value: observed}, {Key: "baselineRevision", Value: baseline}, {Key: "expectedHeads", Value: shown}, {Key: "expectedTotal", Value: int64(moved.ExpectedTotal)}}, nil
+}
+
+// unobservedNotice is the warning a step of the lookup leaves when it has targets the child belongs to and none of them has an observed head yet
+// (CRW-1395): nothing is compared and nothing recorded in the ledger, and the acknowledgement's output carries it as targetUnobserved.
+func unobservedNotice(targets []store.IntegrationTargetRow, baseline string) delivery.Obj {
+	named := make([]any, len(targets))
+	for i, t := range targets {
+		named[i] = delivery.Obj{{Key: "integrationRef", Value: t.IntegrationRef}, {Key: "remote", Value: t.Remote}, {Key: "remoteRef", Value: t.RemoteRef}}
+	}
+	return delivery.Obj{{Key: "warning", Value: TargetUnobservedWarning}, {Key: "targets", Value: named}, {Key: "baselineRevision", Value: baseline},
+		{Key: "detail", Value: "the integration target of the child has no observed head yet, so nothing was compared; a push or dag-integration-target-check observes it"}}
 }
 
 func nullableString(s string) any {
@@ -106,40 +125,43 @@ func childBaseline(ctx context.Context, st *store.Store, event string) (baseline
 }
 
 // observedTargetOf finds the one current target the child belongs to that has an observed head, and the newest head read there. It looks in
-// three steps and stops at the first that has a target with an observation: the targets the child's plans name themselves (the lookup before
-// CRW-1374), then the targets of the integration refs a batch of the child's plans was recorded for, then the targets of the refs whose
-// recorded heads include the child's baselineRevision (CRW-1374). The two later steps find a child of a later plan on the same integration ref
-// and remote branch, although the target row names the plan that recorded it first (a repeat of a recorded remote branch writes nothing). A step
-// with more than one observed target finds none, and a later step never widens an earlier one: a second ref that took the same dev tip as its
-// base does not turn a comparison the plan's own target made into no comparison (CRW-1373 evaluation d1). The lookup does not guess which
-// target the child was started from, and an issue no live node of a plan carries compares nothing.
-func (s *Scheduler) observedTargetOf(ctx context.Context, issue, baseline string) (store.IntegrationTargetRow, string, bool, error) {
+// three steps and stops at the first that has a target the child belongs to, observed or not (CRW-1395): the targets the child's plans name
+// themselves (the lookup before CRW-1374), then the targets of the integration refs a batch of the child's plans was recorded for, then the
+// targets of the refs whose recorded heads include the child's baselineRevision (CRW-1374). The two later steps find a child of a later plan on
+// the same integration ref and remote branch, although the target row names the plan that recorded it first (a repeat of a recorded remote branch
+// writes nothing). Of the targets of that step, exactly one with an observation is found; more than one finds none; none with an observation
+// finds none and returns the step's targets as unobserved, for the warning. A later step never widens an earlier one: a second ref that took the
+// same dev tip as its base neither turns a comparison the plan's own target makes into no comparison (CRW-1373 evaluation d1) nor stands in for
+// the plan's own target before it is observed (CRW-1395). The lookup does not guess which target the child was started from, and an issue no live
+// node of a plan carries compares nothing.
+func (s *Scheduler) observedTargetOf(ctx context.Context, issue, baseline string) (store.IntegrationTargetRow, string, bool, []store.IntegrationTargetRow, error) {
+	none := store.IntegrationTargetRow{}
 	rows, err := s.Store.Q(ctx).QueryContext(ctx, "SELECT DISTINCT plan_id FROM dag_nodes WHERE issue_key = ? AND retired_rev IS NULL ORDER BY plan_id", issue)
 	if err != nil {
-		return store.IntegrationTargetRow{}, "", false, err
+		return none, "", false, nil, err
 	}
 	plans := map[string]bool{}
 	for rows.Next() {
 		var plan string
 		if err := rows.Scan(&plan); err != nil {
 			_ = rows.Close()
-			return store.IntegrationTargetRow{}, "", false, err
+			return none, "", false, nil, err
 		}
 		plans[plan] = true
 	}
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-		return store.IntegrationTargetRow{}, "", false, err
+		return none, "", false, nil, err
 	}
 	if len(plans) == 0 {
-		return store.IntegrationTargetRow{}, "", false, nil
+		return none, "", false, nil, nil
 	}
 	batchRefs, baselineRefs, err := s.integrationRefsOfChild(ctx, plans, baseline)
 	if err != nil {
-		return store.IntegrationTargetRow{}, "", false, err
+		return none, "", false, nil, err
 	}
 	all, err := store.IntegrationTargets(ctx, s.Store)
 	if err != nil {
-		return store.IntegrationTargetRow{}, "", false, err
+		return none, "", false, nil, err
 	}
 	steps := []func(store.IntegrationTargetRow) bool{
 		func(t store.IntegrationTargetRow) bool { return plans[t.PlanID] },
@@ -147,29 +169,32 @@ func (s *Scheduler) observedTargetOf(ctx context.Context, issue, baseline string
 		func(t store.IntegrationTargetRow) bool { return baselineRefs[t.IntegrationRef] },
 	}
 	for _, belongs := range steps {
-		var found []store.IntegrationTargetRow
+		var candidates, found []store.IntegrationTargetRow
 		var heads []string
 		for _, t := range all {
 			if !belongs(t) {
 				continue
 			}
+			candidates = append(candidates, t)
 			latest, has, err := store.LatestIntegrationObservation(ctx, s.Store, t)
 			if err != nil {
-				return store.IntegrationTargetRow{}, "", false, err
+				return none, "", false, nil, err
 			}
 			if has {
 				found, heads = append(found, t), append(heads, latest.ObservedHead)
 			}
 		}
-		switch len(found) {
-		case 0:
+		switch {
+		case len(candidates) == 0:
 			continue
-		case 1:
-			return found[0], heads[0], true, nil
+		case len(found) == 1:
+			return found[0], heads[0], true, nil, nil
+		case len(found) == 0:
+			return none, "", false, candidates, nil
 		}
-		return store.IntegrationTargetRow{}, "", false, nil
+		return none, "", false, nil, nil
 	}
-	return store.IntegrationTargetRow{}, "", false, nil
+	return none, "", false, nil, nil
 }
 
 // integrationRefsOfChild are the integration refs a child belongs to besides the targets of its plans: the refs a batch of one of its plans was

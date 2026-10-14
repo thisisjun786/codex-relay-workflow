@@ -26,11 +26,7 @@ import (
 // claim as the Python adapter's did (defect_surrogates.py): each case's row, less its times and
 // with its home spelled <HOME>, and its claim names are the case's golden.
 func Test33D1SurrogateBinaryPython(t *testing.T) {
-	base, err := os.MkdirTemp("", "d1-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer os.RemoveAll(base)
+	base := socketDir(t, "d1-") // each case's control.sock lives below it (CRW-1393)
 	// Each session and item as the JSON escapes json.dumps writes for the Python str.
 	cases := [][2]string{{`"s"`, `"item"`}, {`"se\ud800ss"`, `"item"`}, {`"se\udfffss"`, `"item"`},
 		{`"s"`, `"\ud800item"`}, {`"s"`, `"mid\udc00dle"`}, {`"s"`, `"end\udbff"`},
@@ -119,11 +115,7 @@ func Test33D3ErrnoNamesPython(t *testing.T) {
 func Test33D3DialErrnosPython(t *testing.T) {
 	for _, kind := range []string{"EAGAIN", "ENOTDIR"} {
 		t.Run(kind, func(t *testing.T) {
-			home, err := os.MkdirTemp("", "d3-")
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { _ = os.RemoveAll(home) })
+			home := socketDir(t, "d3-") // control.sock lives below it (CRW-1393)
 			state := filepath.Join(home, "state")
 			endpoint := filepath.Join(state, "control.sock")
 			config := map[string]any{"configVersion": 1, "relayExecutable": filepath.Join(home, "absent"), "markerRoot": filepath.Join(home, "marker"),

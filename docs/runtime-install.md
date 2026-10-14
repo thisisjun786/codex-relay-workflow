@@ -1409,8 +1409,11 @@ record names, it adds a warning to the session's context at every start and resu
 policy path, the two digests (shortened) and the command that repairs it, `crw install register-mcp
 --re-register-policy --execution-policy <path>`, and points to the policy editor (`crw gui`), whose
 write edits the file and re-registers it in one operation, so an edit made there leaves no disagreement.
-The Codex home is `CODEX_HOME` trimmed (a blank one is unset), else `.codex` below the user's home, as the
-installer reads it, and the path in the command is quoted as one shell word. The launcher also refuses to
+The Codex home is `CODEX_HOME` trimmed of the whitespace around it (a blank one is unset), else `.codex` below the
+user's home: the one rule (`pluginwiring.CodexHomeNamed`) the hook, the bridge launcher, `crw install register-mcp`
+(and the other install commands that take `--codex-home`), `crw install features` and `doctor` read it by, so a padded
+`CODEX_HOME` names one directory to all of them. The path in the command is quoted as one shell word, and so is the
+value of a `CODEX_THREAD_BRIDGE_EXECUTION_POLICY_DIGEST` override the warning names. The launcher also refuses to
 start under a `CODEX_THREAD_BRIDGE_EXECUTION_POLICY` or `CODEX_THREAD_BRIDGE_EXECUTION_POLICY_DIGEST` that names
 another policy or digest than the record, whatever the file holds (`internal/pluginwiring`, the comparison
 the launcher makes); the hook compares them with the same code and, before it looks at the file, says that

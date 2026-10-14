@@ -98,6 +98,16 @@ func RequestGuard(ctx context.Context, conn net.Conn, stop Object, options Guard
 // (darwin 104, Linux 108); Python's control.py uses the same threshold.
 const sunPathLimit = 104
 
+// controlPathNote is what the Stop adapter's unreachable row adds when the control socket path it dialled is longer than a sockaddr_un
+// holds (CRW-1393): the system's own answer is a bare "invalid argument" (EINVAL). The Stop is released as for any unreachable guard;
+// nothing is refused. "" for a path that fits, or a dial that failed for another reason.
+func controlPathNote(path string, err error) string {
+	if len(path) < sunPathLimit || !errors.Is(err, unix.EINVAL) {
+		return ""
+	}
+	return fmt.Sprintf(" (the control socket path is longer than a unix socket address holds: at most %d bytes on darwin and %d on Linux; give the relay state a shorter directory)", sunPathLimit-1, 107)
+}
+
 // ControlAddress is the name a bind or connect uses for the control socket at path. A
 // path a sockaddr_un cannot hold is reached through /proc/self/fd/<dirfd>, as Python's
 // GuardServer and Stop adapter do; release closes that directory descriptor once the
