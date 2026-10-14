@@ -385,7 +385,7 @@ func (c *callRun) sessionRecover(ctx context.Context) (res CallResult, stop bool
 		s.attempt, s.agent, s.turn, s.boundK, s.rollout, s.pair = st.attempt, st.agent, st.turn, st.k, st.rollout, st.pair
 		s.dropCurrentPair()
 		if st.action == StepSendInput {
-			s.seen, c.tokens = st.seen, st.calls
+			c.sessionBaseline(st)
 		}
 	case stagePublished:
 		s.attempt = st.attempt
@@ -393,7 +393,7 @@ func (c *callRun) sessionRecover(ctx context.Context) (res CallResult, stop bool
 			// a repair turn: the subagent it is for, and what the turns before it counted
 			s.agent, s.rollout, s.pair = st.agent, st.rollout, st.pair
 			s.dropCurrentPair()
-			s.seen, c.tokens = st.seen, st.calls
+			c.sessionBaseline(st)
 		}
 		s.note, s.lastText = st.note, st.prev
 	}
@@ -402,6 +402,16 @@ func (c *callRun) sessionRecover(ctx context.Context) (res CallResult, stop bool
 		c.firstK = max(st.k-1, 1)
 	}
 	return CallResult{}, false, max(st.k, 1), st.input
+}
+
+// sessionBaseline takes what the turns before a recovered send_input turn counted, from its step_published row: the subagent's
+// rollout total already counted (the turn adds only its growth) and the call's tokens, in all their parts. The process that counted
+// those tokens died before it ended the call, so they are in no terminal row and the run's figure this process was seeded with
+// (Config.SpentBefore, RunSpent over the terminal rows) leaves them out; the call's terminal row will carry them, so the run's
+// figure counts them here, once (CRW-1278 with CRW-1367).
+func (c *callRun) sessionBaseline(st *sessionStage) {
+	c.sess.seen, c.tokens = st.seen, st.calls
+	c.e.addTokens(st.calls.Total)
 }
 
 // sessionRestore reads what a call's rows of its newest attempt bound: the turns, the thread its handle names, and the task.
@@ -987,7 +997,7 @@ func (c *callRun) sessionOutcome(ctx context.Context, turnID string) (TurnOutcom
 			out.TokensUnmeasured = true
 			return out, true
 		}
-		out.Tokens = Tokens{Input: total.Input - s.seen.Input, Output: total.Output - s.seen.Output, Total: total.Total - s.seen.Total}
+		out.Tokens = total.Sub(s.seen)
 		s.seen = total
 		return out, true
 	}

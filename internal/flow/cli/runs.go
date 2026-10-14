@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/url"
 	"sort"
 	"strings"
@@ -56,11 +57,13 @@ type RunInfo struct {
 	Calls     int `json:"calls"`
 	// Unsettled counts the calls a resume goes on with, Holds the calls in recovery_hold, Waiting the questions no decision has
 	// answered yet.
-	Unsettled int    `json:"unsettled"`
-	Holds     int    `json:"recovery_holds"`
-	Waiting   int    `json:"waiting"`
-	Tokens    int64  `json:"tokens"`
-	Phase     string `json:"phase,omitempty"`
+	Unsettled int   `json:"unsettled"`
+	Holds     int   `json:"recovery_holds"`
+	Waiting   int   `json:"waiting"`
+	Tokens    int64 `json:"tokens"`
+	// TokenSplit is Tokens in its parts (CRW-1327).
+	TokenSplit TokenSplit `json:"token_split"`
+	Phase      string     `json:"phase,omitempty"`
 	// Status and ErrorKind are those of the last finished row; Paused says who paused the run and why.
 	Status    string `json:"status,omitempty"`
 	ErrorKind string `json:"error_kind,omitempty"`
@@ -71,6 +74,35 @@ type RunInfo struct {
 	// ItemErrors are the join items that threw in the last process of the run (its item_error rows, engine/scriptvm.go): a lane of
 	// crw.dag whose release failed is one.
 	ItemErrors []ItemError `json:"item_errors,omitempty"`
+}
+
+// TokenSplit is a token figure in the parts that tell its cost apart (CRW-1327): the input read from the prompt cache, the input that
+// was not (the input minus the cached), and the output, with the reasoning part of the output beside it. A row written before the
+// split has no cached input and no reasoning output, and reads them as 0.
+type TokenSplit struct {
+	CachedInput     int64 `json:"cached_input"`
+	FreshInput      int64 `json:"fresh_input"`
+	Output          int64 `json:"output"`
+	ReasoningOutput int64 `json:"reasoning_output"`
+}
+
+func splitOf(t engine.Tokens) TokenSplit {
+	return TokenSplit{CachedInput: t.CachedInput, FreshInput: t.FreshInput(), Output: t.Output, ReasoningOutput: t.ReasoningOutput}
+}
+
+// String is the split as `crw flow show` and the digest print it.
+func (s TokenSplit) String() string {
+	return fmt.Sprintf("cached input %d, fresh input %d, output %d, reasoning %d", s.CachedInput, s.FreshInput, s.Output, s.ReasoningOutput)
+}
+
+// callTokens is what the rows of a call spent: the tokens of its terminal rows, each counted once, the rule the run's budget is
+// held to (engine.RunSpent).
+func callTokens(rows []engine.Event) engine.Tokens {
+	var t engine.Tokens
+	for _, r := range rows {
+		t = t.Add(engine.TerminalTokens(r))
+	}
+	return t
 }
 
 // ItemError is a join item that threw: the key of the item (the node of a lane), the path of the item and the error it threw.
@@ -109,16 +141,17 @@ type ReviewLink struct {
 
 // AgentNode is one agent call in the tree.
 type AgentNode struct {
-	CallID       string `json:"call_id"`
-	Label        string `json:"label,omitempty"`
-	Role         string `json:"role"`
-	Node         string `json:"node,omitempty"`
-	Attempt      int    `json:"attempt,omitempty"`
-	Status       string `json:"status"`
-	Reason       string `json:"reason,omitempty"`
-	ThreadID     string `json:"thread_id,omitempty"`
-	Tokens       int64  `json:"tokens"`
-	RecoveryHold bool   `json:"recovery_hold,omitempty"`
+	CallID       string     `json:"call_id"`
+	Label        string     `json:"label,omitempty"`
+	Role         string     `json:"role"`
+	Node         string     `json:"node,omitempty"`
+	Attempt      int        `json:"attempt,omitempty"`
+	Status       string     `json:"status"`
+	Reason       string     `json:"reason,omitempty"`
+	ThreadID     string     `json:"thread_id,omitempty"`
+	Tokens       int64      `json:"tokens"`
+	TokenSplit   TokenSplit `json:"token_split"`
+	RecoveryHold bool       `json:"recovery_hold,omitempty"`
 }
 
 // PhaseNode is a phase of the run with the agent calls made in it.
@@ -171,25 +204,6 @@ func num(m map[string]any, key string) int {
 		return int(n)
 	case float64:
 		return int(n)
-	}
-	return 0
-}
-
-// tokensOf is the token total a row carries, whatever form the journal gave it (the stored rows are decoded JSON, the rows of a
-// memory journal are the engine's values).
-func tokensOf(d map[string]any) int64 {
-	switch t := d["tokens"].(type) {
-	case engine.Tokens:
-		return t.Total
-	case map[string]any:
-		switch n := t["total"].(type) {
-		case float64:
-			return int64(n)
-		case int64:
-			return n
-		case int:
-			return int64(n)
-		}
 	}
 	return 0
 }
@@ -338,17 +352,14 @@ func Summarize(rec RunRecord, events []engine.Event, live bool, pid int) RunInfo
 	}
 	order, rows := callRows(events)
 	held := map[string]bool{}
+	var spent engine.Tokens
 	for _, id := range order {
 		cr := rows[id]
 		if !isAgentCall(cr) {
 			continue
 		}
 		info.Calls++
-		for _, r := range cr {
-			if r.Event == engine.EvCompleted || r.Event == engine.EvHeld || r.Event == engine.EvNullModel || r.Event == engine.EvRefused {
-				info.Tokens += tokensOf(r.Data)
-			}
-		}
+		spent = spent.Add(callTokens(cr))
 		switch classify(cr) {
 		case callstate.RecoveryHold:
 			info.Holds++
@@ -359,6 +370,7 @@ func Summarize(rec RunRecord, events []engine.Event, live bool, pid int) RunInfo
 			held[reason] = true
 		}
 	}
+	info.Tokens, info.TokenSplit = spent.Total, splitOf(spent)
 	for reason := range held {
 		info.HeldReasons = append(info.HeldReasons, reason)
 	}
@@ -551,10 +563,9 @@ func Detail(rec RunRecord, events []engine.Event, live bool, pid int) RunDetail 
 				if t := str(r.Data, "thread_id"); t != "" {
 					a.ThreadID = t
 				}
-				if r.Event == engine.EvCompleted || r.Event == engine.EvHeld || r.Event == engine.EvNullModel || r.Event == engine.EvRefused {
-					a.Tokens += tokensOf(r.Data)
-				}
 			}
+			t := callTokens(cr)
+			a.Tokens, a.TokenSplit = t.Total, splitOf(t)
 			a.Status, a.Reason = lastTerminal(cr)
 			a.RecoveryHold = classify(cr) == callstate.RecoveryHold
 			phase(phaseOf[id]).Agents = append(phase(phaseOf[id]).Agents, a)

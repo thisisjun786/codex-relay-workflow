@@ -115,3 +115,18 @@ func TestSessionBackendTraceDigests(t *testing.T) {
 		t.Fatal("a session backend ran a turn")
 	}
 }
+
+// CRW-1327: the session host reads the rollout's token_count with its split (CRW-1332's sessionhost.Usage) and hands the engine all of
+// it: the cached input and the reasoning output are kept, not only the input, the output and the total.
+func TestSessionHostTokensKeepTheCachedSplit(t *testing.T) {
+	rollout := filepath.Join(t.TempDir(), "rollout.jsonl")
+	line := `{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":4171534,"cached_input_tokens":4006518,"output_tokens":46728,"reasoning_output_tokens":31200,"total_tokens":4218262}}}}` + "\n"
+	if err := os.WriteFile(rollout, []byte(line), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := agent.SessionHost{}.Tokens(context.Background(), rollout)
+	want := engine.Tokens{Input: 4171534, CachedInput: 4006518, Output: 46728, ReasoningOutput: 31200, Total: 4218262}
+	if !ok || got != want {
+		t.Errorf("Tokens = %+v %v, want %+v", got, ok, want)
+	}
+}

@@ -190,7 +190,7 @@ func BuildDigest(in DigestInput) BatchDigest {
 	if mismatch != "" && info.State != StateCancelled && info.State != StateFailed && info.State != StateDead {
 		d.Stopped = "night_batch_selection: the milestone is not the selection (" + mismatch + "); nothing was released"
 	}
-	d.Providers = append(d.Providers, DigestProvider{Name: "token budget", Observed: in.Spec.TokenBudget > 0, Detail: budgetDetail(info.Tokens, in.Spec.TokenBudget)},
+	d.Providers = append(d.Providers, DigestProvider{Name: "token budget", Observed: in.Spec.TokenBudget > 0, Detail: budgetDetail(info.Tokens, in.Spec.TokenBudget, info.TokenSplit)},
 		DigestProvider{Name: "model providers", Observed: false, Detail: "the flow run does not observe provider quota or capacity"})
 	return d
 }
@@ -209,11 +209,12 @@ func selectionMismatch(events []engine.Event) string {
 	return ""
 }
 
-func budgetDetail(spent, budget int64) string {
+// budgetDetail is the token budget line of the digest, with the split of what was spent (CRW-1327).
+func budgetDetail(spent, budget int64, split TokenSplit) string {
 	if budget <= 0 {
-		return fmt.Sprintf("%d tokens spent, no ceiling was set", spent)
+		return fmt.Sprintf("%d tokens spent (%s), no ceiling was set", spent, split)
 	}
-	return fmt.Sprintf("%d of %d tokens spent", spent, budget)
+	return fmt.Sprintf("%d of %d tokens spent (%s)", spent, budget, split)
 }
 
 // stoppedWhy says why the run stopped, in words of the journal.

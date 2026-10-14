@@ -11,7 +11,17 @@ export const meta = { name: 'project-lane', description: 'Run the issues of a mi
 // come from crw:lib/lane.
 install(crw)
 
+// The caps of the design loop (one auditedDesign: the DESIGN it starts from, its audit rounds and the architect's fixes; CRW-1327).
+// AUDIT_ROUNDS is the round cap: a DESIGN not approved in that many rounds stops the milestone with the design_audit_rounds
+// escalation (CRW-1347). The token cap is DESIGN_TOKEN_CAP tokens, or DESIGN_TOKEN_WARN of the run's token budget when that is lower,
+// so a run without a budget has one too: when the calls of the loop (its architect, audit and fix calls and the explorers of its open
+// questions) have used it, the loop warns once and tells the orchestrator (design_loop_tokens, no ask) and goes on; the engine itself
+// pauses the run at the whole budget. Either cap writes a `warn design_loop_cap` log row. The run's budget is budget.run, the one its
+// first process started with, which the journal fixes: a resume under another ceiling (budget.total) reaches the cap at the same
+// call and raises the escalation with the same input, so the loop replays (CRW-1327).
 const AUDIT_ROUNDS = 3
+const DESIGN_TOKEN_CAP = 5000000
+const DESIGN_TOKEN_WARN = 0.8
 // the research continuations a node gets on one tier (SP-EXPL-2); after them the node escalates as a scope question
 const RESEARCH_PER_TIER = 2
 
@@ -27,10 +37,28 @@ for (const n of ms.nodes) for (const c of n.end_condition || []) END_CONDITIONS.
 // the design could not be approved.
 async function auditedDesign(first, tag, context) {
   let arch = first
+  // the tokens of the loop are those its calls report (meta.tokens; crw.explore's tokens for its explorers), and its cap is made of
+  // budget.run: both are the same on a resume that replays them, whatever ceiling the resume has
+  const cap = budget.run === null ? DESIGN_TOKEN_CAP : Math.min(DESIGN_TOKEN_CAP, budget.run * DESIGN_TOKEN_WARN)
+  const capText = budget.run === null ? 'the cap of DESIGN_TOKEN_CAP ' + DESIGN_TOKEN_CAP + ' tokens (the run has no budget)'
+    : 'the cap of ' + cap + ' tokens (DESIGN_TOKEN_CAP ' + DESIGN_TOKEN_CAP + ', DESIGN_TOKEN_WARN ' + DESIGN_TOKEN_WARN + ' of the run budget of ' + budget.run + ')'
+  let used = 0
+  let warned = false
+  async function tokenCap(tokens, round) {
+    used += tokens || 0
+    if (warned || used < cap) return
+    warned = true
+    const detail = 'tokens: the design loop ' + (tag ? tag + ' ' : 'of the milestone ') + 'used ' + used + ' tokens by audit round ' + round + ', ' + capText
+    log('warn design_loop_cap ' + detail)
+    await crw.escalate(null, { reason: 'design_loop_tokens', detail })
+  }
+  const tokensOf = (call) => (call && call.meta && call.meta.tokens && call.meta.tokens.total) || 0
+  await tokenCap(tokensOf(first), 0)
   for (let round = 1; round <= AUDIT_ROUNDS; round++) {
     // the end condition commands of the issues are run once, by the first explorer of the first DESIGN's first round (CRW-1382)
     const ends = round === 1 && tag === '' ? END_CONDITIONS : []
     const asked = await crw.explore('open_questions', arch.output.open_questions, { milestone: ms.id }, { endConditions: ends })
+    await tokenCap(asked.tokens, round)
     // the authority questions of the round are asked now, approved or not (CRW-1366): an answer is the next round's
     await askOrchestrator(asked.answers, 'out_of_authority', asked.carried)
     if (asked.failed) return { ok: false, result: await crw.milestoneHalt(ms, 'explorer', asked.failed.status, asked.failed.reason, asked.failed.callId) }
@@ -40,15 +68,19 @@ async function auditedDesign(first, tag, context) {
     let call = await agent.call(designAuditPacket(ms, cand, round), { agentType: 'reviewer', schema: DESIGN_AUDIT, label: 'design-audit:' + tag + 'r' + round })
     let audit = await crw.designAudit(ms.id, round, cand, arch, call)
     if (audit.state === 'null_model') {
+      await tokenCap(tokensOf(call), round)
       call = await agent.call(designAuditPacket(ms, cand, round), { agentType: 'reviewer', schema: DESIGN_AUDIT, label: 'design-audit:' + tag + 'r' + round + ':retry' })
       audit = await crw.designAudit(ms.id, round, cand, arch, call)
     }
+    await tokenCap(tokensOf(call), round)
     if (audit.state === 'approved') return { ok: true, arch, answers, carried: asked.carried }
     if (audit.state !== 'needs_changes') return { ok: false, result: await crw.milestoneHalt(ms, 'design_audit', audit.state, audit.reason, call.callId) }
     // back to the architect, on its own thread: the DESIGN it revises is the one it wrote
     arch = await agent.call(designFixPacket(audit, context), { resume: arch, schema: DESIGN, head: context && context.head, label: 'design-fix:' + tag + 'r' + round })
     if (arch.status !== 'completed') return { ok: false, result: await crw.milestoneHalt(ms, 'architect', arch.status, arch.reason, arch.callId) }
+    await tokenCap(tokensOf(arch), round)
   }
+  log('warn design_loop_cap rounds: the DESIGN ' + (tag ? tag + ' ' : 'of the milestone ') + 'was not approved in AUDIT_ROUNDS ' + AUDIT_ROUNDS + ' audit rounds')
   const esc = await crw.escalate(null, { reason: 'design_audit_rounds', detail: 'the DESIGN was not approved in ' + AUDIT_ROUNDS + ' audit rounds' })
   return { ok: false, result: { state: 'escalated', source: 'design_audit', reason: 'design_audit_rounds', escalation: esc.id } }
 }
