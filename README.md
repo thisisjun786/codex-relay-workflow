@@ -1,8 +1,8 @@
 # Codex Relay Workflow (CRW)
 
-Codex skills for planning, delegating, and verifying work with Linear and CXC. Keep product decisions in Linear, implementation in Git, and delivery evidence connected to the issue and PR.
+Codex skills for planning, delegating, and verifying work with Linear. Keep product decisions in Linear, implementation in Git, and delivery evidence connected to the issue and PR.
 
-CRW is a community project designed to work with CXC; it is not an official
+CRW is a community project; it is not an official
 OpenAI or Codex product. Its workflow connects child-task delegation, PR review
 resolution, and parent-task verification and integration.
 
@@ -12,7 +12,8 @@ through (one Go binary serving the task bridge, the session relay and the comple
 hook) and a symlink installer for development. The two Python packages that runtime was
 ported from left the repository in todo 44, after the cutover; the bridge's upstream
 provenance and licence stay in [packages/codex-thread-bridge](packages/codex-thread-bridge/PROVENANCE.md).
-CXC remains a separate dependency. Having the source here
+CXC v0.2.40 is the origin of the port ([NOTICE](NOTICE),
+[docs/port-cxc/provenance.md](docs/port-cxc/provenance.md)), and CRW runs without it. Having the source here
 does not install or activate a runtime, and offline contract checks do not establish
 live Codex hook or Desktop compatibility.
 
@@ -45,7 +46,7 @@ from, what was deliberately left behind, and where their Go ports live.
 - Product repositories own implementation, executable configuration, and repository policy.
 - Private task locations hold raw receipts, logs, and sensitive verification evidence.
 
-The skills use installed CXC and the available Linear connector; they do not bundle those tools or install credentials.
+The skills use the available Linear connector; they do not bundle it or install credentials.
 
 ## Install
 
@@ -137,7 +138,6 @@ replaces its Python-era Stop settings, once).
 | Install the runtime | A release archive for Linux (amd64 or arm64); darwin/arm64 is built but unvalidated |
 | Run repository checks | The Go toolchain `go.mod` names |
 | Plan and verify Linear work | Codex with local skill support and a connected Linear workspace you can access |
-| Use the shared workflow | Separately installed CXC skills referenced by the [shared references](plugins/crw/skills/crw-canon/SKILL.md) |
 | Delegate independent tasks | A host exposing task creation and coordination tools, or an installed bridge |
 | Receive automatic completion reports | An installed runtime, a trusted Stop hook and verified host capability; installing these skills alone does not enable delivery |
 
@@ -156,14 +156,13 @@ contracts or passing offline fixtures as a supported turnkey runtime.
 
 ### Acquire external dependencies
 
-- CXC: follow the upstream [Codexclaw installation guide](https://github.com/lidge-jun/codexclaw#install).
 - Bridge, relay and completion hook: the `crw` runtime above, from a release that
   carries its archives. Without an installed bridge or host-native task tools,
   independent delegation is unavailable; without an installed relay and a trusted
   Stop hook, automatic completion reporting is unavailable.
 
 You can read, install, and validate the skill sources without these runtimes.
-With Linear and the referenced CXC skills configured, planning and
+With Linear configured, planning and
 manual delivery verification do not require relay delivery. The full unattended
 workflow is not available from this repository alone. There is no certified
 cross-component version matrix yet; inspect the installed interfaces against the

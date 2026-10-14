@@ -25,7 +25,7 @@ follows is about what is read before anything moves and what is put back when it
 | `crw install register-service [--remove]` | Write and enable the one systemd user unit that starts the relay service when the user manager starts; with `--remove`, disable and delete it | OPS-4.1, OPS-6.1 |
 | `crw install status`, `crw doctor` | Read the installation, classify it and report the six check results; write nothing (the relay readings behind them are the relay's `doctor` without `--probe-write`, which creates no file of its own and never opens its write gate; what it still does is named under [Installing the runtime](#installing-the-runtime)) | OPS-2.1, OPS-2.2, OPS-6.1 |
 | `crw install migrate-state` | Copy CXC state to its CRW locations, byte for byte, and refuse rather than replace ([copying CXC state](#copying-cxc-state)) | none (design J2) |
-| `crw install switch {crw,cxc,status}` | Turn the CRW hooks on and the CXC plugin off, return to CXC, or report which side is on ([the CRW/CXC switch](#the-crwcxc-switch)) | none (decision of 10-10) |
+| `crw install switch {crw,cxc,status}` | Turn the ported hooks on, turn them off (the emergency stop), or report the switch ([the hook switch](#the-hook-switch)) | none (decision of 10-10) |
 | `crw-dev skills link --check` or `--apply` | Skill links into Codex, from a checkout | OPS-2.3 |
 
 Every `crw install` and `crw doctor` command prints one JSON document, except `crw install features`,
@@ -76,23 +76,22 @@ failure, with the writes the run completed reported; exit 2 is a usage error. Ca
 the install mode's signal handling and returns a failed or partial report. Exit 0 is not proof of
 activation or of a session that can continue unchanged.
 
-## The CRW/CXC switch
+## The hook switch
 
-CRW and CXC stay installed side by side, and once the hook-side reader of `switch.json` is integrated
-(CRW-392) exactly one side's workflow hooks act; this change provides the selector and the CXC half.
-`crw install switch` is the explicit command that picks the side; nothing calls it implicitly.
-`crw@crw` is never touched: the relay, the MCP bridge and the completion hook stay on in both positions.
-
-The command is the selector and the CXC half of the switch: it writes `<CODEX_HOME>/crw/switch.json`, turns
-the CXC plugin off and exchanges the role files. It does not itself register CRW workflow hooks. The
-shipped `plugins/crw` package declares only the completion hook, and no hook reads `switch.json` yet
-(CRW-392 owns that reader and the cutover that wires the CRW workflow hooks), so until that lands
-`switch crw` leaves CXC off and the completion hook as it was, and `switch cxc` only puts CXC back.
+CRW is the only workflow plugin a host runs. CXC v0.2.40 is where the port came from
+([provenance](port-cxc/provenance.md)); the cutover (S9.3b) removed it, and nothing here leads back
+to it. The switch is the one control over the hooks CRW ported from it: every ported leg reads
+`<CODEX_HOME>/crw/switch.json` before anything else (`cmd/crw/hook_switch.go`, through
+`internal/hookswitch`), and `crw install switch` is the command that writes the file
+(`internal/runtime/install/switch_cmd.go`); nothing calls it implicitly. `crw` turns the ported legs
+on. `cxc`, or no file at all, turns them off: that is the emergency stop, and it is the only meaning
+the value has. The completion Stop is not behind the switch, and `crw@crw` is never touched: the
+relay, the MCP bridge and the completion hook stay on in both positions.
 
 ```text
-crw install switch crw       select CRW: record it in switch.json, the CXC plugin off
-crw install switch cxc       back to CXC: put back what the switch changed
-crw install switch status    which side is on; --json prints one document
+crw install switch crw       the ported hooks on: switch.json says crw, the CXC plugin entry off
+crw install switch cxc       emergency stop: the ported hooks off, and the recorded values restored
+crw install switch status    the switch, the plugin keys, hook trust and the role files
                              [--json] [--codex-home <dir>] [--plugin-root <dir>]
 ```
 
@@ -123,7 +122,7 @@ writer of `config.toml` takes:
    changes nothing), the reason and the backup are reported in the
    notes, and a failed later step puts the entry back (the switch directory is synced after the
    restore, as after the publication);
-3. sets `enabled = false` in `[plugins."codexclaw@codexclaw"]` after copying `config.toml` to
+3. sets `enabled = false` in a `[plugins."codexclaw@codexclaw"]` table left in `config.toml`, after copying `config.toml` to
    `config.toml.crw-<ts>.bak`. The key is recorded as its line verbatim, so `switch cxc` gives back
    `enabled=true`, a tab-separated line or a CRLF file to the byte. A key and a table are identified by
    the name TOML decodes from their spelling: `"enabled"`, `'enabled'` and `"en\u0061bled"` are the key
@@ -133,15 +132,16 @@ writer of `config.toml` takes:
    directions and on every run. A missing CXC table is left missing,
    and one that appeared since the first switch (`codex plugin add`) is read and switched off by the
    next `switch crw`, with its line recorded then;
-4. replaces the CXC-owned `agents/executor.toml` and `agents/architect.toml` (first line
+4. replaces an `agents/executor.toml` or `agents/architect.toml` left by CXC v0.2.40 (first line
    `# codexclaw-managed: <sha256 of the rest>`) with the CRW role files after copying each to
    `<role>.toml.crw-<ts>.bak`, installs a role file that is absent, and leaves any other file alone,
    including a CRW-owned role file that differs from this build's (`kept-crw`). A CXC role file that
-   appeared after the first switch is backed up and recorded the same way, so the way back restores it.
+   appeared after the first switch is backed up and recorded the same way, so the stop restores it from its backup.
    An `agents` directory that is a symlink or not a directory is refused, as role registration refuses
    it, before any file is read or written.
 
-`switch cxc` runs the same steps the other way: `switch.json` says `cxc`, the CXC key's line is put back
+`switch cxc` is the emergency stop. `switch.json` says `cxc`, so every ported leg ends in silence, and
+the values the switch recorded are restored from their backups, file by file: the plugin key's line is put back
 (inserted again at the end of its table when the line was deleted since; refused, with the recorded
 values kept, when the table itself is gone), a role file CRW installed is removed or replaced by its
 backup, and the `switch` section keeps no values. A role file is removed or replaced only while it is
@@ -162,17 +162,17 @@ every step it had done (`config.toml`, `switch.json`, the role files and the man
 the context error.
 
 `switch status` reads and writes nothing, and reads each plugin's table and `enabled` key by the same TOML
-names the switch edits by. State is `crw` (`switch.json` says crw, `crw@crw` is enabled and the
-CXC plugin is off), `cxc` (the CXC plugin is on and the CRW side is not), `conflict` (both are on) or `off`
-(neither); a `switch.json` that says crw while `crw@crw` is not enabled is reported with a note. It also reports both plugins' `enabled` keys, a summary of the CRW hooks' trust
+names the switch edits by. State is `crw` (`switch.json` says crw, `crw@crw` is enabled and no
+CXC plugin entry is enabled), `cxc` (the ported hooks are off, the emergency stop, and a CXC plugin entry left
+in `config.toml` is enabled), `conflict` (the ported hooks are on and such an entry is enabled too) or `off`
+(the ported hooks are off and no such entry is enabled); a `switch.json` that says crw while `crw@crw` is not enabled is reported with a note. It also reports both plugins' `enabled` keys, a summary of the CRW hooks' trust
 (trusted, drifted and untrusted counts, read from the package given by `--plugin-root`,
 `$PLUGIN_ROOT` or the one crw package in the Codex plugin cache) and the owner of each role file.
 
-`codex plugin add codexclaw@codexclaw`, run again for an installed plugin, for a new version or after
-`codex plugin remove`, writes `enabled = true` again (measured with Codex CLI 0.154.0, see
-[CRW-201](port-cxc/known-defects/CRW-201.md)): status then reports `conflict` and `crw install switch crw`
-puts it right. The 0.2.40 reinstall rehearsal and the return after a failure are
-`internal/runtime/integration/switch_rehearsal_test.go`, in an isolated home.
+A `codex plugin add codexclaw@codexclaw` run on the host writes `enabled = true` into that entry again
+(measured with Codex CLI 0.154.0, see [CRW-201](port-cxc/known-defects/CRW-201.md)): status then reports
+`conflict`, and `crw install switch crw` turns the entry off again. That case and the stop after a failure
+are rehearsed in an isolated home by `internal/runtime/integration/switch_rehearsal_test.go`.
 
 ## What an installation is
 
@@ -232,6 +232,21 @@ Stop hook.
 Nothing here manages `PATH`. The declared server and hook name the pointer by absolute path, but a
 skill command that runs `codex-session-relay` finds whatever `PATH` finds
 ([how skill commands reach the relay](#how-skill-commands-reach-the-relay)).
+
+### Six states, each read on its own
+
+What a host runs is six separate states, and none of them implies another: a commit is not an
+installed runtime, an installed plugin is not a trusted hook, and a trusted hook is not one that fired.
+Report each from its own reading.
+
+| State | What it is | Read it with | Not established by |
+| --- | --- | --- | --- |
+| Source | The skills and the Go code at a revision of this repository | `git rev-parse HEAD`; `go run -tags dev ./cmd/crw-dev ci plugin` for the payload it would ship | An install, a cache or a running process |
+| Runtime install | The runtime directory the owned pointer `~/.local/share/crw-runtime/current` selects | `crw install status`, `crw doctor` | A source revision, or a release archive that was downloaded |
+| Plugin cache | The `crw@crw` payload Codex copied at `codex plugin add` into `$CODEX_HOME/plugins/cache/<marketplace>/<plugin>/<version>`: `.codex-plugin/`, `skills/`, `wiring/` and `LICENSE`, and no `docs/**` | `codex plugin list`; `crw-dev ci plugin --payload <cache dir>` | The checkout the plugin was added from |
+| Trust | Codex's trust of each declared hook, recorded in `config.toml` against the command's hash | `crw install switch status` (trusted, drifted and untrusted counts); `crw doctor retrust` records it | A declaration in the cache |
+| Activation | `crw@crw` enabled in `config.toml`, and `switch.json` saying `crw` for the ported legs | `crw install switch status` | A trusted hook, or a cache that holds the plugin |
+| Firing | A hook that ran for a turn: a journal row naming that session and turn | [Registration is not firing](#registration-is-not-firing) | Any of the five above |
 
 ## Where crw keeps its files
 
