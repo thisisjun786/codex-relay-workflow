@@ -1,6 +1,7 @@
 package scenario
 
 import (
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -64,10 +65,10 @@ func TestLandingWhileReviewKeepsOneAncestorBase(t *testing.T) {
 	}
 }
 
-// d1 (stableBase): another node lands while B is building, before B is verified. Both worktrees grew from the same commit, so when
-// B is verified and accepted after A has moved the integration tip, stableBase finds the merge-base of B's head and the moved tip:
-// the one common ancestor of the two heads.
-func TestLandingBeforeVerifyKeepsCommonAncestorBase(t *testing.T) {
+// landingBeforeVerifyLab is the world of the stableBase tests: A and B grow from one commit, and A lands while B is building, so B
+// is verified and accepted after the integration tip has moved past the commit B grew from.
+func landingBeforeVerifyLab(t *testing.T) (*Lab, string) {
+	t.Helper()
 	nodes := []NodeSpec{
 		{ID: "A", Issue: "CRW-A", Title: "issue A", Regions: []string{"a/"}},
 		{ID: "B", Issue: "CRW-B", Title: "issue B", Regions: []string{"b/"}},
@@ -94,6 +95,14 @@ func TestLandingBeforeVerifyKeepsCommonAncestorBase(t *testing.T) {
 		p.Gate = aLanded
 		return &p
 	})
+	return l, start
+}
+
+// d1 (stableBase): another node lands while B is building, before B is verified. Both worktrees grew from the same commit, so when
+// B is verified and accepted after A has moved the integration tip, stableBase finds the merge-base of B's head and the moved tip:
+// the one common ancestor of the two heads.
+func TestLandingBeforeVerifyKeepsCommonAncestorBase(t *testing.T) {
+	l, start := landingBeforeVerifyLab(t)
 	got := mustRun(t, l)
 	if got.State != "closed" {
 		t.Fatalf("state %q: %+v; escalations %v", got.State, got, l.FlowRows(engine.EvEscalation))
@@ -142,6 +151,52 @@ func TestLandingBeforeVerifyKeepsCommonAncestorBase(t *testing.T) {
 		if err != nil || rec.Dev != common {
 			t.Errorf("node %s: the premerge record stands on %q (%v), want %s", a.Node, rec.Dev, err, common)
 		}
+	}
+}
+
+// CRW-1365 d1 (the fallback of crw.accept): a verification row that names no base (a row written before the verification recorded
+// its base) is judged over stableBase found at the acceptance, the merge-base of B's head and the moved tip: the commit B grew
+// from, not the integration tip A moved.
+func TestVerificationWithoutBaseIsAcceptedOverCommonAncestor(t *testing.T) {
+	l, start := landingBeforeVerifyLab(t)
+	l.Rewrite(func(ev engine.Event) engine.Event {
+		if ev.Kind == engine.KindCall && ev.Op == ops.OpVerify && ev.Event == engine.EvCompleted && str(ev.Data, "node") == "B" {
+			data := maps.Clone(ev.Data)
+			delete(data, "base")
+			ev.Data = data
+		}
+		return ev
+	})
+	got := mustRun(t, l)
+	var verB engine.Event
+	for _, ev := range l.Rows(ops.OpVerify) {
+		if str(ev.Data, "node") == "B" {
+			verB = ev
+		}
+	}
+	if verB.Seq == 0 || str(verB.Data, "base") != "" {
+		t.Fatalf("B's verification row %v: the scenario needs one that names no base", verB.Data)
+	}
+	var accB *ops.AcceptRequest
+	for i, a := range l.Relay.Accepts {
+		if a.Node == "B" {
+			accB = &l.Relay.Accepts[i]
+		}
+	}
+	if accB == nil {
+		t.Fatalf("no acceptance of B: %+v", l.Relay.Accepts)
+	}
+	if tip := l.Tip(); accB.Base != start {
+		t.Errorf("B is accepted over %s, want the commit it grew from %s (the integration tip is %s)", accB.Base, start, tip)
+	}
+	if common := l.Git("merge-base", start, accB.Head); common != start {
+		t.Errorf("the commit B grew from %s is not the merge-base %s of B's head", start, common)
+	}
+	if rec, err := premerge.Decode(accB.Premerge); err != nil || rec.Dev != start {
+		t.Errorf("B's premerge record stands on %q (%v), want %s", rec.Dev, err, start)
+	}
+	if got.State != "closed" || !slices.Equal(l.Relay.Landed, []string{"A", "B"}) {
+		t.Errorf("state %q, landed %v; escalations %v", got.State, l.Relay.Landed, l.FlowRows(engine.EvEscalation))
 	}
 }
 
@@ -317,9 +372,8 @@ func TestAdmissionFollowsTheEditRegionsOfTheDesign(t *testing.T) {
 	}
 }
 
-// d7: when a suffix runs crw.tierStep again at the same position over a new checkpoint, crw.stepRecord resolves the conflict with
-// a suffixed step id, and crw:lib/lane's tierStep hands that recorded.id to the executor-t1 call so the call and the persisted
-// flow_step_decisions row carry the same checkpoint id.
+// d7: a suffix that runs crw.tierStep again at the same position over a new checkpoint gets another id from crw.stepRecord, and
+// tierStep (crw:lib/lane) hands that recorded.id to executor-t1: the call and the persisted row carry the id the record gave.
 func TestTierStepConflictHandsRecordedIDToExecutorT1(t *testing.T) {
 	l := NewLab(t, oneNode()...)
 	l.Verify.Fail = map[string][]int{"A": {1, 2, 3}}
@@ -329,7 +383,9 @@ func TestTierStepConflictHandsRecordedIDToExecutorT1(t *testing.T) {
 			killed.Do(func() { l.Kill() })
 		}
 	})
-	l.Run()
+	if res := l.Run(); res.Status == engine.RunCompleted {
+		t.Fatalf("the first run completed (%s): it must end at the kill after its first step record", res.Value)
+	}
 	firstSteps := l.StepRows()
 	if len(firstSteps) != 1 {
 		t.Fatalf("step rows after the first run: %+v, want one", firstSteps)
@@ -344,6 +400,7 @@ func TestTierStepConflictHandsRecordedIDToExecutorT1(t *testing.T) {
 	}
 	build := callNamed(t, l, "build:A:executor")
 	alloc, _ := l.Prepared(build.ID).Data["allocation"].(map[string]any)
+	// no lab fixture moves a worktree back: the reset unproves the fix commit h1, so the resume reaches tierStep over a new checkpoint
 	l.GitIn(str(alloc, "path"), "reset", "--hard", c1)
 
 	l.NewProcess("proc-2")
@@ -360,15 +417,21 @@ func TestTierStepConflictHandsRecordedIDToExecutorT1(t *testing.T) {
 	if h2 == h1 || steps[1].Head != h2 {
 		t.Fatalf("second step checkpoint head %s, want the suffix commit %s (first was %s)", steps[1].Head, h2, h1)
 	}
-	if steps[1].ID == steps[0].ID || !strings.HasPrefix(steps[1].ID, steps[0].ID+"_") {
-		t.Errorf("step ids %q and %q: the conflict must record a distinct suffixed id", steps[0].ID, steps[1].ID)
+	// the id the record gave each step, read from the crw.stepRecord rows: the second, over the new checkpoint, is not the first
+	records := l.Rows("crw.stepRecord")
+	if len(records) != 2 {
+		t.Fatalf("%d crw.stepRecord rows, want the one before the kill and the one of the resume", len(records))
+	}
+	recorded := str(records[1].Data, "step_id")
+	if str(records[0].Data, "step_id") != steps[0].ID || recorded != steps[1].ID || recorded == steps[0].ID {
+		t.Errorf("recorded step ids %q and %q, persisted %q and %q: the conflict must record a distinct id", str(records[0].Data, "step_id"), recorded, steps[0].ID, steps[1].ID)
 	}
 	t1 := l.CallsOf("executor-t1")
 	if len(t1) != 1 {
 		t.Fatalf("executor-t1 calls %+v, want one", t1)
 	}
-	if t1[0].Step != steps[1].ID {
-		t.Errorf("the executor-t1 call carries step id %q, the persisted row for checkpoint %s is %q", t1[0].Step, h2, steps[1].ID)
+	if t1[0].Step != recorded {
+		t.Errorf("the executor-t1 call carries step id %q, the record of checkpoint %s gave %q", t1[0].Step, h2, recorded)
 	}
 	t1Alloc, _ := l.Prepared(t1[0].ID).Data["allocation"].(map[string]any)
 	if str(t1Alloc, "start_commit") != steps[1].Head {
