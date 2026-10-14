@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -234,6 +235,12 @@ func Judge(rec decisions.Record, events []engine.Event, run RunRecord, claim Cla
 	for _, e := range events {
 		if e.Kind == engine.KindFlow && e.Event == ops.EvDecisionApplied && str(e.Data, "ask") == q.ID {
 			if d, ok := e.Data["decision"].(map[string]any); ok && str(d, "id") == rec.DecisionID {
+				// the same decision is a replay only with the parts it was applied with (CRW-1397): other parts, or parts where it was
+				// applied whole (or none where it had parts), would read as applied while the row holds another answer
+				if stored := storedParts(d); !sameParts(stored, parts) {
+					return none, refuse(RefusedApplied, "question %s was answered by decision %s already with the parts %s; this application gives the parts %s: apply a new decision for another answer",
+						q.ID, rec.DecisionID, partsText(stored), partsText(parts))
+				}
 				return Application{Replayed: true, Seq: e.Seq, Data: e.Data}, nil
 			}
 			return none, refuse(RefusedApplied, "question %s was answered by decision %v already", q.ID, e.Data["decision"])
@@ -255,6 +262,58 @@ func Judge(rec decisions.Record, events []engine.Event, run RunRecord, claim Cla
 		row["warnings"] = warnings
 	}
 	return Application{Data: row}, nil
+}
+
+// storedParts are the parts of the answer a decision_applied row's decision holds (its answers member), nil when it was applied whole.
+func storedParts(d map[string]any) map[string]string {
+	var out map[string]string
+	switch m := d["answers"].(type) {
+	case map[string]string:
+		for k, v := range m {
+			if out == nil {
+				out = map[string]string{}
+			}
+			out[k] = v
+		}
+	case map[string]any:
+		for k, v := range m {
+			if out == nil {
+				out = map[string]string{}
+			}
+			out[k], _ = v.(string)
+		}
+	}
+	return out
+}
+
+// sameParts says whether two sets of parts are one: the same digests with the same texts (no parts on both sides is the same).
+func sameParts(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range a {
+		if w, ok := b[k]; !ok || w != v {
+			return false
+		}
+	}
+	return true
+}
+
+// partsText spells parts for a refusal: digest=text pairs in the order of their digests, or "none (the whole answer)".
+func partsText(parts map[string]string) string {
+	if len(parts) == 0 {
+		return "none (the whole answer)"
+	}
+	keys := make([]string, 0, len(parts))
+	for k := range parts {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]string, len(keys))
+	for i, k := range keys {
+		out[i] = fmt.Sprintf("%s=%q", k, parts[k])
+	}
+	return strings.Join(out, ", ")
 }
 
 func classOf(b Binding) string {

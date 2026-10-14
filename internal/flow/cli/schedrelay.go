@@ -15,6 +15,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/compile"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/journal"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
@@ -330,7 +331,7 @@ func (r *SchedRelay) Release(ctx context.Context, req ops.ReleaseRequest) (ops.R
 	if req.Land {
 		// a land of a node another run holds is answered before the claim: the claim would supersede that run's session (CRW-1354)
 		if run, execution, err := r.heldByAnotherRun(ctx, req.Plan, req.Node); err != nil || run != "" {
-			return ops.ReleaseResult{Reason: ops.ReasonLandNodeHeld, HeldRun: run, HeldExecution: execution}, err
+			return ops.ReleaseResult{Reason: ops.ReasonLandNodeHeld, HeldRun: run, HeldExecution: execution, HeldRunState: r.runState(ctx, run)}, err
 		}
 	}
 	if err := r.claim(ctx, req.Plan); err != nil {
@@ -456,6 +457,18 @@ func cmpOr(s, def string) string {
 		return def
 	}
 	return s
+}
+
+// runState is the state of a run as `crw flow ps` reads it (its journal and its lock), "" when it cannot be read (CRW-1397).
+func (r *SchedRelay) runState(ctx context.Context, run string) string {
+	if run == "" {
+		return ""
+	}
+	events, found, err := journal.LoadLean(ctx, r.Sched.Store, run)
+	if err != nil || !found {
+		return ""
+	}
+	return Summarize(RunRecord{RunID: run}, events, r.State != "" && LockHeld(r.State, run), 0).State
 }
 
 // heldByAnotherRun is the run and the execution of the node's current agent execution when a run other than this one holds it ("" when
@@ -910,6 +923,12 @@ func (r *SchedRelay) Close(ctx context.Context, req ops.CloseRequest) (ops.Close
 	}
 	res, err := r.Sched.AgentClose(ctx, req.Plan, req.Node, r.Actor, dagsched.AgentCloseInput{Reason: req.Reason})
 	if err != nil {
+		// the relay keeps the execution (its accepted head landed or may be in the target, or there is none open to close): the
+		// lane's kind of it, which a gate-only land records and does not ask again (CRW-1397)
+		var refused *store.RefusedError
+		if errors.As(err, &refused) && refused.Reason == string(contract.RefusalDispositionConflict) {
+			return ops.CloseResult{}, fmt.Errorf("%w: %w", ops.ErrCloseConflict, err)
+		}
 		return ops.CloseResult{}, epochLost(req.Plan, err)
 	}
 	return ops.CloseResult{Closed: res.Closed, Held: res.Held, SlotReleased: res.SlotReleased, Replayed: res.Replayed, ExecutionID: res.ExecutionID, State: res.State}, nil

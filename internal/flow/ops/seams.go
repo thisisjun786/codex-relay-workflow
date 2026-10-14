@@ -94,6 +94,10 @@ type ReleaseResult struct {
 	HeadRevision   int64  `json:"head_revision,omitempty"`
 	HeldExecution  string `json:"held_execution,omitempty"`
 	HeldRun        string `json:"held_run,omitempty"`
+	// HeldRunState is, for a land answered ReasonLandNodeHeld, the state of the run that holds the node as the run's records read
+	// (running, dead, held, completed, failed, ...; "" when it is not read): a run that has ended is not resumed, and its execution is
+	// given up with crw flow cancel of that run (CRW-1397).
+	HeldRunState string `json:"held_run_state,omitempty"`
 	// Run is the run the answered execution was released to: the run asking for a new release, or, for a replay, the run whose release
 	// it replays ("" when the relay does not say). A land of a node another run holds reads it (CRW-1354).
 	Run string `json:"run,omitempty"`
@@ -197,6 +201,11 @@ const ReasonEpochLost = "epoch_lost"
 // ErrEpochLost is the error kind of that write, as a Relay answers it. Its message opens with refused:epoch_lost:, so the script reads
 // the reason from the error of the op as it reads a refusal (crw:lib/lane), and errors.Is finds the kind through every wrap.
 var ErrEpochLost = errors.New("refused:" + ReasonEpochLost + ": the run lost the coordinator epoch of its plan")
+
+// ErrCloseConflict is the error kind of a close the relay refuses because the node's execution has to stay (CRW-1397): its accepted head
+// landed or may be in the target (a disposition_conflict of AgentClose). A Relay wraps that refusal in it; every other close error is
+// the relay's own, which a gate-only land asks again (a transient error).
+var ErrCloseConflict = errors.New("the relay keeps the node's execution")
 
 // Relay is the DAG scheduler of the relay as the lane uses it.
 type Relay interface {

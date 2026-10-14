@@ -303,6 +303,12 @@ func (c *command) start(args []string) int {
 			plan.Facts = append(plan.Facts, f)
 		}
 	}
+	// a land of a head made outside a run while another run of its plan has not ended (CRW-1397): a warning, recorded, never a refusal
+	if rerr == nil && spec.Workflow == "land-head" {
+		if f, ok := planLiveRunFact(c.ctx, r, planOf(spec.Args)); ok {
+			plan.Facts = append(plan.Facts, f)
+		}
+	}
 	// the release gate over the issues whose body the handoff carries (CRW-1328): a held issue is a warning, recorded, never a refusal
 	if handoffIn != nil {
 		if f, ok := issueReadyFact(*handoffIn, planOf(spec.Args), milestoneArg(spec.Args)); ok {
@@ -473,6 +479,34 @@ func projectKeyFact(ctx context.Context, r *Reader, plan, thread string) (Fact, 
 	return Fact{Name: FactProjectKey, Level: LevelWarn,
 		Reading: fmt.Sprintf("plan %s is put under project key %s; %s", plan, key, holds),
 		Reason:  "a plan's project key is the scope_key of the orchestrator's parent binding (the project UUID), and the run's first claim is refused (scope_role_mismatch) under another key: put the plan again under the binding's key"}.leveled(), true
+}
+
+// FactPlanLiveRun is the warning of a land-head start while another run of the same plan has not ended (CRW-1397): the land's release
+// claims the plan's coordinator epoch, as every run's does (one run orchestrates one plan), so that run stops epoch_lost at its next
+// fenced write. The start goes on: warn and record, never a refusal.
+const FactPlanLiveRun = "plan_live_run"
+
+// planLiveRunFact names the runs of the plan that have not ended (running, paused, held or dead).
+func planLiveRunFact(ctx context.Context, r *Reader, plan string) (Fact, bool) {
+	if plan == "" {
+		return Fact{}, false
+	}
+	infos, err := r.Infos(ctx)
+	if err != nil {
+		return Fact{Name: FactPlanLiveRun, Level: LevelWarn, Reading: fmt.Sprintf("the runs of plan %s cannot be read: %v", plan, err), Reason: "the store cannot be read"}.leveled(), true
+	}
+	var live []string
+	for _, info := range infos {
+		if info.PlanID == plan && !Over(info.State) {
+			live = append(live, fmt.Sprintf("%s (%s, %s)", info.RunID, info.Workflow, info.State))
+		}
+	}
+	if len(live) == 0 {
+		return Fact{}, false
+	}
+	return Fact{Name: FactPlanLiveRun, Level: LevelWarn,
+		Reading: fmt.Sprintf("plan %s has a run that has not ended: %s", plan, strings.Join(live, ", ")),
+		Reason:  "a land-head release claims the plan's coordinator epoch, so a run of the plan that is still going stops epoch_lost at its next fenced write; land the head when no other run of its plan is going (crw flow ps)"}.leveled(), true
 }
 
 func isBuiltin(name string) bool {

@@ -542,7 +542,44 @@ const (
 	WarnEndConditionFailed     = "end_condition_failed"
 	WarnEndConditionNoTests    = "end_condition_no_tests"
 	WarnEndConditionUnreported = "end_condition_unreported"
+	// WarnEndConditionNotRun is the warning of end condition commands no explorer was given: the first round of the DESIGN spawned none
+	// (CRW-1397).
+	WarnEndConditionNotRun = "end_condition_not_run"
 )
+
+// endConditionsNotRun are the end condition commands of the milestone a record of the first DESIGN's first audit round gave to no
+// explorer (CRW-1397): none for a record of a node's questions, of a later round or with an explorer that was given them, and none for a
+// milestone whose issues name no command.
+func endConditionsNotRun(r rows, call, kind string, ec ExploreContext, answers []Answer) []EndConditionAsk {
+	if kind != "open_questions" || ec.Node != "" || ec.Milestone == "" {
+		return nil
+	}
+	for _, a := range answers {
+		if len(a.EndConditionsAsked) > 0 {
+			return nil
+		}
+	}
+	if _, earlier := r.opRows(OpExploreRecord).last(func(ev engine.Event) bool {
+		return ev.CallID != call && dataStr(ev, "kind") == kind && dataStr(ev, "milestone") == ec.Milestone && dataStr(ev, "node") == ""
+	}); earlier {
+		return nil
+	}
+	row, ok := r.opRows(OpMilestone).last(func(ev engine.Event) bool { return dataStr(ev, "milestone") == ec.Milestone })
+	if !ok {
+		return nil
+	}
+	var m Milestone
+	if json.Unmarshal(resultOf(row), &m) != nil {
+		return nil
+	}
+	var out []EndConditionAsk
+	for _, n := range m.Nodes {
+		for _, c := range n.EndCondition {
+			out = append(out, EndConditionAsk{Issue: n.Issue, Command: c})
+		}
+	}
+	return out
+}
 
 // endConditionWarnings judge what the explorer reported of the commands it was given: a command that exited non-zero, one that ran no
 // test, and one it did not report.
@@ -600,6 +637,18 @@ func (o *exploreRecordOp) Run(_ context.Context, req engine.OpRequest) (engine.O
 		list = append(list, entry)
 	}
 	data := map[string]any{"kind": kind, "node": ec.Node, "milestone": ec.Milestone, "answers": list}
+	// the end condition commands are given to the first explorer of the first DESIGN's first audit round (CRW-1382); a round that
+	// spawned none ran none, and its record says so once, a warning only (CRW-1397). The record of that round is the run's first record
+	// of the milestone's open questions; the commands are those of the milestone the run read.
+	if notRun := endConditionsNotRun(rows(req.Journal.Events()), req.CallID, kind, ec, answers); len(notRun) > 0 {
+		cmds := make([]string, len(notRun))
+		for i, a := range notRun {
+			cmds[i] = fmt.Sprintf("`%s` (%s)", a.Command, a.Issue)
+		}
+		warnings = append(warnings, fmt.Sprintf("%s: no explorer was spawned in the first audit round of the DESIGN, so the end condition commands %s were not run",
+			WarnEndConditionNotRun, strings.Join(cmds, ", ")))
+		data["end_conditions_not_run"] = notRun
+	}
 	if len(warnings) > 0 {
 		data["warnings"] = warnings
 	}

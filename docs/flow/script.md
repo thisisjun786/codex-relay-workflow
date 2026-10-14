@@ -317,7 +317,9 @@ from the body the handoff carries), runs each once and reports its exit code and
 answer (`FINDINGS_END`, the one explorer whose schema has the member; every other explorer answers `FINDINGS` with the packet it had
 before, and a milestone's digest leaves `end_condition` out, so a run recorded before CRW-1382 replays its explorer calls and keeps its
 pinned plan on a resume), which the answer carries into the design audit, and a command that failed, ran no test or was not reported is a
-warning of the `crw.exploreRecord` row (CRW-1382; never a stop); a reviewer of another model family than the architect audits the DESIGN (`DESIGN_AUDIT`, recorded by
+warning of the `crw.exploreRecord` row (CRW-1382; never a stop), and a first round that spawns no explorer (a DESIGN with no open
+question to explore) runs none of them, which its `crw.exploreRecord` row records once as the warning `end_condition_not_run` naming each
+command and its issue (CRW-1397; warn only); a reviewer of another model family than the architect audits the DESIGN (`DESIGN_AUDIT`, recorded by
 `crw.designAudit`), and `needs_changes` returns the DESIGN to the architect on its own thread; only an approved DESIGN becomes revision
 `r0` of the design ledger (`crw.designLedger`); `crw.dag` runs one lane for each node and the signal path of the milestone
 ([The architect's continuity and the re-plan](#the-architects-continuity-and-the-re-plan)); when every lane landed, `crw.closeMilestone` closes the milestone over
@@ -467,22 +469,32 @@ fixes nothing. Its steps:
   `independence_unproven` when the pair of any author it names was not read back), and `crw.land` (`crw.accept`, the relay's agent acceptance, which judges the
   reviewer against the pair the execution records, then `crw.integrate`). They write the rows they write for a node of a project lane.
 - The only refusals are input errors (no head, a head git does not resolve, authors of more than one model family - one execution row
-  records one author pair - and an issue that is not a node of the milestone) and the gates. A verification that fails, a review that is
+  records one author pair - and an issue that is not a node of the milestone) and the gates. Named limit: authors of more than one model
+  family are refused `land_author_families_mixed` before any gate, even where a reviewer of a third family would be independent of all of
+  them, because the execution row holds one author pair; lifting it changes the relay's stored form, so such a head is landed one family's
+  work at a time, or made in a project-lane run (CRW-1397). A land one of whose named authors is not read back records no author pair on
+  the execution (`land_author_pair_unrecorded`, a warning of the row: the observed pair would stand for authors the run does not know),
+  and the review is `independence_unproven`; the pairs the host reads back are trimmed. A verification that fails, a review that is
   not verified and a land the relay refuses end the run escalated for the child (`land_verification_failed`, `land_review_needs_changes`,
   the relay's reason); a review that is not independent escalates as a configuration fault. An author whose pair is not read back, no
   author named and a path outside the node's regions are warnings of the release row (`land_author_unobserved`, `land_authors_unnamed`,
   `land_out_of_scope`). A lost epoch ends the run `stopped` with `epoch_lost`.
 - The gate-only lane fixes nothing: the child changes the head and lands it again, in a new run. A land that ends escalated gives its
   release back - the escalation carries `end_land`, and `crw.escalate` asks the relay to close the node's execution with `land_ended`
-  (`cancelled`, the slot returned in the same transaction; a close the relay refuses, an accepted head whose integration may have moved
-  the target, is the row's `close_refused`) - so the next land is a new release: a new execution of its run, with its worktree and the
-  pair of the authors it names. A hold (a verifier or a reviewer the host cannot run now) keeps the release, and the run goes on with
+  (`cancelled`, the slot returned in the same transaction) - so the next land is a new release: a new execution of its run, with its
+  worktree and the pair of the authors it names. Only the relay's refusal to close an execution that has to stay (its accepted head
+  landed or may be in the target, a `disposition_conflict`) is the row's `close_refused`; any other relay error is asked again in place,
+  and one that keeps failing is the op's error, so the run ends on it rather than leaving its execution current under a run that has
+  ended (CRW-1397). A hold (a verifier or a reviewer the host cannot run now) keeps the release, and the run goes on with
   `crw flow resume` or gives the release up with `crw flow cancel`. A node whose current execution another run holds is not released
   to the land: `crw.release` answers `land_node_held` with that run and its execution, before the run claims the plan's coordinator
-  epoch, and no gate runs.
+  epoch, and no gate runs. The answer names what settles it: `crw flow resume` of a run that has not ended, and `crw flow cancel` of
+  one that has (the row records `held_run_state` and the warning `land_node_held_by_ended_run`), whose cancel gives up the executions
+  the run still holds - the ones its rows show, and the ones the relay records under its run id that its rows do not name.
 - A land-head run is a run of the plan: its release claims the plan's coordinator epoch like any run's, so a run of the same plan that
   is still going stops `epoch_lost` at its next fenced write (one run orchestrates one plan). A head made outside a run is landed when
-  no other run of its plan is going.
+  no other run of its plan is going: `crw flow start land-head` warns of one with the preflight fact `plan_live_run`, which names the
+  run, is printed and is recorded in the run's spec, and the start goes on (CRW-1397).
 
 ## The architect's continuity and the re-plan
 

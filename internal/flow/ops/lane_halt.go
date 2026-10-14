@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 )
@@ -17,6 +18,9 @@ var closingReasons = map[string]bool{"tiers_exhausted": true, "blocked_scope": t
 // escalation with end_land, CRW-1354): the run gives its release back - the closure is cancelled and the slot returns in its transaction -
 // so the child's next land of the node is a new release of its own run.
 const ReasonLandEnded = "land_ended"
+
+// closeRetryWaits are the waits before each new try of the close of an ended land after a transient relay error (CRW-1397).
+var closeRetryWaits = []time.Duration{100 * time.Millisecond, 400 * time.Millisecond}
 
 // The reasons that put a node in a recovery hold: nothing is closed, the slot stays, and `crw flow recover` or `crw flow resume`
 // takes the call.
@@ -44,8 +48,9 @@ type EscalateInfo struct {
 	// Ask is a question that waits for the orchestrator's decision (crw.decide).
 	Ask string `json:"ask"`
 	// EndLand: the escalation ends a gate-only land run (land-head) whose head did not pass its gates, and the run gives the node's
-	// release back (AgentClose land_ended), whatever the reason. A close the relay refuses (an accepted head whose integration may
-	// have moved the target) is recorded on the row and ends nothing else; a lost epoch is the run's.
+	// release back (AgentClose land_ended), whatever the reason. A close the relay refuses because the execution has to stay (an
+	// accepted head that landed or whose integration may have moved the target, ErrCloseConflict) is recorded on the row and ends nothing
+	// else; any other relay error is asked again, and is the op's error when it keeps failing (CRW-1397); a lost epoch is the run's.
 	EndLand bool `json:"end_land"`
 }
 
@@ -108,9 +113,24 @@ func (o *escalateOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRe
 		if !closingReasons[reason] {
 			reason = ReasonLandEnded
 		}
-		res, err := o.l.d.Relay.Close(ctx, CloseRequest{Plan: plan, Node: node, Actor: o.l.d.Actor, Reason: reason, RequestID: req.RequestID})
+		closeExecution := func() (CloseResult, error) {
+			return o.l.d.Relay.Close(ctx, CloseRequest{Plan: plan, Node: node, Actor: o.l.d.Actor, Reason: reason, RequestID: req.RequestID})
+		}
+		res, err := closeExecution()
+		// a gate-only land asks again after a relay error that is neither the relay keeping the execution nor a lost epoch (CRW-1397):
+		// the close is the relay's replay, so asking again is safe, and a land must not end with its execution current under a run
+		// that has ended. One that keeps failing is the op's error: the run ends on it and its resume asks again.
+		for i := 0; err != nil && info.EndLand && !errors.Is(err, ErrCloseConflict) && !errors.Is(err, ErrEpochLost) && i < len(closeRetryWaits); i++ {
+			select {
+			case <-ctx.Done():
+				return engine.OpResult{}, errors.Join(err, ctx.Err())
+			case <-time.After(closeRetryWaits[i]):
+			}
+			res, err = closeExecution()
+		}
 		switch {
-		case err != nil && info.EndLand && !errors.Is(err, ErrEpochLost):
+		case err != nil && info.EndLand && errors.Is(err, ErrCloseConflict):
+			// the relay keeps the execution: its accepted head landed or may be in the target
 			closeRefused = err.Error()
 		case err != nil:
 			return engine.OpResult{}, err
