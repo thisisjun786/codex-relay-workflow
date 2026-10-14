@@ -219,8 +219,11 @@ A repeated question folds into the open record of its fingerprint only when that
 under the same seat (the same `authority.ref` of a user-grade or delegated-management-grade record,
 or none). Raised under another management seat it is a record of its own, with that seat as its ref,
 and the answer carries `foldWarning` (`reason` `seat_differs`, the record it did not fold into),
-journaled as a `decision_authority_warning` row (CRW-1378). A record raised before this rule reads
-and answers as it did.
+journaled as a `decision_authority_warning` row (CRW-1378). The warning's detail names the seat the
+open record is held under and the rule that answers this raise: its own seat's owner, the store
+seat's rule for a user-grade or delegated-management-grade question with no seat above its project,
+or the raiser's own authority for a parent-class question (CRW-1390). A record raised before this
+rule reads and answers as it did.
 
 **A record whose seat has no owner** - the parent that held the seat ended or released
 it, so `decision-answer` refuses every answerer `authority_unverified` - is recovered in one of three
@@ -234,6 +237,13 @@ ways, none of which edits the record:
 3. the question is withdrawn (`decision-withdraw --decision ID --reason ...`) and raised again from
    the project: the new record names the seat that stands above the project then, or none (the store
    seat's rule) when no edge does.
+
+The parent's procedure over these records - registering its seat, binding the child of each project it
+starts, handing the seat over - is
+[the parent's section of crw-run](../../plugins/crw/skills/crw-run/SKILL.md#hold-the-seat-bind-the-children-hand-the-seat-over);
+what the project's messages then reach is
+[the level above a project](supervisor-channel.md#the-level-above-a-project), and what a flow run's
+reports record of their delivery is [reporting](../flow/reporting.md#through-the-supervisor-channel).
 
 ## The transaction protocol
 

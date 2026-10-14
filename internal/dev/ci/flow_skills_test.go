@@ -588,9 +588,12 @@ func initiativeReportProblems(section, whole string) []string {
 	}
 	var problems []string
 	for _, p := range wordingMissing(flat, []string{
-		"`crw flow reports --initiative INITIATIVE --unread`",
+		"`crw flow reports --project PROJECT --unread`",
 		`(?i)at the start of every turn`,
-		`(?i)waits in the supervisor queue until the thread loads`,
+		// CRW-1390: a report arrives as a turn the relay daemon opened (CRW-1380), and the list is where one whose delivery is
+		// pending or held is not missed
+		`(?i)a turn the relay daemon opened in this thread`,
+		`(?i)is not missed`,
 		"`milestone_report`", "`project_blocked`", "`project_decision_request`",
 		"\\[crw-check\\]\\(\\.\\./crw-check/SKILL\\.md\\)",
 		"`crw flow report-ack REPORT --turn TURN`",
@@ -627,7 +630,7 @@ func TestRunInitiativeReadsReports(t *testing.T) {
 	}
 
 	t.Run("fixture: a parent that operates a run or skips the ack is reported", func(t *testing.T) {
-		good := "## Read the milestone reports\n\nRun `crw flow reports --initiative INITIATIVE --unread` at the start of every turn: a report to a thread that is not loaded waits in the supervisor queue until the thread loads. " +
+		good := "## Read the milestone reports\n\nEach report arrives as a turn the relay daemon opened in this thread. Run `crw flow reports --project PROJECT --unread` at the start of every turn, so a report whose delivery is held is not missed. " +
 			"The kinds are `milestone_report`, `project_blocked` and `project_decision_request`. Judge each with [crw-check](../crw-check/SKILL.md), then `crw flow report-ack REPORT --turn TURN`: it acknowledges a report only after it has judged it. " +
 			"It never operates a run.\n"
 		section := sectionOf(good, "Read the milestone reports")

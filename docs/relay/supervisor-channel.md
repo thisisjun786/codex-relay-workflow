@@ -42,11 +42,12 @@ block, a decision only the user can make, or a turn that settled without reporti
 the three things CRW-148 decided are news, plus the absence. Nothing else has an entry point,
 which is what makes a heartbeat unsendable rather than merely discouraged.
 
-The reports of a flow run (a milestone report, a project blocker, a decision request) do not use this channel: their path is
-`crw flow report-up` and `crw manage send-parent --role supervisor`, described in [reporting.md](../flow/reporting.md).
-
-Besides those, one other thing: a fault notification the relay's fault ledger has reserved
-(CRW-205 criterion 7), carried as a message of its own kind - see a fault notification, below.
+Besides those, two other things. A fault notification the relay's fault ledger has reserved
+(CRW-205 criterion 7), carried as a message of its own kind - see a fault notification, below. And the
+messages staged without an event behind them - a flow run's reports, escalations, completion digest
+and step wakes (CRW-1380), and a lead's reports - each of a kind of its own; see
+[direct messages](#direct-messages), below, and [reporting.md](../flow/reporting.md) for what a flow
+run sends up and the rows it reads back.
 
 ### What it carries
 
@@ -740,9 +741,24 @@ such a message to `dispatched`, or holds it at a cap, and the busy deferral that
 `busy_cap` before any transport call, append the delivery to that run's `flow_events` in the same
 transaction: `report_delivery` (`accepted` or `refused`) for a report row
 of the run, `message_delivery` for any other, each once for its key and result among that run's
-rows (the check reads the run's rows by the `(run_id, seq)` key, not every run's). A row it cannot
-write is journaled as `flow_delivery_unrecorded` and the settle commits (CRW-1380,
-[reporting](../flow/reporting.md#through-the-supervisor-channel)).
+rows (the check reads the run's rows by the `(run_id, seq)` key, not every run's), so a hold that is
+released and taken again under the same cap writes no second `refused` row. A row it cannot write
+(the store holds no run of that name, or the insert fails) is journaled as `flow_delivery_unrecorded`
+with the reason and the settle commits (CRW-1380,
+[reporting](../flow/reporting.md#through-the-supervisor-channel)). A send whose outcome is unknown is
+recorded too (CRW-1390): the settle that moves the message to `held_uncertain`, and the recovery
+that finds a send stranded after its transport started, append the delivery row with the result
+`unknown` in their own transaction; the verified readback that settles such a send (the reconcile
+of `held_uncertain` to `read`) appends `accepted` in its own. A row the daemon writes carries the
+message's subject in the `subject` column and as the payload's `_label`, and the node of the run's
+row the message is about (an escalation's) in `node_id`.
+
+The level above a project decides one case by kind. A `flow_jun_decision_request` is not staged when
+the level above the project is a supervisor at the initiative's scope (the legacy initiative
+supervision, no management edge above the project), because that supervisor does not decide for Jun:
+the flow side records it for the store seat and leaves it standing, and the `crw manage` pump tells it
+(see [reporting](../flow/reporting.md#through-the-supervisor-channel)). With a management seat above
+the project it goes to that seat's owner like every other project kind.
 
 `crw relay report-up --initiative <key> --kind lead_report|lead_decision_request|lead_blocked
 [--subject ...] [--text ...|@FILE] [--evidence ...]` is a lead's report upward: a `lead_report`
