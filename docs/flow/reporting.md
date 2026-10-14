@@ -59,7 +59,10 @@ does not read `queued` while nothing will move it. The recipient's verified read
 found in a turn that began at or after the send) settles it and appends `accepted`. A replay of the report (a resume of the run, the
 same `report-up` again) finds the message as it may have gone: the channel leaves it as it is, and the writer stages nothing and writes
 no `queued` row over the `unknown` one. A replay that read the `unknown` row and finds the message read (the readback settled it in
-between) stages nothing and writes nothing either, and answers `accepted`, as the rows read. Every row the daemon writes names the message's subject (`<run>/<report id or logical id>`, in
+between) stages nothing and writes nothing either, and answers `accepted`, as the rows read. A notice of the run (an escalation, the
+completion digest) has no delivery row the run reads: a reconcile that finds its message `held_uncertain` or read (the run process died
+after the staging and before the notice row) is answered `queued`, as the staged message it is, so the run writes its `escalation_notice`
+or `completion_notice` row once and does not stage it again (CRW-1406). Every row the daemon writes names the message's subject (`<run>/<report id or logical id>`, in
 the `subject` column and as the payload's `_label`, as a command's row has it) and the node of the run's row it is about: the
 escalation's node for an escalation, none for a report, a completion digest or a step wake.
 
