@@ -96,30 +96,48 @@ func linesOf(secs []section, names []string) (lines []string, found bool) {
 }
 
 // bullets are the list items of lines, without marker and checkbox. An indented line that follows an item directly continues it; a
-// "Blocked by:" item is an order and not an item.
-func bullets(lines []string) []string {
+// "Blocked by:" item is an order and not an item. With nested, a bullet indented deeper than the item above it is a sub-bullet and part
+// of that item (at any depth, after a blank line too): it joins the item's text, and a sub-bullet of a "Blocked by:" item is dropped
+// with it. Without nested every bullet is an item of its own, the reading of a list of paths.
+func bullets(lines []string, nested bool) []string {
 	var out []string
-	cur := -1
+	cur := -1    // the item a continuation line extends
+	parent := -1 // the item whose sub-bullets join it (nested only); with dropped, the "Blocked by:" item they leave out
+	parentIndent := 0
+	dropped := false
 	for _, line := range lines {
 		if strings.TrimSpace(line) == "" {
 			cur = -1
 			continue
 		}
 		if m := bulletLine.FindStringSubmatch(line); m != nil {
+			indent := indentOf(m[1])
 			text := strings.TrimSpace(checkbox.ReplaceAllString(strings.TrimSpace(m[2]), ""))
+			if nested && (parent >= 0 || dropped) && indent > parentIndent {
+				if dropped {
+					cur = -1
+				} else {
+					out[parent] = strings.TrimSpace(out[parent] + " " + text)
+					cur = parent
+				}
+				continue
+			}
+			parent, parentIndent, dropped = -1, indent, false
 			if blockedLine.MatchString(text) {
 				cur = -1
+				dropped = nested
 				continue
 			}
 			out = append(out, text)
 			cur = len(out) - 1
+			parent = cur
 			continue
 		}
 		if cur >= 0 && (line[0] == ' ' || line[0] == '\t') {
 			out[cur] = strings.TrimSpace(out[cur] + " " + strings.TrimSpace(line))
 			continue
 		}
-		cur = -1
+		cur, parent, dropped = -1, -1, false
 	}
 	kept := out[:0]
 	for _, b := range out {
@@ -130,10 +148,23 @@ func bullets(lines []string) []string {
 	return kept
 }
 
+// indentOf is the width of a bullet's leading white space, a tab counting four columns.
+func indentOf(ws string) int {
+	n := 0
+	for _, r := range ws {
+		if r == '\t' {
+			n += 4
+		} else {
+			n++
+		}
+	}
+	return n
+}
+
 // criteria are the bullets of the criteria sections.
 func criteria(secs []section) []string {
 	lines, _ := linesOf(secs, criteriaHeadings)
-	return bullets(lines)
+	return bullets(lines, true)
 }
 
 // regionOf reads the path of one region item: the first backticked span, else the first word. ok is false for a path the scheduler

@@ -9,7 +9,8 @@
 //
 // The issue body is read for the fields of an issue line from a small fixed set of headings (see body.go):
 //
-//	criteria  a bullet list under 끝 조건, Done when, Acceptance or Acceptance criteria; with none the issue title is the one criterion
+//	criteria  a bullet list under 끝 조건, Done when, Acceptance or Acceptance criteria (a bullet indented under another is part of that
+//	          criterion); with none the issue title is the one criterion
 //	regions   a bullet list under 수정 범위, Edit regions or Regions (a path in backticks, or the first word; a trailing slash is a tree);
 //	          with none the issue has no region and the compile default applies
 //	size      "size_fit: V", "size_reason: V" and "issue_size: V" lines under 크기, Size or Size fit; with none compile's defaults apply
@@ -192,7 +193,7 @@ func issueLine(is tracking.Issue, byRef map[string]tracking.Issue, project strin
 	}
 	if items, _ := linesOf(secs, regionHeadings); len(items) > 0 {
 		seen := map[string]bool{}
-		for _, item := range bullets(items) {
+		for _, item := range bullets(items, false) {
 			r, ok := regionOf(item)
 			switch {
 			case !ok:

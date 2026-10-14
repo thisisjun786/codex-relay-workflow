@@ -231,6 +231,46 @@ func TestBodyMappingHeadings(t *testing.T) {
 	}
 }
 
+// TestIndentedSubBulletBelongsToItsParentCondition (CRW-1379 d3): a bullet indented deeper than the end condition above it is part of
+// that condition, not a condition of its own (a sub-bullet states how the parent is shown). It joins the parent's text, at any depth,
+// after a blank line too, and with any marker or checkbox; a bullet at the parent's indent, or less, is a new condition. A sub-bullet of
+// a "Blocked by:" item is part of that order, not a condition.
+func TestIndentedSubBulletBelongsToItsParentCondition(t *testing.T) {
+	tests := []struct {
+		name, body string
+		want       []string
+	}{
+		{"one sub-bullet", "## Done when\n- parent\n  - child\n- next\n", []string{"parent child", "next"}},
+		{"several sub-bullets", "## Done when\n- parent\n  - one\n  - two\n- next\n", []string{"parent one two", "next"}},
+		{"two levels", "## Done when\n- parent\n  - child\n    - grandchild\n- next\n", []string{"parent child grandchild", "next"}},
+		{"numbered under a dash", "## Done when\n1. parent\n   - child\n2. next\n", []string{"parent child", "next"}},
+		{"a checkbox sub-bullet", "## Done when\n- [ ] parent\n  - [x] child\n- [ ] next\n", []string{"parent child", "next"}},
+		{"tab indent", "## Done when\n- parent\n\t- child\n- next\n", []string{"parent child", "next"}},
+		{"after a blank line", "## Done when\n- parent\n\n  - child\n- next\n", []string{"parent child", "next"}},
+		{"continuation line then sub-bullet", "## Done when\n- parent\n  more of the parent\n  - child\n", []string{"parent more of the parent child"}},
+		{"sub-bullet last", "## Done when\n- a\n- parent\n  - child\n", []string{"a", "parent child"}},
+		{"a list that is indented as a whole stays flat", "## Done when\n  - a\n  - b\n", []string{"a", "b"}},
+		{"a dedent is a new condition", "## Done when\n  - a\n    - a1\n- b\n", []string{"a a1", "b"}},
+		{"text between ends the parent", "## Done when\n- a\nOutro\n  - b\n", []string{"a", "b"}},
+		{"blocked by item keeps its sub-bullets out", "## Done when\n- a\n- Blocked by: #1\n  - why\n- b\n", []string{"a", "b"}},
+		{"empty parent", "## Done when\n- \n  - child\n- b\n", []string{"child", "b"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			res := build(t, milestone(open(1, tc.body)), Options{})
+			if got := only(t, res).Criteria; !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("criteria = %q; want %q", got, tc.want)
+			}
+		})
+	}
+
+	// the edit regions are read as before: a nested item of a region list is an item of its own
+	res := build(t, milestone(open(1, "## Done when\n- a\n\n## Edit regions\n- `a/`\n  - `a/b.go`\n")), Options{})
+	if got := only(t, res).Regions; len(got) != 2 || got[0].Path != "a/" || got[1].Path != "a/b.go" {
+		t.Errorf("regions = %+v; a nested region item stays an item of its own", got)
+	}
+}
+
 // TestBodyMappingRegionsAndSize (c2): edit regions come from the headings 수정 범위, Edit regions and Regions (a bullet's backticked
 // path, else its first word; a trailing slash is a tree); size_fit, size_reason and issue_size from "name: value" lines under 크기,
 // Size or Size fit. A missing section gives nothing and no warning (the compile defaults apply); a region the scheduler cannot take
