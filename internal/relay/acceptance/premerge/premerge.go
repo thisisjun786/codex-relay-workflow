@@ -341,13 +341,13 @@ func Judge(r Record, opts Options) error {
 	sort.Strings(refs)
 	for _, ref := range refs {
 		if !neededRefs[ref] && items[ref].Class == "blocking" {
-			return refuse(contract.RefusalPremergeBlocked, "%s is blocking (parent decision): fix it on this head and evaluate the new head", ref)
+			return refuse(contract.RefusalPremergeBlocked, "%s is blocking (자식 decision): fix it on this head and evaluate the new head", ref)
 		}
 	}
 	for _, n := range needed {
 		it, ok := items[n.ref]
 		if !ok {
-			return refuse(contract.RefusalPremergeUndisposed, "%s has no parent disposition", n.ref)
+			return refuse(contract.RefusalPremergeUndisposed, "%s has no 자식 disposition", n.ref)
 		}
 		if err := judgeItem(n, it); err != nil {
 			return err
