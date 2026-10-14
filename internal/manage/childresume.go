@@ -10,6 +10,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/stateroot"
 	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
@@ -95,6 +96,10 @@ type resumeReport struct {
 	Servers    map[string]string `json:"servers"`
 	AdmitTurn  string            `json:"admitTurn,omitempty"`
 	DryRun     bool              `json:"dryRun,omitempty"`
+	// DisabledServers is where the list of servers this run switches off came from (CRW-1398): the configuration file's
+	// manage.child_check.disabled_servers (source "config"), or the default list a file that does not name the key reads as
+	// (source "default", with the warning that was also written to standard error).
+	DisabledServers *resumeDisabledServers `json:"disabledServers,omitempty"`
 	// AutoCompactTokenLimit is the value this resume sent, nil when the pair declares none or the run sent nothing (a dry run). The
 	// host never reports it back, so the report states it the way the bridge states a setting the
 	// host cannot confirm: the value that went out, and AutoCompactUnobservable saying the host
@@ -105,6 +110,13 @@ type resumeReport struct {
 	// PlannedAutoCompactTokenLimit is what a dry run reports in their place: the limit a real run would
 	// send, with nothing sent. It is never set by a run that sent a resume.
 	PlannedAutoCompactTokenLimit *int64 `json:"plannedAutoCompactTokenLimit,omitempty"`
+}
+
+// resumeDisabledServers is the record in the report of the servers a run switches off and where the list came from.
+type resumeDisabledServers struct {
+	Source  string   `json:"source"`
+	Servers []string `json:"servers"`
+	Warning string   `json:"warning,omitempty"`
 }
 
 // resumeFailure is a refusal: the reason and, where the host or the relay gave one, its detail.
@@ -312,6 +324,50 @@ func resumeSandboxMode(sandbox map[string]any) (string, error) {
 	return mode, nil
 }
 
+// resumeDisabledList is the servers this run switches off, from manage.child_check.disabled_servers of the configuration file
+// (CRW-1398). A key the file does not name (no file, no manage object, no child_check section, no key, or null) reads as the
+// default list, crwconfig.DefaultChildCheckDisabledServers, and is warned about on standard error and recorded in the report
+// (source "default"); it is not a refusal, because a host with no server to stop has nothing to configure and the condition is
+// reversible. A key the file names, an empty list included (the installation writes that), is the operator's own and is not warned
+// about. A key that is there but is no list of names cannot be read as either and is refused as disabled_servers_unset, before any
+// host read. Blank names are dropped, as child-check drops them.
+func resumeDisabledList(e *Env, cfg *Config) ([]string, *resumeDisabledServers, error) {
+	var section struct {
+		DisabledServers *[]string `json:"disabled_servers"`
+	}
+	if err := cfg.Section("child_check", &section); err != nil {
+		return nil, nil, &resumeFailure{Reason: resumeDisabledServersUnset, Detail: "the config section child_check is not an object with a disabled_servers list of names: " + err.Error()}
+	}
+	if section.DisabledServers == nil {
+		names := crwconfig.DefaultChildCheckDisabledServers()
+		where := "the configuration file"
+		if cfg.path != "" {
+			where = quote.Value(cfg.path)
+		}
+		warning := "manage.child_check.disabled_servers is not set in " + where + "; reading it as the default list (" +
+			resumeServerCount(names) + "), so this run switches off only what that list names; name the servers there, or run `crw config verifier` to write the default"
+		if e != nil && e.Stderr != nil {
+			fmt.Fprintln(e.Stderr, "crw manage child-resume: warning: "+warning)
+		}
+		return names, &resumeDisabledServers{Source: "default", Servers: names, Warning: warning}, nil
+	}
+	names := make([]string, 0, len(*section.DisabledServers))
+	for _, name := range *section.DisabledServers {
+		if name = strings.TrimSpace(name); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names, &resumeDisabledServers{Source: "config", Servers: names}, nil
+}
+
+// resumeServerCount names how many servers a list switches off, for the warning.
+func resumeServerCount(names []string) string {
+	if len(names) == 0 {
+		return "no server"
+	}
+	return strings.Join(names, ", ")
+}
+
 // resumeMCPConfig is the config a resume carries for the servers this command stops.
 func resumeMCPConfig(disabled []string) map[string]any {
 	off := map[string]any{}
@@ -405,12 +461,9 @@ func resumeRun(ctx context.Context, e *Env, cfg *Config, opts resumeOptions) (*r
 	if err != nil {
 		return nil, err
 	}
-	disabled, err := childCheckDisabled(cfg, nil)
+	disabled, disabledFrom, err := resumeDisabledList(e, cfg)
 	if err != nil {
-		return nil, &resumeFailure{Reason: resumeDisabledServersUnset, Detail: err.Error()}
-	}
-	if len(disabled) == 0 {
-		return nil, &resumeFailure{Reason: resumeDisabledServersUnset, Detail: "the config section child_check names no disabled_servers"}
+		return nil, err
 	}
 	mode, err := resumeSandboxMode(settings.Sandbox)
 	if err != nil {
@@ -424,7 +477,7 @@ func resumeRun(ctx context.Context, e *Env, cfg *Config, opts resumeOptions) (*r
 		return nil, err
 	}
 	report := &resumeReport{OK: true, Thread: child, Generation: generation, Model: settings.Model,
-		Effort: settings.ReasoningEffort, Servers: map[string]string{}, DryRun: opts.dryRun}
+		Effort: settings.ReasoningEffort, Servers: map[string]string{}, DryRun: opts.dryRun, DisabledServers: disabledFrom}
 	if limit != nil && opts.dryRun {
 		// A dry run sends nothing, so it states the limit a real run would send and leaves the fields
 		// that say what went out empty (CRW-1000 d1).

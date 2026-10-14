@@ -273,7 +273,9 @@ func runVerifier(getenv func(string) string, flagPath string, args []string, std
 }
 
 // writeSection replaces the top-level key name of the configuration document with v and writes the file in place of the old one
-// (a temporary file in its directory, renamed over it), owner-only, its keys sorted; a file that is not there yet is created. A
+// (a temporary file in its directory, renamed over it), owner-only, its keys sorted; a file that is not there yet is created. It is
+// the installation's one writer of the file, so it also writes the default of manage.child_check.disabled_servers where the
+// document does not name it (withChildCheckDefault, CRW-1398). A
 // file that is a symbolic link is written through: the file the link names is replaced and the link stays.
 func (f *File) writeSection(name string, v any) error {
 	raw, err := json.Marshal(v)
@@ -285,6 +287,7 @@ func (f *File) writeSection(name string, v any) error {
 		doc[k] = value
 	}
 	doc[name] = raw
+	withChildCheckDefault(doc)
 	data, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
 		return err
