@@ -98,8 +98,8 @@ another key, is a named refusal rather than a second scope, and the seat writes 
 row, because a supervision edge joins an initiative to a project and the store has no initiative
 above it.
 
-The seat is for a session that manages the store rather than one project. The management session
-holds it, and LINA holds the same seat the same way — a task with one supervisor binding at the
+The seat is for a session that manages the store rather than one project. The parent (repository session, relay role
+`supervisor`, [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels)) holds it, and LINA holds the same seat the same way — a task with one supervisor binding at the
 store — so neither is tied to a single initiative's execution. One task holds one supervisor
 seat, so a session registered here cannot also supervise an initiative; that is the rule the role
 model already had, not a limit of the command. The seat is also what such a session needs to
@@ -110,7 +110,7 @@ The seat changes hands like any other: `linkage-handover --role supervisor --sco
 --scope store --expect-task <incumbent> --task <successor> ...` archives the incumbent's binding
 and binds the successor. The scope kind is the same `--scope-kind` decision `linkage-bind` makes,
 so it is accepted for the supervisor's store seat and no other combination; the handover rules are
-the ordinary ones, which is what makes the seat recoverable when the management session is
+the ordinary ones, which is what makes the seat recoverable when the parent is
 replaced. `--expect-task` must name the live owner, and a successor that already supervises an
 initiative is refused `role_already_bound`, because one task holds one supervisor seat. Without
 `--scope-kind` the handover takes the role's own level as it always did, so `--role supervisor
@@ -118,10 +118,10 @@ initiative is refused `role_already_bound`, because one task holds one superviso
 
 ## Management seats
 
-A management session holds a seat of its own: `linkage-bind --role supervisor --scope-kind
+A parent holds a seat of its own: `linkage-bind --role supervisor --scope-kind
 management --scope <seat id> --task <thread>` binds role `supervisor` at scope kind `management`,
 keyed by the seat id, which is the thread that first registered it; `task_id` names the seat's
-current owner. Two management sessions have two keys, so neither overwrites the other, and a third
+current owner. Two parents have two keys, so neither overwrites the other, and a third
 task asking for a seat another one holds is refused `duplicate_scope_owner`. `crw manage supervisor
 register` is that line for the calling thread (`--task`, else `CODEX_THREAD_ID`, else the
 configuration's supervisor section; `--host`, else the section) followed by the settings record.
@@ -145,7 +145,7 @@ supervisor --scope <INIT> --task <lead> --host ... --creator <management thread>
 edge under `managementLink`. A creator that holds no management seat (a lead registering itself)
 writes no edge. An initiative has one upward execution edge: a registration whose creator holds
 another seat is refused `link_conflict`, the conflict row is the only thing it commits, and a
-second management session takes an initiative only by the handover of the seat above it. The edge's
+second parent takes an initiative only by the handover of the seat above it. The edge's
 link id is made from the two scopes, so `linkage-handover --role supervisor --scope-kind management
 --scope <seat id> --expect-task <old owner> --task <new owner> --evidence ...` keeps the edge and
 moves its `upper_task_id` to the new owner, archives the old binding (`superseded_by`), gives the new

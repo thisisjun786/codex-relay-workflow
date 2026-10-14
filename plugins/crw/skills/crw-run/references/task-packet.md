@@ -1209,7 +1209,7 @@ It is not a delivery channel: it carries no receipt, no acknowledgement and no v
 never instructs another parent's child. The handoff is the one kind here that assigns anything, and
 even it assigns only a project to the parent that owns it; that parent binding the project and
 returning its result are separate facts the message does not establish. The path and the rules it follows are
-[Direct coordination between project orchestrators](../../crw-canon/references/hierarchy.md#direct-coordination-between-project-orchestrators).
+[Direct coordination between children](../../crw-canon/references/hierarchy.md#direct-coordination-between-children).
 
 Keep it short. Name what identifies this message, and reference what the existing relationship
 already holds instead of recopying it, exactly as the restoration block carries pointers rather

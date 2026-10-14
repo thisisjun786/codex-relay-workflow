@@ -1,6 +1,0 @@
-interface:
-  display_name: "CRW Run Initiative"
-  short_description: "이니셔티브의 승인된 프로젝트를 기존 project orchestrator를 통해 감독하고 중간점검"
-  default_prompt: "$crw-run-initiative [Linear 이니셔티브 링크]"
-policy:
-  allow_implicit_invocation: true

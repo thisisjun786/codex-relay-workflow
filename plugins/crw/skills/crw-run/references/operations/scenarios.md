@@ -724,7 +724,7 @@ child reports work that assumed the condition already held, and separately A ask
 project adopt the same split.
 
 Clauses: OPS-7.3, OPS-7.4, OPS-9.3; the path and its form are
-[Direct coordination between project orchestrators](../../../crw-canon/references/hierarchy.md#direct-coordination-between-project-orchestrators) and the
+[Direct coordination between children](../../../crw-canon/references/hierarchy.md#direct-coordination-between-children) and the
 [Coordination message](../../../crw-run/references/task-packet.md#coordination-message).
 
 Action: the two parents settle the split between themselves without the supervisor relaying it, and

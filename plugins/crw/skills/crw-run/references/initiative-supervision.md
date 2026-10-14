@@ -1,6 +1,6 @@
 # Initiative supervision
 
-[crw-run-initiative](../../crw-run-initiative/SKILL.md) executes an initiative's scope, and this file
+[The parent's section of crw-run](../SKILL.md#the-parent-the-repository-session) executes an initiative's scope, and this file
 is its reference: how a task becomes that initiative's supervisor, which projects it is executing, when it is
 finished, what each parent receives, what comes back, and how it recovers. The roles themselves are
 the shared [scope of each level](../../crw-canon/references/hierarchy.md#scope-of-each-level),
@@ -20,7 +20,7 @@ holds one live role and one scope, a project has at most one live `execution` ed
 refused supervision leaves no state behind: the decision and the write share one transaction, so a contest that loses writes
 only its conflict row. A supervisor whose own level is not an initiative can hold the store-scope seat
 (`linkage-bind --role supervisor --scope-kind store --scope store`), which is what a session that manages the store holds
-rather than one tied to a single initiative's execution. `crw manage supervisor register` gives the calling management session
+rather than one tied to a single initiative's execution. `crw manage supervisor register` gives the calling parent (repository session, relay role `supervisor`, [the level table](../../crw-canon/references/hierarchy.md#the-levels))
 its own management seat instead and lays down a store seat it held; the store seat is then read through that management seat.
 
 Keep four facts apart, because they are separate. This repository's source implements those commands and its tests pin them; an
@@ -39,7 +39,7 @@ request rather than in the link.
 
 | Request | Owner | Effect on binding |
 |---|---|---|
-| Execute this initiative's agreed projects, naming the initiative | this entry, through [crw-run-initiative](../../crw-run-initiative/SKILL.md) | binds a supervisor for that initiative: this task where it is free to take it, and otherwise the initiative's existing supervisor or one created for it |
+| Execute this initiative's agreed projects, naming the initiative | this entry, through [the parent's section of crw-run](../SKILL.md#the-parent-the-repository-session) | binds a supervisor for that initiative: this task where it is free to take it, and otherwise the initiative's existing supervisor or one created for it |
 | Define or plan it | [crw-define](../../crw-define/SKILL.md), [crw-plan](../../crw-plan/SKILL.md) | none; planning creates no supervisor and moves no ownership |
 | How is it going | a [crw-status](../../crw-status/SKILL.md) read by default; where this task supervises the initiative and its execution approval is still in force, also a checkpoint ([midpoint check](midpoint-check.md)) | none either way. A standalone request, or one under an explicit status-only, report-only, read-only, plan-only, pause or no-contact limit, reads existing records and wakes nothing. A checkpoint is not only a read: while approved work remains unfinished under an approval still in force, it inspects the existing parents, hands that pending work to the responsible parent on the resume path that parent already has, and reports the actions actually taken. It still binds no supervisor, moves no ownership, and starts nothing for work that already has an owner |
 | An initiative link carried as context by other work | the operation already running | none; it locates context |

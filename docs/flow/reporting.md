@@ -1,7 +1,7 @@
 # What goes up from a flow run
 
-A flow run (a project run, the issue-lane of an oversized child) works for the thread that started it, the orchestrator, and the
-orchestrator works for an initiative lead. This page says what travels upward, to whom, by which command, and which row of the relay
+A flow run (a project run, the issue-lane of an oversized child) works for the thread that started it, the orchestrator: the child
+(project session, relay role `parent`, [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels)), which works for its parent (repository session, relay role `supervisor`). This page says what travels upward, to whom, by which command, and which row of the relay
 store's `flow_events` records it. The rows are described in [journal.md](journal.md); the relay commands the paths end in are in the
 [relay README](../relay/README.md). The relay's own supervisor channel is a different path and carries none of this: its entrances are
 the standing obligation of a relationship child and the fault notice ([supervisor-channel.md](../relay/supervisor-channel.md)).
@@ -13,9 +13,9 @@ the standing obligation of a relationship child and the fault notice ([superviso
 | a run that stopped writing | nobody | the manager thread | the pump | | `run_dead` |
 | the plan summary that is owed | the run, `crw flow apply` | the orchestrator thread | `crw manage send-parent` | `summary_document`, `summary_notice`, `summary_notice_settled` | |
 | the receipt of an oversized issue | the child | the orchestrator | relay delivery, then `crw flow apply` | `apply_applied`, `apply_refused`, `apply_override` | |
-| a milestone report | the run | the initiative lead | `crw flow report-up` through `send-parent --role supervisor` | `report`, `report_delivery`, `report_read` | `report_undelivered`, `report_unread` |
-| a run that started no node (`project_blocked`, CRW-1320) | the run | the initiative lead | the writer of `crw flow report-up` through `send-parent --role supervisor` | `report`, `report_delivery`, `report_read` | `report_undelivered`, `report_unread` |
-| a project-level blocker or decision request | the orchestrator | the initiative lead | `crw flow report-up` | `report`, `report_delivery`, `report_read` | `report_undelivered`, `report_unread` |
+| a milestone report | the run | the parent | `crw flow report-up` through `send-parent --role supervisor` | `report`, `report_delivery`, `report_read` | `report_undelivered`, `report_unread` |
+| a run that started no node (`project_blocked`, CRW-1320) | the run | the parent | the writer of `crw flow report-up` through `send-parent --role supervisor` | `report`, `report_delivery`, `report_read` | `report_undelivered`, `report_unread` |
+| a project-level blocker or decision request | the orchestrator | the parent | `crw flow report-up` | `report`, `report_delivery`, `report_read` | `report_undelivered`, `report_unread` |
 | a decision only Jun can make | the orchestrator | the store seat, then the manager | `crw flow report-up` | `report` | `jun_decision` |
 
 ## Escalations and the completion digest
@@ -121,7 +121,7 @@ project lane, and a child of a relationship outside a flow run is verified by th
 
 ## Milestone reports and project-level reports
 
-`crw.reportUp` closes a milestone: the report goes to the initiative lead. Its body names the integrated range and the evidence of the
+`crw.reportUp` closes a milestone: the report goes to the parent. Its body names the integrated range and the evidence of the
 close (the final gate, the review of reviewer-final and the audit of the reviews, CRW-1206; a piece the close did not make is `none`).
 The project's orchestrator lifts a project-level blocker or a decision request the initiative decides:
 
@@ -135,7 +135,7 @@ escalation reaches the orchestrator thread, and the orchestrator reports up.
 A run meant to start the nodes of a plan (a run of `project-lane`, `issue-lane` or `night-batch`, or a run whose arguments name a `plan`)
 that finished `completed` and started no node is `blocked` in `crw flow show` and `ps` (no `crw.release` released a node, no child was
 released, nothing landed, and items of its joins threw: [script.md](script.md)). When it finishes so, the run itself reports
-`project_blocked` to the initiative lead, through the same writer, recipient and delivery as `crw flow report-up`: the subject is `no node
+`project_blocked` to the parent, through the same writer, recipient and delivery as `crw flow report-up`: the subject is `no node
 started` and the body names each item that failed with its error. The report id comes from the run alone, so the run reports it once: a
 resume that ends the same way finds the report row and makes no other, and a delivery is asked again only as for any report. A run whose
 nodes the scheduler held back for capacity, a run where a node started, and a script run that names no plan and is no lane workflow (a
@@ -152,14 +152,14 @@ of the thread and the reason). A report whose row exists is not delivered again 
 
 **The recipient** is found when the report is made, by the supervisor package's linkage walk, read-only and with no new row: the live
 parent of the project, the initiative above it, the live supervisor of that initiative. A handover between two reports sends the second
-to the new lead. When no initiative supervises the project, when the walk can only name the store seat (a seat is not an initiative lead
-and is never sent a report through the bridge), or when the linkage cannot be read or is contested, the report stays standing: it has a
+to the new lead. When no initiative supervises the project, when the walk can only name the store seat (a seat is not an initiative's
+supervisor and is never sent a report through the bridge), or when the linkage cannot be read or is contested, the report stays standing: it has a
 row and no delivery, and `crw flow reports --unread` and the pump (below) show it. A `jun_decision_request` is addressed to the store seat
 and is never delivered through the bridge. A manager that registered its management seat (`crw manage supervisor register`) laid its store
 seat down, and the store seat is then read through that management seat ([linkage](../relay/linkage.md#management-seats)), so the
 report still names the manager's thread.
 
-**The delivery** is `crw manage send-parent --role supervisor --thread <initiative lead's thread> --logical-id <run>:<milestone>:report
+**The delivery** is `crw manage send-parent --role supervisor --thread <the initiative supervisor's thread> --logical-id <run>:<milestone>:report
 --report <report id> --initiative <initiative>`. The role is an option of `crw manage`, not of the relay; the default role (parent) is not
 changed. The settings of the send are the authorization recorded for the supervision binding of that thread in the relay (the model and
 the reasoning effort), read when the notice is sent and again when the pump flushes it; the `crw manage` configuration has only the
@@ -191,7 +191,7 @@ same id and advances the ordinal. The unload race is not a refusal of the notice
 out under `<logical id>-l<n>`, so the settled refusal of the earlier id is not replayed. Any other refusal counts; the third moves the
 notice to `refused/` and tells the flow rows. The parent queue's flush is not changed.
 
-**Reading.** The initiative lead reads its reports when a turn starts, `crw flow reports --initiative I --unread`, and acknowledges each
+**Reading.** The parent reads its reports when a turn starts, `crw flow reports --initiative I --unread`, and acknowledges each
 in that turn, `crw flow report-ack ID --turn T`, which appends a `report_read` row. A report nobody read for `low_priority_seconds` is
 raised to the manager as the low kind `report_unread` (the report, its age, the last delivery result). A decision for Jun is the urgent
 kind `jun_decision`; the manager records the question and Jun's answer with `crw manage decisions`.

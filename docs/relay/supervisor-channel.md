@@ -698,7 +698,7 @@ decision in `decision` and who owes the answer (the recipient, or the user for
 `jun_decision_request`). Sending is the channel's own: the daemon's supervisor pass picks the row up,
 opens a turn in an idle or unloaded recipient and retries a busy one, and a readback is what it is
 for any message. A recipient needs recorded authorized settings and a role policy, as any recipient
-of this channel does; a management session that is not a Codex App Server thread cannot be woken
+of this channel does; a parent (repository session, relay role `supervisor`, [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels)) that is not a Codex App Server thread cannot be woken
 this way.
 
 `crw relay report-up --initiative <key> --kind lead_report|lead_decision_request|lead_blocked

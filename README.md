@@ -22,8 +22,7 @@ live Codex hook or Desktop compatibility.
 | [crw-define](plugins/crw/skills/crw-define/SKILL.md) | Settle a milestone and its issues before they are registered: purpose, desired change, success evidence, scope and open decisions, and whether a question is really needed |
 | [crw-plan](plugins/crw/skills/crw-plan/SKILL.md) | Decompose an agreed goal into projects, milestones, and one-delivery issues |
 | [crw-add-issue](plugins/crw/skills/crw-add-issue/SKILL.md) | Turn one short request into one ready issue: criteria, edit regions, decided answer, tests to write first and done condition, with an open design question held as design first |
-| [crw-run](plugins/crw/skills/crw-run/SKILL.md) | Bind the parent and execute one project's agreed scope, including parallel issue delivery and successors, without a parent goal unless goal mode is explicitly requested |
-| [crw-run-initiative](plugins/crw/skills/crw-run-initiative/SKILL.md) | Lead an initiative's approved projects through their project orchestrators, and own the midpoint check |
+| [crw-run](plugins/crw/skills/crw-run/SKILL.md) | Bind the child (project session, relay role `parent`) and execute one project's agreed scope, including parallel issue delivery and successors, without a goal unless goal mode is explicitly requested; and the work of the parent (repository session, relay role `supervisor`): project order, decisions, reports and the midpoint check |
 | [crw-status](plugins/crw/skills/crw-status/SKILL.md) | Read-only report of where work stands by level, with progress against the agreed schedule, and the one next action when asked |
 | [crw-check](plugins/crw/skills/crw-check/SKILL.md) | Verify delivery, find contradictions with minimal counterexamples, judge the schedule, and return in-scope corrections to managed tasks |
 | [crw-refactor](plugins/crw/skills/crw-refactor/SKILL.md) | Diagnose post-cycle structural debt, read-only, and recommend bounded, behavior-preserving repairs; a chosen repair becomes a Linear issue through crw-add-issue |
@@ -226,16 +225,16 @@ The bundled validator has its own dependencies. It checks skill structure, not t
 ## Usage
 
 ```text
-$crw-run [Linear project] 실행하지 말고 이 프로젝트의 project orchestrator로 연결만 해줘.
+$crw-run [Linear project] 실행하지 말고 이 프로젝트의 프로젝트 세션으로 연결만 해줘.
 $crw-status [Linear project or product repository] 다음에 뭐 하지? 시작할 단계인지 끝난 뒤인지 확인하고 다음 행동 하나를 골라줘.
-$crw-run-initiative [Linear initiative link] 승인된 프로젝트들을 기존 project orchestrator를 통해 끝까지 진행해줘.
+$crw-run [Linear initiative link] 저장소 세션으로서 승인된 프로젝트들을 기존 프로젝트 세션을 통해 끝까지 진행해줘.
 $crw-define [idea or milestone] 목적·성공 증거·범위·열린 결정을 정리해 Linear 마일스톤에 반영해줘.
 $crw-plan [defined initiative or existing project] 프로젝트·마일스톤·이슈와 의존성을 계획해 Linear에 반영해줘.
 $crw-run [Linear project link]
-$crw-run [Linear project link] project orchestrator goal을 열어서 끝까지 진행해줘. (goal mode)
+$crw-run [Linear project link] 프로젝트 세션의 goal을 열어서 끝까지 진행해줘. (goal mode)
 $crw-check [Linear project or issue] 기획대로 구현됐는지 확인해줘.
 $crw-status 지금 어디까지 됐는지, 막힌 이유와 내 결정이 필요한 부분을 근거와 함께 짧게 알려줘.
-$crw-run-initiative 중간점검. 승인된 프로젝트들을 확인하고 이미 승인된 범위의 대기 중인 일을 진행시킨 뒤 보고해줘.
+$crw-run 중간점검. 승인된 프로젝트들을 확인하고 이미 승인된 범위의 대기 중인 일을 진행시킨 뒤 보고해줘.
 $crw-check [Linear document or project] 설계와 계산 규칙의 모순을 찾아줘.
 $crw-refactor [initiative cycle or project] 완료 근거와 변경 코드를 확인하고 구조적 부채 후보를 3개 이내로 추천해줘. 진단과 계획까지만.
 $crw-refactor 추천한 1번을 crw-add-issue로 Linear 이슈로 만들어줘. 관련 없는 개선은 남겨두고 머지와 배포는 하지 마.
@@ -309,7 +308,7 @@ Designating the management task alone does not start project execution;
 an accompanying execution request continues within its authorized scope.
 
 `crw-define` settles a milestone and its issues before they are registered: the
-top session (today Sion) or the parent (repository session) organizes purpose,
+top session (today Sion) or [the parent](plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels) (repository session, relay role `supervisor`) organizes purpose,
 desired change, success evidence, scope and open decisions, and asks one question
 at a time only when one is really needed. `crw-plan` then decomposes the agreed goal into projects, useful
 milestones, and executable issues in one operation. A request for both chains
@@ -333,8 +332,8 @@ schedule using `crw-check`'s judgment, and reports what it could not verify. It 
 writes nothing and wakes nobody, standalone advice launches no work, and a question during an
 authorized run does not pause that run.
 
-`crw-run-initiative` owns the midpoint check. A bare 중간점검 in a task that leads an initiative
-walks the initiative binding down to its project orchestrators and moves the work that Jun's
+The parent's section of `crw-run` owns the midpoint check. A bare 중간점검 in the parent
+walks the initiative binding down to its children and moves the work that Jun's
 approval already covers, then reports what it actually did; under an explicit report-only,
 read-only, pause or no-contact limit, or without that binding, the request is a `crw-status`
 read. Either way it returns control to whoever is executing and starts nothing that was not

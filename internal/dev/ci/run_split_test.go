@@ -14,17 +14,30 @@ import (
 	"testing"
 )
 
-// The project orchestrator procedure stays in crw-run; the initiative lead's part (initiative supervision and the midpoint
-// check) is crw-run-initiative, which links the references that stay under crw-run. crw-next is part of crw-status and
-// crw-logic part of crw-check. These checks pin that layout (CRW-1218).
+// The child's procedure stays in crw-run; crw-next is part of crw-status and crw-logic part of crw-check (CRW-1218). The
+// initiative procedure and the midpoint check were crw-run-initiative's, the initiative lead's skill; CRW-1352 retired that
+// skill with the layer, and they are the parent's section at the end of crw-run, which links the references below it.
+// These checks pin that layout.
 
 const (
 	runSkillDir        = "plugins/crw/skills/crw-run"
 	runInitiativeDir   = "plugins/crw/skills/crw-run-initiative"
 	runSkillFile       = runSkillDir + "/SKILL.md"
-	runInitiativeSkill = runInitiativeDir + "/SKILL.md"
+	parentSectionTitle = "The parent: the repository session"
 	relaySpecsPath     = "internal/relay/argparse/specs.json"
 )
+
+// runSkillParts is crw-run's SKILL.md split at the parent's section, the last section of the skill: the child's
+// procedure before it and the parent's section from its heading on.
+func runSkillParts(t *testing.T) (child, parent string) {
+	t.Helper()
+	run := splitRead(t, runSkillFile)
+	i := strings.Index(run, "\n## "+parentSectionTitle+"\n")
+	if i < 0 {
+		t.Fatalf("%s has no section %q", runSkillFile, parentSectionTitle)
+	}
+	return run[:i+1], run[i+1:]
+}
 
 func splitRead(t *testing.T, rel string) string {
 	t.Helper()
@@ -50,38 +63,38 @@ func splitLinesContaining(text, needle string) []int {
 	return found
 }
 
-// TestRunInitiativePointerSingleLine: crw-run keeps one line that sends an initiative target to
-// crw-run-initiative, and the initiative procedure itself is not in crw-run.
+// TestRunInitiativePointerSingleLine: crw-run-initiative is gone and nothing in crw-run points at it; the initiative
+// procedure and the midpoint check are crw-run's parent section, which links the references below crw-run, and no
+// heading of the child's procedure holds them.
 func TestRunInitiativePointerSingleLine(t *testing.T) {
-	run := splitRead(t, runSkillFile)
-	// The frontmatter description may name the skill it routes to; the body holds one pointer line.
-	body := run[strings.Index(run[4:], "\n---\n")+8:]
-	if lines := splitLinesContaining(body, "crw-run-initiative"); len(lines) != 1 {
-		t.Errorf("the body of %s names crw-run-initiative on lines %v of the body, want exactly one pointer line", runSkillFile, lines)
-	} else if line := strings.Split(body, "\n")[lines[0]-1]; !strings.Contains(line, "](../crw-run-initiative/SKILL.md)") {
-		t.Errorf("%s:%d does not link ../crw-run-initiative/SKILL.md: %s", runSkillFile, lines[0], line)
+	if splitExists(runInitiativeDir) {
+		t.Errorf("%s exists: the skill was retired (CRW-1352)", runInitiativeDir)
 	}
-	for _, heading := range headingsOf(run) {
+	run := splitRead(t, runSkillFile)
+	if strings.Contains(run, "crw-run-initiative") {
+		t.Errorf("%s still names crw-run-initiative", runSkillFile)
+	}
+	child, parent := runSkillParts(t)
+	if strings.Count(run, "\n## "+parentSectionTitle+"\n") != 1 {
+		t.Errorf("%s holds the parent's section more than once", runSkillFile)
+	}
+	for _, heading := range headingsOf(child) {
 		if strings.Contains(strings.ToLower(heading), "initiative") || strings.Contains(strings.ToLower(heading), "midpoint") {
-			t.Errorf("%s keeps the heading %q: the initiative procedure and the midpoint check are crw-run-initiative's", runSkillFile, heading)
+			t.Errorf("%s keeps the heading %q outside the parent's section", runSkillFile, heading)
 		}
 	}
-	for _, gone := range []string{"Initiative supervision", "initiative-supervision.md", "**Supervise an initiative:**", "**Status only:**", "midpoint-check.md"} {
-		if strings.Contains(run, gone) {
-			t.Errorf("%s still contains %q", runSkillFile, gone)
+	for _, gone := range []string{"**Supervise an initiative:**", "**Status only:**", "midpoint-check.md"} {
+		if strings.Contains(child, gone) {
+			t.Errorf("the child's procedure of %s still contains %q", runSkillFile, gone)
+		}
+	}
+	for _, want := range []string{"](references/initiative-supervision.md)", "](references/midpoint-check.md)", "](../crw-canon/references/hierarchy.md#the-levels)"} {
+		if !strings.Contains(parent, want) {
+			t.Errorf("the parent's section of %s does not link %s", runSkillFile, want)
 		}
 	}
 	if splitExists("plugins/crw/skills/crw-run-project") {
-		t.Error("plugins/crw/skills/crw-run-project exists: crw-run is the project orchestrator skill")
-	}
-	initiative := splitRead(t, runInitiativeSkill)
-	for _, want := range []string{"](../crw-run/references/initiative-supervision.md)", "](../crw-run/references/midpoint-check.md)", "](../crw-run/SKILL.md)"} {
-		if !strings.Contains(initiative, want) {
-			t.Errorf("%s does not link %s", runInitiativeSkill, want)
-		}
-	}
-	if !splitExists(runInitiativeDir + "/agents/openai.yaml") {
-		t.Errorf("%s has no agents/openai.yaml", runInitiativeDir)
+		t.Error("plugins/crw/skills/crw-run-project exists: crw-run is the child's skill")
 	}
 }
 
@@ -124,13 +137,13 @@ func TestRunCommandSequenceUnchanged(t *testing.T) {
 	// CRW-1222: the section on a flow run names dag-coordinator-claim once, ahead of the commands of the issue-child procedure,
 	// to say that this thread never claims the epoch of a plan a run holds (TestRunProjectNeverClaimsRunEpoch); every other
 	// command stays where it was.
-	expectEqual(t, "relay commands of "+runSkillFile, relayCommandSequence(t, splitRead(t, runSkillFile)), append([]string{"dag-coordinator-claim"}, runCommandSequenceBefore...))
-	// The initiative procedure sends a project to its orchestrator; it runs none of the project's release or
-	// close commands itself.
-	for _, command := range relayCommandSequence(t, splitRead(t, runInitiativeSkill)) {
+	child, parent := runSkillParts(t)
+	expectEqual(t, "relay commands of "+runSkillFile, relayCommandSequence(t, child), append([]string{"dag-coordinator-claim"}, runCommandSequenceBefore...))
+	// The parent sends a project to its child; it runs none of the project's release or close commands itself.
+	for _, command := range relayCommandSequence(t, parent) {
 		switch command {
 		case "managed-start", "dag-release", "dag-correct", "dag-accept", "relationship-close-merged":
-			t.Errorf("%s runs the project command %s", runInitiativeSkill, command)
+			t.Errorf("the parent's section of %s runs the project command %s", runSkillFile, command)
 		}
 	}
 }
@@ -190,8 +203,8 @@ func TestAbsorbedSkillsMoved(t *testing.T) {
 	}
 }
 
-// TestMidpointTriggerSingleOwner: the midpoint check has one owner, crw-run-initiative: its trigger word is in
-// that description alone, its procedure is in that skill and one reference, and crw-status holds neither.
+// TestMidpointTriggerSingleOwner: the midpoint check has one owner, the parent's section of crw-run: its trigger word is in
+// crw-run's description alone, its procedure is in that section and one reference, and crw-status holds neither.
 func TestMidpointTriggerSingleOwner(t *testing.T) {
 	descriptions, err := skillDescriptions(repoRoot())
 	if err != nil {
@@ -199,8 +212,8 @@ func TestMidpointTriggerSingleOwner(t *testing.T) {
 	}
 	for name, description := range descriptions {
 		has := strings.Contains(description, "중간점검")
-		if has != (name == "crw-run-initiative") {
-			t.Errorf("%s: the trigger 중간점검 in the description is %v, want it in crw-run-initiative alone", name, has)
+		if has != (name == "crw-run") {
+			t.Errorf("%s: the trigger 중간점검 in the description is %v, want it in crw-run alone", name, has)
 		}
 	}
 	const heading = "Long-run midpoint check"
@@ -216,7 +229,7 @@ func TestMidpointTriggerSingleOwner(t *testing.T) {
 		for _, h := range headingsOf(string(data)) {
 			if h == heading {
 				owners++
-				if filepath.Base(filepath.Dir(path)) != "crw-run-initiative" {
+				if filepath.Base(filepath.Dir(path)) != "crw-run" {
 					t.Errorf("%s holds the heading %q", path, heading)
 				}
 			}
@@ -227,7 +240,10 @@ func TestMidpointTriggerSingleOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	if owners != 1 {
-		t.Errorf("%d SKILL.md files hold the heading %q, want one (crw-run-initiative)", owners, heading)
+		t.Errorf("%d SKILL.md files hold the heading %q, want one (crw-run)", owners, heading)
+	}
+	if _, parent := runSkillParts(t); !strings.Contains(parent, "\n### "+heading+"\n") {
+		t.Errorf("the heading %q is not in the parent's section of %s", heading, runSkillFile)
 	}
 	if splitExists("plugins/crw/skills/crw-status/references/midpoint-check.md") {
 		t.Error("crw-status still has references/midpoint-check.md")
@@ -268,14 +284,14 @@ func checkpointCountNames(t *testing.T) (names map[string]bool, thresholds map[s
 }
 
 // TestInitiativeCheckpointAggregatesPerProjectReports: crw manage checkpoint reports one project at a time (its
-// manage test pins that two projects at ten merges each are both not due), so the initiative lead's midpoint
+// manage test pins that two projects at ten merges each are both not due), so the parent's midpoint
 // procedure must say how the approved projects' reports become one crossing and how one check is recorded for all of
 // them. The count names it sums are the command's real count names, and its thresholds are the command's defaults.
 func TestInitiativeCheckpointAggregatesPerProjectReports(t *testing.T) {
-	skill := splitRead(t, runInitiativeSkill)
+	_, skill := runSkillParts(t)
 	section, ok := reportSectionOf(skill, "Long-run midpoint check")
 	if !ok {
-		t.Fatal("crw-run-initiative has no Long-run midpoint check section")
+		t.Fatal("the parent's section of crw-run has no Long-run midpoint check section")
 	}
 	counts, thresholds := checkpointCountNames(t)
 	for _, name := range []string{"merges_since_checkpoint", "needs_changes_or_split_2h", "pair_eval_p0p1_since_checkpoint", "backlog_net_4h", "milestone_integrated", "running_hours"} {
@@ -334,9 +350,10 @@ var backtickedName = regexp.MustCompile("`([a-z0-9_]+)`")
 // bullet that sums it says the count is signed and that an unmeasured one is judged from the coordination record,
 // because a partial signed sum bounds nothing.
 func TestInitiativeCheckpointSumsTheSignedBacklogBeforeJudging(t *testing.T) {
-	section, ok := reportSectionOf(splitRead(t, runInitiativeSkill), "Long-run midpoint check")
+	_, parent := runSkillParts(t)
+	section, ok := reportSectionOf(parent, "Long-run midpoint check")
 	if !ok {
-		t.Fatal("crw-run-initiative has no Long-run midpoint check section")
+		t.Fatal("the parent's section of crw-run has no Long-run midpoint check section")
 	}
 	_, thresholds := checkpointCountNames(t)
 	threshold := 0
@@ -406,8 +423,8 @@ func TestInitiativeCheckpointSumsTheSignedBacklogBeforeJudging(t *testing.T) {
 	}
 }
 
-// TestEntryPointsNameTheSkillOwners: the planning owner table sends an initiative's execution to crw-run-initiative, and the
-// plugin's user-facing description names the initiative executor and no deleted skill (CRW-1218 d3).
+// TestEntryPointsNameTheSkillOwners: the planning owner table sends an initiative's execution to the parent's section of
+// crw-run, and the plugin's user-facing description names the parent's work and no deleted skill (CRW-1218 d3, CRW-1352).
 func TestEntryPointsNameTheSkillOwners(t *testing.T) {
 	integrations := "plugins/crw/skills/crw-plan/references/integrations.md"
 	found := false
@@ -416,8 +433,8 @@ func TestEntryPointsNameTheSkillOwners(t *testing.T) {
 			continue
 		}
 		found = true
-		if !strings.Contains(line, "](../../crw-run-initiative/SKILL.md)") || strings.Contains(line, "](../../crw-run/SKILL.md)") {
-			t.Errorf("%s: the initiative execution row does not name crw-run-initiative as its owner: %s", integrations, line)
+		if !strings.Contains(line, "](../../crw-run/SKILL.md#the-parent-the-repository-session)") {
+			t.Errorf("%s: the initiative execution row does not name the parent's section of crw-run as its owner: %s", integrations, line)
 		}
 	}
 	if !found {
@@ -435,8 +452,8 @@ func TestEntryPointsNameTheSkillOwners(t *testing.T) {
 	if long == "" {
 		t.Fatal("plugins/crw/.codex-plugin/plugin.json has no interface.longDescription")
 	}
-	if !strings.Contains(long, "Run Initiative") {
-		t.Error("the plugin longDescription does not name the initiative executor")
+	if strings.Contains(long, "Run Initiative") || !strings.Contains(long, "the parent's project order") {
+		t.Error("the plugin longDescription still advertises Run Initiative, or does not name the parent's work in Run")
 	}
 	if strings.Contains(long, "Logic") {
 		t.Error("the plugin longDescription still advertises Logic, a skill that was merged into Check")
@@ -447,7 +464,7 @@ func TestEntryPointsNameTheSkillOwners(t *testing.T) {
 var pinnedRunPath = regexp.MustCompile(`crw-run/((?:references|scripts)/[A-Za-z0-9_./*-]*[A-Za-z0-9*]|SKILL\.md)`)
 
 // TestRunSplitPinnedPathsResolve: the crw-run paths the Go code pins still resolve (no path moved), the links crw-run
-// must keep resolve, and crw-run-initiative links its references below crw-run.
+// must keep resolve, and the parent's section links its references below crw-run.
 func TestRunSplitPinnedPathsResolve(t *testing.T) {
 	root := repoRoot()
 	pinned := []string{
@@ -493,27 +510,25 @@ func TestRunSplitPinnedPathsResolve(t *testing.T) {
 			t.Errorf("%s: the anchor #%s does not resolve in %s (%v)", runSkillFile, fragment, file, err)
 		}
 	}
-	links := regexp.MustCompile(`\]\((\.\./crw-run/[^)#]+)(#[^)]*)?\)`).FindAllStringSubmatch(splitRead(t, runInitiativeSkill), -1)
+	_, parent := runSkillParts(t)
+	links := regexp.MustCompile(`\]\((references/[^)#]+)(#[^)]*)?\)`).FindAllStringSubmatch(parent, -1)
 	if len(links) == 0 {
-		t.Errorf("%s links nothing below ../crw-run/", runInitiativeSkill)
+		t.Errorf("the parent's section of %s links nothing below references/", runSkillFile)
 	}
 	for _, m := range links {
-		target := filepath.Join(root, runInitiativeDir, filepath.FromSlash(m[1]))
+		target := filepath.Join(root, runSkillDir, filepath.FromSlash(m[1]))
 		if _, err := os.Stat(target); err != nil {
-			t.Errorf("%s links %s, which does not exist", runInitiativeSkill, m[1])
+			t.Errorf("the parent's section links %s, which does not exist", m[1])
 			continue
 		}
 		if m[2] != "" {
 			if anchors, err := anchorsOf(cache, target); err != nil || !anchors[strings.TrimPrefix(m[2], "#")] {
-				t.Errorf("%s: the anchor %s does not resolve in %s", runInitiativeSkill, m[2], m[1])
+				t.Errorf("the parent's section: the anchor %s does not resolve in %s", m[2], m[1])
 			}
 		}
 	}
 	// references/ and scripts/ stay below crw-run.
 	for _, dir := range []string{"references", "scripts"} {
-		if splitExists(runInitiativeDir + "/" + dir) {
-			t.Errorf("%s/%s exists: references and scripts stay below crw-run", runInitiativeDir, dir)
-		}
 		if !splitExists(runSkillDir + "/" + dir) {
 			t.Errorf("%s/%s is gone", runSkillDir, dir)
 		}
