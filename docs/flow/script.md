@@ -883,7 +883,10 @@ any row is written. `crw flow shadow` replays either from the trace and names th
   subagent); `close` steps (`steps/<call>/close-a<n>-<agent>.json`, one file per subagent, so two closes of one attempt never
   overwrite each other) name a subagent to close. A step whose packet or file cannot be written (a full disk) was sent to nobody:
   the run writes the flow warning `step_unwritten` (`marker`, `k`, `attempt`, `action`, `input_state: not_delivered`, `error`)
-  once and writes the step again until it can or the turn ends; the call is never ended unknown for it.
+  and writes the step again at the poll until it can or the turn ends; the call is never ended unknown for it. A failure that does
+  not pass shows how long in the record: the warning is written at the 1st, 10th, 100th, ... failure with `failures` and the
+  `first_at` and `last_at` times, and a closing one with `written: false` when the turn ends unwritten, or `written: true` when a
+  step whose warning repeated is written after a failure the rows did not show.
 - The spawn message is short; the packet holds the rest:
 
   ```
@@ -917,7 +920,8 @@ any row is written. `crw flow shadow` replays either from the trace and names th
   effort undecided is bound on its model alone: `thread_started` records the effort the host applied, with `effort_unchecked`, as
   the call's pair. A continuation is judged by the same rule: only the decided parts of the role's pair are compared with the pair
   the call's subagent was bound with, so a call bound `pair_unchecked` or `effort_unchecked` continues on a new subagent whose bind
-  records the pair it runs, and a decided part that differs is refused (`pair_refused`). While a step waits, the run also looks the
+  records the pair it runs, and a decided part that differs is refused (`pair_refused`); an explicit `effort` on a continuation of a
+  role whose effort is undecided is compared with the effort the call's subagent ran. While a step waits, the run also looks the
   marker up on the host - the subagent that carries it for a spawn, the turn that carries it on the subagent for a `send_input` -
   so a subagent spawned, or a repair sent, and never reported is bound all the same.
 - A bind writes `thread_started` (the subagent's `thread_id`, the host-read `model` and `effort`, `cwd` P, `host_cwd`,
@@ -971,7 +975,7 @@ any row is written. `crw flow shadow` replays either from the trace and names th
   | --- | --- |
   | `prepared` | publishes the first step (the directory an earlier process made is the call's) |
   | `step_published` | answers first a dispatch report the owner wrote that no process answered (it waits in the inbox), then looks the step up on the host - the subagent that carries the marker for a spawn, the marker turn on the subagent for a `send_input` (a repair is never sent twice) - and binds what it finds; else publishes the same step again |
-  | `thread_started` | adopts the subagent the row names and writes only its `turn_started` (nothing is spawned or published again; one the host does not know for `LostAfter` loses the attempt), then reads it as after `turn_started` |
+  | `thread_started` | adopts the subagent the row names and writes only its `turn_started` (nothing is spawned or published again; one the host does not know, or shows `notLoaded` or `systemError`, for `LostAfter` loses the attempt, and the gate decides the next), then reads it as after `turn_started` |
   | `turn_started` | retracts the step file the dead process left and reads the bound subagent: harvests a completed turn, waits for a running one, loses a lost one |
   | `session_attempt_lost` | closes the old subagent and spawns the next attempt |
 
@@ -998,7 +1002,7 @@ any row is written. `crw flow shadow` replays either from the trace and names th
 | terminal rows | as for any call |
 | `session_wake` (flow row) | a wake of the owner thread the run staged: `batch`, `wake_id`, `renotify`, `ops`, `owner`, `owner_status`, `waiting_seconds`, `staged` (and `error`) |
 | `escalation` (flow row) | `reason: session_unresponsive`: the steps waited `UnresponsiveAfter` without a dispatched report (`owner`, `ops`, `batch`, `waiting_seconds`); the run goes on |
-| `step_unwritten` (flow row) | a step whose packet or file could not be written: nothing was sent (`input_state: not_delivered`, `marker`, `error`); the run writes it again |
+| `step_unwritten` (flow row) | a step whose packet or file could not be written: nothing was sent (`input_state: not_delivered`, `marker`, `error`, `failures`, `first_at`, `last_at`, and `written` on the closing row); the run writes it again |
 
 ### The owner's commands
 

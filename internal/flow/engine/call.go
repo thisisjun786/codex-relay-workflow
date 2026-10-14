@@ -296,9 +296,17 @@ func (s *scriptVM) planResume(p *callPlan, refuse func(reason, detail string)) {
 	}
 	// A fresh call records a differing effort and runs on its role's pair; a continuation cannot, because the thread's
 	// pair is already fixed: naming another effort is a conflict with what it inherits.
-	if ef := p.opts.Effort; ef != "" && ef != spec.Pair.Effort {
-		refuse(ReasonPairRefused, "effort "+ef+" is not the thread's effort "+spec.Pair.Effort)
-		return
+	// A role whose effort is undecided leaves it to the host: the thread's effort is the one the host applied (its configured pair),
+	// so an explicit effort is compared with that, and with nothing when the host read none back (CRW-1392).
+	if ef := p.opts.Effort; ef != "" {
+		threadEffort := spec.Pair.Effort
+		if threadEffort == "" {
+			threadEffort = info.Configured.Effort
+		}
+		if threadEffort != "" && ef != threadEffort {
+			refuse(ReasonPairRefused, "effort "+ef+" is not the thread's effort "+threadEffort)
+			return
+		}
 	}
 	p.inherited = append(p.inherited, "pair")
 	if p.node != "" && p.node != info.Node {

@@ -268,17 +268,20 @@ func (o *fakeOrch) take(st Step) {
 		return
 	}
 	packet, _ := os.ReadFile(st.Packet)
+	// the hooks are read under the lock: a test that swaps them while the orchestrator runs (runDeath, between its two processes) swaps
+	// them under it too (CRW-1392)
 	o.mu.Lock()
 	o.n++
 	n := o.n
+	answer, onSpawn, onInput := o.answer, o.onSpawn, o.onInput
 	o.mu.Unlock()
 	var ans orchAnswer
 	turns := 0
 	if st.Action == StepSendInput {
 		turns = len(o.host.agent(st.AgentID).turns)
 	}
-	if o.answer != nil {
-		ans = o.answer(st, string(packet), turns)
+	if answer != nil {
+		ans = answer(st, string(packet), turns)
 	}
 	if ans.text == "" && ans.fail == "" && !ans.hang && !ans.lose {
 		ans.text = defaultMessage(st.Message, packetSchema(string(packet)))
@@ -341,11 +344,11 @@ func (o *fakeOrch) take(st Step) {
 	} else {
 		finish()
 	}
-	if o.onSpawn != nil && st.Action == StepSpawn {
-		o.onSpawn(st, agent)
+	if onSpawn != nil && st.Action == StepSpawn {
+		onSpawn(st, agent)
 	}
-	if o.onInput != nil && st.Action == StepSendInput {
-		o.onInput(st, agent)
+	if onInput != nil && st.Action == StepSendInput {
+		onInput(st, agent)
 	}
 	if ans.noDispatch {
 		return

@@ -689,20 +689,22 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 	}
 	// a step that cannot be written (a full disk) was sent to nobody: it is recorded as not dispatched and written again, and the
 	// call waits as for any step (CRW-1367; never an unknown outcome or a hold of the node)
-	for warned := false; ; {
+	// A failure that does not pass (EACCES on the steps directory) is still written again at the poll, and the record shows how long:
+	// the warning is written at the 1st, 10th, 100th, ... failure with the count and the first and last time, and a closing one when
+	// the step is written or the turn ends (CRW-1392).
+	unwritten := stepUnwritten{c: c, k: k, attempt: s.attempt, marker: marker, action: action}
+	for {
 		_, err := sc.Bus.WriteFile(c.id, packetName, []byte(packet))
 		if err == nil {
 			err = sc.Bus.Publish(step)
 		}
 		if err == nil {
+			unwritten.close(true)
 			break
 		}
-		if !warned {
-			warned = true
-			e.j.Append(Event{RunID: e.runID, Kind: KindFlow, CallID: c.id, Path: c.path.id, Position: c.position, Op: "agent", Label: c.label, Event: EvStepUnwritten,
-				Data: map[string]any{"call_id": c.id, "node": p.node, "k": k, "attempt": s.attempt, "marker": marker, "action": action, "input_state": "not_delivered", "error": err.Error()}})
-		}
+		unwritten.failed(err, e.cfg.Now())
 		if sc.wait(turnCtx, sc.poll()) != nil && turnCtx.Err() != nil {
+			unwritten.close(false)
 			out, _, err := c.sessionStop(ctx)
 			return &out, CallResult{}, false, err
 		}
@@ -730,6 +732,48 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 			return &out, CallResult{}, false, err
 		}
 	}
+}
+
+// stepUnwritten is the record of a step the bus could not write: step_unwritten flow rows (input_state not_delivered, nothing was
+// sent) at the 1st, 10th, 100th, ... failure, each with the failures so far and the first and last time, and a closing row: `written:
+// false` when the turn ends with the step unwritten, `written: true` when a step whose record had repeated (ten failures or more) is
+// written after a failure the rows did not show. A failure of a few polls is told by its first row.
+type stepUnwritten struct {
+	c               *callRun
+	k, attempt      int
+	marker, action  string
+	failures, shown int
+	first, last     time.Time
+	lastErr         string
+}
+
+func (u *stepUnwritten) failed(err error, now time.Time) {
+	u.failures++
+	if u.failures == 1 {
+		u.first = now
+	}
+	u.last, u.lastErr = now, err.Error()
+	if u.failures == 1 || u.failures == u.shown*10 {
+		u.row(nil)
+	}
+}
+
+func (u *stepUnwritten) close(written bool) {
+	if !written && u.failures > 0 || written && u.shown >= 10 && u.failures > u.shown {
+		u.row(&written)
+	}
+}
+
+func (u *stepUnwritten) row(written *bool) {
+	c := u.c
+	e := c.e
+	u.shown = u.failures
+	data := map[string]any{"call_id": c.id, "node": c.plan.node, "k": u.k, "attempt": u.attempt, "marker": u.marker, "action": u.action, "input_state": "not_delivered",
+		"error": u.lastErr, "failures": u.failures, "first_at": u.first.UTC().Format(time.RFC3339Nano), "last_at": u.last.UTC().Format(time.RFC3339Nano)}
+	if written != nil {
+		data["written"] = *written
+	}
+	e.j.Append(Event{RunID: e.runID, Kind: KindFlow, CallID: c.id, Path: c.path.id, Position: c.position, Op: "agent", Label: c.label, Event: EvStepUnwritten, Data: data})
 }
 
 // sessionTaken looks for what took a step a dead process published before this process shows it again: a report the owner wrote
@@ -784,8 +828,8 @@ func (c *callRun) sessionFind(ctx context.Context, k int, op, marker, action str
 
 // sessionAdopt goes on with an attempt whose subagent a process bound and then died before it wrote turn_started: the subagent its
 // thread_started row records is the attempt's, so nothing is spawned or published again and only turn_started is written, as a
-// send_input bind writes it (one thread_started per attempt). A recorded subagent the host does not know on reads LostAfter apart
-// loses the attempt, and the next attempt is spawned.
+// send_input bind writes it (one thread_started per attempt). A recorded subagent the host does not know, or shows notLoaded or
+// systemError, for LostAfter loses the attempt, as the harvest judges a bound one; the gate decides the next attempt, which spawns.
 func (c *callRun) sessionAdopt(turnCtx, ctx context.Context, k int, op, input string, repair bool, st *sessionStage) (*TurnOutcome, CallResult, bool, error) {
 	s, sc, now := c.sess, c.e.cfg.Session, c.e.cfg.Now
 	s.agent, s.rollout, s.pair, s.seen = st.agent, st.rollout, st.pair, Tokens{}
@@ -801,15 +845,28 @@ func (c *callRun) sessionAdopt(turnCtx, ctx context.Context, k int, op, input st
 		if _, ok := c.sessionVerify(turnCtx, s.agent, k, op, marker, StepSendInput); ok {
 			return nil, CallResult{}, false, nil
 		}
-		_, err := sc.Host.ReadAgent(turnCtx, s.agent)
+		// the subagent is gone as the harvest judges a bound one (hostGone): unknown to the host, or a thread it shows notLoaded or
+		// systemError (CRW-1392)
+		ag, err := sc.Host.ReadAgent(turnCtx, s.agent)
+		status := ""
 		switch {
-		case !errors.Is(err, ErrSessionAgentNotFound):
+		case errors.Is(err, ErrSessionAgentNotFound):
+			status = "notFound"
+		case err == nil && hostGone(ag.Status):
+			status = ag.Status
+		}
+		switch {
+		case status == "":
 			gone = time.Time{}
 		case gone.IsZero():
 			gone = now()
 		case now().Sub(gone) >= sc.lostAfter():
 			s.boundK = k
-			c.sessionLose(&sessionLoss{reason: fmt.Sprintf("the subagent bound before the restart has been unknown to the host for %s", sc.lostAfter()), hostStatus: "notFound"})
+			c.sessionLose(&sessionLoss{reason: fmt.Sprintf("the subagent bound before the restart has been %s on the host for %s", status, sc.lostAfter()), hostStatus: status})
+			// the next attempt is a new request: the gate decides it, as after a loss the harvest found (CRW-1392)
+			if res, stop := c.gate(ctx); stop {
+				return nil, res, true, nil
+			}
 			return c.sessionBind(turnCtx, ctx, k, op, input, repair)
 		}
 		_ = sc.wait(turnCtx, sc.poll())
