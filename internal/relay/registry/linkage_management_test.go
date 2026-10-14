@@ -198,8 +198,10 @@ func TestLeadRegistrationWritesTheManagementEdge(t *testing.T) {
 }
 
 // TestLeadRegistrationSecondManagementTakesOnlyByHandover: an initiative has one upward execution
-// edge, so a second management session registering the same lead is refused with link_conflict and
-// the first edge and binding stand; the seat's handover moves the edge with it.
+// edge, so a second management session registering the same lead writes no second edge: the first
+// edge stands and only the seat's handover moves it. A registration is reversible, so it is not
+// refused (CRW-1361, Jun's rule: warn and record): it exits 0 with the lead's binding, the answer warns
+// under managementLinkSkipped and a management_link_skipped journal row records the conflict once.
 func TestLeadRegistrationSecondManagementTakesOnlyByHandover(t *testing.T) {
 	s := newStoreSeat(t)
 	t.Setenv("CODEX_THREAD_ID", "")
@@ -208,17 +210,48 @@ func TestLeadRegistrationSecondManagementTakesOnlyByHandover(t *testing.T) {
 	if code, out := s.bindLead("INI-1", "01lead1", "01mgmtA"); code != 0 {
 		t.Fatalf("first registration: exit %d %q", code, out)
 	}
-	s.mustRefuse("link_conflict", "linkage-bind", "--role", "supervisor", "--scope", "INI-1", "--task", "01lead1", "--host", "host", "--creator", "01mgmtB")
 	edges := s.managementEdges("INI-1")
-	if len(edges) != 1 || edges[0].Text("upper_key") != "01mgmtA" {
-		t.Fatalf("edges above INI-1 %v after the refused second registration", edges)
+	code, out := s.bindLead("INI-1", "01lead1", "01mgmtB")
+	if code != 0 {
+		t.Fatalf("a second management session's registration: exit %d %q, want exit 0 with a warning", code, out)
 	}
-	if conflicts := s.rows("SELECT reason FROM linkage_conflicts WHERE scope_kind = 'initiative' AND scope_key = 'INI-1'"); len(conflicts) != 1 || conflicts[0].Text("reason") != "link_conflict" {
-		t.Fatalf("conflict record %v", conflicts)
+	var answer map[string]any
+	if err := json.Unmarshal([]byte(out), &answer); err != nil {
+		t.Fatal(err)
 	}
-	// The refusal committed only its conflict row: no edge from the second seat exists anywhere.
+	warning, _ := answer["managementLinkSkipped"].(map[string]any)
+	if answer["taskId"] != "01lead1" || answer["scopeKind"] != "initiative" || answer["status"] != "active" || warning == nil ||
+		warning["reason"] != "link_conflict" || warning["standing"] != edges[0].Text("link_id") || warning["seat"] != "01mgmtB" || warning["creator"] != "01mgmtB" {
+		t.Fatalf("the second registration answered %v, want the lead's live binding and the warning naming the standing edge", answer)
+	}
+	if _, linked := answer["managementLink"]; linked {
+		t.Fatalf("a skipped edge is answered as written: %v", answer)
+	}
+	if now := s.managementEdges("INI-1"); len(now) != 1 || now[0].Text("upper_key") != "01mgmtA" || now[0].Text("revision") != edges[0].Text("revision") {
+		t.Fatalf("edges above INI-1 %v after the second registration, want the first edge untouched", now)
+	}
+	// No edge from the second seat exists anywhere, and a warned registration is no refusal.
 	if fromB := s.rows("SELECT link_id FROM scope_links WHERE upper_kind = 'management' AND upper_key = '01mgmtB'"); len(fromB) != 0 {
-		t.Fatalf("the refused registration left edges %v", fromB)
+		t.Fatalf("the second registration left edges %v", fromB)
+	}
+	if conflicts := s.rows("SELECT reason FROM linkage_conflicts WHERE scope_kind = 'initiative' AND scope_key = 'INI-1'"); len(conflicts) != 0 {
+		t.Fatalf("a warned registration left refusal records %v", conflicts)
+	}
+	// The record: one management_link_skipped row naming the standing edge, kept once over a replay.
+	if code, out := s.bindLead("INI-1", "01lead1", "01mgmtB"); code != 0 {
+		t.Fatalf("replay: exit %d %q", code, out)
+	}
+	skipped := s.rows("SELECT subject, detail FROM journal WHERE kind = 'management_link_skipped'")
+	if len(skipped) != 1 {
+		t.Fatalf("management_link_skipped journal %v, want one row for the two registrations", skipped)
+	}
+	var detail map[string]any
+	if err := json.Unmarshal([]byte(skipped[0].Text("detail")), &detail); err != nil {
+		t.Fatal(err)
+	}
+	if detail["seat"] != "01mgmtB" || detail["standing"] != edges[0].Text("link_id") || detail["standingUpperKind"] != managementKind ||
+		detail["standingUpperKey"] != "01mgmtA" || detail["standingUpperTaskId"] != "01mgmtA" || detail["scopeKind"] != "initiative" || detail["reason"] != "link_conflict" {
+		t.Fatalf("management_link_skipped detail %v", detail)
 	}
 
 	s.mustHandover("supervisor", "01mgmtA", managementKind, "01mgmtA", "01mgmtNew")

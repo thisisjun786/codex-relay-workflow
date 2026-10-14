@@ -613,7 +613,12 @@ func (l linkage) applyBindingPlan(ctx context.Context, b *bindingPlan, status, a
 		return journal(ctx, l.r.Store, "scope_bound", b.id, contract.OrderedObject{{Key: "role", Value: b.role}, {Key: "scopeKind", Value: b.scopeKind},
 			{Key: "scopeKey", Value: b.scopeKey}, {Key: "taskId", Value: b.endpoint.TaskID}, {Key: "revision", Value: 1}}, at)
 	case "reactivate":
-		if _, err := q.ExecContext(ctx, "UPDATE scope_bindings SET status = ?, updated_at = ?, host_id = ?,  cwd = ?, cxc_session = ? WHERE binding_id = ?",
+		// A reactivated row is live again, so it is superseded by nothing: a store seat its holder laid
+		// down for a management seat (retireStoreSeat) and binds again after handing that seat over would
+		// otherwise answer active while every reader of a live seat (superseded_by IS NULL) skips it, and
+		// StoreScopeSupervisor would answer nobody (CRW-1361). bindingRefusal has already refused a rebind
+		// beside a live owner, so nothing live supersedes the row.
+		if _, err := q.ExecContext(ctx, "UPDATE scope_bindings SET status = ?, superseded_by = NULL, updated_at = ?, host_id = ?,  cwd = ?, cxc_session = ? WHERE binding_id = ?",
 			status, at, b.endpoint.HostID, b.endpoint.Cwd, b.endpoint.CXCSession, b.id); err != nil {
 			return err
 		}
