@@ -9,11 +9,13 @@ import (
 	"testing"
 
 	"golang.org/x/sys/unix"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 )
 
 func TestMain(m *testing.M) {
 	Helper()
-	os.Exit(m.Run())
+	testsupport.Main(m)
 }
 
 // The flock a helper holds lasts as long as the helper lives, whatever its garbage collector
