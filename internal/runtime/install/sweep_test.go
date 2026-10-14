@@ -102,17 +102,9 @@ func TestAnInterruptedWaitRemovesNothing(t *testing.T) {
 		},
 	} {
 		_, release := golden.Spawn(t, "", h.record+record.PromotionLockSuffix)
-		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-		done := make(chan record.Object, 1)
-		codes := make(chan int, 1)
-		start := time.Now()
-		go func() { result, code := run(ctx); done <- result; codes <- code }()
-		time.Sleep(time.Second)
-		release()
-		result, code := <-done, <-codes
-		cancel()
+		result, code := interruptedWhileHeld(t, h.record+record.PromotionLockSuffix, release, run)
 		if code != install.Refused || !strings.Contains(text(at(result, "refused")), "interrupted") {
-			t.Fatalf("%s: exit %d after %v\n%s", label, code, time.Since(start), golden.Canon(result))
+			t.Fatalf("%s: exit %d\n%s", label, code, golden.Canon(result))
 		}
 		if _, err := os.Stat(filepath.Join(old, "bin", "crw")); err != nil || !listed(h.installsOf(t), old) {
 			t.Fatalf("%s: an interrupted run removed the directory or its entries", label)
