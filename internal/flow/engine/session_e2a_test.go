@@ -2,6 +2,8 @@ package engine
 
 import (
 	"context"
+	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -174,4 +176,49 @@ func (j *interruptThenLose) Append(e Event) Event {
 		}
 	}
 	return out
+}
+
+// B2: a repair turn sent to the open subagent records the answer it repairs, so a resumed process whose repair attempt is lost
+// gives the next attempt's packet "## Your previous answer", from the bound stage and from the lost stage alike.
+func TestSessionRepairKeepsThePreviousAnswerAcrossARestart(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		stop func(Event) bool
+		// lose loses the repair attempt in the first process (it records session_attempt_lost before it dies)
+		lose bool
+	}{
+		{name: "repair turn_started", stop: deathAtK(EvTurnStarted, 2)},
+		{name: "repair attempt lost", stop: deathAt(EvSessionAttemptLost), lose: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			k := newE2aKit(t, tc.stop)
+			k.orch.answer = func(st Step, _ string, _ int) orchAnswer {
+				switch {
+				case st.K == 1:
+					return orchAnswer{text: "this is not JSON"}
+				case k.phaseNow() == 1 && tc.lose:
+					return orchAnswer{lose: true}
+				case k.phaseNow() == 1:
+					return orchAnswer{hang: true}
+				}
+				return orchAnswer{edit: "P:" + st.Op}
+			}
+			k.die(e2aBuild)
+			k.host.set("agent-1", func(a *fakeAgent, _ *SessionTurn) { a.gone = true })
+			res := k.resume(e2aBuild)
+			got := value[[]any](t, res)
+			rows := k.rowsOf("exe")
+			if got[0] != "completed" {
+				t.Fatalf("the resumed call %v; rows %s", got, eventsOf(rows))
+			}
+			spawns := k.orch.spawned()
+			if len(spawns) != 2 || spawns[1].K != 2 || spawns[1].Attempt != 2 {
+				t.Fatalf("spawns %+v, want the repair turn's second attempt", spawns)
+			}
+			packet, _ := os.ReadFile(spawns[1].Packet)
+			if !strings.Contains(string(packet), "## Your previous answer\n\nthis is not JSON\n") {
+				t.Errorf("the repair attempt after the restart lost the answer it repairs:\n%s", packet)
+			}
+		})
+	}
 }

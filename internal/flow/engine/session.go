@@ -382,6 +382,7 @@ func (c *callRun) sessionRecover(ctx context.Context) (res CallResult, stop bool
 		_ = bus.Retract(c.id, st.k, st.attempt)
 		s.attempt = st.attempt + 1
 		s.note = c.lostNote(st.agent)
+		s.lastText = st.prev
 		c.sessionClose(st.agent, st.attempt)
 		s.agent = ""
 	case stageBound:
@@ -390,6 +391,7 @@ func (c *callRun) sessionRecover(ctx context.Context) (res CallResult, stop bool
 		// left is retracted here (CRW-1367)
 		_ = bus.Retract(c.id, st.k, st.attempt)
 		s.attempt, s.agent, s.turn, s.boundK, s.rollout, s.pair = st.attempt, st.agent, st.turn, st.k, st.rollout, st.pair
+		s.lastText = st.prev
 		s.dropCurrentPair()
 		if st.action == StepSendInput {
 			c.sessionBaseline(st)
@@ -656,7 +658,9 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 		if s.note != "" {
 			data["note"] = s.note
 		}
-		if action == StepSpawn && repair && s.lastText != "" {
+		if repair && s.lastText != "" {
+			// the answer a repair turn repairs, on a send_input too: a later attempt of the turn (a new subagent after a restart) names it
+			// in its packet (CRW-1384)
 			data["previous_answer"] = s.lastText
 		}
 		c.event(EvStepPublished, data)

@@ -875,7 +875,8 @@ any row is written. `crw flow shadow` replays either from the trace and names th
   its parent's, and is recorded only as `host_cwd`.
 - A turn is a step. Its intent row `step_published` (k, `op` `<call>/t<k>`, `marker` `<call>/t<k>-a<n>`, `attempt` n, `action`,
   `input`, `input_digest`, `packet` and `packet_digest`, `role`, `agent_type`, `model`, `effort`, `workspace` P, `agent_id` of a
-  `send_input`, the `note` about earlier attempts, and for a `send_input` `tokens_seen` and `call_tokens`, what the turns before it
+  `send_input`, the `note` about earlier attempts, `previous_answer`, the answer a repair turn repairs (a later attempt of the turn on a new
+  subagent names it in its packet, after a restart too), and for a `send_input` `tokens_seen` and `call_tokens`, what the turns before it
   counted) is committed before the packet `steps/<call>/packet-t<k>-a<n>.md` and the step
   `steps/<call>/t<k>-a<n>.json` are written under `<state>/flow/<run>/` (`engine.FileStepBus`). A step is `spawn` (a first turn, the
   attempt after a lost one, a continuation, a repair whose subagent is closed) or `send_input` (the repair turn on the open
