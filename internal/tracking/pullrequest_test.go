@@ -39,7 +39,7 @@ func TestOpenPullRequestPostsHeadBaseTitleAndTheCarriedIssues(t *testing.T) {
 		writeJSON(w, 201, pullJSON(21, "open", false, map[string]any{"body": sent["body"]}))
 	})
 	pr, err := newClient(t, f).OpenPullRequest(bg, NewPullRequest{Head: "crw/m1", Base: "dev", Title: "milestone M1", Body: "Two issues.\n",
-		Issues: []Ref{{"o/r", 10}, {"o/r", 11}, {"o/r", 10}}})
+		Issues: []Ref{{Repo: "o/r", Number: 10}, {Repo: "o/r", Number: 11}, {Repo: "o/r", Number: 10}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,8 +49,8 @@ func TestOpenPullRequestPostsHeadBaseTitleAndTheCarriedIssues(t *testing.T) {
 	if body, _ := sent["body"].(string); body != "Two issues.\n\nCarries: o/r#10, o/r#11" {
 		t.Errorf("body %q: the issues it carries are named once each on a Carries: line after the text", body)
 	}
-	want := PullRequest{Ref: Ref{"o/r", 21}, URL: "https://github.com/o/r/pull/21", Title: "milestone M1", Body: "Two issues.\n\nCarries: o/r#10, o/r#11",
-		State: StateOpen, HeadRef: "crw/m1", HeadSHA: strings.Repeat("a", 40), HeadRepo: "o/r", BaseRef: "dev", Issues: []Ref{{"o/r", 10}, {"o/r", 11}}}
+	want := PullRequest{Ref: Ref{Repo: "o/r", Number: 21}, URL: "https://github.com/o/r/pull/21", Title: "milestone M1", Body: "Two issues.\n\nCarries: o/r#10, o/r#11",
+		State: StateOpen, HeadRef: "crw/m1", HeadSHA: strings.Repeat("a", 40), HeadRepo: "o/r", BaseRef: "dev", Issues: []Ref{{Repo: "o/r", Number: 10}, {Repo: "o/r", Number: 11}}}
 	if !reflect.DeepEqual(pr, want) {
 		t.Errorf("OpenPullRequest = %+v\nwant %+v", pr, want)
 	}
@@ -62,7 +62,7 @@ func TestOpenPullRequestPostsHeadBaseTitleAndTheCarriedIssues(t *testing.T) {
 func TestOpenPullRequestRefusesWhatItCannotSend(t *testing.T) {
 	f := newFake(t)
 	g := newClient(t, f)
-	ok := NewPullRequest{Head: "crw/m1", Base: "dev", Title: "t", Issues: []Ref{{"o/r", 1}}}
+	ok := NewPullRequest{Head: "crw/m1", Base: "dev", Title: "t", Issues: []Ref{{Repo: "o/r", Number: 1}}}
 	for name, in := range map[string]NewPullRequest{
 		"no head":          {Base: "dev", Title: "t", Issues: ok.Issues},
 		"no base":          {Head: "crw/m1", Title: "t", Issues: ok.Issues},
@@ -75,7 +75,7 @@ func TestOpenPullRequestRefusesWhatItCannotSend(t *testing.T) {
 		"no title":         {Head: "crw/m1", Base: "dev", Title: " ", Issues: ok.Issues},
 		"two-line title":   {Head: "crw/m1", Base: "dev", Title: "a\nb", Issues: ok.Issues},
 		"no issue":         {Head: "crw/m1", Base: "dev", Title: "t"},
-		"an invalid issue": {Head: "crw/m1", Base: "dev", Title: "t", Issues: []Ref{{"o/r", 0}}},
+		"an invalid issue": {Head: "crw/m1", Base: "dev", Title: "t", Issues: []Ref{{Repo: "o/r", Number: 0}}},
 	} {
 		if _, err := g.OpenPullRequest(bg, in); !errors.Is(err, ErrInvalidPullRequest) {
 			t.Errorf("%s: error = %v; want ErrInvalidPullRequest", name, err)
@@ -89,14 +89,14 @@ func TestOpenPullRequestRefusesWhatItCannotSend(t *testing.T) {
 func TestPullRequestReadsStateHeadBaseAndCarriedIssues(t *testing.T) {
 	f := newFake(t)
 	f.reply("GET /repos/o/r/pulls/21", 200, pullJSON(21, "closed", true, map[string]any{"body": "x\n- Carries: #10, other/repo#3\n```\nCarries: #99\n```"}))
-	pr, err := newClient(t, f).PullRequest(bg, Ref{"o/r", 21})
+	pr, err := newClient(t, f).PullRequest(bg, Ref{Repo: "o/r", Number: 21})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if pr.State != StateClosed || !pr.Merged || pr.HeadSHA != strings.Repeat("a", 40) || pr.BaseRef != "dev" || pr.HeadRef != "crw/m1" {
 		t.Errorf("PullRequest = %+v", pr)
 	}
-	if want := []Ref{{"o/r", 10}, {"other/repo", 3}}; !reflect.DeepEqual(pr.Issues, want) {
+	if want := []Ref{{Repo: "o/r", Number: 10}, {Repo: "other/repo", Number: 3}}; !reflect.DeepEqual(pr.Issues, want) {
 		t.Errorf("Issues = %v; want %v (a fenced line is not read)", pr.Issues, want)
 	}
 }
@@ -148,11 +148,11 @@ func TestChecksJudgeTheCheckRunsAndStatusesOfTheHead(t *testing.T) {
 				}
 				writeJSON(w, 200, map[string]any{"state": "pending", "statuses": st})
 			})
-			got, err := newClient(t, f).Checks(bg, Ref{"o/r", 21})
+			got, err := newClient(t, f).Checks(bg, Ref{Repo: "o/r", Number: 21})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got.State != c.want || got.Head != head || got.PullRequest != (Ref{"o/r", 21}) || len(got.Checks) != len(c.runs)+len(c.statuses) {
+			if got.State != c.want || got.Head != head || got.PullRequest != (Ref{Repo: "o/r", Number: 21}) || len(got.Checks) != len(c.runs)+len(c.statuses) {
 				t.Errorf("Checks = %+v; want state %s over %d checks", got, c.want, len(c.runs)+len(c.statuses))
 			}
 			for _, ch := range got.Checks {
@@ -168,14 +168,14 @@ func TestPullRequestOperationsNameTheRepositoryAndComeBackTyped(t *testing.T) {
 	f := newFake(t)
 	g := newClient(t, f)
 	for name, call := range map[string]func() error{
-		"PullRequest": func() error { _, err := g.PullRequest(bg, Ref{"x/y", 1}); return err },
-		"Checks":      func() error { _, err := g.Checks(bg, Ref{"x/y", 1}); return err },
+		"PullRequest": func() error { _, err := g.PullRequest(bg, Ref{Repo: "x/y", Number: 1}); return err },
+		"Checks":      func() error { _, err := g.Checks(bg, Ref{Repo: "x/y", Number: 1}); return err },
 	} {
 		if err := call(); !errors.Is(err, ErrOtherRepository) {
 			t.Errorf("%s(other repo) error = %v; want ErrOtherRepository", name, err)
 		}
 	}
-	if _, err := g.PullRequest(bg, Ref{"o/r", 0}); !errors.Is(err, ErrInvalidRef) {
+	if _, err := g.PullRequest(bg, Ref{Repo: "o/r", Number: 0}); !errors.Is(err, ErrInvalidRef) {
 		t.Errorf("PullRequest(#0) error = %v; want ErrInvalidRef", err)
 	}
 	if n := len(f.requests()); n != 0 {
@@ -195,11 +195,11 @@ func TestPullRequestOperationsNameTheRepositoryAndComeBackTyped(t *testing.T) {
 		g := newClient(t, f)
 		for name, call := range map[string]func() error{
 			"OpenPullRequest": func() error {
-				_, err := g.OpenPullRequest(bg, NewPullRequest{Head: "crw/m1", Base: "dev", Title: "t", Issues: []Ref{{"o/r", 1}}})
+				_, err := g.OpenPullRequest(bg, NewPullRequest{Head: "crw/m1", Base: "dev", Title: "t", Issues: []Ref{{Repo: "o/r", Number: 1}}})
 				return err
 			},
-			"PullRequest": func() error { _, err := g.PullRequest(bg, Ref{"o/r", 21}); return err },
-			"Checks":      func() error { _, err := g.Checks(bg, Ref{"o/r", 21}); return err },
+			"PullRequest": func() error { _, err := g.PullRequest(bg, Ref{Repo: "o/r", Number: 21}); return err },
+			"Checks":      func() error { _, err := g.Checks(bg, Ref{Repo: "o/r", Number: 21}); return err },
 		} {
 			err := call()
 			if !errors.Is(err, c.is) || strings.Contains(err.Error(), testToken) {
@@ -213,14 +213,14 @@ func TestReadingAnIssueStillRefusesAPullRequest(t *testing.T) {
 	// the pull request operations do not widen the issue operations: Issue on a pull request is ErrNotIssue as before
 	f := newFake(t)
 	f.reply("GET /repos/o/r/issues/21", 200, issueJSON(21, "pr", "open", map[string]any{"pull_request": map[string]any{}}))
-	if _, err := newClient(t, f).Issue(bg, Ref{"o/r", 21}); !errors.Is(err, ErrNotIssue) {
+	if _, err := newClient(t, f).Issue(bg, Ref{Repo: "o/r", Number: 21}); !errors.Is(err, ErrNotIssue) {
 		t.Errorf("Issue(pull request) error = %v; want ErrNotIssue", err)
 	}
 }
 
 func TestParseCarries(t *testing.T) {
 	got := ParseCarries("o/r", "Carries: #1, o/r#2\n**Carries:** other/x#3 #1\nnot Carries: #4\n")
-	if want := []Ref{{"o/r", 1}, {"o/r", 2}, {"other/x", 3}}; !reflect.DeepEqual(got, want) {
+	if want := []Ref{{Repo: "o/r", Number: 1}, {Repo: "o/r", Number: 2}, {Repo: "other/x", Number: 3}}; !reflect.DeepEqual(got, want) {
 		t.Errorf("ParseCarries = %v; want %v", got, want)
 	}
 }

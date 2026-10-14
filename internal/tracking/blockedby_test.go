@@ -6,7 +6,7 @@ import (
 )
 
 func TestParseBlockedByReadsTheBlockedByLinesOfABody(t *testing.T) {
-	r := func(repo string, n int) Ref { return Ref{repo, n} }
+	r := func(repo string, n int) Ref { return Ref{Repo: repo, Number: n} }
 	cases := []struct {
 		name, body string
 		want       []Ref

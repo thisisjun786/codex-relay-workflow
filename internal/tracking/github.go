@@ -100,7 +100,7 @@ type apiIssue struct {
 
 func (g *GitHub) issueFrom(a apiIssue) Issue {
 	is := Issue{
-		Ref: Ref{g.repo, a.Number}, URL: a.HTMLURL, Title: a.Title, Body: a.Body,
+		Ref: Ref{Repo: g.repo, Number: a.Number}, URL: a.HTMLURL, Title: a.Title, Body: a.Body,
 		State: State(a.State), Labels: make([]string, 0, len(a.Labels)),
 		BlockedBy: ParseBlockedBy(g.repo, a.Body),
 	}
@@ -145,7 +145,7 @@ func (g *GitHub) Milestone(ctx context.Context, ref Ref) (Milestone, []Issue, er
 		}
 	}
 	return Milestone{
-		Ref: Ref{g.repo, ref.Number}, Title: m.Title, Description: m.Description, State: State(m.State),
+		Ref: Ref{Repo: g.repo, Number: ref.Number}, Title: m.Title, Description: m.Description, State: State(m.State),
 		OpenIssues: m.OpenIssues, ClosedIssues: m.ClosedIssues,
 	}, issues, nil
 }
@@ -187,7 +187,7 @@ func (g *GitHub) subRef(s apiIssue) Ref {
 			}
 		}
 	}
-	return Ref{repo, s.Number}
+	return Ref{Repo: repo, Number: s.Number}
 }
 
 // Comment writes a comment of header, a blank line and text; with no text the comment is the header.
