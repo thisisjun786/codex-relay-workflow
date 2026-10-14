@@ -26,7 +26,7 @@
             "backend": "app-server",
             "helpers": [
               {
-                "digest": "c6fe4ca37c19e316daf5143803de900df799b9f370a15eace36d842971af8a14",
+                "digest": "583138d62bfde94b05f4721528a46b18d6a290441a9d46fd1d4d20e02a3a4d76",
                 "spec": "crw:lib/schemas"
               }
             ],

@@ -2,6 +2,7 @@ package ops
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -11,6 +12,11 @@ import (
 // The reasons that close a node's execution (AgentClose): the node is given up and its slot goes back in the transaction that
 // closes it. Every other reason of an escalation is a question for the orchestrator that leaves the node as it is.
 var closingReasons = map[string]bool{"tiers_exhausted": true, "blocked_scope": true, "size_split": true}
+
+// ReasonLandEnded is the reason the relay closes the execution of a land run's node with when the land ends without landing (an
+// escalation with end_land, CRW-1354): the run gives its release back - the closure is cancelled and the slot returns in its transaction -
+// so the child's next land of the node is a new release of its own run.
+const ReasonLandEnded = "land_ended"
 
 // The reasons that put a node in a recovery hold: nothing is closed, the slot stays, and `crw flow recover` or `crw flow resume`
 // takes the call.
@@ -37,6 +43,10 @@ type EscalateInfo struct {
 	Evidence map[string]any `json:"evidence"`
 	// Ask is a question that waits for the orchestrator's decision (crw.decide).
 	Ask string `json:"ask"`
+	// EndLand: the escalation ends a gate-only land run (land-head) whose head did not pass its gates, and the run gives the node's
+	// release back (AgentClose land_ended), whatever the reason. A close the relay refuses (an accepted head whose integration may
+	// have moved the target) is recorded on the row and ends nothing else; a lost epoch is the run's.
+	EndLand bool `json:"end_land"`
 }
 
 // EscalateOutcome is the answer of crw.escalate.
@@ -88,20 +98,37 @@ func (o *escalateOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRe
 		data := map[string]any{"reason": info.Reason, "class": info.Class, "node": node, "call_id": info.Call, "escalation_id": out.ID, "detail": info.Detail, "evidence": info.Evidence, "ask": info.Ask}
 		req.Journal.Append(engine.Event{RunID: req.RunID, Kind: engine.KindFlow, CallID: req.CallID, Op: OpEscalate, Event: engine.EvEscalation, Data: data})
 	}
-	if node != "" && closingReasons[info.Reason] {
+	closeRefused := ""
+	if node != "" && (closingReasons[info.Reason] || info.EndLand) {
 		plan := ""
 		if rel, ok := releaseRowOf(r, node); ok {
 			plan = dataStr(rel, "plan")
 		}
-		res, err := o.l.d.Relay.Close(ctx, CloseRequest{Plan: plan, Node: node, Actor: o.l.d.Actor, Reason: info.Reason, RequestID: req.RequestID})
-		if err != nil {
-			return engine.OpResult{}, err
+		reason := info.Reason
+		if !closingReasons[reason] {
+			reason = ReasonLandEnded
 		}
-		out.Closed, out.SlotReleased = res.Closed, res.SlotReleased
+		res, err := o.l.d.Relay.Close(ctx, CloseRequest{Plan: plan, Node: node, Actor: o.l.d.Actor, Reason: reason, RequestID: req.RequestID})
+		switch {
+		case err != nil && info.EndLand && !errors.Is(err, ErrEpochLost):
+			closeRefused = err.Error()
+		case err != nil:
+			return engine.OpResult{}, err
+		default:
+			out.Closed, out.SlotReleased = res.Closed, res.SlotReleased
+		}
 	}
-	return engine.OpResult{Result: result(out), Data: map[string]any{
+	data := map[string]any{
 		"node": node, "reason": info.Reason, "class": info.Class, "escalation_id": out.ID, "call": info.Call, "closed": out.Closed, "slot_released": out.SlotReleased, "request_id": req.RequestID,
-	}}, nil
+	}
+	if info.EndLand {
+		data["end_land"] = true
+	}
+	if closeRefused != "" {
+		// warn + record: the land ends escalated with its execution as the relay keeps it
+		data["close_refused"] = closeRefused
+	}
+	return engine.OpResult{Result: result(out), Data: data}, nil
 }
 
 func (o *escalateOp) Proven(ctx context.Context, ev []engine.Event, row engine.Event) (bool, string, error) {
@@ -182,9 +209,24 @@ func (o *releaseChildOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 	r := rows(req.Journal.Events())
 	ms := plan.Milestone
 	planID := planOf(r, ms)
-	res, err := o.l.d.Relay.ReleaseChild(ctx, ChildRequest{Plan: planID, Node: node, RunID: req.RunID, Revision: plan.Revision, DesignDigest: plan.DesignDigest, Reason: plan.SizeReason, RequestID: req.RequestID})
+	// the slice crw.release compared when it found the node sized for a child: the relay compares it again at the start (CRW-1382)
+	slice := ""
+	if rel, ok := designRowOf(r, node); ok && dataStr(rel, "kind") == "child" {
+		slice = dataStr(rel, "slice_digest")
+	}
+	res, err := o.l.d.Relay.ReleaseChild(ctx, ChildRequest{Plan: planID, Node: node, RunID: req.RunID, Revision: plan.Revision, DesignDigest: plan.DesignDigest, Reason: plan.SizeReason, RequestID: req.RequestID,
+		SliceDigest: slice})
 	if err != nil {
 		return engine.OpResult{}, err
+	}
+	if !res.Started && res.Reason == ReasonPlanChanged {
+		// the plan gave the node another slice between crw.release's comparison and the start: no child was started, and the row says so
+		// with the reason; the lane ends the node unreleased (CRW-1382)
+		out := ChildOutcome{Node: node, Reason: res.Reason}
+		return engine.OpResult{Result: result(out), Data: map[string]any{
+			"node": node, "plan": planID, "milestone": ms, "child": "", "revision": plan.Revision, "design_digest": plan.DesignDigest, "size_reason": plan.SizeReason, "started": false,
+			"reason": res.Reason, "slice_digest": slice,
+		}}, nil
 	}
 	if !res.Started {
 		// an answer that started no child is never recorded as one (the lane would read it as a child that is running): the relay's
@@ -201,6 +243,7 @@ func (o *releaseChildOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 	}
 	return engine.OpResult{Result: result(out), Data: map[string]any{
 		"node": node, "plan": planID, "milestone": ms, "child": res.Child, "revision": plan.Revision, "design_digest": plan.DesignDigest, "size_reason": plan.SizeReason, "started": res.Started,
+		"slice_digest": slice,
 	}}, nil
 }
 

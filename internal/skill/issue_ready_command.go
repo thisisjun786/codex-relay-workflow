@@ -3,6 +3,7 @@ package skill
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -155,6 +156,22 @@ func goTestWarnings(command string) []string {
 	}
 	if hasRun && !fixedRunPattern(run) {
 		out = append(out, fmt.Sprintf("end condition: `%s` has -run %q, which does not name its tests literally: go test exits 0 when -run matches no test, so the command can pass having run none; name the tests (for example -run '^(TestA|TestB)$')", command, run))
+	}
+	return out
+}
+
+// endConditionCommands are the commands of the done condition sections, in their order, each once (CRW-1382).
+func endConditionCommands(sections []section) []string {
+	var out []string
+	for _, s := range sections {
+		if s.kind != itemDone {
+			continue
+		}
+		for _, c := range s.commandLines() {
+			if !slices.Contains(out, c) {
+				out = append(out, c)
+			}
+		}
 	}
 	return out
 }

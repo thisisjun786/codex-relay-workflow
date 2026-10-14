@@ -285,6 +285,58 @@ type exploreRouteOp struct{ l *Lane }
 type RoutePlan struct {
 	Kind   string  `json:"kind"`
 	Routes []Route `json:"routes"`
+	// Carried are the open questions the run asked of the orchestrator that no answer has reached and that these questions do not raise
+	// again (CRW-1381): the next ask carries them, so a question a later DESIGN no longer raises stays answerable. Optional.
+	Carried []Carried `json:"carried,omitempty"`
+}
+
+// Carried is a question the run asked and an ask carries on: its digest, its text and the scope notation it was asked with.
+type Carried struct {
+	Digest   string `json:"digest"`
+	Question string `json:"question"`
+	Scope    string `json:"scope"`
+}
+
+// carriedQuestions are the open questions of the milestone the run asked of the orchestrator (in the order its asks named them first),
+// that no answer has reached, and that are not among the digests raised now; each with the text and the notation crw.exploreRecord
+// recorded for it last. A question whose text the run never recorded is not carried.
+func carriedQuestions(r rows, ms string, raised map[string]bool, asked map[string][]string, answered map[string]*answered) []Carried {
+	var out []Carried
+	seen := map[string]bool{}
+	for _, ev := range r.flow(engine.EvEscalation) {
+		if dataStr(ev, "reason") != "design_question" {
+			continue
+		}
+		evidence, _ := ev.Data["evidence"].(map[string]any)
+		list, _ := evidence["questions"].([]any)
+		for _, x := range list {
+			d, _ := x.(string)
+			if d == "" || seen[d] || raised[d] || answered[d] != nil {
+				continue
+			}
+			seen[d] = true
+			if _, ok := orchestratorAnswer(r, asked[d], d); ok {
+				continue
+			}
+			var c *Carried
+			for _, row := range r.opRows(OpExploreRecord) {
+				if dataStr(row, "kind") != ExploreOpen || dataStr(row, "milestone") != ms {
+					continue
+				}
+				entries, _ := row.Data["answers"].([]any)
+				for _, item := range entries {
+					m, _ := item.(map[string]any)
+					if str(m, "digest") == d && str(m, "question") != "" {
+						c = &Carried{Digest: d, Question: str(m, "question"), Scope: str(m, "scope_notation")}
+					}
+				}
+			}
+			if c != nil {
+				out = append(out, *c)
+			}
+		}
+	}
+	return out
 }
 
 func (o *exploreRouteOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResult, error) {
@@ -358,7 +410,7 @@ func (o *exploreRouteOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 		case inlineOK:
 			rt.Route, rt.Rule, rt.Reason = RouteInline, RuleInl1, "asker_answers"
 		case kind == ExploreOpen && len(asked[rt.Digest]) > 0:
-			if a, ok := orchestratorAnswer(r, asked[rt.Digest]); ok {
+			if a, ok := orchestratorAnswer(r, asked[rt.Digest], rt.Digest); ok {
 				rt.Route, rt.Rule, rt.Answer, rt.Reason, rt.Origin = RouteReuse, RuleInl2, a, "answered_by_orchestrator", RouteOrchestrator
 			} else {
 				rt.Route, rt.Reason = RouteOrchestrator, "asked_in_run"
@@ -407,10 +459,27 @@ func (o *exploreRouteOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 		}
 	}
 	routes := make([]map[string]any, 0, len(plan.Routes))
+	raised := map[string]bool{}
 	for _, rt := range plan.Routes {
-		routes = append(routes, map[string]any{"digest": rt.Digest, "route": rt.Route, "reason": rt.Reason, "scope_notation": rt.Authority, "origin": rt.Origin})
+		raised[rt.Digest] = true
+		// the optional origin is written only with a value (CRW-1381)
+		entry := map[string]any{"digest": rt.Digest, "route": rt.Route, "reason": rt.Reason, "scope_notation": rt.Authority}
+		if rt.Origin != "" {
+			entry["origin"] = rt.Origin
+		}
+		routes = append(routes, entry)
 	}
-	return engine.OpResult{Result: result(plan), Data: map[string]any{"kind": kind, "node": ec.Node, "milestone": ec.Milestone, "tier": ec.Tier, "routes": routes}}, nil
+	data := map[string]any{"kind": kind, "node": ec.Node, "milestone": ec.Milestone, "tier": ec.Tier, "routes": routes}
+	if kind == ExploreOpen {
+		if plan.Carried = carriedQuestions(r, ec.Milestone, raised, asked, answered); len(plan.Carried) > 0 {
+			digests := make([]string, 0, len(plan.Carried))
+			for _, c := range plan.Carried {
+				digests = append(digests, c.Digest)
+			}
+			data["carried"] = digests
+		}
+	}
+	return engine.OpResult{Result: result(plan), Data: data}, nil
 }
 
 func (o *exploreRouteOp) Proven(ctx context.Context, ev []engine.Event, row engine.Event) (bool, string, error) {
@@ -457,6 +526,44 @@ type Answer struct {
 	Evidence []string `json:"evidence"`
 	// Findings is the explorer's FINDINGS as it answered, when an explorer did: exploreRecord reads it as a consumer of the schema.
 	Findings json.RawMessage `json:"findings"`
+	// EndConditionsAsked are the end condition commands the explorer of this answer was given to run once (CRW-1382); optional, set on
+	// the first explorer of a DESIGN's first audit round only.
+	EndConditionsAsked []EndConditionAsk `json:"end_conditions_asked,omitempty"`
+}
+
+// EndConditionAsk is an end condition command an explorer is given: the issue whose done condition names it and the command.
+type EndConditionAsk struct {
+	Issue   string `json:"issue"`
+	Command string `json:"command"`
+}
+
+// The warnings of an end condition the design-stage explorer ran (CRW-1382): recorded on the crw.exploreRecord row, never a stop.
+const (
+	WarnEndConditionFailed     = "end_condition_failed"
+	WarnEndConditionNoTests    = "end_condition_no_tests"
+	WarnEndConditionUnreported = "end_condition_unreported"
+)
+
+// endConditionWarnings judge what the explorer reported of the commands it was given: a command that exited non-zero, one that ran no
+// test, and one it did not report.
+func endConditionWarnings(asked []EndConditionAsk, ran []EndConditionRun) []string {
+	var out []string
+	reported := map[string]bool{}
+	for _, r := range ran {
+		reported[strings.TrimSpace(r.Command)] = true
+		if r.ExitCode != 0 {
+			out = append(out, fmt.Sprintf("%s: `%s` exited %d (%d tests ran): %s", WarnEndConditionFailed, r.Command, r.ExitCode, r.Tests, r.Summary))
+		}
+		if r.Tests == 0 {
+			out = append(out, fmt.Sprintf("%s: `%s` exited %d having run no test: %s", WarnEndConditionNoTests, r.Command, r.ExitCode, r.Summary))
+		}
+	}
+	for _, a := range asked {
+		if !reported[strings.TrimSpace(a.Command)] {
+			out = append(out, fmt.Sprintf("%s: `%s` (%s) was given to the explorer and not reported", WarnEndConditionUnreported, a.Command, a.Issue))
+		}
+	}
+	return out
 }
 
 // exploreRecordOp is crw.exploreRecord(kind, context, answers): the answers of a round of questions, kept so that a question of
@@ -471,15 +578,32 @@ func (o *exploreRecordOp) Run(_ context.Context, req engine.OpRequest) (engine.O
 		return engine.OpResult{}, fmt.Errorf("crw.exploreRecord(kind, context, answers): %w", err)
 	}
 	list := make([]map[string]any, 0, len(answers))
+	warnings := []string{}
 	for _, a := range answers {
+		var f Findings
 		if len(a.Findings) > 0 && string(a.Findings) != "null" {
-			if _, err := DecodeFindings(a.Findings); err != nil {
+			var err error
+			if f, err = DecodeFindings(a.Findings); err != nil {
 				return engine.OpResult{}, fmt.Errorf("crw.exploreRecord: the answer to %q is no FINDINGS: %w", a.Question, err)
 			}
 		}
-		list = append(list, map[string]any{"digest": a.Digest, "id": a.ID, "question": a.Question, "answer": a.Answer, "route": a.Route, "reason": a.Reason, "scope_notation": a.Authority, "origin": a.Origin, "call": a.Call})
+		entry := map[string]any{"digest": a.Digest, "id": a.ID, "question": a.Question, "answer": a.Answer, "route": a.Route, "reason": a.Reason, "scope_notation": a.Authority, "call": a.Call}
+		// the optional origin is written only with a value (CRW-1381)
+		if a.Origin != "" {
+			entry["origin"] = a.Origin
+		}
+		// the end condition the explorer was given, and what it reported of it: recorded with the answer, warned of, never a stop (CRW-1382)
+		if len(a.EndConditionsAsked) > 0 || len(f.EndConditions) > 0 {
+			entry["end_conditions"] = f.EndConditions
+			warnings = append(warnings, endConditionWarnings(a.EndConditionsAsked, f.EndConditions)...)
+		}
+		list = append(list, entry)
 	}
-	return engine.OpResult{Result: result(map[string]any{"recorded": len(answers)}), Data: map[string]any{"kind": kind, "node": ec.Node, "milestone": ec.Milestone, "answers": list}}, nil
+	data := map[string]any{"kind": kind, "node": ec.Node, "milestone": ec.Milestone, "answers": list}
+	if len(warnings) > 0 {
+		data["warnings"] = warnings
+	}
+	return engine.OpResult{Result: result(map[string]any{"recorded": len(answers)}), Data: data}, nil
 }
 
 func (o *exploreRecordOp) Proven(ctx context.Context, ev []engine.Event, row engine.Event) (bool, string, error) {
@@ -538,15 +662,26 @@ func askedDigests(r rows) map[string][]string {
 	return out
 }
 
-// orchestratorAnswer is the answer the orchestrator gave to one of the asks: the text (or the option) of the decision_applied row
-// that answers it.
-func orchestratorAnswer(r rows, asks []string) (string, bool) {
+// orchestratorAnswer is the answer the orchestrator gave to the question of digest in one of the asks: the part the decision_applied row
+// that answers it gives the question (CRW-1381: an answer to an ask that joins several questions may give each its part), else the text
+// (or the option) of the row.
+func orchestratorAnswer(r rows, asks []string, digest string) (string, bool) {
 	for _, id := range asks {
 		row, ok := appliedRow(r, "", id)
 		if !ok {
 			continue
 		}
 		d, _ := row.Data["decision"].(map[string]any)
+		switch parts := d["answers"].(type) {
+		case map[string]any:
+			if a, _ := parts[digest].(string); a != "" {
+				return a, true
+			}
+		case map[string]string:
+			if a := parts[digest]; a != "" {
+				return a, true
+			}
+		}
 		if a := str(d, "text"); a != "" {
 			return a, true
 		}

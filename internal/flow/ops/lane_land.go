@@ -69,6 +69,9 @@ func (o *acceptOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 	issue := node
 	if is, found, err := issueOf(r, rel, node); err == nil && found {
 		issue = is.Issue
+	} else if pn, ok := planNodeOf(r, plan, dataStr(rel, "milestone"), node); ok && pn.Issue != "" {
+		// a node released with no DESIGN (a head made outside a run, CRW-1354): the issue the plan gives it
+		issue = pn.Issue
 	}
 	// The acceptance judges the head over the base its verification stood on: the commit the node's work grew from, an ancestor of
 	// the head that does not move when another node lands (the tip of the integration target, sampled now, is neither). A

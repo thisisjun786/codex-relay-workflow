@@ -16,6 +16,9 @@ const AUDIT_ROUNDS = 3
 const RESEARCH_PER_TIER = 2
 
 const ms = await crw.milestone(args.plan, args.milestone)
+// the commands of the issues' done conditions (CRW-1382): the design-stage explorer runs each once and records the exit code and the tests
+const END_CONDITIONS = []
+for (const n of ms.nodes) for (const c of n.end_condition || []) END_CONDITIONS.push({ issue: n.issue, command: c })
 
 // The design audit of a DESIGN of the architect: its open questions go to explorers or, when out of the architect's authority or
 // beyond the explorer cap, to the orchestrator (crw.exploreRoute), a reviewer of another model family audits the
@@ -25,9 +28,11 @@ const ms = await crw.milestone(args.plan, args.milestone)
 async function auditedDesign(first, tag, context) {
   let arch = first
   for (let round = 1; round <= AUDIT_ROUNDS; round++) {
-    const asked = await crw.explore('open_questions', arch.output.open_questions, { milestone: ms.id })
+    // the end condition commands of the issues are run once, by the first explorer of the first DESIGN's first round (CRW-1382)
+    const ends = round === 1 && tag === '' ? END_CONDITIONS : []
+    const asked = await crw.explore('open_questions', arch.output.open_questions, { milestone: ms.id }, { endConditions: ends })
     // the authority questions of the round are asked now, approved or not (CRW-1366): an answer is the next round's
-    await askOrchestrator(asked.answers, 'out_of_authority')
+    await askOrchestrator(asked.answers, 'out_of_authority', asked.carried)
     if (asked.failed) return { ok: false, result: await crw.milestoneHalt(ms, 'explorer', asked.failed.status, asked.failed.reason, asked.failed.callId) }
     const answers = asked.answers
     const cand = { design: arch.output, answers }
@@ -38,7 +43,7 @@ async function auditedDesign(first, tag, context) {
       call = await agent.call(designAuditPacket(ms, cand, round), { agentType: 'reviewer', schema: DESIGN_AUDIT, label: 'design-audit:' + tag + 'r' + round + ':retry' })
       audit = await crw.designAudit(ms.id, round, cand, arch, call)
     }
-    if (audit.state === 'approved') return { ok: true, arch, answers }
+    if (audit.state === 'approved') return { ok: true, arch, answers, carried: asked.carried }
     if (audit.state !== 'needs_changes') return { ok: false, result: await crw.milestoneHalt(ms, 'design_audit', audit.state, audit.reason, call.callId) }
     // back to the architect, on its own thread: the DESIGN it revises is the one it wrote
     arch = await agent.call(designFixPacket(audit, context), { resume: arch, schema: DESIGN, head: context && context.head, label: 'design-fix:' + tag + 'r' + round })
@@ -54,11 +59,12 @@ async function auditedDesign(first, tag, context) {
 // a question the run asked already is routed asked_in_run (crw.exploreRoute) and raises no ask of its own. Only the latest design
 // ask of a run is current (the one crw flow answer accepts and the digest lists as waiting), so an ask carries, besides the
 // questions it raises, every question of this DESIGN the run asked already and no answer has reached: asked_in_run, and the
-// authority questions of the round when the approval asks the ones beyond the cap.
-async function askOrchestrator(answers, reason) {
+// authority questions of the round when the approval asks the ones beyond the cap; and every question the run asked that no answer has
+// reached and this DESIGN no longer raises (carried, from crw.exploreRoute, CRW-1381), so it stays answerable through the current ask.
+async function askOrchestrator(answers, reason, carried) {
   const pending = (a) => a.route === 'orchestrator' && (a.reason === reason || a.reason === 'asked_in_run' || a.reason === 'out_of_authority')
   if (!answers.some((a) => a.route === 'orchestrator' && a.reason === reason)) return
-  const asked = answers.filter(pending)
+  const asked = answers.filter(pending).concat(carried || [])
   await crw.escalate(null, { reason: 'design_question', detail: asked.map((a) => (a.scope ? '[' + a.scope + '] ' : '') + a.question).join(' | '), ask: 'design',
     evidence: { questions: asked.map((a) => a.digest) } })
 }
@@ -76,7 +82,7 @@ async function replan(tag, signal, due, head, misaligned) {
   const audited = await auditedDesign(call, 'replan-' + tag + ':', { head, base_tip: cur.base_tip, landed: cur.landed })
   if (!audited.ok) return { state: 'halted', result: audited.result }
   const led = await crw.designLedger(ms.id, { design: audited.arch.output, answers: audited.answers, architect: audited.arch, signal, head, plan: due.plan })
-  await askOrchestrator(audited.answers, 'explorer_cap')
+  await askOrchestrator(audited.answers, 'explorer_cap', audited.carried)
   return { state: 'revised', revision: led.revision }
 }
 
@@ -115,7 +121,7 @@ const designed0 = await auditedDesign(first, '')
 if (!designed0.ok) return designed0.result
 const arch = designed0.arch
 await crw.designLedger(ms.id, { design: arch.output, answers: designed0.answers, architect: arch })
-await askOrchestrator(designed0.answers, 'explorer_cap')
+await askOrchestrator(designed0.answers, 'explorer_cap', designed0.carried)
 
 // A fenced write after another session claimed the plan's coordinator epoch is refused epoch_lost (CRW-1285): the lane ends at that
 // write with the reason, and neither escalates nor writes anything more at the relay; the run ends stopped on it (below).
@@ -138,6 +144,8 @@ async function nodeLane(n, rel, sig) {
   if (plan.size_fit === 'child') {
     await crw.spawnDecision('CHILD_2', 'spawn', { node, role: 'child', reason: plan.size_reason })
     const child = await crw.releaseChild(node, plan)
+    // a plan that gave the node another slice before the start started no child (CRW-1382): the node is not released
+    if (!child.started) return { node, state: 'unreleased', reason: child.reason }
     return { node, state: 'child', child: child.child }
   }
   if (plan.size_fit === 'split') {
@@ -270,31 +278,42 @@ if (lost.length > 0) return { state: 'stopped', reason: EPOCH_LOST, detail: (los
 if (lanes.some((l) => l && l.state === 'held' && l.reason === 'plan_superseded')) return { state: 'held', reason: 'plan_superseded', milestone: ms.id, lanes }
 if (!lanes.every((l) => l && l.state === 'landed')) return { state: 'incomplete', milestone: ms.id, lanes }
 
-phase('milestone')
-// The close: the final gate over the integrated head (test evidence, and the QA receipt for a driven surface), reviewer-final over
-// the range with the passed gate as its input, and the close recorded over the tip it judged. A gate that fails or cannot be settled
-// ends the milestone here, and reviewer-final does not run (crw:lib/close).
-const closed = await crw.closeMilestone(ms)
-if (closed.state !== 'closed') return crw.milestoneHalt(ms, closed.source, closed.status, closed.reason, closed.call)
-// The architect's reflection (SP-ARCH-3): the next turn of its thread, at the integrated head the gate pinned, in a read-only checkout
-// of it. A call that did not complete is not ALIGNED: held and unknown hold the milestone, everything else escalates.
-const current = await crw.currentDesign(ms.id)
-await crw.spawnDecision('ARCH_3', 'spawn', { role: 'architect', inputs: { milestone: ms.id, revision: current.revision, head: closed.gate.head } })
-const reflected = await agent.call(reflectionPacket(ms, current, closed), { resume: current.handle, schema: REFLECTION, head: closed.gate.head, label: 'reflection:' + ms.id })
-const reflection = await crw.reflection(ms.id, closed.gate, reflected)
-if (reflection.state !== 'verdict') return crw.milestoneHalt(ms, 'reflection', reflection.state, reflection.reason, reflected.callId)
-// A reason to re-plan stands whatever the alignment says: the numbers of the signals, and the alignments the close found.
-const due = await crw.replanSignals(ms.id, { phase: 'close', final: closed.final.alignment, reflection: reflection.alignment })
-if (due.due) {
-  const out = await replan('close', 0, due, closed.gate.head, reflection.misaligned)
-  if (out.state !== 'revised') return out.result
-  // the correction issues are the orchestrator's: crw-add-issue and a plan revision, planned in the revision the architect just made
-  const esc = await crw.escalate(null, { reason: 'replan_correction', detail: 'revision ' + out.revision + ' of milestone ' + ms.id + ' after ' + due.reasons.join(', '), ask: 'correction_issues' })
-  return { state: 'replanned', milestone: ms.id, lanes, tip: closed.tip, revision: out.revision, reasons: due.reasons, escalation: esc.id, final: closed.final.alignment, reflection: reflection.alignment }
+// A fenced write the steps after the lanes make (the close and the re-plan) once another session claimed the plan's epoch ends the run
+// stopped with the reason too (CRW-1382), as a lane that meets it does: closeAndReport() runs those steps and the catch below takes the error kind.
+try {
+  return await closeAndReport()
+} catch (e) {
+  if (epochLost(e)) return { state: 'stopped', reason: EPOCH_LOST, detail: e.message, milestone: ms.id, lanes }
+  throw e
 }
-await crw.spawnDecision('ARCH_2', 'skip', { reason: 'no_replan_signal', inputs: { milestone: ms.id, revision: due.revision, plan_mismatch: due.plan_mismatch, slice_change: due.slice_change.changed, final: closed.final.alignment, reflection: reflection.alignment } })
-// The reviews the acceptances rest on are audited against the reviewer threads on the host before any of them is archived.
-const settled = await crw.settleReviews(ms)
-const report = await crw.reportUp(ms.id, Object.assign({}, closed.close, { audit: settled.audit }))
-return { state: 'closed', milestone: ms.id, lanes, tip: closed.tip, report: report.report_id, gate: closed.gate.state, final: closed.final.alignment, reflection: reflection.alignment,
-  audit: { ok: settled.audit.ok, mismatch: settled.audit.mismatch, unobserved: settled.audit.unobserved }, archived: settled.archive.archived.length }
+
+async function closeAndReport() {
+  phase('milestone')
+  // The close: the final gate over the integrated head (test evidence, and the QA receipt for a driven surface), reviewer-final over
+  // the range with the passed gate as its input, and the close recorded over the tip it judged. A gate that fails or cannot be settled
+  // ends the milestone here, and reviewer-final does not run (crw:lib/close).
+  const closed = await crw.closeMilestone(ms)
+  if (closed.state !== 'closed') return crw.milestoneHalt(ms, closed.source, closed.status, closed.reason, closed.call)
+  // The architect's reflection (SP-ARCH-3): the next turn of its thread, at the integrated head the gate pinned, in a read-only checkout
+  // of it. A call that did not complete is not ALIGNED: held and unknown hold the milestone, everything else escalates.
+  const current = await crw.currentDesign(ms.id)
+  await crw.spawnDecision('ARCH_3', 'spawn', { role: 'architect', inputs: { milestone: ms.id, revision: current.revision, head: closed.gate.head } })
+  const reflected = await agent.call(reflectionPacket(ms, current, closed), { resume: current.handle, schema: REFLECTION, head: closed.gate.head, label: 'reflection:' + ms.id })
+  const reflection = await crw.reflection(ms.id, closed.gate, reflected)
+  if (reflection.state !== 'verdict') return crw.milestoneHalt(ms, 'reflection', reflection.state, reflection.reason, reflected.callId)
+  // A reason to re-plan stands whatever the alignment says: the numbers of the signals, and the alignments the close found.
+  const due = await crw.replanSignals(ms.id, { phase: 'close', final: closed.final.alignment, reflection: reflection.alignment })
+  if (due.due) {
+    const out = await replan('close', 0, due, closed.gate.head, reflection.misaligned)
+    if (out.state !== 'revised') return out.result
+    // the correction issues are the orchestrator's: crw-add-issue and a plan revision, planned in the revision the architect just made
+    const esc = await crw.escalate(null, { reason: 'replan_correction', detail: 'revision ' + out.revision + ' of milestone ' + ms.id + ' after ' + due.reasons.join(', '), ask: 'correction_issues' })
+    return { state: 'replanned', milestone: ms.id, lanes, tip: closed.tip, revision: out.revision, reasons: due.reasons, escalation: esc.id, final: closed.final.alignment, reflection: reflection.alignment }
+  }
+  await crw.spawnDecision('ARCH_2', 'skip', { reason: 'no_replan_signal', inputs: { milestone: ms.id, revision: due.revision, plan_mismatch: due.plan_mismatch, slice_change: due.slice_change.changed, final: closed.final.alignment, reflection: reflection.alignment } })
+  // The reviews the acceptances rest on are audited against the reviewer threads on the host before any of them is archived.
+  const settled = await crw.settleReviews(ms)
+  const report = await crw.reportUp(ms.id, Object.assign({}, closed.close, { audit: settled.audit }))
+  return { state: 'closed', milestone: ms.id, lanes, tip: closed.tip, report: report.report_id, gate: closed.gate.state, final: closed.final.alignment, reflection: reflection.alignment,
+    audit: { ok: settled.audit.ok, mismatch: settled.audit.mismatch, unobserved: settled.audit.unobserved }, archived: settled.archive.archived.length }
+}
