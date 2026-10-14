@@ -48,7 +48,6 @@ const (
 	NameIntegrate      = "integrate"
 	NameEscalate       = "escalate"
 	NameHold           = "hold"
-	NameReleaseChild   = "releaseChild"
 	NameDecide         = "decide"
 	NameMilestoneClose = "milestoneClose"
 	NameReportUp       = "reportUp"
@@ -73,7 +72,7 @@ const (
 	OpStepRecord     = "crw." + NameStepRecord
 	OpEscalate       = "crw." + NameEscalate
 	OpHold           = "crw." + NameHold
-	OpReleaseChild   = "crw." + NameReleaseChild
+	OpReleaseChild   = "crw.releaseChild" // an old run's recording call, read only: the lane installs no crw.releaseChild (CRW-1415)
 	OpDecide         = "crw." + NameDecide
 	OpMilestoneClose = "crw." + NameMilestoneClose
 	OpReportUp       = "crw." + NameReportUp
@@ -155,7 +154,6 @@ func (l *Lane) Ops() map[string]engine.Op {
 		NameIntegrate:      &integrateOp{l},
 		NameEscalate:       &escalateOp{l},
 		NameHold:           &holdOp{l},
-		NameReleaseChild:   &releaseChildOp{l},
 		NameDecide:         &decideOp{l},
 		NameMilestoneClose: &milestoneCloseOp{l},
 		NameReportUp:       &reportUpOp{l},
