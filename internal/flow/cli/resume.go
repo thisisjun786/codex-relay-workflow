@@ -18,6 +18,8 @@ import (
 // holds is refused (two processes would write one journal). With a SCRIPT it is the engine's command (the script and the
 // arguments are given), under the run lock and held to the budget and the deadline of the run's spec (specLimits); without one
 // the workflow and the arguments are those the run started with (its spec), and --detach lets the process go on in the background.
+// The budget is the run's: a resume allows what the spec's budget leaves after the tokens the run's journal shows it spent, and
+// one with nothing left is refused (runBudget). A foreground resume pauses on SIGUSR1 (`crw flow pause`) as the run process does.
 func (c *command) resume(args []string) int {
 	fs, cm := c.flags()
 	repo := fs.String("repo", "", "the git repository the run's worktrees are made from")
@@ -52,12 +54,17 @@ func (c *command) resume(args []string) int {
 			return c.fail("%v", err)
 		}
 		defer lock.Release()
-		ctx := c.ctx
-		if ctl != nil {
-			ctx = engine.WithControl(ctx, ctl.Control)
-			defer ctl.stop()
+		if ctl == nil {
+			ctl = &deadlineControl{Control: &engine.Control{}}
 		}
-		ctx = engine.WithResumeHold(ctx, c.sessionHold(sel.Path, run))
+		defer ctl.stop()
+		// `crw flow pause` signals the lock holder: this process pauses the run as the run process does (process.go)
+		sigs := make(chan os.Signal, 4)
+		signal.Notify(sigs, syscall.SIGUSR1)
+		defer signal.Stop(sigs)
+		defer pauseOnSignal(sigs, ctl.Control)()
+		ctx := engine.WithControl(c.ctx, ctl.Control)
+		ctx = engine.WithResumeHold(ctx, c.resumeHold(sel.Path, run))
 		return engine.RunCLI(ctx, eargs, c.stdout, c.stderr)
 	}
 	if *argsJSON != "" || *argsFile != "" || *pool != 0 || *budget != 0 || *repo != "" {
@@ -86,16 +93,58 @@ func (c *command) resume(args []string) int {
 		return 0
 	}
 	sigs := make(chan os.Signal, 4)
-	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
+	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP, syscall.SIGUSR1)
 	defer signal.Stop(sigs)
 	return c.execute(spec, sel.Path, true, sigs)
 }
 
-// sessionHold holds a `crw flow resume RUN SCRIPT` the way the run process holds its run (CRW-1348): a spec that names another
+// pauseOnSignal pauses the run of ctl with the operator's reason for every SIGUSR1 sigs delivers, as the run process does, until
+// the returned stop is called.
+func pauseOnSignal(sigs <-chan os.Signal, ctl *engine.Control) (stop func()) {
+	done := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-done:
+				return
+			case sig := <-sigs:
+				if sig == syscall.SIGUSR1 {
+					ctl.Pause("operator", "crw flow pause")
+				}
+			}
+		}
+	}()
+	return func() { close(done) }
+}
+
+// runBudget is the token ceiling a resume holds a run to (CRW-1278): the budget of its spec is the run's, so a resume allows what the
+// budget leaves after the tokens the run spent (engine.RunSpent over its journal), a --token-budget (asked, 0 for none) narrows that
+// remainder and never widens it, and a run with nothing left is refused with budget_exhausted: more budget is a new decision. The
+// ceiling counts the tokens spent before (engine.Config.SpentBefore). A spec without a budget sets none, unless asked gives this
+// resume one of its own.
+func runBudget(spec Spec, spent, asked int64) (int64, error) {
+	if spec.TokenBudget <= 0 {
+		if asked > 0 {
+			return spent + asked, nil
+		}
+		return 0, nil
+	}
+	left := spec.TokenBudget - spent
+	if left <= 0 {
+		return 0, fmt.Errorf("%s: run %s spent %d of the %d tokens of its spec%s; it is not resumed, and more budget needs a new decision", engine.ReasonBudgetExhausted, spec.RunID, spent, spec.TokenBudget, decisionOf(spec))
+	}
+	if asked <= 0 || asked > left {
+		asked = left
+	}
+	return spent + asked, nil
+}
+
+// resumeHold holds a `crw flow resume RUN SCRIPT` the way the run process holds its run (CRW-1348): a spec that names another
 // backend than the one the run's started row records is a mixed resume, refused; a session run keeps at most agents.max_threads - 1
 // calls in flight whatever --pool says, and its owner thread holds the run's orchestrator line while the resume runs (the open line
-// of a run whose process is gone is closed first), which is closed when the run ends.
-func (c *command) sessionHold(state, run string) engine.ResumeHold {
+// of a run whose process is gone is closed first), which is closed when the run ends. A run with a spec is held to the budget the
+// spec leaves (runBudget).
+func (c *command) resumeHold(state, run string) engine.ResumeHold {
 	hold := engine.ResumeHold{Session: func(owner string, table *engine.Policy, pool int) (int, func()) {
 		res, err := bindOwner(state, run, owner, table)
 		if w := bindWarning(res, err, owner, run); w != "" {
@@ -109,6 +158,7 @@ func (c *command) sessionHold(state, run string) engine.ResumeHold {
 	}}
 	if spec, err := ReadSpec(state, run); err == nil {
 		hold.Backend = spec.Backend
+		hold.Budget = func(spent, asked int64) (int64, error) { return runBudget(spec, spent, asked) }
 	}
 	return hold
 }
@@ -127,8 +177,9 @@ func (d *deadlineControl) stop() {
 
 // specLimits holds a `crw flow resume RUN SCRIPT` to the budget and the deadline of the run's spec (a night batch's are the
 // decision's): the engine's command line, with the spec's budget when no --token-budget is given; a --token-budget of 0 (no
-// ceiling), below 0 or above the spec's is refused, a lower one narrows it; and a Control that pauses the run at the spec's
-// deadline (at once when it passed). A run that no `crw flow start` made has no spec and nothing to hold it to.
+// ceiling), below 0 or above the spec's is refused, a lower one narrows it (what the run already spent counts against it: runBudget,
+// applied by the engine's command through resumeHold); and a Control that pauses the run at the spec's deadline (at once when it
+// passed). A run that no `crw flow start` made has no spec and nothing to hold it to.
 func (c *command) specLimits(fs *flag.FlagSet, state, run string, budget int64, eargs []string) ([]string, *deadlineControl, error) {
 	spec, err := ReadSpec(state, run)
 	if errors.Is(err, ErrNoSpec) {

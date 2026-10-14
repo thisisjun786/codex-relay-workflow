@@ -56,8 +56,11 @@ type Config struct {
 	Args json.RawMessage
 	// Pool is the number of agent calls in flight at once (DefaultPool).
 	Pool int
-	// TokenBudget is the run's token ceiling; 0 sets none. 80% gives an info event and 100% pauses the run.
+	// TokenBudget is the run's token ceiling; 0 sets none. 80% gives an info event and 100% pauses the run. SpentBefore is what the
+	// run's earlier processes spent (RunSpent over its journal): a resume counts it against the ceiling, the script's budget.spent()
+	// and the result's tokensSpent include it, and a run that starts with nothing left is paused before its first request (CRW-1278).
 	TokenBudget int64
+	SpentBefore int64
 	Limits      script.Limits
 	// OmitSeq leaves the journal sequence numbers (meta.startSeq, meta.endSeq) out of the CallResult a script holds and
 	// of the run's result. They say in which order the host finished concurrent calls, so a run that must print the
@@ -303,6 +306,12 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 	}
 
 	e.startSeq = started.Seq
+	if cfg.SpentBefore > 0 {
+		e.spent.Store(cfg.SpentBefore)
+		if cfg.TokenBudget > 0 && cfg.SpentBefore >= cfg.TokenBudget {
+			e.pause(ReasonBudgetExhausted)
+		}
+	}
 	if cfg.Control != nil {
 		cfg.Control.bind(e)
 		defer cfg.Control.end()
@@ -555,7 +564,8 @@ func (e *Engine) pauseReason() string {
 	return e.paused
 }
 
-// addTokens accounts a turn's tokens against the run's ceiling: 80% gives an info event, 100% pauses the run.
+// addTokens accounts a turn's tokens against the run's ceiling: 80% gives an info event, 100% pauses the run. spent is the run's
+// figure, the earlier processes' included (Config.SpentBefore).
 func (e *Engine) addTokens(n int64) {
 	spent := e.spent.Add(n)
 	total := e.cfg.TokenBudget

@@ -112,6 +112,11 @@ type Tokens struct {
 	Total  int64 `json:"total"`
 }
 
+// Add is the sum of two usages.
+func (t Tokens) Add(o Tokens) Tokens {
+	return Tokens{Input: t.Input + o.Input, Output: t.Output + o.Output, Total: t.Total + o.Total}
+}
+
 // TurnOutcome is a terminal turn: its last agent message, or a failure.
 type TurnOutcome struct {
 	TurnID string

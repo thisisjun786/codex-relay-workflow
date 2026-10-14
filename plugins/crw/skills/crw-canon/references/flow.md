@@ -51,7 +51,7 @@ See [How an answer names its question](#how-an-answer-names-its-question). The a
 
 ### crw flow pause
 
-Signals the process that holds the run lock (SIGUSR1). The process stops sending: the turn in flight is interrupted and the calls that would send end held `engine_paused`; the run then finishes `held`, and `crw flow resume` goes on with those calls. A run no process holds is refused, since nothing runs.
+Signals the process that holds the run lock (SIGUSR1): the detached run process and a foreground `crw flow resume RUN [SCRIPT]` answer it alike. The process stops sending: the turn in flight is interrupted and the calls that would send end held `engine_paused`; the run then finishes `held`, and `crw flow resume` goes on with those calls. A run no process holds is refused, since nothing runs.
 
 ### crw flow cancel
 
@@ -59,7 +59,7 @@ Signals the process (SIGTERM): the calls in flight are cancelled and the run fin
 
 ### crw flow resume
 
-Takes the run from its journal once its run lock is free: with the run's own spec (`crw flow resume RUN`, in the foreground, or `--detach`), or with a script and arguments given (`crw flow resume RUN SCRIPT`, the engine's command, which refuses a script or arguments that are not the run's). Both go on under the budget and the deadline of the run's spec (a night batch's are its decision's): `crw flow resume RUN SCRIPT` takes the spec's budget when no `--token-budget` is given, refuses a `--token-budget` of 0, below 0 or above the spec's (a lower one narrows it), and pauses the run at the spec's deadline. Every call whose last row is an intent is looked up on the host before the script runs again; a call in recovery hold stays until `crw flow recover` settles it.
+Takes the run from its journal once its run lock is free: with the run's own spec (`crw flow resume RUN`, in the foreground, or `--detach`), or with a script and arguments given (`crw flow resume RUN SCRIPT`, the engine's command, which refuses a script or arguments that are not the run's). Both go on under the budget and the deadline of the run's spec (a night batch's are its decision's): `crw flow resume RUN SCRIPT` takes the spec's budget when no `--token-budget` is given, refuses a `--token-budget` of 0, below 0 or above the spec's (a lower one narrows it), and pauses the run at the spec's deadline. The budget is the run's, not the process's: a resume allows what the spec's budget leaves after the tokens the run's journal shows it spent (each call's terminal rows counted once), a `--token-budget` narrows that remainder, and a run with nothing left is not resumed and reports `budget_exhausted`; more budget is a new decision. Every call whose last row is an intent is looked up on the host before the script runs again; a call in recovery hold stays until `crw flow recover` settles it.
 
 ### crw flow recover
 

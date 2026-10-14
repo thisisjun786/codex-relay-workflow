@@ -49,9 +49,14 @@ var ResumeEnv func(ctx context.Context, req ResumeEnvRequest) (ResumeSetup, erro
 // Session, when set, is called for a session run once the script and the arguments are the run's and before the run goes on: it
 // gets the run's owner thread, the role table the run goes on under and the pool asked for, binds what it binds, and returns the
 // pool the run keeps in flight and the release called when the run ends (nil releases nothing).
+//
+// Budget, when set, holds the resume to the token budget of the run (CRW-1278): it gets what the run's journal shows it spent
+// (RunSpent) and the --token-budget of the command line, and returns the run's ceiling for this resume, or the error that refuses
+// it before the run goes on (a budget with nothing left). The run then counts what it spent before against that ceiling.
 type ResumeHold struct {
 	Backend string
 	Session func(owner string, table *Policy, pool int) (int, func())
+	Budget  func(spent, asked int64) (int64, error)
 }
 
 type resumeHoldKey struct{}
@@ -188,6 +193,14 @@ func resumeCmd(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		fmt.Fprintf(stderr, "crw flow resume: error: %s\n", why)
 		return 2
 	}
+	ceiling, spentBefore := *budget, int64(0)
+	if hold.Budget != nil {
+		spentBefore = RunSpent(setup.Journal.Events(), runID).Total
+		if ceiling, err = hold.Budget(spentBefore, *budget); err != nil {
+			fmt.Fprintf(stderr, "crw flow resume: error: %v\n", err)
+			return 2
+		}
+	}
 	inFlight := *pool
 	if setup.Session != nil && hold.Session != nil {
 		var release func()
@@ -197,7 +210,7 @@ func resumeCmd(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		}
 	}
 	res, err := Run(ctx, prog, Config{
-		RunID: runID, Backend: setup.Backend, Policy: table, Journal: setup.Journal, Args: argsRaw, Pool: inFlight, TokenBudget: *budget,
+		RunID: runID, Backend: setup.Backend, Policy: table, Journal: setup.Journal, Args: argsRaw, Pool: inFlight, TokenBudget: ceiling, SpentBefore: spentBefore,
 		Resume: &ResumeOptions{}, Ops: setup.Ops, OmitSeq: true, Control: controlOf(ctx), Upward: setup.Upward, Session: setup.Session,
 		Workflows: func(name, scriptPath string) (*script.Program, error) {
 			return loadSibling(fs.FS(dir), name, scriptPath)

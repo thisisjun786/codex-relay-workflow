@@ -254,3 +254,137 @@ func TestNightBatchResumeKeepsTheDecisionBudget(t *testing.T) {
 		t.Errorf("no run_paused row of the deadline")
 	}
 }
+
+const threeCalls = `export const meta = { name: 'three', phases: ['one'] }
+phase('one')
+const a = await agent.call('first', { agentType: 'executor', node: 'n1', label: 'first' })
+const b = await agent.call('second', { agentType: 'executor', node: 'n1', label: 'second' })
+const c = await agent.call('third', { agentType: 'executor', node: 'n1', label: 'third' })
+return [a.status, b.status, c.status, c.reason]
+`
+
+// scriptResumeEnv installs the engine's resume environment over the world of a process test: `crw flow resume RUN SCRIPT` opens the
+// same store and fake host as the run process.
+func scriptResumeEnv(t *testing.T, pw *processWorld) {
+	t.Helper()
+	prev := engine.ResumeEnv
+	t.Cleanup(func() { engine.ResumeEnv = prev })
+	engine.ResumeEnv = func(ctx context.Context, req engine.ResumeEnvRequest) (engine.ResumeSetup, error) {
+		w, err := pw.td.World(ctx, WorldRequest{Spec: Spec{RunID: req.RunID}, State: req.State, Resume: true})
+		if err != nil {
+			return engine.ResumeSetup{}, err
+		}
+		return engine.ResumeSetup{Journal: w.Journal, Backend: w.Backend, Close: w.Close}, nil
+	}
+}
+
+// TestNightBatchResumeDoesNotRefillTheBudget (CRW-1278): the token budget of a night batch is the run's, not the process's. A resume,
+// by the spec path and by an explicit SCRIPT alike, allows only the spec's budget minus the tokens the run's journal shows it spent
+// (each call's terminal rows counted once, rows of older versions read as before); a resume whose remainder is 0 or less does not
+// start the engine, says budget_exhausted and that more budget needs a new decision, and does not take the run.
+func TestNightBatchResumeDoesNotRefillTheBudget(t *testing.T) {
+	for _, path := range []string{"spec", "script"} {
+		t.Run(path, func(t *testing.T) {
+			pw := newProcessWorld(t, threeCalls)
+			scriptResumeEnv(t, pw)
+			run := "run-refill-" + path
+			resume := func(extra ...string) (int, string, string) {
+				args := []string{"resume", run}
+				if path == "script" {
+					args = append(args, pw.script)
+				}
+				return pw.td.do(append(append(args, "--state", pw.state), extra...)...)
+			}
+			// the first process: the first call spends 70 of the decision's 100 tokens, and the operator pauses the run in the second
+			sigs := make(chan os.Signal, 2)
+			first := true
+			pw.handle = func(r engine.FakeRequest) engine.FakeReply {
+				switch {
+				case r.Kind != "turn":
+				case strings.Contains(r.Prompt, "first"):
+					return engine.FakeReply{Tokens: &engine.Tokens{Input: 60, Output: 10, Total: 70}}
+				case strings.Contains(r.Prompt, "second") && first:
+					sigs <- syscall.SIGUSR1
+					time.Sleep(200 * time.Millisecond)
+					return engine.FakeReply{Tokens: &engine.Tokens{}}
+				case strings.Contains(r.Prompt, "second"):
+					return engine.FakeReply{Tokens: &engine.Tokens{Input: 30, Output: 10, Total: 40}}
+				}
+				return engine.FakeReply{Tokens: &engine.Tokens{Input: 5, Output: 5, Total: 10}}
+			}
+			spec := pw.spec(run, func(s *Spec) { s.Script = pw.script; s.Decision, s.TokenBudget = "ud-night", 100 })
+			if code, errOut := pw.execute(spec, false, sigs); code != 0 {
+				t.Fatalf("the first process: exit %d %s", code, errOut)
+			}
+			first = false
+			if info := pw.info(run); info.State != StateHeld || info.Tokens != 70 || info.Processes != 1 {
+				t.Fatalf("the paused run: %+v", info)
+			}
+			// the resume goes on with the second call, which brings the run to 110 of its 100 tokens: the third call is held
+			// budget_exhausted (a budget refilled for the process would have let it run)
+			code, out, errOut := resume()
+			if code != 0 {
+				t.Fatalf("the resume: exit %d %s %s", code, out, errOut)
+			}
+			info := pw.info(run)
+			if info.Processes != 2 || info.Tokens != 110 || !contains(info.HeldReasons, engine.ReasonBudgetExhausted) {
+				t.Errorf("the resumed run went on past its budget: %+v", info)
+			}
+			events, _, err := loadRun(pw.world, run)
+			if err != nil {
+				t.Fatal(err)
+			}
+			third := ""
+			for _, e := range events {
+				if e.Kind == engine.KindCall && e.Label == "third" && (e.Event == engine.EvHeld || e.Event == engine.EvCompleted) {
+					third = e.Event + ":" + str(e.Data, "reason")
+				}
+				if e.Kind == engine.KindFlow && e.Event == "budget_warning" && num(e.Data, "spent") < 80 {
+					t.Errorf("a budget warning below 80 of 100 tokens: %v", e.Data)
+				}
+			}
+			if third != engine.EvHeld+":"+engine.ReasonBudgetExhausted {
+				t.Errorf("the third call ended %q", third)
+			}
+			// nothing is left: the next resume does not start, names budget_exhausted and the decision, and leaves the run as it was
+			code, out, errOut = resume()
+			if code == 0 || !strings.Contains(errOut, engine.ReasonBudgetExhausted) || !strings.Contains(errOut, "110 of the 100 tokens") || !strings.Contains(errOut, "new decision") {
+				t.Errorf("a resume with no budget left: exit %d %s %q", code, out, errOut)
+			}
+			if info := pw.info(run); info.Processes != 2 {
+				t.Errorf("a resume with no budget left took the run: %+v", info)
+			}
+			// a --token-budget may still only narrow the spec's: above it is refused as before
+			if path == "script" {
+				if code, _, errOut := resume("--token-budget", "101"); code == 0 || !strings.Contains(errOut, "100") {
+					t.Errorf("--token-budget 101: exit %d %q", code, errOut)
+				}
+			}
+		})
+	}
+}
+
+// TestRunBudgetNarrowsTheRemainder (CRW-1278): a resume's ceiling counts what the run spent; a --token-budget narrows the remainder and
+// never widens it, the spec's budget stays the upper bound, and nothing left refuses the resume.
+func TestRunBudgetNarrowsTheRemainder(t *testing.T) {
+	spec := Spec{RunID: "run-b", TokenBudget: 100, Decision: "ud-night"}
+	for _, c := range []struct {
+		spent, asked, want int64
+	}{{0, 100, 100}, {70, 100, 100}, {70, 0, 100}, {70, 20, 90}, {70, 50, 100}, {99, 100, 100}} {
+		if got, err := runBudget(spec, c.spent, c.asked); err != nil || got != c.want {
+			t.Errorf("spent %d asked %d: %d %v, want %d", c.spent, c.asked, got, err, c.want)
+		}
+	}
+	for _, spent := range []int64{100, 110} {
+		if _, err := runBudget(spec, spent, 100); err == nil || !strings.Contains(err.Error(), engine.ReasonBudgetExhausted) || !strings.Contains(err.Error(), "ud-night") {
+			t.Errorf("spent %d: %v", spent, err)
+		}
+	}
+	// a spec without a budget sets none; a --token-budget of a resume is that resume's own
+	if got, err := runBudget(Spec{RunID: "run-n"}, 70, 0); err != nil || got != 0 {
+		t.Errorf("no budget: %d %v", got, err)
+	}
+	if got, err := runBudget(Spec{RunID: "run-n"}, 70, 30); err != nil || got != 100 {
+		t.Errorf("no spec budget, 30 asked: %d %v", got, err)
+	}
+}
