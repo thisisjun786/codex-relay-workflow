@@ -28,6 +28,10 @@ const (
 var (
 	spawnRuleID     = regexp.MustCompile(`\b` + spawnRuleIDForm + `\b`)
 	spawnRuleRowKey = regexp.MustCompile("^`(" + spawnRuleIDForm + ")`$")
+
+	// retiredSpawnRules are rule ids rules.go keeps only so that old decision rows stay readable (CRW-1418: the issue-child path
+	// is retired, a node sized `child` goes up as a `size_split` escalation). The page has no row for them and does not name them.
+	retiredSpawnRules = map[string]bool{"SP-CHILD-1": true, "SP-CHILD-2": true}
 )
 
 // engineRuleIDs is the value of every string constant of rules.go that is a rule id, read with go/parser.
@@ -98,7 +102,7 @@ func spawnPolicyProblems(text string, engine []string) []string {
 	sorted := slices.Clone(rows)
 	slices.Sort(sorted)
 	for _, id := range engine {
-		if !slices.Contains(rows, id) {
+		if !retiredSpawnRules[id] && !slices.Contains(rows, id) {
 			problems = append(problems, "no table row for "+id)
 		}
 	}
@@ -106,12 +110,18 @@ func spawnPolicyProblems(text string, engine []string) []string {
 		if i > 0 && sorted[i-1] == id {
 			problems = append(problems, "two table rows for "+id)
 		}
-		if !slices.Contains(engine, id) {
+		switch {
+		case retiredSpawnRules[id]:
+			problems = append(problems, "the table row "+id+" is a retired rule id")
+		case !slices.Contains(engine, id):
 			problems = append(problems, "the table row "+id+" is no rule id of internal/flow/ops/rules.go")
 		}
 	}
 	for _, id := range spawnRuleID.FindAllString(text, -1) {
-		if !slices.Contains(engine, id) {
+		switch {
+		case retiredSpawnRules[id]:
+			problems = append(problems, "the text names "+id+", a retired rule id")
+		case !slices.Contains(engine, id):
 			problems = append(problems, "the text names "+id+", which is no rule id of internal/flow/ops/rules.go")
 		}
 	}
@@ -241,6 +251,23 @@ func TestSpawnPolicyRulesMatchEngine(t *testing.T) {
 		}
 		if p := spawnPolicyProblems("| `SP-A-1` | x |\n| `SP-B-1` | x |\n", engine); len(p) > 0 {
 			t.Errorf("an equal list is reported: %v", p)
+		}
+	})
+
+	// A retired id (rules.go keeps it for old rows) needs no row, and a row or a prose mention of it is reported.
+	t.Run("fixture: a retired rule id has no row and is not named", func(t *testing.T) {
+		engine := []string{"SP-A-1", "SP-B-1", "SP-CHILD-1", "SP-CHILD-2"}
+		if p := spawnPolicyProblems("| `SP-A-1` | x |\n| `SP-B-1` | x |\n", engine); len(p) > 0 {
+			t.Errorf("a page without the retired ids is reported: %v", p)
+		}
+		for label, c := range map[string]struct{ text, want string }{
+			"as a row": {"| `SP-A-1` | x |\n| `SP-B-1` | x |\n| `SP-CHILD-1` | x |\n", "the table row SP-CHILD-1 is a retired rule id"},
+			"in prose": {"| `SP-A-1` | x |\n| `SP-B-1` | x |\n\nSee SP-CHILD-2.\n", "the text names SP-CHILD-2, a retired rule id"},
+		} {
+			p := spawnPolicyProblems(c.text, engine)
+			if !slices.Contains(p, c.want) {
+				t.Errorf("%s: no problem is %q: %v", label, c.want, p)
+			}
 		}
 	})
 }

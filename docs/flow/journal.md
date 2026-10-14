@@ -58,7 +58,7 @@ saw. A row is never updated.
   `step_published` row has (the task turn 1, the repair 2), a later turn at that place replacing the earlier one, so an older journal
   is read from recorded members too and never from its held rows or k ([script.md](script.md#attempts-restarts-and-continuations)).
 
-- A command that writes into a run which may be alive (`crw flow apply`, `report-up`, `report-ack`, `report-delivered`;
+- A command that writes into a run which may be alive (`report-up`, `report-ack`, `report-delivered`;
   [reporting.md](reporting.md)) is not the run's process and numbers its `flow_events` rows from `engine.ForeignSeqBase` (`1 << 40`).
   A run's own `Seq` stays below it: a journal that is opened again counts after the largest number below the base, so the two writers
   never meet a number, and the run reads the commands' rows back as flow rows of kinds it does not act on. The journal tells a commit
@@ -172,7 +172,8 @@ audit results of acceptances: `results`, each with the acceptance id, the node, 
 the checks and the state (`ok`, `mismatch`, `unobserved`). The newest row that audits an acceptance decides whether it passed
 (`audit.Passed`); a reviewer thread is archived only for an acceptance that passed (`crw.archive`).
 
-**Recording calls.** `releaseChild`, `escalate`, `reportUp`, `hold`, `tierStep`, `spawnDecision`, `stepRecord`, `exploreRoute`, `exploreRecord`, `designAudit`, `designLedger`, `qaReceipt`, `qaCapture`, `reviewerFinal`, `audit`, `archive`, `replanSignals`, `currentDesign`, `reflection`, `signalBind`, `signalDone` and `signalClose` only record a fact. A call with a completed row
+**Recording calls.** `escalate`, `reportUp`, `hold`, `tierStep`, `spawnDecision`, `stepRecord`, `exploreRoute`, `exploreRecord`, `designAudit`, `designLedger`, `qaReceipt`, `qaCapture`, `reviewerFinal`, `audit`, `archive`, `replanSignals`, `currentDesign`, `reflection`, `signalBind`, `signalDone` and `signalClose` only record a fact, and so did `releaseChild`, which no script calls now: an old
+completed `crw.releaseChild` row is read as recorded. A call with a completed row
 of its own operation at its call id is not sent again (a completed call of another operation at the same position, such as an
 agent call of the earlier script, is not its record), whatever else is true; a call without one is executed live under the same call id and the same idempotent
 request id (`ops.RequestID`).
