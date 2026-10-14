@@ -332,11 +332,13 @@ func TestExploreRouting(t *testing.T) {
 	for _, r := range plan.Routes {
 		got = append(got, r.Route)
 	}
-	want := []string{"spawn", "spawn", "spawn", "spawn", "spawn", "spawn", "orchestrator", "orchestrator", "inline", "reuse"}
+	// an open question of a DESIGN is never the asker's to answer (CRW-1347): the small one is one more question for an explorer,
+	// and beyond the cap of the milestone it goes to the orchestrator like the others
+	want := []string{"spawn", "spawn", "spawn", "spawn", "spawn", "spawn", "orchestrator", "orchestrator", "orchestrator", "reuse"}
 	if !slices.Equal(got, want) {
 		t.Errorf("routes %v, want %v", got, want)
 	}
-	if plan.Routes[9].SameAs != 0 || plan.Routes[9].Rule != RuleInl2 || plan.Routes[8].Rule != RuleInl1 {
+	if plan.Routes[9].SameAs != 0 || plan.Routes[9].Rule != RuleInl2 || plan.Routes[8].Rule != RuleExpl1 || plan.Routes[8].Reason != "explorer_cap" {
 		t.Errorf("routes %+v", plan.Routes[8:])
 	}
 	// the answers are kept, and the same question asked again later costs no explorer
@@ -373,6 +375,142 @@ func TestExploreRouting(t *testing.T) {
 	w.must("exploreRoute", ExploreEvidence, ExploreContext{Node: "B", Tier: "executor"}, []Question{})
 	if len(mem.Spawn) != before+1 || mem.Spawn[before].Decision != DecisionSkip || mem.Spawn[before].RuleID != RuleExpl3 {
 		t.Errorf("decisions %+v", mem.Spawn[before:])
+	}
+
+	// A research question of an executor keeps SP-INL-1: inside the asker's regions, or with at most InlineFiles files, it is the
+	// asker's to answer.
+	_ = json.Unmarshal(w.must("exploreRoute", ExploreResearch, ExploreContext{Node: "C", Tier: "executor", Regions: []string{"c/"}}, []Question{
+		{Question: "a research question on one file", FilesNeeded: []string{"x.go"}},
+		{Question: "a research question inside the regions", FilesNeeded: []string{"c/1", "c/2", "c/3", "c/4"}},
+	}), &plan)
+	for i, rt := range plan.Routes {
+		if rt.Route != RouteInline || rt.Rule != RuleInl1 || rt.Reason != "asker_answers" {
+			t.Errorf("research question %d: %+v, want SP-INL-1 inline", i, rt)
+		}
+	}
+}
+
+// The open questions of a DESIGN (CRW-1347): none takes the inline route, whatever its files_needed; a question whose scope starts
+// with one of the four notations of the out-of-authority kinds goes to the orchestrator as a non-blocking ask and to no explorer;
+// a missing, unknown or longer notation goes to an explorer; the cap of the milestone counts only explorers, and the questions
+// beyond it go to the orchestrator as before. Every route is recorded with its reason, in the decision rows and in the explore
+// row.
+func TestExploreRoutingOpenQuestions(t *testing.T) {
+	w := newWorld(t)
+	qs := []Question{
+		{ID: "one", Question: "is the flag documented?", Scope: "docs", FilesNeeded: []string{"README.md"}},
+		{ID: "none", Question: "which package owns it?", Scope: "", FilesNeeded: []string{}},
+		{ID: "rule", Question: "may the change step past the README rule?", Scope: "authority:repo-rule: the README of the store", FilesNeeded: []string{"README.md"}},
+		{ID: "record", Question: "does CRW-9 keep its known-defects line?", Scope: "Authority:Other-Record", FilesNeeded: []string{}},
+		{ID: "policy", Question: "does the project ship it in 1.0?", Scope: "  AUTHORITY:POLICY", FilesNeeded: []string{"a", "b", "c", "d"}},
+		{ID: "env", Question: "does npm ci work where the verification runs?", Scope: "authority:environment (network)", FilesNeeded: nil},
+		{ID: "unknown", Question: "who pays for it?", Scope: "authority:budget", FilesNeeded: []string{"x"}},
+		{ID: "longer", Question: "is it a policy at all?", Scope: "authority:policy-ish", FilesNeeded: []string{"x"}},
+		{ID: "inside", Question: "is the token in the middle?", Scope: "repo, authority:policy", FilesNeeded: []string{"x"}},
+	}
+	var plan RoutePlan
+	_ = json.Unmarshal(w.must("exploreRoute", ExploreOpen, ExploreContext{Milestone: "M"}, qs), &plan)
+	type want struct{ route, reason, authority string }
+	wants := map[string]want{
+		"one": {RouteSpawn, "", ""}, "none": {RouteSpawn, "", ""},
+		"rule": {RouteOrchestrator, "out_of_authority", ScopeRepoRule}, "record": {RouteOrchestrator, "out_of_authority", ScopeOtherRecord},
+		"policy": {RouteOrchestrator, "out_of_authority", ScopePolicy}, "env": {RouteOrchestrator, "out_of_authority", ScopeEnvironment},
+		"unknown": {RouteSpawn, "", ""}, "longer": {RouteSpawn, "", ""}, "inside": {RouteSpawn, "", ""},
+	}
+	if len(plan.Routes) != len(qs) {
+		t.Fatalf("%d routes for %d questions", len(plan.Routes), len(qs))
+	}
+	for i, rt := range plan.Routes {
+		wt := wants[qs[i].ID]
+		if rt.Route != wt.route || rt.Reason != wt.reason || rt.Authority != wt.authority || rt.Rule != RuleExpl1 || rt.Scope != qs[i].Scope {
+			t.Errorf("%s: route %q reason %q authority %q rule %s scope %q, want %+v under %s", qs[i].ID, rt.Route, rt.Reason, rt.Authority, rt.Rule, rt.Scope, wt, RuleExpl1)
+		}
+		if rt.Route == RouteInline || rt.Rule == RuleInl1 {
+			t.Errorf("%s: an open question of a DESIGN took the inline route: %+v", qs[i].ID, rt)
+		}
+	}
+	// the decision rows: one for each question, under SP-EXPL-1, with the reason and the notation
+	mem := w.lane.d.Decisions.(*MemoryDecisions)
+	if len(mem.Spawn) != len(qs) {
+		t.Fatalf("%d decision rows, want %d", len(mem.Spawn), len(qs))
+	}
+	for i, row := range mem.Spawn {
+		wt := wants[qs[i].ID]
+		if row.RuleID != RuleExpl1 || row.Decision != wt.route || row.Reason != wt.reason {
+			t.Errorf("decision row of %s: %s %s %q, want %s %s %q", qs[i].ID, row.RuleID, row.Decision, row.Reason, RuleExpl1, wt.route, wt.reason)
+		}
+		inputs, _ := row.Evidence["inputs"].(map[string]any)
+		if got, _ := inputs["scope_notation"].(string); got != wt.authority {
+			t.Errorf("decision row of %s: scope_notation %q, want %q", qs[i].ID, got, wt.authority)
+		}
+	}
+	// the explore row records the route and the reason of each question
+	var row engine.Event
+	for _, ev := range w.j.Events() {
+		if ev.Op == OpExploreRoute && ev.Event == engine.EvCompleted {
+			row = ev
+		}
+	}
+	list, _ := row.Data["routes"].([]any)
+	if len(list) != len(qs) {
+		t.Fatalf("the explore row: %v", row.Data)
+	}
+	for i, item := range list {
+		m, _ := item.(map[string]any)
+		wt := wants[qs[i].ID]
+		if str(m, "route") != wt.route || str(m, "reason") != wt.reason || str(m, "scope_notation") != wt.authority {
+			t.Errorf("the explore row of %s: %v, want %+v", qs[i].ID, m, wt)
+		}
+	}
+
+	// The cap of the milestone counts explorers only: five were spawned above, so one more question gets an explorer and the
+	// rest go to the orchestrator for the cap; an authority question still goes for its notation and spends nothing.
+	_ = json.Unmarshal(w.must("exploreRoute", ExploreOpen, ExploreContext{Milestone: "M"}, []Question{
+		{ID: "p2", Question: "is the policy written down?", Scope: "authority:policy", FilesNeeded: []string{}},
+		{ID: "a", Question: "question a", Scope: "repo", FilesNeeded: []string{"a"}},
+		{ID: "b", Question: "question b", Scope: "repo", FilesNeeded: []string{"a"}},
+		{ID: "c", Question: "question c", Scope: "repo", FilesNeeded: []string{"a", "b", "c", "d", "e"}},
+	}), &plan)
+	var got []string
+	for _, rt := range plan.Routes {
+		got = append(got, rt.Route+"/"+rt.Reason)
+	}
+	if !slices.Equal(got, []string{"orchestrator/out_of_authority", "spawn/", "orchestrator/explorer_cap", "orchestrator/explorer_cap"}) {
+		t.Errorf("routes after the cap: %v", got)
+	}
+
+	// A question answered earlier in the run still reuses its answer, an authority question among them; an authority question
+	// recorded with no answer (a repeat in its round) is no answer, and goes to the orchestrator again.
+	w.must("exploreRecord", ExploreOpen, ExploreContext{Milestone: "M"}, []Answer{
+		{Digest: QuestionDigest("is the flag documented?"), Question: "is the flag documented?", Answer: "yes, in README.md", Route: RouteSpawn},
+		{Digest: QuestionDigest("does the project ship it in 1.0?"), Question: "does the project ship it in 1.0?", Answer: "", Route: RouteReuse},
+	})
+	_ = json.Unmarshal(w.must("exploreRoute", ExploreOpen, ExploreContext{Milestone: "M2"}, []Question{
+		{ID: "again", Question: "Is the flag   documented?", Scope: "authority:policy", FilesNeeded: []string{"README.md"}},
+		{ID: "ship", Question: "does the project ship it in 1.0?", Scope: "authority:policy", FilesNeeded: []string{}},
+	}), &plan)
+	if rt := plan.Routes[0]; rt.Route != RouteReuse || rt.Rule != RuleInl2 || rt.Answer != "yes, in README.md" || rt.Reason != "answered_in_run" {
+		t.Errorf("a question answered in the run: %+v", rt)
+	}
+	if rt := plan.Routes[1]; rt.Route != RouteOrchestrator || rt.Reason != "out_of_authority" {
+		t.Errorf("an authority question recorded with no answer: %+v", rt)
+	}
+}
+
+// AuthorityScope reads the notation of an out-of-authority kind at the start of a scope, case-insensitively and only as a whole
+// token; anything else is no notation.
+func TestAuthorityScope(t *testing.T) {
+	for scope, want := range map[string]string{
+		"authority:repo-rule": ScopeRepoRule, "AUTHORITY:OTHER-RECORD: CRW-9": ScopeOtherRecord, " authority:policy;": ScopePolicy,
+		"authority:environment\tnpm": ScopeEnvironment, "authority:environment-x": "", "authority:": "", "": "", "policy": "",
+		"repo authority:policy": "", "authority:policy_x": "", "authority:policy.": ScopePolicy,
+	} {
+		if got := AuthorityScope(scope); got != want {
+			t.Errorf("AuthorityScope(%q) = %q, want %q", scope, got, want)
+		}
+	}
+	if !slices.Equal(AuthorityScopes, []string{ScopeRepoRule, ScopeOtherRecord, ScopePolicy, ScopeEnvironment}) {
+		t.Errorf("AuthorityScopes %v", AuthorityScopes)
 	}
 }
 

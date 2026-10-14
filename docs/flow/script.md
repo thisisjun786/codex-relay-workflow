@@ -302,7 +302,8 @@ and a string that is no handle of a result of this run. Like every `crw.*` call,
 `internal/flow/workflows/project-lane.js` is the built-in workflow that runs the issues of a milestone (`args`: `plan`, `milestone`,
 and `cap`, the executors at once, default 3). Its steps, in order: `crw.milestone` reads the nodes of the milestone in the order the
 scheduler offers them; the architect answers `DESIGN` once for the milestone (SP-ARCH-1); the open questions of the DESIGN go to
-explorers (SP-EXPL-1); a reviewer of another model family than the architect audits the DESIGN (`DESIGN_AUDIT`, recorded by
+explorers (SP-EXPL-1), and the ones whose scope carries an out-of-authority notation, or beyond the explorer cap, to the orchestrator
+thread in one non-blocking `design_question` escalation once the DESIGN is approved; a reviewer of another model family than the architect audits the DESIGN (`DESIGN_AUDIT`, recorded by
 `crw.designAudit`), and `needs_changes` returns the DESIGN to the architect on its own thread; only an approved DESIGN becomes revision
 `r0` of the design ledger (`crw.designLedger`); `crw.dag` runs one lane for each node and the signal path of the milestone
 ([The architect's continuity and the re-plan](#the-architects-continuity-and-the-re-plan)); when every lane landed, `crw.closeMilestone` closes the milestone over
@@ -664,8 +665,15 @@ appends under the run lock: `ask` (the question's id), `node`, `run`, `revision`
 `class` (`escalation` or `jun_decision`), `applied_by` and the `decision` (`id`, `option`, `text`, `by`, `via`, `answered_at`,
 `authority`, `authority_ref`); `crw.decide` reads `ask` and `node`. A run cancelled while no process held it ends with a `finished` row
 of error kind `cancelled` written by `crw flow cancel`. The state of a run (`running`, `paused`, `dead`, `held`, `completed`,
-`cancelled`, `failed`) is not a row: it is read from the run lock, the last `started` and `finished` rows, the calls' rows
-(`internal/flow/callstate`) and the questions no `decision_applied` row has answered.
+`blocked`, `cancelled`, `failed`) is not a row: it is read from the run lock, the last `started` and `finished` rows, the calls' rows
+(`internal/flow/callstate`), the questions no `decision_applied` row has answered and, for `blocked`, the lane's own rows. A run meant
+to start the nodes of a plan (a run of `project-lane`, `issue-lane` or `night-batch`, or a run whose arguments name a `plan`) whose last
+process finished `completed` with nothing left to go on with is `blocked` when no process of it started a node (no completed
+`crw.release` row released one, no `crw.releaseChild` row released a child, no `crw.integrate` row landed one) and items of its joins threw
+in its last process (`item_error` rows: a lane of `crw.dag` whose `crw.release` failed is one). The engine's status of the run stays
+`completed`. A node the scheduler held back unreleased in the last process (capacity, a region in use: a wait a resume asks again) keeps the
+run `completed`, and so does a node that started. Another script run (a judge panel, a scout) that names no plan never meant to start a
+node: an item of it that threw is shown, and the run stays `completed`.
 
 The intent rows say what a later process needs to find the request again. `thread_requested` and `fork_requested` carry the
 `cwd` the thread is to run in, the `send` ordinal of the request (1, then one more each time reconcile proved the previous
