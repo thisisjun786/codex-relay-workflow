@@ -49,6 +49,10 @@ func DecodeKey(s string) (tracking.Ref, error) {
 	return r, nil
 }
 
+// ReplanEdgeSuffix is the least suffix compile adds to the id of an order edge on a re-plan ("e:FROM:TO.N", N from 2): the id of an
+// edge it retired is never used again, so the plan that orders the same two issues again names it e:FROM:TO.2, then .3 and on.
+const ReplanEdgeSuffix = ".2"
+
 // edgeIDLength is the length of the id compile gives the order edge from a prerequisite to an issue ("e:FROM:TO"), which the dag holds
 // to the same limit.
 func edgeIDLength(from, to string) int { return len("e:") + len(from) + len(":") + len(to) }

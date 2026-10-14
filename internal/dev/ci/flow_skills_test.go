@@ -437,7 +437,9 @@ func handoffKeyProblems(section string, keys map[string][]string, unset []string
 
 func TestPlanHandoffNamesTheCompilerKeys(t *testing.T) {
 	keys := compileJSONKeys(t)
-	unset := []string{"request_id", "coordinator_epoch", "kind", "criteria_set_digest"}
+	// warnings is written by `crw flow plan-input` (CRW-1379: the project key warning it found), never by the author of a handoff, so the
+	// section does not have to name it
+	unset := []string{"request_id", "coordinator_epoch", "kind", "criteria_set_digest", "warnings"}
 	// the issue's description and labels (CRW-1328) are read by crw flow start's issue_ready fact, never by the compiler, and crw-plan
 	// tells the planner to write them (CRW-1382): the section names every key of the compile input but the unset ones
 	section := sectionOf(readRepoText(t, planSkillFile), "Hand the plan to the run")
