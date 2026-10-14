@@ -64,6 +64,16 @@ type ReleaseRequest struct {
 	// Released false with ReasonLandNodeHeld and that run and execution (HeldRun, HeldExecution) before the run claims the plan's
 	// coordinator epoch, so the land takes nothing from the run that holds the node.
 	Land bool
+	// Regions are the node's admission regions (CRW-1391): the plan's regions together with the DESIGN's edit_regions (AdmissionRegions),
+	// empty when either side names none. The relay declares them for the node (dag_node_regions) before it releases it when the node has
+	// no declaration in force, so two nodes the flow admits together are judged by the regions they edit and not as undeclared nodes,
+	// which overlap every other. A declaration that fails is a warning of the release (RegionsWarning), and the release goes on.
+	Regions []string
+	// Admitted are the admission regions of the milestone's other nodes, by node (CRW-1391): the relay's release judgment reads every
+	// ready node ranked before this one as a holder of its declaration, and an undeclared one overlaps every other, so the relay declares
+	// those of them that have no declaration in force too, before the release. A declaration of another node that fails is that node's
+	// own release's to warn of.
+	Admitted map[string][]string
 }
 
 // ReleaseResult is the scheduler's answer to a release. A node it holds back (Released false) names why in Reason
@@ -87,6 +97,11 @@ type ReleaseResult struct {
 	// Run is the run the answered execution was released to: the run asking for a new release, or, for a replay, the run whose release
 	// it replays ("" when the relay does not say). A land of a node another run holds reads it (CRW-1354).
 	Run string `json:"run,omitempty"`
+	// RegionsDeclared says what became of the request's admission regions (CRW-1391): declared (this release declared them), kept (the
+	// node had a declaration in force, which stands), failed (the declaration was refused or could not be made: RegionsWarning says why,
+	// and the release went on as for an undeclared node) or "" (no regions were asked for).
+	RegionsDeclared string `json:"regions_declared,omitempty"`
+	RegionsWarning  string `json:"regions_warning,omitempty"`
 }
 
 // AcceptRequest asks the relay to accept an agent node's head (dag-accept on the agent path, R05): the premerge record the run

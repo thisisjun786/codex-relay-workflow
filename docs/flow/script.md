@@ -352,6 +352,16 @@ digest and its criteria digest in its input snapshot, so a ledger that later gro
 started under the revision it was released under. The lane function is called with a third argument, `sig`, whose `receipt(result)` reports the RECEIPT of each
 executor call to the signal path.
 
+Before the relay is asked for the slot, `crw.release` declares the node's admission regions to the relay (`dag_node_regions`, as
+`dag-region-declare` does; CRW-1391), because the relay's release judgment reads only declarations and an undeclared node overlaps
+every other: without it the second of two nodes `crw.dag` admitted together was held back `defer:edit_overlap`. It declares the
+admission regions of the milestone's other designed nodes that have none as well, since the judgment counts a ready node ranked before
+the released one as a holder. A plan region is declared as the plan states it; an `edit_regions` entry is a file, a tree when it ends in
+`/` and a symbol after `#`. A node with a declaration in force keeps it (the parent's graded declaration made before the run, or one an
+earlier release made), and a node with no regions on either side is left undeclared. A declaration the relay refuses is a warning, never
+a refusal: the release row records `regions`, `regions_declared` (`declared`, `kept` or `failed`) and the warning `regions_not_declared`
+with the relay's reason, and the release goes on as for an undeclared node.
+
 | `crw.classify` state | The one transition |
 | --- | --- |
 | `ready` | commit, verify, review, land |

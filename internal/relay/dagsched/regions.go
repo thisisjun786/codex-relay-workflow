@@ -142,6 +142,17 @@ type holder struct {
 // MaxRegions bounds one declaration.
 const MaxRegions = 64
 
+// NodeRegions is the declaration of a node in force (the regions of its latest declaration, read as loadDeclarations reads them), and
+// whether it has one. A flow run reads it before it declares a node's admission regions (CRW-1391): a node somebody declared keeps it.
+func (s *Scheduler) NodeRegions(ctx context.Context, plan, node string) ([]Region, bool, error) {
+	all, err := loadDeclarations(ctx, s.Store.Q(ctx), plan)
+	if err != nil {
+		return nil, false, err
+	}
+	regions, ok := all[node]
+	return regions, ok, nil
+}
+
 // RegionDeclaration is the answer of DeclareRegions: the sequence number of the declaration now in force and the regions it holds (as stored: sorted,
 // with the exclusive flag the classifier and the caller agreed on).
 type RegionDeclaration struct {

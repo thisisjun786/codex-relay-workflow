@@ -352,14 +352,38 @@ func (r *SchedRelay) Release(ctx context.Context, req ops.ReleaseRequest) (ops.R
 		return ops.ReleaseResult{}, err
 	}
 	defer done()
+	// the node's admission regions are declared before the relay judges its release (CRW-1391); a declaration that fails is the release's
+	// warning, and the release goes on as for an undeclared node (fail open)
+	var declared, warning string
+	if len(req.Regions) > 0 && request.Base != nil {
+		declared, warning = r.declareRegions(ctx, req.Plan, req.Node, request.Base.Repository, is, req.Regions)
+		// the milestone's other admitted nodes are declared too: the judgment reads an earlier-ranked ready node that has no declaration as
+		// overlapping every other, so a lane released before the one of an earlier node would be held back by it. A failure is that node's
+		// own release's to warn of.
+		others := make([]string, 0, len(req.Admitted))
+		for other := range req.Admitted {
+			others = append(others, other)
+		}
+		sort.Strings(others)
+		for _, other := range others {
+			if other == req.Node || len(req.Admitted[other]) == 0 {
+				continue
+			}
+			if on, ois, err := r.issueOf(ctx, req.Plan, other); err == nil && on.Kind == dag.NodeImplementation {
+				r.declareRegions(ctx, req.Plan, other, request.Base.Repository, ois, req.Admitted[other])
+			}
+		}
+	}
 	// a head made outside a run is released with the pair that wrote it, read back from its author thread (CRW-1354): the execution records it
 	res, err := r.Sched.ReleaseAgent(ctx, req.Plan, req.Node, r.Actor, request, dagsched.AgentReleaseOptions{Role: "executor", Tier: "executor", RunID: r.RunID, Worktree: r.worktreeHandle(req.Node),
 		AuthorModel: req.AuthorModel, AuthorEffort: req.AuthorEffort})
 	if err != nil {
 		if reason, held := holdBack(err); held && reason == ops.ReasonPlanChanged {
-			return r.planChanged(ctx, req.Plan, req.Node)
+			out, err := r.planChanged(ctx, req.Plan, req.Node)
+			out.RegionsDeclared, out.RegionsWarning = declared, warning
+			return out, err
 		} else if held {
-			return ops.ReleaseResult{Reason: reason}, nil
+			return ops.ReleaseResult{Reason: reason, RegionsDeclared: declared, RegionsWarning: warning}, nil
 		}
 		return ops.ReleaseResult{}, epochLost(req.Plan, err)
 	}
@@ -378,7 +402,60 @@ func (r *SchedRelay) Release(ctx context.Context, req ops.ReleaseRequest) (ops.R
 			run = cur.Agent.RunID
 		}
 	}
-	return ops.ReleaseResult{Released: true, ExecutionID: res.ExecutionID, SlotID: res.SlotID, Replayed: res.Replayed, SliceDigest: slice, Run: run}, nil
+	return ops.ReleaseResult{Released: true, ExecutionID: res.ExecutionID, SlotID: res.SlotID, Replayed: res.Replayed, SliceDigest: slice, Run: run,
+		RegionsDeclared: declared, RegionsWarning: warning}, nil
+}
+
+// The answers of declareRegions (ops.ReleaseResult.RegionsDeclared).
+const (
+	regionsDeclared = "declared"
+	regionsKept     = "kept"
+	regionsFailed   = "failed"
+)
+
+// declareRegions declares a node's admission regions in the target repository (dag-region-declare, dagsched.DeclareRegions) when the
+// node has no declaration in force (CRW-1391). A node with one keeps it: the parent's graded declaration made before the run (crw-run,
+// "Release by region grade") or one an earlier release of the node made, which a resume does not widen. A region that is one of the
+// plan's (the handoff's issue regions) is declared as the plan states it (kind, symbol, change, exclusive); an edit region of the DESIGN
+// is a path, a tree when it ends in "/" and a symbol when it names one after "#". It answers what it did and, for a declaration that
+// failed, why: the release goes on.
+func (r *SchedRelay) declareRegions(ctx context.Context, plan, node, repository string, is compile.Issue, regions []string) (string, string) {
+	if _, found, err := r.Sched.NodeRegions(ctx, plan, node); err != nil {
+		return regionsFailed, "the node's declaration in force cannot be read: " + err.Error()
+	} else if found {
+		return regionsKept, ""
+	}
+	planned := map[string]compile.Region{}
+	for _, rg := range is.Regions {
+		planned[rg.String()] = rg
+	}
+	list := make([]dagsched.Region, 0, len(regions))
+	for _, text := range regions {
+		if rg, ok := planned[text]; ok {
+			list = append(list, dagsched.Region{Repository: repository, Path: strings.TrimSuffix(rg.Path, "/"), Kind: cmpOr(rg.Kind, "file"), Key: rg.Key, Change: rg.Change, Exclusive: rg.Exclusive})
+			continue
+		}
+		p := strings.TrimSpace(text)
+		region := dagsched.Region{Repository: repository, Path: p, Kind: "file"}
+		if at := strings.LastIndex(p, "#"); at > 0 {
+			region.Path, region.Kind, region.Key = p[:at], "symbol", p[at+1:]
+		} else if strings.HasSuffix(p, "/") {
+			region.Path, region.Kind = strings.TrimSuffix(p, "/"), "tree"
+		}
+		list = append(list, region)
+	}
+	if _, err := r.Sched.DeclareRegions(ctx, plan, node, r.Actor, list); err != nil {
+		return regionsFailed, err.Error()
+	}
+	return regionsDeclared, ""
+}
+
+// cmpOr is s, or def when s is empty.
+func cmpOr(s, def string) string {
+	if s == "" {
+		return def
+	}
+	return s
 }
 
 // heldByAnotherRun is the run and the execution of the node's current agent execution when a run other than this one holds it ("" when

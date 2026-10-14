@@ -20,7 +20,6 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/bound"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/role"
 	"github.com/thisisjun786/codex-relay-workflow/internal/role/spawn"
@@ -132,14 +131,8 @@ func newSessionLab(t *testing.T) *sessionLab {
 	// the owner thread is the first thread the lab's fake host makes
 	owner := fmt.Sprintf("0190a000-0000-7000-8000-%012x", 1)
 	l := newLaneLabFor(t, owner, "dev", labIssue{Key: "A-1", Milestone: "M1"}, labIssue{Key: "A-2", Milestone: "M1"})
-	// the owner declares the edit region of each node before the run releases it (crw-run, "Release by region grade"): a node with no
-	// declaration overlaps every other and is held back (defer:edit_overlap), so the two nodes could not run at once
-	sched := &dagsched.Scheduler{Store: l.w.st}
-	for _, key := range []string{"A-1", "A-2"} {
-		if _, err := sched.DeclareRegions(context.Background(), l.plan, l.nodeOf[key], owner, []dagsched.Region{{Repository: l.repo, Path: "node-" + key + ".txt", Kind: "file"}}); err != nil {
-			t.Fatalf("the regions of %s: %v", key, err)
-		}
-	}
+	// nobody declares the nodes' edit regions before the run (CRW-1391): crw.release declares each node's admission regions (the plan's
+	// and the DESIGN's edit_regions) before the relay's release, so the two nodes of disjoint regions run at once with no owner's help
 	dir := filepath.Join(t.TempDir(), "crw")
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)

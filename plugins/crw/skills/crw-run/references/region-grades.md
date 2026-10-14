@@ -49,6 +49,8 @@ Declare before the release, with the grade of each region:
 The parent's check runs a `regenerate` command at the root of a fresh checkout of the head, so declare one that works there (the example builds `crw-dev` from the tree, which needs nothing installed), and declare `union` only for a list that both sides add lines to, and for a generated file the command that rebuilds it. A region without a grade is `independent`, which is how every earlier declaration reads. A declaration is made before the release; once a node is released its regions are held until its
 head lands, and a node that holds them may declare again only to narrow them ([Keep optimism honest](#keep-optimism-honest)). A node with no declaration is unknown, and an unknown node overlaps every other.
 
+A flow run declares for you: before it releases a node, `crw.release` declares the node's admission regions (the plan's regions and the DESIGN's `edit_regions`), and those of the milestone's other designed nodes, for each node that has no declaration in force, all graded `independent`. A declaration made before the run is kept, so declare here first only to give a region another grade; a declaration the relay refuses is a warning of the release row (`regions_not_declared`) and the node is released as an unknown one.
+
 ## Read the judgement
 
 `dag-ready` gives every implementation candidate a `release` object: the `rule` (`independent`, `mechanical`, `local-optimistic` or `defer`), the `overlaps` by grade (the
