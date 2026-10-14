@@ -492,6 +492,76 @@ func TestExploreRoutingOpenQuestions(t *testing.T) {
 	}
 }
 
+// CRW-1366: the router remembers the questions the run asked of the orchestrator by their digest, read from the design_question
+// escalation rows (their evidence names the digests), and never rewrites a row: an asked question is not asked again until the
+// orchestrator's applied answer is there, and then that answer is reused. Every reuse names the route its answer came from.
+func TestExploreRoutingRemembersOrchestratorAsks(t *testing.T) {
+	w := newWorld(t)
+	policy := Question{ID: "policy", Question: "does the project ship it in 1.0?", Scope: "authority:policy", FilesNeeded: []string{}}
+	docs := Question{ID: "docs", Question: "is the flag documented?", Scope: "docs", FilesNeeded: []string{"README.md"}}
+	dup := policy
+	dup.ID = "dup"
+	type want struct{ route, reason, origin, answer string }
+	check := func(round string, plan RoutePlan, wants ...want) {
+		t.Helper()
+		if len(plan.Routes) != len(wants) {
+			t.Fatalf("%s: %d routes, want %d", round, len(plan.Routes), len(wants))
+		}
+		for i, rt := range plan.Routes {
+			if got := (want{rt.Route, rt.Reason, rt.Origin, rt.Answer}); got != wants[i] {
+				t.Errorf("%s: question %s routed %+v, want %+v", round, rt.ID, got, wants[i])
+			}
+		}
+	}
+	var plan RoutePlan
+	_ = json.Unmarshal(w.must("exploreRoute", ExploreOpen, ExploreContext{Milestone: "M"}, []Question{policy, dup, docs}), &plan)
+	check("round 1", plan, want{RouteOrchestrator, "out_of_authority", "", ""}, want{RouteReuse, "same_question_in_round", RouteOrchestrator, ""}, want{RouteSpawn, "", "", ""})
+	w.must("exploreRecord", ExploreOpen, ExploreContext{Milestone: "M"}, []Answer{
+		{Digest: plan.Routes[0].Digest, Question: policy.Question, Route: RouteOrchestrator, Reason: "out_of_authority"},
+		{Digest: plan.Routes[1].Digest, Question: policy.Question, Route: RouteReuse, Reason: "same_question_in_round", Origin: RouteOrchestrator},
+		{Digest: plan.Routes[2].Digest, Question: docs.Question, Answer: "yes, in README.md", Route: RouteSpawn},
+	})
+	esc := w.must("escalate", nil, EscalateInfo{Reason: "design_question", Detail: "[authority:policy] " + policy.Question, Ask: "design",
+		Evidence: map[string]any{"questions": []string{QuestionDigest(policy.Question)}}})
+	var out EscalateOutcome
+	_ = json.Unmarshal(esc, &out)
+	written := len(w.j.Events())
+	before, _ := json.Marshal(w.j.Events())
+
+	// the next round: the asked question is not asked again, the explorer's answer is reused with its route
+	_ = json.Unmarshal(w.must("exploreRoute", ExploreOpen, ExploreContext{Milestone: "M"}, []Question{policy, docs}), &plan)
+	check("round 2", plan, want{RouteOrchestrator, "asked_in_run", "", ""}, want{RouteReuse, "answered_in_run", RouteSpawn, "yes, in README.md"})
+	if plan.Routes[0].Authority != ScopePolicy {
+		t.Errorf("the asked question lost its notation: %+v", plan.Routes[0])
+	}
+	// an applied answer of another ask is no answer of this one
+	w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindFlow, Event: EvDecisionApplied, Data: map[string]any{"ask": "esc_other", "node": "", "decision": map[string]any{"text": "not this"}}})
+	_ = json.Unmarshal(w.must("exploreRoute", ExploreOpen, ExploreContext{Milestone: "M"}, []Question{policy}), &plan)
+	check("round 3", plan, want{RouteOrchestrator, "asked_in_run", "", ""})
+	// the orchestrator's applied answer is the answer of the question from then on
+	w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindFlow, Event: EvDecisionApplied, Data: map[string]any{"ask": out.ID, "node": "", "decision": map[string]any{"text": "1.0 ships without it"}}})
+	_ = json.Unmarshal(w.must("exploreRoute", ExploreOpen, ExploreContext{Milestone: "M"}, []Question{policy, dup}), &plan)
+	check("round 4", plan, want{RouteReuse, "answered_by_orchestrator", RouteOrchestrator, "1.0 ships without it"}, want{RouteReuse, "same_question_in_round", RouteOrchestrator, ""})
+	if plan.Routes[0].Rule != RuleInl2 {
+		t.Errorf("the orchestrator's answer reused under %s", plan.Routes[0].Rule)
+	}
+	// the rows the router read are as they were written
+	if after, _ := json.Marshal(w.j.Events()[:written]); string(after) != string(before) {
+		t.Errorf("the router rewrote a row it read")
+	}
+	// the explore row and the decision rows record the route the answer came from
+	row := w.j.Events()[len(w.j.Events())-1]
+	list, _ := row.Data["routes"].([]any)
+	if m, _ := list[0].(map[string]any); str(m, "origin") != RouteOrchestrator || str(m, "reason") != "answered_by_orchestrator" {
+		t.Errorf("the explore row %v", row.Data)
+	}
+	mem := w.lane.d.Decisions.(*MemoryDecisions)
+	last := mem.Spawn[len(mem.Spawn)-2]
+	if inputs, _ := last.Evidence["inputs"].(map[string]any); last.Decision != RouteReuse || inputs["origin"] != RouteOrchestrator {
+		t.Errorf("the decision row of the reused answer: %+v", last)
+	}
+}
+
 // AuthorityScope reads the notation of an out-of-authority kind at the start of a scope, case-insensitively and only as a whole
 // token; anything else is no notation.
 func TestAuthorityScope(t *testing.T) {

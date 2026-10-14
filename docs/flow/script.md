@@ -303,7 +303,11 @@ and a string that is no handle of a result of this run. Like every `crw.*` call,
 and `cap`, the executors at once, default 3). Its steps, in order: `crw.milestone` reads the nodes of the milestone in the order the
 scheduler offers them; the architect answers `DESIGN` once for the milestone (SP-ARCH-1); the open questions of the DESIGN go to
 explorers (SP-EXPL-1), and the ones whose scope carries an out-of-authority notation, or beyond the explorer cap, to the orchestrator
-thread in one non-blocking `design_question` escalation once the DESIGN is approved; a reviewer of another model family than the architect audits the DESIGN (`DESIGN_AUDIT`, recorded by
+thread in a non-blocking `design_question` escalation: an authority question in the audit round that routed it, approved or not, a
+question beyond the cap once the DESIGN is approved; the escalation's evidence names the question digests it asked, so a later round
+or a re-plan does not ask one again on its own (`asked_in_run`); because only the latest design ask of a run is current for `crw flow answer`,
+an ask carries the questions of the DESIGN the run asked already that no answer has reached, and an orchestrator answer applied to it is the answer of the question from the
+next round on (`answered_by_orchestrator`); a reused answer names the route it came from (`origin`); a reviewer of another model family than the architect audits the DESIGN (`DESIGN_AUDIT`, recorded by
 `crw.designAudit`), and `needs_changes` returns the DESIGN to the architect on its own thread; only an approved DESIGN becomes revision
 `r0` of the design ledger (`crw.designLedger`); `crw.dag` runs one lane for each node and the signal path of the milestone
 ([The architect's continuity and the re-plan](#the-architects-continuity-and-the-re-plan)); when every lane landed, `crw.closeMilestone` closes the milestone over
