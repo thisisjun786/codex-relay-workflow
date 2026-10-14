@@ -222,10 +222,26 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "crw-dev fuzz: %s seed %d %d cases in %.1fs: same %d differ %d miss %d extra %d timeout %d refused %d; unreadable %d refused %d not refused %d\n",
 		summary.Target, summary.Seed, summary.Cases, summary.Seconds, summary.Same, summary.Differ, summary.Miss, summary.Extra, summary.Timeouts, summary.Refused,
 		summary.UnreadableCases, summary.UnreadableRefused, summary.UnreadableNotRefused)
+	if warning := failureWarning(summary, cfg.Out); warning != "" {
+		fmt.Fprintln(stderr, warning)
+	}
 	if campaignFailed(summary) {
 		return 1
 	}
 	return 0
+}
+
+// failureWarning is the one line a campaign prints on stderr when cases got no oracle answer: a timeout, a worker that
+// died (a reused process of the pyjson shim included), a reply that answered nothing, or a failure of the case's own
+// machinery. The counts and the directory of the records are named; the campaign fails whether or not anyone reads it.
+// It is empty when every case was answered.
+func failureWarning(summary Summary, out string) string {
+	lost := summary.Timeouts + summary.DeadWorkers + summary.NoAnswers + summary.Errors
+	if lost == 0 {
+		return ""
+	}
+	return fmt.Sprintf("crw-dev fuzz: warning: %d cases got no oracle answer (timeout %d, dead worker %d, no answer %d, error %d); records are in %s; the campaign fails",
+		lost, summary.Timeouts, summary.DeadWorkers, summary.NoAnswers, summary.Errors, crwconfig.JoinRoot(out, failureDir))
 }
 
 // campaignFailed is whether a campaign's summary is a failure. A case that timed out, whose worker died or did not answer, whose own
