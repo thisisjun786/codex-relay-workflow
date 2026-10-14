@@ -32,7 +32,7 @@ func ForwardChild(ctx context.Context, state, program string, argv []string, std
 	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", address)
 	if errors.Is(err, syscall.EPERM) {
 		// CRW-1296: EPERM on connect is how a Codex sandbox without network access refuses it; no child report leaves it.
-		return 0, dispatch.Host("relay daemon unavailable; child report was not submitted: " + err.Error() + "; this sandbox refuses the connection to the relay daemon (no network access): a relay child reports only from a sandbox with network access (danger-full-access, or workspace-write with network access)")
+		return 0, dispatch.Host("relay daemon unavailable; child report was not submitted: " + err.Error() + "; this sandbox refuses the connection to the relay daemon (no network access): a relay child reports only from a sandbox with network access (danger-full-access, or workspace-write with network access), or call the report_child bridge tool, which runs outside the sandbox")
 	}
 	if err != nil {
 		return 0, dispatch.Host("relay daemon unavailable; child report was not submitted: " + err.Error())

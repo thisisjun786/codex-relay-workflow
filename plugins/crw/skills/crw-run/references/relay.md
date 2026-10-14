@@ -509,6 +509,10 @@ against no criteria. `criteria-show --relationship <rel>` returns the set and it
       --outcome ready_for_review --turn-thread <own task id> --turn-id <own turn> \
       --artifact /abs/path [--supersedes-revision <hash>]
 
+A child whose sandbox has no network access cannot connect to the daemon's `control.sock`: its `emit`
+ends with exit 3 and says so. It reports through the bridge's `report_child` tool instead, which runs outside the sandbox
+([bridge](bridge.md)), with the same options after the command name.
+
 For non-PR work, `--artifact` is still required. Freeze the result and verification
 evidence under an authorized artifact root, including any source and delivered
 document identities. A linked document alone has no manifest and cannot produce
