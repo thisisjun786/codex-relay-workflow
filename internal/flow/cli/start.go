@@ -186,6 +186,7 @@ func (c *command) start(args []string) int {
 		}
 	}
 	handoffSum := ""
+	var handoffIn *compile.Input
 	if handoffRaw != nil {
 		in, err := DecodeHandoff(handoffRaw)
 		if err != nil {
@@ -194,6 +195,7 @@ func (c *command) start(args []string) int {
 		if why := CheckHandoff(in, planOf(spec.Args), milestoneArg(spec.Args)); why != "" {
 			return c.fail("%s", why)
 		}
+		handoffIn = &in
 		if _, named := HandoffOf(spec.Args); named {
 			return c.usage("the args name a handoff of their own: the run's handoff is given with --handoff")
 		}
@@ -273,6 +275,12 @@ func (c *command) start(args []string) int {
 	// the plan's project key against the owner thread's parent bindings, before the run process and so before any role call
 	if rerr == nil {
 		if f, ok := projectKeyFact(c.ctx, r, planOf(spec.Args), spec.Thread); ok {
+			plan.Facts = append(plan.Facts, f)
+		}
+	}
+	// the release gate over the issues whose body the handoff carries (CRW-1328): a held issue is a warning, recorded, never a refusal
+	if handoffIn != nil {
+		if f, ok := issueReadyFact(*handoffIn, planOf(spec.Args), milestoneArg(spec.Args)); ok {
 			plan.Facts = append(plan.Facts, f)
 		}
 	}

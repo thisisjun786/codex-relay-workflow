@@ -508,7 +508,10 @@ or on an identity git could not resolve: that verifies nothing); the identities 
 `internal/pabcd/source`, the rule of the native final gate (`source.CommitIdentity` is the identity of a pinned commit), and the
 judgement of every piece is in the `crw.finalGate` row (the call row of the gate). The gate is `pass` when every piece is fresh and
 passes, `failed` when a fresh piece does not pass (a verification that ran and failed, a receipt that is `REVISE`, `FAIL` or
-`INCONCLUSIVE`), and `pending` while a piece is missing or stale. The gate makes no evidence. The close makes it, at H: `crw.verify(null node)` for each
+`INCONCLUSIVE`), and `pending` while a piece is missing or stale. A verification whose record says no test package ran tests
+(`testPackagesRun` 0 in verification-record/1, CRW-1328; a record without the member is unknown, never zero) is recorded on its
+`crw.verify` row with the warning `no_tests_run`, and the gate lists it in `warnings` and on its evidence; its state is the evidence's as
+before. The gate makes no evidence. The close makes it, at H: `crw.verify(null node)` for each
 command named in `need_tests`, and the QA calls below when `need_qa`; then the gate is judged again. A verification that cannot run holds
 the milestone (`verify_unavailable`). A head that moves while evidence is made is judged again from the new head, at most three rounds.
 A gate that failed ends the close with an escalation (`final_gate_test_failed`, `qa_failed`, `qa_inconclusive`) and reviewer-final does not

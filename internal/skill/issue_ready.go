@@ -168,6 +168,9 @@ type readyReport struct {
 	Observed        readyObserved  `json:"observed"`
 	Exception       *sizeException `json:"exception,omitempty"`
 	ExceptionRecord string         `json:"exception_record,omitempty"`
+	// Warnings are the end condition's commands that may pass having run no test (CRW-1328, issue_ready_command.go): additive, and never
+	// a reason the issue is held.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // punctuation dropped when an entry is compared with the placeholder and none words.
@@ -441,7 +444,7 @@ func readyReportFor(in readyInput) (readyReport, error) {
 	}
 
 	report := readyReport{Schema: readySchema, Issue: in.ID, Title: in.Title, Present: []string{}, Missing: []string{}, OpenQuestions: []string{}, Reasons: []string{},
-		Observed: readyObserved{EditRegions: regions, UnreadHeadings: append([]string{}, unread...)}}
+		Observed: readyObserved{EditRegions: regions, UnreadHeadings: append([]string{}, unread...)}, Warnings: endConditionWarnings(sections)}
 	if report.Observed.EditRegions == nil {
 		report.Observed.EditRegions = []string{}
 	}
@@ -533,6 +536,10 @@ func runIssueReady(args []string, stdin io.Reader, stdout, stderr io.Writer) int
 		for _, reason := range report.Reasons {
 			fmt.Fprintf(stderr, "crw skill issue-ready: warning: %s is %s: %s\n", in.ID, report.Decision, reason)
 		}
+	}
+	// the end condition's warnings (CRW-1328) are printed whatever the decision, and change neither it nor the exit code
+	for _, w := range report.Warnings {
+		fmt.Fprintf(stderr, "crw skill issue-ready: warning: %s %s\n", in.ID, w)
 	}
 	return 0
 }

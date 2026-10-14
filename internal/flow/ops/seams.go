@@ -210,7 +210,14 @@ type VerifyOutcome struct {
 	// Note is what the verifier says about how it ran, such as tools taken from PATH because nothing configured them (CRW-1319);
 	// the crw.verify row records it as verifier_note.
 	Note string
+	// TestPackagesRun is the count of go test packages the verification ran tests in, as its record says (testPackagesRun of
+	// verification-record/1, CRW-1328); nil is a record that does not say, which is unknown, never zero. Zero is the warning
+	// no_tests_run of the crw.verify row and the final gate; Pass is the record's either way.
+	TestPackagesRun *int
 }
+
+// WarnNoTestsRun is the warning of a verification whose record says it ran no test (CRW-1328): recorded, never a failure.
+const WarnNoTestsRun = "no_tests_run"
 
 // Verifier verifies a head. The real one runs `crw-dev ci local` (CILocalVerifier).
 type Verifier interface {

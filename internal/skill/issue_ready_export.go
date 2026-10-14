@@ -22,6 +22,8 @@ type ReadyVerdict struct {
 	OpenQuestions []string
 	// Reasons is every reason the issue is held, in the order the command lists them.
 	Reasons []string
+	// Warnings are the end condition's commands that may pass having run no test (CRW-1328): additive, never a reason it is held.
+	Warnings []string
 }
 
 // CheckIssueReady runs the release gate on one issue. It is the one implementation of the gate: the
@@ -40,5 +42,6 @@ func CheckIssueReady(issue ReadyIssue) (ReadyVerdict, error) {
 		Missing:       report.Missing,
 		OpenQuestions: report.OpenQuestions,
 		Reasons:       report.Reasons,
+		Warnings:      report.Warnings,
 	}, nil
 }

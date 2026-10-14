@@ -156,6 +156,8 @@ type VerifyResult struct {
 	Head     string   `json:"head"`
 	// Base is the commit the verification and the acceptance of the head stand on (stableBase).
 	Base string `json:"base"`
+	// Warnings are what the verification warns of without failing (no_tests_run, CRW-1328); additive.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 func (o *verifyOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResult, error) {
@@ -208,6 +210,15 @@ func (o *verifyOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 			record = out.Record
 			if out.Note != "" {
 				data["verifier_note"] = out.Note
+			}
+			// a record that says how many packages ran tests is recorded with the count, and one that says none ran warns: the pass is
+			// the record's, and the warning is the row's and the result's (CRW-1328)
+			if out.TestPackagesRun != nil {
+				data["test_packages_run"] = *out.TestPackagesRun
+				if *out.TestPackagesRun == 0 {
+					data["warning"] = WarnNoTestsRun
+					res.Warnings = append(res.Warnings, WarnNoTestsRun+": the verification record of "+head.Commit+" says no test package ran tests")
+				}
 			}
 		}
 	}
