@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 )
 
@@ -192,5 +193,89 @@ func TestReceiveComparisonMakesNoGitCall(t *testing.T) {
 	ack := delivery.NewAck(delivery.NewService(r.sched.Store, delivery.SystemClock{}))
 	if ack.TargetNotice == nil {
 		t.Fatal("an acknowledgement built in a process that links the scheduler carries no target comparison")
+	}
+}
+
+// laterPlanChild gives the kit a second plan, h, with one node b whose issue key no node of plan g carries, and returns the kit read for the event
+// of b's accepted result: the child of a later plan. The target of the integration ref dev-int stays what plan g's record made it: plan g, origin
+// and dev (a second record of the same remote branch is the no-op CRW-1304 pins, so the row never names plan h).
+func (r *receiveKit) laterPlanChild(t *testing.T) *receiveKit {
+	t.Helper()
+	r.putPlan("h", 0, "h-r1", addRelNode("b", dag.NodeImplementation))
+	reported := r.reportNode("h", "b", acceptOpts{})
+	row, err := r.sched.Store.One(context.Background(), "SELECT r.issue_key AS issue_key FROM relationships r WHERE r.relationship_id = ?", reported.Acceptance.RelationshipID)
+	if err != nil || row == nil || row.Text("issue_key") == r.issue {
+		t.Fatalf("the later plan's child needs an issue key of its own: %v %v", row, err)
+	}
+	later := *r
+	later.event, later.relationship, later.issue = reported.Event, reported.Acceptance.RelationshipID, row.Text("issue_key")
+	return &later
+}
+
+// elsewhere is a commit no branch holds and no batch recorded: a head that is outside the integration path.
+func (r *receiveKit) elsewhere() string {
+	return r.repo.git("commit-tree", r.treeOf(r.base), "-p", r.base, "-m", "elsewhere")
+}
+
+// CRW-1374 d1: the target is looked up by the child's integration ref, not by the plan the first record named. A child of a later plan that
+// integrates onto the same ref and the same remote branch is compared at acknowledgement like the child of the plan that recorded the target.
+func TestReceiveComparesAChildOfALaterPlanOnTheSameIntegrationRef(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(r *receiveKit) (baseline string)
+	}{
+		{"the later plan has a batch of its own on the ref", func(r *receiveKit) string {
+			// plan h recorded an intent stage for dev-int, as its first integrate batch would
+			r.exec("INSERT INTO dag_integration_stages (stage_id, batch_id, plan_id, stage, node_id, acceptance_id, event_id, revision_hash, generation, head_sha, detail, recorded_by, recorded_at)"+
+				" VALUES ('stage-h-1', 'batch-h-1', 'h', 'intent', '', '', '', '', 0, '', ?, 'parent', '2026-10-14T00:00:00+00:00')", `{"integration_ref":"dev-int","base":"`+r.res.NewHead+`"}`)
+			return r.heads["a"] // a baseline of no recorded head: only the plan's batch names the ref
+		}},
+		{"the child was started from a head the ref recorded", func(r *receiveKit) string { return r.base }},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := newReceiveKit(t)
+			target := r.recordTarget(t, "dev-int", "dev")
+			if target.PlanID != "g" {
+				t.Fatalf("the recorded target names plan %q; want g", target.PlanID)
+			}
+			rowsBefore := r.count("SELECT COUNT(*) FROM dag_integration_targets")
+			child := r.laterPlanChild(t)
+			child.seed("dispatch-request-later", c.setup(r))
+			foreign := r.elsewhere()
+			child.observe(t, foreign)
+			if again := r.recordTarget(t, "dev-int", "dev"); again.PlanID != "g" {
+				t.Fatalf("the repeated record names plan %q; the stored target must stay plan g's (no schema or row change is needed)", again.PlanID)
+			}
+			notice := child.notice(t)
+			if notice == nil {
+				t.Fatal("a child of a later plan on the same integration ref and remote branch compared nothing at acknowledgement")
+			}
+			if pyjson.Text(notice.Get("integrationRef")) != "dev-int" || pyjson.Text(notice.Get("remoteRef")) != "dev" || pyjson.Text(notice.Get("observedHead")) != foreign || pyjson.Text(notice.Get("faultId")) == "" {
+				t.Fatalf("notice %v; want the fault of dev-int's moved target, observed %s", notice, foreign)
+			}
+			if faults := targetFaults(t, r.batchKit); len(faults) != 1 {
+				t.Fatalf("%d faults; want one", len(faults))
+			}
+			if rows := r.count("SELECT COUNT(*) FROM dag_integration_targets"); rows != rowsBefore+1 {
+				t.Fatalf("%d target rows (%d before the observation); the comparison must add no target row", rows, rowsBefore)
+			}
+		})
+	}
+}
+
+// CRW-1374 d1: a child of a later plan that nothing ties to the ref (no batch of its plan on it, and a baseline that is none of its recorded heads)
+// is not compared: the lookup still does not guess which target the child was started from.
+func TestReceiveDoesNotGuessTheTargetOfAChildNothingTiesToTheRef(t *testing.T) {
+	r := newReceiveKit(t)
+	r.recordTarget(t, "dev-int", "dev")
+	child := r.laterPlanChild(t)
+	child.seed("dispatch-request-later", r.heads["a"])
+	child.observe(t, r.elsewhere())
+	if got := child.notice(t); got != nil {
+		t.Fatalf("notice %v; want a comparison that compares nothing", got)
+	}
+	if faults := targetFaults(t, r.batchKit); len(faults) != 0 {
+		t.Fatalf("%d faults; want none", len(faults))
 	}
 }

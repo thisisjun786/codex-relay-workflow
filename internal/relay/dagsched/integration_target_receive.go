@@ -38,7 +38,7 @@ func ReceiveTargetNotice(ctx context.Context, st *store.Store, event string) (de
 		return nil, err
 	}
 	s := &Scheduler{Store: st}
-	target, observed, found, err := s.observedTargetOf(ctx, issue)
+	target, observed, found, err := s.observedTargetOf(ctx, issue, baseline)
 	if err != nil || !found || observed == baseline {
 		return nil, err
 	}
@@ -105,45 +105,77 @@ func childBaseline(ctx context.Context, st *store.Store, event string) (baseline
 	return text, issue, nil
 }
 
-// observedTargetOf finds the one current target of the plans whose live nodes carry the issue key that has an observed head, and the
-// newest head read there. Zero targets with an observation, or more than one, find none: the comparison does not guess which target
-// the child was started from.
-func (s *Scheduler) observedTargetOf(ctx context.Context, issue string) (store.IntegrationTargetRow, string, bool, error) {
+// observedTargetOf finds the one current target the child's integration ref names that has an observed head, and the newest head read
+// there. The child's integration refs are the refs its plans recorded a batch for and the refs whose recorded heads include the child's
+// baselineRevision (CRW-1374): the target is looked up by the ref, so a child of a later plan on the same integration ref and remote branch
+// is found although the target row names the plan that recorded it first (a repeat of a recorded remote branch writes nothing). The targets
+// the child's plans name themselves are still candidates. Zero targets with an observation, or more than one, find none: the comparison
+// does not guess which target the child was started from, and an issue no live node of a plan carries compares nothing.
+func (s *Scheduler) observedTargetOf(ctx context.Context, issue, baseline string) (store.IntegrationTargetRow, string, bool, error) {
 	rows, err := s.Store.Q(ctx).QueryContext(ctx, "SELECT DISTINCT plan_id FROM dag_nodes WHERE issue_key = ? AND retired_rev IS NULL ORDER BY plan_id", issue)
 	if err != nil {
 		return store.IntegrationTargetRow{}, "", false, err
 	}
-	var plans []string
+	plans := map[string]bool{}
 	for rows.Next() {
 		var plan string
 		if err := rows.Scan(&plan); err != nil {
 			_ = rows.Close()
 			return store.IntegrationTargetRow{}, "", false, err
 		}
-		plans = append(plans, plan)
+		plans[plan] = true
 	}
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 		return store.IntegrationTargetRow{}, "", false, err
 	}
+	if len(plans) == 0 {
+		return store.IntegrationTargetRow{}, "", false, nil
+	}
+	refs, err := s.integrationRefsOfChild(ctx, plans, baseline)
+	if err != nil {
+		return store.IntegrationTargetRow{}, "", false, err
+	}
+	all, err := store.IntegrationTargets(ctx, s.Store)
+	if err != nil {
+		return store.IntegrationTargetRow{}, "", false, err
+	}
 	var found []store.IntegrationTargetRow
 	var heads []string
-	for _, plan := range plans {
-		targets, err := store.IntegrationTargetsOfPlan(ctx, s.Store, plan)
+	for _, t := range all {
+		if !plans[t.PlanID] && !refs[t.IntegrationRef] {
+			continue
+		}
+		latest, has, err := store.LatestIntegrationObservation(ctx, s.Store, t)
 		if err != nil {
 			return store.IntegrationTargetRow{}, "", false, err
 		}
-		for _, t := range targets {
-			latest, has, err := store.LatestIntegrationObservation(ctx, s.Store, t)
-			if err != nil {
-				return store.IntegrationTargetRow{}, "", false, err
-			}
-			if has {
-				found, heads = append(found, t), append(heads, latest.ObservedHead)
-			}
+		if has {
+			found, heads = append(found, t), append(heads, latest.ObservedHead)
 		}
 	}
 	if len(found) != 1 {
 		return store.IntegrationTargetRow{}, "", false, nil
 	}
 	return found[0], heads[0], true, nil
+}
+
+// integrationRefsOfChild are the integration refs a child belongs to: the refs a batch of one of its plans was recorded for, and the refs whose
+// recorded heads (the bases of their batches and the heads their ref_moved stages name) include the child's baseline, the commit the child was
+// started from. Both are read from the stage rows alone, without a git or network call.
+func (s *Scheduler) integrationRefsOfChild(ctx context.Context, plans map[string]bool, baseline string) (map[string]bool, error) {
+	all, batchRef, err := s.targetStageRows(ctx)
+	if err != nil {
+		return nil, err
+	}
+	refs := map[string]bool{}
+	for _, r := range all {
+		ref := batchRef[r.batch]
+		if ref == "" {
+			continue
+		}
+		if plans[r.plan] || (r.detail != "" && r.detail == baseline) {
+			refs[ref] = true
+		}
+	}
+	return refs, nil
 }

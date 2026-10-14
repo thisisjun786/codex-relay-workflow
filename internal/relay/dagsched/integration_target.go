@@ -96,31 +96,8 @@ func (s *Scheduler) CheckIntegrationTarget(ctx context.Context, checkout, remote
 // the newest: the base of every intent of the ref and every head a ref_moved stage of its batches names. The ref is matched
 // by name, as VerifiedMoveOnto matches it. recorded holds the same heads of every integration ref of the store.
 func (s *Scheduler) recordedTargetHeads(ctx context.Context, integrationRef string) (heads []string, plan string, recorded map[string]bool, err error) {
-	rows, err := s.Store.Q(ctx).QueryContext(ctx, "SELECT stage, batch_id, plan_id, detail FROM dag_integration_stages WHERE node_id = '' AND stage IN ('intent', 'ref_moved') ORDER BY recorded_at, rowid")
+	all, batchRef, err := s.targetStageRows(ctx)
 	if err != nil {
-		return nil, "", nil, err
-	}
-	defer rows.Close()
-	type stageRow struct{ stage, batch, plan, detail string }
-	var all []stageRow
-	batchRef := map[string]string{}
-	for rows.Next() {
-		var r stageRow
-		if err := rows.Scan(&r.stage, &r.batch, &r.plan, &r.detail); err != nil {
-			return nil, "", nil, err
-		}
-		if r.stage == "intent" {
-			var intent map[string]string
-			if json.Unmarshal([]byte(r.detail), &intent) == nil && intent["integration_ref"] != "" {
-				batchRef[r.batch] = intent["integration_ref"]
-				r.detail = intent["base"]
-			} else {
-				r.detail = ""
-			}
-		}
-		all = append(all, r)
-	}
-	if err := rows.Err(); err != nil {
 		return nil, "", nil, err
 	}
 	recorded = map[string]bool{}
@@ -141,6 +118,39 @@ func (s *Scheduler) recordedTargetHeads(ctx context.Context, integrationRef stri
 		}
 	}
 	return heads, plan, recorded, nil
+}
+
+// targetStageRow is one intent or ref_moved stage row of a batch: for an intent the detail is the batch's base, for a ref_moved the head it moved the ref to.
+type targetStageRow struct{ stage, batch, plan, detail string }
+
+// targetStageRows reads the intent and ref_moved stage rows of the store, oldest first, and the integration ref each batch names (from its intent).
+func (s *Scheduler) targetStageRows(ctx context.Context) (all []targetStageRow, batchRef map[string]string, err error) {
+	rows, err := s.Store.Q(ctx).QueryContext(ctx, "SELECT stage, batch_id, plan_id, detail FROM dag_integration_stages WHERE node_id = '' AND stage IN ('intent', 'ref_moved') ORDER BY recorded_at, rowid")
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	batchRef = map[string]string{}
+	for rows.Next() {
+		var r targetStageRow
+		if err := rows.Scan(&r.stage, &r.batch, &r.plan, &r.detail); err != nil {
+			return nil, nil, err
+		}
+		if r.stage == "intent" {
+			var intent map[string]string
+			if json.Unmarshal([]byte(r.detail), &intent) == nil && intent["integration_ref"] != "" {
+				batchRef[r.batch] = intent["integration_ref"]
+				r.detail = intent["base"]
+			} else {
+				r.detail = ""
+			}
+		}
+		all = append(all, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, nil, err
+	}
+	return all, batchRef, nil
 }
 
 // recordTargetMoved records one occurrence of the fault through the ledger, which raises its blocking notice when it opens, and
