@@ -191,7 +191,7 @@ type turnState struct {
 
 func tokensOf(raw map[string]any) engine.Tokens {
 	num := func(k string) int64 { f, _ := raw[k].(float64); return int64(f) }
-	return engine.Tokens{Input: num("inputTokens"), Output: num("outputTokens"), Total: num("totalTokens")}
+	return engine.Tokens{Input: num("inputTokens"), CachedInput: num("cachedInputTokens"), Output: num("outputTokens"), ReasoningOutput: num("reasoningOutputTokens"), Total: num("totalTokens")}
 }
 
 // observe takes one notification of the thread; it returns the turn's terminal state when the notification is the end of
@@ -401,7 +401,7 @@ func (b *Backend) turnTokens(thread string, seen *usageSeen) engine.Tokens {
 	if !known {
 		return seen.last
 	}
-	return engine.Tokens{Input: seen.total.Input - base.Input, Output: seen.total.Output - base.Output, Total: seen.total.Total - base.Total}
+	return seen.total.Sub(base)
 }
 
 type appserverReading = appserver.TurnReading

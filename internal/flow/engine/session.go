@@ -905,7 +905,7 @@ func (c *callRun) sessionOutcome(ctx context.Context, turnID string) (TurnOutcom
 			out.TokensUnmeasured = true
 			return out, true
 		}
-		out.Tokens = Tokens{Input: total.Input - s.seen.Input, Output: total.Output - s.seen.Output, Total: total.Total - s.seen.Total}
+		out.Tokens = total.Sub(s.seen)
 		s.seen = total
 		return out, true
 	}

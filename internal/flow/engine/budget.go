@@ -34,10 +34,18 @@ func RowTokens(data map[string]any) Tokens {
 func RunSpent(events []Event, runID string) Tokens {
 	var sum Tokens
 	for _, ev := range events {
-		if ev.Kind != KindCall || ev.RunID != runID || ev.Op != "agent" || !isTerminal(ev.Event) {
-			continue
+		if ev.RunID == runID {
+			sum = sum.Add(TerminalTokens(ev))
 		}
-		sum = sum.Add(RowTokens(ev.Data))
 	}
 	return sum
+}
+
+// TerminalTokens is what one row adds to the tokens a run spent (RunSpent): the tokens of a terminal row of an agent call, nothing for
+// any other row. A reading of the calls of a run (`crw flow show`, `ps`, the digest) sums the same rows.
+func TerminalTokens(ev Event) Tokens {
+	if ev.Kind != KindCall || ev.Op != "agent" || !isTerminal(ev.Event) {
+		return Tokens{}
+	}
+	return RowTokens(ev.Data)
 }

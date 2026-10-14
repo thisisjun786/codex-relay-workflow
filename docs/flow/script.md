@@ -314,6 +314,15 @@ acceptances against the reviewer threads on the host and archives the threads wh
 a re-plan that did not complete is never read as an approval, a design, a gate, a review or an alignment (`held` and `unknown` hold the milestone, `refused` and
 `null_model` escalate, a gate that failed or cannot be settled and a QA that is INCONCLUSIVE escalate, `superseded` stops).
 
+**The caps of the design loop.** The design loop is one `auditedDesign` of `project-lane.js` (the DESIGN or re-plan delta it starts from, its audit rounds and
+the architect's fixes), and it has two caps, both written in `project-lane.js` beside the loop. The round cap is `AUDIT_ROUNDS` (3): a DESIGN not approved in
+that many rounds stops the milestone with the `design_audit_rounds` escalation, which the run tells the orchestrator thread (CRW-1347). The token cap is the
+run's token budget (`budget.total`; the run's figure across its resumes, CRW-1278): when the calls of the loop have used `DESIGN_TOKEN_WARN` (0.8) of it, by the
+tokens their results report, the loop raises the `design_loop_tokens` escalation, which asks nothing and goes up to the orchestrator thread, once per loop, and
+goes on; the engine pauses the run at the whole budget (`budget_exhausted`). A run without a budget has no token cap. Reaching either cap writes a log row
+`warn design_loop_cap rounds: ...` or `warn design_loop_cap tokens: ...` (CRW-1327). Neither cap is a block of its own: a warning and a record, the stop at the
+round cap being CRW-1347's.
+
 **The lane of a node.** `crw.dag` starts a node when the nodes it waits for (a dependency or an order edge; the members of a
 group are chained by order edges) have landed, in the scheduler's order, at most `cap` nodes at once and never two nodes whose
 edit regions overlap (an undeclared region overlaps every other); the regions of a node are those of the plan together with the
@@ -846,7 +855,9 @@ any row is written. `crw flow shadow` replays either from the trace and names th
   one repair, `null_model`, `completed`.
 - A turn that ended `failed` or `interrupted` with an error is `TurnOutcome.Failed` with its `codexErrorInfo`: a usage or rate limit
   pauses the run, an exceeded context window is a `null_model`, a host failure holds the call, as for any call.
-- Tokens are the rollout's last `token_count` (thread/read `path`), less what the subagent's earlier turns counted. A rollout that
+- Tokens are the rollout's last `token_count` (thread/read `path`), less what the subagent's earlier turns counted, in all its parts: the input and its
+  cached part, the output and its reasoning part, the total (`tokens`: `input`, `cached_input`, `output`, `reasoning_output`, `total`; a part that is 0 is left
+  out of the row, and a row written before the parts reads them as 0). The App Server backend records the same parts from `thread/tokenUsage/updated`. A rollout that
   cannot be read leaves the turn unmeasured: the `tokens_unmeasured` row says `pauses: false`, and a session run's token ceiling
   counts the calls it measured.
 - A pause, a cancellation or a deadline interrupts the bound subagent's running turns and reads the thread until it is no longer

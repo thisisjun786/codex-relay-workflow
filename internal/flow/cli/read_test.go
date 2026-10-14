@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -464,5 +465,62 @@ func TestShowDoesNotCallAnOldStartedRowAPlaceholderTable(t *testing.T) {
 		if name != "placeholder" && strings.Contains(out, "placeholder table") {
 			t.Errorf("%s: an old row is called a placeholder table:\n%s", name, out)
 		}
+	}
+}
+
+// TestTokensShowCachedFreshAndOutput (CRW-1327): `crw flow show`, `crw flow ps` and the run's digest split the tokens into cached input,
+// fresh input (the input minus the cached) and output, with the reasoning output beside it: an architect call of 4,218,262 tokens
+// whose input of 4,171,534 was 4,006,518 cached shows 165,016 fresh. A row written before the split (no cached input) reads it as 0.
+func TestTokensShowCachedFreshAndOutput(t *testing.T) {
+	w := newWorld(t)
+	r := w.newRun("run-tok", "thread-owner")
+	r.phase("design")
+	r.call("c_arch", "architect", "", 1, []string{engine.EvPrepared, engine.EvCompleted}, map[string]map[string]any{
+		engine.EvCompleted: {"tokens": map[string]any{"input": 4171534, "cached_input": 4006518, "output": 46728, "reasoning_output": 31200, "total": 4218262}}})
+	r.call("c_old", "reviewer", "", 1, []string{engine.EvPrepared, engine.EvCompleted}, map[string]map[string]any{
+		engine.EvCompleted: {"tokens": map[string]any{"input": 80, "output": 20, "total": 100}}})
+	r.close()
+	td := w.deps()
+	code, out, errOut := td.do("show", "run-tok", "--state", w.state)
+	if code != 0 {
+		t.Fatalf("show: exit %d %s", code, errOut)
+	}
+	for _, want := range []string{
+		"tokens 4218362 (cached input 4006518, fresh input 165096, output 46748, reasoning 31200)",
+		"tokens 4218262 (cached input 4006518, fresh input 165016, output 46728, reasoning 31200)",
+		"tokens 100 (cached input 0, fresh input 80, output 20, reasoning 0)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("show lacks %q:\n%s", want, out)
+		}
+	}
+	code, out, _ = td.do("show", "run-tok", "--state", w.state, "--json")
+	var d RunDetail
+	if code != 0 || json.Unmarshal([]byte(out), &d) != nil {
+		t.Fatalf("show --json: %d %s", code, out)
+	}
+	if want := (TokenSplit{CachedInput: 4006518, FreshInput: 165096, Output: 46748, ReasoningOutput: 31200}); d.Tokens != 4218362 || d.TokenSplit != want {
+		t.Errorf("show --json: tokens %d split %+v", d.Tokens, d.TokenSplit)
+	}
+	if a := d.Phases[0].Agents[0]; a.TokenSplit != (TokenSplit{CachedInput: 4006518, FreshInput: 165016, Output: 46728, ReasoningOutput: 31200}) {
+		t.Errorf("the architect call: %+v", a)
+	}
+	code, out, _ = td.do("ps", "--all", "--state", w.state)
+	if code != 0 || !strings.Contains(out, "CACHED") || !strings.Contains(out, "FRESH") || !strings.Contains(out, "OUTPUT") || !regexp.MustCompile(`4218362\s+4006518\s+165096\s+46748`).MatchString(out) {
+		t.Errorf("ps:\n%s", out)
+	}
+	events, _, err := loadRun(w, "run-tok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dg := BuildDigest(DigestInput{Run: RunRecord{RunID: "run-tok"}, Events: events, Spec: Spec{TokenBudget: 5000000}})
+	var budget string
+	for _, p := range dg.Providers {
+		if p.Name == "token budget" {
+			budget = p.Detail
+		}
+	}
+	if budget != "4218362 of 5000000 tokens spent (cached input 4006518, fresh input 165096, output 46748, reasoning 31200)" {
+		t.Errorf("the digest's token budget: %q", budget)
 	}
 }

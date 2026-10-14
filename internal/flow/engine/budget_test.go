@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 )
 
@@ -26,5 +27,34 @@ func TestRunSpentCountsEachTerminalRowOnce(t *testing.T) {
 	got := RunSpent(rows, "r")
 	if want := (Tokens{Input: 93, Output: 22, Total: 115}); got != want {
 		t.Errorf("RunSpent = %+v, want %+v", got, want)
+	}
+}
+
+// TestSessionTokensKeepTheCachedSplit (CRW-1327): a session call's tokens are the growth of its subagent's rollout total in every
+// part (cached input and reasoning output too), its terminal row records them in the journal's form (cached_input,
+// reasoning_output), and a row of an older version without them reads them as 0.
+func TestSessionTokensKeepTheCachedSplit(t *testing.T) {
+	k := newSessionKit(t)
+	k.host.tokens["/rollout/agent-1"] = Tokens{Input: 4171534, CachedInput: 4006518, Output: 46728, ReasoningOutput: 31200, Total: 4218262}
+	res := k.h.run(`const a = await agent.call('design', { agentType: 'explorer', label: 'a' })
+return [a.meta.tokens.input, a.meta.tokens.cached_input, a.meta.tokens.output, a.meta.tokens.reasoning_output, a.meta.tokens.total]`)
+	if got := value[[]int64](t, res); fmt.Sprint(got) != "[4171534 4006518 46728 31200 4218262]" {
+		t.Fatalf("the call's tokens %v", got)
+	}
+	rows := k.rowsOf("a")
+	done := rows[len(rows)-1]
+	raw, err := json.Marshal(done.Data["tokens"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != `{"input":4171534,"cached_input":4006518,"output":46728,"reasoning_output":31200,"total":4218262}` {
+		t.Errorf("the %s row records %s", done.Event, raw)
+	}
+	var old map[string]any
+	if err := json.Unmarshal([]byte(`{"tokens":{"input":80,"output":20,"total":100}}`), &old); err != nil {
+		t.Fatal(err)
+	}
+	if got := RowTokens(old); got != (Tokens{Input: 80, Output: 20, Total: 100}) || got.FreshInput() != 80 {
+		t.Errorf("an old row reads %+v (fresh %d)", got, got.FreshInput())
 	}
 }

@@ -183,3 +183,59 @@ func TestMilestoneCloseReportsUpThroughTheReporter(t *testing.T) {
 		t.Fatalf("delivery rows %+v", d)
 	}
 }
+
+// TestDesignLoopCapsWarnAndTellTheOrchestrator (CRW-1327): the design loop of the project lane has two caps, AUDIT_ROUNDS rounds and the
+// run's token budget (budget.total, the run's figure across resumes: CRW-1278). Reaching either writes a warning row (warn
+// design_loop_cap) and tells the orchestrator thread: the round cap through the design_audit_rounds escalation CRW-1347 raises (the
+// milestone stops there as it decided), the token cap - the design loop reaching DESIGN_TOKEN_WARN of the budget - through a
+// design_loop_tokens escalation that asks nothing, and the loop goes on: the DESIGN is recorded and the lanes are released.
+func TestDesignLoopCapsWarnAndTellTheOrchestrator(t *testing.T) {
+	warned := func(l *Lab, cap string) bool {
+		for _, ev := range l.FlowRows("log") {
+			if m := str(ev.Data, "message"); strings.HasPrefix(m, "warn design_loop_cap") && strings.Contains(m, cap) {
+				return true
+			}
+		}
+		return false
+	}
+	told := func(s *scenarioSender, reason string) bool {
+		for _, p := range s.Parent {
+			if strings.HasPrefix(p.LogicalID, "esc-") && strings.Contains(p.Text, "reason="+reason) {
+				return true
+			}
+		}
+		return false
+	}
+	t.Run("rounds", func(t *testing.T) {
+		l := NewLab(t, twoNodes()...)
+		sender := l.wireUpward(t, false)
+		l.Sequence("^design-audit:r\\d+$", func(*Call) fakehostPlan {
+			return Say(map[string]any{"verdict": "needs_changes", "findings": []any{map[string]any{"ref": "D1", "severity": "P2", "finding": "no", "evidence": []string{}}}, "summary": "no"})
+		})
+		if res := l.Run(); res.Status != engine.RunCompleted {
+			t.Fatalf("run %s: %s", res.Status, res.Error)
+		}
+		if !warned(l, "rounds") || !slices.Contains(escalationReasons(l), "design_audit_rounds") || !told(sender, "design_audit_rounds") {
+			t.Errorf("the round cap: warned %v, escalations %v, told %+v", warned(l, "rounds"), escalationReasons(l), sender.Parent)
+		}
+	})
+	t.Run("tokens", func(t *testing.T) {
+		l := NewLab(t, twoNodes()...)
+		sender := l.wireUpward(t, false)
+		l.Budget = 25 // the architect and the audit are 20: 80% of the budget, spent before any executor
+		if res := l.Run(); res.Status != engine.RunCompleted {
+			t.Fatalf("run %s: %s", res.Status, res.Error)
+		}
+		if !warned(l, "tokens") || !slices.Contains(escalationReasons(l), "design_loop_tokens") || !told(sender, "design_loop_tokens") {
+			t.Errorf("the token cap: warned %v, escalations %v, told %+v", warned(l, "tokens"), escalationReasons(l), sender.Parent)
+		}
+		for _, q := range flowcli.Questions(l.Events()) {
+			if q.Reason == "design_loop_tokens" {
+				t.Errorf("the token cap asks a question: %+v", q)
+			}
+		}
+		if len(l.Rows("crw.designLedger")) == 0 || len(l.Rows("crw.release")) == 0 {
+			t.Errorf("the token cap blocked the loop: %d ledger rows, %d releases", len(l.Rows("crw.designLedger")), len(l.Rows("crw.release")))
+		}
+	})
+}

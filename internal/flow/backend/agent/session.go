@@ -220,5 +220,5 @@ func (h SessionHost) Tokens(_ context.Context, rolloutPath string) (engine.Token
 	if err != nil || !measured {
 		return engine.Tokens{}, false
 	}
-	return engine.Tokens{Input: u.Input, Output: u.Output, Total: u.Total}, true
+	return engine.Tokens{Input: u.Input, CachedInput: u.CachedInput, Output: u.Output, ReasoningOutput: u.ReasoningOutput, Total: u.Total}, true
 }
