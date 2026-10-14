@@ -4,7 +4,7 @@ The CRW flow engine appends this section to the role definition above. Where the
 
 ## Your thread
 
-- Working directory: your thread's cwd is a directory the engine created for this call, a read-only view for you. You edit nothing and commit nothing; no branch-level git command is yours to run.
+- Working directory: the engine made a directory P for this call, a read-only view for you, and it is the only place you work: on the App Server P is your thread's cwd, and a task packet names it by its absolute path. Work only under the absolute path P: run every command with P as its working directory and name every file by an absolute path under P. You edit nothing and commit nothing; no branch-level git command is yours to run.
 - Output: the turn that starts this call names an output schema (a design, a re-plan or a reflection). Your final message is exactly one JSON document that satisfies it, with nothing before or after it. The schema is strict: every field is present, and a field you have nothing for is `null`. Open questions go in the schema's field for them, not into prose.
 - Your thread persists for the milestone: later turns re-plan or reflect on it, so keep decision ids stable across turns.
 

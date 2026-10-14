@@ -29,7 +29,14 @@ func (c *callRun) heldInPlace(rows []Event, prep Event) bool {
 	// A held row does not show that the call's turn stopped (an interrupt the host ignored, or whose end did not come in time,
 	// ends the call held engine_paused all the same). Before the call goes on, or anything replaces it, the host shows that no
 	// turn of it still runs; while one does, the call stays held as it is and nothing else starts on its node.
-	if host, ok := e.cfg.Backend.(ReconHost); ok {
+	if e.cfg.Session != nil {
+		// the subagents the held attempts were bound to run nothing any more
+		if err := e.sessionQuiesce(e.ctx, c.id, rows, false); err != nil {
+			e.stopNode(c.plan.node, ReasonRecoveryHold)
+			e.markLive(c.path, c.position+1)
+			return c.replayFrom(rows, prep)
+		}
+	} else if host, ok := e.cfg.Backend.(ReconHost); ok {
 		if err := e.heldTurnsEnded(e.ctx, host, rows); err != nil {
 			e.stopNode(c.plan.node, ReasonRecoveryHold)
 			e.markLive(c.path, c.position+1)
@@ -232,6 +239,9 @@ func heldCwd(rows []Event, prep Event) string {
 // request was refused sends it for the first time once the host shows that the refused request made nothing.
 func (c *callRun) resumeHeld(ctx context.Context) (res CallResult, stop bool, k int, input string, pre *recoveredTurn) {
 	e, p, h := c.e, c.plan, c.held
+	if c.sess != nil {
+		return c.sessionResumeHeld(ctx)
+	}
 	rows := e.prior.rowsOf(c.id, "agent")
 	st := stateOf(c.id, rows)
 	info, _ := lookupCall(rows, c.id)

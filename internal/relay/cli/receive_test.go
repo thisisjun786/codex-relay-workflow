@@ -17,8 +17,10 @@ import (
 // not added to the lists doctor reports, which are the contract's: the lists are the ones the cut
 // ref has, the digest below being taken over them.
 
-// listsDigest is sha256 over the two lists as doctor reports them, the offline one first.
-const listsDigest = "cb7e724d3c0848a9ea8f6bd1b8a3450942e7b8149aec4b85be404a526b16832c"
+// listsDigest is sha256 over the two lists as doctor reports them, the offline one first. The offline list is the
+// contract's less the three child report commands (emit, intent-claim, intent-disposition), which doctor lists in
+// daemonRequiredCommands instead (CRW-1298); the host-required list is the contract's.
+const listsDigest = "72ac4377530d57dbc44a69b3aa58258dce01cfa46f165a92042f0604f0e22061"
 
 func TestDoctorCommandListsUnchanged(t *testing.T) {
 	state := ownerOnlyState(t, tempHome(t), "doctor")
@@ -35,7 +37,7 @@ func TestDoctorCommandListsUnchanged(t *testing.T) {
 		}
 	}
 	sum := sha256.Sum256([]byte(strings.Join(lists[0], "\n") + "\n--\n" + strings.Join(lists[1], "\n")))
-	if len(lists[0]) != 147 || len(lists[1]) != 11 || hex.EncodeToString(sum[:]) != listsDigest {
+	if len(lists[0]) != 144 || len(lists[1]) != 11 || hex.EncodeToString(sum[:]) != listsDigest {
 		t.Errorf("doctor's command lists moved: %d offline, %d host-required, digest %s", len(lists[0]), len(lists[1]), hex.EncodeToString(sum[:]))
 	}
 	for _, name := range []string{"journal-tail", "receive"} {

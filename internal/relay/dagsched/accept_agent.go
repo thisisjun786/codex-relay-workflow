@@ -413,6 +413,28 @@ func callPair(ctx context.Context, q store.Querier, call, run string) (agentPair
 	return agentPair{Model: prepared.Model, Effort: prepared.Effort}, nil
 }
 
+// priorPairs are the pairs the earlier attempts of a session call were bound with: the prior_pairs of its newest thread_started row.
+// A call of the App Server path names none.
+func priorPairs(ctx context.Context, q store.Querier, call, run string) ([]agentPair, error) {
+	var detail string
+	found, err := queryOne(ctx, q, "SELECT detail_json FROM flow_calls WHERE call_id = ? AND run_id = ? AND event = 'thread_started' ORDER BY event_seq DESC LIMIT 1", []any{call, run}, &detail)
+	if err != nil || !found {
+		return nil, err
+	}
+	var row struct {
+		Prior []struct {
+			Model  string `json:"model"`
+			Effort string `json:"effort"`
+		} `json:"prior_pairs"`
+	}
+	_ = json.Unmarshal([]byte(detail), &row)
+	out := make([]agentPair, 0, len(row.Prior))
+	for _, p := range row.Prior {
+		out = append(out, agentPair{Model: p.Model, Effort: p.Effort})
+	}
+	return out, nil
+}
+
 // authorPairs are the distinct pairs the node's author calls ran on, sorted: every completed executor, executor-t1 or architect call of the node (whatever execution of its chain it ran in: the commits of
 // an earlier attempt are in the head too), and the pair the execution rows of the node record. A pair the host never read back is not an observed one.
 func authorPairs(ctx context.Context, q store.Querier, plan, node string, e AgentExecution) ([]agentPair, error) {
@@ -445,6 +467,17 @@ func authorPairs(ctx context.Context, q store.Querier, plan, node string, e Agen
 		}
 		if pair.Model != "" {
 			seen[pair] = true
+		}
+		// a session call's earlier attempts, whose edits stay in the worktree, ran on the pairs its newest thread_started row
+		// names (CRW-1316 §4)
+		prior, err := priorPairs(ctx, q, c.call, c.run)
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range prior {
+			if p.Model != "" {
+				seen[p] = true
+			}
 		}
 	}
 	chain, err := q.QueryContext(ctx, "SELECT DISTINCT author_model, author_effort FROM dag_agent_executions WHERE plan_id = ? AND node_id = ? AND author_model <> ''", plan, node)

@@ -46,7 +46,9 @@ const (
 
 // directKind is what one kind is: the relationship prefix its sender reports through, the
 // direction and layer the envelope names, the two roles, and whether it asks for a decision and
-// who owes the answer.
+// who owes the answer. A project kind goes to the management session above the project on the 1.0
+// path (two session layers, CRW-1314); under a legacy initiative lead the envelope names the lead's
+// layer and role instead (directLayer), while the direction, and so the message id, stays the kind's.
 type directKind struct {
 	prefix, direction, layer, senderRole, recipientRole string
 	decision                                            bool
@@ -58,12 +60,12 @@ var directKinds = map[string]directKind{
 	KindLeadDecisionRequest:        {prefixInitiative, "lead_to_management", "management", "lead", "management", true, "recipient"},
 	KindLeadBlocked:                {prefixInitiative, "lead_to_management", "management", "lead", "management", false, ""},
 	KindJunDecisionRequest:         {prefixInitiative, "lead_to_management", "management", "lead", "management", true, "user"},
-	KindFlowMilestoneReport:        {prefixProject, "orchestrator_to_lead", "lead", "orchestrator", "lead", false, ""},
-	KindFlowProjectBlocked:         {prefixProject, "orchestrator_to_lead", "lead", "orchestrator", "lead", false, ""},
-	KindFlowProjectDecisionRequest: {prefixProject, "orchestrator_to_lead", "lead", "orchestrator", "lead", true, "recipient"},
-	KindFlowEscalation:             {prefixProject, "orchestrator_to_lead", "lead", "orchestrator", "lead", false, ""},
-	KindFlowCompletion:             {prefixProject, "orchestrator_to_lead", "lead", "orchestrator", "lead", false, ""},
-	KindFlowNoNodeStarted:          {prefixProject, "orchestrator_to_lead", "lead", "orchestrator", "lead", false, ""},
+	KindFlowMilestoneReport:        {prefixProject, "orchestrator_to_management", "management", "orchestrator", "management", false, ""},
+	KindFlowProjectBlocked:         {prefixProject, "orchestrator_to_management", "management", "orchestrator", "management", false, ""},
+	KindFlowProjectDecisionRequest: {prefixProject, "orchestrator_to_management", "management", "orchestrator", "management", true, "recipient"},
+	KindFlowEscalation:             {prefixProject, "orchestrator_to_management", "management", "orchestrator", "management", false, ""},
+	KindFlowCompletion:             {prefixProject, "orchestrator_to_management", "management", "orchestrator", "management", false, ""},
+	KindFlowNoNodeStarted:          {prefixProject, "orchestrator_to_management", "management", "orchestrator", "management", false, ""},
 	KindSessionStepWaiting:         {prefixRun, "run_to_orchestrator", "orchestrator", "run", "orchestrator", false, ""},
 }
 
@@ -155,16 +157,26 @@ func (c *Channel) composeDirect(m DirectMessage, r Resolution, at string) Packet
 	if text := strings.TrimSpace(m.Text); text != "" {
 		body = truncateText(text, maxDirectBody)
 	}
-	envelope := map[string]any{"version": "relay-envelope/1", "direction": k.direction, "layer": k.layer, "kind": kind, "purpose": m.Kind,
+	layer, recipientRole := directLayer(k, r)
+	envelope := map[string]any{"version": "relay-envelope/1", "direction": k.direction, "layer": layer, "kind": kind, "purpose": m.Kind,
 		"messageId": id, "relationId": m.Relationship, "relationRevision": absent("unknown", "the link revision was not read"),
 		"sender":    map[string]any{"role": k.senderRole, "taskId": r.Sender},
-		"recipient": map[string]any{"role": k.recipientRole, "taskId": r.Recipient, "scopeKind": r.RecipientScopeKind},
+		"recipient": map[string]any{"role": recipientRole, "taskId": r.Recipient, "scopeKind": r.RecipientScopeKind},
 		"subject":   m.Subject, "scope": scope, "basis": basis, "observedAt": at, "evidence": evidence,
 		"correlationId": absent("not_applicable", "this message answers nothing earlier"),
 		"replyTo":       absent("not_applicable", "no reply is directed at one message"), "answerOwedBy": answer, "decision": decision,
 		"reach": reachUnmeasured()}
 	return Packet{"version": packetVersion, "envelope": envelope, "issue": nil, "generation": nil, "criteriaDigest": nil, "policy": nil,
 		"callback": nil, "artifact": nil, "evidence": evidence, "body": body, "activation": nil}
+}
+
+// directLayer is the layer and the recipient role the envelope of a kind names for resolution r: the
+// kind's own, except that a project kind resolved to a legacy initiative lead names the lead's.
+func directLayer(k directKind, r Resolution) (string, string) {
+	if k.prefix == prefixProject && r.RecipientScopeKind == scopeKindInitiative {
+		return "lead", "lead"
+	}
+	return k.layer, k.recipientRole
 }
 
 // truncateText keeps at most limit bytes of text without splitting a character.

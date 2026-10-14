@@ -5,8 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
-	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/golden"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install"
@@ -14,19 +14,30 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/record"
 )
 
-// interruptedWhileHeld runs command with a context that ends at 300 ms while holding is held,
-// lets go of holding at 1 s, and answers what command answered: a command that honours its
-// context has refused by then, one that does not goes on once the lock frees.
-func interruptedWhileHeld(t *testing.T, release func(), command func(context.Context) (record.Object, int)) (record.Object, int) {
+// interruptedWhileHeld runs command with a context that ends the moment command first pauses to
+// wait for the lock at lockPath, which some other run holds, and answers what command answered
+// once it returned; only then does it let go of the lock (release). A command that honours its
+// context refuses on that wait, and nothing it would do once the lock frees has run. The signal
+// is the wait itself (record.Seam), not a time window, so a loaded host changes nothing.
+func interruptedWhileHeld(t *testing.T, lockPath string, release func(), command func(context.Context) (record.Object, int)) (record.Object, int) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	results := make(chan record.Object, 1)
-	codes := make(chan int, 1)
-	go func() { result, code := command(ctx); results <- result; codes <- code }()
-	time.Sleep(time.Second)
+	var interrupt sync.Once
+	ctx = record.WithSeam(ctx, record.Seam{Waiting: func(path string) {
+		if path == lockPath {
+			interrupt.Do(cancel)
+		}
+	}})
+	type answer struct {
+		result record.Object
+		code   int
+	}
+	answers := make(chan answer, 1)
+	go func() { result, code := command(ctx); answers <- answer{result, code} }()
+	got := <-answers
 	release()
-	return <-results, <-codes
+	return got.result, got.code
 }
 
 // A rollback interrupted while it waits for the promotion lock refuses, and when the holder lets
@@ -40,7 +51,7 @@ func TestAnInterruptedRollbackMovesNothing(t *testing.T) {
 	h.mustInstall(t, "update", second)
 	before := readFile(t, h.record)
 	_, release := golden.Spawn(t, "", h.record+record.PromotionLockSuffix)
-	result, code := interruptedWhileHeld(t, release, func(ctx context.Context) (record.Object, int) {
+	result, code := interruptedWhileHeld(t, h.record+record.PromotionLockSuffix, release, func(ctx context.Context) (record.Object, int) {
 		return install.Rollback(ctx, h.options(), "")
 	})
 	if code != install.Refused || !strings.Contains(text(at(result, "refused")), "interrupted") {
@@ -68,7 +79,7 @@ func TestInterruptedRegistrationsWriteNothing(t *testing.T) {
 			func(ctx context.Context) (record.Object, int) { return install.Hook(ctx, h.options(), h.hookOptions()) }},
 	} {
 		write(t, c.lock, "4242")
-		result, code := interruptedWhileHeld(t, func() { _ = os.Remove(c.lock) }, c.command)
+		result, code := interruptedWhileHeld(t, c.lock, func() { _ = os.Remove(c.lock) }, c.command)
 		if code != install.Refused || !strings.Contains(golden.Canon(result), install.Interrupted) {
 			t.Fatalf("%s: exit %d\n%s", label, code, golden.Canon(result))
 		}

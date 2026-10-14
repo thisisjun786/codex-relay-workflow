@@ -6,11 +6,21 @@ tool schema and instructions decide availability and permitted use; model names
 Ask only when the answer changes the work and is not already available in context.
 
 Main agents may leave useful async questions throughout ordinary work and active
-goals, whenever the tool is exposed and the host permits it. No Interview entry
-or phase change is needed. SessionStart announces this policy. PostCompact only
+goals, whenever the tool is exposed and the host permits it. No phase change is
+needed. SessionStart announces this policy. PostCompact only
 queues a workspace/session-scoped hint; the next root UserPromptSubmit consumes
 it once on an event that accepts model context. No prompt means no same-turn/Stop
 recovery guarantee. These hooks neither enable a missing tool nor force a question.
+
+## In a run: a decision request
+
+In a run nobody asks the user and no session opens an interview. An open question
+that changes scope or design is a decision request to the session above the project
+session: lift it with `crw flow report-up` and the evidence file, continue the work it
+does not block on recorded assumptions, and take the answer when it arrives. A
+milestone or issue that is unclear before it runs goes back to its registration
+([crw-define](../../crw-define/SKILL.md)). The async questions below are for a main
+agent outside a run.
 
 ## Select the exposed tool
 
@@ -20,7 +30,7 @@ recovery guarantee. These hooks neither enable a missing tool nor force a questi
 - If it is absent or rejected, inspect the available schema/policy and use an allowed
   plain-text note/question where permitted, without claiming a question card was sent.
   Do not switch optional mid-work questions to blocking `request_user_input`. Reserve
-  that tool for its existing authorized workflow (such as Interview). Never invent an async tool,
+  that tool for a workflow the host authorizes for it. Never invent an async tool,
   change feature flags, or retry a forbidden request through another channel.
 - Blocking `request_user_input` has different fields and limits. Never copy its
   `header`, `id`, `question` or option-object payload into the async tool.
@@ -68,19 +78,17 @@ For the export example, compute common report rows while format is pending. If
 the user chooses JSON, serialize those rows as JSON. If an optional default was
 already used, revise the affected artifact when feasible. A required publication
 approval leaves publication pending regardless of time spent preparing the report.
-Interview retains its existing blocking question flow; do not migrate it to async.
 
-## Goal and Interview boundaries
+## Goal boundaries
 
 Follow the actual host's question/approval rules and the current goal's authority.
 An active goal alone does not prohibit optional async questions or make their
 answers a completion dependency. Do not bypass an actual host prohibition or
-turn async questions into a blocking Interview. Subagents return question candidates to the main agent;
+turn async questions into a blocking question round. Subagents return question candidates to the main agent;
 they do not question the user independently.
 
-The persisted CRW Interview currently captures synchronous `request_user_input`
-question IDs and returned answers. Async submission and later messages are not
-automatically captured by that path. See the [Interview owner](../../crw-interview/SKILL.md)
-before using questions as readiness evidence; never mark a pending async question as
-answered, manufacture ledger events, or assume the exact-name synchronous goal guard
+The PostToolUse hook records synchronous `request_user_input` question IDs and
+returned answers. Async submission and later messages are not automatically
+captured by that path, and no recorded answer is readiness evidence: never mark a
+pending async question as answered, manufacture ledger events, or assume the exact-name synchronous goal guard
 covers async variants. This reference is agent guidance, not new runtime enforcement.

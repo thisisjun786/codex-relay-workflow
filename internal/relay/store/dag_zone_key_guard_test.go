@@ -185,6 +185,8 @@ var zoneKeyGuards = []keyGuard{
 	{table: "dag_agent_acceptances", suffix: "root_key", cols: []string{"plan_id", "node_id"}, where: "supersedes_acceptance_id IS NULL", newWhere: "NEW.supersedes_acceptance_id IS NULL", whereCols: []string{"supersedes_acceptance_id"}},
 	{table: "dag_agent_acceptances", suffix: "successor_key", cols: []string{"supersedes_acceptance_id"}, where: "supersedes_acceptance_id IS NOT NULL", newWhere: "NEW.supersedes_acceptance_id IS NOT NULL", whereCols: []string{"supersedes_acceptance_id"}},
 	{table: "dag_agent_integration_stages", suffix: "pk", cols: []string{"stage_id"}},
+	// CRW-1304: the integration target record has a primary key only.
+	{table: "dag_integration_targets", suffix: "pk", cols: []string{"target_id"}},
 }
 
 // zoneKeyGuardExempt are the unique keys of the guarded tables that have no guard, with the reason. The unique

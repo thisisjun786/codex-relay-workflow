@@ -4,10 +4,10 @@ The skills of the plugin by the job they do and the level that calls them, and h
 
 | Family | Skills | Called by |
 |---|---|---|
-| Define and plan | `crw-define`, `crw-plan`, `crw-add-issue` | the initiative lead, the manager, or the user; `crw-add-issue` also by the project orchestrator |
+| Define and plan | `crw-define`, `crw-plan`, `crw-add-issue` | `crw-define` by the top session (today Sion) or the parent (repository session) when a milestone and its issues are registered; `crw-plan` and `crw-add-issue` by the initiative lead, the manager, or the user; `crw-add-issue` also by the project orchestrator |
 | Run | `crw-run`, `crw-run-initiative` | a project orchestrator (`crw-run`) or an initiative lead (`crw-run-initiative`), at the level its task is bound to |
 | Report and check | `crw-status`, `crw-check`, `crw-tidy`, `crw-refactor` | any level, read-only unless the skill says what it writes |
-| One task | `crw-loop`, `crw-pabcd`, `crw-interview` | an issue child, or a task without a parent |
+| One task | `crw-loop`, `crw-pabcd` | an issue child, or a task without a parent |
 | Development surfaces | `crw-dev`, the `crw-dev-*` skills, `crw-qa` | the task that edits the code |
 | Tools | `crw-search`, `crw-recall`, `crw-repo-map`, `crw-ast-grep`, `crw-kwrite`, `crw-worktree-guardian` | any task that needs the tool |
 | Shared references | `crw-canon` | never called: it is read through the links of the other skills |

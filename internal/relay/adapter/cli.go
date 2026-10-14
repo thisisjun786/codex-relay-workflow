@@ -9,6 +9,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/mcp"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/cli"
@@ -36,6 +37,10 @@ func Register(configure ...func(*appserver.Client)) {
 	delivery.ObserveTurn = f.observeTurn
 	delivery.EmitConfirmTurn = f.confirmTurn
 	dispatch.ForwardChild = hook.ForwardChild
+	mcp.RegisterChildReports(hook.ForwardChild, func(socket string) (string, error) {
+		selection, err := store.ResolveStateDir("", socket)
+		return selection.Path, err
+	})
 	cli.SupervisorHostCommand = f.supervisorHostCommand
 	cli.DaemonFactory = f.daemonFactory
 	managed.HostStart = f.managedStart

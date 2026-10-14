@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/cxccorpus"
@@ -113,8 +114,10 @@ func TestSessionHookPostCompactRefusesALossyOrLockedState(t *testing.T) {
 }
 
 // TestSessionHookRescanDirectiveMatchesTheK5Extraction pins the ported constant to the oracle's
-// exported RESCAN_REINJECT_DIRECTIVE after the declared name substitution (contract K5), byte for
-// byte: the text a hook injects is the behaviour the model acts on, so it is a contract here.
+// exported RESCAN_REINJECT_DIRECTIVE after the declared name substitution (contract K5): the text a
+// hook injects is the behaviour the model acts on, so it is a contract here. CRW-1340 (port: fixed)
+// keeps the oracle's first line, byte for byte, and replaces the rest, which routed to the retired
+// Interview owner and drove a Mind rescan round, with the decision-request text.
 func TestSessionHookRescanDirectiveMatchesTheK5Extraction(t *testing.T) {
 	var extraction struct {
 		Modules map[string]map[string]json.RawMessage
@@ -138,7 +141,11 @@ func TestSessionHookRescanDirectiveMatchesTheK5Extraction(t *testing.T) {
 	if err := json.Unmarshal(value, &oracle); err != nil {
 		t.Fatal(err)
 	}
-	if want := sub.Expected(oracle); sessionHookRescanReinjectDirective != want {
+	want := sub.Expected(oracle)
+	if !strings.HasPrefix(want, rescanDirectiveHead) || !strings.Contains(want, "$crw:crw-interview") {
+		t.Fatalf("the oracle's rescan directive is not the recorded one: %q", want)
+	}
+	if want = rescanDirectiveHead + rescanDecisionRequestBody; sessionHookRescanReinjectDirective != want {
 		t.Errorf("rescan directive:\n got %q\nwant %q", sessionHookRescanReinjectDirective, want)
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -103,20 +104,29 @@ func TestAnInterruptedPromotionIsResumedAndAnUnsettledClaimIsExit3(t *testing.T)
 }
 
 // Another run holding the promotion lock (flock, as Python's fcntl.flock takes it) makes the
-// promotion refuse after the build: the candidate is released and nothing moved.
+// promotion refuse after the build: the candidate is released and nothing moved. The promotion's
+// wait runs out on a test clock that the first pause for the lock moves past record.PromotionTimeout,
+// so the refusal does not rest on how long the host takes.
 func TestAHeldPromotionLockRefusesAndReleasesTheCandidate(t *testing.T) {
-	// sequential: shortens record.PromotionTimeout for the whole process.
 	h := newHost(t)
 	first := archive(t, "0.9.0", "")
 	if err := os.MkdirAll(filepath.Dir(h.record), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	_, release := golden.Spawn(t, "", h.record+record.PromotionLockSuffix)
+	lock := h.record + record.PromotionLockSuffix
+	_, release := golden.Spawn(t, "", lock)
 	defer release()
-	saved := record.PromotionTimeout
-	record.PromotionTimeout = 200 * time.Millisecond
-	defer func() { record.PromotionTimeout = saved }()
-	result, code := install.Install(context.Background(), h.options(), "install", install.Source{From: first})
+	started := time.Now()
+	var passed atomic.Int64
+	ctx := record.WithSeam(context.Background(), record.Seam{
+		Now: func() time.Time { return started.Add(time.Duration(passed.Load())) },
+		Waiting: func(path string) {
+			if path == lock {
+				passed.Store(int64(2 * record.PromotionTimeout))
+			}
+		},
+	})
+	result, code := install.Install(ctx, h.options(), "install", install.Source{From: first})
 	if code != install.Refused || at(result, "failedStep") != "take the promotion lock" || at(result, "retriable") != true {
 		t.Fatalf("exit %d\n%s", code, golden.Canon(result))
 	}

@@ -45,6 +45,23 @@ rule for keeping the three apart is
 build is installed is classified under
 [OPS-2.2](operations.md#ops-22-five-classes-and-their-rules).
 
+## A relay child that cannot reach the relay daemon
+
+A relay child reports (`emit`, `intent-claim`, `intent-disposition`) only through the relay daemon's
+`control.sock`, and Codex refuses that connect in a readOnly sandbox and in a workspace-write one
+without network access. The bridge runs outside the child's sandbox, so `report_child` reports for
+such a child: `command` is `emit`, `intent-claim` or `intent-disposition`, and `arguments` are that
+command's options as the child would give them to `crw relay` after the command name. The bridge
+hands them to the daemon, which records the report in its own store; the call answers `exitCode` 0
+and the daemon's own output, or an error carrying the daemon's refusal. The state the daemon is found
+in is the bridge's own configuration (the App Server socket it was started with and the relay state
+variable of its own environment), never an argument: a `--state`, `--socket` or `--kind-module` is no
+option of a child command and is refused, as is a path that is not absolute, and nothing is recorded. With no daemon the call
+fails with an explicit error and records nothing; there is no local store. Create-time refusal
+(`create_thread`, `create_worktree_thread`) and `register --child-settings` still refuse a relay child
+in such a sandbox; `report_child` is for the child created outside them, and its MCP profile has to leave
+this bridge enabled.
+
 ## Reach a task that is already working
 
 A running peer is instructed, not waited out. Four actions stay distinct: a

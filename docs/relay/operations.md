@@ -76,7 +76,7 @@ destination the child chose, so omit `--manifest-ref`. An intent may name the da
 by any spelling of the same file.
 
 An unavailable daemon is an explicit host error (exit 3), not success and not a fallback
-to a local writer or a bridge MCP call. A lost answer after submission is reported as an
+to a local writer. A lost answer after submission is reported as an
 unknown report outcome: retry the same receipt identity, not a new receipt. The daemon
 serves one child command for up to 50 s after its request line (the store's 30 s busy wait
 and one 20 s App Server read, `hook.ChildCommandBudget`), and the child waits that long;
@@ -86,8 +86,8 @@ child needs the daemon too.
 Reaching `control.sock` is a network permission, not a filesystem one. Codex (measured on
 codex-cli 0.154.0) refuses the child's `connect` with `EPERM` in every sandbox without
 network access: `read-only`, and `workspace-write` unless its policy grants
-`networkAccess`. A child there cannot report at all; each child command ends with exit 3
-and says that its sandbox refuses the connection. The connect succeeds under
+`networkAccess`. A child there cannot report with its own command: each child command ends with exit 3
+and says that its sandbox refuses the connection, and the report goes through the bridge's `report_child` tool (below). The connect succeeds under
 `danger-full-access`, under `workspace-write` with network access, and under a read-only
 filesystem with network access, so a child whose filesystem cannot write the store still
 reports through the daemon when its network is enabled. The bridge still refuses to create a
@@ -105,6 +105,24 @@ daemon: `danger-full-access`, or `workspace-write` with an `expected_sandbox_pol
 granting `networkAccess` (it travels in the start config and the created thread is checked
 against it). The bridge never silently changes its sandbox. Read-only threads without the
 child role remain supported.
+
+`crw relay register --child-settings` judges the child's recorded sandbox by the same rule
+(`internal/bridge/settings` `RelayChildReaches`): a `readOnly` policy, or a `workspaceWrite` one whose
+`networkAccess` is not true, is refused as `unsupported_sandbox_type` (exit 2) before anything is
+written, naming `danger-full-access` and `workspace-write` with network access. `--parent-settings`
+is not judged. `doctor` lists the three child commands in `actorReachability.daemonRequiredCommands`,
+and in neither `offlineCommands` nor `hostRequiredCommands`.
+
+The bridge's `report_child` tool is the route for a child created outside those refusals (a thread
+without the `child` role, or one created outside the bridge). The bridge runs outside the child's
+sandbox, so it connects to `control.sock` where the child cannot: the tool takes `command` (`emit`,
+`intent-claim` or `intent-disposition`) and the command's `arguments`, forwards them with the client a
+child's own command uses (`hook.ForwardChild`) and answers the daemon's output (a nonzero exit is an
+error result carrying the daemon's answer). The daemon alone decides where the record goes: the bridge
+finds it from its own configuration, the App Server socket it was started with and the relay state of
+its own environment, and nothing the call, the child's argv or its environment says takes part. With
+no daemon the tool answers `relay daemon unavailable; child report was not submitted`, opens no store
+and records nothing; it is not a fallback of the child's own command.
 
 Status: implemented in source. Installation and live delivery are separate operations.
 

@@ -16,13 +16,19 @@ import (
 // (commit 3c1459ac), with the contract's CRW name and CLI substitutions.
 // Constants stay unresolved; invocation lookup happens only at emission.
 
-const phaseIDirective = "[crw: INTERVIEW]\n" +
-	"Apply this pointer and its owners within exact user limits and permissions. No-delegation means no dispatch.\n" +
-	"This also scopes the Mind instructions below. Load $crw:crw-interview for dimensions, questions, loop classification and readiness. Do not implement.\n" +
-	"INTERVIEW-GROUND-01: when tracker writes are authorized, `crw pabcd scan record --session <id> --derive --map <questionId>=<dimension> ...`\n" +
-	"records known[]/unknown[]; read `.crw/sessions/<id>.json` before the next question. Report unmet actions, not false readiness.\n" +
-	"INTERVIEW-RENDER-01: show knowns, the weakest dimension and the answer's impact before the question.\n" +
-	"INTERVIEW-INDEPENDENT-01: batch only INDEPENDENT questions; independence governs, not a count."
+// phaseIDirective keeps the oracle's first two lines (interviewDirectiveHead); the rest is CRW's
+// (CRW-1340, port: fixed): CRW holds no synchronous interview, so the phase names no Interview owner
+// and no Mind dispatch, and an open question goes up as a decision request. The I phase itself stays
+// for the explicit command and the CXC contract; no default path enters it.
+const phaseIDirective = interviewDirectiveHead + interviewDecisionRequestBody
+
+const interviewDirectiveHead = "[crw: INTERVIEW]\n" +
+	"Apply this pointer and its owners within exact user limits and permissions. No-delegation means no dispatch.\n"
+
+const interviewDecisionRequestBody = "CRW holds no synchronous user interview (CRW-1340): do not ask the user here and do not wait for an answer. Do not implement.\n" +
+	"Settle what the repository and the issue already answer; write the rest into the plan as OPEN ASSUMPTIONS with source, confidence and the consequence if wrong.\n" +
+	"An open question that changes scope or design is a decision request to the session above the project session: lift it with `crw flow report-up` and the evidence file, and continue the work it does not block.\n" +
+	"An issue too unclear to plan goes back to its registration through that session. Leave I for P as $crw:crw-pabcd phase control states."
 
 const phasePDirective = "[crw: PLAN]\n" +
 	"Apply this pointer and its owners within exact user limits and permissions. No-delegation means no dispatch.\n" +
@@ -83,22 +89,6 @@ const TriggerAuthorityNote = "[crw: PHASE UNCHANGED — TRIGGER-AUTHORITY-01] A 
 
 // PAAttestExample is the shared compact P-to-A example (hook.ts:488-489).
 const PAAttestExample = "{\"from\":\"P\",\"to\":\"A\",\"did\":\"...\",\"planUnit\":\"devlog/_plan/YYMMDD_slug\",\"workPhaseId\":\"wp1\"}"
-
-// The Mind text is the composition fragment of minds.ts:66-81; no Mind orchestration is added.
-const mindDispatchDirective = "[crw: INTERVIEW — Mind dispatch]\n" +
-	"You (the main session) OWN this interview loop: select Minds, dispatch contradiction workers,\n" +
-	"triage contradictions, ask the user if needed, edit the plan, update state, and re-question.\n" +
-	"The hook only injects directives — it does not coordinate worker returns or plan edits.\n" +
-	"Dispatch Minds ONLY from the top-level main session; if you are yourself a subagent, Mind\n" +
-	"dispatch is unavailable (no nested orchestration) — fall back to inline reasoning, do not nest.\n" +
-	"Each Mind is a read-only lens: it returns contradictions ONLY (never asks/edits/calls/writes).\n" +
-	"Choose Minds by lowest-scoring dimensions; concurrent cap 3.\n" +
-	"MIND-SPAWN-SHAPE-01: only when Mind dispatch is authorized, fully read crw-interview's\n" +
-	"references/mind-dispatch.md before dispatch. Use the live tool schema; never invent unsupported arguments.\n" +
-	"Keep read-only explorer intent, mind_<mindname> labels, NON-full-history tasks and explicit user settings.\n" +
-	"Minds are stateless: pack the lens prompt PLUS a compact interview snapshot (dimension scores,\n" +
-	"knowns, open assumptions, draft plan path) into each task message.\n" +
-	"State + plan artifacts live under .crw/ (session tracker + .crw/plan/)."
 
 // loopArmProjectBranch is the branch the recipe takes before any of its steps (CRW-1084, port: fixed).
 const loopArmProjectBranch = "Project coordination first (CRW-1084): a request to coordinate a Linear project belongs to $crw:crw-run, goal mode where a parent goal was asked for. The project parent creates no implementation goalplan or FSM and runs none of steps 1-5 for itself. Only a session that is a dispatched task, or an explicit request to implement a task in this session, continues below.\n"
@@ -261,9 +251,11 @@ func LoopScopeDirective(parent bool) string {
 	return loopScopeBefore + line + loopScopeAfter
 }
 
-// InterviewDirective composes the I pointer and Mind text, resolving commands at emission.
+// InterviewDirective is the I pointer with its commands resolved at emission. The oracle appended the
+// Mind dispatch text; CRW-1340 dropped it with the Interview (interview.MindDispatchDirective keeps the
+// recorded copy, which no hook emits).
 func InterviewDirective(env host.LookupEnv) string {
-	return ResolveCRWInDirective(phaseIDirective+"\n\n"+mindDispatchDirective, env)
+	return ResolveCRWInDirective(phaseIDirective, env)
 }
 
 // ResolveCRWInDirective resolves only backtick-anchored command prefixes (hook.ts:226-233).

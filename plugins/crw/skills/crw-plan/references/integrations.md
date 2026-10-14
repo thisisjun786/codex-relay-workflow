@@ -170,7 +170,7 @@ Load the existing owner for the requested operation:
 | Request | Owner |
 |---|---|
 | Where to start or what to do next | [crw-status](../../crw-status/SKILL.md#choose-one-next-action) |
-| Define initiative intent or goal | [crw-define](../../crw-define/SKILL.md) |
+| Settle a milestone and its issues before they are registered | [crw-define](../../crw-define/SKILL.md) |
 | Plan, roadmap, milestones, or issue scope | [crw-plan](../../crw-plan/SKILL.md) |
 | Turn one short request into one ready issue (a lighter path than a plan) | [crw-add-issue](../../crw-add-issue/SKILL.md) |
 | Execute the project, coordinate progress, or follow up on delivery | [crw-run](../../crw-run/SKILL.md) |

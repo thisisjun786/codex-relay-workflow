@@ -82,7 +82,7 @@ func checkpointPacket(j Journal, threadID, throughTurn string) string {
 					delete(results, k)
 				}
 			}
-		case EvTurnRequested:
+		case EvTurnRequested, EvStepPublished:
 			inputs[rowStr(ev.Data, "op")] = rowStr(ev.Data, "input")
 		case EvCompleted:
 			results[ev.CallID] = rowStr(ev.Data, "result")
