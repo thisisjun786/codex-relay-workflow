@@ -739,7 +739,18 @@ this way.
 journal row (the report id, kind, initiative, subject, text, its digest, the evidence and the
 reporting thread, `CODEX_THREAD_ID`) and the direct message, in one transaction. A report with
 nobody above to tell is still recorded and the refusal (exit 2) carries the report id with
-`standing: true`; the same report again answers `replayed: true` and stages nothing more. The
+`standing: true`; the same report again answers `replayed: true` and stages nothing more. The same
+report id (`--id`) with a changed subject, evidence or text restates the report, and the row and the
+message never disagree: while its message has not been sent, the message is rewritten and the
+`lead_report` row is updated with it in the same transaction, recorded as a `lead_report_restated`
+journal row; when the channel refuses to stage (nobody above any more, or a hierarchy that moved)
+while the unsent message stands, neither is changed and the refusal warns; once the message may have
+gone, neither the message nor the row is changed, and the answer warns that the sent text stands
+(report it under a new `--id`). Whether it was sent is read from the report's message, so a row first
+recorded with nobody above and staged later by a replay (which then names the message on the row) is
+never restated after the send. One `--id` is one report of one kind for one initiative: the same id
+with another `--kind` or `--initiative` is refused `report_id_reused` (exit 2), naming the recorded
+and the given values, and nothing is written. The
 message goes in the lead's name, and a caller is not refused for not being the lead: a calling
 thread that is not the initiative's lead is named at the top of the message text, recorded on the
 row (`reporterIsLead: false`) and warned in the answer (`warning`); a caller with no

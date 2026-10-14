@@ -14,6 +14,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -232,19 +233,52 @@ func checkScopeKind(scopeKind, what string) error {
 // checkDeclarer is Capacity._check_declarer: the declarer owns the scope it speaks for. The
 // store scope is the one no Linear level owns, so it takes the store-scope supervisor binding
 // alone: an initiative supervisor's seat speaks for that initiative, not for the store, and
-// cannot state a bound for it (CRW-773). A management seat (CRW-1333) speaks for the store as the
-// store seat did: the thread that held the store seat lays it down when it takes its management seat.
-func (c *Capacity) checkDeclarer(ctx context.Context, scopeKind, scopeKey, actor string) error {
+// cannot state a bound for it (CRW-773).
+//
+// The store scope has one declarer (CRW-1361): the holder registry.StoreScopeSupervisor answers, that
+// is the live store seat or, when the store seat was laid down for a management seat (CRW-1333), the
+// live owner of that management seat (following its handovers). Every other live management seat
+// holder may still state a store-wide bound: a declaration is reversible, so it fails open rather than
+// being refused, and the warning it returns is answered under declarerWarning and recorded as a
+// store_scope_declarer_warned journal row by the caller. A task with no live store or management seat
+// is refused as before. The warning is nil for the declarer itself and for every scope but the store.
+func (c *Capacity) checkDeclarer(ctx context.Context, scopeKind, scopeKey, actor string) (contract.OrderedObject, error) {
 	if scopeKind == scopeStore {
 		var task string
 		err := c.Store.Querier(ctx).QueryRowContext(ctx, "SELECT task_id FROM scope_bindings"+
 			"  WHERE task_id = ? AND role = 'supervisor' AND scope_kind IN ('store', 'management')"+
 			"    AND status IN ('active','paused') AND superseded_by IS NULL", actor).Scan(&task)
 		if noRows(err) {
-			return refuse(contract.RefusalScopeRoleMismatch, "task "+strconv.Quote(actor)+" holds no live store-scope supervisor binding, and the store"+
+			return nil, refuse(contract.RefusalScopeRoleMismatch, "task "+strconv.Quote(actor)+" holds no live store-scope supervisor binding, and the store"+
 				" scope has no owner of its own to speak for it")
 		}
-		return err
+		if err != nil {
+			return nil, err
+		}
+		held, err := (&registry.Registry{Store: c.Store}).StoreScopeSupervisor(ctx)
+		if err != nil {
+			return nil, err
+		}
+		holders := []any{}
+		for _, seat := range held {
+			holder := pyvalue.Str(seat.Get("taskId"))
+			if holder == actor {
+				return nil, nil
+			}
+			holders = append(holders, holder)
+		}
+		who := "the store has no store-scope supervisor (no live store seat, and none was laid down for a management seat)"
+		if len(holders) > 0 {
+			quoted := make([]string, len(holders))
+			for i, holder := range holders {
+				quoted[i] = strconv.Quote(holder.(string))
+			}
+			who = "the store-scope supervisor is " + strings.Join(quoted, ", ")
+		}
+		return contract.OrderedObject{{Key: "reason", Value: string(contract.RefusalScopeRoleMismatch)}, {Key: "declaredBy", Value: actor},
+			{Key: "storeScopeSupervisor", Value: holders},
+			{Key: "detail", Value: "task " + strconv.Quote(actor) + " holds a live management seat but is not the store scope's declarer: " + who +
+				"; the store-wide figure is accepted (a declaration is reversible, so it fails open) and recorded as store_scope_declarer_warned"}}, nil
 	}
 	role := roleSupervisor
 	if scopeKind == scopeProject {
@@ -252,17 +286,29 @@ func (c *Capacity) checkDeclarer(ctx context.Context, scopeKind, scopeKey, actor
 	}
 	held, err := owners(ctx, c.Store, scopeKind, scopeKey, role)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if len(held) == 1 && held[0] == actor {
-		return nil
+		return nil, nil
 	}
 	which := ", which has " + strconv.Itoa(len(held)) + " live owners"
 	if len(held) == 1 {
 		which = ", which is held by " + strconv.Quote(held[0])
 	}
-	return refuse(contract.RefusalScopeRoleMismatch, "task "+strconv.Quote(actor)+" is not the registered "+role+" of "+
+	return nil, refuse(contract.RefusalScopeRoleMismatch, "task "+strconv.Quote(actor)+" is not the registered "+role+" of "+
 		scopeKind+" "+strconv.Quote(scopeKey)+which+", so it cannot state a bound for it")
+}
+
+// recordDeclarerWarning journals a store-scope figure stated by a management seat holder that is not
+// the store's declarer (checkDeclarer's warning), inside the caller's transaction: the action
+// (declare_limit or observe), the scope, the dimension and the warning itself.
+func recordDeclarerWarning(ctx context.Context, s *store.Store, warning contract.OrderedObject, action, scopeKind, scopeKey, dimension, at string) error {
+	if warning == nil {
+		return nil
+	}
+	detail := contract.OrderedObject{{Key: "action", Value: action}, {Key: "scopeKind", Value: scopeKind}, {Key: "scopeKey", Value: scopeKey},
+		{Key: "dimension", Value: dimension}}
+	return journal(ctx, s, "store_scope_declarer_warned", pyvalue.Str(warning.Get("declaredBy")), append(detail, warning...), at)
 }
 
 // Reservation is Capacity.reserve's keyword arguments; Detail invalid is None.
@@ -521,7 +567,8 @@ func (c *Capacity) DeclareLimit(ctx context.Context, in Limit) (contract.Ordered
 	if err := checkScope(in.ScopeKind, in.ScopeKey); err != nil {
 		return nil, err
 	}
-	if err := c.checkDeclarer(ctx, in.ScopeKind, in.ScopeKey, in.DeclaredBy); err != nil {
+	warning, err := c.checkDeclarer(ctx, in.ScopeKind, in.ScopeKey, in.DeclaredBy)
+	if err != nil {
 		return nil, err
 	}
 	if err := finite(in.Ceiling, "a ceiling"); err != nil {
@@ -554,10 +601,13 @@ func (c *Capacity) DeclareLimit(ctx context.Context, in Limit) (contract.Ordered
 		}); err != nil {
 			return err
 		}
-		return journal(ctx, c.Store, "execution_limit_declared", identifier, contract.OrderedObject{
+		if err := journal(ctx, c.Store, "execution_limit_declared", identifier, contract.OrderedObject{
 			{Key: "dimension", Value: in.Dimension}, {Key: "ceiling", Value: in.Ceiling},
 			{Key: "previousCeiling", Value: previousCeiling}, {Key: "revision", Value: revision},
-		}, now)
+		}, now); err != nil {
+			return err
+		}
+		return recordDeclarerWarning(ctx, c.Store, warning, "declare_limit", in.ScopeKind, in.ScopeKey, in.Dimension, now)
 	})
 	if err != nil {
 		return nil, err
@@ -568,7 +618,11 @@ func (c *Capacity) DeclareLimit(ctx context.Context, in Limit) (contract.Ordered
 	}
 	for _, entry := range room[2].Value.([]any) {
 		if object := entry.(contract.OrderedObject); object[0].Value == in.Dimension {
-			return append(object, contract.Field{Key: "limitId", Value: identifier}), nil
+			answer := append(object, contract.Field{Key: "limitId", Value: identifier})
+			if warning != nil {
+				answer = append(answer, contract.Field{Key: "declarerWarning", Value: warning})
+			}
+			return answer, nil
 		}
 	}
 	return nil, sql.ErrNoRows
@@ -599,27 +653,35 @@ func (c *Capacity) Observe(ctx context.Context, in Observation) (contract.Ordere
 	if err := checkScope(in.ScopeKind, in.ScopeKey); err != nil {
 		return nil, err
 	}
-	if err := c.checkDeclarer(ctx, in.ScopeKind, in.ScopeKey, in.ObservedBy); err != nil {
+	warning, err := c.checkDeclarer(ctx, in.ScopeKind, in.ScopeKey, in.ObservedBy)
+	if err != nil {
 		return nil, err
 	}
 	if err := finite(in.Observed, "an observation"); err != nil {
 		return nil, err
 	}
 	now := c.Now()
-	err := c.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
-		return c.Store.ObserveExecutionUsage(ctx, store.ExecutionUsageRow{
+	err = c.Store.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
+		if err := c.Store.ObserveExecutionUsage(ctx, store.ExecutionUsageRow{
 			ScopeKind: in.ScopeKind, ScopeKey: in.ScopeKey, Dimension: in.Dimension, Observed: in.Observed,
 			ObservedBy: in.ObservedBy, Method: in.Method, ObservedAt: now,
-		})
+		}); err != nil {
+			return err
+		}
+		return recordDeclarerWarning(ctx, c.Store, warning, "observe", in.ScopeKind, in.ScopeKey, in.Dimension, now)
 	})
 	if err != nil {
 		return nil, err
 	}
-	return contract.OrderedObject{
+	answer := contract.OrderedObject{
 		{Key: "scopeKind", Value: in.ScopeKind}, {Key: "scopeKey", Value: in.ScopeKey}, {Key: "dimension", Value: in.Dimension},
 		{Key: "observed", Value: in.Observed}, {Key: "observedBy", Value: in.ObservedBy}, {Key: "method", Value: in.Method},
 		{Key: "observedAt", Value: now},
-	}, nil
+	}
+	if warning != nil {
+		answer = append(answer, contract.Field{Key: "declarerWarning", Value: warning})
+	}
+	return answer, nil
 }
 
 func reprNullable(v sql.NullString) string {

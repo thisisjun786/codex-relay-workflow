@@ -108,10 +108,12 @@ func TestProjectOwnerBindingWritesTheManagementEdge(t *testing.T) {
 }
 
 // TestProjectOwnerBindingSecondManagementTakesOnlyByHandover: a project has one upward execution
-// edge, so a second management session binding the same owner is refused link_conflict and commits
-// only its conflict row; binding another owner is refused by today's duplicate-owner rule; the
-// handover of the seat moves the edge with its record, and a project owner handover moves the
-// edge's lower end.
+// edge, so a second management session binding the same owner writes no second edge. The binding is
+// reversible, so it is not refused (CRW-1361, Jun's rule: warn and record): it exits 0 with the owner's
+// binding, warns under managementLinkSkipped and records the conflict once as management_link_skipped.
+// Binding another owner is still refused by the duplicate-owner rule (the store's one live owner per
+// scope); the handover of the seat moves the edge with its record, and a project owner handover moves
+// the edge's lower end.
 func TestProjectOwnerBindingSecondManagementTakesOnlyByHandover(t *testing.T) {
 	s := newStoreSeat(t)
 	t.Setenv("CODEX_THREAD_ID", "")
@@ -120,13 +122,33 @@ func TestProjectOwnerBindingSecondManagementTakesOnlyByHandover(t *testing.T) {
 	s.mustBindProjectOwner("P-A", "01ownerA", "01mgmtA")
 	edges := s.projectEdges("P-A")
 
-	s.mustRefuse("link_conflict", "linkage-bind", "--role", "parent", "--scope", "P-A", "--task", "01ownerA", "--host", "host", "--creator", "01mgmtB")
-	if conflicts := s.rows("SELECT reason, incumbent, challenger FROM linkage_conflicts WHERE scope_kind = 'project' AND scope_key = 'P-A'"); len(conflicts) != 1 ||
-		conflicts[0].Text("reason") != "link_conflict" || conflicts[0].Text("incumbent") != "01mgmtA" || conflicts[0].Text("challenger") != "01mgmtB" {
-		t.Fatalf("conflict record %v", conflicts)
+	answer := s.mustBindProjectOwner("P-A", "01ownerA", "01mgmtB")
+	warning, _ := answer["managementLinkSkipped"].(map[string]any)
+	if answer["taskId"] != "01ownerA" || answer["status"] != "active" || warning == nil || warning["reason"] != "link_conflict" ||
+		warning["standing"] != edges[0].Text("link_id") || warning["seat"] != "01mgmtB" || warning["creator"] != "01mgmtB" {
+		t.Fatalf("the second session's binding answered %v, want the owner's live binding and the warning naming the standing edge", answer)
+	}
+	if _, linked := answer["managementLink"]; linked {
+		t.Fatalf("a skipped edge is answered as written: %v", answer)
+	}
+	if conflicts := s.rows("SELECT reason FROM linkage_conflicts WHERE scope_kind = 'project' AND scope_key = 'P-A'"); len(conflicts) != 0 {
+		t.Fatalf("a warned binding left refusal records %v", conflicts)
 	}
 	if fromB := s.rows("SELECT link_id FROM scope_links WHERE upper_kind = 'management' AND upper_key = '01mgmtB'"); len(fromB) != 0 {
-		t.Fatalf("the refused binding left edges %v", fromB)
+		t.Fatalf("the second session's binding left edges %v", fromB)
+	}
+	s.mustBindProjectOwner("P-A", "01ownerA", "01mgmtB")
+	skipped := s.rows("SELECT detail FROM journal WHERE kind = 'management_link_skipped'")
+	if len(skipped) != 1 {
+		t.Fatalf("management_link_skipped journal %v, want one row for the two bindings", skipped)
+	}
+	var detail map[string]any
+	if err := json.Unmarshal([]byte(skipped[0].Text("detail")), &detail); err != nil {
+		t.Fatal(err)
+	}
+	if detail["seat"] != "01mgmtB" || detail["scopeKind"] != "project" || detail["standing"] != edges[0].Text("link_id") ||
+		detail["standingUpperKind"] != managementKind || detail["standingUpperKey"] != "01mgmtA" || detail["reason"] != "link_conflict" {
+		t.Fatalf("management_link_skipped detail %v", detail)
 	}
 	// Another owner is today's duplicate-owner refusal, whoever the creator is.
 	code, out := s.bindProjectOwner("P-A", "01ownerB", "01mgmtB")
