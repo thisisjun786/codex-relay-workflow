@@ -233,3 +233,32 @@ func TestReleaseChildStartsAManagedChildWithHostSettings(t *testing.T) {
 		t.Errorf("the lane's relay holds no host settings: %+v", built.Child)
 	}
 }
+
+// TestSchedRelayReleaseChildComparesTheExpectedSlice (CRW-1382 d3): the child start carries the slice the flow compared, as Release does
+// (CRW-1288), and the relay's managed release compares it with the node's slice of the plan: a slice that is another starts no child,
+// creates no thread and writes no release (Started false, plan_changed, no error), and the slice that stands starts the child.
+func TestSchedRelayReleaseChildComparesTheExpectedSlice(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+	doc, host := childHostDoc(t)
+	r := l.relayFor("run-childslice1", l.handoffBytes(nil), 1)
+	l.wireChild(r, doc, host)
+	node, slice := l.nodeOf["A-1"], ""
+	for _, n := range l.snapshot(0).Nodes {
+		if n.NodeID == node {
+			slice = n.SliceDigest
+		}
+	}
+	req := ops.ChildRequest{Plan: l.plan, Node: node, RunID: r.RunID, Revision: "r0", DesignDigest: "sha256:design", Reason: "fits_child", RequestID: "c-slice", SliceDigest: "sha256:another"}
+	other, err := r.ReleaseChild(ctx, req)
+	if err != nil || other.Started || other.Reason != ops.ReasonPlanChanged || other.Child != "" {
+		t.Fatalf("a child start under another slice: %+v %v, want Started false, plan_changed", other, err)
+	}
+	if n := l.count("SELECT COUNT(*) FROM dag_releases") + l.count("SELECT COUNT(*) FROM dag_node_executions"); n != 0 || len(host.created) != 0 {
+		t.Fatalf("the refused child start wrote %d rows and created %d threads", n, len(host.created))
+	}
+	req.SliceDigest = slice
+	res, err := r.ReleaseChild(ctx, req)
+	if err != nil || !res.Started || res.Child == "" || slice == "" {
+		t.Fatalf("the child start under slice %s: %+v %v", slice, res, err)
+	}
+}

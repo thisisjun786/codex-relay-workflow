@@ -182,9 +182,24 @@ func (o *releaseChildOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 	r := rows(req.Journal.Events())
 	ms := plan.Milestone
 	planID := planOf(r, ms)
-	res, err := o.l.d.Relay.ReleaseChild(ctx, ChildRequest{Plan: planID, Node: node, RunID: req.RunID, Revision: plan.Revision, DesignDigest: plan.DesignDigest, Reason: plan.SizeReason, RequestID: req.RequestID})
+	// the slice crw.release compared when it found the node sized for a child: the relay compares it again at the start (CRW-1382)
+	slice := ""
+	if rel, ok := designRowOf(r, node); ok && dataStr(rel, "kind") == "child" {
+		slice = dataStr(rel, "slice_digest")
+	}
+	res, err := o.l.d.Relay.ReleaseChild(ctx, ChildRequest{Plan: planID, Node: node, RunID: req.RunID, Revision: plan.Revision, DesignDigest: plan.DesignDigest, Reason: plan.SizeReason, RequestID: req.RequestID,
+		SliceDigest: slice})
 	if err != nil {
 		return engine.OpResult{}, err
+	}
+	if !res.Started && res.Reason == ReasonPlanChanged {
+		// the plan gave the node another slice between crw.release's comparison and the start: no child was started, and the row says so
+		// with the reason; the lane ends the node unreleased (CRW-1382)
+		out := ChildOutcome{Node: node, Reason: res.Reason}
+		return engine.OpResult{Result: result(out), Data: map[string]any{
+			"node": node, "plan": planID, "milestone": ms, "child": "", "revision": plan.Revision, "design_digest": plan.DesignDigest, "size_reason": plan.SizeReason, "started": false,
+			"reason": res.Reason, "slice_digest": slice,
+		}}, nil
 	}
 	if !res.Started {
 		// an answer that started no child is never recorded as one (the lane would read it as a child that is running): the relay's
@@ -201,6 +216,7 @@ func (o *releaseChildOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 	}
 	return engine.OpResult{Result: result(out), Data: map[string]any{
 		"node": node, "plan": planID, "milestone": ms, "child": res.Child, "revision": plan.Revision, "design_digest": plan.DesignDigest, "size_reason": plan.SizeReason, "started": res.Started,
+		"slice_digest": slice,
 	}}, nil
 }
 

@@ -148,6 +148,10 @@ type ChildRequest struct {
 	DesignDigest      string
 	Reason            string
 	RequestID         string
+	// SliceDigest is the node's slice of the plan crw.release compared (CRW-1382): the relay's managed release compares it with the
+	// node's slice when it judges the start and again in the transaction that records it, as for an executor (CRW-1288), and a slice
+	// that is another starts no child (Started false, plan_changed). An empty SliceDigest compares nothing.
+	SliceDigest string
 }
 
 // ChildResult is the child that was started.

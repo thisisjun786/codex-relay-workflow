@@ -65,6 +65,38 @@ func TestSizeFitChildReleasesIssueChild(t *testing.T) {
 	}
 }
 
+// TestChildStartRechecksThePlanSlice (CRW-1382 d3): the child start of a node sized for a child carries the node's slice of the plan
+// crw.release compared, as the release of an executor does (CRW-1288), so a plan revision that changes the node between that comparison
+// and the start is caught by the relay: no child starts, the releaseChild row records started false with plan_changed, and the lane
+// ends unreleased with the reason, not as a running child. A start whose slice still stands starts the child, carrying that slice.
+func TestChildStartRechecksThePlanSlice(t *testing.T) {
+	nodes := []NodeSpec{{ID: "A", Issue: "CRW-A", Title: "a big issue", Regions: []string{"a/"}, SizeFit: "child", SizeReason: "regions_gt3"}}
+	l := NewLab(t, nodes...)
+	l.Relay.BeforeChild = func(node string) {
+		l.Relay.ChangeNode(node, func(n *NodeSpec) { n.Regions = []string{"a/", "a2/"} })
+	}
+	got := mustRunIncomplete(t, l)
+	if state, reason := laneOf(t, got, "A"); state != "unreleased" || reason != ops.ReasonPlanChanged {
+		t.Fatalf("lane A: %s %s, want unreleased plan_changed", state, reason)
+	}
+	if len(l.Relay.Children) != 1 || l.Relay.Children[0].SliceDigest == "" {
+		t.Fatalf("the child start carries no slice: %+v", l.Relay.Children)
+	}
+	rel := l.Rows("crw.release")
+	if len(rel) != 1 || str(rel[0].Data, "slice_digest") != l.Relay.Children[0].SliceDigest {
+		t.Fatalf("the release row's slice is not the one the child start carried: %+v %+v", rel, l.Relay.Children)
+	}
+	if rows := l.Rows("crw.releaseChild"); len(rows) != 1 || flagOf(rows[0].Data, "started") || str(rows[0].Data, "reason") != ops.ReasonPlanChanged {
+		t.Fatalf("releaseChild rows %+v, want one with started false and plan_changed", rows)
+	}
+
+	kept := NewLab(t, nodes...)
+	ok := mustRunIncomplete(t, kept)
+	if state, _ := laneOf(t, ok, "A"); state != "child" || len(kept.Relay.Children) != 1 || kept.Relay.Children[0].SliceDigest != str(kept.Rows("crw.release")[0].Data, "slice_digest") {
+		t.Fatalf("a start whose slice stands: lane %s, children %+v", state, kept.Relay.Children)
+	}
+}
+
 // A group is an order unit only: its members run in the declared order, each with its own fresh executor on the executor tier (a
 // tier step of the first does not carry to the second), the second one's worktree starts at the integration tip after the first
 // landed, and no handle crosses from one node to the other.

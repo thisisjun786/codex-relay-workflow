@@ -479,6 +479,13 @@ func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRes
 	data["revision"], data["design_digest"] = out.Revision, out.DesignDigest
 	switch entry.SizeFit {
 	case "child":
+		// the child start carries the node's slice of the plan compared here, which the relay's managed release compares again (CRW-1382),
+		// as the release of an executor carries it below
+		m, err := readNow()
+		if err != nil {
+			return engine.OpResult{}, err
+		}
+		data["slice_digest"] = liveSlices(m)[node]
 		out.Kind, out.Reason = "child", "size_fit_child"
 		return finish()
 	case "split":

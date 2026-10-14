@@ -138,6 +138,8 @@ async function nodeLane(n, rel, sig) {
   if (plan.size_fit === 'child') {
     await crw.spawnDecision('CHILD_2', 'spawn', { node, role: 'child', reason: plan.size_reason })
     const child = await crw.releaseChild(node, plan)
+    // a plan that gave the node another slice before the start started no child (CRW-1382): the node is not released
+    if (!child.started) return { node, state: 'unreleased', reason: child.reason }
     return { node, state: 'child', child: child.child }
   }
   if (plan.size_fit === 'split') {

@@ -469,8 +469,10 @@ func (r *SchedRelay) ReleaseStands(ctx context.Context, plan, node, execution st
 // the run's --child-host document: the parent's and the child's host and settings, and the child's title (the managed start prefixes the
 // node's issue key). The child it admitted, bound to the node, is the answer. A run that holds no host settings, or settings that cannot start a child, is
 // refused with the reason (an input error); a start the managed engine refused or left incomplete, a node the scheduler holds back and
-// every other failure are errors, never a ChildResult with Started false, which the lane would record as a child that is running. The
-// intent and the slot of a start that did not finish stay, and the same release continues it.
+// every other failure are errors. The one ChildResult with Started false is the start under a slice of the plan that is not the node's
+// any more (Reason plan_changed, CRW-1382): the request carries the slice crw.release compared, the managed release compares it, and
+// crw.releaseChild records that no child started and the lane ends the node unreleased. The intent and the slot of a start that did not
+// finish stay, and the same release continues it.
 func (r *SchedRelay) ReleaseChild(ctx context.Context, req ops.ChildRequest) (ops.ChildResult, error) {
 	if r.Child == nil {
 		return ops.ChildResult{}, ErrChildHostUnset
@@ -498,6 +500,9 @@ func (r *SchedRelay) ReleaseChild(ctx context.Context, req ops.ChildRequest) (op
 	request.ScopeRef = "crw-flow:" + r.RunID + "/" + req.Node
 	request.Parent = r.Child.Parent
 	request.Child = r.Child.Child
+	// the node's slice crw.release compared: the managed release compares it when it judges the start and in the transaction that records
+	// it, as Release does (CRW-1288, CRW-1382)
+	request.ExpectedSliceDigest = req.SliceDigest
 	// the managed start sends the host the child's title prefixed with the node's issue key (managed.childTitle), so the title is the document's
 	r.release.Lock()
 	defer r.release.Unlock()
@@ -508,7 +513,10 @@ func (r *SchedRelay) ReleaseChild(ctx context.Context, req ops.ChildRequest) (op
 	defer done()
 	res, err := r.Sched.Release(ctx, req.Plan, req.Node, r.Actor, request)
 	if err != nil {
-		if reason, held := holdBack(err); held {
+		if reason, held := holdBack(err); held && reason == ops.ReasonPlanChanged {
+			// the plan gives the node another slice than the one the flow compared: no child is started, and the answer says why
+			return ops.ChildResult{Reason: ops.ReasonPlanChanged}, nil
+		} else if held {
 			return ops.ChildResult{}, fmt.Errorf("refused:child_held_back: the scheduler holds node %s back (%s): no child is started: %v", req.Node, reason, err)
 		}
 		return ops.ChildResult{}, epochLost(req.Plan, err)
