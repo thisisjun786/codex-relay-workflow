@@ -465,6 +465,27 @@ func TestPlanHandoffNamesTheCompilerKeys(t *testing.T) {
 	})
 }
 
+// The project key of a plan is the scope_key of the child's project binding, which is OWNER:NAME:N for a milestone plan (CRW-1379,
+// the documents of the plan-input change): crw-plan and flow.md no longer call it the project's UUID, the order edge limit counts the
+// ".N" suffix a re-plan adds, and the key warnings of plan-input are said to reach a pipe through the project's warnings member.
+func TestPlanKeyDocsNameTheMilestoneKey(t *testing.T) {
+	plan := normalized(readRepoText(t, planSkillFile))
+	flow := normalized(readRepoText(t, "plugins/crw/skills/crw-canon/references/flow.md"))
+	for name, c := range map[string]struct{ text, want, notWant string }{
+		"crw-plan names the key form":     {plan, "`OWNER:NAME:N` for a milestone plan (`crw flow plan-input` prints it)", "the project's UUID"},
+		"flow.md start fact names it":     {flow, "(`OWNER:NAME:N` for a milestone plan), so the run's first claim", "(the project's UUID)"},
+		"flow.md counts the re-plan edge": {flow, "`e:FROM:TO.2` after a re-plan, so both keys fit in 123 characters together", "fit in 125 characters"},
+		"flow.md says a pipe records it":  {flow, "are also the `warnings` member of the project in the bare input, which `crw flow compile` carries into the plan's warnings, so a pipe records them", ""},
+	} {
+		if !strings.Contains(c.text, c.want) {
+			t.Errorf("%s: the text lacks %q", name, c.want)
+		}
+		if c.notWant != "" && strings.Contains(c.text, c.notWant) {
+			t.Errorf("%s: the text still says %q", name, c.notWant)
+		}
+	}
+}
+
 // A task packet belongs to an issue child of a plan with no run; the child a run releases runs a workflow and starts no PABCD state machine.
 func taskPacketScopeProblems(intro string) []string {
 	flat := normalized(intro)
