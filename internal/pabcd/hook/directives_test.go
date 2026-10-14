@@ -10,6 +10,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/cxccorpus"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/interview"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
 )
 
@@ -56,6 +57,17 @@ func directiveEqual(t *testing.T, label, got, want string) {
 	}
 }
 
+// crw1340Interview is the I directive CRW gives where the recording holds the oracle's (CRW-1340, port:
+// fixed): the oracle's first two lines, then the decision-request text instead of the Interview owner,
+// its tracker commands and, in the composed directive, the Mind dispatch.
+func crw1340Interview(t *testing.T, recorded string) string {
+	t.Helper()
+	if !strings.HasPrefix(recorded, interviewDirectiveHead) || !strings.Contains(recorded, "Load $crw:crw-interview for dimensions") {
+		t.Fatalf("the recording is not the oracle's I directive: %q", recorded)
+	}
+	return interviewDirectiveHead + interviewDecisionRequestBody
+}
+
 func directiveEnv(bin, home string) host.LookupEnv {
 	return func(key string) (string, bool) {
 		switch key {
@@ -82,7 +94,8 @@ func TestK5DirectiveConstants(t *testing.T) {
 		{"hook", "QUESTION_SHAPE_DIRECTIVE", QuestionShapeDirective},
 		{"hook", "AGBROWSE_SEARCH_DIRECTIVE", AgbrowseSearchDirective},
 		{"hook", "TRIGGER_AUTHORITY_NOTE", TriggerAuthorityNote},
-		{"minds", "MIND_DISPATCH_DIRECTIVE", mindDispatchDirective},
+		// CRW-1340: no hook emits the Mind text any more; the recorded copy is interview.MindDispatchDirective.
+		{"minds", "MIND_DISPATCH_DIRECTIVE", interview.MindDispatchDirective},
 	} {
 		t.Run(c.Name, func(t *testing.T) {
 			var raw string
@@ -110,6 +123,9 @@ func TestRecordedPhaseAssembly(t *testing.T) {
 	for _, c := range golden.Phases {
 		t.Run(c.Phase, func(t *testing.T) {
 			phase := state.Phase(c.Phase)
+			if phase == state.PhaseI {
+				c.Directive, c.Active = crw1340Interview(t, c.Directive), crw1340Interview(t, c.Active)
+			}
 			directiveEqual(t, "base", PhaseDirective(phase, nil), c.Directive)
 			directiveEqual(t, "active", PhaseDirective(phase, options), c.Active)
 			directiveEqual(t, "header", BuildStageHeader(phase), c.Header)
@@ -150,7 +166,11 @@ func TestRecordedDirectiveResolution(t *testing.T) {
 	for _, c := range golden.Resolutions {
 		directiveEqual(t, "resolution", ResolveCRWInDirective(c.Input, directiveEnv("{CRW}", "/synthetic-home")), c.Output)
 	}
-	directiveEqual(t, "interview", InterviewDirective(directiveEnv("{CRW}", "/synthetic-home")), golden.Interview)
+	if !strings.Contains(golden.Interview, "[crw: INTERVIEW — Mind dispatch]") {
+		t.Fatal("the recorded interview composition has no Mind dispatch")
+	}
+	interviewWant := ResolveCRWInDirective(crw1340Interview(t, golden.Interview), directiveEnv("{CRW}", "/synthetic-home"))
+	directiveEqual(t, "interview", InterviewDirective(directiveEnv("{CRW}", "/synthetic-home")), interviewWant)
 	directiveEqual(t, "literal replacement", ResolveCRWInDirective(golden.Literal.Input, directiveEnv(" literal $& $$ $1 ", "/synthetic-home")), golden.Literal.Output)
 	input := "`crw pabcd scan record`"
 	prefix, err := host.Invocation(directiveEnv("\uFEFF  ", "/synthetic-home"))
@@ -160,7 +180,7 @@ func TestRecordedDirectiveResolution(t *testing.T) {
 	directiveEqual(t, "runtime pointer", ResolveCRWInDirective(input, directiveEnv("\uFEFF  ", "/synthetic-home")), "`"+prefix+" pabcd scan record`")
 	t.Setenv("CRW_BIN", "{CRW}")
 	directiveEqual(t, "nil environment", ResolveCRWInDirective(input, nil), "`{CRW} pabcd scan record`")
-	directiveEqual(t, "nil interview environment", InterviewDirective(nil), golden.Interview)
+	directiveEqual(t, "nil interview environment", InterviewDirective(nil), interviewWant)
 }
 
 func TestResolutionFailureReturnsWholeInput(t *testing.T) {
@@ -187,7 +207,7 @@ func TestConstantsRemainUnresolved(t *testing.T) {
 	before := PhaseDirective(state.PhaseI, nil)
 	ResolveCRWInDirective(before, directiveEnv("other invocation", "/synthetic-home"))
 	directiveEqual(t, "immutable phase base", PhaseDirective(state.PhaseI, nil), before)
-	if !strings.Contains(before, "`crw pabcd scan") {
+	if !strings.Contains(before, "`crw flow report-up`") { // CRW-1340: the I directive's command
 		t.Fatal("constant was resolved or command suffix missing")
 	}
 }

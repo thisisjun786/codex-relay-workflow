@@ -41,15 +41,15 @@ empty plan now FAILS `crw pabcd loop validate` (E8), and `update_goal
 
 Use a durable goalplan when a CRW loop needs more than a chat-local
 checklist: goals, work phases, success criteria, checkpoints, evidence,
-Interview OPEN ASSUMPTIONS, steering decisions, and quality gates.
+OPEN ASSUMPTIONS, steering decisions, and quality gates.
 
 ### Contract
 
 - Represent goals, work phases, success criteria, checkpoints, and evidence.
-- Carry Interview OPEN ASSUMPTIONS (`proposed` and `open` entries, with source,
+- Carry the plan's OPEN ASSUMPTIONS (`proposed` and `open` entries, with source,
   confidence, consequence if wrong and status) into Plan/Audit instead of dropping
   them. Confirmed requirements and rejected assumptions travel in their own plan
-  sections with their answer reference (INTERVIEW-ASSUME-01 in crw-interview).
+  sections with their answer reference (a decided goalplan decision id).
 - Record steering decisions with rationale and evidence.
 - Reject steering that weakens completion criteria or verification.
 - Require a quality gate before final completion.

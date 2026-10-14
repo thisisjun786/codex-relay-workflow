@@ -49,14 +49,14 @@ Two distinct things, do not conflate them:
      (`crw-loop`, `goalplan`, `hotl`) or a bare `pabcd` / `ipabcd` word (not the one
      inside `crw-pabcd`) plus an action word makes the hook answer the arming mandate
      (ORCH-MANDATE-01) instead of any phase hint, including a P hint.
-  3. Phase hint: the phase directive plus the trigger-authority note. A P hint is
-     delivered as the interview directive under the default interview-entry policy
-     (`new-unit`: not once a cycle is running; `always` also inside a cycle; `off`
-     never) unless step 1 applies.
+  3. Phase hint: the phase directive plus the trigger-authority note. A P hint stays
+     the P directive under the default interview-entry policy `off`; a project
+     `crw.json` that names `new-unit` (not once a cycle is running) or `always` (also
+     inside a cycle) delivers it as the I directive instead, unless step 1 applies.
   - Without a goal, in a fresh un-armed session: `pabcd로 시작해줘`, `pabcd로 인터뷰
     해줘`, `Start pabcd phase` and `Start pabcd phase i` get the mandate; `Use
-    crw-pabcd` and `Use crw-pabcd to start the interview` get a phase hint (the
-    interview directive for both); `인터뷰 먼저 해줘` and `interview me first` get
+    crw-pabcd` and `Use crw-pabcd to start the interview` get a phase hint (the P
+    directive and the I directive); `인터뷰 먼저 해줘` and `interview me first` get
     nothing.
   - With an active goal, in a fresh un-armed session: `Use crw-pabcd` gets the plain P
     directive (not the interview); `Use crw-pabcd to start the interview` and `Start
@@ -69,16 +69,20 @@ Two distinct things, do not conflate them:
     active goal nothing is re-injected.
   Natural hints never enter or advance a phase. A line-anchored `orchestrate i`
   command instead takes the existing explicit-command parser path.
-- **Agent judgment (broad):** for unclear requirements phrased otherwise, select
-  `crw-interview` and its applicable references. Loading a skill is not a state
-  transition. When phase entry is authorized, use `crw pabcd orchestrate I --session <id>`
-  with the current SessionStart binding; explicit user commands are also supported.
+- **Agent judgment (broad):** unclear requirements open no interview. An issue too
+  unclear to plan goes back to its registration ([crw-define](../crw-define/SKILL.md),
+  at the top session (today Sion) or the parent (repository session)). Ambiguity during
+  a run is a decision request to the session above the project session, lifted with
+  `crw flow report-up` and the evidence file; the work it does not block continues on
+  recorded assumptions. The I phase stays for an explicit
+  `crw pabcd orchestrate I --session <id>` or user command; the CRW default flow never
+  enters it.
 
-**I — Interview**: HITL-only requirements discovery. Canonical rules (four dimensions, contradiction scanning, readiness gating, Q/A capture) live in `crw-interview`; PABCD owns the phase edge I->P and the return-to-Interview affordance from any phase.
+**I — Interview**: kept in the state machine for an explicit command and the recorded contract fixtures. CRW holds no synchronous interview (CRW-1340), so no skill owns interview rules; the I directive states the decision-request path above. PABCD owns the phase edge I->P.
 
 ## How It Works
 
-PABCD is a forward progression with Interview return.
+PABCD is a forward progression; the return edge to I stays for an explicit command.
 
 ```
 IDLE ──→ P ──→ A ──→ B ──→ C ──→ D ──→ IDLE
@@ -87,7 +91,7 @@ IDLE ──→ P ──→ A ──→ B ──→ C ──→ D ──→ IDLE
          └──────┴──────┴────→ I (Interview, context preserved)
 ```
 
-With no active host goal, you can return to Interview (I) from any phase to clarify requirements; the plan and audit context are preserved. Phases P, A, B pause for confirmation in interactive use; C and D proceed once their work is genuinely done. In goal mode the agent must explicitly run `crw pabcd orchestrate P --session <id>` to start each PABCD cycle; nothing self-advances into P automatically, but the P->D sequence is never skipped. Here goal mode means a task host goal. Task goal mode is PABCD-only: while a goal is active the Interview NEVER fires — entry is suppressed and `request_user_input` is hard-denied, so the Interview is HITL-only and runs only with no active goal. The CLI holds the same line: `crw pabcd orchestrate I` is refused while a host goal is active (or the goals database cannot be read, which fails closed) and names the goal-mode next command, `crw pabcd orchestrate P --session <id>` from IDLE or the current phase mid-cycle; leaving I is never refused.
+With no active host goal, an explicit command can return to I from any phase with the plan and audit context preserved; the default flow never takes that edge. Phases P, A, B pause for confirmation in interactive use; C and D proceed once their work is genuinely done. In goal mode the agent must explicitly run `crw pabcd orchestrate P --session <id>` to start each PABCD cycle; nothing self-advances into P automatically, but the P->D sequence is never skipped. Here goal mode means a task host goal. Task goal mode is PABCD-only: while a goal is active the Interview NEVER fires — entry is suppressed and `request_user_input` is hard-denied, so the Interview is HITL-only and runs only with no active goal. The CLI holds the same line: `crw pabcd orchestrate I` is refused while a host goal is active (or the goals database cannot be read, which fails closed) and names the goal-mode next command, `crw pabcd orchestrate P --session <id>` from IDLE or the current phase mid-cycle; leaving I is never refused.
 
 ## Phase Control / Orchestrate
 
@@ -109,7 +113,7 @@ link is a conditional routing edge, not a command to preload the entire graph.
 
 | Phase / trigger | Mandatory owner before work |
 |---|---|
-| I | crw-interview; no active host goal |
+| I | none: the I directive's decision-request text; no active host goal |
 | P, including plan-only | [Plan phase](references/phase-plan.md): architect proposal → main executable plan → same-architect reflection; C2+ plans also read [Plan output](references/plan-output.md) for consultation evidence |
 | A, if authorized | [Audit phase](references/phase-audit.md) |
 | C | [Check phase](references/phase-check.md) |
@@ -213,12 +217,6 @@ failed repairs require root-cause work, three require replan. LOOP-DOOM-01:
 three failed attestations are no-progress, never success. REVIEW-SYNTHESIS-01
 requires accept/rebut synthesis before re-dispatch. HOTL never returns to I
 while its goal is active.
-
-## Catalog Discovery routing
-
-Interview sub-modes and Catalog Discovery rules live in `$crw-interview`
-(INTERVIEW-CATALOG-01, CATALOG-DESIGN-FIRST-01). The option ontology YAML lives at
-`references/catalog-discovery.yaml` in this skill directory.
 
 ## State
 
