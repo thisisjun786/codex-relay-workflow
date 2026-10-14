@@ -306,8 +306,10 @@ explorers (SP-EXPL-1), and the ones whose scope carries an out-of-authority nota
 thread in a non-blocking `design_question` escalation: an authority question in the audit round that routed it, approved or not, a
 question beyond the cap once the DESIGN is approved; the escalation's evidence names the question digests it asked, so a later round
 or a re-plan does not ask one again on its own (`asked_in_run`); because only the latest design ask of a run is current for `crw flow answer`,
-an ask carries the questions of the DESIGN the run asked already that no answer has reached, and an orchestrator answer applied to it is the answer of the question from the
-next round on (`answered_by_orchestrator`); a reused answer names the route it came from (`origin`); the first explorer of the first
+an ask carries the questions of the DESIGN the run asked already that no answer has reached, and the questions the run asked that no answer has reached and the
+DESIGN no longer raises (`carried` of `crw.exploreRoute`, CRW-1381), and an orchestrator answer applied to it is the answer of the question from the
+next round on (`answered_by_orchestrator`): the part `crw flow answer --answer-for DIGEST=TEXT` gave the question when the ask joins several,
+else the whole answer; a reused answer names the route it came from (`origin`, written only with a value); the first explorer of the first
 DESIGN's first audit round is also given the commands of the done conditions of the milestone's issues (`end_condition` of a node, read
 from the body the handoff carries), runs each once and reports its exit code and the tests it ran in the `end_conditions` of its
 `FINDINGS`, which the answer carries into the design audit, and a command that failed, ran no test or was not reported is a warning of the

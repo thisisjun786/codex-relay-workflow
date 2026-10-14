@@ -471,7 +471,9 @@ export async function explore(kind, questions, ctx, opts) {
       if (sib && found[sib.digest]) answer = found[sib.digest].answer
       else if (sib) answer = sib.answer || ''
     }
-    const out = { digest: r.digest, id: r.id, question: r.question, route: r.route, reason: r.reason || '', scope: r.scope || '', authority: r.authority || '', answer, call, evidence: ev, findings, origin: r.origin || '' }
+    const out = { digest: r.digest, id: r.id, question: r.question, route: r.route, reason: r.reason || '', scope: r.scope || '', authority: r.authority || '', answer, call, evidence: ev, findings }
+    // the optional origin only with a value (CRW-1381)
+    if (r.origin) out.origin = r.origin
     if (r.route === 'spawn' && r.digest === endsFor) out.end_conditions_asked = ends
     return out
   })
@@ -483,6 +485,8 @@ export async function explore(kind, questions, ctx, opts) {
     inline: plan.routes.filter((r) => r.route === 'inline'),
     orchestrator: plan.routes.filter((r) => r.route === 'orchestrator'),
     escalate: plan.routes.filter((r) => r.route === 'escalate'),
+    // the questions the run asked that no answer reached and these questions do not raise again: the next ask carries them (CRW-1381)
+    carried: plan.carried || [],
     failed,
   }
 }

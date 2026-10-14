@@ -32,7 +32,7 @@ async function auditedDesign(first, tag, context) {
     const ends = round === 1 && tag === '' ? END_CONDITIONS : []
     const asked = await crw.explore('open_questions', arch.output.open_questions, { milestone: ms.id }, { endConditions: ends })
     // the authority questions of the round are asked now, approved or not (CRW-1366): an answer is the next round's
-    await askOrchestrator(asked.answers, 'out_of_authority')
+    await askOrchestrator(asked.answers, 'out_of_authority', asked.carried)
     if (asked.failed) return { ok: false, result: await crw.milestoneHalt(ms, 'explorer', asked.failed.status, asked.failed.reason, asked.failed.callId) }
     const answers = asked.answers
     const cand = { design: arch.output, answers }
@@ -43,7 +43,7 @@ async function auditedDesign(first, tag, context) {
       call = await agent.call(designAuditPacket(ms, cand, round), { agentType: 'reviewer', schema: DESIGN_AUDIT, label: 'design-audit:' + tag + 'r' + round + ':retry' })
       audit = await crw.designAudit(ms.id, round, cand, arch, call)
     }
-    if (audit.state === 'approved') return { ok: true, arch, answers }
+    if (audit.state === 'approved') return { ok: true, arch, answers, carried: asked.carried }
     if (audit.state !== 'needs_changes') return { ok: false, result: await crw.milestoneHalt(ms, 'design_audit', audit.state, audit.reason, call.callId) }
     // back to the architect, on its own thread: the DESIGN it revises is the one it wrote
     arch = await agent.call(designFixPacket(audit, context), { resume: arch, schema: DESIGN, head: context && context.head, label: 'design-fix:' + tag + 'r' + round })
@@ -59,11 +59,12 @@ async function auditedDesign(first, tag, context) {
 // a question the run asked already is routed asked_in_run (crw.exploreRoute) and raises no ask of its own. Only the latest design
 // ask of a run is current (the one crw flow answer accepts and the digest lists as waiting), so an ask carries, besides the
 // questions it raises, every question of this DESIGN the run asked already and no answer has reached: asked_in_run, and the
-// authority questions of the round when the approval asks the ones beyond the cap.
-async function askOrchestrator(answers, reason) {
+// authority questions of the round when the approval asks the ones beyond the cap; and every question the run asked that no answer has
+// reached and this DESIGN no longer raises (carried, from crw.exploreRoute, CRW-1381), so it stays answerable through the current ask.
+async function askOrchestrator(answers, reason, carried) {
   const pending = (a) => a.route === 'orchestrator' && (a.reason === reason || a.reason === 'asked_in_run' || a.reason === 'out_of_authority')
   if (!answers.some((a) => a.route === 'orchestrator' && a.reason === reason)) return
-  const asked = answers.filter(pending)
+  const asked = answers.filter(pending).concat(carried || [])
   await crw.escalate(null, { reason: 'design_question', detail: asked.map((a) => (a.scope ? '[' + a.scope + '] ' : '') + a.question).join(' | '), ask: 'design',
     evidence: { questions: asked.map((a) => a.digest) } })
 }
@@ -81,7 +82,7 @@ async function replan(tag, signal, due, head, misaligned) {
   const audited = await auditedDesign(call, 'replan-' + tag + ':', { head, base_tip: cur.base_tip, landed: cur.landed })
   if (!audited.ok) return { state: 'halted', result: audited.result }
   const led = await crw.designLedger(ms.id, { design: audited.arch.output, answers: audited.answers, architect: audited.arch, signal, head, plan: due.plan })
-  await askOrchestrator(audited.answers, 'explorer_cap')
+  await askOrchestrator(audited.answers, 'explorer_cap', audited.carried)
   return { state: 'revised', revision: led.revision }
 }
 
@@ -120,7 +121,7 @@ const designed0 = await auditedDesign(first, '')
 if (!designed0.ok) return designed0.result
 const arch = designed0.arch
 await crw.designLedger(ms.id, { design: arch.output, answers: designed0.answers, architect: arch })
-await askOrchestrator(designed0.answers, 'explorer_cap')
+await askOrchestrator(designed0.answers, 'explorer_cap', designed0.carried)
 
 // A fenced write after another session claimed the plan's coordinator epoch is refused epoch_lost (CRW-1285): the lane ends at that
 // write with the reason, and neither escalates nor writes anything more at the relay; the run ends stopped on it (below).
