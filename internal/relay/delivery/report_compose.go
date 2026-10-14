@@ -188,7 +188,7 @@ func workRestoreLines(r map[string]any) []string {
 				restoreLines = append(restoreLines, "  "+entry[1]+": "+value)
 			}
 		}
-		pointers := map[string]string{"development": "codexclaw:cxc-dev", "loop": "codexclaw:cxc-loop with codexclaw:cxc-pabcd", "lost-context": "codexclaw:cxc-lost-context", "pull-request": "codexclaw:cxc-dev references/stacked-prs.md", "review-repair": "codexclaw:cxc-review-repair"}
+		pointers := map[string]string{"development": "crw:crw-dev", "loop": "crw:crw-loop with crw:crw-pabcd", "lost-context": "crw:crw-recall", "pull-request": "crw:crw-dev references/stacked-prs.md", "review-repair": "crw:crw-dev"}
 		for _, raw := range py.Items(restore["skills"]) {
 			py.HashKey(raw)
 			if pointer := pointers[reportString(raw)]; pointer != "" {
