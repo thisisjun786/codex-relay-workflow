@@ -233,7 +233,7 @@ var bareLayerWord = regexp.MustCompile(`(?i)\bthe (parent|child)\b`)
 // layerWordCompound is what may follow the word without making it a layer or a role: a relay role or the child
 // pair line named as such, a hyphenated compound, and the parent or child of a plan revision, a path, a process,
 // a test or a turn.
-var layerWordCompound = regexp.MustCompile("^(?:['’]s)? ?(?:(?:role|roles|pair|pairs|plan|path|process|test|turn)\\b|-)")
+var layerWordCompound = regexp.MustCompile(`^(?:['’]s)? ?(?:(?:role|roles|pair|pairs|plan|path|process|test|turn)\b|-)`)
 
 // nonLayerUses are phrases where the word means a git parent, a process, a design term or the session and the
 // subagent of a native spawn, read literally.
