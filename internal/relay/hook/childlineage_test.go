@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -115,5 +116,56 @@ func TestChildBindingByLineageIsNeverABindingOrARefusalWhenSomethingIsUnreadable
 		if child || cwd != "" || !strings.Contains(unreadable, c.wantIn) {
 			t.Errorf("%s: child %v, cwd %q, unreadable %q; want no binding and a reason with %q", name, child, cwd, unreadable, c.wantIn)
 		}
+	}
+}
+
+// countingRollout is a rollout of size bytes with no newline, which counts how much of it was read.
+type countingRollout struct {
+	left, read int
+}
+
+func (r *countingRollout) Read(p []byte) (int, error) {
+	if r.left == 0 {
+		return 0, io.EOF
+	}
+	n := min(len(p), r.left)
+	for i := range p[:n] {
+		p[i] = 'x'
+	}
+	r.left -= n
+	r.read += n
+	return n, nil
+}
+
+func (r *countingRollout) Close() error { return nil }
+
+// CRW-1387 d2: the first line of a rollout is read through a reader bounded at lineageMetaLimit+1 bytes, so a first line over the limit with no
+// newline is never read whole: the lineage is unreadable (the caller warns, fail-open) after at most lineageMetaLimit+1 bytes.
+func TestRolloutParentReadsAtMostTheLimitOfAFirstLineWithoutANewline(t *testing.T) {
+	// A file on disk: a first line over the limit without a newline is an unreadable lineage that says why.
+	home := t.TempDir()
+	dir := filepath.Join(home, "sessions", "2026", "10", "14")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	long := filepath.Join(dir, "rollout-2026-10-14T00-00-00-"+threadID(3)+".jsonl")
+	head := `{"type":"session_meta","payload":{"source":{"subagent":{"thread_spawn":{"parent_thread_id":"` + threadID(2) + `"}}},"base_instructions":"`
+	if err := os.WriteFile(long, []byte(head+strings.Repeat("x", lineageMetaLimit)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	known := func(context.Context, string) (bool, string, error) { return true, "/work/parent", nil }
+	if child, cwd, unreadable := ChildBindingByLineage(context.Background(), long, known); child || cwd != "" || !strings.Contains(unreadable, "too long") {
+		t.Errorf("a first line over the limit: child %v, cwd %q, unreadable %q; want an unreadable lineage (too long)", child, cwd, unreadable)
+	}
+
+	// The read is bounded: of a first line three times the limit, at most lineageMetaLimit+1 bytes are read.
+	r := &countingRollout{left: 3 * lineageMetaLimit}
+	defer func(open func(string) (io.ReadCloser, error)) { openRollout = open }(openRollout)
+	openRollout = func(string) (io.ReadCloser, error) { return r, nil }
+	if _, err := rolloutParent("rollout"); err == nil || !strings.Contains(err.Error(), "too long") {
+		t.Errorf("a first line of %d bytes: %v; want too long", 3*lineageMetaLimit, err)
+	}
+	if r.read > lineageMetaLimit+1 {
+		t.Errorf("%d bytes of a first line without a newline were read; want at most lineageMetaLimit+1 = %d", r.read, lineageMetaLimit+1)
 	}
 }

@@ -148,10 +148,13 @@ func componentHooks() []componentHook {
 					return
 				}
 				harness.RecordInvocation(raw, harness.Component, "pre-tool-use-child-push", os.LookupEnv)
+				once := "" // the unreadable lineage of a sub-agent is recorded once per session (CRW-1387); the relay's own record warns every time
 				answer, rule := pabcdhook.ChildPushDecision(raw, func(session, cwd string) pabcdhook.ChildPushBinding {
 					child, parent, err := hook.ChildBinding(c.ctx, session)
 					if err == nil && !child {
-						child, parent, err = subagentLineageBinding(c.ctx, raw)
+						if child, parent, err = subagentLineageBinding(c.ctx, raw); err != nil {
+							once = "unreadable-lineage"
+						}
 					}
 					switch {
 					case err != nil:
@@ -161,7 +164,7 @@ func componentHooks() []componentHook {
 					}
 					return pabcdhook.ChildPushBinding{Child: true, Own: pabcdhook.ChildPushOwnBranch(c.ctx, cwd, parent)}
 				})
-				done <- harness.SettleGuard(childPushLeg, raw, answer, rule, os.LookupEnv)
+				done <- harness.SettleGuardOnce(childPushLeg, raw, answer, rule, once, os.LookupEnv)
 			}()
 			select {
 			case answer := <-done:

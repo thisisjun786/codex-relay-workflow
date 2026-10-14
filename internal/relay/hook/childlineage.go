@@ -57,14 +57,18 @@ func ChildBindingByLineage(ctx context.Context, transcriptPath string, bind func
 	return false, "", ""
 }
 
+// openRollout opens a rollout for rolloutParent; a test reads through it how much of the file was read.
+var openRollout = func(path string) (io.ReadCloser, error) { return os.Open(path) }
+
 // rolloutParent is the parent_thread_id the session_meta record of a rollout names, "" for a thread that is not a sub-agent's.
 func rolloutParent(path string) (string, error) {
-	f, err := os.Open(path)
+	f, err := openRollout(path)
 	if err != nil {
 		return "", err
 	}
 	defer f.Close()
-	line, err := bufio.NewReaderSize(f, 64<<10).ReadBytes('\n')
+	// The read stops one byte past the limit (CRW-1387): a first line without a newline is never read whole, however long the file.
+	line, err := bufio.NewReaderSize(io.LimitReader(f, lineageMetaLimit+1), 64<<10).ReadBytes('\n')
 	if err != nil && !errors.Is(err, io.EOF) {
 		return "", err
 	}
