@@ -863,10 +863,14 @@ any row is written. `crw flow shadow` replays either from the trace and names th
   its parent's, and is recorded only as `host_cwd`.
 - A turn is a step. Its intent row `step_published` (k, `op` `<call>/t<k>`, `marker` `<call>/t<k>-a<n>`, `attempt` n, `action`,
   `input`, `input_digest`, `packet` and `packet_digest`, `role`, `agent_type`, `model`, `effort`, `workspace` P, `agent_id` of a
-  `send_input`, the `note` about earlier attempts) is committed before the packet `steps/<call>/packet-t<k>-a<n>.md` and the step
+  `send_input`, the `note` about earlier attempts, and for a `send_input` `tokens_seen` and `call_tokens`, what the turns before it
+  counted) is committed before the packet `steps/<call>/packet-t<k>-a<n>.md` and the step
   `steps/<call>/t<k>-a<n>.json` are written under `<state>/flow/<run>/` (`engine.FileStepBus`). A step is `spawn` (a first turn, the
   attempt after a lost one, a continuation, a repair whose subagent is closed) or `send_input` (the repair turn on the open
-  subagent); `close` steps (`steps/<call>/close-a<n>.json`) name a subagent to close.
+  subagent); `close` steps (`steps/<call>/close-a<n>-<agent>.json`, one file per subagent, so two closes of one attempt never
+  overwrite each other) name a subagent to close. A step whose packet or file cannot be written (a full disk) was sent to nobody:
+  the run writes the flow warning `step_unwritten` (`marker`, `k`, `attempt`, `action`, `input_state: not_delivered`, `error`)
+  once and writes the step again until it can or the turn ends; the call is never ended unknown for it.
 - The spawn message is short; the packet holds the rest:
 
   ```
@@ -901,7 +905,8 @@ any row is written. `crw flow shadow` replays either from the trace and names th
   the call's pair. A continuation is judged by the same rule: only the decided parts of the role's pair are compared with the pair
   the call's subagent was bound with, so a call bound `pair_unchecked` or `effort_unchecked` continues on a new subagent whose bind
   records the pair it runs, and a decided part that differs is refused (`pair_refused`). While a step waits, the run also looks the
-  marker up on the host, so a subagent spawned and never reported is bound all the same.
+  marker up on the host - the subagent that carries it for a spawn, the turn that carries it on the subagent for a `send_input` -
+  so a subagent spawned, or a repair sent, and never reported is bound all the same.
 - A bind writes `thread_started` (the subagent's `thread_id`, the host-read `model` and `effort`, `cwd` P, `host_cwd`,
   `parent_thread_id`, `agent_role`, `attempt`, `via: session`, `rollout_path`, `marker`, and `prior_pairs`, the pairs earlier
   attempts of the call were bound with when they differ) and `turn_started` (k, `op`, `turn_id`, `attempt`, `marker`) in one batch;
@@ -917,7 +922,8 @@ any row is written. `crw flow shadow` replays either from the trace and names th
   one repair, `null_model`, `completed`.
 - A turn that ended `failed` or `interrupted` with an error is `TurnOutcome.Failed` with its `codexErrorInfo`: a usage or rate limit
   pauses the run, an exceeded context window is a `null_model`, a host failure holds the call, as for any call.
-- Tokens are the rollout's last `token_count` (thread/read `path`), less what the subagent's earlier turns counted. A rollout that
+- Tokens are the rollout's last `token_count` (thread/read `path`), less what the subagent's earlier turns counted (a recovered
+  `send_input` turn takes that and the call's tokens from its `step_published` row, so it counts only what it adds). A rollout that
   cannot be read leaves the turn unmeasured: the `tokens_unmeasured` row says `pauses: false`, and a session run's token ceiling
   counts the calls it measured.
 - A pause, a cancellation or a deadline interrupts the bound subagent's running turns and reads the thread until it is no longer
@@ -926,7 +932,9 @@ any row is written. `crw flow shadow` replays either from the trace and names th
   takes digests of P, of the owner's checkout and of the run's shared state when it binds and when it harvests, and writes a flow
   warning when they differ: `read_role_wrote` (a role that changes nothing), `executor_wrote_outside`, `shared_state_changed`.
 - An executor's `HEAD` is compared with the commit its worktree is to be at (the node's last `crw.commit`, else the allocation's
-  start). A subagent that committed moved it: the commit is kept on `refs/crw/flow/<run>/stray/<node>/a<attempt>` and the
+  start). A subagent that committed moved it: the commit is kept on `refs/crw/flow/<run>/stray/<node>/a<attempt>-<call>` (the
+  executor calls of one allocation, a build and its fix rounds, each keep their own; the ref is created by a compare-and-swap
+  against no ref and never moved) and the
   completed row records `executor_head_moved` (`start`, `head`, `ref`); `crw.commit` commits the pending tree on `start` with the
   observed `HEAD` as the compare-and-swap's old value, and the proof takes the recorded stray `HEAD` whose tree is the pending tree
   as the call's state ([journal.md](journal.md#the-proofs)). The subagent is closed when the call has its terminal row.
@@ -945,9 +953,9 @@ any row is written. `crw flow shadow` replays either from the trace and names th
   | Last row | The resumed call |
   | --- | --- |
   | `prepared` | publishes the first step (the directory an earlier process made is the call's) |
-  | `step_published` | looks the marker up on the host and binds the subagent it finds; else publishes the same step again |
+  | `step_published` | answers first a dispatch report the owner wrote that no process answered (it waits in the inbox), then looks the step up on the host - the subagent that carries the marker for a spawn, the marker turn on the subagent for a `send_input` (a repair is never sent twice) - and binds what it finds; else publishes the same step again |
   | `thread_started` | adopts the subagent the row names and writes only its `turn_started` (nothing is spawned or published again; one the host does not know for `LostAfter` loses the attempt), then reads it as after `turn_started` |
-  | `turn_started` | reads the bound subagent: harvests a completed turn, waits for a running one, loses a lost one |
+  | `turn_started` | retracts the step file the dead process left and reads the bound subagent: harvests a completed turn, waits for a running one, loses a lost one |
   | `session_attempt_lost` | closes the old subagent and spawns the next attempt |
 
 - A held session call goes on in place after the subagents of its held attempts are shown not running (a running turn is
@@ -970,6 +978,7 @@ any row is written. `crw flow shadow` replays either from the trace and names th
 | terminal rows | as for any call |
 | `session_wake` (flow row) | a wake of the owner thread the run staged: `batch`, `wake_id`, `renotify`, `ops`, `owner`, `owner_status`, `waiting_seconds`, `staged` (and `error`) |
 | `escalation` (flow row) | `reason: session_unresponsive`: the steps waited `UnresponsiveAfter` without a dispatched report (`owner`, `ops`, `batch`, `waiting_seconds`); the run goes on |
+| `step_unwritten` (flow row) | a step whose packet or file could not be written: nothing was sent (`input_state: not_delivered`, `marker`, `error`); the run writes it again |
 
 ### The owner's commands
 
