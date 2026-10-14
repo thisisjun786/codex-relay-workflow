@@ -169,3 +169,26 @@ func TestRolloutParentReadsAtMostTheLimitOfAFirstLineWithoutANewline(t *testing.
 		t.Errorf("%d bytes of a first line without a newline were read; want at most lineageMetaLimit+1 = %d", r.read, lineageMetaLimit+1)
 	}
 }
+
+// CRW-1395 2: the Codex home of a rollout is found from an ancestor named sessions or archived_sessions, so a lineage whose hop starts from, or
+// passes through, an archived rollout goes on: kid <- s2 (sessions) <- s3 (archived_sessions) <- s4 (sessions), read from s4 and from s3.
+func TestChildBindingByLineageThroughArchivedSessions(t *testing.T) {
+	ctx := context.Background()
+	kid, s2, s3, s4 := threadID(1), threadID(2), threadID(3), threadID(4)
+	home, path := rolloutTree(t, map[string]string{s2: kid, s3: s2, s4: s3}, kid, s2, s3, s4)
+	archived := filepath.Join(home, "archived_sessions", "rollout-2026-10-14T00-00-00-"+s3+".jsonl")
+	if err := os.MkdirAll(filepath.Dir(archived), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(path(s3), archived); err != nil {
+		t.Fatal(err)
+	}
+	known := func(_ context.Context, session string) (bool, string, error) {
+		return session == kid, "/work/parent", nil
+	}
+	for name, transcript := range map[string]string{"through an archived parent": path(s4), "from an archived transcript": archived} {
+		if child, cwd, unreadable := ChildBindingByLineage(ctx, transcript, known); !child || cwd != "/work/parent" || unreadable != "" {
+			t.Errorf("%s: child %v, cwd %q, unreadable %q; want the relay child", name, child, cwd, unreadable)
+		}
+	}
+}

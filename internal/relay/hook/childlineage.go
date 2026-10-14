@@ -102,17 +102,18 @@ func rolloutParent(path string) (string, error) {
 }
 
 // rolloutOf finds the rollout of a thread next to the rollout of its child: the rollouts of a Codex home live under its sessions directory
-// (sessions/YYYY/MM/DD/rollout-<time>-<thread id>.jsonl), found from the child's own path, and under its archived_sessions directory.
+// (sessions/YYYY/MM/DD/rollout-<time>-<thread id>.jsonl) and under its archived_sessions directory. The Codex home is the parent of the nearest
+// ancestor of the child's own path named sessions or archived_sessions (CRW-1395), so a hop that starts from an archived rollout goes on.
 func rolloutOf(childRollout, thread string) (string, error) {
 	var root string
 	for dir := filepath.Dir(childRollout); dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
-		if filepath.Base(dir) == "sessions" {
+		if base := filepath.Base(dir); base == "sessions" || base == "archived_sessions" {
 			root = filepath.Dir(dir)
 			break
 		}
 	}
 	if root == "" {
-		return "", errors.New("the rollout is not under a sessions directory")
+		return "", errors.New("the rollout is not under a sessions or archived_sessions directory")
 	}
 	for _, pattern := range []string{
 		filepath.Join(root, "sessions", "*", "*", "*", "rollout-*-"+thread+".jsonl"),
