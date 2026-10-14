@@ -8,7 +8,7 @@ Resolve installed paths from the current catalog. Read `crw-dev` for development
 
 An effective `crw-loop` workflow loads `crw-loop` and `crw-pabcd` and follows their current goal, session, phase, and evidence requirements in the owning task. A plan or audit alone does not activate them. Delegated agents use the helper role policy's dispatch protocol (`crw role helper dispatch`) and host-permitted tools/settings. Task creation, model configuration, and loop activation each need their own evidence.
 
-Only one owner controls an operation. `crw-define` settles a milestone and its issues before they are registered, `crw-plan` decomposes agreed goals into projects and issues, `crw-add-issue` turns one short request into one ready issue without a plan, `crw-run` executes one project at the project orchestrator's level, `crw-run-initiative` carries an initiative's projects through their project orchestrators and owns the midpoint check, `crw-run` goal mode owns the project parent's native goal and automatic repetition, `crw-loop` owns one task's PABCD completion loop, `crw-status` reports the current situation by level, with its schedule verdict, and selects the next action when asked, without auditing criteria, `crw-check` compares delivery with intent, investigates contradictions and owns the schedule judgment, `crw-tidy` diagnoses records that fall short of the rules already agreed and has the owner of a body supplement it, and `crw-refactor` diagnoses structural debt after cycle verification, read-only, and a selected repair becomes an issue through `crw-add-issue` that runs on the ordinary project path. A focused audit returns findings to its caller; it does not become another coordinator or recursively dispatch the caller.
+Only one owner controls an operation. `crw-define` settles a milestone and its issues before they are registered, `crw-plan` decomposes agreed goals into projects and issues, `crw-add-issue` turns one short request into one ready issue without a plan, `crw-run` executes one project at the child's layer and, in the parent's section, carries the repository's projects through their children and owns the midpoint check, `crw-run` goal mode owns the child's native goal and automatic repetition, `crw-loop` owns one task's PABCD completion loop, `crw-status` reports the current situation by level, with its schedule verdict, and selects the next action when asked, without auditing criteria, `crw-check` compares delivery with intent, investigates contradictions and owns the schedule judgment, `crw-tidy` diagnoses records that fall short of the rules already agreed and has the owner of a body supplement it, and `crw-refactor` diagnoses structural debt after cycle verification, read-only, and a selected repair becomes an issue through `crw-add-issue` that runs on the ordinary project path. A focused audit returns findings to its caller; it does not become another coordinator or recursively dispatch the caller.
 
 `crw-run` owns goal-free execution of one project's agreed scope, including parallel
 issue children, verification, integration and newly ready successors. A ready batch
@@ -38,7 +38,7 @@ Recover the existing task first. A replacement is routine only when task creatio
 
 Write instructions sent to child tasks in English, including initial assignments,
 review corrections, active-turn steer messages, resumes, and restoration blocks. The same applies
-to an initiative lead's instructions to a project orchestrator and to messages between peer project orchestrators.
+to the parent's instructions to a child and to messages between peer children.
 Translate the actionable instructions without changing their scope or acceptance
 criteria; preserve exact identifiers, URLs, paths, code, and necessary source quotes.
 A child also works and writes in English: its own messages and final return, its commit
@@ -48,11 +48,11 @@ its host, its workflow or the last thing it read leaned toward, and children of 
 answering in different languages. Exact identifiers, quotations and code stay as they are.
 Keep task titles under the existing Korean title convention, and keep user-facing
 reports and Linear records in Korean unless explicitly requested otherwise. A child writes neither
-of those: it returns proposed Linear changes for its project orchestrator to write, and the project orchestrator reports to the
+of those: it returns proposed Linear changes for its child to write, and the child reports to the
 user. This language rule applies to future messages; it does not require resending old prompts
 or waking existing tasks merely to change their language.
 A Korean report or record names a level by the Korean column of [the level table](hierarchy.md#the-levels)
-and by nothing else, while the English instruction keeps the level nouns of its first column; the table
+and by nothing else, while the English instruction keeps the level nouns of its English column; the table
 is the one place either register is set.
 
 Unless the request chooses otherwise, an independent child task that `crw-run` creates or resumes runs the child pair recorded for its issue under [Child pair by issue type](../../crw-plan/references/integrations.md#child-pair-by-issue-type), with `crw-loop` as its workflow, and owns its own host goal, goalplan, and FSM. That pair is one the declared policy lists for the child role, read from it at the time of the call under [Execution settings by role](execution-roles.md#execution-settings-by-role) rather than restated here, so one location cannot fall behind the other. Precedence, highest first: host and tool restrictions; the explicit limits in force for this request, such as plan-only, read-only, status-only, no-goal, no-FSM, no-create, or current-task; the user's explicit model, effort, or workflow choice for this scope; then this default: `crw-loop` as the workflow and, for the pair, the one the issue body's child pair line records, or the table's answer where the issue has no line. A later explicit instruction supersedes an earlier one only for the same constraint, so every limit it does not contradict stays in force. The result is the effective setting, and an effective Loop workflow carries the same weight as a separately requested one.
@@ -89,7 +89,7 @@ A value this precedence settles is applied without asking. A value it does not s
 
 ### Publish for review when the work is reviewable
 
-Internal work is delivered as commits on the task branch, with the `verification-record/1` of the tree they build and the handoff. The integrator merges the candidate into a local integration tree over `dev`, verifies that tree with the local full verification (a `verification-record/1` with `result: pass`) and fast-forwards `dev` to it ([POLICY.md](../../../../../POLICY.md#branches-and-authority)). Internal work is not delivered through a pull request. An external contribution may still arrive as one, and a pull request that was already open when this procedure took effect follows [In-flight pull requests (transition)](../../crw-run/references/merge-readiness.md#in-flight-pull-requests-transition).
+Internal work is delivered as commits on the task branch, with the `verification-record/1` of the tree they build and the handoff. The integrator merges the candidate into a local integration tree over `dev`, verifies that tree with the local full verification (a `verification-record/1` with `result: pass`) and fast-forwards `dev` to it (`POLICY.md#branches-and-authority` in the CRW repository). Internal work is not delivered through a pull request. An external contribution may still arrive as one, and a pull request that was already open when this procedure took effect follows [In-flight pull requests (transition)](../../crw-run/references/merge-readiness.md#in-flight-pull-requests-transition).
 
 This applies where the assignment's scope expressly covers delivery. Where it does not, the delivery is local commits or a frozen diff and the question of a draft never arises; lacking authorization to deliver is a reason not to deliver, not a reason to deliver as a draft.
 

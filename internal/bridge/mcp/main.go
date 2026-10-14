@@ -130,6 +130,13 @@ func Main(ctx context.Context, args []string, env map[string]string, stdin io.Re
 			relaySocket = expand(socket, env)
 		}
 	})
+	// CRW-1373: a daemon that serves another relay state than this bridge resolves is told once, here; the bridge starts
+	// either way (a report then ends with the explicit "relay daemon unavailable").
+	if stateCheck != nil {
+		if warning := stateCheck(relaySocket); warning != "" {
+			fmt.Fprintln(stderr, "crw bridge: warning: "+warning)
+		}
+	}
 	server := NewServer(bridge.New(client, store, policy), PackageVersion, stderr, WithChildReports(relaySocket))
 	if err := server.Run(ctx, &sdk.IOTransport{Reader: stdin, Writer: stdout}); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, io.EOF) {
 		fmt.Fprintln(stderr, "crw bridge:", err)

@@ -267,3 +267,44 @@ func TestExemptCommandsAreHeldToTheSocketTheStoreRecords(t *testing.T) {
 		t.Fatalf("an intent was written: %v", err)
 	}
 }
+
+// CRW-1373: the doctor names, beside the state the selection chose, the state a bridge in this environment resolves (the
+// relay's own resolution without --state) and the one the live relay daemon of the socket serves, when they differ; it is
+// absent where they agree, where the claim is stale and where no claim exists, and it never changes the exit code.
+func TestDoctorNamesTheStateAReportChildBridgeWouldNotShareWithTheDaemon(t *testing.T) {
+	home := tempHome(t)
+	socket := filepath.Join(home, "codex-home", "app-server-control", "app-server-control.sock")
+	served := filepath.Join(home, "served")
+	writeScopeClaim(t, socket, served)
+
+	bridgeState := filepath.Join(home, "bridge-state")
+	t.Setenv("CODEX_SESSION_RELAY_STATE", bridgeState)
+	// The env state is an explicit selection, which serviceStore does not second-guess; the report_child reading does.
+	answer := golang(t, home, "doctor")
+	report := decode(t, answer.stdout)
+	got := obj(report["reportChildState"])
+	if answer.code != 0 || got["bridgeState"] != bridgeState || got["daemonState"] != served || got["agree"] != false || !strings.Contains(fmt.Sprint(got["detail"]), "report_child") {
+		t.Fatalf("reportChildState %v (exit %d)", report["reportChildState"], answer.code)
+	}
+	if _, present := report["serviceStore"]; present {
+		t.Fatalf("an env selection is not second-guessed by serviceStore: %s", answer.stdout)
+	}
+	if strings.LastIndex(answer.stdout, `"reportChildState"`) < strings.LastIndex(answer.stdout, `"runtime"`) {
+		t.Fatalf("reportChildState is not a trailing key:\n%s", answer.stdout)
+	}
+	// A --state given to the doctor does not change what the bridge resolves.
+	byFlag := decode(t, golang(t, home, "--state", filepath.Join(home, "elsewhere"), "doctor").stdout)
+	if obj(byFlag["reportChildState"])["bridgeState"] != bridgeState {
+		t.Fatalf("--state moved the bridge's state: %v", byFlag["reportChildState"])
+	}
+	absent := func(t *testing.T, argv ...string) {
+		t.Helper()
+		answer := golang(t, home, argv...)
+		if _, present := decode(t, answer.stdout)["reportChildState"]; present || answer.code != 0 {
+			t.Fatalf("%v: reportChildState reported: %s", argv, answer.stdout)
+		}
+	}
+	absent(t, "--socket", filepath.Join(home, "other.sock"), "doctor")
+	t.Setenv("CODEX_SESSION_RELAY_STATE", served)
+	absent(t, "doctor")
+}

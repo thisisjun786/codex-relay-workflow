@@ -20,7 +20,7 @@ crw-dev is canonical for work class, C0/C1 fast-path, proof, and safety.
 P here plans one task's implementation; crw-plan decomposes a goal into Linear
 projects, milestones and issues. C verifies this task's implementation; crw-check
 compares delivered work with canonical Linear documents and issue criteria.
-Which level runs this procedure, and what goal each level opens, is in [hierarchy](../crw-canon/references/hierarchy.md#scope-of-each-level).
+Which level runs this procedure, and what goal each level opens, is in [hierarchy](../crw-canon/references/hierarchy.md#scope-of-each-level), whose [level table](../crw-canon/references/hierarchy.md#the-levels) names the layers.
 
 ## Interview Trigger
 
@@ -71,8 +71,8 @@ Two distinct things, do not conflate them:
   command instead takes the existing explicit-command parser path.
 - **Agent judgment (broad):** unclear requirements open no interview. An issue too
   unclear to plan goes back to its registration ([crw-define](../crw-define/SKILL.md),
-  at the top session (today Sion) or the parent (repository session)). Ambiguity during
-  a run is a decision request to the session above the project session, lifted with
+  at the top session (today Sion) or the parent (repository session, relay role `supervisor`)). Ambiguity during
+  a run is a decision request to the session above the project session (relay role `parent`), lifted with
   `crw flow report-up` and the evidence file; the work it does not block continues on
   recorded assumptions. The I phase stays for an explicit
   `crw pabcd orchestrate I --session <id>` or user command; the CRW default flow never
@@ -174,7 +174,7 @@ dispatch of an independent lane, apply
 [DISPATCH-MANAGED-01](references/dispatch-surfaces.md#dispatch-managed-01-strict--start-from-the-binding-not-from-the-mechanism).
 A Linear issue or DAG node (also one the relay holds no assignment for yet) is an
 independent relay child started and resumed through `crw-run`, or a flow executor call of the
-project orchestrator's run recorded in the relay, never a
+child's run recorded in the relay, never a
 `create_thread` lane, and the relay's duplicate-assignment and capacity refusals are
 followed, not routed around by creating a thread by hand. An unresolved binding is
 not permission to take the unmanaged route. The thread and subagent choice below is

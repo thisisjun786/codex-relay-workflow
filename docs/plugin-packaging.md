@@ -2,7 +2,7 @@
 
 This repository publishes its skills as a versioned Codex plugin. The package also
 declares the task-bridge MCP server, the completion Stop hook, and the hooks ported from CXC
-behind the CRW/CXC switch ([the ported hooks and the switch](#the-ported-hooks-and-the-switch)).
+behind the hook switch ([the ported hooks and the switch](#the-ported-hooks-and-the-switch)).
 All of them reach the Go runtime
 through the installer's pointer, `$HOME/.local/share/crw-runtime/current/bin/`: the hook
 command names `crw` there directly and the server starts a three-line `sh` launcher that execs
@@ -275,14 +275,14 @@ a push, and a command the reader cannot read that spells `push`, is warned about
 It reads the relay store only for a command that pushes or cannot be read, and judges nothing in any other session.
 
 Every ported leg, and the guard, reads the switch `<CODEX_HOME>/crw/switch.json`
-(`{"active": "crw" | "cxc", "changedAt", "by"}`) before anything else. The hook only reads it. The
-writer, `crw install switch`, is CRW-201's and is not in the installer yet; until it is, the file
-is written by hand.
+(`{"active": "crw" | "cxc", "changedAt", "by"}`) before anything else. The hook only reads it. The writer is
+`crw install switch` (`internal/runtime/install/switch_cmd.go`,
+[the hook switch](runtime-install.md#the-hook-switch)).
 
 | Switch | What a ported leg does |
 | --- | --- |
 | No file | Exits 0 with no output, its input unread, nothing recorded: the package installs silent |
-| `cxc` | The same: CXC's own plugin serves the session |
+| `cxc` | The same: the emergency stop, the ported hooks off |
 | `crw` | Runs |
 | Present but unreadable (a read error, over 64 KiB, not JSON, another `active`) | Runs, so a protective guard never goes quiet on a damaged switch, and writes `<CODEX_HOME>/crw/hook-observations/switch-warning.json` |
 

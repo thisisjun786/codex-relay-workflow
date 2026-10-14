@@ -6,7 +6,7 @@ This page is the canonical statement of the risk-tier policy (CRW-1041, part a):
 
 The classifier and the record exist, and nothing consumes them yet. No gate reads the tier: the pre-merge evaluation, the independent review, the parent's combined-tree verification and the integrator's full verification run for every head as before, and `premerge-record/1` is unchanged. The record is never a pre-merge record: it has no grader and no score, and a head that is decided low still gets its own `premerge-record/1` and `dag-accept`.
 
-The original request of CRW-1041 was lower gating for low issues: no per-issue evaluation or independent review, one combined verification per batch, and one fix per batch when it fails. That request is not implemented by this change and is not met by it. The decision of the management session (10-11) reshapes it: the batch part becomes F15 of the 0.5.0-alpha design (candidate batch review of up to four low heads in one reviewer call, one verdict block each, a per-node `premerge-record/1` and `dag-accept` still produced for every member, a fix per failing member), which builds on this classifier and on F08. The reshaped request differs from the written one in what it still requires per node, and the Linear issue stays open until that difference is accepted in the issue itself.
+The original request of CRW-1041 was lower gating for low issues: no per-issue evaluation or independent review, one combined verification per batch, and one fix per batch when it fails. That request is not implemented by this change and is not met by it. The decision of the parent (10-11) reshapes it: the batch part becomes F15 of the 0.5.0-alpha design (candidate batch review of up to four low heads in one reviewer call, one verdict block each, a per-node `premerge-record/1` and `dag-accept` still produced for every member, a fix per failing member), which builds on this classifier and on F08. The reshaped request differs from the written one in what it still requires per node, and the Linear issue stays open until that difference is accepted in the issue itself.
 
 ## The tier
 
@@ -29,7 +29,7 @@ The tier of a head is the larger of three things:
 
 ## The exception
 
-`tier` is the classification and an exception never changes it. The management session may record an exception: who, why, when, and the `execution_tier` it sets. `execution_tier` is the tier whose gates run; it equals `tier` unless an exception says otherwise, and an exception that equals the tier is refused. An exception does not make a change low in the record: it makes the gates of a low change apply to it, with the name and the reason beside it. A record without a reason or a name is not a record.
+`tier` is the classification and an exception never changes it. The parent may record an exception: who, why, when, and the `execution_tier` it sets. `execution_tier` is the tier whose gates run; it equals `tier` unless an exception says otherwise, and an exception that equals the tier is refused. An exception does not make a change low in the record: it makes the gates of a low change apply to it, with the name and the reason beside it. A record without a reason or a name is not a record.
 
 ## The record
 
@@ -48,4 +48,4 @@ The criterion is a record of the defect rate after merge of low-tier batches, co
 - The first check is 14 days after the first live low-tier batch; 14 days alone do not prove quality, and the check records what the period was, not a verdict.
 - The baseline is like for like: changes of similar kind and size, in the same throughput mode, merged under the full gates. A 30-day all-merge baseline is not comparable.
 - A defect counts when it is found after merge and traced to a merged head: a P0 to P2 finding of a later evaluation, a revert, or a follow-up issue that fixes the head. The same counting rule applies to both sides.
-- The result is a status artifact with the counts of both sides, their sizes and the rule used. It changes no tier automatically; whether the low-tier policy stays is decided by Jun and the management session.
+- The result is a status artifact with the counts of both sides, their sizes and the rule used. It changes no tier automatically; whether the low-tier policy stays is decided by Jun and the parent.

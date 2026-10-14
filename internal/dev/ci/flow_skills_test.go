@@ -19,7 +19,7 @@ import (
 )
 
 // The skills that describe the flow engine (CRW-1222, the second skill series): the page of the commands (crw-canon/references/flow.md),
-// the project orchestrator's procedure for a flow run (crw-run), the initiative lead's reading of milestone reports, the size fields of
+// the child's procedure for a flow run (crw-run), the parent's reading of milestone reports, the size fields of
 // the plan, and the status reader. Each check reads the text a reader follows and holds it to the facts of the code or to the order the
 // procedure needs; a judge is itself run on a text that lacks the sentence.
 
@@ -567,7 +567,6 @@ func TestSkillManageCommandsExist(t *testing.T) {
 
 const (
 	flowCLIFile      = "internal/flow/cli/cli.go"
-	initiativeSkill  = "plugins/crw/skills/crw-run-initiative/SKILL.md"
 	hierarchyRefFile = canonRefDir + "hierarchy.md"
 )
 
@@ -577,14 +576,15 @@ func flowUsageHas(t *testing.T, line string) bool {
 	return strings.Contains(readRepoText(t, flowCLIFile), line)
 }
 
-// operatingFlowCommand is a `crw flow` command that changes a run: the initiative lead and the status reader do not run one.
+// operatingFlowCommand is a `crw flow` command that changes a run: the parent and the status reader do not run one.
 var operatingFlowCommand = regexp.MustCompile("`crw flow (start|answer|pause|cancel|resume|recover|apply|report-up|report-delivered|digest)\\b")
 
-// initiativeReportProblems judges the section of crw-run-initiative that reads milestone reports.
+// initiativeReportProblems judges the subsection of the parent's section of crw-run that reads milestone reports; whole is
+// the parent's section (CRW-1352: crw-run-initiative, the initiative lead's skill, was folded into it).
 func initiativeReportProblems(section, whole string) []string {
 	flat := normalized(section)
 	if flat == "" {
-		return []string{"crw-run-initiative has no section \"Read the milestone reports\""}
+		return []string{"the parent's section has no subsection \"Read the milestone reports\""}
 	}
 	var problems []string
 	for _, p := range wordingMissing(flat, []string{
@@ -600,22 +600,24 @@ func initiativeReportProblems(section, whole string) []string {
 		problems = append(problems, "the section lacks "+p)
 	}
 	if found := operatingFlowCommand.FindString(whole); found != "" {
-		problems = append(problems, "the skill names "+found+"`, a command that changes a run, which an initiative lead does not run")
+		problems = append(problems, "the parent's section names "+found+"`, a command that changes a run, which the parent does not run")
 	}
 	return problems
 }
 
-// The lead starts the orchestrator of a project when the project's prerequisites hold and the manager's cap allows it (the manager owns the caps).
+// The parent starts the child of a project when the project's prerequisites hold and the cap on children allows it (the parent
+// owns the caps, `crw manage capacity`).
 func TestRunInitiativeStartsOrchestratorUnderCap(t *testing.T) {
-	if !strings.Contains(normalized(readRepoText(t, initiativeSkill)), "only when its prerequisites hold and the manager's orchestrator cap allows it") {
-		t.Errorf("%s does not say that a project's orchestrator starts only when its prerequisites hold and the cap allows it", initiativeSkill)
+	_, parent := runSkillParts(t)
+	if !strings.Contains(normalized(parent), "only when its prerequisites hold and the cap on children that `crw manage capacity` judges allows it") {
+		t.Errorf("the parent's section of %s does not say that a project's child starts only when its prerequisites hold and the cap allows it", runSkillFile)
 	}
 }
 
 func TestRunInitiativeReadsReports(t *testing.T) {
-	text := readRepoText(t, initiativeSkill)
+	_, text := runSkillParts(t)
 	if problems := initiativeReportProblems(sectionOf(text, "Read the milestone reports"), text); len(problems) > 0 {
-		t.Errorf("%s:\n  %s", initiativeSkill, strings.Join(problems, "\n  "))
+		t.Errorf("%s:\n  %s", runSkillFile, strings.Join(problems, "\n  "))
 	}
 	// The commands are the commands of the binary's usage, with the flags the skill uses.
 	for _, line := range []string{"crw flow reports [--initiative I] [--unread] [--json]", "crw flow report-ack REPORT --turn T"} {
@@ -624,7 +626,7 @@ func TestRunInitiativeReadsReports(t *testing.T) {
 		}
 	}
 
-	t.Run("fixture: an initiative lead that operates a run or skips the ack is reported", func(t *testing.T) {
+	t.Run("fixture: a parent that operates a run or skips the ack is reported", func(t *testing.T) {
 		good := "## Read the milestone reports\n\nRun `crw flow reports --initiative INITIATIVE --unread` at the start of every turn: a report to a thread that is not loaded waits in the supervisor queue until the thread loads. " +
 			"The kinds are `milestone_report`, `project_blocked` and `project_decision_request`. Judge each with [crw-check](../crw-check/SKILL.md), then `crw flow report-ack REPORT --turn TURN`: it acknowledges a report only after it has judged it. " +
 			"It never operates a run.\n"
@@ -686,25 +688,27 @@ func TestStatusReadsRunStateAndUnreadReports(t *testing.T) {
 	}
 }
 
+// The flow run's issue executor (CRW-1222) is a subagent of the level table since CRW-1352: no layer, no Codex task of its own,
+// no relay role id, and the run alone speaks to it.
 func TestHierarchyNamesTheIssueExecutor(t *testing.T) {
 	text := readRepoText(t, hierarchyRefFile)
-	rows := tableRows(text, "Level")
-	var executor []string
+	rows := tableRows(text, "Korean")
+	var subagents []string
 	for _, row := range rows {
-		if len(row) > 0 && row[0] == "issue executor" {
-			executor = row
+		if len(row) > 2 && strings.HasPrefix(row[1], "subagents") {
+			subagents = row
 		}
 	}
-	if executor == nil {
-		t.Fatalf("the level table of %s has no issue executor row: %v", hierarchyRefFile, rows)
+	if subagents == nil {
+		t.Fatalf("the level table of %s has no subagents row: %v", hierarchyRefFile, rows)
 	}
-	if relayRoleID.MatchString(executor[1]) {
-		t.Errorf("the issue executor row names a relay role id: %q", executor[1])
+	if relayRoleID.MatchString(subagents[2]) || !strings.Contains(subagents[1], "executor") {
+		t.Errorf("the subagents row names a relay role id or no executor: %q", subagents)
 	}
 	flat := normalized(text)
 	if missing := wordingMissing(flat, []string{
-		`(?i)issue executor[^.]*(is not|holds no)[^.]*(Codex task|binding)`,
-		`(?i)the run alone (speaks to|instructs) (it|an issue executor)`,
+		`(?i)subagent[^.]*(is not|holds no)[^.]*(Codex task|binding)`,
+		`(?i)the run alone (speaks to|instructs) (it|a subagent)`,
 	}); len(missing) > 0 {
 		t.Errorf("%s lacks: %s", hierarchyRefFile, strings.Join(missing, "\n  "))
 	}

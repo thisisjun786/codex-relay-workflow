@@ -26,7 +26,7 @@ label does not justify retaining independent source areas in main.
 | C2 | Ordinary Product Slice | Conventional endpoint, form, table, model, list/detail screen, integration touchpoint | Compact plan + adjacent convention search + focused tests + micro-audit |
 | C3 | Cross-Domain Feature/Refactor | Multiple modules, public API, shared types, broad behavior | Compact or full PABCD depending on persistence/risk; add subagent audit when scope or risk warrants |
 | C4 | High-Risk | Auth, payments, data deletion, migration, release, permission model, security boundary | Full PABCD (mandatory) + full relevant gates + durable risk/evidence record; in a flow-managed run the run's high-risk lane is this process (architect DESIGN, independent pre-build design audit by a reviewer of a different model family before any executor starts, per-issue candidate review, final gate and reviewer-final with full verification and risk record) and the executor starts no FSM |
-| C5 | Research/Ambiguous | Unclear requirements, ambiguous user value, unknown territory after one §0 clarification round | No interview: back to its registration ([crw-define](../crw-define/SKILL.md)) or, in a run, a decision request to the session above the project session; then reclassify |
+| C5 | Research/Ambiguous | Unclear requirements, ambiguous user value, unknown territory after one §0 clarification round | No interview: back to its registration ([crw-define](../crw-define/SKILL.md)) or, in a run, a decision request to the session above the project session (relay role `parent`, [the level table](../crw-canon/references/hierarchy.md#the-levels)); then reclassify |
 
 **C5 is temporary** — it cannot enter implementation until the registration step or the
 answer to the decision request resolves the ambiguity and the task is reclassified as one
@@ -485,7 +485,7 @@ its own active-skill context, so load only what the sub-task needs.
 Tokens are not the only shared resource. Parallel lanes and the task watching them
 typically use the same credentials and the same external API allowance, so polling
 competes with the work being polled. Before sustained observation, read the actual
-budget and reserve headroom for the workers; the project orchestrator owns that
+budget and reserve headroom for the workers; the child owns that
 aggregate ([account for the resources](../crw-run/SKILL.md#account-for-the-resources-this-run-leaves-behind)).
 Rules: `crw-pabcd` `references/dispatch-surfaces.md` (DISPATCH-POLL-BUDGET-01) and
 `crw-loop` `references/waiting.md`.

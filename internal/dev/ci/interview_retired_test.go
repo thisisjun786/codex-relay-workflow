@@ -71,7 +71,7 @@ func TestDefineRegistersMilestonesAndIssues(t *testing.T) {
 	body := flat(skillBody(t, defineSkillFile))
 	for _, want := range []string{
 		"registers a milestone and its issues",
-		"the top session (today Sion)", "the parent (repository session)",
+		"the top session (today Sion)", "(repository session, relay role `supervisor`)",
 		"purpose", "desired change", "success evidence", "scope", "open decisions",
 		"one question at a time", "no ritual interview",
 		"](../crw-canon/references/linear-model.md)",

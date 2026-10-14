@@ -18,6 +18,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/hook"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/service"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
 )
@@ -41,6 +42,7 @@ func Register(configure ...func(*appserver.Client)) {
 		selection, err := store.ResolveStateDir("", socket)
 		return selection.Path, err
 	})
+	mcp.RegisterChildStateCheck(childStateWarning)
 	cli.SupervisorHostCommand = f.supervisorHostCommand
 	cli.DaemonFactory = f.daemonFactory
 	managed.HostStart = f.managedStart
@@ -262,4 +264,16 @@ func (f hostFactory) hostCommand(ctx context.Context, command, state, socket str
 // command's int64 default. A value past int64 is refused by the parser before this runs.
 func hostLimit(value any) int {
 	return int(value.(int64))
+}
+
+// childStateWarning is the bridge's start-time reading of the relay state (CRW-1373): one line naming both paths when the
+// live relay daemon of the bridge's App Server socket serves another state than the bridge resolves, so a report_child that
+// ends with "relay daemon unavailable" is explained before it is made. It reads only and the bridge starts either way.
+func childStateWarning(socket string) string {
+	bridgeState, daemonState, differ := service.BridgeStateDisagreement(socket)
+	if !differ {
+		return ""
+	}
+	return "report_child reaches the relay state " + strconv.Quote(bridgeState) + " (this bridge's CODEX_SESSION_RELAY_STATE or discovery), but the live relay daemon registered for this App Server socket serves " +
+		strconv.Quote(daemonState) + "; child reports will end with \"relay daemon unavailable\" until the bridge is started with the daemon's CODEX_SESSION_RELAY_STATE"
 }

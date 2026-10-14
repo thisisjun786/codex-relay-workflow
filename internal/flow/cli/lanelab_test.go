@@ -69,6 +69,8 @@ type laneLab struct {
 	pendingIntegrate string
 	// reports are the milestone reports the runs sent up.
 	reports []string
+	// owner is the thread the plan's author, the project's parent binding and the runs are (labOwner); target the target branch.
+	owner, target string
 }
 
 const labOwner = "thread-owner"
@@ -172,6 +174,13 @@ func labProcFixture(t *testing.T) string {
 // binary installs them with the lab's verifications, and the proc root of the host memory bound set to the lab's own fixture with its threshold variables cleared.
 func newLaneLab(t *testing.T, issues ...labIssue) *laneLab {
 	t.Helper()
+	return newLaneLabFor(t, labOwner, "integration", issues...)
+}
+
+// newLaneLabFor is newLaneLab with the owner thread and the target branch named (a session run's owner is a thread of the fake
+// host).
+func newLaneLabFor(t *testing.T, owner, target string, issues ...labIssue) *laneLab {
+	t.Helper()
 	isolateGit(t)
 	// the host memory bound reads this proc root, never the host's own /proc: a lab test does not depend on the memory of the machine
 	t.Setenv("CRW_DAG_HOST_PROC_ROOT", labProcFixture(t))
@@ -179,7 +188,7 @@ func newLaneLab(t *testing.T, issues ...labIssue) *laneLab {
 	for _, name := range []string{dagsched.EnvHostMinAvailableGiB, dagsched.EnvHostMaxSwapPercent, dagsched.EnvHostMaxPressure, dagsched.EnvHostMaxPressureFull} {
 		t.Setenv(name, "")
 	}
-	l := &laneLab{t: t, w: newWorld(t), plan: "plan-1", nodeOf: map[string]string{}, issue: map[string]string{}}
+	l := &laneLab{t: t, w: newWorld(t), plan: "plan-1", nodeOf: map[string]string{}, issue: map[string]string{}, owner: owner, target: target}
 	l.repo = filepath.Join(t.TempDir(), "repo")
 	if err := os.MkdirAll(l.repo, 0o755); err != nil {
 		t.Fatal(err)
@@ -190,9 +199,9 @@ func newLaneLab(t *testing.T, issues ...labIssue) *laneLab {
 	l.git(l.repo, "init", "-q", "-b", "main")
 	l.git(l.repo, "add", "-A")
 	l.git(l.repo, "commit", "-q", "-m", "base")
-	l.git(l.repo, "branch", "integration")
+	l.git(l.repo, "branch", target)
 
-	p := compile.Project{Key: "P", PlanID: l.plan, Target: &compile.Target{Repository: l.repo, BaseRef: "integration"}}
+	p := compile.Project{Key: "P", PlanID: l.plan, Target: &compile.Target{Repository: l.repo, BaseRef: target}}
 	seen := map[string]bool{}
 	for _, is := range issues {
 		p.Issues = append(p.Issues, compile.Issue{Key: is.Key, Title: "issue " + is.Key, Criteria: []string{"the work of " + is.Key + " is in node-file of its node"}, Milestone: is.Milestone,
@@ -203,7 +212,7 @@ func newLaneLab(t *testing.T, issues ...labIssue) *laneLab {
 				Surfaces: []string{"logic"}, Grade: "C2", RequiredCommands: []string{}})
 		}
 	}
-	l.input = compile.Input{Schema: compile.InputSchema, AuthorTaskID: labOwner, Projects: []compile.Project{p}}
+	l.input = compile.Input{Schema: compile.InputSchema, AuthorTaskID: owner, Projects: []compile.Project{p}}
 	res, err := compile.Compile(l.input, compile.Options{})
 	if err != nil {
 		t.Fatalf("compile: %v", err)
@@ -216,7 +225,7 @@ func newLaneLab(t *testing.T, issues ...labIssue) *laneLab {
 	}
 	now := "2026-10-12T08:00:00.000000Z"
 	if err := storeseed.InsertScopeBinding(context.Background(), l.w.st, store.ScopeBindingsRow{BindingID: "bind-parent", Role: "parent", ScopeKind: "project", ScopeKey: "P",
-		TaskID: labOwner, HostID: "host", Status: "active", Revision: 1, CreatedAt: now, UpdatedAt: now}); err != nil {
+		TaskID: owner, HostID: "host", Status: "active", Revision: 1, CreatedAt: now, UpdatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := json.MarshalIndent(l.input, "", "  ")
@@ -278,7 +287,7 @@ func newLaneLab(t *testing.T, issues ...labIssue) *laneLab {
 func (l *laneLab) start(argv ...string) Spec {
 	l.t.Helper()
 	before := len(l.td.spawned)
-	code, out, errOut := l.td.do(append(argv, "--thread", labOwner, "--state", l.w.state, "--socket", l.host.SocketPath, "--repo", l.repo, "--force", "--backend", "app-server")...)
+	code, out, errOut := l.td.do(append(argv, "--thread", l.owner, "--state", l.w.state, "--socket", l.host.SocketPath, "--repo", l.repo, "--force", "--backend", "app-server")...)
 	if code != 0 || len(l.td.spawned) != before+1 {
 		l.t.Fatalf("start %v: exit %d\n%s%s", argv, code, out, errOut)
 	}
@@ -651,7 +660,7 @@ func (l *laneLab) count(query string, args ...any) int {
 // file is on the target branch.
 func (l *laneLab) effectsOnce(issues ...string) {
 	l.t.Helper()
-	tip := l.git(l.repo, "rev-parse", "integration")
+	tip := l.git(l.repo, "rev-parse", l.target)
 	for _, key := range issues {
 		node := l.nodeOf[key]
 		if n := l.count("SELECT COUNT(*) FROM dag_agent_executions WHERE plan_id = ? AND node_id = ?", l.plan, node); n != 1 {

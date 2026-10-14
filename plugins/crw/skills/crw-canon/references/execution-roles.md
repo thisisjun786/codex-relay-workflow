@@ -10,8 +10,8 @@ Two kinds of key are in the table. The relay roles `supervisor`, `parent` and `c
 
 | Policy key | Kind | Role | Settings come from | Who decides |
 |---|---|---|---|---|
-| `supervisor` | relay role | initiative lead, and the manager's seat (its management seat, through which the store seat is read once it registers) | its own recorded setting | Jun, directly |
-| `parent` | relay role | project orchestrator | the role policy's `parent` entry | the policy |
+| `supervisor` | relay role | the parent's management seat, through which the store seat is read once it registers | its own recorded setting | Jun, directly |
+| `parent` | relay role | the child (the relay's `parent` names the child of [hierarchy.md](hierarchy.md#the-levels)) | the role policy's `parent` entry | the policy |
 | `child` | relay role | issue child | one of the pairs the policy declares for `child`, chosen per issue | the policy for which pairs exist; [Child pair by issue type](../../crw-plan/references/integrations.md#child-pair-by-issue-type) for which issue gets which |
 | `architect` | agent role | proposes a design and checks a plan against the repository, read-only | the helper role store (`crw role helper`) | the operator, through `crw role helper` |
 | `executor` | agent role | makes one bounded change inside a stated write scope | the helper role store (`crw role helper`) | the operator, through `crw role helper` |
@@ -20,7 +20,7 @@ Two kinds of key are in the table. The relay roles `supervisor`, `parent` and `c
 | `executor-t1` | agent role | flow only: the executor's tier step in a `crw flow` run | the helper role store (`crw role helper`) | the operator, through `crw role helper` |
 | `reviewer-final` | agent role | flow only: the final review of a `crw flow` run, read-only | the helper role store (`crw role helper`) | the operator, through `crw role helper` |
 
-Read the pair rather than remember it. The host's execution policy declares the pair of each relay role, or several pairs for a role, and `get_capabilities` reports what it declares, so a creation states a pair that policy reports for the relay role it is creating (for a role that lists several, one entry of its `pairs`) and passes the role itself so the host checks the answer. Never carry a pair from memory, from another project, or from a document, this one included: a pair here would be named by a model and an effort, and this file carries neither. That habit is what the failure was made of: a coordinator created a project orchestrator on a model it remembered, and another retried a withheld send by changing the model and keeping the previous effort. Reasoning-effort names are catalog values belonging to their own model; two that look similar are not interchangeable, and nothing maps one onto another.
+Read the pair rather than remember it. The host's execution policy declares the pair of each relay role, or several pairs for a role, and `get_capabilities` reports what it declares, so a creation states a pair that policy reports for the relay role it is creating (for a role that lists several, one entry of its `pairs`) and passes the role itself so the host checks the answer. Never carry a pair from memory, from another project, or from a document, this one included: a pair here would be named by a model and an effort, and this file carries neither. That habit is what the failure was made of: a coordinator created a child on a model it remembered, and another retried a withheld send by changing the model and keeping the previous effort. Reasoning-effort names are catalog values belonging to their own model; two that look similar are not interchangeable, and nothing maps one onto another.
 
 A relay role that lists several pairs ranks none of them. The policy says which pairs a task may run on and not which one it does run on; for `child` the issue decides, under [Child pair by issue type](../../crw-plan/references/integrations.md#child-pair-by-issue-type).
 

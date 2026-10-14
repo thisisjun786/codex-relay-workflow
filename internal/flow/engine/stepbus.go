@@ -18,7 +18,7 @@ import (
 // Layout under <state>/flow/<run>/:
 //
 //	steps/<call>/t<k>-a<n>.json      a step to take (spawn or send_input), until the run binds it or retracts it
-//	steps/<call>/close-a<n>.json     a subagent to close (close_agent), until the command that hands it out removes it
+//	steps/<call>/close-a<n>-<agent>.json a subagent to close (close_agent), until the command that hands it out removes it
 //	steps/<call>/packet-t<k>-a<n>.md the task packet of a step (kept: a later attempt or a continuation names it)
 //	steps/<call>/<name>              the other files a packet names (the answer a continuation reads)
 //	inbox/<id>.json                  a dispatch report, until the run has answered it
@@ -63,6 +63,9 @@ type Step struct {
 	Workspace string `json:"workspace,omitempty"`
 	// AgentID is the subagent a send_input or close step is for.
 	AgentID string `json:"agent_id,omitempty"`
+	// File is the name of the step's file in its call's directory, as Steps read it (the command that hands out a close step
+	// removes that file).
+	File string `json:"-"`
 }
 
 // DispatchReport is what `crw flow dispatched` reports: the owner thread spawned (or sent input to) agent for the step.
@@ -145,8 +148,11 @@ func StepName(k, attempt int) string { return fmt.Sprintf("t%d-a%d.json", k, att
 // PacketName is the file name of a step's packet.
 func PacketName(k, attempt int) string { return fmt.Sprintf("packet-t%d-a%d.md", k, attempt) }
 
-// CloseName is the file name of a close step.
-func CloseName(attempt int) string { return fmt.Sprintf("close-a%d.json", attempt) }
+// CloseName is the file name of a close step: the attempt and the subagent, so the closes of two subagents of one attempt (the
+// pair_mismatch close and the close after the harvest) are two files and neither overwrites the other.
+func CloseName(attempt int, agent string) string {
+	return fmt.Sprintf("close-a%d-%s.json", attempt, pathElem(agent))
+}
 
 // pathElem makes an id one path element.
 func pathElem(s string) string {
@@ -211,7 +217,7 @@ func (b *FileStepBus) Publish(step Step) error {
 	}
 	name := StepName(step.K, step.Attempt)
 	if step.Action == StepClose {
-		name = CloseName(step.Attempt)
+		name = CloseName(step.Attempt, step.AgentID)
 	}
 	return WriteAtomic(filepath.Join(b.StepsDir(step.Call), name), append(raw, '\n'))
 }
@@ -260,6 +266,7 @@ func (b *FileStepBus) Steps() ([]Step, error) {
 			if err := json.Unmarshal(raw, &s); err != nil || s.Schema != StepSchema {
 				continue
 			}
+			s.File = n
 			out = append(out, s)
 		}
 	}
