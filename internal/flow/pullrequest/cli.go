@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/gitprobe"
 	"github.com/thisisjun786/codex-relay-workflow/internal/tracking"
 )
 
@@ -47,7 +48,7 @@ The answer is one JSON object on stdout. The token is GH_TOKEN, GITHUB_TOKEN or 
 type Deps struct {
 	// NewPullRequests makes the pull request side of the tracking adapter for the repository "owner/name".
 	NewPullRequests func(repo string) (tracking.PullRequests, error)
-	// Env is the environment git runs with (nil: the process's).
+	// Env is the environment git runs with (nil: the process's), without its routing variables (pushEnv).
 	Env []string
 }
 
@@ -276,16 +277,20 @@ func RunWith(ctx context.Context, d *Deps, args []string, stdout, stderr io.Writ
 	return usage("unknown command %q: open or show", sub)
 }
 
+// pushEnv is the environment of the push's git calls: env (nil is the process environment) without the routing variables
+// (GIT_DIR, GIT_WORK_TREE, GIT_OBJECT_DIRECTORY, GIT_NAMESPACE, ...), so -C names the repository, and GIT_TERMINAL_PROMPT=0 in
+// place of any value env had, as the dev queue (internal/integrator) builds its git environment.
+func pushEnv(env []string) []string {
+	return gitprobe.Sanitize(env, "GIT_TERMINAL_PROMPT=0")
+}
+
 // pushBranch pushes refs/heads/<branch> of the checkout to the remote's branch of the same name, never forced, and returns the commit
 // it pushed.
 func pushBranch(ctx context.Context, env []string, checkout, remote, branch string) (string, error) {
 	gitOut := func(args ...string) (string, error) {
 		var out, errb bytes.Buffer
 		cmd := exec.CommandContext(ctx, "git", append([]string{"-C", checkout}, args...)...)
-		if env != nil {
-			cmd.Env = env
-		}
-		cmd.Env = append(cmd.Environ(), "GIT_TERMINAL_PROMPT=0")
+		cmd.Env = pushEnv(env)
 		cmd.Stdout, cmd.Stderr = &out, &errb
 		if err := cmd.Run(); err != nil {
 			return "", fmt.Errorf("git %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(errb.String()))

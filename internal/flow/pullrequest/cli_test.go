@@ -195,3 +195,77 @@ func TestShowReadsTheStateAndChecksOfAPullRequest(t *testing.T) {
 		}
 	}
 }
+
+// otherRepository is a second repository with its own crw/m1 and its own remote, the one a GIT_DIR inherited from the process
+// environment would name; it answers its .git directory and its remote.
+func (g *gitWorld) otherRepository() (gitDir, bare string) {
+	g.t.Helper()
+	root := g.t.TempDir()
+	repo, bare := filepath.Join(root, "repo"), filepath.Join(root, "other.git")
+	g.git(root, "init", "-q", "--bare", "-b", "dev", bare)
+	g.git(root, "init", "-q", "-b", "crw/m1", repo)
+	if err := os.WriteFile(filepath.Join(repo, "other.txt"), []byte("other\n"), 0o644); err != nil {
+		g.t.Fatal(err)
+	}
+	g.git(repo, "add", "-A")
+	g.git(repo, "commit", "-q", "-m", "other")
+	g.git(repo, "remote", "add", "origin", bare)
+	return filepath.Join(repo, ".git"), bare
+}
+
+func bareSHA(t *testing.T, env []string, bare, branch string) string {
+	t.Helper()
+	cmd := exec.Command("git", "-C", bare, "rev-parse", "--verify", "-q", "refs/heads/"+branch)
+	cmd.Env = env
+	out, _ := cmd.Output()
+	return strings.TrimSpace(string(out))
+}
+
+// TestOpenPushesTheCheckoutItNamesWhateverGitDirTheEnvironmentHolds (CRW-1355 fix 1): `crw flow pr open --push DIR` pushes the
+// branch of DIR: a GIT_DIR, GIT_WORK_TREE, GIT_OBJECT_DIRECTORY or GIT_NAMESPACE of the environment it runs in does not route the
+// rev-parse or the push to another repository, with the dependencies' environment and with the process's (Default, nil Env).
+func TestOpenPushesTheCheckoutItNamesWhateverGitDirTheEnvironmentHolds(t *testing.T) {
+	for _, viaProcess := range []bool{false, true} {
+		name := "deps env"
+		if viaProcess {
+			name = "process env"
+		}
+		t.Run(name, func(t *testing.T) {
+			g := newGitWorld(t)
+			otherDir, otherBare := g.otherRepository()
+			fake := trackingfake.New(t, "o/r")
+			fake.HeadSHA = g.remoteSHA
+			tip := g.git(g.checkout, "rev-parse", "crw/m1")
+			routing := []string{"GIT_DIR=" + otherDir, "GIT_WORK_TREE=" + filepath.Dir(otherDir), "GIT_OBJECT_DIRECTORY=" + filepath.Join(otherDir, "objects"), "GIT_NAMESPACE=elsewhere"}
+			d := deps(t, fake, g)
+			if viaProcess {
+				for _, kv := range g.env {
+					if k, v, ok := strings.Cut(kv, "="); ok && strings.HasPrefix(k, "GIT_") || k == "HOME" {
+						t.Setenv(k, v)
+					}
+				}
+				for _, kv := range routing {
+					k, v, _ := strings.Cut(kv, "=")
+					t.Setenv(k, v)
+				}
+				d.Env = nil
+			} else {
+				d.Env = append(append([]string(nil), g.env...), routing...)
+			}
+			code, out, errOut := run(t, d, "open", "--repo", "o/r", "--head", "crw/m1", "--title", "t", "--issue", "o/r#1", "--push", g.checkout)
+			if code != 0 {
+				t.Fatalf("open: exit %d\n%s%s", code, out, errOut)
+			}
+			if got := g.remoteSHA("crw/m1"); got != tip {
+				t.Errorf("the checkout's remote has crw/m1 at %q, want the checkout's tip %s", got, tip)
+			}
+			if got := bareSHA(t, g.env, otherBare, "crw/m1"); got != "" {
+				t.Errorf("the push went to the other repository's remote (crw/m1 at %s)", got)
+			}
+			var ans Answer
+			if err := json.Unmarshal([]byte(out), &ans); err != nil || ans.Pushed != tip {
+				t.Errorf("answer %s (%v), want pushed %s", out, err, tip)
+			}
+		})
+	}
+}
