@@ -72,7 +72,7 @@ const (
 	OpStepRecord     = "crw." + NameStepRecord
 	OpEscalate       = "crw." + NameEscalate
 	OpHold           = "crw." + NameHold
-	OpReleaseChild   = "crw.releaseChild" // an old run's recording call, read only: the lane installs no crw.releaseChild (CRW-1415)
+	OpReleaseChild   = engine.OpLegacyReleaseChild // an old run's recording call, read only: the lane installs no crw.releaseChild (CRW-1415)
 	OpDecide         = "crw." + NameDecide
 	OpMilestoneClose = "crw." + NameMilestoneClose
 	OpReportUp       = "crw." + NameReportUp

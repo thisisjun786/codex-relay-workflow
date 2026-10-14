@@ -287,6 +287,10 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 		if recorded := RecordedBackend(cfg.Journal.Events(), cfg.RunID); recorded != backend && hasStarted(cfg.Journal.Events(), cfg.RunID) {
 			return nil, fmt.Errorf("engine: run %s was started on the %s backend and cannot be resumed on the %s backend: resume it with the backend its started row records", cfg.RunID, recorded, backend)
 		}
+		// a legacy issue-child run is refused before anything is written as well (CRW-1415): its old child records stay read only
+		if why := LegacyIssueChild(cfg.Journal.Events(), cfg.RunID); why != "" {
+			return nil, fmt.Errorf("engine: %s", why)
+		}
 	}
 	rctx, cancel := context.WithCancel(ctx)
 	defer cancel()

@@ -175,14 +175,14 @@ func (c *command) applyAnswer(st *store.Store, state string, claim Claim) (Answe
 	return reply, 0
 }
 
-// resumeDetached starts the process of a run again from its journal; a run with nothing left of its spec's budget is refused
-// before (budgetLeft, over the journal in st).
+// resumeDetached starts the process of a run again from its journal; a run with nothing left of its spec's budget, and a legacy
+// issue-child run, is refused before (resumeRefused, over the journal in st).
 func (c *command) resumeDetached(st *store.Store, state, run string) (int, error) {
 	spec, err := ReadSpec(state, run)
 	if err != nil {
 		return 0, err
 	}
-	if err := budgetLeft(c.ctx, st, spec); err != nil {
+	if err := resumeRefused(c.ctx, st, spec); err != nil {
 		return 0, err
 	}
 	dir, _ := os.Getwd()

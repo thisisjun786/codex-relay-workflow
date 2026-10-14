@@ -89,17 +89,15 @@ func (c *command) resume(args []string) int {
 		if LockHeld(sel.Path, run) {
 			return c.fail("%v %s", ErrRunLive, run)
 		}
-		// a run with nothing left is refused here, before a process is started for it (budgetLeft)
-		if spec.TokenBudget > 0 {
-			r, err := c.reader(cm)
-			if err != nil {
-				return c.fail("%v", err)
-			}
-			err = budgetLeft(c.ctx, r.St, spec)
-			_ = r.Close()
-			if err != nil {
-				return c.fail("%v", err)
-			}
+		// a legacy issue-child run and a run with nothing left are refused here, before a process is started for it (resumeRefused)
+		r, err := c.reader(cm)
+		if err != nil {
+			return c.fail("%v", err)
+		}
+		err = resumeRefused(c.ctx, r.St, spec)
+		_ = r.Close()
+		if err != nil {
+			return c.fail("%v", err)
 		}
 		dir, _ := os.Getwd()
 		spawned := c.now()
@@ -190,6 +188,22 @@ func budgetLeft(ctx context.Context, st *store.Store, spec Spec) error {
 	}
 	_, err = runBudget(spec, engine.RunSpent(events, spec.RunID).Total, spec.TokenBudget)
 	return err
+}
+
+// resumeRefused is why the run of spec is not resumed, asked before a process is started for it (`crw flow resume RUN --detach`, the
+// resume of `crw flow answer` and of `crw flow next`): a legacy issue-child run, whose journal holds a crw.releaseChild row the current
+// project lane does not replay (engine.LegacyIssueChild, CRW-1415), and a run whose spec's budget is spent (budgetLeft). The run process
+// judges both again under the run lock (engine.Run, execute), so the refusal is the command's own answer and not a process that takes the
+// run lock and ends at once.
+func resumeRefused(ctx context.Context, st *store.Store, spec Spec) error {
+	events, _, err := journal.LoadLean(ctx, st, spec.RunID)
+	if err != nil {
+		return fmt.Errorf("the journal of run %s cannot be read: %w", spec.RunID, err)
+	}
+	if why := engine.LegacyIssueChild(events, spec.RunID); why != "" {
+		return errors.New(why)
+	}
+	return budgetLeft(ctx, st, spec)
 }
 
 // resumeHold holds a `crw flow resume RUN SCRIPT` the way the run process holds its run (CRW-1348): a spec that names another

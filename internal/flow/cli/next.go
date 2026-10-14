@@ -287,19 +287,17 @@ func nextState(info RunInfo, live bool, steps []engine.Step) string {
 }
 
 // detachResume starts the run's process as `crw flow resume RUN --detach` does and waits until it holds the run. Like that command and
-// `crw flow answer` it asks budgetLeft first (CRW-1390): a run whose spec's budget is spent is refused with the same words, before a
-// process is started that would take the run lock and end at once with budget_exhausted.
+// `crw flow answer` it asks resumeRefused first (CRW-1390, CRW-1415): a run whose spec's budget is spent, or a legacy issue-child run, is
+// refused with the same words, before a process is started that would take the run lock and end at once.
 func (c *command) detachResume(cm *common, state string, spec Spec) (int, error) {
-	if spec.TokenBudget > 0 {
-		r, err := c.reader(cm)
-		if err != nil {
-			return 0, err
-		}
-		err = budgetLeft(c.ctx, r.St, spec)
-		_ = r.Close()
-		if err != nil {
-			return 0, err
-		}
+	r, err := c.reader(cm)
+	if err != nil {
+		return 0, err
+	}
+	err = resumeRefused(c.ctx, r.St, spec)
+	_ = r.Close()
+	if err != nil {
+		return 0, err
 	}
 	dir, _ := os.Getwd()
 	spawned := c.now()
