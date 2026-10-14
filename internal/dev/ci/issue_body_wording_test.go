@@ -3,7 +3,9 @@
 package ci
 
 import (
+	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -17,6 +19,36 @@ import (
 // names and stay where the routing table uses them.
 
 var issueBodySkills = []string{"plugins/crw/skills/crw-add-issue/SKILL.md", "plugins/crw/skills/crw-plan/SKILL.md"}
+
+// issueBodyReferenceGlobs are the references of the two skills that write issue bodies (CRW-1386 d4): the
+// child pair line they define is written into an issue body too, so they name no model either. The two pair
+// names `Sonnet` and `SOL` are the names the role policy declares for its child pairs (the pair-choice
+// command and its quota snapshot key them), so a reference may use those names as names, and never defines a
+// pair by the model it runs.
+var issueBodyReferenceGlobs = []string{"plugins/crw/skills/crw-add-issue/references/*.md", "plugins/crw/skills/crw-plan/references/*.md"}
+
+// referenceModelName is modelName without the policy's pair name `Sonnet`.
+var referenceModelName = regexp.MustCompile(`(?i)\b(haiku|opus|fable|gpt-?\d|gemini|claude|o3|o4-mini|codex-mini)\b`)
+
+// pairByModel is a sentence that defines a pair by the model it runs.
+var pairByModel = regexp.MustCompile(`(?i)pair (whose|with a|that runs a) model`)
+
+// codeSpans are the inline code and fenced blocks of a markdown text: a schema key or a JSON example, not
+// prose that names a model.
+var codeSpans = regexp.MustCompile("(?s)```.*?```|`[^`\n]*`")
+
+func issueBodyReferenceProblems(text string) []string {
+	var problems []string
+	for i, line := range strings.Split(codeSpans.ReplaceAllString(text, "``"), "\n") {
+		if m := referenceModelName.FindString(line); m != "" {
+			problems = append(problems, strconv.Itoa(i+1)+": names the model "+m)
+		}
+		if pairByModel.MatchString(line) {
+			problems = append(problems, strconv.Itoa(i+1)+": defines a pair by its model")
+		}
+	}
+	return problems
+}
 
 // modelName is a model or model family name that an issue body does not carry.
 var modelName = regexp.MustCompile(`(?i)\b(sonnet|haiku|opus|fable|gpt-?\d|gemini|claude|o3|o4-mini|codex-mini)\b`)
@@ -55,6 +87,34 @@ func TestIssueBodiesNameNoModel(t *testing.T) {
 		}
 		if p := issueBodyRuleProblems(text + " Sonnet builds it."); len(p) != 1 {
 			t.Errorf("model: %v", p)
+		}
+	})
+	var references []string
+	for _, glob := range issueBodyReferenceGlobs {
+		matches, err := filepath.Glob(filepath.Join(repoRoot(), glob))
+		if err != nil {
+			t.Fatal(err)
+		}
+		references = append(references, matches...)
+	}
+	if len(references) == 0 {
+		t.Fatal("no reference of crw-add-issue or crw-plan was read")
+	}
+	for _, path := range references {
+		rel, _ := filepath.Rel(repoRoot(), path)
+		for _, p := range issueBodyReferenceProblems(readRepoText(t, filepath.ToSlash(rel))) {
+			t.Errorf("%s:%s", filepath.ToSlash(rel), p)
+		}
+	}
+	t.Run("fixture: a reference names a pair, never a model", func(t *testing.T) {
+		good := "The pairs are the names the role policy declares, `Sonnet` and `SOL`: the Sonnet pair, the SOL pair.\n" +
+			"    Child pair: Sonnet (reference exists) - a rename\n`claude` is a snapshot key.\n```json\n{\"claude\":1}\n```\n"
+		if p := issueBodyReferenceProblems(good); len(p) != 0 {
+			t.Errorf("good: %v", p)
+		}
+		bad := "the Sonnet pair is the declared pair whose model is a Claude Sonnet model\n"
+		if p := issueBodyReferenceProblems(bad); len(p) != 2 {
+			t.Errorf("bad: %v", p)
 		}
 	})
 	if strings.Contains(readRepoText(t, "plugins/crw/skills/crw-plan/references/integrations.md"), "## Child pair by issue type") == false {

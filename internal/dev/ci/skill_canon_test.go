@@ -790,9 +790,10 @@ func mustJSON(v any) string {
 	return string(data)
 }
 
-// The level nouns are what an instruction uses; the Korean words of the level table are shown to a
-// reader. Current skill metadata and the usage examples follow the same table: 부모 is the initiative
-// lead there, so a description that calls the project orchestrator 부모 names the wrong level.
+// The level nouns are what an instruction uses; the Korean words of the level table in hierarchy.md are
+// shown to a reader there and nowhere else. Current skill metadata, the references and the README name a
+// level by its English noun (parent for the repository session, child for the project session), so a Korean
+// level word outside the table is a second definition of a level.
 func TestCurrentSurfacesUseNoLevelWordOfTheOldMapping(t *testing.T) {
 	root := repoRoot()
 	var found []string

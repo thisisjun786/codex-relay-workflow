@@ -84,8 +84,10 @@ to it. The switch is the one control over the hooks CRW ported from it: every po
 `<CODEX_HOME>/crw/switch.json` before anything else (`cmd/crw/hook_switch.go`, through
 `internal/hookswitch`), and `crw install switch` is the command that writes the file
 (`internal/runtime/install/switch_cmd.go`); nothing calls it implicitly. `crw` turns the ported legs
-on. `cxc`, or no file at all, turns them off: that is the emergency stop, and it is the only meaning
-the value has. The completion Stop is not behind the switch, and `crw@crw` is never touched: the
+on. `cxc` is the emergency stop: it turns them off and puts back, byte for byte, only what `switch crw`
+recorded as changed, so a CXC plugin entry that `switch crw` turned off from `enabled = true` comes back
+on, with the CXC role files it replaced, and `switch status` reports that entry. No file at all turns
+the ported legs off too and puts nothing back. The completion Stop is not behind the switch, and `crw@crw` is never touched: the
 relay, the MCP bridge and the completion hook stay on in both positions.
 
 ```text

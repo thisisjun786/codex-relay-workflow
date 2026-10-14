@@ -11,9 +11,11 @@ import (
 
 // maxSkillDirectories is the most skills the plugin holds: the 34 of the inventory base, less the
 // three that were merged (CRW-1218 two, CRW-1220 one), plus the new skills of CRW-1216 to CRW-1220,
-// which made 33, less crw-interview, which CRW-1340 removed (crw-define stays: Jun's 10-14 correction).
+// which made 33, less crw-interview, which CRW-1340 removed (crw-define stays: Jun's 10-14 correction), and
+// less crw-run-initiative, which CRW-1352 folded into crw-run: 31, and the limit follows the count down so it
+// cannot grow back unnoticed (CRW-1386, the coordinator's reversible decision).
 // A new skill is a net addition and has to take the place of one that goes away.
-const maxSkillDirectories = 32
+const maxSkillDirectories = 31
 
 // skillDirectoryCountErrors counts the directories of root's plugins/crw/skills that hold a SKILL.md
 // and reports the count when it is over limit.
@@ -37,7 +39,7 @@ func skillDirectoryCountErrors(root string, limit int) []string {
 	return nil
 }
 
-func TestSkillDirectoryCountAtMost32(t *testing.T) {
+func TestSkillDirectoryCountAtMost31(t *testing.T) {
 	t.Run("the checked-in tree", func(t *testing.T) {
 		if errs := skillDirectoryCountErrors(repoRoot(), maxSkillDirectories); len(errs) > 0 {
 			t.Errorf("%v", errs)
@@ -62,13 +64,13 @@ func TestSkillDirectoryCountAtMost32(t *testing.T) {
 		}
 		return root
 	}
-	t.Run("fixture: 32 skills pass, a 33rd fails", func(t *testing.T) {
-		expectEqual(t, "32", skillDirectoryCountErrors(fixture(t, 32, 0), maxSkillDirectories), []string(nil))
-		expectEqual(t, "33", skillDirectoryCountErrors(fixture(t, 33, 0), maxSkillDirectories),
-			[]string{"plugins/crw/skills holds 33 directories with a SKILL.md, over 32"})
+	t.Run("fixture: 31 skills pass, a 32nd fails", func(t *testing.T) {
+		expectEqual(t, "31", skillDirectoryCountErrors(fixture(t, 31, 0), maxSkillDirectories), []string(nil))
+		expectEqual(t, "32", skillDirectoryCountErrors(fixture(t, 32, 0), maxSkillDirectories),
+			[]string{"plugins/crw/skills holds 32 directories with a SKILL.md, over 31"})
 	})
 	t.Run("fixture: a directory without a SKILL.md and a loose file are not skills", func(t *testing.T) {
-		root := fixture(t, 32, 3)
+		root := fixture(t, 31, 3)
 		if err := os.WriteFile(filepath.Join(root, "plugins/crw/skills", "README.md"), []byte("x"), 0o644); err != nil {
 			t.Fatal(err)
 		}

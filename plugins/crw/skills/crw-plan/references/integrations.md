@@ -196,12 +196,11 @@ next step or meaningful gap. Distinguish completed binding from work execution.
 
 #### Child pair by issue type
 
-Children run on one of two pairs, and the issue decides which. The pairs are named after the family of
-their model: the Sonnet pair is the declared pair whose model is a Claude Sonnet model, and the SOL pair
-is the one whose model is a GPT SOL model. This section carries no model name and no effort, because a
-document that carries one is a second source of truth beside the host's policy (see
-[Execution settings by role](../../crw-canon/references/execution-roles.md#execution-settings-by-role)); each pair's model and effort are read from
-the declared policy when the child is created.
+Children run on one of two pairs, and the issue decides which. `Sonnet` and `SOL` are the names the
+role policy gives its two child pairs, and a name here is only that: which model and effort a pair runs
+is the policy's, read from the declared policy when the child is created. This section carries no model
+and no effort, because a document that carries one is a second source of truth beside the host's policy (see
+[Execution settings by role](../../crw-canon/references/execution-roles.md#execution-settings-by-role)).
 
 The axis is where the answer comes from. When a reference implementation, a specification, a golden
 output or an existing pattern decides what the right result is, the child's work is to meet it exactly
@@ -250,10 +249,10 @@ neither counted as a criterion nor read as a deliverable:
 
     Child pair: SOL (answer must be found) - a new retry state machine
 
-The form is `Child pair: <Sonnet or SOL> (<axis>) - <the issue's type and the reason, in a few words>`.
+The form is `Child pair: <the policy's pair name, Sonnet or SOL> (<axis>) - <the issue's type and the reason, in a few words>`.
 The axis is exactly one of `reference exists`, `answer must be found` and `half-half`. A Korean issue
 body may write the label as `자식 pair`; the pair name and the axis words stay as written here, so a
-reader or a check can match them. The line records a family, never a model or an effort. An issue with
+reader or a check can match them. The line records the pair's name (its family), never a model or an effort. An issue with
 no line is routed by the table by the parent that dispatches it: the parent writes the answer as the
 line on the issue and reads it back before it prepares the packet or creates the child, so a later
 parent reading the issue finds the selection there. A note in the parent's own coordination record is
