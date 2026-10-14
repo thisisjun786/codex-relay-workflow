@@ -62,6 +62,8 @@ func TestCampaignSegmentsGiveTheWholeRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The second segment is a new process in life: its draws count from one again, the first 25 of them skipped.
+	drawn.Store(0)
 	second, err := Campaign(resumeConfig(resumeTarget(t, 31, &drawn), secondOut, 35, 25))
 	if err != nil {
 		t.Fatal(err)

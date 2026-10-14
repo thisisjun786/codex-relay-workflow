@@ -13,7 +13,9 @@ go run -tags dev ./cmd/crw-dev fuzz echo --seconds 30
 go run -tags dev ./cmd/crw-dev fuzz echo --cases 500 --seed 7 --workers 4 --out ./fuzz-out
 ```
 
-`--seconds` and `--cases` bound a campaign; one of them is required. `--workers` defaults to 4 and is
+`--seconds` and `--cases` bound a campaign; one of them is required. `--skip N` draws the first N cases of
+the seed and judges none of them, so a campaign that was stopped carries on at the case after the last
+one it judged (see "Stopping and carrying on"). `--workers` defaults to 4 and is
 both the number of oracle workers and the number of cases evaluated at a time. `--seed` defaults to the clock, and the seed a campaign used is written to `summary.json` so the run can be
 repeated. `--out` defaults under the harness's own output root (`DefaultOutRoot`) at
 `<target>/<UTC time>`. Without `node` on `PATH` the command stops with exit 2 and one line, before
@@ -142,6 +144,18 @@ On a disk the sync of the Go side's atomic write dominates; on a tmpfs the cost 
 home guard, which resolves every path of a root again for each directory made (36 % of the CPU
 samples). `PrepareRoot` and `RemoveCaseRoot` are the two places it was spent without need.
 
+## Stopping and carrying on
+
+An interrupt or a terminate signal ends the draw of new cases and nothing else: the cases already drawn
+are judged, counted and written as usual, `summary.json` is written with `"stopped": true`, and the
+last line on stdout names the `--skip` that carries the same seed on. A campaign of two hours can
+therefore run as segments, each a campaign of its own with its own output directory: the next segment
+starts with `--seed S --skip K`, where K is the sum of the cases the earlier segments judged and
+skipped, and a failure record carries its case's number in the whole run
+(`TestCampaignSegmentsGiveTheWholeRun`, `TestCampaignStopLetsTheDrawnCasesFinishAndAResumeFinishesTheRun`).
+A host load gate uses this: a campaign is stopped when the host is over its limit and carried on when
+the load has fallen, and the campaign time is the sum of its segments' elapsed time.
+
 ## Campaign records
 
 A campaign is recorded with its `summary.json`, which holds the target, seed, dev sha, elapsed time,
@@ -149,7 +163,8 @@ case count, counts per verdict kind, timeouts, dead workers, cases with no answe
 records written under `failures/`. A campaign counts as failed when any difference, timeout, dead
 worker, missing answer, harness error, refused scenario or unrefused unreadable command was found. The
 record of a campaign names the target, the seed, the dev sha the binary was built from, the elapsed
-time, the case count, the difference count per kind, the timeout count and the dead-worker count. A
+time (the sum of its segments), the case count, the difference count per kind, the timeout count and
+the dead-worker count; a campaign that ran as segments also names the segments. A
 campaign that found a difference shrinks it and pins it with `--adopt` (tag `open`, record the
 issue), or the difference becomes a follow-up issue.
 

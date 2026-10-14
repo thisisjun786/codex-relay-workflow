@@ -7,6 +7,7 @@
 package cxcfuzz
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -17,9 +18,11 @@ import (
 	"math/rand"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
@@ -65,6 +68,12 @@ type Config struct {
 	Cases   int
 	Seconds int
 	Seed    int64
+	// Skip draws the first Skip inputs of the seed without judging them, so a campaign that was stopped carries on at
+	// the case after the last one it judged; Cases and Seconds then bound the cases judged after them.
+	Skip int
+	// Stop, when closed, ends the draw of new cases. The cases already drawn are judged, counted and written as usual,
+	// and the summary says the campaign was stopped.
+	Stop <-chan struct{}
 	// SeedSet says Seed was given, so a Seed of 0 is the seed the campaign runs, not a request for the clock.
 	SeedSet bool
 	Workers int
@@ -106,6 +115,9 @@ type Summary struct {
 	// Failures names the case records written under the output directory, one per distinct failing input.
 	Failures  []string `json:"failures,omitempty"`
 	PerSecond float64  `json:"casesPerSecond"`
+	// Skipped is the cases of the seed drawn and not judged (Config.Skip); Stopped says Config.Stop ended the draw.
+	Skipped int  `json:"skipped,omitempty"`
+	Stopped bool `json:"stopped,omitempty"`
 }
 
 // Divergence is one shrunk difference, written to <out>/divergences/<kind>-<sha12>.json.
@@ -136,7 +148,7 @@ func divergenceName(kind Kind, input string) string {
 // It exits 2 when the target is unknown or its oracle command is missing, 1 when the campaign
 // found a divergence, and 0 when every case agreed.
 func Run(args []string, stdout, stderr io.Writer) int {
-	const usage = "usage: crw-dev fuzz <target> [--seconds N] [--cases N] [--seed S] [--workers N] [--out DIR] [--adopt FILE --tag TAG --record TEXT --name NAME]"
+	const usage = "usage: crw-dev fuzz <target> [--seconds N] [--cases N] [--skip N] [--seed S] [--workers N] [--out DIR] [--adopt FILE --tag TAG --record TEXT --name NAME]"
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
 		fmt.Fprintln(stderr, usage)
 		fmt.Fprintln(stderr, "crw-dev fuzz: error: the following arguments are required: target")
@@ -147,6 +159,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	set.SetOutput(stderr)
 	seconds := set.Int("seconds", 0, "stop after this many seconds")
 	cases := set.Int("cases", 0, "stop after this many cases")
+	skip := set.Int("skip", 0, "draw this many cases of the seed without judging them (carries on a stopped campaign)")
 	seed := set.Int64("seed", 0, "the generator seed (default: the clock, written to summary.json)")
 	workers := set.Int("workers", DefaultWorkers, "long-lived oracle workers")
 	out := set.String("out", "", "the output directory (default <scratch_root>/fuzz/<target>/<UTC time>; crw config paths prints scratch_root)")
@@ -184,7 +197,15 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "crw-dev fuzz: error: one of --seconds or --cases is required")
 		return 2
 	}
-	cfg := Config{Target: target, Cases: *cases, Seconds: *seconds, Seed: *seed, SeedSet: seedGiven, Workers: *workers, Timeout: DefaultTimeout, DevSHA: devSHA()}
+	if *skip < 0 {
+		fmt.Fprintln(stderr, "crw-dev fuzz: error: --skip must not be negative")
+		return 2
+	}
+	// An interrupt or a terminate signal ends the draw, not the campaign: the cases already drawn finish, the summary is
+	// written and says it was stopped, and --skip carries the same seed on from there.
+	signalled, release := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer release()
+	cfg := Config{Target: target, Cases: *cases, Seconds: *seconds, Skip: *skip, Stop: signalled.Done(), Seed: *seed, SeedSet: seedGiven, Workers: *workers, Timeout: DefaultTimeout, DevSHA: devSHA()}
 	if *out != "" {
 		cfg.Out = *out
 	} else {
@@ -222,6 +243,9 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "crw-dev fuzz: %s seed %d %d cases in %.1fs: same %d differ %d miss %d extra %d timeout %d refused %d; unreadable %d refused %d not refused %d\n",
 		summary.Target, summary.Seed, summary.Cases, summary.Seconds, summary.Same, summary.Differ, summary.Miss, summary.Extra, summary.Timeouts, summary.Refused,
 		summary.UnreadableCases, summary.UnreadableRefused, summary.UnreadableNotRefused)
+	if summary.Stopped {
+		fmt.Fprintf(stdout, "crw-dev fuzz: stopped by a signal after %d cases; carry on with --seed %d --skip %d\n", summary.Cases, summary.Seed, summary.Skipped+summary.Cases)
+	}
 	if warning := failureWarning(summary, cfg.Out); warning != "" {
 		fmt.Fprintln(stderr, warning)
 	}
@@ -283,7 +307,7 @@ func Campaign(cfg Config) (summary Summary, err error) {
 	if cfg.Seconds > 0 {
 		deadline = start.Add(time.Duration(cfg.Seconds) * time.Second)
 	}
-	summary = Summary{Target: cfg.Target.Name, Seed: seed, DevSHA: cfg.DevSHA}
+	summary = Summary{Target: cfg.Target.Name, Seed: seed, DevSHA: cfg.DevSHA, Skipped: cfg.Skip}
 	written := map[string]bool{}
 	failed := map[string]bool{}
 	var campaignErr error
@@ -303,6 +327,7 @@ func Campaign(cfg Config) (summary Summary, err error) {
 	if campaignErr != nil {
 		return summary, campaignErr
 	}
+	summary.Stopped = cases.stopped.Load()
 	summary.Seconds = time.Since(start).Seconds()
 	if summary.Seconds > 0 {
 		summary.PerSecond = float64(summary.Cases) / summary.Seconds
@@ -317,6 +342,8 @@ func Campaign(cfg Config) (summary Summary, err error) {
 type caseStream struct {
 	ordered chan *startedCase
 	halt    atomic.Bool
+	// stopped is whether Config.Stop ended the draw.
+	stopped atomic.Bool
 }
 
 // stop ends the stream: no further case is started. Cases already started still finish and are on ordered.
@@ -338,7 +365,17 @@ func (c *campaign) start(deadline time.Time) *caseStream {
 	running := make(chan struct{}, workers)
 	go func() {
 		defer close(stream.ordered)
+		// The first Skip inputs of the seed are drawn and dropped, so the ones after them are those a whole run draws.
+		for i := 0; i < c.cfg.Skip; i++ {
+			c.cfg.Target.Generate(c.rng, c.rng.Int())
+		}
 		for n := 0; (c.cfg.Cases <= 0 || n < c.cfg.Cases) && !stream.halt.Load(); n++ {
+			select {
+			case <-c.cfg.Stop:
+				stream.stopped.Store(true)
+				return
+			default:
+			}
 			if !deadline.IsZero() && time.Now().After(deadline) {
 				return
 			}
@@ -406,7 +443,8 @@ func (c *campaign) apply(summary *Summary, result caseResult, written, failed ma
 		// was left and why, and the run must not continue as if the case had merely been refused.
 		return result.err
 	case caseFailed:
-		return recordFailure(c.cfg, summary, c.seed, summary.Cases, result.input, result.err, failed)
+		// A failure record carries the case's number in the whole run, skipped cases counted.
+		return recordFailure(c.cfg, summary, c.seed, c.cfg.Skip+summary.Cases, result.input, result.err, failed)
 	case caseRefused:
 		summary.Refused++
 		return nil
