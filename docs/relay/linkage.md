@@ -197,7 +197,30 @@ the raiser's. What the raise cannot settle is not refused: a ref the raiser name
 seat is replaced by the seat, and a seat that cannot be read or two seats above one project leave
 the authority as given; each is answered under `authorityWarning` (`reason` `ref_replaced`,
 `seat_unreadable` or `seat_contested`) and recorded by one `decision_authority_warning` journal row.
-No schema change: the seat is a value of the record's existing authority object.
+With no management edge above the project, a ref the raiser named that is a known management seat is
+kept, so that seat's owner answers and the store seat does not; it is warned (`ref_without_edge`) and
+journaled the same way (CRW-1378). No schema change: the seat is a value of the record's existing
+authority object.
+
+A repeated question folds into the open record of its fingerprint only when that record is held
+under the same seat (the same `authority.ref` of a user-grade or delegated-management-grade record,
+or none). Raised under another management seat it is a record of its own, with that seat as its ref,
+and the answer carries `foldWarning` (`reason` `seat_differs`, the record it did not fold into),
+journaled as a `decision_authority_warning` row (CRW-1378). A record raised before this rule reads
+and answers as it did.
+
+**A record whose seat has no owner** - the management session that held the seat ended or released
+it, so `decision-answer` refuses every answerer `authority_unverified` - is recovered in one of three
+ways, none of which edits the record:
+
+1. a new management thread binds the seat's key again: `linkage-bind --role supervisor --scope-kind
+   management --scope <seat id> --task <new thread> --host ...`; the seat's new owner answers;
+2. while the old session's binding is still live, `linkage-handover --role supervisor --scope-kind
+   management --scope <seat id> --expect-task <old owner> --task <new thread> --evidence ...` moves
+   the seat, and its edges, to the new thread, which then answers;
+3. the question is withdrawn (`decision-withdraw --decision ID --reason ...`) and raised again from
+   the project: the new record names the seat that stands above the project then, or none (the store
+   seat's rule) when no edge does.
 
 ## The transaction protocol
 
