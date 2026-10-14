@@ -42,6 +42,20 @@ type sessionCall struct {
 	// process asked for, with the turn it was asked for.
 	resume *sessionStage
 	intent sessionIntent
+	// conv is the conversation turn of the step the call works on (conversationTurn) and replaces the turn of the call's conversation
+	// that step's turn replaces: the step_published and turn_started rows of the step record both (CRW-1384).
+	conv     int
+	replaces string
+}
+
+// conversationTurn is the turn of its call's conversation a session step's turn is: the call's task turn is 1 and its one repair 2,
+// on whatever subagent, attempt and k it runs. A turn run again - the next attempt of a lost turn, the turn a held call goes on with
+// in place on a new subagent - is the turn it replaces.
+func conversationTurn(repair bool) int {
+	if repair {
+		return 2
+	}
+	return 1
 }
 
 // sessionIntent is an interrupt the previous process asked for (its interrupt_requested row) and the turn it was asked for: the op
@@ -645,6 +659,10 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 		action, agent = StepSendInput, s.agent
 	}
 	packetName := PacketName(k, s.attempt)
+	// the turn's place in the call's conversation, which its step and its turn record: the task turn or its repair, over the turn the
+	// conversation holds there (a lost attempt's turn, the turn a held call goes on from in place)
+	s.conv = conversationTurn(repair)
+	s.replaces = callConversation(CallEvents(e.j, c.id)).at(s.conv)
 	recovered := s.resume != nil && s.resume.kind == stagePublished && s.resume.k == k && s.resume.attempt == s.attempt
 	if recovered {
 		st := s.resume
@@ -669,7 +687,10 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 	if !recovered {
 		data := map[string]any{"k": k, "op": op, "marker": marker, "attempt": s.attempt, "action": action, "input": input, "repair": repair,
 			"input_digest": digestJSON([]byte(input)), "packet": step.Packet, "packet_digest": digestJSON([]byte(packet)), "role": p.role,
-			"agent_type": step.AgentType, "model": step.Model, "effort": step.ReasoningEffort, "workspace": c.cwd}
+			"agent_type": step.AgentType, "model": step.Model, "effort": step.ReasoningEffort, "workspace": c.cwd, "conversation_turn": s.conv}
+		if s.replaces != "" {
+			data["replaces_turn"] = s.replaces
+		}
 		if agent != "" {
 			data["agent_id"] = agent
 		}
@@ -990,7 +1011,11 @@ func (c *callRun) sessionVerify(ctx context.Context, agent string, k int, op, ma
 	c.turnIDs = append(c.turnIDs, turn.ID)
 	c.delivered = true
 	s.turn, s.boundK = turn.ID, k
-	c.event(EvTurnStarted, map[string]any{"k": k, "op": op, "turn_id": turn.ID, "attempt": s.attempt, "marker": marker, "via": "session"})
+	data := map[string]any{"k": k, "op": op, "turn_id": turn.ID, "attempt": s.attempt, "marker": marker, "via": "session", "conversation_turn": s.conv}
+	if s.replaces != "" {
+		data["replaces_turn"] = s.replaces
+	}
+	c.event(EvTurnStarted, data)
 	return DispatchReply{Status: ReplyBound}, true
 }
 

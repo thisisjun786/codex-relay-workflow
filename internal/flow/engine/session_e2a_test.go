@@ -629,3 +629,251 @@ func TestSessionStartCommitIsTheAllocationsStart(t *testing.T) {
 		})
 	}
 }
+
+// The A4+B4 seam, its invariant (F1): a turn's place in its call's conversation is recorded when the step is published and the turn
+// bound, never reconstructed from held rows and k. A call held before any subagent took its first step (input_state not_delivered)
+// goes on with that step in place, without a step_published row of its own, and its repair turn is then the conversation's second
+// turn: the record holds the task and then the repair, once each, on the subagent of the task turn and when the repair finishes on
+// another subagent (a lost repair attempt run again, a repair held and gone on with in place). The rows say so: the task turn is
+// conversation turn 1, every repair turn 2, and a turn run again names the turn it replaces.
+func TestSessionConversationTurnIsRecorded(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// repair is what the first repair turn comes to in the process that goes on with the held call
+		repair orchAnswer
+		// held: the repair turn is held (delivered) and a third process goes on with it in place
+		held bool
+	}{
+		{name: "repair completes on the subagent of the task turn"},
+		{name: "repair attempt lost and run again on a new subagent", repair: orchAnswer{lose: true}},
+		{name: "repair turn held and gone on with in place", repair: orchAnswer{fail: "usageLimitExceeded"}, held: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			k := newSessionKit(t)
+			var mu sync.Mutex
+			phase := 1
+			first := firstCallOf()
+			k.orch.answer = func(st Step, _ string, _ int) orchAnswer {
+				mu.Lock()
+				defer mu.Unlock()
+				switch {
+				case !first(st.Call):
+				case phase == 1:
+					// the owner never takes the first step before the run is paused
+					return orchAnswer{skip: true}
+				case st.K == 1:
+					return orchAnswer{text: "this is not JSON"}
+				case st.K == 2 && st.Attempt == 1 && (tc.repair.lose || tc.repair.fail != ""):
+					return tc.repair
+				}
+				return orchAnswer{edit: "P:" + st.Op}
+			}
+			one := `const r = await agent.call('build node n1', { agentType: 'executor', label: 'exe', node: 'n1', schema: RECEIPT })
+`
+			ctl := &Control{}
+			k.h.cfg.Control = ctl
+			go func() {
+				for i := 0; i < 10000; i++ {
+					if len(rowsNamed(k.h.journal.Events(), EvStepPublished)) > 0 {
+						ctl.Pause("operator", "test")
+						return
+					}
+					time.Sleep(time.Millisecond)
+				}
+			}()
+			if got := value[[]any](t, k.h.run(one+`return [r.status, r.reason]`)); fmt.Sprint(got) != "[held engine_paused]" {
+				t.Fatalf("the first run %v; rows %s", got, eventsOf(k.rowsOf("exe")))
+			}
+			if rows := k.rowsOf("exe"); rowStr(rows[len(rows)-1].Data, "input_state") != "not_delivered" || len(rowsNamed(rows, EvTurnStarted)) != 0 {
+				t.Fatalf("the first run's rows %s, held %v: want a step no subagent took", eventsOf(rows), rows[len(rows)-1].Data)
+			}
+			k.h.cfg.Control = nil
+			mu.Lock()
+			phase = 2
+			mu.Unlock()
+			want := "completed"
+			if tc.held {
+				want = "held"
+			}
+			k.h.cfg.Resume = &ResumeOptions{}
+			if got := value[string](t, k.h.run(one+`return r.status`)); got != want {
+				t.Fatalf("the held call gone on with %s, want %s; rows %s", got, want, eventsOf(k.rowsOf("exe")))
+			}
+			firstSteps := 0
+			for _, r := range rowsNamed(k.rowsOf("exe"), EvStepPublished) {
+				if rowInt(r.Data, "k") == 1 {
+					firstSteps++
+				}
+			}
+			if firstSteps != 1 {
+				t.Fatalf("%d step_published rows of k 1, want the one the first process wrote (the held call goes on with it in place); rows %s", firstSteps, eventsOf(k.rowsOf("exe")))
+			}
+			if tc.held {
+				k.h.cfg.Resume = &ResumeOptions{}
+				if got := value[string](t, k.h.run(one+`return r.status`)); got != "completed" {
+					t.Fatalf("the held repair gone on with %s; rows %s", got, eventsOf(k.rowsOf("exe")))
+				}
+			}
+			k.h.cfg.Resume = &ResumeOptions{}
+			got := value[[]string](t, k.h.run(one+`const fix = await agent.call('fix what the review found', { resume: r, label: 'fix', schema: RECEIPT })
+return [r.status, fix.status]`))
+			if strings.Join(got, ",") != "completed,completed" {
+				t.Fatalf("results %v", got)
+			}
+			cp := flowRows(k.h.journal, EvCheckpointStarted)
+			if len(cp) != 1 {
+				t.Fatalf("checkpoint_started rows %v", cp)
+			}
+			packet := rowStr(cp[0].Data, "packet")
+			task, repair := strings.Index(packet, "[turn 1] build node n1"), strings.Index(packet, "[turn 2] Your previous answer did not satisfy the output schema")
+			if task < 0 || repair < task || strings.Count(packet, "[turn ") != 2 || strings.Count(packet, "[answer of the call]") != 1 {
+				t.Errorf("the checkpoint does not hold the task turn and then the repair turn, once each:\n%s", packet)
+			}
+			// the recorded places: the task turn is conversation turn 1, every repair turn 2, and a repair turn run again names the one
+			// it replaces
+			var turns []string
+			prev := ""
+			for _, r := range rowsNamed(k.rowsOf("exe"), EvTurnStarted) {
+				id, at := rowStr(r.Data, "turn_id"), rowInt(r.Data, "conversation_turn")
+				wantAt, wantReplaces := 2, prev
+				if rowInt(r.Data, "k") == 1 {
+					wantAt, wantReplaces = 1, ""
+				}
+				if at != wantAt || rowStr(r.Data, "replaces_turn") != wantReplaces {
+					t.Errorf("turn_started %s: conversation_turn %d replaces_turn %q, want %d %q", id, at, rowStr(r.Data, "replaces_turn"), wantAt, wantReplaces)
+				}
+				if wantAt == 2 {
+					prev = id
+				}
+				turns = append(turns, id)
+			}
+			for _, r := range rowsNamed(k.rowsOf("exe"), EvStepPublished) {
+				wantAt := 2
+				if r.Data["repair"] != true {
+					wantAt = 1
+				}
+				if rowInt(r.Data, "conversation_turn") != wantAt {
+					t.Errorf("step_published k %d attempt %d: conversation_turn %v, want %d", rowInt(r.Data, "k"), rowInt(r.Data, "attempt"), r.Data["conversation_turn"], wantAt)
+				}
+			}
+			if n := len(turns); n < 2 {
+				t.Errorf("turns %v", turns)
+			}
+		})
+	}
+}
+
+// A journal written before the conversation turn was recorded (no conversation_turn, no replaces_turn on its rows) is read by the
+// reconstruction kept for those journals: the checkpoint of a call held and gone on with in place, of a repair finished on a second
+// subagent and of a first turn lost and run again holds each turn of the conversation once, as before.
+func TestSessionConversationOfAJournalWithoutRecordedTurns(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// answer is what a step of the first call comes to in the first run (phase 1) and after it (phase 2)
+		answer func(st Step, phase int) orchAnswer
+		// resumes is the number of resumed runs of the call before the continuation (a held call goes on in one)
+		resumes int
+		want    []string
+	}{
+		{name: "task turn held and gone on with in place", resumes: 1, want: []string{"[turn 1] build node n1"},
+			answer: func(st Step, phase int) orchAnswer {
+				if phase == 1 {
+					return orchAnswer{fail: "usageLimitExceeded"}
+				}
+				return orchAnswer{edit: "P:" + st.Op}
+			}},
+		{name: "repair turn held and gone on with in place", resumes: 1, want: []string{"[turn 1] build node n1", "[turn 2] Your previous answer did not satisfy the output schema"},
+			answer: func(st Step, phase int) orchAnswer {
+				switch {
+				case phase == 2:
+					return orchAnswer{edit: "P:" + st.Op}
+				case st.K == 1:
+					return orchAnswer{text: "this is not JSON"}
+				}
+				return orchAnswer{fail: "usageLimitExceeded"}
+			}},
+		{name: "repair finished on a second subagent", want: []string{"[turn 1] build node n1", "[turn 2] Your previous answer did not satisfy the output schema"},
+			answer: func(st Step, _ int) orchAnswer {
+				switch {
+				case st.K == 1:
+					return orchAnswer{text: "this is not JSON"}
+				case st.K == 2 && st.Attempt == 1:
+					return orchAnswer{lose: true}
+				}
+				return orchAnswer{edit: "P:" + st.Op}
+			}},
+		{name: "first turn lost and run again", want: []string{"[turn 1] build node n1"},
+			answer: func(st Step, _ int) orchAnswer {
+				if st.Attempt == 1 {
+					return orchAnswer{lose: true}
+				}
+				return orchAnswer{edit: "P:" + st.Op}
+			}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			k := newSessionKit(t)
+			var mu sync.Mutex
+			phase := 1
+			first := firstCallOf()
+			k.orch.answer = func(st Step, _ string, _ int) orchAnswer {
+				mu.Lock()
+				defer mu.Unlock()
+				if !first(st.Call) {
+					return orchAnswer{edit: "P:" + st.Op}
+				}
+				return tc.answer(st, phase)
+			}
+			one := `const r = await agent.call('build node n1', { agentType: 'executor', label: 'exe', node: 'n1', schema: RECEIPT })
+`
+			value[string](t, k.h.run(one+`return r.status`))
+			mu.Lock()
+			phase = 2
+			mu.Unlock()
+			for i := 0; i < tc.resumes; i++ {
+				k.h.cfg.Resume = &ResumeOptions{}
+				value[string](t, k.h.run(one+`return r.status`))
+			}
+			if got := terminalOf(k.rowsOf("exe")); got != EvCompleted {
+				t.Fatalf("the call ended %s; rows %s", got, eventsOf(k.rowsOf("exe")))
+			}
+			// the journal as a binary before the recorded conversation turn wrote it
+			old := NewMemoryJournal()
+			for _, e := range k.h.journal.Events() {
+				if e.Kind == KindCall && (e.Event == EvStepPublished || e.Event == EvTurnStarted) {
+					d := make(map[string]any, len(e.Data))
+					for key, v := range e.Data {
+						if key != "conversation_turn" && key != "replaces_turn" {
+							d[key] = v
+						}
+					}
+					e.Data = d
+				}
+				old.Append(e)
+			}
+			k.h.journal, k.h.cfg.Journal = old, old
+			k.h.cfg.Resume = &ResumeOptions{}
+			got := value[[]string](t, k.h.run(one+`const fix = await agent.call('fix what the review found', { resume: r, label: 'fix', schema: RECEIPT })
+return [r.status, fix.status]`))
+			if strings.Join(got, ",") != "completed,completed" {
+				t.Fatalf("results %v", got)
+			}
+			cp := flowRows(old, EvCheckpointStarted)
+			if len(cp) != 1 {
+				t.Fatalf("checkpoint_started rows %v", cp)
+			}
+			packet := rowStr(cp[0].Data, "packet")
+			at := 0
+			for _, w := range tc.want {
+				i := strings.Index(packet[at:], w)
+				if i < 0 {
+					at = -1
+					break
+				}
+				at += i + len(w)
+			}
+			if at < 0 || strings.Count(packet, "[turn ") != len(tc.want) || strings.Count(packet, "[answer of the call]") != 1 {
+				t.Errorf("the checkpoint of a journal without recorded conversation turns, want %q in order and once each:\n%s", tc.want, packet)
+			}
+		})
+	}
+}

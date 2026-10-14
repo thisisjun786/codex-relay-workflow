@@ -876,8 +876,10 @@ any row is written. `crw flow shadow` replays either from the trace and names th
 - A turn is a step. Its intent row `step_published` (k, `op` `<call>/t<k>`, `marker` `<call>/t<k>-a<n>`, `attempt` n, `action`,
   `input`, `input_digest`, `packet` and `packet_digest`, `role`, `agent_type`, `model`, `effort`, `workspace` P, `agent_id` of a
   `send_input`, the `note` about earlier attempts, `previous_answer`, the answer a repair turn repairs (a later attempt of the turn on a new
-  subagent names it in its packet, after a restart too), and for a `send_input` `tokens_seen` and `call_tokens`, what the turns before it
-  counted) is committed before the packet `steps/<call>/packet-t<k>-a<n>.md` and the step
+  subagent names it in its packet, after a restart too), for a `send_input` `tokens_seen` and `call_tokens`, what the turns before it
+  counted, and the turn's place in the call's conversation: `conversation_turn`, the conversation turn it is (the call's task turn 1,
+  its repair 2, on whatever subagent, attempt and k it runs), and `replaces_turn`, the turn it replaces when it is a turn run again)
+  is committed before the packet `steps/<call>/packet-t<k>-a<n>.md` and the step
   `steps/<call>/t<k>-a<n>.json` are written under `<state>/flow/<run>/` (`engine.FileStepBus`). A step is `spawn` (a first turn, the
   attempt after a lost one, a continuation, a repair whose subagent is closed) or `send_input` (the repair turn on the open
   subagent); `close` steps (`steps/<call>/close-a<n>-<agent>.json`, one file per subagent, so two closes of one attempt never
@@ -926,7 +928,8 @@ any row is written. `crw flow shadow` replays either from the trace and names th
   so a subagent spawned, or a repair sent, and never reported is bound all the same.
 - A bind writes `thread_started` (the subagent's `thread_id`, the host-read `model` and `effort`, `cwd` P, `host_cwd`,
   `parent_thread_id`, `agent_role`, `attempt`, `via: session`, `rollout_path`, `marker`, and `prior_pairs`, the pairs earlier
-  attempts of the call were bound with when they differ) and `turn_started` (k, `op`, `turn_id`, `attempt`, `marker`) in one batch;
+  attempts of the call were bound with when they differ) and `turn_started` (k, `op`, `turn_id`, `attempt`, `marker`, and the
+  `conversation_turn` and `replaces_turn` of its step) in one batch;
   a `send_input` turn writes `turn_started` only. The relay reads the call's pair from its newest `thread_started` row and an
   author call's earlier pairs from `prior_pairs`.
 
@@ -998,17 +1001,20 @@ any row is written. `crw flow shadow` replays either from the trace and names th
   the relay reads name it. Inside a resume's suffix it never forks: it takes the checkpoint branch (`checkpoint_started`), and its
   packet carries the journal's record of the handle's turns, each with the input of the step or request it took: for a session
   subagent the conversation it goes on from, the turns of the calls its handle continues before its own and the call's conversation
-  before the turn its subagent started at. A call's conversation is its turns by turn index, each index once: a turn run again (the
-  next attempt of a lost turn, at the same k; the turn a held call goes on with in place on a new subagent, at the next k) supersedes
-  the turn it replaces, and the packet is built from that list alone. The continuation's input digest keeps the handle's own thread
-  chain: a position replays only after every one before it.
+  before the turn its subagent started at. A session call's conversation is its turns at the conversation turn each records
+  (`conversation_turn` of its `turn_started` row), each conversation turn once: a turn run again (the next attempt of a lost turn;
+  the turn a held call goes on with in place on a new subagent, at the next k) is recorded at the conversation turn of the turn it
+  replaces and names that turn (`replaces_turn`), and supersedes it, and the packet is built from that list alone. The place is
+  recorded when the step is published and the turn bound, never read back from held rows or k; a row of a journal written before
+  the place was recorded (no `conversation_turn`) is read by the reconstruction kept for those journals: k, less one for each time a
+  held call went on in place at the next k. The continuation's input digest keeps the handle's own thread chain: a position replays only after every one before it.
 
 | Row | In a session call |
 | --- | --- |
 | `prepared` | as for any call, with `backend: session` and the allocation every attempt shares |
-| `step_published` | the intent of a step, committed before the step file and the packet |
+| `step_published` | the intent of a step, committed before the step file and the packet; `conversation_turn` and `replaces_turn` record the turn's place in the call's conversation |
 | `thread_started` | a subagent bound to an attempt (one row per attempt and per continuation) |
-| `turn_started` | the turn of a step the subagent took |
+| `turn_started` | the turn of a step the subagent took, with the place its step records (`conversation_turn`, `replaces_turn`) |
 | `interrupt_requested` | the engine's interrupt of the turn in flight (`reason`, `op`); a resumed process applies it only to the turn bound to that step and attempt |
 | `session_attempt_lost` | an attempt whose subagent will not finish its turn |
 | terminal rows | as for any call |

@@ -977,40 +977,105 @@ func threadPrefix(j Journal, threadID, throughTurn string) []map[string]any {
 // conversationPrefix is threadPrefix as the conversation a session subagent continues (the checkpoint packet's record), each turn
 // with the input of the step or request it took: a session subagent bound to a continuation goes on from the conversation of the
 // handle it continues (its packet names that call's packet and answer), as a fork inherits its prefix, and a later attempt of a call
-// goes on from the call's conversation before the turn it starts at (its packet holds the task and the answer it repairs). A call's
-// conversation is its turns by turn index, each index once: a turn run again - the next attempt of a lost turn at the same k, the
-// turn a held call goes on with in place on a new subagent at the next k - supersedes the turn it replaces. The digest chain of a
-// continuation (threadChain) keeps threadPrefix: the replay rule replays a position only after every position before it, so the
-// links before the handle's are proven by their own positions (CRW-1384).
+// goes on from the call's conversation before the turn it starts at (its packet holds the task and the answer it repairs). A session
+// call's conversation is its turns at the conversation turn each records (callConv), each conversation turn once, a turn that names
+// the turn it replaces in that turn's place. The digest chain of a continuation (threadChain) keeps threadPrefix: the replay rule
+// replays a position only after every position before it, so the links before the handle's are proven by their own positions
+// (CRW-1384).
 func conversationPrefix(j Journal, threadID, throughTurn string) []map[string]any {
 	return threadTurns(j, threadID, throughTurn, true, 0)
 }
 
-// convTurn is a turn of a call's conversation: its turn index and the thread it ran on.
+// convTurn is a turn of a call's conversation: the conversation turn it is and the thread it ran on.
 type convTurn struct {
 	index                int
 	id, op, input, owner string
 }
 
-// convIndex reads the turn index of a call's turns: k, less one for each time the call, held after a delivered turn, went on in
-// place with the next k on a new subagent (sessionResumeHeld), whose turn replaces the held one.
-type convIndex struct {
+// callConv is a session call's conversation as its rows record it. The engine records the place of a turn when it publishes the
+// turn's step and when it binds the turn: step_published and turn_started name the conversation turn the turn is
+// (conversation_turn: the call's task turn 1, its repair 2, conversationTurn) and, for a turn run again - the next attempt of a lost
+// turn, the turn a held call goes on with in place on a new subagent - the turn it replaces (replaces_turn). The conversation holds
+// each conversation turn once: a turn takes its place over the turn that held it and takes out the turn it names. A turn_started row
+// of a journal written before the place was recorded (no conversation_turn) is read by the reconstruction kept for those journals
+// only: k, less one for each time the held call went on in place with the next k (the first step_published after a held row at a k
+// past the call's steps).
+type callConv struct {
+	turns []convTurn
+	// the reconstruction of a row without a recorded conversation turn
 	shift, lastK int
 	held         bool
 }
 
-// supersede puts a turn in its index's place of a conversation ordered by index, over the turn it replaces.
-func supersede(conv []convTurn, t convTurn) []convTurn {
-	for i := range conv {
+// step and hold read a step_published and a held row for the reconstruction.
+func (x *callConv) step(d map[string]any) {
+	k := rowInt(d, "k")
+	if x.held && k > x.lastK {
+		x.shift++
+	}
+	x.held, x.lastK = false, max(x.lastK, k)
+}
+
+func (x *callConv) hold() { x.held = true }
+
+// index is the conversation turn of a session turn_started row: the one the row records, else the reconstruction's.
+func (x *callConv) index(d map[string]any) int {
+	if n := rowInt(d, "conversation_turn"); n > 0 {
+		return n
+	}
+	return rowInt(d, "k") - x.shift
+}
+
+// put puts a turn in its conversation turn's place, over the turn that held it, and takes out the turn it names as the one it
+// replaces.
+func (x *callConv) put(t convTurn, replaces string) {
+	if replaces != "" {
+		x.turns = slices.DeleteFunc(x.turns, func(c convTurn) bool { return c.id == replaces })
+	}
+	for i := range x.turns {
 		switch {
-		case conv[i].index == t.index:
-			conv[i] = t
-			return conv
-		case conv[i].index > t.index:
-			return slices.Insert(conv, i, t)
+		case x.turns[i].index == t.index:
+			x.turns[i] = t
+			return
+		case x.turns[i].index > t.index:
+			x.turns = slices.Insert(x.turns, i, t)
+			return
 		}
 	}
-	return append(conv, t)
+	x.turns = append(x.turns, t)
+}
+
+// at is the turn the conversation holds at conversation turn n, "" when it holds none there.
+func (x *callConv) at(n int) string {
+	for _, t := range x.turns {
+		if t.index == n {
+			return t.id
+		}
+	}
+	return ""
+}
+
+// callConversation is the conversation the rows of a session call's newest attempt record.
+func callConversation(rows []Event) *callConv {
+	x := &callConv{}
+	for _, ev := range rows {
+		if ev.Kind != KindCall {
+			continue
+		}
+		switch ev.Event {
+		case EvPrepared:
+			x = &callConv{}
+		case EvStepPublished:
+			x.step(ev.Data)
+		case EvHeld:
+			x.hold()
+		case EvTurnStarted:
+			if rowStr(ev.Data, "via") == "session" {
+				x.put(convTurn{index: x.index(ev.Data), id: rowStr(ev.Data, "turn_id"), op: rowStr(ev.Data, "op")}, rowStr(ev.Data, "replaces_turn"))
+			}
+		}
+	}
+	return x
 }
 
 func threadTurns(j Journal, threadID, throughTurn string, session bool, depth int) []map[string]any {
@@ -1020,18 +1085,17 @@ func threadTurns(j Journal, threadID, throughTurn string, session bool, depth in
 	forkReq := map[string]Event{}
 	var out []map[string]any
 	inherited := false
-	// the session reading: the handle a call continues, each call's conversation (convTurn by index), the input of each op, and the
+	// the session reading: the handle a call continues, each session call's conversation (callConv), the input of each op, and the
 	// call whose earlier turns the thread's first turn goes on from
 	handle := map[string][2]string{}
-	conv := map[string][]convTurn{}
-	index := map[string]*convIndex{}
+	conv := map[string]*callConv{}
 	inputOf := map[string]string{}
 	goesOn := ""
-	indexOf := func(call string) *convIndex {
-		if index[call] == nil {
-			index[call] = &convIndex{}
+	convOf := func(call string) *callConv {
+		if conv[call] == nil {
+			conv[call] = &callConv{}
 		}
-		return index[call]
+		return conv[call]
 	}
 	turn := func(id, op string) map[string]any {
 		t := map[string]any{"turn_id": id, "op": op}
@@ -1049,20 +1113,14 @@ func threadTurns(j Journal, threadID, throughTurn string, session bool, depth in
 			// a continuation is on its handle's thread from the start, any other call on none until its thread starts
 			owner[ev.CallID], _ = ev.Data["thread_id"].(string)
 			handle[ev.CallID] = [2]string{rowStr(ev.Data, "thread_id"), rowStr(ev.Data, "through_turn_id")}
-			conv[ev.CallID], index[ev.CallID] = nil, &convIndex{}
+			conv[ev.CallID] = &callConv{}
 		case EvTurnRequested:
 			inputOf[rowStr(ev.Data, "op")] = rowStr(ev.Data, "input")
 		case EvStepPublished:
 			inputOf[rowStr(ev.Data, "op")] = rowStr(ev.Data, "input")
-			// the first step after a held row at a k past the call's steps is the held call going on in place: its turn replaces the
-			// held one
-			x, k := indexOf(ev.CallID), rowInt(ev.Data, "k")
-			if x.held && k > x.lastK {
-				x.shift++
-			}
-			x.held, x.lastK = false, max(x.lastK, k)
+			convOf(ev.CallID).step(ev.Data)
 		case EvHeld:
-			indexOf(ev.CallID).held = true
+			convOf(ev.CallID).hold()
 		case EvForkRequested:
 			forkReq[ev.CallID] = ev
 		case EvThreadStarted:
@@ -1089,17 +1147,19 @@ func threadTurns(j Journal, threadID, throughTurn string, session bool, depth in
 			if replaced[id] {
 				continue
 			}
-			at := rowInt(ev.Data, "k") - indexOf(ev.CallID).shift
-			if session {
-				conv[ev.CallID] = supersede(conv[ev.CallID], convTurn{index: at, id: id, op: op, input: inputOf[op], owner: owner[ev.CallID]})
+			x := convOf(ev.CallID)
+			at := x.index(ev.Data)
+			if session && rowStr(ev.Data, "via") == "session" {
+				x.put(convTurn{index: at, id: id, op: op, input: inputOf[op], owner: owner[ev.CallID]}, rowStr(ev.Data, "replaces_turn"))
 			}
 			if owner[ev.CallID] != threadID {
 				continue
 			}
 			if goesOn == ev.CallID {
-				// the thread's first turn: the call's conversation before this turn's index, on the subagents of its earlier attempts
+				// the thread's first turn: the call's conversation before this turn's conversation turn, on the subagents of its earlier
+				// attempts
 				goesOn = ""
-				for _, t := range conv[ev.CallID] {
+				for _, t := range x.turns {
 					if t.index < at && t.owner != threadID {
 						out = append(out, map[string]any{"turn_id": t.id, "op": t.op, "input": t.input})
 					}
