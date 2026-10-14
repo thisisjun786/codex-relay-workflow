@@ -14,7 +14,7 @@ import (
 )
 
 // Usage is the one-line usage of the command.
-const Usage = `usage: crw flow compile [--dry-run] [--base LOG.json]... <handoff.json | ->`
+const Usage = `usage: crw flow compile [--dry-run] [--base LOG.json]... [--thread T] [--state DIR] [--socket PATH] <handoff.json | ->`
 
 const usageHelp = Usage + `
 
@@ -29,6 +29,12 @@ with dag-plan-put.
 
 A project's target is the absolute path of the local checkout the run integrates on and the short name of its branch (dev): a
 repository that is not an absolute path is a warning, and a base_ref written refs/heads/BRANCH is read as BRANCH with a warning.
+  --thread T    the owner thread whose live parent bindings each project key is compared with (default: CODEX_THREAD_ID)
+  --state DIR, --socket P  the relay state the bindings are read from (read-only)
+
+A project key the owner thread holds no live parent binding of is a warning (project_key_bound), as it is for crw flow start; with no
+thread named the key is not compared. Warnings the handoff carries (crw flow plan-input records its key warning in the project's
+"warnings") are kept as the plan's own.
 Warnings are printed on stderr and kept in the plan's "warnings"; they do not refuse the handoff.
 
 Exit 0 compiled; 1 the handoff is refused (the reasons are printed on stderr and as JSON on stdout); 2 an input that cannot be used.
@@ -39,14 +45,32 @@ type baseFiles []string
 func (b *baseFiles) String() string     { return strings.Join(*b, ",") }
 func (b *baseFiles) Set(v string) error { *b = append(*b, v); return nil }
 
+// Deps are what the command reaches outside: the relay's bindings and the environment.
+type Deps struct {
+	// Scopes reads the project keys of the live parent bindings of thread.
+	Scopes func(ctx context.Context, thread, state, socket string) ([]string, error)
+	Getenv func(string) string
+}
+
+// Default is the production dependencies.
+func Default() *Deps { return &Deps{Scopes: ReadScopes, Getenv: os.Getenv} }
+
 // RunCLI is `crw flow compile`.
 func RunCLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	return RunWith(ctx, Default(), args, stdin, stdout, stderr)
+}
+
+// RunWith is `crw flow compile` over explicit dependencies; args are the arguments after the command word.
+func RunWith(ctx context.Context, d *Deps, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("crw flow compile", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	dry := fs.Bool("dry-run", false, "print the previews only")
 	var bases baseFiles
 	fs.Var(&bases, "base", "the whole log of an existing plan")
+	thread := fs.String("thread", "", "the owner thread")
+	state := fs.String("state", "", "the relay state directory")
+	socket := fs.String("socket", "", "the App Server control socket")
 	// flags may follow the file
 	var positional []string
 	rest := args
@@ -93,6 +117,17 @@ func RunCLI(ctx context.Context, args []string, stdin io.Reader, stdout, stderr 
 		keyOf[planID(p)] = p.Key
 	}
 	opts := Options{DryRun: *dry, Bases: map[string]dag.State{}}
+	// the project keys are compared with the live parent bindings of the owner thread, when one is named: --thread, else the session's
+	// CODEX_THREAD_ID. With none nothing is read and nothing is said; `crw flow plan-input` already records that case in the handoff.
+	owner := *thread
+	if owner == "" {
+		owner = strings.TrimSpace(d.Getenv("CODEX_THREAD_ID"))
+	}
+	if owner != "" {
+		b := &Binding{Thread: owner}
+		b.Scopes, b.Err = d.Scopes(ctx, owner, *state, *socket)
+		opts.Binding = b
+	}
 	for _, file := range bases {
 		log, err := os.ReadFile(file)
 		if err != nil {

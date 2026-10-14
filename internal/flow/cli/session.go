@@ -117,14 +117,41 @@ func ownerPairs(table *engine.Policy) map[string]bound.Pair {
 // its run lock, and the open line of a run without the lock is closed first.
 func bindOwner(state, run, thread string, table *engine.Policy) (bound.BindResult, error) {
 	return bound.BindOrchestrator(bound.OrchestratorBinding{RunID: run, Thread: thread, Digest: table.Digest, Pairs: ownerPairs(table),
-		Live: func(other string) bool { return validRunID(other) && LockHeld(state, other) }})
+		Live: func(other string) bool { return validRunID(other) && runLive(state, other) }})
+}
+
+// bindFromStarted is what a session run's process does once its started row is in the journal (engine.SessionConfig.Started): it binds
+// the owner thread with the table that row pinned, and warns in its log when the line was not written. While a process holds the run
+// it is the one party that writes the run's line (CRW-1372): `crw flow next` reads it, and a line that is missing then is written by
+// the run's next process (a resume) after its own started row.
+func (c *command) bindFromStarted(state, run, owner string) func(*engine.Policy) {
+	return func(table *engine.Policy) {
+		res, err := bindOwner(state, run, owner, table)
+		if w := bindWarning(res, err, owner, run); w != "" {
+			fmt.Fprintf(c.stderr, "crw flow %s: warning: %s\n", c.name, w)
+		}
+	}
+}
+
+// processLock takes the process lock of a session run's process (nil for a run of the App Server backend, or a lock that cannot be
+// taken: the process warns and runs, and its started row names no process, which `crw flow next` reads as an earlier crw's).
+func (c *command) processLock(state string, spec Spec) *processLock {
+	if specBackend(spec) != BackendSession {
+		return nil
+	}
+	p, err := takeProcessLock(state, spec.RunID)
+	if err != nil {
+		fmt.Fprintf(c.stderr, "crw flow %s: warning: %v: the run's started row names no process, so crw flow next reads the run as one of an earlier crw\n", c.name, err)
+		return nil
+	}
+	return p
 }
 
 // closeOwner closes the run's orchestrator line when it is the owner thread's last (the run ended).
 func closeOwner(run, thread string) (bool, error) { return bound.CloseOrchestrator(nil, run, thread) }
 
-// bindWarning is the warning a start, a resume or `crw flow next` prints for a binding that was not written ("" when it was, or
-// was there already).
+// bindWarning is the warning a start or a run's process (a resume's included) prints for a binding that was not written ("" when it
+// was, or was there already).
 func bindWarning(res bound.BindResult, err error, thread, run string) string {
 	switch {
 	case err != nil:
@@ -170,9 +197,10 @@ func sessionFacts(req sessionFactRequest) []Fact {
 			fmt.Sprintf("the owner %q is not a thread id", req.Thread))
 	case err != nil:
 		add(FactOwnerBound, LevelWarn, "the start cannot write the binding the spawn hook decides by; "+sessionProtocolStops, fmt.Sprintf("the flow binding of thread %s cannot be read: %v", req.Thread, err))
-	case present && line.Kind != bound.KindClosed && validRunID(line.RunID) && LockHeld(req.State, line.RunID):
+	case present && line.Kind != bound.KindClosed && validRunID(line.RunID) && runLive(req.State, line.RunID):
+		// live as the binding reads it (bindOwner): the run's process holds the run lock, or its start holds the start lock
 		add(FactOwnerBound, LevelWarn, "one thread binds one live run: this run is not bound, and the hook applies the other run's pairs",
-			fmt.Sprintf("thread %s is bound to run %s, whose process holds its lock", req.Thread, line.RunID))
+			fmt.Sprintf("thread %s is bound to run %s, which lives (its process holds its run lock, or its start holds its start lock)", req.Thread, line.RunID))
 	case present && line.Kind != bound.KindClosed:
 		add(FactOwnerBound, LevelPass, "", fmt.Sprintf("thread %s holds the open line of run %s, which no process holds: the start closes it and binds this run", req.Thread, line.RunID))
 	default:

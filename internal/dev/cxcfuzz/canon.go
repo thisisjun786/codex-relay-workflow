@@ -22,6 +22,9 @@ func decode(text string) (any, error) {
 // canonical rewrites a value in the one form both sides are compared in: object keys sorted, a
 // lone surrogate as its \udXXX escape. Two answers that agree in this form are the same answer.
 func canonical(value any) string {
+	if text, ok := canonicalLong(value); ok {
+		return text
+	}
 	return pyjson.Dumps(value, pyjson.Options{SortKeys: true, Bytes: pyjson.SurrogateEscapes})
 }
 

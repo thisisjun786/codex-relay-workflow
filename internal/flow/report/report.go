@@ -168,15 +168,29 @@ func (w *Writer) Up(ctx context.Context, req UpRequest) (UpResult, error) {
 			return res, nil
 		}
 	}
-	if !res.Recipient.Deliverable() {
+	deliverable := res.Recipient.Deliverable()
+	if d, ok := w.Sender.(interface{ Delivers(Recipient) bool }); ok {
+		// a sender over the supervisor channel delivers to the store seat too (CRW-1380, D1c d2)
+		deliverable = d.Delivers(res.Recipient)
+	}
+	if !deliverable {
 		return res, nil
 	}
 	if w.Sender == nil {
 		return res, errors.New("report: a sender is required to deliver")
 	}
-	sent, err := w.Sender.SendSupervisor(ctx, SupervisorSend{Thread: res.Recipient.Thread, LogicalID: res.LogicalID, Text: message(req, res, digest), ReportID: id, Initiative: res.Recipient.InitiativeKey})
+	// the project is the one the report row records (one resolution for the row and the message): the listing the message points at
+	// finds the row
+	sent, err := w.Sender.SendSupervisor(ctx, SupervisorSend{Thread: res.Recipient.Thread, LogicalID: res.LogicalID, Text: message(req, res, digest), ReportID: id,
+		Initiative: res.Recipient.InitiativeKey, Kind: req.Kind, Run: req.Run, Project: res.Recipient.ProjectKey, Subject: req.Subject})
 	if err != nil {
 		return res, err
+	}
+	if sent.Class == "" {
+		// nothing was staged (the channel refused it, or a lead would hear a decision only Jun can make): no row, the report stands and a
+		// replay stages it again
+		res.Reason, res.Observation = sent.Reason, sent.Observation
+		return res, nil
 	}
 	result := resultOf(sent.Class)
 	if _, err := w.Rows.Append(ctx, NewRow{Kind: KindDelivery, Payload: map[string]any{
@@ -270,11 +284,25 @@ type reportHistory struct {
 	reads      []Row
 }
 
+// lastDelivery is the delivery row that says what the report's delivery came to: the newest, unless it is a queued row after a settled
+// one (SupersedesDelivery).
 func (h reportHistory) lastDelivery() *Row {
-	if len(h.deliveries) == 0 {
-		return nil
+	var last *Row
+	for i := range h.deliveries {
+		if last == nil || SupersedesDelivery(last.Str("result"), h.deliveries[i].Str("result")) {
+			last = &h.deliveries[i]
+		}
 	}
-	return &h.deliveries[len(h.deliveries)-1]
+	return last
+}
+
+// SupersedesDelivery says whether a delivery row with result next, written after one with result prev, is what the report's delivery
+// came to. A queued row is the writer's record of its staging, and the relay daemon may claim, send and settle the message (appending
+// accepted) or hold it at a cap (appending refused) before the writer has appended it (CRW-1380): a queued row never supersedes a
+// settled row (accepted or refused) that came before it. Any other later row stands for the earlier one. The flow side's readers and
+// the manager's pump read the rows through it.
+func SupersedesDelivery(prev, next string) bool {
+	return !(next == ResultQueued && (prev == ResultAccepted || prev == ResultRefused))
 }
 
 func (w *Writer) history(ctx context.Context, id string) (reportHistory, error) {
@@ -354,7 +382,8 @@ type ReportView struct {
 	ID, Kind, Run, Milestone, Subject, RecordedAt string
 	BodyDigest, BodyPath                          string
 	Recipient                                     Recipient
-	// LastDelivery is the result of the newest delivery row, "" when there is none.
+	// LastDelivery is the result of the newest delivery row (a queued row after a settled one aside, SupersedesDelivery), "" when
+	// there is none.
 	LastDelivery string
 	RequestID    string
 	Read         bool
@@ -396,7 +425,7 @@ func ReportsMatching(ctx context.Context, db DB, f ReportFilter) ([]ReportView, 
 			byID[id] = v
 			order = append(order, id)
 		case KindDelivery:
-			if v := byID[id]; v != nil {
+			if v := byID[id]; v != nil && SupersedesDelivery(v.LastDelivery, r.Str("result")) {
 				v.LastDelivery, v.RequestID = r.Str("result"), r.Str("request_id")
 				v.Standing = v.LastDelivery != ResultAccepted
 			}

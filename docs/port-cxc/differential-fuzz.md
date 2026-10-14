@@ -13,8 +13,10 @@ go run -tags dev ./cmd/crw-dev fuzz echo --seconds 30
 go run -tags dev ./cmd/crw-dev fuzz echo --cases 500 --seed 7 --workers 4 --out ./fuzz-out
 ```
 
-`--seconds` and `--cases` bound a campaign; one of them is required. `--workers` defaults to 4 and
-`--seed` to the clock, and the seed a campaign used is written to `summary.json` so the run can be
+`--seconds` and `--cases` bound a campaign; one of them is required. `--skip N` draws the first N cases of
+the seed and judges none of them, so a campaign that was stopped carries on at the case after the last
+one it judged (see "Stopping and carrying on"). `--workers` defaults to 4 and is
+both the number of oracle workers and the number of cases evaluated at a time. `--seed` defaults to the clock, and the seed a campaign used is written to `summary.json` so the run can be
 repeated. `--out` defaults under the harness's own output root (`DefaultOutRoot`) at
 `<target>/<UTC time>`. Without `node` on `PATH` the command stops with exit 2 and one line, before
 any fuzzing. It exits 1 when the campaign found a divergence and 0 when every case agreed.
@@ -68,6 +70,124 @@ each member is reduced in place, up to 500 candidate evaluations. The result is 
 input hash, and `<out>/summary.json` carries the target, seed, dev sha, elapsed time, case count,
 per-kind counts, cases per second, timeout count and the count of refused scenarios.
 
+## Throughput
+
+A campaign is bounded by how fast one case is asked of the oracle and compared, so the harness keeps
+each cost small and puts the cases side by side.
+
+**Cases side by side.** The campaign draws its inputs in order from the seed, judges up to `--workers`
+of them at a time, each on its own goroutine and its own oracle worker, and applies the results in case
+order. The counts, the divergence files and the failure records of a seed are therefore the same at
+one worker as at four (`TestCampaignGivesTheSameResultAtOneWorkerAndFour`). A difference is shrunk on
+the goroutine that found it. A removal failure or an unknown verdict ends the campaign: the cases
+already started finish, their results are dropped, and the pool closes with no worker in a case.
+
+**The pyjson oracle.** `testdata/pyjson/shim.mjs` answers a request with the answer of a fresh
+`python3 -m json.tool --json-lines` process fed that request's text; three paths give it, cheapest
+first, and each gives the same exit status, stdout and stderr
+(`TestPyjsonShimMatchesAFreshJsonToolForEveryRequest` compares the shim with a fresh process for the
+committed cases, the boundary documents under six option sets and a generated sample, 1,432 requests,
+invalid documents, lone surrogate escapes, nesting around Python's recursion limit and every
+`--compact`, `--indent`, `--sort-keys` and `--no-ensure-ascii` combination):
+
+1. a bounded memory of earlier answers, keyed by the option flags and the text (json.tool is a pure
+   function of both); the recursion-limit answers are two megabytes each and are kept as reply text,
+   compressed when large;
+2. a reused process, one per option set: the request text is written, its last line ended, followed by
+   a sentinel document no request can contain; Python prints each document's value as it reads it, so
+   the sentinel's echo ends the answer. A text goes to a reused process only when every line parses in
+   the host JSON parser and the text opens fewer than 256 containers; only an answer with nothing on
+   stderr is taken from one. json.tool ends its process on a refusal, and a refusal names a line and
+   column that the line ending this path adds could move, so the refused request is asked again fresh;
+3. a fresh process per request: every refusal, every text the host parser rejects (`NaN`, `Infinity`),
+   every deep nesting and every answer past the buffer.
+
+No `.py` file and no Python source text is committed; the shim builds an argv and pipes text in. A
+reused process that is killed (a signal) ends the shim without a reply, which the pool reads as a dead
+worker; one that stops answering is a request that outlives the five-second deadline, and the pool
+kills the worker and its whole process group, so no stopped `python3` outlives the campaign
+(`TestPyjsonShimReportsAKilledReusedProcessAsADeadWorker`,
+`TestPyjsonShimReportsAHungReusedProcessAsATimeoutAndLeavesNothingRunning`,
+`TestCampaignCountsAReusedProcessThatDiesMidCampaign`). Both are failing cases of the campaign. A reused
+process that ends while no request waits on it is found by the first request after its end, before that
+request takes any path: a remembered answer, a fresh process, another option set and the ending of the
+oldest open process all meet the death first, so it is counted as a dead worker for that case and never
+dropped unseen
+(`TestPyjsonShimReportsAReusedProcessThatDiedWhileIdleWhateverTheNextRequestIs`,
+`TestCampaignCountsAReusedProcessThatDiedWhileIdleAtTheNextCase`).
+
+**Per-case cost.** `canonical` writes a long ASCII string (4,096 bytes or more) in one pass over its
+bytes, because a pass over its characters costs more than 20 ms on a two-megabyte traceback
+(`TestCanonicalWritesWhatThePyjsonWriterWrites`). `PrepareRoot` judges a case root once and makes
+its homes as plain directories; `RemoveCaseRoot` tries `RemoveAll` before it makes every directory
+listable. The case roots are made below `$TMPDIR`: on a tmpfs the state target runs several times
+faster than on a disk, because the port's and the oracle's atomic write both sync the file, so a
+campaign sets `TMPDIR` to a tmpfs directory of its own.
+
+**What a rate was measured at.** Seed 711, four workers, the CXC v0.2.40 tree extracted from git tag
+`v0.2.40` and named by `CRW_CXC_ORACLE_ROOT`, on a host also running other work:
+
+| target | cases per second | measured over |
+| --- | --- | --- |
+| pyjson | 112 | a two-hour campaign: 804,051 cases in 7,196 s |
+| pyjson | 6.6 | the CRW-711 campaign, one case judged at a time and one `python3` per request: 11,853 cases in 1,800 s |
+| state, `TMPDIR` on a tmpfs | 40 | a two-hour campaign: 288,131 cases in 7,196 s |
+| state, `TMPDIR` on a disk | 8.8 | a two-minute run |
+| state | 5.1 | the CRW-711 campaign, one case judged at a time: 9,087 cases in 1,800 s |
+
+The state target spends its time in difference shrinking: the known open difference of the lone
+surrogate session file (about one case in seven) is shrunk through up to 500 candidates, each a fresh
+case root on both sides, so 98 % of the evaluations of a state campaign are shrink candidates. The
+wall time of one case at a time, from a thirty-second seed-711 state campaign with the evaluation
+timed in five parts:
+
+| part | `TMPDIR` on a disk | `TMPDIR` on a tmpfs |
+| --- | --- | --- |
+| root preparation, scenario build and input reading | 15 % | 33 % |
+| the Go side (read, rewrite, read back) | 47 % | 5 % |
+| the oracle worker | 15 % | 25 % |
+| the comparison | 2 % | 5 % |
+| removing the roots and the rest | 21 % | 32 % |
+
+On a disk the sync of the Go side's atomic write dominates; on a tmpfs the cost that stays is the
+home guard, which resolves every path of a root again for each directory made (36 % of the CPU
+samples). `PrepareRoot` and `RemoveCaseRoot` are the two per-case places that pay it: `PrepareRoot` judges
+a case root once, and `RemoveCaseRoot` removes it without walking it first.
+
+## Stopping and carrying on
+
+An interrupt or a terminate signal ends the draw of new cases and nothing else: the cases already drawn
+are judged, counted and written as usual, `summary.json` is written with `"stopped": true`, and the
+last line on stdout names the `--skip` that carries the same seed on. A campaign of two hours can
+therefore run as segments, each a campaign of its own with its own output directory: the next segment
+starts with `--seed S --skip K`, where K is the sum of the cases the earlier segments judged and
+skipped, and a failure record carries its case's number in the whole run
+(`TestCampaignSegmentsGiveTheWholeRun`, `TestCampaignStopLetsTheDrawnCasesFinishAndAResumeFinishesTheRun`).
+A host load gate uses this: a campaign is stopped when the host is over its limit and carried on when
+the load has fallen, and the campaign time is the sum of its segments' elapsed time.
+
+The draw reads what ends it (an interrupt or terminate signal, the deadline, a case that ended the campaign on
+an error) once a worker is free to take the next case, and draws that case's input only after that. With
+every worker in a case, no input is drawn for a case that does not run, so a stop, the deadline or an error
+starts nothing more, `"stopped"` is set whenever the draw ended on a signal with cases left to run, and
+`--skip` counts exactly the cases the campaign judged
+(`TestCampaignStartsNoCaseAfterStopWhileEveryWorkerIsBusy`,
+`TestCampaignStartsNoCaseAfterTheDeadlineWhileEveryWorkerIsBusy`,
+`TestCampaignStreamStartsNoCaseAfterItIsStoppedWhileEveryWorkerIsBusy`,
+`TestCampaignStoppedWhileBusyAndResumedGivesTheWholeRun`).
+
+## Campaign records
+
+A campaign is recorded with its `summary.json`, which holds the target, seed, dev sha, elapsed time,
+case count, counts per verdict kind, timeouts, dead workers, cases with no answer and the failure
+records written under `failures/`. A campaign counts as failed when any difference, timeout, dead
+worker, missing answer, harness error, refused scenario or unrefused unreadable command was found. The
+record of a campaign names the target, the seed, the dev sha the binary was built from, the elapsed
+time (the sum of its segments), the case count, the difference count per kind, the timeout count and
+the dead-worker count; a campaign that ran as segments also names the segments. A
+campaign that found a difference shrinks it and pins it with `--adopt` (tag `open`, record the
+issue), or the difference becomes a follow-up issue.
+
 ## Pinning a difference
 
 ```sh
@@ -83,4 +203,17 @@ so a change in the Go output fails until the case is pinned again.
 ## The end condition
 
 Milestone M7.5 ("pre-use verification: differential fuzzing and package audit") is done when every
-ported surface has a target whose campaign agrees, or whose differences are pinned as cases.
+ported surface has a target whose campaign agrees, or whose differences are pinned as cases. A
+campaign runs two hours with four workers at a fixed seed, and each target has a minimum case count:
+1,000,000 for shellwrite, spawn, pyjson and doctor, and 100,000 for worktreedel, memorygate, state and
+goalplan.
+
+At the rates above the minimums take: pyjson 1,000,000 cases in about 2.5 hours, state 100,000 cases
+in about 42 minutes on a tmpfs (about 3.2 hours on a disk), and the other targets inside the two hours.
+Only pyjson needs more than the two hours.
+
+Proposal (not applied; it touches the end condition set in CRW-711 and waits for Jun): the pyjson
+campaign runs until it has its 1,000,000 cases, which is two and a half hours rather than two, so the
+minimum count is kept and the time bound is the part that gives way; or the pyjson minimum becomes
+800,000, which is what two hours at four workers reach. Until Jun decides, the end condition stays as
+written above and a pyjson campaign records both its case count and its elapsed time.

@@ -235,7 +235,9 @@ type events func() (apply.EventInfo, error)
 func (e events) Event(context.Context, string) (apply.EventInfo, error) { return e() }
 
 // A report-up in a relay the operator selected (--state, --socket) sends its notice with that relay named, so the notice is not read and
-// delivered against the manage configuration's relay; the hook of a resumed run does the same. (post-evaluation d6)
+// delivered against the manage configuration's relay; the hook of a resumed run does the same. (post-evaluation d6) Since CRW-1380 a
+// report goes through the selected store's supervisor channel and not through send-parent at all; send-parent is the fallback of what
+// the channel has no kind for (the plan summary notice), and that fallback names the selected relay.
 func TestReportUpAndTheResumeHookNameTheSelectedRelay(t *testing.T) {
 	w := newCLIWorld(t)
 	dir := t.TempDir()
@@ -256,20 +258,20 @@ func TestReportUpAndTheResumeHookNameTheSelectedRelay(t *testing.T) {
 	if code := w.run("report-up", "--kind", "project_blocked", "--run", "run-1", "--evidence", evidence, "--state", "/relay/selected", "--socket", "/sock/selected"); code != ExitOK {
 		t.Fatalf("report-up: exit %d %s", code, w.errOut.String())
 	}
-	raw, err := os.ReadFile(record)
-	if err != nil {
-		t.Fatal(err)
+	if raw, err := os.ReadFile(record); err == nil {
+		t.Errorf("the report went through send-parent: %q", raw)
 	}
-	line := string(raw)
 	// the state is the one the command resolved (the test's Open answers the store's directory), the socket the one named
-	if !strings.Contains(line, "--role supervisor") || !strings.Contains(line, "--state "+filepath.Dir(w.st.Path)) || !strings.Contains(line, "--socket /sock/selected") {
-		t.Errorf("send-parent was called as %q", line)
+	relay, _ := w.env.sender(w.st, filepath.Dir(w.st.Path), "/sock/selected").(report.RelaySender)
+	if fallback, _ := relay.Fallback.(report.ManageSender); relay.Store != w.st || fallback.State != filepath.Dir(w.st.Path) || fallback.Socket != "/sock/selected" {
+		t.Errorf("report-up's sender is %+v", w.env.sender(w.st, filepath.Dir(w.st.Path), "/sock/selected"))
 	}
 	hook, ok := UpwardFactory(w.st, nil, "run-1", "/relay/resumed", "/sock/resumed").(*report.RunHook)
 	if !ok {
 		t.Fatal("the factory makes no RunHook")
 	}
-	if sender, _ := hook.Sender.(report.ManageSender); sender.State != "/relay/resumed" || sender.Socket != "/sock/resumed" {
+	relay, _ = hook.Sender.(report.RelaySender)
+	if fallback, _ := relay.Fallback.(report.ManageSender); relay.Store != w.st || fallback.State != "/relay/resumed" || fallback.Socket != "/sock/resumed" {
 		t.Errorf("the hook's sender is %+v", hook.Sender)
 	}
 }

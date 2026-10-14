@@ -94,7 +94,7 @@ func ResumeEnv(ctx context.Context, req engine.ResumeEnvRequest) (engine.ResumeS
 		if err == nil {
 			cwd, _ := os.Getwd()
 			var sb *agent.SessionBackend
-			if sb, setup.Session, err = SessionEnv(SessionEnvRequest{Store: st, Client: client, Allocator: alloc, StateDir: selection.Path, RunID: req.RunID, Owner: owner, OwnerCwd: cwd}); err == nil {
+			if sb, setup.Session, err = SessionEnv(SessionEnvRequest{Store: st, Client: client, Allocator: alloc, StateDir: selection.Path, RunID: req.RunID, Owner: owner, OwnerCwd: cwd, Journal: j}); err == nil {
 				setup.Backend = sb
 			}
 		}

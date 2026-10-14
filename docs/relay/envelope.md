@@ -1,5 +1,7 @@
 # The shared envelope, and what is owed upward
 
+Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+
 Two relations carry messages here. A parent and its child exchange a completion and a
 correction, and that pair has a queue, a receipt, an acknowledgement and a verdict. A
 supervisor and a parent exchange instructions and reports, and that pair has less: an

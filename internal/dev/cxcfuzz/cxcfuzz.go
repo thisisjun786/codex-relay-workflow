@@ -7,6 +7,7 @@
 package cxcfuzz
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -17,8 +18,11 @@ import (
 	"math/rand"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
@@ -64,6 +68,12 @@ type Config struct {
 	Cases   int
 	Seconds int
 	Seed    int64
+	// Skip draws the first Skip inputs of the seed without judging them, so a campaign that was stopped carries on at
+	// the case after the last one it judged; Cases and Seconds then bound the cases judged after them.
+	Skip int
+	// Stop, when closed, ends the draw of new cases. The cases already drawn are judged, counted and written as usual,
+	// and the summary says the campaign was stopped.
+	Stop <-chan struct{}
 	// SeedSet says Seed was given, so a Seed of 0 is the seed the campaign runs, not a request for the clock.
 	SeedSet bool
 	Workers int
@@ -105,6 +115,9 @@ type Summary struct {
 	// Failures names the case records written under the output directory, one per distinct failing input.
 	Failures  []string `json:"failures,omitempty"`
 	PerSecond float64  `json:"casesPerSecond"`
+	// Skipped is the cases of the seed drawn and not judged (Config.Skip); Stopped says Config.Stop ended the draw.
+	Skipped int  `json:"skipped,omitempty"`
+	Stopped bool `json:"stopped,omitempty"`
 }
 
 // Divergence is one shrunk difference, written to <out>/divergences/<kind>-<sha12>.json.
@@ -135,7 +148,7 @@ func divergenceName(kind Kind, input string) string {
 // It exits 2 when the target is unknown or its oracle command is missing, 1 when the campaign
 // found a divergence, and 0 when every case agreed.
 func Run(args []string, stdout, stderr io.Writer) int {
-	const usage = "usage: crw-dev fuzz <target> [--seconds N] [--cases N] [--seed S] [--workers N] [--out DIR] [--adopt FILE --tag TAG --record TEXT --name NAME]"
+	const usage = "usage: crw-dev fuzz <target> [--seconds N] [--cases N] [--skip N] [--seed S] [--workers N] [--out DIR] [--adopt FILE --tag TAG --record TEXT --name NAME]"
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
 		fmt.Fprintln(stderr, usage)
 		fmt.Fprintln(stderr, "crw-dev fuzz: error: the following arguments are required: target")
@@ -146,6 +159,7 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	set.SetOutput(stderr)
 	seconds := set.Int("seconds", 0, "stop after this many seconds")
 	cases := set.Int("cases", 0, "stop after this many cases")
+	skip := set.Int("skip", 0, "draw this many cases of the seed without judging them (carries on a stopped campaign)")
 	seed := set.Int64("seed", 0, "the generator seed (default: the clock, written to summary.json)")
 	workers := set.Int("workers", DefaultWorkers, "long-lived oracle workers")
 	out := set.String("out", "", "the output directory (default <scratch_root>/fuzz/<target>/<UTC time>; crw config paths prints scratch_root)")
@@ -183,7 +197,15 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "crw-dev fuzz: error: one of --seconds or --cases is required")
 		return 2
 	}
-	cfg := Config{Target: target, Cases: *cases, Seconds: *seconds, Seed: *seed, SeedSet: seedGiven, Workers: *workers, Timeout: DefaultTimeout, DevSHA: devSHA()}
+	if *skip < 0 {
+		fmt.Fprintln(stderr, "crw-dev fuzz: error: --skip must not be negative")
+		return 2
+	}
+	// An interrupt or a terminate signal ends the draw, not the campaign: the cases already drawn finish, the summary is
+	// written and says it was stopped, and --skip carries the same seed on from there.
+	signalled, release := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer release()
+	cfg := Config{Target: target, Cases: *cases, Seconds: *seconds, Skip: *skip, Stop: signalled.Done(), Seed: *seed, SeedSet: seedGiven, Workers: *workers, Timeout: DefaultTimeout, DevSHA: devSHA()}
 	if *out != "" {
 		cfg.Out = *out
 	} else {
@@ -221,10 +243,29 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "crw-dev fuzz: %s seed %d %d cases in %.1fs: same %d differ %d miss %d extra %d timeout %d refused %d; unreadable %d refused %d not refused %d\n",
 		summary.Target, summary.Seed, summary.Cases, summary.Seconds, summary.Same, summary.Differ, summary.Miss, summary.Extra, summary.Timeouts, summary.Refused,
 		summary.UnreadableCases, summary.UnreadableRefused, summary.UnreadableNotRefused)
+	if summary.Stopped {
+		fmt.Fprintf(stdout, "crw-dev fuzz: stopped by a signal after %d cases; carry on with --seed %d --skip %d\n", summary.Cases, summary.Seed, summary.Skipped+summary.Cases)
+	}
+	if warning := failureWarning(summary, cfg.Out); warning != "" {
+		fmt.Fprintln(stderr, warning)
+	}
 	if campaignFailed(summary) {
 		return 1
 	}
 	return 0
+}
+
+// failureWarning is the one line a campaign prints on stderr when cases got no oracle answer: a timeout, a worker that
+// died (a reused process of the pyjson shim included), a reply that answered nothing, or a failure of the case's own
+// machinery. The counts and the directory of the records are named; the campaign fails whether or not anyone reads it.
+// It is empty when every case was answered.
+func failureWarning(summary Summary, out string) string {
+	lost := summary.Timeouts + summary.DeadWorkers + summary.NoAnswers + summary.Errors
+	if lost == 0 {
+		return ""
+	}
+	return fmt.Sprintf("crw-dev fuzz: warning: %d cases got no oracle answer (timeout %d, dead worker %d, no answer %d, error %d); records are in %s; the campaign fails",
+		lost, summary.Timeouts, summary.DeadWorkers, summary.NoAnswers, summary.Errors, crwconfig.JoinRoot(out, failureDir))
 }
 
 // campaignFailed is whether a campaign's summary is a failure. A case that timed out, whose worker died or did not answer, whose own
@@ -260,77 +301,33 @@ func Campaign(cfg Config) (summary Summary, err error) {
 		return Summary{}, err
 	}
 	defer func() { err = joinCleanup(err, pool.Close()) }()
-	run := &campaign{cfg: cfg, pool: pool, rng: rand.New(rand.NewSource(seed))}
+	run := &campaign{cfg: cfg, pool: pool, rng: rand.New(rand.NewSource(seed)), seed: seed}
 	start := time.Now()
 	deadline := time.Time{}
 	if cfg.Seconds > 0 {
 		deadline = start.Add(time.Duration(cfg.Seconds) * time.Second)
 	}
-	summary = Summary{Target: cfg.Target.Name, Seed: seed, DevSHA: cfg.DevSHA}
+	summary = Summary{Target: cfg.Target.Name, Seed: seed, DevSHA: cfg.DevSHA, Skipped: cfg.Skip}
 	written := map[string]bool{}
 	failed := map[string]bool{}
-	for n := 0; cfg.Cases <= 0 || n < cfg.Cases; n++ {
-		if !deadline.IsZero() && time.Now().After(deadline) {
-			break
+	var campaignErr error
+	cases := run.start(deadline)
+	for pending := range cases.ordered {
+		result := <-pending.done
+		if campaignErr != nil {
+			// The campaign has ended on an error: the cases already started are waited for and their results dropped,
+			// so no worker is still in a case when the pool closes.
+			continue
 		}
 		summary.Cases++
-		run.reading = readingResult{}
-		verdict, goOut, oracleOut, input, err := run.one()
-		reading := run.reading
-		switch classifyCaseError(err) {
-		case caseRemovalFailed:
-			// A root that survived its removal is reported, never counted: the caller must see which root
-			// was left and why, and the run must not continue as if the case had merely been refused.
-			return summary, err
-		case caseFailed:
-			if err := recordFailure(cfg, &summary, seed, summary.Cases, input, err, failed); err != nil {
-				return summary, err
-			}
-			continue
-		case caseRefused:
-			summary.Refused++
-			continue
-		}
-		if reading.unreadable {
-			summary.UnreadableCases++
-			if reading.refused {
-				summary.UnreadableRefused++
-			} else {
-				summary.UnreadableNotRefused++
-			}
-		}
-		switch verdict.Kind {
-		case Same:
-			summary.Same++
-			continue
-		case Miss:
-			summary.Miss++
-		case Extra:
-			summary.Extra++
-		case Differ:
-			summary.Differ++
-		default:
-			return summary, fmt.Errorf("the target's Compare answered an unknown verdict kind %q", verdict.Kind)
-		}
-		shrinker := &shrinkRun{campaign: run, verdict: verdict, goOut: goOut, oracleOut: oracleOut}
-		shrunk, _ := Shrink(input, ShrinkAttempts, shrinker.keep)
-		if shrinker.removal != nil {
-			// A removal failure during shrinking is the same fact as one during the run: a root outlived
-			// the work that owned it, so it is reported rather than folded into the kept candidate.
-			return summary, shrinker.removal
-		}
-		if err := writeDivergence(cfg.Out, Divergence{
-			Kind:    verdict.Kind,
-			Input:   canonical(shrunk),
-			Go:      shrinker.goOut,
-			Oracle:  shrinker.oracleOut,
-			Verdict: shrinker.verdict,
-			Seed:    seed,
-			DevSHA:  cfg.DevSHA,
-		}, written); err != nil {
-			return summary, err
+		if campaignErr = run.apply(&summary, result, written, failed); campaignErr != nil {
+			cases.stop()
 		}
 	}
+	if campaignErr != nil {
+		return summary, campaignErr
+	}
+	summary.Stopped = cases.stopped.Load()
 	summary.Seconds = time.Since(start).Seconds()
 	if summary.Seconds > 0 {
 		summary.PerSecond = float64(summary.Cases) / summary.Seconds
@@ -339,6 +336,152 @@ func Campaign(cfg Config) (summary Summary, err error) {
 		return summary, err
 	}
 	return summary, nil
+}
+
+// caseStream is the cases a campaign has started, in case order, and the means to stop starting more.
+type caseStream struct {
+	ordered chan *startedCase
+	halt    atomic.Bool
+	// stopped is whether Config.Stop ended the draw.
+	stopped atomic.Bool
+}
+
+// stop ends the stream: no further case is started. Cases already started still finish and are on ordered.
+func (s *caseStream) stop() { s.halt.Store(true) }
+
+// startedCase is one case in flight; its result is sent on done when it has been judged.
+type startedCase struct{ done chan caseResult }
+
+// start draws the campaign's inputs in order, one case after another, and judges up to cfg.Workers of them at a time,
+// each by its own goroutine on a worker of the pool; the draw stays in order so a seed gives the same inputs at any
+// worker count, and the results come back in case order so the counts and the files written do not depend on which
+// case finished first. It stops drawing at cfg.Cases, at the deadline, or when stop is called. A case is drawn only when
+// a worker is free to take it and the draw has not been stopped, so every input drawn is a case that runs and --skip
+// carries the same seed on from the cases a stopped campaign judged.
+func (c *campaign) start(deadline time.Time) *caseStream {
+	workers := c.cfg.Workers
+	if workers < 1 {
+		workers = 1
+	}
+	stream := &caseStream{ordered: make(chan *startedCase, workers)}
+	running := make(chan struct{}, workers)
+	go func() {
+		defer close(stream.ordered)
+		// The first Skip inputs of the seed are drawn and dropped, so the ones after them are those a whole run draws.
+		for i := 0; i < c.cfg.Skip; i++ {
+			c.cfg.Target.Generate(c.rng, c.rng.Int())
+		}
+		for n := 0; c.cfg.Cases <= 0 || n < c.cfg.Cases; n++ {
+			// The slot comes first: while every worker is in a case this waits, and what ends the draw (Stop, the deadline, a
+			// case error) is read only once a case can start, so no input is drawn for a case that is then not started.
+			running <- struct{}{}
+			select {
+			case <-c.cfg.Stop:
+				stream.stopped.Store(true)
+				<-running
+				return
+			default:
+			}
+			if stream.halt.Load() || !deadline.IsZero() && time.Now().After(deadline) {
+				<-running
+				return
+			}
+			input := c.cfg.Target.Generate(c.rng, c.rng.Int())
+			started := &startedCase{done: make(chan caseResult, 1)}
+			go func() {
+				defer func() { <-running }()
+				started.done <- c.judge(input)
+			}()
+			stream.ordered <- started
+		}
+	}()
+	return stream
+}
+
+// caseResult is what judging one case found: the case's own error, or its verdict, the reading of it, and for a
+// difference the shrunk divergence.
+type caseResult struct {
+	err        error
+	verdict    Verdict
+	input      any
+	reading    readingResult
+	divergence *Divergence
+	// removal is the first removal failure shrinking hit (see shrinkRun).
+	removal error
+}
+
+// judge evaluates one input on both sides and, when they differ, shrinks the difference. It runs on its own
+// goroutine, so it works on a campaign of its own that shares the configuration and the pool and nothing else.
+func (c *campaign) judge(input any) caseResult {
+	local := &campaign{cfg: c.cfg, pool: c.pool, seed: c.seed}
+	verdict, goOut, oracleOut, err := local.evaluate(input)
+	result := caseResult{err: err, verdict: verdict, input: input, reading: local.reading}
+	if err != nil {
+		return result
+	}
+	switch verdict.Kind {
+	case Miss, Extra, Differ:
+	default:
+		// Same needs nothing more; an unknown kind is the campaign's error, raised in case order.
+		return result
+	}
+	shrinker := &shrinkRun{campaign: local, verdict: verdict, goOut: goOut, oracleOut: oracleOut}
+	shrunk, _ := Shrink(input, ShrinkAttempts, shrinker.keep)
+	result.removal = shrinker.removal
+	result.divergence = &Divergence{
+		Kind:    verdict.Kind,
+		Input:   canonical(shrunk),
+		Go:      shrinker.goOut,
+		Oracle:  shrinker.oracleOut,
+		Verdict: shrinker.verdict,
+		Seed:    c.seed,
+		DevSHA:  c.cfg.DevSHA,
+	}
+	return result
+}
+
+// apply counts one case's result into the summary and writes what it owes, in case order. A non-nil return ends the
+// campaign.
+func (c *campaign) apply(summary *Summary, result caseResult, written, failed map[string]bool) error {
+	switch classifyCaseError(result.err) {
+	case caseRemovalFailed:
+		// A root that survived its removal is reported, never counted: the caller must see which root
+		// was left and why, and the run must not continue as if the case had merely been refused.
+		return result.err
+	case caseFailed:
+		// A failure record carries the case's number in the whole run, skipped cases counted.
+		return recordFailure(c.cfg, summary, c.seed, c.cfg.Skip+summary.Cases, result.input, result.err, failed)
+	case caseRefused:
+		summary.Refused++
+		return nil
+	}
+	if result.reading.unreadable {
+		summary.UnreadableCases++
+		if result.reading.refused {
+			summary.UnreadableRefused++
+		} else {
+			summary.UnreadableNotRefused++
+		}
+	}
+	switch result.verdict.Kind {
+	case Same:
+		summary.Same++
+		return nil
+	case Miss:
+		summary.Miss++
+	case Extra:
+		summary.Extra++
+	case Differ:
+		summary.Differ++
+	default:
+		return fmt.Errorf("the target's Compare answered an unknown verdict kind %q", result.verdict.Kind)
+	}
+	if result.removal != nil {
+		// A removal failure during shrinking is the same fact as one during the run: a root outlived
+		// the work that owned it, so it is reported rather than folded into the kept candidate.
+		return result.removal
+	}
+	return writeDivergence(c.cfg.Out, *result.divergence, written)
 }
 
 // errRefused is a case whose fs scenario the harness refused to build, so it was not run.
@@ -402,21 +545,15 @@ func joinCleanup(err, cleanup error) error {
 type campaign struct {
 	cfg  Config
 	pool *Pool
+	// rng and seed are the draw of the inputs; rng is used only by the goroutine that draws them.
 	rng  *rand.Rand
+	seed int64
 	// reading is what the target's Reading said about the last case evaluate ran (the zero value when the target has none).
 	reading readingResult
 }
 
 // readingResult is one case's reading: whether the shared reader could not read it, and whether the Go answer refused it.
 type readingResult struct{ unreadable, refused bool }
-
-// one generates one input and evaluates it on both sides, each in its own fresh root. The roots
-// are removed before it returns, and each side's own root is replaced by ${ROOT} in the answers.
-func (c *campaign) one() (Verdict, string, string, any, error) {
-	input := c.cfg.Target.Generate(c.rng, c.rng.Int())
-	verdict, goOut, oracleOut, err := c.evaluate(input)
-	return verdict, goOut, oracleOut, input, err
-}
 
 func (c *campaign) evaluate(input any) (verdict Verdict, goText, oracleText string, err error) {
 	text := canonical(input)

@@ -11,8 +11,6 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/compile"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/tracking"
 )
 
@@ -46,7 +44,8 @@ The command reads through the tracking adapter with GET requests (the token is G
   --state DIR, --socket P  the relay state the bindings are read from (read-only)
 
 A mapping that cannot be carried over, a blocker outside the milestone or closed, and a project key the thread holds no binding of are
-warnings, printed on stderr and kept in the envelope's "warnings"; none refuses. Exit 0 built; 2 an input that cannot be used (a ref that
+warnings, printed on stderr and kept in the envelope's "warnings"; none refuses. The key warning is also the "warnings" member of the
+project in the input, which crw flow compile carries into the plan it prints, so it is recorded through a pipe too. Exit 0 built; 2 an input that cannot be used (a ref that
 is not OWNER/NAME#N, a milestone that does not exist, a key the dag cannot hold, a refused token).
 `
 
@@ -171,26 +170,7 @@ func RunWith(ctx context.Context, d *Deps, args []string, stdout, stderr io.Writ
 }
 
 // ReadScopes reads the project keys of the live parent bindings of thread from the relay store of the state, read-only: the reading
-// `crw flow start` compares a plan's project key with (CRW-1317).
+// `crw flow start` compares a plan's project key with (CRW-1317). It is compile.ReadScopes.
 func ReadScopes(ctx context.Context, thread, state, socket string) ([]string, error) {
-	if socket == "" {
-		var err error
-		if socket, err = store.DefaultSocket(); err != nil {
-			return nil, err
-		}
-	}
-	sel, err := store.ResolveStateDir(state, socket)
-	if err != nil {
-		return nil, err
-	}
-	db := sel.DBPath()
-	if err := store.CheckReadable(db); err != nil {
-		return nil, fmt.Errorf("there is no relay store at %s (%s): %w", db, sel.Detail, err)
-	}
-	st, err := store.OpenReadOnlyStore(ctx, db)
-	if err != nil {
-		return nil, err
-	}
-	defer st.Close()
-	return dag.LiveParentScopes(ctx, st.DB, thread)
+	return compile.ReadScopes(ctx, thread, state, socket)
 }

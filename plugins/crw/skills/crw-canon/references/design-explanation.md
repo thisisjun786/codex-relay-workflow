@@ -1,5 +1,7 @@
 # Explaining a design
 
+Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](hierarchy.md#the-levels).
+
 Use this when the request is to understand or review a system rather than to plan one: what a
 component is for, whether an existing owner can be left where it is, how the parts fit together,
 where a service ends and its database begins, or whether a proposed change actually helps. It also

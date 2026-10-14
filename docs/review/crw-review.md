@@ -1,5 +1,7 @@
 # crw review
 
+Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+
 `crw review` runs the independent code review on one change and writes its artifact. It builds the context bundle (`internal/review/bundle`), runs the pipeline (`internal/review/pipeline`) with the agy runner (`internal/review/agy`), validates the result against schema v1 (`internal/review`) and writes `<head>.json` with its sha256; with `--post-summary` it also keeps one summary comment on the pull request. The review is a reference opinion, never a merge gate. The command is the top-level mode `review` of `crw` (the mode table in `cmd/crw/main.go`); the package contract is [doc.go](../../internal/review/command/doc.go).
 
 A child runs it only where the assignment in its packet names the independent code review for its task, never because a rule that describes the step mentions it, once per head after the local full verification passes on the head it hands off.
@@ -74,7 +76,7 @@ Every setting comes from one place, `Config` in [config.go](../../internal/revie
 
 ## Not covered
 
-The artifact's `agyVersion` is `unknown`: reading it would start an agy process outside the runner's host-wide lock. A `SIGKILL` of `crw` cannot be caught: agy, which holds no lock descriptor and whose time limit lives in the parent, may then run on, unbounded, while the locks are free; closing that gap belongs to the runner. The receipt field and the parent's reading of the artifact belong to the wiring around this command. The summary comment has only been exercised against a scripted forge and a fake `gh`, never against a live pull request.
+The artifact's `agyVersion` is `unknown`: reading it would start an agy process outside the runner's host-wide lock. A `SIGKILL` of `crw` cannot be caught: agy, which holds no lock descriptor and whose time limit lives in the parent process, may then run on, unbounded, while the locks are free; closing that gap belongs to the runner. The receipt field and the parent's reading of the artifact belong to the wiring around this command. The summary comment has only been exercised against a scripted forge and a fake `gh`, never against a live pull request.
 
 The parent can combine saved findings with Devin/Codex observations in the separate [adjudication ledger](adjudication.md) and compare requested models over the same explicit PR heads. That append-only file convention and report do not change this command's artifact, execution ledger or merge rules.
 

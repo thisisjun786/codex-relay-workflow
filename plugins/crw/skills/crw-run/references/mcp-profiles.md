@@ -1,5 +1,7 @@
 # MCP profiles
 
+Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../crw-canon/references/hierarchy.md#the-levels).
+
 Every Codex thread starts the MCP servers `config.toml` defines and the installed plugins provide, whether
 it calls them or not, and each sub-thread it spawns does the same. Hundreds of megabytes of helper
 processes per child came from servers an issue never used. The parent therefore chooses at release which

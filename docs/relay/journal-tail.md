@@ -1,5 +1,7 @@
 # Journal tail and receive
 
+Here the parent (relay role `parent`) is a relay role, read through [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+
 Two relay commands let a process that works inside a delivery turn follow the relay and finish a
 review in one call: `journal-tail`, an awaitable read of the journal, and `receive`, which composes
 the claim, the acknowledgement and the verdict. Both belong to the relay's command line

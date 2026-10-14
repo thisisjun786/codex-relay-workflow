@@ -3,7 +3,9 @@
 package ci
 
 import (
+	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -17,6 +19,42 @@ import (
 // names and stay where the routing table uses them.
 
 var issueBodySkills = []string{"plugins/crw/skills/crw-add-issue/SKILL.md", "plugins/crw/skills/crw-plan/SKILL.md"}
+
+// issueBodyReferenceGlobs are the references of the two skills that write issue bodies (CRW-1386 d4): the
+// child pair line they define is written into an issue body too, so they name no model either. The two pair
+// names `Sonnet` and `SOL` are the names the role policy declares for its child pairs (the pair-choice
+// command and its quota snapshot key them), so a reference may use those names as names, and never defines a
+// pair by the model it runs.
+var issueBodyReferenceGlobs = []string{"plugins/crw/skills/crw-add-issue/references/*.md", "plugins/crw/skills/crw-plan/references/*.md"}
+
+// referenceModelName is modelName without the policy's pair name `Sonnet`.
+var referenceModelName = regexp.MustCompile(`(?i)\b(haiku|opus|fable|gpt-?\d|gemini|claude|o3|o4-mini|codex-mini)\b`)
+
+// pairByModel is a sentence that defines a pair by the model it runs.
+var pairByModel = regexp.MustCompile(`(?i)pair (whose|with a|that runs a) model`)
+
+// codeSpans are the inline code and fenced blocks of a markdown text: a schema key or a JSON example, not
+// prose that names a model.
+var codeSpans = regexp.MustCompile("(?s)```.*?```|`[^`\n]*`")
+
+// withoutCodeKeepingLines is text with each code span and fenced block replaced by two backticks followed by the new
+// lines it held, so every line after a fenced block keeps its number (Argon V5 K4).
+func withoutCodeKeepingLines(text string) string {
+	return codeSpans.ReplaceAllStringFunc(text, func(code string) string { return "``" + strings.Repeat("\n", strings.Count(code, "\n")) })
+}
+
+func issueBodyReferenceProblems(text string) []string {
+	var problems []string
+	for i, line := range strings.Split(withoutCodeKeepingLines(text), "\n") {
+		if m := referenceModelName.FindString(line); m != "" {
+			problems = append(problems, strconv.Itoa(i+1)+": names the model "+m)
+		}
+		if pairByModel.MatchString(line) {
+			problems = append(problems, strconv.Itoa(i+1)+": defines a pair by its model")
+		}
+	}
+	return problems
+}
 
 // modelName is a model or model family name that an issue body does not carry.
 var modelName = regexp.MustCompile(`(?i)\b(sonnet|haiku|opus|fable|gpt-?\d|gemini|claude|o3|o4-mini|codex-mini)\b`)
@@ -57,7 +95,90 @@ func TestIssueBodiesNameNoModel(t *testing.T) {
 			t.Errorf("model: %v", p)
 		}
 	})
+	var references []string
+	for _, glob := range issueBodyReferenceGlobs {
+		matches, err := filepath.Glob(filepath.Join(repoRoot(), glob))
+		if err != nil {
+			t.Fatal(err)
+		}
+		references = append(references, matches...)
+	}
+	if len(references) == 0 {
+		t.Fatal("no reference of crw-add-issue or crw-plan was read")
+	}
+	for _, path := range references {
+		rel, _ := filepath.Rel(repoRoot(), path)
+		for _, p := range issueBodyReferenceProblems(readRepoText(t, filepath.ToSlash(rel))) {
+			t.Errorf("%s:%s", filepath.ToSlash(rel), p)
+		}
+	}
+	t.Run("fixture: a reference names a pair, never a model", func(t *testing.T) {
+		good := "The pairs are the names the role policy declares, `Sonnet` and `SOL`: the Sonnet pair, the SOL pair.\n" +
+			"    Child pair: Sonnet (reference exists) - a rename\n`claude` is a snapshot key.\n```json\n{\"claude\":1}\n```\n"
+		if p := issueBodyReferenceProblems(good); len(p) != 0 {
+			t.Errorf("good: %v", p)
+		}
+		bad := "the Sonnet pair is the declared pair whose model is a Claude Sonnet model\n"
+		if p := issueBodyReferenceProblems(bad); len(p) != 2 {
+			t.Errorf("bad: %v", p)
+		}
+	})
+	t.Run("fixture: a line after a fenced block keeps its number (Argon V5 K4)", func(t *testing.T) {
+		text := "The pairs are the policy's names.\n```json\n{\"claude\": 1}\n{\"opus\": 2}\n```\nThe SOL pair whose model is a Claude model.\n"
+		want := "6: names the model Claude|6: defines a pair by its model"
+		if p := strings.Join(issueBodyReferenceProblems(text), "|"); p != want {
+			t.Errorf("problems %q, want %q", p, want)
+		}
+	})
 	if strings.Contains(readRepoText(t, "plugins/crw/skills/crw-plan/references/integrations.md"), "## Child pair by issue type") == false {
 		t.Error("crw-plan's child pair table moved: the pair families it names are the policy's, read there")
+	}
+}
+
+// CRW-1396 (Argon V5 on CRW-1352): crw-add-issue ran a tree-wide done condition "or a test over every package"
+// when the issue is written, while the next paragraph (CRW-1328) runs the done condition's go test in the design
+// stage only. The decided default keeps rg and grep at write time and leaves go test to the design stage, so the
+// write-time sentence names no test.
+func addIssueWriteTimeProblems(text string) []string {
+	var problems []string
+	flat := normalized(text)
+	i := strings.Index(flat, "When the done condition searches the whole tree")
+	if i < 0 {
+		return []string{"lacks the write-time sentence for a tree-wide done condition"}
+	}
+	sentence := flat[i:]
+	if j := strings.Index(sentence, ". "); j >= 0 {
+		sentence = sentence[:j]
+	}
+	if regexp.MustCompile(`(?i)\btest`).MatchString(sentence) {
+		problems = append(problems, "the write-time sentence runs a test: "+sentence)
+	}
+	if !strings.Contains(flat, "The done condition's `go test` command is not run when the issue is created") {
+		problems = append(problems, "lacks the design-stage rule for the done condition's go test")
+	}
+	return problems
+}
+
+func TestAddIssueRunsNoGoTestWhenWriting(t *testing.T) {
+	for _, p := range addIssueWriteTimeProblems(readRepoText(t, "plugins/crw/skills/crw-add-issue/SKILL.md")) {
+		t.Errorf("crw-add-issue: %s", p)
+	}
+	t.Run("fixture: the old sentence is caught", func(t *testing.T) {
+		old := "When the done condition searches the whole tree (an `rg` or `grep` over the repository, or a test over every package), run it once when the issue is written. " +
+			"The done condition's `go test` command is not run when the issue is created."
+		if p := addIssueWriteTimeProblems(old); len(p) != 1 {
+			t.Errorf("old: %v", p)
+		}
+	})
+}
+
+// TestReadmeLayerSentencesUseTheTable (CRW-1396): the two README sentences that still named the layers of the
+// old mapping use the table's layers.
+func TestReadmeLayerSentencesUseTheTable(t *testing.T) {
+	flat := normalized(readRepoText(t, "README.md"))
+	for _, old := range []string{"Each parent orchestrates one project and each child one issue", "from the manager down to the issue"} {
+		if strings.Contains(flat, old) {
+			t.Errorf("README.md still says %q", old)
+		}
 	}
 }

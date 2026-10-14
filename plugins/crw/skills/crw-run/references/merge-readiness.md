@@ -1,5 +1,7 @@
 # Merge readiness
 
+Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../crw-canon/references/hierarchy.md#the-levels).
+
 Use before integration, together with the target repository's policy and the
 [shared authorization and review rules](../../crw-canon/references/delivery.md#default-dev-integration).
 This procedure consumes existing CI and review evidence; it does not install a

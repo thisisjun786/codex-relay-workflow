@@ -1,5 +1,7 @@
 # Operational faults
 
+Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+
 When the machinery between a child, its parent and the supervisor breaks, somebody has to
 notice. Until now that somebody was the user: they read a stalled project, asked what had
 happened, and then asked for an issue to be filed. This removes both steps. The daemon reads
@@ -1021,7 +1023,7 @@ relationship - the project its scope names, when that project key is a plain ide
 (`notice_facts`' anchor `project:<key>`). A relationship of another project neither
 addresses a notice nor holds it back: it is another project's assignment, and its level above
 and its wishes are that project's. Either way the project's live parent sends
-and the initiative's supervisor receives, exactly as a report does. A project-addressed notice has
+and the initiative-scoped supervisor receives, exactly as a report does. A project-addressed notice has
 no relationship whose pause or contact applies, so the ledger's eligibility lets it through and
 the channel's own rules decide the rest: the supervisor's archive, pause or limit withholds it
 without a wake, as it withholds a report. A notice says what the fault is - purpose `fault_notice` (blocking,

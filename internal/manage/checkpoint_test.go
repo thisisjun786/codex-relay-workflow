@@ -1305,8 +1305,8 @@ func TestCheckpointProjectFilter(t *testing.T) {
 // The command has no initiative aggregate (CRW-1218 d1): two projects with the same baseline and ten
 // merges each both stay below the merges threshold although the pair has reached twenty, so a reader that
 // judges an initiative across its projects sums the per-project counts and never reads one project's
-// due flag as the initiative's answer. crw-run-initiative states that procedure; its test reads the
-// count names below.
+// due flag as the initiative's answer. The long-run midpoint check of crw-run (the parent's section) states
+// that procedure; TestInitiativeCheckpointAggregatesPerProjectReports reads the count names below.
 func TestCheckpointCountsAreReportedPerProjectNeverAsAnInitiative(t *testing.T) {
 	f := checkpointNewFixture(t)
 	f.scope("relationship-a", "project-a")
@@ -1338,9 +1338,10 @@ func TestCheckpointCountsAreReportedPerProjectNeverAsAnInitiative(t *testing.T) 
 // The backlog count is signed, so one project's backlog reason is not the initiative's crossing
 // (CRW-1218): with the same baseline, project A's backlog grows by sixteen and B's drains by sixteen,
 // so A alone names backlog_net_4h while the approved set's net is zero; and A at +10 with B at +6 nets
-// sixteen while neither report names the signal. crw-run-initiative therefore keeps backlog_net_4h out
-// of the per-project promotion and sums the signed counts of every approved project first; its test
-// applies the procedure to the same two scenarios.
+// sixteen while neither report names the signal. The long-run midpoint check of crw-run therefore keeps
+// backlog_net_4h out of the per-project promotion and sums the signed counts of every approved project
+// first; TestInitiativeCheckpointSumsTheSignedBacklogBeforeJudging applies the procedure to the same two
+// scenarios.
 func TestCheckpointBacklogNetIsSignedPerProjectSoTheInitiativeSumsIt(t *testing.T) {
 	issue := func(id int, project, created, state, completed string) string {
 		row := fmt.Sprintf("{\"identifier\":\"CRW-%d\",\"project\":\"%s\",\"createdAt\":\"%s\",\"state\":\"%s\"", id, project, created, state)

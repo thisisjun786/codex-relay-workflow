@@ -128,8 +128,9 @@ func TestRuntimeInstallHasOneStateTable(t *testing.T) {
 	})
 }
 
-// TestSwitchCXCIsTheHooksOff: the switch's `cxc` value is the ported hooks turned off and nothing else,
-// in both documents, and the packaging page names the writer that exists.
+// TestSwitchCXCIsTheHooksOff: the switch's `cxc` value is the emergency stop of the ported hooks in both
+// documents, and the packaging page names the writer that exists. What the stop also puts back is pinned by
+// TestSwitchCXCDefinitionIsWhatTheCodeDoes.
 func TestSwitchCXCIsTheHooksOff(t *testing.T) {
 	install := readRepoText(t, "docs/runtime-install.md")
 	if !strings.Contains(install, "\n## The hook switch\n") {
@@ -155,4 +156,46 @@ func TestSwitchCXCIsTheHooksOff(t *testing.T) {
 			}
 		}
 	}
+}
+
+// switchCXCDefinitionProblems: the one-line definition of the switch's values in the hook switch section
+// says what `crw install switch cxc` does in the code (internal/runtime/install/switch_cmd.go, the usage text
+// that carries the same words): the ported hooks off, and only what `switch crw` recorded put back byte for
+// byte, so a CXC plugin entry it turned off from enabled = true comes back on (CRW-1386 c3/d3, decided default:
+// the code stays and the definition states it). It no longer calls the stop the only meaning of the value.
+func switchCXCDefinitionProblems(section, usage string) []string {
+	var problems []string
+	flat := normalized(section)
+	if strings.Contains(flat, "the only meaning the value has") {
+		problems = append(problems, "calls the emergency stop the only meaning of `cxc`, while `switch cxc` also puts recorded values back")
+	}
+	for _, want := range []string{
+		"`cxc` is the emergency stop: it turns them off and puts back, byte for byte, only what `switch crw` recorded as changed",
+		"comes back on",
+		"No file at all turns the ported legs off too and puts nothing back",
+	} {
+		if !strings.Contains(flat, want) {
+			problems = append(problems, "the definition lacks "+strconv.Quote(want))
+		}
+	}
+	for _, want := range []string{"puts back, byte for byte,", "comes back on"} {
+		if !strings.Contains(usage, want) {
+			problems = append(problems, "switch_cmd.go's usage no longer says "+strconv.Quote(want)+": the definition and the code moved apart")
+		}
+	}
+	return problems
+}
+
+func TestSwitchCXCDefinitionIsWhatTheCodeDoes(t *testing.T) {
+	section := headingSection(readRepoText(t, "docs/runtime-install.md"), "## The hook switch")
+	usage := readRepoText(t, "internal/runtime/install/switch_cmd.go")
+	for _, p := range switchCXCDefinitionProblems(section, usage) {
+		t.Errorf("docs/runtime-install.md: %s", p)
+	}
+	t.Run("fixture: the old definition is caught", func(t *testing.T) {
+		old := "`cxc`, or no file at all, turns them off: that is the emergency stop, and it is the only meaning the value has."
+		if p := switchCXCDefinitionProblems(old, usage); len(p) != 4 {
+			t.Errorf("old definition: %v", p)
+		}
+	})
 }

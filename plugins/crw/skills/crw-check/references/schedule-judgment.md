@@ -1,5 +1,7 @@
 # Schedule judgment
 
+Here the parent (repository session, relay role `supervisor`) is a layer of [the level table](../../crw-canon/references/hierarchy.md#the-levels).
+
 Use when a check covers subjects that carry agreed dates, which the contract defines
 as projects, milestones and issues. An initiative-level request is judged through those
 subjects rather than as a subject of its own. It consumes the [Schedule baseline contract](../../crw-canon/references/schedule-contract.md#schedule-baseline-contract),

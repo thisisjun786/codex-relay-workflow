@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -120,6 +121,9 @@ func poolEnvNamesPath(env []string) bool {
 func (p *Pool) start() (*worker, error) {
 	cmd := exec.Command(p.argv[0], p.argv[1:]...)
 	cmd.Env = p.env
+	// A process group of its own, so everything the worker started (the pyjson shim's reused python3
+	// processes) is ended with it.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Stderr = io.Discard
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -137,8 +141,12 @@ func (p *Pool) start() (*worker, error) {
 
 func (w *worker) kill() {
 	_ = w.stdin.Close()
+	// The whole group is ended: a worker killed because it did not answer may have a child that is hung
+	// too, and a child holds no pipe to the pool that would end it.
 	if w.cmd.Process != nil {
-		_ = w.cmd.Process.Kill()
+		if err := syscall.Kill(-w.cmd.Process.Pid, syscall.SIGKILL); err != nil {
+			_ = w.cmd.Process.Kill()
+		}
 	}
 	_ = w.cmd.Wait()
 }

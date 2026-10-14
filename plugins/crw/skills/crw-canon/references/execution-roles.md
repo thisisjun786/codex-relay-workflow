@@ -1,5 +1,7 @@
 # Execution roles
 
+Here the parent (repository session, relay role `supervisor`) and the child (project session, relay role `parent`) are layers of [the level table](hierarchy.md#the-levels).
+
 The roles a task or a helper runs as, named by their policy keys, and where each one's settings are decided. This file names no model and no reasoning effort: a document that carries one is a second source of truth beside the host's execution policy. The levels the keys belong to are in [hierarchy.md](hierarchy.md).
 
 ## Execution settings by role

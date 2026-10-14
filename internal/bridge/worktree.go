@@ -191,14 +191,18 @@ func (b *Bridge) CreateWorktreeThread(ctx context.Context, in CreateWorktree) (l
 		if pyjson.Text(pyjson.Map(created["thread"])["cwd"]) != w.Destination || (in.ProjectID != "" && pyjson.Text(pyjson.Map(created["thread"])["projectId"]) != in.ProjectID) {
 			return &Invalid{"Created thread placement differs; initial prompt withheld. Inspect creation receipt"}
 		}
-		if in.Title != "" {
+		// CRW-1313: the creator names the thread by the thread title table; a naming failure is a recorded warning.
+		name, warning := creationTitle(ctx, in.Role, in.Title, w.Destination)
+		if warning != nil {
+			recordTitleWarning(receipt, warning)
+		}
+		if name != "" {
 			if err = checkpoint("naming_thread"); err != nil {
 				return err
 			}
-			if _, err = b.dispatch(ctx, "thread/name/set", map[string]any{"threadId": threadID, "name": in.Title}, effects); err != nil {
+			if err = b.nameThread(ctx, threadID, name, effects, receipt); err != nil {
 				return err
 			}
-			receipt["title"] = in.Title
 			if err = checkpoint("thread_named"); err != nil {
 				return err
 			}

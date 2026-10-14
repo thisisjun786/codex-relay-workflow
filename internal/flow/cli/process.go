@@ -171,6 +171,9 @@ func (c *command) process(args []string) int {
 
 // execute runs a spec as this process: the lock, the world, the engine, the result. sigs delivers the signals the process answers.
 func (c *command) execute(spec Spec, state string, resume bool, sigs <-chan os.Signal) int {
+	// a session run's process holds its process lock from before the run lock until after it (its started row names the token)
+	process := c.processLock(state, spec)
+	defer process.Release()
 	lock, err := TakeLock(state, spec.RunID, "_run", c.now())
 	if err != nil {
 		fmt.Fprintf(c.stderr, "crw flow %s: %v\n", c.name, err)
@@ -254,13 +257,13 @@ func (c *command) execute(spec Spec, state string, resume bool, sigs <-chan os.S
 	}
 	if s := world.Session; s != nil {
 		// a session run keeps at most agents.max_threads - 1 calls in flight (the owner's own helper takes a slot), and its owner
-		// thread holds the run's orchestrator line while the run lives: the start wrote it, a resume writes it again when it is not
-		// the last line, after closing the open line of a run whose process is gone (CRW-1316 §9)
+		// thread holds the run's orchestrator line while the run lives (CRW-1316 §9). This process is the one that writes the line
+		// while it holds the run, from its own record: right after its started row pinned the table it runs on, it writes the line
+		// again when it is not the last one (after closing the open line of a run whose process is gone); `crw flow next` only reads
+		// it (CRW-1372). The start wrote the first line before any process existed.
 		cfg.Pool = sessionPool(spec.Pool, readCodexAgents(c.getenv).MaxThreads)
-		res, err := bindOwner(state, spec.RunID, s.Owner, table)
-		if w := bindWarning(res, err, s.Owner, spec.RunID); w != "" {
-			fmt.Fprintf(c.stderr, "crw flow %s: warning: %s\n", c.name, w)
-		}
+		s.Process = process.Token()
+		s.Started = c.bindFromStarted(state, spec.RunID, s.Owner)
 		defer func() {
 			if _, err := closeOwner(spec.RunID, s.Owner); err != nil {
 				fmt.Fprintf(c.stderr, "crw flow %s: warning: the orchestrator line of thread %s could not be closed: %v\n", c.name, s.Owner, err)

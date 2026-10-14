@@ -1,5 +1,7 @@
 # Parent judgments and review comparisons
 
+Here the parent (relay role `parent`) is a relay role, read through [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+
 The parent keeps independent review, Devin and Codex findings in one private `adjudication.jsonl`, then records its own verdict for each finding. `internal/review/adjudication` imports saved inputs, appends validated records and computes a JSON report. This is a file convention with a Go API: no new command, model execution, network access or merge gate. It reuses the existing artifact validator without changing the artifact or execution ledger.
 
 ## Append observations, then parent judgments

@@ -106,12 +106,12 @@ func TestNextHandsOutTheStepsOfTheBus(t *testing.T) {
 			t.Errorf("the hint does not say %q: %s", want, ans.Hint)
 		}
 	}
-	// the binding of the owner was missing: next wrote it again, with a warning
-	if len(ans.Warnings) != 1 || !strings.Contains(ans.Warnings[0], "missing and is written again") || !strings.Contains(errOut, "warning") {
+	// the binding of the owner is missing: next says so and writes none, the run's process binds it (CRW-1372)
+	if len(ans.Warnings) != 1 || !strings.Contains(ans.Warnings[0], "holds no open line of run "+run) || !strings.Contains(errOut, "warning") {
 		t.Fatalf("warnings %v / %s", ans.Warnings, errOut)
 	}
-	if got := bound.Lookup(sessOwner); got.State != bound.Orchestrator || got.Line.RunID != run || len(got.Line.HelperPairs) != 6 {
-		t.Fatalf("the owner's binding: %+v", got)
+	if got := bound.Lookup(sessOwner); got.State == bound.Orchestrator && got.Line.RunID == run {
+		t.Fatalf("next wrote the owner's binding: %+v", got)
 	}
 	// the close steps were handed out once: their files are gone, the others stay until the run binds or retracts them
 	steps, _ := bus.Steps()
@@ -119,7 +119,7 @@ func TestNextHandsOutTheStepsOfTheBus(t *testing.T) {
 		t.Fatalf("steps left %+v", steps)
 	}
 	_, out, _ = td.do("next", run, "--json", "--state", w.state)
-	if again := decodeNext(t, out); len(again.Steps) != 2 || len(again.Warnings) != 0 {
+	if again := decodeNext(t, out); len(again.Steps) != 2 || len(again.Warnings) != 1 || !strings.Contains(again.Warnings[0], "holds no open line") {
 		t.Fatalf("the second next: %+v", again)
 	}
 	// with the slots full the hint says the spawn waits for a close

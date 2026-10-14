@@ -166,9 +166,20 @@ func runDecisionRaise(ctx context.Context, services dispatch.Services, args disp
 	defer opened.Close()
 	var warning contract.OrderedObject
 	record.Authority, warning = decisionManagementAuthority(ctx, opened, record.Authority, originProject)
-	stored, merged, err := opened.Raise(ctx, record)
+	// A repeated question folds only into a record held under the same seat (CRW-1378): the record of
+	// another management seat is answered by that seat's owner, so this raise is a record of its own.
+	stored, merged, passed, err := opened.RaiseWhere(ctx, record, func(held, incoming decisions.Record) bool {
+		return decisionSeat(held) == decisionSeat(incoming)
+	})
 	if err != nil {
 		return nil, decisionRefusal(err)
+	}
+	var foldWarning contract.OrderedObject
+	if !merged && len(passed) > 0 {
+		foldWarning = contract.OrderedObject{{Key: "reason", Value: "seat_differs"},
+			{Key: "detail", Value: "the same question is open as " + strings.Join(passed, ", ") + " under another seat than this raise's (" +
+				pyvalue.StrRepr(decisionSeat(record)) + "), whose owner answers it; this raise is recorded as its own record"},
+			{Key: "decisions", Value: anyStrings(passed)}, {Key: "seat", Value: decisionSeat(record)}}
 	}
 	answer := contract.OrderedObject{
 		{Key: "decisionId", Value: stored.DecisionID},
@@ -176,15 +187,31 @@ func runDecisionRaise(ctx context.Context, services dispatch.Services, args disp
 		{Key: "merged", Value: merged},
 		{Key: "state", Value: string(stored.State)},
 	}
-	if warning != nil {
+	for _, w := range []struct {
+		key     string
+		warning contract.OrderedObject
+	}{{"authorityWarning", warning}, {"foldWarning", foldWarning}} {
+		if w.warning == nil {
+			continue
+		}
 		// The record stands; the warning is the answer's and one journal row's. A journal that
 		// cannot be written leaves the warning in the answer alone rather than undoing the raise.
 		_ = opened.Transaction(ctx, func(txCtx context.Context, _ *sql.Conn) error {
-			return (&registry.Registry{Store: opened}).Journal(txCtx, "decision_authority_warning", stored.DecisionID, warning, decisionNow())
+			return (&registry.Registry{Store: opened}).Journal(txCtx, "decision_authority_warning", stored.DecisionID, w.warning, decisionNow())
 		})
-		answer = append(answer, contract.Field{Key: "authorityWarning", Value: warning})
+		answer = append(answer, contract.Field{Key: w.key, Value: w.warning})
 	}
 	return answer, nil
+}
+
+// decisionSeat is the management seat a record's answer belongs to: the ref of a user-grade or
+// delegated-management-grade authority, "" for any other record (the store seat's, or the raiser's
+// own for a parent-class question).
+func decisionSeat(record decisions.Record) string {
+	if record.Authority.Kind != decisions.AuthorityUser && record.Authority.Kind != decisions.AuthorityDelegatedManagement {
+		return ""
+	}
+	return strings.TrimSpace(record.Authority.Ref)
 }
 
 // decisionManagementAuthority is the authority a question raised from origin is recorded with
@@ -221,6 +248,15 @@ func decisionManagementAuthority(ctx context.Context, opened *store.Store, given
 		return warn("seat_unreadable", "the management seat above project "+pyvalue.StrRepr(project)+" could not be read ("+err.Error()+
 			"); the question is recorded with the authority as given, so the store seat's rule answers it")
 	case len(seats) == 0:
+		// No management edge above the project: the ref the raiser gave stands. When it names a known
+		// management seat, that seat's owner alone answers and the store seat does not (CRW-1378):
+		// kept, warned and journaled, never refused.
+		if ref := strings.TrimSpace(given.Ref); ref != "" {
+			if _, known, err := (&registry.Registry{Store: opened}).ManagementSeat(ctx, ref); err == nil && known {
+				return warn("ref_without_edge", "no management edge stands above project "+pyvalue.StrRepr(project)+", and the ref "+pyvalue.StrRepr(ref)+
+					" the raise named is a management seat: the question is recorded under that seat, so its owner answers it and the store seat does not")
+			}
+		}
 		return given, nil
 	case len(seats) > 1:
 		return warn("seat_contested", fmt.Sprintf("%d management seats (%s) stand above project %s; the question is recorded with the authority as given, "+

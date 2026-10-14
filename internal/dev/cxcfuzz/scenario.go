@@ -92,6 +92,11 @@ func refuse(root string, refused error) error {
 // escaping link included. Only then is the root removed. A root that is already gone is not an error,
 // so the helper is safe to call again from a caller's cleanup.
 func RemoveCaseRoot(root string) error {
+	// A root whose directories can all be listed and written is removed by the first call, without the walk
+	// that makes them so; only a root it could not remove whole is walked and removed again.
+	if os.RemoveAll(root) == nil {
+		return nil
+	}
 	if err := makeDirectoriesRemovable(root); err != nil {
 		return err
 	}

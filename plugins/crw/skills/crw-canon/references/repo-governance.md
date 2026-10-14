@@ -1,5 +1,7 @@
 # Repository governance
 
+Here the parent (repository session, relay role `supervisor`) is a layer of [the level table](hierarchy.md#the-levels).
+
 The rules for how a repository is set up and how it receives pull requests from agents. They belong to a repository, not to a task: the parent or the integrator reads this file when a repository is created, when its settings are audited, or when its intake policy is decided. An issue child never changes repository settings, and reading these rules authorizes none of the changes they describe (each owner file states its own authority).
 
 CRW's own task branches open no pull request ([delivery](delivery.md#default-dev-integration)), so these rules apply to a repository whose delivery path is pull requests: an external contribution, or a repository that receives agent-authored PRs.

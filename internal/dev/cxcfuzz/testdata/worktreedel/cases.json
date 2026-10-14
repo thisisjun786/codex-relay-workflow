@@ -78,5 +78,69 @@
     "go": "{\"decision\": \"deny\", \"reason\": \"[crw: WORKTREE-GUARD-03] blocked `rm -r .`: it deletes this session's own Codex-app-managed worktree (slot: ${ROOT}/home/.codex/worktrees/zk3q). This thread is bound to that worktree; deletion destroys uncommitted work. Remedies: finish and commit here; rename in place (git switch -c / branch -m); teardown of THIS session's worktree is done by the user (archive the thread in the app — snapshot preserved — or remove it from OUTSIDE this session). See $crw:crw-worktree-guardian.\"}",
     "tag": "identical",
     "record": ""
+  },
+  {
+    "name": "crw-1066-differ-0a76b5cc462f",
+    "input": "{\"command\": \"rm -rf ~/.codex/worktrees/z\", \"cwd\": \"home/.codex/worktrees/z\", \"event\": \"PreToolUse\"}",
+    "oracle": "{\"decision\": \"deny\", \"reason\": \"[crw: WORKTREE-GUARD-03] blocked `unresolvable target mentioning the managed worktree`: it deletes this session's own Codex-app-managed worktree (slot: ${ROOT}/home/.codex/worktrees/z). This thread is bound to that worktree; deletion destroys uncommitted work. Remedies: finish and commit here; rename in place (git switch -c / branch -m); teardown of THIS session's worktree is done by the user (archive the thread in the app \\u2014 snapshot preserved \\u2014 or remove it from OUTSIDE this session). See $crw:crw-worktree-guardian.\"}",
+    "go": "{\"decision\": \"deny\", \"reason\": \"[crw: WORKTREE-GUARD-03] cannot analyze this command (analysis-unavailable). Run a smaller command with literal paths, or inspect the script and use supported shell commands so the guard can check its targets. See $crw:crw-worktree-guardian.\"}",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-differ-1e0e7239bf26",
+    "input": "{\"command\": \"rm -rf $HOME/.codex/worktrees/z\", \"cwd\": \"home/.codex/worktrees/z\", \"event\": \"PreToolUse\"}",
+    "oracle": "{\"decision\": \"deny\", \"reason\": \"[crw: WORKTREE-GUARD-03] blocked `unresolvable target mentioning the managed worktree`: it deletes this session's own Codex-app-managed worktree (slot: ${ROOT}/home/.codex/worktrees/z). This thread is bound to that worktree; deletion destroys uncommitted work. Remedies: finish and commit here; rename in place (git switch -c / branch -m); teardown of THIS session's worktree is done by the user (archive the thread in the app \\u2014 snapshot preserved \\u2014 or remove it from OUTSIDE this session). See $crw:crw-worktree-guardian.\"}",
+    "go": "{\"decision\": \"deny\", \"reason\": \"[crw: WORKTREE-GUARD-03] cannot analyze this command (analysis-unavailable). Run a smaller command with literal paths, or inspect the script and use supported shell commands so the guard can check its targets. See $crw:crw-worktree-guardian.\"}",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-extra-040e4d74744f",
+    "input": "{\"command\": \"mv . /\", \"cwd\": \"home/.codex/worktrees/z\", \"event\": \"PreToolUse\"}",
+    "oracle": "{\"decision\": \"allow\", \"reason\": \"\"}",
+    "go": "{\"decision\": \"deny\", \"reason\": \"[crw: WORKTREE-GUARD-03] blocked `mv .`: it deletes this session's own Codex-app-managed worktree (slot: ${ROOT}/home/.codex/worktrees/z). This thread is bound to that worktree; deletion destroys uncommitted work. Remedies: finish and commit here; rename in place (git switch -c / branch -m); teardown of THIS session's worktree is done by the user (archive the thread in the app \\u2014 snapshot preserved \\u2014 or remove it from OUTSIDE this session). See $crw:crw-worktree-guardian.\"}",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-extra-0a1930027f0a",
+    "input": "{\"command\": \"rm -rf $\", \"cwd\": \"o\", \"event\": \"PreToolUse\", \"worktree_roots\": [\"\"]}",
+    "oracle": "{\"decision\": \"allow\", \"reason\": \"\"}",
+    "go": "{\"decision\": \"deny\", \"reason\": \"[crw: WORKTREE-GUARD-03] blocked `rm -r $`: it deletes this session's own Codex-app-managed worktree (slot: ${ROOT}/o). This thread is bound to that worktree; deletion destroys uncommitted work. Remedies: finish and commit here; rename in place (git switch -c / branch -m); teardown of THIS session's worktree is done by the user (archive the thread in the app \\u2014 snapshot preserved \\u2014 or remove it from OUTSIDE this session). See $crw:crw-worktree-guardian.\"}",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-extra-238fd0d8e5d9",
+    "input": "{\"command\": \"find . -delete\", \"cwd\": \"h\", \"event\": \"PreToolUse\", \"worktree_roots\": [\"\"]}",
+    "oracle": "{\"decision\": \"allow\", \"reason\": \"\"}",
+    "go": "{\"decision\": \"deny\", \"reason\": \"[crw: WORKTREE-GUARD-03] blocked `find . -delete`: it deletes this session's own Codex-app-managed worktree (slot: ${ROOT}/h). This thread is bound to that worktree; deletion destroys uncommitted work. Remedies: finish and commit here; rename in place (git switch -c / branch -m); teardown of THIS session's worktree is done by the user (archive the thread in the app \\u2014 snapshot preserved \\u2014 or remove it from OUTSIDE this session). See $crw:crw-worktree-guardian.\"}",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-extra-d1c921302221",
+    "input": "{\"command\": \"mv ../repo /\", \"cwd\": \"home/.codex/worktrees/z\", \"event\": \"PreToolUse\"}",
+    "oracle": "{\"decision\": \"allow\", \"reason\": \"\"}",
+    "go": "{\"decision\": \"deny\", \"reason\": \"[crw: WORKTREE-GUARD-03] blocked `mv ../repo`: it deletes this session's own Codex-app-managed worktree (slot: ${ROOT}/home/.codex/worktrees/z). This thread is bound to that worktree; deletion destroys uncommitted work. Remedies: finish and commit here; rename in place (git switch -c / branch -m); teardown of THIS session's worktree is done by the user (archive the thread in the app \\u2014 snapshot preserved \\u2014 or remove it from OUTSIDE this session). See $crw:crw-worktree-guardian.\"}",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-miss-185182b7af62",
+    "input": "{\"command\": \"rm -rf ../../zk3q\", \"cwd\": \"home/.codex/worktrees/zk3q/repo/deep\", \"event\": \"PreToolUse\", \"fs\": [{\"kind\": \"dir\", \"path\": \"home/.codex/worktrees/zk3q/repo/deep\"}]}",
+    "oracle": "{\"decision\": \"deny\", \"reason\": \"[crw: WORKTREE-GUARD-03] blocked `unresolvable target mentioning the managed worktree`: it deletes this session's own Codex-app-managed worktree (slot: ${ROOT}/home/.codex/worktrees/zk3q). This thread is bound to that worktree; deletion destroys uncommitted work. Remedies: finish and commit here; rename in place (git switch -c / branch -m); teardown of THIS session's worktree is done by the user (archive the thread in the app \\u2014 snapshot preserved \\u2014 or remove it from OUTSIDE this session). See $crw:crw-worktree-guardian.\"}",
+    "go": "{\"decision\": \"allow\", \"reason\": \"\"}",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-miss-5720a99f75f1",
+    "input": "{\"command\": \"cd deep && rm -rf .\", \"cwd\": \"home/.codex/worktrees/zk3q/repo\", \"event\": \"PreToolUse\", \"fs\": [{\"kind\": \"dir\", \"path\": \"home/.codex/worktrees/zk3q/repo/deep\"}]}",
+    "oracle": "{\"decision\": \"deny\", \"reason\": \"[crw: WORKTREE-GUARD-03] blocked `rm -r .`: it deletes this session's own Codex-app-managed worktree (slot: ${ROOT}/home/.codex/worktrees/zk3q). This thread is bound to that worktree; deletion destroys uncommitted work. Remedies: finish and commit here; rename in place (git switch -c / branch -m); teardown of THIS session's worktree is done by the user (archive the thread in the app \\u2014 snapshot preserved \\u2014 or remove it from OUTSIDE this session). See $crw:crw-worktree-guardian.\"}",
+    "go": "{\"decision\": \"allow\", \"reason\": \"\"}",
+    "tag": "open",
+    "record": "CRW-1066"
   }
 ]

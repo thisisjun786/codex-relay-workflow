@@ -28,6 +28,9 @@ type SessionEnvRequest struct {
 	Owner, OwnerCwd string
 	// BoundDir is the flow-bound directory the marker search reads the hook's ledger from; empty is bound.Dir().
 	BoundDir string
+	// Journal is the run's journal: what the session host adapter warns about (a marker search that tied a subagent other than by
+	// one ledger line) is a session_host_warning row of it (CRW-1372). Nil drops the warnings.
+	Journal engine.Journal
 }
 
 // SessionEnv is the backend and the session configuration of a session run: SessionBackend over the allocator, the session host
@@ -49,8 +52,14 @@ func SessionEnv(req SessionEnvRequest) (*agent.SessionBackend, *engine.SessionCo
 		}
 	}
 	backend.BoundDir = dir
+	host := agent.SessionHost{Host: sessionhost.New(req.Client, dir)}
+	if j := req.Journal; j != nil {
+		host.Warn = func(op string, warnings []string) {
+			j.Append(engine.Event{RunID: req.RunID, Kind: engine.KindFlow, Event: EvSessionHostWarning, Data: map[string]any{"op": op, "warnings": warnings}})
+		}
+	}
 	cfg := &engine.SessionConfig{
-		Host:  agent.SessionHost{Host: sessionhost.New(req.Client, dir)},
+		Host:  host,
 		Bus:   engine.NewFileStepBus(filepath.Join(req.StateDir, "flow", req.RunID)),
 		Owner: req.Owner,
 		Trace: backend.Trace,
@@ -61,10 +70,15 @@ func SessionEnv(req SessionEnvRequest) (*agent.SessionBackend, *engine.SessionCo
 	return backend, cfg, nil
 }
 
+// EvSessionHostWarning is the row of a session host warning (FindByMarker's no_ledger_line, ledger_op_differs, several_spawns,
+// window_ended).
+const EvSessionHostWarning = "session_host_warning"
+
 // StageWake is the wake of a session run's owner thread (CRW-1316 §10): a session_step_waiting message through run:<id>, which
 // the supervisor channel addresses to the run's owner (flow_runs.actor_task_id) and delivers the way it delivers every message: a
 // new turn on an idle thread, a resume and a turn on a notLoaded one, after the turn on a busy one (CRW-1333, CRW-1334). The
-// subject is <run>/<wake id>, so the same wake staged again is one message.
+// subject is <run>/<wake id>, so the same wake staged again is one message; a wake the relay already holds stages nothing, and
+// StageWake answers engine.WakeNotStaged with the relay's reason, so the run records staged:false (CRW-1372).
 func StageWake(st *store.Store) func(ctx context.Context, w engine.SessionWake) error {
 	return func(ctx context.Context, w engine.SessionWake) error {
 		steps := "a step"
@@ -77,8 +91,14 @@ func StageWake(st *store.Store) func(ctx context.Context, w engine.SessionWake) 
 		}
 		text := summary + ": " + strings.Join(w.Ops, ", ") + ".\n" +
 			"Take them: crw flow next " + w.Run + " --json, then spawn_agent each spawn step with the arguments it names and run crw flow dispatched for it."
-		_, err := (&supervisor.Channel{Store: st}).StageDirect(ctx, supervisor.DirectMessage{Kind: supervisor.KindSessionStepWaiting, Relationship: "run:" + w.Run,
-			Subject: w.Run + "/" + w.ID, Summary: summary, Text: text, Evidence: []string{"crw flow next " + w.Run + " --json"}}, nil)
-		return err
+		answer, err := (&supervisor.Channel{Store: st}).StageDirect(ctx, supervisor.DirectMessage{Kind: supervisor.KindSessionStepWaiting, Relationship: "run:" + w.Run,
+			Subject: supervisor.FlowSubject(w.Run, w.ID), Summary: summary, Text: text, Evidence: []string{"crw flow next " + w.Run + " --json"}}, nil)
+		if err != nil {
+			return err
+		}
+		if reason, _ := answer["reason"].(string); answer["staged"] != true && reason != "" {
+			return engine.WakeNotStaged{Reason: reason}
+		}
+		return nil
 	}
 }

@@ -231,6 +231,139 @@ func TestBodyMappingHeadings(t *testing.T) {
 	}
 }
 
+// TestIndentedSubBulletBelongsToItsParentCondition (CRW-1379 d3): a bullet indented deeper than the end condition above it is part of
+// that condition, not a condition of its own (a sub-bullet states how the parent is shown). It joins the parent's text, at any depth,
+// after a blank line too, and with any marker or checkbox; a bullet at the parent's indent, or less, is a new condition. A sub-bullet of
+// a "Blocked by:" item is part of that order, not a condition.
+func TestIndentedSubBulletBelongsToItsParentCondition(t *testing.T) {
+	tests := []struct {
+		name, body string
+		want       []string
+	}{
+		{"one sub-bullet", "## Done when\n- parent\n  - child\n- next\n", []string{"parent child", "next"}},
+		{"several sub-bullets", "## Done when\n- parent\n  - one\n  - two\n- next\n", []string{"parent one two", "next"}},
+		{"two levels", "## Done when\n- parent\n  - child\n    - grandchild\n- next\n", []string{"parent child grandchild", "next"}},
+		{"numbered under a dash", "## Done when\n1. parent\n   - child\n2. next\n", []string{"parent child", "next"}},
+		{"a checkbox sub-bullet", "## Done when\n- [ ] parent\n  - [x] child\n- [ ] next\n", []string{"parent child", "next"}},
+		{"tab indent", "## Done when\n- parent\n\t- child\n- next\n", []string{"parent child", "next"}},
+		{"after a blank line", "## Done when\n- parent\n\n  - child\n- next\n", []string{"parent child", "next"}},
+		{"continuation line then sub-bullet", "## Done when\n- parent\n  more of the parent\n  - child\n", []string{"parent more of the parent child"}},
+		{"sub-bullet last", "## Done when\n- a\n- parent\n  - child\n", []string{"a", "parent child"}},
+		{"a list that is indented as a whole stays flat", "## Done when\n  - a\n  - b\n", []string{"a", "b"}},
+		{"a dedent is a new condition", "## Done when\n  - a\n    - a1\n- b\n", []string{"a a1", "b"}},
+		{"text between ends the parent", "## Done when\n- a\nOutro\n  - b\n", []string{"a", "b"}},
+		{"blocked by item keeps its sub-bullets out", "## Done when\n- a\n- Blocked by: #1\n  - why\n- b\n", []string{"a", "b"}},
+		{"empty parent", "## Done when\n- \n  - child\n- b\n", []string{"child", "b"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			res := build(t, milestone(open(1, tc.body)), Options{})
+			if got := only(t, res).Criteria; !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("criteria = %q; want %q", got, tc.want)
+			}
+		})
+	}
+
+	// the edit regions are read as before: a nested item of a region list is an item of its own
+	res := build(t, milestone(open(1, "## Done when\n- a\n\n## Edit regions\n- `a/`\n  - `a/b.go`\n")), Options{})
+	if got := only(t, res).Regions; len(got) != 2 || got[0].Path != "a/" || got[1].Path != "a/b.go" {
+		t.Errorf("regions = %+v; a nested region item stays an item of its own", got)
+	}
+}
+
+// TestIndentedBlockedByUnderACriterionStaysABlocker (CRW-1379 P3): a "Blocked by:" bullet indented under a criterion is an order, as
+// tracking.ParseBlockedBy reads it at any indent, and not a part of the criterion's text; the criterion stays the parent of the
+// sub-bullets that come after it, and a sub-bullet of the "Blocked by:" bullet leaves with it.
+func TestIndentedBlockedByUnderACriterionStaysABlocker(t *testing.T) {
+	tests := []struct {
+		name, body string
+		want       []string
+	}{
+		{"dash", "## Done when\n- parent\n  - Blocked by: #1\n- next\n", []string{"parent", "next"}},
+		{"bold", "## Done when\n- parent\n  - **Blocked by:** #1\n- next\n", []string{"parent", "next"}},
+		{"star and capitals", "## Done when\n- parent\n  * BLOCKED BY: #1\n- next\n", []string{"parent", "next"}},
+		{"tab indent", "## Done when\n- parent\n\t- Blocked by: #1\n- next\n", []string{"parent", "next"}},
+		{"two levels down", "## Done when\n- parent\n  - child\n    - Blocked by: #1\n- next\n", []string{"parent child", "next"}},
+		{"after a blank line", "## Done when\n- parent\n\n  - Blocked by: #1\n- next\n", []string{"parent", "next"}},
+		{"the parent keeps the sub-bullets after it", "## Done when\n- parent\n  - Blocked by: #1\n  - child\n- next\n", []string{"parent child", "next"}},
+		{"and those before it", "## Done when\n- parent\n  - child\n  - Blocked by: #1\n- next\n", []string{"parent child", "next"}},
+		{"its own sub-bullet leaves with it", "## Done when\n- parent\n  - Blocked by: #1\n    - why\n  - child\n- next\n", []string{"parent child", "next"}},
+		{"a continuation line of it leaves with it", "## Done when\n- parent\n  - Blocked by: #1\n    and the reason\n- next\n", []string{"parent", "next"}},
+		{"a top level one still drops its sub-bullets", "## Done when\n- a\n- Blocked by: #1\n  - why\n- b\n", []string{"a", "b"}},
+		{"a list indented as a whole is flat", "## Done when\n  - a\n  - Blocked by: #1\n  - b\n", []string{"a", "b"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			res := build(t, milestone(open(1, "## Done when\n- one\n"), open(2, tc.body)), Options{})
+			two := res.Input.Projects[0].Issues[1]
+			if !reflect.DeepEqual(two.Criteria, tc.want) {
+				t.Errorf("criteria = %q; want %q", two.Criteria, tc.want)
+			}
+			if !reflect.DeepEqual(two.After, []string{"o:r:1"}) {
+				t.Errorf("after = %v; want [o:r:1]: the indented Blocked by line is still the order", two.After)
+			}
+		})
+	}
+}
+
+// TestIndentedContinuationKeepsTheStateOfItsBullet (CRW-1403): an indented line that is not a bullet continues the bullet above it and
+// leaves what that bullet set alone. Under a criterion the criterion stays the parent of the sub-bullets after the line; under a
+// "Blocked by:" item the sub-bullets after the line stay left out with it. An indented plain "Blocked by:" line is an order as
+// tracking.ParseBlockedBy reads it, with or without a bullet above it, and never a part of a criterion's text; the sub-bullets under it
+// are left out with it. A blank line before the line still ends the continuation.
+func TestIndentedContinuationKeepsTheStateOfItsBullet(t *testing.T) {
+	tests := []struct {
+		name, body string
+		want       []string
+		blocked    bool // the body holds a Blocked by line, which is an order on issue 1
+	}{
+		{"criterion, continuation, sub-bullet", "## Done when\n- parent\n  more of it\n  - child\n- next\n", []string{"parent more of it child", "next"}, false},
+		{"criterion, two continuations, sub-bullets", "## Done when\n- parent\n  more\n  - one\n  and more\n  - two\n- next\n", []string{"parent more one and more two", "next"}, false},
+		{"sub-bullet, its continuation, sub-bullet", "## Done when\n- parent\n  - one\n    about one\n  - two\n- next\n", []string{"parent one about one two", "next"}, false},
+		{"blocked by item, continuation, sub-bullet", "## Done when\n- parent\n  - Blocked by: #1\n    and the reason\n  - child\n- next\n", []string{"parent child", "next"}, true},
+		{"blocked by item, continuation, its sub-bullet", "## Done when\n- parent\n  - Blocked by: #1\n    and the reason\n    - why\n  - child\n- next\n", []string{"parent child", "next"}, true},
+		{"top level blocked by, continuation, its sub-bullet", "## Done when\n- a\n- Blocked by: #1\n  the reason\n  - why\n- b\n", []string{"a", "b"}, true},
+		{"top level blocked by, two continuations", "## Done when\n- a\n- Blocked by: #1\n  the reason\n  and more\n  - why\n- b\n", []string{"a", "b"}, true},
+		{"dropped sub-bullet, its continuation, sibling", "## Done when\n- a\n- Blocked by: #1\n  - why\n    more why\n  - why too\n- b\n", []string{"a", "b"}, true},
+		{"tab continuation", "## Done when\n- a\n- Blocked by: #1\n\tthe reason\n\t- why\n- b\n", []string{"a", "b"}, true},
+		{"a blank line ends the continuation", "## Done when\n- a\n- Blocked by: #1\n\n  the reason\n  - c\n", []string{"a", "c"}, true},
+		{"plain blocked by line under a criterion", "## Done when\n- parent\n  Blocked by: #1\n- next\n", []string{"parent", "next"}, true},
+		{"plain bold blocked by line under a criterion", "## Done when\n- parent\n  **Blocked by:** #1\n- next\n", []string{"parent", "next"}, true},
+		{"plain blocked by line, then a sub-bullet of the criterion", "## Done when\n- parent\n  Blocked by: #1\n  - child\n- next\n", []string{"parent child", "next"}, true},
+		{"plain blocked by line, its sub-bullet, a sibling", "## Done when\n- parent\n  Blocked by: #1\n    - why\n  - child\n- next\n", []string{"parent child", "next"}, true},
+		{"plain blocked by line, a continuation, its sub-bullet", "## Done when\n- parent\n  Blocked by: #1\n    the reason\n    - why\n  - child\n- next\n", []string{"parent child", "next"}, true},
+		{"plain blocked by line after a continuation", "## Done when\n- parent\n  more\n  Blocked by: #1\n  - child\n- next\n", []string{"parent more child", "next"}, true},
+		{"plain blocked by line with no bullet above it", "## Done when\n  Blocked by: #1\n- a\n", []string{"a"}, true},
+		{"plain blocked by line with no bullet above it, its sub-bullet", "## Done when\n  Blocked by: #1\n    - why\n- a\n", []string{"a"}, true},
+		{"plain blocked by line with no bullet above it, a list under it", "## Done when\n  Blocked by: #1\n  - a\n  - b\n", []string{"a", "b"}, true},
+		{"plain blocked by line after a blank line", "## Done when\n- a\n\n  Blocked by: #1\n    - why\n- b\n", []string{"a", "b"}, true},
+		{"plain blocked by line inside a dropped item", "## Done when\n- a\n- Blocked by: #1\n  - why\n    Blocked by: #2\n  - why too\n- b\n", []string{"a", "b"}, true},
+		{"plain tab indented blocked by line, no bullet above it", "## Done when\n\tBlocked by: #1\n\t\t- why\n- a\n", []string{"a"}, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			res := build(t, milestone(open(1, "## Done when\n- one\n"), open(2, tc.body)), Options{})
+			two := res.Input.Projects[0].Issues[1]
+			if !reflect.DeepEqual(two.Criteria, tc.want) {
+				t.Errorf("criteria = %q; want %q", two.Criteria, tc.want)
+			}
+			var wantAfter []string
+			if tc.blocked {
+				wantAfter = []string{"o:r:1"}
+			}
+			if !reflect.DeepEqual(two.After, wantAfter) {
+				t.Errorf("after = %v; want %v", two.After, wantAfter)
+			}
+		})
+	}
+
+	// a list of edit regions is read as before: each bullet an item, and a Blocked by line is not a path
+	res := build(t, milestone(open(1, "## Done when\n- a\n\n## Edit regions\n- `a/`\n  Blocked by: #9\n  - `a/b.go`\n")), Options{})
+	if got := only(t, res).Regions; len(got) != 2 || got[0].Path != "a/" || got[1].Path != "a/b.go" {
+		t.Errorf("regions = %+v; want a/ and a/b.go", got)
+	}
+}
+
 // TestBodyMappingRegionsAndSize (c2): edit regions come from the headings 수정 범위, Edit regions and Regions (a bullet's backticked
 // path, else its first word; a trailing slash is a tree); size_fit, size_reason and issue_size from "name: value" lines under 크기,
 // Size or Size fit. A missing section gives nothing and no warning (the compile defaults apply); a region the scheduler cannot take
@@ -408,6 +541,123 @@ func TestProjectKeyIsComparedWithTheOwnersBinding(t *testing.T) {
 	res = build(t, r(), Options{Binding: &Binding{Thread: "thread-owner", Err: errors.New("no relay store at /x")}})
 	if len(res.Warnings) != 1 || res.Warnings[0].Rule != "project_key_unchecked" || !strings.Contains(res.Warnings[0].Detail, "no relay store at /x") {
 		t.Errorf("unreadable bindings: %+v", res.Warnings)
+	}
+}
+
+// TestBuildCarriesTheKeyWarningsInTheCompileInput (CRW-1379 c1): the key warnings (project_key_bound, project_key_unchecked) are also a
+// member of the project in the compile input, so the bare input of a pipe carries them to `crw flow compile`; the other warnings of the
+// mapping stay on stderr and in the envelope. A bound key carries none.
+func TestBuildCarriesTheKeyWarningsInTheCompileInput(t *testing.T) {
+	r := func() *fakeReader { return milestone(open(1, "just prose\n")) } // criteria_missing is a warning too
+	res := build(t, r(), Options{Binding: &Binding{Thread: "thread-owner", Scopes: []string{"uuid-1"}}})
+	if !reflect.DeepEqual(rules(res.Warnings), []string{"criteria_missing", "project_key_bound"}) {
+		t.Fatalf("warnings = %v", rules(res.Warnings))
+	}
+	got := res.Input.Projects[0].Warnings
+	if len(got) != 1 || got[0] != res.Warnings[1] || got[0].Rule != "project_key_bound" || !strings.Contains(got[0].Detail, "o/r#3") {
+		t.Errorf("the input carries %+v; want the project_key_bound warning only", got)
+	}
+	res = build(t, r(), Options{Binding: &Binding{}})
+	if got := res.Input.Projects[0].Warnings; len(got) != 1 || got[0].Rule != "project_key_unchecked" {
+		t.Errorf("no thread: the input carries %+v", got)
+	}
+	res = build(t, r(), Options{Binding: &Binding{Thread: "thread-owner", Scopes: []string{"o:r:3"}}})
+	if got := res.Input.Projects[0].Warnings; len(got) != 0 {
+		t.Errorf("a bound key carries %+v", got)
+	}
+	if res = build(t, r(), Options{}); len(res.Input.Projects[0].Warnings) != 0 {
+		t.Errorf("no binding to compare: %+v", res.Input.Projects[0].Warnings)
+	}
+}
+
+// TestPipedPlanInputKeepsTheKeyWarningInTheCompiledPlan (CRW-1379 c1, P2): `crw flow plan-input | crw flow compile --dry-run -` (the
+// bare input, no --envelope) records the key warning in the compile output. When compile names no thread it compares nothing and the
+// warning plan-input carried stands, with the milestone ref only plan-input knows. When compile names a thread its own comparison
+// replaces the carried key warning: a project_key_unchecked of a plan-input run without a thread does not outlive a key the thread is
+// bound to, and the two sides never both speak.
+func TestPipedPlanInputKeepsTheKeyWarningInTheCompiledPlan(t *testing.T) {
+	// plan-input is run by a session with a thread whose binding is another key: it carries project_key_bound
+	e := newEnv()
+	e.env["CODEX_THREAD_ID"] = "thread-owner"
+	e.scopes = []string{"uuid-1"}
+	code, bound, errOut := e.run("--milestone", "o/r#3", "--target-repository", "/srv/checkout", "--base-ref", "dev")
+	if code != 0 {
+		t.Fatalf("plan-input: exit %d, stderr %q", code, errOut)
+	}
+	// plan-input is run with no thread: it carries project_key_unchecked
+	e = newEnv()
+	code, unchecked, errOut := e.run("--milestone", "o/r#3", "--target-repository", "/srv/checkout", "--base-ref", "dev")
+	if code != 0 {
+		t.Fatalf("plan-input without a thread: exit %d, stderr %q", code, errOut)
+	}
+	compileWith := func(piped, thread string, scopes []string) ([]compile.Warning, string) {
+		d := &compile.Deps{
+			Scopes: func(context.Context, string, string, string) ([]string, error) { return scopes, nil },
+			Getenv: func(k string) string {
+				if k == "CODEX_THREAD_ID" {
+					return thread
+				}
+				return ""
+			},
+		}
+		var out, cErr bytes.Buffer
+		if c := compile.RunWith(bg, d, []string{"--dry-run", "-"}, strings.NewReader(piped), &out, &cErr); c != 0 {
+			t.Fatalf("crw flow compile --dry-run -: exit %d\n%s%s", c, out.String(), cErr.String())
+		}
+		var res compile.Result
+		if err := json.Unmarshal(out.Bytes(), &res); err != nil {
+			t.Fatalf("%v\n%s", err, out.String())
+		}
+		return res.Plans[0].Warnings, cErr.String()
+	}
+
+	// compile names no thread: what plan-input carried stands, milestone ref included
+	ws, cErr := compileWith(bound, "", nil)
+	if len(ws) != 1 || ws[0].Rule != "project_key_bound" || !strings.Contains(ws[0].Detail, "o/r#3") || !strings.Contains(ws[0].Detail, "uuid-1") || !strings.Contains(cErr, "[project_key_bound]") {
+		t.Errorf("no thread, carried bound: warnings %+v, stderr %q", ws, cErr)
+	}
+	if ws, _ = compileWith(unchecked, "", nil); len(ws) != 1 || ws[0].Rule != "project_key_unchecked" {
+		t.Errorf("no thread, carried unchecked: warnings %+v", ws)
+	}
+
+	// compile's thread is bound to the key: the stale carried warning (either) is gone
+	for name, piped := range map[string]string{"carried bound": bound, "carried unchecked": unchecked} {
+		ws, cErr := compileWith(piped, "thread-owner", []string{"o:r:3"})
+		if len(ws) != 0 || strings.Contains(cErr, "project_key") {
+			t.Errorf("%s, key bound on compile's side: warnings %+v, stderr %q; want none", name, ws, cErr)
+		}
+	}
+
+	// compile's thread is bound to another key: one warning, compile's own
+	for name, piped := range map[string]string{"carried bound": bound, "carried unchecked": unchecked} {
+		ws, cErr := compileWith(piped, "thread-owner", []string{"uuid-2"})
+		if len(ws) != 1 || ws[0].Rule != "project_key_bound" || !strings.Contains(ws[0].Detail, "uuid-2") || strings.Count(cErr, "[project_key") != 1 {
+			t.Errorf("%s, another key on compile's side: warnings %+v, stderr %q; want compile's one project_key_bound", name, ws, cErr)
+		}
+	}
+
+	// compile cannot read the bindings: its unchecked replaces a carried bound
+	d := &compile.Deps{
+		Scopes: func(context.Context, string, string, string) ([]string, error) {
+			return nil, errors.New("no relay store at /x")
+		},
+		Getenv: func(k string) string {
+			if k == "CODEX_THREAD_ID" {
+				return "thread-owner"
+			}
+			return ""
+		},
+	}
+	var out, cErrBuf bytes.Buffer
+	if c := compile.RunWith(bg, d, []string{"--dry-run", "-"}, strings.NewReader(bound), &out, &cErrBuf); c != 0 {
+		t.Fatalf("crw flow compile --dry-run - with unreadable bindings: exit %d\n%s", c, cErrBuf.String())
+	}
+	var res compile.Result
+	if err := json.Unmarshal(out.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	if ws := res.Plans[0].Warnings; len(ws) != 1 || ws[0].Rule != "project_key_unchecked" || !strings.Contains(ws[0].Detail, "no relay store at /x") || strings.Contains(cErrBuf.String(), "[project_key_bound]") {
+		t.Errorf("unreadable bindings on compile's side: warnings %+v, stderr %q; want compile's one project_key_unchecked", ws, cErrBuf.String())
 	}
 }
 

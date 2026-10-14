@@ -344,7 +344,7 @@ counts as closing one — is `dev-testing` `references/ci-pipeline.md` §5
 
 ### Escalate When:
 
-- **Repeated fix attempts failed** — likely architectural; return it to the level that assigned the work (an issue child to the child that released it, a task with no parent to the user)
+- **Repeated fix attempts failed** — likely architectural; return it to the level that assigned the work (an issue child to [the child](../crw-canon/references/hierarchy.md#the-levels) (project session, relay role `parent`) that released it, a task with no parent to the user)
 - **Undocumented library behavior** — document evidence; propose an upstream report or scoped workaround without posting externally unless authorized
 - **Environment-specific** — requires access you don't have (prod DB, cloud IAM)
 - **Security-sensitive** — don't debug auth/crypto/payment alone; flag it to the level that assigned the work for human review

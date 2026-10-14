@@ -1,5 +1,7 @@
 # Preparing and starting a live trial
 
+Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+
 A live trial drives the installed runtime through a real completion, a real delivery to a parent,
 a real verdict and a real correction round trip, on the shared store that ordinary work uses. The
 automatic legs of one have closed with no operator inside the window. What went wrong on the way

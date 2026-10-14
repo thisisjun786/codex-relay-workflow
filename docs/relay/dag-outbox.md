@@ -1,5 +1,7 @@
 # DAG summary outbox
 
+Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+
 A DAG plan's Linear summary is written by the project's parent with its own Linear connector. The relay holds no Linear credential, makes no Linear call and has no Linear client; what it holds is the
 durable, ordered queue the parent drains: one table in the DAG zone and seven commands. A summary that is lost, refused or overtaken is recovered by writing a summary again. It never re-runs a child,
 re-sends a correction or makes a second summary, because every command here writes the summary table and no other. This page is the normative description. It follows the DAG execution contract

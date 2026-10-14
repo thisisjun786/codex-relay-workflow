@@ -214,5 +214,301 @@
     "go": "[\"/m/a\"]",
     "tag": "intentionally-changed",
     "record": "known-defects CRW-900 (port: fixed, security): the port names the second positional argument of shutil.copy as a write destination, which the oracle scriptWriteDestinations (open() and Path().write_text/bytes only) misses; CRW-857 pinned the gap"
+  },
+  {
+    "name": "crw-1066-shellwrite-differ-special-redirect",
+    "input": "{\"command\": \">|~/x\"}",
+    "oracle": "[\"~/x\"]",
+    "go": "[\"\\u0000unknown\"]",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-shellwrite-extra-python-inline",
+    "input": "{\"command\": \"python3 -c\\\"open('/m/a b','w')\\\"\"}",
+    "oracle": "[]",
+    "go": "[\"/m/a b\"]",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-shellwrite-differ-heredoc",
+    "input": "{\"command\": \"> /m/a; cat <<A > ~/x\"}",
+    "oracle": "[\"/m/a\", \"~/x\"]",
+    "go": "[\"\\u0000unknown\"]",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-shellwrite-extra-special-redirect",
+    "input": "{\"command\": \"a#b 2>\"}",
+    "oracle": "[]",
+    "go": "[\"\\u0000unknown\"]",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-shellwrite-differ-in-place-edit",
+    "input": "{\"command\": \"sed -i 's/a/b/' ~/x\"}",
+    "oracle": "[\"~/x\"]",
+    "go": "[\"\\u0000unknown\"]",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-shellwrite-extra-move-copy",
+    "input": "{\"command\": \"cp -t\"}",
+    "oracle": "[]",
+    "go": "[\"\\u0000unknown\"]",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-shellwrite-extra-heredoc",
+    "input": "{\"command\": \"5 cp /w/a.md /m/a'b\\ncat <<'EOF'\"}",
+    "oracle": "[]",
+    "go": "[\"\\u0000unknown\"]",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-shellwrite-extra-in-place-edit",
+    "input": "{\"command\": \"sed -i 's/a/b/'\"}",
+    "oracle": "[]",
+    "go": "[\"s/a/b/\"]",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-shellwrite-differ-python-inline",
+    "input": "{\"command\": \"python3 -c\\\"open('rel','w'\"}",
+    "oracle": "[\"rel\"]",
+    "go": "[\"\\u0000unknown\"]",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-shellwrite-differ-line-break",
+    "input": "{\"command\": \"> /m/a b\\n.\"}",
+    "oracle": "[\"/m/a\"]",
+    "go": "[\"\\u0000unknown\"]",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-shellwrite-differ-move-copy",
+    "input": "{\"command\": \"cp -t ~/x\"}",
+    "oracle": "[\"~/x\"]",
+    "go": "[\"\\u0000unknown\"]",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-shellwrite-differ-comment",
+    "input": "{\"command\": \"\\\\ # /m/a; >|/m/a\"}",
+    "oracle": "[\"/m/a\"]",
+    "go": "[\"\\u0000unknown\"]",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-shellwrite-miss-comment",
+    "input": "{\"command\": \"# rel; >/m/a\"}",
+    "oracle": "[\"/m/a\"]",
+    "go": "[]",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-shellwrite-differ-tee",
+    "input": "{\"command\": \"tee ~/x\"}",
+    "oracle": "[\"~/x\"]",
+    "go": "[\"\\u0000unknown\"]",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-shellwrite-extra-tee",
+    "input": "{\"command\": \"d\\ntee ~\"}",
+    "oracle": "[]",
+    "go": "[\"\\u0000unknown\"]",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-shellwrite-extra-comment",
+    "input": "{\"command\": \"\\\\ # /m/a'\"}",
+    "oracle": "[]",
+    "go": "[\"\\u0000unknown\"]",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-shellwrite-differ-wrapper",
+    "input": "{\"command\": \"=2 sudo >/m/a\"}",
+    "oracle": "[\"/m/a\"]",
+    "go": "[\"\\u0000unknown\"]",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-shellwrite-differ-substitution",
+    "input": "{\"command\": \"> ~/x`\"}",
+    "oracle": "[\"~/x`\"]",
+    "go": "[\"\\u0000unknown\"]",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-shellwrite-extra-xargs",
+    "input": "{\"command\": \"xargs -n\"}",
+    "oracle": "[]",
+    "go": "[\"\\u0000unknown\"]",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-shellwrite-extra-wrapper",
+    "input": "{\"command\": \"sudo -u\"}",
+    "oracle": "[]",
+    "go": "[\"\\u0000unknown\"]",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-shellwrite-extra-line-break",
+    "input": "{\"command\": \"\\r\"}",
+    "oracle": "[]",
+    "go": "[\"\\u0000unknown\"]",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-shellwrite-differ-xargs",
+    "input": "{\"command\": \">/m/a b & xargs -n\"}",
+    "oracle": "[\"/m/a\"]",
+    "go": "[\"\\u0000unknown\"]",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-shellwrite-differ-quote",
+    "input": "{\"command\": \">/m/a'b\"}",
+    "oracle": "[\"/m/a'b\"]",
+    "go": "[\"\\u0000unknown\"]",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-shellwrite-extra-quote",
+    "input": "{\"command\": \"'\"}",
+    "oracle": "[]",
+    "go": "[\"\\u0000unknown\"]",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-shellwrite-miss-tee",
+    "input": "{\"command\": \"tee /m/a\\nb\"}",
+    "oracle": "[\"/m/a\", \"b\"]",
+    "go": "[\"/m/a\"]",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-shellwrite-differ-plain-redirect",
+    "input": "{\"command\": \">~/x\"}",
+    "oracle": "[\"~/x\"]",
+    "go": "[\"\\u0000unknown\"]",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-shellwrite-miss-in-place-edit",
+    "input": "{\"command\": \"sed -i.bak -e 's/a/b/' /m/a\\nb\"}",
+    "oracle": "[\"/m/a\", \"b\"]",
+    "go": "[\"/m/a\"]",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-shellwrite-miss-heredoc",
+    "input": "{\"command\": \"tee /m/n\\ncat <<A > /m/a#b\\nrel\\nA\\necho x > /\"}",
+    "oracle": "[\"/m/a#b\", \"/\", \"/m/n\", \"cat\", \">\", \"/m/a#b\", \"echo\", \"x\", \">\", \"/\"]",
+    "go": "[\"/m/n\", \"/m/a#b\", \"/\"]",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-shellwrite-miss-special-redirect",
+    "input": "{\"command\": \"o >> /m/a; (echo hi > /m/a)\"}",
+    "oracle": "[\"/m/a\", \"/m/a)\"]",
+    "go": "[\"/m/a\"]",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-shellwrite-extra-substitution",
+    "input": "{\"command\": \"(\"}",
+    "oracle": "[]",
+    "go": "[\"\\u0000unknown\"]",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-shellwrite-miss-move-copy",
+    "input": "{\"command\": \"cp /w/a.md /m/a\\necho hi>/m/a\"}",
+    "oracle": "[\"/m/a\", \"hi>/m/a\"]",
+    "go": "[\"/m/a\"]",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-shellwrite-miss-substitution",
+    "input": "{\"command\": \"n >rel; (echo hi > rel)\"}",
+    "oracle": "[\"rel\", \"rel)\"]",
+    "go": "[\"rel\"]",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-shellwrite-miss-python-inline",
+    "input": "{\"command\": \"python3 -c \\\"open(r'/m/a','a')\\\"\\ny=`echo hi > /m/a`\"}",
+    "oracle": "[\"/m/a`\", \"/m/a\"]",
+    "go": "[\"/m/a\"]",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-shellwrite-extra-plain-redirect",
+    "input": "{\"command\": \";\"}",
+    "oracle": "[]",
+    "go": "[\"\\u0000unknown\"]",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-shellwrite-miss-line-break",
+    "input": "{\"command\": \"sudo sed --in-place=.bak 's/a/b/' /m/a\\r\\nb\\nnohup sed --in-place=.bak 's/a/b/'\"}",
+    "oracle": "[\"/m/a\", \"b\", \"nohup\", \"sed\", \"s/a/b/\"]",
+    "go": "[\"s/a/b/\", \"/m/a\"]",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-shellwrite-miss-wrapper",
+    "input": "{\"command\": \"sed --in-place=.bak 's/a/b/' rel.md & exec sed --in-place=.bak 's/a/b/'\"}",
+    "oracle": "[\"rel.md\", \"&\", \"exec\", \"sed\", \"s/a/b/\"]",
+    "go": "[\"s/a/b/\", \"rel.md\"]",
+    "tag": "open",
+    "record": "CRW-1066"
+  },
+  {
+    "name": "crw-1066-shellwrite-miss-xargs",
+    "input": "{\"command\": \"command sed -i.bak -e 's/a/b/' rel\\necho /m/a\\\"b | xargs -I{} tee {}\\nenv -i sed --in-place=.bak 's/a/b/' /m/a\\\"b\"}",
+    "oracle": "[\"rel\", \"echo\", \"/m/a\\\"b\", \"|\", \"xargs\", \"tee\", \"{}\", \"env\", \"sed\", \"s/a/b/\", \"/m/a\\\"b\"]",
+    "go": "[\"rel\"]",
+    "tag": "open",
+    "record": "CRW-1066"
   }
 ]

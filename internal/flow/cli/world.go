@@ -89,7 +89,7 @@ func ProductionWorld(ctx context.Context, req WorldRequest) (World, error) {
 		// `crw manage send-parent` on the relay the run is in
 		program, _ := os.Executable()
 		reporter := report.Reporter{Run: spec.RunID, W: &report.Writer{Store: st, Rows: report.JournalAppender{Journal: j, RunID: spec.RunID, Store: st}, Resolver: report.StoreResolver{Store: st},
-			Sender: report.ManageSender{Program: program, State: statePath, Socket: socket}, ArtifactDir: filepath.Join(statePath, "flow", spec.RunID, "reports")}}
+			Sender: report.RelaySender{Store: st, Fallback: report.ManageSender{Program: program, State: statePath, Socket: socket}}, ArtifactDir: filepath.Join(statePath, "flow", spec.RunID, "reports")}}
 		if lane, err = OpsFor(ctx, LaneRequest{WorldRequest: req, Store: st, Journal: j, Identity: id, Repo: repo, Policy: table, Threads: host, Reporter: reporter, Socket: socket}); err != nil {
 			_ = client.Close()
 			_ = st.Close()
@@ -125,7 +125,7 @@ func ProductionWorld(ctx context.Context, req WorldRequest) (World, error) {
 		// a session run (CRW-1316): the steps on the run's bus, the subagents read through the session host adapter, the wakes staged
 		// in the store; the App Server backend stays for what the lane reads of the host (the milestone close's archive)
 		cwd, _ := os.Getwd()
-		sb, sess, err := journal.SessionEnv(journal.SessionEnvRequest{Store: st, Client: client, Allocator: alloc, StateDir: req.State, RunID: spec.RunID, Owner: spec.Thread, OwnerCwd: cwd})
+		sb, sess, err := journal.SessionEnv(journal.SessionEnvRequest{Store: st, Client: client, Allocator: alloc, StateDir: req.State, RunID: spec.RunID, Owner: spec.Thread, OwnerCwd: cwd, Journal: j})
 		if err != nil {
 			backend.Close()
 			_ = client.Close()

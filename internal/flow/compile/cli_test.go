@@ -12,6 +12,8 @@ import (
 
 func runCLI(t testing.TB, stdin string, args ...string) (int, string, string) {
 	t.Helper()
+	// no owner thread named: the key comparison of CRW-1379 stays out of the golden bytes, whatever session runs the test
+	t.Setenv("CODEX_THREAD_ID", "")
 	var out, errOut bytes.Buffer
 	code := RunCLI(context.Background(), args, strings.NewReader(stdin), &out, &errOut)
 	return code, out.String(), errOut.String()

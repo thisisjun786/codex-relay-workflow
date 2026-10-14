@@ -108,6 +108,13 @@ type SessionConfig struct {
 	// between two notifications, and UnresponsiveAfter how long they wait before the run writes its session_unresponsive
 	// escalation (DefaultSessionWakeAfter, DefaultSessionRenotifyMax, DefaultSessionUnresponsiveAfter).
 	WakeAfter, RenotifyMax, UnresponsiveAfter time.Duration
+	// Process names the process that runs the run (the token of the process lock it holds): its started row records it as
+	// `process`, so a reader tells this process's started row from an earlier process's (CRW-1372). "" records none.
+	Process string
+	// Started is called once the run's started row (and its policy_repinned row when it repinned) is in the journal, before the
+	// reconcile of a resume and before any call: it gets the table that row pinned. The run's process binds its owner's
+	// orchestrator line there, from its own record (CRW-1372). nil does nothing.
+	Started func(table *Policy)
 }
 
 // Session defaults.
