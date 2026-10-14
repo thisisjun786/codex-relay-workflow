@@ -355,7 +355,9 @@ type startedCase struct{ done chan caseResult }
 // start draws the campaign's inputs in order, one case after another, and judges up to cfg.Workers of them at a time,
 // each by its own goroutine on a worker of the pool; the draw stays in order so a seed gives the same inputs at any
 // worker count, and the results come back in case order so the counts and the files written do not depend on which
-// case finished first. It stops drawing at cfg.Cases, at the deadline, or when stop is called.
+// case finished first. It stops drawing at cfg.Cases, at the deadline, or when stop is called. A case is drawn only when
+// a worker is free to take it and the draw has not been stopped, so every input drawn is a case that runs and --skip
+// carries the same seed on from the cases a stopped campaign judged.
 func (c *campaign) start(deadline time.Time) *caseStream {
 	workers := c.cfg.Workers
 	if workers < 1 {
@@ -369,18 +371,22 @@ func (c *campaign) start(deadline time.Time) *caseStream {
 		for i := 0; i < c.cfg.Skip; i++ {
 			c.cfg.Target.Generate(c.rng, c.rng.Int())
 		}
-		for n := 0; (c.cfg.Cases <= 0 || n < c.cfg.Cases) && !stream.halt.Load(); n++ {
+		for n := 0; c.cfg.Cases <= 0 || n < c.cfg.Cases; n++ {
+			// The slot comes first: while every worker is in a case this waits, and what ends the draw (Stop, the deadline, a
+			// case error) is read only once a case can start, so no input is drawn for a case that is then not started.
+			running <- struct{}{}
 			select {
 			case <-c.cfg.Stop:
 				stream.stopped.Store(true)
+				<-running
 				return
 			default:
 			}
-			if !deadline.IsZero() && time.Now().After(deadline) {
+			if stream.halt.Load() || !deadline.IsZero() && time.Now().After(deadline) {
+				<-running
 				return
 			}
 			input := c.cfg.Target.Generate(c.rng, c.rng.Int())
-			running <- struct{}{}
 			started := &startedCase{done: make(chan caseResult, 1)}
 			go func() {
 				defer func() { <-running }()
