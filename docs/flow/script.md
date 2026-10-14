@@ -954,6 +954,8 @@ any row is written. `crw flow shadow` replays either from the trace and names th
   active; only then is the call ended `held` (or `superseded`). A call that waited for a dispatch retracts its step. A step whose
   subagent is known (a `send_input`, an adopted one) and was not bound yet has the turn that subagent started for it bound first
   (`turn_started`), so the rows name the turn the interrupt reaches; a spawn step no subagent was bound to has no turn to interrupt.
+  The rows before an interrupt, that `turn_started` among them, are stored before it is sent: a journal that batches its rows
+  commits them first, so a process that dies once the interrupt is sent leaves the turn the `interrupt_requested` row decides.
 - An interrupt goes with the turn it was asked for. In the process that asked for it, that is the turn in flight. For a process
   that resumes the run it is the turn the rows bound to the step and attempt of the `interrupt_requested` row (its `op`, the step
   published last before it): that turn, if the resumed call goes on with it, ends `held` for the row's reason whatever it came to. Every

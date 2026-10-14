@@ -1147,10 +1147,15 @@ func (c *callRun) sessionOutcome(ctx context.Context, turnID string) (TurnOutcom
 
 // sessionStop ends a turn the engine stopped (a pause, a cancellation, a deadline): the bound subagent's turn is interrupted and
 // the thread read until it is no longer active, so a held row is never written beside a subagent that still works. A turn that
-// was not bound yet has nothing to interrupt.
+// was not bound yet has nothing to interrupt. The rows before the interrupt are stored before it is sent: the turn_started a stop
+// binds (sessionBindStopped) or a bind wrote after the interrupt_requested row is the turn that row decides for a process that
+// resumes the run, and a journal that batches its rows would lose it with a process that dies once the interrupt is sent.
 func (c *callRun) sessionStop(ctx context.Context) (TurnOutcome, *sessionLoss, error) {
 	s, sc := c.sess, c.e.cfg.Session
 	if s.agent != "" {
+		if err := journalFlush(c.e.j); err != nil {
+			c.e.journalFailed(err)
+		}
 		ictx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
 		// every running turn of the subagent: the bound one, or the one a send_input step that was not bound yet started
 		if turns, err := sc.Host.Turns(ictx, s.agent, 0, false); err == nil {

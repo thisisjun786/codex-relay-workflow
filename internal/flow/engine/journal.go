@@ -83,6 +83,15 @@ type FailingJournal interface {
 	Err() error
 }
 
+// journalFlush stores the rows a journal that batches them still holds (the SQLite journal's Flush), nil for a journal that stores
+// every row when it is appended.
+func journalFlush(j Journal) error {
+	if f, ok := j.(interface{ Flush() error }); ok {
+		return f.Flush()
+	}
+	return nil
+}
+
 // journalErr is the stored-row failure of a journal, nil for a journal that cannot fail.
 func journalErr(j Journal) error {
 	if f, ok := j.(FailingJournal); ok {

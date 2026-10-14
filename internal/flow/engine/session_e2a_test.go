@@ -23,6 +23,8 @@ type e2aKit struct {
 	*sessionKit
 	sw  *deadSwitch
 	mem *MemoryJournal
+	// reopen, when set, opens the journal the resumed process reads over what the dying one stored (newE2aKitOver)
+	reopen func() Journal
 	// mu guards phase, which the orchestrator's answer reads: 1 while the first process runs, 2 after it.
 	mu    sync.Mutex
 	phase int
@@ -35,6 +37,17 @@ func newE2aKit(t *testing.T, stop func(Event) bool) *e2aKit {
 	k.h.cfg.Journal = &dyingJournal{Journal: k.mem, sw: k.sw, stop: stop}
 	k.cfg.Bus = &dyingBus{FileStepBus: k.bus, sw: k.sw}
 	k.cfg.Host = &dyingHost{fakeSessionHost: k.host, sw: k.sw}
+	return k
+}
+
+// newE2aKitOver is newE2aKit over the journal of a death case: the resumed process opens it again over what the dying one stored, so
+// over the SQLite journal the rows of the batch that was open when the process died are lost with it.
+func newE2aKitOver(t *testing.T, stop func(Event) bool, dj deathJournal) *e2aKit {
+	t.Helper()
+	k := newE2aKit(t, stop)
+	first, reopen := dj.open(t)
+	k.h.cfg.Journal = &dyingJournal{Journal: first, sw: k.sw, stop: stop}
+	k.jr, k.reopen = first, reopen
 	return k
 }
 
@@ -67,12 +80,17 @@ func (k *e2aKit) die(body string) {
 // resume runs the process that resumes the run, as crw flow resume does (CRW-1278: it counts what the journal shows spent).
 func (k *e2aKit) resume(body string) *Result {
 	k.t.Helper()
-	k.h.cfg.Journal = k.mem
+	var j Journal = k.mem
+	if k.reopen != nil {
+		j = k.reopen()
+		k.jr = j
+	}
+	k.h.cfg.Journal = j
 	k.cfg.Bus = k.bus
 	k.cfg.Host = k.host
 	k.h.cfg.Control = nil
 	k.h.cfg.Resume = &ResumeOptions{}
-	k.h.cfg.SpentBefore = RunSpent(k.mem.Events(), k.h.cfg.RunID).Total
+	k.h.cfg.SpentBefore = RunSpent(j.Events(), k.h.cfg.RunID).Total
 	return k.h.run(body)
 }
 
@@ -873,6 +891,48 @@ return [r.status, fix.status]`))
 			}
 			if at < 0 || strings.Count(packet, "[turn ") != len(tc.want) || strings.Count(packet, "[answer of the call]") != 1 {
 				t.Errorf("the checkpoint of a journal without recorded conversation turns, want %q in order and once each:\n%s", tc.want, packet)
+			}
+		})
+	}
+}
+
+// F2: the turn a stop binds before it interrupts it (sessionBindStopped) is stored before the interrupt is sent. Over the SQLite
+// journal, which batches every row but an intent, a process that dies right after its stop interrupted the repair turn leaves that
+// turn's turn_started in the store, so the resumed process's intent names it and the repair turn is held engine_paused, never
+// host_interrupted_external.
+func TestSessionStopBindIsStoredBeforeTheInterrupt(t *testing.T) {
+	for _, dj := range deathJournals(t) {
+		t.Run(dj.name, func(t *testing.T) {
+			k := newE2aKitOver(t, nil, dj)
+			// the process dies the moment its stop has interrupted the repair turn, before it ends the call
+			k.cfg.Host = &killOnInterrupt{dyingHost: k.cfg.Host.(*dyingHost)}
+			ctl := &Control{}
+			k.h.cfg.Control = ctl
+			k.orch.answer = func(st Step, _ string, _ int) orchAnswer {
+				if st.K == 1 {
+					return orchAnswer{text: "this is not JSON"}
+				}
+				return orchAnswer{hang: true}
+			}
+			// the run is paused the moment the owner has sent the repair, before it reports it
+			k.orch.onInput = func(Step, string) {
+				if k.phaseNow() == 1 {
+					ctl.Pause("operator", "test")
+				}
+			}
+			k.die(e2aBuild)
+			res := k.resume(e2aBuild)
+			got := value[[]any](t, res)
+			rows := k.rowsOf("exe")
+			if fmt.Sprint(got) != "[held engine_paused]" {
+				t.Fatalf("the resumed call %v, want held engine_paused; rows %s; last row %v", got, eventsOf(rows), rows[len(rows)-1].Data)
+			}
+			var bound []string
+			for _, r := range rowsNamed(rows, EvTurnStarted) {
+				bound = append(bound, rowStr(r.Data, "turn_id"))
+			}
+			if strings.Join(bound, ",") != "agent-1-turn1,agent-1-turn2" {
+				t.Errorf("bound turns %v, want the task turn and the repair turn the stop interrupted, once each; rows %s", bound, eventsOf(rows))
 			}
 		})
 	}

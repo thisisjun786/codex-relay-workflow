@@ -19,7 +19,9 @@ saw. A row is never updated.
 - Every other row is written by the one run process in a batch transaction. It waits in memory until the next intent, the end
   of a call (its terminal row), the run's `started` and `finished` rows, or `Flush`, and is committed then, in order. A crash
   loses at most the result rows after the last intent, and the reconcile pass finds those on the host from the intent that is
-  stored.
+  stored. A session call that stops a subagent's turn (a pause, a cancellation, a deadline) flushes before it sends the interrupt,
+  so the `turn_started` it bound after its `interrupt_requested` row (the turn that row decides on a resume) is stored before the
+  interrupt reaches the subagent.
 - A journal that cannot store a row keeps the first error (`Err`) and keeps its rows in memory only. The engine sends nothing
   whose intent row could not be stored, and ends the run with that error. The run's own `finished` row is written with the rows
   still buffered, so the error is read again after it: a run whose last write failed ends with the journal's error, not as completed.

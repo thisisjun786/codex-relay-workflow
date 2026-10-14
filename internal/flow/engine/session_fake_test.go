@@ -545,6 +545,14 @@ func (j *dyingJournal) Err() error {
 	return nil
 }
 
+// Flush commits what the journal batches while the process lives; a dead process commits nothing.
+func (j *dyingJournal) Flush() error {
+	if f, ok := j.Journal.(interface{ Flush() error }); ok && !j.sw.isDead() {
+		return f.Flush()
+	}
+	return nil
+}
+
 func (j *dyingJournal) SetOnCommit(notify func()) {
 	if n, ok := j.Journal.(CommitNotifier); ok {
 		n.SetOnCommit(notify)
