@@ -107,7 +107,7 @@ func TestSkillPagesStateTheBridgeReportRoute(t *testing.T) {
 			t.Errorf("%s: a report_child sentence carries change history (%s)", name, found)
 		}
 	}
-	if !strings.Contains(pages["operations.md"], "the daemon alone decides where the record goes") {
+	if !strings.Contains(pages["operations.md"], "daemon alone decides where the record goes") {
 		t.Error("operations.md does not say the relay daemon alone decides where the record goes")
 	}
 	if strings.Contains(pages["operations.md"], "cannot report at all") || strings.Contains(pages["operations.md"], "or a bridge MCP call") {
