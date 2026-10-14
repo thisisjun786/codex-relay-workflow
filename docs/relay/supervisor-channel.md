@@ -16,8 +16,10 @@ is a `scope_directives` row that linkage already owns, and nothing here sends on
 
 ### Who may emit one
 
-The live parent of the project, addressed to the live supervisor of the initiative above it,
-both read from the linkage walk rather than from a frozen row - the rule
+The live parent of the project, addressed to the level directly above the project (the owner of
+the management seat linked to it, else the live supervisor of the initiative above it, else the
+single store seat; see [the level above a project](#the-level-above-a-project)), both read from the
+linkage walk rather than from a frozen row - the rule
 `delivery.resolve_recipient` already applies to a completion, for the same reason: an
 assignment registered before a handover names the owner that stepped down.
 
@@ -26,7 +28,8 @@ one has said two things, and neither becomes a recipient. A caller may name the 
 believes in; a disagreement with the linkage is the finding and is refused, because substituting
 either value for the other files a report with the wrong task.
 
-A project no initiative supervises refuses as `unregistered_scope`. That is not the same as
+A project nothing stands above (no management seat, no initiative, no store seat), or whose
+management seat has no live owner, refuses as `unregistered_scope`. That is not the same as
 owing nothing: the obligation stays standing, and having nowhere to send a report is a different
 state from having none to send.
 
@@ -674,6 +677,25 @@ withholding, the busy backoff and caps, the recipient's send budget, one head pe
 staging order, uncertain sends held until a readback. The deliverer that reserves and settles it
 lives in `faultnotice` and is described in [faults](faults.md).
 
+### The level above a project
+
+A message from the project side - a report raised from one of the project's issue relationships, a
+`project:<key>` notice, a direct project kind - is addressed to the level the walk finds directly
+above the project, in this order:
+
+1. the owner of the management seat whose execution edge stands directly above the project (a
+   management session bound the project owner, see [linkage](linkage.md#management-seats));
+   `recipient.scopeKind` is `management`;
+2. without one, the live supervisor of the initiative above the project (the legacy lead);
+   `initiative`;
+3. without either, the single store seat (folded in by `withStoreSeat`); `store`.
+
+A management edge whose seat has no live owner is refused `unregistered_scope` rather than falling
+through to the store seat, because the seat that should hear the message exists and waits for its
+handover. A walk that is ambiguous or contested (two upward edges above the project, competing
+owners, owner drift) is refused as before. A handover of the seat moves the recipient with the
+edge's `upper_task_id`; a message never sent is re-addressed at its next staging.
+
 ### Direct messages
 
 `StageDirect` stages the messages the channel carries without an event behind them, the way a fault
@@ -686,13 +708,14 @@ The kinds, the relationship each one goes through and the two ends are:
 | obligation_kind | relationship | from | to |
 | --- | --- | --- | --- |
 | `lead_report`, `lead_decision_request`, `lead_blocked`, `jun_decision_request` | `initiative:<key>` | the initiative's lead | the management seat above it (the store seat when no management edge stands) |
-| `flow_milestone_report`, `flow_project_blocked`, `flow_project_decision_request`, `flow_escalation`, `flow_completion`, `flow_no_node_started` | `project:<key>` | the project's owner (the orchestrator) | the lead |
+| `flow_milestone_report`, `flow_project_blocked`, `flow_project_decision_request`, `flow_escalation`, `flow_completion`, `flow_no_node_started` | `project:<key>` | the project's owner (the orchestrator) | [the level above the project](#the-level-above-a-project): its management seat, else a legacy lead, else the store seat |
 | `session_step_waiting` | `run:<id>` | the run | its owner, `flow_runs.actor_task_id` |
 
 `blocked` and `decision_request` are not among them: those are the event path's kinds, re-derived
 from their event at every claim. The packet is relay-envelope/1 with the roles named by the kind
-(`lead`, `management`, `orchestrator`, `run`), the envelope's `layer` (the layer the message is for)
-and the text in the packet's `body`; the rendered message's header is `[codex-session-relay] <layer>
+(`lead`, `management`, `orchestrator`, `run`), the envelope's `layer` (the layer the message is for:
+a project kind names `management` with the direction `orchestrator_to_management`, and `lead` with the
+recipient role `lead` when a legacy lead is the recipient) and the text in the packet's `body`; the rendered message's header is `[codex-session-relay] <layer>
 message from <sender role> <sender>` and the text follows the fields. A decision kind names the
 decision in `decision` and who owes the answer (the recipient, or the user for
 `jun_decision_request`). Sending is the channel's own: the daemon's supervisor pass picks the row up,

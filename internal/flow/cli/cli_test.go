@@ -287,3 +287,34 @@ func TestRunServesTheAuditCommand(t *testing.T) {
 		t.Errorf("exit %d stdout %q stderr %q", code, out.String(), errOut.String())
 	}
 }
+
+// TestReportsListsTheReportsOfOneProject: a management session lists only its own project's reports
+// with `crw flow reports --project P` (CRW-1314); another project's listing does not hold them.
+func TestReportsListsTheReportsOfOneProject(t *testing.T) {
+	w := newCLIWorld(t)
+	w.env.Resolver = fixedResolver{report.Recipient{State: report.RecipientManagement, Thread: "01mgmtA", ProjectKey: "PRJ-1"}}
+	evidence := filepath.Join(t.TempDir(), "evidence.md")
+	if err := os.WriteFile(evidence, []byte("blocked on the schema decision"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code := w.run("report-up", "--kind", "project_blocked", "--run", "run-1", "--evidence", evidence); code != ExitOK {
+		t.Fatalf("report-up: exit %d %s", code, w.errOut.String())
+	}
+	var up report.UpResult
+	w.json(&up)
+	var views []report.ReportView
+	if code := w.run("reports", "--project", "PRJ-1", "--unread", "--json"); code != ExitOK {
+		t.Fatalf("reports --project PRJ-1: exit %d %s", code, w.errOut.String())
+	}
+	w.json(&views)
+	if len(views) != 1 || views[0].ID != up.ReportID {
+		t.Fatalf("the reports of PRJ-1: %+v", views)
+	}
+	if code := w.run("reports", "--project", "PRJ-2", "--unread", "--json"); code != ExitOK {
+		t.Fatalf("reports --project PRJ-2: exit %d %s", code, w.errOut.String())
+	}
+	w.json(&views)
+	if len(views) != 0 {
+		t.Fatalf("the reports of PRJ-2 hold another project's: %+v", views)
+	}
+}

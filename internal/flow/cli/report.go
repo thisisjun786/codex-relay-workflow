@@ -79,12 +79,13 @@ func reportUpCmd(ctx context.Context, args []string, env Environment) int {
 	return ExitOK
 }
 
-// reportsCmd is `crw flow reports`: the reports of the store, those of an initiative, the unread ones.
+// reportsCmd is `crw flow reports`: the reports of the store, those of an initiative or of a project, the unread ones.
 func reportsCmd(ctx context.Context, args []string, env Environment) int {
-	var initiative, state, socket string
+	var initiative, project, state, socket string
 	var unread, asJSON bool
 	positional, code, ok := flags("reports", args, env, func(fs *flag.FlagSet) {
 		fs.StringVar(&initiative, "initiative", "", "only the reports for this initiative")
+		fs.StringVar(&project, "project", "", "only the reports of this project (a management session reads its own projects')")
 		fs.BoolVar(&unread, "unread", false, "only the reports nobody acknowledged")
 		fs.BoolVar(&asJSON, "json", false, "print JSON")
 		fs.StringVar(&state, "state", "", "the relay state directory")
@@ -101,7 +102,7 @@ func reportsCmd(ctx context.Context, args []string, env Environment) int {
 		return failure(env, "reports", err)
 	}
 	defer st.Close()
-	views, err := report.Reports(ctx, st.DB, initiative, unread)
+	views, err := report.ReportsMatching(ctx, st.DB, report.ReportFilter{Initiative: initiative, Project: project, Unread: unread})
 	if err != nil {
 		return failure(env, "reports", err)
 	}
