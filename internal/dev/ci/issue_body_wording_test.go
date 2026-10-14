@@ -37,9 +37,15 @@ var pairByModel = regexp.MustCompile(`(?i)pair (whose|with a|that runs a) model`
 // prose that names a model.
 var codeSpans = regexp.MustCompile("(?s)```.*?```|`[^`\n]*`")
 
+// withoutCodeKeepingLines is text with each code span and fenced block replaced by two backticks followed by the new
+// lines it held, so every line after a fenced block keeps its number (Argon V5 K4).
+func withoutCodeKeepingLines(text string) string {
+	return codeSpans.ReplaceAllStringFunc(text, func(code string) string { return "``" + strings.Repeat("\n", strings.Count(code, "\n")) })
+}
+
 func issueBodyReferenceProblems(text string) []string {
 	var problems []string
-	for i, line := range strings.Split(codeSpans.ReplaceAllString(text, "``"), "\n") {
+	for i, line := range strings.Split(withoutCodeKeepingLines(text), "\n") {
 		if m := referenceModelName.FindString(line); m != "" {
 			problems = append(problems, strconv.Itoa(i+1)+": names the model "+m)
 		}
@@ -115,6 +121,13 @@ func TestIssueBodiesNameNoModel(t *testing.T) {
 		bad := "the Sonnet pair is the declared pair whose model is a Claude Sonnet model\n"
 		if p := issueBodyReferenceProblems(bad); len(p) != 2 {
 			t.Errorf("bad: %v", p)
+		}
+	})
+	t.Run("fixture: a line after a fenced block keeps its number (Argon V5 K4)", func(t *testing.T) {
+		text := "The pairs are the policy's names.\n```json\n{\"claude\": 1}\n{\"opus\": 2}\n```\nThe SOL pair whose model is a Claude model.\n"
+		want := "6: names the model Claude|6: defines a pair by its model"
+		if p := strings.Join(issueBodyReferenceProblems(text), "|"); p != want {
+			t.Errorf("problems %q, want %q", p, want)
 		}
 	})
 	if strings.Contains(readRepoText(t, "plugins/crw/skills/crw-plan/references/integrations.md"), "## Child pair by issue type") == false {
