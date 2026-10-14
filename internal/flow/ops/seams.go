@@ -3,6 +3,7 @@ package ops
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
@@ -155,6 +156,14 @@ type ChildResult struct {
 	Reason  string `json:"reason"`
 	Child   string `json:"child"`
 }
+
+// ReasonEpochLost is the closed reason of a fenced write the run made after another session claimed the coordinator epoch of its plan
+// (CRW-1285): the run ends at that write with the reason, and writes nothing more at the relay.
+const ReasonEpochLost = "epoch_lost"
+
+// ErrEpochLost is the error kind of that write, as a Relay answers it. Its message opens with refused:epoch_lost:, so the script reads
+// the reason from the error of the op as it reads a refusal (crw:lib/lane), and errors.Is finds the kind through every wrap.
+var ErrEpochLost = errors.New("refused:" + ReasonEpochLost + ": the run lost the coordinator epoch of its plan")
 
 // Relay is the DAG scheduler of the relay as the lane uses it.
 type Relay interface {

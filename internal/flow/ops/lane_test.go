@@ -32,6 +32,8 @@ type stubRelay struct {
 	relaySlice map[string]string
 	// afterRelease, when a test sets it, runs after the relay answered a release.
 	afterRelease func()
+	// releaseErr, when a test sets it, is the error the relay answers a release with (CRW-1285).
+	releaseErr error
 }
 
 func (s *stubRelay) Milestone(context.Context, string, string) (Milestone, error) {
@@ -47,6 +49,9 @@ func (s *stubRelay) Release(_ context.Context, r ReleaseRequest) (ReleaseResult,
 	s.releases = append(s.releases, r)
 	if s.afterRelease != nil {
 		defer s.afterRelease()
+	}
+	if s.releaseErr != nil {
+		return ReleaseResult{}, s.releaseErr
 	}
 	// the relay compares the slice the flow compared with the node's slice in its release transaction (CRW-1288)
 	slice, ok := s.relaySlice[r.Node]
