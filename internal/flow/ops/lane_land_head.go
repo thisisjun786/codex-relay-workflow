@@ -245,7 +245,8 @@ func (o *releaseOp) landRelease(ctx context.Context, req engine.OpRequest, plan,
 		return finish()
 	}
 	if res.Run != "" && res.Run != req.RunID {
-		return held(res.Run, res.ExecutionID, "")
+		// the replay of the execution another run holds carries that run's state as the first answer does (CRW-1404)
+		return held(res.Run, res.ExecutionID, res.HeldRunState)
 	}
 	data["slice_digest"] = res.SliceDigest
 	wt, err := o.l.landWorktree(ctx, node, commit)

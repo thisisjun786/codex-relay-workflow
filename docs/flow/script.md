@@ -346,7 +346,9 @@ run at the whole budget (`budget_exhausted`). Reaching either cap writes a log r
 group are chained by order edges) have landed, in the scheduler's order, at most `cap` nodes at once and never two nodes whose
 edit regions overlap (an undeclared region overlaps every other); the regions of a node are those of the plan together with the
 `edit_regions` of the approved DESIGN (`crw.admissionRegions`), because the scheduler's own gate reads the plan's and the executor
-is scoped to the DESIGN's; there is no barrier. A node whose predecessor did not land is
+is scoped to the DESIGN's; there is no barrier. The relay is told the same regions before the release, each once by its cleaned
+path, and a DESIGN region that repeats a planned one in another spelling (blanks around it, `./path`) is that planned region, with
+the plan's change and exclusive flag. A node whose predecessor did not land is
 `blocked`. Each node runs on a path of its own (its id), and its first position is `crw.release`, which asks the relay for the
 slot and records the design revision and digest the node is released under. The lane builds its packet from that revision
 (`crw.issuePlan` reads the journal and nothing the script holds), and every call of the node carries the revision, the node's slice

@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
+	"path"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
@@ -375,19 +375,44 @@ type ReleaseOpts struct {
 
 // AdmissionRegions are the regions the lane admits a node by, as crw:lib/lane admissionRegions makes them: the plan's declared regions
 // and then the DESIGN's edit_regions the plan does not name. A node with no regions on either side is undeclared (none), and an
-// undeclared node overlaps every other.
+// undeclared node overlaps every other. An edit region is compared by its normal form (RegionOf, CRW-1404), so one that names a region
+// already admitted in another spelling (blanks around it, ./path) is not admitted again: the relay would refuse the declaration of a
+// planned region and a second spelling of it whose change or exclusive flag differ.
 func AdmissionRegions(plan, edit []string) []string {
 	out := []string{}
 	if len(plan) == 0 || len(edit) == 0 {
 		return out
 	}
 	out = append(out, plan...)
+	seen := map[RegionForm]bool{}
+	for _, r := range plan {
+		seen[RegionOf(r)] = true
+	}
 	for _, r := range edit {
-		if !slices.Contains(out, r) {
+		if form := RegionOf(r); !seen[form] {
+			seen[form] = true
 			out = append(out, r)
 		}
 	}
 	return out
+}
+
+// RegionForm is the normal form of a region as the lane writes it (a path, a tree when it ends in "/", a symbol when it names one after
+// "#"): its kind, the path trimmed and cleaned as the relay's DeclareRegions cleans it, and the symbol's key.
+type RegionForm struct{ Path, Kind, Key string }
+
+// RegionOf is the normal form of a region's text (CRW-1404). A path the relay refuses (empty, absolute, outside the repository) keeps
+// its cleaned form, which the relay refuses as it would the text.
+func RegionOf(text string) RegionForm {
+	p := strings.TrimSpace(text)
+	form := RegionForm{Path: p, Kind: "file"}
+	if at := strings.LastIndex(p, "#"); at > 0 {
+		form.Path, form.Kind, form.Key = p[:at], "symbol", p[at+1:]
+	} else if strings.HasSuffix(p, "/") {
+		form.Path, form.Kind = strings.TrimSuffix(p, "/"), "tree"
+	}
+	form.Path = path.Clean(form.Path)
+	return form
 }
 
 // WarnRegionsNotDeclared is the warning of a release whose admission regions the relay did not declare (CRW-1391): the release goes on
