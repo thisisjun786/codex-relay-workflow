@@ -12,7 +12,7 @@ import (
 
 func Ladder(ctx context.Context, s *store.Store, rid, subject string, observation any) (Obj, error) {
 	states := Unobserved()
-	Set(&states, "linear_done", Stage("unmeasured", nil, "the store holds no reading of the issue's status; read it in Linear"))
+	Set(&states, "linear_done", Stage("unmeasured", nil, "the store holds no reading of the issue's status; read it in the tracking record"))
 	sync := Stage("unmeasured", nil, "nothing was read")
 	result := func() Obj { return O("handover", states, "coordinationSync", sync) }
 	if s == nil || rid == "" {

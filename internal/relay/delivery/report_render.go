@@ -137,7 +137,7 @@ func completionParties(ctx context.Context, s *store.Store, rid string) (string,
 		return "", "", err
 	}
 	sender := "<unknown: the sending task was not read from the relationship>"
-	scope := "<unknown: no Linear scope was read>"
+	scope := "<unknown: no tracking scope was read>"
 	if relationship != nil {
 		if id, ok := relationship.Get("child_task_id").(string); ok && id != "" {
 			sender = id

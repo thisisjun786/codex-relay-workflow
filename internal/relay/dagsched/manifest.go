@@ -24,7 +24,7 @@ var statArtifact = os.Stat
 // BaseRef is the branch a node's work starts from: the repository, the ref and the commit the ref pointed at when the manifest was built.
 type BaseRef struct{ Repository, Ref, SHA string }
 
-// Volatile is a thing outside the store a node reads that can change (a Linear document, an issue): a snapshot of it taken before dispatch, so the node reads what the
+// Volatile is a thing outside the store a node reads that can change (a tracked document, an issue): a snapshot of it taken before dispatch, so the node reads what the
 // manifest says and a later edit is a different manifest.
 type Volatile struct {
 	Source      string `json:"source"`

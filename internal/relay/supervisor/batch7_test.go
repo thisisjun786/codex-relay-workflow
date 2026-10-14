@@ -433,7 +433,7 @@ func Test24_SCH_73_DischargedCompletionHeldAndReopened(t *testing.T) {
 	h := &sendHost{status: "idle"}
 	_, err = f.c.Attempt(f.ctx, id, h, 1_700_000_000)
 	var refusal Refusal
-	if !errors.As(err, &refusal) || refusal.Reason != "superseded_revision" || !strings.Contains(refusal.Detail, "Linear record") {
+	if !errors.As(err, &refusal) || refusal.Reason != "superseded_revision" || !strings.Contains(refusal.Detail, "tracking record") {
 		t.Fatalf("discharged %v", err)
 	}
 	row, err := f.c.Get(f.ctx, id)

@@ -226,7 +226,7 @@ func Test24_SCH_20_Capture(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return []any{shown["state"], shown["recipient"], len(shown["attempts"].([]any)), shown["readback"].(map[string]any)["verified"], shown["packet"].(map[string]any)["version"], strings.Contains(shown["limits"].(string), "Linear record")}
+		return []any{shown["state"], shown["recipient"], len(shown["attempts"].([]any)), shown["readback"].(map[string]any)["verified"], shown["packet"].(map[string]any)["version"], strings.Contains(shown["limits"].(string), "tracking record")}
 	})
 }
 func Test24_SCH_22_Capture(t *testing.T) {

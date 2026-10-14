@@ -16,7 +16,7 @@ import (
 func unreadableDetail(err error) string { return store.StoredSQLiteError(err) }
 
 // StoreScopeSupervisor is the live store-scope supervisor: the seat a session that manages the
-// store itself holds (CRW-450), the one supervisor scope no Linear level owns. The store's kind
+// store itself holds (CRW-450), the one supervisor scope no tracking level owns. The store's kind
 // and key stay in this package, with the other scope constants, so a reader of the walk names the
 // seat without spelling its scope itself.
 //

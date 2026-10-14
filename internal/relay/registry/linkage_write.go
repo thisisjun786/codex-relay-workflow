@@ -261,7 +261,7 @@ func (r *Registry) BindScopeAs(ctx context.Context, role, key string, endpoint E
 }
 
 // bindScopeKind is bind_scope with the scope kind named: --scope-kind store moves the supervisor
-// seat off its own Linear level onto the store, and no other binding may name one (CRW-450).
+// seat off its own tracking level onto the store, and no other binding may name one (CRW-450).
 //
 // creator is the thread registering the binding (linkage-bind --creator, by default the caller's
 // CODEX_THREAD_ID). When an initiative supervisor (a lead) is registered by a thread that holds a
@@ -974,7 +974,7 @@ func (r *Registry) Handover(ctx context.Context, role, key, expect string, endpo
 }
 
 // HandoverScopeKind is Handover with the scope kind named: --scope-kind store moves the supervisor's
-// store seat, the one scope no Linear level owns, and no other handover may name one (CRW-450). The
+// store seat, the one scope no tracking level owns, and no other handover may name one (CRW-450). The
 // kind is decided by bindingScopeKind, the same rule linkage-bind uses, so the accepted combination
 // lives in one place; every other handover keeps the role's own level.
 func (r *Registry) HandoverScopeKind(ctx context.Context, role, requested, key, expect string, endpoint Endpoint, acknowledged []string, evidence, actor string) (contract.OrderedObject, error) {

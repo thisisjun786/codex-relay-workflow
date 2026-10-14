@@ -555,6 +555,6 @@ func Test24_SCH_73_DischargeCapture(t *testing.T) {
 		h := &captureHost4{sendHost: sendHost{status: "idle"}}
 		_, err := c.Attempt(ctx, id, h, 1700000000)
 		refusal := captureRefusal4(t, err)
-		return []any{refusal.Reason, strings.Contains(refusal.Detail, "Linear record"), getSet3(t, c, id).HoldReason.String, []any{}}
+		return []any{refusal.Reason, strings.Contains(refusal.Detail, "tracking record"), getSet3(t, c, id).HoldReason.String, []any{}}
 	})
 }

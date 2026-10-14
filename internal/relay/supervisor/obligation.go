@@ -173,7 +173,7 @@ func (c *Channel) PriorReport(ctx context.Context, obligationID string) (map[str
 	return map[string]any{"seq": entry.ID, "at": entry.At, "detail": detail}, nil
 }
 
-// Reportable checks both independent conditions: the Linear record has not
+// Reportable checks both independent conditions: the tracking record has not
 // discharged the fact and no report of the fact was already produced.
 func (c *Channel) Reportable(ctx context.Context, o Obligation) (bool, string, error) {
 	prior, err := c.PriorReport(ctx, o.ID)
