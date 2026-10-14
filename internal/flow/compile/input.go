@@ -67,8 +67,8 @@ type Project struct {
 	// pins the handoff and reads them from it (crw flow start --handoff).
 	Milestones []Milestone `json:"milestones,omitempty"`
 	// Warnings are what the writer of the handoff found and did not refuse (CRW-1379): `crw flow plan-input` records here that the
-	// project key is not the owner's binding. Compile carries them into the plan's warnings and judges nothing by them; they are
-	// not part of the plan revision.
+	// project key is not the owner's binding. Compile carries them into the plan's warnings and judges nothing by them (a comparison of
+	// its own replaces the carried key warnings); they are not part of the plan revision. The author of a handoff does not write them.
 	Warnings []InputWarning `json:"warnings,omitempty"`
 }
 

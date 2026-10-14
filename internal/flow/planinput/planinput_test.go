@@ -512,21 +512,35 @@ func TestBuildCarriesTheKeyWarningsInTheCompileInput(t *testing.T) {
 	}
 }
 
-// TestPipedPlanInputKeepsTheKeyWarningInTheCompiledPlan (CRW-1379 c1): `crw flow plan-input | crw flow compile --dry-run -` (the bare
-// input, no --envelope) records the key warning in the compile output, which names the milestone ref only plan-input knows; compile's
-// own comparison, with the key bound on its side, adds nothing, and with the thread unbound on its side it does not repeat the warning.
+// TestPipedPlanInputKeepsTheKeyWarningInTheCompiledPlan (CRW-1379 c1, P2): `crw flow plan-input | crw flow compile --dry-run -` (the
+// bare input, no --envelope) records the key warning in the compile output. When compile names no thread it compares nothing and the
+// warning plan-input carried stands, with the milestone ref only plan-input knows. When compile names a thread its own comparison
+// replaces the carried key warning: a project_key_unchecked of a plan-input run without a thread does not outlive a key the thread is
+// bound to, and the two sides never both speak.
 func TestPipedPlanInputKeepsTheKeyWarningInTheCompiledPlan(t *testing.T) {
+	// plan-input is run by a session with a thread whose binding is another key: it carries project_key_bound
 	e := newEnv()
 	e.env["CODEX_THREAD_ID"] = "thread-owner"
 	e.scopes = []string{"uuid-1"}
-	code, piped, errOut := e.run("--milestone", "o/r#3", "--target-repository", "/srv/checkout", "--base-ref", "dev")
+	code, bound, errOut := e.run("--milestone", "o/r#3", "--target-repository", "/srv/checkout", "--base-ref", "dev")
 	if code != 0 {
 		t.Fatalf("plan-input: exit %d, stderr %q", code, errOut)
 	}
-	compileWith := func(scopes []string) (compile.Result, string) {
+	// plan-input is run with no thread: it carries project_key_unchecked
+	e = newEnv()
+	code, unchecked, errOut := e.run("--milestone", "o/r#3", "--target-repository", "/srv/checkout", "--base-ref", "dev")
+	if code != 0 {
+		t.Fatalf("plan-input without a thread: exit %d, stderr %q", code, errOut)
+	}
+	compileWith := func(piped, thread string, scopes []string) ([]compile.Warning, string) {
 		d := &compile.Deps{
 			Scopes: func(context.Context, string, string, string) ([]string, error) { return scopes, nil },
-			Getenv: func(k string) string { return e.env[k] },
+			Getenv: func(k string) string {
+				if k == "CODEX_THREAD_ID" {
+					return thread
+				}
+				return ""
+			},
 		}
 		var out, cErr bytes.Buffer
 		if c := compile.RunWith(bg, d, []string{"--dry-run", "-"}, strings.NewReader(piped), &out, &cErr); c != 0 {
@@ -536,20 +550,56 @@ func TestPipedPlanInputKeepsTheKeyWarningInTheCompiledPlan(t *testing.T) {
 		if err := json.Unmarshal(out.Bytes(), &res); err != nil {
 			t.Fatalf("%v\n%s", err, out.String())
 		}
-		return res, cErr.String()
+		return res.Plans[0].Warnings, cErr.String()
 	}
-	// compile's side has the key bound: the only record is what plan-input carried
-	res, cErr := compileWith([]string{"o:r:3"})
-	ws := res.Plans[0].Warnings
-	if len(ws) != 1 || ws[0].Rule != "project_key_bound" || !strings.Contains(ws[0].Detail, "o/r#3") || !strings.Contains(ws[0].Detail, "uuid-1") {
-		t.Errorf("the piped plan's warnings = %+v", ws)
+
+	// compile names no thread: what plan-input carried stands, milestone ref included
+	ws, cErr := compileWith(bound, "", nil)
+	if len(ws) != 1 || ws[0].Rule != "project_key_bound" || !strings.Contains(ws[0].Detail, "o/r#3") || !strings.Contains(ws[0].Detail, "uuid-1") || !strings.Contains(cErr, "[project_key_bound]") {
+		t.Errorf("no thread, carried bound: warnings %+v, stderr %q", ws, cErr)
 	}
-	if !strings.Contains(cErr, "[project_key_bound]") {
-		t.Errorf("compile's stderr: %q", cErr)
+	if ws, _ = compileWith(unchecked, "", nil); len(ws) != 1 || ws[0].Rule != "project_key_unchecked" {
+		t.Errorf("no thread, carried unchecked: warnings %+v", ws)
 	}
-	// compile's side finds the key unbound too: the warning plan-input carried is not said twice
-	if res, _ = compileWith([]string{"uuid-1"}); len(res.Plans[0].Warnings) != 1 {
-		t.Errorf("the piped plan's warnings = %+v; want the one plan-input carried", res.Plans[0].Warnings)
+
+	// compile's thread is bound to the key: the stale carried warning (either) is gone
+	for name, piped := range map[string]string{"carried bound": bound, "carried unchecked": unchecked} {
+		ws, cErr := compileWith(piped, "thread-owner", []string{"o:r:3"})
+		if len(ws) != 0 || strings.Contains(cErr, "project_key") {
+			t.Errorf("%s, key bound on compile's side: warnings %+v, stderr %q; want none", name, ws, cErr)
+		}
+	}
+
+	// compile's thread is bound to another key: one warning, compile's own
+	for name, piped := range map[string]string{"carried bound": bound, "carried unchecked": unchecked} {
+		ws, cErr := compileWith(piped, "thread-owner", []string{"uuid-2"})
+		if len(ws) != 1 || ws[0].Rule != "project_key_bound" || !strings.Contains(ws[0].Detail, "uuid-2") || strings.Count(cErr, "[project_key") != 1 {
+			t.Errorf("%s, another key on compile's side: warnings %+v, stderr %q; want compile's one project_key_bound", name, ws, cErr)
+		}
+	}
+
+	// compile cannot read the bindings: its unchecked replaces a carried bound
+	d := &compile.Deps{
+		Scopes: func(context.Context, string, string, string) ([]string, error) {
+			return nil, errors.New("no relay store at /x")
+		},
+		Getenv: func(k string) string {
+			if k == "CODEX_THREAD_ID" {
+				return "thread-owner"
+			}
+			return ""
+		},
+	}
+	var out, cErrBuf bytes.Buffer
+	if c := compile.RunWith(bg, d, []string{"--dry-run", "-"}, strings.NewReader(bound), &out, &cErrBuf); c != 0 {
+		t.Fatalf("crw flow compile --dry-run - with unreadable bindings: exit %d\n%s", c, cErrBuf.String())
+	}
+	var res compile.Result
+	if err := json.Unmarshal(out.Bytes(), &res); err != nil {
+		t.Fatal(err)
+	}
+	if ws := res.Plans[0].Warnings; len(ws) != 1 || ws[0].Rule != "project_key_unchecked" || !strings.Contains(ws[0].Detail, "no relay store at /x") || strings.Contains(cErrBuf.String(), "[project_key_bound]") {
+		t.Errorf("unreadable bindings on compile's side: warnings %+v, stderr %q; want compile's one project_key_unchecked", ws, cErrBuf.String())
 	}
 }
 

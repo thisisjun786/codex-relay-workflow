@@ -24,7 +24,8 @@ type Options struct {
 	Bases map[string]dag.State
 	// DryRun leaves the revision documents out of the result; the previews are the same.
 	DryRun bool
-	// Binding is compared with each project key, and a key it does not hold is a warning of the plan (CRW-1379); nil compares nothing.
+	// Binding is compared with each project key, and a key it does not hold is a warning of the plan (CRW-1379); its result replaces
+	// the key warnings (project_key_bound, project_key_unchecked) a handoff carries. nil compares nothing, and the carried ones stand.
 	Binding *Binding
 }
 
@@ -196,15 +197,19 @@ func compileProject(in Input, at int, owner map[string]string, opts Options) (Pl
 		}
 	}
 
-	// what the handoff's writer found and did not refuse (CRW-1379), then the comparison of the project key with the owner's binding,
-	// unless the handoff already carries that warning: both are warnings of the plan and neither refuses or changes the revision
-	carried := map[string]bool{}
+	// what the handoff's writer found and did not refuse (CRW-1379), then the comparison of the project key with the owner's binding: both
+	// are warnings of the plan and neither refuses or changes the revision. When compile makes the comparison (a thread is named) its
+	// result replaces the key warnings the handoff carries, whatever their rule: plan-input's reading was earlier, and may have been of
+	// another thread or state or none, so a carried project_key_unchecked must not outlive a key the thread is bound to, and the two
+	// sides must not both speak. With no comparison the carried key warnings stand.
 	for _, w := range p.Warnings {
-		carried[w.Rule] = true
+		if opts.Binding != nil && (w.Rule == RuleProjectKeyBound || w.Rule == RuleProjectKeyUnchecked) {
+			continue
+		}
 		plan.Warnings = append(plan.Warnings, Warning{Project: p.Key, Rule: w.Rule, Path: w.Issue, Detail: w.Detail})
 	}
 	if b := opts.Binding; b != nil {
-		if w, ok := KeyWarning(p.Key, "", *b, nil); ok && !carried[w.Rule] {
+		if w, ok := KeyWarning(p.Key, "", *b, nil); ok {
 			plan.Warnings = append(plan.Warnings, Warning{Project: p.Key, Rule: w.Rule, Detail: w.Detail})
 		}
 	}

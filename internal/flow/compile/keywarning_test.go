@@ -65,8 +65,8 @@ func TestHandoffWarningsAreCarriedIntoThePlanWarnings(t *testing.T) {
 
 // TestCompileComparesTheProjectKeyWithTheBinding (CRW-1379 c1): with a binding, compile compares each project key with the scope keys
 // of the owner's live parent bindings, the comparison `crw flow start` and `crw flow plan-input` make: a bound key is silent, another key
-// is project_key_bound, no thread or unreadable bindings is project_key_unchecked, and none refuses or changes the revision. A warning of
-// the same rule the handoff already carries is not repeated.
+// is project_key_bound, no thread or unreadable bindings is project_key_unchecked, and none refuses or changes the revision. What the
+// comparison does to the key warnings a handoff carries is TestCompileKeyCheckReplacesTheCarriedKeyWarning.
 func TestCompileComparesTheProjectKeyWithTheBinding(t *testing.T) {
 	in := project(iss("A"))
 	in.Projects[0].Key = "o:r:3"
@@ -108,17 +108,73 @@ func TestCompileComparesTheProjectKeyWithTheBinding(t *testing.T) {
 			}
 		})
 	}
+}
 
-	// the handoff already carries the warning plan-input recorded: compile does not say it twice
-	carried := in
-	carried.Projects = []Project{in.Projects[0]}
-	carried.Projects[0].Warnings = []InputWarning{{Rule: "project_key_bound", Detail: "from plan-input"}}
-	res, err := Compile(carried, Options{Binding: &Binding{Thread: "t", Scopes: []string{"other"}}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ws := res.Plans[0].Warnings; len(ws) != 1 || ws[0].Detail != "from plan-input" {
-		t.Errorf("warnings = %+v; want the carried one only", ws)
+// TestCompileKeyCheckReplacesTheCarriedKeyWarning (CRW-1379 P2): when compile runs its own check of the project key (a binding is given,
+// that is a thread is named), its result replaces any key warning the handoff carries (project_key_bound, project_key_unchecked):
+// plan-input's reading was earlier and may be of another thread or state, so a carried project_key_unchecked does not outlive a
+// successful check, and the two sides never both speak. With no binding (no thread named) the carried key warnings stand. A carried
+// warning of any other rule is carried either way.
+func TestCompileKeyCheckReplacesTheCarriedKeyWarning(t *testing.T) {
+	in := project(iss("A"))
+	in.Projects[0].Key = "o:r:3"
+	in.Projects[0].Target = &Target{Repository: "/srv/checkout", BaseRef: "dev"} // a target of the form a run takes: no target warning
+	unchecked := InputWarning{Rule: "project_key_unchecked", Detail: "from plan-input: no thread"}
+	bound := InputWarning{Rule: "project_key_bound", Detail: "from plan-input: another key"}
+	other := InputWarning{Rule: "criteria_missing", Issue: "o:r:1", Detail: "the title is the one criterion"}
+	holds := &Binding{Thread: "t", Scopes: []string{"x:y:1", "o:r:3"}}
+	another := &Binding{Thread: "t", Scopes: []string{"uuid-9"}}
+	unreadable := &Binding{Thread: "t", Err: errors.New("no relay store at /x")}
+	for _, tc := range []struct {
+		name    string
+		carried []InputWarning
+		b       *Binding
+		want    []string // "rule: text the detail holds", in order
+	}{
+		{"a stale unchecked does not outlive a successful check", []InputWarning{unchecked}, holds, nil},
+		{"a bound carried warning does not either", []InputWarning{bound}, holds, nil},
+		{"unchecked and another key: compile's bound only", []InputWarning{unchecked}, another, []string{"project_key_bound: uuid-9"}},
+		{"bound and another key: compile's bound, not the carried one", []InputWarning{bound}, another, []string{"project_key_bound: uuid-9"}},
+		{"bound and unreadable bindings: compile's unchecked only", []InputWarning{bound}, unreadable, []string{"project_key_unchecked: no relay store at /x"}},
+		{"unchecked and unreadable bindings: compile's unchecked only", []InputWarning{unchecked}, unreadable, []string{"project_key_unchecked: no relay store at /x"}},
+		{"a binding with no thread says unchecked itself", []InputWarning{bound}, &Binding{}, []string{"project_key_unchecked: --thread"}},
+		{"no binding: the carried unchecked stands", []InputWarning{unchecked}, nil, []string{"project_key_unchecked: from plan-input: no thread"}},
+		{"no binding: the carried bound stands", []InputWarning{bound}, nil, []string{"project_key_bound: from plan-input: another key"}},
+		{"another rule is carried and the key check is silent", []InputWarning{other, unchecked}, holds, []string{"criteria_missing: the title"}},
+		{"another rule is carried before compile's own", []InputWarning{other, bound}, another, []string{"criteria_missing: the title", "project_key_bound: uuid-9"}},
+		{"another rule is carried with no binding", []InputWarning{other, unchecked}, nil, []string{"criteria_missing: the title", "project_key_unchecked: from plan-input"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := in
+			c.Projects = []Project{in.Projects[0]}
+			c.Projects[0].Warnings = tc.carried
+			for _, dry := range []bool{true, false} {
+				base, err := Compile(in, Options{DryRun: dry})
+				if err != nil {
+					t.Fatal(err)
+				}
+				res, err := Compile(c, Options{DryRun: dry, Binding: tc.b})
+				if err != nil {
+					t.Fatalf("dry=%v: a key warning refused the handoff: %v", dry, err)
+				}
+				var got []string
+				for _, w := range res.Plans[0].Warnings {
+					got = append(got, w.Rule+": "+w.Detail)
+				}
+				if len(got) != len(tc.want) {
+					t.Fatalf("dry=%v: warnings = %q; want %d like %q", dry, got, len(tc.want), tc.want)
+				}
+				for i, w := range got {
+					rule, text, _ := strings.Cut(tc.want[i], ": ")
+					if !strings.HasPrefix(w, rule+": ") || !strings.Contains(w, text) {
+						t.Errorf("dry=%v: warning %d = %q; want %q", dry, i, w, tc.want[i])
+					}
+				}
+				if string(res.Plans[0].Revision) != string(base.Plans[0].Revision) {
+					t.Errorf("dry=%v: a key warning changed the revision", dry)
+				}
+			}
+		})
 	}
 }
 
