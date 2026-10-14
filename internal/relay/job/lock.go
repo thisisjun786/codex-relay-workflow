@@ -11,6 +11,8 @@ import (
 	"os"
 	"syscall"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 )
 
 // ErrStoreBusy is a lock that another writer kept for longer than LockWait.
@@ -20,13 +22,14 @@ const ErrStoreBusy = sentinel("the bg store is locked by another writer")
 var lockWait = 5 * time.Second
 
 // lockStore takes the store lock of the workspace and returns its release. A store that does not exist has nothing to lock: the error
-// is then os.ErrNotExist. The handle is opened close-on-exec, so a job started while it is held never carries it.
+// is then os.ErrNotExist. A symbolic link at .crw or at bg is refused naming it (crwdir.ErrLink, CRW-1375), and the directory is
+// opened without following one. The handle is opened close-on-exec, so a job started while it is held never carries it.
 func lockStore(ws string) (func(), error) {
 	dir := BGDir(ws)
-	if err := inside(ws, dir); err != nil {
+	if err := crwdir.CheckTree(ws, BGDirName); err != nil {
 		return nil, err
 	}
-	f, err := os.Open(dir)
+	f, err := crwdir.OpenFile(dir, os.O_RDONLY|syscall.O_DIRECTORY, 0)
 	if err != nil {
 		return nil, err
 	}

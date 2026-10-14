@@ -70,14 +70,13 @@ func Helper() {
 		held = file
 	}
 	fmt.Println("ready")
-	// A line "collect" runs the garbage collector and answers "collected": a test of the helper
-	// itself asks it to, rather than leave to chance whether a collection happens while it waits.
+	// A line "collect" runs the garbage collector and answers "collected" once the finalizers of what
+	// it collected have run (collect): a test of the helper itself asks it to, rather than leave to
+	// chance whether a collection happens while it waits.
 	lines := bufio.NewScanner(os.Stdin)
 	for lines.Scan() {
 		if lines.Text() == "collect" {
-			runtime.GC()
-			runtime.GC()
-			time.Sleep(50 * time.Millisecond) // the file's cleanup runs on another goroutine
+			collect()
 			fmt.Println("collected")
 		}
 	}
@@ -85,6 +84,41 @@ func Helper() {
 	// collection would close it (its cleanup) and drop the lock under the test that relies on it.
 	runtime.KeepAlive(held)
 	os.Exit(0)
+}
+
+// collect runs the garbage collector and returns once every finalizer it queued has run, so the
+// answer that follows is the outcome of the collection and not a race with it. A file nobody refers
+// to is closed by its finalizer (os.newFile sets one), and the runtime runs every finalizer on one
+// goroutine, one queued batch after another. A marker whose finalizer is set only after a first
+// marker's has run is queued after the batch that held the first, and the first was queued no
+// earlier than anything unreachable at the collection that found it; so once the second marker's
+// finalizer has run, so has the file's. A collection that has not found a marker yet (it was still
+// reachable) is repeated.
+func collect() {
+	for range 2 {
+		ran := make(chan struct{})
+		queueMarker(ran)
+		for done := false; !done; {
+			runtime.GC()
+			select {
+			case <-ran:
+				done = true
+			case <-time.After(10 * time.Millisecond):
+			}
+		}
+	}
+}
+
+// marker is an object only a finalizer refers to; its pointer field keeps it out of the tiny
+// allocator, whose blocks may never be finalized.
+type marker struct{ _ *int }
+
+// queueMarker allocates a marker that closes ran when it is finalized; the marker is unreachable
+// once this returns.
+//
+//go:noinline
+func queueMarker(ran chan struct{}) {
+	runtime.SetFinalizer(&marker{}, func(*marker) { close(ran) })
 }
 
 // Spawn starts a helper whose argv[0] is argv0 ("" keeps the test binary's), holding an flock

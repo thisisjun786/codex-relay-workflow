@@ -60,7 +60,9 @@ type ciRecord struct {
 	Schema string `json:"schema"`
 	Result string `json:"result"`
 	Digest string `json:"digest"`
-	Jobs   []struct {
+	// TestPackagesRun is additive (CRW-1328): a record without it does not say how many packages ran tests.
+	TestPackagesRun *int `json:"testPackagesRun"`
+	Jobs            []struct {
 		Name   string `json:"name"`
 		Result string `json:"result"`
 		Steps  []struct {
@@ -116,7 +118,8 @@ func (v CILocalVerifier) Verify(ctx context.Context, req VerifyRequest) (VerifyO
 	if err := json.Unmarshal(raw, &rec); err != nil || rec.Schema != "verification-record/1" || rec.Digest == "" {
 		return VerifyOutcome{}, fmt.Errorf("ops: %s left a record that is no verification-record/1 with a digest (exit %d)", CILocalCommand, code)
 	}
-	out := VerifyOutcome{Command: CILocalCommand, Digest: rec.Digest, Record: raw, Pass: code == 0 && rec.Result == "pass", Failures: []string{}, Note: command.Note}
+	out := VerifyOutcome{Command: CILocalCommand, Digest: rec.Digest, Record: raw, Pass: code == 0 && rec.Result == "pass", Failures: []string{}, Note: command.Note,
+		TestPackagesRun: rec.TestPackagesRun}
 	for _, job := range rec.Jobs {
 		for _, st := range job.Steps {
 			if st.Result != "passed" && st.Result != "not_applicable" {

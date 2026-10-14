@@ -66,7 +66,11 @@ type verificationRecord struct {
 	Sealed       bool              `json:"sealed"`
 	PlanDigest   string            `json:"planDigest"`
 	IgnoredEnv   []string          `json:"ignoredEnv"`
-	Digest       string            `json:"digest"`
+	// TestPackagesRun is the count of go test packages the run's steps ran tests in (CRW-1328, local_testcount.go): additive, absent
+	// from a record whose steps printed no go test result and from every record written before it, which a reader takes as unknown,
+	// never as zero. Zero says no test ran; the result is the steps' as before.
+	TestPackagesRun *int   `json:"testPackagesRun,omitempty"`
+	Digest          string `json:"digest"`
 }
 
 // recordJob is one GitHub check the run performed: validate, secrets, skill-scripts-node, gui,

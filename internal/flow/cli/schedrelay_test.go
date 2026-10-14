@@ -639,7 +639,9 @@ func TestSchedRelayReleaseChildRefusesUnwired(t *testing.T) {
 	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
 	r := l.relayFor("run-child00001", l.handoffBytes(nil), 1)
 	res, err := r.ReleaseChild(ctx, ops.ChildRequest{Plan: l.plan, Node: l.nodeOf["A-1"], RunID: r.RunID, RequestID: "c1"})
-	if !errors.Is(err, ErrChildReleaseUnwired) || !strings.HasPrefix(err.Error(), "refused:child_release_unwired:") || res.Started || res.Child != "" {
+	// CRW-1285 superseded the answer (g): a run that holds no host settings (no --child-host) still starts no child, and its refusal is
+	// child_host_unset; the managed start with host settings is TestReleaseChildStartsAManagedChildWithHostSettings
+	if !errors.Is(err, ErrChildHostUnset) || !strings.HasPrefix(err.Error(), "refused:child_host_unset:") || res.Started || res.Child != "" {
 		t.Fatalf("ReleaseChild: %+v %v", res, err)
 	}
 	if n := l.count("SELECT COUNT(*) FROM dag_agent_executions") + l.count("SELECT COUNT(*) FROM managed_start_requests") + l.count("SELECT COUNT(*) FROM dag_coordinator_claims"); n != 0 {

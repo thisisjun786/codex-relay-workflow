@@ -156,12 +156,13 @@ func TestAtomicWriteTakesARelativeAndAnAliasedWorkspace(t *testing.T) {
 	}
 }
 
-func TestAtomicWriteFollowsAStoreLinkedInsideTheWorkspace(t *testing.T) {
+// A store linked to a directory inside the workspace was followed (CRW-1134); it is a link in the .crw tree, refused (CRW-1375).
+func TestAtomicWriteRefusesAStoreLinkedInsideTheWorkspace(t *testing.T) {
 	cwd := workspace(t)
 	mkdir(t, filepath.Join(cwd, "elsewhere"))
 	mkdir(t, filepath.Join(cwd, ".crw"))
 	symlink(t, filepath.Join(cwd, "elsewhere"), filepath.Join(cwd, ".crw", "bg"))
-	if err := AtomicWrite(cwd, RecordPath(cwd, "r"), "x"); err != nil || get(t, filepath.Join(cwd, "elsewhere", "r.json")) != "x" {
+	if err := AtomicWrite(cwd, RecordPath(cwd, "r"), "x"); !errors.Is(err, crwdir.ErrLink) || exists(filepath.Join(cwd, "elsewhere", "r.json")) {
 		t.Errorf("err = %v", err)
 	}
 }
@@ -461,17 +462,15 @@ func linkedStore(t *testing.T, linked string) (cwd, bg string) {
 func TestAStoreThatLeavesTheWorkspaceIsRefused(t *testing.T) {
 	for _, linked := range []string{".crw", ".crw/bg"} {
 		cwd, bg := linkedStore(t, linked)
-		// A link at .crw itself is refused by crwdir.EnsureDir before the store's own check (CRW-475).
-		refused := func(err error) bool {
-			return errors.Is(err, ErrOutsideStore) || linked == ".crw" && errors.Is(err, crwdir.ErrLink)
-		}
+		// A link at .crw or at bg is a link in the .crw tree, refused as such (crwdir.ErrLink; CRW-475, CRW-1375).
+		refused := func(err error) bool { return errors.Is(err, crwdir.ErrLink) }
 		if dir, err := EnsureDir(cwd); !refused(err) || dir != "" {
 			t.Errorf("%s: EnsureDir = %q, %v", linked, dir, err)
 		}
-		if err := AtomicWrite(cwd, RecordPath(cwd, "r"), "x"); !errors.Is(err, ErrOutsideStore) {
+		if err := AtomicWrite(cwd, RecordPath(cwd, "r"), "x"); !refused(err) {
 			t.Errorf("%s: AtomicWrite: %v", linked, err)
 		}
-		if err := RemovePath(cwd, DisabledPath(cwd)); !errors.Is(err, ErrOutsideStore) {
+		if err := RemovePath(cwd, DisabledPath(cwd)); !refused(err) {
 			t.Errorf("%s: RemovePath: %v", linked, err)
 		}
 		if err := appendLedger(cwd, Event{{"event", "x"}}, time.Now); !refused(err) {

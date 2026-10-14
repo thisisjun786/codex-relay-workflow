@@ -115,6 +115,10 @@ type Issue struct {
 	IssueSize         string   `json:"issue_size,omitempty"` // the issue-size report's answer
 	BundleReason      string   `json:"bundle_reason,omitempty"`
 	ExceptionRecord   string   `json:"exception_record,omitempty"`
+	// Description and Labels are the issue's body and label names as the Linear tools give them (CRW-1328), optional: the run judges
+	// them with the release gate when it starts (the warn fact issue_ready) and the compiler reads neither.
+	Description string   `json:"description,omitempty"`
+	Labels      []string `json:"labels,omitempty"`
 }
 
 // Region is one edit region of an issue. In the handoff it is a string (a trailing slash makes it a tree, else it is a
