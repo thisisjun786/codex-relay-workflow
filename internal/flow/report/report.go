@@ -179,12 +179,10 @@ func (w *Writer) Up(ctx context.Context, req UpRequest) (UpResult, error) {
 	if w.Sender == nil {
 		return res, errors.New("report: a sender is required to deliver")
 	}
-	project := res.Recipient.ProjectKey
-	if project == "" {
-		project, _ = ProjectOf(ctx, w.Store, plan)
-	}
+	// the project is the one the report row records (one resolution for the row and the message): the listing the message points at
+	// finds the row
 	sent, err := w.Sender.SendSupervisor(ctx, SupervisorSend{Thread: res.Recipient.Thread, LogicalID: res.LogicalID, Text: message(req, res, digest), ReportID: id,
-		Initiative: res.Recipient.InitiativeKey, Kind: req.Kind, Run: req.Run, Project: project, Subject: req.Subject})
+		Initiative: res.Recipient.InitiativeKey, Kind: req.Kind, Run: req.Run, Project: res.Recipient.ProjectKey, Subject: req.Subject})
 	if err != nil {
 		return res, err
 	}

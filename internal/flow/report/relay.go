@@ -38,11 +38,15 @@ var relayKinds = map[string]string{
 }
 
 // Delivers says which recipients the channel delivers to: every recipient the linkage walk named a thread for, the store seat included
-// (D1c d2: a report that falls to the store seat wakes that seat too).
+// (D1c d2: a report that falls to the store seat wakes that seat too). A store seat's report whose run's plan names no project has no
+// project to be staged through, and crw manage send-parent does not go to the store seat: it stands for the store seat's pump, which
+// tells the seat of it, and `crw flow reports --unread` lists it.
 func (r RelaySender) Delivers(rec Recipient) bool {
 	switch rec.State {
-	case RecipientManagement, RecipientInitiative, RecipientStore:
+	case RecipientManagement, RecipientInitiative:
 		return rec.Thread != ""
+	case RecipientStore:
+		return rec.Thread != "" && rec.ProjectKey != ""
 	}
 	return false
 }

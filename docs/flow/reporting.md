@@ -28,7 +28,11 @@ report's (`flow_milestone_report`, `flow_project_blocked`, `flow_project_decisio
 (`flow_escalation`, `flow_completion`), and the subject is `<run>/<report id>` or `<run>/<logical id>`, so the message id is
 deterministic and the same report staged again is the same message. The channel addresses it to the level above the project - the
 management seat's owner, else a legacy lead, else the single store seat, which is woken like any other recipient - and the relay daemon
-delivers it: a new turn on an idle thread, a resume and a turn on an unloaded one, after the turn on a busy one.
+delivers it: a new turn on an idle thread, a resume and a turn on an unloaded one, after the turn on a busy one. The report row and the
+message carry one resolution of the project: the row records the project the report is staged through (`recipient_project`, the
+store seat's decision for Jun included), so the listing the message's evidence names, `crw flow reports --project <project> --unread`,
+lists it. A store seat's report of a run whose plan names no project has no project to be staged through and does not go through `crw
+manage send-parent` either: it stands for the store seat's pump, and `crw flow reports --unread` lists it.
 
 Staging writes only `queued`: the `report_delivery` row the writer appends from the staging says `queued`, with the message id as its
 request id, and an `escalation_notice` or `completion_notice` says `queued` too. What the transport came to is the daemon's to write, in

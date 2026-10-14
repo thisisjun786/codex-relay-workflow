@@ -37,7 +37,9 @@ type Recipient struct {
 	// binding) for RecipientInitiative, the store seat's for RecipientStore when exactly one is registered.
 	Thread        string
 	InitiativeKey string
-	ProjectKey    string
+	// ProjectKey is the project of the run's plan the recipient was resolved for, "" when the plan names none: the report row keeps it,
+	// the sender stages the report through it, and `crw flow reports --project` lists the report by it.
+	ProjectKey string
 	// Reason is the refusal of the walk that left the report standing.
 	Reason, Detail string
 }
@@ -74,7 +76,12 @@ func (r StoreResolver) Recipient(ctx context.Context, plan, kind string) (Recipi
 				return Recipient{State: RecipientManagement, Thread: res.Recipient, ProjectKey: project}, nil
 			}
 		}
+		// the row keeps the project the plan names, the one the sender stages the decision through: the listing the message points
+		// at (crw flow reports --project <project>) finds it
 		rec := Recipient{State: RecipientStore}
+		if planErr == nil {
+			rec.ProjectKey = project
+		}
 		held, err := (&registry.Registry{Store: r.Store}).StoreScopeSupervisor(ctx)
 		if err != nil {
 			return rec, err
