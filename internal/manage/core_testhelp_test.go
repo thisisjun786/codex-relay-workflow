@@ -56,7 +56,15 @@ func coreMain(m *testing.M) int {
 	if base == "" {
 		base = "/dev/shm"
 	}
-	if tmpfs, owner := tmpfsRoot(base, tmpfsRealHost(), os.Getenv); tmpfs != "" {
+	tmpfs, owner := tmpfsRoot(base, tmpfsRealHost(), os.Getenv)
+	if tmpfs == "" && !tmpfsDeclinedByOwner(tmpfsRealHost(), os.Getenv(tmpfsRootEnv)) {
+		// No tmpfs is chosen: a helper started again follows this (the marker names no root) instead of choosing for itself.
+		if err := os.Setenv(tmpfsRootEnv, tmpfsDeclinedMarker(os.Getpid())); err != nil {
+			fmt.Fprintln(os.Stderr, "crw manage tests:", err)
+			return 1
+		}
+	}
+	if tmpfs != "" {
 		if owner {
 			defer func() { _ = os.RemoveAll(tmpfs) }()
 			if err := os.Setenv(tmpfsRootEnv, fmt.Sprintf("%d:%s", os.Getpid(), tmpfs)); err != nil {

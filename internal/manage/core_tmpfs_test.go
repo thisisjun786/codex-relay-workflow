@@ -20,7 +20,8 @@ import (
 //
 //   - a test binary started again by a test (a supervisor child, any helper that goes through TestMain) made a root of its own and
 //     left it. The process that makes a root names it in tmpfsRootEnv ("<pid>:<root>"); a process that finds a live owner's root there
-//     uses it, makes none and removes none, and the owner removes the root after m.Run, whatever the helpers did;
+//     uses it, makes none and removes none, and the owner removes the root after m.Run, whatever the helpers did. A process that chose no
+//     tmpfs says so ("<pid>:-") and its helpers choose none either;
 //   - one small exec probe did not reject a small or full tmpfs, and then every fixture write failed. The root must have tmpfsFloorBytes
 //     and tmpfsFloorInodes free as well as run a script.
 //
@@ -34,6 +35,7 @@ const (
 	tmpfsBaseEnv    = "CRW_MANAGE_TEST_TMPFS_BASE"
 	tmpfsRootPrefix = "crw-manage-tmp-"
 	// tmpfsFloorBytes and tmpfsFloorInodes are what the base must have free: a run of the package keeps well under a quarter of the bytes.
+	tmpfsDeclined    = "-" // the root part of a marker whose process chose no tmpfs
 	tmpfsFloorBytes  = 2 << 30
 	tmpfsFloorInodes = 20000
 )
@@ -74,6 +76,9 @@ func tmpfsRoot(base string, h tmpfsHost, getenv func(string) string) (root strin
 	if runtime.GOOS != "linux" {
 		return "", false
 	}
+	if tmpfsDeclinedByOwner(h, getenv(tmpfsRootEnv)) {
+		return "", false
+	}
 	if named, ok := tmpfsNamedRoot(h, getenv(tmpfsRootEnv)); ok {
 		return named, false
 	}
@@ -93,6 +98,17 @@ func tmpfsRoot(base string, h tmpfsHost, getenv func(string) string) (root strin
 		return "", false
 	}
 	return root, true
+}
+
+// tmpfsDeclinedMarker is the marker of a process that chose no tmpfs root: "<pid>:-". A helper it starts again follows the choice and does
+// not look again, as it would make a root of its own and leave it through os.Exit.
+func tmpfsDeclinedMarker(pid int) string { return strconv.Itoa(pid) + ":" + tmpfsDeclined }
+
+// tmpfsDeclinedByOwner is true if marker is "<pid>:-" of a live process.
+func tmpfsDeclinedByOwner(h tmpfsHost, marker string) bool {
+	pidText, rest, found := strings.Cut(marker, ":")
+	pid, err := strconv.Atoi(pidText)
+	return found && rest == tmpfsDeclined && err == nil && pid > 0 && h.Alive(pid)
 }
 
 // tmpfsNamedRoot is the root of a marker "<pid>:<root>" whose owner is alive and whose root is still a directory of ours.

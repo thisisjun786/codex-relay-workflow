@@ -428,7 +428,7 @@ production store and its fsync are not touched; the tests assert no durability a
 least 2 GiB and 20,000 inodes free (`statfs`) **and** a script written in it runs; otherwise the tests stay on the `TMPDIR` the caller set. A
 test binary a test starts again (the supervisor child, any helper that goes through `TestMain`) reads the root its starter named in
 `CRW_MANAGE_TEST_TMPFS_ROOT` (`<pid>:<root>`; honoured only for a live pid and a directory of ours named `crw-manage-tmp-<that pid>`),
-uses it, and makes and removes none; the process that made the root removes it after `m.Run`. A run that a timeout or a signal killed
+uses it, and makes and removes none; a process that chose no tmpfs names that as `<pid>:-`, and a helper of a live such process chooses none either (it would make a root and leave it through `os.Exit`); the process that made the root removes it after `m.Run`. A run that a timeout or a signal killed
 leaves its root (it is memory), and the next run removes the `crw-manage-tmp-<pid>` roots whose pid is gone. To see them:
 `ls -d /dev/shm/crw-manage-tmp-*`. Pinned by the `TestTmpfsRoot*` tests.
 

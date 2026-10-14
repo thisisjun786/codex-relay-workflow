@@ -17,6 +17,10 @@ import (
 const tmpfsChildEnv = "CRW_MANAGE_TEST_TMPFS_CHILD"
 const tmpfsResultEnv = "CRW_MANAGE_TEST_TMPFS_RESULT"
 
+// tmpfsLateBaseEnv names a directory the "parent" role of TestTmpfsRootChild makes just before it starts the helper: the base was not
+// there (or not fit) when the parent chose, and is fit when the helper starts.
+const tmpfsLateBaseEnv = "CRW_MANAGE_TEST_TMPFS_LATE_BASE"
+
 // tmpfsFakeHost is a host with the free space and the exec answer a case names; processes 4242 and only 4242 are alive.
 func tmpfsFakeHost(bytes, inodes uint64, probe error) tmpfsHost {
 	return tmpfsHost{
@@ -232,6 +236,11 @@ func TestTmpfsRootChild(t *testing.T) {
 	if role == "helper" {
 		os.Exit(0)
 	}
+	if late := os.Getenv(tmpfsLateBaseEnv); late != "" {
+		if err := os.Mkdir(late, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
 	cmd := exec.Command(os.Args[0], "-test.run=^TestTmpfsRootChild$")
 	cmd.Env = append(os.Environ(), tmpfsChildEnv+"=helper")
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -277,5 +286,71 @@ func TestTmpfsRootLeavesNothingAfterHelpersReexec(t *testing.T) {
 		if left := tmpfsEntries(t, dir); len(left) != 0 {
 			t.Errorf("%s was left %v", dir, left)
 		}
+	}
+}
+
+// A parent that chose no tmpfs (a same-name root, too little room) says so in the marker, and a helper it starts again follows it: it
+// does not look again, so it cannot make a root of its own that it leaves through os.Exit (the d1 gap of the CRW-1262 evaluation).
+func TestTmpfsRootDeclinedParentLeavesNothingAfterHelpersReexec(t *testing.T) {
+	if os.Getenv(tmpfsChildEnv) != "" {
+		return // the child runs only TestTmpfsRootChild
+	}
+	parentBase, disk := t.TempDir(), t.TempDir()
+	base := filepath.Join(parentBase, "late") // not there when the parent chooses, fit when the helper starts
+	result := filepath.Join(t.TempDir(), "result")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestTmpfsRootChild$")
+	env := []string{}
+	for _, kv := range os.Environ() {
+		if !strings.HasPrefix(kv, tmpfsRootEnv+"=") && !strings.HasPrefix(kv, tmpfsBaseEnv+"=") && !strings.HasPrefix(kv, "TMPDIR=") {
+			env = append(env, kv)
+		}
+	}
+	cmd.Env = append(env, tmpfsChildEnv+"=parent", tmpfsResultEnv+"="+result, tmpfsBaseEnv+"="+base, tmpfsLateBaseEnv+"="+base, "TMPDIR="+disk)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("the child: %v\n%s", err, out)
+	}
+	data, err := os.ReadFile(result)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		role, tmp, _ := strings.Cut(line, " ")
+		seen[role] = tmp
+	}
+	if seen["parent"] != disk {
+		t.Fatalf("the parent's TMPDIR is %q, want the caller's %q (no fit base)", seen["parent"], disk)
+	}
+	if seen["helper"] != disk {
+		t.Errorf("the helper's TMPDIR is %q, want the caller's %q: it chose a root the parent had declined", seen["helper"], disk)
+	}
+	if left := tmpfsEntries(t, base); len(left) != 0 {
+		t.Errorf("%s was left %v", base, left)
+	}
+}
+
+// The marker of a parent that chose no tmpfs is "<pid>:-": a live pid makes a helper choose none, a dead one is no marker.
+func TestTmpfsRootFollowsAnAliveParentsDeclining(t *testing.T) {
+	host := tmpfsFakeHost(tmpfsFloorBytes, tmpfsFloorInodes, nil)
+	marker := func(v string) func(string) string {
+		return func(k string) string {
+			if k == tmpfsRootEnv {
+				return v
+			}
+			return ""
+		}
+	}
+	base := t.TempDir()
+	if root, owner := tmpfsRoot(base, host, marker("4242:-")); root != "" || owner {
+		t.Fatalf("root %q owner %v, want none after a live parent declined", root, owner)
+	}
+	if left := tmpfsEntries(t, base); len(left) != 0 {
+		t.Errorf("the helper made %v", left)
+	}
+	if root, owner := tmpfsRoot(base, host, marker("4243:-")); root == "" || !owner {
+		t.Errorf("a dead parent's declining held: root %q owner %v", root, owner)
+	}
+	if got := tmpfsDeclinedMarker(4242); got != "4242:-" {
+		t.Errorf("declined marker %q", got)
 	}
 }
