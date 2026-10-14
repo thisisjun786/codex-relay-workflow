@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -46,8 +47,12 @@ func TestTmpfsRootIsChosenAtTheFloorAndIsTheCallersToRemove(t *testing.T) {
 	if root == "" || !owner {
 		t.Fatalf("root %q owner %v, want a root this call owns", root, owner)
 	}
-	if filepath.Dir(root) != base || !strings.HasPrefix(filepath.Base(root), tmpfsRootPrefix) {
-		t.Errorf("root %q is not a %s* directory of %s", root, tmpfsRootPrefix, base)
+	if want := filepath.Join(base, tmpfsRootPrefix+strconv.Itoa(os.Getpid())); root != want {
+		t.Errorf("root %q, want %q", root, want)
+	}
+	// the fake hosts bind unix sockets under TMPDIR (107 bytes at most, TMPDIR plus 67 for the longest): /dev/shm and this name leave 9 bytes
+	if n := len("/dev/shm/") + len(tmpfsRootPrefix) + len(strconv.Itoa(1<<22)); n > 31 {
+		t.Errorf("a root under /dev/shm is %d bytes, over the 31 the socket paths of the tests allow", n)
 	}
 	if fi, err := os.Stat(root); err != nil || !fi.IsDir() {
 		t.Errorf("root %q: %v", root, err)
@@ -76,6 +81,21 @@ func TestTmpfsRootRejectsASmallOrFullTmpfs(t *testing.T) {
 			}
 		})
 	}
+	t.Run("a root of the same name is there", func(t *testing.T) {
+		base := t.TempDir()
+		stale := filepath.Join(base, tmpfsRootPrefix+strconv.Itoa(os.Getpid()))
+		if err := os.Mkdir(stale, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		host := tmpfsFakeHost(64<<30, 1<<20, nil)
+		host.Alive = func(pid int) bool { return pid == os.Getpid() } // the sweep leaves a root of a live pid, this one's
+		if root, owner := tmpfsRoot(base, host, tmpfsNoEnv); root != "" || owner {
+			t.Fatalf("a root %q was chosen over %s", root, stale)
+		}
+		if _, err := os.Stat(stale); err != nil {
+			t.Errorf("the root that was there was removed: %v", err)
+		}
+	})
 	t.Run("a base that is not there", func(t *testing.T) {
 		host := tmpfsRealHost()
 		if _, _, err := host.Free(filepath.Join(t.TempDir(), "missing")); err == nil {
@@ -107,13 +127,8 @@ func TestTmpfsRealHostReadsSpaceAndRunsAScript(t *testing.T) {
 }
 
 // A re-executed helper takes the root its parent named and makes none; a marker that names a dead parent, a directory that is not
-// there or one that is not a root of ours is no marker.
+// there or one that is not a root of that parent is no marker.
 func TestTmpfsRootHelperReusesTheParentsRoot(t *testing.T) {
-	base := t.TempDir()
-	parent := filepath.Join(base, tmpfsRootPrefix+"4242-abc")
-	if err := os.Mkdir(parent, 0o700); err != nil {
-		t.Fatal(err)
-	}
 	host := tmpfsFakeHost(tmpfsFloorBytes, tmpfsFloorInodes, nil)
 	marker := func(v string) func(string) string {
 		return func(k string) string {
@@ -123,24 +138,46 @@ func TestTmpfsRootHelperReusesTheParentsRoot(t *testing.T) {
 			return ""
 		}
 	}
-	root, owner := tmpfsRoot(base, host, marker(fmt.Sprintf("4242:%s", parent)))
-	if root != parent || owner {
-		t.Fatalf("helper root %q owner %v, want %q not owned", root, owner, parent)
+	made := func(t *testing.T, name string) (base, root string) {
+		t.Helper()
+		base = t.TempDir()
+		root = filepath.Join(base, name)
+		if err := os.Mkdir(root, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		return base, root
 	}
-	if left := tmpfsEntries(t, base); len(left) != 1 {
-		t.Errorf("the helper made its own root: %v", left)
-	}
-	for name, value := range map[string]string{
-		"a dead parent":       fmt.Sprintf("4243:%s", parent),
-		"a missing root":      fmt.Sprintf("4242:%s", filepath.Join(base, tmpfsRootPrefix+"4242-gone")),
-		"a foreign directory": fmt.Sprintf("4242:%s", t.TempDir()),
-		"no process number":   parent,
-		"a relative root":     "4242:" + tmpfsRootPrefix + "4242-abc",
+	t.Run("a live parent", func(t *testing.T) {
+		base, parent := made(t, tmpfsRootPrefix+"4242")
+		root, owner := tmpfsRoot(base, host, marker("4242:"+parent))
+		if root != parent || owner {
+			t.Fatalf("helper root %q owner %v, want %q not owned", root, owner, parent)
+		}
+		if left := tmpfsEntries(t, base); len(left) != 1 {
+			t.Errorf("the helper made its own root: %v", left)
+		}
+	})
+	for name, value := range map[string]func(base, parent string) string{
+		"a dead parent": func(base, _ string) string {
+			dead := filepath.Join(base, tmpfsRootPrefix+"4243")
+			_ = os.Mkdir(dead, 0o700)
+			return "4243:" + dead
+		},
+		"a root that is another pid's": func(base, _ string) string {
+			other := filepath.Join(base, tmpfsRootPrefix+"4243")
+			_ = os.Mkdir(other, 0o700)
+			return "4242:" + other
+		},
+		"a missing root":      func(base, _ string) string { return "4242:" + filepath.Join(base, tmpfsRootPrefix+"4242-gone") },
+		"a foreign directory": func(_, _ string) string { return "4242:" + t.TempDir() },
+		"no process number":   func(_, parent string) string { return parent },
+		"a relative root":     func(_, _ string) string { return "4242:" + tmpfsRootPrefix + "4242" },
 	} {
 		t.Run(name, func(t *testing.T) {
-			own, owner := tmpfsRoot(base, host, marker(value))
+			base, parent := made(t, tmpfsRootPrefix+"4242")
+			own, owner := tmpfsRoot(base, host, marker(value(base, parent)))
 			if own == parent || own == "" || !owner {
-				t.Fatalf("marker %q gave root %q owner %v, want a root of its own", value, own, owner)
+				t.Fatalf("marker %q gave root %q owner %v, want a root of its own", value(base, parent), own, owner)
 			}
 		})
 	}
@@ -150,7 +187,7 @@ func TestTmpfsRootHelperReusesTheParentsRoot(t *testing.T) {
 // are gone, and only those.
 func TestTmpfsRootSweepsTheRootsOfDeadProcessesOnly(t *testing.T) {
 	base := t.TempDir()
-	for _, name := range []string{tmpfsRootPrefix + "4243-dead", tmpfsRootPrefix + "4242-alive", tmpfsRootPrefix + "notapid-x", "crw-manage-123456", "other"} {
+	for _, name := range []string{tmpfsRootPrefix + "4243", tmpfsRootPrefix + "4242", tmpfsRootPrefix + "notapid", tmpfsRootPrefix + "4244-x", "crw-manage-123456", "other"} {
 		if err := os.Mkdir(filepath.Join(base, name), 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -163,12 +200,12 @@ func TestTmpfsRootSweepsTheRootsOfDeadProcessesOnly(t *testing.T) {
 	for _, name := range tmpfsEntries(t, base) {
 		got[name] = true
 	}
-	for _, name := range []string{tmpfsRootPrefix + "4242-alive", tmpfsRootPrefix + "notapid-x", "crw-manage-123456", "other", filepath.Base(root)} {
+	for _, name := range []string{tmpfsRootPrefix + "4242", tmpfsRootPrefix + "notapid", tmpfsRootPrefix + "4244-x", "crw-manage-123456", "other", filepath.Base(root)} {
 		if !got[name] {
 			t.Errorf("%s was removed", name)
 		}
 	}
-	if got[tmpfsRootPrefix+"4243-dead"] {
+	if got[tmpfsRootPrefix+"4243"] {
 		t.Error("the root of a dead process was kept")
 	}
 }

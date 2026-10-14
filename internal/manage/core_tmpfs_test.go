@@ -82,8 +82,10 @@ func tmpfsRoot(base string, h tmpfsHost, getenv func(string) string) (root strin
 		return "", false
 	}
 	tmpfsSweep(base, h)
-	root, err = os.MkdirTemp(base, tmpfsRootPrefix+strconv.Itoa(os.Getpid())+"-")
-	if err != nil {
+	// The name is the prefix and the pid and nothing else: the fake hosts of the tests bind unix sockets under TMPDIR, and a socket path
+	// is at most 107 bytes (the longest of them is TMPDIR plus 67 bytes). A root of that name that is already there is not ours to replace.
+	root = filepath.Join(base, tmpfsRootPrefix+strconv.Itoa(os.Getpid()))
+	if err := os.Mkdir(root, 0o700); err != nil {
 		return "", false
 	}
 	if err := h.Probe(root); err != nil {
@@ -97,7 +99,7 @@ func tmpfsRoot(base string, h tmpfsHost, getenv func(string) string) (root strin
 func tmpfsNamedRoot(h tmpfsHost, marker string) (string, bool) {
 	pidText, root, found := strings.Cut(marker, ":")
 	pid, err := strconv.Atoi(pidText)
-	if !found || err != nil || pid <= 0 || !filepath.IsAbs(root) || !strings.HasPrefix(filepath.Base(root), tmpfsRootPrefix) || !h.Alive(pid) {
+	if !found || err != nil || pid <= 0 || !filepath.IsAbs(root) || filepath.Base(root) != tmpfsRootPrefix+pidText || !h.Alive(pid) {
 		return "", false
 	}
 	info, err := os.Stat(root)
@@ -117,9 +119,8 @@ func tmpfsSweep(base string, h tmpfsHost) {
 		return
 	}
 	for _, entry := range entries {
-		pidText, _, found := strings.Cut(strings.TrimPrefix(entry.Name(), tmpfsRootPrefix), "-")
-		pid, err := strconv.Atoi(pidText)
-		if !strings.HasPrefix(entry.Name(), tmpfsRootPrefix) || !found || err != nil || pid <= 0 || !entry.IsDir() || h.Alive(pid) {
+		pid, err := strconv.Atoi(strings.TrimPrefix(entry.Name(), tmpfsRootPrefix))
+		if !strings.HasPrefix(entry.Name(), tmpfsRootPrefix) || err != nil || pid <= 0 || !entry.IsDir() || h.Alive(pid) {
 			continue
 		}
 		if info, err := entry.Info(); err == nil {
