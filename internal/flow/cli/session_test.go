@@ -58,7 +58,9 @@ func TestNextHandsOutTheStepsOfTheBus(t *testing.T) {
 	inputStep := engine.Step{Run: run, Call: "c_000000000002", K: 2, Attempt: 1, Op: "c_000000000002/t2-a1", Role: "executor", Action: engine.StepSendInput,
 		AgentType: "executor", AgentID: "agent-7", Message: "crw-flow-op: c_000000000002/t2-a1\n\nrepair"}
 	closeStep := engine.Step{Run: run, Call: "c_000000000003", Attempt: 1, Role: "explorer", Action: engine.StepClose, AgentID: "agent-3"}
-	for _, st := range []engine.Step{spawnStep, inputStep, closeStep} {
+	// CRW-1367: a second close of the same attempt (the pair_mismatch close, then the close after the harvest) is a step of its own
+	closeAgain := engine.Step{Run: run, Call: "c_000000000003", Attempt: 1, Role: "explorer", Action: engine.StepClose, AgentID: "agent-4"}
+	for _, st := range []engine.Step{spawnStep, inputStep, closeStep, closeAgain} {
 		if err := bus.Publish(st); err != nil {
 			t.Fatal(err)
 		}
@@ -68,12 +70,19 @@ func TestNextHandsOutTheStepsOfTheBus(t *testing.T) {
 		t.Fatalf("next: %d %s %s", code, out, errOut)
 	}
 	ans := decodeNext(t, out)
-	if ans.State != NextWaitingSession || len(ans.Steps) != 3 || ans.Slots.Limit != DefaultMaxThreads || ans.Slots.Open != 1 || len(ans.Spawns) != 6 {
+	if ans.State != NextWaitingSession || len(ans.Steps) != 4 || ans.Slots.Limit != DefaultMaxThreads || ans.Slots.Open != 2 || len(ans.Spawns) != 6 {
 		t.Fatalf("answer %+v", ans)
 	}
 	byAction := map[string]NextStep{}
+	var closed []string
 	for _, st := range ans.Steps {
 		byAction[st.Action] = st
+		if st.Action == engine.StepClose {
+			closed = append(closed, st.AgentID)
+		}
+	}
+	if strings.Join(closed, ",") != "agent-3,agent-4" {
+		t.Fatalf("the close steps handed out: %v, want both subagents of the attempt", closed)
 	}
 	sp := byAction[engine.StepSpawn]
 	if sp.Tool.Name != "spawn_agent" || sp.Tool.Arguments["agent_type"] != "reviewer" || sp.Tool.Arguments["model"] != "gpt-fake-sol" || sp.Tool.Arguments["reasoning_effort"] != "xhigh" ||
@@ -86,7 +95,7 @@ func TestNextHandsOutTheStepsOfTheBus(t *testing.T) {
 		!strings.Contains(in.Then, "--agent agent-7 --k 2 --attempt 1") {
 		t.Fatalf("send_input step %+v", in)
 	}
-	if cl := byAction[engine.StepClose]; cl.Tool.Name != "close_agent" || cl.Tool.Arguments["target"] != "agent-3" || cl.Then != "" {
+	if cl := byAction[engine.StepClose]; cl.Tool.Name != "close_agent" || cl.Tool.Arguments["target"] != "agent-4" || cl.Then != "" {
 		t.Fatalf("close step %+v", cl)
 	}
 	for _, want := range []string{"close_agent(target=...) agent-3", "wait_agent(targets=", "timeout_ms=600000", "send_input(target=<agent_id>"} {
@@ -101,7 +110,7 @@ func TestNextHandsOutTheStepsOfTheBus(t *testing.T) {
 	if got := bound.Lookup(sessOwner); got.State != bound.Orchestrator || got.Line.RunID != run || len(got.Line.HelperPairs) != 6 {
 		t.Fatalf("the owner's binding: %+v", got)
 	}
-	// the close step was handed out once: its file is gone, the others stay until the run binds or retracts them
+	// the close steps were handed out once: their files are gone, the others stay until the run binds or retracts them
 	steps, _ := bus.Steps()
 	if len(steps) != 2 {
 		t.Fatalf("steps left %+v", steps)

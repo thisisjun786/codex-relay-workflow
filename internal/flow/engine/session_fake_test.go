@@ -189,8 +189,9 @@ type fakeOrch struct {
 	host   *fakeSessionHost
 	placer *sessPlacer
 	answer func(st Step, packet string, n int) orchAnswer
-	// onSpawn is called after a spawn, before the report.
+	// onSpawn is called after a spawn, before the report; onInput after a send_input, before the report.
 	onSpawn func(st Step, agent string)
+	onInput func(st Step, agent string)
 
 	mu      sync.Mutex
 	seen    map[string]bool
@@ -227,7 +228,17 @@ func (o *fakeOrch) loop() {
 		}
 		steps, _ := o.bus.Steps()
 		for _, st := range steps {
+			// a step file is taken once: the same file seen again is the step already taken, and a step a process publishes again
+			// (a new file) is a new one, as the owner thread sees it
 			key := fmt.Sprintf("%s/%s/t%d-a%d/%s", st.Call, st.Action, st.K, st.Attempt, st.AgentID)
+			if st.Action != StepClose {
+				fi, err := os.Stat(filepath.Join(o.bus.StepsDir(st.Call), StepName(st.K, st.Attempt)))
+				if err != nil {
+					// retracted since it was read: no step to take
+					continue
+				}
+				key += "@" + fi.ModTime().Format(time.RFC3339Nano)
+			}
 			o.mu.Lock()
 			seen := o.seen[key]
 			o.seen[key] = true
@@ -253,7 +264,7 @@ func (o *fakeOrch) take(st Step) {
 		o.closed = append(o.closed, st.AgentID)
 		o.mu.Unlock()
 		o.host.set(st.AgentID, func(a *fakeAgent, _ *SessionTurn) { a.closed = true })
-		_ = os.Remove(filepath.Join(o.bus.StepsDir(st.Call), CloseName(st.Attempt)))
+		_ = os.Remove(filepath.Join(o.bus.StepsDir(st.Call), st.File))
 		return
 	}
 	packet, _ := os.ReadFile(st.Packet)
@@ -332,6 +343,9 @@ func (o *fakeOrch) take(st Step) {
 	}
 	if o.onSpawn != nil && st.Action == StepSpawn {
 		o.onSpawn(st, agent)
+	}
+	if o.onInput != nil && st.Action == StepSendInput {
+		o.onInput(st, agent)
 	}
 	if ans.noDispatch {
 		return
@@ -497,9 +511,10 @@ func (d *deadSwitch) isDead() bool {
 	return d.dead
 }
 
-// dyingJournal stores rows until the process dies; stop names the last row it stores.
+// dyingJournal stores rows until the process dies; stop names the last row it stores. A journal that batches its rows (the
+// SQLite journal) loses the rows of its open batch with the process: nothing is flushed after the death.
 type dyingJournal struct {
-	*MemoryJournal
+	Journal
 	sw   *deadSwitch
 	stop func(Event) bool
 }
@@ -508,11 +523,24 @@ func (j *dyingJournal) Append(e Event) Event {
 	if j.sw.isDead() {
 		return e
 	}
-	out := j.MemoryJournal.Append(e)
+	out := j.Journal.Append(e)
 	if j.stop != nil && j.stop(out) {
 		j.sw.kill()
 	}
 	return out
+}
+
+func (j *dyingJournal) Err() error {
+	if f, ok := j.Journal.(FailingJournal); ok {
+		return f.Err()
+	}
+	return nil
+}
+
+func (j *dyingJournal) SetOnCommit(notify func()) {
+	if n, ok := j.Journal.(CommitNotifier); ok {
+		n.SetOnCommit(notify)
+	}
 }
 
 // dyingBus is the bus as the process sees it: a dead process writes nothing and reads nothing.
@@ -565,6 +593,8 @@ type sessionKit struct {
 	bus    *FileStepBus
 	orch   *fakeOrch
 	cfg    *SessionConfig
+	// jr is the journal the rows are read from when it is not the harness's (the SQLite journal of a resumed process).
+	jr Journal
 }
 
 func newSessionKit(t *testing.T) *sessionKit {
@@ -580,7 +610,18 @@ func newSessionKit(t *testing.T) *sessionKit {
 }
 
 // rowsOf are the call rows with the label, and eventsOf their event names.
-func (k *sessionKit) rowsOf(label string) []Event { return k.h.callRows(label) }
+func (k *sessionKit) rowsOf(label string) []Event {
+	if k.jr == nil {
+		return k.h.callRows(label)
+	}
+	var out []Event
+	for _, e := range k.jr.Events() {
+		if e.Kind == KindCall && e.Label == label {
+			out = append(out, e)
+		}
+	}
+	return out
+}
 
 func eventsOf(rows []Event) string {
 	var out []string
