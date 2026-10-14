@@ -87,7 +87,10 @@ func (r *Runner) listPending() (entries []Entry, ignored []string, err error) {
 	for _, de := range des {
 		name := de.Name()
 		num, perr := strconv.ParseUint(strings.TrimPrefix(name, prPrefix), 10, 64)
-		if !queueNameRE.MatchString(name) || perr != nil || !de.Type().IsRegular() || (strings.HasPrefix(name, prPrefix) && (num == 0 || num > maxPRNumber)) {
+		// a pr-<N> file is a pull request only for a queue that lands the pull requests of a repository; otherwise it is not an
+		// entry, as before PR-unit landing
+		isPR := strings.HasPrefix(name, prPrefix)
+		if !queueNameRE.MatchString(name) || perr != nil || !de.Type().IsRegular() || (isPR && (num == 0 || num > maxPRNumber || r.Cfg.PullRequestRepo == "")) {
 			ignored = append(ignored, name)
 			continue
 		}
@@ -97,7 +100,7 @@ func (r *Runner) listPending() (entries []Entry, ignored []string, err error) {
 			continue
 		}
 		e := Entry{Name: name, Key: r.keyOf(name), Node: r.Cfg.node(name), Head: head, HeadOK: headRE.MatchString(head), num: num}
-		if strings.HasPrefix(name, prPrefix) {
+		if isPR {
 			e.Node, e.PR = name, int(num)
 		}
 		entries = append(entries, e)

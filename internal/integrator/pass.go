@@ -25,6 +25,8 @@ type Report struct {
 	Ignored []string `json:"ignored,omitempty"`
 	// Retry describes the retry step the pass took after a failed verification.
 	Retry string `json:"retry,omitempty"`
+	// Held are the pending pull requests this pass could not read, as "<name>: <why>"; they stay pending.
+	Held []string `json:"held,omitempty"`
 	// Landing is the record of a pull request's run (CRW-1355), nil for a run of issue heads.
 	Landing *Landing `json:"pull_request_landing,omitempty"`
 }
@@ -74,16 +76,27 @@ func (r *Runner) Pass(ctx context.Context) Report {
 			heads = append(heads, e)
 		}
 	}
-	if len(prs) > 0 {
-		pr, stop := r.checkPR(ctx, prs[0], &rep)
-		if stop != nil {
-			return *stop
+	for _, e := range prs {
+		pr, held := r.checkPR(ctx, e, &rep)
+		if ctx.Err() != nil {
+			return r.cancelled(ctx, rep)
 		}
-		if pr == nil {
+		if held != "" {
+			// not a verdict on the pull request: it waits in pending, and the queue goes on without it
+			rep.Held = append(rep.Held, e.Name+": "+held)
+			continue
+		}
+		if pr != nil {
+			return r.run(ctx, rep, []Entry{e}, pr)
+		}
+	}
+	if len(prs) > 0 && len(heads) == 0 {
+		if len(rep.Held) > 0 {
+			rep.Result, rep.Exit, rep.Error = "error", ExitUsage, strings.Join(rep.Held, "; ")
+		} else {
 			rep.Result, rep.Exit = "nothing-to-integrate", ExitNothingMerged
-			return rep
 		}
-		return r.run(ctx, rep, []Entry{prs[0]}, pr)
+		return rep
 	}
 	entries = heads
 	solo := len(r.soloPrune(entries)) > 0

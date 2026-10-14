@@ -392,3 +392,37 @@ func TestConfigPullRequestRepoAndReviewCommand(t *testing.T) {
 		}
 	}
 }
+
+func TestPassHoldsAnUnreadablePullRequestAndLandsTheIssueHeads(t *testing.T) {
+	w := newPRWorld(t, true)
+	w.milestone("10")
+	w.enqueue("o/r#1")
+	h3 := w.head("h3", map[string]string{"f3.txt": "3\n"}, true)
+	w.pend("3", h3)
+	// GitHub cannot be read: the pull request is no verdict and waits, and the issue heads still go to dev
+	gh, err := tracking.NewGitHub("o/r", tracking.StaticToken("wrong"), tracking.WithBaseURL(w.fake.URL))
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.r.PullRequests = gh
+	rep := w.pass()
+	requireExit(t, rep, ExitPushed, "pushed")
+	if rep.Summary.Merged != "crw-3="+h3 || len(rep.Held) != 1 || !strings.HasPrefix(rep.Held[0], "pr-1: the pull request could not be read") {
+		t.Fatalf("pass %+v", rep)
+	}
+	w.mustWhere("pr-1", "pending")
+	w.mustWhere("3", "done")
+}
+
+func TestAQueueWithoutAPullRequestRepoTakesNoPullRequest(t *testing.T) {
+	w := newWorld(t)
+	w.write(filepath.Join(w.cfg.QueueDir, "pending", "pr-1"), strings.Repeat("a", 40)+"\n")
+	h3 := w.head("h3", map[string]string{"f3.txt": "3\n"}, true)
+	w.pend("3", h3)
+	rep := w.pass()
+	requireExit(t, rep, ExitPushed, "pushed")
+	if rep.Summary.Merged != "crw-3="+h3 || strings.Join(rep.Ignored, ",") != "pr-1" || rep.Landing != nil {
+		t.Fatalf("pass %+v", rep)
+	}
+	w.mustWhere("pr-1", "pending")
+}

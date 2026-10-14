@@ -152,30 +152,25 @@ func (r *Runner) EnqueuePR(ctx context.Context, ref string) (Entry, error) {
 }
 
 // checkPR reads the pull request of a pending entry before anything is merged. It answers the pull request to land, or nil when
-// the entry was moved (a closed, merged, retargeted or moved-on pull request), or a report that ends the pass with the entry left
-// pending (the pull request could not be read: no verdict).
-func (r *Runner) checkPR(ctx context.Context, e Entry, rep *Report) (*tracking.PullRequest, *Report) {
-	stop := func(format string, args ...any) (*tracking.PullRequest, *Report) {
-		msg := fmt.Sprintf(format, args...)
-		r.logf("%s %s: %s", e.Key, e.Head, msg)
-		rep.Result, rep.Exit, rep.Error = "error", ExitUsage, msg
-		return nil, rep
-	}
+// the entry was moved (a closed, merged, retargeted or moved-on pull request, or a head that is not a commit), or why the entry is
+// held in pending this pass (the pull request could not be read: no verdict, so the entry waits and the issue heads go on).
+func (r *Runner) checkPR(ctx context.Context, e Entry, rep *Report) (*tracking.PullRequest, string) {
 	if !e.HeadOK {
 		r.logf("%s %q is not a full head SHA: blocked", e.Key, e.Head)
 		rep.moved(r, e, dirBlocked, "head is not a 40-hex commit")
-		return nil, nil
+		return nil, ""
 	}
-	if r.PullRequests == nil || r.Cfg.PullRequestRepo == "" {
-		return stop("the pending pull request cannot be read: the integrate section names no pull_request_repo")
+	if r.PullRequests == nil {
+		return nil, "the pending pull request cannot be read: the queue has no tracking adapter"
 	}
 	pr, err := r.PullRequests.PullRequest(ctx, r.prRef(e))
 	if ctx.Err() != nil {
-		c := r.cancelled(ctx, *rep)
-		return nil, &c
+		return nil, ""
 	}
 	if err != nil {
-		return stop("the pull request could not be read, it stays pending: %v", err)
+		held := fmt.Sprintf("the pull request could not be read, it stays pending: %v", err)
+		r.logf("%s %s: %s", e.Key, e.Head, held)
+		return nil, held
 	}
 	reason, dir := "", ""
 	switch {
@@ -191,9 +186,9 @@ func (r *Runner) checkPR(ctx context.Context, e Entry, rep *Report) (*tracking.P
 	if reason != "" {
 		r.logf("%s %s: %s", e.Key, e.Head, reason)
 		rep.moved(r, e, dir, reason)
-		return nil, nil
+		return nil, ""
 	}
-	return &pr, nil
+	return &pr, ""
 }
 
 // review runs the review command on the verified merged tree and reads its verdict. Only a verdict file that says needs_changes
