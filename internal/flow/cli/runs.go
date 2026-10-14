@@ -7,7 +7,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/flow/apply"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/callstate"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
@@ -311,7 +310,7 @@ func Questions(events []engine.Event) []Question {
 //
 // A run meant to start the nodes of a plan (StartsNodes: a lane workflow, or a run whose arguments name a plan) whose last process finished
 // completed with nothing left to go on with is blocked, not completed, when it started no node (no crw.release released one, no
-// crw.releaseChild released a child and nothing landed, in any process) and join items of its last process threw (the releases of crw.dag
+// crw.releaseChild row of an old run released a child and nothing landed, in any process) and join items of its last process threw (the releases of crw.dag
 // that failed are such items). The engine's status of the run stays completed. A run whose last process has a node the scheduler held back
 // unreleased (a wait a resume asks again, CRW-1201), a run where a node started and a run not meant to start one (a judge panel, a scout)
 // keep the state completed.
@@ -422,8 +421,8 @@ func releasedRow(e engine.Event) bool {
 }
 
 // nodeStarted says whether any process of the run started a node of its milestone: a crw.release released one to an executor, a
-// crw.releaseChild released an issue child, or a crw.integrate landed one. The reading is the lane's results, never the thread or turn rows
-// of the journal.
+// crw.integrate landed one, or, in an old run, a crw.releaseChild released an issue child (the issue child is retired, CRW-1415, and no
+// new run writes that row; an old run's row is read only). The reading is the lane's results, never the thread or turn rows of the journal.
 func nodeStarted(events []engine.Event) bool {
 	for _, e := range events {
 		if e.Kind != engine.KindCall || e.Event != engine.EvCompleted {
@@ -440,9 +439,13 @@ func nodeStarted(events []engine.Event) bool {
 // ProjectLaneWorkflow is the built-in workflow that runs the issue nodes of a milestone.
 const ProjectLaneWorkflow = "project-lane"
 
-// laneWorkflows are the built-in workflows whose run is meant to start the nodes of a plan: the project lane, the issue lane of a child and
-// the night batch.
-var laneWorkflows = map[string]bool{ProjectLaneWorkflow: true, apply.IssueLane: true, NightBatchWorkflow: true}
+// LegacyIssueLaneWorkflow is an old run's workflow, read only: the issue lane of a child, retired with the issue child (CRW-1415). A run
+// record that names it still reads as a lane run.
+const LegacyIssueLaneWorkflow = "issue-lane"
+
+// laneWorkflows are the workflows whose run is meant to start the nodes of a plan: the built-in project lane and night batch, and an old
+// run's issue lane of a child.
+var laneWorkflows = map[string]bool{ProjectLaneWorkflow: true, LegacyIssueLaneWorkflow: true, NightBatchWorkflow: true}
 
 // StartsNodes says whether a run is meant to start the nodes of a plan, so that a run of it that started none is blocked (CRW-1320): a run of
 // a lane workflow, or a run whose arguments name a plan (the record's plan). The workflow is the record's, else the one the run's first

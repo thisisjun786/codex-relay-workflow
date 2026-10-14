@@ -171,3 +171,40 @@ func TestCRW1320_DigestSaysABlockedRunStartedNoNode(t *testing.T) {
 		t.Errorf("stopped %q", got)
 	}
 }
+
+// TestLegacyChildRowsStayReadable: the issue lane of a child is retired (CRW-1415), but an old run of it stays readable. Its record names
+// the old workflow, so it still counts as a lane run: with no node started and failed items it is blocked. Its completed crw.releaseChild
+// row still counts as a started node, so a run whose only start is that row keeps the state completed and is not blocked.
+func TestLegacyChildRowsStayReadable(t *testing.T) {
+	rec := RunRecord{RunID: "run-old", Workflow: LegacyIssueLaneWorkflow}
+	w := newWorld(t)
+	startedNone(t, w, "run-old", nil)
+	events, _, err := loadRun(w, "run-old")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !StartsNodes(rec, events) {
+		t.Errorf("an old issue-lane run does not count as a lane run")
+	}
+	if _, blocked := Blocked(rec, events); !blocked {
+		t.Errorf("an old issue-lane run that started no node is not blocked")
+	}
+
+	w = newWorld(t)
+	startedNone(t, w, "run-old", func(r *run) {
+		r.op("c_child", ops.OpReleaseChild, map[string]any{"node": "C", "child": "child-C"})
+	})
+	events, _, err = loadRun(w, "run-old")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !StartsNodes(rec, events) {
+		t.Errorf("an old issue-lane run does not count as a lane run")
+	}
+	if info := Summarize(rec, events, false, 0); info.State != StateCompleted || len(info.ItemErrors) != 2 {
+		t.Errorf("state %q item errors %+v", info.State, info.ItemErrors)
+	}
+	if reasons, blocked := Blocked(rec, events); blocked {
+		t.Errorf("an old crw.releaseChild row does not count as a started node: %q", reasons)
+	}
+}
