@@ -174,12 +174,18 @@ func runSectionProblems(section string, relay map[string]bool) []string {
 		`(?i)milestone ends .?incomplete`,
 		`(?i)out-of-band [^.]*transition[^.]*(is )?(raised|goes) (to the manager )?as an escalation`,
 		`(?i)` + "`crw flow resume`",
-		// The run releases the child of an oversized issue; the thread sends it no task packet and no PABCD is armed.
-		`(?i)releases? the (issue )?child of an oversized issue itself`,
-		"`issue-lane`",
-		`(?i)sends? it no task packet`,
+		// A node sized for an issue child starts no issue child (CRW-1415): the project lane escalates it as size_split with detail
+		// child_retired, the parent asks for a bundle split, and the thread sends no task packet for it.
+		`(?i)starts? no issue child`,
+		"`size_split`",
+		"`child_retired`",
+		`(?i)bundle split`,
+		`(?i)sends? (it )?no task packet`,
 	}) {
 		problems = append(problems, "the section lacks "+p)
+	}
+	if m := regexp.MustCompile("(?i)releases? the (issue )?child of an oversized issue|crw\\.releaseChild|`issue-lane`").FindString(flat); m != "" {
+		problems = append(problems, "the section says the run starts an issue child ("+m+"), a path the project lane retired")
 	}
 	if regexp.MustCompile(`(?i)is the path of an oversized issue`).MatchString(flat) {
 		problems = append(problems, "the section sends an oversized issue to the dispatch of an issue child, which a run does not use")
@@ -223,7 +229,7 @@ func TestRunProjectNeverClaimsRunEpoch(t *testing.T) {
 			"The thread handles only escalations. " +
 			"It never claims the coordinator epoch of a plan a run holds with `dag-coordinator-claim`: the run's next write is `stale_coordinator_epoch` and the milestone ends `incomplete`. " +
 			"An out-of-band transition is raised as an escalation. A dead run is taken again with `crw flow resume`. " +
-			"The run releases the child of an oversized issue itself: it runs the `issue-lane` workflow and the thread sends it no task packet.\n"
+			"A node sized for an issue child starts no issue child: the project lane escalates it as `size_split` with detail `child_retired`, the parent asks for a bundle split, and the thread sends no task packet for it.\n"
 		fixture := map[string]bool{"dag-coordinator-claim": true}
 		if p := runSectionProblems(sectionOf(good, "Run a milestone with a flow run"), fixture); len(p) > 0 {
 			t.Fatalf("the good text is reported: %v", p)
@@ -238,7 +244,12 @@ func TestRunProjectNeverClaimsRunEpoch(t *testing.T) {
 			"unconditional": func(s string) string { return s + "Run `dag-coordinator-claim` at the start of every turn.\n" },
 			"child path":    func(s string) string { return s + "The rest of this skill is the path of an oversized issue.\n" },
 			"no packet note": func(s string) string {
-				return strings.Replace(s, "and the thread sends it no task packet", "and the thread sends it a packet", 1)
+				return strings.Replace(s, "and the thread sends no task packet for it", "and the thread sends it a packet", 1)
+			},
+			"no child_retired": func(s string) string { return strings.Replace(s, " with detail `child_retired`", "", 1) },
+			"no bundle split":  func(s string) string { return strings.Replace(s, "the parent asks for a bundle split, ", "", 1) },
+			"retired child path": func(s string) string {
+				return s + "The run releases the child of an oversized issue itself: it runs the `issue-lane` workflow.\n"
 			},
 			"unknown command": func(s string) string { return s + "Hand it up with `crw manage decisions`.\n" },
 		} {

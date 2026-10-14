@@ -18,11 +18,12 @@ The default path is a flow run with role subagents: the child carries the projec
 at a time as a flow run of the built-in project lane, the run hands the child each step, and the child
 spawns that step's role subagent (an architect, an executor, a reviewer or an explorer: a leaf whose
 call the run records) under [Run a milestone with a flow run](#run-a-milestone-with-a-flow-run) and
-[How the child works](#how-the-child-works). The exception is one oversized issue the architect sized
-for an issue child (SP-CHILD-1 of the [spawn policy](../crw-canon/references/spawn-policy.md)): the run
-releases that issue child itself, and the dispatch, observation, verification and correction of an
-issue child under [Independent implementation tasks](#independent-implementation-tasks) are that
-exception path and the path of a plan with no run. Follow the shared
+[How the child works](#how-the-child-works). A node the architect sized for an issue child starts no
+issue child: the project lane escalates it as `size_split` with detail `child_retired`, and the
+escalation goes up to the parent (repository session), which asks for a bundle split of that issue.
+The dispatch, observation, verification and correction of an issue child under
+[Independent implementation tasks](#independent-implementation-tasks) are the exception path, the
+path of a plan with no run. Follow the shared
 [scope of each level](../crw-canon/references/hierarchy.md#scope-of-each-level),
 which fixes the names and the ids they are recorded under and covers
 standalone issues and explicit current-task work. This child owns scope, dependencies, its runs and
@@ -181,7 +182,7 @@ The child carries a project one milestone at a time, and starts one run of the b
 - **A run that stopped.** `crw flow ps` and `crw flow show` say whether it is `dead`, `held` or over. A run whose process died is taken again with `crw flow resume`, which keeps its claim (`crw flow next` does it for a run no process holds); a call in `recovery_hold` is settled only with `crw flow recover`. `crw flow pause` and `crw flow cancel` follow an instruction, not a hunch.
 - **What goes up.** The run reports each closed milestone to the parent (repository session) itself. This thread lifts a project-level blocker or a decision request with `crw flow report-up`, with the evidence file, because an agent node reports nothing upward on its own.
 
-The run releases the issue child of an oversized issue itself (`crw.releaseChild`, SP-CHILD-1): that issue child runs the built-in `issue-lane` workflow and starts no PABCD state machine ([who owns control](../crw-canon/references/flow.md#who-owns-control-in-a-flow-managed-run)), so this thread sends it no task packet and arms no `crw-pabcd` for it. The issue-child rules from [Independent implementation tasks](#independent-implementation-tasks) on, the dispatch of an issue child and its observation, verification and correction, are that exception path and the path of a plan with no run.
+A node of an oversized issue, one the architect sized for an issue child, starts no issue child: the project lane escalates it as `size_split` with detail `child_retired` (the evidence carries the plan's `size_reason`), releases the node to no executor, and goes on with the other nodes of the milestone. The escalation goes up to the parent (repository session), which asks for a bundle split of that issue. No issue child is started for the node, so this thread sends no task packet for it and arms no `crw-pabcd` for it ([who owns control](../crw-canon/references/flow.md#who-owns-control-in-a-flow-managed-run)). The issue-child rules from [Independent implementation tasks](#independent-implementation-tasks) on, the dispatch of an issue child and its observation, verification and correction, are the exception path of a plan with no run.
 
 ### How the child works
 
