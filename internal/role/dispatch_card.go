@@ -126,9 +126,9 @@ text(await tools[s[0]](v1 ? a : {...a, task_name:"model_probe", fork_turns:"none
 
 // RenderFlowBoundDispatchCard is the dispatch card of a thread a flow run bound (F14), kind being the kind of its binding line
 // (bound.KindEngine, bound.KindOrchestrator). The ordinary card shows a model alias and reasoning_effort "low" for the helper; here
-// the hook sets the pair from the role, so the card shows the role key (agent_type "explorer") and no model or effort, and the
-// orchestrator's review form carries the producer header line `CRW-ROLE: reviewer` that picks the reviewer pair: the hook never
-// picks it from review keywords. Like the ordinary card, its cell is data the parent runs as printed.
+// the hook sets the pair from the role, so the card shows the role key (agent_type "explorer" for an engine call, the role for the
+// child's helper) and no model or effort, and the child's review form carries the producer header line `CRW-ROLE: reviewer` that
+// picks the reviewer pair: the hook never picks it from review keywords. Like the ordinary card, its cell is data the parent runs as printed.
 func RenderFlowBoundDispatchCard(kind string) (string, error) {
 	var card string
 	switch kind {
@@ -157,6 +157,9 @@ const dispatchFlowEngineCard = `[crw] Subagent dispatch, flow-bound engine call:
 ` + dispatchFlowCell + `const a = {agent_type:"explorer",message:"TASK: <question packet>"};
 text(await tools[s[0]](v1 ? a : {...a, task_name:"helper", fork_turns:"none"}));`
 
-const dispatchFlowOrchestratorCard = `[crw] Subagent dispatch, flow-bound orchestrator: agent_type "explorer" only; the spawn hook sets the pair from the role, never from words like review. V1: header line CRW-ROLE: reviewer or CRW-ROLE: explorer before TASK:. V2: the message is ciphertext, so task_name names the role (reviewer or explorer, or reviewer_x); other names are refused. Other roles go through run(crw flow). Pass no model or reasoning_effort. First Code Mode cell, review form:
-` + dispatchFlowCell + `const a = {agent_type:"explorer",message:"CRW-ROLE: reviewer\nTASK: <what to review>"};
+// dispatchFlowOrchestratorCard is the card of the child that owns a session run (CRW-1316 sections 3.2 and 9, CRW-1353): it
+// spawns each step of the run as crw flow next names it and reports it with crw flow dispatched, and a helper of its own, of any
+// role, is allowed with that role's pair and recorded.
+const dispatchFlowOrchestratorCard = `[crw] Subagent dispatch, flow-bound child: spawn each run step as crw flow next names it (fork_context false), then at once its crw flow dispatched line. A helper of your own is allowed with its role's pair and recorded unrecorded_spawn: CRW-ROLE: reviewer or CRW-ROLE: explorer (any role) before TASK: on V1; on V2 the message is ciphertext, so task_name names the role. Pass no model or reasoning_effort for a helper. First Code Mode cell, helper review form:
+` + dispatchFlowCell + `const a = {agent_type:"reviewer",message:"CRW-ROLE: reviewer\nTASK: <what to review>"};
 text(await tools[s[0]](v1 ? a : {...a, task_name:"reviewer", fork_turns:"none"}));`

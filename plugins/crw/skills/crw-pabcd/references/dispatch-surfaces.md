@@ -17,20 +17,21 @@ the task packet, the assignment record the relay holds for it, or the DAG node
 - **Managed** — a Linear issue or a DAG node, whether the relay already holds an assignment for it
   or not. An issue with no assignment yet is not unmanaged: its first lane is a managed one. A
   managed issue or node is one of two things, and the choice is the plan of [the child](../../crw-canon/references/hierarchy.md#the-levels) (project session, relay role `parent`), not this file's:
-  - an independent relay child, started and resumed through `crw-run`: the managed start, the DAG
-    release and their bridge recovery, pair/profile, capacity and receipt rules. An oversized issue
-    is this one. It is never a desktop `create_thread` lane.
-  - a flow executor call of the child's run, recorded in the relay: the run
-    releases the node to the relay's DAG scheduler and starts the executor (an engine thread of its
-    own, not a native helper of any task), and the call, its commits, its review and its acceptance
-    are rows of the run's journal and the DAG records
+  - a flow executor call of the child's run, the default path: the run releases the node to the
+    relay's DAG scheduler and publishes the executor's step, the child spawns that step's role
+    subagent (a leaf) as `crw flow next` names it and reports it with `crw flow dispatched`, and the
+    call, its commits, its review and its acceptance are rows of the run's journal and the DAG records
     ([the flow commands](../../crw-canon/references/flow.md), [the spawn policy](../../crw-canon/references/spawn-policy.md)).
+  - an issue child (relay role `child`), started and resumed through `crw-run`: the exception path of
+    one oversized issue (SP-CHILD-1) with the managed start, the DAG release and their bridge
+    recovery, pair/profile, capacity and receipt rules. It is never a desktop `create_thread` lane.
 
   Either way the relay refuses a second active or paused assignment of the same issue and a release
-  past capacity; those answers are followed, not routed around by creating a thread by hand. A
-  child's own thread uses read-only and review helpers only; the implementation of an
-  issue is its independent relay child's or its run's executor call, and that child, or that executor
-  within its stated allowance, may own bounded native helpers for its own task. The manifest of
+  past capacity; those answers are followed, not routed around by creating a thread by hand. The
+  child's own thread spawns the run's role subagents for the steps `crw flow next` hands it, and helpers
+  of its own for its judgment (recorded, SP-NAT-1); it edits no node's directory. The implementation of
+  an issue is its run's executor call or its issue child's, and a step's subagent is a leaf that spawns
+  nothing. The manifest of
   managed lanes is a read-only projection of the relay assignments and DAG records (and, for a run,
   its journal), not a second file to keep. A goal-free parent is resumed by relay delivery
   ([OPS-8.1](../../crw-run/references/operations.md#ops-81-parent-continuation-and-waiting)): it

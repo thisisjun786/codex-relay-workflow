@@ -68,7 +68,7 @@ func TestDispatchCardUsesRoleKeyWhenFlowBound(t *testing.T) {
 		if strings.Contains(card, `reasoning_effort:"low"`) || strings.Contains(card, "model:") || strings.Contains(card, "Aliases") {
 			t.Errorf("%s card still shows a model or a low effort:\n%s", name, card)
 		}
-		if !strings.Contains(card, `agent_type:"explorer"`) {
+		if !strings.Contains(card, `agent_type:"explorer"`) && !strings.Contains(card, `agent_type:"reviewer"`) {
 			t.Errorf("%s card has no role key:\n%s", name, card)
 		}
 		if dispatchUTF16Len(card) > 1200 {
@@ -77,6 +77,17 @@ func TestDispatchCardUsesRoleKeyWhenFlowBound(t *testing.T) {
 	}
 	if !strings.Contains(orchestrator, `message:"CRW-ROLE: reviewer\nTASK:`) || !strings.Contains(orchestrator, "CRW-ROLE: explorer") {
 		t.Errorf("the orchestrator card does not show the header forms:\n%s", orchestrator)
+	}
+	// CRW-1353 (design-1316 sections 3.2 and 9): the child spawns the run's steps as `crw flow next` names them and reports each with
+	// `crw flow dispatched`; a helper of its own may be any role (agent_type reviewer in the review form), so the card no longer
+	// keeps the child to the explorer.
+	for _, want := range []string{"crw flow next", "crw flow dispatched", "fork_context false", `agent_type:"reviewer"`, "unrecorded_spawn"} {
+		if !strings.Contains(orchestrator, want) {
+			t.Errorf("the orchestrator card lacks %q:\n%s", want, orchestrator)
+		}
+	}
+	if strings.Contains(orchestrator, `"explorer" only`) || strings.Contains(orchestrator, "Other roles go through run") {
+		t.Errorf("the orchestrator card still keeps the child to the explorer:\n%s", orchestrator)
 	}
 	// under native V2 the message is ciphertext: the review form names the role in the plaintext task_name too
 	if !strings.Contains(orchestrator, `task_name:"reviewer"`) || !strings.Contains(orchestrator, "ciphertext") {

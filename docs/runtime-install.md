@@ -1490,17 +1490,17 @@ A registration keeps the configuration it used: when the registering environment
 `CRW_CONFIG` or `XDG_CONFIG_HOME` and that file exists, the unit carries it as `Environment=CRW_CONFIG=<file>` (a path systemd
 would split or expand is a usage error, as for the state directory), so the relay a boot start runs, and the jobs and evidence
 commands it starts, read the same `log_root`, tool roots and `relay_state` as the registering shell, which a user manager's
-environment does not carry. A file at the default location needs no line (the manager finds it too), and a missing file
+environment does not carry. A file at the default location needs no line (the systemd user manager finds it too), and a missing file
 configures nothing. A unit registered without the line and a registration that would add it differ (`unit_differs`): remove,
 then register again.
 
-One owner registers this surface, and the command asks the manager as well as the file. It refuses, writing nothing:
+One owner registers this surface, and the command asks the systemd user manager as well as the file. It refuses, writing nothing:
 
 | Outcome | When |
 | --- | --- |
 | `unit_foreign` | something at the path is not the installer's unit (it lacks `X-CRW-Owner=crw-install`), or is not a regular file |
 | `unit_differs` | the installer's unit says something else; run `--remove`, then register again |
-| `unit_name_taken` | the manager loads the name from another file, or it is masked |
+| `unit_name_taken` | the systemd user manager loads the name from another file, or it is masked |
 | `unit_modified` | a `<name>.d` directory, drop-ins (also read once the unit is enabled and loaded, when the unit stays enabled and the exit status is 3), or a manager definition older than the disk (`NeedDaemonReload`), which `disable` would re-read |
 | `unit_second_owner` | another unit in the directory runs the relay's `service start` or `run` |
 | `unit_dir_in_runtime` | the unit directory lies inside the installer's destination, where removing a runtime would delete it |
@@ -1513,7 +1513,7 @@ role-bound deliveries, or write its host record elsewhere. It never changes the 
 landed and a later step did not or could not be confirmed (written and not enabled: run it again; an `enable` or `disable` that
 failed, possibly after changing some links: read `systemctl --user is-enabled`; deleted and `daemon-reload` failed: run that); 1 is a
 refusal with nothing changed, 2 a usage error. `--remove` disables and deletes only a unit it wrote, only when the file is exactly
-what the command writes (`disable` follows `Also=` into other units), the manager resolves the name to that file and it is not
+what the command writes (`disable` follows `Also=` into other units), the systemd user manager resolves the name to that file and it is not
 running; it never stops the relay.
 
 The maintenance order is the relay's own: `service stop` (`systemctl --user stop crw-relay.service` runs the same stop while the

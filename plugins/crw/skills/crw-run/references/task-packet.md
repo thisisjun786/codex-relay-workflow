@@ -233,7 +233,7 @@ Workspace ownership:
   what the service manager would otherwise decide by its own default. Older service managers refuse
   `OOMPolicy` for a scope (this command was tried with systemd 259 only), and
   `systemd-run --user --scope -p OOMPolicy=kill true` says whether the one in use accepts it. Where
-  it does not, the child omits `-p OOMPolicy=kill` and keeps the rest: the manager's default then
+  it does not, the child omits `-p OOMPolicy=kill` and keeps the rest: systemd's default then
   decides what else in the scope ends, so the child also checks the command's exit status and stops
   what it started, by its recorded process group, that the kill left running. Everything inside one
   scope ends together, so each heavy command gets its own. Keeping the host itself from running out is the

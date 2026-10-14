@@ -7,30 +7,40 @@ description: "Coordinate one Linear project as its child: bind, dispatch, observ
 
 Use the selected Linear project as the planning source and keep this Codex task
 as its coordinator: this task is [the child](../crw-canon/references/hierarchy.md#the-levels)
-(project session, relay role `parent`), one per project. In this skill and its references the relay
-words keep their relay sense: "parent" is this task in its relay role `parent`, and "child" is an
-issue child (relay role `child`), one per oversized issue. Follow the shared
+(project session, relay role `parent`), one per project, and this skill names every session by
+that table. The parent (repository session, relay role `supervisor`) above this project orders the
+repository's projects, answers the decisions this child raises and reads its reports; it instructs
+this child, never this child's subagents or issue children, and its own work is
+[the parent's section](#the-parent-the-repository-session) at the end of this skill. An issue child
+(relay role `child`) is a Codex session bound to one oversized issue.
+
+The default path is a flow run with role subagents: the child carries the project one milestone
+at a time as a flow run of the built-in project lane, the run hands the child each step, and the child
+spawns that step's role subagent (an architect, an executor, a reviewer or an explorer: a leaf whose
+call the run records) under [Run a milestone with a flow run](#run-a-milestone-with-a-flow-run) and
+[How the child works](#how-the-child-works). The exception is one oversized issue the architect sized
+for an issue child (SP-CHILD-1 of the [spawn policy](../crw-canon/references/spawn-policy.md)): the run
+releases that issue child itself, and the dispatch, observation, verification and correction of an
+issue child under [Independent implementation tasks](#independent-implementation-tasks) are that
+exception path and the path of a plan with no run. Follow the shared
 [scope of each level](../crw-canon/references/hierarchy.md#scope-of-each-level),
 which fixes the names and the ids they are recorded under and covers
-standalone issues and explicit current-task work. The parent (repository session, relay role
-`supervisor`) above this project verifies this task's reported outcome and instructs this
-task, never this task's issue children; its own work is
-[the parent's section](#the-parent-the-repository-session) at the end of this skill. Each child owns its
-checkout and execution; this task owns scope, dependencies, dispatch receipts,
-review, and the decision to release the next work.
+standalone issues and explicit current-task work. This child owns scope, dependencies, its runs and
+their steps, review, and the decision to release the next work; an issue child owns its checkout and
+execution.
 
 Run owns project execution, including newly ready successors within the agreed scope, and by
-default it runs with no parent goal: the parent ends its turn when only waiting remains and a
-delivered relay event brings it back. [Goal mode](references/goal-mode.md) holds the lifecycle of a
-parent goal where the user explicitly asked for one; it does not enlarge Run's project scope.
+default the child holds no goal: it ends its turn when only waiting remains, and a delivered relay
+event or a step of its run brings it back. [Goal mode](references/goal-mode.md) holds the lifecycle of
+the child's goal where the user explicitly asked for one; it does not enlarge Run's project scope.
 Load `crw:crw-dev` and relevant surface skills for development
-and review work. A child whose effective workflow is `crw-loop` loads
+and review work. An issue child whose effective workflow is `crw-loop` loads
 `crw:crw-loop` and `crw:crw-pabcd` and owns its goal, goalplan and phases.
 Resolve current installed paths; never copy plugin versions from old records.
 `crw-loop` and `crw-pabcd` own those phases and the helper role policy (`crw role helper`)
-owns helper routing; the parent does not adopt a child's FSM. How a child consumes its packet
-and when a task loops are [crw-loop's lane dispatch](../crw-loop/references/lane-dispatch.md); this
-skill writes the packet and does not restate the child's rules.
+owns helper routing; the child does not adopt an issue child's FSM. How an issue child consumes its
+packet and when a task loops are [crw-loop's lane dispatch](../crw-loop/references/lane-dispatch.md); this
+skill writes the packet and does not restate the issue child's rules.
 
 Read the shared [Linear model](../crw-canon/references/linear-model.md) for Linear document
 authority and tools. Use the available Linear tools
@@ -43,23 +53,23 @@ needs a refreshed briefing. Route roadmap authoring to
 
 A submitted `$crw-run <Linear project link>` execution request, where a plugin
 installation exposes this skill as `crw:crw-run`, designates or restores
-this task as the fixed parent using [Project parent binding](../crw-plan/references/integrations.md#project-parent-binding)
+this task as the fixed child using [Project parent binding](../crw-plan/references/integrations.md#project-parent-binding)
 and executes the agreed project scope. Record that scope and delivery boundary,
 including its known blocked successors, rather than equating scope with today's ready
-batch. Reconcile existing work, reuse/create responsible children, verify and integrate
+batch. Reconcile existing work, reuse/create responsible issue children, verify and integrate
 their results, and admit newly ready in-scope issues as capacity opens. The first batch
 is a scheduling choice, not a finish boundary. The link does not approve undefined work,
-future backlog additions, another project's work or replacing another parent.
+future backlog additions, another project's work or replacing another child.
 
-An ordinary project execution request opens no goal. The parent waits idle and is resumed by the
+An ordinary project execution request opens no goal. The child waits idle and is resumed by the
 delivery path, on the readiness recorded under
-[OPS-8.1](references/operations.md#ops-81-parent-continuation-and-waiting). A parent goal exists
+[OPS-8.1](references/operations.md#ops-81-parent-continuation-and-waiting). A child goal exists
 only where the user asked for one, and its lifecycle is [goal mode](references/goal-mode.md); inside
-goal mode, Run returns progress and pending obligations to the same goal-mode parent without creating
+goal mode, Run returns progress and pending obligations to the same goal-mode child without creating
 another goal. An explicit no-goal or read-only limit agrees with the default and bars only goal mode,
 and existing scope and authorization survive skill routing.
 
-An initiative target is not a project run: an explicit designation to execute an initiative's projects is the parent's, under [the parent's section](#the-parent-the-repository-session), and a link merely cited as context rebinds nothing.
+An initiative target is not a project run: an explicit designation to execute an initiative's projects is the work of the parent (repository session), under [the parent's section](#the-parent-the-repository-session), and a link merely cited as context rebinds nothing.
 
 Explicit status, explanation, plan-only, batch, issue, no-create, no-goal,
 no-merge, or current-task limits override the default. An issue or milestone
@@ -70,12 +80,12 @@ still govern each action, including task creation and goal activation.
 
 - **Plan/prompts:** inspect project state and prepare task packets; do not launch.
 - **Bind/restore only:** apply [Project parent binding](../crw-plan/references/integrations.md#project-parent-binding)
-  and report the connection; do not dispatch children or create a goal.
+  and report the connection; do not dispatch issue children or create a goal.
 - **Dispatch a named batch:** reuse prior authorization and settings, refresh its
   prerequisites, then launch only that batch.
 - **Run a project or milestone:** carry its agreed scope through delivery, including
   successors. A milestone, named batch or issue narrows the same project's assignment.
-  The parent holds no goal by default and is resumed by the delivery path; the lifecycle of a
+  The child holds no goal by default and is resumed by the delivery path; the lifecycle of a
   goal the user explicitly asked for is [goal mode](references/goal-mode.md).
 - **Verify completed work:** inspect its exact revision and relevant behavior,
   send in-scope corrections to the existing responsible task, and recheck its
@@ -100,81 +110,107 @@ title, and sidebar pin, then continue the authorized execution here.
 
 ## Goal mode
 
-Goal mode is Run's one optional mode: the project parent holds a native host goal, and the host's
+Goal mode is Run's one optional mode: the child holds a native host goal, and the host's
 automatic continuation carries the run across turns. It is entered only by an explicit request for a
-parent goal on the project, such as a goal for the run, keeping or restoring a goal the parent already
+child goal on the project, such as a goal for the run, keeping or restoring a goal the child already
 holds, or `$crw-loop` given a Linear project and coordination intent. In the last case no loop starts:
 say so, and continue here in goal mode. A *loop* is the PABCD completion loop of one task, owned by
-`crw-loop`; goal mode is this mode, and the two are different procedures. The parent follows
+`crw-loop`; goal mode is this mode, and the two are different procedures. The child follows
 [Goal mode](references/goal-mode.md) and never the `crw-loop` or `crw-pabcd` procedure, with or without
-a goal, for as long as it acts as project parent; the one way a session leaves that role is the
+a goal, for as long as it acts as child; the one way a session leaves that role is the
 explicit current-task implementation request under task creation below. Nothing else enters it: an ordinary project execution request, a status or explanation request,
 a quoted example, automatic skill discovery or an unsubmitted UI prompt opens no goal.
 
 ## Keep a project run moving
 
-Run does not initialize, resume, complete or block a parent goal. It keeps progressing
+Run does not initialize, resume, complete or block a child goal. It keeps progressing
 the agreed project scope during execution: dispatch, wait, verify, correct, integrate
-and start eligible successors. Before any child dispatch, record its observation path
+and start eligible successors. Before any issue child dispatch, record its observation path
 and the requested delivery boundary under
 [OPS-8.1](references/operations.md#ops-81-parent-continuation-and-waiting).
 
 A dispatch-only request may return with pending ownership and an exact next step.
 Otherwise continue until the agreed scope is delivered, the user stops, a resource
 limit is reached, or no authorized progress is possible. An empty ready queue while
-children run calls for bounded observation; a blocked issue does not stop independent
+issue children run calls for bounded observation; a blocked issue does not stop independent
 work. If the host ends the turn, preserve the unfinished project and exact resume step,
 not a claim that the first batch completed the request. Where the recorded `observation_path`
-is `event-driven-idle`, the parent yields the turn and the delivery path resumes it on a real
-child event; where it is `active-observation` or `blocked`, Run alone promises no automatic
+is `event-driven-idle`, the child yields the turn and the delivery path resumes it on a real
+issue child event; where it is `active-observation` or `blocked`, Run alone promises no automatic
 future wake-up. A checkpoint handed down by the parent (repository session) is not a status read: it reaches
-this parent and is handled here as a resume of the authorized run, which re-evaluates outstanding
-child results, pending decision requests, cleared blockers and empty execution slots, then
-continues the successors that approval already covers. Reuse the same parent, children and
+this child and is handled here as a resume of the authorized run, which re-evaluates outstanding
+issue child results, pending decision requests, cleared blockers and empty execution slots, then
+continues the successors that approval already covers. Reuse the same child, issue children and
 assignments; this adds no scheduler and dispatches nothing that already has an owner. That
 handoff is a manual push rather than automatic continuation, and an explicit status-only,
 report-only, read-only or pause limit on it still wins.
 
-A request from a peer parent is answered here, by this task, under
+A request from a peer child is answered here, by this task, under
 [Direct coordination between children](../crw-canon/references/hierarchy.md#direct-coordination-between-children):
-decide what this project's own issues and children do about it, never reach into the other
-project's children, and escalate to the supervisor only an unresolved disagreement, a scope
+decide what this project's own issues and issue children do about it, never reach into the other
+project's issue children, and escalate to the parent (repository session) only an unresolved disagreement, a scope
 change, new ownership, or a shared resource including the order into a shared target. Where the
 two projects share no supervisor, or answer to different ones, invent none: record the unsettled
 part, hold only that part, keep the independent work moving, and raise that decision to the user.
 Record the agreement and whether it is still conditional; a peer message moves no delivery by itself.
-An accepted condition reaches this project through its own child, on the correction path this task
-already uses, and the evidence that it landed is that child's changed revision rather than its
-acknowledgement. Return the outcome to the peer from here: a child never answers another project's
-parent, and no peer reads this project's child for its answer.
+An accepted condition reaches this project through its own issue child, on the correction path this task
+already uses, and the evidence that it landed is that issue child's changed revision rather than its
+acknowledgement. Return the outcome to the peer from here: an issue child never answers another project's
+child, and no peer reads this project's issue child for its answer.
 
-[Goal mode](references/goal-mode.md) owns a parent host goal and its continuation across turns where
+[Goal mode](references/goal-mode.md) owns a child host goal and its continuation across turns where
 the user explicitly asked for one; by default there is none and the delivery path is what returns
-the parent. Returning from Run hands control back to that mode where goal mode is running.
+the child. Returning from Run hands control back to that mode where goal mode is running.
 Explicit pause/no-goal limits still win, and existing
-parent `.crw/` state must be reconciled through its supported lifecycle, never reset to
-avoid a guard. A parent holding its own goal does not alter the child `crw-loop` defaults.
+child `.crw/` state must be reconciled through its supported lifecycle, never reset to
+avoid a guard. A child holding its own goal does not alter the issue child `crw-loop` defaults.
 
 ## Run a milestone with a flow run
 
-The child carries a project one milestone at a time, and starts one run of the built-in project lane for each milestone. The run does what the child would otherwise do issue by issue: the architect's DESIGN of the milestone and its audit, an executor for each issue node, the verification and the review of each head, the acceptance and the integration, and the close of the milestone with its final gate. The commands are in [the flow commands](../crw-canon/references/flow.md#the-crw-flow-command-table), and which agent calls the run makes, and why, are the [spawn policy](../crw-canon/references/spawn-policy.md). The issues the run releases are the nodes of the plan the project holds, which `crw flow compile` checks from the [crw-plan handoff](../crw-plan/references/issue-boundaries.md#close-the-plan) before it is put as a plan revision.
+The child carries a project one milestone at a time, and starts one run of the built-in project lane for each milestone. The run does what the child would otherwise do issue by issue: the architect's DESIGN of the milestone and its audit, an executor for each issue node, the verification and the review of each head, the acceptance and the integration, and the close of the milestone with its final gate. Each of those agent calls is a session call: the run publishes it as a step, and the child spawns the step's role subagent. The commands are in [the flow commands](../crw-canon/references/flow.md#the-crw-flow-command-table), and which agent calls the run makes, and why, are the [spawn policy](../crw-canon/references/spawn-policy.md). The issues the run releases are the nodes of the plan the project holds, which `crw flow compile` checks from the [crw-plan handoff](../crw-plan/references/issue-boundaries.md#close-the-plan) before it is put as a plan revision.
 
 - **Start.** Run `crw flow start project-lane --handoff FILE --thread THIS_THREAD` with the plan and the milestone in `--args`. Read the preview first (`--preview` stops after it): it shows the nodes, the width, the role pairs, the budget and the five preflight facts, each `pass`, `warn` or `fail` with its reading. A fact never stops the start: the ones that did not pass are printed, recorded in the run's spec, and the run starts without `--force` (which is accepted and changes nothing). Read a `fail` before the run waits on you and report it with the run; a `warn` on a new thread's first run is expected. A preview that says `blocked` is not overridden. A milestone starts when its prerequisites have landed, and the next one starts after the one before has closed.
-- **What this thread handles.** The thread handles only two things that need judgment. The first is an escalation of the run: it arrives as a notice from the run, `crw flow show RUN` gives the cause, and the thread decides within its own authority, or hands the decision up (see *What goes up* below), and once the parent (repository session) has recorded its answer in the relay's user-decision record (`crw relay decision-answer`) the thread applies that record with `crw flow answer`, which writes the answer to the run's journal. The second is the receipt of an oversized issue, an issue the architect sized for a child: the receipt arrives as a relay delivery, and in that turn the thread runs `crw flow apply --event E --turn T`. Exit 0 is an applied verdict, 1 a refusal (an integrity refusal is also an escalation), 3 `next_turn` (apply it again in a later turn). When the run says a Linear summary is owed, the thread drains it as a record write (claim, write with its own connector, read back, complete); that is not control of the run.
+- **Take the steps.** Run `crw flow next RUN --wait 600 --json` and do what its steps say, every step of a batch at once:
+  - a `spawn` step is `spawn_agent` with the step's `agent_type`, `message`, `model` and `reasoning_effort`, and `fork_context` false; right after it, run the step's `crw flow dispatched RUN CALL --agent ID --k K --attempt N` with the id `spawn_agent` returned. A full-history fork is refused by the spawn hook, because it keeps this thread's pair;
+  - a `send_input` step is `send_input` to the step's agent with its message, then its `crw flow dispatched` line;
+  - a `close` step is `close_agent` for the step's agent: a finished subagent holds its slot of `agents.max_threads` until it is closed.
+
+  While subagents work, alternate `wait_agent` on the open subagents (a long timeout) with `crw flow next RUN --wait 600 --json`. `crw flow dispatched` binds a subagent once the run has read it on the host (the thread that spawned it, the `crw-flow-op:` marker of its first message and its role's pair); a `pair_mismatch` answer names the subagent to close and the pair to spawn again with, and the step stays. A spawn that fails with `agent thread limit reached` leaves its step too: close what the hint names, then take the step again. The child never copies a subagent's answer into the run: the run reads it from the host, validates and records it, and the child edits no node's directory. `crw flow next` resumes the run itself when no process holds it and it is neither paused nor over, writes the owner binding again when it is missing, and says when the run waits for a decision or is over (`ended`).
+- **What this thread handles.** Besides its steps, the thread handles only two things that need judgment. The first is an escalation of the run: it arrives as a notice from the run, `crw flow show RUN` gives the cause, and the thread decides within its own authority, or hands the decision up (see *What goes up* below), and once the parent (repository session) has recorded its answer in the relay's user-decision record (`crw relay decision-answer`) the thread applies that record with `crw flow answer`, which writes the answer to the run's journal. The second is the receipt of an oversized issue, an issue the architect sized for an issue child: the receipt arrives as a relay delivery, and in that turn the thread runs `crw flow apply --event E --turn T`. Exit 0 is an applied verdict, 1 a refusal (an integrity refusal is also an escalation), 3 `next_turn` (apply it again in a later turn). When the run says a Linear summary is owed, the thread drains it as a record write (claim, write with its own connector, read back, complete); that is not control of the run.
 - **What this thread does not do.** It does not release, correct, accept or integrate a node of a plan a run owns. It never claims the coordinator epoch of a plan a run holds: the run claims the epoch before its first fenced write, so a `dag-coordinator-claim` by this thread would raise the epoch past the run's, the run's next fenced write would be refused with `stale_coordinator_epoch`, and that milestone ends `incomplete`. An out-of-band `dag-*` transition (a release, an acceptance, an integration or a decision written by hand into a run's plan) is raised as an escalation to the parent (repository session), never made here.
-- **A run that stopped.** `crw flow ps` and `crw flow show` say whether it is `dead`, `held` or over. A run whose process died is taken again with `crw flow resume`, which keeps its claim; a call in `recovery_hold` is settled only with `crw flow recover`. `crw flow pause` and `crw flow cancel` follow an instruction, not a hunch.
+- **A run that stopped.** `crw flow ps` and `crw flow show` say whether it is `dead`, `held` or over. A run whose process died is taken again with `crw flow resume`, which keeps its claim (`crw flow next` does it for a run no process holds); a call in `recovery_hold` is settled only with `crw flow recover`. `crw flow pause` and `crw flow cancel` follow an instruction, not a hunch.
 - **What goes up.** The run reports each closed milestone to the parent (repository session) itself. This thread lifts a project-level blocker or a decision request with `crw flow report-up`, with the evidence file, because an agent node reports nothing upward on its own.
 
-The run releases the child of an oversized issue itself (`crw.releaseChild`): that child runs the built-in `issue-lane` workflow and starts no PABCD state machine ([who owns control](../crw-canon/references/flow.md#who-owns-control-in-a-flow-managed-run)), so this thread sends it no task packet and arms no `crw-pabcd` for it. The rest of this skill, the dispatch of an issue child and its observation, verification and correction, is the path of a plan with no run.
+The run releases the issue child of an oversized issue itself (`crw.releaseChild`, SP-CHILD-1): that issue child runs the built-in `issue-lane` workflow and starts no PABCD state machine ([who owns control](../crw-canon/references/flow.md#who-owns-control-in-a-flow-managed-run)), so this thread sends it no task packet and arms no `crw-pabcd` for it. The issue-child rules from [Independent implementation tasks](#independent-implementation-tasks) on, the dispatch of an issue child and its observation, verification and correction, are that exception path and the path of a plan with no run.
+
+### How the child works
+
+The child splits the work and spawns subagents broadly and boldly: it breaks a milestone into pieces that can run in parallel, runs them at once, and decides the next step from their results rather than following one fixed line. In a flow run that judgment has two places. Inside the run, the project lane chooses by its results: nodes in parallel up to the run's width (the `cap` of `crw.dag`, 3 unless the child widens it in the run's arguments) where their `after` dependencies and edit regions allow, the design audit rounds, the fix rounds and the tier step, the explorer routes and a re-plan (SP-ARCH-2); the run's agent pool (`--pool`, 6) bounds the calls of every role at once, and the child spawns the steps of a batch together. Outside the run, the child spawns helpers of its own for its judgment (a spawn with no `crw-flow-op:` marker), which the spawn hook allows with the pair of their role and records (SP-NAT-1).
+
+The sequence is fixed: the architect writes the DESIGN, a reviewer of another model family audits it in the design audit, executors in parallel build it (one executor lane for each node, so an issue the architect sizes as a split goes up as `size_split` and the child divides the plan's node), a reviewer of another family reviews each head, a fix round goes back to the same worktree and up a tier when the evidence says so, the verification runs and the head lands; an explorer is called whenever it is needed, for an open question, a research question or missing evidence. The child decides whether to use the DAG (the project lane) or another way for a piece of work; whatever way it takes, CRW enforces the order, the gates and the records:
+
+- **Order.** No executor before the design audit approves, no acceptance before the verification and the review, no integration before the acceptance; the run enforces it.
+- **Gates.** The review by another family is the runtime independence gate (`independence_refused`, `independence_unproven`), and the verification is a passing `verification-record/1`. `crw review` is a reference opinion where a packet asks for one, not a merge gate; an Argon gate before a merge is CRW-1355.
+- **Records.** The rows of the flow journal, the relay's acceptance and integration records, and the spawn hook's ledger.
+
+A change made another way lands through the same gates: the landing path of a child outside a run is CRW-1354, and several executors for one issue are CRW-1356. The concurrency cap is the host's `agents.max_threads` (6 by default, one slot staying the child's own): `crw flow next` reports the slots, and a wider run needs a higher `agents.max_threads` on the child's session, which is Jun's setting of the real Codex configuration.
+
+Ambiguity during a run never opens an interview. A question the child cannot settle within its authority goes up to the parent (repository session) as a decision request with `crw flow report-up` and the evidence file, and the work it does not block continues on recorded assumptions (CRW-1347, CRW-1314).
+
+Today a flow run lands each node on its target branch by itself and opens no pull request. A pull request that bundles related issues of a milestone, opened by the child from its milestone integration branch and merged by the dev fast-forward queue after an Argon review, is the place CRW-1355 keeps for the GitHub transition; nothing in this skill opens one yet.
 
 ## Independent implementation tasks
 
-In this managed execution workflow, implementation belongs to a responsible
-independent child Codex task, including a single issue, an existing worktree,
-and repairs to an existing PR. The coordinator owns scope selection, preparation,
-dispatch, delivery validation, and authorized integration; a child whose assignment
-covers publication owns its own delivery, including its checks and its review
-cycle. Issue count and checkout availability do not turn the coordinator into the
+This section and the issue-child rules that follow it are the exception path (SP-CHILD-1) of one
+oversized issue, and the path of a plan with no run. On the default path the implementation of an
+issue is its executor's call, a step the run records, which this child spawns as a role subagent; the
+rules about issue children below do not apply to it.
+
+On this path, the implementation of an issue belongs to its issue child, a responsible
+independent Codex task, including an existing worktree and repairs to an existing PR. The child
+owns scope selection, preparation, dispatch, delivery validation, and authorized integration; an
+issue child whose assignment covers publication owns its own delivery, including its checks and its
+review cycle. Issue count and checkout availability do not turn the child into the
 implementation worker.
 
 Read the coordination record and inspect the existing responsible task and any
@@ -185,17 +221,17 @@ task, an uncertain send, or an inaccessible record is not evidence that no write
 exists; reconcile before retrying or considering a replacement.
 
 Where a relay holds the assignment, ask it first: an assignment lookup by issue
-returns the existing relationship, its responsible child, its current state, and
-the next expected action. Registering a different child for an issue that already
+returns the existing relationship, its responsible issue child, its current state, and
+the next expected action. Registering a different issue child for an issue that already
 has an active or paused assignment is refused in the same transaction that would
 have recorded it, so duplicate registered ownership cannot be created even by two
 concurrent attempts.
 
 That is a guarantee about the assignment RECORD, and it is not a lock taken before
 creation: registration needs the task id creation returns, so two coordinators can
-both find an issue unassigned and both create a child before either registers. The
+both find an issue unassigned and both create an issue child before either registers. The
 lookup makes reuse the first move and names an existing owner; the registration
-transaction is what settles which child owns the issue. A coordinator refused with
+transaction is what settles which issue child owns the issue. A coordinator refused with
 `duplicate_assignment` has therefore just created a losing writer. Assign it nothing
 further, and tell it to stand down and preserve its artifact without waiting for it to
 go idle: read its status and active turn, steer that exact turn with the stand-down
@@ -207,12 +243,12 @@ something already done. Commands are in
 [codex-session-relay](references/relay.md), transport limits in
 [codex-thread-bridge](references/bridge.md).
 
-Internal subagents are bounded helpers within their owning task. A child may use
-them for its implementation; the coordinator may use them for bounded inspection
-or review. A subagent handle, even one represented as a thread ID, is not evidence
-of an independent child task. Do not replace the child with parent implementation
-or a parent-owned implementation subagent just because the issue is small or a
-creation path is unavailable.
+Internal subagents are bounded helpers within their owning task. An issue child may use
+them for its implementation; the child may use them for bounded inspection or review, beside the
+role subagents it spawns for the steps of its runs, which are steps the run records. A subagent
+handle, even one represented as a thread ID, is not evidence of an independent issue child. On this
+path, do not replace the issue child with the child's own implementation or a child-owned
+implementation subagent just because the issue is small or a creation path is unavailable.
 
 Resolve creation and execution intent from the full conversation for this scope,
 including prior authorization and the plan the user is accepting. Explicit intent
@@ -224,14 +260,14 @@ them. Higher-priority host/tool restrictions still apply.
 
 | Invocation context | Action |
 |---|---|
-| Submitted `$crw-run <Linear project link>` execution request with no narrower operation | Bind/restore the fixed parent and execute the agreed project scope, including successors, with no parent goal, ending the turn when only waiting remains once the readiness facts hold; host restrictions and an explicit no-goal limit still apply |
-| Request to create/reuse child tasks, a submitted prompt expressing that intent, or clear project delegation after independent tasks were established as the execution workflow | Reuse the responsible task first; create only when needed within that scope and allowed by the host, without another authorization round |
+| Submitted `$crw-run <Linear project link>` execution request with no narrower operation | Bind/restore the fixed child and execute the agreed project scope, including successors, with no child goal, ending the turn when only waiting remains once the readiness facts hold; host restrictions and an explicit no-goal limit still apply |
+| Request to create/reuse issue child tasks, a submitted prompt expressing that intent, or clear project delegation after independent tasks were established as the execution workflow | Reuse the responsible task first; create only when needed within that scope and allowed by the host, without another authorization round |
 | Concrete new-task plan followed by the user's acceptance, such as “진행해” or “응” | Execute the accepted plan within its stated scope; do not ask for a creation keyword |
 | Resume of an authorized run, including after compaction | Recover its authorization source, scope, and settings; refresh ownership and prerequisites, then continue the remaining in-scope obligations, including successors. Preserve an explicitly batch-limited assignment; do not repeat approval already covering the scope |
 | Standalone short invocation such as `$crw-run 다음 작업 진행해줘`, with genuinely no creation intent in the conversation or prior authorization for this scope | Prepare the issue packet and inspect ownership; if a new task is needed and the host requires an explicit creation request, obtain only that missing request |
 
 Merely mentioning the skill's name, an unsubmitted UI default prompt, a quoted
-example, or task designation without execution is not a child-creation request.
+example, or task designation without execution is not an issue child-creation request.
 The submitted project-run shorthand above is an execution request. Permission
 for an unrelated earlier task does not authorize this scope. Discover a
 permitted tool; a different transport does not waive the host's creation rule.
@@ -241,17 +277,17 @@ the unresolved decision. Do not silently switch execution mode or widen permissi
 
 An explicit request to implement within the current task overrides this workflow's
 default separation: honor it with `crw-loop` and label the actual mode accurately. For that
-task the session is its implementer and not acting as project parent, which is the supported
-role change that lets it follow the loop procedure: it creates no child and dispatches nothing,
-and it starts no goal mode. A session bound to the project that holds no parent goal does this
-and says the parent role is paused for that task. A session that holds an active parent goal
+task the session is its implementer and not acting as child, which is the supported
+role change that lets it follow the loop procedure: it creates no issue child and dispatches nothing,
+and it starts no goal mode. A session bound to the project that holds no child goal does this
+and says the child role is paused for that task. A session that holds an active child goal
 cannot run the loop under it, because that goal and the loop's would be one host goal: report
-the conflict and offer the supported choices (a child implements, or the user ends or blocks the
-parent goal first), and change neither goal nor binding on its own. Coordination of the other
-issues resumes when the loop ends or the user returns the session to the parent role.
+the conflict and offer the supported choices (an issue child implements, or the user ends or blocks the
+child goal first), and change neither goal nor binding on its own. Coordination of the other
+issues resumes when the loop ends or the user returns the session to the child role.
 Status-only, report-only, read-only, and no-create limits also win. Ordinary
 coordinator review, verification, CI inspection, and authorized integration
-remain here. Assignment is not loop evidence: creating or assigning a child task
+remain here. Assignment is not loop evidence: creating or assigning an issue child task
 does not by itself create a goal or prove that a `crw-loop` started.
 
 ## Establish the project baseline
@@ -268,7 +304,7 @@ Missing connector access is a concrete limitation, not permission to invent issu
 For a standalone issue, read that issue, its linked canonical documents and
 blocking relations directly; project and milestone reads are inapplicable. Keep
 its issue-scoped ownership and the existing management binding unchanged. Do not
-create a project or project-parent binding to satisfy this baseline. If a transport
+create a project or a project binding to satisfy this baseline. If a transport
 requires a project binding, use a permitted projectless execution path or report
 that capability gap; never invent a project ID for a receipt.
 
@@ -276,7 +312,7 @@ For repository-changing work, compare local and remote commit ancestry. Preserve
 work. Record a full baseline commit for each task and decide how any prerequisite
 changes will reach it. Do not push shared baseline commits through every task.
 
-At initial dispatch, after a child's completion, blocker or decision request, after an
+At initial dispatch, after an issue child's completion, blocker or decision request, after an
 integration lands, and on every resume or recovery, scan the agreed project scope for useful
 parallel work, including newly unblocked successors. Before the turn ends that scan has run, or
 the reason it could not be read is recorded; a final answer describing what would be dispatched
@@ -287,7 +323,7 @@ again ([Start policy](references/start-policy.md#re-read-on-every-entry-re-decid
 An explicitly limited batch or issue remains limited in both Run and goal mode. Check
 verified prerequisites, overlapping edit surfaces, existing
 writers, shared runtime resources, and available execution capacity. An issue that already has a
-responsible child is not a candidate, and that is read rather than assumed. Where a relay holds
+responsible issue child is not a candidate, and that is read rather than assumed. Where a relay holds
 the assignment, `doctor --issue` answers it from one non-constructing read before anything is
 created: `holds` true ends the evaluation for that issue, and `holds` null is an unproven answer
 rather than a free slot
@@ -295,10 +331,10 @@ rather than a free slot
 An explicitly direct assignment has no store to ask, so its owner comes from the coordination
 record and the existing task the same way the rest of this skill establishes one; a direct run
 reads no relay answer and is never held for the absence of one.
-Where a relay holds the assignment, a child that stopped for a person is invisible to the
+Where a relay holds the assignment, an issue child that stopped for a person is invisible to the
 reviewable reads, so enumerate the stopped
-children with `dispositions-show` ([Which children stopped](references/relay.md#which-children-stopped-and-whether-anyone-was-told))
-instead of reading their silence as progress; it reports what a child actually emitted, which is
+issue children with `dispositions-show` ([Which children stopped](references/relay.md#which-children-stopped-and-whether-anyone-was-told))
+instead of reading their silence as progress; it reports what an issue child actually emitted, which is
 why [OPS-8.1](references/operations.md#ops-81-parent-continuation-and-waiting) still requires an
 emit path or a bounded observation path for the disposition itself. Dispatch
 the largest useful set of independent ready issues within explicit concurrency,
@@ -332,7 +368,7 @@ document as part of the management assignment, without a separate recording requ
 For a standalone issue, use its existing linked coordination document or a compact
 owned section in the issue within the authorized recording scope. Keep private
 recovery receipts keyed by the issue and actual task IDs; no project record or
-project-level parent binding is required. If delegation or a relay is used, retain
+project-level child binding is required. If delegation or a relay is used, retain
 the real coordinator task ID and routing identity; projectless does not mean
 coordinatorless. Preserve unrelated issue content on each update.
 For explicit read-only scope or unavailable access, return the unsynced update and
@@ -340,7 +376,7 @@ retain the task's private recovery receipt. Keep raw launch
 receipts and sensitive evidence in an appropriate private location; local
 snapshots point to the Linear document and are not another planning source.
 Do not store project state or credentials inside this installed skill.
-A DAG plan's Linear summary is the plan's own queue in the relay, drained by the parent with its own connector: take an entry, write it, read it back, confirm it, retry only
+A DAG plan's Linear summary is the plan's own queue in the relay, drained by the child with its own connector: take an entry, write it, read it back, confirm it, retry only
 that entry ([The Linear summary of a DAG plan](references/relay.md#the-linear-summary-of-a-dag-plan)).
 
 Before assigning a checkout, apply the shared
@@ -392,25 +428,25 @@ ownership, access, settings, criteria and recovery evidence. This non-PR path
 applies throughout dispatch, observation and completion below.
 
 For repository-changing work, every packet carries the current delivery contract, and where the template's older
-delivery menu disagrees the contract wins. Name in the packet that the child owns its
+delivery menu disagrees the contract wins. Name in the packet that the issue child owns its
 commits, push, the task branch and its verification through to
 the applicable gates, and that the coordinator performs the merge while release and
-deployment remain the user's. Then give the child OPS-5.5 and OPS-9 from
+deployment remain the user's. Then give the issue child OPS-5.5 and OPS-9 from
 [Operations contract](references/operations.md) as context of its own: cite them by id
-where the child can read this repository, and carry the clause text itself where it
-cannot, because a packet has to stand alone and a child that never sees OPS-9.1 and
+where the issue child can read this repository, and carry the clause text itself where it
+cannot, because a packet has to stand alone and an issue child that never sees OPS-9.1 and
 OPS-9.2 can follow the summary above while still requesting review on a draft or
 reporting a missing mandatory check as complete. Carry that text rather than a summary
 of it. A quotation can be diffed against its source and regenerated when the clause
 moves, while a paraphrase cannot, and it is the paraphrase that drifts unnoticed.
-Name the capability the child is being created with, and for a task that cannot write
+Name the capability the issue child is being created with, and for a task that cannot write
 git metadata say so explicitly and assign the fallback, since those are the parts the
-contract cannot know. A packet carrying neither clause sends a child the previous
+contract cannot know. A packet carrying neither clause sends an issue child the previous
 workflow.
 
 Write the first packet in the form of the pair recorded for the issue: the
-[Launch packet](references/task-packet.md#launch-packet) for a Sonnet child and the short
-[SOL packet](references/task-packet.md#sol-packet) for a SOL child; an issue with no recorded pair keeps the
+[Launch packet](references/task-packet.md#launch-packet) for a Sonnet issue child and the short
+[SOL packet](references/task-packet.md#sol-packet) for a SOL issue child; an issue with no recorded pair keeps the
 Launch packet. The rule that picks the pair is "Child pair by issue type" in
 [crw-plan's integrations.md](../crw-plan/references/integrations.md), and both forms carry the restoration block and
 restate the workflow on every send. The choice itself is recorded at release
@@ -421,15 +457,15 @@ Apply [Child task titles](references/task-packet.md#child-task-titles):
 spaces; exclude the issue code and separator). Supply the title through the supported
 creation field, verify the actual title by task ID, and correct it on the same
 managed task when supported. The packet's title alone is not app-state evidence.
-That title names the Codex task, not the pull request, which the child titles in English under
+That title names the Codex task, not the pull request, which the issue child titles in English under
 `Language:` ([Child task titles](references/task-packet.md#child-task-titles)). A temporary
 directory the packet names is short, and every make target, CI check and script it names for
 verification was confirmed to exist when the packet was written ([First full assignment required fields](references/task-packet.md#first-full-assignment-required-fields)).
 
-Choose the child's MCP profile at release, from the issue and its packet, and state it in the packet and in the
+Choose the issue child's MCP profile at release, from the issue and its packet, and state it in the packet and in the
 release request's `child.settings.mcpProfile`: `ui-qa` for UI or browser QA, `second-opinion` when an
 external-model review is named, otherwise `minimal`. A host whose policy declares profiles for the child role
-refuses a child whose request states none or one it does not declare. A child that needs a server its profile
+refuses an issue child whose request states none or one it does not declare. An issue child that needs a server its profile
 lacks raises a decision request; the profile is not widened under it. Selection rule and what the host does
 with it: [MCP profiles](references/mcp-profiles.md).
 
@@ -437,13 +473,13 @@ with it: [MCP profiles](references/mcp-profiles.md).
 Apply [Independent implementation tasks](#independent-implementation-tasks) even
 when no new branch or worktree is needed. Non-PR work uses its permitted working
 directory and artifact access without Git metadata. For code work, reuse a checkout whose ownership is
-verified for the responsible child; a coordinator may prepare it before handoff.
+verified for the responsible issue child; a coordinator may prepare it before handoff.
 Otherwise follow the project/user placement convention. Record the actual path,
 branch, and owner; do not create a second checkout just to prove task separation.
 Placement, the ownership columns, and the write split between a coordinator that
-prepares git metadata and a child that only edits source are in
+prepares git metadata and an issue child that only edits source are in
 [Operations contract](references/operations.md), which also owns the shared relay
-service, its durable store, and the parent's continuation and waiting mode.
+service, its durable store, and the child's continuation and waiting mode.
 
 Discover the live creation tool and schema before claiming availability.
 Use native app task tools when suitable. Before proposing or adopting the official
@@ -458,10 +494,10 @@ If using `codex-thread-bridge`, read
 If no usable creation tool exists, reuse a verified existing task when its
 follow-up path and authorization suffice. Otherwise finish the packets and
 preparation, identify the missing capability, and report that nothing was
-launched; parent or internal-subagent implementation is not a substitute.
+launched; on this path the child's own or an internal subagent's implementation is not a substitute.
 
 Apply the effective settings through the creation tool's real arguments, and send
-the bounded issue packet in the initial work prompt so the child can start the
+the bounded issue packet in the initial work prompt so the issue child can start the
 assigned work. When `crw-loop` is the effective workflow, that prompt invokes the
 `crw-loop` skill; an explicit non-Loop or no-goal alternative omits that
 invocation and names the agreed workflow instead. Verify the returned task ID,
@@ -502,11 +538,11 @@ call. The title is a hint and never a filter: a host may generate or change it, 
 filtering on it can exclude the very task being looked for and leave a live writer
 orphaned, which is worse than a wide list. Narrowing is not identifying either way.
 These fields are non-unique, two tasks can share them, and adopting a candidate on that
-basis is how a coincident task gets registered or steered as somebody else's child.
+basis is how a coincident task gets registered or steered as somebody else's issue child.
 Bind it only on something that could not be true of another task, such as its own first
 user message being the packet that was dispatched, read from that task. Widen the search
 before concluding nothing is there, and where nothing is identified the creation stays
-unresolved and is reported as such; an unidentified candidate is not the child, and
+unresolved and is reported as such; an unidentified candidate is not the issue child, and
 identity stays on stable IDs.
 
 Neither path always settles. A response lost at the wrong moment leaves the outcome
@@ -514,30 +550,30 @@ genuinely unresolved, and an unresolved outcome means a writer may exist. Treat 
 one: create no replacement while it stands, and report it rather than overwrite it.
 
 Where a relay holds the assignment, register the relationship with its authorized
-scope, record BOTH the parent's and the child's authorized execution settings from
+scope, record BOTH the child's and the issue child's authorized execution settings from
 the actual creation receipts, and record the issue's criteria as the canonical set
 so the later verdict rules on the agreed obligations rather than on a reviewer's
 recollection. All of that reuses what creation and the issue already provide; none
 of it is a readiness round trip and none needs another approval. Registration uses the
 task id creation returns, so the packet carries the shared state directory and the exact
 issue identity registration was given instead, which depend on nothing creation returns;
-the child resolves its own relationship by issue lookup when it emits, which is after the
+the issue child resolves its own relationship by issue lookup when it emits, which is after the
 work rather than at startup. That lookup matches the registered string exactly, so a
-display key in the packet where registration used a stable id resolves to nothing. A child
+display key in the packet where registration used a stable id resolves to nothing. An issue child
 fast enough to reach that lookup before registration lands finds nothing, or, on a host
 where registration is the store's first write, is refused `store_absent`, since a read never
 creates the store; either way it
 reports its completion unemitted and preserves the artifact; recover it from that same task
 after registering, in a later turn carrying a continuation claim, rather than creating another
-child or writing on its behalf. The receipt it then emits is the same event the on-time one
+issue child or writing on its behalf. The receipt it then emits is the same event the on-time one
 would have been. Field-level detail, including that recovery and which settings field is
 nested in the response, is in
 [codex-session-relay](references/relay.md). Without a relay this paragraph does not
 apply and the dispatch above stands as written.
 
-When `crw-loop` is the effective workflow, the child owns its goal, goalplan, and
+When `crw-loop` is the effective workflow, the issue child owns its goal, goalplan, and
 phases through its own `crw-loop` and `crw-pabcd`; the coordinator checks the
-resulting evidence, not the child's internals. Creating a task does not create a
+resulting evidence, not the issue child's internals. Creating a task does not create a
 goal; an active turn does not prove the loop is armed. Missing loop prerequisites
 are reported explicitly, with no silent substitution of a different workflow.
 
@@ -546,8 +582,8 @@ are reported explicitly, with no silent substitution of a different workflow.
 Before an issue gets a packet, a task, a `managed-start` or a DAG release, run `crw skill issue-ready check` on the issue as the Linear tools return it (id, title, description and labels; JSON on stdin or saved to a file), before the size check below. It judges the [release gate](../crw-canon/references/release-gate.md#the-release-gate): registered criteria, edit regions, a decided answer with no design question left, the test cases to write first, and the done condition. Like the size check, its answer never stops the release: a reversible step is warned and recorded, not refused.
 
 - `ready` (exit 0): the release goes on under the checks below.
-- `not_ready` or `design_first` (exit 0, a warning): the decision says which, and each of the `reasons` is printed on stderr as a warning; it names the missing item and the heading that supplies it, and a `design_first` reason names the label or the open question. Write the reasons into the coordination record beside the launch record and report them to the issue's owner. What the parent can supply from the evidence at hand it supplies before the release and runs the check again: the content of a missing heading, and for a `design_first` issue the design (an architect-role proposal and the parent's decision, written into the decided answer, the label removed). Otherwise the release goes on (the packet, the task, the `managed-start` or the `dag-release`) with the warning recorded. A held issue never holds the rest of the ready set.
-- `bypassed` (exit 0): the input carried the parent's (repository session's) explicit approval (`exception`: `exception.issue`, `exception.approved_by`, `exception.approved_on` as YYYY-MM-DD, `exception.statement`) for this issue. Write the report's `exception_record` into the coordination record beside the launch record, then release. Your own judgment that the issue is small, a child's request and a sibling's earlier release are not that approval; without it the record of the release is the warning.
+- `not_ready` or `design_first` (exit 0, a warning): the decision says which, and each of the `reasons` is printed on stderr as a warning; it names the missing item and the heading that supplies it, and a `design_first` reason names the label or the open question. Write the reasons into the coordination record beside the launch record and report them to the issue's owner. What the child can supply from the evidence at hand it supplies before the release and runs the check again: the content of a missing heading, and for a `design_first` issue the design (an architect-role proposal and the child's decision, written into the decided answer, the label removed). Otherwise the release goes on (the packet, the task, the `managed-start` or the `dag-release`) with the warning recorded. A held issue never holds the rest of the ready set.
+- `bypassed` (exit 0): the input carried the explicit approval of the parent (repository session) (`exception`: `exception.issue`, `exception.approved_by`, `exception.approved_on` as YYYY-MM-DD, `exception.statement`) for this issue. Write the report's `exception_record` into the coordination record beside the launch record, then release. Your own judgment that the issue is small, an issue child's request and a sibling's earlier release are not that approval; without it the record of the release is the warning.
 - Exit 2 and 3 mean the issue was not read (exit 2 also for an `exception` that names no approver, issue, date or statement): correct the input and run the check again. An unread answer is not `ready`.
 
 The relay's release request does not carry the issue body, so the warning is this step and not a relay refusal. Where no issue-ready answer was recorded, the dispatch record says so. `crw-tidy` finds the unreleased issues that fall short and a missing `설계 먼저` label.
@@ -561,7 +597,7 @@ exit status: `decision`, `reasons`, `limits`, `concept_questions`, `bundle_reaso
 the sections whose headings it knows, and only criteria written as list items or as rows of a pipe table under such a heading; a list
 under a heading it does not know, a bold label, a quote or another list symbol is not counted, and it only warns about a heading. Where
 an unread heading looks like criteria, tell the issue's owner and check a local copy with the heading changed, whatever the answer says;
-the parent writes nothing to the issue. The command counts what the body
+the child writes nothing to the issue. The command counts what the body
 states against limits read from recorded delivery; it judges nothing, the same issue gets the same answer, and the limits are in
 its report, so this text states none. It also shows the concept-boundary questions and, when the body states one, the scaled line
 estimate with the CRW-739 ratio correction.
@@ -577,7 +613,7 @@ estimate with the CRW-739 ratio correction.
 - Exit 2 (the input or its `depends_on` cannot be read, a code fence in the description is never closed, or the issue has no completion criteria) and exit 3 (the file cannot be read)
   mean the input was not read: correct the input or the issue and run the check again.
 
-This is an instruction the parent follows; nothing refuses a dispatch that skipped it, so the run records the answer where it records
+This is an instruction the child follows; nothing refuses a dispatch that skipped it, so the run records the answer where it records
 the dispatch. The check informs the dispatch; it does not decide it.
 
 ### Check the bundle before release
@@ -655,29 +691,29 @@ with the other launch facts that could not be recorded.
 
 ### Release by region grade
 
-The parent exists to run work in parallel, so an edit region is a signal for the merge order and for the handling of a conflict, not a gate on release. Two nodes that both write a file are not run one
+The child exists to run work in parallel, so an edit region is a signal for the merge order and for the handling of a conflict, not a gate on release. Two nodes that both write a file are not run one
 after the other for that reason alone. Only a change two branches cannot both make holds a release back: the same file renamed or deleted, the same function body rewritten in two directions, a shared
 contract surface (the contract schema, the CLI spec, the contract goldens), or an overlap whose resolution would cost more than the work. Every other overlap is released and settled when the branches meet.
-The parent orders the merges and settles the mechanical conflicts by their rule, and the child of the later pull request resolves the rest when it refreshes its base.
+The child orders the merges and settles the mechanical conflicts by their rule, and the issue child of the later pull request resolves the rest when it refreshes its base.
 
 In a DAG plan the scheduler applies this by grade: a region is declared `independent`, `mechanical` (with the rule that settles it: `union`, `renumber` or `regenerate:<command>`), `local` or `exclusive`,
 `dag-ready` releases mechanical and local overlaps and defers only exclusive ones, and the rule it released a node under, with the rows that rest on and the overlap count by grade, is in the reading and
-in the recorded pass. [Release by region grade](references/region-grades.md) says how to declare the grades, how to read the judgement, and what the parent does at merge time: deciding the merge order,
-settling a mechanical overlap, and when a candidate goes back to its child. A conflict only in mechanical places is settled by the
-parent and proved by `crw skill base-refresh mechanical` ([Resolve a mechanical conflict
+in the recorded pass. [Release by region grade](references/region-grades.md) says how to declare the grades, how to read the judgement, and what the child does at merge time: deciding the merge order,
+settling a mechanical overlap, and when a candidate goes back to its issue child. A conflict only in mechanical places is settled by the
+child and proved by `crw skill base-refresh mechanical` ([Resolve a mechanical conflict
 yourself](references/merge-readiness.md#resolve-a-mechanical-conflict-yourself)). Conflicts are measured at every landing and every receipt (`dag-integration-observe`, `dag-accept` and `dag-conflict-sweep`, after a `git fetch`), and a measured conflict of two live nodes
-appears in `dag-ready` as a `merge_order` that says which lands first and that the other refreshes its base after it; nothing running is stopped, and the parent orders the merges by it ([Read the merge order](references/region-grades.md#read-the-merge-order)).
+appears in `dag-ready` as a `merge_order` that says which lands first and that the other refreshes its base after it; nothing running is stopped, and the child orders the merges by it ([Read the merge order](references/region-grades.md#read-the-merge-order)).
 
 ### Start policy and child cap
 
-Before this run creates its first child or registers an assignment for one, whichever comes first,
+Before this run creates its first issue child or registers an assignment for one, whichever comes first,
 settle the start policy and record it in full: every field [Start policy](references/start-policy.md)
 names, each carrying its source, its scope and the conditions it stands on. A value the precedence
 settles is applied without asking; a value that genuinely needs a new decision is asked before any
-child is created, and only the action waiting on that answer is held while independent authorized
+issue child is created, and only the action waiting on that answer is held while independent authorized
 work continues. Registration is named beside creation because it does not always follow one: a
-reused child already has its task id, so an assignment can become managed with no creation call in
-sight. Counting is the separate question, and there a creation still means a child. On a resume,
+reused issue child already has its task id, so an assignment can become managed with no creation call in
+sight. Counting is the separate question, and there a creation still means an issue child. On a resume,
 after a compaction or for a later batch, re-read the identities those values stand on, restore what
 has not changed, and adjudicate again only the field whose conditions did. Start policy owns the
 fields, the scope each decision carries, the re-adjudication triggers and the cases this is judged
@@ -685,11 +721,11 @@ by; the standing cap and its precedence are in
 [Default parent start policy](../crw-canon/references/delivery.md#default-parent-start-policy).
 
 The first thing settled is the role, because it decides what this task opens: an initiative
-management task runs without a native goal or an automatic loop, a project parent opens no goal
+management task runs without a native goal or an automatic loop, a child opens no goal
 either and is resumed by the delivery path, and an issue child creates or reuses its own goal and
 keeps its `crw-loop`. Record the role beside the recorded mode and observation path, the approved
 scope, the hook compatibility, and whether the approval policy in force can carry the callback this
-run depends on. Where a parent does hold a goal because one was requested, record its objective and
+run depends on. Where a child does hold a goal because one was requested, record its objective and
 state beside those.
 
 Editing these instructions does not alter a turn that already loaded them, but where an installation
@@ -745,12 +781,12 @@ dependency cache, regenerable build output, original data, and verification evid
 a finished task is deliberately keeping. Take the permitted locations from the
 operator's working instructions and this repository's exceptions; a fixed path, a
 capacity threshold or a retention rule invented here would be a new global policy
-this assignment has no authority to make. Two children needing the same large
+this assignment has no authority to make. Two issue children needing the same large
 original share a permitted read-only copy instead of receiving one each. A repeated
 whole-disk scan that stops the work is its own failure, and a report that a disk
 filled up is not a current measurement of it.
 
-What the assignment permits and what the child can actually write are separate
+What the assignment permits and what the issue child can actually write are separate
 findings, and for a linked worktree they come apart in one specific place: the
 working tree is under the checkout, while the common directory, the per-worktree
 index and the reference files are under the original repository, which
@@ -765,7 +801,7 @@ all four cases and they have different answers. None of this is enforced by a
 packet, a prompt or a hook; those carry the intent, and what constrains a write is
 the sandbox, the permission profile and the filesystem.
 
-A refused Git write is answered on the same child and the same checkout, and which
+A refused Git write is answered on the same issue child and the same checkout, and which
 answer applies follows from which refusal it was. An environmental restriction, an
 OS permission on the original repository's Git metadata, a read-only mount, or a lock
 whose owning process has already exited, is cleared through its supported route and
@@ -773,15 +809,15 @@ the work continues there; establish that a lock is stale before removing it, bec
 a lock file records only that somebody took it. Another task still holding that path
 or that lock is not a restriction to clear but an ownership conflict: leave its work
 as it is, serialize behind it or settle it with its owner, and report the blocker
-rather than displacing a live writer. Where the refusal is the child's own permission
+rather than displacing a live writer. Where the refusal is the issue child's own permission
 profile, nothing here widens it: a running task keeps the settings it was created
 with, and the supported answer is the
 [OPS-5.3](references/operations.md#ops-53-who-commits-and-the-fallback-when-a-task-cannot)
-fallback taken deliberately and recorded, with the child still owning the source
+fallback taken deliberately and recorded, with the issue child still owning the source
 edits in that checkout and returning a frozen diff against the recorded baseline
 while the coordinator writes the Git metadata. What both cases refuse is the
 improvised route: redirecting `GIT_DIR`, cloning the repository somewhere writable,
-or a parent commit taken as a workaround rather than as that recorded fallback, each
+or a child commit taken as a workaround rather than as that recorded fallback, each
 of which settles a permission problem by leaving the recorded ownership instead of
 repairing it, and leaves a delivery the review cannot trace to an owner. `reset`, `clean`,
 `stash` and `rebase` are not repairs either: they make the command succeed by
@@ -789,7 +825,7 @@ discarding the state that explains the failure. Preserve the files, record why, 
 carry a blocker neither route clears to whoever can grant the permission.
 
 Carry the result into the packet's workspace-ownership fields
-([Launch packet](references/task-packet.md#launch-packet)), so the child is told
+([Launch packet](references/task-packet.md#launch-packet)), so the issue child is told
 what is not its own instead of deriving ownership from the path it was handed.
 
 ### Verify what this dispatch established
@@ -798,9 +834,9 @@ The first full assignment carries the fields in
 [First full assignment required fields](references/task-packet.md#first-full-assignment-required-fields),
 and they travel in that same first request rather than in a preparation turn.
 
-Then judge the dispatch on four separate facts: the instruction the child actually
+Then judge the dispatch on four separate facts: the instruction the issue child actually
 received for this dispatch, the settings the dispatching call requested, the settings the
-receipt returned at the scope it claims them, and whether the child's own goal and
+receipt returned at the scope it claims them, and whether the issue child's own goal and
 goalplan state show the effective workflow running. A dispatch can pass the first three
 and fail the fourth, and on a reused task the evidence for the first two is the
 correction or resume itself rather than the original launch.
@@ -828,7 +864,7 @@ Describe evidence separately:
 
 | Claim | Evidence required |
 |---|---|
-| Independent child assigned | Creation or reuse receipt from the independent-task interface, actual task/host ID and ownership; not an internal-subagent handle |
+| Independent issue child assigned | Creation or reuse receipt from the independent-task interface, actual task/host ID and ownership; not an internal-subagent handle |
 | New task created | Creation receipt and recoverable task ID; reuse is recorded separately |
 | Prompt dispatched | Accepted turn ID and matching user message |
 | Instruction delivered into a running turn | Accepted steer receipt naming the guarded turn ID; a refused or mismatched turn ID is not delivery |
@@ -836,16 +872,16 @@ Describe evidence separately:
 | Peer acted on an instruction | The changed work, revision or reply; neither acceptance nor a read establishes it |
 | Goal paused | The goal read back as paused; it does not establish that a running turn stopped |
 | Requested settings applied | Actual returned settings, not prompt text |
-| `crw-loop` active | Child's active goal and current goalplan/FSM evidence |
+| `crw-loop` active | Issue child's active goal and current goalplan/FSM evidence |
 | Agreed workflow actually followed | That task's own recorded phases, plan and evidence for this assignment. A skill-loading line, an acceptance receipt, or the instruction quoted back is an indication of receipt, not of compliance |
-| Child reused its own existing goal | That task's current goal and goalplan read back under its own identity. A second goal opened for the same assignment is a duplicate, not a resume |
+| Issue child reused its own existing goal | That task's current goal and goalplan read back under its own identity. A second goal opened for the same assignment is a duplicate, not a resume |
 | Work delivered | Completed turn plus actual commit/diff and checks for code; verified result with both input baseline and delivered output revision/digest for non-PR work |
-| In-flight pull request review handled by the child | Per-finding trail on that pull request (in-flight only): the finding, the commit that addressed it, and the recheck |
-| Child reports normal completion | The repository's named verification and the applicable reviews finished on the current head, blocking findings resolved; a missing mandatory review or verification is blocked, not complete |
-| Candidate ready to hand over | The child's handoff record: the delivered tree and head, the verified destination tip, the verification evidence the repository names (this repository's `verification-record/1`, or the runs by id and attempt where a repository still runs hosted CI), the review coverage actually read, and a judged disposition with evidence for every thread seen. A completion naming a pull request and saying nothing about its review is refused, because silence is the failure this exists to catch |
-| Parent runs in goal mode | That task's own active goal, read back under its own identity, where goal mode was explicitly requested. A parent operating without a goal is the default and needs no authorization; what is recorded instead is its observation path and the readiness facts behind it |
+| In-flight pull request review handled by the issue child | Per-finding trail on that pull request (in-flight only): the finding, the commit that addressed it, and the recheck |
+| Issue child reports normal completion | The repository's named verification and the applicable reviews finished on the current head, blocking findings resolved; a missing mandatory review or verification is blocked, not complete |
+| Candidate ready to hand over | The issue child's handoff record: the delivered tree and head, the verified destination tip, the verification evidence the repository names (this repository's `verification-record/1`, or the runs by id and attempt where a repository still runs hosted CI), the review coverage actually read, and a judged disposition with evidence for every thread seen. A completion naming a pull request and saying nothing about its review is refused, because silence is the failure this exists to catch |
+| Child runs in goal mode | That task's own active goal, read back under its own identity, where goal mode was explicitly requested. A child operating without a goal is the default and needs no authorization; what is recorded instead is its observation path and the readiness facts behind it |
 | Verified for integration | Coordinator reviewed the exact revision and acceptance criteria |
-| Receipt recorded, where a relay holds the assignment | The child's completion receipt with its revision hash and manifest |
+| Receipt recorded, where a relay holds the assignment | The issue child's completion receipt with its revision hash and manifest |
 | Verification decision, where a relay holds the assignment | A verdict at the current head revision, covering the registered criteria and naming the criteria set it was reviewed against |
 | Coordination summary written | The coordinator's own connector write, confirmed by a readback carrying that job's structured record |
 | Merged by the coordinator | Linear criteria and the delivered head's verification checked, then the actual landing on the intended branch verified (for an in-flight pull request, its latest diff, base, head, checks and review resolution) |
@@ -863,17 +899,17 @@ meaningful negative cases, and relevant user-visible behavior. Reuse valid proof
 for the same revision and criteria; run missing checks or checks invalidated by
 integration. A completed turn may contain a failure or interruption.
 
-The parent shares the host with every child, so what it starts to verify or integrate follows the
+The child shares the host with every issue child, so what it starts to verify or integrate follows the
 `Processes you start:` line of the [Launch packet](references/task-packet.md#launch-packet) as a
-child's runs do: a local build or test run records its pid when it starts or runs under `timeout`,
+issue child's runs do: a local build or test run records its pid when it starts or runs under `timeout`,
 and is stopped only by that pid, its own process group or the handle the execution tool returned
 for it, never by pattern or name. The relay's delivery service is not such a run: it stays the
-scope's service, and the parent that started it does not end it early
+scope's service, and the child that started it does not end it early
 ([OPS-4.1](references/operations.md#ops-41-ownership-is-the-operating-scope-not-a-parent)).
-A process of a child's that looks hung is that child's to stop; the parent raises it with that
-child and does not stop it.
+A process of an issue child's that looks hung is that issue child's to stop; the child raises it with that
+issue child and does not stop it.
 
-What the parent runs locally to verify also follows the launch packet's `Go build resources:` line: the
+What the child runs locally to verify also follows the launch packet's `Go build resources:` line: the
 shared build cache, `GOFLAGS=-p=4`, the packages the change touches and a memory-limited scope for
 anything heavy. The whole test suite is the verification the repository names for the tree under
 verification (this repository's `crw-dev ci local`) and is not repeated locally
@@ -905,20 +941,20 @@ packet after changes so it reads as current. Do not run every check on every del
 After verification, the coordinator applies [Default dev integration](../crw-canon/references/delivery.md#default-dev-integration),
 unless the assignment limits delivery. Read [Merge readiness](references/merge-readiness.md)
 to check current CI and reviewer evidence using the repository's actual configuration.
-Devin and Codex reviews are references there and not gates: the merge waits for neither, and the child
+Devin and Codex reviews are references there and not gates: the merge waits for neither, and the issue child
 waits for the one run of each within its waiting budget before its receipt ([Devin and Codex reviews are references, not merge gates](references/merge-readiness.md#devin-and-codex-reviews-are-references-not-merge-gates)).
 Serialize integrations that share a target, verify the landing, and update the
 coordination record. Work inside a relay merge turn never runs in the background and records
-its steps ([Working inside a merge turn](references/relay.md#working-inside-a-merge-turn)). A capable child owns its commits, its push of the task branch, the handoff and the local verification record, and reports once the current head is verified; the integrator fast-forwards the verified tree to dev, and the child never merges. Release and deployment
+its steps ([Working inside a merge turn](references/relay.md#working-inside-a-merge-turn)). A capable issue child owns its commits, its push of the task branch, the handoff and the local verification record, and reports once the current head is verified; the integrator fast-forwards the verified tree to dev, and the issue child never merges. Release and deployment
 still require the user. Delivery ownership and the fallback for a task that cannot
 write git metadata are in [Operations contract](references/operations.md).
 
-Read the child's handoff rather than rebuilding it. It already paginated the review and
+Read the issue child's handoff rather than rebuilding it. It already paginated the review and
 enumerated the check runs, so collecting them again repeats work this contract just assigned
 elsewhere, and re-triaging its findings opens a second review round it already owns. What the
 coordinator adds is currency: re-read the head and base immediately before merging and compare
 the counts against the record. That is a mechanical check, not a review. Where they disagree,
-return the candidate to the same child fail-closed rather than fixing it here. A late review
+return the candidate to the same issue child fail-closed rather than fixing it here. A late review
 thread on the record's head that the coordinator has itself dispositioned with
 `merge-evidence --restate <record> --late-dispositions <file>` is not a disagreement
 ([how](references/merge-readiness.md#a-late-thread-the-parent-dispositions-itself)). Where the installed relay
@@ -932,18 +968,18 @@ This is the same rule in Run and goal mode; a goal changes persistence, not scop
 
 Name what the work is doing in the vocabulary its contract already defines, rather than
 in words invented for the report. Ordinary progress, waiting on input, a stop and a
-request for verification are conditions the parent has to tell apart, and two contracts
-supply the words for different questions. What the child's turn did is a
+request for verification are conditions the child has to tell apart, and two contracts
+supply the words for different questions. What the issue child's turn did is a
 [turn disposition](references/hook-contract.md#turn-disposition): `in_progress`,
 `ready_for_review`, `blocked_needs_input`, `interrupted` or `failed`. Where the
 delivery stands is
 the [assignment state](references/relay.md#verify-the-current-revision) when a relay
-holds it. Report them separately; a child blocked on a person has a turn that stopped
+holds it. Report them separately; an issue child blocked on a person has a turn that stopped
 and a delivery that did not move, and one word cannot carry both. A condition neither
 vocabulary names is reported as a blocker against the state that does apply, under
 [OPS-6.2](references/operations.md#ops-62-record-shape).
 
-A child blocked on a person is answered with a decision, never with a verdict or a message the relay cannot see: the answer goes back through `decision-reply`; for a split approval or a scope change, which open the next generation of the same child, `dag-correct` then records that generation for its DAG node; and the child's result in it is ruled and accepted like any other. Follow [Answering a child that stopped for input](references/relay.md#answering-a-child-that-stopped-for-input). A message sent outside that route leaves only the trace `admit-turn` records, which the same section names as the fallback.
+An issue child blocked on a person is answered with a decision, never with a verdict or a message the relay cannot see: the answer goes back through `decision-reply`; for a split approval or a scope change, which open the next generation of the same issue child, `dag-correct` then records that generation for its DAG node; and the issue child's result in it is ruled and accepted like any other. Follow [Answering a child that stopped for input](references/relay.md#answering-a-child-that-stopped-for-input). A message sent outside that route leaves only the trace `admit-turn` records, which the same section names as the fallback.
 
 After integration, apply [Implementation Done](../crw-canon/references/linear-model.md#implementation-done)
 before reporting or recording the issue complete. Read back the one delivery's landing: the commit on the intended branch (the integrator's fast-forward) with its repository and branch, or the pull request's actual merge where one was named. For legacy multi-PR
@@ -952,7 +988,7 @@ existing accepted operational criteria and never infer completion from an automa
 
 ### Reuse the child's evidence while it still applies
 
-A capable child runs its own checks and carries the review on its own pull
+A capable issue child runs its own checks and carries the review on its own pull
 request, so where that evidence still applies the coordinator reads the result
 instead of producing it again. What still applies is already settled elsewhere
 and is not restated here:
@@ -960,7 +996,7 @@ and is not restated here:
 result only at the same revision, criteria and environment and re-runs it when
 any of the three moved, and [Merge readiness](references/merge-readiness.md)
 refreshes whatever a new head, a changed base or a changed dependency
-invalidated. Inside that, polling a check run the child is already carrying,
+invalidated. Inside that, polling a check run the issue child is already carrying,
 reading again every finding on a hosted review it has resolved, and re-running a
 suite that passed and is still valid are the coordinator doing a level below
 itself. The coordinator's own verification at the merge gate is the exception: it reads the diff and the
@@ -968,7 +1004,7 @@ code and reruns the tests the criteria rest on
 ([the three gates](references/merge-readiness.md#the-three-gates)). Read the head it reports, the conclusions on that head and its
 per-finding trail, and accept them as the evidence table above defines them.
 
-Acceptance keeps its own work, which was never the child's. Confirm the reported head is the head the delivery names (the task branch and its head, or the pull request's head where one exists), the base is current and the merge is clean, every accepted criterion maps to evidence that still applies at that head,
+Acceptance keeps its own work, which was never the issue child's. Confirm the reported head is the head the delivery names (the task branch and its head, or the pull request's head where one exists), the base is current and the merge is clean, every accepted criterion maps to evidence that still applies at that head,
 and any finding still open is named. The handoff's disclosures are part of that: every decision
 request is answered before the verdict, under
 [what the handoff discloses, checked at the verdict](references/merge-readiness.md#what-the-handoff-discloses-checked-at-the-verdict).
@@ -976,13 +1012,13 @@ A merge without a conflict is not yet a merge that builds, so the head merged wi
 built and vetted before the verdict too, with `crw skill merge-build-check`
 ([Build and vet the merged tree before the verdict](references/merge-readiness.md#build-and-vet-the-merged-tree-before-the-verdict)).
 The one head that differs from the report on
-purpose is a base refresh the parent made itself under
+purpose is a base refresh the child made itself under
 [Merge readiness](references/merge-readiness.md#refresh-the-base-yourself-when-only-the-base-moved),
 confirmed by that rule's own checks. Any other moved head invalidates the reused result,
-and so does a base or a dependency the child never built against: that the base
+and so does a base or a dependency the issue child never built against: that the base
 is current now is not evidence that its checks ever saw this one, so re-run what
 that change invalidated rather than read the old conclusion again. Where the
-child's evidence is missing, ambiguous, stale or contradicted, or where
+issue child's evidence is missing, ambiguous, stale or contradicted, or where
 independent review is required and has not happened, get that evidence directly:
 a shorter report is not a reason to pass a criterion nobody verified.
 
@@ -1001,7 +1037,7 @@ without prescribing an unsupported code change.
 
 How many rounds this has taken is not a reason to send it upward. Where the criteria and the
 correction scope are already settled, the next round goes to the same task with what changed,
-and the parent judges whether the evidence still supports continuing rather than returning that
+and the child judges whether the evidence still supports continuing rather than returning that
 judgement to the user. New scope, new authority, and a real contradiction in the criteria are
 decisions somebody else owns; a round count is not one of them, and neither is the cost of
 having looked again.
@@ -1015,13 +1051,13 @@ the same as it still being in force ten turns later.
 
 Where a relay holds the assignment, the needs-changes verdict IS the correction: it
 opens the next execution generation and queues the revision request to the same
-registered child, carrying the superseded event, its digest, and the per-criterion
+registered issue child, carrying the superseded event, its digest, and the per-criterion
 findings. Record findings with notes, because a correction with no findings is one
 nobody can act on. Do not create a task, a second relationship, or a parallel
 message path to deliver it. Without a relay, send the packet as described above.
 
 The restoration block rides inside that payload rather than beside it. The findings and
-their notes are what the relay actually delivers to the child, so that is where the
+their notes are what the relay actually delivers to the issue child, so that is where the
 block goes, and a verdict is not issued until it is there. Declare which finding carries
 it, so a correction the relay cannot carry is refused before it opens the next generation
 instead of being discovered after there is nothing left to go back to. Where the installed
@@ -1033,10 +1069,10 @@ assignment, per [codex-session-relay](references/relay.md#the-parent-verifies) a
 [the restoration block](references/task-packet.md#restoration-block).
 
 A correction that asks only for the base to be brought up to date is not new scope, and the packet
-says so: the child merges the base, names the kind of each merge ([the kinds and what reruns for
+says so: the issue child merges the base, names the kind of each merge ([the kinds and what reruns for
 each](references/task-packet.md#what-a-handoff-discloses)) and reruns that kind's checks and no
 more, so the correction does not ask for an audit of what the base moved under. The restoration
-block carries the siblings' landings and the conflicts the parent expects.
+block carries the siblings' landings and the conflicts the child expects.
 
 A base conflict can show after the receipt was ruled `verified` and before the node is accepted. The needs-changes ruling on that same receipt carries it: the relay replaces the verified ruling and opens the next generation, as long as nothing rests on it. The steps, the refusals and what an older relay answers are in [a base conflict after the ruling and before the acceptance](references/merge-readiness.md#a-base-conflict-after-the-ruling-and-before-the-acceptance).
 
@@ -1069,14 +1105,14 @@ On resume, read the coordination record and refresh its known task IDs before
 creating anything. Recover after uncertain delivery; do not duplicate a writer.
 Do not restart a stopped task merely to inspect it.
 
-A resume this task publishes into an existing child carries the same
+A resume this task publishes into an existing issue child carries the same
 [restoration block](references/task-packet.md#restoration-block) a correction does,
 for the same reason: it is a message into a context this task cannot read. Two
 recoveries are easy to write as one event and are not. This coordinator recovering its
-own lost context is the paragraph above, done from the coordination record. A child
+own lost context is the paragraph above, done from the coordination record. An issue child
 recovering its own is that task's affair, handled by its own workflow from its own
 durable state; the coordinator supplies the pointers and the assignment facts it holds
-and does not reconstruct the child's plan on its behalf.
+and does not reconstruct the issue child's plan on its behalf.
 
 A final update gives task links/IDs, requested and verified settings, actual
 progress, review outcome, and the next actionable dependency. Use the host's
@@ -1110,7 +1146,7 @@ path when one is actually authorized.
 
 ### Close the project's merged assignments
 
-When a relay-managed project is finished, its parent closes the merged assignments it leaves live, so the next parent can take
+When a relay-managed project is finished, its child closes the merged assignments it leaves live, so the next child can take
 the project over with `linkage-handover` and the store stops counting finished work. Read `linkage-completion --project <key>`
 first and keep that reading as the completion evidence, because afterwards it reads `unregistered` while nothing is live. Run
 `relationship-close-merged --project <key> --actor <own task id>` without `--apply`, read `closable` and `kept`, then repeat
@@ -1139,7 +1175,7 @@ Write it against what was found at dispatch rather than against whatever is visi
 now, because the comparison is what separates the entries. Pre-existing resources
 this run never touched, what it added, what it is keeping on purpose together with
 the event that releases it, what a failed creation left behind, and what two
-children share are five different answers. Evidence a finished task is deliberately
+issue children share are five different answers. Evidence a finished task is deliberately
 retaining and residue nobody has looked at are both still on disk and are not the
 same entry. A resource whose owner cannot be established is recorded as unknown and
 returned as an open question; it does not become this task's by being found by it.
@@ -1154,11 +1190,11 @@ disposable.
 Write scratch files under a `mktemp -d` directory outside the worktree and leave them there; the Codex exec policy refuses `rm -f`, so a file this run must take out of the worktree is deleted with an `apply_patch` `*** Delete File:` hunk. Keep the three claims apart when reporting: what is proposed for
 cleanup, what was actually deleted, and what capacity that actually returned.
 
-Observation spends a shared resource as well. Parallel children and the task watching them
+Observation spends a shared resource as well. Parallel issue children and the task watching them
 typically use the same credentials and the same external API allowance, so polling competes with
 the work being polled. This task, as the child (project session), owns that aggregate for its
 project: before sustained observation it reads the actual budget and reserves headroom for the
-children ([the observer shares the lanes' quota](../crw-pabcd/references/dispatch-surfaces.md#the-observer-shares-the-lanes-quota-dispatch-poll-budget-01-default),
+issue children ([the observer shares the lanes' quota](../crw-pabcd/references/dispatch-surfaces.md#the-observer-shares-the-lanes-quota-dispatch-poll-budget-01-default),
 [waiting on work](../crw-loop/references/waiting.md)).
 Proposing is the default, and anything beyond this run's authorized resources is a
 request rather than an action.
@@ -1189,7 +1225,7 @@ these live and already forbids a second store:
 - **The approved scope** in force, with the limits that arrived with it and the start policy this
   run recorded, restored under [Start policy and child cap](#start-policy-and-child-cap) and
   adjudicated again only for the fields whose conditions have changed.
-- **The current owner** of each piece of live work — the child task, its issue, its pull request.
+- **The current owner** of each piece of live work — the issue child task, its issue, its pull request.
 - **The one next action.**
 
 Those five are what the restatement reports. What it has to establish before reporting them, the
@@ -1217,16 +1253,16 @@ outstanding beside it, installation or live verification included where the crit
 for accepted non-PR work it is the agreed observable result, which has no pull request by design.
 That test runs per subject rather than once, so each scoped issue is corroborated on its own
 delivery and the project is finished only when every obligation in its agreed scope is delivered,
-integrated and reconciled. That is the parent's own completion boundary in
+integrated and reconciled. That is the child's own completion boundary in
 [Scope of each level](../crw-canon/references/hierarchy.md#scope-of-each-level),
 and no single pull request reaches it.
 
 Four states then look alike from outside, and the restatement separates them. A project whose
-evidence holds is finished, and its parent resting is the shape of that rather than a failure to
+evidence holds is finished, and its child resting is the shape of that rather than a failure to
 recover from. A project labelled completed while some subject still lacks the evidence its shape
 requires is unfinished: that gap is what gets reported and the project stays in the active set,
 because a status nobody corroborated is the one thing that can hide undelivered work behind a
-quiet parent. A project still in progress whose returned result was never judged, or whose
+quiet child. A project still in progress whose returned result was never judged, or whose
 recorded blocker has since cleared, continues inside the approved scope and through the task that
 already owns it. And a run somebody stopped stays stopped: the finding is recorded with what would
 release it, and nothing is sent.

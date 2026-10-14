@@ -3,7 +3,7 @@
 Here the parent (repository session, relay role `supervisor`) and the child (project session, relay role `parent`) are layers of [the level table](../../crw-canon/references/hierarchy.md#the-levels).
 
 [The parent's section of crw-run](../SKILL.md#the-parent-the-repository-session) executes an initiative's scope, and this file
-is its reference: how a task becomes that initiative's supervisor, which projects it is executing, when it is
+is its reference: how a task becomes that initiative's scoped supervisor, which projects it is executing, when it is
 finished, what each parent receives, what comes back, and how it recovers. The roles themselves are
 the shared [scope of each level](../../crw-canon/references/hierarchy.md#scope-of-each-level),
 which also fixes what each level is called in a report to Jun,
@@ -16,7 +16,7 @@ wake-up.
 What the relay does now RECORD is the relationship itself, not a channel that carries it.
 [OPS-7.4](operations.md#ops-74-three-levels-and-their-routing-identity) and
 Three-level linkage (`docs/relay/linkage.md` in the CRW repository) describe the store's linkage module: `linkage-bind` claims one
-scope for one task at one level, `linkage-supervise` records an initiative supervisor over a project parent (by execution or
+scope for one task at one level, `linkage-supervise` records an initiative-scoped supervisor over a project parent (by execution or
 by reference), and `linkage-up` / `linkage-down` walk the hierarchy either way and report its gaps and contention. One task
 holds one live role and one scope, a project has at most one live `execution` edge whichever initiative names it, and a
 refused supervision leaves no state behind: the decision and the write share one transaction, so a contest that loses writes

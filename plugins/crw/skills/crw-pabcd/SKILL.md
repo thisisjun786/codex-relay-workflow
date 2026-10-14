@@ -205,7 +205,8 @@ The main session owns the plan, host goal, and transitions. Before authorized
 dispatch read [Delegation](references/delegation.md). Leaves do not spawn by
 default; attachments name the needed owner skills explicitly. The spawns of a flow run
 (an executor, a reviewer, an explorer, the architect) are decided by the
-[spawn policy](../crw-canon/references/spawn-policy.md), not by this procedure.
+[spawn policy](../crw-canon/references/spawn-policy.md), not by this procedure: the child spawns
+each as the step `crw flow next` hands it, and those subagents are leaves.
 No-delegation and scoped read/write restrictions take precedence.
 
 ## Loop Engineering (§11)

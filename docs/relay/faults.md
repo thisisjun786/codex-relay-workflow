@@ -1023,7 +1023,7 @@ relationship - the project its scope names, when that project key is a plain ide
 (`notice_facts`' anchor `project:<key>`). A relationship of another project neither
 addresses a notice nor holds it back: it is another project's assignment, and its level above
 and its wishes are that project's. Either way the project's live parent sends
-and the initiative's supervisor receives, exactly as a report does. A project-addressed notice has
+and the initiative-scoped supervisor receives, exactly as a report does. A project-addressed notice has
 no relationship whose pause or contact applies, so the ledger's eligibility lets it through and
 the channel's own rules decide the rest: the supervisor's archive, pause or limit withholds it
 without a wake, as it withholds a report. A notice says what the fault is - purpose `fault_notice` (blocking,

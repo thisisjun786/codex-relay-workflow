@@ -9,7 +9,7 @@ carries no task identifiers, host paths or private history. The five JSON schema
 
 **Status: planned.** The protocol below is frozen and real. Its implementation is not yet written.
 
-The three-level execution linkage - an initiative supervisor over a project parent over an issue
+The three-level execution linkage - an initiative-scoped supervisor over a project parent over an issue
 child, and peer links between parents - is NOT part of this contract and has no schema here. It
 is a relay-owned record set, described in [linkage.md](linkage.md).
 

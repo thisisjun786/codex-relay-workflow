@@ -204,7 +204,7 @@ removes or fixes the cause and what depends on it and re-verifies the changed tr
 destination moves, only the invalidated evidence is refreshed.
 
 Each candidate of a DAG plan is integrated by the owner of its own plan: the project parent that holds the
-execution edge of the node, and for a node run by an agent the orchestrator that holds the node's current
+execution edge of the node, and for a node run by an agent the child (project session, relay role `parent`) whose run holds the node's current
 execution, also after a handover. The check that a parent integrates only its own nodes applies to both kinds,
 and no task has authority over another plan's candidates. Integrations into one target are serialized by the
 compare-and-swap of the ref move, not by a standing integrator or a lease: the integration branch moves, and a

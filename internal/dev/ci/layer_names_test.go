@@ -21,8 +21,11 @@ import (
 // written. The dispatch case files under docs/crw-run/dispatch-cases are the source of a skill reference, not records. crw-run-initiative, the initiative lead's skill, leaves the 1.0
 // path and the parent's work is folded into crw-run.
 
-// oldLayerName is a layer name the table replaces, in English and in Korean.
-var oldLayerName = regexp.MustCompile(`(?i)management session|initiative lead|project orchestrator|project owner|관리 세션|이니셔티브 리드|프로젝트 오케스트레이터|프로젝트 담당`)
+// oldLayerName is a layer name the table replaces, in English and in Korean, and (CRW-1353, the CRW-1352 carry-over d2) the
+// stand-ins that replaced them outside the table: the orchestrator (thread) for the child, the manager for the parent, and the
+// initiative's supervisor for the parent.
+var oldLayerName = regexp.MustCompile(`(?i)management session|initiative lead|project orchestrator|project owner|관리 세션|이니셔티브 리드|프로젝트 오케스트레이터|프로젝트 담당|` +
+	`orchestrator thread|\bthe orchestrator\b|\bthe manager\b|initiative's supervisor|initiative supervisor`)
 
 // layerNameScanned is whether rel is a 1.0-path skill or document whose text may not use an old layer name:
 // the plugin's text files, the documents outside the records, and the top-level documents.
@@ -114,6 +117,10 @@ func TestOldLayerNamesLeaveTheOnePointZeroPath(t *testing.T) {
 		got := oldLayerNameProblems(map[string]string{"a.md": "the Management Session\nan initiative lead\nthe project orchestrator\na project owner\n관리 세션\nthe parent\n"})
 		if len(got) != 5 {
 			t.Errorf("problems = %v, want five", got)
+		}
+		stand := oldLayerNameProblems(map[string]string{"a.md": "the orchestrator thread\nThe orchestrator decides\nfrom the manager down\nthe initiative's supervisor\nan initiative supervisor\na workflow orchestrator binary\n"})
+		if len(stand) != 5 {
+			t.Errorf("stand-ins = %v, want five (an orchestrator that is no layer stays)", stand)
 		}
 	})
 }
@@ -392,4 +399,56 @@ func TestRunInitiativeOffThePath(t *testing.T) {
 			t.Errorf("%s still names crw-run-initiative", rel)
 		}
 	}
+}
+
+// TestRunSkillUsesTheLayerNames (CRW-1353, the CRW-1352 carry-over d1): crw-run's own text uses the table's names, so its relay
+// sense of "parent" (this task in its relay role `parent`) is written as the child and "child" as the issue child. The parent
+// (repository session) has its own section at the end of the skill; anywhere before it, outside code spans and link texts, each
+// "parent" is the repository session and says so: "the parent (repository session...". The relay role id `parent` stays a word in
+// code font.
+func TestRunSkillUsesTheLayerNames(t *testing.T) {
+	for _, p := range runSkillParentProblems(readRepoText(t, runSkillFile)) {
+		t.Error(p)
+	}
+	t.Run("fixture: the relay sense of parent is caught", func(t *testing.T) {
+		good := "The child (project session, relay role `parent`) reports to [the parent](h.md#the-levels) (repository session, relay role `supervisor`). " +
+			"See [Project parent binding](i.md#project-parent-binding) and `crw manage send-parent`.\n\n## The parent: the repository session\n\nThe parent orders the projects.\n"
+		if p := runSkillParentProblems(good); len(p) != 0 {
+			t.Errorf("good: %v", p)
+		}
+		if p := runSkillParentProblems("The parent dispatches a child for each issue, and a parent goal waits.\n"); len(p) != 2 {
+			t.Errorf("relay sense: %v", p)
+		}
+	})
+}
+
+var (
+	parentWord      = regexp.MustCompile(`(?i)\bparents?\b`)
+	runSkillLink    = regexp.MustCompile(`\[[^\]]*\]\([^)]*\)`)
+	parentLabelled  = regexp.MustCompile(`^(\]\([^)]*\))? \(repository session`)
+	parentSectionAt = "\n## The parent: the repository session"
+)
+
+// runSkillParentProblems are the uses of "parent" in crw-run's text before the parent's own section that do not name the
+// repository session.
+func runSkillParentProblems(text string) []string {
+	if i := strings.Index(text, parentSectionAt); i >= 0 {
+		text = text[:i]
+	}
+	body := codeSpans.ReplaceAllString(withoutFrontmatter(text), "``")
+	// a link whose text is the parent keeps its target, so the label after it is still seen; any other link text is a heading's name
+	body = runSkillLink.ReplaceAllStringFunc(body, func(link string) string {
+		if regexp.MustCompile(`(?i)^\[the parent\]`).MatchString(link) {
+			return "the parent" + link[strings.Index(link, "]"):]
+		}
+		return "[]"
+	})
+	flat := normalized(body)
+	var problems []string
+	for _, m := range parentWord.FindAllStringIndex(flat, -1) {
+		if !parentLabelled.MatchString(flat[m[1]:]) {
+			problems = append(problems, "crw-run: a parent that is not the repository session: ..."+flat[max(0, m[0]-60):min(len(flat), m[1]+40)])
+		}
+	}
+	return problems
 }

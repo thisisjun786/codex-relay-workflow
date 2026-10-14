@@ -8,7 +8,7 @@ It states what is verified, what is unknown, and how a request is identified, ad
 and answered. It does not assume any dots API, webhook or internal extension.
 
 Status: the admission rules in `internal/manage/dotscontact.go` are tested with fakes. No live
-round trip through dots is observed by this change. The live check is the manager task at the end.
+round trip through dots is observed by this change. The live check is the parent's task at the end.
 
 ## Capabilities
 
@@ -26,14 +26,14 @@ supported.
 |---|---|---|
 | Linna thread to manager delegation, with request id | verified (one direction) | CRW-549 issue record for the delegation; receiving contract in `internal/manage/dotscontact.go` |
 | Read a dots conversation or message by id | unknown | no interface list received |
-| Send a message from the manager back into dots | unknown | no interface list received |
+| Send a message from the parent back into dots | unknown | no interface list received |
 | Receive a manager reply inside dots as a delivery receipt | unknown | no interface list received |
 | Push webhook or event subscription from dots | unknown | not assumed; none known |
 | Sender identity check on an inbound request | unknown | no interface list received |
 | Application of a manager instruction | unknown | transport acceptance is never application |
 
 A transport acceptance from the bridge is a receipt that the message was dispatched. It does not
-show that the manager read it, applied it or finished the work. The round trip is proven only after
+show that the parent read it, applied it or finished the work. The round trip is proven only after
 a manager turn shows the instruction in its own record.
 
 ## Identifiers
@@ -93,7 +93,7 @@ manager turn counts as the instruction taking effect.
 ## Approvals
 
 An approval answers one question under one revision, for one concrete action. Admission reads the
-open question from the manager's own record, not from the request. Every value the open question
+open question from the parent's own record, not from the request. Every value the open question
 must hold (id, revision, action, target, scope and authority source) is checked first, and a blank
 value in the open question refuses the approval, so a blank cannot match a blank.
 
@@ -115,7 +115,7 @@ current revision does. A separate approval that a platform or a user policy requ
 | Reason | Action | Meaning |
 |---|---|---|
 | `manager_busy`, `manager_idle` | deliver | Send to the existing manager session. |
-| `manager_unreachable` | wait | The manager is offline or unknown. Nothing is sent. |
+| `manager_unreachable` | wait | The parent is offline or unknown. Nothing is sent. |
 | `accepted_not_applied` | converge | Earlier transport acceptance. Not a new send. |
 | `outcome_unknown_reconcile_first` | wait | Reconcile the earlier record first. |
 | `wrong_repository`, `previous_manager` | refuse | Routing does not match this manager. |
@@ -136,7 +136,7 @@ the delivery input. These tests are simulated. They prove the decision rules, no
 
 ## Manager task: the live round trip
 
-The manager session runs this on the host. The child does not run it, because the child has no
+The parent (repository session) runs this on the host. The child does not run it, because the child has no
 network access and no MCP servers.
 
 1. Ask Linna for the dots interface list. Mark each capability in the table above as verified or
@@ -144,7 +144,7 @@ network access and no MCP servers.
 2. Send one progress message, one completion, one block and one decision request through the
    existing path: `send-parent` for messages to the parent, and the relay's decision record for a
    decision request. Do not add a command.
-3. For each message, record the transport receipt, then the receipt of the manager turn that shows
+3. For each message, record the transport receipt, then the receipt of the parent's turn that shows
    the instruction, then the application, as three separate records.
 4. Repeat one request with the same request id and confirm it converges. Interrupt one send and
    confirm that a restart reconciles it.

@@ -54,8 +54,7 @@ Flags that live in the CLI USAGE and are easy to miss:
 - `--json` on `crw recall chat index` prints index status as JSON.
 - `--verify` on `crw recall chat index` decides which rollout files changed from their content, so a rewrite that kept the size and the millisecond mtime is found; the default refresh compares size, mtime and file identity only. With `--status` it reports without writing.
 
-Diagnosing the host memory pipeline (`crw recall memory status`, `crw recall memory requeue`) is operator
-work for the manager: [operator.md](references/operator.md).
+Diagnosing the host memory pipeline (`crw recall memory status`, `crw recall memory requeue`) is operator work for the parent (repository session, relay role `supervisor`, [the level table](../crw-canon/references/hierarchy.md#the-levels)): [operator.md](references/operator.md).
 
 Defaults that matter:
 
