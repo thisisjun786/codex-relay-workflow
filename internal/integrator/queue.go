@@ -4,6 +4,7 @@ import (
 	"crypto/sha1" //nolint:gosec // names a retry marker, as the shell runner's sha1sum did
 	"encoding/hex"
 	"errors"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -127,6 +128,9 @@ func (r *Runner) listPending() (entries []Entry, ignored []string, err error) {
 // wins), and only a file that held the processed head replaces the destination. A file that can
 // be neither moved on nor put back stays under its private name (restoreClaim), and the next
 // pass puts it back first (recoverClaims).
+//
+// A pull request entry that moves to done/ is named by its number and its head (doneName): a done/ entry stands for that head
+// only, so a later head of the same pull request is a new entry.
 func (r *Runner) moveEntry(e Entry, to string) bool {
 	src := r.qpath(dirPending, e.Name)
 	if now, err := readHead(src); err != nil || now != e.Head {
@@ -151,12 +155,44 @@ func (r *Runner) moveEntry(e Entry, to string) bool {
 		r.restoreClaim(claim, e.Name)
 		return false
 	}
-	if err := os.Rename(claim, r.qpath(to, e.Name)); err != nil {
+	dest := e.Name
+	if to == dirDone {
+		dest = doneName(e)
+	}
+	if err := os.Rename(claim, r.qpath(to, dest)); err != nil {
 		r.logf("%s: move to %s: %v", e.Key, to, err)
 		r.restoreClaim(claim, e.Name)
 		return false
 	}
 	return true
+}
+
+// doneName is the name of an entry in done/: the queue name, and for a pull request also its head (pr-<N>-<head>).
+func doneName(e Entry) string {
+	if e.PR > 0 && e.HeadOK {
+		return e.Name + "-" + e.Head
+	}
+	return e.Name
+}
+
+// writePending writes head as pending/<name>: beside the queue first and renamed in, so a pass never reads half a file.
+func (r *Runner) writePending(name, head string) error {
+	tmp, err := os.CreateTemp(r.Cfg.QueueDir, ".enqueue-"+name+"-")
+	if err != nil {
+		return err
+	}
+	_, werr := io.WriteString(tmp, head+"\n")
+	cerr := tmp.Close()
+	if werr == nil {
+		werr = cerr
+	}
+	if werr == nil {
+		werr = os.Rename(tmp.Name(), r.qpath(dirPending, name))
+	}
+	if werr != nil {
+		_ = os.Remove(tmp.Name())
+	}
+	return werr
 }
 
 // claimPrefix starts the private name a pending file has while moveEntry moves it; the name

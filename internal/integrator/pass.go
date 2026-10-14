@@ -15,7 +15,8 @@ import (
 // Report is what one pass reports.
 type Report struct {
 	// Result is idle, stopped, locked, nothing-to-integrate, error, or the run's own result
-	// (pushed, nothing-merged, verification-failed(rc=N), dev-moved:<sha>, push-failed).
+	// (pushed, nothing-merged, verification-failed(rc=N), dev-moved:<sha>, push-failed; for a pull request also
+	// review-needs-changes, head-moved:<sha> and pull-request-changed).
 	Result  string   `json:"result"`
 	Exit    int      `json:"exit"`
 	Error   string   `json:"error,omitempty"`
@@ -77,6 +78,12 @@ func (r *Runner) Pass(ctx context.Context) Report {
 		}
 	}
 	for _, e := range prs {
+		// a head of the pull request that already landed (done/ or its landing record) is done again, with no second record
+		if why := r.landedBefore(e); why != "" {
+			r.logf("%s %s: %s", e.Key, e.Head, why)
+			rep.moved(r, e, dirDone, why)
+			continue
+		}
 		pr, held := r.checkPR(ctx, e, &rep)
 		if ctx.Err() != nil {
 			return r.cancelled(ctx, rep)
@@ -169,7 +176,19 @@ func (r *Runner) run(ctx context.Context, rep Report, batch []Entry, pr *trackin
 	data, _ := jsonLine(out.Summary)
 	r.logf("%s rc=%d %s", tag, out.Exit, data)
 	if pr != nil {
-		rep.Landing = r.recordLanding(ctx, *pr, out)
+		if out.Exit == ExitNothingMerged && len(out.left) == 1 && out.left[0].Reason == reasonAlreadyInDev {
+			// the head reached the branch between the pass's check and its run: recorded once, after the fact
+			l, err := r.recoverLanding(ctx, tag, batch[0], *pr)
+			if err != nil {
+				r.logf("%s: %v", pr.Ref, err)
+			}
+			rep.Landing = l
+		} else {
+			rep.Landing = r.recordLanding(ctx, *pr, out)
+		}
+		if out.headMoved != "" {
+			r.retarget(batch[0], out.headMoved)
+		}
 	}
 	if out.Exit == ExitReviewRefused {
 		reason := "review needs_changes"
@@ -199,6 +218,21 @@ func (r *Runner) run(ctx context.Context, rep Report, batch []Entry, pr *trackin
 	}
 	r.afterRun(batch, out, &rep)
 	return rep
+}
+
+// retarget puts the pull request's new head in place of the head the run merged, in pending/<name>, so the next pass verifies and
+// reviews the new head. A pending file that no longer holds the run's head (the project session enqueued again meanwhile) is
+// left as it is.
+func (r *Runner) retarget(e Entry, head string) {
+	if now, err := readHead(r.qpath(dirPending, e.Name)); err != nil || now != e.Head {
+		r.logf("%s %s changed or went away during the run: left as it is", e.Key, e.Head)
+		return
+	}
+	if err := r.writePending(e.Name, head); err != nil {
+		r.logf("%s: the new head %s could not be written to pending: %v", e.Key, head, err)
+		return
+	}
+	r.logf("%s %s: the pull request's head moved during the run; pending now holds %s", e.Key, e.Head, head)
 }
 
 // runFileExts are the files a run leaves in runs_dir under its tag.

@@ -45,6 +45,10 @@ type Outcome struct {
 	// tree, nil when none ran.
 	verifyRC int
 	review   *LandingReview
+	// headMoved is the pull request's head GitHub named right before the branch was to move, when it was no longer the merged
+	// head; prNote says why the branch did not move for a pull request that changed during the run.
+	headMoved string
+	prNote    string
 }
 
 type leftOut struct {
@@ -211,6 +215,17 @@ func (r *Runner) integrate(ctx context.Context, tag string, entries []Entry, pr 
 		// like the verification, the review judged the commit that is pushed and changed nothing beside it
 		if err := r.treeIsTheCommit(ctx, wt, head); err != nil {
 			return fail("the review: %v", err)
+		}
+		// the pull request is read again right before the branch moves: a head pushed during the verification or the review
+		// is not what was verified, so the branch does not move for the old head and the entry stays pending
+		result, moved, why := r.recheckPR(ctx, *pr, entries[0].Head)
+		if ctx.Err() != nil {
+			return fail("%v", ctx.Err())
+		}
+		if result != "" {
+			fmt.Fprintf(logf, "%s: %s; %s does not move\n", pr.Ref, why, c.Branch)
+			out.headMoved, out.prNote = moved, why
+			return finish(result, ExitMoved)
 		}
 	}
 	// From here on a git call the signal ended is not a moved branch or a refused push: the

@@ -65,6 +65,9 @@ type Landing struct {
 	Verification LandingVerification `json:"verification"`
 	Review       LandingReview       `json:"review"`
 	Warnings     []string            `json:"warnings,omitempty"`
+	// HeadMoved is the head GitHub named right before dev was to move, when it was not Head: dev did not move for Head, and the
+	// entry stays pending with HeadMoved for the next pass to verify and review.
+	HeadMoved string `json:"head_moved,omitempty"`
 	// Comment is "written" once the record is on the pull request as a comment, else why it is not.
 	Comment string `json:"comment"`
 }
@@ -75,6 +78,8 @@ type LandingVerification struct {
 	Record string `json:"record"`
 	SHA256 string `json:"sha256,omitempty"`
 	Status int    `json:"status"`
+	// Note says why the verification is not in the record (a landing recovered without the files of its run).
+	Note string `json:"note,omitempty"`
 }
 
 // LandingReview is what the review of a pull request's merged tree gave.
@@ -97,7 +102,9 @@ func (r *Runner) prRef(e Entry) tracking.Ref {
 
 // EnqueuePR puts pull request ref ("owner/name#N" of the configured repository) into the queue: it reads the pull request and
 // writes its head to pending/pr-<N>, replacing an earlier head of the same pull request. A pull request that is not open, not
-// toward the branch, or names no head commit is refused and nothing is written.
+// toward the branch, or names no head commit is refused and nothing is written, and so is a head of it that already landed (a
+// done/ entry or a landing record for that number and head): after new commits on its branch the pull request is enqueued
+// again with the new head.
 func (r *Runner) EnqueuePR(ctx context.Context, ref string) (Entry, error) {
 	c := r.Cfg
 	if c.PullRequestRepo == "" || r.PullRequests == nil {
@@ -132,25 +139,174 @@ func (r *Runner) EnqueuePR(ctx context.Context, ref string) (Entry, error) {
 		return Entry{}, err
 	}
 	name := prPrefix + strconv.Itoa(pr.Number)
-	// the head is written beside the queue and renamed in, so a pass never reads half a file
-	tmp, err := os.CreateTemp(c.QueueDir, ".enqueue-"+name+"-")
-	if err != nil {
+	e := Entry{Name: name, Key: r.keyOf(name), Node: name, Head: got.HeadSHA, HeadOK: true, PR: pr.Number, num: uint64(pr.Number)}
+	if why := r.landedBefore(e); why != "" {
+		return Entry{}, fmt.Errorf("%s at %s %s; enqueue it again after new commits on %s", pr, got.HeadSHA, why, got.HeadRef)
+	}
+	if err := r.writePending(name, got.HeadSHA); err != nil {
 		return Entry{}, err
 	}
-	_, werr := io.WriteString(tmp, got.HeadSHA+"\n")
-	cerr := tmp.Close()
-	if werr == nil {
-		werr = cerr
-	}
-	if werr == nil {
-		werr = os.Rename(tmp.Name(), r.qpath(dirPending, name))
-	}
-	if werr != nil {
-		_ = os.Remove(tmp.Name())
-		return Entry{}, werr
-	}
 	r.logf("%s %s enqueued (%s -> %s)", r.keyOf(name), got.HeadSHA, got.HeadRef, got.BaseRef)
-	return Entry{Name: name, Key: r.keyOf(name), Node: name, Head: got.HeadSHA, HeadOK: true, PR: pr.Number, num: uint64(pr.Number)}, nil
+	return e, nil
+}
+
+// resultLandedBeforeRecord is the result of a landing record written after the fact: the head was found in the branch with no
+// record of its landing (a pass that ended after its push, or a pull request GitHub shows merged).
+const resultLandedBeforeRecord = "landed_before_record"
+
+// landedBefore says why a pull request entry already landed, "" when it did not: done/ holds the entry for its number and head,
+// or runs_dir holds a landing record of that number and head that moved the branch. A landing is recorded once per (number,
+// head).
+func (r *Runner) landedBefore(e Entry) string {
+	if e.PR == 0 || !e.HeadOK {
+		return ""
+	}
+	if fileExists(r.qpath(dirDone, doneName(e))) {
+		return "already landed (done/" + doneName(e) + ")"
+	}
+	if path := r.findLanding(e.PR, e.Head); path != "" {
+		return "already landed (" + path + ")"
+	}
+	return ""
+}
+
+// findLanding is the landing record in runs_dir of pull request number at head that moved the branch, "" when there is none.
+func (r *Runner) findLanding(number int, head string) string {
+	paths, _ := filepath.Glob(filepath.Join(r.Cfg.RunsDir, "*.pr.json"))
+	for _, p := range paths {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		var l Landing
+		if json.Unmarshal(data, &l) == nil && l.Number == number && l.Head == head && l.DevAfter != "" {
+			return p
+		}
+	}
+	return ""
+}
+
+// headInBranch fetches the remote and says whether head is in the remote branch (a commit the checkout does not have is not).
+func (r *Runner) headInBranch(ctx context.Context, head string) (bool, error) {
+	c := r.Cfg
+	if rc, err := r.git(ctx, c.Checkout, nil, "fetch", c.Remote, "--quiet"); err != nil || rc != 0 {
+		return false, fmt.Errorf("fetch failed (status %d, %v)", rc, err)
+	}
+	rc, err := r.git(ctx, c.Checkout, nil, "merge-base", "--is-ancestor", head, c.remoteRef())
+	if err != nil {
+		return false, err
+	}
+	return rc == 0, nil
+}
+
+// firstContaining is the commit of the branch's first-parent line that brought head into it: the merge of head, or head itself
+// when the branch moved to it.
+func (r *Runner) firstContaining(ctx context.Context, head string) string {
+	c := r.Cfg
+	out, err := r.gitOut(ctx, c.Checkout, "rev-list", "--first-parent", "--ancestry-path", head+".."+c.remoteRef())
+	if err != nil {
+		return ""
+	}
+	lines := strings.Fields(out)
+	if len(lines) == 0 {
+		return head
+	}
+	oldest := lines[len(lines)-1]
+	// a first parent that holds head is head itself (it is not on the ancestry path from head)
+	if rc, err := r.git(ctx, c.Checkout, nil, "merge-base", "--is-ancestor", head, oldest+"^1"); err == nil && rc == 0 {
+		return head
+	}
+	return oldest
+}
+
+// pushedRun is the summary of this queue's run that pushed the entry's head (its tag and summary), nil when no run file says so.
+func (r *Runner) pushedRun(e Entry) *Summary {
+	paths, _ := filepath.Glob(filepath.Join(r.Cfg.RunsDir, "*.summary.json"))
+	var found *Summary
+	for _, p := range paths {
+		data, err := os.ReadFile(p)
+		if err != nil {
+			continue
+		}
+		var s Summary
+		if json.Unmarshal(data, &s) == nil && s.Merged == e.Spec() && s.Result == "pushed" && headRE.MatchString(s.Head) && (found == nil || s.Tag > found.Tag) {
+			found = &s
+		}
+	}
+	return found
+}
+
+// recoverLanding writes the one landing record of a pull request entry whose head is in the branch with no record (result
+// landed_before_record): dev_after is the branch commit that brought the head in, and the verification and the review come from
+// the files of the run that pushed it, or are stated as not recorded. tag is the run's tag ("" reserves one). The record is
+// written before its comment, so a pass that ends between the two posts no second comment.
+func (r *Runner) recoverLanding(ctx context.Context, tag string, e Entry, pr tracking.PullRequest) (*Landing, error) {
+	if tag == "" {
+		var err error
+		if tag, err = r.reserveTag(); err != nil {
+			return nil, err
+		}
+	}
+	l := &Landing{Schema: LandingSchema, Tag: tag, PullRequest: pr.Ref.String(), Number: pr.Ref.Number, URL: pr.URL, Head: e.Head,
+		HeadRef: pr.HeadRef, Issues: []string{}, Result: resultLandedBeforeRecord}
+	for _, is := range pr.Issues {
+		l.Issues = append(l.Issues, is.String())
+	}
+	configured := len(r.Cfg.ReviewCommand) > 0
+	if run := r.pushedRun(e); run != nil {
+		l.DevBefore, l.DevAfter, l.Merged = run.Base, run.Head, run.Head
+		l.Verification = LandingVerification{Record: run.Record, Status: 0}
+		if data, err := os.ReadFile(run.Record); err == nil {
+			d := sha256.Sum256(data)
+			l.Verification.SHA256 = hex.EncodeToString(d[:])
+		} else {
+			l.Verification.Note = "the verification-record of run " + run.Tag + " is not readable: " + err.Error()
+		}
+		verdictFile := filepath.Join(r.Cfg.RunsDir, run.Tag+".review.json")
+		if v, err := readVerdict(verdictFile); err == nil {
+			l.Review = LandingReview{Configured: true, Verdict: v, VerdictFile: verdictFile, Status: -1, Log: filepath.Join(r.Cfg.RunsDir, run.Tag+".review.log"),
+				Note: "the review command's status is not recorded"}
+		} else {
+			l.Review = LandingReview{Configured: configured, Status: -1, Note: "not recorded: run " + run.Tag + " left no readable verdict"}
+		}
+	} else {
+		after := r.firstContaining(ctx, e.Head)
+		l.DevAfter, l.Merged = after, after
+		if before, err := r.gitOut(ctx, r.Cfg.Checkout, "rev-parse", "--verify", "-q", after+"^1"); err == nil {
+			l.DevBefore = before
+		}
+		const none = "not recorded: no run file of this queue names the head"
+		l.Verification = LandingVerification{Status: -1, Note: none}
+		l.Review = LandingReview{Configured: configured, Status: -1, Note: none}
+	}
+	l.Warnings = append(l.Warnings, "the head was in "+r.Cfg.Branch+" before its landing was recorded; this record is written after the fact")
+	r.logf("%s %s: in %s with no landing record: recovered record %s", pr.Ref, e.Head, r.Cfg.Branch, tag)
+	r.publishLanding(ctx, l)
+	return l, nil
+}
+
+// recheckPR reads the pull request again right before the branch moves. It answers "" when the pull request is still the one
+// the run merged (open, toward the branch, from the repository, at head), else the run's result: head-moved:<sha> with the new
+// head, or pull-request-changed with why. Neither moves the branch; the entry stays pending.
+func (r *Runner) recheckPR(ctx context.Context, pr tracking.PullRequest, head string) (result, moved, why string) {
+	now, err := r.PullRequests.PullRequest(ctx, pr.Ref)
+	switch {
+	case ctx.Err() != nil:
+		return "", "", ""
+	case err != nil:
+		return "pull-request-changed", "", "the pull request could not be read again before " + r.Cfg.Branch + " moves: " + err.Error()
+	case now.Merged || now.State != tracking.StateOpen:
+		return "pull-request-changed", "", "the pull request was closed or merged during the run"
+	case now.BaseRef != r.Cfg.Branch:
+		return "pull-request-changed", "", "the pull request goes to " + now.BaseRef + " now"
+	case !strings.EqualFold(now.HeadRepo, r.Cfg.PullRequestRepo):
+		return "pull-request-changed", "", "the pull request comes from " + headRepoName(now.HeadRepo) + " now"
+	case now.HeadSHA != head && headRE.MatchString(now.HeadSHA):
+		return "head-moved:" + now.HeadSHA, now.HeadSHA, "the pull request's head moved to " + now.HeadSHA + " during the run"
+	case now.HeadSHA != head:
+		return "pull-request-changed", "", fmt.Sprintf("the pull request names no head commit now (%q)", now.HeadSHA)
+	}
+	return "", "", ""
 }
 
 // headRepoName names the repository of a pull request's head branch; GitHub names none for a fork that was deleted.
@@ -162,8 +318,9 @@ func headRepoName(repo string) string {
 }
 
 // checkPR reads the pull request of a pending entry before anything is merged. It answers the pull request to land, or nil when
-// the entry was moved (a closed, merged, retargeted or moved-on pull request, or a head that is not a commit), or why the entry is
-// held in pending this pass (the pull request could not be read: no verdict, so the entry waits and the issue heads go on).
+// the entry was moved (a closed, merged, retargeted or moved-on pull request, a head that is not a commit, or a head already in
+// the branch, whose landing it records once), or why the entry is held in pending this pass (the pull request or the branch
+// could not be read: no verdict, so the entry waits and the issue heads go on).
 func (r *Runner) checkPR(ctx context.Context, e Entry, rep *Report) (*tracking.PullRequest, string) {
 	if !e.HeadOK {
 		r.logf("%s %q is not a full head SHA: blocked", e.Key, e.Head)
@@ -181,6 +338,26 @@ func (r *Runner) checkPR(ctx context.Context, e Entry, rep *Report) (*tracking.P
 		held := fmt.Sprintf("the pull request could not be read, it stays pending: %v", err)
 		r.logf("%s %s: %s", e.Key, e.Head, held)
 		return nil, held
+	}
+	// a head already in the branch with no landing record (landedBefore found none): a pass ended after its push, or GitHub
+	// shows the pull request merged; the landing is recorded once, after the fact, and the entry is done
+	in, err := r.headInBranch(ctx, e.Head)
+	if ctx.Err() != nil {
+		return nil, ""
+	}
+	if err != nil {
+		held := fmt.Sprintf("whether %s holds the head could not be read, it stays pending: %v", r.Cfg.Branch, err)
+		r.logf("%s %s: %s", e.Key, e.Head, held)
+		return nil, held
+	}
+	if in {
+		l, err := r.recoverLanding(ctx, "", e, pr)
+		if err != nil {
+			return nil, "the landing record could not be written, it stays pending: " + err.Error()
+		}
+		rep.Landing = l
+		rep.moved(r, e, dirDone, "landed before its record: "+filepath.Join(r.Cfg.RunsDir, l.Tag+".pr.json"))
+		return nil, ""
 	}
 	reason, dir := "", ""
 	switch {
@@ -286,6 +463,10 @@ func (r *Runner) recordLanding(ctx context.Context, pr tracking.PullRequest, out
 	if out.Exit == ExitPushed && len(out.merged) > 0 {
 		l.DevAfter = sum.Head
 	}
+	l.HeadMoved = out.headMoved
+	if out.prNote != "" {
+		l.Warnings = append(l.Warnings, out.prNote+": "+r.Cfg.Branch+" did not move; the entry stays pending")
+	}
 	if data, err := os.ReadFile(sum.Record); err == nil {
 		d := sha256.Sum256(data)
 		l.Verification.SHA256 = hex.EncodeToString(d[:])
@@ -302,16 +483,23 @@ func (r *Runner) recordLanding(ctx context.Context, pr tracking.PullRequest, out
 		l.Warnings = append(l.Warnings, l.Review.Note+": dev moves on the verification-record alone (CRW-1306)")
 		r.logf("%s %s: %s", pr.Ref, pr.HeadSHA, l.Review.Note)
 	}
+	r.publishLanding(ctx, l)
+	return l
+}
+
+// publishLanding writes <tag>.pr.json, then puts the same record on the pull request as a comment and writes the file again
+// with what the comment became.
+func (r *Runner) publishLanding(ctx context.Context, l *Landing) {
 	l.Comment = "not written yet"
 	r.writeLanding(l)
-	if err := r.PullRequests.Comment(context.WithoutCancel(ctx), pr.Ref, "[dev queue · "+sum.Tag+"]", landingText(l)); err != nil {
+	ref := tracking.Ref{Repo: r.Cfg.PullRequestRepo, Number: l.Number}
+	if err := r.PullRequests.Comment(context.WithoutCancel(ctx), ref, "[dev queue · "+l.Tag+"]", landingText(l)); err != nil {
 		l.Comment = "not written: " + err.Error()
-		r.logf("%s: the landing record could not be written on the pull request: %v", pr.Ref, err)
+		r.logf("%s: the landing record could not be written on the pull request: %v", ref, err)
 	} else {
 		l.Comment = "written"
 	}
 	r.writeLanding(l)
-	return l
 }
 
 func (r *Runner) writeLanding(l *Landing) {
@@ -331,6 +519,9 @@ func landingText(l *Landing) string {
 	fmt.Fprintf(&b, "result: %s\n", l.Result)
 	fmt.Fprintf(&b, "pull request: %s\n", l.PullRequest)
 	fmt.Fprintf(&b, "head: %s (%s)\n", l.Head, l.HeadRef)
+	if l.HeadMoved != "" {
+		fmt.Fprintf(&b, "head moved: %s (dev did not move for %s; the next pass verifies and reviews the new head)\n", l.HeadMoved, shortHead(l.Head))
+	}
 	fmt.Fprintf(&b, "issues: %s\n", strings.Join(l.Issues, ", "))
 	if l.DevAfter != "" {
 		fmt.Fprintf(&b, "dev: %s -> %s\n", l.DevBefore, l.DevAfter)
@@ -338,7 +529,11 @@ func landingText(l *Landing) string {
 		fmt.Fprintf(&b, "dev: %s (not moved)\n", l.DevBefore)
 	}
 	fmt.Fprintf(&b, "merged tree: %s\n", l.Merged)
-	fmt.Fprintf(&b, "verification-record: %s sha256:%s (status %d)\n", l.Verification.Record, l.Verification.SHA256, l.Verification.Status)
+	if l.Verification.Record == "" && l.Verification.Note != "" {
+		fmt.Fprintf(&b, "verification-record: %s\n", l.Verification.Note)
+	} else {
+		fmt.Fprintf(&b, "verification-record: %s sha256:%s (status %d)\n", l.Verification.Record, l.Verification.SHA256, l.Verification.Status)
+	}
 	switch {
 	case l.Review.Verdict != "":
 		fmt.Fprintf(&b, "review: %s (%s)\n", l.Review.Verdict, l.Review.VerdictFile)

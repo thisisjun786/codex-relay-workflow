@@ -13,6 +13,9 @@ type DryEntry struct {
 	AlreadyInDev bool   `json:"already_in_dev"`
 	Gate         string `json:"gate,omitempty"`
 	Retried      bool   `json:"retried"`
+	// Landed says why a pull request entry already landed at its head (done/ or its landing record): the pass moves it to done/
+	// with no run, so it is not planned.
+	Landed string `json:"landed,omitempty"`
 }
 
 // DryReport is what a dry run reports.
@@ -68,6 +71,9 @@ func (r *Runner) DryRun(ctx context.Context, withGate bool) (DryReport, error) {
 			d.Retried = true
 		}
 		pass := true
+		if d.Landed = r.landedBefore(e); d.Landed != "" {
+			pass = false
+		}
 		if e.HeadOK {
 			if _, rc, err := r.gitRO(ctx, r.Cfg.Checkout, "cat-file", "-e", e.Head+"^{commit}"); err == nil && rc == 0 {
 				d.InCheckout = true
