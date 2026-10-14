@@ -24,7 +24,16 @@ type ChildState func(socket string) (string, error)
 var (
 	forwardChild ChildForward
 	childState   ChildState
+	stateCheck   ChildStateCheck
 )
+
+// ChildStateCheck says, for a bridge started on socket ("" is the default socket), whether the relay daemon report_child
+// reaches runs on another relay state than the bridge resolves: it returns one line naming both paths, or "" when the
+// states agree or nothing is known. It reads only and never refuses (CRW-1373).
+type ChildStateCheck func(socket string) string
+
+// RegisterChildStateCheck gives the bridge its start-time reading of the relay state it shares with the daemon.
+func RegisterChildStateCheck(check ChildStateCheck) { stateCheck = check }
 
 // RegisterChildReports gives report_child its route to the relay daemon. It is called at executable composition time (the
 // relay adapter's Register), not when this package loads: the package imports no relay package but the leaf argparse,

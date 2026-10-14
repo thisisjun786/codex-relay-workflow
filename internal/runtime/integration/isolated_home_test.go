@@ -725,7 +725,7 @@ func (h *isolated) bridge(t *testing.T, env []string) bridgeAnswer {
 
 // bridgeAnswers requires the declared server, started with env, to be runtimeDir's crw running
 // as the bridge (the pid the host started, exec'd through the pointer's codex-thread-bridge), to
-// list exactly the 12 tools and to report the policy the bridge record names: its digest when it
+// list exactly the 13 tools (toolNames) and to report the policy the bridge record names: its digest when it
 // names one, presence_only when it names none. No tripwire may have fired by then.
 func (h *isolated) bridgeAnswers(t *testing.T, runtimeDir string, env []string) {
 	t.Helper()
