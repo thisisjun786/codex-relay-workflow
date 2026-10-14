@@ -66,6 +66,13 @@ type idleWake struct {
 	// to wait for. It is reset when a hold is taken or the recipient leaves the backlog (CRW-904
 	// correction, d1).
 	holdBackoff map[string]float64
+	// carried are the reports a tick took off the host's channel and did not apply because a store
+	// write of the idle pass failed: the failing report and every one after it. The host hands a report
+	// over once, and a busy_cap or attempt_cap hold has no timer, so a report dropped here would leave
+	// that hold standing until the recipient's next edge or a readback. The next pass applies them
+	// before the host's new reports (CRW-1349). Applying a report again is harmless: a head already
+	// woken and a message already due write nothing. In memory, like the holds.
+	carried []delivery.IdleReport
 	// woken, opened and released are what the pass did, and notes is what it could not do: both are
 	// read by the daemon's own tests and by Tick's report.
 	woken, opened, released int
@@ -94,6 +101,8 @@ func (w *idleWake) take() []string {
 // thread whose head is not waiting out a busy backoff changes nothing: WakeBusyHead writes only for
 // the deferred-busy head that is still inside its backoff, so a younger delivery, a recipient with
 // no backlog, and a report about a head that is already due are all no-ops.
+//
+// The reports a failed tick did not apply come first (carried, CRW-1349), then the host's new ones.
 func (w *idleWake) idle(ctx context.Context, r *Report, host Host, now float64) error {
 	if w.beforeIdle != nil {
 		w.beforeIdle()
@@ -102,7 +111,9 @@ func (w *idleWake) idle(ctx context.Context, r *Report, host Host, now float64) 
 	if !ok {
 		return nil
 	}
-	for _, report := range reporter.IdleReports() {
+	reports := append(w.carried, reporter.IdleReports()...)
+	w.carried = nil
+	for i, report := range reports {
 		if report.Status != "idle" && report.Status != "notLoaded" {
 			continue
 		}
@@ -111,6 +122,8 @@ func (w *idleWake) idle(ctx context.Context, r *Report, host Host, now float64) 
 			// A store failure ends the tick here, before any later write: the wake is this pass's own write,
 			// and nothing after a failed write may take the store's writes (I-564). The delivery pass and
 			// the supervisor channel only run on a tick whose idle pass succeeded (CRW-904 correction, d1).
+			// The reports not applied are kept for the next tick rather than dropped (CRW-1349).
+			w.carry(reports[i:])
 			return fmt.Errorf("idle report for %s not applied: %w", report.ThreadID, err)
 		}
 		if wrote {
@@ -124,11 +137,28 @@ func (w *idleWake) idle(ctx context.Context, r *Report, host Host, now float64) 
 		// write, so a store failure ends the tick the same way.
 		count, err := w.daemon.Channel.WakeBusyRecipient(ctx, report.ThreadID, report.Status, now)
 		if err != nil {
+			// The delivery wake of this report may stand; applying it again next tick writes nothing.
+			w.carry(reports[i:])
 			return fmt.Errorf("idle report for %s not applied to the supervisor channel: %w", report.ThreadID, err)
 		}
 		w.woken += count.Woken + count.Released
 	}
 	return nil
+}
+
+// carry keeps the reports a failed idle pass did not apply for the next pass, once each and in their
+// order: a store that keeps failing tick after tick does not grow the list with the same reports.
+func (w *idleWake) carry(reports []delivery.IdleReport) {
+	seen := map[delivery.IdleReport]bool{}
+	kept := make([]delivery.IdleReport, 0, len(reports))
+	for _, report := range reports {
+		if seen[report] {
+			continue
+		}
+		seen[report] = true
+		kept = append(kept, report)
+	}
+	w.carried = kept
 }
 
 // hold opens a subscription for every recipient whose head waits out a busy backoff and has none,
