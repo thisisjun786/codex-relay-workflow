@@ -384,7 +384,7 @@ is the disk (`TMPDIR` under `/scratch`), never `/dev/shm`.
 processes, and each fsync waits behind the other writers of the disk. Method: read the per-test
 `Elapsed` of `go test -json`, take the biggest costs first, count the processes and fsyncs a test makes
 (`strace -f -y -e trace=execve,fsync`, test directories are named after the test), change, and measure the whole
-package again. The tests run under the `TMPDIR` the caller sets (no memory-backed temporary root). Whole-package times,
+package again. Whole-package times (before the memory-backed root of CRW-1262 below),
 same host, same command (`go test -count=1`, through `heavy_slot.sh`), `load1` read before and after the command:
 
 | Step | Package time |
@@ -416,8 +416,21 @@ so pass a larger `-timeout` to it.
   (`TestPremergeTestCopyRepoKeepsOddTemporaryPaths`). The commits carry a fixed identity and date, so the
   copy is the repository the build made.
 - An earlier version of this lane put the tests' `TMPDIR` on `/dev/shm` (47 s and 43 s before the dev merge, 52 s after).
-  It is removed: a helper process re-run by a test made its own `/dev/shm` root that nothing removed, and a small or
-  full tmpfs that passed a probe still failed every fixture write.
+  It was removed: a helper process re-run by a test made its own `/dev/shm` root that nothing removed, and a small or
+  full tmpfs that passed a probe still failed every fixture write. CRW-1262 brings it back, test-only, with both fixed
+  (next section).
+
+#### The memory-backed temporary root (CRW-1262)
+
+The `TestMain` of `internal/manage` (`core_tmpfs_test.go`) runs the package in `crw-manage-tmp-<pid>-*` under `/dev/shm` when that is fit,
+so the roughly 16,000 fsyncs of a run (a stalled disk made one test take 229 s and the package 591 s) do not wait for the disk. The
+production store and its fsync are not touched; the tests assert no durability a sync gives. The root is chosen only if the base has at
+least 2 GiB and 20,000 inodes free (`statfs`) **and** a script written in it runs; otherwise the tests stay on the `TMPDIR` the caller set. A
+test binary a test starts again (the supervisor child, any helper that goes through `TestMain`) reads the root its starter named in
+`CRW_MANAGE_TEST_TMPFS_ROOT` (`<pid>:<root>`; honoured only for a live pid and a directory of ours with the `crw-manage-tmp-` prefix),
+uses it, and makes and removes none; the process that made the root removes it after `m.Run`. A run that a timeout or a signal killed
+leaves its root (it is memory), and the next run removes the `crw-manage-tmp-<pid>-*` roots whose pid is gone. To see them:
+`ls -d /dev/shm/crw-manage-tmp-*`. Pinned by the `TestTmpfsRoot*` tests.
 
 ## Leftover isolation trees
 
