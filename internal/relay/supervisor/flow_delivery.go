@@ -96,6 +96,15 @@ func (c *Channel) recordFlowDelivery(tx context.Context, row store.SupervisorMes
 	return jerr
 }
 
+// flowDeliveryHeldQuery counts the delivery rows of a key and result among the rows of the message's run, with the arguments
+// flowDeliveryHeldArgs gives: the run narrows the read to the run's rows by the (run_id, seq) primary key, inside the settle's write
+// transaction, and a key is the run's alone (its message id and report id are derived from the run).
+const flowDeliveryHeldQuery = "SELECT COUNT(*) FROM flow_events WHERE run_id = ? AND kind = ? AND json_extract(payload_json, '$.'||?) = ? AND json_extract(payload_json, '$.result') = ?"
+
+func flowDeliveryHeldArgs(run, kind, key, value, result string) []any {
+	return []any{run, kind, key, value, result}
+}
+
 // appendFlowDelivery writes the row unless one with its key is there. why says why nothing was
 // written when that is not because the row exists ("" when it exists).
 func (c *Channel) appendFlowDelivery(tx context.Context, row store.SupervisorMessagesRow, run, what string, d flowDelivery) (bool, string, error) {
@@ -124,8 +133,7 @@ func (c *Channel) appendFlowDelivery(tx context.Context, row store.SupervisorMes
 		payload["wake_id"] = what
 	}
 	var n int
-	if err := q.QueryRowContext(tx, "SELECT COUNT(*) FROM flow_events WHERE kind = ? AND json_extract(payload_json, '$.'||?) = ? AND json_extract(payload_json, '$.result') = ?",
-		kind, key, value, d.result).Scan(&n); err != nil {
+	if err := q.QueryRowContext(tx, flowDeliveryHeldQuery, flowDeliveryHeldArgs(run, kind, key, value, d.result)...).Scan(&n); err != nil {
 		return false, "", err
 	}
 	if n > 0 {
