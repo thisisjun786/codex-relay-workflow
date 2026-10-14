@@ -25,7 +25,7 @@ import (
 // adapter's comparison (adapter_compare.py) ran it: stdout, exit, the journal rows and the claim
 // and outcome files are each scenario's golden, which began as the Python adapter's answers.
 func Test33AdapterBinaryPython(t *testing.T) {
-	tree := t.TempDir()
+	tree := socketDir(t, "crwh") // the cases' control.sock lives below it (CRW-1393)
 	release := Object{{Key: "decision", Value: "release"}, {Key: "state", Value: "unmanaged"}, {Key: "hook_output", Value: Object{}}}
 	hold := Object{{Key: "decision", Value: "block"}, {Key: "state", Value: "receipt_missing"}, {Key: "observation", Value: "receipt_missing"},
 		{Key: "assignmentId", Value: strings.Repeat("a", 64)}, {Key: "counters", Value: Object{{Key: "holdsThisTurn", Value: int64(0)}}},

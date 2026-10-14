@@ -40,7 +40,7 @@ func serveOnce(t *testing.T, state string) {
 
 func ownedState(t *testing.T) string {
 	t.Helper()
-	state := filepath.Join(t.TempDir(), "state")
+	state := filepath.Join(socketDir(t, "crwh"), "state") // control.sock lives in it (CRW-1393)
 	if err := os.Mkdir(state, 0o700); err != nil {
 		t.Fatal(err)
 	}
