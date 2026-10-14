@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"os"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
 )
 
@@ -21,7 +23,10 @@ import (
 // through 'initiative:KEY' to the management seat above the initiative (the store seat when no
 // management edge stands). Both are written in one transaction. A report with nobody above to tell is
 // still recorded and the refusal says the report stands; running the same report again converges on
-// the same row and the same message.
+// the same row and the same message. The same report id with a changed text restates the report
+// (CRW-1361): while its message is unsent, the channel rewrites the message and the row is updated
+// with it (a lead_report_restated journal row records the change); once the message may have gone,
+// neither the message nor the row is changed and the answer warns that the sent text stands.
 
 const reportUpSchema = "relay-report-up/1"
 
@@ -96,21 +101,58 @@ func runReportUp(ctx context.Context, services dispatch.Services, args dispatch.
 		}
 	}
 	message := supervisor.DirectMessage{Kind: kind, Relationship: "initiative:" + initiative, Subject: report, Summary: subject, Text: text, Evidence: evidence, At: at}
+	// sentStands is set when a restatement found the report's message already gone: the row and the
+	// message keep what was sent.
+	sentStands := false
 	record := func(ctx context.Context, staged map[string]any) (bool, error) {
-		var one int
-		err := c.Store.Q(ctx).QueryRowContext(ctx, "SELECT 1 FROM journal WHERE kind = ? AND subject = ? LIMIT 1", leadReportKind, report).Scan(&one)
-		if err == nil {
-			return true, nil
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return false, err
-		}
 		detail := contract.OrderedObject{{Key: "reportId", Value: report}, {Key: "kind", Value: kind}, {Key: "initiative", Value: initiative},
 			{Key: "subject", Value: subject}, {Key: "text", Value: reported}, {Key: "bodyDigest", Value: digest}, {Key: "evidence", Value: anyStrings(evidence)},
 			{Key: "reportedBy", Value: nullableText(reportedBy)}, {Key: "reporterIsLead", Value: reporterIsLead}, {Key: "messageId", Value: nullableText(pyvalue.Str(staged["messageId"]))},
 			{Key: "recipient", Value: nullableText(pyvalue.Str(staged["recipient"]))}, {Key: "staged", Value: staged["messageId"] != nil}}
-		_, err = c.Store.Q(ctx).ExecContext(ctx, "INSERT INTO journal (at, kind, subject, detail) VALUES (?,?,?,?)", at, leadReportKind, report,
-			pyjson.Dumps(detail, pyjson.Options{}))
+		var seq int64
+		var stored string
+		err := c.Store.Q(ctx).QueryRowContext(ctx, "SELECT seq, detail FROM journal WHERE kind = ? AND subject = ? ORDER BY seq LIMIT 1", leadReportKind, report).Scan(&seq, &stored)
+		if errors.Is(err, sql.ErrNoRows) {
+			_, err = c.Store.Q(ctx).ExecContext(ctx, "INSERT INTO journal (at, kind, subject, detail) VALUES (?,?,?,?)", at, leadReportKind, report,
+				pyjson.Dumps(detail, pyjson.Options{}))
+			return false, err
+		}
+		if err != nil {
+			return false, err
+		}
+		var previous struct {
+			BodyDigest string `json:"bodyDigest"`
+			MessageID  string `json:"messageId"`
+		}
+		if err := json.Unmarshal([]byte(stored), &previous); err != nil || previous.BodyDigest == digest {
+			// The same report again (or a row this command cannot read, which it leaves as it is): a replay.
+			return true, nil
+		}
+		// The text changed under the same report id. The row follows the message: it is rewritten only
+		// while that message was never sent (the channel restated it above in this transaction), so the
+		// row never says something the recipient did not get.
+		if previous.MessageID != "" {
+			var unsent int
+			err := c.Store.Q(ctx).QueryRowContext(ctx, "SELECT COUNT(*) FROM supervisor_messages WHERE message_id = ? AND "+store.SupervisorNeverSentSQL(), previous.MessageID).Scan(&unsent)
+			if err != nil {
+				return false, err
+			}
+			var exists int
+			if err := c.Store.Q(ctx).QueryRowContext(ctx, "SELECT COUNT(*) FROM supervisor_messages WHERE message_id = ?", previous.MessageID).Scan(&exists); err != nil {
+				return false, err
+			}
+			if exists == 1 && unsent == 0 {
+				sentStands = true
+				return true, nil
+			}
+		}
+		if _, err := c.Store.Q(ctx).ExecContext(ctx, "UPDATE journal SET detail = ? WHERE seq = ?", pyjson.Dumps(detail, pyjson.Options{}), seq); err != nil {
+			return false, err
+		}
+		_, err = c.Store.Q(ctx).ExecContext(ctx, "INSERT INTO journal (at, kind, subject, detail) VALUES (?,?,?,?)", at, "lead_report_restated", report,
+			pyjson.Dumps(contract.OrderedObject{{Key: "reportId", Value: report}, {Key: "fromDigest", Value: previous.BodyDigest}, {Key: "toDigest", Value: digest},
+				{Key: "messageId", Value: nullableText(pyvalue.Str(staged["messageId"]))},
+				{Key: "reason", Value: "the same report id was reported again with a changed text and its message had not been sent"}}, pyjson.Options{}))
 		return false, err
 	}
 	var replayed bool
@@ -143,6 +185,14 @@ func runReportUp(ctx context.Context, services dispatch.Services, args dispatch.
 		{Key: "initiative", Value: initiative}, {Key: "replayed", Value: replayed}, {Key: "staged", Value: answer["staged"]},
 		{Key: "messageId", Value: answer["messageId"]}, {Key: "sender", Value: answer["sender"]}, {Key: "recipient", Value: answer["recipient"]},
 		{Key: "recipientScopeKind", Value: answer["recipientScopeKind"]}, {Key: "reportedBy", Value: nullableText(reportedBy)}}
+	if sentStands {
+		stands := "report " + pyvalue.StrRepr(report) + " was already sent with its first text, so neither the sent message nor the report row is changed and the new text is not sent; report it under a new --id"
+		if warning != "" {
+			warning += "; " + stands
+		} else {
+			warning = stands
+		}
+	}
 	if warning != "" {
 		out = append(out, contract.Field{Key: "warning", Value: warning})
 	}

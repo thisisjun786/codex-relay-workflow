@@ -268,11 +268,12 @@ func (r *Registry) BindScopeAs(ctx context.Context, role, key string, endpoint E
 // live management seat, the execution edge from that seat to the initiative is written in the same
 // transaction (CRW-1333), and so is the edge from that seat to the project when a project owner
 // (role parent at its project) is bound by such a thread (CRW-1314). An initiative or a project has
-// one upward execution edge: another seat's edge refuses the registration with link_conflict, because
-// a second management session takes it only by the handover of the seat above it. A project an
-// initiative lead already supervises (the legacy configuration) keeps that edge: the binding stands,
-// no management edge is written, and the answer and the journal carry the warning
-// (managementLinkSkipped, management_link_skipped). A creator with no management seat writes no edge.
+// one upward execution edge, and a second management session takes it only by the handover of the seat
+// above it. A binding is reversible, so an edge that already stands above the scope does not refuse
+// it (CRW-1361, Jun's rule: warn and record): another management seat's edge, or an initiative lead's
+// over a project (the legacy configuration), stays, the binding stands, no second edge is written, and
+// the answer and the journal carry the warning (managementLinkSkipped, management_link_skipped). A
+// creator with no management seat writes no edge.
 func (r *Registry) bindScopeKind(ctx context.Context, role, requested, key string, endpoint Endpoint, status, creator string) (contract.OrderedObject, error) {
 	kind, err := bindingScopeKind(role, requested, key)
 	if err != nil {
@@ -373,7 +374,8 @@ func (r *Registry) bindScopeKind(ctx context.Context, role, requested, key strin
 // managementEdge is the execution edge a binding writes from its creator's management seat to the
 // scope it binds (a lead's initiative, CRW-1333, or a project owner's project, CRW-1314): its link id,
 // the seat and the two tasks, and what to do with the row (insert, repoint, present when it already
-// stands as it should, or skip when a legacy initiative edge stands above the project).
+// stands as it should, or skip when another seat's edge or a legacy initiative edge stands above the
+// scope).
 type managementEdge struct {
 	id, action, seat, creator, kind, key, owner string
 	// standing, upper and detail are the legacy edge a skip leaves in place and why.
@@ -387,9 +389,11 @@ func (e *managementEdge) warning() contract.OrderedObject {
 }
 
 // managementEdgePlan decides the edge a binding of owner at kind/key writes: nil when the creator is
-// empty, is the owner itself, or holds no live management seat; a link_conflict refusal when another
-// management seat's live execution edge already stands above the scope; a skip when the scope is a
-// project a legacy initiative edge stands above.
+// empty, is the owner itself, or holds no live management seat; a skip when another live execution
+// edge already stands above the scope, another management seat's (CRW-1361) or a legacy initiative's
+// over a project. It never refuses: the one upward edge is not a stored invariant of its own (the
+// store's unique index is per edge, not per lower scope), and the binding it would refuse is
+// reversible, so the registration warns and records instead.
 func (l linkage) managementEdgePlan(ctx context.Context, creator, kind, key, owner string) (*managementEdge, *linkRefusal, error) {
 	creator = strings.TrimSpace(creator)
 	if creator == "" || creator == owner {
@@ -425,10 +429,13 @@ func (l linkage) managementEdgePlan(ctx context.Context, creator, kind, key, own
 				standing: standing, upperKind: upperKind, upperKey: upperKey, upperTask: holder,
 				detail: under + "; a project has one upward execution edge, so no management edge was written and the initiative lead stays the level above it"}, nil, nil
 		}
-		return nil, &linkRefusal{reason: contract.RefusalLinkConflict,
-			detail: under + "; " + article + kind + " has one upward execution edge, so another management session " +
-				"takes it only by the handover of that seat (linkage-handover --role supervisor --scope-kind management)",
-			scopeKind: kind, scopeKey: key, incumbent: holder, challenger: creator}, nil
+		// Another management seat's edge (CRW-1361): the registration is reversible, so it is not refused.
+		// The binding stands, the standing edge stays, no second edge is written, and the conflict is
+		// warned in the answer and recorded in the journal as the legacy skip is.
+		return &managementEdge{id: lid, action: "skip", seat: seat, creator: creator, kind: kind, key: key, owner: owner,
+			standing: standing, upperKind: upperKind, upperKey: upperKey, upperTask: holder,
+			detail: under + "; " + article + kind + " has one upward execution edge, so no second edge was written and the standing edge stays: " +
+				"another management session takes it only by the handover of that seat (linkage-handover --role supervisor --scope-kind management)"}, nil, nil
 	}
 	edge := &managementEdge{id: lid, action: "insert", seat: seat, creator: creator, kind: kind, key: key, owner: owner}
 	row, err := l.r.Store.One(ctx, "SELECT status, upper_task_id, lower_task_id, superseded_by FROM scope_links WHERE link_id = ?", lid)

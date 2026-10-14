@@ -729,7 +729,11 @@ this way.
 journal row (the report id, kind, initiative, subject, text, its digest, the evidence and the
 reporting thread, `CODEX_THREAD_ID`) and the direct message, in one transaction. A report with
 nobody above to tell is still recorded and the refusal (exit 2) carries the report id with
-`standing: true`; the same report again answers `replayed: true` and stages nothing more. The
+`standing: true`; the same report again answers `replayed: true` and stages nothing more. The same
+report id (`--id`) with a changed text restates the report: while its message has not been sent, the
+message is rewritten and the `lead_report` row is updated with it, recorded as a
+`lead_report_restated` journal row; once the message may have gone, neither the message nor the row
+is changed, and the answer warns that the sent text stands (report it under a new `--id`). The
 message goes in the lead's name, and a caller is not refused for not being the lead: a calling
 thread that is not the initiative's lead is named at the top of the message text, recorded on the
 row (`reporterIsLead: false`) and warned in the answer (`warning`); a caller with no
