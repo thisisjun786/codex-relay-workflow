@@ -30,7 +30,7 @@ const Usage = `usage: crw flow start WORKFLOW [--args JSON | --args-file FILE] [
        crw flow audit (--run RUN | --acceptance ID) [--milestone M] [--json] [--no-record]
        crw flow apply --event E --turn T [--run RUN] [--base COMMIT] [--wait 10m] [--override REASON] [--manifest-request FILE] [--repo DIR]
        crw flow report-up --kind project_blocked|project_decision_request|jun_decision_request --run RUN --evidence FILE [--subject TEXT]
-       crw flow reports [--initiative I] [--unread] [--json]
+       crw flow reports [--initiative I] [--unread] [--json] [--project P]
        crw flow report-ack REPORT --turn T
        crw flow report-delivered --report ID --result accepted|queued|refused|unknown --request-id R [--observation O]
        (every command takes --state DIR and --socket PATH)`

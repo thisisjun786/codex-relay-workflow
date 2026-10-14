@@ -24,6 +24,12 @@ const (
 	// EvInterruptRequested is the engine's intent to interrupt the turn in flight (the pause of a run); it is written
 	// before the interrupt is sent, and decides how the interrupted turn is classified.
 	EvInterruptRequested = "interrupt_requested"
+	// EvStepPublished is the intent of a session call to have a subagent turn run (CRW-1316 §4): it is committed before the step
+	// file and the packet are written, and names the turn (k, op), the attempt, the marker, the input and the packet.
+	EvStepPublished = "step_published"
+	// EvSessionAttemptLost is a session call's subagent that the host shows will not finish the turn it was bound to: the call
+	// goes on with a new attempt (a new subagent) in the same allocation.
+	EvSessionAttemptLost = "session_attempt_lost"
 
 	EvCompleted      = "completed"
 	EvNullModel      = "null_model"

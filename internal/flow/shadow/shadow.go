@@ -71,13 +71,16 @@ type RunReport struct {
 	RunID string `json:"runId"`
 	// RecordedScriptDigest is the digest of the script the run recorded; it differs from the replayed script's when the
 	// comparison asks what another script would have done. ArgsMatch says whether the args given are the recorded ones.
-	RecordedScriptDigest string         `json:"recordedScriptDigest"`
-	ArgsMatch            bool           `json:"argsMatch"`
-	Replay               ReplayInfo     `json:"replay"`
-	Actual               int            `json:"actual"`
-	Computed             int            `json:"computed"`
-	Counts               map[string]int `json:"counts"`
-	Items                []Item         `json:"items"`
+	RecordedScriptDigest string `json:"recordedScriptDigest"`
+	ArgsMatch            bool   `json:"argsMatch"`
+	// Backend is the backend the run's started row records (session or app-server; a run that records none is an App Server run).
+	// The replay answers either from the trace.
+	Backend  string         `json:"backend"`
+	Replay   ReplayInfo     `json:"replay"`
+	Actual   int            `json:"actual"`
+	Computed int            `json:"computed"`
+	Counts   map[string]int `json:"counts"`
+	Items    []Item         `json:"items"`
 }
 
 // ReplayInfo says how the replayed run ended and where it was answered from.
@@ -171,7 +174,7 @@ func compareRun(ctx context.Context, run *trace.Run, prog *script.Program, cfg C
 	computed := Derive(journal.Events(), batch)
 	actual := Actual(run, batch)
 	rr := &RunReport{
-		RunID: run.RunID, RecordedScriptDigest: run.ScriptDigest, ArgsMatch: run.ArgsDigest == argsDigest(cfg.Args),
+		RunID: run.RunID, RecordedScriptDigest: run.ScriptDigest, ArgsMatch: run.ArgsDigest == argsDigest(cfg.Args), Backend: recordedBackend(run),
 		Replay: ReplayInfo{Status: res.Status, ErrorKind: res.ErrorKind, Error: res.Error, Replayed: backend.Replayed(), Invented: backend.Invented()},
 		Actual: len(actual), Computed: len(computed),
 	}
@@ -371,4 +374,13 @@ func recordedClock(run *trace.Run, journal *engine.MemoryJournal) func() time.Ti
 		}
 		return fallback
 	}
+}
+
+// recordedBackend is the backend the run's started rows record.
+func recordedBackend(run *trace.Run) string {
+	events := make([]engine.Event, 0, len(run.Events))
+	for _, e := range run.Events {
+		events = append(events, e.Engine(run.RunID))
+	}
+	return engine.RecordedBackend(events, run.RunID)
 }

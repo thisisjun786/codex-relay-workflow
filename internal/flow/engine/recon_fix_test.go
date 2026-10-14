@@ -124,6 +124,7 @@ func TestCallstateReadsTheEnginesEvents(t *testing.T) {
 		EvTurnStarted: callstate.TurnStarted, EvInterruptRequested: callstate.Interrupt, EvCompleted: callstate.Completed,
 		EvNullModel: callstate.NullModel, EvHeld: callstate.Held, EvRefused: callstate.Refused, EvOutcomeUnknown: callstate.OutcomeUnknown,
 		EvSuperseded: callstate.Superseded, EvRecoveryCleared: callstate.RecoveryCleared, ReasonDispatchUnknown: callstate.DispatchUnknown,
+		EvStepPublished: callstate.StepPublished, EvSessionAttemptLost: callstate.SessionAttemptLost,
 	} {
 		if engine != shared {
 			t.Errorf("engine %q, callstate %q", engine, shared)

@@ -98,13 +98,17 @@ var signatures = map[string][]field{
 	"steer_thread":    {required("request_id"), required("thread_id"), required("expected_turn_id"), required("message")},
 	"pause_goal":      {required("request_id"), required("thread_id")},
 	"get_operation":   {required("request_id")},
+	"report_child": {
+		{"command", map[string]any{"enum": []any{"emit", "intent-claim", "intent-disposition"}, "title": "Command", "type": "string"}, true},
+		{"arguments", map[string]any{"items": map[string]any{"type": "string"}, "title": "Arguments", "type": "array"}, true},
+	},
 }
 
 // order is the registration order, which is the order tools/list reports.
 var order = []string{
 	"get_capabilities", "create_thread", "create_worktree_thread", "send_message_to_thread",
 	"list_threads", "read_thread", "wait_thread", "get_goal", "get_active_turn", "steer_thread",
-	"pause_goal", "get_operation",
+	"pause_goal", "get_operation", "report_child",
 }
 
 // readOnly names the tools annotated read-only; the rest carry the write annotations.

@@ -1,4 +1,4 @@
-// Package mcp serves the bridge's twelve tools over MCP stdio: the tool names, input schemas,
+// Package mcp serves the bridge's thirteen tools over MCP stdio: the tool names, input schemas,
 // annotations and instructions contract/schema/bridge-mcp-tools.json freezes, and each tool's
 // structured reply.
 package mcp
@@ -33,11 +33,14 @@ type Output = map[string]any
 
 // NewServer builds the MCP server for b. Every tool error and failed App Server call is also
 // explained on log, which must never be the protocol stream.
-func NewServer(b *bridge.Bridge, version string, log io.Writer) *sdk.Server {
+func NewServer(b *bridge.Bridge, version string, log io.Writer, options ...ServerOption) *sdk.Server {
 	logger := slog.New(slog.NewTextHandler(log, nil))
 	server := sdk.NewServer(&sdk.Implementation{Name: ServerName, Version: version}, &sdk.ServerOptions{Instructions: instructions, Logger: logger})
 	server.AddReceivingMiddleware(frozenToolsList, unknownTool, checkedArguments)
 	h := handlers{b: b, log: logger}
+	for _, option := range options {
+		option(&h)
+	}
 	add(server, "get_capabilities", h.getCapabilities)
 	add(server, "create_thread", h.createThread)
 	add(server, "create_worktree_thread", h.createWorktreeThread)
@@ -50,6 +53,7 @@ func NewServer(b *bridge.Bridge, version string, log io.Writer) *sdk.Server {
 	add(server, "steer_thread", h.steerThread)
 	add(server, "pause_goal", h.pauseGoal)
 	add(server, "get_operation", h.getOperation)
+	add(server, "report_child", h.reportChild)
 	return server
 }
 
@@ -89,8 +93,9 @@ func indented(value any) (string, error) {
 }
 
 type handlers struct {
-	b   *bridge.Bridge
-	log *slog.Logger
+	b       *bridge.Bridge
+	log     *slog.Logger
+	reports *childReports
 }
 
 // explained logs a failed call on the log stream and passes it through unchanged.

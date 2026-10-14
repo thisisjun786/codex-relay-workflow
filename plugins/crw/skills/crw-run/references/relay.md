@@ -51,11 +51,20 @@ transaction under the write gate (`judgedBy` is `measured`); only that sees a sa
 writes without changing permissions. What a given task can do is a property of that task's profile on that host, not a fixed
 fact about the relay, so discover it rather than assuming it.
 
-Its `offlineCommands` and `hostRequiredCommands` lists are curated capability GUIDANCE, not an
-exhaustive index. `hostRequiredCommands` is the authoritative set; `offlineCommands` currently
-omits `assignment-find`, `assignment-mark` and all ten synchronisation commands, every one of
-which works from the store alone. Treat anything outside `hostRequiredCommands` as store-only.
-A child's `emit`, `intent-claim` and `intent-disposition` are the exception: they report only through the relay daemon's `control.sock`, which a sandbox without network access cannot reach (exit 3).
+Its `offlineCommands`, `hostRequiredCommands` and `daemonRequiredCommands` lists are curated
+capability GUIDANCE, not an exhaustive index. `hostRequiredCommands` (the App Server) and
+`daemonRequiredCommands` (the relay daemon) are the authoritative sets; `offlineCommands`
+currently omits `assignment-find`, `assignment-mark` and all ten synchronisation commands, every
+one of which works from the store alone. Treat anything outside `hostRequiredCommands` and
+`daemonRequiredCommands` as store-only. `daemonRequiredCommands` is a child's `emit`,
+`intent-claim` and `intent-disposition`: they report only through the relay daemon's
+`control.sock`, which a sandbox without network access (readOnly, or workspace-write with
+`networkAccess` off) cannot reach (exit 3). The sandboxes that reach it are danger-full-access
+and workspace-write with network access, and `register --child-settings` refuses any other
+sandbox the child's settings state (`unsupported_sandbox_type`, exit 2, nothing written). A child
+that runs in a sandbox that cannot reach it anyway (a thread created without the child role, or
+outside the bridge) reports through the bridge's `report_child` tool, which hands the same
+command to the same daemon from outside that sandbox.
 
 On the host and profile measured during JUN-92, a workspace-write task could not write the default
 state directory under the user state home and could not connect to the App Server control socket,
@@ -307,8 +316,12 @@ for that assignment rather than relocated into one.
 Commands that require the App Server and `--socket` include `managed-start`, `deliver`,
 `reconcile`, `recover`, `daemon` and `verify-acks`. Inspect `doctor`
 `actorReachability.hostRequiredCommands` for the installed command inventory;
-`reporting-show` reads only the explicitly selected marker and store. Where a task cannot
-reach the socket, it uses the store-only subset and a host-capable process owns delivery.
+`reporting-show` reads only the explicitly selected marker and store. A child's `emit`,
+`intent-claim` and `intent-disposition` (`actorReachability.daemonRequiredCommands`) run on the
+relay daemon through its `control.sock` and open no store of the child's own; `report_child`
+(`command` and the command's `arguments`, bridge MCP) carries them for a child that cannot connect,
+and the daemon alone decides where the record goes. Where a task cannot
+reach the App Server socket, it uses the store-only subset and a host-capable process owns delivery.
 
 `ack` sits between the two. It does not REQUIRE a socket, which is why it is not in that list, but
 it uses one when given: with `--socket` and a reachable host it verifies the acknowledging turn
@@ -477,6 +490,10 @@ relationship, and either side can be recorded afterwards with
 incomplete one is refused when it is written, and a recipient with no record at all has its send
 withheld rather than sent under a host default. `settings-show --task <id>` reports what is held
 and what is missing.
+A `--child-settings` whose sandbox cannot reach the relay daemon's `control.sock` (a readOnly
+policy, or workspaceWrite with `networkAccess` off) is refused as `unsupported_sandbox_type` (exit 2) and
+registers nothing; the refusal names danger-full-access and workspace-write with network access as
+the two sandboxes a relay child reports from. `--parent-settings` is not judged that way.
 
 A delivery held on its recipient's settings says who recovers it and how. `status` carries
 `settingsHold` (kind `withheld`, `capped` or `channel_closed`, and the reason) and `recovery`
