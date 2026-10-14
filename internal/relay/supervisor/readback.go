@@ -245,6 +245,11 @@ func (c *Channel) ReadBack(ctx context.Context, id, turnID, proof, assertedBy st
 			}
 		}
 		if reconciled != nil {
+			// a flow run's message whose send was uncertain (its delivery row says unknown): the readback settles it as accepted (CRW-1390)
+			if e = c.recordFlowDelivery(tx, current, flowDelivery{result: FlowDeliveryAccepted, requestID: attempt.RequestID, state: "read", hold: "readback",
+				at: at, turnID: delivered["turnId"]}); e != nil {
+				return e
+			}
 			journal := pyjson.Dumps(contract.OrderedObject{{Key: "from", Value: "held_uncertain"}, {Key: "by", Value: "readback"}, {Key: "requestId", Value: attempt.RequestID}, {Key: "attemptNo", Value: attempt.AttemptNo}, {Key: "deliveredTurnId", Value: delivered["turnId"]}, {Key: "readTurnId", Value: turnID}}, pyjson.Options{})
 			if _, e = c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_reconciled',?,?)", at, id, string(journal)); e != nil {
 				return e
