@@ -133,10 +133,12 @@ var parentTitle = family{name: "parent-title", description: `Compute a project p
 
 crw-plan/references/integrations.md#set-the-app-presentation-and-record owns the rule: a
 project parent's Codex task title leads with the linked project's product-family label in
-brackets, spelled exactly as Linear spells it. The label is data, so nothing here maps, expands or
-case-folds it, and there is no table of known families to drift.
+brackets, spelled exactly as the tracking repository spells it: the family:NAME label of the
+milestone's issues. The label is data, so nothing here maps, expands or case-folds it, and there is
+no table of known families to drift.
 
-The caller supplies the family candidates already scoped to the product-family label group. A
+The caller supplies the family candidates already scoped to the family:NAME labels of the
+milestone's issues in the tracking repository. A
 label may contain "[" or "]", so a boundary is only ever acted on when it was constructed from the
 verified family or named verbatim by the caller. A decision here is a proposal and never evidence
 that a task is named anything, and it assumes the caller has already matched this task to this
