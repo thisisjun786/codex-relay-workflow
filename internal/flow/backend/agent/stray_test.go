@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/backend/agent"
@@ -115,7 +116,8 @@ func TestAllocatorKeepRefNeverOverwrites(t *testing.T) {
 
 // CRW-1392: the second HEAD of a call whose first was kept (the call's second turn after a crash) is kept on the same ref when it
 // descends from the first: KeepRef moves the ref by a fast-forward with the old value as the compare-and-swap's, and refuses a
-// commit that does not descend from the record and a fast-forward over a record that moved meanwhile.
+// commit that does not descend from the record (a fast-forward over a record that moved meanwhile, and a commit that is no commit,
+// are TestAllocatorKeepRefRefusesAMovedRecordAndANonCommit's, CRW-1405).
 func TestAllocatorKeepRefFastForwards(t *testing.T) {
 	dir := t.TempDir()
 	repo := filepath.Join(dir, "repo")
@@ -163,4 +165,107 @@ func TestAllocatorKeepRefFastForwards(t *testing.T) {
 	if got := run(repo, "rev-parse", ref); got != second {
 		t.Errorf("%s is %s, want %s", ref, got, second)
 	}
+}
+
+// CRW-1405: the two refusals of KeepRef over a ref that already keeps a record that TestAllocatorKeepRefFastForwards does not reach.
+// A fast-forward over a record that moved between KeepRef's read of the ref and its update (a second writer of the same ref) is
+// refused by the update's compare-and-swap against the commit it read, and the record the other writer left is kept. A commit that
+// names no commit (an object id the repository does not hold, a tree, a name that is no object) is refused over an existing ref as
+// "no commit", before any ancestry check, and the record is kept.
+func TestAllocatorKeepRefRefusesAMovedRecordAndANonCommit(t *testing.T) {
+	dir := t.TempDir()
+	repo := filepath.Join(dir, "repo")
+	run := func(cwd string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = cwd
+		cmd.Env = append(cmd.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	run(dir, "init", "-q", "-b", "main", repo)
+	writeFile(t, filepath.Join(repo, "a.txt"), "a\n")
+	run(repo, "add", "-A")
+	run(repo, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "first")
+	first := run(repo, "rev-parse", "HEAD")
+	writeFile(t, filepath.Join(repo, "a.txt"), "b\n")
+	run(repo, "-c", "commit.gpgsign=false", "commit", "-q", "-am", "second")
+	second := run(repo, "rev-parse", "HEAD")
+	// what the other writer moved the record to while KeepRef was between its read and its update
+	other := run(repo, "commit-tree", second+"^{tree}", "-p", first, "-m", "the other writer's record")
+	ref := "refs/crw/flow/run-s/stray/n1/a1-c_000000000001"
+	execGit := agent.ExecGit("git")
+	var mu sync.Mutex
+	moveBeforeUpdate := false
+	var updates [][]string
+	git := func(ctx context.Context, cwd string, env []string, args ...string) (string, error) {
+		mu.Lock()
+		move := moveBeforeUpdate && len(args) > 0 && args[0] == "update-ref"
+		if len(args) > 0 && args[0] == "update-ref" {
+			updates = append(updates, append([]string(nil), args...))
+		}
+		if move {
+			moveBeforeUpdate = false
+		}
+		mu.Unlock()
+		if move {
+			run(repo, "update-ref", ref, other)
+		}
+		return execGit(ctx, cwd, env, args...)
+	}
+	alloc, err := agent.NewAllocator(agent.AllocatorConfig{Repo: repo, StateDir: filepath.Join(dir, "state"), RunID: "run-s", Git: git})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if err := alloc.KeepRef(ctx, ref, first); err != nil {
+		t.Fatal(err)
+	}
+
+	t.Run("a fast-forward over a record that moved meanwhile", func(t *testing.T) {
+		mu.Lock()
+		moveBeforeUpdate, updates = true, nil
+		mu.Unlock()
+		if err := alloc.KeepRef(ctx, ref, second); err == nil {
+			t.Errorf("the allocator moved %s over a record that moved after it read it", ref)
+		}
+		if got := run(repo, "rev-parse", ref); got != other {
+			t.Errorf("%s is %s, want the record the other writer left %s", ref, got, other)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		// the update KeepRef sent is the fast-forward from the record it read, compared against that record
+		if len(updates) != 1 || strings.Join(updates[0][len(updates[0])-2:], " ") != second+" "+first {
+			t.Errorf("updates %v, want one update-ref %s %s", updates, second, first)
+		}
+	})
+
+	t.Run("a commit that is no commit over an existing ref", func(t *testing.T) {
+		held := run(repo, "rev-parse", ref)
+		for _, c := range []struct{ name, commit string }{
+			{"an object the repository does not hold", strings.Repeat("0", len(first))},
+			{"a tree", run(repo, "rev-parse", second+"^{tree}")},
+			{"a name that is no object", "no-such-commit"},
+			{"no name", ""},
+		} {
+			mu.Lock()
+			updates = nil
+			mu.Unlock()
+			err := alloc.KeepRef(ctx, ref, c.commit)
+			if err == nil || !strings.Contains(err.Error(), "is no commit") {
+				t.Errorf("%s: KeepRef %v, want the refusal that it is no commit", c.name, err)
+			}
+			if got := run(repo, "rev-parse", ref); got != held {
+				t.Errorf("%s: %s is %s, want the record %s", c.name, ref, got, held)
+			}
+			mu.Lock()
+			if len(updates) != 0 {
+				t.Errorf("%s: the allocator sent %v", c.name, updates)
+			}
+			mu.Unlock()
+		}
+	})
 }
