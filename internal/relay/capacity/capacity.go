@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/layername"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
@@ -249,7 +250,7 @@ func (c *Capacity) checkDeclarer(ctx context.Context, scopeKind, scopeKey, actor
 			"  WHERE task_id = ? AND role = 'supervisor' AND scope_kind IN ('store', 'management')"+
 			"    AND status IN ('active','paused') AND superseded_by IS NULL", actor).Scan(&task)
 		if noRows(err) {
-			return nil, refuse(contract.RefusalScopeRoleMismatch, "task "+strconv.Quote(actor)+" holds no live store-scope supervisor binding, and the store"+
+			return nil, refuse(contract.RefusalScopeRoleMismatch, "task "+strconv.Quote(actor)+" holds no live store-scope 부모 binding, and the store"+
 				" scope has no owner of its own to speak for it")
 		}
 		if err != nil {
@@ -267,13 +268,13 @@ func (c *Capacity) checkDeclarer(ctx context.Context, scopeKind, scopeKey, actor
 			}
 			holders = append(holders, holder)
 		}
-		who := "the store has no store-scope supervisor (no live store seat, and none was laid down for a management seat)"
+		who := "the store has no store-scope 부모 (no live store seat, and none was laid down for a management seat)"
 		if len(holders) > 0 {
 			quoted := make([]string, len(holders))
 			for i, holder := range holders {
 				quoted[i] = strconv.Quote(holder.(string))
 			}
-			who = "the store-scope supervisor is " + strings.Join(quoted, ", ")
+			who = "the store-scope 부모 is " + strings.Join(quoted, ", ")
 		}
 		return contract.OrderedObject{{Key: "reason", Value: string(contract.RefusalScopeRoleMismatch)}, {Key: "declaredBy", Value: actor},
 			{Key: "storeScopeSupervisor", Value: holders},
@@ -295,7 +296,7 @@ func (c *Capacity) checkDeclarer(ctx context.Context, scopeKind, scopeKey, actor
 	if len(held) == 1 {
 		which = ", which is held by " + strconv.Quote(held[0])
 	}
-	return nil, refuse(contract.RefusalScopeRoleMismatch, "task "+strconv.Quote(actor)+" is not the registered "+role+" of "+
+	return nil, refuse(contract.RefusalScopeRoleMismatch, "task "+strconv.Quote(actor)+" is not the registered "+layername.Name(role)+" of "+
 		scopeKind+" "+strconv.Quote(scopeKey)+which+", so it cannot state a bound for it")
 }
 
@@ -346,13 +347,13 @@ func (c *Capacity) Reserve(ctx context.Context, in Reservation) (contract.Ordere
 			for i, t := range sorted {
 				quoted[i] = pyvalue.StrRepr(t)
 			}
-			decided = &refusal{contract.RefusalDuplicateScopeOwner, "project " + pyvalue.StrRepr(in.Project) + " has more than one live parent (" +
+			decided = &refusal{contract.RefusalDuplicateScopeOwner, "project " + pyvalue.StrRepr(in.Project) + " has more than one live 자식 (" +
 				strings.Join(quoted, ", ") + "), so there is no owner to reserve under", domainExecution, in.SubjectKey, sorted[0], in.ParentTask}
 		case len(parents) == 0:
-			decided = &refusal{contract.RefusalUnregisteredScope, "project " + pyvalue.StrRepr(in.Project) + " has no registered parent",
+			decided = &refusal{contract.RefusalUnregisteredScope, "project " + pyvalue.StrRepr(in.Project) + " has no registered 자식",
 				domainExecution, in.SubjectKey, "", in.ParentTask}
 		case parents[0] != in.ParentTask:
-			decided = &refusal{contract.RefusalScopeRoleMismatch, "task " + pyvalue.StrRepr(in.ParentTask) + " is not the registered parent of project" +
+			decided = &refusal{contract.RefusalScopeRoleMismatch, "task " + pyvalue.StrRepr(in.ParentTask) + " is not the registered 자식 of project" +
 				" " + pyvalue.StrRepr(in.Project) + ", which is held by " + pyvalue.StrRepr(parents[0]), domainExecution, in.SubjectKey, parents[0], in.ParentTask}
 		}
 		if decided == nil {

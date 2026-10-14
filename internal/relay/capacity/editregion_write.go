@@ -57,7 +57,7 @@ func (e *EditRegions) actingSide(ctx context.Context, r row, actor, subject stri
 		}
 		return side, nil, nil
 	}
-	return "", &refusal{contract.RefusalScopeRoleMismatch, "task " + pyvalue.StrRepr(actor) + " is the registered parent of neither " +
+	return "", &refusal{contract.RefusalScopeRoleMismatch, "task " + pyvalue.StrRepr(actor) + " is the registered 자식 of neither " +
 		pyvalue.StrRepr(r.Text("left_project")) + " nor " + pyvalue.StrRepr(r.Text("right_project")), domainEditRegion, subject, "", actor}, nil
 }
 
@@ -122,7 +122,7 @@ func (e *EditRegions) Propose(ctx context.Context, in Proposal) (contract.Ordere
 			return nil, err
 		}
 		if owned == "" {
-			return nil, refuse(contract.RefusalScopeRoleMismatch, "task "+strconv.Quote(in.ProposerTaskID)+" is the registered parent of neither "+
+			return nil, refuse(contract.RefusalScopeRoleMismatch, "task "+strconv.Quote(in.ProposerTaskID)+" is the registered 자식 of neither "+
 				strconv.Quote(low)+" nor "+strconv.Quote(high)+", and a proposal pre-accepts its own side, so a stranger could forge one and block an overlapping region")
 		}
 	}

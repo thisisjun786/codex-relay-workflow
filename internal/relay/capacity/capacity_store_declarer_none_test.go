@@ -9,7 +9,7 @@ import (
 
 // CRW-1390 (Argon V5 P3 of 146cbab5, checkDeclarer): a management seat holder states or observes a store-wide figure in a store whose
 // store seat was never bound, so the store scope has no declarer at all (StoreScopeSupervisor names nobody). The figure is accepted
-// (fail open), and the warning says the store has no store-scope supervisor and names none.
+// (fail open), and the warning says the store has no store-scope 부모 and names none.
 func TestStoreDeclarationOfAManagementHolderWithNoStoreSeatWarnsThatThereIsNoDeclarer(t *testing.T) {
 	e := newEnv(t)
 	const manager = "01loneManager"
@@ -30,8 +30,8 @@ func TestStoreDeclarationOfAManagementHolderWithNoStoreSeatWarnsThatThereIsNoDec
 	if holders, ok := field(warning, "storeScopeSupervisor").([]any); !ok || len(holders) != 0 {
 		t.Fatalf("the warning names store-scope supervisors %v, want none", field(warning, "storeScopeSupervisor"))
 	}
-	if detail, _ := field(warning, "detail").(string); !strings.Contains(detail, "the store has no store-scope supervisor") {
-		t.Fatalf("the warning's detail %q does not say the store has no store-scope supervisor", detail)
+	if detail, _ := field(warning, "detail").(string); !strings.Contains(detail, "the store has no store-scope 부모") {
+		t.Fatalf("the warning's detail %q does not say the store has no store-scope 부모", detail)
 	}
 	seen, err := e.cap.Observe(ctx(), Observation{ScopeKind: "store", ScopeKey: "store", Dimension: "model_cost", Observed: 2, ObservedBy: manager, Method: "counted"})
 	if err != nil {
