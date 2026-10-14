@@ -102,7 +102,7 @@ use up the run another member is owed. A new head under the same issue number st
 
 ## Pull requests (PR-unit landing)
 
-A project session lands its milestone through one pull request. The plan's target `base_ref` is the milestone integration branch, so
+A project session (relay role `parent`) lands its milestone through one pull request. The plan's target `base_ref` is the milestone integration branch, so
 `crw.integrate` lands each node there exactly as it lands one on `dev` (merge commit, verification of the merged tree, compare-and-swap
 of the branch). The project session then opens one pull request from that branch toward `dev`, naming the issues it carries
 (`crw flow pr open`, which pushes the branch first), and puts it into this queue with `crw manage integrate --enqueue-pr OWNER/NAME#N`.
