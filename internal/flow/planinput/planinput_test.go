@@ -306,6 +306,64 @@ func TestIndentedBlockedByUnderACriterionStaysABlocker(t *testing.T) {
 	}
 }
 
+// TestIndentedContinuationKeepsTheStateOfItsBullet (CRW-1403): an indented line that is not a bullet continues the bullet above it and
+// leaves what that bullet set alone. Under a criterion the criterion stays the parent of the sub-bullets after the line; under a
+// "Blocked by:" item the sub-bullets after the line stay left out with it. An indented plain "Blocked by:" line is an order as
+// tracking.ParseBlockedBy reads it, with or without a bullet above it, and never a part of a criterion's text; the sub-bullets under it
+// are left out with it. A blank line before the line still ends the continuation.
+func TestIndentedContinuationKeepsTheStateOfItsBullet(t *testing.T) {
+	tests := []struct {
+		name, body string
+		want       []string
+		blocked    bool // the body holds a Blocked by line, which is an order on issue 1
+	}{
+		{"criterion, continuation, sub-bullet", "## Done when\n- parent\n  more of it\n  - child\n- next\n", []string{"parent more of it child", "next"}, false},
+		{"criterion, two continuations, sub-bullets", "## Done when\n- parent\n  more\n  - one\n  and more\n  - two\n- next\n", []string{"parent more one and more two", "next"}, false},
+		{"sub-bullet, its continuation, sub-bullet", "## Done when\n- parent\n  - one\n    about one\n  - two\n- next\n", []string{"parent one about one two", "next"}, false},
+		{"blocked by item, continuation, sub-bullet", "## Done when\n- parent\n  - Blocked by: #1\n    and the reason\n  - child\n- next\n", []string{"parent child", "next"}, true},
+		{"blocked by item, continuation, its sub-bullet", "## Done when\n- parent\n  - Blocked by: #1\n    and the reason\n    - why\n  - child\n- next\n", []string{"parent child", "next"}, true},
+		{"top level blocked by, continuation, its sub-bullet", "## Done when\n- a\n- Blocked by: #1\n  the reason\n  - why\n- b\n", []string{"a", "b"}, true},
+		{"top level blocked by, two continuations", "## Done when\n- a\n- Blocked by: #1\n  the reason\n  and more\n  - why\n- b\n", []string{"a", "b"}, true},
+		{"dropped sub-bullet, its continuation, sibling", "## Done when\n- a\n- Blocked by: #1\n  - why\n    more why\n  - why too\n- b\n", []string{"a", "b"}, true},
+		{"tab continuation", "## Done when\n- a\n- Blocked by: #1\n\tthe reason\n\t- why\n- b\n", []string{"a", "b"}, true},
+		{"a blank line ends the continuation", "## Done when\n- a\n- Blocked by: #1\n\n  the reason\n  - c\n", []string{"a", "c"}, true},
+		{"plain blocked by line under a criterion", "## Done when\n- parent\n  Blocked by: #1\n- next\n", []string{"parent", "next"}, true},
+		{"plain bold blocked by line under a criterion", "## Done when\n- parent\n  **Blocked by:** #1\n- next\n", []string{"parent", "next"}, true},
+		{"plain blocked by line, then a sub-bullet of the criterion", "## Done when\n- parent\n  Blocked by: #1\n  - child\n- next\n", []string{"parent child", "next"}, true},
+		{"plain blocked by line, its sub-bullet, a sibling", "## Done when\n- parent\n  Blocked by: #1\n    - why\n  - child\n- next\n", []string{"parent child", "next"}, true},
+		{"plain blocked by line, a continuation, its sub-bullet", "## Done when\n- parent\n  Blocked by: #1\n    the reason\n    - why\n  - child\n- next\n", []string{"parent child", "next"}, true},
+		{"plain blocked by line after a continuation", "## Done when\n- parent\n  more\n  Blocked by: #1\n  - child\n- next\n", []string{"parent more child", "next"}, true},
+		{"plain blocked by line with no bullet above it", "## Done when\n  Blocked by: #1\n- a\n", []string{"a"}, true},
+		{"plain blocked by line with no bullet above it, its sub-bullet", "## Done when\n  Blocked by: #1\n    - why\n- a\n", []string{"a"}, true},
+		{"plain blocked by line with no bullet above it, a list under it", "## Done when\n  Blocked by: #1\n  - a\n  - b\n", []string{"a", "b"}, true},
+		{"plain blocked by line after a blank line", "## Done when\n- a\n\n  Blocked by: #1\n    - why\n- b\n", []string{"a", "b"}, true},
+		{"plain blocked by line inside a dropped item", "## Done when\n- a\n- Blocked by: #1\n  - why\n    Blocked by: #2\n  - why too\n- b\n", []string{"a", "b"}, true},
+		{"plain tab indented blocked by line, no bullet above it", "## Done when\n\tBlocked by: #1\n\t\t- why\n- a\n", []string{"a"}, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			res := build(t, milestone(open(1, "## Done when\n- one\n"), open(2, tc.body)), Options{})
+			two := res.Input.Projects[0].Issues[1]
+			if !reflect.DeepEqual(two.Criteria, tc.want) {
+				t.Errorf("criteria = %q; want %q", two.Criteria, tc.want)
+			}
+			var wantAfter []string
+			if tc.blocked {
+				wantAfter = []string{"o:r:1"}
+			}
+			if !reflect.DeepEqual(two.After, wantAfter) {
+				t.Errorf("after = %v; want %v", two.After, wantAfter)
+			}
+		})
+	}
+
+	// a list of edit regions is read as before: each bullet an item, and a Blocked by line is not a path
+	res := build(t, milestone(open(1, "## Done when\n- a\n\n## Edit regions\n- `a/`\n  Blocked by: #9\n  - `a/b.go`\n")), Options{})
+	if got := only(t, res).Regions; len(got) != 2 || got[0].Path != "a/" || got[1].Path != "a/b.go" {
+		t.Errorf("regions = %+v; want a/ and a/b.go", got)
+	}
+}
+
 // TestBodyMappingRegionsAndSize (c2): edit regions come from the headings 수정 범위, Edit regions and Regions (a bullet's backticked
 // path, else its first word; a trailing slash is a tree); size_fit, size_reason and issue_size from "name: value" lines under 크기,
 // Size or Size fit. A missing section gives nothing and no warning (the compile defaults apply); a region the scheduler cannot take
