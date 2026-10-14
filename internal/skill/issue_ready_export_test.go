@@ -57,3 +57,22 @@ func TestCheckIssueReadyNeverReadsAnException(t *testing.T) {
 		t.Fatalf("verdict %+v err %v", verdict, err)
 	}
 }
+
+// TestCheckIssueReadyNamesTheEndConditionCommands (CRW-1382 d2): the verdict names the commands of the done condition, read and never
+// run, so the flow's design-stage explorer can be given the command it runs once; a body whose done condition names no command names none.
+func TestCheckIssueReadyNamesTheEndConditionCommands(t *testing.T) {
+	v, err := CheckIssueReady(ReadyIssue{ID: "CRW-A", Title: "a", Description: readyBody})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(v.EndCondition) != 1 || v.EndCondition[0] != "go test ./internal/skill -run IssueReady" {
+		t.Errorf("the end condition commands of the ready body: %q", v.EndCondition)
+	}
+	none, err := CheckIssueReady(ReadyIssue{ID: "CRW-B", Title: "b", Description: "## 기준\n\n* c1: x\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(none.EndCondition) != 0 {
+		t.Errorf("a body with no done condition names commands: %q", none.EndCondition)
+	}
+}

@@ -94,6 +94,13 @@ func (r rows) authorModels(node string) []string {
 			out = append(out, model)
 		}
 	}
+	// the authors a land release read back from the host for a head made outside a run (CRW-1354)
+	for _, model := range r.landAuthorModels(node) {
+		if !seen[model] {
+			seen[model] = true
+			out = append(out, model)
+		}
+	}
 	sort.Strings(out)
 	return out
 }
@@ -134,6 +141,10 @@ func (r rows) worktreeOf(node string) string {
 			}
 		case ev.Kind == engine.KindFlow && ev.Event == engine.EvWorktreeRestored && str(ev.Data, "node") == node && ev.Seq > seq:
 			path, seq = str(ev.Data, "path"), ev.Seq
+		case ev.Kind == engine.KindCall && ev.Op == OpRelease && ev.Event == engine.EvCompleted && str(ev.Data, "node") == node && str(ev.Data, "kind") == "land" &&
+			flag(ev.Data, "released") && str(ev.Data, "worktree") != "" && ev.Seq > seq:
+			// the worktree a land release checked the head made outside a run out in (CRW-1354)
+			path, seq = str(ev.Data, "worktree"), ev.Seq
 		}
 	}
 	return path

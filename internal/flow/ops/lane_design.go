@@ -366,6 +366,9 @@ type ReleaseOpts struct {
 	// Pinned makes the release compare the live plan with the plan the audited DESIGN stands on in the flow, before Relay.Release, whose
 	// release commit compares the node's slice of that plan again (CRW-1288).
 	Pinned bool `json:"pinned"`
+	// Land is the head made outside a project-lane run that the gate-only workflow land-head lands (CRW-1354, lane_land_head.go): the node
+	// is released with no DESIGN, at the plan the run read, and the head is checked out for the gates. Absent for every other release.
+	Land *LandOpts `json:"land,omitempty"`
 }
 
 // ReasonPlanChanged is the reason of a pinned release whose plan is not the one the audited DESIGN stands on.
@@ -393,6 +396,10 @@ type ReleaseOutcome struct {
 	// Escalation is the hold this release raised, the question its node waits on; Hold the hold that stands (plan_superseded).
 	Escalation string `json:"escalation,omitempty"`
 	Hold       string `json:"hold,omitempty"`
+	// Detail is the relay's message of a release refused epoch_lost (CRW-1382): the lane ends unreleased with it.
+	Detail string `json:"detail,omitempty"`
+	// Land is the head a land release checked out for the gates (CRW-1354); absent for every other release.
+	Land *LandHead `json:"land,omitempty"`
 }
 
 func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResult, error) {
@@ -423,6 +430,10 @@ func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRes
 			}
 		}
 		return finish()
+	}
+	// a head made outside a run lands with no DESIGN (CRW-1354): its release is the land's
+	if opts.Land != nil {
+		return o.landRelease(ctx, req, plan, node, ms, opts)
 	}
 	if !ok {
 		out.Reason = "design_missing"
@@ -479,6 +490,13 @@ func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRes
 	data["revision"], data["design_digest"] = out.Revision, out.DesignDigest
 	switch entry.SizeFit {
 	case "child":
+		// the child start carries the node's slice of the plan compared here, which the relay's managed release compares again (CRW-1382),
+		// as the release of an executor carries it below
+		m, err := readNow()
+		if err != nil {
+			return engine.OpResult{}, err
+		}
+		data["slice_digest"] = liveSlices(m)[node]
 		out.Kind, out.Reason = "child", "size_fit_child"
 		return finish()
 	case "split":
@@ -508,7 +526,7 @@ func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRes
 	if errors.Is(err, ErrEpochLost) {
 		// the fenced write of a run whose plan another session claimed (CRW-1285): the node is not released, the row names the reason,
 		// and the lane ends on it; a resume asks again, and the relay refuses again while the other session holds the plan
-		out.Reason, data["detail"] = ReasonEpochLost, err.Error()
+		out.Reason, out.Detail, data["detail"] = ReasonEpochLost, err.Error(), err.Error()
 		return finish()
 	}
 	if err != nil {

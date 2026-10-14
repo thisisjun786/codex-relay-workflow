@@ -13,7 +13,7 @@
 // position of its path, and every position it uses is that of a call or of an operation it makes, so a resume replays it through
 // the journal like any other code of the script. It reads no variable outside its arguments.
 
-import { FINDINGS, VERDICT } from 'crw:lib/schemas'
+import { FINDINGS, FINDINGS_END, VERDICT } from 'crw:lib/schemas'
 import { evidence } from 'crw:lib/evidence'
 import { explorerPacket, reviewPacket } from 'crw:lib/packets'
 import { closeMilestone, settleReviews } from 'crw:lib/close'
@@ -374,7 +374,8 @@ export async function dag(planId, lane, opts) {
       } else if (!rel.released && rel.hold) {
         out = await superseded(n.id, rel)
       } else {
-        if (!rel.released && rel.kind === 'executor') out = { node: n.id, state: 'unreleased', reason: rel.reason }
+        // a release the relay refused for a lost epoch carries the relay's detail, which the run's stop names (CRW-1382)
+        if (!rel.released && rel.kind === 'executor') out = rel.detail ? { node: n.id, state: 'unreleased', reason: rel.reason, detail: rel.detail } : { node: n.id, state: 'unreleased', reason: rel.reason }
         else out = await lane(n, rel, S ? S.forLane(n.id) : noSignals)
       }
     } catch (e) {
@@ -430,16 +431,28 @@ async function superseded(node, rel) {
 // question of the same digest asked again in the run reuses the answer and names the route it came from (origin). The result lists an answer for each question, the
 // questions that went to the orchestrator thread or that exhausted the asker's research, the call that failed when an
 // explorer did not complete, and the tokens the explorers it spawned report (meta.tokens: a design loop counts them, CRW-1327).
-export async function explore(kind, questions, ctx) {
+//
+// opts.endConditions are the end condition commands of the milestone's issues ({issue, command}, CRW-1382): the first explorer this
+// fan-out spawns is given them to run once, and its answer names them (end_conditions_asked) so crw.exploreRecord can warn of a command
+// that failed, ran no test or was not reported. They are not an argument of crw.exploreRoute or of crw.exploreRecord's context.
+export async function explore(kind, questions, ctx, opts) {
   const plan = await crw.exploreRoute(kind, ctx, questions)
   const spawn = plan.routes.filter((r) => r.route === 'spawn')
+  const ends = (opts && opts.endConditions) || []
+  const endsFor = spawn.length && ends.length ? spawn[0].digest : null
   const found = {}
   let failed = null
   let tokens = 0
   for (const wave of chunks(spawn, EXPLORER_CONCURRENCY)) {
-    const calls = await parallel(wave.map((r) => () => agent.call(explorerPacket(kind, r, ctx), {
-      agentType: 'explorer', node: ctx.node || undefined, head: ctx.head || undefined, schema: FINDINGS, label: 'explore:' + (ctx.node || ctx.milestone) + ':' + r.digest.slice(0, 12),
-    })), { keys: wave.map((r) => r.digest.slice(0, 12)), label: 'explore' })
+    // the explorer given the end conditions answers FINDINGS_END; every other one is the call it was before CRW-1382 (its packet and
+    // its schema), so a run recorded then replays it
+    const calls = await parallel(wave.map((r) => () => r.digest === endsFor
+      ? agent.call(explorerPacket(kind, r, ctx, ends), {
+        agentType: 'explorer', node: ctx.node || undefined, head: ctx.head || undefined, schema: FINDINGS_END, label: 'explore:' + (ctx.node || ctx.milestone) + ':' + r.digest.slice(0, 12),
+      })
+      : agent.call(explorerPacket(kind, r, ctx), {
+        agentType: 'explorer', node: ctx.node || undefined, head: ctx.head || undefined, schema: FINDINGS, label: 'explore:' + (ctx.node || ctx.milestone) + ':' + r.digest.slice(0, 12),
+      })), { keys: wave.map((r) => r.digest.slice(0, 12)), label: 'explore' })
     wave.forEach((r, i) => {
       const call = calls[i]
       tokens += (call && call.meta && call.meta.tokens && call.meta.tokens.total) || 0
@@ -466,7 +479,11 @@ export async function explore(kind, questions, ctx) {
       if (sib && found[sib.digest]) answer = found[sib.digest].answer
       else if (sib) answer = sib.answer || ''
     }
-    return { digest: r.digest, id: r.id, question: r.question, route: r.route, reason: r.reason || '', scope: r.scope || '', authority: r.authority || '', answer, call, evidence: ev, findings, origin: r.origin || '' }
+    const out = { digest: r.digest, id: r.id, question: r.question, route: r.route, reason: r.reason || '', scope: r.scope || '', authority: r.authority || '', answer, call, evidence: ev, findings }
+    // the optional origin only with a value (CRW-1381)
+    if (r.origin) out.origin = r.origin
+    if (r.route === 'spawn' && r.digest === endsFor) out.end_conditions_asked = ends
+    return out
   })
   await crw.exploreRecord(kind, ctx, answers)
   return {
@@ -476,6 +493,8 @@ export async function explore(kind, questions, ctx) {
     inline: plan.routes.filter((r) => r.route === 'inline'),
     orchestrator: plan.routes.filter((r) => r.route === 'orchestrator'),
     escalate: plan.routes.filter((r) => r.route === 'escalate'),
+    // the questions the run asked that no answer reached and these questions do not raise again: the next ask carries them (CRW-1381)
+    carried: plan.carried || [],
     failed,
     tokens,
   }

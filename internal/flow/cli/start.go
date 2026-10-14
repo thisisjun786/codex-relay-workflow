@@ -308,6 +308,10 @@ func (c *command) start(args []string) int {
 		if f, ok := issueReadyFact(*handoffIn, planOf(spec.Args), milestoneArg(spec.Args)); ok {
 			plan.Facts = append(plan.Facts, f)
 		}
+		// an issue sized for a child in a run without host settings (CRW-1382): a warning, recorded, never a refusal
+		if f, ok := childHostFact(*handoffIn, planOf(spec.Args), milestoneArg(spec.Args), childHostRaw != nil); ok {
+			plan.Facts = append(plan.Facts, f)
+		}
 	}
 	// the facts of a session run (CRW-1316 §11): warnings, never a refusal
 	if session {

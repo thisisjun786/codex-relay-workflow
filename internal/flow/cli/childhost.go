@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/compile"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 )
 
@@ -33,6 +34,33 @@ type ChildHost struct {
 	MarkerRoot string            `json:"marker_root"`
 	Parent     dagsched.Endpoint `json:"parent"`
 	Child      dagsched.Endpoint `json:"child"`
+}
+
+// FactChildHostUnset is the warn fact of a start whose milestone has an issue the handoff sizes for a child and that names no
+// --child-host (CRW-1382).
+const FactChildHostUnset = "child_host_unset"
+
+// childHostFact warns of the issues of a run's milestone (every issue of the plan's project when the run names no milestone) that the
+// handoff sizes for a child when the start names no --child-host: such a node is refused child_host_unset only when it is released, so the
+// start says so before (warn and record, CRW-1382); the run starts. The architect's DESIGN decides a node's size at the release, so a node
+// the handoff does not size for a child and the DESIGN does is still refused at its release only.
+func childHostFact(in compile.Input, plan, milestone string, named bool) (Fact, bool) {
+	p, ok := HandoffProject(in, plan)
+	if !ok || named {
+		return Fact{}, false
+	}
+	var keys []string
+	for _, is := range p.Issues {
+		if (milestone == "" || is.Milestone == milestone) && is.SizeFit == "child" {
+			keys = append(keys, is.Key)
+		}
+	}
+	if len(keys) == 0 {
+		return Fact{}, false
+	}
+	return Fact{Name: FactChildHostUnset, Level: LevelWarn,
+		Reading: fmt.Sprintf("the handoff sizes %d issue(s) of the run for a child (%s) and the start names no host settings", len(keys), strings.Join(keys, ", ")),
+		Reason:  "a node sized for a child is started with the run's host settings and is refused child_host_unset at its release without them: start the run with --child-host FILE (" + ChildHostSchema + "); the run starts either way (warn and record)"}.leveled(), true
 }
 
 // ErrChildHostUnset is the refusal of a node sized for a child in a run that holds no host settings.

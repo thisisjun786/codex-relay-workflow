@@ -388,12 +388,34 @@ func TestEveryWorkflowReleasePassesPinned(t *testing.T) {
 }
 
 // releaseSites checks the release call sites of one workflow source.
+// topLevelArgs splits an argument list at the commas outside any bracket.
+func topLevelArgs(list string) []string {
+	var parts []string
+	depth, start := 0, 0
+	for i := 0; i < len(list); i++ {
+		switch list[i] {
+		case '(', '{', '[':
+			depth++
+		case ')', '}', ']':
+			depth--
+		case ',':
+			if depth == 0 {
+				parts = append(parts, list[start:i])
+				start = i + 1
+			}
+		}
+	}
+	return append(parts, list[start:])
+}
+
 func releaseSites(t *testing.T, path, text string, sites *int) {
 	t.Helper()
 	call := regexp.MustCompile(`crw\.release\(`)
 	other := regexp.MustCompile(`\[\s*['"]release['"]\s*\]|\brelease\s*=\s*crw\.release\b|\{[^}]*\brelease\b[^}]*\}\s*=\s*crw\b`)
 	pinnedConst := regexp.MustCompile(`const PINNED = \{ pinned: true \}`)
-	pinnedLiteral := regexp.MustCompile(`^\{\s*pinned:\s*true\s*\}$`)
+	// the literal {pinned: true}, or an object literal whose first member is pinned: true and that carries more options (the land of a head
+	// made outside a run, CRW-1354)
+	pinnedLiteral := regexp.MustCompile(`^\{\s*pinned:\s*true\s*(\}$|,)`)
 	if loc := other.FindStringIndex(text); loc != nil {
 		t.Errorf("%s releases a node by another name than crw.release(...): %q", path, text[loc[0]:loc[1]])
 	}
@@ -416,7 +438,7 @@ func releaseSites(t *testing.T, path, text string, sites *int) {
 			t.Fatalf("%s: unbalanced crw.release call", path)
 		}
 		argList := text[loc[1]:end]
-		parts := strings.Split(argList, ",")
+		parts := topLevelArgs(argList)
 		switch {
 		case len(parts) == 4 && strings.TrimSpace(parts[3]) == "PINNED" && pinnedConst.MatchString(text):
 		case len(parts) == 4 && pinnedLiteral.MatchString(strings.TrimSpace(parts[3])):

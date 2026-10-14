@@ -335,3 +335,74 @@ func mustLoad(t *testing.T, w *world) []engine.Event {
 }
 
 var _ = store.ErrUserDecisionAbsent
+
+// TestAnswerForGivesEachQuestionOfAJoinedAskItsPart (CRW-1381 d3): `crw flow answer --answer-for DIGEST=TEXT` gives each question an ask
+// joins its own part of the recorded answer: the row's decision holds the parts by digest. A digest the ask does not carry, a part that is
+// not text of the recorded answer and a flag that is not DIGEST=TEXT are refused (input errors, nothing appended); an answer with no part
+// is every question's, with the warning single_answer_for_joined_ask in the row and on stderr.
+func TestAnswerForGivesEachQuestionOfAJoinedAskItsPart(t *testing.T) {
+	const d1, d2 = "1111111111111111111111111111111111111111111111111111111111111111", "2222222222222222222222222222222222222222222222222222222222222222"
+	setup := func(t *testing.T) (*world, *asking) {
+		w := newWorld(t)
+		r := w.newRun("run-q", "thread-owner")
+		r.phase("design")
+		r.flow(engine.EvEscalation, map[string]any{"reason": "design_question", "class": "decision", "node": "n1", "escalation_id": "esc_one", "ask": "design",
+			"detail": "[authority:policy] q one | [authority:environment] q two", "evidence": map[string]any{"questions": []any{d1, d2}}})
+		r.finish(engine.RunCompleted, "")
+		r.close()
+		return w, &asking{run: r, q: "esc_one", rec: RunRecord{RunID: "run-q", Owner: "thread-owner", PlanID: "plan-1", PlanRevision: 3}}
+	}
+	text := func(_ *Binding, _ *decisions.Record, ans *decisions.Answer) {
+		ans.Option, ans.Text = "", "No flag in 1.0. The shared runner is fine."
+	}
+	attempt0 := func(b *Binding, r *decisions.Record, ans *decisions.Answer) { b.Attempt = 0; text(b, r, ans) }
+
+	w, a := setup(t)
+	td := w.deps()
+	for name, flags := range map[string][]string{
+		"a digest the ask does not carry": {"--answer-for", strings.Repeat("3", 64) + "=No flag in 1.0."},
+		"a part the record does not hold": {"--answer-for", d1 + "=words nobody recorded"},
+		"no DIGEST=TEXT":                  {"--answer-for", "no-equals-sign"},
+	} {
+		id := a.answered(t, "ud-"+strings.ReplaceAll(name, " ", "-"), attempt0)
+		if code, reply, errOut := a.answer(td, id, flags...); code == 0 || reply.Applied {
+			t.Errorf("%s: exit %d %+v %s", name, code, reply, errOut)
+		}
+	}
+	if n := len(a.appliedRows(t)); n != 0 {
+		t.Fatalf("a refused answer appended %d rows", n)
+	}
+	id := a.answered(t, "ud-parts", attempt0)
+	code, reply, errOut := a.answer(td, id, "--no-resume", "--answer-for", d1+"=No flag in 1.0.", "--answer-for", d2+"=The shared runner is fine.")
+	if code != 0 || !reply.Applied {
+		t.Fatalf("the answer with a part for each question: exit %d %+v %s", code, reply, errOut)
+	}
+	rows := a.appliedRows(t)
+	dec, _ := rows[0].Data["decision"].(map[string]any)
+	parts, _ := dec["answers"].(map[string]any)
+	if len(rows) != 1 || parts[d1] != "No flag in 1.0." || parts[d2] != "The shared runner is fine." || len(rowWarningsOf(rows[0].Data)) != 0 {
+		t.Errorf("the applied row: %v", rows[0].Data)
+	}
+
+	w2, a2 := setup(t)
+	td2 := w2.deps()
+	single := a2.answered(t, "ud-single", attempt0)
+	code, reply, errOut = a2.answer(td2, single, "--no-resume")
+	if code != 0 || !reply.Applied || !strings.Contains(strings.Join(rowWarningsOf(reply.Row), " "), "single_answer_for_joined_ask") || !strings.Contains(errOut, "single_answer_for_joined_ask") {
+		t.Errorf("a single answer to a joined ask: exit %d %+v %s", code, reply, errOut)
+	}
+}
+
+func rowWarningsOf(data map[string]any) []string {
+	var out []string
+	switch w := data["warnings"].(type) {
+	case []string:
+		out = w
+	case []any:
+		for _, x := range w {
+			s, _ := x.(string)
+			out = append(out, s)
+		}
+	}
+	return out
+}

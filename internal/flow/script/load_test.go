@@ -355,7 +355,7 @@ func TestSchemaLintStrictMode(t *testing.T) {
 	prom, _ := rt.Main()
 	rt.Loop.Run(nil)
 	data, _ := json.Marshal(prom.Result().Export())
-	if string(data) != `["DESIGN","DESIGN_AUDIT","FINDINGS","QA_CAPTURE","QA_PASS","QA_RECEIPT","RECEIPT","REFLECTION","VERDICT","VERDICT_BATCH","VERDICT_FINAL"]` {
+	if string(data) != `["DESIGN","DESIGN_AUDIT","FINDINGS","FINDINGS_END","QA_CAPTURE","QA_PASS","QA_RECEIPT","RECEIPT","REFLECTION","VERDICT","VERDICT_BATCH","VERDICT_FINAL"]` {
 		t.Errorf("library schemas %s", data)
 	}
 }

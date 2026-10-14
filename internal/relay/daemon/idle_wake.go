@@ -66,11 +66,29 @@ type idleWake struct {
 	// to wait for. It is reset when a hold is taken or the recipient leaves the backlog (CRW-904
 	// correction, d1).
 	holdBackoff map[string]float64
+	// carried are the reports a tick took off the host's channel and did not apply because a store
+	// write of the idle pass failed: the failing report and every one after it. The host hands a report
+	// over once, and a busy_cap or attempt_cap hold has no timer, so a report dropped here would leave
+	// that hold standing until the recipient's next edge or a readback. The next pass applies them
+	// before the host's new reports (CRW-1349). Applying a report again is harmless: a head already
+	// woken and a message already due write nothing. In memory, like the holds.
+	carried []delivery.IdleReport
+	// headFailures is how many passes in a row the first carried report failed on. It bounds the carry: a
+	// report whose wake fails on every pass is dropped after idleReportPasses tries, so it cannot end every
+	// later tick before the delivery pass and the supervisor channel run (CRW-1349 evaluation d1).
+	headFailures int
 	// woken, opened and released are what the pass did, and notes is what it could not do: both are
 	// read by the daemon's own tests and by Tick's report.
 	woken, opened, released int
 	notes                   []string
 }
+
+// idleReportPasses is how many passes one report is tried on when its wake keeps failing: the pass that
+// fails it the last time drops it with a note and carries only the reports after it. A store-wide fault
+// that is not corruption then costs at most this many ticks per report, and a per-report failure no
+// longer wedges every tick behind it; the recipient's busy backoff, its next edge and the readback stay
+// the triggers for a dropped report, as they were for every report before the carry.
+const idleReportPasses = 3
 
 func newIdleWake(d *Daemon) *idleWake {
 	return &idleWake{daemon: d, holds: map[string]string{}, attempted: map[string]string{}, refused: map[string]float64{}, holdBackoff: map[string]float64{}}
@@ -94,6 +112,8 @@ func (w *idleWake) take() []string {
 // thread whose head is not waiting out a busy backoff changes nothing: WakeBusyHead writes only for
 // the deferred-busy head that is still inside its backoff, so a younger delivery, a recipient with
 // no backlog, and a report about a head that is already due are all no-ops.
+//
+// The reports a failed tick did not apply come first (carried, CRW-1349), then the host's new ones.
 func (w *idleWake) idle(ctx context.Context, r *Report, host Host, now float64) error {
 	if w.beforeIdle != nil {
 		w.beforeIdle()
@@ -102,7 +122,14 @@ func (w *idleWake) idle(ctx context.Context, r *Report, host Host, now float64) 
 	if !ok {
 		return nil
 	}
-	for _, report := range reporter.IdleReports() {
+	// headFailed is how often reports[0] already failed: only a carried report has failed before.
+	headFailed := 0
+	if len(w.carried) > 0 {
+		headFailed = w.headFailures
+	}
+	reports := append(w.carried, reporter.IdleReports()...)
+	w.carried, w.headFailures = nil, 0
+	for i, report := range reports {
 		if report.Status != "idle" && report.Status != "notLoaded" {
 			continue
 		}
@@ -111,6 +138,9 @@ func (w *idleWake) idle(ctx context.Context, r *Report, host Host, now float64) 
 			// A store failure ends the tick here, before any later write: the wake is this pass's own write,
 			// and nothing after a failed write may take the store's writes (I-564). The delivery pass and
 			// the supervisor channel only run on a tick whose idle pass succeeded (CRW-904 correction, d1).
+			// The reports not applied are kept for the next tick rather than dropped (CRW-1349), the failing
+			// one only up to its last try.
+			w.fail(reports, i, headFailed)
 			return fmt.Errorf("idle report for %s not applied: %w", report.ThreadID, err)
 		}
 		if wrote {
@@ -124,11 +154,54 @@ func (w *idleWake) idle(ctx context.Context, r *Report, host Host, now float64) 
 		// write, so a store failure ends the tick the same way.
 		count, err := w.daemon.Channel.WakeBusyRecipient(ctx, report.ThreadID, report.Status, now)
 		if err != nil {
+			// The delivery wake of this report may stand; applying it again next tick writes nothing.
+			w.fail(reports, i, headFailed)
 			return fmt.Errorf("idle report for %s not applied to the supervisor channel: %w", report.ThreadID, err)
 		}
 		w.woken += count.Woken + count.Released
 	}
 	return nil
+}
+
+// fail carries what a pass that failed on reports[i] did not apply. The failing report is kept at the head
+// of the carried list unless this was its last try (idleReportPasses passes in a row, counting the passes it
+// failed on as a carried report): then it is dropped with a note and the reports after it are carried.
+// headFailed is how often reports[0] had failed before this pass.
+func (w *idleWake) fail(reports []delivery.IdleReport, i, headFailed int) {
+	failures := 1
+	if i == 0 {
+		failures = headFailed + 1
+	}
+	if failures >= idleReportPasses {
+		report := reports[i]
+		w.notes = append(w.notes, fmt.Sprintf("idle report %s for %s dropped after %d failed passes; its busy backoff, next edge or readback is its trigger", report.Status, report.ThreadID, failures))
+		// A copy of the same report later in the batch is dropped with it, so it does not start its tries again.
+		rest := make([]delivery.IdleReport, 0, len(reports)-i-1)
+		for _, later := range reports[i+1:] {
+			if later != report {
+				rest = append(rest, later)
+			}
+		}
+		w.carry(rest)
+		return
+	}
+	w.carry(reports[i:])
+	w.headFailures = failures
+}
+
+// carry keeps the reports a failed idle pass did not apply for the next pass, once each and in their
+// order: a store that keeps failing tick after tick does not grow the list with the same reports.
+func (w *idleWake) carry(reports []delivery.IdleReport) {
+	seen := map[delivery.IdleReport]bool{}
+	kept := make([]delivery.IdleReport, 0, len(reports))
+	for _, report := range reports {
+		if seen[report] {
+			continue
+		}
+		seen[report] = true
+		kept = append(kept, report)
+	}
+	w.carried = kept
 }
 
 // hold opens a subscription for every recipient whose head waits out a busy backoff and has none,

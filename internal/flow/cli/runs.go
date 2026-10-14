@@ -126,6 +126,9 @@ type Question struct {
 	Current bool `json:"current"`
 	// Applied is the decision that answered it, "" while it waits.
 	Applied string `json:"applied,omitempty"`
+	// Questions are the digests of the questions a design ask joins (its evidence, CRW-1366): an answer can give each its part
+	// (CRW-1381). Absent for an ask that names none.
+	Questions []string `json:"questions,omitempty"`
 }
 
 // ReviewLink is one review verdict of a node: the reviewer's call and what it judged.
@@ -287,6 +290,14 @@ func Questions(events []engine.Event) []Question {
 		q := Question{ID: str(e.Data, "escalation_id"), Revision: count[key], Node: str(e.Data, "node"), Reason: str(e.Data, "reason"), Ask: ask, Call: str(e.Data, "call_id"), Seq: e.Seq}
 		q.Attempt = attempts[q.Call]
 		q.Applied = applied[q.ID]
+		if evidence, ok := e.Data["evidence"].(map[string]any); ok {
+			list, _ := evidence["questions"].([]any)
+			for _, d := range list {
+				if s, _ := d.(string); s != "" {
+					q.Questions = append(q.Questions, s)
+				}
+			}
+		}
 		last[key] = len(out)
 		out = append(out, q)
 	}

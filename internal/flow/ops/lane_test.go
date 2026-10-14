@@ -34,6 +34,8 @@ type stubRelay struct {
 	afterRelease func()
 	// releaseErr, when a test sets it, is the error the relay answers a release with (CRW-1285).
 	releaseErr error
+	// closeErr, when a test sets it, is the error the relay answers a close with (CRW-1354).
+	closeErr error
 }
 
 func (s *stubRelay) Milestone(context.Context, string, string) (Milestone, error) {
@@ -81,6 +83,9 @@ func (s *stubRelay) Integrate(context.Context, IntegrateRequest) (IntegrateResul
 func (s *stubRelay) IntegrationTip(context.Context, string) (string, error) { return s.tip, nil }
 func (s *stubRelay) Close(_ context.Context, r CloseRequest) (CloseResult, error) {
 	s.closes = append(s.closes, r)
+	if s.closeErr != nil {
+		return CloseResult{}, s.closeErr
+	}
 	return CloseResult{Closed: true}, nil
 }
 
