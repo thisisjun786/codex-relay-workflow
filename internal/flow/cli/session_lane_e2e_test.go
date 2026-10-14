@@ -342,6 +342,20 @@ func rowNum(v any) float64 {
 	return f
 }
 
+// boundTo is whether the run bound the subagent to the step's attempt (its thread_started row names it) and the call has ended.
+func (k *sessionLab) boundTo(st NextStep, agent string) bool {
+	bound, ended := false, false
+	for _, r := range k.rows(st.Call) {
+		switch {
+		case r.event == engine.EvThreadStarted && int(rowNum(r.data["attempt"])) == st.Attempt && r.data["thread_id"] == agent:
+			bound = true
+		case engine.IsTerminalEvent(r.event):
+			ended = true
+		}
+	}
+	return bound && ended
+}
+
 // runningSubagents are the subagents of the owner whose turn is in progress.
 func (k *sessionLab) runningSubagents() []string {
 	var out []string
@@ -483,7 +497,9 @@ func (k *sessionLab) take(st NextStep) {
 			k.openGate()
 		}
 	}
-	if status := k.dispatched(st, agent); status != engine.ReplyBound {
+	if status := k.dispatched(st, agent); status != engine.ReplyBound && !(status == engine.ReplyClose && k.boundTo(st, agent)) {
+		// a report the run reads after its marker search bound this subagent and the call ended is answered close: the attempt is
+		// over, and the subagent is closed (judgeReport); any other answer is wrong
 		k.t.Fatalf("dispatched %s for %s: %s", agent, st.Op, status)
 	}
 	if st.Call == k.lostStep.Call && st.Attempt == 2 && !k.late {
