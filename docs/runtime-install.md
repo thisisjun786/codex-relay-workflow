@@ -464,8 +464,9 @@ the `manage` object of the configuration file:
 | --- | --- |
 | `manage.child_check.disabled_servers` | The servers to switch off, a list of names. The default is the empty list: no server is switched off and none is compared. Blank names are dropped. |
 
-`crw config verifier` (the installation's writer of the file) writes the default where the file does not name the key, in a new
-file too, and keeps a list the file already has, an empty one included. A `manage` or `child_check` value that is not an object is
+`crw config verifier` (the installation's writer of the file) writes the default where the file does not name the key (a key
+that is `null` counts as not named, as the reader below reads it), in a new file too, and keeps a list the file already has, an
+empty one included, and a value that is no list (the reader refuses it). A `manage` or `child_check` value that is not an object is
 left as it is.
 
 A file that does not name the key (no file, no `manage` object, no `child_check` section, no key, or `null`) is read as the default
