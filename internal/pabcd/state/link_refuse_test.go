@@ -87,3 +87,37 @@ func TestStateWritersRefuseALinkInTheStateTree(t *testing.T) {
 		})
 	}
 }
+
+// EnsureState with a link at the session's state file writes nothing through it: the publication links a new file to that name,
+// which never follows the name's link, so the link is answered as the session that exists (created false), kept as it is, and what
+// it leads to outside the workspace is unchanged. The refusal of that link is WriteState's, the writer that would replace it.
+func TestEnsureStateWritesNothingThroughALinkAtTheStateFile(t *testing.T) {
+	cwd, outside := t.TempDir(), t.TempDir()
+	victim := filepath.Join(outside, "victim")
+	if err := os.WriteFile(victim, []byte("keep\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(cwd, ".crw", "sessions", "s1.json")
+	if err := os.MkdirAll(filepath.Dir(link), 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(victim, link); err != nil {
+		t.Fatal(err)
+	}
+	before := linkRefuseListing(t, outside)
+	if created, err := EnsureState(cwd, "s1"); created || err != nil {
+		t.Fatalf("EnsureState = %v, %v; want the existing session answered, nothing created", created, err)
+	}
+	if after := linkRefuseListing(t, outside); after != before {
+		t.Fatalf("outside the workspace changed:\n%s\nwas\n%s", after, before)
+	}
+	if target, err := os.Readlink(link); err != nil || target != victim {
+		t.Fatalf("the link was not kept: %q %v", target, err)
+	}
+	if entries, err := os.ReadDir(filepath.Dir(link)); err != nil || len(entries) != 1 {
+		t.Fatalf("the sessions directory holds %v %v", entries, err)
+	}
+	if err := WriteState(cwd, DefaultState("s1", "")); err == nil || !strings.Contains(err.Error(), link) || !strings.Contains(err.Error(), "symbolic link") {
+		t.Fatalf("WriteState over the link: %v", err)
+	}
+}

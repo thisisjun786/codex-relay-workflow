@@ -3,9 +3,10 @@
 //
 // On POSIX the spawned shell records its own exit code, so no watcher process exists:
 //
-//	( cmd ) > out 2>&1; printf %s $? > exit.tmp && mv -- exit.tmp exit
+//	( cmd ) >&4 2>&1 4>&- 5>&-; printf %s $? >&5 && exec 4>&- 5>&- && mv -T -- exit.tmp exit
 //
-// behind the launch gate (launchGate), which waits for the launcher's "go" on descriptor 3.
+// behind the launch gate (launchGate), which waits for the launcher's "go" on descriptor 3. Descriptors 4 and 5 are <id>.out and
+// <id>.exit.tmp, which the launcher creates (the oracle's shell opened "> out" and "> exit.tmp" by name); mv's -T is -h on macOS.
 //
 // Behaviour is the oracle's. The differences are these. The workspace is the first argument and the record's cwd (store.go's rule), the
 // clock is the caller's, and an error is returned where the oracle throws. Five differences come from the security checklist of the
@@ -14,6 +15,10 @@
 //     with the workspace as its directory, so a relative workspace sent its redirects to a place the store never confined.
 //   - <id>.exit.tmp is removed with the other files before the start, as the oracle removed .exit and .out only: a link planted there was
 //     written through by "printf >" and truncated its target.
+//   - After the clearing the launcher creates <id>.out and <id>.exit.tmp itself, exclusively and without following a link, and hands
+//     them to the shell as descriptors (CRW-1375): an entry put at either name in between is refused, a link naming it, and one put
+//     there while the job runs is not written through. mv publishes the exit code without moving it into a directory that a link at
+//     <id>.exit leads to (GNU -T, BSD -h).
 //   - mv takes "--", so a relative path that starts with "-" is not read as an option.
 //   - Cancel signals a pid only inside 1 < pid <= MaxInt32. A record is data, and kill(-pid) of pid 0 is the caller's own process group,
 //     of 1 every process the user may signal; Node rejects a larger pid before the call, but a Go int such as 2^32 or 2^32+1 is cut by
@@ -51,6 +56,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/fdsweep"
 )
 
@@ -184,6 +190,8 @@ func BuildWindowsHelper() string {
 }
 
 // BuildShell is the file and arguments that start the job (buildShell). An empty helperPath is the oracle's default, out + ".helper.cjs".
+// On POSIX the shell writes the job's output to descriptor 4 and its exit code to descriptor 5, which the caller opens on out and on
+// exit + ".tmp" (createShellTarget), and then renames exit + ".tmp" to exit.
 func BuildShell(command []string, out, exit, helperPath string) (string, []string, error) {
 	return buildShell(runtime.GOOS, "node", command, out, exit, helperPath)
 }
@@ -205,10 +213,32 @@ func buildShell(goos, nodePath string, command []string, out, exit, helperPath s
 		quoted[i] = shellQuotePosix(arg)
 	}
 	// tmp + mv so a reader never sees a half-written exit code. A SUBSHELL, not a brace group: a command such as "exit 3" in braces
-	// would end the wrapper itself and the exit code would never be written.
+	// would end the wrapper itself and the exit code would never be written. The command gets neither descriptor 4 nor 5.
 	tmp := shellQuotePosix(exit + ".tmp")
-	script := "( " + strings.Join(quoted, " ") + " ) > " + shellQuotePosix(out) + " 2>&1; printf %s $? > " + tmp + " && mv -- " + tmp + " " + shellQuotePosix(exit)
+	script := "( " + strings.Join(quoted, " ") + " ) >&4 2>&1 4>&- 5>&-; printf %s $? >&5 && exec 4>&- 5>&- && mv " + noTargetDirectory(goos) + " -- " + tmp + " " + shellQuotePosix(exit)
 	return "/bin/sh", []string{"-c", script}, nil
+}
+
+// noTargetDirectory is mv's option that renames onto a link at the destination rather than into the directory it leads to: GNU's -T,
+// BSD's (macOS) -h.
+func noTargetDirectory(goos string) string {
+	if goos == "linux" {
+		return "-T"
+	}
+	return "-h"
+}
+
+// createShellTarget creates path for the shell to write through a descriptor: exclusively and without following a link
+// (O_CREAT|O_EXCL|O_NOFOLLOW), with the mode a shell redirection gives (0666 under the umask). Whatever is at path already, put there
+// after the clearing, is refused rather than opened: a symbolic link with an error that names it (crwdir.ErrLink, CRW-1375).
+func createShellTarget(path string) (*os.File, error) {
+	f, err := crwdir.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o666)
+	if err != nil && errors.Is(err, os.ErrExist) {
+		if lerr := crwdir.NotLink(path); lerr != nil {
+			return nil, lerr
+		}
+	}
+	return f, err
 }
 
 // RunBackground starts the command detached and returns its record, which is already written as running (runBackground). A shell that
@@ -274,6 +304,22 @@ func runBackground(ws string, opts RunOptions, clock func() time.Time, start fun
 		return withdraw(ErrNULArgument)
 	}
 	args[len(args)-1] = launchGate + args[len(args)-1]
+	// The shell's two targets are created now, after the clearing and before anything starts, and handed to it as descriptors 4 and 5
+	// (CRW-1375). A launch that ends before its command runs removes them again, as nothing was written to them.
+	outFile, err := createShellTarget(out)
+	if err != nil {
+		return withdraw(err)
+	}
+	defer func() { _ = outFile.Close() }()
+	exitFile, err := createShellTarget(exit + ".tmp")
+	if err != nil {
+		_ = RemovePath(ws, out)
+		return withdraw(err)
+	}
+	defer func() { _ = exitFile.Close() }()
+	dropTargets := func() { _ = RemovePath(ws, out); _ = RemovePath(ws, exit+".tmp") }
+	withdrawRecord := withdraw
+	withdraw = func(err error) (BgRecord, error) { dropTargets(); return withdrawRecord(err) }
 	cmd := exec.Command(file, args...)
 	cmd.Dir = ws
 	// The job runs with the tool roots the configuration names (CRW-958): its go commands use the
@@ -293,19 +339,22 @@ func runBackground(ws string, opts RunOptions, clock func() time.Time, start fun
 		return withdraw(err)
 	}
 	defer func() { _ = gateW.Close() }()
-	cmd.ExtraFiles = []*os.File{gateR}
+	cmd.ExtraFiles = []*os.File{gateR, outFile, exitFile}
 	startErr := start(cmd)
 	_ = gateR.Close()
+	_ = outFile.Close()
+	_ = exitFile.Close()
 	if startErr != nil && !deferredStartError(startErr) {
 		return withdraw(startErr) // Node throws these from spawn itself, before any record
 	}
 	if startErr != nil || cmd.Process == nil {
 		// The oracle's error listener: a shell that never started will never write an exit file.
+		dropTargets()
 		_ = appendLedger(ws, Event{{"event", "registered"}, {"id", id}, {"pid", nil}, {"command", opts.Command}}, clock)
 		return failLaunch(ws, rec, "spawn failed", nil, clock)
 	}
 	pid := cmd.Process.Pid
-	stopShell := func() { _ = gateW.Close(); _ = cmd.Process.Kill(); _ = cmd.Wait() } // the shell is still waiting at the gate
+	stopShell := func() { _ = gateW.Close(); _ = cmd.Process.Kill(); _ = cmd.Wait(); dropTargets() } // the shell is still waiting at the gate
 	token, ok := ProcessStartToken(pid)
 	if !ok {
 		stopShell()
