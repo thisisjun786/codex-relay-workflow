@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/tracking/ref"
 )
 
 var (
@@ -19,7 +21,7 @@ var (
 	ErrRateLimited = errors.New("tracking: rate limited")
 
 	// ErrInvalidRef is the error of a Ref that is not "<owner>/<name>#N" with N above 0.
-	ErrInvalidRef = errors.New("tracking: invalid reference")
+	ErrInvalidRef = ref.ErrInvalid
 	// ErrOtherRepository is the error of a Ref of another repository than the tracker's.
 	ErrOtherRepository = errors.New("tracking: reference is in another repository")
 	// ErrInvalidHeader is the error of a comment header that is not one line "[layer · session]".

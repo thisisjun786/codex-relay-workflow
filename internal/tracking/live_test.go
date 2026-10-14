@@ -50,7 +50,7 @@ func TestLiveReadCrwWork(t *testing.T) {
 	ctx := context.Background()
 
 	var tr Tracker = g
-	ms, issues, err := tr.Milestone(ctx, Ref{repo, liveNumber(t, "CRW_TRACKING_LIVE_MILESTONE", 3)})
+	ms, issues, err := tr.Milestone(ctx, Ref{Repo: repo, Number: liveNumber(t, "CRW_TRACKING_LIVE_MILESTONE", 3)})
 	if err != nil {
 		t.Fatalf("Milestone: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestLiveReadCrwWork(t *testing.T) {
 		}
 	}
 
-	ref := Ref{repo, liveNumber(t, "CRW_TRACKING_LIVE_ISSUE", 49)}
+	ref := Ref{Repo: repo, Number: liveNumber(t, "CRW_TRACKING_LIVE_ISSUE", 49)}
 	is, err := tr.Issue(ctx, ref)
 	if err != nil {
 		t.Fatalf("Issue: %v", err)
@@ -77,7 +77,7 @@ func TestLiveReadCrwWork(t *testing.T) {
 	}
 	t.Logf("issue %s %q (%s): labels %v, blocked by %v, %d sub-issues", is.Ref, is.Title, is.State, is.Labels, is.BlockedBy, len(is.SubIssues))
 
-	if _, err := tr.Issue(ctx, Ref{repo, 999999}); !isNotFound(err) {
+	if _, err := tr.Issue(ctx, Ref{Repo: repo, Number: 999999}); !isNotFound(err) {
 		t.Errorf("Issue(999999) error = %v; want not found", err)
 	}
 	if err := tr.AddLabel(ctx, ref, "live-test-must-not-write"); err == nil {
