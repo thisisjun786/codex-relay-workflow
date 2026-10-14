@@ -140,7 +140,7 @@ func (c *command) next(args []string) int {
 		if !live && !starting && !resumed && info.State == StateDead && info.Paused == "" {
 			// no process, not paused and not over: next resumes the run as `crw flow resume RUN --detach` does
 			resumed = true
-			if pid, err := c.detachResume(sel.Path, spec); err != nil {
+			if pid, err := c.detachResume(cm, sel.Path, spec); err != nil {
 				ans.Warnings = append(ans.Warnings, fmt.Sprintf("no process holds run %s and its resume did not start: %v", run, err))
 			} else {
 				ans.Resumed = pid
@@ -286,8 +286,21 @@ func nextState(info RunInfo, live bool, steps []engine.Step) string {
 	return NextRunning
 }
 
-// detachResume starts the run's process as `crw flow resume RUN --detach` does and waits until it holds the run.
-func (c *command) detachResume(state string, spec Spec) (int, error) {
+// detachResume starts the run's process as `crw flow resume RUN --detach` does and waits until it holds the run. Like that command and
+// `crw flow answer` it asks budgetLeft first (CRW-1390): a run whose spec's budget is spent is refused with the same words, before a
+// process is started that would take the run lock and end at once with budget_exhausted.
+func (c *command) detachResume(cm *common, state string, spec Spec) (int, error) {
+	if spec.TokenBudget > 0 {
+		r, err := c.reader(cm)
+		if err != nil {
+			return 0, err
+		}
+		err = budgetLeft(c.ctx, r.St, spec)
+		_ = r.Close()
+		if err != nil {
+			return 0, err
+		}
+	}
 	dir, _ := os.Getwd()
 	spawned := c.now()
 	pid, err := c.Spawn(c.ctx, SpawnRequest{Spec: spec, State: state, Resume: true, Dir: dir})
@@ -433,8 +446,7 @@ func ownerLineOf(state string, spec Spec, digest string) (settled bool, line str
 	case present && last.Kind == bound.KindOrchestrator && last.RunID == run && last.PolicyDigest == digest:
 		return true, ""
 	case present && last.Kind != bound.KindClosed && last.RunID != run && validRunID(last.RunID) && runLive(state, last.RunID):
-		return true, fmt.Sprintf("the owner thread %s is bound to run %s, whose process holds its lock: run %s is not bound (one thread binds one live run), so the spawn hook applies run %s's pairs",
-			thread, last.RunID, run, last.RunID)
+		return true, liveHolderText(thread, last.RunID, run)
 	case present && last.Kind == bound.KindOrchestrator && last.RunID == run:
 		return false, fmt.Sprintf("the orchestrator line of thread %s carries run %s's pairs under %s, not those its process pinned (%s): next writes no line; the run's next process binds it after its started row",
 			thread, run, cell(last.PolicyDigest), cell(digest))

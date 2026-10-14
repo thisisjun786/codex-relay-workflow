@@ -42,6 +42,10 @@ type SendResult struct {
 	Reason string
 	// State is where a summary notice stands in the queue (pending, in_flight, sent, refused).
 	State string
+	// Recipient is the thread the notice was addressed to when that is not the thread asked for: the level above the project a
+	// message staged through the supervisor channel goes to (RelaySender); "" for crw manage send-parent, which sends to the thread
+	// it was given.
+	Recipient string
 }
 
 // Sender delivers the notices of the upward half of a run through crw manage send-parent.

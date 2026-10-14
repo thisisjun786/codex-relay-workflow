@@ -45,3 +45,11 @@ func SetJournalTailPoll(pause time.Duration) func() {
 
 // OpenJournalTailStore is the store journal-tail reads the journal through.
 var OpenJournalTailStore = openJournalTailStore
+
+// SetReportUpAfterPrecheck runs f once report-up has checked a recorded --id and before it stages, as a second call would land
+// between the two (CRW-1390).
+func SetReportUpAfterPrecheck(f func()) func() {
+	previous := reportUpAfterPrecheck
+	reportUpAfterPrecheck = f
+	return func() { reportUpAfterPrecheck = previous }
+}

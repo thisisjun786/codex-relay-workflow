@@ -150,7 +150,8 @@ func runLive(state, run string) bool { return LockHeld(state, run) || startLockH
 // it before the run lock and lets it go after the run lock, and its started row names the token (`process`). A reader that finds the
 // run lock held tells by it whether the newest started row is the holder's (its process lock is held) or an earlier process's (the
 // kernel let that one go when the process ended), so `crw flow next` never takes an ended process's pins for the holder's (CRW-1372).
-// The holder removes its file when it ends; the file of a process that died stays, and nothing holds it.
+// The holder removes its file when it ends. The file of a process that died stays, held by nobody, until the next process that holds
+// the run lock removes it (sweepProcessLocks, CRW-1390).
 type processLock struct {
 	f     *os.File
 	path  string
@@ -177,7 +178,9 @@ func validProcessToken(token string) bool {
 	return true
 }
 
-// takeProcessLock makes the process lock of this process of a run under a new token and holds it.
+// takeProcessLock makes the process lock of this process of a run under a new token and holds it. A file that a sweep removed between
+// its creation and its lock (sweepProcessLocks holds the lock of a file it removes) is not the lock any more: it is made again under
+// another token.
 func takeProcessLock(state, run string) (*processLock, error) {
 	if !validRunID(run) {
 		return nil, fmt.Errorf("%q is not a run id", run)
@@ -185,6 +188,20 @@ func takeProcessLock(state, run string) (*processLock, error) {
 	if err := os.MkdirAll(RunDir(state, run), 0o700); err != nil {
 		return nil, err
 	}
+	for range 3 {
+		p, err := makeProcessLock(state, run)
+		if err != nil || p != nil {
+			return p, err
+		}
+	}
+	return nil, fmt.Errorf("the process lock of run %s was removed three times before it was held", run)
+}
+
+// processLockOpened, when set, runs between the creation of a process lock file and its lock (tests: a sweep in that moment).
+var processLockOpened func(path string)
+
+// makeProcessLock makes and holds one process lock file; nil and no error when the file was removed before its lock was held.
+func makeProcessLock(state, run string) (*processLock, error) {
 	var b [processTokenLen / 2]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		return nil, err
@@ -195,13 +212,53 @@ func takeProcessLock(state, run string) (*processLock, error) {
 	if err != nil {
 		return nil, err
 	}
+	if processLockOpened != nil {
+		processLockOpened(path)
+	}
 	// the file is new and this process's: only a reader's probe (heldAt) can hold its lock, for an instant, so the lock is waited for
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
 		_ = f.Close()
 		_ = os.Remove(path)
 		return nil, fmt.Errorf("the process lock of run %s: %w", run, err)
 	}
+	if held, err := f.Stat(); err != nil {
+		_ = f.Close()
+		return nil, err
+	} else if named, err := os.Lstat(path); err != nil || !os.SameFile(held, named) {
+		// a sweep removed the file before this process held it: the lock is on a file no reader finds
+		_ = f.Close()
+		return nil, nil
+	}
 	return &processLock{f: f, path: path, token: token}, nil
+}
+
+// sweepProcessLocks removes the process lock files of a run that nobody holds - the files of processes that died without removing
+// theirs - but keep's. The holder of the run lock calls it right after it took the run lock: the newest started row of a process that
+// died names a file nobody holds, which reads as no process either way. Each file is removed while the sweep holds its lock, so a
+// process that makes its lock at that moment finds its file gone once it holds the lock and makes another (takeProcessLock); a file
+// another process holds (one that will not get the run lock while this one holds it) is left.
+func sweepProcessLocks(state, run, keep string) {
+	if !validRunID(run) {
+		return
+	}
+	entries, _ := os.ReadDir(RunDir(state, run))
+	for _, e := range entries {
+		rest, ok := strings.CutPrefix(e.Name(), "process.")
+		token, lock := strings.CutSuffix(rest, ".lock")
+		if !ok || !lock || !validProcessToken(token) || token == keep {
+			continue
+		}
+		path := processLockPath(state, run, token)
+		f, err := os.OpenFile(path, os.O_RDWR|syscall.O_NOFOLLOW, 0)
+		if err != nil {
+			continue
+		}
+		if syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) == nil {
+			_ = os.Remove(path)
+			_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+		}
+		_ = f.Close()
+	}
 }
 
 // Token is the token the process's started row names ("" for no lock).

@@ -680,6 +680,9 @@ func pumpRound(ctx context.Context, e *Env, cfg *Config, s pumpSettings, dry boo
 	if err := pumpSupervisorFlush(ctx, e, cfg, &st, s, now, dry); err != nil {
 		pumpLog(cfg, "supervisor queue flush: "+err.Error())
 	}
+	// The management batch to management_thread is superseded by the supervisor channel on the CRW 1.0 path (CRW-1314, CRW-1390): the
+	// relay daemon delivers what the flow run and its child send up to the management seat above the project, and a decision for Jun the
+	// channel holds or delivered is not batched here again (pumpChannelHolds). The batch stays for what the channel does not carry.
 	switch {
 	case cfg.ManagementThread == "":
 		pumpLog(cfg, "no management_thread; the management batch waits, the parent queue still runs")

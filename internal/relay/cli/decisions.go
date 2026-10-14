@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -168,8 +169,13 @@ func runDecisionRaise(ctx context.Context, services dispatch.Services, args disp
 	record.Authority, warning = decisionManagementAuthority(ctx, opened, record.Authority, originProject)
 	// A repeated question folds only into a record held under the same seat (CRW-1378): the record of
 	// another management seat is answered by that seat's owner, so this raise is a record of its own.
+	heldSeats := []string{}
 	stored, merged, passed, err := opened.RaiseWhere(ctx, record, func(held, incoming decisions.Record) bool {
-		return decisionSeat(held) == decisionSeat(incoming)
+		folds := decisionSeat(held) == decisionSeat(incoming)
+		if !folds && !slices.Contains(heldSeats, decisionSeat(held)) {
+			heldSeats = append(heldSeats, decisionSeat(held))
+		}
+		return folds
 	})
 	if err != nil {
 		return nil, decisionRefusal(err)
@@ -177,8 +183,8 @@ func runDecisionRaise(ctx context.Context, services dispatch.Services, args disp
 	var foldWarning contract.OrderedObject
 	if !merged && len(passed) > 0 {
 		foldWarning = contract.OrderedObject{{Key: "reason", Value: "seat_differs"},
-			{Key: "detail", Value: "the same question is open as " + strings.Join(passed, ", ") + " under another seat than this raise's (" +
-				pyvalue.StrRepr(decisionSeat(record)) + "), whose owner answers it; this raise is recorded as its own record"},
+			{Key: "detail", Value: "the same question is open as " + strings.Join(passed, ", ") + " under " + decisionSeatsText(heldSeats) +
+				", whose answer belongs there; this raise " + decisionRuleText(record) + ": it is recorded as its own record"},
 			{Key: "decisions", Value: anyStrings(passed)}, {Key: "seat", Value: decisionSeat(record)}}
 	}
 	answer := contract.OrderedObject{
@@ -202,6 +208,35 @@ func runDecisionRaise(ctx context.Context, services dispatch.Services, args disp
 		answer = append(answer, contract.Field{Key: w.key, Value: w.warning})
 	}
 	return answer, nil
+}
+
+// decisionSeatsText names the seats the open records of a question are held under, for a fold warning: a management seat by its key,
+// the empty seat by the rule that answers such a record.
+func decisionSeatsText(seats []string) string {
+	named := make([]string, 0, len(seats))
+	for _, seat := range seats {
+		if seat == "" {
+			named = append(named, "no management seat (the store seat's rule, or the raiser's own for a parent-class question)")
+			continue
+		}
+		named = append(named, "management seat "+pyvalue.StrRepr(seat))
+	}
+	if len(named) == 0 {
+		return "another seat"
+	}
+	return strings.Join(named, " and ")
+}
+
+// decisionRuleText says who answers a raise, for a fold warning: the owner of the management seat its ref names, else the store seat's
+// rule for a user-grade or delegated-management-grade question, else the raiser's own (a parent-class question).
+func decisionRuleText(record decisions.Record) string {
+	switch seat := decisionSeat(record); {
+	case seat != "":
+		return "is held under management seat " + pyvalue.StrRepr(seat) + ", whose owner answers it"
+	case record.Authority.Kind == decisions.AuthorityUser || record.Authority.Kind == decisions.AuthorityDelegatedManagement:
+		return "names no management seat (no edge stands above its project), and the store seat's rule answers it"
+	}
+	return "is a " + record.Authority.Kind + "-class question, which the raiser's own authority answers (the parent rule)"
 }
 
 // decisionSeat is the management seat a record's answer belongs to: the ref of a user-grade or

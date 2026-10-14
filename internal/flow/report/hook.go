@@ -18,9 +18,11 @@ import (
 //   - the plan summary: at run start (a resume too) and after every committed batch the summary stream of the run's plan and document is
 //     reconciled (ReconcileSummary), so an entry owed because the process died between two steps is found;
 //   - the escalations of the run (dispatch_unknown, tiers_exhausted, blocked_scope, size_split, restore_snapshot_mismatch, a configuration
-//     fault, ...) are told to the orchestrator thread with `crw manage send-parent`, once each, queued unless the wake-up of the thread is
-//     proven (the run cannot prove it, so it does not probe the thread first);
-//   - the completion digest is told the same way when the run finishes;
+//     fault, ...) are told once each to the level above the run's project through the Sender: RelaySender stages them on the supervisor
+//     channel (flow_escalation, CRW-1380), and a run whose plan names no project tells the orchestrator thread with `crw manage
+//     send-parent`, queued unless the wake-up of the thread is proven (the run cannot prove it, so it does not probe the thread first);
+//     the escalation_notice row names the thread the notice was addressed to;
+//   - the completion digest is told the same way when the run finishes (flow_completion);
 //   - a run meant to start nodes that finished completed and started none (Blocked over the run's record, the reading of `crw flow show`,
 //     CRW-1320) is reported to the initiative lead as project_blocked through Reports, the writer `crw flow report-up` works through, once
 //     for the run: the report id comes from the run, so a resume that ends the same way finds the report row and makes no other. A run not
@@ -156,9 +158,9 @@ func (h *RunHook) document() string {
 	return doc
 }
 
-// escalations tells the orchestrator thread about each escalation row of the run that was not told yet.
+// escalations tells the level above the run's project (through the supervisor channel; the orchestrator thread through the fallback)
+// about each escalation row of the run that was not told yet. The escalation_notice row names the thread the notice was addressed to.
 func (h *RunHook) escalations(ctx context.Context, run RunInfo) error {
-	thread := run.Actor
 	var told = map[string]bool{}
 	for _, ev := range h.Journal.Events() {
 		if ev.Kind == engine.KindFlow && ev.Event == KindEscalationNotice {
@@ -189,6 +191,8 @@ func (h *RunHook) escalations(ctx context.Context, run RunInfo) error {
 		}
 		switch res.Class {
 		case "accepted", "queued":
+			// the recipient the channel staged the notice for (CRW-1390), else the orchestrator thread send-parent was given
+			thread := firstText(res.Recipient, run.Actor)
 			if _, _, err := h.Rows.AppendOnce(ctx, NewRow{Kind: KindEscalationNotice, Payload: map[string]any{"escalation_id": id, "result": res.Class, "request_id": res.RequestID, "thread": thread}}, "escalation_id"); err != nil {
 				errs = append(errs, err)
 			}

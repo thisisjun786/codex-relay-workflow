@@ -191,9 +191,9 @@ func TestFlowReportE2EStoreSeatReportIsDelivered(t *testing.T) {
 }
 
 // TestFlowReportE2EDaemonDeathAndResumeNeverWriteTheDeliveryTwice: a daemon that dies after the
-// transport and before its settle commits leaves no delivery row (the send is unknown and is not
-// repeated); a daemon that dies after the settle leaves the one row, and the next daemon and a
-// resume of the run write no second.
+// transport and before its settle commits leaves no delivery row of its own (the send is unknown and
+// is not repeated; the next daemon records it unknown, CRW-1390); a daemon that dies after the settle
+// leaves the one row, and the next daemon and a resume of the run write no second.
 func TestFlowReportE2EDaemonDeathAndResumeNeverWriteTheDeliveryTwice(t *testing.T) {
 	t.Run("before the settle", func(t *testing.T) {
 		w := newMgmtWorld(t)
@@ -216,14 +216,14 @@ func TestFlowReportE2EDaemonDeathAndResumeNeverWriteTheDeliveryTwice(t *testing.
 		if got := f.deliveries(id); got["queued"] != 1 || len(got) != 1 {
 			t.Fatalf("a daemon that died before its settle left the deliveries %v", got)
 		}
-		// the next daemon finds the stranded send once its lease is over: unknown, so not repeated
+		// the next daemon finds the stranded send once its lease is over: unknown, so not repeated, and recorded as unknown (CRW-1390)
 		w.clock.T += 400
 		w.d = daemon.New(w.s, w.a, w.clock, w.c)
 		w.tick(3)
 		f.milestone()
 		w.tick(2)
-		if got := f.deliveries(id); got["queued"] != 1 || len(got) != 1 {
-			t.Fatalf("after the restart and the resume the deliveries are %v, want the one queued", got)
+		if got := f.deliveries(id); got["queued"] != 1 || got["unknown"] != 1 || len(got) != 2 {
+			t.Fatalf("after the restart and the resume the deliveries are %v, want the one queued and the one unknown", got)
 		}
 	})
 	t.Run("after the settle", func(t *testing.T) {

@@ -183,6 +183,8 @@ func (c *command) execute(spec Spec, state string, resume bool, sigs <-chan os.S
 		return exitUnusable
 	}
 	defer lock.Release()
+	// the process lock files of processes of the run that died go (CRW-1390)
+	sweepProcessLocks(state, spec.RunID, process.Token())
 	src, err := spec.Load()
 	if err != nil {
 		return c.fail("the workflow of run %s cannot be loaded: %v", spec.RunID, err)

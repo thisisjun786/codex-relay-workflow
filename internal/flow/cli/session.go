@@ -157,9 +157,16 @@ func bindWarning(res bound.BindResult, err error, thread, run string) string {
 	case err != nil:
 		return fmt.Sprintf("the owner thread %s could not be bound to run %s (%v): the spawn hook gives its spawns no role pair, and a subagent spawned before a dispatched report cannot be found again after a restart", thread, run, err)
 	case res.Holder != "":
-		return fmt.Sprintf("the owner thread %s is bound to run %s, whose process holds its lock: run %s is not bound (one thread binds one live run), so the spawn hook applies run %s's pairs", thread, res.Holder, run, res.Holder)
+		return liveHolderText(thread, res.Holder, run)
 	}
 	return ""
+}
+
+// liveHolderText says that the owner thread is bound to another run that lives as the binding reads it (runLive): its process holds its
+// run lock, or its start holds its start lock (CRW-1390, as the owner_bound fact says), so run is not bound.
+func liveHolderText(thread, holder, run string) string {
+	return fmt.Sprintf("the owner thread %s is bound to run %s, which lives (its process holds its run lock, or its start holds its start lock): "+
+		"run %s is not bound (one thread binds one live run), so the spawn hook applies run %s's pairs", thread, holder, run, holder)
 }
 
 // The preflight facts a session run adds (CRW-1316 §11). Each is pass or warn: a session run starts whatever they read (CRW-1318).

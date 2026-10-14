@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
@@ -25,8 +26,14 @@ import (
 //	report_delivery: the delivery of a report row of the run (its report_id is the subject's rest)
 //	message_delivery: the delivery of any other flow message (an escalation, a completion, a wake)
 //
-// A row is written once for its key: (report_id, result) and (message_id, result). The flow side
-// reads them as it reads the rows a command writes (internal/flow/report).
+// A send whose outcome is unknown (the settle or the recovery of a stranded send moves the message to
+// held_uncertain) is recorded too, as unknown, so the report does not read queued for ever; the
+// verified readback that settles such a send appends accepted (CRW-1390).
+//
+// A row is written once for its key: (report_id, result) and (message_id, result). Its subject (the
+// column and the payload's _label, as a command's row has them) is the message's subject, and its
+// node is the node of the run's row the message is about (an escalation's node; a report row and a
+// wake have none). The flow side reads them as it reads the rows a command writes (internal/flow/report).
 
 // FlowForeignSeqBase is the first sequence number of a row a process that is not the run writes
 // into flow_events (engine.ForeignSeqBase, which the flow report package checks this against).
@@ -38,6 +45,7 @@ const (
 	FlowMessageDeliveryKind = "message_delivery"
 	FlowDeliveryAccepted    = "accepted"
 	FlowDeliveryRefused     = "refused"
+	FlowDeliveryUnknown     = "unknown"
 )
 
 // flowReportKinds are the direct kinds a flow report row goes up as.
@@ -54,11 +62,15 @@ func IsFlowKind(kind string) bool {
 func FlowSubject(run, what string) string { return run + "/" + what }
 
 // flowDeliveryResult is the result a settle records for a flow message, "" when it records none:
-// accepted for a message the host took (dispatched), refused for one the settle holds at a cap.
+// accepted for a message the host took (dispatched), refused for one the settle holds at a cap,
+// unknown for one whose send nobody heard back from (held_uncertain: not repeated, settled only by a
+// verified readback).
 func flowDeliveryResult(state string, hold sql.NullString) string {
 	switch {
 	case state == delivery.Dispatched:
 		return FlowDeliveryAccepted
+	case state == delivery.HeldUncertain:
+		return FlowDeliveryUnknown
 	case hold.Valid && hold.String != "":
 		return FlowDeliveryRefused
 	}
@@ -132,6 +144,10 @@ func (c *Channel) appendFlowDelivery(tx context.Context, row store.SupervisorMes
 	if row.ObligationKind == KindSessionStepWaiting {
 		payload["wake_id"] = what
 	}
+	node, err := c.flowDeliveryNode(tx, row, run, what, kind)
+	if err != nil {
+		return false, "", err
+	}
 	var n int
 	if err := q.QueryRowContext(tx, flowDeliveryHeldQuery, flowDeliveryHeldArgs(run, kind, key, value, d.result)...).Scan(&n); err != nil {
 		return false, "", err
@@ -148,13 +164,36 @@ func (c *Channel) appendFlowDelivery(tx context.Context, row store.SupervisorMes
 		seq = top.Int64 + 1
 	}
 	payload["_kind"] = "flow"
+	payload["_label"] = row.Subject
 	raw, err := json.Marshal(payload)
 	if err != nil {
 		return false, "", err
 	}
 	if _, err := q.ExecContext(tx, "INSERT INTO flow_events (run_id, seq, kind, call_id, node_id, subject, payload_json, recorded_at) VALUES (?,?,?,?,?,?,?,?)",
-		run, seq, kind, "", "", "", string(raw), d.at); err != nil {
+		run, seq, kind, "", node, row.Subject, string(raw), d.at); err != nil {
 		return false, "", err
 	}
 	return true, "", nil
+}
+
+// flowDeliveryNode is the node of the run's row a flow message is about: the report row of a report's
+// delivery, the escalation row of an escalation (its logical id is esc-<escalation id>), "" for any
+// other message (a completion, a wake) and for a row that names none.
+func (c *Channel) flowDeliveryNode(tx context.Context, row store.SupervisorMessagesRow, run, what, deliveryKind string) (string, error) {
+	kind, key, value := "", "", ""
+	switch {
+	case deliveryKind == FlowReportDeliveryKind:
+		kind, key, value = "report", "report_id", what
+	case row.ObligationKind == KindFlowEscalation && strings.HasPrefix(what, "esc-"):
+		kind, key, value = "escalation", "escalation_id", strings.TrimPrefix(what, "esc-")
+	default:
+		return "", nil
+	}
+	var node sql.NullString
+	err := c.Store.Q(tx).QueryRowContext(tx, "SELECT node_id FROM flow_events WHERE run_id = ? AND kind = ? AND json_extract(payload_json, '$.'||?) = ? ORDER BY seq LIMIT 1",
+		run, kind, key, value).Scan(&node)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return node.String, err
 }

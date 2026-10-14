@@ -26,8 +26,18 @@ rather than one tied to a single initiative's execution. `crw manage supervisor 
 its own management seat instead and lays down a store seat it held; the store seat is then read through that management seat.
 A parent that binds a child itself (`linkage-bind --role parent --scope <project> --task <owner> --host ...
 --creator <its own thread>`, the creator by default `CODEX_THREAD_ID`) records the management -> project edge in the same
-transaction, and the project's upward messages and `crw flow report-up` reports then go to that parent; a project an initiative's
-supervisor already supervises keeps that supervisor, and the answer says so under `managementLinkSkipped`.
+transaction, and the project's upward messages and `crw flow report-up` reports then go to that parent; a project a supervisor at
+an initiative's scope already supervises keeps that supervisor, and the answer says so under `managementLinkSkipped`.
+
+A second parent is warned and recorded, never refused. A project (or an initiative) has one upward execution edge, so when a
+second parent's thread binds a child, or registers a supervisor at an initiative's scope, whose project or initiative already has
+the edge of another parent's management seat above it, the binding is written or stands and the command exits 0, no second edge
+is written and the standing edge stays: the answer carries `managementLinkSkipped` (`reason` `link_conflict`, `detail`, the
+`standing` link id, the creator's seat and the creator) and one `management_link_skipped` journal row records it (CRW-1361). The
+first parent stays the recipient of the project's messages and the answerer of its decisions; the second takes the project only by
+the handover of the seat above it (`linkage-handover --role supervisor --scope-kind management ...`, the parent's procedure in
+[crw-run](../SKILL.md#hold-the-seat-bind-the-children-hand-the-seat-over)). A second child of the same project is another matter:
+one live owner per scope and role is the store's own invariant, refused `duplicate_scope_owner`.
 
 Keep four facts apart, because they are separate. This repository's source implements those commands and its tests pin them; an
 installed runtime may be older than that source; a task may or may not be currently registered for a scope; and an actual

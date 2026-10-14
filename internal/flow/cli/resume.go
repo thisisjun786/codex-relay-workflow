@@ -62,6 +62,7 @@ func (c *command) resume(args []string) int {
 			return c.fail("%v", err)
 		}
 		defer lock.Release()
+		sweepProcessLocks(sel.Path, run, process.Token())
 		if ctl == nil {
 			ctl = &deadlineControl{Control: &engine.Control{}}
 		}
