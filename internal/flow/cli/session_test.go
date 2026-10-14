@@ -42,6 +42,9 @@ func decodeNext(t *testing.T, out string) NextAnswer {
 }
 
 func TestNextHandsOutTheStepsOfTheBus(t *testing.T) {
+	// the owner's binding is a file of the home's flow-bound directory, which the test package's home keeps across runs: a home of
+	// the test's own starts without it, so every run (-count>1 too) checks the warning of a missing binding (CRW-1392)
+	t.Setenv("HOME", t.TempDir())
 	w := newWorld(t)
 	td := w.deps()
 	run := "run-0123456789ab"
