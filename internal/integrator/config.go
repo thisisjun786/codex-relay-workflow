@@ -55,12 +55,24 @@ type Config struct {
 
 	// IntervalSeconds is the pause between passes of watch (default 60).
 	IntervalSeconds int `json:"interval_seconds"`
+
+	// PullRequestRepo is the repository ("owner/name") whose pull requests the queue lands (PR-unit landing, CRW-1355): a pending
+	// file pr-<N> is pull request N of it, read through the tracking adapter. Empty: the queue lands no pull request.
+	PullRequestRepo string `json:"pull_request_repo"`
+	// ReviewCommand is the repository's independent review of a pull request's merged tree, run in the worktree after the
+	// verification passed and before dev moves: argv with {pr}, {pr_number}, {head}, {merged}, {base}, {verdict}, {worktree} and
+	// {record} replaced, and CRW_REVIEW_PR, CRW_REVIEW_HEAD, CRW_REVIEW_MERGED, CRW_REVIEW_BASE, CRW_REVIEW_VERDICT and
+	// CRW_VERIFY_RECORD in its environment. It writes its verdict file ({"verdict": "accept"|"needs_changes"}, at the top or
+	// under structured_output); needs_changes refuses the merge. Empty: the queue warns, records "review not configured" and
+	// lands on the verification-record alone.
+	ReviewCommand []string `json:"review_command"`
 }
 
 var (
 	keyPrefixRE = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9]*$`)
 	tagPrefixRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 	refNameRE   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
+	repoRE      = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
 )
 
 // Resolved is c with the defaults filled and every field checked, or the first problem found.
@@ -125,6 +137,12 @@ func (c Config) Resolved() (Config, error) {
 		if filepath.IsAbs(p.value) || p.value != filepath.ToSlash(filepath.Clean(p.value)) || strings.HasPrefix(p.value, "..") {
 			problems = append(problems, p.name+" must be a clean path relative to the repository")
 		}
+	}
+	if c.PullRequestRepo != "" && !repoRE.MatchString(c.PullRequestRepo) {
+		problems = append(problems, "pull_request_repo must be owner/name")
+	}
+	if c.ReviewCommand != nil && (len(c.ReviewCommand) == 0 || c.ReviewCommand[0] == "") {
+		problems = append(problems, "review_command must name a program")
 	}
 	if c.IntervalSeconds < 1 {
 		problems = append(problems, "interval_seconds must be positive")

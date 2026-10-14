@@ -10,20 +10,25 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/integrator"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tracking"
 )
 
 // crw manage integrate: the plain-head integration queue (internal/integrator). One pass takes
 // the integration lock, re-checks the gate of every pending head, merges the passing heads onto
-// the remote integration branch, verifies the merged tree and pushes it fast-forward only.
+// the remote integration branch, verifies the merged tree and pushes it fast-forward only. A
+// pending pull request of the configured pull_request_repo (--enqueue-pr) is landed alone: merged,
+// verified, reviewed by the configured review command, and pushed only when the review did not ask
+// for changes (CRW-1355).
 
-const integrateUsage = "usage: crw manage integrate [--dry-run [--with-gate]] [--watch [--interval <duration>]]"
+const integrateUsage = "usage: crw manage integrate [--dry-run [--with-gate]] [--watch [--interval <duration>]] [--enqueue-pr OWNER/NAME#N]"
 
 // integrateFlags is the parsed command line.
 type integrateFlags struct {
-	dryRun   bool
-	withGate bool
-	watch    bool
-	interval time.Duration
+	dryRun    bool
+	withGate  bool
+	watch     bool
+	interval  time.Duration
+	enqueuePR string
 }
 
 func integrateParse(args []string) (integrateFlags, string) {
@@ -36,6 +41,19 @@ func integrateParse(args []string) (integrateFlags, string) {
 			f.withGate = true
 		case a == "--watch":
 			f.watch = true
+		case a == "--enqueue-pr" || strings.HasPrefix(a, "--enqueue-pr="):
+			v := strings.TrimPrefix(a, "--enqueue-pr=")
+			if a == "--enqueue-pr" {
+				if i+1 >= len(args) {
+					return f, "argument --enqueue-pr: expected one argument"
+				}
+				i++
+				v = args[i]
+			}
+			if v == "" {
+				return f, "argument --enqueue-pr: expected OWNER/NAME#N"
+			}
+			f.enqueuePR = v
 		case a == "--interval" || strings.HasPrefix(a, "--interval="):
 			v := strings.TrimPrefix(a, "--interval=")
 			if a == "--interval" {
@@ -55,6 +73,8 @@ func integrateParse(args []string) (integrateFlags, string) {
 		}
 	}
 	switch {
+	case f.enqueuePR != "" && (f.dryRun || f.watch):
+		return f, "--enqueue-pr puts one pull request into the queue and cannot be combined with --dry-run or --watch"
 	case f.dryRun && f.watch:
 		return f, "--dry-run reads once and cannot be combined with --watch"
 	case f.withGate && !f.dryRun:
@@ -97,9 +117,16 @@ func init() { Register(integrateCommand) }
 // integrateRunner is the runner the command builds; a test replaces it to drive the seams.
 var integrateRunner = integrator.NewRunner
 
+// integratePullRequests makes the tracking adapter the queue reads its pull requests through (the configured pull_request_repo);
+// a test replaces it with one over a fake GitHub.
+var integratePullRequests = func(repo string) (integrator.PullRequestSource, error) {
+	return tracking.NewGitHub(repo, tracking.DefaultTokenSource())
+}
+
 // integrateRun is crw manage integrate. The status of a pass is the integration run's own: 0
 // pushed or nothing to do, 2 usage, configuration, fetch or lock, 3 verification failed, 4 dev
-// moved or the push failed, 5 nothing merged. Watch ends 0 at the stop file.
+// moved or the push failed, 5 nothing merged, 6 the review of a pull request asked for changes.
+// Watch ends 0 at the stop file. --enqueue-pr is 0 enqueued, 2 refused (nothing written).
 func integrateRun(ctx context.Context, e *Env, args []string) int {
 	for _, a := range args {
 		if a == "-h" || a == "--help" {
@@ -133,6 +160,14 @@ func integrateRun(ctx context.Context, e *Env, args []string) int {
 	if e.Now != nil {
 		runner.Now = e.Now
 	}
+	if cfg.PullRequestRepo != "" {
+		prs, err := integratePullRequests(cfg.PullRequestRepo)
+		if err != nil {
+			fmt.Fprintf(e.Stderr, "crw manage integrate: error: pull_request_repo: %v\n", err)
+			return usageExit
+		}
+		runner.PullRequests = prs
+	}
 	emit := func(v any) int {
 		data, err := json.Marshal(v)
 		if err == nil {
@@ -145,6 +180,13 @@ func integrateRun(ctx context.Context, e *Env, args []string) int {
 		return 0
 	}
 	switch {
+	case flags.enqueuePR != "":
+		entry, err := runner.EnqueuePR(ctx, flags.enqueuePR)
+		if err != nil {
+			fmt.Fprintf(e.Stderr, "crw manage integrate: error: --enqueue-pr %s: %v\n", flags.enqueuePR, err)
+			return usageExit
+		}
+		return emit(map[string]any{"enqueued": entry})
 	case flags.dryRun:
 		rep, err := runner.DryRun(ctx, flags.withGate)
 		if err != nil {

@@ -9,6 +9,12 @@
 // re-deriving that line), runs the verification command on the merged tree and pushes it
 // fast-forward only. It never forces a push and never touches the relay.
 //
+// A pull request is the other kind of pending entry (PR-unit landing, CRW-1355): a file pr-<N> holds the head of pull request N
+// of the configured repository, put there by EnqueuePR. A pass lands one pull request alone, before the issue heads: it reads
+// the pull request (open, toward the branch, still at that head), merges its head, verifies the merged tree, runs the configured
+// review command and moves the branch only on a verification that passed and a review that did not ask for changes. The
+// landing is recorded against the pull request in <tag>.pr.json and as a comment on it.
+//
 // Every host path and command comes from the configuration (Config); the package fixes no
 // path of its own. The shell scripts stay the live runner until an explicit post-cutover
 // switch; this package only reads their queue directories and lock.
@@ -26,4 +32,6 @@ const (
 	ExitMoved = 4
 	// ExitNothingMerged means no head could be merged.
 	ExitNothingMerged = 5
+	// ExitReviewRefused means the review of a pull request's merged tree asked for changes; nothing was pushed.
+	ExitReviewRefused = 6
 )

@@ -4,6 +4,7 @@ import (
 	"crypto/sha1" //nolint:gosec // names a retry marker, as the shell runner's sha1sum did
 	"encoding/hex"
 	"errors"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -27,17 +28,22 @@ const (
 
 var (
 	headRE      = regexp.MustCompile(`^[0-9a-f]{40}$`)
-	queueNameRE = regexp.MustCompile(`^[0-9]{1,18}$`)
+	queueNameRE = regexp.MustCompile(`^(?:` + prPrefix + `)?[0-9]{1,18}$`)
 )
 
-// Entry is one pending file: the issue number it is named after and the head it holds.
+// prPrefix starts the queue name of a pull request entry: pr-<N> is pull request N of the configured repository.
+const prPrefix = "pr-"
+
+// Entry is one pending file: the issue number (or pull request number) it is named after and the head it holds.
 type Entry struct {
 	Name   string `json:"name"`
 	Key    string `json:"key"`
 	Node   string `json:"node"`
 	Head   string `json:"head"`
 	HeadOK bool   `json:"head_ok"`
-	num    uint64
+	// PR is the pull request number of a pr-<N> entry, 0 for an issue head.
+	PR  int `json:"pr,omitempty"`
+	num uint64
 }
 
 // Spec is the "node=head" argument of the integration run.
@@ -81,8 +87,11 @@ func (r *Runner) listPending() (entries []Entry, ignored []string, err error) {
 	}
 	for _, de := range des {
 		name := de.Name()
-		num, perr := strconv.ParseUint(name, 10, 64)
-		if !queueNameRE.MatchString(name) || perr != nil || !de.Type().IsRegular() {
+		num, perr := strconv.ParseUint(strings.TrimPrefix(name, prPrefix), 10, 64)
+		// a pr-<N> file is a pull request only for a queue that lands the pull requests of a repository; otherwise it is not an
+		// entry, as before PR-unit landing
+		isPR := strings.HasPrefix(name, prPrefix)
+		if !queueNameRE.MatchString(name) || perr != nil || !de.Type().IsRegular() || (isPR && (num == 0 || num > maxPRNumber || r.Cfg.PullRequestRepo == "")) {
 			ignored = append(ignored, name)
 			continue
 		}
@@ -91,7 +100,11 @@ func (r *Runner) listPending() (entries []Entry, ignored []string, err error) {
 			ignored = append(ignored, name)
 			continue
 		}
-		entries = append(entries, Entry{Name: name, Key: r.Cfg.key(name), Node: r.Cfg.node(name), Head: head, HeadOK: headRE.MatchString(head), num: num})
+		e := Entry{Name: name, Key: r.keyOf(name), Node: r.Cfg.node(name), Head: head, HeadOK: headRE.MatchString(head), num: num}
+		if isPR {
+			e.Node, e.PR = name, int(num)
+		}
+		entries = append(entries, e)
 	}
 	sort.SliceStable(entries, func(i, j int) bool {
 		if entries[i].num != entries[j].num {
@@ -115,6 +128,9 @@ func (r *Runner) listPending() (entries []Entry, ignored []string, err error) {
 // wins), and only a file that held the processed head replaces the destination. A file that can
 // be neither moved on nor put back stays under its private name (restoreClaim), and the next
 // pass puts it back first (recoverClaims).
+//
+// A pull request entry that moves to done/ is named by its number and its head (doneName): a done/ entry stands for that head
+// only, so a later head of the same pull request is a new entry.
 func (r *Runner) moveEntry(e Entry, to string) bool {
 	src := r.qpath(dirPending, e.Name)
 	if now, err := readHead(src); err != nil || now != e.Head {
@@ -139,7 +155,11 @@ func (r *Runner) moveEntry(e Entry, to string) bool {
 		r.restoreClaim(claim, e.Name)
 		return false
 	}
-	if err := os.Rename(claim, r.qpath(to, e.Name)); err != nil {
+	dest := e.Name
+	if to == dirDone {
+		dest = doneName(e)
+	}
+	if err := os.Rename(claim, r.qpath(to, dest)); err != nil {
 		r.logf("%s: move to %s: %v", e.Key, to, err)
 		r.restoreClaim(claim, e.Name)
 		return false
@@ -147,11 +167,54 @@ func (r *Runner) moveEntry(e Entry, to string) bool {
 	return true
 }
 
+// doneName is the name of an entry in done/: the queue name, and for a pull request also its head (pr-<N>-<head>).
+func doneName(e Entry) string {
+	if e.PR > 0 && e.HeadOK {
+		return e.Name + "-" + e.Head
+	}
+	return e.Name
+}
+
+// writePending writes head as pending/<name>: beside the queue first and renamed in, so a pass never reads half a file.
+func (r *Runner) writePending(name, head string) error {
+	tmp, err := os.CreateTemp(r.Cfg.QueueDir, ".enqueue-"+name+"-")
+	if err != nil {
+		return err
+	}
+	_, werr := io.WriteString(tmp, head+"\n")
+	cerr := tmp.Close()
+	if werr == nil {
+		werr = cerr
+	}
+	if werr == nil {
+		werr = os.Rename(tmp.Name(), r.qpath(dirPending, name))
+	}
+	if werr != nil {
+		_ = os.Remove(tmp.Name())
+	}
+	return werr
+}
+
 // claimPrefix starts the private name a pending file has while moveEntry moves it; the name
 // goes on with the queue name and the mover's pid.
 const claimPrefix = ".moving-"
 
-var claimNameRE = regexp.MustCompile(`^\.moving-([0-9]{1,18})-[0-9]+$`)
+var claimNameRE = regexp.MustCompile(`^\.moving-((?:` + prPrefix + `)?[0-9]{1,18})-[0-9]+$`)
+
+// maxPRNumber bounds the number of a pr-<N> entry so it is an int everywhere.
+const maxPRNumber = 1<<31 - 1
+
+// keyOf is the key a queue name is logged under: the issue key, or the pull request's ref ("owner/name#N", "pr-N" when no
+// repository is configured).
+func (r *Runner) keyOf(name string) string {
+	if n, ok := strings.CutPrefix(name, prPrefix); ok {
+		if r.Cfg.PullRequestRepo != "" {
+			return r.Cfg.PullRequestRepo + "#" + n
+		}
+		return name
+	}
+	return r.Cfg.key(name)
+}
 
 // claimDirs are the directories moveEntry moves into, where a claim can be left.
 var claimDirs = []string{dirDone, dirConflict, dirBlocked}
@@ -174,13 +237,13 @@ func (r *Runner) restoreClaim(claim, name string) bool {
 	switch {
 	case err == nil:
 	case errors.Is(err, fs.ErrExist) && isRegularHead(src):
-		r.logf("%s: %s not put back, a newer file in pending wins", r.Cfg.key(name), filepath.Base(claim))
+		r.logf("%s: %s not put back, a newer file in pending wins", r.keyOf(name), filepath.Base(claim))
 	default:
-		r.logf("%s: could not be put back into pending (%v): kept as %s, the next pass puts it back", r.Cfg.key(name), err, claim)
+		r.logf("%s: could not be put back into pending (%v): kept as %s, the next pass puts it back", r.keyOf(name), err, claim)
 		return false
 	}
 	if err := os.Remove(claim); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		r.logf("%s: remove %s: %v", r.Cfg.key(name), claim, err)
+		r.logf("%s: remove %s: %v", r.keyOf(name), claim, err)
 		return false
 	}
 	return true
@@ -223,7 +286,7 @@ type claimFile struct {
 func (r *Runner) recoverClaims() {
 	for _, c := range r.listClaims() {
 		if r.restoreClaim(c.Path, c.Name) {
-			r.logf("%s: %s put back into pending", r.Cfg.key(c.Name), c.Path)
+			r.logf("%s: %s put back into pending", r.keyOf(c.Name), c.Path)
 		}
 	}
 }

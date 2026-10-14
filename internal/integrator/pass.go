@@ -8,12 +8,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/tracking"
 )
 
 // Report is what one pass reports.
 type Report struct {
 	// Result is idle, stopped, locked, nothing-to-integrate, error, or the run's own result
-	// (pushed, nothing-merged, verification-failed(rc=N), dev-moved:<sha>, push-failed).
+	// (pushed, nothing-merged, verification-failed(rc=N), dev-moved:<sha>, push-failed; for a pull request also
+	// review-needs-changes, head-moved:<sha> and pull-request-changed).
 	Result  string   `json:"result"`
 	Exit    int      `json:"exit"`
 	Error   string   `json:"error,omitempty"`
@@ -23,6 +26,10 @@ type Report struct {
 	Ignored []string `json:"ignored,omitempty"`
 	// Retry describes the retry step the pass took after a failed verification.
 	Retry string `json:"retry,omitempty"`
+	// Held are the pending pull requests this pass could not read, as "<name>: <why>"; they stay pending.
+	Held []string `json:"held,omitempty"`
+	// Landing is the record of a pull request's run (CRW-1355), nil for a run of issue heads.
+	Landing *Landing `json:"pull_request_landing,omitempty"`
 }
 
 // Pass runs one pass of the queue: the shell runner's loop body. A stop file ends it before it
@@ -61,6 +68,44 @@ func (r *Runner) Pass(ctx context.Context) Report {
 		rep.Result, rep.Exit = "idle", ExitPushed
 		return rep
 	}
+	// A pending pull request is landed alone, before the issue heads (CRW-1355): one pull request per pass, the lowest number first.
+	var prs, heads []Entry
+	for _, e := range entries {
+		if e.PR > 0 {
+			prs = append(prs, e)
+		} else {
+			heads = append(heads, e)
+		}
+	}
+	for _, e := range prs {
+		// a head of the pull request that already landed (done/ or its landing record) is done again, with no second record
+		if why := r.landedBefore(e); why != "" {
+			r.logf("%s %s: %s", e.Key, e.Head, why)
+			rep.moved(r, e, dirDone, why)
+			continue
+		}
+		pr, held := r.checkPR(ctx, e, &rep)
+		if ctx.Err() != nil {
+			return r.cancelled(ctx, rep)
+		}
+		if held != "" {
+			// not a verdict on the pull request: it waits in pending, and the queue goes on without it
+			rep.Held = append(rep.Held, e.Name+": "+held)
+			continue
+		}
+		if pr != nil {
+			return r.run(ctx, rep, []Entry{e}, pr)
+		}
+	}
+	if len(prs) > 0 && len(heads) == 0 {
+		if len(rep.Held) > 0 {
+			rep.Result, rep.Exit, rep.Error = "error", ExitUsage, strings.Join(rep.Held, "; ")
+		} else {
+			rep.Result, rep.Exit = "nothing-to-integrate", ExitNothingMerged
+		}
+		return rep
+	}
+	entries = heads
 	solo := len(r.soloPrune(entries)) > 0
 	var batch []Entry
 	for _, e := range entries {
@@ -102,7 +147,11 @@ func (r *Runner) Pass(ctx context.Context) Report {
 		rep.Result, rep.Exit = "nothing-to-integrate", ExitNothingMerged
 		return rep
 	}
+	return r.run(ctx, rep, batch, nil)
+}
 
+// run is one integration run of the batch (or of one pull request's head, with pr) and what the pass does with its result.
+func (r *Runner) run(ctx context.Context, rep Report, batch []Entry, pr *tracking.PullRequest) Report {
 	tag, err := r.reserveTag()
 	if err != nil {
 		r.logf("run tag: %v", err)
@@ -114,7 +163,7 @@ func (r *Runner) Pass(ctx context.Context) Report {
 		specs[i] = e.Spec()
 	}
 	r.logf("%s start %s", tag, strings.Join(specs, " "))
-	out := r.integrate(ctx, tag, batch)
+	out := r.integrate(ctx, tag, batch, pr)
 	if out.Err != nil {
 		if ctx.Err() != nil {
 			return r.cancelled(ctx, rep)
@@ -126,6 +175,30 @@ func (r *Runner) Pass(ctx context.Context) Report {
 	rep.Summary, rep.Exit, rep.Result = out.Summary, out.Exit, out.Summary.Result
 	data, _ := jsonLine(out.Summary)
 	r.logf("%s rc=%d %s", tag, out.Exit, data)
+	if pr != nil {
+		if out.Exit == ExitNothingMerged && len(out.left) == 1 && out.left[0].Reason == reasonAlreadyInDev {
+			// the head reached the branch between the pass's check and its run: recorded once, after the fact
+			l, err := r.recoverLanding(ctx, tag, batch[0], *pr)
+			if err != nil {
+				r.logf("%s: %v", pr.Ref, err)
+			}
+			rep.Landing = l
+		} else {
+			rep.Landing = r.recordLanding(ctx, *pr, out)
+		}
+		if out.headMoved != "" {
+			r.retarget(batch[0], out.headMoved)
+		}
+	}
+	if out.Exit == ExitReviewRefused {
+		reason := "review needs_changes"
+		if out.review != nil {
+			reason += ": " + out.review.VerdictFile
+		}
+		for _, e := range out.merged {
+			rep.moved(r, e, dirBlocked, reason)
+		}
+	}
 
 	if out.Exit == ExitPushed || out.Exit == ExitNothingMerged {
 		if out.Exit == ExitPushed {
@@ -147,8 +220,23 @@ func (r *Runner) Pass(ctx context.Context) Report {
 	return rep
 }
 
+// retarget puts the pull request's new head in place of the head the run merged, in pending/<name>, so the next pass verifies and
+// reviews the new head. A pending file that no longer holds the run's head (the project session enqueued again meanwhile) is
+// left as it is.
+func (r *Runner) retarget(e Entry, head string) {
+	if now, err := readHead(r.qpath(dirPending, e.Name)); err != nil || now != e.Head {
+		r.logf("%s %s changed or went away during the run: left as it is", e.Key, e.Head)
+		return
+	}
+	if err := r.writePending(e.Name, head); err != nil {
+		r.logf("%s: the new head %s could not be written to pending: %v", e.Key, head, err)
+		return
+	}
+	r.logf("%s %s: the pull request's head moved during the run; pending now holds %s", e.Key, e.Head, head)
+}
+
 // runFileExts are the files a run leaves in runs_dir under its tag.
-var runFileExts = []string{".log", ".out", ".summary.json", ".verify.log", ".json"}
+var runFileExts = []string{".log", ".out", ".summary.json", ".verify.log", ".json", ".review.log", ".review.json", ".pr.json"}
 
 // reserveTag picks the tag of the next run, tag_prefix plus the month, day and time, and
 // reserves it by creating its log exclusively. A tag an earlier run already used (two passes in

@@ -4,7 +4,9 @@
 // An issue or milestone is named "<tracking repo>#N", for example "thisisjun786/crw-work#49" (Ref).
 // A Tracker reads a milestone with its issues, reads an issue with its labels, state, sub-issues
 // and the "Blocked by:" lines of its body, writes a comment whose first line is the caller's
-// "[layer · session]" header, closes an issue as completed or not planned, and adds a label.
+// "[layer · session]" header, closes an issue as completed or not planned, and adds a label. Its pull request side
+// (PullRequests) opens a pull request from a milestone integration branch naming the issues it carries, and reads a pull
+// request's state and the checks of its head.
 //
 // The adapter has no opinion on who may write: the caller decides that only the owning session
 // writes and an executor does not. It holds no caller, no relay, flow or manage state and imports

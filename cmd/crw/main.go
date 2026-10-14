@@ -19,6 +19,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/journal"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/lint"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/planinput"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/pullrequest"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/shadow"
 	"github.com/thisisjun786/codex-relay-workflow/internal/gui"
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
@@ -245,6 +246,11 @@ func modes() []mode {
 			if planinput.Handles(c.args) {
 				return planinput.RunCLI(c.ctx, c.args, c.stdout, c.stderr)
 			}
+			// pr opens the milestone branch's pull request toward dev and reads it back, through the tracking adapter
+			// (internal/flow/pullrequest); the dev merge is the dev queue's (crw manage integrate).
+			if pullrequest.Handles(c.args) {
+				return pullrequest.RunCLI(c.ctx, c.args, c.stdout, c.stderr)
+			}
 			// No command, or one no table serves: the usage of every flow command and the whole choice (CRW-1323 item 31).
 			if len(c.args) == 0 || (!isHelpWord(c.args[0]) && !slices.Contains(flowCommandWords(), c.args[0])) {
 				printFlowUsage(c.stderr)
@@ -270,11 +276,11 @@ func modes() []mode {
 func isHelpWord(word string) bool { return word == "help" || word == "-h" || word == "--help" }
 
 // flowCommandWords are the first words `crw flow` dispatches, in the order its usage prints them: the engine's and lint, the
-// run surface of internal/flow/cli, the trace commands of internal/flow/shadow and plan-input (internal/flow/planinput). The run
-// process's own entry is left out.
+// run surface of internal/flow/cli, the trace commands of internal/flow/shadow, plan-input (internal/flow/planinput) and pr
+// (internal/flow/pullrequest). The run process's own entry is left out.
 func flowCommandWords() []string {
 	words := append(slices.Clone(engine.Commands), lint.Command)
-	for _, word := range append(append(flowcli.Words(), shadow.Commands...), planinput.Command) {
+	for _, word := range append(append(flowcli.Words(), shadow.Commands...), planinput.Command, pullrequest.Command) {
 		if !slices.Contains(words, word) {
 			words = append(words, word)
 		}
@@ -286,6 +292,7 @@ func flowCommandWords() []string {
 func printFlowUsage(w io.Writer) {
 	engine.PrintUsage(w)
 	fmt.Fprintln(w, planinput.Usage)
+	fmt.Fprintln(w, pullrequest.Usage)
 	fmt.Fprintln(w, shadow.Usage)
 	fmt.Fprintln(w, flowcli.Usage)
 }

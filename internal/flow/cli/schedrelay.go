@@ -108,7 +108,8 @@ func (r *SchedRelay) project(plan string) (compile.Project, error) {
 }
 
 // target is where the plan's nodes integrate: the local checkout and the branch the handoff's target names. The agent path integrates
-// locally (the pull request landing of an agent node is CRW-1226's), so a target that is not a local checkout is refused.
+// locally (a milestone's pull request is opened from that branch by the project session, crw flow pr, and merged by the dev queue), so a
+// target that is not a local checkout is refused.
 func (r *SchedRelay) target(plan string) (checkout, ref string, err error) {
 	p, err := r.project(plan)
 	if err != nil {
@@ -118,7 +119,7 @@ func (r *SchedRelay) target(plan string) (checkout, ref string, err error) {
 		return "", "", fmt.Errorf("the project %s of the run's handoff names no target {repository, base_ref}: the run integrates its nodes there", p.Key)
 	}
 	if !filepath.IsAbs(p.Target.Repository) {
-		return "", "", fmt.Errorf("the target repository %q of project %s is not a local checkout: an agent node integrates on a local branch (its pull request landing is CRW-1226's)", p.Target.Repository, p.Key)
+		return "", "", fmt.Errorf("the target repository %q of project %s is not a local checkout: an agent node integrates on a local branch (a milestone's pull request is opened from that branch with crw flow pr)", p.Target.Repository, p.Key)
 	}
 	if r.Repo != "" && !sameDirectory(r.Repo, p.Target.Repository) {
 		return "", "", fmt.Errorf("the target repository %s of project %s is not the repository %s the run's worktrees are made from: the relay reads a node's commits in the target (start the run with --repo %s)", p.Target.Repository, p.Key, r.Repo, p.Target.Repository)

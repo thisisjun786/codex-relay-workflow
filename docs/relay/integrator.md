@@ -3,21 +3,23 @@
 Here the parent (relay role `parent`) is a relay role, read through [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
 
 `crw manage integrate` is the product form of the shell queue runner that merges gated heads onto `dev`. It covers the
-plain-head path only: the queue holds a commit per issue, and the runner merges, verifies and pushes. It reads and writes no relay
+plain-head path, where the queue holds a commit per issue and the runner merges, verifies and pushes, and the pull request of a
+milestone ([Pull requests](#pull-requests-pr-unit-landing)). It reads and writes no relay
 record. A node's `merged` mark, the reach observation and the relationship and child clean-up still belong to the parent that owns the
 node (see [DAG scheduler](dag-scheduler.md), "Commit acceptance and local integration"); the queue does not replace them and does not decide
 who may integrate. Code: `internal/integrator` (the logic) and `internal/manage/integrate.go` (the command).
 
 ## The queue
 
-One directory, `queue_dir`, with one file per issue number in `pending/`. The file holds the full 40-hex head (spaces and newlines are
-ignored). A pass moves a file out of `pending/` only after acting on it:
+One directory, `queue_dir`, with one file per issue number in `pending/`, and, in a queue whose integrate section names
+`pull_request_repo`, one file `pr-<N>` per pull request N of that repository ([Pull requests](#pull-requests-pr-unit-landing)). The file
+holds the full 40-hex head (spaces and newlines are ignored). A pass moves a file out of `pending/` only after acting on it:
 
 | Directory | Why a file is there |
 |---|---|
-| `done/` | the head is merged and pushed, or it is already in the branch |
-| `conflict/` | the head conflicts with the branch, is not in the checkout, or could not be merged; its owner refreshes it |
-| `blocked/` | the gate is not `PASS`, the file does not hold a 40-hex head, or the head failed verification alone twice |
+| `done/` | the head is merged and pushed, or it is already in the branch; for a pull request also merged on GitHub. A pull request's entry is `done/pr-<N>-<head>`, one per head that landed, so a later head of the same pull request is a new entry |
+| `conflict/` | the head conflicts with the branch, is not in the checkout, or could not be merged; its owner refreshes it. A pull request that is closed, or whose head moved after the enqueue and before the pass, is here too (enqueue it again) |
+| `blocked/` | the gate is not `PASS`, the file does not hold a 40-hex head, or the head failed verification alone twice; a pull request also when its review says `needs_changes` (the reason names the verdict file), when it goes to another branch, or when its head branch is in another repository or in one GitHub no longer names (a deleted fork) |
 | `retried/` | retry markers: `batch-<16 hex>` for a batch retried once, `<number>` holding the head retried once alone |
 | `stop` | a file that ends `--watch` (and refuses a pass) |
 | `solo-heads` | the heads (`node=head`, one per line) of a failed batch that have not yet had a run of their own; the file ends when none is pending any more |
@@ -29,8 +31,9 @@ run worked on. A coordinator should replace a pending file atomically (write a n
 place after the move can still be missed. A file that can be neither moved on nor put back (the move to its destination and the link back
 into `pending/` both fail) is never removed: it stays under its private name `.moving-<name>-<pid>` in the destination directory, the log
 names it, `--dry-run` lists it as a claim, and the next pass puts it back into `pending/` under the lock before it reads the queue (a file
-written to `pending/<name>` since wins and the claim goes). A name that is not an issue number, a
-directory and a link are not entries; they are reported as ignored.
+written to `pending/<name>` since wins and the claim goes). A name that is neither an issue number nor, with `pull_request_repo` set,
+`pr-<N>`, a directory and a link are not entries; they are reported as ignored. A pull request entry whose head moved during the
+verification or the review stays in `pending/` with the new head (`head-moved:<sha>`, below), and the next pass verifies and reviews it.
 
 ## One pass
 
@@ -86,8 +89,9 @@ Run files, in `runs_dir`: `<tag>.log`, `<tag>.out` and `<tag>.summary.json` (`ta
 | 0 | `pushed`, `idle`, `stopped` | the merged heads were pushed, or there was nothing to do |
 | 2 | `locked`, `error`, `cancelled` | usage, configuration, fetch or lock failure, a gate that could not run, the worktree already exists, a re-derived version line that could not be committed, a worktree not clean before the verification, or a termination signal; no head was judged by it |
 | 3 | `verification-failed(rc=N)` | the merged tree failed verification; nothing was pushed |
-| 4 | `dev-moved:<sha>`, `push-failed` | the branch moved during the run or the push was refused; nothing was pushed |
+| 4 | `dev-moved:<sha>`, `push-failed`, `head-moved:<sha>`, `pull-request-changed` | the branch moved during the run or the push was refused; for a pull request, its head moved, or it was closed, retargeted or could not be read again, between the merge and the move of the branch; nothing was pushed and the entry stays pending |
 | 5 | `nothing-merged`, `nothing-to-integrate` | no head could be merged, or no head passed the gate |
+| 6 | `review-needs-changes` | the review of a pull request's merged tree asked for changes; nothing was pushed |
 
 ### Retry after a failed verification
 
@@ -96,15 +100,72 @@ heads runs alone, and batching resumes when none of them is pending with that he
 or its owner refreshed or removed the file). A head that fails alone is retried once with the same head, then blocked; its retry does not
 use up the run another member is owed. A new head under the same issue number starts again.
 
+## Pull requests (PR-unit landing)
+
+A project session (relay role `parent`) lands its milestone through one pull request. The plan's target `base_ref` is the milestone integration branch, so
+`crw.integrate` lands each node there exactly as it lands one on `dev` (merge commit, verification of the merged tree, compare-and-swap
+of the branch). The project session then opens one pull request from that branch toward `dev`, naming the issues it carries
+(`crw flow pr open`, which pushes the branch first), and puts it into this queue with `crw manage integrate --enqueue-pr OWNER/NAME#N`.
+Nobody merges the pull request on GitHub: the queue does, and the pull request is the place of its record and its review. The gate is
+the verification-record of the merged tree; the review is a step of the queue the repository configures.
+
+- `--enqueue-pr` reads the pull request through the tracking adapter of `pull_request_repo` and writes its head to `pending/pr-<N>`
+  (written beside the queue and renamed in, replacing an earlier head of the same pull request). A pull request of another repository,
+  one that is closed or merged, one toward another branch than `branch`, one whose head branch is in another repository (a fork), or
+  one that names no head commit is refused and nothing is written. A queue without `pull_request_repo` takes no `pr-<N>` file: it is reported as ignored, as before.
+- A pull request entry is keyed by its number and its head. A head that already landed (`done/pr-<N>-<head>`, or a landing record of that
+  number and head that moved the branch) is refused by `--enqueue-pr`, and a pass moves such a pending file to `done/` with no run, no
+  record and no comment (`--dry-run` reports it as `landed` and plans no run for it). After new commits on its branch the project session
+  enqueues the same pull request again and the queue lands the new head.
+- A pass lands one pull request alone, the lowest number first, before the issue heads, and runs no `gate_command` for it. It reads the
+  pull request again and fetches the branch. A head that is already in the branch with no landing record (a pass that ended after its
+  push, or a pull request GitHub shows merged after the branch reached its head) gets one record after the fact, result
+  `landed_before_record`: `dev_after` is the branch's first-parent commit that brought the head in, the verification and the review are
+  taken from the files of the run that pushed it (`<tag>.summary.json`, the verification-record, `<tag>.review.json`) and stated as not
+  recorded when they are gone; its comment is posted once and the file moves to `done/`. Otherwise: merged moves the file to `done/`;
+  closed, or a head that is no longer the one enqueued (the project session landed more and pushed before the pass), to `conflict/`
+  (enqueue it again); toward another branch, from a fork, or from a repository GitHub no longer names, to `blocked/`. A pull request GitHub
+  does not answer, or a fetch that fails, is no verdict: it stays in `pending/`, the report lists it under `held`, and the pass goes on with
+  the issue heads (status 2 when there are none).
+- The run merges the head with `merge --no-ff -m "Merge pull request OWNER/NAME#N (<branch>) at <head8> into <branch>"` and verifies the
+  merged tree as step 4 and 5 above. Only after a verification that passed does `review_command` run, in the worktree, on that tree:
+  `{pr}`, `{pr_number}`, `{head}` (the pull request's head), `{merged}` (the verified commit), `{base}` (the branch before), `{verdict}`
+  (`runs_dir/<tag>.review.json`), `{worktree}` and `{record}` are replaced, and `CRW_REVIEW_PR`, `CRW_REVIEW_HEAD`, `CRW_REVIEW_MERGED`,
+  `CRW_REVIEW_BASE`, `CRW_REVIEW_VERDICT` and `CRW_VERIFY_RECORD` are set; its output is `runs_dir/<tag>.review.log`. What the review
+  judges against is the review tool's own input: the coordinator's Argon review (`argon-v5.sh KEY WORKTREE HEAD OUT_JSON [BASE]`) reads
+  the scope and end conditions from its key (`/state/crw/crw-<N>/criteria.json` for a key `CRW-<N>`) and reviews without end conditions
+  when no such file exists, so the key configured in `review_command` must name a criteria file. It writes the
+  verdict file, `{"verdict": "accept"}` or `{"verdict": "needs_changes"}`, at the top or under `structured_output` (the shape the
+  coordinator's Argon review writes). `needs_changes` ends the run `review-needs-changes` (status 6), pushes nothing and moves the file to
+  `blocked/` with the verdict file's path. No `review_command` is a warning: the run records `review not configured` and lands on the
+  verification-record alone (CRW-1306). A review that cannot start or leaves no readable verdict is recorded and warned the same way and
+  does not stop the landing. A review that moves HEAD or leaves a change in the worktree ends the run with status 2, as the verification
+  does.
+- Right before the branch moves the pull request is read once more. A head pushed during the verification or the review ends the run
+  `head-moved:<sha>` (status 4): the branch does not move for the head that was verified, `pending/pr-<N>` is rewritten with the new head
+  (unless the project session enqueued meanwhile), the record says `head_moved`, and the next pass verifies and reviews the new head. A
+  pull request closed, merged or retargeted meanwhile, or one that cannot be read again, ends the run `pull-request-changed` (status 4,
+  the reason is in the record's warnings) and the entry stays pending for the next pass to read.
+- The branch then moves as step 6 above: the second fetch must find it at the base the tree was verified on, and the push is never forced.
+  A move during the review ends the run `dev-moved:<sha>` and the pull request stays pending.
+- Every run of a pull request writes `runs_dir/<tag>.pr.json` (`crw-pr-landing/1`): the pull request, its number, URL, head and branch, the
+  issues of its `Carries:` line, `dev_before`, `dev_after` (empty when the branch did not move), the merged commit, the result, the
+  verification (record path, its sha256, the command's status, a note when it is not recorded) and the review (configured, verdict,
+  verdict file, status, note), `head_moved` when the head moved during the run, and its warnings. One (number, head) has one record that
+  moved the branch: written by the run that pushed it, or, when that run ended before its record, by the pass that finds the head in the
+  branch (`landed_before_record`). The same record is written on the pull request as a comment headed `[dev queue · <tag>]`; `comment` says whether it was.
+- A failed verification is retried as for a head alone: once with the same head, then the file is blocked.
+
 ## Command
 
     crw manage integrate                      one pass
     crw manage integrate --watch              passes until the stop file (--interval <duration>, default interval_seconds)
     crw manage integrate --dry-run            read the queue and the checkout and report; --with-gate also runs the gate
+    crw manage integrate --enqueue-pr REF     put pull request REF (OWNER/NAME#N of pull_request_repo) into the queue
 
 `--dry-run` makes nothing: no directory, no file move, no lock (it is only probed for `free`, `held` or `absent`), no fetch, no worktree.
 It reports the pending heads with whether each commit is in the checkout and already in the last-fetched branch, the retry markers, the
-solo state, the claims an earlier pass left behind and the heads the next pass would hand to one run. The gate is run only with `--with-gate`, because a gate may fetch on its own.
+solo state, the claims an earlier pass left behind and the heads the next pass would hand to one run (a pending pull request alone). The gate is run only with `--with-gate`, because a gate may fetch on its own; a dry run reads no pull request.
 
 ## Configuration
 
@@ -119,6 +180,8 @@ default.
 | `verify_command` | argv; the merged-tree verification |
 | `record_version_command`, `record_version_env` | argv and extra environment; `{tmpdir}` is the run's private directory below `work_root` |
 | `remote`, `branch`, `git`, `key_prefix`, `tag_prefix`, `plugin_dir`, `plugin_manifest`, `interval_seconds` | defaults: `origin`, `dev`, `git`, `CRW`, `cc-q`, `plugins/crw`, `plugins/crw/.codex-plugin/plugin.json`, `60` |
+| `pull_request_repo` | `owner/name` of the repository whose pull requests the queue lands; empty: none (the token is `GH_TOKEN`, `GITHUB_TOKEN` or `gh auth token`) |
+| `review_command` | argv; the review of a pull request's merged tree (placeholders above); empty: `review not configured`, warned and recorded. The review tool reads its criteria from the key the argv gives it (Argon V5: `/state/crw/crw-<N>/criteria.json` for `CRW-<N>`), so the configured key must name a criteria file |
 
 ## Switch from the shell runner
 

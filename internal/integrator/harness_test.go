@@ -181,10 +181,17 @@ func (w *world) ctlRead(name string) string {
 	return string(data)
 }
 
+// where is the queue directory that holds the file num; a pull request's entry in done/ is named by its number and its head
+// (pr-<N>-<head>), so for a pr-<N> name done/ is matched with any head.
 func (w *world) where(num string) string {
 	for _, d := range []string{"pending", "done", "conflict", "blocked"} {
 		if _, err := os.Stat(filepath.Join(w.cfg.QueueDir, d, num)); err == nil {
 			return d
+		}
+		if d == "done" && strings.HasPrefix(num, "pr-") {
+			if m, _ := filepath.Glob(filepath.Join(w.cfg.QueueDir, d, num+"-"+strings.Repeat("[0-9a-f]", 40))); len(m) > 0 {
+				return d
+			}
 		}
 	}
 	return ""
