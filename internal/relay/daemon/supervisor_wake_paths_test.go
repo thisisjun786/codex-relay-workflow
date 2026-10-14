@@ -190,27 +190,39 @@ func TestIdleWake_a_capped_supervisor_message_gives_a_shared_refused_hold_no_dea
 	})
 	t.Run("the delivery waits first, the capped message joins", func(t *testing.T) {
 		t.Parallel()
-		host := &idleHost{holdErr: errors.New("the host refused the resume")}
+		host := &idleHost{}
 		d, s, id := supervisorWakeDaemon(t, host)
 		seedHeadOn(t, s, "shared", supWakeRecipient, deliveryThread, idleNow+300)
+		// The first hold pass sees only the delivery and holds its thread; the staged message then meets its
+		// recipient busy, the second hold pass sees both channels and keeps the delivery's thread. The message
+		// is then held at the cap, which gives it no deadline.
 		tickAt(t, d, idleNow)
-		if host.holdTries != 1 {
-			t.Fatalf("%d hold tries in the first tick, want one", host.holdTries)
+		if supervisorDeferrals(t, s, id) != 1 || !slices.Equal(host.holds, []string{deliveryThread}) || len(host.releases) != 0 {
+			t.Errorf("the fixture: holds %v, releases %v after %d busy answers, want the delivery's thread held for both channels", host.holds, host.releases, supervisorDeferrals(t, s, id))
 		}
 		exec(t, s, "UPDATE supervisor_messages SET hold_reason = ? WHERE message_id = ?", delivery.BusyCap, id)
-		// Both wait: the capped message's zero deadline is not taken as the earliest.
-		retries(t, d, host, 1, idleNow+16, idleNow+60, idleNow+299)
+		// The socket goes away and the host refuses the resume: the hold is tried again while both channels
+		// wait - the delivery with its deadline at +300, the capped message with none - and refused.
+		host.lost, host.holdErr = true, errors.New("the host refused the resume")
+		retries(t, d, host, 2, idleNow+1)
+		if len(host.releases) != 0 {
+			t.Errorf("releases %v, want the one subscription kept on the delivery's thread", host.releases)
+		}
+		// The refusal waits for the delivery's deadline: the capped message's zero is not taken as the
+		// earliest, and neither is it the one deadline the recipient has (which would start the hold's own
+		// 15 s curve).
+		retries(t, d, host, 2, idleNow+16, idleNow+60, idleNow+299)
 		// At the delivery's deadline the hold is tried again; with that deadline passed, the refusal starts
 		// the hold's own curve and waits 15 s.
-		retries(t, d, host, 2, idleNow+301, idleNow+315)
+		retries(t, d, host, 3, idleNow+301, idleNow+315)
 		// The delivery no longer waits: the capped message alone keeps its recipient wanted, on its own
 		// thread, and with no deadline of its own the refused hold goes on along that curve (next 30 s).
 		exec(t, s, "UPDATE deliveries SET state = 'dispatched', next_eligible_at = NULL WHERE event_id = 'ev-shared'")
-		retries(t, d, host, 3, idleNow+317, idleNow+346)
+		retries(t, d, host, 4, idleNow+317, idleNow+346)
 		if !slices.Equal(host.releases, []string{deliveryThread}) {
 			t.Fatalf("releases %v, want the delivery thread's attempted hold released for the supervisor's", host.releases)
 		}
-		retries(t, d, host, 4, idleNow+348)
+		retries(t, d, host, 5, idleNow+348)
 	})
 }
 
