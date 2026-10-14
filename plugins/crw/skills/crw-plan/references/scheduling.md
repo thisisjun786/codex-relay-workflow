@@ -1,5 +1,7 @@
 # Schedule and dependency roadmap
 
+Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../crw-canon/references/hierarchy.md#the-levels).
+
 How `crw-plan` builds, checks and records a schedule. The field names, their sources, the
 precedence between records, the evidence rules, the wait cause and change reason words and
 the four graph checks belong to the shared

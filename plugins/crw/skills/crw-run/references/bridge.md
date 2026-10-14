@@ -1,5 +1,7 @@
 # codex-thread-bridge launch and recovery
 
+Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../crw-canon/references/hierarchy.md#the-levels).
+
 Read only when this MCP is the selected transport. Discover current schemas and
 call `get_capabilities`; the tool contract overrides this dated reference.
 The observations below were checked on 2026-09-14 against bridge 0.1.0 and

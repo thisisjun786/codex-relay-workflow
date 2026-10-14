@@ -1,5 +1,7 @@
 # Operational faults
 
+Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+
 When the machinery between a child, its parent and the supervisor breaks, somebody has to
 notice. Until now that somebody was the user: they read a stalled project, asked what had
 happened, and then asked for an issue to be filed. This removes both steps. The daemon reads

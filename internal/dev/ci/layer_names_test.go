@@ -202,8 +202,128 @@ func layerLinkProblems(rel, text string) []string {
 			problems = append(problems, rel+": the first "+l.label+" does not give "+l.role+": ..."+flatText[i:min(len(flatText), i+80)])
 		}
 	}
-	if uses && !regexp.MustCompile(`\]\([^)]*hierarchy\.md#the-levels\)`).MatchString(text) {
+	body := normalized(withoutFrontmatter(text))
+	problems = append(problems, bareLayerWordProblems(rel, body)...)
+	if (uses || bareLayerWordUsed(rel, body)) && !regexp.MustCompile(`\]\([^)]*hierarchy\.md#the-levels\)`).MatchString(text) {
 		problems = append(problems, rel+": names a layer and does not link hierarchy.md#the-levels")
+	}
+	return problems
+}
+
+// CRW-1396: a document that names a layer only as "the parent" or "the child" escaped both checks above,
+// which look for the labels "repository session" and "project session". The words are also the relay role
+// ids, so the table's rule tells the two senses apart at the first use: the layer sense gives its label and
+// role id (the parent (repository session, relay role `supervisor`), the child (project session, relay role
+// `parent`)), and relay-role prose keeps its meaning and says so (the parent (relay role `parent`), the child
+// (relay role `child`)). Either way the first use of each word gives a relay role id and the file links the
+// table. A case file under docs/crw-run/dispatch-cases is a fragment of crw-run's dispatch verification
+// reference, which is checked as a whole, and a JSON or YAML file holds metadata that links nothing.
+
+// bareLayerWord is "the parent" or "the child" as a noun of its own, not a compound such as the child role or
+// the child pair line.
+var bareLayerWord = regexp.MustCompile(`(?i)\bthe (parent|child)\b`)
+
+// layerWordCompound is what may follow the word without making it a layer or a role: a relay role or the child
+// pair line named as such, a hyphenated compound, and the parent or child of a plan revision, a path, a process,
+// a test or a turn.
+var layerWordCompound = regexp.MustCompile("^(?:['’]s)? ?(?:(?:role|roles|pair|pairs|plan|path|process|test|turn)\\b|-)")
+
+// nonLayerUses are phrases where the word means a git parent, a process, a design term or the session and the
+// subagent of a native spawn, read literally.
+var nonLayerUses = []string{
+	"no longer the parent refuses the commit",
+	"at the parent of the commit",
+	"the parent render chain",
+	"the parent direction",
+	"the parent RUN finished",
+	"requires the child to exit",
+	"the supervisor restarts the child",
+	"reads the parent as context",
+	"State the child's question",
+	"asking the child to self-load",
+	"the child's first turn parses the mention",
+	"Do not ask the parent or the user to recap",
+	"the child's start time",
+}
+
+// nonSessionFiles are files whose parent and child are never a session layer or a relay role, with what they are.
+var nonSessionFiles = map[string]string{
+	"docs/flow/journal.md":                                  "a git parent commit and the parent path of a nested call",
+	"docs/relay/dag-plans.md":                               "the parent revision of a plan and the Linear parent of an issue",
+	"plugins/crw/skills/crw-dev/references/stacked-prs.md":  "the parent and child branches of a stacked pull request, and the session a native subagent runs in",
+	"plugins/crw/skills/crw-pabcd/references/delegation.md": "the session that delegates to a native subagent and that subagent",
+	"plugins/crw/skills/crw-loop/references/waiting.md":     "a native subagent and the session that waits on it",
+}
+
+// layerWordSenses are the openings a first use's parenthetical may take, per word.
+var layerWordSenses = map[string][]string{
+	"parent": {"repository session, relay role `supervisor`", "relay role `parent`"},
+	"child":  {"project session, relay role `parent`", "relay role `child`"},
+}
+
+func bareLayerWordChecked(rel string) bool {
+	_, nonSession := nonSessionFiles[rel]
+	return strings.HasSuffix(rel, ".md") && !strings.HasPrefix(rel, "docs/crw-run/dispatch-cases/") && !nonSession
+}
+
+// withoutFrontmatter is text without a leading YAML front matter block: a skill's description is metadata that
+// links nothing, and the body gives the first use.
+func withoutFrontmatter(text string) string {
+	if !strings.HasPrefix(text, "---\n") {
+		return text
+	}
+	if i := strings.Index(text[4:], "\n---\n"); i >= 0 {
+		return text[4+i+5:]
+	}
+	return text
+}
+
+// bareLayerWordFirsts is the offset of the first bare use of each word in flatText, after the literal
+// non-layer phrases are blanked.
+func bareLayerWordFirsts(flatText string) map[string]int {
+	for _, phrase := range nonLayerUses {
+		flatText = strings.ReplaceAll(flatText, phrase, strings.Repeat("_", len(phrase)))
+	}
+	firsts := map[string]int{}
+	for _, m := range bareLayerWord.FindAllStringSubmatchIndex(flatText, -1) {
+		word := strings.ToLower(flatText[m[2]:m[3]])
+		if _, seen := firsts[word]; seen {
+			continue
+		}
+		if layerWordCompound.MatchString(flatText[m[1]:]) {
+			continue
+		}
+		firsts[word] = m[1]
+	}
+	return firsts
+}
+
+func bareLayerWordUsed(rel, flatText string) bool {
+	return bareLayerWordChecked(rel) && len(bareLayerWordFirsts(flatText)) > 0
+}
+
+var linkTarget = regexp.MustCompile(`^\]\([^)]*\)`)
+
+func bareLayerWordProblems(rel, flatText string) []string {
+	if !bareLayerWordChecked(rel) {
+		return nil
+	}
+	var problems []string
+	for _, word := range []string{"parent", "child"} {
+		end, ok := bareLayerWordFirsts(flatText)[word]
+		if !ok {
+			continue
+		}
+		after := linkTarget.ReplaceAllString(flatText[end:], "")
+		given := false
+		if strings.HasPrefix(after, " (") {
+			for _, sense := range layerWordSenses[word] {
+				given = given || strings.HasPrefix(after[2:], sense)
+			}
+		}
+		if !given {
+			problems = append(problems, rel+": the first \"the "+word+"\" gives no relay role id ("+strings.Join(layerWordSenses[word], " or ")+"): ..."+flatText[max(0, end-len("the "+word)-30):min(len(flatText), end+60)])
+		}
 	}
 	return problems
 }
@@ -229,6 +349,35 @@ func TestLayerNamesLinkTheTable(t *testing.T) {
 		}
 		if p := layerLinkProblems("a.md", "the project session, which has a role id elsewhere"); len(p) != 2 {
 			t.Errorf("bad: %v", p)
+		}
+	})
+	t.Run("fixture: the parent and the child used without the first-use role id (CRW-1396)", func(t *testing.T) {
+		link := " See [the level table](x/hierarchy.md#the-levels)."
+		for _, good := range []string{
+			"The parent (repository session, relay role `supervisor`) decides. The child (project session, relay role `parent`) runs it." + link,
+			"[The parent](x/hierarchy.md#the-levels) (repository session, relay role `supervisor`) decides, and the parent's record holds it.",
+			"The parent (relay role `parent`) accepts what the child (relay role `child`) reports." + link,
+			"The child role and the child pair line, the parent-title replay, a HEAD that is no longer the parent refuses the commit.",
+		} {
+			if p := layerLinkProblems("docs/a.md", good); len(p) != 0 {
+				t.Errorf("good %q: %v", good, p)
+			}
+		}
+		// The old forms of the documents CRW-1396 names: each is caught, with the missing link.
+		for _, old := range []struct {
+			rel, text string
+		}{
+			{"docs/relay/risk-tier.md", "The decision of the parent (10-11) reshapes it. The parent may record an exception. It is decided by Jun and the parent."},
+			{"docs/flow/session-host.md", "A session call (CRW-1316) runs a role call as a subagent the child spawns with `spawn_agent` (multi-agent V1)."},
+			{"docs/CI.md", "The parent changes the branch protection when the push-only procedure is switched on."},
+			{"POLICY.md", "approval scope (Jun, 2026-10-06: Node for the build and CI only), the parent chose this layout"},
+		} {
+			if p := layerLinkProblems(old.rel, normalized(old.text)); len(p) != 2 {
+				t.Errorf("old %s: %v, want the first use and the link", old.rel, p)
+			}
+		}
+		if p := layerLinkProblems("docs/crw-run/dispatch-cases/recorded/0110-S9c.md", "| S9c | The parent issues no creation |"); len(p) != 0 {
+			t.Errorf("a dispatch case fragment is checked as part of its document: %v", p)
 		}
 	})
 }

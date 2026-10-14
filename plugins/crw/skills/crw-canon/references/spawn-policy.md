@@ -1,5 +1,7 @@
 # Spawn policy
 
+Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](hierarchy.md#the-levels).
+
 Which agent calls a flow run makes, which signal adds one, which work the run does itself, what is recorded for each decision, and the two kinds of refusal that no option overrides. A child reads it to know why a run spawned or did not spawn; the parent and the status readers use it to read a run's decisions. The commands are in [flow.md](flow.md), the script format is `docs/flow/script.md` in the CRW repository, and the roles are named by policy key in [execution-roles.md](execution-roles.md), never by model.
 
 The workflow decides the structural spawns. Signals with numeric thresholds decide the rest. Anything cheaper is done inline by code. Every decision (spawn, inline, reuse, skip, refused) and its outcome is an append-only relay record. A rule id is the reason a row gives for the decision it records. The ids are the constants of `internal/flow/ops/rules.go`, the one place the strings are written; a script names a rule by its key (`EXEC_1`, `TIER_1`) and the id is looked up there, so a rule renamed there is renamed here by the test that compares this page with that file.

@@ -1,5 +1,7 @@
 # Invariants
 
+Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+
 JSON Schema is the structural layer only. Everything here is contract prose or observed host
 behaviour that the schema cannot express, with the code that actually refuses. Each row carries a
 status. Every row below is implemented and carries a test, unless its status says it is retired;

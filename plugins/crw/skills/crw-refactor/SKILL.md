@@ -5,6 +5,8 @@ description: "Diagnose structural debt after an initiative cycle, project or spr
 
 # CRW Refactor
 
+Here the parent (repository session, relay role `supervisor`) and the child (project session, relay role `parent`) are layers of [the level table](../crw-canon/references/hierarchy.md#the-levels).
+
 Find what the completed cycle made harder to change, and propose the smallest useful repair. Success means reducing a demonstrated maintenance cost while preserving the features and external contracts the user wants to keep. A tidy-looking diff or a new abstraction is not evidence of that benefit.
 
 Actors: the parent and the top session, who diagnose ([the level table](../crw-canon/references/hierarchy.md#the-levels)); this skill is read-only. Read the shared [Linear model](../crw-canon/references/linear-model.md) for source authority and available tools and [execution roles](../crw-canon/references/execution-roles.md) for role ownership. Use [crw-check](../crw-check/SKILL.md) to establish the delivery boundary. A repair that is chosen becomes a Linear issue through [crw-add-issue](../crw-add-issue/SKILL.md) and runs through [crw-run](../crw-run/SKILL.md) like any other issue. Keep one owner for each operation; this skill adds no runtime, hook, analyzer or completion loop.

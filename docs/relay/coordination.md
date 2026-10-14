@@ -1,5 +1,7 @@
 # Coordination between parents
 
+Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+
 Relay-owned records, like the linkage tables and for the same reason: the five schemas under
 `contract/schema/` (`src/codex_session_relay/schema/` until todo 44) are byte copies of a frozen contract, none of them
 describes anything on this page, and nothing here changed them.

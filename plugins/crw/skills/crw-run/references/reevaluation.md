@@ -1,5 +1,7 @@
 # Re-evaluating the candidate set
 
+Here the parent (relay role `parent`) is a relay role, read through [the level table](../../crw-canon/references/hierarchy.md#the-levels).
+
 What [Keep a project run moving](../SKILL.md#keep-a-project-run-moving) and
 [Establish the project baseline](../SKILL.md#establish-the-project-baseline) need and do not
 already own: the read behind each forcing event, the closed set a hold is recorded in, and what a

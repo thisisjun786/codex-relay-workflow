@@ -1,5 +1,7 @@
 # dots contact: how a Linna request reaches a repository manager
 
+Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+
 This page records the control point between the Linna dots app and a repository's parent (repository session, relay role `supervisor`,
 [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels)).
 It states what is verified, what is unknown, and how a request is identified, admitted, converged

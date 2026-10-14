@@ -1,5 +1,7 @@
 # DAG scheduler
 
+Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+
 The scheduler runs a stored DAG plan ([DAG plans](dag-plans.md)). It computes which nodes may start, says why every other node may
 not, and (in the later sections of this page) releases a ready node to a Codex child, records what the parent accepted and what
 landed, and judges merge eligibility. It is code in `internal/relay/dagsched`, reached through `crw relay dag-*` commands that read

@@ -1,5 +1,7 @@
 # The CXC report contract, as this relay reads it
 
+Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+
 Jun's managed workflow runs CXC and this relay together, so both have a vocabulary for how
 an execution ended. Where the two touch, one of them has to say what the other one means.
 This page is that statement. It copies no CXC prose and rebuilds no part of its state

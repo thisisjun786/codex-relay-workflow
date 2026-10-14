@@ -1,5 +1,7 @@
 # Start policy and child cap
 
+Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../crw-canon/references/hierarchy.md#the-levels).
+
 One adjudication settles how a run starts. It happens after the project baseline and before the
 first child is created, and what it decides is recorded where the next session will read it. A
 value the adjudication can settle is never put to the user as a question; a value it cannot settle

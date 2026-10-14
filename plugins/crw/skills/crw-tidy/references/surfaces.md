@@ -1,5 +1,7 @@
 # Surfaces
 
+Here the parent (relay role `parent`) is a relay role, read through [the level table](../../crw-canon/references/hierarchy.md#the-levels).
+
 What each judged surface is measured against, and what exempts it. The rules themselves belong to
 the [shared references](../../crw-canon/SKILL.md); these rows only say which test to apply (the Diagnose job) and, in the last column, when a gap is clear enough for the Supplement job to write.
 

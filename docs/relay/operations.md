@@ -1,5 +1,7 @@
 # Operating the relay
 
+Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+
 Who owns the state, who owns the daemon, and what an operator can ask it. The delivery
 contract itself is in [protocol-v1.md](protocol-v1.md) and the refusals that enforce it are
 in [invariants.md](invariants.md).

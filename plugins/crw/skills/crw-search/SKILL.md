@@ -130,7 +130,7 @@ There is no codex-native equivalent.
 
 ## For a dispatcher
 
-Read by the parent, a child or an issue child that sends helpers out to search. A
+Read by [the parent](../crw-canon/references/hierarchy.md#the-levels) (repository session, relay role `supervisor`), a child or an issue child that sends helpers out to search. A
 helper that only searches reads the ladder above and nothing here.
 
 ### Subagent Skill Attachment (SEARCH-ATTACH-01)

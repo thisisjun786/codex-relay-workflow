@@ -1,5 +1,7 @@
 # Goal mode
 
+Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../crw-canon/references/hierarchy.md#the-levels).
+
 Goal mode is the one optional execution mode of [crw-run](../SKILL.md): the fixed project parent holds a
 native host goal, and the goal plus the host's automatic continuation carry the run across turns. It is
 entered only where the user explicitly asks for it. Since CRW-165's 2026-09-21 decision a project parent

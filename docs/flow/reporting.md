@@ -1,5 +1,7 @@
 # What goes up from a flow run
 
+Here the parent (repository session, relay role `supervisor`) is a layer of [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+
 A flow run (a project run, the issue-lane of an oversized child) works for the thread that started it, the orchestrator: the child
 (project session, relay role `parent`, [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels)), which works for its parent (repository session, relay role `supervisor`). This page says what travels upward, to whom, by which command, and which row of the relay
 store's `flow_events` records it. The rows are described in [journal.md](journal.md); the relay commands the paths end in are in the

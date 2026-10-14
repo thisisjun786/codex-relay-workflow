@@ -1,5 +1,7 @@
 # Task packet and coordination record
 
+Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../crw-canon/references/hierarchy.md#the-levels).
+
 Use this when writing a launch prompt or handing off work. Fill in actual values;
 remove inapplicable items instead of sending placeholders. Embed the acceptance
 criteria unless the worker's access to the linked issue has been established;

@@ -5,6 +5,8 @@ description: "Turn one short request into one ready Linear issue that passes the
 
 # CRW Add Issue
 
+Here the parent (repository session, relay role `supervisor`) and the child (project session, relay role `parent`) are layers of [the level table](../crw-canon/references/hierarchy.md#the-levels).
+
 Write one issue an issue child can start from. A request of a paragraph becomes an issue whose body already holds what the [release gate](../crw-canon/references/release-gate.md#the-release-gate) asks, so the issue is released and not sent back for missing items, and the child implements an answer instead of designing one. Registering the issue is the whole operation: it plans no project, milestone or initiative, and it releases nothing. A request that needs several deliveries, a new project or a schedule is a plan and goes to [crw-plan](../crw-plan/SKILL.md).
 
 Consultation and draft-only requests return the issue body and write nothing. Invoking this skill implicitly does not supply write intent; a request to add, register or create the issue does, for that one issue.
@@ -49,7 +51,7 @@ A plan revision holds at most 64 live nodes (the plan refuses more; a retired no
 
 Build the issue as JSON (`id` or a placeholder, `title`, `description`, `labels`) and run `crw skill issue-ready check` on it before any write. Fix every `missing` item it names that the evidence can fill. An issue body names no model and no effort: the role policy (`crw role helper`, read with `crw flow roles`) alone decides them, and the child pair line names a pair family of that policy, not a model. The check also reads the done condition's `go test` commands and lists `warnings`: a package under `internal/dev` or `cmd/crw-dev` without `-tags dev`, and a `-run` pattern that does not name its tests literally, can pass having run no test. Fix the command when you can; a warning never changes the decision. What remains is either a `설계 먼저` issue with its open decisions listed or a stated gap in the report; do not write an issue claiming a ready state the check did not give.
 
-When the done condition searches the whole tree (an `rg` or `grep` over the repository, or a test over every package), run it once when the issue is written. Compare the paths it matches with `## 편집 영역`; a path outside it, or a listed region it does not reach, is a warning in the report and a line recorded in the issue, and its owner corrects the edit regions or the done condition. The issue is still written: the check warns and records, and refuses nothing.
+When the done condition searches the whole tree (an `rg` or `grep` over the repository), run it once when the issue is written. Compare the paths it matches with `## 편집 영역`; a path outside it, or a listed region it does not reach, is a warning in the report and a line recorded in the issue, and its owner corrects the edit regions or the done condition. The issue is still written: the check warns and records, and refuses nothing.
 
 The done condition's `go test` command is not run when the issue is created. It is run once in the design stage, by the explorer (a subagent) that answers the design's open questions: the explorer runs the command at the base the design names and records the exit code and how many tests ran. A command that exits non-zero, or runs no test, is a warning that goes into the design answer and the issue's record. It never blocks the design or the release.
 

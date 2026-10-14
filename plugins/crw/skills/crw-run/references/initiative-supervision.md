@@ -1,5 +1,7 @@
 # Initiative supervision
 
+Here the parent (repository session, relay role `supervisor`) and the child (project session, relay role `parent`) are layers of [the level table](../../crw-canon/references/hierarchy.md#the-levels).
+
 [The parent's section of crw-run](../SKILL.md#the-parent-the-repository-session) executes an initiative's scope, and this file
 is its reference: how a task becomes that initiative's supervisor, which projects it is executing, when it is
 finished, what each parent receives, what comes back, and how it recovers. The roles themselves are

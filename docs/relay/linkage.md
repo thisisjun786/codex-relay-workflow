@@ -84,7 +84,7 @@ the case the role rule does not cover, a task that owns a scope BELOW the projec
 asked to supervise.
 
 A project has at most one live `execution` edge, whichever initiative or parent it names. Every
-other initiative uses a `reference`, and a reference must agree about who the parent is. That is
+other initiative uses a `reference`, and a reference must agree about who the parent (relay role `parent`) is. That is
 what stops a shared project from acquiring a second execution parent.
 
 ## The store seat
@@ -152,7 +152,7 @@ link id is made from the two scopes, so `linkage-handover --role supervisor --sc
 moves its `upper_task_id` to the new owner, archives the old binding (`superseded_by`), gives the new
 one the evidence as `handover_note`, and writes `scope_handover`.
 
-On the 1.0 path the sessions are two layers, the parent and the child ([the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels)),
+On the 1.0 path the sessions are two layers, the parent and the child (project session, relay role `parent`, [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels)),
 and a parent binds its child itself. A child (role `parent` at its project) bound by a thread
 that holds a live management seat gets the execution edge from that seat to the project in the same
 transaction: `linkage-bind --role parent --scope <PROJECT> --task <owner> --host ... --creator

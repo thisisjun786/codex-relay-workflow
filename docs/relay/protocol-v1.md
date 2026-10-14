@@ -1,5 +1,7 @@
 # Protocol v1
 
+Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+
 Derived from the frozen cross-session communication contract, bundle revision
 `c37d332e2daba95c9ef47adf00a82bc9c6a539ab62538f0ad857561e470d2989`. This document is portable: it
 carries no task identifiers, host paths or private history. The five JSON schemas are kept under

@@ -1,5 +1,7 @@
 # CRW workflow scripts
 
+Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+
 A CRW workflow script is a JavaScript file that `crw flow run` executes. It orchestrates agent calls with ordinary
 control flow (loops, conditionals, `await`) and the engine records every call it makes. This page is the reference for
 the script format, the loader, the globals, call identity, the call result and the limits. It describes what
@@ -123,7 +125,7 @@ target drops to ES2016 (esbuild then lowers async/await to generators) and this 
 | `phase(title)`, `log(message)` | Journal a phase or log row. |
 | `args` | The `--args` value. |
 | `budget` | `{total, spent(), remaining()}`: the run's token ceiling (`total` is `null` without one), the tokens spent and the tokens left (`Infinity` without a ceiling). At 80% the engine journals an info row; at 100% the run is paused and a call that would send a request ends `held` with reason `budget_exhausted`. A completed turn whose usage the backend never received counts as unmeasured, not as zero: the engine journals a flow row `tokens_unmeasured`, and under a ceiling pauses the run the same way. |
-| `workflow(nameOrRef, args)` | Runs another script inline as one step and resolves with what it returns. The child shares the run's pool, journal and budget, and its calls live on a child path. Nesting is one level: `workflow()` inside a child throws. `crw flow run` resolves a name to `<name>.js` and `{scriptPath}` to that relative path, inside the script's directory. |
+| `workflow(nameOrRef, args)` | Runs another script inline as one step and resolves with what it returns. The called script shares the run's pool, journal and budget, and its calls live on a child path. Nesting is one level: `workflow()` inside a called script throws. `crw flow run` resolves a name to `<name>.js` and `{scriptPath}` to that relative path, inside the script's directory. |
 | `crw.classify(result)` | Maps an executor `CallResult` to one outcome state (below). |
 | `crw.clock()` | The time as an RFC 3339 string, journaled. It occupies a position of its path like a call. |
 | `crw.tierStep(node, evidence)` | Mints the step decision: it journals the call and resolves with `{id, checkpoint}`; a fresh `executor-t1` call carries `id` as `stepDecision`. It occupies a position of its path. The engine's own call holds the id only (its `checkpoint` is `null` and the evidence is recorded by its digest); the project lane's `crw.tierStep` ([below](#the-project-lane)) wraps it, appends the `flow_step_decisions` row with the evidence and the checkpoint, and resolves with the checkpoint filled in. |

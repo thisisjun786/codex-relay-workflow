@@ -1,5 +1,7 @@
 # codex-session-relay
 
+Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+
 Durable, same-host communication between two independent Codex tasks.
 
 A child task finishes a piece of work and needs its parent to verify it. The two are separate

@@ -1,5 +1,7 @@
 # Role execution policy
 
+Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+
 CRW runs at three levels and each level runs on the model and reasoning effort decided for its
 role. Two roles may be decided onto the same pair, as the parent and the child were from 2026-09-23
 to 2026-09-29, and the check is per role either way. Until now nothing in the code knew any of that. The bridge

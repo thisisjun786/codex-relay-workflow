@@ -5,6 +5,8 @@ description: "Check delivered work against the canonical Linear documents and is
 
 # CRW Check
 
+Here the parent (repository session, relay role `supervisor`) and the child (project session, relay role `parent`) are layers of [the level table](../crw-canon/references/hierarchy.md#the-levels).
+
 Check delivered work against what was agreed, using Linear as the canonical source of what was agreed, and find the
 claims or behaviors that cannot both hold. The check is read-only until an existing execution workflow authorizes
 more, and it runs in one of three ways. Read the section for the way this call is made; the sections before them are

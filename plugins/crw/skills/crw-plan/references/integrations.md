@@ -1,5 +1,7 @@
 # Linear and implementation workflow integration
 
+Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../crw-canon/references/hierarchy.md#the-levels).
+
 The rules that planning and run setup keep to themselves: how a task resolves its Linear project target, how it binds to a project and recovers that binding, and how an issue's child pair is chosen and recorded. What more than one skill reads (the levels, the Linear model, the release gate, the schedule contract, delivery and the execution roles) is in [crw-canon](../../crw-canon/SKILL.md). Apply these rules within the user's assignment and current host permissions.
 
 ## Resolve the project target
@@ -176,7 +178,7 @@ Load the existing owner for the requested operation:
 | Execute the project, coordinate progress, or follow up on delivery | [crw-run](../../crw-run/SKILL.md) |
 | Create/restore a project parent's native goal, which exists only where the user explicitly asked for one | [crw-run goal mode](../../crw-run/references/goal-mode.md) |
 | Carry one task's authorized objective through a scoped PABCD completion loop | `crw-loop`, with `crw-pabcd` for the phases |
-| Execute an initiative's approved projects through their existing parents, or run its midpoint check | [the parent's section of crw-run](../../crw-run/SKILL.md#the-parent-the-repository-session), which reads [Initiative supervision](../../crw-run/references/initiative-supervision.md) rather than the project binding above |
+| Execute an initiative's approved projects through their existing parents, or run its midpoint check | [the section of crw-run for the parent (repository session, relay role `supervisor`)](../../crw-run/SKILL.md#the-parent-the-repository-session), which reads [Initiative supervision](../../crw-run/references/initiative-supervision.md) rather than the project binding above |
 | Compare delivery with accepted requirements | [crw-check](../../crw-check/SKILL.md) |
 | Investigate contradictions or broken invariants | [crw-check](../../crw-check/SKILL.md#find-contradictions) |
 | Diagnose structural debt after a verified cycle, read-only, and recommend bounded repairs; a chosen repair is added as an issue through crw-add-issue | [crw-refactor](../../crw-refactor/SKILL.md) |

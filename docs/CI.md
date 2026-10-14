@@ -408,7 +408,7 @@ the 10 minute bound; one that meets a stall can come within seconds of it (run 1
 so pass a larger `-timeout` to it.
 
 - The overlap combinations (CRW-991) are parallel subtests: each has its own state directory, fake bridge and
-  clock, and the parent sets the homes once, because `t.Setenv` is refused in a parallel test
+  clock, and the parent test sets the homes once, because `t.Setenv` is refused in a parallel test
   (`pumpTestEnvHomeless`). Names, the 375 combinations and every assertion are unchanged. Run it with
   `-race -gcflags=all=-d=checkptr=0` after a change: with checkptr on, the relay store's own pointer arithmetic
   stops any test that opens a store.
@@ -558,7 +558,7 @@ Use `dev` as default. `main` is a release mirror, advanced by the
 owner-authorized [Release workflow](releases.md) to the exact verified dev SHA. There is no
 promotion PR or release-specific CI gate.
 
-The parent changes the branch protection when the push-only procedure is switched on:
+[The parent](../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels) (repository session, relay role `supervisor`) changes the branch protection when the push-only procedure is switched on:
 the `dev` ruleset stops requiring a pull request and stops requiring a status check, while
 deletion and force-push stay disallowed. Read back the effective rules before claiming the
 protection is active; never loosen a protection merely to land a change.

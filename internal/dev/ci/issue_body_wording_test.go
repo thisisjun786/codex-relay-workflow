@@ -121,3 +121,51 @@ func TestIssueBodiesNameNoModel(t *testing.T) {
 		t.Error("crw-plan's child pair table moved: the pair families it names are the policy's, read there")
 	}
 }
+
+// CRW-1396 (Argon V5 on CRW-1352): crw-add-issue ran a tree-wide done condition "or a test over every package"
+// when the issue is written, while the next paragraph (CRW-1328) runs the done condition's go test in the design
+// stage only. The decided default keeps rg and grep at write time and leaves go test to the design stage, so the
+// write-time sentence names no test.
+func addIssueWriteTimeProblems(text string) []string {
+	var problems []string
+	flat := normalized(text)
+	i := strings.Index(flat, "When the done condition searches the whole tree")
+	if i < 0 {
+		return []string{"lacks the write-time sentence for a tree-wide done condition"}
+	}
+	sentence := flat[i:]
+	if j := strings.Index(sentence, ". "); j >= 0 {
+		sentence = sentence[:j]
+	}
+	if regexp.MustCompile(`(?i)\btest`).MatchString(sentence) {
+		problems = append(problems, "the write-time sentence runs a test: "+sentence)
+	}
+	if !strings.Contains(flat, "The done condition's `go test` command is not run when the issue is created") {
+		problems = append(problems, "lacks the design-stage rule for the done condition's go test")
+	}
+	return problems
+}
+
+func TestAddIssueRunsNoGoTestWhenWriting(t *testing.T) {
+	for _, p := range addIssueWriteTimeProblems(readRepoText(t, "plugins/crw/skills/crw-add-issue/SKILL.md")) {
+		t.Errorf("crw-add-issue: %s", p)
+	}
+	t.Run("fixture: the old sentence is caught", func(t *testing.T) {
+		old := "When the done condition searches the whole tree (an `rg` or `grep` over the repository, or a test over every package), run it once when the issue is written. " +
+			"The done condition's `go test` command is not run when the issue is created."
+		if p := addIssueWriteTimeProblems(old); len(p) != 1 {
+			t.Errorf("old: %v", p)
+		}
+	})
+}
+
+// TestReadmeLayerSentencesUseTheTable (CRW-1396): the two README sentences that still named the layers of the
+// old mapping use the table's layers.
+func TestReadmeLayerSentencesUseTheTable(t *testing.T) {
+	flat := normalized(readRepoText(t, "README.md"))
+	for _, old := range []string{"Each parent orchestrates one project and each child one issue", "from the manager down to the issue"} {
+		if strings.Contains(flat, old) {
+			t.Errorf("README.md still says %q", old)
+		}
+	}
+}

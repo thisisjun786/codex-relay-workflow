@@ -173,8 +173,7 @@ Choose the surface before dispatching, and start from the binding: before any
 dispatch of an independent lane, apply
 [DISPATCH-MANAGED-01](references/dispatch-surfaces.md#dispatch-managed-01-strict--start-from-the-binding-not-from-the-mechanism).
 A Linear issue or DAG node (also one the relay holds no assignment for yet) is an
-independent relay child started and resumed through `crw-run`, or a flow executor call of the
-child's run recorded in the relay, never a
+independent relay child started and resumed through `crw-run`, or a flow executor call of the run of the child (project session, relay role `parent`) recorded in the relay, never a
 `create_thread` lane, and the relay's duplicate-assignment and capacity refusals are
 followed, not routed around by creating a thread by hand. An unresolved binding is
 not permission to take the unmanaged route. The thread and subagent choice below is
