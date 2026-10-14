@@ -321,7 +321,7 @@ increase concurrency; an issue the [size check](#check-the-size-before-dispatch)
 One issue runs as one packet and one delivery today (a task branch and its head for the
 integrator, or a pull request where one is named), and a batch keeps those
 separate pairs, under the shared [issue-to-PR mapping](../crw-canon/references/linear-model.md#issue-to-pr-mapping)
-and the [work-unit rules](../../../../POLICY.md#work-units-review-and-integration). Several
+and the work-unit rules (`POLICY.md#work-units-review-and-integration` in the CRW repository). Several
 packets for one feature are allowed by policy but are not switched on until their
 support lands. If one issue needs several PRs, or a proposed PR would deliver
 several issues, reconcile the plan through `crw-plan` before new dispatch;
@@ -1150,7 +1150,8 @@ readers have exited. Existing dirty work, another task's cache or evidence, orig
 data, active worktrees and shared services stay as they are. `reset`, `clean`,
 `stash`, `rebase` and forced deletion are not cleanup here, and an old modification
 time, a scratch-looking name or a full disk is not proof that anything is
-disposable. Keep the three claims apart when reporting: what is proposed for
+disposable.
+Write scratch files under a `mktemp -d` directory outside the worktree and leave them there; the Codex exec policy refuses `rm -f`, so a file this run must take out of the worktree is deleted with an `apply_patch` `*** Delete File:` hunk. Keep the three claims apart when reporting: what is proposed for
 cleanup, what was actually deleted, and what capacity that actually returned.
 
 Observation spends a shared resource as well. Parallel children and the task watching them

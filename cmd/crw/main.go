@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -158,8 +159,9 @@ type invocation struct {
 }
 
 // A mode is one top-level word of crw, and this table is the one place that lists them: dispatch, the
-// usage line and the invalid-choice message all read it. A mode that is not listed is dispatched but
-// not advertised: pabcd, until the switch that activates the ported hooks lists it.
+// usage line and the invalid-choice message all read it. Every word is listed (CRW-1323: the usage line
+// names the commands that are registered); the option spellings -h, --help and --version are dispatched
+// without being listed.
 type mode struct {
 	name   string
 	listed bool
@@ -208,19 +210,19 @@ func modes() []mode {
 		}},
 		{"config", true, func(c invocation) int { return crwconfig.Run(c.args, c.stdout, c.stderr, os.Getenv) }},
 		{"tools", true, func(c invocation) int { return tools.Run(c.ctx, c.args, c.stdout, c.stderr, nil) }},
-		{"recall", false, func(c invocation) int { return recall.Run(c.args, c.stdout, c.stderr, recallNow()) }},
-		{"pabcd", false, func(c invocation) int {
+		{"recall", true, func(c invocation) int { return recall.Run(c.args, c.stdout, c.stderr, recallNow()) }},
+		{"pabcd", true, func(c invocation) int {
 			return harness.PabcdContext(c.ctx, c.args, os.Stdin, c.stdout, c.stderr, harness.Verbs())
 		}},
-		{"role", false, func(c invocation) int {
+		{"role", true, func(c invocation) int {
 			// The role package stays offline; the binary installs the App Server opener the
 			// dispatch CLI's stopped close reads through (internal/role/dispatchhost).
 			role.OpenDispatchHost = dispatchhost.Open
 			return role.CLI(c.args, os.Stdin, c.stdout, c.stderr, os.LookupEnv)
 		}},
-		{"provider", false, func(c invocation) int { return provider.Run(c.ctx, c.args, c.stdout, c.stderr) }},
-		{"map", false, runRepoMap},
-		{"flow", false, func(c invocation) int {
+		{"provider", true, func(c invocation) int { return provider.Run(c.ctx, c.args, c.stdout, c.stderr) }},
+		{"map", true, runRepoMap},
+		{"flow", true, func(c invocation) int {
 			// The engine names no store and no network client: the binary installs what `crw flow recover` and `crw flow resume` work on,
 			// the relay store the run's journal is persisted in and the App Server connection of its host.
 			engine.RecoverEnv = journal.RecoverEnv
@@ -238,16 +240,47 @@ func modes() []mode {
 			if shadow.Handles(c.args) {
 				return shadow.RunCLI(c.ctx, c.args, c.stdout, c.stderr)
 			}
-			code := lint.RunCLI(c.ctx, c.args, c.stdout, c.stderr)
-			if len(c.args) > 0 && code == 0 && (c.args[0] == "help" || c.args[0] == "-h" || c.args[0] == "--help") {
-				fmt.Fprintln(c.stdout, shadow.Usage)
-				fmt.Fprintln(c.stdout, flowcli.Usage)
+			// No command, or one no table serves: the usage of every flow command and the whole choice (CRW-1323 item 31).
+			if len(c.args) == 0 || (!isHelpWord(c.args[0]) && !slices.Contains(flowCommandWords(), c.args[0])) {
+				printFlowUsage(c.stderr)
+				if len(c.args) == 0 {
+					fmt.Fprintln(c.stderr, "crw flow: error: the following arguments are required: command")
+				} else {
+					fmt.Fprintf(c.stderr, "crw flow: error: argument command: invalid choice: %q (choose from '%s')\n", c.args[0], strings.Join(flowCommandWords(), "', '"))
+				}
+				return parserExit
 			}
-			return code
+			if isHelpWord(c.args[0]) {
+				printFlowUsage(c.stdout)
+				return 0
+			}
+			return lint.RunCLI(c.ctx, c.args, c.stdout, c.stderr)
 		}},
 		{"help", true, help}, {"-h", false, help}, {"--help", false, help},
 		{"version", true, showVersion}, {"--version", false, showVersion},
 	}
+}
+
+// isHelpWord is whether a flow command line asks for the usage.
+func isHelpWord(word string) bool { return word == "help" || word == "-h" || word == "--help" }
+
+// flowCommandWords are the first words `crw flow` dispatches, in the order its usage prints them: the engine's and lint, the
+// run surface of internal/flow/cli and the trace commands of internal/flow/shadow. The run process's own entry is left out.
+func flowCommandWords() []string {
+	words := append(slices.Clone(engine.Commands), lint.Command)
+	for _, word := range append(flowcli.Words(), shadow.Commands...) {
+		if !slices.Contains(words, word) {
+			words = append(words, word)
+		}
+	}
+	return words
+}
+
+// printFlowUsage writes the usage lines of every `crw flow` command.
+func printFlowUsage(w io.Writer) {
+	engine.PrintUsage(w)
+	fmt.Fprintln(w, shadow.Usage)
+	fmt.Fprintln(w, flowcli.Usage)
 }
 
 func listedModes() (names []string) {

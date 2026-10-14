@@ -13,7 +13,7 @@ wake-up.
 
 What the relay does now RECORD is the relationship itself, not a channel that carries it.
 [OPS-7.4](operations.md#ops-74-three-levels-and-their-routing-identity) and
-[Three-level linkage](../../../../../docs/relay/linkage.md) describe the store's linkage module: `linkage-bind` claims one
+Three-level linkage (`docs/relay/linkage.md` in the CRW repository) describe the store's linkage module: `linkage-bind` claims one
 scope for one task at one level, `linkage-supervise` records an initiative supervisor over a project parent (by execution or
 by reference), and `linkage-up` / `linkage-down` walk the hierarchy either way and report its gaps and contention. One task
 holds one live role and one scope, a project has at most one live `execution` edge whichever initiative names it, and a
@@ -28,7 +28,7 @@ installed runtime may be older than that source; a task may or may not be curren
 delivery or readback either happened or it did not. A green suite here says the source behaves as its tests describe and says
 nothing about any host, so read the commands a given installation actually offers from its live help (`crw linkage-bind -h`
 and its siblings, whose help text the binary carries) and the current contract from this checkout's
-[linkage document](../../../../../docs/relay/linkage.md). Registration is a record: it is not an automatic wake, and it is not a
+linkage document (`docs/relay/linkage.md` in the CRW repository). Registration is a record: it is not an automatic wake, and it is not a
 guarantee that a message was delivered or read back. Every sentence below about a recorded relationship therefore reads that
 record where an installation has it, and an instruction a reader follows is still not a store that enforces it.
 

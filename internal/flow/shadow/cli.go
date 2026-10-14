@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/trace"
@@ -20,17 +21,11 @@ const Usage = `usage: crw flow trace export --store-copy PATH [--run RUN] --out 
        crw flow shadow --trace FILE --script W [--run RUN] [--args JSON | --args-file FILE] [--out FILE]
        crw flow measure --trace FILE --out FILE [--run RUN] [--oversized-tokens N]`
 
+// Commands are the first words of the commands this package serves.
+var Commands = []string{"trace", "shadow", "measure"}
+
 // Handles reports whether `crw flow args...` is one of the commands this package serves.
-func Handles(args []string) bool {
-	if len(args) == 0 {
-		return false
-	}
-	switch args[0] {
-	case "trace", "shadow", "measure":
-		return true
-	}
-	return false
-}
+func Handles(args []string) bool { return len(args) > 0 && slices.Contains(Commands, args[0]) }
 
 // RunCLI serves `crw flow trace export`, `crw flow shadow` and `crw flow measure`. It exits 0 when the command did what it was
 // asked, 1 when the script of a shadow comparison does not load or ends in script_error, and 2 for a command line it cannot use
