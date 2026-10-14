@@ -30,3 +30,27 @@ func TestFaultsDependencyInventoryContainsNoNetworkClient(t *testing.T) {
 		t.Fatalf("internal/relay/faults must not depend on network client packages: %s", strings.Join(found, ", "))
 	}
 }
+
+// The ledger reads a tracking ref through the network-free leaf, not the GitHub client in
+// internal/tracking, so it still carries no network client.
+func TestFaultsParsesRefsWithTheNetworkFreeLeaf(t *testing.T) {
+	cmd := exec.Command("go", "list", "-deps", "./...")
+	cmd.Dir = "."
+	raw, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("go list -deps ./...: %v\n%s", err, raw)
+	}
+	const module = "github.com/thisisjun786/codex-relay-workflow/"
+	have := map[string]bool{}
+	for _, dependency := range strings.Fields(string(raw)) {
+		have[dependency] = true
+	}
+	if !have[module+"internal/tracking/ref"] {
+		t.Errorf("internal/relay/faults does not depend on internal/tracking/ref")
+	}
+	for _, forbidden := range []string{module + "internal/tracking", "net/http"} {
+		if have[forbidden] {
+			t.Errorf("internal/relay/faults must not depend on %s", forbidden)
+		}
+	}
+}
