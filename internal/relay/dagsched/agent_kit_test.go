@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/reviewadapter"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -190,6 +192,47 @@ func (k *agentKit) record(c journalCall) string {
 		result = string(raw)
 	}
 	row(3, "completed", thread, turn, result, detail)
+	return id
+}
+
+// unitCheckCall is one unit check the run records (CRW-1456): the completed row of the op crw.unitCheck, written the way the journal maps the op's Data (role, node, execution_id, commit, tree and
+// criteria_digest) and its result (the reviewadapter.Result document).
+type unitCheckCall struct {
+	node string
+	res  reviewadapter.Result
+	// commit is the head the check ran on; empty for a check run before the commit (its row then names only the tree it saw).
+	commit, tree string
+	// criteria is the criteria digest the check was given (detail_json).
+	criteria string
+	// execution is the execution the row carries; the node's current one when empty.
+	execution string
+	// run is the run that recorded the row; run-1 when empty.
+	run string
+}
+
+// unitCheck writes the single completed flow_calls row of a crw.unitCheck op: an op row has no prepared or thread_started row, so its pair is the model and effort of its result. It returns the call id.
+func (k *agentKit) unitCheck(c unitCheckCall) string {
+	k.t.Helper()
+	k.calls++
+	id := fmt.Sprintf("call-%d", k.calls)
+	if c.run == "" {
+		c.run = "run-1"
+	}
+	if k.count("SELECT COUNT(*) FROM flow_runs WHERE run_id = ?", c.run) == 0 {
+		k.exec("INSERT INTO flow_runs (run_id, workflow, script_digest, helper_digests_json, args_digest, plan_id, plan_revision, actor_task_id, epoch_nonce, resume_from, started_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+			c.run, "project-lane", dig("script"), "{}", dig("args"), "g", 1, "parent", "nonce", "", k.clock())
+	}
+	if c.execution == "" {
+		c.execution = k.execution(c.node)
+	}
+	data := map[string]string{"role": execution.AgentUnitCheck, "node": c.node, "execution_id": c.execution, "tree": c.tree, "criteria_digest": c.criteria}
+	if c.commit != "" {
+		data["commit"] = c.commit
+	}
+	detail, _ := json.Marshal(data)
+	result, _ := json.Marshal(c.res)
+	k.exec("INSERT INTO flow_calls (call_id, event_seq, run_id, path, position, kind, role, event, commit_sha, tree_digest, thread_id, turn_id, plan_id, node_id, execution_id, result_bytes, detail_json, recorded_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+		id, 1, c.run, "unitCheck:"+c.node, 0, "crw.unitCheck", execution.AgentUnitCheck, "completed", c.commit, c.tree, "", "", "g", c.node, c.execution, string(result), string(detail), k.clock())
 	return id
 }
 

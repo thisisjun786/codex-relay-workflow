@@ -17,6 +17,11 @@ const (
 	AgentExplorer      = "explorer"
 )
 
+// AgentUnitCheck is the role the row of a unit check (the op crw.unitCheck) names in the flow journal. It is a name
+// only: a unit check is a tool run, not an agent call, so it is not one of AgentRoleNames and the policy file
+// declares no section for it.
+const AgentUnitCheck = "unit-check"
+
 // AgentRoleNames is the six agent roles in the order the design lists them; every section that iterates roles
 // follows it.
 var AgentRoleNames = [...]string{AgentArchitect, AgentExecutor, AgentExecutorT1, AgentReviewer, AgentReviewerFinal, AgentExplorer}
