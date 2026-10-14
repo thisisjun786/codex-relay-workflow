@@ -53,16 +53,6 @@ func splitExists(rel string) bool {
 	return err == nil
 }
 
-func splitLinesContaining(text, needle string) []int {
-	var found []int
-	for i, line := range strings.Split(text, "\n") {
-		if strings.Contains(line, needle) {
-			found = append(found, i+1)
-		}
-	}
-	return found
-}
-
 // TestRunInitiativePointerSingleLine: crw-run-initiative is gone and nothing in crw-run points at it; the initiative
 // procedure and the midpoint check are crw-run's parent section, which links the references below crw-run, and no
 // heading of the child's procedure holds them.
