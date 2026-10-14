@@ -70,7 +70,7 @@ func PremergeNeeds(r premerge.Record) []string {
 		}
 	}
 	for _, d := range r.Defects {
-		if d.Severity == "P0" || d.Severity == "P1" || d.Severity == "P2" || (d.Impact != "" && d.Impact != "minor_separable") {
+		if premerge.Blocks(d.Severity, d.Impact) {
 			out = append(out, d.ID)
 		}
 	}
