@@ -16,8 +16,9 @@ import (
 // reports, escalations, completion digest and step wakes as direct messages whose subject is
 // '<run>/<what it is>'; staging is the run's (or its command's) and writes only queued. What the
 // transport came to is the daemon's: the settle that moves such a message to dispatched (accepted)
-// or holds it at a cap (refused: the channel stopped retrying on its own) appends one row to the
-// run's flow_events in the same transaction, so the row and the message's state commit together
+// or holds it at a cap (refused: the channel stopped retrying on its own), and the busy deferral that
+// holds it at busy_cap before any transport call (deferBusy), append one row to the run's
+// flow_events in the same transaction, so the row and the message's state commit together
 // or not at all. A daemon that dies before the settle commits leaves neither; one that dies after
 // it leaves both, and a later settle or a resume of the run finds the row and writes no second.
 //

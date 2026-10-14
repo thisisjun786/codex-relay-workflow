@@ -46,7 +46,14 @@ func (c *Channel) deferBusy(ctx context.Context, row store.SupervisorMessagesRow
 			return err
 		}
 		detail := pyjson.Dumps(contract.OrderedObject{{Key: "deferral", Value: next}, {Key: "holdReason", Value: holdValue}}, pyjson.Options{})
-		_, err = c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_deferred',?,?)", at, row.MessageID, string(detail))
-		return err
+		if _, err = c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_deferred',?,?)", at, row.MessageID, string(detail)); err != nil {
+			return err
+		}
+		if hold == "" {
+			return nil
+		}
+		// the busy cap holds the message here, before any transport call: a flow run's message gets its refused delivery row in this
+		// transaction, as a cap the settle holds gives it (CRW-1380)
+		return c.recordFlowDelivery(tx, row, flowDelivery{result: FlowDeliveryRefused, state: "deferred_busy", hold: hold, at: at})
 	})
 }

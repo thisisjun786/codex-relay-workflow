@@ -265,8 +265,10 @@ func pumpFlowReadAt(ctx context.Context, state string) (pumpFlowData, error) {
 				byID[id] = r
 				order = append(order, id)
 			case "report_delivery":
-				if r := byID[id]; r != nil {
-					r.LastDelivery, _ = doc["result"].(string)
+				// a queued row after an accepted one does not undo the acceptance: the daemon's settle can land before the writer
+				// appends the queued row of its staging (report.SupersedesDelivery, CRW-1380)
+				if result, _ := doc["result"].(string); byID[id] != nil && !(byID[id].LastDelivery == "accepted" && result == "queued") {
+					byID[id].LastDelivery = result
 				}
 			case "report_read":
 				if r := byID[id]; r != nil {

@@ -734,8 +734,9 @@ this way.
 
 A flow run's message (a project kind or `session_step_waiting`) names its run in its subject,
 `<run>/<what it is>` (the report id, the notice's logical id, the wake id). The settle that moves
-such a message to `dispatched`, or holds it at a cap, appends the delivery to that run's
-`flow_events` in the same transaction: `report_delivery` (`accepted` or `refused`) for a report row
+such a message to `dispatched`, or holds it at a cap, and the busy deferral that holds it at
+`busy_cap` before any transport call, append the delivery to that run's `flow_events` in the same
+transaction: `report_delivery` (`accepted` or `refused`) for a report row
 of the run, `message_delivery` for any other, each once for its key and result. A row it cannot
 write is journaled as `flow_delivery_unrecorded` and the settle commits (CRW-1380,
 [reporting](../flow/reporting.md#through-the-supervisor-channel)).
