@@ -60,8 +60,8 @@ func conversationTurn(repair bool) int {
 
 // sessionIntent is an interrupt the previous process asked for (its interrupt_requested row) and the turn it was asked for: the op
 // the row names, the attempt, and the subagent and turn the rows bound to that step - the turn the engine's interrupt reached, which
-// a stop binds before it interrupts it (sessionBindStopped). It decides that turn only: every other turn of the call - a new attempt,
-// a step published again, a turn the host started after the interrupt - starts with no intent (CRW-1384).
+// a stop binds before it interrupts it (sessionBindStopped, sessionStop). It decides that turn only: every other turn of the call - a
+// new attempt, a step published again, a turn the host started after the interrupt - starts with no intent (CRW-1384).
 type sessionIntent struct {
 	reason, op  string
 	attempt     int
@@ -742,7 +742,7 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 		unwritten.failed(err, e.cfg.Now())
 		if sc.wait(turnCtx, sc.poll()) != nil && turnCtx.Err() != nil {
 			unwritten.close(false)
-			out, _, err := c.sessionStop(ctx)
+			out, _, err := c.sessionStop(ctx, &stopStep{k: k, op: op, marker: marker})
 			return &out, CallResult{}, false, err
 		}
 	}
@@ -766,7 +766,8 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 			}
 		case <-turnCtx.Done():
 			bound = c.sessionBindStopped(ctx, k, op, marker)
-			out, _, err := c.sessionStop(ctx)
+			out, _, err := c.sessionStop(ctx, &stopStep{k: k, op: op, marker: marker})
+			bound = bound || s.boundK == k && s.turn != ""
 			return &out, CallResult{}, false, err
 		}
 	}
@@ -893,7 +894,7 @@ func (c *callRun) sessionAdopt(turnCtx, ctx context.Context, k int, op, input st
 	for {
 		if turnCtx.Err() != nil {
 			c.sessionBindStopped(ctx, k, op, marker)
-			out, _, err := c.sessionStop(ctx)
+			out, _, err := c.sessionStop(ctx, &stopStep{k: k, op: op, marker: marker})
 			return &out, CallResult{}, false, err
 		}
 		if _, ok := c.sessionVerify(turnCtx, s.agent, k, op, marker, StepSendInput); ok {
@@ -1044,7 +1045,7 @@ func (c *callRun) sessionHarvest(turnCtx, ctx context.Context) (TurnOutcome, *se
 	lastKey, changed := "", now()
 	for {
 		if turnCtx.Err() != nil {
-			return c.sessionStop(ctx)
+			return c.sessionStop(ctx, nil)
 		}
 		status, turn, ok := c.sessionRead(turnCtx)
 		if ok {
@@ -1147,27 +1148,42 @@ func (c *callRun) sessionOutcome(ctx context.Context, turnID string) (TurnOutcom
 	return TurnOutcome{}, false
 }
 
+// stopStep is the step a stop came to before a turn of it was bound (sessionBind, sessionAdopt): the turn the subagent runs for it
+// carries its marker.
+type stopStep struct {
+	k          int
+	op, marker string
+}
+
 // sessionStop ends a turn the engine stopped (a pause, a cancellation, a deadline): the bound subagent's turn is interrupted and
 // the thread read until it is no longer active, so a held row is never written beside a subagent that still works. A turn that
-// was not bound yet has nothing to interrupt. The rows before the interrupt are stored before it is sent: the turn_started a stop
-// binds (sessionBindStopped) or a bind wrote after the interrupt_requested row is the turn that row decides for a process that
-// resumes the run, and a journal that batches its rows would lose it with a process that dies once the interrupt is sent.
-func (c *callRun) sessionStop(ctx context.Context) (TurnOutcome, *sessionLoss, error) {
+// was not bound yet has nothing to interrupt. Every turn the stop interrupts is bound first and the rows are stored before the
+// interrupt is sent: the running turns are read once, and a running turn of the step the stop came to (step, nil when the call's
+// turn was bound) that no row binds yet - a send_input turn the subagent started after a stop's bind read (sessionBindStopped) or
+// while the bus could not write the step - is bound here with the conversation place its step recorded (CRW-1405). The turn_started
+// a stop binds, or a bind wrote after the interrupt_requested row, is the turn that row decides for a process that resumes the run,
+// and a journal that batches its rows would lose it with a process that dies once the interrupt is sent. A running turn the stop
+// cannot bind (no row of the call names it, it carries no marker of the step) is not interrupted: the resumed process would read
+// its end as an interrupt nobody asked for.
+func (c *callRun) sessionStop(ctx context.Context, step *stopStep) (TurnOutcome, *sessionLoss, error) {
 	s, sc := c.sess, c.e.cfg.Session
 	if s.agent != "" {
-		if err := journalFlush(c.e.j); err != nil {
-			c.e.journalFailed(err)
-		}
 		ictx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
-		// every running turn of the subagent: the bound one, or the one a send_input step that was not bound yet started
+		var interrupt []string
 		if turns, err := sc.Host.Turns(ictx, s.agent, 0, false); err == nil {
 			for _, t := range turns {
-				if t.Status == "inProgress" {
-					_ = sc.Host.Interrupt(ictx, s.agent, t.ID)
+				if t.Status == "inProgress" && c.sessionStopBinds(ictx, step, t) {
+					interrupt = append(interrupt, t.ID)
 				}
 			}
 		} else if s.turn != "" {
-			_ = sc.Host.Interrupt(ictx, s.agent, s.turn)
+			interrupt = []string{s.turn}
+		}
+		if err := journalFlush(c.e.j); err != nil {
+			c.e.journalFailed(err)
+		}
+		for _, id := range interrupt {
+			_ = sc.Host.Interrupt(ictx, s.agent, id)
 		}
 		for i := 0; i < 50; i++ {
 			ag, err := sc.Host.ReadAgent(ictx, s.agent)
@@ -1184,6 +1200,22 @@ func (c *callRun) sessionStop(ctx context.Context) (TurnOutcome, *sessionLoss, e
 		return TurnOutcome{}, nil, &TransportError{Err: context.Cause(ctx)}
 	}
 	return TurnOutcome{TurnID: s.turn, Failed: &TurnFailure{Interrupted: true, Message: "the engine interrupted the subagent's turn"}}, nil, nil
+}
+
+// sessionStopBinds says whether a running turn of the subagent is bound, binding it when it is the turn of the step the stop came to.
+func (c *callRun) sessionStopBinds(ctx context.Context, step *stopStep, t SessionTurn) bool {
+	s := c.sess
+	if t.ID == s.turn {
+		return true
+	}
+	if step == nil {
+		return false
+	}
+	if first, _, _ := strings.Cut(t.FirstUserText, "\n"); first != "crw-flow-op: "+step.marker {
+		return false
+	}
+	_, ok := c.sessionVerify(ctx, s.agent, step.k, step.op, step.marker, StepSendInput)
+	return ok && s.turn == t.ID
 }
 
 // sessionQuiesce makes sure no subagent of a call's rows still runs: each bound one (and with unbound, the subagent a published step
