@@ -515,7 +515,6 @@ func (c *callRun) sessionResumeHeld(ctx context.Context) (res CallResult, stop b
 	if res, stop := c.sessionNeedsDirectory(); stop {
 		return res, true, 0, "", nil
 	}
-	c.repairUsed = h.repairUsed
 	st := sessionStageOf(rows)
 	lastK, maxAttempt := 0, 0
 	var repairStep *Event
@@ -530,6 +529,9 @@ func (c *callRun) sessionResumeHeld(ctx context.Context) (res CallResult, stop b
 			}
 		}
 	}
+	// the call has used its one repair when its rows hold the repair step: a call held at the gate of the repair turn (its task's
+	// answer failed validation, the step was never published) goes on with the task and has its repair still (CRW-1405)
+	c.repairUsed = h.repairUsed && repairStep != nil
 	switch {
 	case h.inputState == "delivered":
 		k = lastK + 1
