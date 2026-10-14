@@ -168,8 +168,8 @@ delivered. Where repository identity affects readiness, apply the shared
 **Where to start.** Establish the intended user outcome, what already exists, and the constraint
 that prevents progress. Inspect existing plans, code and open work before proposing a new project
 or a duplicate issue. If the outcome is unclear, choose the smallest discovery step that would
-change the decision. Use [crw-define](../crw-define/SKILL.md) when the initiative goal itself needs
-definition. If it is clear, choose the smallest useful first delivery with ready prerequisites, and
+change the decision. Use [crw-define](../crw-define/SKILL.md) when a milestone and its issues need
+settling before they are registered. If it is clear, choose the smallest useful first delivery with ready prerequisites, and
 use [crw-plan](../crw-plan/SKILL.md) only when missing scope or dependencies actually prevent
 execution.
 

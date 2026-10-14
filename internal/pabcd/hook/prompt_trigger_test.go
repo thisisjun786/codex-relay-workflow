@@ -55,7 +55,7 @@ func TestPromptTriggerInjectsTheAdviceOncePerTurn(t *testing.T) {
 	cwd := t.TempDir()
 	const prompt = "Use crw-pabcd to start Plan phase"
 	env := promptSubmitHost(cwd)
-	want := promptTriggerAdvice(env, InterviewDirective(env), state.PhaseIdle)
+	want := promptTriggerAdvice(env, PhaseDirective(state.PhaseP, nil), state.PhaseIdle) // CRW-1340: the default policy no longer promotes P
 	if first := promptSubmitAnswer(t, cwd, "s1", "t1", prompt, true); first != want {
 		t.Errorf("the first turn\n got %q\nwant %q", first, want)
 	}
@@ -76,7 +76,7 @@ func TestPromptTriggerSessionsAreIndependent(t *testing.T) {
 	cwd := t.TempDir()
 	const prompt = "Use crw-pabcd to start Plan phase"
 	env := promptSubmitHost(cwd)
-	want := promptTriggerAdvice(env, InterviewDirective(env), state.PhaseIdle)
+	want := promptTriggerAdvice(env, PhaseDirective(state.PhaseP, nil), state.PhaseIdle) // CRW-1340: the default policy no longer promotes P
 	for _, session := range []string{"alpha", "beta"} {
 		if got := promptSubmitAnswer(t, cwd, session, "t1", prompt, true); got != want {
 			t.Errorf("%s\n got %q\nwant %q", session, got, want)
@@ -123,7 +123,7 @@ func TestPromptTriggerHintWinsOverAgbrowse(t *testing.T) {
 	cwd := t.TempDir()
 	env := promptSubmitHost(cwd)
 	got := promptSubmitAnswer(t, cwd, "s1", "t1", "Use crw-pabcd to start Plan phase with agbrowse", true)
-	want := promptTriggerAdvice(env, InterviewDirective(env), state.PhaseIdle)
+	want := promptTriggerAdvice(env, PhaseDirective(state.PhaseP, nil), state.PhaseIdle) // CRW-1340: the default policy no longer promotes P
 	if got != want {
 		t.Errorf("answer\n got %q\nwant %q", got, want)
 	}
@@ -278,7 +278,7 @@ func TestPromptTriggerTurnlessHintsPreserveThePhase(t *testing.T) {
 		cwd := t.TempDir()
 		env := promptSubmitHost(cwd)
 		got := promptSubmitAnswer(t, cwd, "tl1", "", "Use crw-pabcd to start Plan phase", true)
-		if want := promptTriggerAdvice(env, InterviewDirective(env), state.PhaseIdle); got != want {
+		if want := promptTriggerAdvice(env, PhaseDirective(state.PhaseP, nil), state.PhaseIdle); got != want { // CRW-1340: the default policy no longer promotes P
 			t.Errorf("answer\n got %q\nwant %q", got, want)
 		}
 		if _, err := os.Stat(filepath.Join(cwd, crwdir.DirName)); err == nil {

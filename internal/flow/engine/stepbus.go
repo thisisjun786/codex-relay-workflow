@@ -53,7 +53,7 @@ type Step struct {
 	Role   string `json:"role"`
 	Action string `json:"action"`
 	// AgentType, Model and ReasoningEffort are the spawn_agent arguments; Model and ReasoningEffort are empty for a role whose
-	// pair the role helper leaves to the host (mode default).
+	// pair the role helper leaves to the host (mode default), and ReasoningEffort alone is empty for a role whose effort is undecided.
 	AgentType       string `json:"agent_type,omitempty"`
 	Model           string `json:"model,omitempty"`
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`

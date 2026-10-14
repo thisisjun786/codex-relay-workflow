@@ -101,12 +101,54 @@ func (l *laneLab) git(dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
+// TestLaneLabIgnoresAShortHost (CRW-1295): the lab does not read the host's memory. The environment names a proc root whose
+// MemAvailable is 1 GiB, far under the bound's floor, before the lab is made; the lab points the bound at its own proc fixture, so the
+// release of A-1 is not deferred (defer:host_memory) and writes its execution.
+func TestLaneLabIgnoresAShortHost(t *testing.T) {
+	short := t.TempDir()
+	if err := os.WriteFile(filepath.Join(short, "meminfo"), []byte("MemTotal: 64395904 kB\nMemAvailable: 1048576 kB\nSwapTotal: 0 kB\nSwapFree: 0 kB\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("CRW_DAG_HOST_PROC_ROOT", short)
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+	r := l.buildLane("run-shorthost01", l.handoffBytes(nil), LaneOptions{})
+	got, err := r.Release(ctx, ops.ReleaseRequest{Plan: l.plan, Node: l.nodeOf["A-1"], RunID: r.RunID, RequestID: "req-short"})
+	if err != nil || !got.Released {
+		t.Fatalf("the release of A-1 on a host the environment names short of memory: %+v %v", got, err)
+	}
+	if n := l.count("SELECT COUNT(*) FROM dag_agent_executions"); n != 1 {
+		t.Errorf("%d executions written, want 1", n)
+	}
+}
+
+// labProcFixture writes a /proc of its own into a temporary directory: ample MemAvailable, no swap, and memory pressure far under the
+// bound's ceilings. newLaneLab points CRW_DAG_HOST_PROC_ROOT at it, so no lane-lab test reads the memory of the host it runs on.
+func labProcFixture(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "pressure"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"meminfo":         "MemTotal: 134217728 kB\nMemAvailable: 67108864 kB\nSwapTotal: 0 kB\nSwapFree: 0 kB\n",
+		"pressure/memory": "some avg10=0.00 avg60=0.00 avg300=0.00 total=0\nfull avg10=0.00 avg60=0.00 avg300=0.00 total=0\n",
+	}
+	for name, text := range files {
+		if err := os.WriteFile(filepath.Join(root, name), []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
+
 // newLaneLab makes the world: the repository with its target branch "integration", the plan of the issues put into the store at
 // revision 1, the project's parent binding of the owner thread, the fake host, and the lane's operations installed as the shipped
-// binary installs them with the lab's verifications.
+// binary installs them with the lab's verifications, and the proc root of the host memory bound set to the lab's own fixture.
 func newLaneLab(t *testing.T, issues ...labIssue) *laneLab {
 	t.Helper()
 	isolateGit(t)
+	// the host memory bound reads this proc root, never the host's own /proc: a lab test does not depend on the memory of the machine
+	t.Setenv("CRW_DAG_HOST_PROC_ROOT", labProcFixture(t))
 	l := &laneLab{t: t, w: newWorld(t), plan: "plan-1", nodeOf: map[string]string{}, issue: map[string]string{}}
 	l.repo = filepath.Join(t.TempDir(), "repo")
 	if err := os.MkdirAll(l.repo, 0o755); err != nil {

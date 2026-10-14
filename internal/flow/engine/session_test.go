@@ -476,6 +476,215 @@ return r.status`)
 	}
 }
 
+// Since the role helper snapshot (CRW-1330) a role can name a model and leave its effort undecided: the step names the model and
+// no effort, and the host runs the subagent at an effort of its own. That subagent is bound on its model alone: thread_started
+// records the effort the host applied as the call's pair with effort_unchecked (not pair_unchecked), and a continuation of the
+// call's handle is not refused for that effort.
+func TestSessionUndecidedEffortIsNotCompared(t *testing.T) {
+	k := newSessionKit(t)
+	pol := FakePolicy()
+	exp := pol.Roles["explorer"]
+	exp.Pair = Pair{Model: "claude-fake-haiku"}
+	pol.Roles["explorer"] = exp
+	k.h.cfg.Policy = pol
+	applied := Pair{"claude-fake-haiku", "medium"}
+	k.orch.answer = func(Step, string, int) orchAnswer { return orchAnswer{pair: &applied} }
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	var mu sync.Mutex
+	mismatch := ""
+	done := make(chan struct{})
+	defer func() {
+		cancel()
+		<-done
+	}()
+	// a pair_mismatch reply is never followed by another spawn here, so the first one ends the run at once
+	go func() {
+		defer close(done)
+		for ctx.Err() == nil {
+			k.orch.mu.Lock()
+			reps := append([]DispatchReport(nil), k.orch.reports...)
+			k.orch.mu.Unlock()
+			for _, rep := range reps {
+				if r, ok, _ := k.bus.ReadReply(rep.ID); ok && r.Status == ReplyPairMismatch {
+					mu.Lock()
+					mismatch = r.Detail
+					mu.Unlock()
+					cancel()
+					return
+				}
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	res, err := Run(ctx, k.h.load(`const r = await agent.call('look', { agentType: 'explorer', label: 'x' })
+const more = await agent.call('look again', { resume: r, label: 'more' })
+return [r.status, more.status]`), k.h.cfg)
+	mu.Lock()
+	detail := mismatch
+	mu.Unlock()
+	if detail != "" {
+		t.Fatalf("the undecided effort was compared: the report was answered %q", detail)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := value[[]string](t, res); strings.Join(got, ",") != "completed,completed" {
+		t.Fatalf("statuses %v (the continuation's rows: %v)", got, k.rowsOf("more"))
+	}
+	for _, label := range []string{"x", "more"} {
+		rows := k.rowsOf(label)
+		if got := eventsOf(rows); got != "prepared,step_published,thread_started,turn_started,completed" {
+			t.Errorf("%s: rows %s", label, got)
+			continue
+		}
+		step, ts := rows[1], rows[2]
+		if rowStr(step.Data, "model") != applied.Model || rowStr(step.Data, "effort") != "" {
+			t.Errorf("%s: step_published names %s/%s, want the role's model and no effort", label, rowStr(step.Data, "model"), rowStr(step.Data, "effort"))
+		}
+		if rowStr(ts.Data, "model") != applied.Model || rowStr(ts.Data, "effort") != applied.Effort || ts.Data["effort_unchecked"] != true || ts.Data["pair_unchecked"] != nil {
+			t.Errorf("%s: thread_started %v, want the host-read pair %v with effort_unchecked", label, ts.Data, applied)
+		}
+	}
+	if n := len(k.orch.spawned()); n != 2 {
+		t.Errorf("%d spawns, want one subagent per call", n)
+	}
+	if info, _ := LookupCall(k.h.journal, k.rowsOf("x")[0].CallID); info.Configured != applied {
+		t.Errorf("the call's pair %v, want the host-read %v", info.Configured, applied)
+	}
+}
+
+// A decided effort is compared as before: a subagent of the role's model at another effort is answered pair_mismatch with the
+// role's pair, the step stays, and the subagent spawned again with the role's pair is bound with no unchecked mark.
+func TestSessionDecidedEffortThatDiffersIsAMismatch(t *testing.T) {
+	k := newSessionKit(t)
+	other := Pair{"claude-fake-haiku", "medium"}
+	var spawnsM sync.Mutex
+	spawns := 0
+	k.orch.answer = func(st Step, _ string, _ int) orchAnswer {
+		spawnsM.Lock()
+		defer spawnsM.Unlock()
+		spawns++
+		if spawns == 1 {
+			return orchAnswer{pair: &other}
+		}
+		return orchAnswer{}
+	}
+	var mu sync.Mutex
+	retried := false
+	go func() {
+		for i := 0; i < 5000; i++ {
+			r, ok, _ := k.bus.ReadReply(firstReportID(k.orch))
+			if ok && r.Status == ReplyPairMismatch {
+				mu.Lock()
+				retried = true
+				mu.Unlock()
+				k.orch.forget()
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+	}()
+	res := k.h.run(`const r = await agent.call('look', { agentType: 'explorer', label: 'x' })
+return r.status`)
+	if got := value[string](t, res); got != "completed" {
+		t.Fatalf("status %s", got)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if !retried {
+		t.Fatalf("no pair_mismatch reply for a decided effort that differs")
+	}
+	r, _, _ := k.bus.ReadReply(firstReportID(k.orch))
+	if r.Close != "agent-1" || !strings.Contains(r.Detail, "spawn again with claude-fake-haiku/high (it runs claude-fake-haiku/medium)") {
+		t.Errorf("pair_mismatch reply %+v", r)
+	}
+	ts := rowsNamed(k.rowsOf("x"), EvThreadStarted)
+	if len(ts) != 1 || rowStr(ts[0].Data, "thread_id") != "agent-2" || rowStr(ts[0].Data, "effort") != "high" || ts[0].Data["effort_unchecked"] != nil || ts[0].Data["pair_unchecked"] != nil {
+		t.Errorf("thread_started %v", ts)
+	}
+}
+
+// explorerOn is the fake role table with the explorer on the pair.
+func explorerOn(pair Pair) *Policy {
+	pol := FakePolicy()
+	exp := pol.Roles["explorer"]
+	exp.Pair = pair
+	pol.Roles["explorer"] = exp
+	return pol
+}
+
+// A role whose pair the role table leaves to the host entirely binds its subagent unchecked (pair_unchecked), and a continuation
+// of the call is judged by the same rule: the undecided model is not compared with the pair the host read back, so the
+// continuation runs on a new subagent whose thread_started records the host-read pair, marked pair_unchecked, as the bind does.
+func TestSessionUndecidedModelIsNotComparedOnContinuation(t *testing.T) {
+	k := newSessionKit(t)
+	k.h.cfg.Policy = explorerOn(Pair{})
+	applied := Pair{"claude-fake-haiku", "high"}
+	k.orch.answer = func(Step, string, int) orchAnswer { return orchAnswer{pair: &applied} }
+	res := k.h.run(`const r = await agent.call('look', { agentType: 'explorer', label: 'x' })
+const more = await agent.call('look again', { resume: r, label: 'more' })
+return [r.status, more.status]`)
+	if got := value[[]string](t, res); strings.Join(got, ",") != "completed,completed" {
+		t.Fatalf("statuses %v (the continuation's rows: %v)", got, k.rowsOf("more"))
+	}
+	for _, label := range []string{"x", "more"} {
+		rows := k.rowsOf(label)
+		if got := eventsOf(rows); got != "prepared,step_published,thread_started,turn_started,completed" {
+			t.Errorf("%s: rows %s", label, got)
+			continue
+		}
+		step, ts := rows[1], rows[2]
+		if rowStr(step.Data, "model") != "" || rowStr(step.Data, "effort") != "" {
+			t.Errorf("%s: step_published names %s/%s, want no pair", label, rowStr(step.Data, "model"), rowStr(step.Data, "effort"))
+		}
+		if rowStr(ts.Data, "model") != applied.Model || rowStr(ts.Data, "effort") != applied.Effort || ts.Data["pair_unchecked"] != true || ts.Data["effort_unchecked"] != nil {
+			t.Errorf("%s: thread_started %v, want the host-read pair %v with pair_unchecked", label, ts.Data, applied)
+		}
+	}
+	if n := len(k.orch.spawned()); n != 2 {
+		t.Errorf("%d spawns, want one subagent per call", n)
+	}
+	if info, _ := LookupCall(k.h.journal, k.rowsOf("more")[0].CallID); info.Configured != applied {
+		t.Errorf("the continuation's pair %v, want the host-read %v", info.Configured, applied)
+	}
+}
+
+// A continuation is refused when a decided part of the role's pair differs from the pair the call's subagent was bound with: a call
+// bound pair_unchecked whose role a later run reads with a decided model, or a decided effort, other than the one the host ran is
+// refused pair_refused, and no subagent is spawned for it.
+func TestSessionContinuationOnADecidedPairThatDiffersIsRefused(t *testing.T) {
+	applied := Pair{"claude-fake-haiku", "high"}
+	for _, tc := range []struct {
+		name string
+		now  Pair
+	}{
+		{"model", Pair{"claude-fake-sonnet", "high"}},
+		{"effort", Pair{"claude-fake-haiku", "xhigh"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			k := newSessionKit(t)
+			k.h.cfg.Policy = explorerOn(Pair{})
+			k.orch.answer = func(Step, string, int) orchAnswer { return orchAnswer{pair: &applied} }
+			handle := value[string](t, k.h.run(`const r = await agent.call('look', { agentType: 'explorer', label: 'x' })
+return r.handle`))
+			// a later run of the journal reads a role table that decides the part; the clock read takes the first call's position
+			k.h.cfg.Policy = explorerOn(tc.now)
+			k.h.cfg.Args = mustJSON(map[string]any{"handle": handle})
+			got := value[[]string](t, k.h.run(`await crw.clock()
+const more = await agent.call('look again', { resume: args.handle, label: 'more' })
+return [more.status, more.reason]`))
+			rows := k.rowsOf("more")
+			want := "the thread reads back claude-fake-haiku/high, the role's pair is " + tc.now.Model + "/" + tc.now.Effort
+			if strings.Join(got, ",") != "refused,pair_refused" || eventsOf(rows) != "prepared,refused" || rowStr(rows[1].Data, "detail") != want {
+				t.Errorf("continuation %v, rows %v; want refused pair_refused %q", got, rows, want)
+			}
+			if n := len(k.orch.spawned()); n != 1 {
+				t.Errorf("%d spawns, want only the first call's", n)
+			}
+		})
+	}
+}
+
 func firstReportID(o *fakeOrch) string {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -590,28 +799,86 @@ type deathCase struct {
 	lose bool
 	// spawns is how many subagents the call ends up with.
 	spawns int
+	// rows is the call's exact row sequence after the resume: one thread_started per attempt.
+	rows string
+	// noFind makes the resumed process's marker search find nothing, so only the call's own rows name its subagent.
+	noFind bool
+	// gone makes the host forget attempt 1's subagent before the resume.
+	gone bool
+}
+
+// noFindHost is a host whose marker search finds no subagent.
+type noFindHost struct{ *fakeSessionHost }
+
+func (noFindHost) FindByMarker(context.Context, string, string) (string, bool, error) {
+	return "", false, nil
 }
 
 // The run dies at each last-row state of a session call, and a resume goes on from that row in the same allocation: prepared and
 // step_published publish the step again after a marker search (a subagent spawned before it was reported is bound, not spawned
-// again), thread_started and turn_started harvest the bound subagent, and session_attempt_lost goes on with the next attempt.
+// again), thread_started adopts the recorded subagent and turn_started harvests the bound one, and session_attempt_lost goes on
+// with the next attempt. Each case's rows are exact: one thread_started per attempt.
 func TestSessionRunDeathAtEachRow(t *testing.T) {
-	ev := func(name string) func(Event) bool {
-		return func(e Event) bool { return e.Kind == KindCall && e.Event == name }
-	}
+	one := "prepared,step_published,thread_started,turn_started,completed"
 	for _, c := range []deathCase{
-		{name: "prepared", stop: ev(EvPrepared), spawns: 1},
-		{name: "step_published", stop: ev(EvStepPublished), spawns: 1},
-		{name: "spawned before the report", killOnSpawn: true, spawns: 1},
-		{name: "thread_started", stop: ev(EvThreadStarted), spawns: 1},
-		{name: "turn_started", stop: ev(EvTurnStarted), spawns: 1},
-		{name: "session_attempt_lost", stop: ev(EvSessionAttemptLost), lose: true, spawns: 2},
+		{name: "prepared", stop: deathAt(EvPrepared), spawns: 1, rows: one},
+		{name: "step_published", stop: deathAt(EvStepPublished), spawns: 1, rows: one},
+		{name: "spawned before the report", killOnSpawn: true, spawns: 1, rows: one},
+		{name: "thread_started", stop: deathAt(EvThreadStarted), spawns: 1, rows: one},
+		{name: "turn_started", stop: deathAt(EvTurnStarted), spawns: 1, rows: one},
+		{name: "session_attempt_lost", stop: deathAt(EvSessionAttemptLost), lose: true, spawns: 2,
+			rows: "prepared,step_published,thread_started,turn_started,session_attempt_lost,step_published,thread_started,turn_started,completed"},
 	} {
 		t.Run(c.name, func(t *testing.T) { runDeath(t, c) })
 	}
 }
 
-func runDeath(t *testing.T, c deathCase) {
+// deathAt stops the process after it stored the call row.
+func deathAt(name string) func(Event) bool {
+	return func(e Event) bool { return e.Kind == KindCall && e.Event == name }
+}
+
+// A process that dies after it wrote thread_started and before turn_started leaves an attempt whose subagent is recorded: the
+// resumed call adopts that subagent - with the marker search or without it - and writes only the missing turn_started, so the
+// attempt keeps one thread_started, nothing is spawned again, and the harvest reads the recorded subagent's marker turn. A
+// recorded subagent the host no longer knows loses the attempt, and the next attempt has its own thread_started.
+func TestSessionResumeAfterThreadStartedAdoptsTheRecordedAgent(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		noFind, gone bool
+		rows, agent  string
+		spawns       int
+	}{
+		{name: "marker search finds it", rows: "prepared,step_published,thread_started,turn_started,completed", agent: "agent-1", spawns: 1},
+		{name: "marker search finds nothing", noFind: true, rows: "prepared,step_published,thread_started,turn_started,completed", agent: "agent-1", spawns: 1},
+		{name: "recorded subagent gone", gone: true, agent: "agent-2", spawns: 2,
+			rows: "prepared,step_published,thread_started,session_attempt_lost,step_published,thread_started,turn_started,completed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			k, got := runDeath(t, deathCase{name: "thread_started", stop: deathAt(EvThreadStarted), spawns: tc.spawns, rows: tc.rows, noFind: tc.noFind, gone: tc.gone})
+			rows := k.rowsOf("exe")
+			ts, turn := rowsNamed(rows, EvThreadStarted), rowsNamed(rows, EvTurnStarted)
+			for i, r := range ts {
+				if rowInt(r.Data, "attempt") != i+1 || rowStr(r.Data, "thread_id") != fmt.Sprintf("agent-%d", i+1) {
+					t.Errorf("thread_started %d: %v, want one row per attempt", i, r.Data)
+				}
+			}
+			if len(turn) != 1 || rowStr(turn[0].Data, "turn_id") != tc.agent+"-turn1" {
+				t.Errorf("turn_started %v, want the marker turn of %s", turn, tc.agent)
+			}
+			if got[1] != tc.agent {
+				t.Errorf("the handle's thread %s, want %s", got[1], tc.agent)
+			}
+			if lost := rowsNamed(rows, EvSessionAttemptLost); tc.gone && (len(lost) != 1 || rowStr(lost[0].Data, "agent_id") != "agent-1" || rowInt(lost[0].Data, "attempt") != 1) {
+				t.Errorf("session_attempt_lost %v, want attempt 1 of agent-1", lost)
+			}
+		})
+	}
+}
+
+// runDeath kills a session run's process where the case says, resumes it in a new process, checks what every case shares, and
+// returns the kit and the resumed call's [status, threadId].
+func runDeath(t *testing.T, c deathCase) (*sessionKit, []string) {
 	k := newSessionKit(t)
 	sw := &deadSwitch{}
 	mem := NewMemoryJournal()
@@ -659,6 +926,12 @@ return [r.status, r.meta.threadId]`
 	k.h.cfg.Journal = mem
 	k.cfg.Bus = k.bus
 	k.cfg.Host = k.host
+	if c.noFind {
+		k.cfg.Host = noFindHost{k.host}
+	}
+	if c.gone {
+		k.host.set("agent-1", func(a *fakeAgent, _ *SessionTurn) { a.gone = true })
+	}
 	k.h.cfg.Resume = &ResumeOptions{}
 	k.orch.answer = func(st Step, _ string, _ int) orchAnswer { return orchAnswer{edit: "P:" + st.Op} }
 	k.orch.onSpawn = nil
@@ -671,6 +944,9 @@ return [r.status, r.meta.threadId]`
 		t.Fatalf("the resumed call %v; rows %s", got, eventsOf(k.rowsOf("exe")))
 	}
 	rows := k.rowsOf("exe")
+	if got := eventsOf(rows); c.rows != "" && got != c.rows {
+		t.Errorf("rows %s, want %s", got, c.rows)
+	}
 	if n := len(rowsNamed(rows, EvPrepared)); n != 1 {
 		t.Errorf("%d prepared rows (%s): the resume did not go on in the same allocation", n, eventsOf(rows))
 	}
@@ -687,6 +963,7 @@ return [r.status, r.meta.threadId]`
 	if len(ts) == 0 || got[1] != rowStr(ts[len(ts)-1].Data, "thread_id") {
 		t.Errorf("the handle's thread %s is not the last bound subagent (%v)", got[1], ts)
 	}
+	return k, got
 }
 
 // A continuation after a run restart runs on a new subagent from a checkpoint packet - never a fork - and writes its own

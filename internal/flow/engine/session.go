@@ -576,11 +576,16 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 	packetName := PacketName(k, s.attempt)
 	recovered := s.resume != nil && s.resume.kind == stagePublished && s.resume.k == k && s.resume.attempt == s.attempt
 	if recovered {
-		action, agent = s.resume.action, s.resume.agent
+		st := s.resume
+		s.resume = nil
+		action, agent = st.action, st.agent
 		if action == StepSendInput && agent == "" {
 			action = StepSpawn
 		}
-		s.resume = nil
+		if action == StepSpawn && agent != "" {
+			// the attempt's thread_started names its subagent: it is adopted, never spawned again
+			return c.sessionAdopt(turnCtx, ctx, k, op, input, repair, st)
+		}
 	}
 	packet := c.sessionPacket(k, marker, input, repair, action)
 	step := Step{Run: e.runID, Call: c.id, K: k, Attempt: s.attempt, Op: marker, Role: p.role, Action: action, AgentType: agentTypeOf(p.role),
@@ -661,6 +666,40 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 	}
 }
 
+// sessionAdopt goes on with an attempt whose subagent a process bound and then died before it wrote turn_started: the subagent its
+// thread_started row records is the attempt's, so nothing is spawned or published again and only turn_started is written, as a
+// send_input bind writes it (one thread_started per attempt). A recorded subagent the host does not know on reads LostAfter apart
+// loses the attempt, and the next attempt is spawned.
+func (c *callRun) sessionAdopt(turnCtx, ctx context.Context, k int, op, input string, repair bool, st *sessionStage) (*TurnOutcome, CallResult, bool, error) {
+	s, sc, now := c.sess, c.e.cfg.Session, c.e.cfg.Now
+	s.agent, s.rollout, s.pair, s.seen = st.agent, st.rollout, st.pair, Tokens{}
+	s.dropCurrentPair()
+	marker, attempt := sessionOp(op, s.attempt), s.attempt
+	defer func() { _ = sc.Bus.Retract(c.id, k, attempt) }()
+	var gone time.Time
+	for {
+		if turnCtx.Err() != nil {
+			out, _, err := c.sessionStop(ctx)
+			return &out, CallResult{}, false, err
+		}
+		if _, ok := c.sessionVerify(turnCtx, s.agent, k, op, marker, StepSendInput); ok {
+			return nil, CallResult{}, false, nil
+		}
+		_, err := sc.Host.ReadAgent(turnCtx, s.agent)
+		switch {
+		case !errors.Is(err, ErrSessionAgentNotFound):
+			gone = time.Time{}
+		case gone.IsZero():
+			gone = now()
+		case now().Sub(gone) >= sc.lostAfter():
+			s.boundK = k
+			c.sessionLose(&sessionLoss{reason: fmt.Sprintf("the subagent bound before the restart has been unknown to the host for %s", sc.lostAfter()), hostStatus: "notFound"})
+			return c.sessionBind(turnCtx, ctx, k, op, input, repair)
+		}
+		_ = sc.wait(turnCtx, sc.poll())
+	}
+}
+
 // spawnMessage is the spawn_agent message of a step (§3.1): the marker, the role and the directory, and the packet that holds the rest.
 func (c *callRun) spawnMessage(marker, packet string) string {
 	return "crw-flow-op: " + marker + "\nCRW-ROLE: " + c.plan.role + "\n\n" +
@@ -700,7 +739,7 @@ func (c *callRun) sessionVerify(ctx context.Context, agent string, k int, op, ma
 	}
 	want := p.spec.Pair
 	got := Pair{Model: ag.Model, Effort: ag.Effort}
-	if action == StepSpawn && want.Model != "" && got != want {
+	if action == StepSpawn && !sessionPairBinds(want, got) {
 		return DispatchReply{Status: ReplyPairMismatch, Close: agent,
 			Detail: fmt.Sprintf("pair_mismatch: close %s and spawn again with %s/%s (it runs %s/%s)", agent, want.Model, want.Effort, got.Model, got.Effort)}, false
 	}
@@ -716,8 +755,11 @@ func (c *callRun) sessionVerify(ctx context.Context, agent string, k int, op, ma
 		}
 		data := map[string]any{"thread_id": agent, "model": ag.Model, "effort": ag.Effort, "cwd": c.cwd, "host_cwd": ag.Cwd, "parent_thread_id": ag.ParentThreadID,
 			"agent_role": ag.AgentRole, "attempt": s.attempt, "via": "session", "rollout_path": ag.RolloutPath, "marker": marker}
-		if want.Model == "" {
+		switch {
+		case want.Model == "":
 			data["pair_unchecked"] = true
+		case want.Effort == "":
+			data["effort_unchecked"] = true
 		}
 		if s.trace != nil {
 			data["trace"] = map[string]any{"workspace": s.trace.Workspace, "outside": s.trace.Outside, "shared": s.trace.Shared}
@@ -742,6 +784,20 @@ func (c *callRun) sessionVerify(ctx context.Context, agent string, k int, op, ma
 	s.turn, s.boundK = turn.ID, k
 	c.event(EvTurnStarted, map[string]any{"k": k, "op": op, "turn_id": turn.ID, "attempt": s.attempt, "marker": marker, "via": "session"})
 	return DispatchReply{Status: ReplyBound}, true
+}
+
+// sessionPairBinds is the pair rule of a bind and of a continuation's handle: only the decided parts of the role's pair are
+// compared. A role whose model the role table leaves to the host binds any subagent (pair_unchecked), a role whose model is set
+// and whose effort is undecided binds a subagent of its model at the effort the host applied (effort_unchecked), and any other
+// role binds a subagent of its pair only.
+func sessionPairBinds(want, got Pair) bool {
+	switch {
+	case want.Model == "":
+		return true
+	case want.Effort == "":
+		return got.Model == want.Model
+	}
+	return got == want
 }
 
 // sessionHarvest reads the bound subagent until its turn ends (§3.3) and returns the outcome, or the loss of the attempt (§5): the
