@@ -46,12 +46,15 @@ var ResumeEnv func(ctx context.Context, req ResumeEnvRequest) (ResumeSetup, erro
 // ResumeHold is what the caller of the engine's `crw flow resume RUN SCRIPT` holds a resumed run to beyond its journal (CRW-1348):
 // the run process holds a session run the same way. Backend is the backend the run's spec names ("" for a spec written before the
 // field, or no spec): a run whose started row records the other backend is a mixed resume and is refused before it is taken.
-// Session, when set, is called for a session run once the script and the arguments are the run's and before the run goes on: it
-// gets the run's owner thread, the role table the run goes on under and the pool asked for, binds what it binds, and returns the
-// pool the run keeps in flight and the release called when the run ends (nil releases nothing).
+// Process is the token of the process lock the caller holds for the run (SessionConfig.Process, "" for none). Session, when set, is
+// called for a session run once the script and the arguments are the run's and before the run goes on: it gets the run's owner
+// thread and the pool asked for, and returns the pool the run keeps in flight, the bind the run calls once its started row is in the
+// journal (SessionConfig.Started: the owner's line with the table that row pinned, CRW-1372) and the release called when the run ends
+// (nil binds or releases nothing).
 type ResumeHold struct {
 	Backend string
-	Session func(owner string, table *Policy, pool int) (int, func())
+	Process string
+	Session func(owner string, pool int) (inFlight int, bind func(table *Policy), release func())
 }
 
 type resumeHoldKey struct{}
@@ -189,11 +192,14 @@ func resumeCmd(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		return 2
 	}
 	inFlight := *pool
-	if setup.Session != nil && hold.Session != nil {
-		var release func()
-		inFlight, release = hold.Session(setup.Session.Owner, table, inFlight)
-		if release != nil {
-			defer release()
+	if setup.Session != nil {
+		setup.Session.Process = hold.Process
+		if hold.Session != nil {
+			var release func()
+			inFlight, setup.Session.Started, release = hold.Session(setup.Session.Owner, inFlight)
+			if release != nil {
+				defer release()
+			}
 		}
 	}
 	res, err := Run(ctx, prog, Config{

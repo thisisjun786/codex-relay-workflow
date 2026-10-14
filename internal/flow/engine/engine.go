@@ -298,12 +298,16 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 		startedData["policy_warnings"] = slices.Clone(cfg.Policy.Warnings)
 	}
 	if cfg.Session != nil {
-		// the pairs a session run pins: `crw flow next` binds the owner's line with them, not with the role store read again (CRW-1372)
+		// the pairs a session run pins: its process binds the owner's line with them (Started), and `crw flow next` reads them as the
+		// pairs the process runs on, never the role store read again (CRW-1372)
 		pairs := map[string]any{}
 		for name, spec := range cfg.Policy.Roles {
 			pairs[name] = map[string]any{"model": spec.Pair.Model, "effort": spec.Pair.Effort}
 		}
 		startedData["role_pairs"] = pairs
+		if cfg.Session.Process != "" {
+			startedData["process"] = cfg.Session.Process
+		}
 	}
 	started := e.j.Append(Event{RunID: e.runID, Kind: KindRun, Event: "started", Data: startedData})
 	e.epoch = startedRows(e.j.Events(), e.runID)
@@ -311,6 +315,10 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 		e.j.Append(Event{RunID: e.runID, Kind: KindRun, Event: EvPolicyRepinned, Data: map[string]any{
 			"old": prior.Digest, "new": cfg.Policy.Digest, "old_source": prior.Source, "new_source": cfg.Policy.Source,
 		}})
+	}
+	if cfg.Session != nil && cfg.Session.Started != nil {
+		// the run's own record first, then what is made from it: the owner's line with the pairs the started row pinned (CRW-1372)
+		cfg.Session.Started(cfg.Policy)
 	}
 
 	e.startSeq = started.Seq

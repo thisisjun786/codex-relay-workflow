@@ -13,25 +13,28 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/bound"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/journal"
-	"github.com/thisisjun786/codex-relay-workflow/internal/flow/report"
 )
 
 // `crw flow next` and `crw flow dispatched` (CRW-1316 §3.2, CRW-1348): the owner thread's side of a session run's step exchange
 // over the run's FileStepBus (<state>/flow/<run>/). next reads the steps the run published and hands them out (a close step's file
-// is removed once handed out) with the run's state, the subagent slots and a hint; a run with no process that is not paused and not
-// over is resumed (`crw flow resume RUN --detach`), and the owner's binding is written again when it is missing. dispatched writes
-// a dispatch report into the run's inbox atomically and waits for the run's answer; the report of a run with no process waits in
-// the inbox for the resume.
+// is removed once handed out) with the run's state, the subagent slots, the spawn formats of the pairs the run's process pinned and a
+// hint; a run with no process that is not paused and not over is resumed (`crw flow resume RUN --detach`). next writes neither the
+// owner's orchestrator line nor a row of the run: the run's process writes both from its own started row, and next reads them
+// (CRW-1372). dispatched writes a dispatch report into the run's inbox atomically and waits for the run's answer; the report of a run
+// with no process waits in the inbox for the resume.
 
-// The states next reports.
+// The states next reports. starting is a run whose process is coming up: it holds the run (or its start holds the start lock) and has
+// not recorded its started row, or not bound the owner's line after it, within the time next reads it again.
 const (
 	NextRunning         = "running"
 	NextWaitingSession  = "waiting_session"
 	NextWaitingDecision = "waiting_decision"
 	NextPaused          = "paused"
 	NextEnded           = "ended"
+	NextStarting        = "starting"
 )
 
 // ToolCall is the host tool call the owner makes for a step, with the argument names of the live declaration.
@@ -69,10 +72,12 @@ type NextAnswer struct {
 	Ended *NextEnd   `json:"ended,omitempty"`
 	Steps []NextStep `json:"steps"`
 	Slots NextSlots  `json:"slots"`
-	// Spawns are the spawn formats of the six roles.
+	// Spawns are the spawn formats of the six roles: the pairs the run's process pinned in its started row, the role store's when no
+	// process holds the run (a resume reads it), none while the process is starting.
 	Spawns []RoleSpawn `json:"spawn_formats"`
 	Hint   string      `json:"hint"`
-	// Warnings are what next did not find as it should (a binding it wrote again, a resume that did not start).
+	// Warnings are what next did not find as it should (an owner's line that is not the run's process's, a role store that moved since
+	// the process pinned, a resume that did not start).
 	Warnings []string `json:"warnings,omitempty"`
 	// Resumed is the process next started for a run that had none (0: none was started).
 	Resumed int `json:"resumed_pid,omitempty"`
@@ -80,6 +85,10 @@ type NextAnswer struct {
 
 // nextPoll is how often next and dispatched look again while they wait.
 var nextPoll = 500 * time.Millisecond
+
+// startingWait is how long next reads again a run whose process is starting, beyond --wait: a process records its started row and binds
+// the owner's line soon after it holds the run.
+var startingWait = 15 * time.Second
 
 // next is `crw flow next RUN [--wait S] [--json]`.
 func (c *command) next(args []string) int {
@@ -113,46 +122,56 @@ func (c *command) next(args []string) int {
 		return c.fail("%v", err)
 	}
 	bus := engine.NewFileStepBus(RunDir(sel.Path, run))
-	// a run no process holds spawns with the role store when it is resumed; the process that holds it, with its own table (below)
+	// a run no process holds spawns with the role store when it is resumed; the process that holds it, with the pairs it pinned (below)
 	ans := NextAnswer{Run: run, Steps: []NextStep{}, Spawns: roleSpawns(table)}
 	deadline := time.Now().Add(time.Duration(*wait) * time.Second)
-	first, resumed, bindChecked := "", false, false
+	first, resumed := "", false
 	var steps []engine.Step
 	var info RunInfo
-	// before are the rows the ended process left when next resumes the run
-	var before []engine.Event
+	var held heldProcess
+	var live bool
+	// until bounds the reads of a process that is starting
+	var until time.Time
 	for {
 		info = c.runInfo(cm, run)
-		live := LockHeld(sel.Path, run)
-		if !live && !resumed && info.State == StateDead && info.Paused == "" {
+		live = LockHeld(sel.Path, run)
+		// a start holds the start lock until its process holds the run lock: that run is starting, not one to resume
+		starting := !live && startLockHeld(sel.Path, run)
+		if !live && !starting && !resumed && info.State == StateDead && info.Paused == "" {
 			// no process, not paused and not over: next resumes the run as `crw flow resume RUN --detach` does
 			resumed = true
-			before = c.runEvents(cm, run)
 			if pid, err := c.detachResume(sel.Path, spec); err != nil {
 				ans.Warnings = append(ans.Warnings, fmt.Sprintf("no process holds run %s and its resume did not start: %v", run, err))
 			} else {
 				ans.Resumed = pid
-				live = true
-				info.State, info.Live = StateRunning, true
+				info, live = c.runInfo(cm, run), LockHeld(sel.Path, run)
 			}
 		}
-		if live && !bindChecked {
-			bindChecked = true
-			// the line and the spawn formats are those of the process that holds the run, the one next found or the one it resumed
-			// (CRW-1372)
-			held, warning := c.processTable(cm, run, table, before, ans.Resumed > 0)
-			if warning != "" {
-				ans.Warnings = append(ans.Warnings, warning)
+		held = heldProcess{}
+		if live {
+			// what the process that holds the run recorded, read now: next never takes an earlier process's pins for it (CRW-1372)
+			held = c.heldProcess(cm, sel.Path, spec, table)
+			starting = held.starting
+		}
+		if starting || held.binding {
+			// read again, startingWait at most: past it a starting run is answered as such, and a line not bound is reported
+			if until.IsZero() {
+				until = time.Now().Add(startingWait)
 			}
-			ans.Spawns = roleSpawns(held)
-			if w := c.checkBinding(sel.Path, spec, held); w != "" {
-				ans.Warnings = append(ans.Warnings, w)
+			if time.Now().Before(until) {
+				time.Sleep(nextPoll)
+				continue
 			}
+		} else {
+			until = time.Time{}
 		}
 		if steps, err = bus.Steps(); err != nil {
 			return c.fail("the steps of run %s cannot be read: %v", run, err)
 		}
 		state := nextState(info, live, steps)
+		if starting {
+			state = NextStarting
+		}
 		if first == "" {
 			first = state
 		}
@@ -161,6 +180,14 @@ func (c *command) next(args []string) int {
 			break
 		}
 		time.Sleep(nextPoll)
+	}
+	switch {
+	case ans.State == NextStarting:
+		// the process has recorded no pairs yet: next prints none rather than an earlier process's or the store's
+		ans.Spawns = []RoleSpawn{}
+	case live:
+		ans.Spawns = roleSpawns(held.table)
+		ans.Warnings = append(ans.Warnings, held.warnings(run, table, ans.Resumed > 0)...)
 	}
 	if ans.State == NextEnded {
 		ans.Ended = &NextEnd{Status: info.Status, State: info.State}
@@ -275,19 +302,6 @@ func (c *command) detachResume(state string, spec Spec) (int, error) {
 	return pid, nil
 }
 
-// checkBinding writes the owner's orchestrator line again when it is missing (another line is last, or none), and says so. A line of
-// the run that is the thread's last stands: the run's process binds it with the pairs it runs on (bindMissingOwner).
-func (c *command) checkBinding(state string, spec Spec, table *engine.Policy) string {
-	res, err := bindMissingOwner(state, spec.RunID, spec.Thread, table)
-	if w := bindWarning(res, err, spec.Thread, spec.RunID); w != "" {
-		return w
-	}
-	if res.Bound {
-		return fmt.Sprintf("the orchestrator binding of thread %s to run %s was missing and is written again", spec.Thread, spec.RunID)
-	}
-	return ""
-}
-
 // openSubagents are the subagents that hold the owner's slots, sorted: the subagents bound to calls that have not ended, and those
 // whose close step waits.
 func openSubagents(events []engine.Event, steps []engine.Step) []string {
@@ -324,73 +338,124 @@ func openSubagents(events []engine.Event, steps []engine.Step) []string {
 	return out
 }
 
-// processTable is the role table of the process that holds the run, which next binds the owner's line with and prints the spawn
-// formats of (CRW-1372), and what next warns about it. A process next found holding the run runs on the pairs it pinned (the newest
-// started row, read now): a role store whose digest differs is warned about and recorded once (role_store_changed). A process next
-// resumed reads the role store as it is now and pins what it read in a started row of its own, which next takes once it is there (a
-// started row after those of before, the rows the ended process left); until then the store as next read it is that table. A store
-// that moved since the ended process pinned is the resumed process's to record (its started row and its policy_repinned row): next
-// warns and records nothing of its own. A run that recorded no pairs takes the store's.
-func (c *command) processTable(cm *common, run string, store *engine.Policy, before []engine.Event, resumed bool) (*engine.Policy, string) {
-	now := c.runEvents(cm, run)
-	if !resumed {
-		pinned, digest, ok := pinnedPairs(now, run)
-		if !ok {
-			return store, ""
-		}
-		warning := ""
-		if digest != store.Digest {
-			warning = c.roleStoreMoved(cm, run, digest, store.Digest)
-		}
-		return withPinnedPairs(store, pinned, digest), warning
-	}
-	table := store
-	if startedCount(now, run) > startedCount(before, run) {
-		if pairs, d, own := pinnedPairs(now, run); own {
-			table = withPinnedPairs(store, pairs, d)
-		}
-	}
-	_, digest, ok := pinnedPairs(before, run)
-	if !ok || digest == table.Digest {
-		return table, ""
-	}
-	return table, fmt.Sprintf("run %s had no process and its resume runs on the role store as it reads now (%s), not on the pairs its earlier process pinned (%s): "+
-		"the resumed process records them in its started row and the change in a policy_repinned row; the owner's line and the spawn formats are the resumed process's",
-		run, cell(table.Digest), cell(digest))
+// heldProcess is what next reads of the process that holds a run (CRW-1372). The process is the one party that records its pairs and
+// writes the owner's orchestrator line while it holds the run: its started row pins the table it runs on and names its process lock,
+// and right after it the process binds the owner's line with that table. next reads both and writes neither.
+type heldProcess struct {
+	// starting: the process has not recorded its started row (the newest started row is an earlier process's, or there is none), so
+	// next has no pairs of it. binding: the row is there and the owner's line after it is not yet.
+	starting, binding bool
+	// table is the role store's table with the pairs and the digest the process's started row pinned (the store's for a row that pinned
+	// none: a run started before the pairs were pinned).
+	table *engine.Policy
+	// repinned is the policy_repinned row after the process's started row: its pairs moved from those an earlier process pinned.
+	repinned *engine.Event
+	// line says what next found of the owner's line when it is not the process's ("" when it is).
+	line string
 }
 
-// startedCount is how many processes of the run started (its started rows).
-func startedCount(events []engine.Event, run string) int {
-	n := 0
-	for _, ev := range events {
+// heldProcess reads the process that holds the run: the newest started row is that process's when the process lock its token names is
+// held. A newest row whose process lock was let go is an earlier process's, and so is a row that names no process while a process lock
+// of the run is held: the holder has not recorded its row yet (or a command such as crw flow answer holds the run between two
+// processes), and next reads again. A row that names no process while no process lock is held is that of a process of a crw before
+// the process lock, which bound the owner's line before it recorded its row.
+func (c *command) heldProcess(cm *common, state string, spec Spec, store *engine.Policy) heldProcess {
+	run := spec.RunID
+	events := c.runEvents(cm, run)
+	newest := -1
+	for i, ev := range events {
 		if ev.Kind == engine.KindRun && ev.Event == "started" && ev.RunID == run {
-			n++
+			newest = i
 		}
 	}
-	return n
+	token := ""
+	if newest >= 0 {
+		token = str(events[newest].Data, "process")
+	}
+	switch {
+	case token != "" && !processHeld(state, run, token):
+		return heldProcess{starting: true}
+	case token == "" && anyProcessHeld(state, run):
+		return heldProcess{starting: true}
+	}
+	out := heldProcess{table: store}
+	if newest >= 0 {
+		if pairs, digest, ok := rowPairs(events[newest]); ok {
+			out.table = withPinnedPairs(store, pairs, digest)
+		}
+		for _, ev := range events[newest+1:] {
+			if ev.Kind == engine.KindRun && ev.Event == engine.EvPolicyRepinned && ev.RunID == run {
+				ev := ev
+				out.repinned = &ev
+			}
+		}
+	}
+	settled, line := ownerLineOf(state, spec, out.table.Digest)
+	// a process of this crw binds right after its started row: the line of a process that started within startingWait and is not
+	// settled yet is read again; an older process's line is what it bound, and is reported
+	out.binding, out.line = token != "" && !settled && processFresh(state, run, token), line
+	return out
 }
 
-// pinnedPairs are the role pairs the run's newest started row pinned (a session run records them, CRW-1372) and the digest it pinned
-// them under; ok is false for a run that recorded none (it started before the pairs were recorded): the role store is read as before.
-func pinnedPairs(events []engine.Event, run string) (map[string]engine.Pair, string, bool) {
-	var pairs map[string]engine.Pair
-	digest := ""
-	for _, ev := range events {
-		if ev.Kind != engine.KindRun || ev.Event != "started" || ev.RunID != run {
-			continue
-		}
-		raw, ok := ev.Data["role_pairs"].(map[string]any)
-		if !ok {
-			continue
-		}
-		pairs = map[string]engine.Pair{}
-		for role, v := range raw {
-			p, _ := v.(map[string]any)
-			pairs[role] = engine.Pair{Model: str(p, "model"), Effort: str(p, "effort")}
-		}
-		digest = str(ev.Data, "policy_digest")
+// warnings are what next says of the process it read: a line of the owner that is not the process's; for a process next resumed, that
+// it pinned other pairs than the process before it (its policy_repinned row); for one next found, a role store that reads other pairs
+// now than the process pinned. next records none of them: the process records its pairs in its started row, and a resume the change in
+// a policy_repinned row.
+func (h heldProcess) warnings(run string, store *engine.Policy, resumed bool) []string {
+	var out []string
+	if h.line != "" {
+		out = append(out, h.line)
 	}
-	return pairs, digest, pairs != nil
+	switch {
+	case resumed && h.repinned != nil:
+		out = append(out, fmt.Sprintf("run %s had no process and its resume runs on the role store as it reads now (%s), not on the pairs its earlier process pinned (%s): "+
+			"the resumed process recorded them in its started row and the change in a policy_repinned row; the owner's line and the spawn formats are the resumed process's",
+			run, cell(str(h.repinned.Data, "new")), cell(str(h.repinned.Data, "old"))))
+	case !resumed && h.table.Digest != store.Digest:
+		out = append(out, fmt.Sprintf("the role store changed while run %s lives (its process pinned %s, the store now reads %s): the process runs on the pairs it pinned and the owner's line keeps them, "+
+			"and a resume takes the new ones (recorded then in its started row and a policy_repinned row)", run, cell(h.table.Digest), cell(store.Digest)))
+	}
+	return out
+}
+
+// ownerLineOf reads the owner thread's last line for the process that holds the run, which pinned digest: settled when it is that
+// process's (the run's open line under digest), when another live run holds the thread (one thread binds one live run, so the
+// process could not bind) or when no line can name the owner; line says what next found when it is not the process's line.
+func ownerLineOf(state string, spec Spec, digest string) (settled bool, line string) {
+	run, thread := spec.RunID, spec.Thread
+	if !bound.ValidThreadID(thread) {
+		return true, fmt.Sprintf("the owner %q is not a thread id: no flow-bound line names it, and the spawn hook gives its spawns no role pair", thread)
+	}
+	last, present, err := bound.OrchestratorLine(nil, thread)
+	switch {
+	case err != nil:
+		return false, fmt.Sprintf("the orchestrator line of thread %s cannot be read (%v): the spawn hook decides the owner's spawns by it", thread, err)
+	case present && last.Kind == bound.KindOrchestrator && last.RunID == run && last.PolicyDigest == digest:
+		return true, ""
+	case present && last.Kind != bound.KindClosed && last.RunID != run && validRunID(last.RunID) && runLive(state, last.RunID):
+		return true, fmt.Sprintf("the owner thread %s is bound to run %s, whose process holds its lock: run %s is not bound (one thread binds one live run), so the spawn hook applies run %s's pairs",
+			thread, last.RunID, run, last.RunID)
+	case present && last.Kind == bound.KindOrchestrator && last.RunID == run:
+		return false, fmt.Sprintf("the orchestrator line of thread %s carries run %s's pairs under %s, not those its process pinned (%s): next writes no line; the run's next process binds it after its started row",
+			thread, run, cell(last.PolicyDigest), cell(digest))
+	}
+	return false, fmt.Sprintf("thread %s holds no open line of run %s, so the spawn hook gives the owner's spawns no pair of the run: next writes no line; the run's process binds it after its started row, and its next process when it is resumed",
+		thread, run)
+}
+
+// rowPairs are the role pairs a session run's started row pinned (CRW-1372) and the digest it pinned them under; ok is false for a row
+// that recorded none (a run started before the pairs were recorded): the role store is read as before.
+func rowPairs(ev engine.Event) (map[string]engine.Pair, string, bool) {
+	raw, ok := ev.Data["role_pairs"].(map[string]any)
+	if !ok {
+		return nil, "", false
+	}
+	pairs := map[string]engine.Pair{}
+	for role, v := range raw {
+		p, _ := v.(map[string]any)
+		pairs[role] = engine.Pair{Model: str(p, "model"), Effort: str(p, "effort")}
+	}
+	return pairs, str(ev.Data, "policy_digest"), true
 }
 
 // withPinnedPairs is the table with the pairs and the digest the run pinned in place of the store's.
@@ -409,29 +474,8 @@ func withPinnedPairs(table *engine.Policy, pinned map[string]engine.Pair, digest
 	return &out
 }
 
-// roleStoreMoved records, once for the pair of digests, that the role store moved while the run lives (a role_store_changed row of the
-// run), and says so: next calls it for a process it found holding the run, never for one it resumed. A row that cannot be written
-// leaves the warning.
-func (c *command) roleStoreMoved(cm *common, run, pinned, now string) string {
-	warning := fmt.Sprintf("the role store changed while run %s lives (it pinned %s, the store now reads %s): the owner's line keeps the pairs the run pinned, "+
-		"and a resume takes the new ones", run, cell(pinned), cell(now))
-	open := c.Writer
-	if open == nil {
-		open = OpenWriter
-	}
-	st, _, err := open(c.ctx, cm.state, cm.socket)
-	if err != nil {
-		return warning + " (not recorded: " + err.Error() + ")"
-	}
-	defer st.Close()
-	if _, _, err := (report.ForeignAppender{Store: st, Run: run}).AppendOnce(c.ctx, report.NewRow{Kind: KindRoleStoreChanged, Payload: map[string]any{
-		"change_key": pinned + ">" + now, "pinned_digest": pinned, "store_digest": now}}, "change_key"); err != nil {
-		return warning + " (not recorded: " + err.Error() + ")"
-	}
-	return warning
-}
-
-// KindRoleStoreChanged is the row `crw flow next` writes when the role store moved while a run lives.
+// KindRoleStoreChanged is a flow row no command writes: the run's process is the one party that records a run's pairs and their change
+// (CRW-1372). The journal of an older run may hold one.
 const KindRoleStoreChanged = "role_store_changed"
 
 // nextHint says what to do next.
@@ -447,10 +491,13 @@ func nextHint(ans NextAnswer, info RunInfo, closes []string) string {
 		parts = append(parts, fmt.Sprintf("run %s is paused (%s): crw flow resume %s goes on", ans.Run, info.Paused, ans.Run))
 	case NextWaitingDecision:
 		parts = append(parts, fmt.Sprintf("run %s waits for a decision: crw flow show %s lists its questions", ans.Run, ans.Run))
+	case NextStarting:
+		parts = append(parts, fmt.Sprintf("run %s's process is starting: it holds the run and has not recorded its started row or bound the owner's line yet, so no spawn format is given: "+
+			"crw flow next %s --wait 600 --json reads it again", ans.Run, ans.Run))
 	}
 	if len(ans.Steps) > 0 {
 		parts = append(parts, sessionLoop(ans.Run))
-	} else if ans.State != NextEnded {
+	} else if ans.State != NextEnded && ans.State != NextStarting {
 		parts = append(parts, fmt.Sprintf("no step to take: wait_agent(targets=[<open agents>], timeout_ms=600000) on the subagents that work, then crw flow next %s --wait 600 --json", ans.Run))
 	}
 	spawns := 0

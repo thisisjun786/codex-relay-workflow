@@ -926,7 +926,7 @@ any row is written. `crw flow shadow` replays either from the trace and names th
 | terminal rows | as for any call |
 | `session_wake` (flow row) | a wake of the owner thread the run staged: `batch`, `wake_id`, `renotify`, `ops`, `owner`, `owner_status`, `waiting_seconds`, `staged` (and `error`, or `reason` when the relay already held the message and staged nothing) |
 | `session_host_warning` (flow row) | what the session host adapter's marker search could not tie as it should: `op`, `warnings` (`no_ledger_line`, `ledger_op_differs`, `several_spawns`, `window_ended`) |
-| `role_store_changed` (flow row, written by `crw flow next`) | the role store moved while the process that pinned the run's pairs holds it (not written for a run next resumed: that process records its own pairs): `pinned_digest`, `store_digest`, once for the pair |
+| `role_store_changed` (flow row) | written by no command: the run's process is the one party that records the pairs a run runs on and their change (its started row, `policy_repinned`); the journal of an older run may hold one (`pinned_digest`, `store_digest`) |
 | `escalation` (flow row) | `reason: session_unresponsive`: the steps waited `UnresponsiveAfter` without a dispatched report (`owner`, `ops`, `batch`, `waiting_seconds`); the run goes on |
 | `step_unwritten` (flow row) | a step whose packet or file could not be written: nothing was sent (`input_state: not_delivered`, `marker`, `error`); the run writes it again |
 
@@ -942,7 +942,7 @@ run's directory `<state>/flow/<run>/` and none writes the journal, which only th
   fork_context=false)`) and the six session facts below, and the answer names the command the steps are taken with
   (`next`). Before the process starts the owner thread is bound (below).
 - `crw flow next RUN [--wait S] [--json]` answers the run's `state` (`running`, `waiting_session`, `waiting_decision`, `paused`,
-  `ended` with the `ended` status and state), its `steps`, the `slots` (`limit`: `agents.max_threads`, `open`: the subagents of
+  `ended` with the `ended` status and state, `starting` below), its `steps`, the `slots` (`limit`: `agents.max_threads`, `open`: the subagents of
   calls not ended and of close steps not taken, `agents`: their ids), the `spawn_formats` and a `hint`; with `--wait` it waits up to S seconds for a
   step or a change of state. Each step carries the step file's members (call, k, attempt, op, role, action, agent_type, model,
   reasoning_effort, message, packet, workspace, agent_id) and the host call to make with the live argument names: a spawn step is
@@ -950,16 +950,25 @@ run's directory `<state>/flow/<run>/` and none writes the journal, which only th
   dispatched`, a close step is `close_agent(target)`; the hint says to alternate `wait_agent(targets, timeout_ms)` with `next
   --wait` (its `targets` are the open subagents' ids), which subagents to close first and when the slots are full (`agent thread limit reached`; the step stays). A close
   step's file is removed once next has handed it out. A run no process holds that is neither paused nor over is resumed as
-  `crw flow resume RUN --detach` does, and the hint says so (`resumed_pid`). While a process holds the run, next writes the
-  owner's binding again when it is missing (another line is last, or none), with a warning, and with the pairs that process pinned
-  (the `role_pairs` and `policy_digest` of the run's newest started row when next finds the process), not the role store read again;
-  the spawn formats are those pairs too. A line of the run that is the thread's last stands whatever its pairs: the run's process
-  binds it with the pairs it runs on. A role store that moved since is warned about and recorded once as a `role_store_changed` row
-  of the run, and the run's line stays; a resume takes the new pairs. When next resumed the run itself, the process that holds it is
-  the resumed one, which reads the role store as it is now, binds the owner's line with it and pins it in its own started row (with
-  a `policy_repinned` row when it moved since the earlier process pinned): next prints the spawn formats of that process's started
-  row once it is there, else of the role store as next read it, warns when the resume takes other pairs than the earlier process
-  pinned, and writes no `role_store_changed` row. A run that recorded no pairs is bound with the store's, as before.
+  `crw flow resume RUN --detach` does, and the hint says so (`resumed_pid`). next writes neither the owner's orchestrator line nor a
+  row of the run (CRW-1372): while a process holds the run, that process is the one party that records the pairs it runs on (the
+  `role_pairs` and `policy_digest` of its started row, which names its process lock as `process`) and writes the owner's line from
+  them right after that row (below), and next reads both. The spawn formats are the pairs of the holder's started row: the newest
+  started row when the process lock it names is held, or a newest row that names no process (one of a process of a crw before the
+  process lock, which bound before it recorded its row) when no process lock of the run is held. A run whose holder has not recorded
+  its started row yet (the newest row names a process lock that was let go, or names none while a process lock of the run is held:
+  the holder is coming up, or a command such as `crw flow answer` holds the run between two processes), or whose start holds its
+  start lock, is `starting`: next reads it again, up to 15 seconds whatever `--wait` says, never takes an earlier process's pins for
+  the holder's and resumes nothing; still starting then, it answers `starting` with no spawn formats and a hint to ask again (at once
+  without `--wait`, else when the state changes or `--wait` runs out). A holder that took its process lock less than 15 seconds ago,
+  recorded its started row and has not bound the owner's line under that row's digest yet is read again the same way, and its line
+  is then reported as it is. A run no process holds answers the role store's spawn formats
+  (a resume reads the store). next warns, and records nothing, when the owner's last line is not the holder's (another live run's,
+  another digest's, or none: the hook gives the owner's spawns no pair of the run until the run's process, or its next process when
+  it is resumed, binds it), when the role store reads other pairs than the holder pinned (the process runs on its pins; a resume
+  takes the new ones and records them in its started row and the change in a `policy_repinned` row) and, for a run next resumed,
+  when that process repinned (its `policy_repinned` row: it runs on the role store as it reads now, not on the pairs the earlier
+  process pinned). A run that recorded no pairs answers the store's, as before.
 - `crw flow dispatched RUN CALL --agent ID --k K --attempt N [--wait S] [--json]` writes the dispatch report into the inbox (a
   temporary name and a rename), waits up to S seconds (120) for the run's reply and prints it (`bound` exits 0, the other replies
   exit 1). A report of a run no process holds, or one the run has not answered in time, is answered `queued`: it stays in the inbox
@@ -976,8 +985,15 @@ run's directory `<state>/flow/<run>/` and none writes the journal, which only th
   architect, executor, executor-t1, reviewer, reviewer-final, explorer; `Line.Validate` takes no orchestrator line without the six).
   A pair carries the decided parts of its role only: an undecided role has the empty pair, a role that names a model and leaves its
   effort undecided has the empty effort, and an effort without a model is no role's pair.
-  The start writes it, the run process writes it again when it starts or resumes and it is not the last line, and the process
-  closes it when the run ends (`CloseOrchestrator`). A live run is one whose process holds its run lock, or whose start holds its
+  The start writes it before any process of the run exists. While a process holds the run, that process is the one party that writes
+  it (CRW-1372): right after its started row is in the journal it writes the line again with the table that row pinned when it is
+  not the last line (`engine.SessionConfig.Started`; the foreground `crw flow resume RUN SCRIPT` through `engine.ResumeHold`), and it
+  closes it when the run ends (`CloseOrchestrator`). `crw flow next` only reads it, so a line that is missing while a process holds
+  the run (its bind failed, or a process of an older crw left it) is reported and stays missing until the run's next process, a
+  resume, binds it after its own started row. A session run's process holds its process lock, `<state>/flow/<run>/process.<token>.lock`,
+  from before it takes the run lock until after it lets the run lock go, and its started row names the token (`process`); it
+  removes the file when it ends (the file of a process that died stays, held by nobody). A process lock that cannot be taken is
+  warned about and the process runs with a started row that names no process. A live run is one whose process holds its run lock, or whose start holds its
   start lock (`<state>/flow/<run>/start.lock`, held from before the start binds until the run's process holds the run lock, since the
   start binds before its process exists): the open line of a run with neither is closed before the new one is written, and a thread
   holds the line of one live run, so a second start while the first lives, or is still starting, warns and does not bind. The read

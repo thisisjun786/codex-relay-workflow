@@ -73,7 +73,8 @@ func TestSessionWakeThatStagedNothingIsRecordedAsSuch(t *testing.T) {
 	}
 }
 
-// CRW-1372 (2): a session run pins its role pairs in its started row, which `crw flow next` binds the owner's line with.
+// CRW-1372 (2): a session run pins its role pairs in its started row: its process binds the owner's line with them, and `crw flow next`
+// reads them.
 func TestSessionRunPinsItsRolePairsInItsStartedRow(t *testing.T) {
 	h, orch, rec := wakeKit(t, "idle")
 	h.cfg.Session.UnresponsiveAfter = time.Hour
@@ -88,5 +89,40 @@ func TestSessionRunPinsItsRolePairsInItsStartedRow(t *testing.T) {
 	want := h.cfg.Policy.Roles["explorer"].Pair
 	if explorer == nil || explorer["model"] != want.Model || explorer["effort"] != want.Effort {
 		t.Fatalf("the started row pinned %v, want the explorer's %+v", pinned, want)
+	}
+}
+
+// CRW-1372 (2), Argon V5 G1/G2 of fbed54e9: the run's process writes the owner's line from its own record. Started is called once, after
+// the started row (which names the process) and the policy_repinned row of a resume that repinned are in the journal and before any row
+// of a call, with the table the started row pinned.
+func TestSessionRunCallsStartedAfterItsStartedRow(t *testing.T) {
+	h, orch, rec := wakeKit(t, "idle")
+	h.cfg.Session.UnresponsiveAfter = time.Hour
+	// an earlier process pinned another digest: this one repins
+	h.journal.Append(Event{RunID: "run-test", Kind: KindRun, Event: "started", Data: map[string]any{"workflow": "t", "backend": BackendSession, "policy_digest": "sha256:earlier"}})
+	h.cfg.Session.Process = "0123456789abcdef"
+	var calls int
+	var at []Event
+	var got *Policy
+	h.cfg.Session.Started = func(table *Policy) {
+		calls++
+		at, got = h.journal.Events(), table
+	}
+	runUntilWoken(t, h, orch, rec)
+	if calls != 1 || got != h.cfg.Policy {
+		t.Fatalf("Started was called %d times with %p, want once with the run's table %p", calls, got, h.cfg.Policy)
+	}
+	last := at[len(at)-1]
+	started := at[len(at)-2]
+	if started.Kind != KindRun || started.Event != "started" || rowStr(started.Data, "process") != "0123456789abcdef" || started.Data["role_pairs"] == nil {
+		t.Fatalf("the row before the repin when Started ran is %+v, want this process's started row naming it", started)
+	}
+	if last.Kind != KindRun || last.Event != EvPolicyRepinned {
+		t.Fatalf("the last row when Started ran is %+v, want the policy_repinned row", last)
+	}
+	for _, ev := range at {
+		if ev.Kind == KindCall {
+			t.Fatalf("a call row was written before Started: %+v", ev)
+		}
 	}
 }

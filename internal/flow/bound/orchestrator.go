@@ -79,16 +79,11 @@ type OrchestratorBinding struct {
 	Pairs map[string]Pair
 	// Live reports whether the process of a run holds its run lock; nil takes every other run for one without a process.
 	Live func(run string) bool
-	// KeepRunLine leaves a thread whose last line is the run's own open line as it is, whatever its pairs (Already): the binding is
-	// written only when it is missing. `crw flow next` binds so, because the run's process binds the line with the pairs it runs on,
-	// and next must not write other pairs over them (CRW-1372).
-	KeepRunLine bool
 }
 
 // BindResult is what BindOrchestrator did.
 type BindResult struct {
-	// Bound: a line of the run was written. Already: the thread's last line is the run's open line with the same pairs (with any
-	// pairs under KeepRunLine).
+	// Bound: a line of the run was written. Already: the thread's last line is the run's open line with the same pairs.
 	Bound, Already bool
 	// Closed is the run whose open line was closed first (its process is gone); Holder the live run the thread stays bound to,
 	// in which case nothing was written.
@@ -132,8 +127,6 @@ func BindOrchestrator(o OrchestratorBinding) (BindResult, error) {
 	if present && last.Kind != KindClosed {
 		switch {
 		case last.RunID == o.RunID && last.Kind == KindOrchestrator && last.PolicyDigest == o.Digest && maps.Equal(last.HelperPairs, line.HelperPairs):
-			return BindResult{Already: true}, nil
-		case last.RunID == o.RunID && last.Kind == KindOrchestrator && o.KeepRunLine:
 			return BindResult{Already: true}, nil
 		case last.RunID == o.RunID:
 			// the run's own line with other pairs (a resume that re-pinned them): written again below

@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -142,6 +145,113 @@ func startLockHeld(state, run string) bool {
 
 // runLive says whether a run is live for the owner binding: its process holds the run lock, or its start holds the start lock.
 func runLive(state, run string) bool { return LockHeld(state, run) || startLockHeld(state, run) }
+
+// The process lock is a file lock a session run's process holds on a file of its own, <state>/flow/<run>/process.<token>.lock: it takes
+// it before the run lock and lets it go after the run lock, and its started row names the token (`process`). A reader that finds the
+// run lock held tells by it whether the newest started row is the holder's (its process lock is held) or an earlier process's (the
+// kernel let that one go when the process ended), so `crw flow next` never takes an ended process's pins for the holder's (CRW-1372).
+// The holder removes its file when it ends; the file of a process that died stays, and nothing holds it.
+type processLock struct {
+	f     *os.File
+	path  string
+	token string
+}
+
+// processTokenLen is the length of a process token: 16 lowercase hex digits.
+const processTokenLen = 16
+
+func processLockPath(state, run, token string) string {
+	return filepath.Join(RunDir(state, run), "process."+token+".lock")
+}
+
+// validProcessToken is a token a path can carry: 16 lowercase hex digits.
+func validProcessToken(token string) bool {
+	if len(token) != processTokenLen {
+		return false
+	}
+	for _, r := range token {
+		if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// takeProcessLock makes the process lock of this process of a run under a new token and holds it.
+func takeProcessLock(state, run string) (*processLock, error) {
+	if !validRunID(run) {
+		return nil, fmt.Errorf("%q is not a run id", run)
+	}
+	if err := os.MkdirAll(RunDir(state, run), 0o700); err != nil {
+		return nil, err
+	}
+	var b [processTokenLen / 2]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return nil, err
+	}
+	token := hex.EncodeToString(b[:])
+	path := processLockPath(state, run, token)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	// the file is new and this process's: only a reader's probe (heldAt) can hold its lock, for an instant, so the lock is waited for
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
+		_ = f.Close()
+		_ = os.Remove(path)
+		return nil, fmt.Errorf("the process lock of run %s: %w", run, err)
+	}
+	return &processLock{f: f, path: path, token: token}, nil
+}
+
+// Token is the token the process's started row names ("" for no lock).
+func (p *processLock) Token() string {
+	if p == nil {
+		return ""
+	}
+	return p.token
+}
+
+// Release removes the file and lets the lock go.
+func (p *processLock) Release() {
+	if p == nil || p.f == nil {
+		return
+	}
+	_ = os.Remove(p.path)
+	_ = syscall.Flock(int(p.f.Fd()), syscall.LOCK_UN)
+	_ = p.f.Close()
+	p.f = nil
+}
+
+// processHeld says whether the process a started row names by its token still holds its process lock.
+func processHeld(state, run, token string) bool {
+	return validRunID(run) && validProcessToken(token) && heldAt(processLockPath(state, run, token))
+}
+
+// processFresh says whether the process lock a token names was made within startingWait: the process took the run a moment ago.
+func processFresh(state, run, token string) bool {
+	if !validRunID(run) || !validProcessToken(token) {
+		return false
+	}
+	info, err := os.Stat(processLockPath(state, run, token))
+	return err == nil && time.Since(info.ModTime()) < startingWait
+}
+
+// anyProcessHeld says whether a process of the run holds a process lock: a process of this crw holds the run, or takes it.
+func anyProcessHeld(state, run string) bool {
+	if !validRunID(run) {
+		return false
+	}
+	entries, _ := os.ReadDir(RunDir(state, run))
+	for _, e := range entries {
+		rest, ok := strings.CutPrefix(e.Name(), "process.")
+		token, lock := strings.CutSuffix(rest, ".lock")
+		if ok && lock && validProcessToken(token) && heldAt(processLockPath(state, run, token)) {
+			return true
+		}
+	}
+	return false
+}
 
 // heldAt says whether another open file holds the flock of path; a file that is not there is not held.
 func heldAt(path string) bool {

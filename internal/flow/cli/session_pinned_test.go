@@ -10,9 +10,10 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/report"
 )
 
-// CRW-1372 (2): `crw flow next` writes the owner's orchestrator line with the pairs the live run pinned (its newest started row), not
-// with the role store read again: a role store changed while the run lives is warned about and recorded once, and the line stays the
-// run's. (5): the hint names the open subagents wait_agent waits on.
+// CRW-1372 (2): `crw flow next` answers with the pairs the live run pinned (its newest started row), not with the role store read
+// again, and writes no line: the owner's orchestrator line is the run process's, and a role store changed while the run lives is
+// warned about and recorded by nobody (the run's next process records its pairs and the change). (5): the hint names the open
+// subagents wait_agent waits on.
 
 // pinnedRun is a live session run whose newest started row pinned pairs no role store holds.
 func pinnedRun(t *testing.T, w *world, run string) (*Lock, map[string]bound.Pair) {
@@ -35,11 +36,20 @@ func pinnedRun(t *testing.T, w *world, run string) (*Lock, map[string]bound.Pair
 }
 
 func TestNextBindsThePairsTheLiveRunPinned(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
 	w := newWorld(t)
 	td := w.deps()
 	run := "run-0123456789b0"
 	lock, want := pinnedRun(t, w, run)
 	defer lock.Release()
+	// the run's process (one of a crw before the process lock: its started row names none) bound the owner with the pairs it pinned
+	pinned := map[string]engine.Pair{}
+	for role, pair := range want {
+		pinned[role] = engine.Pair{Model: pair.Model, Effort: pair.Effort}
+	}
+	if res, err := bindOwner(w.state, run, sessOwner, withPinnedPairs(engine.FakePolicy(), pinned, "sha256:pinned")); err != nil || !res.Bound {
+		t.Fatalf("the process's bind: %+v %v", res, err)
+	}
 	code, out, errOut := td.do("next", run, "--json", "--state", w.state)
 	if code != 0 {
 		t.Fatalf("next: %d %s %s", code, out, errOut)
@@ -71,18 +81,21 @@ func TestNextBindsThePairsTheLiveRunPinned(t *testing.T) {
 		}
 		return len(n)
 	}
-	if rows() != 1 {
-		t.Fatalf("%d role_store_changed rows, want 1", rows())
+	if rows() != 0 {
+		t.Fatalf("%d role_store_changed rows: next recorded a row of the run", rows())
 	}
-	// next again: the line is the run's (nothing rewritten, no 'missing' warning), and the change is recorded once
+	// next again: the line is the run's process's (one line, nothing rewritten, nothing reported of it), and nothing is recorded
 	_, out, _ = td.do("next", run, "--json", "--state", w.state)
 	again := decodeNext(t, out)
 	for _, warning := range again.Warnings {
-		if strings.Contains(warning, "missing") {
-			t.Fatalf("the second next rewrote the line: %v", again.Warnings)
+		if strings.Contains(warning, "next writes no line") {
+			t.Fatalf("the second next found the line not the process's: %v", again.Warnings)
 		}
 	}
-	if rows() != 1 {
+	if n := ownerLines(t, sessOwner); n != 1 {
+		t.Fatalf("%d lines in the owner's file: next wrote one", n)
+	}
+	if rows() != 0 {
 		t.Fatalf("%d role_store_changed rows after the second next", rows())
 	}
 }

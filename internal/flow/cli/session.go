@@ -120,19 +120,38 @@ func bindOwner(state, run, thread string, table *engine.Policy) (bound.BindResul
 		Live: func(other string) bool { return validRunID(other) && runLive(state, other) }})
 }
 
-// bindMissingOwner is bindOwner for `crw flow next`: the line is written only when it is missing (another line is last, or none). A line
-// of the run that is the thread's last stands whatever its pairs, because the run's process binds it with the pairs it runs on, and the
-// process next resumed, or one another command started, may have bound after next read the pins (CRW-1372).
-func bindMissingOwner(state, run, thread string, table *engine.Policy) (bound.BindResult, error) {
-	return bound.BindOrchestrator(bound.OrchestratorBinding{RunID: run, Thread: thread, Digest: table.Digest, Pairs: ownerPairs(table), KeepRunLine: true,
-		Live: func(other string) bool { return validRunID(other) && runLive(state, other) }})
+// bindFromStarted is what a session run's process does once its started row is in the journal (engine.SessionConfig.Started): it binds
+// the owner thread with the table that row pinned, and warns in its log when the line was not written. While a process holds the run
+// it is the one party that writes the run's line (CRW-1372): `crw flow next` reads it, and a line that is missing then is written by
+// the run's next process (a resume) after its own started row.
+func (c *command) bindFromStarted(state, run, owner string) func(*engine.Policy) {
+	return func(table *engine.Policy) {
+		res, err := bindOwner(state, run, owner, table)
+		if w := bindWarning(res, err, owner, run); w != "" {
+			fmt.Fprintf(c.stderr, "crw flow %s: warning: %s\n", c.name, w)
+		}
+	}
+}
+
+// processLock takes the process lock of a session run's process (nil for a run of the App Server backend, or a lock that cannot be
+// taken: the process warns and runs, and its started row names no process, which `crw flow next` reads as an earlier crw's).
+func (c *command) processLock(state string, spec Spec) *processLock {
+	if specBackend(spec) != BackendSession {
+		return nil
+	}
+	p, err := takeProcessLock(state, spec.RunID)
+	if err != nil {
+		fmt.Fprintf(c.stderr, "crw flow %s: warning: %v: the run's started row names no process, so crw flow next reads the run as one of an earlier crw\n", c.name, err)
+		return nil
+	}
+	return p
 }
 
 // closeOwner closes the run's orchestrator line when it is the owner thread's last (the run ended).
 func closeOwner(run, thread string) (bool, error) { return bound.CloseOrchestrator(nil, run, thread) }
 
-// bindWarning is the warning a start, a resume or `crw flow next` prints for a binding that was not written ("" when it was, or
-// was there already).
+// bindWarning is the warning a start or a run's process (a resume's included) prints for a binding that was not written ("" when it
+// was, or was there already).
 func bindWarning(res bound.BindResult, err error, thread, run string) string {
 	switch {
 	case err != nil:
