@@ -55,8 +55,8 @@ func TestLiveCompileDryRunOfACrwWorkMilestone(t *testing.T) {
 		t.Logf("warning [%s] %s: %s", w.Rule, w.Issue, w.Detail)
 	}
 	p := res.Input.Projects[0]
-	if p.Key != ref.String() || len(p.Issues) == 0 {
-		t.Fatalf("project %q with %d issues", p.Key, len(p.Issues))
+	if want, _ := EncodeKey(ref); p.Key != want || res.Refs[p.Key] != ref.String() || len(p.Issues) == 0 {
+		t.Fatalf("project %q (want %q) with %d issues", p.Key, want, len(p.Issues))
 	}
 	plan, err := compile.Compile(res.Input, compile.Options{DryRun: true})
 	if err != nil {

@@ -3,8 +3,9 @@
 //
 // A project owner takes one milestone; the plan's project key is the milestone ref (OWNER/NAME#N, the identifier form of the tracking
 // package), each open issue of the milestone is one issue line keyed by its ref (OWNER/NAME#N), and the order of the issues is the
-// "Blocked by:" lines of their bodies. The command only reads: the Reader it takes has a Milestone method and nothing that writes, and
-// the tracking adapter sends GET requests for it.
+// "Blocked by:" lines of their bodies. The ref is the identity; the compile input spells it OWNER:NAME:N (enc.go), because the relay dag
+// reads the keys as identifiers, which a '/' and a '#' are not. The envelope and the warnings show the refs. The command only reads: the
+// Reader it takes has a Milestone method and nothing that writes, and the tracking adapter sends GET requests for it.
 //
 // The issue body is read for the fields of an issue line from a small fixed set of headings (see body.go):
 //
@@ -16,7 +17,7 @@
 // What cannot be mapped is a warning, never a refusal: a missing criteria section, a region compile would refuse, a size value outside
 // its closed set, a blocker that is closed, outside the milestone or the issue itself, a milestone that is closed or has no open issue,
 // and a project key the owner thread holds no live parent binding of (the comparison `crw flow start` makes as project_key_bound,
-// CRW-1317). Only an input error (a Ref that is not OWNER/NAME#N, a milestone that does not exist) stops the command.
+// CRW-1317). Only an input error (a Ref that is not OWNER/NAME#N, a milestone that does not exist, a key the dag cannot hold) stops the command.
 package planinput
 
 import (
@@ -27,6 +28,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/compile"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/tracking"
 )
 
@@ -65,6 +67,8 @@ type Options struct {
 type Result struct {
 	Input    compile.Input
 	Warnings []Warning
+	// Refs maps each key of Input (OWNER:NAME:N) to its ref (OWNER/NAME#N).
+	Refs map[string]string
 }
 
 // Envelope is the report `--envelope` prints: the input beside the warnings array that records what the mapping left out.
@@ -72,7 +76,9 @@ type Envelope struct {
 	Schema    string        `json:"schema"`
 	Milestone string        `json:"milestone"`
 	Input     compile.Input `json:"input"`
-	Warnings  []Warning     `json:"warnings"`
+	// Refs maps each key of the input back to its OWNER/NAME#N ref.
+	Refs     map[string]string `json:"refs"`
+	Warnings []Warning         `json:"warnings"`
 }
 
 // Build reads the milestone and builds the compile input for it. An error is an input error, worded with what to pass.
@@ -92,6 +98,22 @@ func Build(ctx context.Context, r Reader, ref tracking.Ref, opts Options) (Resul
 	warn := func(rule, issue, format string, a ...any) {
 		warnings = append(warnings, Warning{Rule: rule, Issue: issue, Detail: fmt.Sprintf(format, a...)})
 	}
+	var problems []string
+	seenProblem := map[string]bool{}
+	refs := map[string]string{}
+	encode := func(r tracking.Ref) string {
+		k, err := EncodeKey(r)
+		if err != nil {
+			if !seenProblem[err.Error()] {
+				seenProblem[err.Error()] = true
+				problems = append(problems, err.Error())
+			}
+			return ""
+		}
+		refs[k] = r.String()
+		return k
+	}
+	pkey := encode(ref)
 
 	byRef := map[string]tracking.Issue{}
 	var open []tracking.Issue
@@ -113,39 +135,54 @@ func Build(ctx context.Context, r Reader, ref tracking.Ref, opts Options) (Resul
 		warn("no_open_issue", "", "milestone %s has no open issue: compile refuses a project with no issue", key)
 	}
 
-	project := compile.Project{Key: key, Target: opts.Target, Issues: []compile.Issue{}}
+	project := compile.Project{Key: pkey, Target: opts.Target, Issues: []compile.Issue{}}
 	ordered := false
 	for _, is := range open {
-		line, w := issueLine(is, byRef, key)
+		line, w := issueLine(is, byRef, key, encode)
 		warnings = append(warnings, w...)
 		ordered = ordered || len(line.After) > 0
 		project.Issues = append(project.Issues, line)
+	}
+	// compile names the order edge "e:FROM:TO", and the dag holds that id to the same limit as a key
+	for _, line := range project.Issues {
+		for _, a := range line.After {
+			if line.Key == "" || a == "" {
+				continue
+			}
+			if n := edgeIDLength(a, line.Key); n > dag.MaxIDLength {
+				problems = append(problems, fmt.Sprintf("the order of %s after %s is the dag edge \"e:%s:%s\" of %d characters, over the %d the relay dag allows for an identifier: use a repository with a shorter owner/name", refs[line.Key], refs[a], a, line.Key, n, dag.MaxIDLength))
+			}
+		}
+	}
+	if len(problems) > 0 {
+		return Result{}, fmt.Errorf("milestone %s cannot be written as a plan, nothing is built: %s", key, strings.Join(problems, "; "))
 	}
 	if ordered && opts.Target == nil {
 		warn("target_missing", "", "compile refuses an order between issues that integrate code when the project has no target: pass --target-repository (the absolute path of the checkout) and --base-ref (the branch)")
 	}
 	if b := opts.Binding; b != nil {
-		if w, ok := keyWarning(key, *b); ok {
+		if w, ok := keyWarning(pkey, key, *b); ok {
 			warnings = append(warnings, w)
 		}
 	}
 	return Result{
 		Input:    compile.Input{Schema: compile.InputSchema, Projects: []compile.Project{project}},
 		Warnings: warnings,
+		Refs:     refs,
 	}, nil
 }
 
 // refKey is a Ref as a map key: the repository compared without regard to case.
 func refKey(r tracking.Ref) string { return strings.ToLower(r.Repo) + "#" + fmt.Sprint(r.Number) }
 
-// issueLine maps one open issue to its issue line and the warnings of the mapping.
-func issueLine(is tracking.Issue, byRef map[string]tracking.Issue, project string) (compile.Issue, []Warning) {
+// issueLine maps one open issue to its issue line and the warnings of the mapping. The line is keyed by encode(ref): the dag-safe form.
+func issueLine(is tracking.Issue, byRef map[string]tracking.Issue, project string, encode func(tracking.Ref) string) (compile.Issue, []Warning) {
 	var warnings []Warning
 	key := is.Ref.String()
 	warn := func(rule, format string, a ...any) {
 		warnings = append(warnings, Warning{Rule: rule, Issue: key, Detail: fmt.Sprintf(format, a...)})
 	}
-	line := compile.Issue{Key: key, Title: is.Title}
+	line := compile.Issue{Key: encode(is.Ref), Title: is.Title}
 	secs := sections(is.Body)
 
 	line.Criteria = criteria(secs)
@@ -181,20 +218,20 @@ func issueLine(is tracking.Issue, byRef map[string]tracking.Issue, project strin
 		case dep.State != tracking.StateOpen:
 			warn("blocker_closed", "blocker %s is closed: it is not a prerequisite", b)
 		default:
-			line.After = append(line.After, dep.Ref.String())
+			line.After = append(line.After, encode(dep.Ref))
 		}
 	}
 	return line, warnings
 }
 
-// keyWarning compares the project key with the scope keys of the owner's live parent bindings. A key the thread is bound to answers
-// nothing.
-func keyWarning(key string, b Binding) (Warning, bool) {
+// keyWarning compares the project key (the encoded form, the scope key `crw flow start` compares) with the scope keys of the owner's
+// live parent bindings. A key the thread is bound to answers nothing. ref is the milestone ref the key stands for.
+func keyWarning(key, ref string, b Binding) (Warning, bool) {
 	switch {
 	case b.Thread == "":
 		return Warning{Rule: "project_key_unchecked", Detail: "the project key is not compared with a binding: pass --thread (or run in a session that has CODEX_THREAD_ID) to name the owner thread"}, true
 	case b.Err != nil:
-		return Warning{Rule: "project_key_unchecked", Detail: fmt.Sprintf("the live parent bindings of thread %s cannot be read, so the project key %s is not compared: %v", b.Thread, key, b.Err)}, true
+		return Warning{Rule: "project_key_unchecked", Detail: fmt.Sprintf("the live parent bindings of thread %s cannot be read, so the project key %s (milestone %s) is not compared: %v", b.Thread, key, ref, b.Err)}, true
 	}
 	for _, s := range b.Scopes {
 		if strings.EqualFold(s, key) {
@@ -203,7 +240,14 @@ func keyWarning(key string, b Binding) (Warning, bool) {
 	}
 	holds := "thread " + b.Thread + " holds no live parent binding"
 	if len(b.Scopes) > 0 {
-		holds = "thread " + b.Thread + " is the live parent of project " + strings.Join(b.Scopes, ", ")
+		shown := make([]string, len(b.Scopes))
+		for i, s := range b.Scopes {
+			shown[i] = s
+			if r, err := DecodeKey(s); err == nil {
+				shown[i] = s + " (" + r.String() + ")"
+			}
+		}
+		holds = "thread " + b.Thread + " is the live parent of project " + strings.Join(shown, ", ")
 	}
-	return Warning{Rule: "project_key_bound", Detail: fmt.Sprintf("the plan's project key is %s; %s: a plan's project key is the scope_key of the orchestrator's parent binding, and the run's first claim is refused (scope_role_mismatch) under another key", key, holds)}, true
+	return Warning{Rule: "project_key_bound", Detail: fmt.Sprintf("the plan's project key is %s (milestone %s); %s: a plan's project key is the scope_key of the orchestrator's parent binding, and the run's first claim is refused (scope_role_mismatch) under another key", key, ref, holds)}, true
 }

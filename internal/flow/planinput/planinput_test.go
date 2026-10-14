@@ -131,8 +131,8 @@ func TestBuildMapsTheMilestoneToTheCompileInput(t *testing.T) {
 		t.Fatalf("input = %+v", in)
 	}
 	p := in.Projects[0]
-	if p.Key != "o/r#3" {
-		t.Errorf("project key = %q; want the milestone ref o/r#3", p.Key)
+	if p.Key != "o:r:3" {
+		t.Errorf("project key = %q; want the dag-safe form o:r:3 of the milestone ref o/r#3", p.Key)
 	}
 	if p.Target == nil || *p.Target != *devTarget {
 		t.Errorf("target = %+v", p.Target)
@@ -141,7 +141,7 @@ func TestBuildMapsTheMilestoneToTheCompileInput(t *testing.T) {
 	for _, is := range p.Issues {
 		keys = append(keys, is.Key)
 	}
-	if !reflect.DeepEqual(keys, []string{"o/r#1", "o/r#2", "o/r#3"}) {
+	if !reflect.DeepEqual(keys, []string{"o:r:1", "o:r:2", "o:r:3"}) {
 		t.Errorf("issue keys = %v; want the open issues by number (the closed #4 is left out)", keys)
 	}
 	one := p.Issues[0]
@@ -159,7 +159,7 @@ func TestBuildMapsTheMilestoneToTheCompileInput(t *testing.T) {
 	if one.SizeFit != "child" || one.SizeReason != "regions_gt3" || one.IssueSize != "" {
 		t.Errorf("size = %q %q %q", one.SizeFit, one.SizeReason, one.IssueSize)
 	}
-	if !reflect.DeepEqual(p.Issues[1].After, []string{"o/r#1"}) || !reflect.DeepEqual(p.Issues[2].After, []string{"o/r#1", "o/r#2"}) {
+	if !reflect.DeepEqual(p.Issues[1].After, []string{"o:r:1"}) || !reflect.DeepEqual(p.Issues[2].After, []string{"o:r:1", "o:r:2"}) {
 		t.Errorf("after = %v, %v", p.Issues[1].After, p.Issues[2].After)
 	}
 	if !reflect.DeepEqual(p.Issues[2].Criteria, []string{"c works"}) {
@@ -179,7 +179,7 @@ func TestBuildMapsTheMilestoneToTheCompileInput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("compile.Compile: %v\n%s", err, raw)
 	}
-	if len(plan.Plans) != 1 || plan.Plans[0].ProjectKey != "o/r#3" {
+	if len(plan.Plans) != 1 || plan.Plans[0].ProjectKey != "o:r:3" {
 		t.Errorf("compiled plans = %+v", plan.Plans)
 	}
 }
@@ -303,8 +303,8 @@ func TestBlockedByWarnings(t *testing.T) {
 	)
 	res := build(t, r, Options{Target: devTarget})
 	two := res.Input.Projects[0].Issues[1]
-	if !reflect.DeepEqual(two.After, []string{"o/r#1"}) {
-		t.Errorf("after = %v; want [o/r#1]", two.After)
+	if !reflect.DeepEqual(two.After, []string{"o:r:1"}) {
+		t.Errorf("after = %v; want [o:r:1]", two.After)
 	}
 	type w struct{ rule, issue, mentions string }
 	var got []w
@@ -366,26 +366,26 @@ func TestBuildNotes(t *testing.T) {
 func TestProjectKeyIsComparedWithTheOwnersBinding(t *testing.T) {
 	r := func() *fakeReader { return milestone(open(1, "## Done when\n- a\n")) }
 
-	res := build(t, r(), Options{Binding: &Binding{Thread: "thread-owner", Scopes: []string{"o/r#3"}}})
+	res := build(t, r(), Options{Binding: &Binding{Thread: "thread-owner", Scopes: []string{"o:r:3"}}})
 	if len(res.Warnings) != 0 {
 		t.Errorf("bound key: warnings %+v", res.Warnings)
 	}
-	res = build(t, r(), Options{Binding: &Binding{Thread: "thread-owner", Scopes: []string{"other/repo#1", "O/R#3"}}})
+	res = build(t, r(), Options{Binding: &Binding{Thread: "thread-owner", Scopes: []string{"other:repo:1", "O:R:3"}}})
 	if len(res.Warnings) != 0 {
 		t.Errorf("a repository is compared without regard to case: %+v", res.Warnings)
 	}
 
-	res = build(t, r(), Options{Binding: &Binding{Thread: "thread-owner", Scopes: []string{"3b46bc6e-uuid", "o/r#4"}}})
+	res = build(t, r(), Options{Binding: &Binding{Thread: "thread-owner", Scopes: []string{"3b46bc6e-uuid", "o:r:4"}}})
 	if len(res.Warnings) != 1 || res.Warnings[0].Rule != "project_key_bound" {
 		t.Fatalf("mismatch: warnings %+v", res.Warnings)
 	}
 	d := res.Warnings[0].Detail
-	for _, want := range []string{"o/r#3", "3b46bc6e-uuid", "o/r#4", "thread-owner"} {
+	for _, want := range []string{"o/r#3", "o:r:3", "3b46bc6e-uuid", "o:r:4", "o/r#4", "thread-owner"} {
 		if !strings.Contains(d, want) {
 			t.Errorf("the warning does not name %q: %s", want, d)
 		}
 	}
-	if res.Input.Projects[0].Key != "o/r#3" || len(res.Input.Projects[0].Issues) != 1 {
+	if res.Input.Projects[0].Key != "o:r:3" || len(res.Input.Projects[0].Issues) != 1 {
 		t.Errorf("a mismatch changes the input: %+v", res.Input)
 	}
 
@@ -500,7 +500,7 @@ func TestBuildReadsOnlyThroughTheTrackingAdapter(t *testing.T) {
 		}
 	}
 	p := res.Input.Projects[0]
-	if p.Key != "o/r#3" || len(p.Issues) != 2 || !reflect.DeepEqual(p.Issues[1].After, []string{"o/r#1"}) || p.Issues[0].Criteria[0] != "one" {
+	if p.Key != "o:r:3" || len(p.Issues) != 2 || !reflect.DeepEqual(p.Issues[1].After, []string{"o:r:1"}) || p.Issues[0].Criteria[0] != "one" {
 		t.Errorf("project = %+v", p)
 	}
 	if _, err := compile.Compile(res.Input, compile.Options{DryRun: true}); err != nil {
@@ -592,7 +592,7 @@ func newEnv() *cliEnv {
 func TestCLIPrintsTheCompileInput(t *testing.T) {
 	e := newEnv()
 	e.env["CODEX_THREAD_ID"] = "thread-owner"
-	e.scopes = []string{"o/r#3"}
+	e.scopes = []string{"o:r:3"}
 	code, out, errOut := e.run("--milestone", "o/r#3", "--target-repository", "/srv/checkout", "--base-ref", "dev")
 	if code != 0 || errOut != "" {
 		t.Fatalf("exit %d, stderr %q", code, errOut)
@@ -604,14 +604,14 @@ func TestCLIPrintsTheCompileInput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stdout is not a compile input: %v\n%s", err, out)
 	}
-	if in.Projects[0].Key != "o/r#3" || len(in.Projects[0].Issues) != 2 {
+	if in.Projects[0].Key != "o:r:3" || len(in.Projects[0].Issues) != 2 {
 		t.Errorf("input = %+v", in)
 	}
 	var cOut, cErr bytes.Buffer
 	if c := compile.RunCLI(bg, []string{"--dry-run", "-"}, strings.NewReader(out), &cOut, &cErr); c != 0 {
 		t.Fatalf("crw flow compile --dry-run: exit %d\n%s%s", c, cOut.String(), cErr.String())
 	}
-	if !strings.Contains(cOut.String(), `"o/r#3"`) {
+	if !strings.Contains(cOut.String(), `"o:r:3"`) {
 		t.Errorf("compile output: %s", cOut.String())
 	}
 
@@ -626,7 +626,7 @@ func TestCLIPrintsTheCompileInput(t *testing.T) {
 	if !reflect.DeepEqual(e.asked, []string{"thread-x", "/s", "/k.sock"}) {
 		t.Errorf("binding read with %v", e.asked)
 	}
-	for _, want := range []string{"crw flow plan-input: warning: [blocker_outside_milestone] o/r#2:", "crw flow plan-input: warning: [project_key_bound]", "o/r#3"} {
+	for _, want := range []string{"crw flow plan-input: warning: [blocker_outside_milestone] o/r#2:", "crw flow plan-input: warning: [project_key_bound]", "o:r:3", "o/r#3"} {
 		if !strings.Contains(errOut, want) {
 			t.Errorf("stderr lacks %q:\n%s", want, errOut)
 		}
@@ -646,13 +646,17 @@ func TestCLIEnvelopeRecordsTheWarnings(t *testing.T) {
 		t.Fatalf("exit %d, stderr %q", code, errOut)
 	}
 	var env struct {
-		Schema    string          `json:"schema"`
-		Milestone string          `json:"milestone"`
-		Input     json.RawMessage `json:"input"`
-		Warnings  []Warning       `json:"warnings"`
+		Schema    string            `json:"schema"`
+		Milestone string            `json:"milestone"`
+		Input     json.RawMessage   `json:"input"`
+		Refs      map[string]string `json:"refs"`
+		Warnings  []Warning         `json:"warnings"`
 	}
 	if err := json.Unmarshal([]byte(out), &env); err != nil {
 		t.Fatalf("%v\n%s", err, out)
+	}
+	if want := map[string]string{"o:r:3": "o/r#3", "o:r:1": "o/r#1", "o:r:2": "o/r#2"}; !reflect.DeepEqual(env.Refs, want) {
+		t.Errorf("the envelope maps each encoded key to its ref: refs = %v; want %v", env.Refs, want)
 	}
 	if env.Schema != EnvelopeSchema || env.Milestone != "o/r#3" {
 		t.Errorf("envelope = %s %s", env.Schema, env.Milestone)
@@ -660,13 +664,13 @@ func TestCLIEnvelopeRecordsTheWarnings(t *testing.T) {
 	if _, err := compile.Decode(env.Input); err != nil {
 		t.Errorf("input: %v", err)
 	}
-	if len(env.Warnings) != 1 || env.Warnings[0].Rule != "project_key_bound" || !strings.Contains(env.Warnings[0].Detail, "uuid-1") || !strings.Contains(env.Warnings[0].Detail, "o/r#3") {
+	if len(env.Warnings) != 1 || env.Warnings[0].Rule != "project_key_bound" || !strings.Contains(env.Warnings[0].Detail, "uuid-1") || !strings.Contains(env.Warnings[0].Detail, "o:r:3") || !strings.Contains(env.Warnings[0].Detail, "o/r#3") {
 		t.Errorf("warnings = %+v", env.Warnings)
 	}
 
 	// no warning: an empty array, not null
 	e = newEnv()
-	e.scopes = []string{"o/r#3"}
+	e.scopes = []string{"o:r:3"}
 	_, out, _ = e.run("--milestone", "o/r#3", "--thread", "t", "--envelope", "--target-repository", "/srv/checkout", "--base-ref", "dev")
 	if !strings.Contains(out, `"warnings": []`) {
 		t.Errorf("an empty warnings array is expected:\n%s", out)
@@ -756,17 +760,17 @@ func TestReadScopesReadsTheLiveParentBindings(t *testing.T) {
 	defer st.Close()
 	const at = "2026-10-14T00:00:00.000000000Z"
 	for _, q := range []string{
-		`INSERT INTO scope_bindings (binding_id, role, scope_kind, scope_key, task_id, host_id, status, revision, created_at, updated_at) VALUES ('b1','parent','project','o/r#3','thread-owner','h','active',1,'` + at + `','` + at + `')`,
+		`INSERT INTO scope_bindings (binding_id, role, scope_kind, scope_key, task_id, host_id, status, revision, created_at, updated_at) VALUES ('b1','parent','project','o:r:3','thread-owner','h','active',1,'` + at + `','` + at + `')`,
 		`INSERT INTO scope_bindings (binding_id, role, scope_kind, scope_key, task_id, host_id, status, revision, created_at, updated_at) VALUES ('b2','parent','project','old-uuid','thread-owner','h','released',1,'` + at + `','` + at + `')`,
-		`INSERT INTO scope_bindings (binding_id, role, scope_kind, scope_key, task_id, host_id, status, revision, created_at, updated_at) VALUES ('b3','parent','project','o/r#4','thread-other','h','active',1,'` + at + `','` + at + `')`,
+		`INSERT INTO scope_bindings (binding_id, role, scope_kind, scope_key, task_id, host_id, status, revision, created_at, updated_at) VALUES ('b3','parent','project','o:r:4','thread-other','h','active',1,'` + at + `','` + at + `')`,
 	} {
 		if _, err := st.DB.ExecContext(bg, q); err != nil {
 			t.Fatalf("%s: %v", q, err)
 		}
 	}
 	got, err := ReadScopes(bg, "thread-owner", state, filepath.Join(state, "control.sock"))
-	if err != nil || !reflect.DeepEqual(got, []string{"o/r#3"}) {
-		t.Errorf("ReadScopes = %v, %v; want [o/r#3]", got, err)
+	if err != nil || !reflect.DeepEqual(got, []string{"o:r:3"}) {
+		t.Errorf("ReadScopes = %v, %v; want [o:r:3]", got, err)
 	}
 	if got, err := ReadScopes(bg, "thread-none", state, filepath.Join(state, "control.sock")); err != nil || len(got) != 0 {
 		t.Errorf("a thread with no binding: %v, %v", got, err)

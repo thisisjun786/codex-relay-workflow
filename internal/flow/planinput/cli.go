@@ -29,7 +29,9 @@ Build the handoff of crw flow compile (crw-flow-compile-input/1) from one milest
   crw flow plan-input --milestone thisisjun786/crw-work#3 | crw flow compile --dry-run -
 
 The project key is the milestone ref (OWNER/NAME#N); each open issue of the milestone is one issue line keyed by its ref, with its
-criteria, edit regions and size fields read from its body, and its prerequisites from its "Blocked by:" lines. The body headings are:
+criteria, edit regions and size fields read from its body, and its prerequisites from its "Blocked by:" lines. The input spells a ref
+OWNER:NAME:N (o/r#3 is o:r:3), because the relay dag reads keys as identifiers; a ':' cannot occur in an owner or a repository name, so
+it reads back to the ref, and the parent binding of the plan's owner is made under that key. The body headings are:
   criteria  a bullet list under "끝 조건", "Done when", "Acceptance" or "Acceptance criteria" (none: the title is the one criterion)
   regions   a bullet list under "수정 범위", "Edit regions" or "Regions"; a path in backticks, else the first word, a trailing slash is a tree
   size      "size_fit: V", "size_reason: V" and "issue_size: V" lines under "크기", "Size" or "Size fit"
@@ -39,12 +41,13 @@ The command reads through the tracking adapter with GET requests (the token is G
   --target-repository DIR  the absolute path of the checkout the issues integrate on (with --base-ref); compile needs a target for any order
   --base-ref BRANCH        the short name of the branch the issues integrate on
   --thread T               the owner thread whose live parent bindings the project key is compared with (default: CODEX_THREAD_ID)
-  --envelope               print {schema, milestone, input, warnings} instead of the bare input, so the warnings are recorded with it
+  --envelope               print {schema, milestone, input, refs, warnings} instead of the bare input: the warnings are recorded with it,
+                           and refs maps each key of the input to its OWNER/NAME#N ref
   --state DIR, --socket P  the relay state the bindings are read from (read-only)
 
 A mapping that cannot be carried over, a blocker outside the milestone or closed, and a project key the thread holds no binding of are
 warnings, printed on stderr and kept in the envelope's "warnings"; none refuses. Exit 0 built; 2 an input that cannot be used (a ref that
-is not OWNER/NAME#N, a milestone that does not exist, a refused token).
+is not OWNER/NAME#N, a milestone that does not exist, a key the dag cannot hold, a refused token).
 `
 
 // Deps are what the command reaches outside: the tracking repository, the relay's bindings and the environment.
@@ -157,7 +160,7 @@ func RunWith(ctx context.Context, d *Deps, args []string, stdout, stderr io.Writ
 		if warnings == nil {
 			warnings = []Warning{}
 		}
-		doc = Envelope{Schema: EnvelopeSchema, Milestone: ref.String(), Input: res.Input, Warnings: warnings}
+		doc = Envelope{Schema: EnvelopeSchema, Milestone: ref.String(), Input: res.Input, Refs: res.Refs, Warnings: warnings}
 	}
 	out, err := json.MarshalIndent(doc, "", "  ")
 	if err != nil {
