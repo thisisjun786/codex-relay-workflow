@@ -80,8 +80,8 @@ type OrchestratorBinding struct {
 	// Live reports whether the process of a run holds its run lock; nil takes every other run for one without a process.
 	Live func(run string) bool
 	// KeepRunLine leaves a thread whose last line is the run's own open line as it is, whatever its pairs (Already): the binding is
-	// written only when it is missing. `crw flow next` binds so after it resumed the run, because the resumed process binds the line
-	// with the pairs it runs on, and next must not write other pairs over them (CRW-1372).
+	// written only when it is missing. `crw flow next` binds so, because the run's process binds the line with the pairs it runs on,
+	// and next must not write other pairs over them (CRW-1372).
 	KeepRunLine bool
 }
 

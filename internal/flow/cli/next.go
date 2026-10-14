@@ -112,8 +112,6 @@ func (c *command) next(args []string) int {
 	if err != nil {
 		return c.fail("%v", err)
 	}
-	// the run's rows as next found them, before any resume: the pairs the newest started row pinned and how many processes started
-	before := c.runEvents(cm, run)
 	bus := engine.NewFileStepBus(RunDir(sel.Path, run))
 	// a run no process holds spawns with the role store when it is resumed; the process that holds it, with its own table (below)
 	ans := NextAnswer{Run: run, Steps: []NextStep{}, Spawns: roleSpawns(table)}
@@ -121,12 +119,15 @@ func (c *command) next(args []string) int {
 	first, resumed, bindChecked := "", false, false
 	var steps []engine.Step
 	var info RunInfo
+	// before are the rows the ended process left when next resumes the run
+	var before []engine.Event
 	for {
 		info = c.runInfo(cm, run)
 		live := LockHeld(sel.Path, run)
 		if !live && !resumed && info.State == StateDead && info.Paused == "" {
 			// no process, not paused and not over: next resumes the run as `crw flow resume RUN --detach` does
 			resumed = true
+			before = c.runEvents(cm, run)
 			if pid, err := c.detachResume(sel.Path, spec); err != nil {
 				ans.Warnings = append(ans.Warnings, fmt.Sprintf("no process holds run %s and its resume did not start: %v", run, err))
 			} else {
@@ -144,7 +145,7 @@ func (c *command) next(args []string) int {
 				ans.Warnings = append(ans.Warnings, warning)
 			}
 			ans.Spawns = roleSpawns(held)
-			if w := c.checkBinding(sel.Path, spec, held, ans.Resumed > 0); w != "" {
+			if w := c.checkBinding(sel.Path, spec, held); w != "" {
 				ans.Warnings = append(ans.Warnings, w)
 			}
 		}
@@ -274,14 +275,10 @@ func (c *command) detachResume(state string, spec Spec) (int, error) {
 	return pid, nil
 }
 
-// checkBinding writes the owner's orchestrator line again when it is missing (another line is last, or none), and says so. After
-// next resumed the run, a line of the run that is there stands: the resumed process binds it with the pairs it runs on.
-func (c *command) checkBinding(state string, spec Spec, table *engine.Policy, resumed bool) string {
-	bind := bindOwner
-	if resumed {
-		bind = bindResumedOwner
-	}
-	res, err := bind(state, spec.RunID, spec.Thread, table)
+// checkBinding writes the owner's orchestrator line again when it is missing (another line is last, or none), and says so. A line of
+// the run that is the thread's last stands: the run's process binds it with the pairs it runs on (bindMissingOwner).
+func (c *command) checkBinding(state string, spec Spec, table *engine.Policy) string {
+	res, err := bindMissingOwner(state, spec.RunID, spec.Thread, table)
 	if w := bindWarning(res, err, spec.Thread, spec.RunID); w != "" {
 		return w
 	}
@@ -328,14 +325,16 @@ func openSubagents(events []engine.Event, steps []engine.Step) []string {
 }
 
 // processTable is the role table of the process that holds the run, which next binds the owner's line with and prints the spawn
-// formats of (CRW-1372), and what next warns about it. A process next found live runs on the pairs it pinned (the newest started row
-// of before): a role store whose digest differs is warned about and recorded once (role_store_changed). A process next resumed reads
-// the role store as it is now and pins what it read in a started row of its own, which next takes once it is there; until then the
-// store as next read it is that table. A store that moved since the earlier process pinned is the resumed process's to record (its
-// started row and its policy_repinned row): next warns and records nothing of its own. A run that recorded no pairs takes the store's.
+// formats of (CRW-1372), and what next warns about it. A process next found holding the run runs on the pairs it pinned (the newest
+// started row, read now): a role store whose digest differs is warned about and recorded once (role_store_changed). A process next
+// resumed reads the role store as it is now and pins what it read in a started row of its own, which next takes once it is there (a
+// started row after those of before, the rows the ended process left); until then the store as next read it is that table. A store
+// that moved since the ended process pinned is the resumed process's to record (its started row and its policy_repinned row): next
+// warns and records nothing of its own. A run that recorded no pairs takes the store's.
 func (c *command) processTable(cm *common, run string, store *engine.Policy, before []engine.Event, resumed bool) (*engine.Policy, string) {
-	pinned, digest, ok := pinnedPairs(before, run)
+	now := c.runEvents(cm, run)
 	if !resumed {
+		pinned, digest, ok := pinnedPairs(now, run)
 		if !ok {
 			return store, ""
 		}
@@ -346,11 +345,12 @@ func (c *command) processTable(cm *common, run string, store *engine.Policy, bef
 		return withPinnedPairs(store, pinned, digest), warning
 	}
 	table := store
-	if now := c.runEvents(cm, run); startedCount(now, run) > startedCount(before, run) {
+	if startedCount(now, run) > startedCount(before, run) {
 		if pairs, d, own := pinnedPairs(now, run); own {
 			table = withPinnedPairs(store, pairs, d)
 		}
 	}
+	_, digest, ok := pinnedPairs(before, run)
 	if !ok || digest == table.Digest {
 		return table, ""
 	}

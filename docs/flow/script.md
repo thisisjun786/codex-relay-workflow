@@ -942,15 +942,15 @@ run's directory `<state>/flow/<run>/` and none writes the journal, which only th
   --wait` (its `targets` are the open subagents' ids), which subagents to close first and when the slots are full (`agent thread limit reached`; the step stays). A close
   step's file is removed once next has handed it out. A run no process holds that is neither paused nor over is resumed as
   `crw flow resume RUN --detach` does, and the hint says so (`resumed_pid`). While a process holds the run, next writes the
-  owner's binding again when it is missing, with a warning, and with the pairs the live run pinned (the `role_pairs` and
-  `policy_digest` of its newest started row), not the role store read again; the spawn formats are those pairs too. A role store
-  that moved since is warned about and recorded once as a `role_store_changed` row of the run, and the run's line stays; a resume
-  takes the new pairs. When next resumed the run itself, the process that holds it is the resumed one, which reads the role store
-  as it is now, binds the owner's line with it and pins it in its own started row (with a `policy_repinned` row when it moved since
-  the earlier process pinned): next prints the spawn formats of that process's started row once it is there, else of the role store
-  as next read it, writes the owner's line only when no line of the run is the thread's last (the resumed process's line stands),
-  warns when the resume takes other pairs than the earlier process pinned, and writes no `role_store_changed` row. A run that
-  recorded no pairs is bound with the store's, as before.
+  owner's binding again when it is missing (another line is last, or none), with a warning, and with the pairs that process pinned
+  (the `role_pairs` and `policy_digest` of the run's newest started row when next finds the process), not the role store read again;
+  the spawn formats are those pairs too. A line of the run that is the thread's last stands whatever its pairs: the run's process
+  binds it with the pairs it runs on. A role store that moved since is warned about and recorded once as a `role_store_changed` row
+  of the run, and the run's line stays; a resume takes the new pairs. When next resumed the run itself, the process that holds it is
+  the resumed one, which reads the role store as it is now, binds the owner's line with it and pins it in its own started row (with
+  a `policy_repinned` row when it moved since the earlier process pinned): next prints the spawn formats of that process's started
+  row once it is there, else of the role store as next read it, warns when the resume takes other pairs than the earlier process
+  pinned, and writes no `role_store_changed` row. A run that recorded no pairs is bound with the store's, as before.
 - `crw flow dispatched RUN CALL --agent ID --k K --attempt N [--wait S] [--json]` writes the dispatch report into the inbox (a
   temporary name and a rename), waits up to S seconds (120) for the run's reply and prints it (`bound` exits 0, the other replies
   exit 1). A report of a run no process holds, or one the run has not answered in time, is answered `queued`: it stays in the inbox
