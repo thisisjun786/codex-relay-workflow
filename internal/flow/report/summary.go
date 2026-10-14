@@ -63,8 +63,8 @@ func SummaryNoticeText(id, plan, document string) string {
 }
 
 // ReconcileSummary brings the summary of the stream up to date and tells the orchestrator thread what is owed. It is safe to call at any
-// time and as often as wanted: the run calls it when it starts (a resume too) and after each committed batch, `crw flow apply` after each
-// verdict, so an entry owed because a process died between two of the steps is found by the next call.
+// time and as often as wanted: the run calls it (the run hook, hook.go) when it starts (a resume too) and after each committed batch, so
+// an entry owed because a process died between two of the steps is found by the next call.
 func ReconcileSummary(ctx context.Context, env SummaryEnv) (SummaryOutcome, error) {
 	var out SummaryOutcome
 	if env.Sched == nil || env.Rows == nil || env.Plan == "" || env.Document == "" || env.Actor == "" {
@@ -179,8 +179,9 @@ func streamOf(ctx context.Context, env SummaryEnv) (dagsched.SummaryStream, bool
 }
 
 // noticeRows are the summary ids of the stream that have an intent and those that have a settlement, from the rows of every run, each id
-// once: a live run and a concurrent `crw flow apply` can both have written the intent of one summary id (the journal's check and its later
-// flush are not one transaction), and a duplicate row must neither send twice nor settle twice.
+// once: two writers can both have written the intent of one summary id (the journal's check and its later flush are not one transaction;
+// before CRW-1416 a live run and a concurrent `crw flow apply` did, and their rows stay on record), and a duplicate row must neither send
+// twice nor settle twice.
 func noticeRows(ctx context.Context, env SummaryEnv) (notices, settled []string, err error) {
 	rows, err := ReadRows(ctx, env.Store.DB, "", KindSummaryNotice, KindSummarySettled)
 	if err != nil {
@@ -235,8 +236,9 @@ func firstError(errs ...error) error {
 }
 
 // SummaryTarget finds the run that keeps the plan summary of a plan for an orchestrator: the newest run of the plan whose actor is the
-// orchestrator and that recorded a summary document (`crw flow run --summary-document`). `crw flow apply` reconciles the stream through
-// it every time it runs. ok is false when no run recorded one.
+// orchestrator and that recorded a summary document (`crw flow run --summary-document`). ok is false when no run recorded one. The run hook
+// (hook.go) is the production caller of ReconcileSummary and knows its own run; since `crw flow apply` went (CRW-1416) no command calls
+// SummaryTarget, which is kept for a command that reconciles from outside the run.
 func SummaryTarget(ctx context.Context, db DB, plan, actor string) (run, document string, ok bool, err error) {
 	var payload string
 	err = db.QueryRowContext(ctx, `SELECT e.run_id, e.payload_json FROM flow_events e JOIN flow_runs r ON r.run_id = e.run_id

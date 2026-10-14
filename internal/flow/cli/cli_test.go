@@ -6,12 +6,12 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/flow/apply"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/journal"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/report"
@@ -88,7 +88,7 @@ func (w *cliWorld) json(v any) {
 }
 
 func TestHandlesTheReachUpCommands(t *testing.T) {
-	for _, c := range []string{"apply", "report-up", "reports", "report-ack", "report-delivered"} {
+	for _, c := range []string{"report-up", "reports", "report-ack", "report-delivered"} {
 		if !Handles([]string{c}) {
 			t.Errorf("%s is not handled", c)
 		}
@@ -101,6 +101,26 @@ func TestHandlesTheReachUpCommands(t *testing.T) {
 	}
 	if Handles(nil) {
 		t.Error("no command is handled")
+	}
+}
+
+// `crw flow apply` is gone with the issue child it received (CRW-1416): no command word, no usage line, and the word is a usage error.
+func TestApplyIsNoLongerACommand(t *testing.T) {
+	if Handles([]string{"apply"}) {
+		t.Error("apply is handled")
+	}
+	if slices.Contains(Words(), "apply") {
+		t.Errorf("apply is a word: %v", Words())
+	}
+	if slices.Contains(Commands, "apply") {
+		t.Errorf("apply is a reach-up command: %v", Commands)
+	}
+	if strings.Contains(Usage, "flow apply") {
+		t.Error("the usage names crw flow apply")
+	}
+	w := newCLIWorld(t)
+	if code := w.run("apply", "--event", "e", "--turn", "t"); code != ExitUsage {
+		t.Errorf("apply: exit %d\n%s", code, w.errOut.String())
 	}
 }
 
@@ -180,59 +200,12 @@ func TestReachUpCommandsRefuseBadLines(t *testing.T) {
 		{"report-delivered", "--report", "rep_x"},
 		{"report-delivered", "--report", "rep_missing", "--result", "accepted"},
 		{"reports", "extra"},
-		{"apply", "--turn", "t"},
-		{"apply", "--event", "0123456789abcdef0123456789abcdef"},
-		{"apply", "--event", "0123456789abcdef0123456789abcdef", "--turn", "t", "--wait", "-1s"},
 	} {
 		if code := w.run(args...); code != ExitUsage {
 			t.Errorf("%v: exit %d\n%s", args, code, w.errOut.String())
 		}
 	}
 }
-
-// apply answers with its state and its exit: 0 applied, 1 refused, 3 the verdict is not in the journal yet.
-func TestApplyCommandStatesAndExits(t *testing.T) {
-	w := newCLIWorld(t)
-	const event = "0123456789abcdef0123456789abcdef"
-	info := apply.EventInfo{ID: event, ChildTask: "child-task", ParentTask: "orch-task", Head: strings.Repeat("a", 40), CriteriaDigest: "d"}
-	var known = true
-	saved := applyDeps
-	t.Cleanup(func() { applyDeps = saved })
-	applyDeps = func(ctx context.Context, env Environment, state, socket, repo string) (apply.Deps, func(), error) {
-		st, _, err := env.Open(ctx, state, socket)
-		if err != nil {
-			return apply.Deps{}, nil, err
-		}
-		return apply.Deps{Store: st, Events: events(func() (apply.EventInfo, error) {
-			if !known {
-				return apply.EventInfo{}, apply.ErrUnknownEvent
-			}
-			return info, nil
-		}), Commits: func(context.Context, string, string, string) ([]string, error) { return nil, nil },
-			Receive: func(context.Context, apply.ReceiveInput) (json.RawMessage, error) { return json.RawMessage(`{}`), nil }}, func() { _ = st.Close() }, nil
-	}
-	// the child has no run yet: apply again in a later turn
-	if code := w.run("apply", "--event", event, "--turn", "turn-1"); code != ExitNextTurn {
-		t.Fatalf("exit %d\n%s", code, w.errOut.String())
-	}
-	var res apply.Result
-	w.json(&res)
-	if res.State != apply.StateNextTurn || res.Event != event {
-		t.Errorf("result %+v", res)
-	}
-	known = false
-	if code := w.run("apply", "--event", event, "--turn", "turn-1"); code != ExitRefused {
-		t.Fatalf("exit %d\n%s", code, w.errOut.String())
-	}
-	w.json(&res)
-	if res.State != apply.StateRefused || res.Reason != apply.ReasonUnknownEvent || !strings.Contains(w.errOut.String(), "unknown_event") {
-		t.Errorf("result %+v stderr %s", res, w.errOut.String())
-	}
-}
-
-type events func() (apply.EventInfo, error)
-
-func (e events) Event(context.Context, string) (apply.EventInfo, error) { return e() }
 
 // A report-up in a relay the operator selected (--state, --socket) sends its notice with that relay named, so the notice is not read and
 // delivered against the manage configuration's relay; the hook of a resumed run does the same. (post-evaluation d6) Since CRW-1380 a
