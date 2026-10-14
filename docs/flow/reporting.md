@@ -92,10 +92,12 @@ urgent kind `run_dead`; it is told again only when it was resumed and stopped ag
 flight, so a run with an open agent call (a call that began and has no terminal row) is judged by the longer of `run_dead_seconds` and six
 hours.
 
-The run's escalations go to the run's actor. For the project run that is the child's thread. An issue child's issue-lane run is resumed with
-the issue child's task as its actor, so its escalations go to the issue child's thread; the child learns of that issue child's trouble from the receipt
-and from `crw flow apply` (a refusal of integrity is also an `escalation` row of the issue child's run), and the pump's management thread
-hears it whichever thread the run told.
+An issue child's issue-lane run tells the level above the project too: it runs with the plan the project run released it with, so its
+escalations go through `project:<project>` on the supervisor channel, as the project run's do. Only a run whose plan names no project
+tells its actor's thread, with `crw manage send-parent`: the child's thread for a project run, the issue child's thread for an issue-lane
+run (which is resumed with the issue child's task as its actor). The child learns of its issue child's trouble from the receipt and from
+`crw flow apply` (a refusal of integrity is also an `escalation` row of the issue child's run), and the pump's management thread hears it
+whichever thread the run told.
 
 ## The plan summary
 
