@@ -414,8 +414,8 @@ func TestOrchestratorDrainsSummaryAndManagerClaimRefused(t *testing.T) {
 	}
 }
 
-// The live run and a concurrent `crw flow apply` can each have written the intent of one summary id (the run's check and its flush are
-// not one transaction): the duplicate row neither sends twice nor settles twice.
+// Two writers can each have written the intent of one summary id (the run's check and its flush are not one transaction; before CRW-1416
+// a live run and a concurrent `crw flow apply` did): the duplicate row neither sends twice nor settles twice.
 func TestSummaryDuplicateIntentRowsSendAndSettleOnce(t *testing.T) {
 	w := newWorld(t)
 	w.agentNode("A")
@@ -452,10 +452,10 @@ func TestSummaryDuplicateIntentRowsSendAndSettleOnce(t *testing.T) {
 	}
 }
 
-// `crw flow apply` is a process of its own: each time it runs it finds the run that keeps the summary of the plan for the orchestrator (the
-// run that recorded the document), reconciles the stream under the orchestrator's task id and writes its rows into that run - from the
-// range commands use, so the live run's own numbers are never met.
-func TestApplyPathReconcilesTheSummaryOfTheOrchestratorsRun(t *testing.T) {
+// A command outside the run (as `crw flow apply` was before CRW-1416) is a process of its own: each time it runs it finds the run that
+// keeps the summary of the plan for the orchestrator (the run that recorded the document), reconciles the stream under the orchestrator's
+// task id and writes its rows into that run - from the range commands use, so the live run's own numbers are never met.
+func TestAForeignCommandReconcilesTheSummaryOfTheOrchestratorsRun(t *testing.T) {
 	w := newWorld(t)
 	w.agentNode("A")
 	w.documentRow()

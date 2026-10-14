@@ -18,7 +18,7 @@ import (
 // goes with every supervisor notice, so `crw manage send-parent` reads the binding there and not in the configuration's relay.
 //
 // A report goes through the supervisor channel of the store (RelaySender, CRW-1380); send-parent is the fallback for what the channel
-// has no kind for (the plan summary notice `crw flow apply` reconciles).
+// has no kind for (the plan summary notice).
 func (env Environment) sender(st *store.Store, statePath, socket string) report.Sender {
 	if env.Sender != nil {
 		return env.Sender

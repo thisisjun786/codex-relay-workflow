@@ -30,7 +30,6 @@ const Usage = `usage: crw flow start WORKFLOW [--args JSON | --args-file FILE] [
        crw flow status-line --thread T
        crw flow digest RUN [--out FILE]
        crw flow audit (--run RUN | --acceptance ID) [--milestone M] [--json] [--no-record]
-       crw flow apply --event E --turn T [--run RUN] [--base COMMIT] [--wait 10m] [--override REASON] [--manifest-request FILE] [--repo DIR]
        crw flow report-up --kind project_blocked|project_decision_request|jun_decision_request --run RUN --evidence FILE [--subject TEXT]
        crw flow reports [--initiative I] [--unread] [--json] [--project P]
        crw flow report-ack REPORT --turn T
@@ -40,18 +39,19 @@ const Usage = `usage: crw flow start WORKFLOW [--args JSON | --args-file FILE] [
 // commands are the first words of the commands this package serves; resume and recover are served here for the run lock and the
 // forms the engine's commands do not have, and hand the rest to the engine; next and dispatched are the owner thread's side of a
 // session run's steps (next.go). audit is `crw flow audit` (audit.go); the reach-up
-// commands of Commands (apply.go, report.go) run over an Environment (RunEnv).
+// commands of Commands (report.go) run over an Environment (RunEnv).
 var commands = map[string]bool{"start": true, "ps": true, "show": true, "watch": true, "answer": true, "pause": true, "cancel": true,
 	"status-line": true, "digest": true, "resume": true, "recover": true, "audit": true, ProcessCommand: true, "next": true, "dispatched": true,
-	"apply": true, "report-up": true, "reports": true, "report-ack": true, "report-delivered": true}
+	"report-up": true, "reports": true, "report-ack": true, "report-delivered": true}
 
-// Commands are the `crw flow` commands that work on the relay store's flow rows over an Environment: apply, report-up, reports,
-// report-ack and report-delivered reach up from a run (CRW-1204, F11), and audit (CRW-1206, F13, audit.go) reads the reviews behind
-// the acceptances of a run back from the reviewer threads on the host.
-var Commands = []string{"apply", "report-up", "reports", "report-ack", "report-delivered", "audit"}
+// Commands are the `crw flow` commands that work on the relay store's flow rows over an Environment: report-up, reports, report-ack
+// and report-delivered reach up from a run (CRW-1204, F11), and audit (CRW-1206, F13, audit.go) reads the reviews behind the
+// acceptances of a run back from the reviewer threads on the host.
+var Commands = []string{"report-up", "reports", "report-ack", "report-delivered", "audit"}
 
-// The exit statuses of the commands of Commands: 0 an application or a record that was made, 1 a refusal, 2 a command line or an
-// infrastructure failure, 3 an application that waits for a later turn.
+// The exit statuses of the commands of Commands: 0 a record that was made, 1 a refusal, 2 a command line or an infrastructure failure.
+// ExitNextTurn was the exit of `crw flow apply` waiting for a later turn; that command is gone (CRW-1416) and no command answers
+// it now. The value stays so it is never reused for another meaning.
 const (
 	ExitOK       = 0
 	ExitRefused  = 1
@@ -268,8 +268,6 @@ func RunEnv(ctx context.Context, args []string, env Environment) int {
 		return ExitUsage
 	}
 	switch args[0] {
-	case "apply":
-		return applyCmd(ctx, args[1:], env)
 	case "report-up":
 		return reportUpCmd(ctx, args[1:], env)
 	case "reports":
