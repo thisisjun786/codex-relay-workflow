@@ -23,8 +23,9 @@ const (
 // UID is the user id the files must belong to: the current user's. A test replaces it to stand for a file of another owner.
 var UID = os.Getuid
 
-// UnavailableError says that the binding state of a thread cannot be known: a spawn is refused, never taken for an ordinary
-// one.
+// UnavailableError says that the binding state of a thread, or a record a bound thread's spawn needs, cannot be known or kept: a
+// lookup that cannot read the binding leaves the spawn to the ordinary path with a warning (CRW-1348), and a claim or record of a
+// bound engine thread that cannot be kept refuses that spawn.
 type UnavailableError struct {
 	Reason string
 	Detail string

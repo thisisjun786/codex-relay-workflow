@@ -97,20 +97,19 @@ func (b *Backend) bindTurn(spec engine.TurnSpec) error {
 
 var errNoBinding = errors.New("agent: the backend has no flow binding configured")
 
-// BindOrchestrator binds the thread that orchestrates the run: it appends the opening line (helper pairs explorer and reviewer,
-// no allowance) to the thread's file. The run calls it when it starts; until CloseOrchestrator, the hook gives the native
-// helpers of that thread the pair of their role.
+// BindOrchestrator binds the thread that orchestrates the run: it appends the opening line (the pairs of the six roles of the
+// policy, no allowance) to the thread's file, through bound.BindOrchestrator. The run calls it when it starts; until
+// CloseOrchestrator, the hook gives the spawns of that thread the pair of their role.
 func (b *Backend) BindOrchestrator(ctx context.Context, thread string) error {
 	c := b.cfg.Bound
 	if c == nil {
 		return errNoBinding
 	}
-	line := bound.Line{
-		RunID: c.RunID, ThreadID: thread, Kind: bound.KindOrchestrator,
-		HelperPairs:  map[string]bound.Pair{bound.HelperExplorer: c.pair(bound.HelperExplorer), bound.HelperReviewer: c.pair(bound.HelperReviewer)},
-		PolicyDigest: c.Policy.Digest,
+	pairs := map[string]bound.Pair{}
+	for _, role := range bound.OrchestratorRoles {
+		pairs[role] = c.pair(role)
 	}
-	if err := c.writer().Append(line); err != nil {
+	if _, err := bound.BindOrchestrator(bound.OrchestratorBinding{Writer: c.writer(), RunID: c.RunID, Thread: thread, Digest: c.Policy.Digest, Pairs: pairs}); err != nil {
 		return bindError(err)
 	}
 	b.mu.Lock()
@@ -120,7 +119,7 @@ func (b *Backend) BindOrchestrator(ctx context.Context, thread string) error {
 }
 
 // CloseOrchestrator appends the closed line to the file of the thread BindOrchestrator bound, when the run ends or is
-// cancelled; the thread is an ordinary one again. It does nothing when no thread is bound.
+// cancelled (bound.CloseOrchestrator); the thread is an ordinary one again. It does nothing when no thread is bound.
 func (b *Backend) CloseOrchestrator(ctx context.Context) error {
 	c := b.cfg.Bound
 	b.mu.Lock()
@@ -129,7 +128,7 @@ func (b *Backend) CloseOrchestrator(ctx context.Context) error {
 	if c == nil || thread == "" {
 		return nil
 	}
-	if err := c.writer().Append(bound.Line{RunID: c.RunID, ThreadID: thread, Kind: bound.KindClosed, PolicyDigest: c.Policy.Digest}); err != nil {
+	if _, err := bound.CloseOrchestrator(c.writer(), c.RunID, thread); err != nil {
 		return bindError(err)
 	}
 	b.mu.Lock()
