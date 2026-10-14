@@ -3,6 +3,7 @@
 package cxcfuzz
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 )
@@ -26,6 +27,42 @@ func TestCases(t *testing.T) {
 				t.Errorf("%s/%s: %s", target.Name, c.Name, problem)
 			}
 		}
+	}
+}
+
+// Every pinned case gives the same answer wherever the case root is made (CRW-1066). Replay makes the root below
+// the temporary directory, so a case whose answer depends on where that is -- a command that names /tmp, which is an
+// ancestor of the root when TMPDIR is /tmp -- would pass on one host and fail on another. The cases are replayed with
+// the root below /tmp, the default on most hosts, and below a deep directory of the test's own.
+func TestCasesHoldWhereverTheCaseRootIs(t *testing.T) {
+	if info, err := os.Stat("/tmp"); err != nil || !info.IsDir() {
+		t.Skip("/tmp is not a directory on this host")
+	}
+	deep := filepath.Join(t.TempDir(), "a", "b", "c")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range []struct{ name, base string }{{"below-tmp", "/tmp"}, {"below-a-deep-directory", deep}} {
+		base := row.base
+		t.Run(row.name, func(t *testing.T) {
+			t.Setenv("TMPDIR", base)
+			replayed := 0
+			for _, target := range registry() {
+				cases, err := LoadCases(filepath.Join("testdata", target.Name))
+				if err != nil {
+					t.Fatalf("%s: %v", target.Name, err)
+				}
+				for _, c := range cases {
+					replayed++
+					if problem := CheckCase(target, c); problem != "" {
+						t.Errorf("%s/%s with the case root below %s: %s", target.Name, c.Name, base, problem)
+					}
+				}
+			}
+			if replayed == 0 {
+				t.Fatal("no pinned case was replayed")
+			}
+		})
 	}
 }
 
