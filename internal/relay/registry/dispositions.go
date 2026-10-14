@@ -67,7 +67,7 @@ const (
 		"different answers and none of them means finished."
 	RefusedPreQueueDetail = "delivery was wanted for this event and refused for a reason that may not last"
 	ClaimedDetail         = "an acknowledgement is recorded, but its own turn has not been established by a host " +
-		"read, so it is the parent's claim rather than an observation of it"
+		"read, so it is the 자식's claim rather than an observation of it"
 	EvidenceWithoutAckDetail = "acknowledgement evidence is recorded for this event with no acknowledgement beside " +
 		"it, so whether the recipient observed it has no supportable answer"
 	NoDispositionDetail = "no final execution-only disposition in this generation, which is not the same as nothing being wrong"

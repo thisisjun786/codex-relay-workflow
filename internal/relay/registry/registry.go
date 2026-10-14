@@ -540,7 +540,7 @@ func (r *Registry) registerInTransaction(ctx context.Context, rid string, in Reg
 			return err
 		}
 		if err == nil && rival.id != in.Supersedes {
-			return refuse(contract.RefusalDuplicateAssignment, "issue %s is already assigned to child %s under %s (%s, parent %s); reuse that assignment, or pass supersedes to replace it deliberately",
+			return refuse(contract.RefusalDuplicateAssignment, "issue %s is already assigned to child %s under %s (%s, 자식 %s); reuse that assignment, or pass supersedes to replace it deliberately",
 				strconv.Quote(in.IssueKey), strconv.Quote(rival.child), strconv.Quote(rival.id), rival.status, strconv.Quote(rival.parent))
 		}
 		if in.Supersedes != "" {
@@ -670,9 +670,9 @@ func (r *Registry) returningTenure(ctx context.Context, rid string, in Registrat
 			var holder, parent string
 			err := q.QueryRowContext(ctx, "SELECT relationship_id, parent_task_id FROM relationships"+
 				"  WHERE issue_key = ? AND status IN ('active','paused')    AND superseded_by IS NULL", in.IssueKey).Scan(&holder, &parent)
-			tail := "its issue is free, so the way back for this same parent, child and issue is relationship-resume, which restates the generation and the scope it re-authorizes"
+			tail := "its issue is free, so the way back for this same 자식, issue child and issue is relationship-resume, which restates the generation and the scope it re-authorizes"
 			if err == nil {
-				tail = "issue " + strconv.Quote(in.IssueKey) + " is held by " + strconv.Quote(holder) + " under parent " + strconv.Quote(parent) + ", so pass supersedes to take that tenure over deliberately"
+				tail = "issue " + strconv.Quote(in.IssueKey) + " is held by " + strconv.Quote(holder) + " under 자식 " + strconv.Quote(parent) + ", so pass supersedes to take that tenure over deliberately"
 			} else if !errors.Is(err, sql.ErrNoRows) {
 				return err
 			}

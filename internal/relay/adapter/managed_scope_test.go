@@ -111,7 +111,8 @@ func Test28_ManagedStartRefusesAnUnboundProjectBeforeCreation(t *testing.T) {
 	}
 
 	out, code := start()
-	want := "{\n  \"error\": \"refused\",\n  \"reason\": \"unregistered_scope\",\n  \"detail\": \"project 'P-SCOPE' has no registered parent, so an issue cannot be attached to it yet\"\n}\n"
+	// The answer is ASCII JSON, so the layer name 자식 is written as its \u escapes.
+	want := "{\n  \"error\": \"refused\",\n  \"reason\": \"unregistered_scope\",\n  \"detail\": \"project 'P-SCOPE' has no registered \\uc790\\uc2dd, so an issue cannot be attached to it yet\"\n}\n"
 	if code != contract.ExitRefused || out != want {
 		t.Fatalf("unbound project: exit %d stdout %q", code, out)
 	}
