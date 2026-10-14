@@ -138,9 +138,11 @@ func TestShellQuotePosix(t *testing.T) { // oracle: each argument comes back as 
 	}
 }
 
-func TestBuildShellPosix(t *testing.T) { // oracle registry.test.ts: the shell records its own exit code; the new part is mv --
+// oracle registry.test.ts: the shell records its own exit code. The new parts are mv's "--" and the option that does not move into a
+// linked directory, and the two targets as descriptors 4 and 5 (CRW-1375), where the oracle's shell opened "> out" and "> e.tmp".
+func TestBuildShellPosix(t *testing.T) {
 	file, args, err := BuildShell([]string{"echo", "hi there"}, "/tmp/o", "/tmp/e", "")
-	want := "( 'echo' 'hi there' ) > '/tmp/o' 2>&1; printf %s $? > '/tmp/e.tmp' && mv -- '/tmp/e.tmp' '/tmp/e'"
+	want := "( 'echo' 'hi there' ) >&4 2>&1 4>&- 5>&-; printf %s $? >&5 && exec 4>&- 5>&- && mv " + noTargetDirectory(runtime.GOOS) + " -- '/tmp/e.tmp' '/tmp/e'"
 	if err != nil || file != "/bin/sh" || !reflect.DeepEqual(args, []string{"-c", want}) {
 		t.Errorf("%s %q %v", file, args, err)
 	}
@@ -149,9 +151,19 @@ func TestBuildShellPosix(t *testing.T) { // oracle registry.test.ts: the shell r
 func TestBuildShellKeepsADashedRelativePathAnOperand(t *testing.T) {
 	dir := workspace(t)
 	mkdir(t, filepath.Join(dir, "-r"))
-	_, args, err := buildShell("linux", "node", []string{"true"}, "-r/o", "-r/e", "")
+	_, args, err := buildShell(runtime.GOOS, "node", []string{"true"}, "-r/o", "-r/e", "")
 	cmd := exec.Command("sh", args...)
 	cmd.Dir = dir
+	var targets []*os.File
+	for _, path := range []string{filepath.Join(dir, "-r", "o"), filepath.Join(dir, "-r", "e.tmp")} {
+		f, ferr := createShellTarget(path)
+		if ferr != nil {
+			t.Fatal(ferr)
+		}
+		defer f.Close()
+		targets = append(targets, f)
+	}
+	cmd.ExtraFiles = append([]*os.File{nil}, targets...) // descriptors 4 and 5; 3 (the launch gate) is not part of the script
 	if err != nil || cmd.Run() != nil || get(t, filepath.Join(dir, "-r", "e")) != "0" {
 		t.Errorf("the exit code was not published: %v / %v", err, cmd.ProcessState)
 	}
