@@ -114,9 +114,8 @@ func (s *Scheduler) readTarget(ctx context.Context, t store.IntegrationTargetRow
 	default:
 		out.Status = TargetMovedOutside
 		out.Moved = &TargetMoved{IntegrationRef: t.IntegrationRef, RemoteHead: head, Expected: expected[:min(len(expected), expectedShown)], ExpectedTotal: len(expected), Strict: true, Source: SourceCheck}
-		if t.PlanID != "" {
-			plan = t.PlanID
-		}
+		// The fault names the newest batch plan on the ref (CRW-1398), as the acknowledgement's does: the target row names the plan that
+		// recorded the target first.
 		signature := map[string]any{"checkout": t.Checkout, "remote": t.Remote, "remoteRef": t.RemoteRef}
 		if id, err := s.recordTargetMoved(ctx, out.Moved, signature, plan); err != nil {
 			out.Moved.FaultError = err.Error()
