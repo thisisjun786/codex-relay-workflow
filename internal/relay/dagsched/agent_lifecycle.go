@@ -727,7 +727,7 @@ func (s *Scheduler) resumeOfAgent(ctx context.Context, q store.Querier, plan, ac
 	case cur.Actor != actor:
 		a.Action = AgentActionAdopt
 		out.Resume = ResumeAdoptNeeded
-		out.ResumeDetail = "run dag-adopt: execution " + cur.ExecutionID + " is held by " + cur.Actor + " and the actor is the registered parent that replaced it; then " + action
+		out.ResumeDetail = "run dag-adopt: execution " + cur.ExecutionID + " is held by " + cur.Actor + " and the actor is the registered 자식 that replaced it; then " + action
 	case a.State == AgentStateHeld && action == AgentActionFlowRecover:
 		a.Action = action
 		out.Resume, out.ResumeDetail = ResumeReconcile, "a call of execution "+cur.ExecutionID+" is in recovery hold (its outcome is unknown and nobody has cleared it): settle it with "+action+" CALL (--adopt THREAD|TURN | --absent); the run sends nothing for it until then"

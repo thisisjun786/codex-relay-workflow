@@ -403,7 +403,7 @@ func (s *Scheduler) CloseRelease(ctx context.Context, plan, node, actor, digest,
 			return err
 		}
 		if !contains(parents, actor) {
-			return refuse(contract.RefusalScopeRoleMismatch, "task %s is not a registered parent of project %s: only the parent that owns the slot closes a release", actor, snap.ProjectKey)
+			return refuse(contract.RefusalScopeRoleMismatch, "task %s is not a registered 자식 of project %s: only the 자식 that owns the slot closes a release", actor, snap.ProjectKey)
 		}
 		open, found, err := latestRelease(txCtx, tx, plan, node)
 		if err != nil {

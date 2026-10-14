@@ -93,7 +93,7 @@ func checkRevision(entries []consumed, a Acceptance) *BlockedFinding {
 		return &BlockedFinding{"B-17", BlockedInputMissing, "the artifact list of the accepted receipt cannot be digested: " + err.Error()}
 	}
 	if revision != a.RevisionHash {
-		return &BlockedFinding{"B-17", BlockedInputMissing, "the artifact list of the accepted receipt digests to " + revision + " and the parent accepted revision " + a.RevisionHash + ": an artifact was left out, added or changed"}
+		return &BlockedFinding{"B-17", BlockedInputMissing, "the artifact list of the accepted receipt digests to " + revision + " and the 자식 accepted revision " + a.RevisionHash + ": an artifact was left out, added or changed"}
 	}
 	return nil
 }

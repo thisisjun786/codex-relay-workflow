@@ -147,7 +147,7 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 		return out, err
 	}
 	if !hasAcc || acc.HeadSHA == "" {
-		return out, refuse(contract.RefusalDispositionConflict, "node %s has no accepted head: a base refresh is recorded for a result the parent accepted", node)
+		return out, refuse(contract.RefusalDispositionConflict, "node %s has no accepted head: a base refresh is recorded for a result the 자식 accepted", node)
 	}
 	if acc.agent != nil {
 		return out, refuse(contract.RefusalDispositionConflict, "node %s was accepted by an agent (acceptance %s): an agent acceptance stands on its own head and no base refresh is recorded for it", node, acc.AcceptanceID)
@@ -174,7 +174,7 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 	if landed, _, err := s.nodeIntegrated(ctx, q, plan, snap, acc); err != nil {
 		return out, err
 	} else if landed {
-		return out, refuse(contract.RefusalDispositionConflict, "%s landed (its accepted head %s is contained in every target it lands on and the parent marked it merged): there is nothing to refresh", node, short(acc.HeadSHA))
+		return out, refuse(contract.RefusalDispositionConflict, "%s landed (its accepted head %s is contained in every target it lands on and the 자식 marked it merged): there is nothing to refresh", node, short(acc.HeadSHA))
 	}
 	if st, err := s.staleOf(ctx, q, plan, snap, n); err != nil {
 		return out, err
@@ -285,7 +285,7 @@ func (s *Scheduler) RecordBaseRefresh(ctx context.Context, plan, node, actor str
 		if refreshed == acc.HeadSHA {
 			if commit {
 				// the commit path's ruling fixed the accepted head itself, so its own generation never carries another head: dag-integrate merges the base onto it
-				return out, refuse(contract.RefusalDispositionConflict, "the relationship %s is still at generation %d, the one %s was accepted on by its commit, and that generation's head is the accepted head %s: there is nothing to refresh (dag-integrate merges the base itself; a head that merged the base comes from a later generation the parent rules verified)", rel.ID, rel.Generation, node, short(acc.HeadSHA))
+				return out, refuse(contract.RefusalDispositionConflict, "the relationship %s is still at generation %d, the one %s was accepted on by its commit, and that generation's head is the accepted head %s: there is nothing to refresh (dag-integrate merges the base itself; a head that merged the base comes from a later generation the 자식 rules verified)", rel.ID, rel.Generation, node, short(acc.HeadSHA))
 			}
 			return out, refuse(contract.RefusalDispositionConflict, "the relationship %s is still at generation %d, the one %s was accepted on, and pull request %s#%d is still at the accepted head %s: there is nothing to refresh", rel.ID, rel.Generation, node, forge, number, short(acc.HeadSHA))
 		}
