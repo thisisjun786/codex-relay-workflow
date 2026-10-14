@@ -295,7 +295,7 @@ in one project returns to that project's parent, which settles within the approv
 already holds whether the approved successor proceeds. Where the mismatch orders work
 across projects, return it through the supervisor that owns both. Where the two projects share no
 supervisor or answer to different ones, follow
-[direct coordination between project orchestrators](../../crw-canon/references/hierarchy.md#direct-coordination-between-project-orchestrators):
+[direct coordination between children](../../crw-canon/references/hierarchy.md#direct-coordination-between-children):
 the parents settle what they can between themselves, hold only the unsettled part
 while independent work continues, and raise that pair-level decision to the user,
 because neither supervisor acquires authority over the pair and none is invented. A

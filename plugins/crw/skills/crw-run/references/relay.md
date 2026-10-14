@@ -17,7 +17,7 @@ Verified against `crw` built from `423c2584` on 2026-09-29: every command and fl
 names is one `crw relay <command> --help` lists. The refusal reasons quoted here and the record
 shapes were read from the Python `codex-session-relay` 0.1.0 on 2026-09-15 and exercised against
 temporary stores; the Go relay is held to that package's outputs by
-[the contract corpus](../../../../../contract/README.md), which is a different claim from having
+the contract corpus (`contract/README.md` in the CRW repository), which is a different claim from having
 re-read each of them here. A different installed build may not share them, so check what is
 installed before relying on a refusal reason or a field name.
 
@@ -28,7 +28,7 @@ and does not manage `PATH`. Before relying on a result, check that
 selects, `readlink -f ~/.local/share/crw-runtime/current`, and not in an older copy earlier on
 `PATH`. That is the directory's `bin/crw` (`bin-<version>-<digest>`). Or run the relay
 by that absolute path
-([how skill commands reach the relay](../../../../../docs/runtime-install.md#how-skill-commands-reach-the-relay)).
+(how skill commands reach the relay (`docs/runtime-install.md#how-skill-commands-reach-the-relay` in the CRW repository)).
 
 Global options come BEFORE the subcommand:
 
@@ -133,7 +133,49 @@ of the later one quietly winning.
 
 For new assignments, prefer the relay's `managed-start` entry when that installed version exposes
 it. It owns pre-creation reservation, standby creation, registration and business dispatch as one
-recoverable operation; see the [request and recovery contract](../../../../../docs/relay/README.md#recoverable-managed-start).
+recoverable operation (the request and recovery contract is "Recoverable managed start" in `docs/relay/README.md`
+of the CRW repository). The smallest request the relay accepts for a local workspace is the one below: replace
+every identity, path, baseline, criterion and the prompt with what your own authorized assignment observed, take
+each role's model and effort from the host's role policy (`get_capabilities`), never from this example, and state
+the child's MCP profile ([MCP profiles](mcp-profiles.md)): a host whose policy declares profiles for the child role
+refuses a request that states none (`mcp_profile_required`).
+
+```json
+{
+  "schema": "managed-start/1",
+  "requestId": "example-42-attempt-1",
+  "issueKey": "EXAMPLE-42",
+  "parent": {
+    "taskId": "observed-parent-task", "hostId": "observed-local-host",
+    "settings": {
+      "model": "the-parent-role-model", "reasoningEffort": "the-parent-role-effort",
+      "approvalPolicy": "never",
+      "sandbox": {"type": "workspaceWrite", "writableRoots": [], "networkAccess": false},
+      "cwd": "/workspace/project", "runtimeWorkspaceRoots": ["/workspace/project"],
+      "environments": [{"environmentId": "local", "cwd": "/workspace/project",
+                        "runtimeWorkspaceRoots": ["/workspace/project"]}]
+    }
+  },
+  "child": {
+    "hostId": "observed-local-host", "title": "EXAMPLE-42 · Implement the assigned change",
+    "settings": {
+      "model": "the-child-role-model", "reasoningEffort": "the-child-role-effort",
+      "approvalPolicy": "never",
+      "sandbox": {"type": "workspaceWrite", "writableRoots": [], "networkAccess": true},
+      "cwd": "/workspace/issue-42", "runtimeWorkspaceRoots": ["/workspace/issue-42"],
+      "environments": [{"environmentId": "local", "cwd": "/workspace/issue-42",
+                        "runtimeWorkspaceRoots": ["/workspace/issue-42"]}],
+      "mcpProfile": "minimal"
+    }
+  },
+  "artifactRoots": ["/workspace/issue-42"],
+  "allowedRecipients": ["observed-parent-task"],
+  "criteria": [{"id": "c1", "title": "The agreed behavior is verified", "required": true}],
+  "criteriaSource": "issue:EXAMPLE-42", "baselineRevision": "observed-revision",
+  "scopeRef": "issue:EXAMPLE-42", "prompt": "The complete authorized assignment goes here."
+}
+```
+
 Use the same request id, exact request contents and state/socket/marker paths when recovering.
 Pass `--marker-root` as the marker root the relay daemon judges Stops under (the daemon's own
 `CODEX_SESSION_RELAY_MARKER_ROOT`, else under its state home; managed-start asks the daemon for it,
@@ -168,7 +210,7 @@ what reports a real assignment as absent from whatever store answers there, or r
 `tests/test_managed_execution.py` in the Python relay package ran exactly this sequence against a
 real store and asserted the chain until todo 44 removed that package, and
 `Test27_MEX_1_PythonInstructedSequenceWholeOutput` in
-[the Go runtime's managed tests](../../../../../internal/relay/managed/capture_test.go) holds the Go
+the Go runtime's managed tests (`internal/relay/managed/capture_test.go` in the CRW repository) holds the Go
 relay's output for the same sequence equal to its recorded answer, so an instruction that stopped
 producing it fails there. It covers
 managed START only: an `emit` without `--socket` stages (the relay daemon still records it) and a staged receipt has no delivery row, and
@@ -184,7 +226,7 @@ issue reservation and retained bridge receipts. The lower-level calls remain sep
 `doctor --require-worker-policy` alone neither runs admission nor prevents raw task creation.
 The managed entry rechecks authorization after resume, but an external UI change can race its
 last read and turn start. Do not describe that observation as an atomic host permission guard.
-The source package's [exact-turn reporting observation](../../../../../docs/relay/README.md#exact-turn-reporting-observation)
+The source package's exact-turn reporting observation (`docs/relay/README.md#exact-turn-reporting-observation` in the CRW repository)
 is a separate manual diagnosis: `reporting-show` reads one named turn offline. A Stop observation
 alone is not a terminal assignment, and missing or unreadable evidence stays unknown rather than
 success. The command does not wake a parent, write a queue, or publish a report. Source presence
@@ -194,15 +236,15 @@ The durable owners are separate:
 
 | Boundary | Owner | Evidence it supplies |
 | --- | --- | --- |
-| Dispatch intent and task correlation | [intent.go](../../../../../internal/relay/delivery/intent.go) | Published intent, creation observations, identity binding and relationship reference |
-| Authorized assignment and execution | [registry.go](../../../../../internal/relay/registry/registry.go) and [criteria.go](../../../../../internal/relay/delivery/criteria.go) | Endpoints, scope, generation, exact dispatch anchor and canonical criteria |
-| Actual worker policy | [the service package](../../../../../internal/relay/service/) and [rolepolicy.go](../../../../../internal/relay/registry/rolepolicy.go) | The serving process's policy snapshot and point-in-time readiness |
-| Child's declared result and observed turn ending | [receipt_classification.go](../../../../../internal/relay/store/receipt_classification.go) and the daemon's settlement ([observe.go](../../../../../internal/relay/daemon/observe.go)) | Staged versus final result, or failure/interruption/ordinary turn end |
-| Stop-time omission | [guard.go](../../../../../internal/relay/hook/guard.go) | Bounded missing-declaration/receipt observations, never an invented result |
-| Delivery, acknowledgement and judgment | [the delivery service](../../../../../internal/relay/delivery/service.go) and [ack.go](../../../../../internal/relay/delivery/ack.go) | Separate queued, dispatched, received and judged states |
+| Dispatch intent and task correlation | `internal/relay/delivery/intent.go` in the CRW repository | Published intent, creation observations, identity binding and relationship reference |
+| Authorized assignment and execution | `internal/relay/registry/registry.go` in the CRW repository and `internal/relay/delivery/criteria.go` in the CRW repository | Endpoints, scope, generation, exact dispatch anchor and canonical criteria |
+| Actual worker policy | the service package (`internal/relay/service` in the CRW repository) and `internal/relay/registry/rolepolicy.go` in the CRW repository | The serving process's policy snapshot and point-in-time readiness |
+| Child's declared result and observed turn ending | `internal/relay/store/receipt_classification.go` in the CRW repository and the daemon's settlement (`internal/relay/daemon/observe.go` in the CRW repository) | Staged versus final result, or failure/interruption/ordinary turn end |
+| Stop-time omission | `internal/relay/hook/guard.go` in the CRW repository | Bounded missing-declaration/receipt observations, never an invented result |
+| Delivery, acknowledgement and judgment | the delivery service (`internal/relay/delivery/service.go` in the CRW repository) and `internal/relay/delivery/ack.go` in the CRW repository | Separate queued, dispatched, received and judged states |
 
 A registered generation can still lack its first dispatch anchor. Receipt intake refuses it
-until an exact turn is bound. The [live-trial startup order](../../../../../docs/live-trial.md#the-order)
+until an exact turn is bound. The live-trial startup order (`docs/live-trial.md#the-order` in the CRW repository)
 materializes a standby turn before business dispatch; that host preparation is not completion
 evidence. An unknown creation or dispatch response must be reconciled against its retained
 bridge operation rather than retried with a new request id.
@@ -508,6 +550,10 @@ against no criteria. `criteria-show --relationship <rel>` returns the set and it
     codex-session-relay --state "$RELAY_STATE" emit --relationship <rel> --generation <n> \
       --outcome ready_for_review --turn-thread <own task id> --turn-id <own turn> \
       --artifact /abs/path [--supersedes-revision <hash>]
+
+A child whose sandbox has no network access cannot connect to the daemon's `control.sock`: its `emit`
+ends with exit 3 and says so. It reports through the bridge's `report_child` tool instead, which runs outside the sandbox
+([bridge](bridge.md)), with the same options after the command name.
 
 For non-PR work, `--artifact` is still required. Freeze the result and verification
 evidence under an authorized artifact root, including any source and delivered
@@ -1357,7 +1403,7 @@ else is refused with `unknown_generation`. The last names the route for a result
 and that is still current, when a blocking defect is found in it before it lands: `dag-correct` records that
 generation as a correction under the checks the stale case has, and the parent takes the corrected result
 with `dag-accept --supersedes`
-([Correcting a result that was accepted and is still current](../../../../../docs/relay/dag-scheduler.md#correcting-a-result-that-was-accepted-and-is-still-current)).
+(Correcting a result that was accepted and is still current (`docs/relay/dag-scheduler.md#correcting-a-result-that-was-accepted-and-is-still-current` in the CRW repository)).
 Opening SENDS nothing, because the command is store-only and a generation is
 not an event the relay can deliver. The child learns about the re-review the same way it learned
 about the original assignment, through whatever transport dispatched it, and the turn that resume

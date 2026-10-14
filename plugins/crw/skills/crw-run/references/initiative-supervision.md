@@ -1,6 +1,6 @@
 # Initiative supervision
 
-[crw-run-initiative](../../crw-run-initiative/SKILL.md) executes an initiative's scope, and this file
+[The parent's section of crw-run](../SKILL.md#the-parent-the-repository-session) executes an initiative's scope, and this file
 is its reference: how a task becomes that initiative's supervisor, which projects it is executing, when it is
 finished, what each parent receives, what comes back, and how it recovers. The roles themselves are
 the shared [scope of each level](../../crw-canon/references/hierarchy.md#scope-of-each-level),
@@ -13,26 +13,26 @@ wake-up.
 
 What the relay does now RECORD is the relationship itself, not a channel that carries it.
 [OPS-7.4](operations.md#ops-74-three-levels-and-their-routing-identity) and
-[Three-level linkage](../../../../../docs/relay/linkage.md) describe the store's linkage module: `linkage-bind` claims one
+Three-level linkage (`docs/relay/linkage.md` in the CRW repository) describe the store's linkage module: `linkage-bind` claims one
 scope for one task at one level, `linkage-supervise` records an initiative supervisor over a project parent (by execution or
 by reference), and `linkage-up` / `linkage-down` walk the hierarchy either way and report its gaps and contention. One task
 holds one live role and one scope, a project has at most one live `execution` edge whichever initiative names it, and a
 refused supervision leaves no state behind: the decision and the write share one transaction, so a contest that loses writes
 only its conflict row. A supervisor whose own level is not an initiative can hold the store-scope seat
 (`linkage-bind --role supervisor --scope-kind store --scope store`), which is what a session that manages the store holds
-rather than one tied to a single initiative's execution. `crw manage supervisor register` gives the calling management session
+rather than one tied to a single initiative's execution. `crw manage supervisor register` gives the calling parent (repository session, relay role `supervisor`, [the level table](../../crw-canon/references/hierarchy.md#the-levels))
 its own management seat instead and lays down a store seat it held; the store seat is then read through that management seat.
-A management session that binds a project owner itself (`linkage-bind --role parent --scope <project> --task <owner> --host ...
+A parent that binds a child itself (`linkage-bind --role parent --scope <project> --task <owner> --host ...
 --creator <its own thread>`, the creator by default `CODEX_THREAD_ID`) records the management -> project edge in the same
-transaction, and the project's upward messages and `crw flow report-up` reports then go to that session; a project an initiative
-lead already supervises keeps its lead, and the answer says so under `managementLinkSkipped`.
+transaction, and the project's upward messages and `crw flow report-up` reports then go to that parent; a project an initiative's
+supervisor already supervises keeps that supervisor, and the answer says so under `managementLinkSkipped`.
 
 Keep four facts apart, because they are separate. This repository's source implements those commands and its tests pin them; an
 installed runtime may be older than that source; a task may or may not be currently registered for a scope; and an actual
 delivery or readback either happened or it did not. A green suite here says the source behaves as its tests describe and says
 nothing about any host, so read the commands a given installation actually offers from its live help (`crw linkage-bind -h`
 and its siblings, whose help text the binary carries) and the current contract from this checkout's
-[linkage document](../../../../../docs/relay/linkage.md). Registration is a record: it is not an automatic wake, and it is not a
+linkage document (`docs/relay/linkage.md` in the CRW repository). Registration is a record: it is not an automatic wake, and it is not a
 guarantee that a message was delivered or read back. Every sentence below about a recorded relationship therefore reads that
 record where an installation has it, and an instruction a reader follows is still not a store that enforces it.
 
@@ -43,7 +43,7 @@ request rather than in the link.
 
 | Request | Owner | Effect on binding |
 |---|---|---|
-| Execute this initiative's agreed projects, naming the initiative | this entry, through [crw-run-initiative](../../crw-run-initiative/SKILL.md) | binds a supervisor for that initiative: this task where it is free to take it, and otherwise the initiative's existing supervisor or one created for it |
+| Execute this initiative's agreed projects, naming the initiative | this entry, through [the parent's section of crw-run](../SKILL.md#the-parent-the-repository-session) | binds a supervisor for that initiative: this task where it is free to take it, and otherwise the initiative's existing supervisor or one created for it |
 | Define or plan it | [crw-define](../../crw-define/SKILL.md), [crw-plan](../../crw-plan/SKILL.md) | none; planning creates no supervisor and moves no ownership |
 | How is it going | a [crw-status](../../crw-status/SKILL.md) read by default; where this task supervises the initiative and its execution approval is still in force, also a checkpoint ([midpoint check](midpoint-check.md)) | none either way. A standalone request, or one under an explicit status-only, report-only, read-only, plan-only, pause or no-contact limit, reads existing records and wakes nothing. A checkpoint is not only a read: while approved work remains unfinished under an approval still in force, it inspects the existing parents, hands that pending work to the responsible parent on the resume path that parent already has, and reports the actions actually taken. It still binds no supervisor, moves no ownership, and starts nothing for work that already has an owner |
 | An initiative link carried as context by other work | the operation already running | none; it locates context |

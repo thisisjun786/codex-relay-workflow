@@ -35,7 +35,7 @@ Three rules follow, and every section below keeps them.
    child's goal or FSM.
 
 One parent coordinates one project; one independent child owns one issue and its delivery, one issue per
-delivery today under the repository's [work-unit rules](../../../../../POLICY.md#work-units-review-and-integration),
+delivery today under the repository's work-unit rules (`POLICY.md#work-units-review-and-integration` in the CRW repository),
 under the shared
 [scope of each level](../../crw-canon/references/hierarchy.md#scope-of-each-level).
 Run and goal mode have the same project scope. Goal mode adds the parent's host goal, automatic
@@ -118,7 +118,7 @@ or claim goal mode is active.
    then release newly ready successors. Each Run pass returns to goal mode; it does not end the parent
    objective. Keep one implementation issue per delivery today (a task branch and its head, or a pull
    request where one is named), under the repository's
-   [work-unit rules](../../../../../POLICY.md#work-units-review-and-integration); a child report or green
+   work-unit rules (`POLICY.md#work-units-review-and-integration` in the CRW repository); a child report or green
    CI alone is not Done.
 
 Keep the record current after meaningful transitions, with the latest evidence and next action rather

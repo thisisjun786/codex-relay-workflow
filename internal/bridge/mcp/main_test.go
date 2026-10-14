@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -298,5 +299,49 @@ func Test_the_default_socket_and_ledger_follow_codex_home_and_xdg_state_home(t *
 		if socket != tc.socket || state != tc.state {
 			t.Fatalf("%v: %s %s", tc.env, socket, state)
 		}
+	}
+}
+
+// CRW-1373: a bridge started on a relay state the daemon does not serve warns on stderr at start, with the line the relay
+// side names both paths in, and serves all the same: it never refuses to start (Jun's standing rule: warn and record).
+func TestBridgeStartWarnsOnStderrWhenTheRelayStatesDiffer(t *testing.T) {
+	home, env := isolated(t)
+	asked := []string{}
+	previous := stateCheck
+	RegisterChildStateCheck(func(socket string) string {
+		asked = append(asked, socket)
+		return "report_child reaches the relay state /bridge/state but the relay daemon serves /daemon/state"
+	})
+	t.Cleanup(func() { RegisterChildStateCheck(previous) })
+	socket := fakehost.SocketPath(t, "absent.sock")
+	s := serve(t, []string{"--socket", socket, "--state-dir", filepath.Join(home, "ledger")}, env)
+	listed, err := s.session.ListTools(context.Background(), nil)
+	if err != nil || len(listed.Tools) != 13 {
+		t.Fatalf("a bridge that warned must still serve its tools: %v %v", listed, err)
+	}
+	s.finish(t)
+	log := s.stderr.String()
+	if strings.Count(log, "crw bridge: warning: report_child reaches the relay state /bridge/state but the relay daemon serves /daemon/state\n") != 1 {
+		t.Fatalf("stderr does not carry the one-line warning:\n%s", log)
+	}
+	if len(asked) != 1 || asked[0] != socket {
+		t.Fatalf("the check was asked about %v, want the bridge's socket once", asked)
+	}
+}
+
+func TestBridgeStartSaysNothingWhenTheRelayStatesAgree(t *testing.T) {
+	home, env := isolated(t)
+	asked := []string{}
+	previous := stateCheck
+	RegisterChildStateCheck(func(socket string) string { asked = append(asked, socket); return "" })
+	t.Cleanup(func() { RegisterChildStateCheck(previous) })
+	// Started without --socket the check is asked about the default socket (""), as the relay scopes its state by it.
+	if err := os.MkdirAll(filepath.Join(env["CODEX_HOME"], "app-server-control"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	s := serve(t, []string{"--state-dir", filepath.Join(home, "ledger")}, env)
+	s.finish(t)
+	if strings.Contains(s.stderr.String(), "warning") || len(asked) != 1 || asked[0] != "" {
+		t.Fatalf("stderr %q, asked %v", s.stderr.String(), asked)
 	}
 }

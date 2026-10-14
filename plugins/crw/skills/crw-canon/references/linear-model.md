@@ -60,7 +60,7 @@ target, so a multi-repository outcome is one project per repository, held togeth
 initiative, with one issue per delivery.
 Batches coordinate separate issue/delivery pairs; they do not combine issues into one
 delivery. Referencing a related issue is not claiming to deliver or close it. This is today's
-operation under the [work-unit rules](../../../../../POLICY.md#work-units-review-and-integration),
+operation under the work-unit rules (`POLICY.md#work-units-review-and-integration` in the CRW repository),
 not a standing one-to-one rule: several packets for one feature are allowed by policy and
 switch on when their support lands.
 
@@ -153,7 +153,7 @@ Keep its source baseline and delivered output identity under the non-PR evidence
 An implementation issue is Done when every accepted criterion maps to a commit that actually landed on the
 intended integration target, and a partial implementation never closes it. In today's operation one issue runs as
 one packet and one delivery, so that mapping is its one current delivery's landing commit
-([the work-unit rules](../../../../../POLICY.md#work-units-review-and-integration)). Under the push-only procedure
+(the work-unit rules (`POLICY.md#work-units-review-and-integration` in the CRW repository)). Under the push-only procedure
 that commit is the integrator's fast-forward of the verified merged tree; where the delivery is a pull request,
 read GitHub's current PR identity, repository, base branch, merged state and landing commit instead. A
 related/reference PR, superseded replacement, approval, green CI, merge-ready flag or closed-but-unmerged PR is

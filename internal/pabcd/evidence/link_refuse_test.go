@@ -24,17 +24,26 @@ func linkRefuseListing(t *testing.T, dir string) string {
 	return strings.Join(out, "\n")
 }
 
-// The attempt counter and the tombstone (through the session state and its lock) refuse a symbolic link in the state tree: they
+// The attempt counter (in the flat directory and in the session's own one), the overflow record and the tombstone (through the
+// session state and its lock) refuse a symbolic link in the state tree: they
 // report that nothing was written, and the directory the link leads to outside the workspace is left as it was.
 func TestEvidenceWritersRefuseALinkInTheStateTree(t *testing.T) {
 	p := Payload{AgentType: "executor", AgentID: "a1", TurnID: "t1"}
 	writers := map[string]func(cwd string) bool{
 		"WriteAttempts":   func(cwd string) bool { return WriteAttempts(cwd, "s1", "a1", 1, "t1") },
 		"RecordTombstone": func(cwd string) bool { return RecordTombstone(cwd, "s1", p, MaxAttempts, nil) },
+		// An agent id that sanitising changes keeps its counter in the session's own directory (ownDirectoryCounter).
+		"WriteAttempts own directory": func(cwd string) bool { return WriteAttempts(cwd, "s1", "a/1", 1, "t1") },
+		"writeOverflow":               func(cwd string) bool { return writeOverflowAt(cwd, "s1", "a1", "t1") == nil },
 	}
 	for _, c := range []struct{ writer, link string }{
 		{"WriteAttempts", ".crw"}, {"WriteAttempts", ".crw/" + AttemptsSubdir},
 		{"RecordTombstone", ".crw"}, {"RecordTombstone", ".crw/sessions"},
+		{"WriteAttempts own directory", ".crw/" + AttemptsSubdir},
+		{"WriteAttempts own directory", ".crw/" + AttemptsSubdir + "/" + counterVersionDir},
+		{"WriteAttempts own directory", ".crw/" + AttemptsSubdir + "/" + counterVersionDir + "/" + sessionRecordDir("s1")},
+		{"writeOverflow", ".crw"}, {"writeOverflow", ".crw/" + OverflowSubdir},
+		{"writeOverflow", ".crw/" + OverflowSubdir + "/" + sessionRecordDir("s1")},
 	} {
 		t.Run(c.writer+" "+c.link, func(t *testing.T) {
 			cwd, outside := t.TempDir(), t.TempDir()

@@ -845,7 +845,7 @@ condition outside the run still holds (the budget, the host's availability) ends
 ## Session calls
 
 A run whose configuration names a session host (`engine.Config.Session`: the host, the step bus, the run's owner thread) runs every
-agent call as a session call (CRW-1316). The owner thread - the project orchestrator - runs the call's turns on role subagents it
+agent call as a session call (CRW-1316). The owner thread - the child (project session, relay role `parent`, [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels)) - runs the call's turns on role subagents it
 spawns, and the engine starts no thread and no turn of its own: it publishes a step, binds the subagent the owner reports, reads
 its answer from the host and records it in the rows relay acceptance reads. Everything around a turn is the engine's as for any
 call: the `prepared` row and its allocation, the gate, the schema validation and its one repair, the terminal rows, the pending

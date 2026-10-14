@@ -26,6 +26,16 @@ const flowUsage = `usage: crw flow run --backend fake [--args JSON | --args-file
        crw flow resume [--state DIR] [--socket PATH] [--repo DIR] [--args JSON | --args-file FILE] RUN SCRIPT
        crw flow lint [--args JSON | --args-file FILE] [--no-dry-run] [--json] <script.js>...`
 
+// Commands are the first words of the commands RunCLI serves itself; lint is internal/flow/lint's, and the rest of `crw flow` is
+// internal/flow/cli's and internal/flow/shadow's.
+var Commands = []string{"run", "roles", "compile", "recover", "resume"}
+
+// PrintUsage writes the usage lines of the commands this package serves, with compile's.
+func PrintUsage(w io.Writer) {
+	fmt.Fprintln(w, flowUsage)
+	fmt.Fprintln(w, compile.Usage)
+}
+
 // lookupEnv reads the environment for the policy file; tests replace it.
 var lookupEnv = os.LookupEnv
 
@@ -56,7 +66,7 @@ func RunCLI(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintln(stderr, flowUsage)
 	fmt.Fprintln(stderr, compile.Usage)
-	fmt.Fprintf(stderr, "crw flow: error: argument command: invalid choice: %q (choose from 'run', 'roles', 'compile', 'recover', 'resume')\n", args[0])
+	fmt.Fprintf(stderr, "crw flow: error: argument command: invalid choice: %q (choose from '%s')\n", args[0], strings.Join(Commands, "', '"))
 	return 2
 }
 

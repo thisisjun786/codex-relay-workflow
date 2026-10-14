@@ -38,7 +38,7 @@ type canonSection struct{ File, Heading string }
 var canonMoved = []canonSection{
 	{"hierarchy.md", "Scope of each level"},
 	{"hierarchy.md", "The message both relations are read by"},
-	{"hierarchy.md", "Direct coordination between project orchestrators"},
+	{"hierarchy.md", "Direct coordination between children"},
 	{"release-gate.md", "The release gate"},
 	{"schedule-contract.md", "Schedule baseline contract"},
 	{"linear-model.md", "Linear operating model"},
@@ -269,14 +269,14 @@ func TestNoSharedSectionOutsideCanon(t *testing.T) {
 			}
 			r.write(canonRefDir+s.File, "# "+s.Heading+"\n")
 		}
-		r.write(canonRefDir+"hierarchy.md", "# Scope of each level\n\n## Direct coordination between project orchestrators\n")
+		r.write(canonRefDir+"hierarchy.md", "# Scope of each level\n\n## Direct coordination between children\n")
 		r.write(planIntegrate, "# Linear and implementation workflow integration\n\n## The release gate\n")
-		r.write("docs/other.md", "## Direct coordination between project orchestrators\n")
+		r.write("docs/other.md", "## Direct coordination between children\n")
 		r.commit()
 		joined := strings.Join(sharedSectionOutsideCanonErrors(r.root), "\n")
 		for _, want := range []string{
 			"hierarchy.md: heading The message both relations are read by appears 0 times",
-			"docs/other.md: heading Direct coordination between project orchestrators belongs to crw-canon/references/hierarchy.md",
+			"docs/other.md: heading Direct coordination between children belongs to crw-canon/references/hierarchy.md",
 			planIntegrate + ": heading The release gate belongs to crw-canon/references/release-gate.md",
 			planIntegrate + ": headings Linear and implementation workflow integration | The release gate; want only the planning sections",
 		} {
@@ -311,6 +311,7 @@ func TestNoSharedSectionOutsideCanon(t *testing.T) {
 var formerSlugs = []canonSection{
 	{"hierarchy.md", "Supervisor, parent and child scope"},
 	{"hierarchy.md", "Direct coordination between parents"},
+	{"hierarchy.md", "Direct coordination between project orchestrators"},
 }
 
 // movedSlugs is the anchor of every moved heading, and of every heading it was renamed from, with the
@@ -467,68 +468,51 @@ func tableRows(text, first string) [][]string {
 }
 
 var (
-	inlineCode    = regexp.MustCompile("`[^`]*`")
-	linkTarget    = regexp.MustCompile(`\]\([^)]*\)`)
-	relayRoleWord = regexp.MustCompile(`(?i)\b(supervisor|parent|child)\b`)
-	issueChild    = regexp.MustCompile(`(?i)\bissue child(ren)?\b`)
-	relayRoleID   = regexp.MustCompile("`(supervisor|parent|child)`")
-	junTalks      = regexp.MustCompile(`(?i)manager[^.\n]*\btalks? with Jun|\bJun talks with the manager`)
+	inlineCode  = regexp.MustCompile("`[^`]*`")
+	relayRoleID = regexp.MustCompile("`(supervisor|parent|child)`")
+	junTalks    = regexp.MustCompile(`(?i)top session[^.\n]*\btalks? with Jun|\bJun talks with the top session`)
 )
 
+// TestHierarchyTableRoleIds: the one level table of hierarchy.md (CRW-1352, design-1316 section 18.1) names the four layers
+// in order with the relay role ids the store records: none for the top session and the subagents, `supervisor` for the parent
+// and `parent` for the child. The ids are not renamed, and the table says that the relay's `parent` is the child.
 func TestHierarchyTableRoleIds(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(repoRoot(), canonRefDir, "hierarchy.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(data)
-	rows := tableRows(text, "Level")
-	want := []struct{ level, relay, korean string }{
-		{"manager", "", "관리"},
-		{"initiative lead", "`supervisor`", "부모"},
-		{"project orchestrator", "`parent`", "자식"},
-		{"issue child", "`child`", "이슈 child"},
-		// The row of the flow run's executor (CRW-1222): it is no relay role and no Codex task, so no role id.
-		{"issue executor", "", "없음 (레벨이 아님)"},
+	rows := tableRows(text, "Korean")
+	want := []struct{ korean, english, relay string }{
+		{"총괄", "top session", ""},
+		{"부모", "parent (repository session)", "`supervisor`"},
+		{"자식", "child (project session)", "`parent`"},
+		{"서브에이전트", "subagents (architect, executor, reviewer, explorer)", ""},
 	}
 	if len(rows) != len(want) {
 		t.Fatalf("level table has %d rows, want %d: %v", len(rows), len(want), rows)
 	}
 	for i, w := range want {
 		row := rows[i]
-		if len(row) < 3 {
+		if len(row) < 5 {
 			t.Fatalf("row %d has %d cells: %v", i+1, len(row), row)
 		}
-		if row[0] != w.level {
-			t.Errorf("row %d level = %q, want %q", i+1, row[0], w.level)
+		if row[0] != w.korean || row[1] != w.english {
+			t.Errorf("row %d = %q / %q, want %q / %q", i+1, row[0], row[1], w.korean, w.english)
 		}
 		if w.relay == "" {
-			// The manager is the store seat and the issue executor an agent call of a run; neither is an initiative lead, project
-			// orchestrator or issue child.
-			if relayRoleID.MatchString(row[1]) {
-				t.Errorf("manager row names a relay role id: %q", row[1])
+			if relayRoleID.MatchString(row[2]) {
+				t.Errorf("%s row names a relay role id: %q", w.english, row[2])
 			}
-		} else if row[1] != w.relay {
-			t.Errorf("%s relay role id = %q, want %q", w.level, row[1], w.relay)
-		}
-		if row[2] != w.korean {
-			t.Errorf("%s Korean = %q, want %q", w.level, row[2], w.korean)
+		} else if !strings.HasPrefix(row[2], w.relay) {
+			t.Errorf("%s relay role id = %q, want %q", w.english, row[2], w.relay)
 		}
 	}
-	if !junTalks.MatchString(text) {
-		t.Errorf("hierarchy.md does not say that Jun talks with the manager")
+	if !junTalks.MatchString(normalized(text)) {
+		t.Errorf("hierarchy.md does not say that the top session talks with Jun")
 	}
-	// The relay role words appear in code font, in the table, and nowhere else in hierarchy.md.
-	var prose []string
-	for _, line := range lines(text) {
-		if strings.HasPrefix(strings.TrimSpace(line), "|") {
-			continue
-		}
-		if relayRoleWord.MatchString(issueChild.ReplaceAllString(linkTarget.ReplaceAllString(inlineCode.ReplaceAllString(line, ""), "]"), "")) {
-			prose = append(prose, strings.TrimSpace(line))
-		}
-	}
-	if len(prose) > 0 {
-		t.Errorf("hierarchy.md uses the relay words outside code font and the table:\n%s", strings.Join(prose, "\n"))
+	if !strings.Contains(normalized(text), "The relay role id `parent` names the child, not the parent") {
+		t.Errorf("hierarchy.md does not warn that the relay's `parent` is the child")
 	}
 	if n := utf8.RuneCountInString(text); n < 2000 {
 		t.Errorf("hierarchy.md is only %d characters", n)
