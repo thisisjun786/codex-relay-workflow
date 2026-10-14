@@ -962,12 +962,36 @@ func (c *callRun) forkThread(ctx context.Context) (CallResult, bool) {
 // order, and a turn belongs to the thread its call was on when the turn started: a call that ran again on another thread
 // (a new attempt, a fork in a suffix) left its earlier turns on the thread it ran them on.
 func threadPrefix(j Journal, threadID, throughTurn string) []map[string]any {
+	return threadTurns(j, threadID, throughTurn, false, 0)
+}
+
+// conversationPrefix is threadPrefix as the conversation a session subagent continues (the checkpoint packet's record): a session
+// subagent bound to a continuation goes on from the conversation of the handle it continues (its packet names that call's packet
+// and answer), as a fork inherits its prefix, and a later attempt of a call goes on from the call's turns before the turn it starts
+// at (its packet holds the task and the answer it repairs). The digest chain of a continuation (threadChain) keeps threadPrefix:
+// the replay rule replays a position only after every position before it, so the links before the handle's are proven by their
+// own positions (CRW-1384).
+func conversationPrefix(j Journal, threadID, throughTurn string) []map[string]any {
+	return threadTurns(j, threadID, throughTurn, true, 0)
+}
+
+func threadTurns(j Journal, threadID, throughTurn string, session bool, depth int) []map[string]any {
 	events := j.Events()
 	replaced := replacedTurns(events)
 	owner := map[string]string{}
 	forkReq := map[string]Event{}
 	var out []map[string]any
 	inherited := false
+	// the session reading: the handle a call continues, the turns each call ran (with their k), and the call whose earlier turns
+	// the thread's first turn goes on from
+	type callTurn struct {
+		k        int
+		id, op   string
+		threadOf string
+	}
+	handle := map[string][2]string{}
+	turnsOf := map[string][]callTurn{}
+	goesOn := ""
 	for _, ev := range events {
 		if ev.Kind != KindCall {
 			continue
@@ -976,10 +1000,19 @@ func threadPrefix(j Journal, threadID, throughTurn string) []map[string]any {
 		case EvPrepared:
 			// a continuation is on its handle's thread from the start, any other call on none until its thread starts
 			owner[ev.CallID], _ = ev.Data["thread_id"].(string)
+			handle[ev.CallID] = [2]string{rowStr(ev.Data, "thread_id"), rowStr(ev.Data, "through_turn_id")}
+			turnsOf[ev.CallID] = nil
 		case EvForkRequested:
 			forkReq[ev.CallID] = ev
 		case EvThreadStarted:
 			owner[ev.CallID], _ = ev.Data["thread_id"].(string)
+			if session && !inherited && rowStr(ev.Data, "via") == "session" && owner[ev.CallID] == threadID {
+				inherited = true
+				if h := handle[ev.CallID]; h[0] != "" && h[0] != threadID && depth < 64 {
+					out = append(out, threadTurns(j, h[0], h[1], true, depth+1)...)
+				}
+				goesOn = ev.CallID
+			}
 		case EvForkStarted:
 			t, _ := ev.Data["thread_id"].(string)
 			owner[ev.CallID] = t
@@ -991,10 +1024,33 @@ func threadPrefix(j Journal, threadID, throughTurn string) []map[string]any {
 			}
 		case EvTurnStarted:
 			id, _ := ev.Data["turn_id"].(string)
-			if owner[ev.CallID] != threadID || replaced[id] {
+			op, _ := ev.Data["op"].(string)
+			k := rowInt(ev.Data, "k")
+			if replaced[id] {
 				continue
 			}
-			op, _ := ev.Data["op"].(string)
+			if session {
+				turnsOf[ev.CallID] = append(turnsOf[ev.CallID], callTurn{k: k, id: id, op: op, threadOf: owner[ev.CallID]})
+			}
+			if owner[ev.CallID] != threadID {
+				continue
+			}
+			if goesOn == ev.CallID {
+				// the thread's first turn: the turns its call ran before this turn's k, on the subagents of its earlier attempts
+				// (the newest turn of each k: an attempt that ran a turn again replaces the lost one)
+				goesOn = ""
+				newest := map[int]callTurn{}
+				for _, t := range turnsOf[ev.CallID] {
+					if t.k < k && t.threadOf != threadID {
+						newest[t.k] = t
+					}
+				}
+				for kk := 1; kk < k; kk++ {
+					if t, ok := newest[kk]; ok {
+						out = append(out, map[string]any{"turn_id": t.id, "op": t.op})
+					}
+				}
+			}
 			out = append(out, map[string]any{"turn_id": id, "op": op})
 		}
 	}

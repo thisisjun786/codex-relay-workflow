@@ -265,3 +265,106 @@ func TestSessionHeldRepairGoesOnAsTheRepair(t *testing.T) {
 		t.Errorf("the held repair does not go on as the repair of the answer it repairs:\n%s", p)
 	}
 }
+
+// A4+B4: the checkpoint packet of a continuation is the record of the handle's conversation. A session continuation's subagent
+// continues the conversation of the call it continues (its packet names that call's packet and answer), and a later attempt of a
+// call goes on with the turns before it, so the record holds them: c3 -> c2 -> c1 reads c1's turn before c2's, and a continuation of
+// a call whose repair finished on a second subagent reads the first turn before the repair.
+func TestSessionCheckpointHoldsTheWholeConversation(t *testing.T) {
+	t.Run("chained continuations", func(t *testing.T) {
+		k := newSessionKit(t)
+		k.orch.answer = func(st Step, _ string, _ int) orchAnswer { return orchAnswer{edit: "P:" + st.Op} }
+		two := `const r = await agent.call('build node n1', { agentType: 'executor', label: 'exe', node: 'n1', schema: RECEIPT })
+const fix = await agent.call('fix what the review found', { resume: r, label: 'fix', schema: RECEIPT })
+`
+		value[[]string](t, k.h.run(two+`return [r.status, fix.status]`))
+		k.h.cfg.Resume = &ResumeOptions{}
+		got := value[[]string](t, k.h.run(two+`const again = await agent.call('fix the second round', { resume: fix, label: 'again', schema: RECEIPT })
+return [r.status, fix.status, again.status]`))
+		if strings.Join(got, ",") != "completed,completed,completed" {
+			t.Fatalf("results %v", got)
+		}
+		cp := flowRows(k.h.journal, EvCheckpointStarted)
+		if len(cp) != 1 {
+			t.Fatalf("checkpoint_started rows %v", cp)
+		}
+		packet := rowStr(cp[0].Data, "packet")
+		first, second := strings.Index(packet, "build node n1"), strings.Index(packet, "fix what the review found")
+		if first < 0 || second < 0 || first > second {
+			t.Errorf("the checkpoint of c3 -> c2 -> c1 does not hold c1's turn before c2's:\n%s", packet)
+		}
+	})
+	t.Run("repair finished on a second subagent", func(t *testing.T) {
+		k := newSessionKit(t)
+		first := firstCallOf()
+		k.orch.answer = func(st Step, _ string, _ int) orchAnswer {
+			switch {
+			case !first(st.Call):
+			case st.K == 1:
+				return orchAnswer{text: "this is not JSON"}
+			case st.K == 2 && st.Attempt == 1:
+				return orchAnswer{lose: true}
+			}
+			return orchAnswer{edit: "P:" + st.Op}
+		}
+		one := `const r = await agent.call('build node n1', { agentType: 'executor', label: 'exe', node: 'n1', schema: RECEIPT })
+`
+		value[string](t, k.h.run(one+`return r.status`))
+		if got := eventsOf(k.rowsOf("exe")); got != "prepared,step_published,thread_started,turn_started,step_published,turn_started,session_attempt_lost,step_published,thread_started,turn_started,completed" {
+			t.Fatalf("the first run's rows %s", got)
+		}
+		k.h.cfg.Resume = &ResumeOptions{}
+		got := value[[]string](t, k.h.run(one+`const fix = await agent.call('fix what the review found', { resume: r, label: 'fix', schema: RECEIPT })
+return [r.status, fix.status]`))
+		if strings.Join(got, ",") != "completed,completed" {
+			t.Fatalf("results %v", got)
+		}
+		cp := flowRows(k.h.journal, EvCheckpointStarted)
+		if len(cp) != 1 {
+			t.Fatalf("checkpoint_started rows %v", cp)
+		}
+		packet := rowStr(cp[0].Data, "packet")
+		task, repair := strings.Index(packet, "[turn 1] build node n1"), strings.Index(packet, "[turn 2] Your previous answer did not satisfy")
+		if task < 0 || repair < 0 || strings.Count(packet, "[turn ") != 2 {
+			t.Errorf("the checkpoint of a call whose repair finished on a second subagent does not hold its first turn and then the repair:\n%s", packet)
+		}
+	})
+	t.Run("first turn lost and run again", func(t *testing.T) {
+		k := newSessionKit(t)
+		first := firstCallOf()
+		k.orch.answer = func(st Step, _ string, _ int) orchAnswer {
+			if first(st.Call) && st.Attempt == 1 {
+				return orchAnswer{lose: true}
+			}
+			return orchAnswer{edit: "P:" + st.Op}
+		}
+		one := `const r = await agent.call('build node n1', { agentType: 'executor', label: 'exe', node: 'n1', schema: RECEIPT })
+`
+		value[string](t, k.h.run(one+`return r.status`))
+		k.h.cfg.Resume = &ResumeOptions{}
+		value[[]string](t, k.h.run(one+`const fix = await agent.call('fix what the review found', { resume: r, label: 'fix', schema: RECEIPT })
+return [r.status, fix.status]`))
+		cp := flowRows(k.h.journal, EvCheckpointStarted)
+		if len(cp) != 1 {
+			t.Fatalf("checkpoint_started rows %v", cp)
+		}
+		// the second attempt ran the same turn again: the record holds it once
+		if packet := rowStr(cp[0].Data, "packet"); strings.Count(packet, "[turn ") != 1 || !strings.Contains(packet, "[turn 1] build node n1") {
+			t.Errorf("the checkpoint holds the lost attempt's turn beside the one that ran it again:\n%s", packet)
+		}
+	})
+}
+
+// firstCallOf says whether a step is of the first call the orchestrator saw.
+func firstCallOf() func(call string) bool {
+	var mu sync.Mutex
+	first := ""
+	return func(call string) bool {
+		mu.Lock()
+		defer mu.Unlock()
+		if first == "" {
+			first = call
+		}
+		return call == first
+	}
+}

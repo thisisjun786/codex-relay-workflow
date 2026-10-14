@@ -65,10 +65,10 @@ func (c *callRun) sourceReadable(ctx context.Context) bool {
 	return false
 }
 
-// checkpointPacket is the conversation of a thread through a turn as the journal recorded it: each turn's input, and the
-// result of the call the turn ended.
+// checkpointPacket is the conversation of a thread through a turn as the journal recorded it (conversationPrefix: for a session
+// subagent, the conversation it continues too): each turn's input, and the result of the call the turn ended.
 func checkpointPacket(j Journal, threadID, throughTurn string) string {
-	prefix := threadPrefix(j, threadID, throughTurn)
+	prefix := conversationPrefix(j, threadID, throughTurn)
 	inputs := map[string]string{}
 	results := map[string]string{}
 	for _, ev := range j.Events() {
