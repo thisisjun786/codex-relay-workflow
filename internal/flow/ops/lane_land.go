@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/reviewadapter"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/acceptance/premerge"
 )
 
@@ -48,23 +50,98 @@ func (o *acceptOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 	if !ok {
 		return engine.OpResult{}, &Refusal{"verification_missing", "no passing verification of " + head.Commit + " is recorded for node " + node}
 	}
-	rev, ok := r.opRows(OpReview).last(func(ev engine.Event) bool {
-		return dataStr(ev, "node") == node && dataStr(ev, "head") == head.Commit && dataStr(ev, "state") == StateVerdict && dataStr(ev, "verdict") == "verified"
-	})
-	if !ok {
-		return engine.OpResult{}, &Refusal{"reviewer_missing", "no verified review of " + head.Commit + " is recorded for node " + node}
+	// The basis of the premerge record is the newer, in journal order, of the last verified review of the head and the last unit
+	// check on the head that gave a judgment (CRW-1456): a check that gave none (no answer, quota, a failed tool, a changed
+	// worktree, an invalid answer) is no basis. A later verdict of either kind that withdraws a verified one is the relay's to read.
+	revAt := -1
+	for i := len(r) - 1; i >= 0; i-- {
+		if ev := r[i]; ev.Kind == engine.KindCall && ev.Op == OpReview && ev.Event == engine.EvCompleted && dataStr(ev, "node") == node && dataStr(ev, "head") == head.Commit &&
+			dataStr(ev, "state") == StateVerdict && dataStr(ev, "verdict") == "verified" {
+			revAt = i
+			break
+		}
 	}
-	var rr ReviewResult
-	if err := json.Unmarshal(resultOf(rev), &rr); err != nil {
-		return engine.OpResult{}, err
+	// The tree of the head, which a check run before the commit names in place of a commit, is read from the journal first: the
+	// commit row of the head, else the land release of the head, else git in the node's worktree. With none of them the tree is
+	// unknown and such a check is on no head; it is resolved once, and only for such a check.
+	tree, treeRead := "", false
+	headTree := func() (string, error) {
+		if treeRead {
+			return tree, nil
+		}
+		treeRead = true
+		if c, ok := r.opRows(OpCommit).last(func(ev engine.Event) bool {
+			return dataStr(ev, "node") == node && dataStr(ev, "commit") == head.Commit && dataStr(ev, "tree") != ""
+		}); ok {
+			tree = dataStr(c, "tree")
+		} else if dataStr(rel, "kind") == "land" && dataStr(rel, "head") == head.Commit && dataStr(rel, "tree") != "" {
+			tree = dataStr(rel, "tree")
+		} else if wt := r.worktreeOf(node); wt != "" {
+			t, err := TreeOf(ctx, o.l.d.Git, wt, head.Commit)
+			if err != nil {
+				return "", err
+			}
+			tree = t
+		}
+		return tree, nil
 	}
-	verdict, err := DecodeVerdict(rr.Verdict)
-	if err != nil {
-		return engine.OpResult{}, &Refusal{"reviewer_not_verified", err.Error()}
+	ucAt := -1
+	var uc reviewadapter.Result
+	for i := len(r) - 1; i > revAt; i-- {
+		ev := r[i]
+		if ev.Kind != engine.KindCall || ev.Op != OpUnitCheck || ev.Event != engine.EvCompleted || dataStr(ev, "node") != node || dataStr(ev, "role") != execution.AgentUnitCheck {
+			continue
+		}
+		var res reviewadapter.Result
+		if json.Unmarshal(resultOf(ev), &res) != nil || res.State != reviewadapter.StateOK {
+			continue
+		}
+		commit := dataStr(ev, "commit")
+		if commit == "" {
+			commit = dataStr(ev, "head")
+		}
+		onHead := commit == head.Commit
+		if commit == "" && head.Commit != "" {
+			t, err := headTree()
+			if err != nil {
+				return engine.OpResult{}, err
+			}
+			onHead = t != "" && dataStr(ev, "tree") == t
+		}
+		if onHead {
+			ucAt, uc = i, res
+			break
+		}
 	}
-	prep, ok := r.prepared().last(func(ev engine.Event) bool { return ev.CallID == rr.Call.CallID })
-	if !ok {
-		return engine.OpResult{}, &Refusal{"reviewer_missing", "the reviewer call " + rr.Call.CallID + " has no prepared row"}
+	var verdict ReviewVerdict
+	var grader premerge.Grader
+	var criteriaDigest, reviewerCall string
+	switch {
+	case ucAt >= 0:
+		row := r[ucAt]
+		v, err := UnitCheckVerdict(uc, row.CallID, dataStr(ver, "digest"), expectedCriteria(r, node))
+		if err != nil {
+			return engine.OpResult{}, &Refusal{"reviewer_not_verified", err.Error()}
+		}
+		verdict, grader = v, premerge.Grader{Model: uc.Model, Effort: uc.Effort, PromptDigest: uc.PromptDigest}
+		criteriaDigest, reviewerCall = dataStr(row, "criteria_digest"), row.CallID
+	case revAt >= 0:
+		var rr ReviewResult
+		if err := json.Unmarshal(resultOf(r[revAt]), &rr); err != nil {
+			return engine.OpResult{}, err
+		}
+		v, err := DecodeVerdict(rr.Verdict)
+		if err != nil {
+			return engine.OpResult{}, &Refusal{"reviewer_not_verified", err.Error()}
+		}
+		prep, ok := r.prepared().last(func(ev engine.Event) bool { return ev.CallID == rr.Call.CallID })
+		if !ok {
+			return engine.OpResult{}, &Refusal{"reviewer_missing", "the reviewer call " + rr.Call.CallID + " has no prepared row"}
+		}
+		verdict, grader = v, premerge.Grader{Model: str(prep.Data, "model"), Effort: str(prep.Data, "effort"), PromptDigest: str(prep.Data, "prompt_digest")}
+		criteriaDigest, reviewerCall = rr.CriteriaDigest, rr.Call.CallID
+	default:
+		return engine.OpResult{}, &Refusal{"reviewer_missing", "no verified review or unit check of " + head.Commit + " is recorded for node " + node}
 	}
 	issue := node
 	if is, found, err := issueOf(r, rel, node); err == nil && found {
@@ -78,14 +155,14 @@ func (o *acceptOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 	// verification row that names none is judged over the base found now.
 	base := dataStr(ver, "base")
 	if base == "" {
+		var err error
 		if base, err = o.l.stableBase(ctx, plan, r.worktreeOf(node), head.Commit); err != nil {
 			return engine.OpResult{}, err
 		}
 	}
 	rec, err := AssemblePremerge(PremergeInput{
-		Issue: issue, Node: node, Head: head.Commit, Dev: base, CriteriaDigest: rr.CriteriaDigest, Expect: expectedCriteria(r, node),
-		Grader:   premerge.Grader{Model: str(prep.Data, "model"), Effort: str(prep.Data, "effort"), PromptDigest: str(prep.Data, "prompt_digest")},
-		GradedAt: o.l.d.Now(), Verdict: verdict, By: o.l.d.Actor,
+		Issue: issue, Node: node, Head: head.Commit, Dev: base, CriteriaDigest: criteriaDigest, Expect: expectedCriteria(r, node),
+		Grader: grader, GradedAt: o.l.d.Now(), Verdict: verdict, By: o.l.d.Actor,
 	})
 	if err != nil {
 		return engine.OpResult{}, &Refusal{"premerge_missing", err.Error()}
@@ -102,7 +179,7 @@ func (o *acceptOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 		record = json.RawMessage(s)
 	}
 	res, err := o.l.d.Relay.Accept(ctx, AcceptRequest{Plan: plan, Node: node, Actor: o.l.d.Actor, RunID: req.RunID, Head: head.Commit, Base: base, Premerge: doc, Verification: record,
-		CriteriaDigest: rr.CriteriaDigest, ReviewerCall: rr.Call.CallID, RequestID: req.RequestID})
+		CriteriaDigest: criteriaDigest, ReviewerCall: reviewerCall, RequestID: req.RequestID})
 	if err != nil {
 		return engine.OpResult{}, err
 	}
