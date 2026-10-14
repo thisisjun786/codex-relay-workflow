@@ -123,6 +123,8 @@ func (r *Runner) EnqueuePR(ctx context.Context, ref string) (Entry, error) {
 		return Entry{}, fmt.Errorf("%s is closed: the queue lands an open pull request", pr)
 	case got.BaseRef != c.Branch:
 		return Entry{}, fmt.Errorf("%s goes to %s, not %s", pr, got.BaseRef, c.Branch)
+	case !strings.EqualFold(got.HeadRepo, c.PullRequestRepo):
+		return Entry{}, fmt.Errorf("%s comes from %s, not %s: the queue lands a pull request whose branch is in the repository", pr, headRepoName(got.HeadRepo), c.PullRequestRepo)
 	case !headRE.MatchString(got.HeadSHA):
 		return Entry{}, fmt.Errorf("%s names no head commit (%q)", pr, got.HeadSHA)
 	}
@@ -149,6 +151,14 @@ func (r *Runner) EnqueuePR(ctx context.Context, ref string) (Entry, error) {
 	}
 	r.logf("%s %s enqueued (%s -> %s)", r.keyOf(name), got.HeadSHA, got.HeadRef, got.BaseRef)
 	return Entry{Name: name, Key: r.keyOf(name), Node: name, Head: got.HeadSHA, HeadOK: true, PR: pr.Number, num: uint64(pr.Number)}, nil
+}
+
+// headRepoName names the repository of a pull request's head branch; GitHub names none for a fork that was deleted.
+func headRepoName(repo string) string {
+	if repo == "" {
+		return "a repository GitHub no longer names"
+	}
+	return repo
 }
 
 // checkPR reads the pull request of a pending entry before anything is merged. It answers the pull request to land, or nil when
@@ -180,6 +190,8 @@ func (r *Runner) checkPR(ctx context.Context, e Entry, rep *Report) (*tracking.P
 		reason, dir = "the pull request is closed", dirConflict
 	case pr.BaseRef != r.Cfg.Branch:
 		reason, dir = fmt.Sprintf("the pull request goes to %s, not %s", pr.BaseRef, r.Cfg.Branch), dirBlocked
+	case !strings.EqualFold(pr.HeadRepo, r.Cfg.PullRequestRepo):
+		reason, dir = fmt.Sprintf("the pull request comes from %s, not %s", headRepoName(pr.HeadRepo), r.Cfg.PullRequestRepo), dirBlocked
 	case pr.HeadSHA != e.Head:
 		reason, dir = fmt.Sprintf("the pull request's head is now %s; enqueue it again", pr.HeadSHA), dirConflict
 	}

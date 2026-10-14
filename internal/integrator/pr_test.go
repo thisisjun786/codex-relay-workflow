@@ -284,6 +284,7 @@ func TestPassChecksThePullRequestBeforeItMerges(t *testing.T) {
 		{"closed", func(w *prWorld) { w.fake.SetPull(1, func(p *trackingfake.Pull) { p.State = "closed" }) }, "conflict", "the pull request is closed"},
 		{"merged", func(w *prWorld) { w.fake.SetPull(1, func(p *trackingfake.Pull) { p.State, p.Merged = "closed", true }) }, "done", "the pull request is merged"},
 		{"base", func(w *prWorld) { w.fake.SetPull(1, func(p *trackingfake.Pull) { p.Base = "main" }) }, "blocked", "goes to main, not dev"},
+		{"fork", func(w *prWorld) { w.fake.SetPull(1, func(p *trackingfake.Pull) { p.HeadRepo = "someone/r" }) }, "blocked", "comes from someone/r, not o/r"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			w := newPRWorld(t, true)
@@ -361,7 +362,11 @@ func TestEnqueuePRRefusesAPullRequestTheQueueCannotLand(t *testing.T) {
 	if _, err := w.r.EnqueuePR(context.Background(), "o/r#1"); err == nil || !strings.Contains(err.Error(), "not dev") {
 		t.Errorf("a pull request to main: %v", err)
 	}
-	w.fake.SetPull(1, func(p *trackingfake.Pull) { p.Base, p.State = "dev", "closed" })
+	w.fake.SetPull(1, func(p *trackingfake.Pull) { p.Base, p.HeadRepo = "dev", "someone/r" })
+	if _, err := w.r.EnqueuePR(context.Background(), "o/r#1"); err == nil || !strings.Contains(err.Error(), "comes from someone/r") {
+		t.Errorf("a pull request from a fork: %v", err)
+	}
+	w.fake.SetPull(1, func(p *trackingfake.Pull) { p.HeadRepo, p.State = "", "closed" })
 	if _, err := w.r.EnqueuePR(context.Background(), "o/r#1"); err == nil || !strings.Contains(err.Error(), "closed") {
 		t.Errorf("a closed pull request: %v", err)
 	}

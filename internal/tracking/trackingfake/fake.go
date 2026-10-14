@@ -25,6 +25,8 @@ type Pull struct {
 	Title, Body, Head, Base string
 	State                   string
 	Merged, Draft           bool
+	// HeadRepo is the repository the head branch is in; empty is the fake's own repository.
+	HeadRepo string
 }
 
 // Comment is a comment the fake keeps.
@@ -160,10 +162,14 @@ func (s *Server) pullJSON(p *Pull) map[string]any {
 		}
 	}
 	repo := map[string]any{"full_name": s.Repo}
+	headRepo := repo
+	if p.HeadRepo != "" {
+		headRepo = map[string]any{"full_name": p.HeadRepo}
+	}
 	return map[string]any{
 		"number": p.Number, "title": p.Title, "body": p.Body, "state": p.State, "merged": p.Merged, "draft": p.Draft,
 		"html_url": fmt.Sprintf("https://github.com/%s/pull/%d", s.Repo, p.Number),
-		"head":     map[string]any{"ref": p.Head, "sha": sha, "repo": repo},
+		"head":     map[string]any{"ref": p.Head, "sha": sha, "repo": headRepo},
 		"base":     map[string]any{"ref": p.Base, "repo": repo},
 	}
 }

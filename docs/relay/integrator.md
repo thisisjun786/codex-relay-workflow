@@ -109,11 +109,11 @@ the verification-record of the merged tree; the review is a step of the queue th
 
 - `--enqueue-pr` reads the pull request through the tracking adapter of `pull_request_repo` and writes its head to `pending/pr-<N>`
   (written beside the queue and renamed in, replacing an earlier head of the same pull request). A pull request of another repository,
-  one that is closed or merged, one toward another branch than `branch`, or one that names no head commit is refused and nothing is
-  written. A queue without `pull_request_repo` takes no `pr-<N>` file: it is reported as ignored, as before.
+  one that is closed or merged, one toward another branch than `branch`, one whose head branch is in another repository (a fork), or
+  one that names no head commit is refused and nothing is written. A queue without `pull_request_repo` takes no `pr-<N>` file: it is reported as ignored, as before.
 - A pass lands one pull request alone, the lowest number first, before the issue heads, and runs no `gate_command` for it. It reads the
   pull request again: merged moves the file to `done/`; closed, or a head that is no longer the one enqueued (the project session landed
-  more and pushed), to `conflict/` (enqueue it again); toward another branch, to `blocked/`. A pull request GitHub does not answer is no
+  more and pushed), to `conflict/` (enqueue it again); toward another branch or from a fork, to `blocked/`. A pull request GitHub does not answer is no
   verdict: it stays in `pending/`, the report lists it under `held`, and the pass goes on with the issue heads (status 2 when there are
   none).
 - The run merges the head with `merge --no-ff -m "Merge pull request OWNER/NAME#N (<branch>) at <head8> into <branch>"` and verifies the
