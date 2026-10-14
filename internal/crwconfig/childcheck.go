@@ -12,8 +12,10 @@ func DefaultChildCheckDisabledServers() []string { return []string{} }
 
 // withChildCheckDefault writes the default of manage.child_check.disabled_servers into doc where the document does not name it: a
 // missing manage object becomes one, a manage object without child_check gets the section, a section without the key gets the key.
-// A key the document names (any list, empty included, or any value) is the operator's and stays; so does a manage or child_check
-// value that is no object, which this writer does not repair. The other keys of every object are kept as they are.
+// A key the document names as null is not set either (the reader, resumeDisabledList in internal/manage, reads null as the default
+// and warns), so it is replaced like a missing key (CRW-1400). Any other value the key holds (a list, empty included, or a value that
+// is no list, which the reader refuses) is the operator's and stays; so does a manage or child_check value that is no object, which
+// this writer does not repair. The other keys of every object are kept as they are.
 func withChildCheckDefault(doc map[string]json.RawMessage) {
 	manage := map[string]json.RawMessage{}
 	if raw, ok := doc["manage"]; ok {
@@ -27,7 +29,7 @@ func withChildCheckDefault(doc map[string]json.RawMessage) {
 			return
 		}
 	}
-	if _, ok := section["disabled_servers"]; ok {
+	if raw, ok := section["disabled_servers"]; ok && !isJSONNull(raw) {
 		return
 	}
 	section["disabled_servers"], _ = json.Marshal(DefaultChildCheckDisabledServers())
@@ -39,4 +41,9 @@ func withChildCheckDefault(doc map[string]json.RawMessage) {
 func isJSONObject(raw json.RawMessage) bool {
 	trimmed := bytes.TrimSpace(raw)
 	return len(trimmed) > 0 && trimmed[0] == '{'
+}
+
+// isJSONNull reports whether raw is the JSON value null.
+func isJSONNull(raw json.RawMessage) bool {
+	return string(bytes.TrimSpace(raw)) == "null"
 }
