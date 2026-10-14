@@ -46,10 +46,12 @@ type Ack struct {
 	Clock    Clock
 	Criteria *Criteria
 	Sync     SyncHook
+	// TargetNotice is the comparison of the integration target with the child's baselineRevision (CRW-1302, ack_target.go); nil compares nothing.
+	TargetNotice TargetNoticeFunc
 }
 
 func NewAck(d *Service) *Ack {
-	return &Ack{Store: d.Store, Delivery: d, Clock: d.Clock, Criteria: &Criteria{Store: d.Store, Clock: d.Clock}}
+	return &Ack{Store: d.Store, Delivery: d, Clock: d.Clock, Criteria: &Criteria{Store: d.Store, Clock: d.Clock}, TargetNotice: AckTargetNotice}
 }
 
 func basis(row Row) [3]any {
