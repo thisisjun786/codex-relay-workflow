@@ -384,8 +384,11 @@ nothing for a run in progress. A run process that resumes a run and reads anothe
 only the calls that start a new thread take the new pairs; a continuation keeps the pair of the thread in its
 handle, since the pair of a thread never changes. `crw flow show RUN` prints the path and digest the run holds on a
 `policy` line (and `policy_path` and `policy_digest` in `--json`), the latest of its start and any `policy_repinned`
-event, with the digest a repin replaced; a run on the placeholder table, which reads no store file, prints `policy
-none`. A call's input digest holds its role, model and effort, so a
+event, with the digest a repin replaced (`repinned from <old digest>`); a later start of the run, which pins the
+snapshot again, clears it, so the line names a repin only when one came after the newest start. A run on the
+placeholder table, which reads no store file, prints `policy none`. A run whose `started` row has no
+`policy_source` (it started before the policy file was journaled) prints `policy file not recorded  digest
+<digest>` when the row holds a digest, and `policy not recorded` when it holds none. A call's input digest holds its role, model and effort, so a
 pair that did not change keeps a completed call's digest valid. The spawn hook does not read the store for an
 engine thread: the run writes the helper pairs (`explorer`, `reviewer`) and the digest of its own snapshot to the
 flow binding file and the hook uses that.

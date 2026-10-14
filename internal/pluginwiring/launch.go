@@ -59,10 +59,11 @@ func parent(p string) string {
 	return p[:i]
 }
 
-// codexHome is crw_bridge_mcp.py codex_home(), with the launcher's path standing for __file__.
+// codexHome is crw_bridge_mcp.py codex_home(), with the launcher's path standing for __file__, and
+// CODEX_HOME read by the one rule CodexHomeNamed (CRW-1377: trimmed; a blank one names no home).
 // The declared cwd is the installed version directory, so the launcher is cwd/wiring/crw-bridge.sh.
 func codexHome(env map[string]string) (string, string) {
-	if named := env["CODEX_HOME"]; named != "" {
+	if named := CodexHomeNamed(env["CODEX_HOME"]); named != "" {
 		return reading.Spelling(named), "the CODEX_HOME environment variable"
 	}
 	if cwd, err := os.Getwd(); err == nil {

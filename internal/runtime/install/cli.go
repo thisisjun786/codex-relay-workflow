@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pluginwiring"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/doctor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/install/migrate"
@@ -298,8 +299,9 @@ func options(env scope.Env, codexHome, recordPath, issue, socket, state string) 
 	dest := filepath.Join(home, ".local", "share", "crw-runtime")
 	source := "--codex-home"
 	if codexHome == "" {
-		if named, set := lookup("CODEX_HOME"); set && named != "" {
-			codexHome, source = named, "CODEX_HOME"
+		// CODEX_HOME by the rule the hook, the launcher and doctor share (CRW-1377: trimmed, a blank one names no home)
+		if named, _ := lookup("CODEX_HOME"); pluginwiring.CodexHomeNamed(named) != "" {
+			codexHome, source = pluginwiring.CodexHomeNamed(named), "CODEX_HOME"
 		} else {
 			codexHome, source = filepath.Join(home, ".codex"), "HOME"
 		}
