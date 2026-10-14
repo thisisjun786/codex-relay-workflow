@@ -20,7 +20,8 @@ import (
 // answer says queued. Whether the message was accepted or refused is the daemon's to write, in the transaction of its settle
 // (supervisor's recordFlowDelivery). A staging the channel refuses (nobody above the project, a hierarchy that moved) answers no class:
 // nothing is written and the report stands, so a replay stages it again. A replay that finds its message sent with an unknown outcome
-// (held_uncertain, which the daemon recorded unknown) answers no class either: nothing new was staged.
+// (held_uncertain, which the daemon recorded unknown) or read by its recipient (the readback that settled such a send recorded accepted)
+// answers no class either: nothing new was staged, and the writer answers what the rows read.
 //
 // Fallback carries what the channel has no kind for: the plan summary notice to the orchestrator thread, and a notice of a run whose plan
 // names no project. It is crw manage send-parent in the binary; nil leaves those notices undelivered (an error).
@@ -30,6 +31,9 @@ type RelaySender struct {
 }
 
 var _ Sender = RelaySender{}
+
+// messageRead is the state of a supervisor message its recipient's verified readback found in its thread.
+const messageRead = "read"
 
 // relayKinds is the direct kind each report kind goes up as.
 var relayKinds = map[string]string{
@@ -105,11 +109,18 @@ func (r RelaySender) stage(ctx context.Context, m supervisor.DirectMessage) (Sen
 		return SendResult{}, err
 	}
 	id, _ := answer["messageId"].(string)
-	if row, _ := answer["message"].(store.Row); row != nil && row.Text("state") == delivery.HeldUncertain {
-		// the message was sent and nobody heard back what the send did (CRW-1390): the channel leaves it as it is, the daemon recorded
-		// the delivery unknown, and a queued row now would read as if it waited to be sent
-		return SendResult{Reason: delivery.HeldUncertain, Observation: "message " + id + " was sent and what the send did is unknown: it is not staged again, " +
-			"and its delivery reads unknown until the recipient's readback settles it"}, nil
+	if row, _ := answer["message"].(store.Row); row != nil {
+		switch row.Text("state") {
+		case delivery.HeldUncertain:
+			// the message was sent and nobody heard back what the send did (CRW-1390): the channel leaves it as it is, the daemon recorded
+			// the delivery unknown, and a queued row now would read as if it waited to be sent
+			return SendResult{Reason: delivery.HeldUncertain, Observation: "message " + id + " was sent and what the send did is unknown: it is not staged again, " +
+				"and its delivery reads unknown until the recipient's readback settles it"}, nil
+		case messageRead:
+			// the recipient's verified readback found the message in its thread, and the delivery row of that settle is written (accepted):
+			// a replay that read the rows before the readback (an unknown send it would stage again) stages nothing
+			return SendResult{Reason: messageRead, Observation: "message " + id + " was read by its recipient: it is not staged again, and its delivery reads accepted"}, nil
+		}
 	}
 	observation := "staged"
 	if reason, _ := answer["reason"].(string); reason != "" && reason != "staged" {

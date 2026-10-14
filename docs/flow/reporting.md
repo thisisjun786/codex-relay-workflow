@@ -43,10 +43,12 @@ the transaction of its settle of the message: a message the host took (dispatche
 holds a message to a recipient that stayed busy before any transport call, in the transaction of that deferral. Each row is written once
 for its report (or message) and result, in the run's `flow_events` from `1 << 40`; a daemon that dies before its settle commits writes neither the settle nor the row
 (the send is unknown and the channel does not repeat it), one that dies after it leaves both, and neither a second daemon nor a resume of
-the run writes a second row. The daemon may settle the message, or hold it at a cap, before the writer has appended its `queued` row, so a
-`queued` row can follow the `accepted` or `refused` one; a `queued` row never supersedes a settled row (`accepted` or `refused`) before it,
-and the report reads what the settle wrote (`accepted`: not standing; `refused`: standing) for `crw flow reports`, a replay and the pump,
-which all read the rows by `report.SupersedesDelivery`. A staging the channel refuses (nobody above the project, a hierarchy that moved) writes no row: the report
+the run writes a second row. The daemon may settle the message, hold it at a cap, or find its send's outcome unknown before the writer has
+appended its `queued` row, so a `queued` row can follow the `accepted`, `refused` or `unknown` one; a `queued` row never supersedes a
+settled row (`accepted`, `refused` or `unknown`) before it, and only a later settled row does (the readback's `accepted` after `unknown`).
+The report reads what the settle wrote (`accepted`: not standing; `refused`, `unknown`: standing) for `crw flow reports`, the writer's
+answer and its replay, and the pump, which all read the rows by `report.SupersedesDelivery`: a decision for Jun whose send is `unknown`
+stays the pump's urgent `jun_decision` whatever `queued` row follows it. A staging the channel refuses (nobody above the project, a hierarchy that moved) writes no row: the report
 stands, with the refusal as its reason, and a replay stages it again. A notice the channel has no kind for - the plan summary notice, and an
 escalation or completion of a run whose plan names no project - goes through `crw manage send-parent` as described below.
 
@@ -56,7 +58,8 @@ same transaction appends `report_delivery` (or `message_delivery`) `unknown`, wi
 does not read `queued` while nothing will move it. The recipient's verified readback of that send (`supervisor-read`, whose token is
 found in a turn that began at or after the send) settles it and appends `accepted`. A replay of the report (a resume of the run, the
 same `report-up` again) finds the message as it may have gone: the channel leaves it as it is, and the writer stages nothing and writes
-no `queued` row over the `unknown` one. Every row the daemon writes names the message's subject (`<run>/<report id or logical id>`, in
+no `queued` row over the `unknown` one. A replay that read the `unknown` row and finds the message read (the readback settled it in
+between) stages nothing and writes nothing either, and answers `accepted`, as the rows read. Every row the daemon writes names the message's subject (`<run>/<report id or logical id>`, in
 the `subject` column and as the payload's `_label`, as a command's row has it) and the node of the run's row it is about: the
 escalation's node for an escalation, none for a report, a completion digest or a step wake.
 

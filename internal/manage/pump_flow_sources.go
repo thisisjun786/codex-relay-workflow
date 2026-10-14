@@ -278,8 +278,9 @@ func pumpFlowReadAt(ctx context.Context, state string) (pumpFlowData, error) {
 				byID[id] = r
 				order = append(order, id)
 			case "report_delivery":
-				// a queued row after a settled one (accepted or refused) does not undo it: the daemon's settle or cap hold can land
-				// before the writer appends the queued row of its staging (CRW-1380); the flow side reads the rows by the same rule
+				// a queued row after a settled one (accepted, refused or unknown) does not undo it: the daemon's settle, cap hold or
+				// recovery of an uncertain send can land before the writer appends the queued row of its staging (CRW-1380, CRW-1390), and
+				// an unknown send the queued row hid would leave a decision for Jun untold; the flow side reads the rows by the same rule
 				if result, _ := doc["result"].(string); byID[id] != nil && report.SupersedesDelivery(byID[id].LastDelivery, result) {
 					byID[id].LastDelivery = result
 				}

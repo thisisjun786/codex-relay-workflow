@@ -749,7 +749,10 @@ with the reason and the settle commits (CRW-1380,
 recorded too (CRW-1390): the settle that moves the message to `held_uncertain`, and the recovery
 that finds a send stranded after its transport started, append the delivery row with the result
 `unknown` in their own transaction; the verified readback that settles such a send (the reconcile
-of `held_uncertain` to `read`) appends `accepted` in its own. A row the daemon writes carries the
+of `held_uncertain` to `read`) appends `accepted` in its own. The flow side and the `crw manage` pump
+read `unknown` as a settled row, as they read `accepted` and `refused`: a `queued` row the run writes
+after it does not hide it, and only a later settled row supersedes it
+([reporting](../flow/reporting.md#through-the-supervisor-channel)). A row the daemon writes carries the
 message's subject in the `subject` column and as the payload's `_label`, and the node of the run's
 row the message is about (an escalation's) in `node_id`.
 

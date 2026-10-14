@@ -186,20 +186,27 @@ func (w *Writer) Up(ctx context.Context, req UpRequest) (UpResult, error) {
 	if err != nil {
 		return res, err
 	}
-	if sent.Class == "" {
-		// nothing was staged (the channel refused it, or a lead would hear a decision only Jun can make): no row, the report stands and a
-		// replay stages it again
-		res.Reason, res.Observation = sent.Reason, sent.Observation
-		return res, nil
+	if sent.Class != "" {
+		if _, err := w.Rows.Append(ctx, NewRow{Kind: KindDelivery, Payload: map[string]any{
+			"report_id": id, "result": resultOf(sent.Class), "request_id": sent.RequestID, "observation": sent.Observation, "reason": sent.Reason, "logical_id": res.LogicalID,
+		}}); err != nil {
+			return res, err
+		}
 	}
-	result := resultOf(sent.Class)
-	if _, err := w.Rows.Append(ctx, NewRow{Kind: KindDelivery, Payload: map[string]any{
-		"report_id": id, "result": result, "request_id": sent.RequestID, "observation": sent.Observation, "reason": sent.Reason, "logical_id": res.LogicalID,
-	}}); err != nil {
+	// what the delivery came to is what the rows read now, by the rule every reader reads them by (SupersedesDelivery): the daemon may have
+	// settled or held the message, or the recipient's readback settled a send of unknown outcome, after the rows were read above (CRW-1390)
+	if history, err = w.history(ctx, id); err != nil {
 		return res, err
 	}
-	res.Delivery, res.RequestID, res.Observation, res.Reason = result, sent.RequestID, sent.Observation, sent.Reason
-	res.Standing = result != ResultAccepted
+	if last := history.lastDelivery(); last != nil {
+		res.Delivery, res.RequestID, res.Observation, res.Reason = last.Str("result"), last.Str("request_id"), last.Str("observation"), last.Str("reason")
+		res.Standing = res.Delivery != ResultAccepted
+	}
+	if sent.Class == "" {
+		// nothing was staged (the channel refused it, a lead would hear a decision only Jun can make, or the message was sent already): no
+		// row, and the answer says why; a report no settled row delivered stands, and a replay stages it again
+		res.Reason, res.Observation = sent.Reason, sent.Observation
+	}
 	return res, nil
 }
 
@@ -285,7 +292,7 @@ type reportHistory struct {
 }
 
 // lastDelivery is the delivery row that says what the report's delivery came to: the newest, unless it is a queued row after a settled
-// one (SupersedesDelivery).
+// one (SupersedesDelivery). The writer's replay and its answer read it.
 func (h reportHistory) lastDelivery() *Row {
 	var last *Row
 	for i := range h.deliveries {
@@ -298,11 +305,19 @@ func (h reportHistory) lastDelivery() *Row {
 
 // SupersedesDelivery says whether a delivery row with result next, written after one with result prev, is what the report's delivery
 // came to. A queued row is the writer's record of its staging, and the relay daemon may claim, send and settle the message (appending
-// accepted) or hold it at a cap (appending refused) before the writer has appended it (CRW-1380): a queued row never supersedes a
-// settled row (accepted or refused) that came before it. Any other later row stands for the earlier one. The flow side's readers and
-// the manager's pump read the rows through it.
+// accepted), hold it at a cap (appending refused) or find its send's outcome unknown (held_uncertain, appending unknown) before the writer
+// has appended it (CRW-1380, CRW-1390): a queued row never supersedes a settled row (accepted, refused or unknown) that came before it.
+// Any other later row stands for the earlier one, so a settled row supersedes a settled one (the readback's accepted after unknown).
+// Every reader of the rows reads them through it: crw flow reports (ReportsMatching), the writer's replay and its answer (lastDelivery)
+// and the manager's pump.
 func SupersedesDelivery(prev, next string) bool {
-	return !(next == ResultQueued && (prev == ResultAccepted || prev == ResultRefused))
+	return !(next == ResultQueued && settledDelivery(prev))
+}
+
+// settledDelivery says whether a delivery result is the record of what the send came to (accepted, refused, unknown), not the writer's
+// record of its staging (queued).
+func settledDelivery(result string) bool {
+	return result == ResultAccepted || result == ResultRefused || result == ResultUnknown
 }
 
 func (w *Writer) history(ctx context.Context, id string) (reportHistory, error) {
@@ -382,8 +397,8 @@ type ReportView struct {
 	ID, Kind, Run, Milestone, Subject, RecordedAt string
 	BodyDigest, BodyPath                          string
 	Recipient                                     Recipient
-	// LastDelivery is the result of the newest delivery row (a queued row after a settled one aside, SupersedesDelivery), "" when
-	// there is none.
+	// LastDelivery is the result of the newest delivery row (a queued row after a settled one - accepted, refused, unknown - aside,
+	// SupersedesDelivery), "" when there is none.
 	LastDelivery string
 	RequestID    string
 	Read         bool
