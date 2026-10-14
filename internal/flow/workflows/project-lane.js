@@ -51,10 +51,15 @@ async function auditedDesign(first, tag, context) {
 // The open questions routed to the orchestrator for reason are design questions for the orchestrator thread, each with its scope:
 // one non-blocking ask, and the milestone goes on. The ones out of the architect's authority are asked in the audit round that
 // routed them, the ones beyond the explorer cap of the milestone when the DESIGN is approved. The evidence names the digests asked:
-// a question the run asked already is routed asked_in_run (crw.exploreRoute) and not asked again.
+// a question the run asked already is routed asked_in_run (crw.exploreRoute) and raises no ask of its own. Only the latest design
+// ask of a run is current (the one crw flow answer accepts and the digest lists as waiting), so an ask carries, besides the
+// questions it raises, every question of this DESIGN the run asked already and no answer has reached: asked_in_run, and the
+// authority questions of the round when the approval asks the ones beyond the cap.
 async function askOrchestrator(answers, reason) {
-  const asked = answers.filter((a) => a.route === 'orchestrator' && a.reason === reason)
-  if (asked.length > 0) await crw.escalate(null, { reason: 'design_question', detail: asked.map((a) => (a.scope ? '[' + a.scope + '] ' : '') + a.question).join(' | '), ask: 'design',
+  const pending = (a) => a.route === 'orchestrator' && (a.reason === reason || a.reason === 'asked_in_run' || a.reason === 'out_of_authority')
+  if (!answers.some((a) => a.route === 'orchestrator' && a.reason === reason)) return
+  const asked = answers.filter(pending)
+  await crw.escalate(null, { reason: 'design_question', detail: asked.map((a) => (a.scope ? '[' + a.scope + '] ' : '') + a.question).join(' | '), ask: 'design',
     evidence: { questions: asked.map((a) => a.digest) } })
 }
 

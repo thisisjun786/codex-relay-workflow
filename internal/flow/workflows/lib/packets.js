@@ -111,13 +111,14 @@ function reuseLine(reason) {
   }
 }
 
-// askLine says when the run asks an orchestrator question (CRW-1366): an authority question in the round that routed it, once.
+// askLine says when the run asks an orchestrator question (CRW-1366): an authority question in the round that routed it, once, and
+// carried by each later ask of the run until it is answered.
 function askLine(reason) {
   switch (reason) {
     case 'out_of_authority':
       return 'the run raised it in the design_question escalation of this round'
     case 'asked_in_run':
-      return 'the run raised it in an earlier design_question escalation and does not ask it again'
+      return 'the run raised it in an earlier design_question escalation and does not ask it again on its own (a later ask of the run carries it while no answer has come)'
     default:
       return 'the run raises it in the design_question escalation when the DESIGN is approved'
   }

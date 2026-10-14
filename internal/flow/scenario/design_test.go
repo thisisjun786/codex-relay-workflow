@@ -11,10 +11,12 @@ import (
 	"testing/fstest"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
+	flowcli "github.com/thisisjun786/codex-relay-workflow/internal/flow/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/roles"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/workflows/lib"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/decisions"
 )
 
 // seqOf is the sequence number of the first row the function accepts.
@@ -494,6 +496,111 @@ func TestReplanAsksTheSameAuthorityQuestionOnce(t *testing.T) {
 	}
 	if answers := answersOf(t, l, "design-audit:replan-close:r1"); !strings.Contains(answers, "policy: does the project ship the flag in 1.0?\n  route: asked of the orchestrator (asked_in_run, authority:policy): no answer in this audit; the run raised it in an earlier design_question escalation and does not ask it again") {
 		t.Errorf("the re-plan's audit answers:\n%s", answers)
+	}
+}
+
+// designAsks are the questions of the run's design asks as `crw flow answer` and the digest read them (flowcli.Questions).
+func designAsks(l *Lab) []flowcli.Question {
+	var out []flowcli.Question
+	for _, q := range flowcli.Questions(l.Events()) {
+		if q.Ask == "design" {
+			out = append(out, q)
+		}
+	}
+	return out
+}
+
+// judgeDesignAsk judges, as `crw flow answer` does (flowcli.Judge), a manager's answer to the design ask q of the lab's run.
+func judgeDesignAsk(l *Lab, q flowcli.Question, decision, text string) *flowcli.Refusal {
+	run := flowcli.RunRecord{RunID: l.RunID, Owner: "owner", PlanID: "plan-1366", PlanRevision: 1}
+	b := flowcli.Binding{Source: flowcli.SourceQuestion, Run: l.RunID, Node: q.Node, Question: q.ID, Revision: q.Revision, Attempt: q.Attempt, PlanBasis: flowcli.PlanBasis(run.PlanID, run.PlanRevision)}
+	rec := decisions.Record{DecisionID: decision, State: decisions.StateAnswered, Source: decisions.Source{Kind: b.Source, Ref: flowcli.BindingRef(b)},
+		Blocking:  []decisions.Blocking{{Kind: decisions.BlockingPlanNode, Ref: b.Run + "/" + b.Node}},
+		Authority: decisions.Authority{Kind: decisions.AuthorityDelegatedManagement}, AnsweredBy: "manager-task", AnsweredVia: decisions.ViaManagementMessage, AnswerText: text}
+	_, refusal := flowcli.Judge(rec, l.Events(), run, flowcli.Claim{Decision: decision, Run: l.RunID, Node: q.Node, Question: q.ID, Revision: q.Revision, By: "owner"})
+	return refusal
+}
+
+// askedIn are the question digests a design_question escalation names in its evidence.
+func askedIn(ev engine.Event) []string {
+	evidence, _ := ev.Data["evidence"].(map[string]any)
+	list, _ := evidence["questions"].([]any)
+	var out []string
+	for _, d := range list {
+		s, _ := d.(string)
+		out = append(out, s)
+	}
+	return out
+}
+
+// CRW-1366 (evaluation d1): only the latest design ask of a run is current, the one `crw flow answer` accepts and the digest lists
+// as waiting, so a new ask carries the questions the run asked already that no answer has reached and the DESIGN still raises.
+// Round 1 asks the policy question; the revised DESIGN raises it again with a new authority question, and the ask of round 2 names
+// both: the earlier ask is replaced, and the current one is answerable through the answer path and holds the first question too.
+func TestANewAskCarriesTheAuthorityQuestionsStillUnanswered(t *testing.T) {
+	l := NewLab(t, oneNode()...)
+	d := l.designFor()
+	d.OpenQuestions = []ops.OpenQuestion{policyQuestion}
+	l.Design = &d
+	revised := l.designFor()
+	env := ops.OpenQuestion{ID: "env", Question: "may the lane use the shared runner?", Scope: "authority:environment", FilesNeeded: []string{}}
+	revised.OpenQuestions = []ops.OpenQuestion{policyQuestion, env}
+	l.Sequence("^design-fix:r1$", func(*Call) fakehostPlan { return Say(revised) })
+	l.Sequence("^design-audit:r\\d+$", designAuditNeedsChanges, func(*Call) fakehostPlan {
+		return Say(map[string]any{"verdict": "approved", "findings": []any{}, "summary": "now it holds"})
+	})
+	if got := mustRun(t, l); got.State != "closed" {
+		t.Fatalf("state %q; calls %v", got.State, l.Labels())
+	}
+	rows := designQuestions(l)
+	if len(rows) != 2 {
+		t.Fatalf("%d design_question escalations, want the ask of each round that raised a new authority question", len(rows))
+	}
+	if detail := str(rows[1].Data, "detail"); detail != "[authority:policy] does the project ship the flag in 1.0? | [authority:environment] may the lane use the shared runner?" {
+		t.Errorf("the ask of round 2 is %q, want the unanswered policy question carried with the new one", detail)
+	}
+	if got, want := askedIn(rows[1]), []string{ops.QuestionDigest(policyQuestion.Question), ops.QuestionDigest(env.Question)}; !slices.Equal(got, want) {
+		t.Errorf("the ask of round 2 names the digests %v, want %v", got, want)
+	}
+	asks := designAsks(l)
+	if len(asks) != 2 || asks[0].Current || !asks[1].Current || asks[1].Applied != "" || asks[1].ID != str(rows[1].Data, "escalation_id") {
+		t.Fatalf("the design asks as the answer path reads them: %+v", asks)
+	}
+	if r := judgeDesignAsk(l, asks[0], "dec-old", "1.0 ships without the flag"); r == nil || r.Code != flowcli.RefusedStaleRevison {
+		t.Errorf("an answer to the replaced ask: %v, want %s", r, flowcli.RefusedStaleRevison)
+	}
+	if r := judgeDesignAsk(l, asks[1], "dec-cur", "1.0 ships without the flag; the shared runner is fine"); r != nil {
+		t.Errorf("an answer to the current ask, which holds both questions, is refused: %v", r)
+	}
+}
+
+// CRW-1366 (evaluation d1): the ask of the questions beyond the explorer cap, raised when the DESIGN is approved, replaces the ask of
+// the authority question of the same round, so it carries that question too.
+func TestTheExplorerCapAskCarriesTheAuthorityQuestionOfItsRound(t *testing.T) {
+	l := NewLab(t, oneNode()...)
+	d := l.designFor()
+	d.OpenQuestions = append(openQuestions(ops.ExplorersPerMilestone+1), policyQuestion)
+	l.Design = &d
+	if got := mustRun(t, l); got.State != "closed" {
+		t.Fatalf("state %q; calls %v", got.State, l.Labels())
+	}
+	rows := designQuestions(l)
+	if len(rows) != 2 {
+		t.Fatalf("%d design_question escalations, want the authority ask of the round and the explorer-cap ask of the approval", len(rows))
+	}
+	capped := openQuestions(ops.ExplorersPerMilestone + 1)[ops.ExplorersPerMilestone]
+	if detail := str(rows[1].Data, "detail"); detail != "[repo] "+capped.Question+" | [authority:policy] does the project ship the flag in 1.0?" {
+		t.Errorf("the approval's ask is %q, want the capped question and the authority question of the round", detail)
+	}
+	if got, want := askedIn(rows[1]), []string{ops.QuestionDigest(capped.Question), ops.QuestionDigest(policyQuestion.Question)}; !slices.Equal(got, want) {
+		t.Errorf("the approval's ask names the digests %v, want %v", got, want)
+	}
+	asks := designAsks(l)
+	if len(asks) != 2 || !asks[1].Current {
+		t.Fatalf("the design asks as the answer path reads them: %+v", asks)
+	}
+	if r := judgeDesignAsk(l, asks[1], "dec-cap", "module 7 is the platform team's; 1.0 ships without the flag"); r != nil {
+		t.Errorf("an answer to the current ask is refused: %v", r)
 	}
 }
 
