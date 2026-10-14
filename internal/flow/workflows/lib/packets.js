@@ -14,7 +14,10 @@
 // that recorded its open questions under the earlier binary replays its crw.exploreRoute rows and its explorer calls as recorded
 // (their arguments are the same), so the routes of its open questions stay the recorded ones, an inline route among them, and runs
 // crw.exploreRecord live again and, after it, design-audit:r1, the one agent call that runs again; a run past its design audit then
-// comes to the same refusal of crw.designLedger. The
+// comes to the same refusal of crw.designLedger. CRW-1366 changed the answers again (each carries the origin of its route) and their
+// route lines, and asks an authority question in its audit round: a run that recorded its open questions under the earlier binary
+// runs crw.exploreRecord live again on a resume and, where the packet or the asks differ, the ask and design-audit:r1, and a run
+// past its design audit comes to the same refusal of crw.designLedger. The
 // role overlays (internal/flow/roles/*.md) are no packet: they are the developer instructions a thread starts with, part of no input
 // digest, so a change of them re-runs nothing; a turn on a thread started earlier runs under the instructions that thread was
 // started with, and a new thread or a fork takes the new text. TestResumeAfterPromptTextChange pins both.
@@ -89,11 +92,34 @@ function routeLine(a) {
     case 'spawn':
       return 'an explorer answered it (call ' + (a.call || 'none') + ')'
     case 'reuse':
-      return 'reused: ' + (a.reason === 'same_question_in_round' ? 'the same question as another of this DESIGN' : 'the answer an earlier question of the run got')
+      return 'reused: ' + reuseLine(a.reason) + (a.origin ? ' (original route: ' + (a.origin === 'spawn' ? 'explorer' : a.origin) + ')' : '')
     case 'orchestrator':
-      return 'asked of the orchestrator (' + (a.reason || 'design_question') + (a.authority ? ', ' + a.authority : '') + '): no answer in this audit; the run raises it in the design_question escalation when the DESIGN is approved, the milestone goes on and the plan stands on the assumption the DESIGN states'
+      return 'asked of the orchestrator (' + (a.reason || 'design_question') + (a.authority ? ', ' + a.authority : '') + '): no answer in this audit; ' + askLine(a.reason) + ', the milestone goes on and the plan stands on the assumption the DESIGN states'
     default:
       return a.route + (a.reason ? ' (' + a.reason + ')' : '') + ': no answer'
+  }
+}
+
+function reuseLine(reason) {
+  switch (reason) {
+    case 'same_question_in_round':
+      return 'the same question as another of this DESIGN'
+    case 'answered_by_orchestrator':
+      return 'the answer the orchestrator gave in the design_question escalation of the run'
+    default:
+      return 'the answer an earlier question of the run got'
+  }
+}
+
+// askLine says when the run asks an orchestrator question (CRW-1366): an authority question in the round that routed it, once.
+function askLine(reason) {
+  switch (reason) {
+    case 'out_of_authority':
+      return 'the run raised it in the design_question escalation of this round'
+    case 'asked_in_run':
+      return 'the run raised it in an earlier design_question escalation and does not ask it again'
+    default:
+      return 'the run raises it in the design_question escalation when the DESIGN is approved'
   }
 }
 

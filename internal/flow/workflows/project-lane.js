@@ -26,6 +26,8 @@ async function auditedDesign(first, tag, context) {
   let arch = first
   for (let round = 1; round <= AUDIT_ROUNDS; round++) {
     const asked = await crw.explore('open_questions', arch.output.open_questions, { milestone: ms.id })
+    // the authority questions of the round are asked now, approved or not (CRW-1366): an answer is the next round's
+    await askOrchestrator(asked.answers, 'out_of_authority')
     if (asked.failed) return { ok: false, result: await crw.milestoneHalt(ms, 'explorer', asked.failed.status, asked.failed.reason, asked.failed.callId) }
     const answers = asked.answers
     const cand = { design: arch.output, answers }
@@ -46,11 +48,14 @@ async function auditedDesign(first, tag, context) {
   return { ok: false, result: { state: 'escalated', source: 'design_audit', reason: 'design_audit_rounds', escalation: esc.id } }
 }
 
-// The open questions out of the architect's authority and the questions beyond the explorer cap of the milestone are design
-// questions for the orchestrator thread, each with its scope: one non-blocking ask, and the milestone goes on.
-async function askOrchestrator(answers) {
-  const asked = answers.filter((a) => a.route === 'orchestrator')
-  if (asked.length > 0) await crw.escalate(null, { reason: 'design_question', detail: asked.map((a) => (a.scope ? '[' + a.scope + '] ' : '') + a.question).join(' | '), ask: 'design' })
+// The open questions routed to the orchestrator for reason are design questions for the orchestrator thread, each with its scope:
+// one non-blocking ask, and the milestone goes on. The ones out of the architect's authority are asked in the audit round that
+// routed them, the ones beyond the explorer cap of the milestone when the DESIGN is approved. The evidence names the digests asked:
+// a question the run asked already is routed asked_in_run (crw.exploreRoute) and not asked again.
+async function askOrchestrator(answers, reason) {
+  const asked = answers.filter((a) => a.route === 'orchestrator' && a.reason === reason)
+  if (asked.length > 0) await crw.escalate(null, { reason: 'design_question', detail: asked.map((a) => (a.scope ? '[' + a.scope + '] ' : '') + a.question).join(' | '), ask: 'design',
+    evidence: { questions: asked.map((a) => a.digest) } })
 }
 
 // A re-plan (SP-ARCH-2): the architect's DESIGN delta is the next turn of its thread (the handle the ledger holds), asked at the head
@@ -66,7 +71,7 @@ async function replan(tag, signal, due, head, misaligned) {
   const audited = await auditedDesign(call, 'replan-' + tag + ':', { head, base_tip: cur.base_tip, landed: cur.landed })
   if (!audited.ok) return { state: 'halted', result: audited.result }
   const led = await crw.designLedger(ms.id, { design: audited.arch.output, answers: audited.answers, architect: audited.arch, signal, head, plan: due.plan })
-  await askOrchestrator(audited.answers)
+  await askOrchestrator(audited.answers, 'explorer_cap')
   return { state: 'revised', revision: led.revision }
 }
 
@@ -105,7 +110,7 @@ const designed0 = await auditedDesign(first, '')
 if (!designed0.ok) return designed0.result
 const arch = designed0.arch
 await crw.designLedger(ms.id, { design: arch.output, answers: designed0.answers, architect: arch })
-await askOrchestrator(designed0.answers)
+await askOrchestrator(designed0.answers, 'explorer_cap')
 
 // The lane of one issue node. It reads no variable of the script that another lane may have changed: its facts are the plan of
 // its release revision and the results of its own calls.
