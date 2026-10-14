@@ -11,10 +11,12 @@ import (
 	"testing/fstest"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
+	flowcli "github.com/thisisjun786/codex-relay-workflow/internal/flow/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/roles"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/workflows/lib"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/decisions"
 )
 
 // seqOf is the sequence number of the first row the function accepts.
@@ -278,15 +280,19 @@ func TestOpenQuestionRoutesThroughDesignAudit(t *testing.T) {
 	for _, r := range spawnRowsOf(l, ops.RuleInl2, "reuse") {
 		counts[key{r.Decision, r.Reason}]++
 	}
-	if want := map[key]int{{"spawn", ""}: 2, {"orchestrator", "out_of_authority"}: 2, {"reuse", "answered_in_run"}: 2}; !reflect.DeepEqual(counts, want) {
-		t.Errorf("the routes of the open questions %v, want %v (the first audit and the re-plan)", counts, want)
+	if want := map[key]int{{"spawn", ""}: 2, {"orchestrator", "out_of_authority"}: 1, {"orchestrator", "asked_in_run"}: 1, {"reuse", "answered_in_run"}: 2}; !reflect.DeepEqual(counts, want) {
+		t.Errorf("the routes of the open questions %v, want %v (the first audit and the re-plan, which asks nothing again, CRW-1366)", counts, want)
 	}
 	// each audit packet shows every question with its route and what it got
 	for _, label := range []string{"design-audit:r1", "design-audit:replan-close:r1"} {
 		text := textOfCall(l, callNamed(t, l, label).ID)
 		answers := text[strings.Index(text, "ANSWERS TO THE OPEN QUESTIONS"):]
+		reason := "out_of_authority"
+		if label != "design-audit:r1" {
+			reason = "asked_in_run"
+		}
 		for _, want := range []string{
-			"policy: does the project ship the flag in 1.0?\n  route: asked of the orchestrator (out_of_authority, authority:policy)",
+			"policy: does the project ship the flag in 1.0?\n  route: asked of the orchestrator (" + reason + ", authority:policy)",
 			"design_question escalation",
 			"the milestone goes on",
 		} {
@@ -310,16 +316,16 @@ func TestOpenQuestionRoutesThroughDesignAudit(t *testing.T) {
 			t.Errorf("%s: a question reached the audit with an empty answer and no route:\n%s", label, answers)
 		}
 	}
-	// the authority question is asked of the orchestrator, with its scope, once for each approved DESIGN; nothing stops the
-	// milestone, which closed and re-planned
+	// the authority question is asked of the orchestrator, with its scope, once in the run (the re-plan's DESIGN raises it again
+	// and the run does not ask it again, CRW-1366); nothing stops the milestone, which closed and re-planned
 	var asked []string
 	for _, ev := range l.FlowRows(engine.EvEscalation) {
 		if str(ev.Data, "reason") == "design_question" {
 			asked = append(asked, str(ev.Data, "detail"))
 		}
 	}
-	if len(asked) != 2 {
-		t.Fatalf("design_question escalations %q, want one for the DESIGN and one for the re-plan", asked)
+	if len(asked) != 1 {
+		t.Fatalf("design_question escalations %q, want one for the run", asked)
 	}
 	for _, detail := range asked {
 		if detail != "[authority:policy: the release scope] does the project ship the flag in 1.0?" {
@@ -328,6 +334,273 @@ func TestOpenQuestionRoutesThroughDesignAudit(t *testing.T) {
 	}
 	if holds := l.Rows(ops.OpHold); len(holds) != 0 {
 		t.Errorf("an open question made a hold: %+v", holds)
+	}
+}
+
+// policyQuestion is the authority question of the CRW-1366 tests.
+var policyQuestion = ops.OpenQuestion{ID: "policy", Question: "does the project ship the flag in 1.0?", Scope: "authority:policy", FilesNeeded: []string{}}
+
+func designAuditNeedsChanges(*Call) fakehostPlan {
+	return Say(map[string]any{"verdict": "needs_changes", "findings": []any{map[string]any{"ref": "D1", "severity": "P2", "finding": "state the order of the nodes", "evidence": []string{}}}, "summary": "one thing to fix"})
+}
+
+// designQuestions are the design_question escalations of the run, in order.
+func designQuestions(l *Lab) []engine.Event {
+	var out []engine.Event
+	for _, ev := range l.FlowRows(engine.EvEscalation) {
+		if str(ev.Data, "reason") == "design_question" {
+			out = append(out, ev)
+		}
+	}
+	return out
+}
+
+// answersOf is the text of the ANSWERS section of the packet of a design audit call.
+func answersOf(t *testing.T, l *Lab, label string) string {
+	t.Helper()
+	text := textOfCall(l, callNamed(t, l, label).ID)
+	i := strings.Index(text, "ANSWERS TO THE OPEN QUESTIONS")
+	if i < 0 {
+		t.Fatalf("%s: no answers section:\n%s", label, text)
+	}
+	return text[i:]
+}
+
+// CRW-1366 d1: an authority question of a DESIGN that is never approved is still asked of the orchestrator. The ask is raised in
+// the round that routed it, before the audit of that round and before the design_audit_rounds escalation, and it stops nothing:
+// the rounds after it run, and the later rounds do not ask the same question again.
+func TestAuthorityQuestionIsAskedWhenTheAuditRoundsRunOut(t *testing.T) {
+	l := NewLab(t, oneNode()...)
+	d := l.designFor()
+	d.OpenQuestions = []ops.OpenQuestion{policyQuestion}
+	l.Design = &d
+	l.Sequence("^design-audit:r\\d+$", designAuditNeedsChanges, designAuditNeedsChanges, designAuditNeedsChanges)
+	got := mustRunIncomplete(t, l)
+	if got.State != "escalated" {
+		t.Fatalf("state %q, want the design_audit_rounds escalation; calls %v", got.State, l.Labels())
+	}
+	reasons := escalationReasons(l)
+	if !slices.Equal(reasons, []string{"design_question", "design_audit_rounds"}) {
+		t.Fatalf("escalations %v, want the design question once and then design_audit_rounds", reasons)
+	}
+	ask := designQuestions(l)[0]
+	if detail := str(ask.Data, "detail"); detail != "[authority:policy] does the project ship the flag in 1.0?" || str(ask.Data, "ask") != "design" || str(ask.Data, "node") != "" {
+		t.Errorf("the design question: %v", ask.Data)
+	}
+	if r1 := callNamed(t, l, "design-audit:r1"); ask.Seq > r1.Seq {
+		t.Errorf("the ask is at seq %d, after the audit of its round at %d", ask.Seq, r1.Seq)
+	}
+	for _, label := range []string{"design-audit:r2", "design-audit:r3"} {
+		if c := callNamed(t, l, label); c.Seq < ask.Seq {
+			t.Errorf("%s at seq %d before the ask at %d", label, c.Seq, ask.Seq)
+		}
+	}
+	if holds := l.Rows(ops.OpHold); len(holds) != 0 {
+		t.Errorf("the ask made a hold: %+v", holds)
+	}
+	if answers := answersOf(t, l, "design-audit:r1"); !strings.Contains(answers, "policy: does the project ship the flag in 1.0?\n  route: asked of the orchestrator (out_of_authority, authority:policy): no answer in this audit; the run raised it in the design_question escalation of this round") {
+		t.Errorf("design-audit:r1 answers:\n%s", answers)
+	}
+	for _, label := range []string{"design-audit:r2", "design-audit:r3"} {
+		if answers := answersOf(t, l, label); !strings.Contains(answers, "policy: does the project ship the flag in 1.0?\n  route: asked of the orchestrator (asked_in_run, authority:policy)") {
+			t.Errorf("%s answers:\n%s", label, answers)
+		}
+	}
+}
+
+// CRW-1366 d1 and d2: the orchestrator's answer to the ask of a round is the answer of the question in the next round, and a reused
+// answer names the route it came from: the repeat of the question in its first round shows that the first went to the orchestrator,
+// and the next round shows the orchestrator's answer with that route. The approved DESIGN asks nothing again.
+func TestOrchestratorAnswerIsUsedOnTheNextAuditRound(t *testing.T) {
+	l := NewLab(t, oneNode()...)
+	d := l.designFor()
+	again := policyQuestion
+	again.ID = "again"
+	d.OpenQuestions = []ops.OpenQuestion{policyQuestion, again}
+	l.Design = &d
+	l.On("^design-audit:r1$", func(c *Call) *fakehostPlan {
+		for _, ev := range designQuestions(l) {
+			l.apply(ops.EvDecisionApplied, map[string]any{"ask": str(ev.Data, "escalation_id"), "node": "", "decision": map[string]any{"id": "dec-1", "text": "1.0 ships without the flag"}})
+		}
+		p := designAuditNeedsChanges(c)
+		return &p
+	})
+	if got := mustRun(t, l); got.State != "closed" {
+		t.Fatalf("state %q; calls %v", got.State, l.Labels())
+	}
+	if asks := designQuestions(l); len(asks) != 1 {
+		t.Fatalf("%d design_question escalations, want the ask of the first round only", len(asks))
+	}
+	r1 := answersOf(t, l, "design-audit:r1")
+	for _, want := range []string{
+		"policy: does the project ship the flag in 1.0?\n  route: asked of the orchestrator (out_of_authority, authority:policy)",
+		"again: does the project ship the flag in 1.0?\n  route: reused: the same question as another of this DESIGN (original route: orchestrator)",
+	} {
+		if !strings.Contains(r1, want) {
+			t.Errorf("design-audit:r1 answers lack %q:\n%s", want, r1)
+		}
+	}
+	r2 := answersOf(t, l, "design-audit:r2")
+	if want := "policy: does the project ship the flag in 1.0?\n  route: reused: the answer the orchestrator gave in the design_question escalation of the run (original route: orchestrator)\n  answer: 1.0 ships without the flag"; !strings.Contains(r2, want) {
+		t.Errorf("design-audit:r2 answers lack %q:\n%s", want, r2)
+	}
+	// the record: each reused answer carries the route it came from
+	records := l.Rows(ops.OpExploreRecord)
+	if len(records) != 2 {
+		t.Fatalf("%d crw.exploreRecord rows, want one for each round", len(records))
+	}
+	type rec struct{ route, reason, origin, answer string }
+	want := [][]rec{
+		{{"orchestrator", "out_of_authority", "", ""}, {"reuse", "same_question_in_round", "orchestrator", ""}},
+		{{"reuse", "answered_by_orchestrator", "orchestrator", "1.0 ships without the flag"}, {"reuse", "same_question_in_round", "orchestrator", "1.0 ships without the flag"}},
+	}
+	for i, row := range records {
+		list, _ := row.Data["answers"].([]any)
+		var gotRecs []rec
+		for _, item := range list {
+			m, _ := item.(map[string]any)
+			gotRecs = append(gotRecs, rec{str(m, "route"), str(m, "reason"), str(m, "origin"), str(m, "answer")})
+		}
+		if !slices.Equal(gotRecs, want[i]) {
+			t.Errorf("round %d recorded %+v, want %+v", i+1, gotRecs, want[i])
+		}
+	}
+}
+
+// CRW-1366 d1b: a re-plan whose DESIGN raises the authority question the run asked already does not ask it again. The run knows the
+// question by its digest from the escalation row it wrote (its evidence names the digests it asked), which it reads and never
+// rewrites; the re-plan's route says the question was asked in the run.
+func TestReplanAsksTheSameAuthorityQuestionOnce(t *testing.T) {
+	l := NewLab(t, twoNodes()...)
+	d := l.designFor()
+	d.OpenQuestions = []ops.OpenQuestion{policyQuestion}
+	l.Design = &d
+	l.On("^reviewer-final:M1$", func(*Call) *fakehostPlan { p := Say(VerdictFinal(false)); return &p })
+	if got := runReplan(t, l); got.State != "replanned" {
+		t.Fatalf("%+v; calls %v", got, l.Labels())
+	}
+	asks := designQuestions(l)
+	if len(asks) != 1 {
+		t.Fatalf("%d design_question escalations, want one for the run", len(asks))
+	}
+	ev, _ := asks[0].Data["evidence"].(map[string]any)
+	if qs, _ := ev["questions"].([]any); len(qs) != 1 || qs[0] != ops.QuestionDigest(policyQuestion.Question) {
+		t.Errorf("the ask's evidence %v does not name the digest of the question it asked", asks[0].Data["evidence"])
+	}
+	var reasons []string
+	for _, r := range spawnRowsOf(l, ops.RuleExpl1, "orchestrator") {
+		reasons = append(reasons, r.Reason)
+	}
+	if !slices.Equal(reasons, []string{"out_of_authority", "asked_in_run"}) {
+		t.Errorf("the routes of the authority question %v, want the first ask and the re-plan's memory of it", reasons)
+	}
+	if answers := answersOf(t, l, "design-audit:replan-close:r1"); !strings.Contains(answers, "policy: does the project ship the flag in 1.0?\n  route: asked of the orchestrator (asked_in_run, authority:policy): no answer in this audit; the run raised it in an earlier design_question escalation and does not ask it again") {
+		t.Errorf("the re-plan's audit answers:\n%s", answers)
+	}
+}
+
+// designAsks are the questions of the run's design asks as `crw flow answer` and the digest read them (flowcli.Questions).
+func designAsks(l *Lab) []flowcli.Question {
+	var out []flowcli.Question
+	for _, q := range flowcli.Questions(l.Events()) {
+		if q.Ask == "design" {
+			out = append(out, q)
+		}
+	}
+	return out
+}
+
+// judgeDesignAsk judges, as `crw flow answer` does (flowcli.Judge), a manager's answer to the design ask q of the lab's run.
+func judgeDesignAsk(l *Lab, q flowcli.Question, decision, text string) *flowcli.Refusal {
+	run := flowcli.RunRecord{RunID: l.RunID, Owner: "owner", PlanID: "plan-1366", PlanRevision: 1}
+	b := flowcli.Binding{Source: flowcli.SourceQuestion, Run: l.RunID, Node: q.Node, Question: q.ID, Revision: q.Revision, Attempt: q.Attempt, PlanBasis: flowcli.PlanBasis(run.PlanID, run.PlanRevision)}
+	rec := decisions.Record{DecisionID: decision, State: decisions.StateAnswered, Source: decisions.Source{Kind: b.Source, Ref: flowcli.BindingRef(b)},
+		Blocking:  []decisions.Blocking{{Kind: decisions.BlockingPlanNode, Ref: b.Run + "/" + b.Node}},
+		Authority: decisions.Authority{Kind: decisions.AuthorityDelegatedManagement}, AnsweredBy: "manager-task", AnsweredVia: decisions.ViaManagementMessage, AnswerText: text}
+	_, refusal := flowcli.Judge(rec, l.Events(), run, flowcli.Claim{Decision: decision, Run: l.RunID, Node: q.Node, Question: q.ID, Revision: q.Revision, By: "owner"})
+	return refusal
+}
+
+// askedIn are the question digests a design_question escalation names in its evidence.
+func askedIn(ev engine.Event) []string {
+	evidence, _ := ev.Data["evidence"].(map[string]any)
+	list, _ := evidence["questions"].([]any)
+	var out []string
+	for _, d := range list {
+		s, _ := d.(string)
+		out = append(out, s)
+	}
+	return out
+}
+
+// CRW-1366 (evaluation d1): only the latest design ask of a run is current, the one `crw flow answer` accepts and the digest lists
+// as waiting, so a new ask carries the questions the run asked already that no answer has reached and the DESIGN still raises.
+// Round 1 asks the policy question; the revised DESIGN raises it again with a new authority question, and the ask of round 2 names
+// both: the earlier ask is replaced, and the current one is answerable through the answer path and holds the first question too.
+func TestANewAskCarriesTheAuthorityQuestionsStillUnanswered(t *testing.T) {
+	l := NewLab(t, oneNode()...)
+	d := l.designFor()
+	d.OpenQuestions = []ops.OpenQuestion{policyQuestion}
+	l.Design = &d
+	revised := l.designFor()
+	env := ops.OpenQuestion{ID: "env", Question: "may the lane use the shared runner?", Scope: "authority:environment", FilesNeeded: []string{}}
+	revised.OpenQuestions = []ops.OpenQuestion{policyQuestion, env}
+	l.Sequence("^design-fix:r1$", func(*Call) fakehostPlan { return Say(revised) })
+	l.Sequence("^design-audit:r\\d+$", designAuditNeedsChanges, func(*Call) fakehostPlan {
+		return Say(map[string]any{"verdict": "approved", "findings": []any{}, "summary": "now it holds"})
+	})
+	if got := mustRun(t, l); got.State != "closed" {
+		t.Fatalf("state %q; calls %v", got.State, l.Labels())
+	}
+	rows := designQuestions(l)
+	if len(rows) != 2 {
+		t.Fatalf("%d design_question escalations, want the ask of each round that raised a new authority question", len(rows))
+	}
+	if detail := str(rows[1].Data, "detail"); detail != "[authority:policy] does the project ship the flag in 1.0? | [authority:environment] may the lane use the shared runner?" {
+		t.Errorf("the ask of round 2 is %q, want the unanswered policy question carried with the new one", detail)
+	}
+	if got, want := askedIn(rows[1]), []string{ops.QuestionDigest(policyQuestion.Question), ops.QuestionDigest(env.Question)}; !slices.Equal(got, want) {
+		t.Errorf("the ask of round 2 names the digests %v, want %v", got, want)
+	}
+	asks := designAsks(l)
+	if len(asks) != 2 || asks[0].Current || !asks[1].Current || asks[1].Applied != "" || asks[1].ID != str(rows[1].Data, "escalation_id") {
+		t.Fatalf("the design asks as the answer path reads them: %+v", asks)
+	}
+	if r := judgeDesignAsk(l, asks[0], "dec-old", "1.0 ships without the flag"); r == nil || r.Code != flowcli.RefusedStaleRevison {
+		t.Errorf("an answer to the replaced ask: %v, want %s", r, flowcli.RefusedStaleRevison)
+	}
+	if r := judgeDesignAsk(l, asks[1], "dec-cur", "1.0 ships without the flag; the shared runner is fine"); r != nil {
+		t.Errorf("an answer to the current ask, which holds both questions, is refused: %v", r)
+	}
+}
+
+// CRW-1366 (evaluation d1): the ask of the questions beyond the explorer cap, raised when the DESIGN is approved, replaces the ask of
+// the authority question of the same round, so it carries that question too.
+func TestTheExplorerCapAskCarriesTheAuthorityQuestionOfItsRound(t *testing.T) {
+	l := NewLab(t, oneNode()...)
+	d := l.designFor()
+	d.OpenQuestions = append(openQuestions(ops.ExplorersPerMilestone+1), policyQuestion)
+	l.Design = &d
+	if got := mustRun(t, l); got.State != "closed" {
+		t.Fatalf("state %q; calls %v", got.State, l.Labels())
+	}
+	rows := designQuestions(l)
+	if len(rows) != 2 {
+		t.Fatalf("%d design_question escalations, want the authority ask of the round and the explorer-cap ask of the approval", len(rows))
+	}
+	capped := openQuestions(ops.ExplorersPerMilestone + 1)[ops.ExplorersPerMilestone]
+	if detail := str(rows[1].Data, "detail"); detail != "[repo] "+capped.Question+" | [authority:policy] does the project ship the flag in 1.0?" {
+		t.Errorf("the approval's ask is %q, want the capped question and the authority question of the round", detail)
+	}
+	if got, want := askedIn(rows[1]), []string{ops.QuestionDigest(capped.Question), ops.QuestionDigest(policyQuestion.Question)}; !slices.Equal(got, want) {
+		t.Errorf("the approval's ask names the digests %v, want %v", got, want)
+	}
+	asks := designAsks(l)
+	if len(asks) != 2 || !asks[1].Current {
+		t.Fatalf("the design asks as the answer path reads them: %+v", asks)
+	}
+	if r := judgeDesignAsk(l, asks[1], "dec-cap", "module 7 is the platform team's; 1.0 ships without the flag"); r != nil {
+		t.Errorf("an answer to the current ask is refused: %v", r)
 	}
 }
 

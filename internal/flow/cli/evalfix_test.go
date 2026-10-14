@@ -23,6 +23,12 @@ import (
 // names one) and answers the SchedRelay the lane holds.
 func (l *laneLab) buildLane(run string, raw []byte, opt LaneOptions) *SchedRelay {
 	l.t.Helper()
+	return l.buildLaneWith(run, raw, nil, opt)
+}
+
+// buildLaneWith is buildLane with more members of the run's arguments (the child host settings a start pinned, CRW-1285).
+func (l *laneLab) buildLaneWith(run string, raw []byte, extra map[string]any, opt LaneOptions) *SchedRelay {
+	l.t.Helper()
 	ref, err := PinHandoff(l.w.state, run, raw)
 	if err != nil {
 		l.t.Fatal(err)
@@ -35,7 +41,11 @@ func (l *laneLab) buildLane(run string, raw []byte, opt LaneOptions) *SchedRelay
 	if err := os.WriteFile(script, []byte("export const meta = { name: 'laneful' }\nawait crw.commit({ node: 'n1' })\n"), 0o600); err != nil {
 		l.t.Fatal(err)
 	}
-	args, _ := json.Marshal(map[string]any{"plan": l.plan, "milestone": "M1", "handoff": ref})
+	members := map[string]any{"plan": l.plan, "milestone": "M1", "handoff": ref}
+	for k, v := range extra {
+		members[k] = v
+	}
+	args, _ := json.Marshal(members)
 	pair := func(model string) engine.RoleSpec {
 		return engine.RoleSpec{Pair: engine.Pair{Model: model, Effort: "high"}}
 	}
