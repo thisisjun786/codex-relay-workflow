@@ -16,10 +16,10 @@ func TestRelationshipAndParentRefusalsKeepTheirWords(t *testing.T) {
 	if got := relationshipState(relRow{Status: "cancelled"}); got != "cancelled" {
 		t.Errorf("a cancelled relationship is named %q", got)
 	}
-	if got, want := notParentHeldBy("t1", rel).Error(), "scope_role_mismatch: task t1 is not the parent of relationship rel-1, which is held by p1"; got != want {
+	if got, want := notParentHeldBy("t1", rel).Error(), "scope_role_mismatch: task t1 is not the 자식 that holds relationship rel-1, which is held by p1"; got != want {
 		t.Errorf("held-by refusal = %q, want %q", got, want)
 	}
-	if got, want := notParentOf("t1", rel).Error(), "scope_role_mismatch: task t1 is not the parent of relationship rel-1"; got != want {
+	if got, want := notParentOf("t1", rel).Error(), "scope_role_mismatch: task t1 is not the 자식 that holds relationship rel-1"; got != want {
 		t.Errorf("short refusal = %q, want %q", got, want)
 	}
 
@@ -31,7 +31,7 @@ func TestRelationshipAndParentRefusalsKeepTheirWords(t *testing.T) {
 	if err := requireProjectParent(ctx, q, "P-TEST", "parent"); err != nil {
 		t.Errorf("the registered parent is refused: %v", err)
 	}
-	if got, want := requireProjectParent(ctx, q, "P-TEST", "intruder").Error(), "scope_role_mismatch: task intruder is not the registered parent of project P-TEST"; got != want {
+	if got, want := requireProjectParent(ctx, q, "P-TEST", "intruder").Error(), "scope_role_mismatch: task intruder is not the registered 자식 of project P-TEST"; got != want {
 		t.Errorf("project parent refusal = %q, want %q", got, want)
 	}
 	if err := requireProjectParent(ctx, q, "P-NONE", "parent"); refusalReason(err) != "scope_role_mismatch" {

@@ -494,7 +494,7 @@ func TestClaimEpochRefusalNamesBothKeys(t *testing.T) {
 		t.Fatalf("a parent of another project claims the plan: %v", err)
 	}
 	_, err = k.sched.ClaimEpoch(ctx, "rp", ClaimInput{Actor: "nobody", SessionNonce: "session-2"})
-	if !errors.As(err, &refused) || refused.Reason != "scope_role_mismatch" || !strings.Contains(refused.Detail, "P-TEST") || !strings.Contains(refused.Detail, "holds no live parent binding") {
+	if !errors.As(err, &refused) || refused.Reason != "scope_role_mismatch" || !strings.Contains(refused.Detail, "P-TEST") || !strings.Contains(refused.Detail, "holds no live 자식 binding") {
 		t.Fatalf("a task with no binding claims the plan: %v", err)
 	}
 }

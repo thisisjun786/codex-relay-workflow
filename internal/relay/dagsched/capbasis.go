@@ -58,7 +58,7 @@ func (s *Scheduler) RecordCapBasis(ctx context.Context, in CapBasis) error {
 				}
 			}
 			if len(parents) != 1 || parents[0] != in.DecidedBy {
-				return refuse(contract.RefusalScopeRoleMismatch, "task %s neither declared limit %s nor is the registered parent of its scope", in.DecidedBy, in.LimitID)
+				return refuse(contract.RefusalScopeRoleMismatch, "task %s neither declared limit %s nor is the registered 자식 of its scope", in.DecidedBy, in.LimitID)
 			}
 		}
 		var w, sMin float64
