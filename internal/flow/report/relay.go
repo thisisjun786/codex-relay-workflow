@@ -117,5 +117,6 @@ func (r RelaySender) stage(ctx context.Context, m supervisor.DirectMessage) (Sen
 	} else if answer["staged"] != true {
 		observation = "restaged"
 	}
-	return SendResult{Class: ResultQueued, RequestID: id, Observation: observation, State: ResultQueued}, nil
+	recipient, _ := answer["recipient"].(string)
+	return SendResult{Class: ResultQueued, RequestID: id, Observation: observation, State: ResultQueued, Recipient: recipient}, nil
 }
