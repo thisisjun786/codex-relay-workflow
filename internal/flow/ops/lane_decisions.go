@@ -457,6 +457,44 @@ type Answer struct {
 	Evidence []string `json:"evidence"`
 	// Findings is the explorer's FINDINGS as it answered, when an explorer did: exploreRecord reads it as a consumer of the schema.
 	Findings json.RawMessage `json:"findings"`
+	// EndConditionsAsked are the end condition commands the explorer of this answer was given to run once (CRW-1382); optional, set on
+	// the first explorer of a DESIGN's first audit round only.
+	EndConditionsAsked []EndConditionAsk `json:"end_conditions_asked,omitempty"`
+}
+
+// EndConditionAsk is an end condition command an explorer is given: the issue whose done condition names it and the command.
+type EndConditionAsk struct {
+	Issue   string `json:"issue"`
+	Command string `json:"command"`
+}
+
+// The warnings of an end condition the design-stage explorer ran (CRW-1382): recorded on the crw.exploreRecord row, never a stop.
+const (
+	WarnEndConditionFailed     = "end_condition_failed"
+	WarnEndConditionNoTests    = "end_condition_no_tests"
+	WarnEndConditionUnreported = "end_condition_unreported"
+)
+
+// endConditionWarnings judge what the explorer reported of the commands it was given: a command that exited non-zero, one that ran no
+// test, and one it did not report.
+func endConditionWarnings(asked []EndConditionAsk, ran []EndConditionRun) []string {
+	var out []string
+	reported := map[string]bool{}
+	for _, r := range ran {
+		reported[strings.TrimSpace(r.Command)] = true
+		if r.ExitCode != 0 {
+			out = append(out, fmt.Sprintf("%s: `%s` exited %d (%d tests ran): %s", WarnEndConditionFailed, r.Command, r.ExitCode, r.Tests, r.Summary))
+		}
+		if r.Tests == 0 {
+			out = append(out, fmt.Sprintf("%s: `%s` exited %d having run no test: %s", WarnEndConditionNoTests, r.Command, r.ExitCode, r.Summary))
+		}
+	}
+	for _, a := range asked {
+		if !reported[strings.TrimSpace(a.Command)] {
+			out = append(out, fmt.Sprintf("%s: `%s` (%s) was given to the explorer and not reported", WarnEndConditionUnreported, a.Command, a.Issue))
+		}
+	}
+	return out
 }
 
 // exploreRecordOp is crw.exploreRecord(kind, context, answers): the answers of a round of questions, kept so that a question of
@@ -471,15 +509,28 @@ func (o *exploreRecordOp) Run(_ context.Context, req engine.OpRequest) (engine.O
 		return engine.OpResult{}, fmt.Errorf("crw.exploreRecord(kind, context, answers): %w", err)
 	}
 	list := make([]map[string]any, 0, len(answers))
+	warnings := []string{}
 	for _, a := range answers {
+		var f Findings
 		if len(a.Findings) > 0 && string(a.Findings) != "null" {
-			if _, err := DecodeFindings(a.Findings); err != nil {
+			var err error
+			if f, err = DecodeFindings(a.Findings); err != nil {
 				return engine.OpResult{}, fmt.Errorf("crw.exploreRecord: the answer to %q is no FINDINGS: %w", a.Question, err)
 			}
 		}
-		list = append(list, map[string]any{"digest": a.Digest, "id": a.ID, "question": a.Question, "answer": a.Answer, "route": a.Route, "reason": a.Reason, "scope_notation": a.Authority, "origin": a.Origin, "call": a.Call})
+		entry := map[string]any{"digest": a.Digest, "id": a.ID, "question": a.Question, "answer": a.Answer, "route": a.Route, "reason": a.Reason, "scope_notation": a.Authority, "origin": a.Origin, "call": a.Call}
+		// the end condition the explorer was given, and what it reported of it: recorded with the answer, warned of, never a stop (CRW-1382)
+		if len(a.EndConditionsAsked) > 0 || len(f.EndConditions) > 0 {
+			entry["end_conditions"] = f.EndConditions
+			warnings = append(warnings, endConditionWarnings(a.EndConditionsAsked, f.EndConditions)...)
+		}
+		list = append(list, entry)
 	}
-	return engine.OpResult{Result: result(map[string]any{"recorded": len(answers)}), Data: map[string]any{"kind": kind, "node": ec.Node, "milestone": ec.Milestone, "answers": list}}, nil
+	data := map[string]any{"kind": kind, "node": ec.Node, "milestone": ec.Milestone, "answers": list}
+	if len(warnings) > 0 {
+		data["warnings"] = warnings
+	}
+	return engine.OpResult{Result: result(map[string]any{"recorded": len(answers)}), Data: data}, nil
 }
 
 func (o *exploreRecordOp) Proven(ctx context.Context, ev []engine.Event, row engine.Event) (bool, string, error) {

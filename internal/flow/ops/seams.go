@@ -22,6 +22,9 @@ type PlanNode struct {
 	Criteria       []string `json:"criteria"`
 	CriteriaDigest string   `json:"criteria_digest"`
 	SliceDigest    string   `json:"slice_digest"`
+	// EndCondition are the commands of the done condition of the node's issue, read from the body the handoff carries and never run by
+	// the relay (CRW-1382): the design-stage explorer runs them once. Absent when the handoff carries no body or the body names none.
+	EndCondition []string `json:"end_condition,omitempty"`
 }
 
 // Milestone is a milestone of a plan: its nodes in the order the scheduler offers them (dagsched.Ready: critical path, then

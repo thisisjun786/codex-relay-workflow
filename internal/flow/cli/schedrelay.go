@@ -19,6 +19,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/skill"
 )
 
 // SchedRelay is the relay's DAG scheduler as the project lane of a run uses it (ops.Relay over internal/relay/dagsched, CRW-1277). The
@@ -248,6 +249,12 @@ func (r *SchedRelay) Milestone(ctx context.Context, plan, milestone string) (ops
 		}
 		for _, rg := range is.Regions {
 			pn.Regions = append(pn.Regions, rg.String())
+		}
+		// the commands of the issue's done condition, read from the body the handoff carries (CRW-1382): the design-stage explorer runs them
+		if strings.TrimSpace(is.Description) != "" {
+			if v, err := skill.CheckIssueReady(skill.ReadyIssue{ID: is.Key, Title: is.Title, Description: is.Description, Labels: is.Labels}); err == nil {
+				pn.EndCondition = v.EndCondition
+			}
 		}
 		out.Nodes = append(out.Nodes, pn)
 	}

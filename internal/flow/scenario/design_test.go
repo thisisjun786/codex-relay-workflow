@@ -151,6 +151,62 @@ func openQuestions(n int) []ops.OpenQuestion {
 	return out
 }
 
+// TestDesignExplorerRunsTheEndConditionOnce (CRW-1382 d2): the design-stage explorer that answers the DESIGN's open questions is given
+// the end condition commands of the milestone's issues, once: only the first explorer of the first audit round gets them, it reports each
+// command's exit code and the tests it ran in its FINDINGS (end_conditions), and the answer carries them into the design audit. A command
+// that failed or ran no test is a warning of the crw.exploreRecord row, never a stop: the milestone closes.
+func TestDesignExplorerRunsTheEndConditionOnce(t *testing.T) {
+	const cmd = "go test ./a -run '^TestA$'"
+	nodes := oneNode()
+	nodes[0].EndCondition = []string{cmd}
+	l := NewLab(t, nodes...)
+	d := l.designFor()
+	d.OpenQuestions = openQuestions(2)
+	l.Design = &d
+	given := 0
+	l.On("^explore:", func(c *Call) *fakehostPlan {
+		ran := []any{}
+		if strings.Contains(c.Text, "END CONDITIONS") {
+			given++
+			if !strings.Contains(c.Text, cmd) || !strings.Contains(c.Text, "CRW-A") {
+				t.Errorf("the explorer packet does not name the command of CRW-A:\n%s", c.Text)
+			}
+			ran = append(ran, map[string]any{"command": cmd, "exit_code": 1, "tests": 0, "summary": "build failed"})
+		}
+		p := Say(map[string]any{"answer": "answer of the explorer", "evidence": []string{"README.md"}, "verified": []string{}, "inferred": []string{}, "unknown": []string{}, "end_conditions": ran})
+		return &p
+	})
+	auditText := ""
+	l.On("^design-audit:r1$", func(c *Call) *fakehostPlan {
+		auditText = c.Text
+		return nil
+	})
+	got := mustRun(t, l)
+	if got.State != "closed" {
+		t.Fatalf("state %q: an end condition that failed stops nothing", got.State)
+	}
+	if given != 1 || len(l.CallsOf("explorer")) != 2 {
+		t.Fatalf("%d of %d explorers were given the end condition, want 1", given, len(l.CallsOf("explorer")))
+	}
+	var warned []string
+	for _, row := range l.Rows("crw.exploreRecord") {
+		if str(row.Data, "kind") != "open_questions" {
+			continue
+		}
+		list, _ := row.Data["warnings"].([]any)
+		for _, w := range list {
+			warned = append(warned, fmt.Sprint(w))
+		}
+	}
+	joined := strings.Join(warned, " | ")
+	if !strings.Contains(joined, ops.WarnEndConditionFailed) || !strings.Contains(joined, ops.WarnEndConditionNoTests) || !strings.Contains(joined, cmd) {
+		t.Errorf("the warnings of the exploreRecord rows: %q", warned)
+	}
+	if !strings.Contains(auditText, `"exit_code":1`) || !strings.Contains(auditText, `"tests":0`) {
+		t.Errorf("the design audit does not see the end condition's result:\n%s", auditText)
+	}
+}
+
 // maxOpen is the most calls of a role that were open at once (prepared and not yet ended).
 func maxOpen(l *Lab, role string) int {
 	open, most := map[string]bool{}, 0
@@ -184,7 +240,7 @@ func TestExplorerSignalAndInlineThresholds(t *testing.T) {
 		ops.OpenQuestion{ID: "dup", Question: "Who owns   module number 1?", Scope: "repo", FilesNeeded: []string{"a.go", "b.go", "c.go", "d.go", "e.go"}})
 	l.Design = &d
 	l.On("^explore:", func(c *Call) *fakehostPlan {
-		p := Say(map[string]any{"answer": "answer of the explorer", "evidence": []string{"README.md"}, "verified": []string{}, "inferred": []string{}, "unknown": []string{}})
+		p := Say(map[string]any{"answer": "answer of the explorer", "evidence": []string{"README.md"}, "verified": []string{}, "inferred": []string{}, "unknown": []string{}, "end_conditions": []any{}})
 		p.Delay = 40_000_000
 		return &p
 	})
@@ -241,7 +297,7 @@ func TestOpenQuestionRoutesThroughDesignAudit(t *testing.T) {
 	l.On("^explore:", func(c *Call) *fakehostPlan {
 		for q, a := range explained {
 			if strings.Contains(c.Text, "QUESTION: "+q) {
-				p := Say(map[string]any{"answer": a, "evidence": []string{"README.md"}, "verified": []string{}, "inferred": []string{}, "unknown": []string{}})
+				p := Say(map[string]any{"answer": a, "evidence": []string{"README.md"}, "verified": []string{}, "inferred": []string{}, "unknown": []string{}, "end_conditions": []any{}})
 				return &p
 			}
 		}
@@ -639,7 +695,7 @@ func TestEvidenceMissingSpawnsExplorerThenReviewerPacket(t *testing.T) {
 	l := NewLab(t, oneNode()...)
 	reviews(l, "A", Verdict(false, EvidenceDefect("e1", "does the retry loop stop at the deadline?", "retry.go", "deadline.go")), Verdict(true))
 	l.On("^explore:A:", func(*Call) *fakehostPlan {
-		p := Say(map[string]any{"answer": "the loop stops at the deadline in retry.go:44", "evidence": []string{"retry.go:44"}, "verified": []string{"retry.go"}, "inferred": []string{}, "unknown": []string{}})
+		p := Say(map[string]any{"answer": "the loop stops at the deadline in retry.go:44", "evidence": []string{"retry.go:44"}, "verified": []string{"retry.go"}, "inferred": []string{}, "unknown": []string{}, "end_conditions": []any{}})
 		return &p
 	})
 	got := mustRun(t, l)

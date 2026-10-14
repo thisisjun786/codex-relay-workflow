@@ -24,6 +24,9 @@ type ReadyVerdict struct {
 	Reasons []string
 	// Warnings are the end condition's commands that may pass having run no test (CRW-1328): additive, never a reason it is held.
 	Warnings []string
+	// EndCondition are the commands the done condition names, read and never run (CRW-1382): the flow's design-stage explorer runs them
+	// once and records the exit code and the tests they ran.
+	EndCondition []string
 }
 
 // CheckIssueReady runs the release gate on one issue. It is the one implementation of the gate: the
@@ -43,5 +46,6 @@ func CheckIssueReady(issue ReadyIssue) (ReadyVerdict, error) {
 		OpenQuestions: report.OpenQuestions,
 		Reasons:       report.Reasons,
 		Warnings:      report.Warnings,
+		EndCondition:  report.EndCondition,
 	}, nil
 }

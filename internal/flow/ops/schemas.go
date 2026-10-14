@@ -76,7 +76,9 @@ var schemaTexts = map[string]string{
 		`"matrix":` + textsJSON + `,"teardown":` + textsJSON + `,"summary":{"type":"string"}},"required":["captures","matrix","teardown","summary"],"additionalProperties":false}`,
 	SchemaQAPass:    `{"type":"object","properties":{"pass":{"type":"string","enum":["A","B"]},"verdict":{"type":"string","enum":` + qaVerdicts + `},"findings":{"type":"array","items":` + qaFindingJS + `},"summary":{"type":"string"}},"required":["pass","verdict","findings","summary"],"additionalProperties":false}`,
 	SchemaQAReceipt: `{"type":"object","properties":{"verdict":{"type":"string","enum":` + qaVerdicts + `},"findings":{"type":"array","items":` + qaFindingJS + `},"summary":{"type":"string"}},"required":["verdict","findings","summary"],"additionalProperties":false}`,
-	SchemaFindings:  `{"type":"object","properties":{"answer":{"type":"string"},"evidence":` + textsJSON + `,"verified":` + textsJSON + `,"inferred":` + textsJSON + `,"unknown":` + textsJSON + `},"required":["answer","evidence","verified","inferred","unknown"],"additionalProperties":false}`,
+	SchemaFindings: `{"type":"object","properties":{"answer":{"type":"string"},"evidence":` + textsJSON + `,"verified":` + textsJSON + `,"inferred":` + textsJSON + `,"unknown":` + textsJSON + `,` +
+		`"end_conditions":{"type":"array","items":{"type":"object","properties":{"command":{"type":"string"},"exit_code":{"type":"integer"},"tests":{"type":"integer"},"summary":{"type":"string"}},"required":["command","exit_code","tests","summary"],"additionalProperties":false}}},` +
+		`"required":["answer","evidence","verified","inferred","unknown","end_conditions"],"additionalProperties":false}`,
 }
 
 // SchemaNames lists the schemas this file holds a copy of.
@@ -478,6 +480,17 @@ type Findings struct {
 	Verified []string `json:"verified"`
 	Inferred []string `json:"inferred"`
 	Unknown  []string `json:"unknown"`
+	// EndConditions are the end condition commands the explorer was given and ran once, each with its exit code and the tests it ran
+	// (CRW-1382); empty when it was given none.
+	EndConditions []EndConditionRun `json:"end_conditions"`
+}
+
+// EndConditionRun is one end condition command the design-stage explorer ran: its exit code and how many tests it ran.
+type EndConditionRun struct {
+	Command  string `json:"command"`
+	ExitCode int    `json:"exit_code"`
+	Tests    int    `json:"tests"`
+	Summary  string `json:"summary"`
 }
 
 // DecodeFindings reads FINDINGS.

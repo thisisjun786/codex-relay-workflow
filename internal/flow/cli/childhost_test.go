@@ -302,7 +302,9 @@ func TestChildSizedIssueWithoutChildHostWarnsAtStart(t *testing.T) {
 		}
 		return nil
 	}
-	child := func(in *compile.Input) { in.Projects[0].Issues[1].SizeFit, in.Projects[0].Issues[1].SizeReason = "child", "regions_gt3" }
+	child := func(in *compile.Input) {
+		in.Projects[0].Issues[1].SizeFit, in.Projects[0].Issues[1].SizeReason = "child", "regions_gt3"
+	}
 	f := factOf(start(child))
 	if f == nil || f.Level != LevelWarn || !strings.Contains(f.Reading, "A-2") || strings.Contains(f.Reading, "A-1") || !strings.Contains(f.Reason, "--child-host") {
 		t.Errorf("a child-sized issue without --child-host: %+v", f)

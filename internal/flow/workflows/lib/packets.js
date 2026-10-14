@@ -189,14 +189,21 @@ export function replanPacket(ms, cur, due, head, misaligned) {
   return parts.join('\n\n')
 }
 
-export function explorerPacket(kind, route, ctx) {
-  return [
+// ends are the end condition commands of the milestone's issues the explorer runs once (CRW-1382): given to the first explorer of a
+// DESIGN's first audit round only; every other packet tells the explorer to answer end_conditions as [].
+export function explorerPacket(kind, route, ctx, ends) {
+  const parts = [
     'ROLE: explorer. Answer one question by reading the repository; do not edit anything.',
     'ASKED BY: ' + (ctx.node ? 'node ' + ctx.node : 'the architect of milestone ' + ctx.milestone) + ' (' + kind + ')',
     'QUESTION: ' + route.question,
     section('FILES NEEDED', list(route.files_needed, 'not named')),
-    'Answer with FINDINGS: the answer, the evidence, and what you verified, inferred and could not determine.',
-  ].join('\n\n')
+  ]
+  if (ends && ends.length) {
+    parts.push(section('END CONDITIONS (run each command once where you are, change nothing, and report each in end_conditions with its exit code, the number of tests it ran and a one-line summary; a failure or a run of no test is reported, never fixed)',
+      ends.map((e) => '- ' + e.issue + ': `' + e.command + '`')))
+  }
+  parts.push('Answer with FINDINGS: the answer, the evidence, and what you verified, inferred and could not determine' + (ends && ends.length ? ', and end_conditions.' : '; end_conditions is [].'))
+  return parts.join('\n\n')
 }
 
 export function packet(node, plan, checkpoint, notes) {

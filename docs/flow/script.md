@@ -307,7 +307,11 @@ thread in a non-blocking `design_question` escalation: an authority question in 
 question beyond the cap once the DESIGN is approved; the escalation's evidence names the question digests it asked, so a later round
 or a re-plan does not ask one again on its own (`asked_in_run`); because only the latest design ask of a run is current for `crw flow answer`,
 an ask carries the questions of the DESIGN the run asked already that no answer has reached, and an orchestrator answer applied to it is the answer of the question from the
-next round on (`answered_by_orchestrator`); a reused answer names the route it came from (`origin`); a reviewer of another model family than the architect audits the DESIGN (`DESIGN_AUDIT`, recorded by
+next round on (`answered_by_orchestrator`); a reused answer names the route it came from (`origin`); the first explorer of the first
+DESIGN's first audit round is also given the commands of the done conditions of the milestone's issues (`end_condition` of a node, read
+from the body the handoff carries), runs each once and reports its exit code and the tests it ran in the `end_conditions` of its
+`FINDINGS`, which the answer carries into the design audit, and a command that failed, ran no test or was not reported is a warning of the
+`crw.exploreRecord` row (CRW-1382; never a stop); a reviewer of another model family than the architect audits the DESIGN (`DESIGN_AUDIT`, recorded by
 `crw.designAudit`), and `needs_changes` returns the DESIGN to the architect on its own thread; only an approved DESIGN becomes revision
 `r0` of the design ledger (`crw.designLedger`); `crw.dag` runs one lane for each node and the signal path of the milestone
 ([The architect's continuity and the re-plan](#the-architects-continuity-and-the-re-plan)); when every lane landed, `crw.closeMilestone` closes the milestone over
@@ -479,8 +483,10 @@ put the handoff first", and nothing is defaulted. Before its first fenced write 
 run id as the session nonce (a resumed process is the same claim); a write after another session claimed the plan is refused
 (`stale_coordinator_epoch`), writes nothing and is the error kind `epoch_lost` (`ops.ErrEpochLost`, whose message opens `refused:epoch_lost:`,
 CRW-1285): a release answers it as `released: false` with the reason `epoch_lost`, and `project-lane.js` ends the lane whose fenced write it
-was (`stopped`, reason `epoch_lost`: no escalation and no further write) and, once its lanes have ended, the run with `{state: 'stopped', reason:
-'epoch_lost', detail}` (a parallel lane stops at its own next fenced write, refused the same way). `release` is `ReleaseAgent` (dag-release-request/1: the base from
+was (`stopped`, reason `epoch_lost`: no escalation and no further write; a release refused so ends the lane `unreleased` with the reason and
+the relay's detail) and, once its lanes have ended, the run with `{state: 'stopped', reason: 'epoch_lost', detail}` (a parallel lane stops at
+its own next fenced write, refused the same way). The steps after the lanes (the close, the reflection, a re-plan, the report) end the run
+the same way when one of them meets the error kind (CRW-1382), instead of ending it in a script error. `release` is `ReleaseAgent` (dag-release-request/1: the base from
 the plan's target, the criteria `c1..cn` of the issue, the pinned handoff as the volatile input, the run's directory as the artifact
 root, the rule version of the executor pair, the script and helper digests, the installed plugin's skills digest and the build, and
 `expected_slice_digest`, the node's slice the flow compared; the answer names the slice of the manifest the relay committed); a
@@ -498,7 +504,12 @@ run the issue-lane workflow, and the answer is the child the start admitted and 
 child. A run with no host settings, or settings missing a field, refuses the node with the reason (`refused:child_host_unset:`,
 `refused:child_host_settings:`, an input error); a start the managed engine refused or left incomplete (`refused:child_not_started:`, its
 intent and slot stay and the same release continues it) and a node the scheduler holds back (`refused:child_held_back:`) are errors, never a
-child that is running (`crw.releaseChild` refuses a relay answer that started nothing, `child_not_started`).
+child that is running (`crw.releaseChild` refuses a relay answer that started nothing, `child_not_started`). The request carries
+`expected_slice_digest`, the node's slice `crw.release` compared when it found the node sized for a child (CRW-1382), and the managed release
+compares it as `ReleaseAgent` does: a plan that gave the node another slice before the start starts no child, the answer is `Started` false
+with `plan_changed`, `crw.releaseChild` records that (`started: false`, the reason, the slice) and the lane ends the node `unreleased` with
+the reason. `crw flow start` warns when the handoff sizes an issue of the run for a child and names no `--child-host` (the warn fact
+`child_host_unset`, recorded in the run's spec; the run starts).
 
 ## The milestone close
 

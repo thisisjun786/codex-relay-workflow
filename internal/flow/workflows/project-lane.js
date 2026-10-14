@@ -16,6 +16,9 @@ const AUDIT_ROUNDS = 3
 const RESEARCH_PER_TIER = 2
 
 const ms = await crw.milestone(args.plan, args.milestone)
+// the commands of the issues' done conditions (CRW-1382): the design-stage explorer runs each once and records the exit code and the tests
+const END_CONDITIONS = []
+for (const n of ms.nodes) for (const c of n.end_condition || []) END_CONDITIONS.push({ issue: n.issue, command: c })
 
 // The design audit of a DESIGN of the architect: its open questions go to explorers or, when out of the architect's authority or
 // beyond the explorer cap, to the orchestrator (crw.exploreRoute), a reviewer of another model family audits the
@@ -25,7 +28,9 @@ const ms = await crw.milestone(args.plan, args.milestone)
 async function auditedDesign(first, tag, context) {
   let arch = first
   for (let round = 1; round <= AUDIT_ROUNDS; round++) {
-    const asked = await crw.explore('open_questions', arch.output.open_questions, { milestone: ms.id })
+    // the end condition commands of the issues are run once, by the first explorer of the first DESIGN's first round (CRW-1382)
+    const ends = round === 1 && tag === '' ? END_CONDITIONS : []
+    const asked = await crw.explore('open_questions', arch.output.open_questions, { milestone: ms.id }, { endConditions: ends })
     // the authority questions of the round are asked now, approved or not (CRW-1366): an answer is the next round's
     await askOrchestrator(asked.answers, 'out_of_authority')
     if (asked.failed) return { ok: false, result: await crw.milestoneHalt(ms, 'explorer', asked.failed.status, asked.failed.reason, asked.failed.callId) }

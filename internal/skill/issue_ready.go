@@ -171,6 +171,9 @@ type readyReport struct {
 	// Warnings are the end condition's commands that may pass having run no test (CRW-1328, issue_ready_command.go): additive, and never
 	// a reason the issue is held.
 	Warnings []string `json:"warnings,omitempty"`
+	// EndCondition are the commands of the done condition sections, read and never run (CRW-1382): what the design-stage explorer of the
+	// flow runs once. Not part of the report.
+	EndCondition []string `json:"-"`
 }
 
 // punctuation dropped when an entry is compared with the placeholder and none words.
@@ -444,7 +447,8 @@ func readyReportFor(in readyInput) (readyReport, error) {
 	}
 
 	report := readyReport{Schema: readySchema, Issue: in.ID, Title: in.Title, Present: []string{}, Missing: []string{}, OpenQuestions: []string{}, Reasons: []string{},
-		Observed: readyObserved{EditRegions: regions, UnreadHeadings: append([]string{}, unread...)}, Warnings: endConditionWarnings(sections)}
+		Observed: readyObserved{EditRegions: regions, UnreadHeadings: append([]string{}, unread...)}, Warnings: endConditionWarnings(sections),
+		EndCondition: endConditionCommands(sections)}
 	if report.Observed.EditRegions == nil {
 		report.Observed.EditRegions = []string{}
 	}

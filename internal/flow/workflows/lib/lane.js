@@ -431,13 +431,19 @@ async function superseded(node, rel) {
 // question of the same digest asked again in the run reuses the answer and names the route it came from (origin). The result lists an answer for each question, the
 // questions that went to the orchestrator thread or that exhausted the asker's research, and the call that failed when an
 // explorer did not complete.
-export async function explore(kind, questions, ctx) {
+//
+// opts.endConditions are the end condition commands of the milestone's issues ({issue, command}, CRW-1382): the first explorer this
+// fan-out spawns is given them to run once, and its answer names them (end_conditions_asked) so crw.exploreRecord can warn of a command
+// that failed, ran no test or was not reported. They are not an argument of crw.exploreRoute or of crw.exploreRecord's context.
+export async function explore(kind, questions, ctx, opts) {
   const plan = await crw.exploreRoute(kind, ctx, questions)
   const spawn = plan.routes.filter((r) => r.route === 'spawn')
+  const ends = (opts && opts.endConditions) || []
+  const endsFor = spawn.length && ends.length ? spawn[0].digest : null
   const found = {}
   let failed = null
   for (const wave of chunks(spawn, EXPLORER_CONCURRENCY)) {
-    const calls = await parallel(wave.map((r) => () => agent.call(explorerPacket(kind, r, ctx), {
+    const calls = await parallel(wave.map((r) => () => agent.call(explorerPacket(kind, r, ctx, r.digest === endsFor ? ends : null), {
       agentType: 'explorer', node: ctx.node || undefined, head: ctx.head || undefined, schema: FINDINGS, label: 'explore:' + (ctx.node || ctx.milestone) + ':' + r.digest.slice(0, 12),
     })), { keys: wave.map((r) => r.digest.slice(0, 12)), label: 'explore' })
     wave.forEach((r, i) => {
@@ -465,7 +471,9 @@ export async function explore(kind, questions, ctx) {
       if (sib && found[sib.digest]) answer = found[sib.digest].answer
       else if (sib) answer = sib.answer || ''
     }
-    return { digest: r.digest, id: r.id, question: r.question, route: r.route, reason: r.reason || '', scope: r.scope || '', authority: r.authority || '', answer, call, evidence: ev, findings, origin: r.origin || '' }
+    const out = { digest: r.digest, id: r.id, question: r.question, route: r.route, reason: r.reason || '', scope: r.scope || '', authority: r.authority || '', answer, call, evidence: ev, findings, origin: r.origin || '' }
+    if (r.route === 'spawn' && r.digest === endsFor) out.end_conditions_asked = ends
+    return out
   })
   await crw.exploreRecord(kind, ctx, answers)
   return {

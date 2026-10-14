@@ -24,6 +24,8 @@ type NodeSpec struct {
 	// SizeFit is the architect's size_fit for the node's issue (executor when empty).
 	SizeFit, SizeReason string
 	Criteria            []string
+	// EndCondition are the commands of the issue's done condition, as the relay reads them from the body the handoff carries (CRW-1382).
+	EndCondition []string
 }
 
 func (n NodeSpec) criteria() []string {
@@ -104,7 +106,7 @@ func (r *FakeRelay) Milestone(_ context.Context, plan, milestone string) (ops.Mi
 	ms := ops.Milestone{ID: milestone, Plan: plan, Title: "milestone " + milestone, Criteria: []string{"the milestone is done"}, CriteriaDigest: sha("milestone " + milestone),
 		Surfaces: r.Surfaces, Grade: r.Grade, RequiredCommands: r.Commands}
 	for _, n := range r.nodes {
-		pn := ops.PlanNode{ID: n.ID, Issue: n.Issue, Title: n.Title, After: n.After, Regions: n.Regions, Group: n.Group, Criteria: n.criteria()}
+		pn := ops.PlanNode{ID: n.ID, Issue: n.Issue, Title: n.Title, After: n.After, Regions: n.Regions, Group: n.Group, Criteria: n.criteria(), EndCondition: n.EndCondition}
 		pn.CriteriaDigest = sha(strings.Join(pn.Criteria, "\n"))
 		pn.SliceDigest = sliceOf(n)
 		ms.Nodes = append(ms.Nodes, pn)

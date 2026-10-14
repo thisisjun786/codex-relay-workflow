@@ -449,7 +449,7 @@ const viaCall = (await agent.call('plain text', { agentType: 'explorer' })).outp
 return { objKeys: Object.keys(obj).sort(), text, none, refused, same: viaCall === text, wrapper: typeof agent.call === 'function' }
 `)
 	v := value[map[string]any](t, res)
-	if fmt.Sprint(v["objKeys"]) != "[answer evidence inferred unknown verified]" || v["text"] != "fake answer to: plain text" ||
+	if fmt.Sprint(v["objKeys"]) != "[answer end_conditions evidence inferred unknown verified]" || v["text"] != "fake answer to: plain text" ||
 		v["none"] != nil || v["refused"] != nil || v["same"] != true {
 		t.Errorf("%v", v)
 	}

@@ -637,7 +637,7 @@ func (l *laneLab) onTurn(r fakehost.TurnRequest) fakehost.TurnPlan {
 	case c.Role == "reviewer":
 		return labSay(map[string]any{"verdict": "verified", "criteria": []any{map[string]any{"id": "c1", "met": true, "evidence": "read the head"}}, "defects": []any{}, "summary": "reviewed"})
 	case c.Role == "explorer":
-		return labSay(map[string]any{"answer": "answer", "evidence": []string{"README.md"}, "verified": []string{"README.md"}, "inferred": []string{}, "unknown": []string{}})
+		return labSay(map[string]any{"answer": "answer", "evidence": []string{"README.md"}, "verified": []string{"README.md"}, "inferred": []string{}, "unknown": []string{}, "end_conditions": []any{}})
 	case c.Role == "executor" || c.Role == "executor-t1":
 		if c.Cwd != "" && c.Node != "" {
 			path := filepath.Join(c.Cwd, "node-"+l.issue[c.Node]+".txt")
