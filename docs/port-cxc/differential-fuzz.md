@@ -123,8 +123,8 @@ campaign sets `TMPDIR` to a tmpfs directory of its own.
 
 | target | one case at a time, one python3 per request | cases side by side, reused processes |
 | --- | --- | --- |
-| pyjson | 6.6 cases/s (CRW-711: 11,853 cases in 1,800 s) | 72 cases/s |
-| state | 5.1 cases/s (CRW-711: 9,087 cases in 1,800 s) | 8.8 cases/s with `TMPDIR` on a disk, 45 cases/s on a tmpfs |
+| pyjson | 6.6 cases/s (CRW-711: 11,853 cases in 1,800 s) | 112 cases/s (a two-hour campaign: 804,051 cases in 7,196 s) |
+| state | 5.1 cases/s (CRW-711: 9,087 cases in 1,800 s) | 8.8 cases/s with `TMPDIR` on a disk (two-minute run), 40 cases/s on a tmpfs (a two-hour campaign: 288,131 cases in 7,196 s) |
 
 The state target spends its time in difference shrinking: the known open difference of the lone
 surrogate session file (about one case in seven) is shrunk through up to 500 candidates, each a fresh
@@ -188,12 +188,12 @@ campaign runs two hours with four workers at a fixed seed, and each target has a
 1,000,000 for shellwrite, spawn, pyjson and doctor, and 100,000 for worktreedel, memorygate, state and
 goalplan.
 
-At the rates above the minimums take: pyjson 1,000,000 cases in about 3.8 hours, state
-100,000 cases in about 37 minutes on a tmpfs (3.2 hours on a disk), and the
-other targets inside the two hours. Only pyjson does not reach its minimum in two hours.
+At the rates above the minimums take: pyjson 1,000,000 cases in about 2.5 hours, state 100,000 cases
+in about 42 minutes on a tmpfs (about 3.2 hours on a disk), and the other targets inside the two hours.
+Only pyjson needs more than the two hours.
 
-Proposal (not applied; it changes the end condition set in CRW-711 and waits for Jun): for pyjson,
-take 500,000 cases as the minimum, which is what two hours at four workers reaches, or keep
-1,000,000 and let the pyjson campaign run until it has them. Until Jun decides, the end condition
-stays as written above and a pyjson campaign that stops at two hours is recorded with its case count
-and the shortfall.
+Proposal (not applied; it touches the end condition set in CRW-711 and waits for Jun): the pyjson
+campaign runs until it has its 1,000,000 cases, which is two and a half hours rather than two, so the
+minimum count is kept and the time bound is the part that gives way; or the pyjson minimum becomes
+800,000, which is what two hours at four workers reach. Until Jun decides, the end condition stays as
+written above and a pyjson campaign records both its case count and its elapsed time.
