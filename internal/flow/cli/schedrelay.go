@@ -55,6 +55,10 @@ type SchedRelay struct {
 	HostMemory func() (*dagsched.HostMemoryBound, error)
 	// RunnableCommand says why the run's verifier cannot run a required command of a milestone ("" when it can); nil checks nothing.
 	RunnableCommand func(command string) string
+	// Child is the host settings of a managed child start (SP-CHILD-1, CRW-1285): the crw-flow-child-host/1 document the run pinned
+	// (--child-host); nil when it pinned none, and a node sized for a child is then refused with the reason. The scheduler's Start and
+	// Selectors are the managed engine the child is started with.
+	Child *ChildHost
 
 	// release serializes the releases: the bound of the host is set on the scheduler for the one being made.
 	release sync.Mutex
@@ -67,11 +71,6 @@ type SchedRelay struct {
 }
 
 var _ ops.Relay = (*SchedRelay)(nil)
-
-// ErrChildReleaseUnwired is the answer of ReleaseChild: a managed child start needs the host settings of the parent and the child, which
-// the run does not hold (SP-CHILD-1). It is an error and never a ChildResult with Started false, which the project lane would record as a
-// child that is running.
-var ErrChildReleaseUnwired = errors.New("refused:child_release_unwired: the run starts no issue child: a managed child start needs the host settings of the parent and the child, which the run does not hold (SP-CHILD-1 host settings are a follow-up of CRW-1277)")
 
 func (r *SchedRelay) q(ctx context.Context) store.Querier { return r.Sched.Store.Q(ctx) }
 
@@ -148,8 +147,9 @@ func (r *SchedRelay) claim(ctx context.Context, plan string) error {
 }
 
 // ErrEpochLost is the error of a fenced write the run made after another session claimed the plan: the run stops there, and its result
-// names the reason.
-var ErrEpochLost = errors.New("the run lost the coordinator epoch of its plan")
+// names the reason. It is the lane's error kind (ops.ErrEpochLost, the closed reason epoch_lost), so it reaches the op's result and the
+// script as itself, never as another refusal (CRW-1285).
+var ErrEpochLost = ops.ErrEpochLost
 
 // epochLost wraps a stale_coordinator_epoch refusal as ErrEpochLost; any other error is returned as it is.
 func epochLost(plan string, err error) error {
@@ -327,31 +327,18 @@ func (r *SchedRelay) Release(ctx context.Context, req ops.ReleaseRequest) (ops.R
 	if err != nil {
 		return ops.ReleaseResult{}, err
 	}
-	criteria := make([]dagsched.Criterion, len(is.Criteria))
-	for i, c := range is.Criteria {
-		criteria[i] = dagsched.Criterion{ID: fmt.Sprintf("c%d", i+1), Title: strings.TrimSpace(c), Required: true}
+	request, err := r.releaseRequest(req.Plan, n, is)
+	if err != nil {
+		return ops.ReleaseResult{}, err
 	}
-	request := dagsched.ReleaseRequest{Schema: dagsched.SchemaReleaseRequest, RuleVersion: r.Rule, Criteria: criteria,
-		CriteriaSource: compile.InputSchema + "@" + r.Handoff.SHA256,
-		Volatile:       []dagsched.Volatile{{Source: compile.InputSchema, SnapshotURI: r.Handoff.Path, SHA256: r.Handoff.SHA256, CapturedAt: r.CreatedAt}},
-		ArtifactRoots:  []string{RunDir(r.State, r.RunID)}, ExpectedSliceDigest: req.SliceDigest}
-	if n.Kind == dag.NodeImplementation {
-		checkout, ref, err := r.target(req.Plan)
-		if err != nil {
-			return ops.ReleaseResult{}, err
-		}
-		request.Base = &dagsched.BaseSpec{Repository: checkout, Ref: ref}
-	}
+	request.ExpectedSliceDigest = req.SliceDigest
 	r.release.Lock()
 	defer r.release.Unlock()
-	if r.HostMemory != nil {
-		bound, err := r.HostMemory()
-		if err != nil {
-			return ops.ReleaseResult{}, err
-		}
-		r.Sched.Host = bound
-		defer func() { r.Sched.Host = nil }()
+	done, err := r.hostBound()
+	if err != nil {
+		return ops.ReleaseResult{}, err
 	}
+	defer done()
 	res, err := r.Sched.ReleaseAgent(ctx, req.Plan, req.Node, r.Actor, request, dagsched.AgentReleaseOptions{Role: "executor", Tier: "executor", RunID: r.RunID, Worktree: r.worktreeHandle(req.Node)})
 	if err != nil {
 		if reason, held := holdBack(err); held && reason == ops.ReasonPlanChanged {
@@ -367,6 +354,42 @@ func (r *SchedRelay) Release(ctx context.Context, req ops.ReleaseRequest) (ops.R
 	}
 	slice, _ := body["node_slice_digest"].(string)
 	return ops.ReleaseResult{Released: true, ExecutionID: res.ExecutionID, SlotID: res.SlotID, Replayed: res.Replayed, SliceDigest: slice}, nil
+}
+
+// releaseRequest is the dag-release-request/1 the run holds the inputs of for a node: the rule version, the criteria of the node's issue
+// as c1..cn required, the pinned handoff as the volatile input and the run's directory as the artifact root, and, for an implementation
+// node, the base from the plan's target.
+func (r *SchedRelay) releaseRequest(plan string, n dag.SnapNode, is compile.Issue) (dagsched.ReleaseRequest, error) {
+	criteria := make([]dagsched.Criterion, len(is.Criteria))
+	for i, c := range is.Criteria {
+		criteria[i] = dagsched.Criterion{ID: fmt.Sprintf("c%d", i+1), Title: strings.TrimSpace(c), Required: true}
+	}
+	request := dagsched.ReleaseRequest{Schema: dagsched.SchemaReleaseRequest, RuleVersion: r.Rule, Criteria: criteria,
+		CriteriaSource: compile.InputSchema + "@" + r.Handoff.SHA256,
+		Volatile:       []dagsched.Volatile{{Source: compile.InputSchema, SnapshotURI: r.Handoff.Path, SHA256: r.Handoff.SHA256, CapturedAt: r.CreatedAt}},
+		ArtifactRoots:  []string{RunDir(r.State, r.RunID)}}
+	if n.Kind == dag.NodeImplementation {
+		checkout, ref, err := r.target(plan)
+		if err != nil {
+			return dagsched.ReleaseRequest{}, err
+		}
+		request.Base = &dagsched.BaseSpec{Repository: checkout, Ref: ref}
+	}
+	return request, nil
+}
+
+// hostBound sets the host memory bound of a release on the scheduler (the caller holds the release lock) and answers what takes it
+// back.
+func (r *SchedRelay) hostBound() (func(), error) {
+	if r.HostMemory == nil {
+		return func() {}, nil
+	}
+	bound, err := r.HostMemory()
+	if err != nil {
+		return nil, err
+	}
+	r.Sched.Host = bound
+	return func() { r.Sched.Host = nil }, nil
 }
 
 // planChanged is the answer to a release the relay refused plan_revision_conflict (CRW-1291): the revision the run pinned, the plan's
@@ -440,9 +463,61 @@ func (r *SchedRelay) ReleaseStands(ctx context.Context, plan, node, execution st
 	return r.Sched.AgentAcceptanceIntegrated(ctx, q, acc.Agent)
 }
 
-// ReleaseChild refuses: the run holds no host settings for a managed child start (CRW-1277 g).
-func (r *SchedRelay) ReleaseChild(context.Context, ops.ChildRequest) (ops.ChildResult, error) {
-	return ops.ChildResult{}, ErrChildReleaseUnwired
+// ReleaseChild releases a node the architect sized for a child as an issue child (SP-CHILD-1, CRW-1285): dagsched.Release, the managed
+// start of dag-release, under the task that runs the run, with the request the run holds the inputs of (as Release: the base from the
+// plan's target, the rule version, the criteria of the node's issue, the pinned handoff, the run's directory) and the host settings of
+// the run's --child-host document: the parent's and the child's host and settings, and the child's title (the managed start prefixes the
+// node's issue key). The child it admitted, bound to the node, is the answer. A run that holds no host settings, or settings that cannot start a child, is
+// refused with the reason (an input error); a start the managed engine refused or left incomplete, a node the scheduler holds back and
+// every other failure are errors, never a ChildResult with Started false, which the lane would record as a child that is running. The
+// intent and the slot of a start that did not finish stay, and the same release continues it.
+func (r *SchedRelay) ReleaseChild(ctx context.Context, req ops.ChildRequest) (ops.ChildResult, error) {
+	if r.Child == nil {
+		return ops.ChildResult{}, ErrChildHostUnset
+	}
+	if why := r.Child.Problem(); why != "" {
+		return ops.ChildResult{}, fmt.Errorf("refused:child_host_settings: %s", why)
+	}
+	if r.Sched.Start == nil {
+		return ops.ChildResult{}, errors.New("refused:child_start_unwired: the run's scheduler has no managed-start engine")
+	}
+	if err := r.claim(ctx, req.Plan); err != nil {
+		return ops.ChildResult{}, err
+	}
+	n, is, err := r.issueOf(ctx, req.Plan, req.Node)
+	if err != nil {
+		return ops.ChildResult{}, err
+	}
+	request, err := r.releaseRequest(req.Plan, n, is)
+	if err != nil {
+		return ops.ChildResult{}, err
+	}
+	request.Instructions = fmt.Sprintf("You are the issue child of node %s (issue %s) of DAG plan %s, released by flow run %s under design revision %s (%s; sized for a child: %s). "+
+		"Run the issue-lane workflow for this node with the plan the run released it with; you coordinate only, and the executor calls of your run author every commit (SP-CHILD-1).",
+		req.Node, n.IssueKey, req.Plan, r.RunID, req.Revision, req.DesignDigest, req.Reason)
+	request.ScopeRef = "crw-flow:" + r.RunID + "/" + req.Node
+	request.Parent = r.Child.Parent
+	request.Child = r.Child.Child
+	// the managed start sends the host the child's title prefixed with the node's issue key (managed.childTitle), so the title is the document's
+	r.release.Lock()
+	defer r.release.Unlock()
+	done, err := r.hostBound()
+	if err != nil {
+		return ops.ChildResult{}, err
+	}
+	defer done()
+	res, err := r.Sched.Release(ctx, req.Plan, req.Node, r.Actor, request)
+	if err != nil {
+		if reason, held := holdBack(err); held {
+			return ops.ChildResult{}, fmt.Errorf("refused:child_held_back: the scheduler holds node %s back (%s): no child is started: %v", req.Node, reason, err)
+		}
+		return ops.ChildResult{}, epochLost(req.Plan, err)
+	}
+	if !res.Bound {
+		return ops.ChildResult{}, fmt.Errorf("refused:child_not_started: the managed start of node %s ended %s at %s (%s): no child is running; its intent and slot stay, and the same release continues it",
+			req.Node, res.State, res.Stage, res.Reason)
+	}
+	return ops.ChildResult{Started: true, Child: res.ChildTaskID, Reason: req.Reason}, nil
 }
 
 // ---- acceptance and integration ----

@@ -186,6 +186,11 @@ func (o *releaseChildOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 	if err != nil {
 		return engine.OpResult{}, err
 	}
+	if !res.Started {
+		// an answer that started no child is never recorded as one (the lane would read it as a child that is running): the relay's
+		// release says why, and the op refuses with it (CRW-1285)
+		return engine.OpResult{}, &Refusal{"child_not_started", fmt.Sprintf("the relay started no child for node %s: %s", node, res.Reason)}
+	}
 	out := ChildOutcome{Started: res.Started, Node: node, Child: res.Child, Reason: res.Reason}
 	if res.Started {
 		// the structural spawn of the child (SP-CHILD-1); the signal that sized the node for it (SP-CHILD-2) is the lane's own decision

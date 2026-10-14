@@ -247,7 +247,8 @@ func HandoffMilestone(p compile.Project, milestone string) (compile.Milestone, b
 }
 
 // CheckHandoff says why a handoff cannot be a run's compiled milestone ("" when it can): the project of the plan and the entry of the
-// milestone have to be in it.
+// milestone have to be in it, an entry the compiler accepts, whose required commands the shipped lane's verifier can run
+// (ShippedRunnableCommand, CRW-1285): the start refuses such a handoff rather than the run process when it reads the milestone.
 func CheckHandoff(in compile.Input, plan, milestone string) string {
 	p, ok := HandoffProject(in, plan)
 	if !ok {
@@ -260,7 +261,15 @@ func CheckHandoff(in compile.Input, plan, milestone string) string {
 	if !ok {
 		return fmt.Sprintf("the handoff names no entry of milestone %q in project %s (milestones[] of crw-flow-compile-input/1)", milestone, p.Key)
 	}
-	return EntryProblem(p, m)
+	if why := EntryProblem(p, m); why != "" {
+		return why
+	}
+	for _, c := range m.RequiredCommands {
+		if why := ShippedRunnableCommand(c); why != "" {
+			return fmt.Sprintf("milestone %s requires the command %q, which the run cannot verify: %s", milestone, c, why)
+		}
+	}
+	return ""
 }
 
 // EntryProblem says why the entry of a milestone is not one the compiler would have compiled ("" when it is): the rules of

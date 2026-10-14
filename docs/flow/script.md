@@ -471,11 +471,16 @@ node, then the most nodes below it, then the node id), each waiting for the node
 criteria, regions and group of its issue; the milestone's title, criteria, surfaces, grade and required commands are its entry in
 `milestones[]`, which compile judges (an issue without an entry and an entry without an issue are refused) and the run judges again by the same
 entry rules (`compile.MilestoneEntryRefusals`) when it starts and when it reads the milestone; the verifier of the shipped lane runs
-`crw-dev ci local` only, so an entry that requires another command is refused when the run reads it. A handoff that is not the
+`crw-dev ci local` only, so an entry that requires another command is refused before the run starts (`CheckHandoff` with the shipped lane's
+predicate `cli.ShippedRunnableCommand`, applied by `crw flow start --handoff`, the start of a night batch and `crw manage batch decide --handoff`)
+and again when the run reads it; a verifier that runs other commands (`make e2e`) is the first real project's to decide (CRW-1209). A handoff that is not the
 one the pinned revision was compiled from (an issue with no node, criteria whose digest is not the node's) is refused with "compile and
 put the handoff first", and nothing is defaulted. Before its first fenced write the run claims the plan's coordinator epoch with its
 run id as the session nonce (a resumed process is the same claim); a write after another session claimed the plan is refused
-(`stale_coordinator_epoch`) and writes nothing; `project-lane.js` takes the refusal of the acceptance or of the close as the lane's `land_refused`, so that milestone ends `incomplete` with the reason in the journal (the run does not stop on the spot: a parallel lane's next fenced write is refused the same way). `release` is `ReleaseAgent` (dag-release-request/1: the base from
+(`stale_coordinator_epoch`), writes nothing and is the error kind `epoch_lost` (`ops.ErrEpochLost`, whose message opens `refused:epoch_lost:`,
+CRW-1285): a release answers it as `released: false` with the reason `epoch_lost`, and `project-lane.js` ends the lane whose fenced write it
+was (`stopped`, reason `epoch_lost`: no escalation and no further write) and, once its lanes have ended, the run with `{state: 'stopped', reason:
+'epoch_lost', detail}` (a parallel lane stops at its own next fenced write, refused the same way). `release` is `ReleaseAgent` (dag-release-request/1: the base from
 the plan's target, the criteria `c1..cn` of the issue, the pinned handoff as the volatile input, the run's directory as the artifact
 root, the rule version of the executor pair, the script and helper digests, the installed plugin's skills digest and the build, and
 `expected_slice_digest`, the node's slice the flow compared; the answer names the slice of the manifest the relay committed); a
@@ -485,8 +490,15 @@ worktree before it asks, the run's buffered rows are stored first, and the run's
 node's calls and the reviewer's input criteria digest on the reviewer's completed row, which the acceptance reads. `integrate` names the node's current acceptance and the head it accepted (anything else is refused before the batch, `acceptance_not_current` or `head_not_accepted`) and is one
 `IntegrateBatch` of the node with the wiring of `crw relay dag-integrate` (`dagsched.IntegrationDeps`: `crw-dev ci local` over the
 merged tree, the merged tree's own crw-dev when the configuration names a Go root, git's compare-and-swap of the branch) onto the plan's target branch, followed by the observation of the landing there;
-`close` is `AgentClose`. `releaseChild` is refused (`refused:child_release_unwired:`): a managed child start needs host settings the
-run does not hold.
+`close` is `AgentClose`. `releaseChild` (SP-CHILD-1, CRW-1285) is the managed start of `dag-release` with the host settings the run
+holds: `crw flow start --child-host FILE` checks a `crw-flow-child-host/1` document (`marker_root`, `parent {host_id, settings}`, `child
+{host_id, title, settings}`, one host) and pins it into the run's directory like the handoff (`child_host {path, sha256}` in the run's
+arguments). The request carries the parent's and the child's host and settings, the child's title (the managed start prefixes the node's issue key) and the instruction to
+run the issue-lane workflow, and the answer is the child the start admitted and bound to the node; the same release again answers the same
+child. A run with no host settings, or settings missing a field, refuses the node with the reason (`refused:child_host_unset:`,
+`refused:child_host_settings:`, an input error); a start the managed engine refused or left incomplete (`refused:child_not_started:`, its
+intent and slot stay and the same release continues it) and a node the scheduler holds back (`refused:child_held_back:`) are errors, never a
+child that is running (`crw.releaseChild` refuses a relay answer that started nothing, `child_not_started`).
 
 ## The milestone close
 
@@ -501,7 +513,10 @@ or on an identity git could not resolve: that verifies nothing); the identities 
 `internal/pabcd/source`, the rule of the native final gate (`source.CommitIdentity` is the identity of a pinned commit), and the
 judgement of every piece is in the `crw.finalGate` row (the call row of the gate). The gate is `pass` when every piece is fresh and
 passes, `failed` when a fresh piece does not pass (a verification that ran and failed, a receipt that is `REVISE`, `FAIL` or
-`INCONCLUSIVE`), and `pending` while a piece is missing or stale. The gate makes no evidence. The close makes it, at H: `crw.verify(null node)` for each
+`INCONCLUSIVE`), and `pending` while a piece is missing or stale. A verification whose record says no test package ran tests
+(`testPackagesRun` 0 in verification-record/1, CRW-1328; a record without the member is unknown, never zero) is recorded on its
+`crw.verify` row with the warning `no_tests_run`, and the gate lists it in `warnings` and on its evidence; its state is the evidence's as
+before. The gate makes no evidence. The close makes it, at H: `crw.verify(null node)` for each
 command named in `need_tests`, and the QA calls below when `need_qa`; then the gate is judged again. A verification that cannot run holds
 the milestone (`verify_unavailable`). A head that moves while evidence is made is judged again from the new head, at most three rounds.
 A gate that failed ends the close with an escalation (`final_gate_test_failed`, `qa_failed`, `qa_inconclusive`) and reviewer-final does not

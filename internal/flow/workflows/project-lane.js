@@ -117,9 +117,22 @@ const arch = designed0.arch
 await crw.designLedger(ms.id, { design: arch.output, answers: designed0.answers, architect: arch })
 await askOrchestrator(designed0.answers, 'explorer_cap')
 
+// A fenced write after another session claimed the plan's coordinator epoch is refused epoch_lost (CRW-1285): the lane ends at that
+// write with the reason, and neither escalates nor writes anything more at the relay; the run ends stopped on it (below).
+const EPOCH_LOST = 'epoch_lost'
+const epochLost = (e) => /refused:epoch_lost:/.test((e && e.message) || '')
+async function lane(n, rel, sig) {
+  try {
+    return await nodeLane(n, rel, sig)
+  } catch (e) {
+    if (epochLost(e)) return { node: n.id, state: 'stopped', reason: EPOCH_LOST, detail: e.message }
+    throw e
+  }
+}
+
 // The lane of one issue node. It reads no variable of the script that another lane may have changed: its facts are the plan of
 // its release revision and the results of its own calls.
-async function lane(n, rel, sig) {
+async function nodeLane(n, rel, sig) {
   const node = n.id
   const plan = await crw.issuePlan(node)
   if (plan.size_fit === 'child') {
@@ -213,6 +226,7 @@ async function lane(n, rel, sig) {
         if (verdict.verdict === 'verified') {
           const landed = await crw.land(node, { head, ci, review: rv })
           if (landed.state === 'landed') return landed
+          if (landed.reason === EPOCH_LOST) return { node, state: 'stopped', reason: EPOCH_LOST, detail: landed.detail }
           const esc = await crw.escalate(node, { reason: landed.reason || 'land_refused', detail: landed.detail || '', ask: 'land' })
           return { node, state: 'escalated', reason: landed.reason, escalation: esc.id }
         }
@@ -250,6 +264,8 @@ const designed = {}
 for (const is of arch.output.issues) designed[is.node] = is.edit_regions
 const admitted = ms.nodes.map((n) => Object.assign({}, n, { regions: crw.admissionRegions(n.regions, designed[n.id]) }))
 const lanes = await crw.dag(args.plan, lane, { nodes: admitted, milestone: ms.id, cap: args.cap, onSignal })
+const lost = lanes.filter((l) => l && l.reason === EPOCH_LOST)
+if (lost.length > 0) return { state: 'stopped', reason: EPOCH_LOST, detail: (lost.find((l) => l.detail) || lost[0]).detail || '', milestone: ms.id, lanes }
 // the run-level hold plan_superseded (CRW-1291): the relay's plan moved past the revision the run pinned, and the run holds for its parent
 if (lanes.some((l) => l && l.state === 'held' && l.reason === 'plan_superseded')) return { state: 'held', reason: 'plan_superseded', milestone: ms.id, lanes }
 if (!lanes.every((l) => l && l.state === 'landed')) return { state: 'incomplete', milestone: ms.id, lanes }
