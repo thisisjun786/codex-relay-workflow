@@ -108,10 +108,16 @@ worker; one that stops answering is a request that outlives the five-second dead
 kills the worker and its whole process group, so no stopped `python3` outlives the campaign
 (`TestPyjsonShimReportsAKilledReusedProcessAsADeadWorker`,
 `TestPyjsonShimReportsAHungReusedProcessAsATimeoutAndLeavesNothingRunning`,
-`TestCampaignCountsAReusedProcessThatDiesMidCampaign`). Both are failing cases of the campaign.
+`TestCampaignCountsAReusedProcessThatDiesMidCampaign`). Both are failing cases of the campaign. A reused
+process that ends while no request waits on it is found by the first request after its end, before that
+request takes any path: a remembered answer, a fresh process, another option set and the ending of the
+oldest open process all meet the death first, so it is counted as a dead worker for that case and never
+dropped unseen
+(`TestPyjsonShimReportsAReusedProcessThatDiedWhileIdleWhateverTheNextRequestIs`,
+`TestCampaignCountsAReusedProcessThatDiedWhileIdleAtTheNextCase`).
 
 **Per-case cost.** `canonical` writes a long ASCII string (4,096 bytes or more) in one pass over its
-bytes, because the writer's pass over its characters cost more than 20 ms on a two-megabyte traceback
+bytes, because a pass over its characters costs more than 20 ms on a two-megabyte traceback
 (`TestCanonicalWritesWhatThePyjsonWriterWrites`). `PrepareRoot` judges a case root once and makes
 its homes as plain directories; `RemoveCaseRoot` tries `RemoveAll` before it makes every directory
 listable. The case roots are made below `$TMPDIR`: on a tmpfs the state target runs several times
@@ -121,10 +127,13 @@ campaign sets `TMPDIR` to a tmpfs directory of its own.
 **What a rate was measured at.** Seed 711, four workers, the CXC v0.2.40 tree extracted from git tag
 `v0.2.40` and named by `CRW_CXC_ORACLE_ROOT`, on a host also running other work:
 
-| target | one case at a time, one python3 per request | cases side by side, reused processes |
+| target | cases per second | measured over |
 | --- | --- | --- |
-| pyjson | 6.6 cases/s (CRW-711: 11,853 cases in 1,800 s) | 112 cases/s (a two-hour campaign: 804,051 cases in 7,196 s) |
-| state | 5.1 cases/s (CRW-711: 9,087 cases in 1,800 s) | 8.8 cases/s with `TMPDIR` on a disk (two-minute run), 40 cases/s on a tmpfs (a two-hour campaign: 288,131 cases in 7,196 s) |
+| pyjson | 112 | a two-hour campaign: 804,051 cases in 7,196 s |
+| pyjson | 6.6 | the CRW-711 campaign, one case judged at a time and one `python3` per request: 11,853 cases in 1,800 s |
+| state, `TMPDIR` on a tmpfs | 40 | a two-hour campaign: 288,131 cases in 7,196 s |
+| state, `TMPDIR` on a disk | 8.8 | a two-minute run |
+| state | 5.1 | the CRW-711 campaign, one case judged at a time: 9,087 cases in 1,800 s |
 
 The state target spends its time in difference shrinking: the known open difference of the lone
 surrogate session file (about one case in seven) is shrunk through up to 500 candidates, each a fresh
@@ -142,7 +151,8 @@ timed in five parts:
 
 On a disk the sync of the Go side's atomic write dominates; on a tmpfs the cost that stays is the
 home guard, which resolves every path of a root again for each directory made (36 % of the CPU
-samples). `PrepareRoot` and `RemoveCaseRoot` are the two places it was spent without need.
+samples). `PrepareRoot` and `RemoveCaseRoot` are the two per-case places that pay it: `PrepareRoot` judges
+a case root once, and `RemoveCaseRoot` removes it without walking it first.
 
 ## Stopping and carrying on
 
@@ -155,6 +165,16 @@ skipped, and a failure record carries its case's number in the whole run
 (`TestCampaignSegmentsGiveTheWholeRun`, `TestCampaignStopLetsTheDrawnCasesFinishAndAResumeFinishesTheRun`).
 A host load gate uses this: a campaign is stopped when the host is over its limit and carried on when
 the load has fallen, and the campaign time is the sum of its segments' elapsed time.
+
+The draw reads what ends it (an interrupt or terminate signal, the deadline, a case that ended the campaign on
+an error) once a worker is free to take the next case, and draws that case's input only after that. With
+every worker in a case, no input is drawn for a case that does not run, so a stop, the deadline or an error
+starts nothing more, `"stopped"` is set whenever the draw ended on a signal with cases left to run, and
+`--skip` counts exactly the cases the campaign judged
+(`TestCampaignStartsNoCaseAfterStopWhileEveryWorkerIsBusy`,
+`TestCampaignStartsNoCaseAfterTheDeadlineWhileEveryWorkerIsBusy`,
+`TestCampaignStreamStartsNoCaseAfterItIsStoppedWhileEveryWorkerIsBusy`,
+`TestCampaignStoppedWhileBusyAndResumedGivesTheWholeRun`).
 
 ## Campaign records
 
