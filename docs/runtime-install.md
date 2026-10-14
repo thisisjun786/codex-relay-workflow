@@ -477,7 +477,8 @@ neither `--disabled` nor a non-empty list it has nothing to compare and still re
 
 A dry run of a `notLoaded` thread ends `settings_unverified` (exit 3): the host reports no settings for a thread until it is
 resumed, and a dry run sends nothing, so it cannot resume to learn them. A real run resumes with the recorded model and effort (the
-record is the child's one authorized pair) and starts the turn only when the host's answer equals the record.
+record is the one pair authorized for the child (project session, relay role `parent`), read through [the level
+table](../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels)) and starts the turn only when the host's answer equals the record.
 
 ## Installing the runtime
 
