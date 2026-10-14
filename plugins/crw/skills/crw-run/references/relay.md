@@ -1474,8 +1474,8 @@ can land a second copy after another writer appended. Then read the comment back
 
 `sync-reconcile` answers from the document before any rewrite: `already_written`, `absent`,
 `stale`, `duplicate` or `malformed`. Those describe THIS JOB'S BLOCK, not the container, so
-`absent` still means writing through the conditional container replacement above. A duplicated or
-unterminated block is repaired by one conditional replacement, never appended over, and `stale`
+`absent` still means writing through the container replacement above. A duplicated or
+unterminated block is repaired by one replacement of the container, never appended over, and `stale`
 returns that block's exact current text so the repair is built from what is actually there.
 `sync-complete` parses the readback as a structured record and checks this job's own block, not
 the presence of words, and confirmation is monotonic.
@@ -1494,7 +1494,7 @@ You are the project's registered parent: every write command takes `--actor` wit
 summary once and pass it as `--document` every time (its URL, one line).
 
 1. **Look.** `dag-summary-status --plan <plan>` lists each document with its newest entry, `owed` (that entry is not confirmed) and `up_to_date` (it states the plan as the store reads it now).
-   Nothing owed and up to date: stop. The plan moved on, or there is no entry: `dag-summary-enqueue --plan <plan> --actor <you> --document <doc>`. The same state of the plan is the same entry, so asking again
+   Nothing owed and up to date: the comment can still hold a stale summary that a slow writer put over the confirmed one, so read it and run the check of step 6 (`dag-summary-reconcile` of the newest entry) and stop only when that answers `again: false`. The plan moved on, or there is no entry: `dag-summary-enqueue --plan <plan> --actor <you> --document <doc>`. The same state of the plan is the same entry, so asking again
    after a wake, a compaction or a restart is safe.
 
         codex-session-relay --state "$RELAY_STATE" dag-summary-status --plan <plan>
@@ -1503,7 +1503,7 @@ summary once and pass it as `--document` every time (its URL, one line).
 2. **Take.** `dag-summary-claim --summary <id> --actor <you>` answers a `claim_token` and the `operation`: the exact `block`, the exact `container` text, the `empty_container` and the protocol. A second claim of the same
    entry is allowed at once (the answer of the first may have been lost) and kills the first token: a restarted or replacement session claims again any entry that reads `claimed`, because
    a `dag-coordinator-claim` does not touch summary tokens and only that second claim ends the earlier session's. `sync_not_claimable` means this is not the entry to write: the entry was superseded or confirmed, so run
-   `dag-summary-status` and take the newest one; an entry that failed eight times says so, and `dag-summary-retry --summary <id> --actor <you>` reopens that entry only.
+   `dag-summary-status`, take the newest open one, and when none is open check the comment against the newest confirmed entry (step 6); an entry that failed eight times says so, and `dag-summary-retry --summary <id> --actor <you>` reopens that entry only.
 
         codex-session-relay --state "$RELAY_STATE" dag-summary-claim --summary <id> --actor <you>
 
@@ -1515,14 +1515,22 @@ summary once and pass it as `--document` every time (its URL, one line).
    older summary over a newer one. `already_written`: the block is there, so confirm (step 5) and write nothing. Otherwise `repair` says how to write:
 
    * `replace_container`: the document has the plan's container once: step 4.
-   * `initialize`: the document has no container. Add it with ONE `gh api -X PATCH` of the comment whose body is the text you read, a blank line and the `empty_container`. The claim token keeps two sessions from doing it at once, and a second container shows up as `manual` at the next reconcile.
+   * `initialize`: the document has no container. Add it with ONE `gh api -X PATCH` of the comment whose body is the text you read, a blank line and the `empty_container`, after the same two checks as step 4 (this entry still open, the comment read again and equal to the text you reconciled).
+     GitHub takes the whole body without comparing it, so two sessions that both found no container can each write one: the later write replaces the earlier text, and the next reconcile finds one container or `manual`, which decides.
      Then read again and reconcile again. A comment created for the summary is best created with the
-     `empty_container` as its body. If the comment cannot be matched although nobody edited it, stop and ask a person to add the container.
+     `empty_container` as its body. If the comment does not exist or cannot be read, stop and ask a person for the comment to use.
    * `manual`: the document is malformed (a block or container that is not closed, two containers, a block outside its container). Write nothing: record it with `dag-summary-fail`, naming the document and what
      `detail` says, and report it to a person. The relay never confirms a corrupt document and one replacement cannot repair markers that appear twice.
 
-4. **Write.** One call, for `replace_container`: `gh api -X PATCH repos/OWNER/NAME/issues/comments/ID -F body=@new.txt`, where `new.txt` is the comment text you read with the container (markers included) replaced by `operation.container`. GitHub applies it
-   without comparing the comment with your read, so write at once after the reconcile of step 3 and never from a text read before another claim; the readback of step 5 shows whether a newer summary or an edit was overwritten. Never append a summary to the comment.
+4. **Check, then write.** GitHub has no compare-and-swap for a comment, so the write is guarded by two checks made right before it. They narrow the window between the read and the write and do not close it:
+
+   * Write only while this session holds a live claim. Run `dag-summary-status --plan <plan>` immediately before the write: this entry must still be the document's newest entry and read `claimed`. Superseded or confirmed means do not write: go to step 6.
+     The status shows the entry's state and not whose token is current, so a session that cannot tell whether a later claim replaced its own (a restart, a long pause since step 2) claims again (step 2) and starts at step 3.
+   * Then read the comment again (the same `gh api` read) and compare it with the text you reconciled in step 3. If it differs in any byte, write nothing and go back to step 3 with the new text.
+
+   Then one call, for `replace_container`: `gh api -X PATCH repos/OWNER/NAME/issues/comments/ID -F body=@new.txt`, where `new.txt` is the text you reconciled with the container (markers included) replaced by `operation.container`. GitHub applies it
+   without comparing the comment with your read, so write at once after the checks and never from a text read before another claim. Never append a summary to the comment.
+   The race that remains: two writers inside the window can still overwrite each other. The claim, the check before the write and the repair of step 6 make the comment converge to the newest confirmed summary.
 
 5. **Read back and confirm.** Read the comment again (the same `gh api` read) and pass the whole text:
 
@@ -1530,15 +1538,20 @@ summary once and pass it as `--document` every time (its URL, one line).
           --document <doc> --readback @doc.txt
 
    It confirms only when the plan's container holds this entry's block and nothing else (`readback_mismatch` names the difference and leaves the entry claimed: reconcile the readback and act on its
-   `repair`, then read again). `replayed: true` means it was already confirmed.
+   `repair`, then read again). `replayed: true` means it was already confirmed. A comment that does not hold this entry's block as written is not confirmed, whatever the cause: go to step 6.
 
-6. **Failure: retry only that entry.** A write the readback shows overwrote something (the container changed since you read it: a concurrent edit or a newer summary), a `gh` error, a lost response or a readback you cannot repair is recorded
-   with `dag-summary-fail --summary <id> --actor <you> --claim-token <token> --error '<text>'`. Then claim the same entry again and start at step 3: after a lost response the reconcile finds the block in the
-   document (`already_written`) and the entry is confirmed without a second write. Do not enqueue to retry; the entry is the unit. A failure the relay refuses with `sync_not_claimable` came after a newer summary
-   superseded the entry: take the newest.
+6. **Failure and repair: the comment converges to the newest confirmed summary.** Never end with a stale summary in the comment.
+
+   * A `gh` error, a lost response, or a readback that does not hold this entry's block as written (the write overwrote a concurrent edit or a newer summary, or another writer overwrote it): record
+     `dag-summary-fail --summary <id> --actor <you> --claim-token <token> --error '<text>'` with what the readback showed. Then claim the same entry again and start at step 3: after a lost response the reconcile finds the block in the
+     document (`already_written`) and the entry is confirmed without a second write. Do not enqueue to retry; the entry is the unit.
+   * `sync_not_claimable` from the claim, the complete or the fail means a newer entry superseded this one or it is confirmed already. It is not the end. Run `dag-summary-status`: a newer open entry is taken and written from step 2 (the older summary is never written).
+     When the newest entry is `confirmed`, read the comment again and run `dag-summary-reconcile --summary <newest id> --observed @doc.txt`. `again: false` (the comment carries that summary): stop. `again: true` (the comment holds a stale summary, an older one or none, because a slow writer put it over the newer one):
+     `dag-summary-enqueue --plan <plan> --actor <you> --document <doc> --again` records the plan's state as a new entry, and you write it from step 2. The relay has this command for exactly this case, so no other way to re-write a confirmed summary is needed.
+   * If the repair does not hold (the readback still does not carry the block after a second pass, or the relay refuses one of these commands), record `dag-summary-fail` with what the readback showed (when the relay refuses it with `sync_not_claimable` because the entry is confirmed, put the same facts in the report) and report to a person that the comment holds a stale summary. Do not stop quietly.
 
 If the confirmed summary is no longer in the document (a person removed it, or something outside this procedure replaced it: `dag-summary-reconcile` of the newest confirmed entry answers `again: true`),
-`dag-summary-enqueue --plan <plan> --actor <you> --document <doc> --again` records the plan's state as a new entry and you write it as above.
+the same `dag-summary-enqueue ... --again` records the plan's state as a new entry and you write it as above.
 
 ## Not owned here
 
