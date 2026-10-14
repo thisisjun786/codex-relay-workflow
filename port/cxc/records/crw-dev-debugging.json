@@ -74,7 +74,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Normalize frontmatter to the repository-supported name and description fields; preserve the invocation description and record the removed oracle metadata. CRW-1220: Logic Analysis is system behaviour analysis; the escalation names the levels; the description is scoped",
+      "reason": "Normalize frontmatter to the repository-supported name and description fields; preserve the invocation description and record the removed oracle metadata. CRW-1220: Logic Analysis is system behaviour analysis; the escalation names the levels; the description is scoped. CRW-1352: the session layers carry the names of the level table (crw-canon/references/hierarchy.md); crw-run-initiative is retired into crw-run",
       "hunks": [
         {
           "line": 3,
@@ -125,7 +125,7 @@
             "- **Repeated fix attempts failed** — likely architectural; needs human judgment\n"
           ],
           "new": [
-            "- **Repeated fix attempts failed** — likely architectural; return it to the level that assigned the work (an issue child to its project orchestrator, a task with no parent to the user)\n"
+            "- **Repeated fix attempts failed** — likely architectural; return it to the level that assigned the work (an issue child to the child that released it, a task with no parent to the user)\n"
           ]
         },
         {
