@@ -30,7 +30,8 @@ func RowTokens(data map[string]any) Tokens {
 // (a held call that goes on in place starts again from zero, a replayed call writes no row, and a row another process writes for
 // a call - a superseded row of a resume, a reconcile's unknown outcome - carries none), so each token is counted once however
 // often the run was resumed. Tokens a process spent on a call it never ended (it was killed mid-call) are in no row and not
-// counted.
+// counted, unless a later process goes on with the call from a send_input step whose row records them (call_tokens, CRW-1367): that
+// process counts them when it takes them and its terminal row carries them, once.
 func RunSpent(events []Event, runID string) Tokens {
 	var sum Tokens
 	for _, ev := range events {

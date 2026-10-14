@@ -58,3 +58,64 @@ return [a.meta.tokens.input, a.meta.tokens.cached_input, a.meta.tokens.output, a
 		t.Errorf("an old row reads %+v (fresh %d)", got, got.FreshInput())
 	}
 }
+
+// TestSessionResumedRepairCountsItsTokensOnce (CRW-1278 with CRW-1367): a session call whose process died in its repair turn - the
+// repair input sent before the owner reported it, or the repair turn bound - goes on in place in a resumed process, over the memory
+// journal and over the SQLite journal. The send_input step row keeps what the turns before it counted in every part (tokens_seen,
+// call_tokens) and the resume reads that baseline back in the split; the call's terminal row is the sum of its turns (the subagent's
+// rollout total) in every part, the repair turn adds only its own growth, RunSpent counts the call once, and the resumed process's
+// figure - the run's, seeded from the terminal rows (SpentBefore) - is the same: the first turn's tokens are in no terminal row
+// until the resumed call's, so the resumed process counts them once, with it.
+func TestSessionResumedRepairCountsItsTokensOnce(t *testing.T) {
+	turns := []Tokens{
+		{Input: 1000, CachedInput: 600, Output: 200, ReasoningOutput: 80, Total: 1200},
+		{Input: 2600, CachedInput: 1800, Output: 500, ReasoningOutput: 150, Total: 3100},
+	}
+	want, added := turns[1], turns[1].Sub(turns[0])
+	for _, dj := range deathJournals(t) {
+		for _, c := range []deathCase{
+			{name: "repair sent before the report", killOnInput: true, repair: true, spawns: 1, inputs: 1, rows: repaired, tokens: turns},
+			{name: "repair turn_started", stop: deathAtK(EvTurnStarted, 2), repair: true, spawns: 1, inputs: 1, rows: repaired, tokens: turns},
+		} {
+			t.Run(dj.name+"/"+c.name, func(t *testing.T) {
+				k, _ := runDeath(t, dj, c)
+				rows := k.rowsOf("exe")
+				var steps []Event
+				for _, r := range rowsNamed(rows, EvStepPublished) {
+					if rowStr(r.Data, "action") == StepSendInput {
+						steps = append(steps, r)
+					}
+				}
+				if len(steps) != 1 {
+					t.Fatalf("send_input step rows %v, want the repair's one", steps)
+				}
+				if seen, calls := rowTokens(steps[0].Data, "tokens_seen"), rowTokens(steps[0].Data, "call_tokens"); seen != turns[0] || calls != turns[0] {
+					t.Errorf("the repair step records tokens_seen %+v, call_tokens %+v, want the first turn's %+v in every part", seen, calls, turns[0])
+				}
+				if st := sessionStageOf(rows); st.seen != turns[0] || st.calls != turns[0] {
+					t.Errorf("the resume reads the baseline back as seen %+v, calls %+v, want %+v in every part", st.seen, st.calls, turns[0])
+				}
+				done := rowsNamed(rows, EvCompleted)
+				if len(done) != 1 {
+					t.Fatalf("rows %s", eventsOf(rows))
+				}
+				term := RowTokens(done[0].Data)
+				if term != want {
+					t.Errorf("the terminal row records %+v, want the sum of the turns %+v", term, want)
+				}
+				if got := term.Sub(rowTokens(steps[0].Data, "call_tokens")); got != added {
+					t.Errorf("the recovered repair turn added %+v, want its own growth %+v", got, added)
+				}
+				if got := RunSpent(k.jr.Events(), k.h.cfg.RunID); got != want {
+					t.Errorf("RunSpent = %+v, want the call once %+v", got, want)
+				}
+				if k.resumed == nil {
+					t.Fatal("the resumed process left no result")
+				}
+				if k.resumed.Spent != want.Total {
+					t.Errorf("the resumed process's spent figure %d, want the run's %d (RunSpent over the journal it leaves)", k.resumed.Spent, want.Total)
+				}
+			})
+		}
+	}
+}

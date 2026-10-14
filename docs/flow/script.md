@@ -883,7 +883,9 @@ any row is written. `crw flow shadow` replays either from the trace and names th
 - Tokens are the rollout's last `token_count` (thread/read `path`), less what the subagent's earlier turns counted, in all its parts: the input and its
   cached part, the output and its reasoning part, the total (`tokens`: `input`, `cached_input`, `output`, `reasoning_output`, `total`; a part that is 0 is left
   out of the row, and a row written before the parts reads them as 0). A recovered `send_input` turn takes that and the call's tokens, in the same parts, from
-  its `step_published` row (`tokens_seen`, `call_tokens`), so it counts only what it adds. The App Server backend records the same parts from
+  its `step_published` row (`tokens_seen`, `call_tokens`), so it counts only what it adds. The call's tokens it takes are in no terminal row (the process that
+  counted them died before it ended the call), so the resumed process counts them against the run's figure when it takes them, and the call's terminal row
+  carries them: `RunSpent` and the process's `spent()` count them once. The App Server backend records the same parts from
   `thread/tokenUsage/updated`. A rollout that cannot be read leaves the turn unmeasured: the `tokens_unmeasured` row says `pauses: false`,
   and a session run's token ceiling counts the calls it measured.
 - A pause, a cancellation or a deadline interrupts the bound subagent's running turns and reads the thread until it is no longer
