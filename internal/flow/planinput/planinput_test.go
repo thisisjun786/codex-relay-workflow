@@ -271,6 +271,41 @@ func TestIndentedSubBulletBelongsToItsParentCondition(t *testing.T) {
 	}
 }
 
+// TestIndentedBlockedByUnderACriterionStaysABlocker (CRW-1379 P3): a "Blocked by:" bullet indented under a criterion is an order, as
+// tracking.ParseBlockedBy reads it at any indent, and not a part of the criterion's text; the criterion stays the parent of the
+// sub-bullets that come after it, and a sub-bullet of the "Blocked by:" bullet leaves with it.
+func TestIndentedBlockedByUnderACriterionStaysABlocker(t *testing.T) {
+	tests := []struct {
+		name, body string
+		want       []string
+	}{
+		{"dash", "## Done when\n- parent\n  - Blocked by: #1\n- next\n", []string{"parent", "next"}},
+		{"bold", "## Done when\n- parent\n  - **Blocked by:** #1\n- next\n", []string{"parent", "next"}},
+		{"star and capitals", "## Done when\n- parent\n  * BLOCKED BY: #1\n- next\n", []string{"parent", "next"}},
+		{"tab indent", "## Done when\n- parent\n\t- Blocked by: #1\n- next\n", []string{"parent", "next"}},
+		{"two levels down", "## Done when\n- parent\n  - child\n    - Blocked by: #1\n- next\n", []string{"parent child", "next"}},
+		{"after a blank line", "## Done when\n- parent\n\n  - Blocked by: #1\n- next\n", []string{"parent", "next"}},
+		{"the parent keeps the sub-bullets after it", "## Done when\n- parent\n  - Blocked by: #1\n  - child\n- next\n", []string{"parent child", "next"}},
+		{"and those before it", "## Done when\n- parent\n  - child\n  - Blocked by: #1\n- next\n", []string{"parent child", "next"}},
+		{"its own sub-bullet leaves with it", "## Done when\n- parent\n  - Blocked by: #1\n    - why\n  - child\n- next\n", []string{"parent child", "next"}},
+		{"a continuation line of it leaves with it", "## Done when\n- parent\n  - Blocked by: #1\n    and the reason\n- next\n", []string{"parent", "next"}},
+		{"a top level one still drops its sub-bullets", "## Done when\n- a\n- Blocked by: #1\n  - why\n- b\n", []string{"a", "b"}},
+		{"a list indented as a whole is flat", "## Done when\n  - a\n  - Blocked by: #1\n  - b\n", []string{"a", "b"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			res := build(t, milestone(open(1, "## Done when\n- one\n"), open(2, tc.body)), Options{})
+			two := res.Input.Projects[0].Issues[1]
+			if !reflect.DeepEqual(two.Criteria, tc.want) {
+				t.Errorf("criteria = %q; want %q", two.Criteria, tc.want)
+			}
+			if !reflect.DeepEqual(two.After, []string{"o:r:1"}) {
+				t.Errorf("after = %v; want [o:r:1]: the indented Blocked by line is still the order", two.After)
+			}
+		})
+	}
+}
+
 // TestBodyMappingRegionsAndSize (c2): edit regions come from the headings 수정 범위, Edit regions and Regions (a bullet's backticked
 // path, else its first word; a trailing slash is a tree); size_fit, size_reason and issue_size from "name: value" lines under 크기,
 // Size or Size fit. A missing section gives nothing and no warning (the compile defaults apply); a region the scheduler cannot take
