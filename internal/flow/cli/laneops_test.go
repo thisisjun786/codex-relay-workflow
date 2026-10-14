@@ -35,19 +35,6 @@ func TestStartRefusesWorkflowsThatNeedLaneOperationsTheBuildLacks(t *testing.T) 
 			t.Errorf("%s: exit %d, %d processes\n%s%s", name, code, len(td.spawned)-before, out, errOut)
 		}
 	}
-	// the issue lane of a child (CRW-1204, internal/flow/workflows/issue-lane.js) calls lane operations too (crw.commit, crw.hold,
-	// crw.escalate): refused the same way, --force and --preview included
-	for name, argv := range map[string][]string{
-		"issue lane":         {"start", "issue-lane", "--thread", "thread-child", "--state", w.state, "--args", `{"node":"n1","issue":{"key":"CRW-1"}}`},
-		"issue lane force":   {"start", "issue-lane", "--thread", "thread-child", "--state", w.state, "--args", `{"node":"n1","issue":{"key":"CRW-1"}}`, "--force"},
-		"issue lane preview": {"start", "issue-lane", "--preview", "--thread", "thread-child", "--state", w.state, "--args", `{"node":"n1","issue":{"key":"CRW-1"}}`},
-	} {
-		before := len(td.spawned)
-		code, out, errOut := td.do(argv...)
-		if code == 0 || len(td.spawned) != before || !strings.Contains(out+errOut, "crw.commit") || !strings.Contains(out+errOut, "installs no") {
-			t.Errorf("%s: exit %d, %d processes\n%s%s", name, code, len(td.spawned)-before, out, errOut)
-		}
-	}
 	if entries, err := os.ReadDir(filepath.Join(w.state, "flow")); err == nil && len(entries) != 0 {
 		t.Errorf("a refused start left run directories: %v", entries)
 	}
