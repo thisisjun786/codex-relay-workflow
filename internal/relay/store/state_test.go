@@ -90,6 +90,15 @@ func TestLocate_returns_empty_physical_fields_when_missing(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
+	// CRW-1401: the database's inode must outlive the store's reference in the process-wide
+	// identity table. Close drops that reference only after it has closed the connection, so a
+	// database unlinked while open would free its inode first, and a parallel test's new file
+	// that the filesystem gives the freed inode (ext4 reuses one at once) would be refused as a
+	// relay store file this process holds. A second name keeps the inode allocated until the
+	// TempDir cleanup, which runs after the deferred Close; the path itself is still missing.
+	if err := os.Link(path, path+".kept-until-close"); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
