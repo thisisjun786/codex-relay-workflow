@@ -69,6 +69,9 @@ type laneLab struct {
 	pendingIntegrate string
 	// reports are the milestone reports the runs sent up.
 	reports []string
+	// tipErr, when a test sets it, is asked before every read of the integration tip the lane makes through the relay, and an error it
+	// answers is the read's (the relay's answer at a step after the lanes, CRW-1382).
+	tipErr func() error
 }
 
 const labOwner = "thread-owner"
@@ -459,6 +462,18 @@ func (r *labRelay) Integrate(ctx context.Context, req ops.IntegrateRequest) (out
 	r.l.mu.Unlock()
 	err = r.effect("integrate:"+req.Node, func() (e error) { out, e = r.SchedRelay.Integrate(ctx, req); return })
 	return
+}
+
+func (r *labRelay) IntegrationTip(ctx context.Context, plan string) (string, error) {
+	r.l.mu.Lock()
+	tipErr := r.l.tipErr
+	r.l.mu.Unlock()
+	if tipErr != nil {
+		if err := tipErr(); err != nil {
+			return "", err
+		}
+	}
+	return r.SchedRelay.IntegrationTip(ctx, plan)
 }
 
 func (r *labRelay) Close(ctx context.Context, req ops.CloseRequest) (out ops.CloseResult, err error) {

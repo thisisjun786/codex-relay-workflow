@@ -393,6 +393,8 @@ type ReleaseOutcome struct {
 	// Escalation is the hold this release raised, the question its node waits on; Hold the hold that stands (plan_superseded).
 	Escalation string `json:"escalation,omitempty"`
 	Hold       string `json:"hold,omitempty"`
+	// Detail is the relay's message of a release refused epoch_lost (CRW-1382): the lane ends unreleased with it.
+	Detail string `json:"detail,omitempty"`
 }
 
 func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResult, error) {
@@ -515,7 +517,7 @@ func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRes
 	if errors.Is(err, ErrEpochLost) {
 		// the fenced write of a run whose plan another session claimed (CRW-1285): the node is not released, the row names the reason,
 		// and the lane ends on it; a resume asks again, and the relay refuses again while the other session holds the plan
-		out.Reason, data["detail"] = ReasonEpochLost, err.Error()
+		out.Reason, out.Detail, data["detail"] = ReasonEpochLost, err.Error(), err.Error()
 		return finish()
 	}
 	if err != nil {

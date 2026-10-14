@@ -374,7 +374,8 @@ export async function dag(planId, lane, opts) {
       } else if (!rel.released && rel.hold) {
         out = await superseded(n.id, rel)
       } else {
-        if (!rel.released && rel.kind === 'executor') out = { node: n.id, state: 'unreleased', reason: rel.reason }
+        // a release the relay refused for a lost epoch carries the relay's detail, which the run's stop names (CRW-1382)
+        if (!rel.released && rel.kind === 'executor') out = rel.detail ? { node: n.id, state: 'unreleased', reason: rel.reason, detail: rel.detail } : { node: n.id, state: 'unreleased', reason: rel.reason }
         else out = await lane(n, rel, S ? S.forLane(n.id) : noSignals)
       }
     } catch (e) {
