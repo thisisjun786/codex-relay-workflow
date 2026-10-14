@@ -169,8 +169,6 @@ func runSectionProblems(section string, relay map[string]bool) []string {
 		"`--preview`",
 		"--handoff",
 		`(?i)handles only (two things|escalations)`,
-		"`crw flow apply ",
-		`(?i)the receipt of an oversized issue`,
 		`(?i)never claims the coordinator epoch of a plan (that )?a run holds`,
 		"`stale_coordinator_epoch`",
 		`(?i)milestone ends .?incomplete`,
@@ -222,7 +220,7 @@ func TestRunProjectNeverClaimsRunEpoch(t *testing.T) {
 
 	t.Run("fixture: a thread that claims the plan of a run is reported", func(t *testing.T) {
 		good := "## Run a milestone with a flow run\n\nThe orchestrator starts one run for each milestone with `crw flow start project-lane --handoff F` after `--preview`. " +
-			"The thread handles only two things: an escalation, and the receipt of an oversized issue with `crw flow apply --event E`. " +
+			"The thread handles only escalations. " +
 			"It never claims the coordinator epoch of a plan a run holds with `dag-coordinator-claim`: the run's next write is `stale_coordinator_epoch` and the milestone ends `incomplete`. " +
 			"An out-of-band transition is raised as an escalation. A dead run is taken again with `crw flow resume`. " +
 			"The run releases the child of an oversized issue itself: it runs the `issue-lane` workflow and the thread sends it no task packet.\n"
@@ -237,7 +235,6 @@ func TestRunProjectNeverClaimsRunEpoch(t *testing.T) {
 				return strings.Replace(s, "An out-of-band transition is raised as an escalation.", "", 1)
 			},
 			"no section":    func(s string) string { return strings.Replace(s, "## Run a milestone with a flow run", "## Other", 1) },
-			"no apply":      func(s string) string { return strings.Replace(s, "`crw flow apply --event E`", "a command", 1) },
 			"unconditional": func(s string) string { return s + "Run `dag-coordinator-claim` at the start of every turn.\n" },
 			"child path":    func(s string) string { return s + "The rest of this skill is the path of an oversized issue.\n" },
 			"no packet note": func(s string) string {
@@ -827,7 +824,7 @@ func TestSkillCommandsExist(t *testing.T) {
 	}
 	// The commands the skills of this series rely on are among the ones written, so the comparison above has them as its subject.
 	found := skillFlowSubcommands(texts)
-	for _, sub := range []string{"start", "show", "watch", "apply", "reports", "report-ack", "report-up", "compile", "resume", "answer"} {
+	for _, sub := range []string{"start", "show", "watch", "reports", "report-ack", "report-up", "compile", "resume", "answer"} {
 		if len(found[sub]) == 0 {
 			t.Errorf("no skill text writes `crw flow %s`: the comparison no longer covers it", sub)
 		}
