@@ -69,6 +69,9 @@ func SchedulerSettle(ctx context.Context, st *store.Store, runID string, nodes [
 // relayRunNodes are the nodes whose agent executions the relay records under the run, in the order the relay wrote them; a store with no
 // agent executions has none.
 func relayRunNodes(ctx context.Context, st *store.Store, runID string) ([]dagsched.RunNode, error) {
+	if runID == "" {
+		return nil, nil
+	}
 	var exists int
 	if err := st.DB.QueryRowContext(ctx, "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'dag_agent_executions'").Scan(&exists); err != nil || exists == 0 {
 		return nil, err
