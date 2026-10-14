@@ -102,10 +102,12 @@ const sunPathLimit = 104
 // holds (CRW-1393): the system's own answer is a bare "invalid argument" (EINVAL). The Stop is released as for any unreachable guard;
 // nothing is refused. "" for a path that fits, or a dial that failed for another reason.
 func controlPathNote(path string, err error) string {
-	if len(path) < sunPathLimit || !errors.Is(err, unix.EINVAL) {
+	// The limit is this system's own (sockaddrUnPathLimit: Linux 108, darwin 104, CRW-1398); sunPathLimit, the shorter of the two, is the
+	// threshold of ControlAddress, which a dial of a path between them goes through.
+	if len(path) < sockaddrUnPathLimit || !errors.Is(err, unix.EINVAL) {
 		return ""
 	}
-	return fmt.Sprintf(" (the control socket path is longer than a unix socket address holds: at most %d bytes on darwin and %d on Linux; give the relay state a shorter directory)", sunPathLimit-1, 107)
+	return " (the control socket path is longer than a unix socket address holds: at most 103 bytes on darwin and 107 on Linux; give the relay state a shorter directory)"
 }
 
 // ControlAddress is the name a bind or connect uses for the control socket at path. A
