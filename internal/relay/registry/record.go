@@ -7,6 +7,7 @@ import (
 	"fmt"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/layername"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -63,7 +64,7 @@ func (r *Registry) RecordSettings(ctx context.Context, task string, settings con
 			carried := citedRole(previous)
 			if carried != nil && role != "" && carried != any(role) {
 				return refuse(contract.RefusalRoleBindingMismatch, "%s was created citing role %s and this record states %s. The creation role is not something a later write changes; correct whichever of the two is wrong at its source",
-					pyvalue.StrRepr(task), pyvalue.Repr(carried), pyvalue.StrRepr(role))
+					pyvalue.StrRepr(task), roleValue(carried), pyvalue.StrRepr(role)+layername.Gloss(role))
 			}
 			if carried != nil && role == "" {
 				settings = settings.Set("citedRole", carried)
@@ -97,7 +98,7 @@ func (r *Registry) RecordSettings(ctx context.Context, task string, settings con
 		}
 		if contested != nil {
 			return refuse(contract.RefusalRoleBindingMismatch, "%s holds live bindings at %s; one task holds one role, so there is no single role to record settings against",
-				pyvalue.StrRepr(task), pyvalue.Repr(contested))
+				pyvalue.StrRepr(task), pyvalue.Repr(contested)+layername.ListGloss(contested))
 		}
 		if bound != "" {
 			if finding := CheckBinding(citedRole(settings), bound, settings, r.Policy); finding != nil {
@@ -267,7 +268,7 @@ func CheckBoundRole(ctx context.Context, s *store.Store, task string, settings c
 		return "", false, refuse(contract.RefusalRoleBindingMismatch, "%s holds live bindings at %s, and one task holds one role. "+
 			"Nothing was sent and no turn was started, because checking its authorization against "+
 			"either of them would report a clean answer derived from an arbitrary choice. Resolve "+
-			"the bindings first.", pyvalue.StrRepr(task), pyvalue.Repr(contested))
+			"the bindings first.", pyvalue.StrRepr(task), pyvalue.Repr(contested)+layername.ListGloss(contested))
 	}
 	if role == "" {
 		return "", false, nil
@@ -275,7 +276,7 @@ func CheckBoundRole(ctx context.Context, s *store.Store, task string, settings c
 	if !policy.Declared {
 		return role, false, refuse(contract.RefusalRolePolicyUnconfigured, "%s is bound as %s and this process cannot read a role policy to check "+
 			"its authorization against: %s. Nothing was sent and no turn was started. Set the policy for this process and the held deliveries resume on the next "+
-			"pass.", pyvalue.StrRepr(task), pyvalue.StrRepr(role), policy.Detail)
+			"pass.", pyvalue.StrRepr(task), pyvalue.StrRepr(role)+layername.Gloss(role), policy.Detail)
 	}
 	if finding := CheckRecord(settings, role, policy); finding != nil {
 		recovery, ok := finding.Lookup("recovery")
@@ -284,7 +285,7 @@ func CheckBoundRole(ctx context.Context, s *store.Store, task string, settings c
 		}
 		digest, _ := finding.Lookup("digest")
 		return role, false, refuse(contract.RefusalReason(findingText(finding, "code")), "%s is bound as %s: %s (policy %v). Nothing was sent and no turn was started. %v",
-			pyvalue.StrRepr(task), pyvalue.StrRepr(role), describe(finding), digest, recovery)
+			pyvalue.StrRepr(task), pyvalue.StrRepr(role)+layername.Gloss(role), describe(finding), digest, recovery)
 	}
 	return role, !derivedFromRolePair(settings, role, policy), nil
 }

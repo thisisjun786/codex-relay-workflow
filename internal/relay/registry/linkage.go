@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/layername"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -184,7 +185,7 @@ func (l linkage) projectRefusal(ctx context.Context, x *row, project string) (bo
 	}
 	if x.ParentTask == x.ChildTask {
 		return false, &linkRefusal{reason: contract.RefusalScopeCycle,
-			detail:    "relationship " + pyvalue.StrRepr(x.ID) + " has the same task as parent and child, which is a self-link rather than a level",
+			detail:    "relationship " + pyvalue.StrRepr(x.ID) + " has the same task as 자식 and issue child, which is a self-link rather than a level",
 			scopeKind: scopeIssue, scopeKey: x.Issue, incumbent: x.ParentTask, challenger: x.ChildTask}, nil
 	}
 	owners, err := l.liveOwners(ctx, scopeProject, project, roleParent)
@@ -196,7 +197,7 @@ func (l linkage) projectRefusal(ctx context.Context, x *row, project string) (bo
 	}
 	if len(owners) == 0 {
 		return false, &linkRefusal{reason: contract.RefusalUnregisteredScope,
-			detail:    "project " + pyvalue.StrRepr(project) + " has no registered parent, so an issue cannot be attached to it yet",
+			detail:    "project " + pyvalue.StrRepr(project) + " has no registered 자식, so an issue cannot be attached to it yet",
 			scopeKind: scopeProject, scopeKey: project, challenger: x.ParentTask}, nil
 	}
 	holder := owners[0]
@@ -220,7 +221,7 @@ func (l linkage) projectRefusal(ctx context.Context, x *row, project string) (bo
 	}
 	if holder != x.ParentTask && !movingWithin {
 		return false, &linkRefusal{reason: contract.RefusalForeignScope,
-			detail: "issue " + pyvalue.StrRepr(x.Issue) + " is assigned under parent " + pyvalue.StrRepr(x.ParentTask) + ", but project " + pyvalue.StrRepr(project) +
+			detail: "issue " + pyvalue.StrRepr(x.Issue) + " is assigned under 자식 " + pyvalue.StrRepr(x.ParentTask) + ", but project " + pyvalue.StrRepr(project) +
 				" is executed by " + pyvalue.StrRepr(holder) + "; an issue belongs to its own project",
 			scopeKind: scopeProject, scopeKey: project, incumbent: holder, challenger: x.ParentTask}, nil
 	}
@@ -336,8 +337,8 @@ func (l linkage) bindingRefusal(ctx context.Context, role, kind, key string, end
 		"    AND superseded_by IS NULL", endpoint.TaskID, role).Scan(&other.role, &other.kind, &other.key)
 	if err == nil {
 		return &linkRefusal{reason: contract.RefusalScopeRoleMismatch,
-			detail: "task " + pyvalue.StrRepr(endpoint.TaskID) + " is already the " + other.role + " of " + other.kind + " " + pyvalue.StrRepr(other.key) +
-				", so it cannot also be a " + role,
+			detail: "task " + pyvalue.StrRepr(endpoint.TaskID) + " is already the " + layername.Name(other.role) + " of " + other.kind + " " + pyvalue.StrRepr(other.key) +
+				", so it cannot also be a " + layername.Name(role),
 			scopeKind: kind, scopeKey: key, incumbent: other.key, challenger: endpoint.TaskID}, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
@@ -356,8 +357,8 @@ func (l linkage) bindingRefusal(ctx context.Context, role, kind, key string, end
 		"    AND status IN ('active','paused') AND superseded_by IS NULL", endpoint.TaskID, role, kind, key).Scan(&other.kind, &other.key)
 	if err == nil {
 		return &linkRefusal{reason: contract.RefusalRoleAlreadyBound,
-			detail: "task " + pyvalue.StrRepr(endpoint.TaskID) + " is already the " + role + " of " + other.kind + " " + pyvalue.StrRepr(other.key) +
-				"; one task is bound to one tracking level, so a second " + kind + " needs its own " + role,
+			detail: "task " + pyvalue.StrRepr(endpoint.TaskID) + " is already the " + layername.Name(role) + " of " + other.kind + " " + pyvalue.StrRepr(other.key) +
+				"; one task is bound to one tracking level, so a second " + kind + " needs its own " + layername.Name(role),
 			scopeKind: kind, scopeKey: key, incumbent: other.key, challenger: endpoint.TaskID}, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
@@ -498,8 +499,8 @@ func (l linkage) applyRelationshipStatus(ctx context.Context, rid, status, previ
 			if found {
 				shown = pyvalue.StrRepr(holder)
 			}
-			return refusing(contract.RefusalForeignScope, "project "+pyvalue.StrRepr(project)+" is now parented by "+shown+", not by "+pyvalue.StrRepr(x.parent)+
-				", so restoring "+pyvalue.StrRepr(rid)+" would reattach its issue under an owner the project no longer has; re-register the assignment under the current parent instead",
+			return refusing(contract.RefusalForeignScope, "the 자식 of project "+pyvalue.StrRepr(project)+" is now "+shown+", not "+pyvalue.StrRepr(x.parent)+
+				", so restoring "+pyvalue.StrRepr(rid)+" would reattach its issue under an owner the project no longer has; re-register the assignment under the current 자식 instead",
 				scopeProject, project, holder, x.parent)
 		}
 		rival, found, err := l.oneString(ctx, "SELECT task_id FROM scope_bindings  WHERE scope_kind = ? AND scope_key = ? AND role = ?"+
@@ -529,7 +530,7 @@ func (l linkage) applyRelationshipStatus(ctx context.Context, rid, status, previ
 			if b.role == roleChild {
 				reason = contract.RefusalRoleAlreadyBound
 			}
-			return refusing(reason, "task "+pyvalue.StrRepr(x.child)+" has since become the "+b.role+" of "+b.kind+" "+pyvalue.StrRepr(b.key)+
+			return refusing(reason, "task "+pyvalue.StrRepr(x.child)+" has since become the "+layername.Typed(b.role)+" of "+b.kind+" "+pyvalue.StrRepr(b.key)+
 				", so it cannot be restored as the child of issue "+pyvalue.StrRepr(x.issue)+" as well", scopeIssue, x.issue, b.key, x.child)
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
@@ -559,7 +560,7 @@ func (l linkage) applyRelationshipStatus(ctx context.Context, rid, status, previ
 func (r *Registry) BindScope(ctx context.Context, role, key string, endpoint Endpoint) (contract.OrderedObject, error) {
 	kind, known := roleScope[role]
 	if !known {
-		return nil, refuse(contract.RefusalScopeRoleMismatch, "a role is one of child, parent, supervisor, not %s", strconv.Quote(role))
+		return nil, refuse(contract.RefusalScopeRoleMismatch, "a role is one of child (issue child), parent (자식), supervisor (부모), not %s", strconv.Quote(role))
 	}
 	for _, check := range []struct{ value, what string }{{key, "a scope key"}, {endpoint.TaskID, "a task id"}, {endpoint.HostID, "a host id"}} {
 		if err := exact(check.value, check.what); err != nil {

@@ -87,7 +87,7 @@ func (r *Registry) owedOf(ctx context.Context, rid string, mark contract.Ordered
 		return "", err
 	}
 	if row != nil {
-		return "a " + colString(row, "state") + " delivery of it is still owed to its parent", nil
+		return "a " + colString(row, "state") + " delivery of it is still owed to its 자식", nil
 	}
 	row, err = r.Store.One(ctx, "SELECT m.state AS state FROM supervisor_messages m WHERE m.relationship_id = ?"+
 		" AND m.state IN ("+placeholders(len(unsentMessageStates))+") ORDER BY m.staged_at LIMIT 1", stringArgs(rid, unsentMessageStates)...)
@@ -95,7 +95,7 @@ func (r *Registry) owedOf(ctx context.Context, rid string, mark contract.Ordered
 		return "", err
 	}
 	if row != nil {
-		return "a " + colString(row, "state") + " supervisor message about it is still owed", nil
+		return "a " + colString(row, "state") + " 부모 message about it is still owed", nil
 	}
 	// A plan node's result is accepted, and its acceptance revalidated, while its relationship is active (dag-accept),
 	// so closing an execution whose current head has no active acceptance under the current criteria would shut the
