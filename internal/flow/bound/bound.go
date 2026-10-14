@@ -5,7 +5,8 @@
 // run) to ~/.local/state/crw/flow-bound/<thread_id>.jsonl before the turn is sent. The spawn hook reads the file of the
 // thread in whose name a native spawn is made (Lookup) and decides from its last line: no directory, a thread that has no
 // file, or a closed last line is an ordinary thread (Standalone); an unsafe directory or a file that cannot be trusted is
-// Unavailable, and every spawn is refused; anything else binds the thread to the run (Engine, Orchestrator). The hook never
+// Unavailable: the hook cannot tell whose thread it is, and decides the spawn as an ordinary thread's with a warning (CRW-1348:
+// no blanket refusal); anything else binds the thread to the run (Engine, Orchestrator). The hook never
 // opens the relay store and never reads the policy file: the helper pairs travel in the line.
 //
 // The location is computed here, once, from os.UserHomeDir and not from XDG_STATE_HOME, so that the run and the Codex host,
