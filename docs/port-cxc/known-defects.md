@@ -1573,3 +1573,7 @@ A relay child pushed the integration branch (`git push origin HEAD:dev`, r2 S8 F
 ## CRW-1306 — an implementation node is accepted by its commit, and no later step waits for a forge row
 
 The CXC relay accepts an implementation node only on its pull request and reads that pull request in every later step; port: fixed (Jun's decision of 10-13, no CXC oracle). The commit path with its local verification record is the default and a pull request is optional: the merge check, the predecessor rule and the base refresh proceed for a commit acceptance without a forge row, and the merge lane sends it to `dag-integrate`. Details are in [CRW-1306](known-defects/CRW-1306.md).
+
+## CRW-1066 — differential-fuzz throughput
+
+The fuzz campaigns judged one case at a time, started one `python3` per pyjson request and spent a third of a state case in the home guard; the harness now judges cases side by side, reuses its json.tool processes and prepares roots once, with the pyjson case-count basis left as a proposal for Jun; port: fixed (harness, no CXC oracle behavior). Details are in [CRW-1066](known-defects/CRW-1066.md).

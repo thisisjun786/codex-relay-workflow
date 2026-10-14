@@ -26,13 +26,13 @@ const (
 	RuleChild2 = "SP-CHILD-2" // size_fit child: the node is released as an issue child
 	RuleArch2  = "SP-ARCH-2"  // a re-plan (F09)
 	RuleArch3  = "SP-ARCH-3"  // the architect's reflection at the milestone close (F09)
-	RuleNat1   = "SP-NAT-1"   // a native spawn of a flow-bound thread
+	RuleNat1   = "SP-NAT-1"   // a native spawn of a flow-bound thread that is no step: an engine call's explorer, or a helper of the child
 
 	// The work the run does itself.
 	RuleInl1 = "SP-INL-1" // a research question inside the asker's regions, or with at most three files, is answered by the asker; never an open question of a DESIGN
 	RuleInl2 = "SP-INL-2" // a question already answered in the run reuses its answer
 	RuleInl3 = "SP-INL-3" // compile, commit, verification, premerge assembly, accept and integrate are code steps
-	RuleInl4 = "SP-INL-4" // the orchestrator thread is never woken for an ordinary issue
+	RuleInl4 = "SP-INL-4" // the child is never woken for one issue's event; it is woken for a step of its run
 
 	// RuleAudit is the design audit of the F08 body: a reviewer of another model family than the architect audits the DESIGN
 	// before the first executor starts.

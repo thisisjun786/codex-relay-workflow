@@ -1,5 +1,7 @@
 # The integration queue: `crw manage integrate`
 
+Here the parent (relay role `parent`) is a relay role, read through [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+
 `crw manage integrate` is the product form of the shell queue runner that merges gated heads onto `dev`. It covers the
 plain-head path only: the queue holds a commit per issue, and the runner merges, verifies and pushes. It reads and writes no relay
 record. A node's `merged` mark, the reach observation and the relationship and child clean-up still belong to the parent that owns the

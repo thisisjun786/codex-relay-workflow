@@ -32,7 +32,16 @@ func PrepareRoot(root string) error {
 		return err
 	}
 	env := RootEnv(root)
-	for _, dir := range []string{root, env.Home, env.CodexHome, env.CrwHome, env.TmpDir, filepath.Join(root, "codexclaw-home")} {
+	if err := homeguard.MkdirAll(root, 0o755); err != nil {
+		return err
+	}
+	// The root is judged once above; each home is a direct child of it, made here as a plain directory, so it
+	// cannot be a link that was not there. Whatever already stands in a home's place (a directory, a link, a file)
+	// is judged as before, by the guard's own MkdirAll.
+	for _, dir := range []string{env.Home, env.CodexHome, env.CrwHome, env.TmpDir, filepath.Join(root, "codexclaw-home")} {
+		if err := os.Mkdir(dir, 0o755); err == nil {
+			continue
+		}
 		if err := homeguard.MkdirAll(dir, 0o755); err != nil {
 			return err
 		}

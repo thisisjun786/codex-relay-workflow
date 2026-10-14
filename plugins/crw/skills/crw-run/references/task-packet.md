@@ -1,5 +1,7 @@
 # Task packet and coordination record
 
+Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../crw-canon/references/hierarchy.md#the-levels).
+
 Use this when writing a launch prompt or handing off work. Fill in actual values;
 remove inapplicable items instead of sending placeholders. Embed the acceptance
 criteria unless the worker's access to the linked issue has been established;
@@ -24,7 +26,8 @@ PR number, model, CI status, or merge status. Keep the execution mode in the
 packet's `Workflow` field and verify runtime behavior separately. A title or a
 chat link does not establish the task's native PR association; keep PR linkage
 separate from naming. An explicit user-supplied title takes precedence over
-this default. This convention names issue children; the management task above them
+this default. This convention names issue children, their row of the one
+[thread title table](../../crw-canon/references/hierarchy.md#thread-titles); the task above them
 is named by [Set the app presentation and record](../../crw-plan/references/integrations.md#set-the-app-presentation-and-record),
 including the product-family prefix that no child title carries.
 Each implementation packet names its
@@ -230,7 +233,7 @@ Workspace ownership:
   what the service manager would otherwise decide by its own default. Older service managers refuse
   `OOMPolicy` for a scope (this command was tried with systemd 259 only), and
   `systemd-run --user --scope -p OOMPolicy=kill true` says whether the one in use accepts it. Where
-  it does not, the child omits `-p OOMPolicy=kill` and keeps the rest: the manager's default then
+  it does not, the child omits `-p OOMPolicy=kill` and keeps the rest: systemd's default then
   decides what else in the scope ends, so the child also checks the command's exit status and stops
   what it started, by its recorded process group, that the kill left running. Everything inside one
   scope ends together, so each heavy command gets its own. Keeping the host itself from running out is the

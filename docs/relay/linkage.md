@@ -84,7 +84,7 @@ the case the role rule does not cover, a task that owns a scope BELOW the projec
 asked to supervise.
 
 A project has at most one live `execution` edge, whichever initiative or parent it names. Every
-other initiative uses a `reference`, and a reference must agree about who the parent is. That is
+other initiative uses a `reference`, and a reference must agree about who the parent (relay role `parent`) is. That is
 what stops a shared project from acquiring a second execution parent.
 
 ## The store seat
@@ -142,12 +142,12 @@ seat's holder is the live owner of the management seat that superseded the most 
 store binding, so it follows that seat's handovers. A user-grade or delegated-management-grade
 `decision-answer` on a record with no management ref (see below), the recipient of a
 `jun_decision_request` and the store-seat fallback of a report or a message nobody above receives
-all keep finding the manager after it registers. A store
+all keep finding the parent after it registers. A store
 seat bound again afterwards is live and answers for itself; the thread that laid it down binding it
 again after handing its management seat over reactivates its old row with `superseded_by` cleared
 (`scope_rebound`), so that row is the store seat again.
 
-A lead (an initiative supervisor) registered by a thread that holds a live management seat gets the
+A lead (an initiative-scoped supervisor) registered by a thread that holds a live management seat gets the
 execution edge from that seat to its initiative in the same transaction: `linkage-bind --role
 supervisor --scope <INIT> --task <lead> --host ... --creator <management thread>`, where
 `--creator` defaults to the caller's `CODEX_THREAD_ID`. The answer is the lead's binding with the
@@ -163,7 +163,7 @@ link id is made from the two scopes, so `linkage-handover --role supervisor --sc
 moves its `upper_task_id` to the new owner, archives the old binding (`superseded_by`), gives the new
 one the evidence as `handover_note`, and writes `scope_handover`.
 
-On the 1.0 path the sessions are two layers, the parent and the child ([the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels)),
+On the 1.0 path the sessions are two layers, the parent and the child (project session, relay role `parent`, [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels)),
 and a parent binds its child itself. A child (role `parent` at its project) bound by a thread
 that holds a live management seat gets the execution edge from that seat to the project in the same
 transaction: `linkage-bind --role parent --scope <PROJECT> --task <owner> --host ... --creator
@@ -175,7 +175,7 @@ another seat writes no second edge and is warned and recorded the same way (`man
 which is the store's own invariant (one live owner per scope and role); and the seat's handover moves
 the edge's `upper_task_id` with the
 `scope_handover` record, as a child's handover moves its `lower_task_id`. A project an
-initiative's supervisor already supervises (the legacy configuration, `linkage-supervise`) keeps that edge:
+initiative-scoped supervisor already supervises (the legacy configuration, `linkage-supervise`) keeps that edge:
 the binding is not refused, no management edge is written, the answer carries the warning under
 `managementLinkSkipped` (`reason` `link_conflict`, `detail`, the `standing` link id, the seat and the
 creator) and a `management_link_skipped` journal row records it once. In the other direction
@@ -189,7 +189,7 @@ The walk up from an issue or a project reaches whatever stands above the project
 directly above the project is the recipient of the project's upward messages: a relationship's
 report, a `project:<key>` notice and the direct project kinds go to the owner of that seat (see [the
 supervisor channel](supervisor-channel.md#the-level-above-a-project)). Without one, a legacy
-initiative supervisor is the recipient, and without that the single store seat. A management level above an
+initiative-scoped supervisor is the recipient, and without that the single store seat. A management level above an
 initiative is not a project's recipient: the lead stands between and stays the recipient of the
 project's reports, while the lead's own messages go to the management seat through
 `initiative:<key>` (see [direct messages](supervisor-channel.md#direct-messages)). An initiative with

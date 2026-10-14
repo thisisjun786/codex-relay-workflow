@@ -1,5 +1,7 @@
 # Official Codex worktree verification
 
+Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../crw-canon/references/hierarchy.md#the-levels).
+
 Read before proposing the official Codex managed worktree as a creation path for
 child tasks, or before recording a verdict about it. This reference owns the probe
 procedure, the evidence format and the judgment rule. It does not select a default

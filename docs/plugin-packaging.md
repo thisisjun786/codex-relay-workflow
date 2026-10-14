@@ -1,5 +1,7 @@
 # Plugin packaging
 
+Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+
 This repository publishes its skills as a versioned Codex plugin. The package also
 declares the task-bridge MCP server, the completion Stop hook, and the hooks ported from CXC
 behind the hook switch ([the ported hooks and the switch](#the-ported-hooks-and-the-switch)).

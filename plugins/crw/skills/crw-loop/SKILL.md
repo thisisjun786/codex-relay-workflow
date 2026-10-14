@@ -23,7 +23,7 @@ Apply the current request's authority before choosing a mode:
   If missing intent or authority prevents progress, report it; do not silently
   enlarge the scope. Do not enter Interview while a host goal is active.
 
-This skill runs one task's authorized objective. A request that names a Linear project or initiative is [crw-run](../crw-run/SKILL.md)'s, and which level runs this loop and what goal each level opens is in [hierarchy](../crw-canon/references/hierarchy.md#scope-of-each-level).
+This skill runs one task's authorized objective. A request that names a Linear project or initiative is [crw-run](../crw-run/SKILL.md)'s, and which level runs this loop and what goal each level opens is in [hierarchy](../crw-canon/references/hierarchy.md#scope-of-each-level), whose [level table](../crw-canon/references/hierarchy.md#the-levels) names the layers.
 
 A **leaf** — a spawned subagent — never opens a host goal, runs `crw pabcd orchestrate`, or
 spawns; it follows its packet and reports. A dispatched **task** is not a leaf: it owns
@@ -87,9 +87,10 @@ Keep explicit-only skills and leaf-safe delivery restrictions intact.
 ## Execution invariants
 
 - DISPATCH-MANAGED-01 (STRICT): before fanning work out, start from the binding. A
-  Linear issue or DAG node (also one the relay holds no assignment for yet) is an
-  independent relay child started and resumed through `crw-run`, or a flow executor call of the
-  child's run recorded in the relay, never a
+  Linear issue or DAG node (also one the relay holds no assignment for yet) is a flow
+  executor call of the run of the child (project session, relay role `parent`), recorded in the
+  relay, whose step the child spawns as a role subagent (the default path), or an issue child
+  started and resumed through `crw-run` (the exception, SP-CHILD-1), never a
   `create_thread` lane; the relay refuses a second active or paused assignment of
   the same issue and a release past capacity, and those answers are followed, not
   routed around by creating a thread by hand. An unresolved binding is not

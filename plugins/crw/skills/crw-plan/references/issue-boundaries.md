@@ -1,5 +1,7 @@
 # Issue boundaries and plan completeness
 
+Here the parent (relay role `parent`) is a relay role, read through [the level table](../../crw-canon/references/hierarchy.md#the-levels).
+
 Where one implementation issue ends, what it must carry, and how to tell that the split
 is finished. The mapping itself belongs to the shared
 [issue-to-PR rule](../../crw-canon/references/linear-model.md#issue-to-pr-mapping); this file is the judgment

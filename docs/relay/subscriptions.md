@@ -1,5 +1,7 @@
 # Root and descendant thread subscription lifetime
 
+Here the child (relay role `child`) is a relay role, read through [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+
 The bridge and relay release the App Server root subscriptions they own after
 finishing their useful observations and confirming the delivered turn ended.
 A finished root remains resumable and is never archived by this path. The next

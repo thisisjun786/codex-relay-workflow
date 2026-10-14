@@ -1,5 +1,7 @@
 # codex-session-relay
 
+Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+
 Durable, same-host communication between two independent Codex tasks.
 
 A child task finishes a piece of work and needs its parent to verify it. The two are separate
@@ -645,7 +647,7 @@ Global options come BEFORE the subcommand:
 | `relationship-status` / `relationship-resume` | pause, cancel, archive; resume only by restating generation and scope |
 | `relationship-close-merged` | archive the live assignments that are merged with nothing owed; a dry run without `--apply` |
 | `child-cleanup` | after the merge and the integration observation, archive the finished child and its loaded sub-threads on the App Server so their MCP helpers stop; refuses unless a merged mark counts and nothing can still be sent to the child; needs `--socket`, `--dry-run` plans |
-| `linkage-supervise` | an initiative supervisor over a project parent, by execution or by reference |
+| `linkage-supervise` | an initiative-scoped supervisor over a project parent, by execution or by reference |
 | `linkage-bind` | claim one scope for one task at one level |
 | `linkage-attach` | bind an existing assignment's issue to its project |
 | `linkage-peer` | join two project parents, symmetrically and outside the hierarchy |

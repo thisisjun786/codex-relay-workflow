@@ -1,5 +1,7 @@
 # Linear model
 
+Here the parent (relay role `parent`) is a relay role, read through [the level table](hierarchy.md#the-levels).
+
 How Linear holds the work: how goals, projects and issues relate, which document is canonical where, which level writes which record, and when an issue is Done. The levels themselves are in [hierarchy.md](hierarchy.md).
 
 ## Linear operating model

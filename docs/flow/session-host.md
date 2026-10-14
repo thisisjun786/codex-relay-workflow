@@ -1,6 +1,6 @@
 # The session host: reading role subagents
 
-A session call (CRW-1316) runs a role call as a subagent the child spawns with `spawn_agent` (multi-agent V1).
+A session call (CRW-1316) runs a role call as a subagent [the child](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels) (project session, relay role `parent`) spawns with `spawn_agent` (multi-agent V1).
 The run does not start that thread; it reads it on the host. `internal/flow/sessionhost` is that reader. It goes through the
 App Server client (`internal/bridge/appserver`), keeps plain types, and imports neither the engine nor a backend: the engine
 defines the interface it consumes.
@@ -70,7 +70,7 @@ answers are fixtures in `internal/bridge/appserver/testdata/fixtures/subagent-*.
   (`testdata/schema-0.154`). The facts below are 0.154.0's.
 - `thread/read` of a subagent: `parentThreadId`, `threadSource: subagent`, `source.subAgent.thread_spawn` (`parent_thread_id`,
   `depth`, `agent_path`, `agent_nickname`, `agent_role`), `agentRole`, `agentNickname`, `model`, `reasoningEffort`, `cwd` (the
-  parent turn's), `path` (the rollout) and `historyMode: paginated`. A finished subagent reads `notLoaded`, or `idle` while
+  spawning turn's), `path` (the rollout) and `historyMode: paginated`. A finished subagent reads `notLoaded`, or `idle` while
   its parent session keeps it loaded.
 - `thread/turns/list`: the default view is `summary` and the default order is newest first. The summary of a finished turn
   holds its first `userMessage` and its last `agentMessage` (phase `final_answer`); the full view holds every item
@@ -96,8 +96,7 @@ answers are fixtures in `internal/bridge/appserver/testdata/fixtures/subagent-*.
 
 ## The fake host's subagents
 
-`fakehost.Threads.Spawn(SubagentSpec)` makes a subagent of an owner thread the way the host shows one: the members above, the
-parent's cwd and pair unless the spec names its own, a first turn run by a `TurnPlan` (no connection follows it), and a
+`fakehost.Threads.Spawn(SubagentSpec)` makes a subagent of an owner thread the way the host shows one: the members above, the spawning session's cwd and pair unless the spec names its own, a first turn run by a `TurnPlan` (no connection follows it), and a
 `collabAgentToolCall` item (`id` the spec's tool use id, `receiverThreadIds`, `prompt` the spawn message) in the owner's turn
 in progress, else its last turn. A subagent reads `active` while its turn runs and `notLoaded` after it, unless `StayLoaded`.
 It is left out of a `thread/list` that names no source kind and listed under `subAgentThreadSpawn`. Its summary view is the

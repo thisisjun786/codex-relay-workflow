@@ -1,5 +1,7 @@
 # Operations contract
 
+Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../crw-canon/references/hierarchy.md#the-levels).
+
 Read when installing, updating, or operating the runtime that `crw-run` depends on, when assigning
 a checkout to an implementation task, and when deciding how a parent waits for delegated work. This
 file is the single owner of dependency identity, installation ownership, the shared relay service

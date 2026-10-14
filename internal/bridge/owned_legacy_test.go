@@ -82,16 +82,20 @@ func Test_test_lost_creation_response_is_never_retried(t *testing.T) {
 		t.Fatalf("again=%v err=%v calls=%v", again, err, host.Requests())
 	}
 }
+
+// CRW-1313: a refused thread/name/set is a recorded warning and no longer the partial failure (thread titles,
+// crw-canon/references/hierarchy.md), so the partial failure is a refused first turn: the created id is retained.
 func Test_test_partial_failure_retains_created_id(t *testing.T) {
 	b, host := testBridge(t)
 	cwd := t.TempDir()
 	host.Respond("thread/start", startReply(cwd))
-	host.Respond("thread/name/set", fakehost.Reply{Error: &fakehost.RPCError{Code: -32602, Message: "name rejected"}})
+	host.Respond("thread/name/set", fakehost.Reply{})
+	host.Respond("turn/start", fakehost.Reply{Error: &fakehost.RPCError{Code: -32602, Message: "turn rejected"}})
 	in := createInput(cwd, "partial")
 	in.Prompt = "hello"
 	in.Title = "Demo"
 	r, err := b.CreateThread(context.Background(), in)
-	if err != nil || r["status"] != "failed" || r["threadId"] != "thread-1" || host.Count("turn/start") != 0 {
+	if err != nil || r["status"] != "failed" || r["threadId"] != "thread-1" || r["title"] != "Demo" || host.Count("turn/start") != 1 {
 		t.Fatalf("r=%v err=%v", r, err)
 	}
 	stored, err := b.GetOperation(context.Background(), "partial")

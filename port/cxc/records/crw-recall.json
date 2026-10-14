@@ -17,7 +17,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
+      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed CRW-1353: the default path is a flow run whose steps the child spawns as role subagents (crw flow next, crw flow dispatched) and an issue child is the exception (SP-CHILD-1); the stand-in layer words follow the level table (crw-canon/references/hierarchy.md).",
       "hunks": [
         {
           "line": 3,
@@ -71,8 +71,7 @@
             "supports more than one memories schema, and reports `unsupported` rather than guessing.\n"
           ],
           "new": [
-            "Diagnosing the host memory pipeline (`crw recall memory status`, `crw recall memory requeue`) is operator\n",
-            "work for the manager: [operator.md](references/operator.md).\n"
+            "Diagnosing the host memory pipeline (`crw recall memory status`, `crw recall memory requeue`) is operator work for the parent (repository session, relay role `supervisor`, [the level table](../crw-canon/references/hierarchy.md#the-levels)): [operator.md](references/operator.md).\n"
           ]
         },
         {
@@ -110,9 +109,9 @@
     },
     {
       "file": "references/operator.md",
-      "reason": "CRW-1220: the description states the corpus; the host memory pipeline diagnosis moves to references/operator.md for the manager",
+      "reason": "CRW-1220: the description states the corpus; the host memory pipeline diagnosis moves to references/operator.md for the manager CRW-1353: the default path is a flow run whose steps the child spawns as role subagents (crw flow next, crw flow dispatched) and an issue child is the exception (SP-CHILD-1); the stand-in layer words follow the level table (crw-canon/references/hierarchy.md).",
       "add": true,
-      "sha256": "2c428270c825d43a8570f1c140abc79dee9027e286b6c7d260685a8c41034577"
+      "sha256": "146e641727a93090e757ca55fe70bd47354fc2fd4ad8ea44c9edb8e2743eb1e0"
     }
   ]
 }

@@ -5,6 +5,8 @@ description: "Read-only report of where work stands, by layer from the parent to
 
 # CRW Status
 
+Here the parent (repository session, relay role `supervisor`) and the child (project session, relay role `parent`) are layers of [the level table](../crw-canon/references/hierarchy.md#the-levels).
+
 Report what is true right now and how it is known, and choose the one action that follows when
 Jun asks for it. He asks for this as '현재 어디까지 됐어?', as '전체 프로젝트 어떻게 돼가?' or as
 '다음에 뭐 하지?'. Standing on its own, that asks for a short grounded report rather than a plan,

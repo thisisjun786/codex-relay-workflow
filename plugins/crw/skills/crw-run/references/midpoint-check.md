@@ -1,5 +1,7 @@
 # Midpoint check
 
+Here the child (project session, relay role `parent`) is a layer of [the level table](../../crw-canon/references/hierarchy.md#the-levels).
+
 One word from Jun, 중간점검 or '현재 어디까지 됐어?', arriving in the parent (repository session, relay role `supervisor`, [the level table](../../crw-canon/references/hierarchy.md#the-levels)) that leads an
 initiative. The answer is a short report covering everything that leadership holds and, where the
 execution approval is still in force, the approved work moved along. This file is the procedure

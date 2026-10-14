@@ -1,5 +1,7 @@
 # Dispatch surfaces — thread or subagent
 
+Here the parent (relay role `parent`) is a relay role, read through [the level table](../../crw-canon/references/hierarchy.md#the-levels).
+
 Read before choosing how to fan work out. This file owns the choice between
 surfaces for unmanaged work; a CRW-managed lane is chosen first by
 [DISPATCH-MANAGED-01](#dispatch-managed-01-strict--start-from-the-binding-not-from-the-mechanism).
@@ -14,22 +16,22 @@ the task packet, the assignment record the relay holds for it, or the DAG node
 
 - **Managed** — a Linear issue or a DAG node, whether the relay already holds an assignment for it
   or not. An issue with no assignment yet is not unmanaged: its first lane is a managed one. A
-  managed issue or node is one of two things, and the choice is the child's plan,
-  not this file's:
-  - an independent relay child, started and resumed through `crw-run`: the managed start, the DAG
-    release and their bridge recovery, pair/profile, capacity and receipt rules. An oversized issue
-    is this one. It is never a desktop `create_thread` lane.
-  - a flow executor call of the child's run, recorded in the relay: the run
-    releases the node to the relay's DAG scheduler and starts the executor (an engine thread of its
-    own, not a native helper of any task), and the call, its commits, its review and its acceptance
-    are rows of the run's journal and the DAG records
+  managed issue or node is one of two things, and the choice is the plan of [the child](../../crw-canon/references/hierarchy.md#the-levels) (project session, relay role `parent`), not this file's:
+  - a flow executor call of the child's run, the default path: the run releases the node to the
+    relay's DAG scheduler and publishes the executor's step, the child spawns that step's role
+    subagent (a leaf) as `crw flow next` names it and reports it with `crw flow dispatched`, and the
+    call, its commits, its review and its acceptance are rows of the run's journal and the DAG records
     ([the flow commands](../../crw-canon/references/flow.md), [the spawn policy](../../crw-canon/references/spawn-policy.md)).
+  - an issue child (relay role `child`), started and resumed through `crw-run`: the exception path of
+    one oversized issue (SP-CHILD-1) with the managed start, the DAG release and their bridge
+    recovery, pair/profile, capacity and receipt rules. It is never a desktop `create_thread` lane.
 
   Either way the relay refuses a second active or paused assignment of the same issue and a release
-  past capacity; those answers are followed, not routed around by creating a thread by hand. A
-  child's own thread uses read-only and review helpers only; the implementation of an
-  issue is its independent relay child's or its run's executor call, and that child, or that executor
-  within its stated allowance, may own bounded native helpers for its own task. The manifest of
+  past capacity; those answers are followed, not routed around by creating a thread by hand. The
+  child's own thread spawns the run's role subagents for the steps `crw flow next` hands it, and helpers
+  of its own for its judgment (recorded, SP-NAT-1); it edits no node's directory. The implementation of
+  an issue is its run's executor call or its issue child's, and a step's subagent is a leaf that spawns
+  nothing. The manifest of
   managed lanes is a read-only projection of the relay assignments and DAG records (and, for a run,
   its journal), not a second file to keep. A goal-free parent is resumed by relay delivery
   ([OPS-8.1](../../crw-run/references/operations.md#ops-81-parent-continuation-and-waiting)): it
@@ -53,8 +55,7 @@ only as a call the run records.
 different mechanisms answer to those words and they are not substitutes:
 
 - A **subagent** is a leaf spawned with the collab tools (`spawn_agent` in the
-  `multi_agent_v1` or `collaboration` namespace). Its native cwd inherits the
-  parent's working directory. It has no session state, no host goal and no PABCD FSM.
+  `multi_agent_v1` or `collaboration` namespace). Its native cwd inherits the spawning session's working directory. It has no session state, no host goal and no PABCD FSM.
 - A **thread** is a separate Codex task created with the desktop task tools
   (`create_thread` and its family). With `environment: worktree` it gets its own
   checkout; with `environment: local` it shares the project checkout. Either way
@@ -84,8 +85,8 @@ Say which one you are creating, in those words, before you create it.
 
 | | Subagent (`spawn_agent`) | Thread (`create_thread`) |
 |---|---|---|
-| Working directory | native cwd inherits the parent's; a bounded worker must pass its assigned managed-worktree path as the shell workdir on every command | its own, with `environment: worktree`; the shared project checkout with `local` |
-| Git branch and HEAD | native cwd points at the parent's; commands run in an assigned managed worktree see that worktree's branch and HEAD | its own under `worktree`; shared under `local` |
+| Working directory | native cwd inherits the spawning session's; a bounded worker must pass its assigned managed-worktree path as the shell workdir on every command | its own, with `environment: worktree`; the shared project checkout with `local` |
+| Git branch and HEAD | native cwd points at the spawning session's; commands run in an assigned managed worktree see that worktree's branch and HEAD | its own under `worktree`; shared under `local` |
 | Edits visible to the parent | immediately in the selected checkout; a managed worktree has its own branch and files | only through git |
 | Thread id | yes, its own | yes, its own |
 | `.crw` session state | none | its own |
@@ -102,10 +103,10 @@ like the right word for it. It proves nothing about the filesystem.
 
 ## DISPATCH-SHARED-TREE-01 (STRICT) — subagents inherit your cwd
 
-A spawned child inherits the parent's cwd. Measured on 2026-09-13: a probe
-subagent reported the parent's `pwd`, the parent's `git rev-parse --show-toplevel`,
-the parent's branch and HEAD, and a file it created appeared as an untracked entry
-in the parent's `git status`. In `codex-rs`, `apply_spawn_agent_runtime_overrides`
+A spawned subagent inherits the spawning session's cwd. Measured on 2026-09-13: a probe
+subagent reported the spawning session's `pwd`, the spawning session's `git rev-parse --show-toplevel`,
+the spawning session's branch and HEAD, and a file it created appeared as an untracked entry
+in the spawning session's `git status`. In `codex-rs`, `apply_spawn_agent_runtime_overrides`
 assigns the parent turn's cwd to the child config and is called from both spawn
 paths; no worktree is created anywhere on that path.
 
