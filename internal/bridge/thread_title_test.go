@@ -215,3 +215,124 @@ func TestRepositorySessionTitle(t *testing.T) {
 		}
 	}
 }
+
+// CRW-1313 (Argon V5 on the CRW-1353 lane, K1): create_worktree_thread names its thread by the same table and warns
+// and records the same way. Its save right before turn/start is the phase dispatching_initial_prompt whatever the
+// naming outcome, so a process killed after turn/start leaves a receipt that says the prompt may have been sent.
+
+// worktreeNamingHost is namingHost for create_worktree_thread: the started thread is placed in the destination and runs
+// the role's pair with a danger-full-access sandbox.
+func worktreeNamingHost(host *fakehost.Server, destination string, refuseName bool) {
+	danger := map[string]any{"type": "dangerFullAccess"}
+	namingHost(host, destination, danger, refuseName)
+	host.Respond("thread/start", fakehost.Reply{Result: map[string]any{"thread": map[string]any{"id": "thread-1", "cwd": destination}, "cwd": destination, "model": pyModel, "reasoningEffort": pyEffort, "approvalPolicy": "never", "sandbox": danger, "runtimeWorkspaceRoots": []any{destination}}})
+}
+
+// roleWorktreeInput is a worktree creation for role with the given title, whose source checkout has origin when one is
+// given (the worktree shares the source's configuration, so the destination reads the same origin).
+func roleWorktreeInput(t *testing.T, role, title, origin string) CreateWorktree {
+	t.Helper()
+	input := worktreeInput(t)
+	if origin != "" {
+		gitAt(t, input.Source, "remote", "add", "origin", origin)
+	}
+	input.RequestID = "worktree-title-" + role
+	input.Role, input.Title, input.Prompt = role, title, "첫 프롬프트 문장은 제목이 아니다."
+	input.Sandbox, input.Policy = "danger-full-access", map[string]any{"type": "dangerFullAccess"}
+	input.Model, input.Effort = pyModel, pyEffort
+	if role == "parent" {
+		input.Model, input.Effort = parentModel, parentEffort
+	}
+	return input
+}
+
+// rowAtTurnStart makes the host read the bridge's ledger row for request when turn/start arrives: what a process killed
+// right after sending turn/start leaves.
+func rowAtTurnStart(t *testing.T, b *Bridge, host *fakehost.Server, request string) <-chan map[string]any {
+	t.Helper()
+	rows := make(chan map[string]any, 1)
+	host.Handle("turn/start", func(json.RawMessage) fakehost.Reply {
+		row, err := b.Ledger.Get(context.Background(), request)
+		if err != nil {
+			t.Errorf("reading the ledger at turn/start: %v", err)
+		}
+		rows <- row
+		return fakehost.Reply{Result: map[string]any{"turn": map[string]any{"id": "turn-1"}}}
+	})
+	return rows
+}
+
+func TestWorktreeCreatorNamesTheThreadByTheTitleTable(t *testing.T) {
+	for _, c := range []struct {
+		name, role, title, origin, want string
+	}{
+		{"the repository session from its origin", "supervisor", "", "git@github.com:thisisjun786/crw-trial.git", "[CRW] 부모 · thisisjun786/crw-trial"},
+		{"the project session by crw-plan's rule", "parent", "[CRW] 실사용 첫 시험 (P-CRW-140)", "", "[CRW] 실사용 첫 시험 (P-CRW-140)"},
+		{"an issue child by the managed start's rule", "child", "CRW-1313 · 스레드 제목을 붙인다", "", "CRW-1313 · 스레드 제목을 붙인다"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			b, host := rolesBridge(t)
+			input := roleWorktreeInput(t, c.role, c.title, c.origin)
+			worktreeNamingHost(host, input.Destination, false)
+			rows := rowAtTurnStart(t, b, host, input.RequestID)
+			receipt, err := b.CreateWorktreeThread(context.Background(), input)
+			if err != nil || receipt["status"] != "accepted" || receipt["turnId"] != "turn-1" {
+				t.Fatalf("receipt=%v err=%v", receipt, err)
+			}
+			if got := readName(t, b, "thread-1"); got != c.want {
+				t.Fatalf("thread/read name = %v, want %q", got, c.want)
+			}
+			if receipt["title"] != c.want || receipt["titleWarning"] != nil {
+				t.Fatalf("receipt title = %v, warning = %v", receipt["title"], receipt["titleWarning"])
+			}
+			methods := hostMethods(host)
+			if named, turned := indexOf(methods, "thread/name/set"), indexOf(methods, "turn/start"); named < 0 || named > turned || indexOf(methods, "thread/start") > named {
+				t.Fatalf("the name is not set right after thread/start and before the first turn: %v", methods)
+			}
+			if row := <-rows; row["phase"] != "dispatching_initial_prompt" || row["title"] != c.want {
+				t.Fatalf("the save before the first turn: phase %v, title %v", row["phase"], row["title"])
+			}
+		})
+	}
+}
+
+func TestAWorktreeNamingFailureWarnsAndRecordsAndNeverRefuses(t *testing.T) {
+	for _, c := range []struct {
+		name, role, title, code string
+		refuse                  bool
+	}{
+		{"the host refuses thread/name/set", "parent", "[CRW] 시험", "title_not_set", true},
+		{"a repository session whose checkout has no origin", "supervisor", "", "title_unset", false},
+		{"a project session created without a title", "parent", "", "title_unset", false},
+		{"an issue child created without a title", "child", "", "title_unset", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			warnings := captureTitleWarnings(t)
+			b, host := rolesBridge(t)
+			input := roleWorktreeInput(t, c.role, c.title, "")
+			worktreeNamingHost(host, input.Destination, c.refuse)
+			rows := rowAtTurnStart(t, b, host, input.RequestID)
+			receipt, err := b.CreateWorktreeThread(context.Background(), input)
+			if err != nil || receipt["status"] != "accepted" || receipt["turnId"] != "turn-1" || receipt["phase"] != "complete" {
+				t.Fatalf("a naming failure refused the creation: receipt=%v err=%v", receipt, err)
+			}
+			warning := pyjson.Map(receipt["titleWarning"])
+			if warning["code"] != c.code || receipt["title"] != nil {
+				t.Fatalf("receipt titleWarning = %v, title = %v", receipt["titleWarning"], receipt["title"])
+			}
+			if c.refuse != (host.Count("thread/name/set") == 1) {
+				t.Fatalf("thread/name/set x%d", host.Count("thread/name/set"))
+			}
+			if c.refuse && !strings.Contains(pyjson.Text(warning["message"]), "name store unavailable") {
+				t.Fatalf("the warning does not say what the host answered: %v", warning)
+			}
+			if !strings.Contains(warnings.String(), c.code) {
+				t.Fatalf("no warning on stderr: %q", warnings.String())
+			}
+			row := <-rows
+			if row["phase"] != "dispatching_initial_prompt" || pyjson.Map(row["initialPrompt"])["state"] != "outcome_unknown" || pyjson.Map(row["titleWarning"])["code"] != c.code {
+				t.Fatalf("the save before the first turn does not say the prompt may have been sent: %v", row)
+			}
+		})
+	}
+}
