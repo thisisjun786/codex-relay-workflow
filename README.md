@@ -18,7 +18,7 @@ live Codex hook or Desktop compatibility.
 
 | Skill | Purpose |
 |---|---|
-| [crw-define](plugins/crw/skills/crw-define/SKILL.md) | Explore intent and define an initiative goal, success evidence, and scope |
+| [crw-define](plugins/crw/skills/crw-define/SKILL.md) | Settle a milestone and its issues before they are registered: purpose, desired change, success evidence, scope and open decisions, and whether a question is really needed |
 | [crw-plan](plugins/crw/skills/crw-plan/SKILL.md) | Decompose an agreed goal into projects, milestones, and one-delivery issues |
 | [crw-add-issue](plugins/crw/skills/crw-add-issue/SKILL.md) | Turn one short request into one ready issue: criteria, edit regions, decided answer, tests to write first and done condition, with an open design question held as design first |
 | [crw-run](plugins/crw/skills/crw-run/SKILL.md) | Bind the parent and execute one project's agreed scope, including parallel issue delivery and successors, without a parent goal unless goal mode is explicitly requested |
@@ -230,7 +230,7 @@ The bundled validator has its own dependencies. It checks skill structure, not t
 $crw-run [Linear project] 실행하지 말고 이 프로젝트의 project orchestrator로 연결만 해줘.
 $crw-status [Linear project or product repository] 다음에 뭐 하지? 시작할 단계인지 끝난 뒤인지 확인하고 다음 행동 하나를 골라줘.
 $crw-run-initiative [Linear initiative link] 승인된 프로젝트들을 기존 project orchestrator를 통해 끝까지 진행해줘.
-$crw-define [idea or initiative] 목표·완료 기준·범위를 정의해 Linear에 반영해줘.
+$crw-define [idea or milestone] 목적·성공 증거·범위·열린 결정을 정리해 Linear 마일스톤에 반영해줘.
 $crw-plan [defined initiative or existing project] 프로젝트·마일스톤·이슈와 의존성을 계획해 Linear에 반영해줘.
 $crw-run [Linear project link]
 $crw-run [Linear project link] project orchestrator goal을 열어서 끝까지 진행해줘. (goal mode)
@@ -309,8 +309,10 @@ The requesting skill remains the operation owner.
 Designating the management task alone does not start project execution;
 an accompanying execution request continues within its authorized scope.
 
-`crw-define` explores intent and defines the initiative’s goal, finish condition
-and scope. `crw-plan` then decomposes the agreed goal into projects, useful
+`crw-define` settles a milestone and its issues before they are registered: the
+top session (today Sion) or the parent (repository session) organizes purpose,
+desired change, success evidence, scope and open decisions, and asks one question
+at a time only when one is really needed. `crw-plan` then decomposes the agreed goal into projects, useful
 milestones, and executable issues in one operation. A request for both chains
 them; definition-only stops before project and issue creation. It reuses existing
 items, creates missing ones within that request, and keeps narrow updates scoped.

@@ -26,10 +26,11 @@ label does not justify retaining independent source areas in main.
 | C2 | Ordinary Product Slice | Conventional endpoint, form, table, model, list/detail screen, integration touchpoint | Compact plan + adjacent convention search + focused tests + micro-audit |
 | C3 | Cross-Domain Feature/Refactor | Multiple modules, public API, shared types, broad behavior | Compact or full PABCD depending on persistence/risk; add subagent audit when scope or risk warrants |
 | C4 | High-Risk | Auth, payments, data deletion, migration, release, permission model, security boundary | Full PABCD (mandatory) + full relevant gates + durable risk/evidence record; in a flow-managed run the run's high-risk lane is this process (architect DESIGN, independent pre-build design audit by a reviewer of a different model family before any executor starts, per-issue candidate review, final gate and reviewer-final with full verification and risk record) and the executor starts no FSM |
-| C5 | Research/Ambiguous | Unclear requirements, ambiguous user value, unknown territory after one §0 clarification round | Interview-first via the `pabcd` skill, then reclassify |
+| C5 | Research/Ambiguous | Unclear requirements, ambiguous user value, unknown territory after one §0 clarification round | No interview: back to its registration ([crw-define](../crw-define/SKILL.md)) or, in a run, a decision request to the session above the project session; then reclassify |
 
-**C5 is temporary** — it cannot enter implementation until Interview resolves ambiguity
-and the task is reclassified as one of C0 through C4.
+**C5 is temporary** — it cannot enter implementation until the registration step or the
+answer to the decision request resolves the ambiguity and the task is reclassified as one
+of C0 through C4.
 
 In a flow-managed run, reviewer-final does not replace the pre-build design audit. The executor and an
 oversized child start no PABCD state machine; the standalone PABCD rules above are unchanged.
@@ -110,8 +111,9 @@ findings only) · docs-only work (no code gates, docs consistency checks instead
 PABCD, goal, divergence, and repeated work-phase mechanics are canonical in
 `pabcd` and `crw-loop`. Load those skills when the selected process requires
 them; classify each work-phase independently.
-Linear initiative definition, goal decomposition, delivery checks and project
-coordination route to crw-define, crw-plan, crw-check and crw-run respectively.
+Settling a milestone and its issues before registration, goal decomposition, delivery
+checks and project coordination route to crw-define, crw-plan, crw-check and crw-run
+respectively.
 The PABCD and task host-goal modes above govern a task's implementation; crw-run
 parent goal mode creates no implementation goalplan or FSM.
 
@@ -283,7 +285,8 @@ During work, when `request_user_input_async` is exposed and allowed, leave usefu
 questions without expecting a reply or stopping progress. Continue with evidence
 and authorized assumptions; incorporate answers if they arrive, and leave distinct
 new questions as needed. Read [Async user questions](references/async-questions.md)
-for schema, pending-answer handling and fallback. Interview keeps its existing flow.
+for schema, pending-answer handling and fallback; in a run an open question is a
+decision request instead.
 
 ---
 

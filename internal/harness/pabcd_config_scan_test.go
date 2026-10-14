@@ -13,10 +13,10 @@ import (
 )
 
 // configInterviewUsageForTest is the oracle's usage text (pabcd-state/src/cli.ts:224-228) in CRW
-// names, pinned independently of the adapter's own constant.
+// names with the default on off (CRW-1340), pinned independently of the adapter's own constant.
 const configInterviewUsageForTest = "Usage:\n  crw pabcd config interview [off|new-unit|always]\n\n" +
-	"  off       only an explicit 'interview' / '인터뷰' request opens the Interview\n" +
-	"  new-unit  also open it on the first plan request of a new unit (default)\n" +
+	"  off       only an explicit 'interview' / '인터뷰' request opens the Interview (default)\n" +
+	"  new-unit  also open it on the first plan request of a new unit\n" +
 	"  always    open it on every plan request\n\n" +
 	"The Interview is advisory: it never changes the PABCD phase, and goal mode always suppresses it.\n"
 
@@ -34,9 +34,9 @@ func TestPabcdCLIConfigScanVerbs(t *testing.T) {
 			out, errOut string
 		}{
 			{"config_bare", []string{"config"}, 2, "", "config: this component handles 'config interview' only\n" + configInterviewUsageForTest},
-			{"config_interview", []string{"config", "interview"}, 0, configInterviewUsageForTest + "current: new-unit\n", ""},
-			{"config_interview_help", []string{"config", "interview", "--help"}, 0, configInterviewUsageForTest + "current: new-unit\n", ""},
-			{"config_interview_h", []string{"config", "interview", "-h"}, 0, configInterviewUsageForTest + "current: new-unit\n", ""},
+			{"config_interview", []string{"config", "interview"}, 0, configInterviewUsageForTest + "current: off\n", ""},
+			{"config_interview_help", []string{"config", "interview", "--help"}, 0, configInterviewUsageForTest + "current: off\n", ""},
+			{"config_interview_h", []string{"config", "interview", "-h"}, 0, configInterviewUsageForTest + "current: off\n", ""},
 			{"config_interview_unknown", []string{"config", "interview", "sometimes"}, 2, "", "config interview: unknown policy 'sometimes'\n" + configInterviewUsageForTest},
 			{"config_other_subcommand", []string{"config", "list"}, 2, "", "config: this component handles 'config interview' only\n" + configInterviewUsageForTest},
 			{"scan_help_word", []string{"scan", "help"}, 0, help, ""},
