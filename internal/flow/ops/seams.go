@@ -96,7 +96,8 @@ type ReleaseResult struct {
 	HeldRun        string `json:"held_run,omitempty"`
 	// HeldRunState is, for a land answered ReasonLandNodeHeld, the state of the run that holds the node as the run's records read
 	// (running, dead, held, completed, failed, ...; "" when it is not read): a run that has ended is not resumed, and its execution is
-	// given up with crw flow cancel of that run (CRW-1397).
+	// given up with crw flow cancel of that run (CRW-1397). A replay of the release of another run (Run) carries that run's state too
+	// (CRW-1404).
 	HeldRunState string `json:"held_run_state,omitempty"`
 	// Run is the run the answered execution was released to: the run asking for a new release, or, for a replay, the run whose release
 	// it replays ("" when the relay does not say). A land of a node another run holds reads it (CRW-1354).

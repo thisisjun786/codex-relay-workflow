@@ -404,8 +404,14 @@ func (r *SchedRelay) Release(ctx context.Context, req ops.ReleaseRequest) (ops.R
 			run = cur.Agent.RunID
 		}
 	}
+	// a replay of another run's execution carries that run's state, as a land the relay answers land_node_held does (CRW-1404): a land
+	// held by a run that has ended names its cancel
+	var state string
+	if run != "" && run != r.RunID {
+		state = r.runState(ctx, run)
+	}
 	return ops.ReleaseResult{Released: true, ExecutionID: res.ExecutionID, SlotID: res.SlotID, Replayed: res.Replayed, SliceDigest: slice, Run: run,
-		RegionsDeclared: declared, RegionsWarning: warning}, nil
+		HeldRunState: state, RegionsDeclared: declared, RegionsWarning: warning}, nil
 }
 
 // The answers of declareRegions (ops.ReleaseResult.RegionsDeclared).
@@ -418,8 +424,8 @@ const (
 // declareRegions declares a node's admission regions in the target repository (dag-region-declare, dagsched.DeclareRegions) when the
 // node has no declaration in force (CRW-1391). A node with one keeps it: the parent's graded declaration made before the run (crw-run,
 // "Release by region grade") or one an earlier release of the node made, which a resume does not widen. A region that is one of the
-// plan's (the handoff's issue regions) is declared as the plan states it (kind, symbol, change, exclusive); an edit region of the DESIGN
-// is a path, a tree when it ends in "/" and a symbol when it names one after "#". It answers what it did and, for a declaration that
+// plan's (the handoff's issue regions), in any spelling of it, is declared as the plan states it (kind, symbol, change, exclusive); an edit
+// region of the DESIGN is a path, a tree when it ends in "/" and a symbol when it names one after "#". It answers what it did and, for a declaration that
 // failed, why: the release goes on.
 func (r *SchedRelay) declareRegions(ctx context.Context, plan, node, repository string, is compile.Issue, regions []string) (string, string) {
 	if _, found, err := r.Sched.NodeRegions(ctx, plan, node); err != nil {
@@ -427,22 +433,32 @@ func (r *SchedRelay) declareRegions(ctx context.Context, plan, node, repository 
 	} else if found {
 		return regionsKept, ""
 	}
-	planned := map[string]compile.Region{}
+	// a region is looked up and declared once by its normal form (ops.RegionOf, CRW-1404): another spelling of a planned region (blanks
+	// around it, ./path) is that region, with the plan's change and exclusive flag, and not a second region of the same place that the
+	// relay refuses the whole declaration for. A planned region's normal form is taken from its fields (ops.RegionFormOf, CRW-1408), and
+	// the plan's own text of it (the manifest's, RegionForm.Text) is that region and is not read again, so a planned path that holds "#" stays
+	// the file or tree the plan states; only a DESIGN edit region is read from its text
+	planned := map[ops.RegionForm]compile.Region{}
+	spelled := map[string]ops.RegionForm{}
 	for _, rg := range is.Regions {
-		planned[rg.String()] = rg
+		form := ops.RegionFormOf(rg.Path, rg.Kind, rg.Key)
+		planned[form] = rg
+		spelled[form.Text()] = form
 	}
 	list := make([]dagsched.Region, 0, len(regions))
+	seen := map[ops.RegionForm]bool{}
 	for _, text := range regions {
-		if rg, ok := planned[text]; ok {
-			list = append(list, dagsched.Region{Repository: repository, Path: strings.TrimSuffix(rg.Path, "/"), Kind: cmpOr(rg.Kind, "file"), Key: rg.Key, Change: rg.Change, Exclusive: rg.Exclusive})
+		form, ok := spelled[strings.TrimSpace(text)]
+		if !ok {
+			form = ops.RegionOf(text)
+		}
+		if seen[form] {
 			continue
 		}
-		p := strings.TrimSpace(text)
-		region := dagsched.Region{Repository: repository, Path: p, Kind: "file"}
-		if at := strings.LastIndex(p, "#"); at > 0 {
-			region.Path, region.Kind, region.Key = p[:at], "symbol", p[at+1:]
-		} else if strings.HasSuffix(p, "/") {
-			region.Path, region.Kind = strings.TrimSuffix(p, "/"), "tree"
+		seen[form] = true
+		region := dagsched.Region{Repository: repository, Path: form.Path, Kind: form.Kind, Key: form.Key}
+		if rg, ok := planned[form]; ok {
+			region.Change, region.Exclusive = rg.Change, rg.Exclusive
 		}
 		list = append(list, region)
 	}
@@ -450,14 +466,6 @@ func (r *SchedRelay) declareRegions(ctx context.Context, plan, node, repository 
 		return regionsFailed, err.Error()
 	}
 	return regionsDeclared, ""
-}
-
-// cmpOr is s, or def when s is empty.
-func cmpOr(s, def string) string {
-	if s == "" {
-		return def
-	}
-	return s
 }
 
 // runState is the state of a run as `crw flow ps` reads it (its journal and its lock), "" when it cannot be read (CRW-1397).

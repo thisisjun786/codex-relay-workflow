@@ -29,7 +29,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Keep manual surface QA distinct from the Linear delivery-check verdict. Resolve the QA helper from its owning skill directory, including staging outside the plugin. Explain skill-directory placeholder resolution before invoking the staged QA helper. Quote the resolved helper path so a skill directory containing spaces is usable. State the boundary to crw-check in the description, so a request routes to the skill that owns it. CRW-1220: the description is scoped to manual QA; reviewer passes replace the oracle passes; the lineage note and the v2 candidates section are removed",
+      "reason": "CRW-1344: Linear wording became tracking wording (a tracking issue, the tracking repository, a milestone), and the skill catalog no longer lists a Linear skill",
       "hunks": [
         {
           "line": 3,
@@ -39,7 +39,7 @@
             "  short-description: \"Manual surface-driving QA gate: faithful channels, evidence matrix, adversarial classes, teardown receipts.\"\n"
           ],
           "new": [
-            "description: \"Manual QA of a built surface (web UI, TUI, CLI, HTTP API, desktop GUI): drive it for real, capture artifacts, probe adversarial inputs, record teardown. Suites are crw-dev-testing; delivery against Linear criteria is crw-check. Triggers: manual QA, QA this, smoke test, visual QA, 수동 QA, 직접 돌려봐.\"\n"
+            "description: \"Manual QA of a built surface (web UI, TUI, CLI, HTTP API, desktop GUI): drive it for real, capture artifacts, probe adversarial inputs, record teardown. Suites are crw-dev-testing; delivery against the issue criteria is crw-check. Triggers: manual QA, QA this, smoke test, visual QA, 수동 QA, 직접 돌려봐.\"\n"
           ]
         },
         {
@@ -83,7 +83,7 @@
         {
           "line": 43,
           "new": [
-            "- crw-check compares delivered work with canonical Linear documents and issue\n",
+            "- crw-check compares delivered work with canonical tracking documents and issue\n",
             "  criteria. This skill drives a built surface before the task's done claim; its\n",
             "  PASS is evidence that crw-check may read, not a delivery verdict. A delivery\n",
             "  check does not replace driven-surface QA.\n",

@@ -1,24 +1,24 @@
 ---
 name: crw-define
-description: "Settle a milestone and its issues before they are registered in Linear: purpose, desired change, success evidence, scope and open decisions, and whether a question is really needed. Hand the agreed definition to crw-plan. Triggers: 마일스톤 정의, 요구사항 정리, 아이디어 정리."
+description: "Settle a milestone and its issues before they are registered in the tracking repository: purpose, desired change, success evidence, scope and open decisions, and whether a question is really needed. Hand the agreed definition to crw-plan. Triggers: 마일스톤 정의, 요구사항 정리, 아이디어 정리."
 ---
 
 # CRW Define
 
 Make a milestone and its issues clear enough to register before anything runs them.
 This is the step that registers a milestone and its issues: the top session (today Sion)
-and [the parent](../crw-canon/references/hierarchy.md#the-levels) (repository session, relay role `supervisor`) use it when they put new work into Linear. It
+and [the parent](../crw-canon/references/hierarchy.md#the-levels) (repository session, relay role `supervisor`) use it when they put new work into the tracking repository. It
 organizes purpose, desired change, success evidence, scope and open decisions, finds what
 is still unclear, and decides whether that needs an exchange with a person.
-Read the shared [Linear model](../crw-canon/references/linear-model.md) for source
+Read the shared [tracking model](../crw-canon/references/tracking-model.md) for source
 of truth, write authority, classification, and tool access.
 Defining a milestone starts no run and moves no project's ownership; the levels are in
 [scope of each level](../crw-canon/references/hierarchy.md#scope-of-each-level).
 
 ## Find what is unclear
 
-Read the request, accepted decisions, and the existing project, milestones, issues and
-linked documents. Reuse stable IDs and distinguish the user's words, accepted choices,
+Read the request, accepted decisions, and the existing milestone, issues and
+linked documents. Reuse stable refs and distinguish the user's words, accepted choices,
 suggestions, and unresolved assumptions. Inspect relevant product or repository evidence
 only where it can change the definition. Do not replace the user's goal with a guessed
 “real problem.” Use `crw-recall` for missing history, not as live proof.
@@ -61,29 +61,29 @@ Do not invent dates, owners, numerical targets, validated demand, or user answer
 Distinguish evidence from assumptions. Record unknowns as unknowns rather than
 filling later design stages with plausible detail. Reuse an existing milestone or issue
 when the goal matches; related products or repositories alone do not establish it.
-When the milestone serves a Linear initiative, read the initiative body as context
-under the shared [initiative body standard](../crw-canon/references/linear-model.md#initiative-body-standard)
-and return a needed change to it as a proposal.
+When the milestone is one of several projects toward a shared goal, read the descriptions of the others as context
+under the shared [milestone description standard](../crw-canon/references/tracking-model.md#milestone-description-standard)
+and return a needed change to them as a proposal.
 
 ## Size rules
 
 A milestone is one observable result and each of its issues a concept bundle; their
-numbers are crw-plan's [Size rules](../crw-plan/SKILL.md#size-rules). When the milestones
-belong to a Linear initiative of several projects, the initiative is one outcome. Its
-definition lists its projects, the artifacts one project hands to another, which projects
+numbers are crw-plan's [Size rules](../crw-plan/SKILL.md#size-rules). When several milestones
+(projects) serve one outcome, the outcome is written in each description. It
+lists the projects, the artifacts one project hands to another, which projects
 run in parallel and in what order, and an observable finish condition for each project:
 which integrated result, and which check shows it. Recommended: at most 8 projects in
-flight at the same time; beyond that, split the initiative or stagger its projects. The
+flight at the same time; beyond that, split the outcome or stagger its projects. The
 levels these sizes belong to are in
 [hierarchy.md](../crw-canon/references/hierarchy.md#sizes-at-each-level).
 
 ## Carry design forward
 
 Use Strategy → Scope → Structure → Skeleton → Surface as design lenses, not as
-Linear levels or mandatory headings. Keep the milestone definition in its description;
+tracking levels or mandatory headings. Keep the milestone definition in its description;
 linked documents carry requested or necessary supporting detail, not a duplicate.
 Where the definition names a repository contract, a procedure or a research
-result, link it under [where each document type is canonical](../crw-canon/references/linear-model.md#where-each-document-type-is-canonical)
+result, link it under [where each document type is canonical](../crw-canon/references/tracking-model.md#where-each-document-type-is-canonical)
 instead of copying it into the description.
 The milestone definition usually supplies Strategy and Scope. Let the issues develop
 Structure, Skeleton and Surface when they become knowable; CLI/API work need not invent
@@ -96,8 +96,8 @@ product demand. Real-use evaluation remains separate.
 
 ## Apply and hand off
 
-Advice, exploration and draft-only requests produce a proposal without Linear
-writes. A request to define or update an existing milestone in Linear covers that
+Advice, exploration and draft-only requests produce a proposal without tracking
+writes. A request to define or update an existing milestone covers that
 milestone's description, not automatic issues, projects or a separate definition document.
 A milestone that does not exist yet is not created here: a request to create it continues
 to crw-plan with the draft definition as the milestone's description.

@@ -33,7 +33,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
+      "reason": "CRW-1344: Linear wording became tracking wording (a tracking issue, the tracking repository, a milestone), and the skill catalog no longer lists a Linear skill",
       "hunks": [
         {
           "line": 3,
@@ -77,7 +77,7 @@
             "**Rule (SCAF-SOT-01):** In crw or any repo that already uses durable devlog/source-of-truth conventions, prefer the existing `devlog/` placement, local numbering scheme, and source-of-truth paths before proposing generic `docs/` + `plans/`.\n"
           ],
           "new": [
-            "**Rule (SCAF-SOT-01):** A product decision is canonical in Linear and the code structure in the repo docs; scaffolding reuses the repository's existing docs placement, local numbering scheme and source-of-truth paths before proposing generic `docs/` + `plans/`, and a scaffold doc links the Linear issue instead of restating the decision.\n"
+            "**Rule (SCAF-SOT-01):** A product decision is canonical in the tracking repository and the code structure in the repo docs; scaffolding reuses the repository's existing docs placement, local numbering scheme and source-of-truth paths before proposing generic `docs/` + `plans/`, and a scaffold doc links the tracking issue instead of restating the decision.\n"
           ]
         },
         {

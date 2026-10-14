@@ -12,7 +12,7 @@ Jun asks for it. He asks for this as '현재 어디까지 됐어?', as '전체 �
 '다음에 뭐 하지?'. Standing on its own, that asks for a short grounded report rather than a plan,
 an audit, or a recommendation he did not ask for.
 
-This skill is read-only. It writes no Linear record, creates or resumes no task, sends no message,
+This skill is read-only. It writes no tracking record, creates or resumes no task, sends no message,
 wakes no child or issue child, installs nothing and changes no schedule, whatever
 the state of the work it reports on. Reporting that a project is behind does not authorize starting
 it. A one-word 중간점검 inside the parent (repository session, relay role `supervisor`) is not a read: its owner is
@@ -32,8 +32,8 @@ belongs in the report when the user asked for one, and is not a required section
 
 ## Connect the workflow
 
-Read the shared [Linear model](../crw-canon/references/linear-model.md) and
-[delivery](../crw-canon/references/delivery.md) for canonical documents, connector
+Read the shared [tracking model](../crw-canon/references/tracking-model.md) and
+[delivery](../crw-canon/references/delivery.md) for canonical documents, tracking
 access and which operation owns what, and
 [scope of each level](../crw-canon/references/hierarchy.md#scope-of-each-level)
 for the levels and the names a Korean report gives them. Write the report in an
@@ -58,8 +58,8 @@ The morning report of a night batch is written by `crw manage batch report` in t
 
 Take the target from the current request, then its explicit links, then this task's verified
 binding, and say which one you used. Resolve names to stable IDs under the shared
-[target rules](../crw-plan/references/integrations.md#resolve-the-project-target). A Linear project
-ID, a Codex task ID, a Desktop project ID and a repository are four different identities, and a
+[target rules](../crw-plan/references/integrations.md#resolve-the-project-target). A milestone
+ref, a Codex task ID, a Desktop project ID and a repository are four different identities, and a
 title, a folder or a branch is none of them.
 
 Reading another project because somebody asked about it changes no binding. That holds at every
@@ -127,8 +127,8 @@ thread matters to the report, page it to the end, because an unread page is an u
 
 Five things get collapsed into 'done' and they are five separate claims: the source exists, its
 checks passed, it actually merged into the intended target, it is installed or deployed, and it has
-been observed working. A Linear status of Done, a summary written last week, and an agent turn that
-ended are none of them. Use [Implementation Done](../crw-canon/references/linear-model.md#implementation-done)
+been observed working. An issue closed as completed, a summary written last week, and an agent turn that
+ended are none of them. Use [Implementation Done](../crw-canon/references/tracking-model.md#implementation-done)
 for what a real landing requires and [Merge readiness](../crw-run/references/merge-readiness.md)
 for what current CI and review evidence establish.
 
@@ -162,11 +162,11 @@ evidence, the reason and the observable completion condition. Do not impose a cy
 the user or require that the project adopt a workflow.
 
 Gather only the evidence the choice needs: the product goal and accepted decisions, the relevant
-Linear criteria and dependencies, active ownership, and the current repository or delivery state.
+issue criteria and `Blocked by:` lines, active ownership, and the current repository or delivery state.
 Refresh stale facts and page the relevant results before claiming absence. An empty backlog does
-not prove a fresh start, and a Done label or a completed agent turn does not prove the outcome is
+not prove a fresh start, and a closed issue or a completed agent turn does not prove the outcome is
 delivered. Where repository identity affects readiness, apply the shared
-[repository resolution](../crw-canon/references/linear-model.md#resolve-the-implementation-repository).
+[repository resolution](../crw-canon/references/tracking-model.md#resolve-the-implementation-repository).
 
 **Where to start.** Establish the intended user outcome, what already exists, and the constraint
 that prevents progress. Inspect existing plans, code and open work before proposing a new project
@@ -187,11 +187,11 @@ the whole outcome is complete, say so and recommend stopping instead of inventin
 Honor explicit priorities and deadlines, then choose the action that removes the most consequential
 constraint or closes the nearest useful delivery. Do not rank by issue number alone or invent a
 score. Account for active ownership: a recommendation must not create a duplicate writer. Lead with
-one concrete action in plain Korean, link the decisive Linear item or evidence, and give one
+one concrete action in plain Korean, link the decisive issue or evidence, and give one
 recommendation, not a menu. When Jun has no action to take while authorized work proceeds, say that
 and name the next result to observe.
 
-A "what next?" is advisory: selection launches no work and mutates no Linear. During an active
+A "what next?" is advisory: selection launches no work and mutates no tracking record. During an active
 authorized run, answer briefly and return control to the existing owner. When execution is also
 requested, hand the chosen action and evidence to [crw-run](../crw-run/SKILL.md), the child's
 procedure or the parent's section in it, under the existing scope.

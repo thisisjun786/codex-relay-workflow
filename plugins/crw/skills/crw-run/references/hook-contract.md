@@ -5,7 +5,7 @@ Here the child (relay role `child`) is a relay role, read through [the level tab
 Read when deciding whether a Codex hook may conclude that a managed assignment finished, or when
 implementing the marker, disposition, and blocking behaviour that later issues install. This
 reference DECIDES those rules; it installs nothing. No hook is registered by this contract, no PABCD
-(`.crw/`) state is read or written, and no Linear write happens from a hook. The one run that did register
+(`.crw/`) state is read or written, and no tracking write happens from a hook. The one run that did register
 hooks, recorded in the host-verification packet, did so inside a throwaway `CODEX_HOME` that was
 removed afterwards, and left nothing installed.
 
@@ -776,4 +776,4 @@ repeated polling, and a native subagent completion is not the same thing as an i
 relay handoff. No host is assumed to support automatic wake.
 
 This contract changes no PABCD state, does not change any other skill's reference, and does not
-authorise a hook to write Linear.
+authorise a hook to write to the tracking repository.

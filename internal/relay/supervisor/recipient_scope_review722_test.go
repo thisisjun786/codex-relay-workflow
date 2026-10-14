@@ -85,7 +85,7 @@ func newReview722World(t *testing.T) *review722World {
 	return w
 }
 
-// seat registers the live store-scope supervisor: the one seat no Linear level owns (CRW-450).
+// seat registers the live store-scope supervisor: the one seat no tracking level owns (CRW-450).
 func (w *review722World) seat() {
 	w.t.Helper()
 	if err := storeseed.InsertScopeBinding(w.ctx, w.s, store.ScopeBindingsRow{BindingID: "bnd-722-store",

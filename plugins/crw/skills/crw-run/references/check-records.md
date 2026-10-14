@@ -22,7 +22,7 @@ An agreed change maps to verified too, but only once the registered criterion it
 
 ## Queue the audit summary
 
-An audit summary under an existing management assignment goes to the linked Linear coordination document ([crw-check](../../crw-check/SKILL.md#in-workflow-auditor)). Where a relay holds the assignment, it QUEUES that summary with the event, revision, and verdict it describes; the write itself is the coordinator's own connector operation, since the relay holds no credential. Confirm it by reading the document back and checking this job's own structured record rather than searching the text for words. A failed write is retried on its own and never re-runs the check or re-sends the correction.
+An audit summary under an existing management assignment goes to the coordination issue of the milestone ([crw-check](../../crw-check/SKILL.md#in-workflow-auditor)). Where a relay holds the assignment, it QUEUES that summary with the event, revision, and verdict it describes; the write itself is the coordinator's own `gh` operation, since the relay holds no credential. Confirm it by reading the comment back and checking this job's own structured record rather than searching the text for words. A failed write is retried on its own and never re-runs the check or re-sends the correction.
 
 ## A quiet child is not a finding
 

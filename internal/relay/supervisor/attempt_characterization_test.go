@@ -112,9 +112,9 @@ func charStaged(t *testing.T) (*stageFixture, string) {
 	return f, stagedID(t, f)
 }
 
-// dischargeInLinear makes the staged completion already confirmed in the record the supervisor
+// dischargeInTrackingRecord makes the staged completion already confirmed in the record the supervisor
 // reads, so the claim refuses it as superseded_revision (what Test24_SCH_73 does).
-func dischargeInLinear(t *testing.T, f *stageFixture) {
+func dischargeInTrackingRecord(t *testing.T, f *stageFixture) {
 	t.Helper()
 	sweepExec(t, f,
 		"INSERT INTO sync_targets(relationship_id,target,target_ref,recorded_at) VALUES ('rel-1','coordination_document','document-a','"+f.at+"')",
@@ -218,7 +218,7 @@ func TestAttemptCharacterization_a_failed_write_stops_the_attempt_with_its_error
 		{"journaling a send withheld for its settings", "", func(t *testing.T, f *stageFixture, _ *sendHost) { settingsUnreadable(f) },
 			"INSERT", "journal", journal("supervisor_message_withheld")},
 		{"recording the claim", "", nil, "INSERT", "supervisor_attempts", "NEW.message_id IS NOT NULL"},
-		{"holding a message whose claim found it superseded", "", func(t *testing.T, f *stageFixture, _ *sendHost) { dischargeInLinear(t, f) },
+		{"holding a message whose claim found it superseded", "", func(t *testing.T, f *stageFixture, _ *sendHost) { dischargeInTrackingRecord(t, f) },
 			"UPDATE", "supervisor_messages", "NEW.hold_reason='superseded_by_report'"},
 		{"starting the transport", "", nil, "UPDATE", "supervisor_attempts", "OLD.transport_started_at IS NULL AND NEW.transport_started_at IS NOT NULL"},
 		{"settling the attempt of a hierarchy that moved before the transport", "", func(t *testing.T, f *stageFixture, _ *sendHost) { hierarchyMovesAtTransport(t, f) },
@@ -329,14 +329,14 @@ func TestAttemptCharacterization_a_row_that_moved_after_the_attempt_read_it_is_n
 	inner := &sendHost{status: "idle"}
 	host := &charHost{sendHost: inner}
 	host.onRead = func() {
-		dischargeInLinear(t, f)
+		dischargeInTrackingRecord(t, f)
 		sweepExec(t, f, "UPDATE supervisor_messages SET attempt_count=attempt_count+1")
 		host.onRead = nil
 	}
 	since := journalSeq(t, f)
 	record, err := f.c.Attempt(f.ctx, id, host, charNow)
 	var refusal Refusal
-	if record != nil || !errors.As(err, &refusal) || refusal.Reason != "superseded_revision" || !strings.Contains(refusal.Detail, "Linear record") {
+	if record != nil || !errors.As(err, &refusal) || refusal.Reason != "superseded_revision" || !strings.Contains(refusal.Detail, "tracking record") {
 		t.Fatalf("record %v err %v", record, err)
 	}
 	if got, want := charSummary(t, f, id, since, inner), charWant["moved row not held"]; got != want {

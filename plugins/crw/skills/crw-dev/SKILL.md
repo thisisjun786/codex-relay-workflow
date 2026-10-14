@@ -1,6 +1,6 @@
 ---
 name: crw-dev
-description: "Class-scaled development guidelines: classify the task C0-C5, keep the safety rules and fresh proof, and load the matching crw-dev-* surface owner. Use for coding, fixes and docs in a repository; project coordination and Linear planning go to crw-run and crw-plan. Triggers: develop, fix, docs, 개발."
+description: "Class-scaled development guidelines: classify the task C0-C5, keep the safety rules and fresh proof, and load the matching crw-dev-* surface owner. Use for coding, fixes and docs in a repository; project coordination and tracking planning go to crw-run and crw-plan. Triggers: develop, fix, docs, 개발."
 ---
 
 # Dev — Common Development Guidelines

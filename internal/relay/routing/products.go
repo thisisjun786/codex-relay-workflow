@@ -15,6 +15,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tracking"
 )
 
 const ProjectsScope = "__projects__"
@@ -24,6 +25,25 @@ var Checks = []string{"acceptance", "install", "realUse", "handoff"}
 var keyPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]{0,127}$`)
 var productPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 var issuePattern = regexp.MustCompile(`^[A-Z][A-Z0-9]*-[0-9]+$`)
+
+// isIssueIdentifier reports whether s names a tracked issue: a Linear key like ABC-12, or a tracking
+// ref "<owner>/<name>#N" as internal/tracking reads it.
+func isIssueIdentifier(s string) bool {
+	if issuePattern.MatchString(s) {
+		return true
+	}
+	_, err := tracking.ParseRef(s)
+	return err == nil
+}
+
+// issueTeam is the team an issue belongs to: the prefix of a Linear key, or the repository of a
+// tracking ref.
+func issueTeam(issue string) string {
+	if ref, err := tracking.ParseRef(issue); err == nil {
+		return ref.Repo
+	}
+	return strings.Split(issue, "-")[0]
+}
 
 type Object = map[string]any
 
@@ -115,8 +135,8 @@ func (v *validator) issue(value any, name string, optional bool) any {
 		return nil
 	}
 	s, ok := value.(string)
-	if !ok || !issuePattern.MatchString(s) {
-		v.fail(fmt.Sprintf("%s is a Linear issue identifier like ABC-12, not %s", name, quote.Value(value)))
+	if !ok || !isIssueIdentifier(s) {
+		v.fail(fmt.Sprintf("%s is an issue identifier, a Linear key like ABC-12 or a tracking ref like owner/name#7, not %s", name, quote.Value(value)))
 	}
 	return value
 }
@@ -320,7 +340,7 @@ func ReadBinding(value any, registry Object) (Object, error) {
 				if where != target["project"] {
 					v.fail(fmt.Sprintf("a test binding sits on the test target project %s, not %s", quote.Value(target["project"]), quote.Value(where)))
 				}
-				if kind == "issue" && strings.Split(pyjson.Text(out["ref"]), "-")[0] != target["team"] {
+				if kind == "issue" && issueTeam(pyjson.Text(out["ref"])) != target["team"] {
 					v.fail(fmt.Sprintf("a test issue belongs to the test target team %s", quote.Value(target["team"])))
 				}
 			}

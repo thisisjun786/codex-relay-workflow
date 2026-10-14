@@ -65,7 +65,7 @@ Never supply a timezone from the host, a user profile, or memory.
 A result is achieved only when evidence exists at the delivery level its own
 criteria require. This skill already separates source existence, passing checks,
 integration, deployment, and observed behavior, and
-[Implementation Done](../../crw-canon/references/linear-model.md#implementation-done)
+[Implementation Done](../../crw-canon/references/tracking-model.md#implementation-done)
 already makes merge, installation, and live behavior three separate claims; apply
 those rules here rather than restating them. A lower level reached early is an
 observation, never an achievement: a merge that landed well before the date does
@@ -244,7 +244,7 @@ rather than judging through it.
 ## Record the judgment and reuse it
 
 The judgment goes where this skill already records its result and nowhere else: the
-linked Linear coordination document under an existing management assignment, the
+coordination issue of the milestone under an existing management assignment, the
 summary a bounded helper returns to its coordinator, or the unsynced update when the
 scope is read-only. A read-only or report-only scope returns findings and never
 gains a write merely to leave a reusable record. Keep no second schedule store.

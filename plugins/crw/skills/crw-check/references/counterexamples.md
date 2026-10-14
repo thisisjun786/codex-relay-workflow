@@ -18,6 +18,6 @@ Example: a short-period estimate of 140 and a containing-period estimate of 100 
 
 For retry logic, test a repeated delivery of one logical request and a new legitimate request with similar content. A correction suppressing both may replace duplication with data loss.
 
-If a Linear document says to retain all historical receipts while a later accepted decision limits only newly generated output, the statements need not conflict. Check version and write/read boundaries before proposing a universal limit.
+If a tracking document says to retain all historical receipts while a later accepted decision limits only newly generated output, the statements need not conflict. Check version and write/read boundaries before proposing a universal limit.
 
 Keep probes tied to the caller's target. Do not create a generic test framework or run every row for a small audit.

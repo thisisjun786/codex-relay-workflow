@@ -133,10 +133,12 @@ var parentTitle = family{name: "parent-title", description: `Compute a project p
 
 crw-plan/references/integrations.md#set-the-app-presentation-and-record owns the rule: a
 project parent's Codex task title leads with the linked project's product-family label in
-brackets, spelled exactly as Linear spells it. The label is data, so nothing here maps, expands or
-case-folds it, and there is no table of known families to drift.
+brackets, spelled exactly as the tracking repository spells it: the family:NAME label of the
+milestone's issues. The label is data, so nothing here maps, expands or case-folds it, and there is
+no table of known families to drift.
 
-The caller supplies the family candidates already scoped to the product-family label group. A
+The caller supplies the family candidates already scoped to the family:NAME labels of the
+milestone's issues in the tracking repository. A
 label may contain "[" or "]", so a boundary is only ever acted on when it was constructed from the
 verified family or named verbatim by the caller. A decision here is a proposal and never evidence
 that a task is named anything, and it assumes the caller has already matched this task to this
@@ -153,20 +155,25 @@ var startPolicy = family{name: "start-policy", description: `Check a start-polic
 	{"selftest", "check the vocabulary and the recorded negative cases"},
 }}
 
+// githubIssueMapping is how a GitHub issue is given to the two checks that read one issue: gh issue view prints the keys url, title, body
+// and labels, and its --jq makes them the id, title, description and labels the checks read. The same command is in
+// plugins/crw/skills/crw-canon/references/tracking-model.md ("Use the tracking access").
+const githubIssueMapping = "`gh issue view N --repo OWNER/NAME --json url,title,body,labels --jq '{id: .url, title: .title, description: .body, labels: [.labels[].name]}'` prints it"
+
 var issueSize = family{name: "issue-size", description: `Count what one issue states and report it as ok, over_line or over_line_accepted, so a bundle that would outgrow one pull request is seen before a child is given it. The answer is advisory: it never blocks a dispatch and never exits non-zero on the count alone.
 
-The issue is read as the Linear tools give it (id, title, description) or as fields (criteria, research_criteria, deliverables, scope, verification, depends_on, exception). The answer is a count against limits taken from recorded issues, not a judgment: the same input is the same bytes, and the report prints the limits it applied, the concept-boundary questions to read beside them, and a draft split for crw-plan to judge. A body that states a line estimate is scaled by the measured actual/estimate ratios of the calibration table; when the scaled estimate exceeds the ceiling (the input's size_ceiling, else 600) the reason estimate_scaled_over_ceiling is shown, and calibrate prints that table's ratio distribution. A --bundle-reason records why an over-baseline bundle was accepted, as bundle_reason in the report. Exit 0 for any readable input (ok, over_line, or over_line_accepted), 2 an input that cannot be read, 3 a file that cannot be read.`, commands: [][2]string{
+The issue is read as a GitHub issue mapped to id, title and description (` + githubIssueMapping + `) or as fields (criteria, research_criteria, deliverables, scope, verification, depends_on, exception). The answer is a count against limits taken from recorded issues, not a judgment: the same input is the same bytes, and the report prints the limits it applied, the concept-boundary questions to read beside them, and a draft split for crw-plan to judge. A body that states a line estimate is scaled by the measured actual/estimate ratios of the calibration table; when the scaled estimate exceeds the ceiling (the input's size_ceiling, else 600) the reason estimate_scaled_over_ceiling is shown, and calibrate prints that table's ratio distribution. A --bundle-reason records why an over-baseline bundle was accepted, as bundle_reason in the report. Exit 0 for any readable input (ok, over_line, or over_line_accepted), 2 an input that cannot be read, 3 a file that cannot be read.`, commands: [][2]string{
 	{"check", "read one issue as JSON, from a file or stdin, and print the size answer"},
 	{"calibrate", "read a measured table and print its actual/estimate ratio distribution"},
 }}
 
 var issueReady = family{name: "issue-ready", description: `Judge whether one issue may be released to a child, so work with no decided answer, no test written to fail first or no end condition is held back before a child spends evaluation rounds designing it.
 
-The issue is read as the Linear tools give it (id, title, description, labels). An issue is ready when its body carries the five items: registered criteria, the edit regions, a decided answer with no design question left, the test cases to write first and see fail, and the end condition (which command must give which result). Each item is found by its section heading, in Korean or English, and the report names every missing item with the heading that supplies it. An issue that carries the design-first label, or whose open decisions section still lists a question, is held as design_first until the design result is in the decided answer and the label is gone.
+The issue is read as a GitHub issue mapped to id, title, description and labels (` + githubIssueMapping + `). An issue is ready when its body carries the five items: registered criteria, the edit regions, a decided answer with no design question left, the test cases to write first and see fail, and the end condition (which command must give which result). Each item is found by its section heading, in Korean or English, and the report names every missing item with the heading that supplies it. An issue that carries the design-first label, or whose open decisions section still lists a question, is held as design_first until the design result is in the decided answer and the label is gone.
 
 ` + readyInputKeys + `
 
-Exit 0: an answer, whatever its decision: ready; bypassed (a held issue released on an exception record: the management session's explicit approval, with the issue, the approver, the date and the statement); not_ready or design_first, a warning: the decision says so, the reasons say what to supply and each is printed on stderr as a warning, and the caller records them with the release. Exit 2: an input that cannot be read, or an exception that names no approver, issue, date or statement. Exit 3: a file that cannot be read. The answer is a function of the issue text and labels: the same input is the same bytes. It reads nothing from Linear and writes nothing.`, commands: [][2]string{
+Exit 0: an answer, whatever its decision: ready; bypassed (a held issue released on an exception record: the management session's explicit approval, with the issue, the approver, the date and the statement); not_ready or design_first, a warning: the decision says so, the reasons say what to supply and each is printed on stderr as a warning, and the caller records them with the release. Exit 2: an input that cannot be read, or an exception that names no approver, issue, date or statement. Exit 3: a file that cannot be read. The answer is a function of the issue text and labels: the same input is the same bytes. It reads nothing from the tracking repository and writes nothing.`, commands: [][2]string{
 	{"check", "read one issue as JSON, from a file or stdin, and print the release answer"},
 }}
 

@@ -32,7 +32,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Route Linear project coordination to crw-run goal mode before task activation and exclude project parents from the implementation loop. Replace the removed Node CLI fallback with the installer-owned Go runtime pointer. CRW-1130 (post-evaluation): DISPATCH-MANAGED-01 added before DISPATCH-SURFACE-01 (a Linear issue or DAG node is a relay child through crw-run, never a create_thread lane; an unresolved binding is not permission to go unmanaged), DISPATCH-SURFACE-01 and its parallel-lane request sentence scoped to unmanaged work, and the router row points to the binding check first. Oracle: loop/SKILL.md DISPATCH-SURFACE-01. CRW-1219: the description is one task's loop and sends a Linear project or initiative request to crw-run, and the parent-exclusion paragraph is one pointer to hierarchy.md. CRW-1222: DISPATCH-MANAGED-01 names the flow executor call of the project orchestrator's run as the second managed surface beside the independent relay child. CRW-1340: the synchronous Interview is retired with crw-interview; an unclear milestone or issue goes back to its registration (crw-define) and ambiguity during a run goes up as a decision request, so the routes to the Interview are dropped. CRW-1352: the session layers carry the names of the level table (crw-canon/references/hierarchy.md); crw-run-initiative is retired into crw-run CRW-1396: the first use of the parent or the child gives its relay role id and links the level table (crw-canon/references/hierarchy.md); a native spawn's parent is the spawning session. CRW-1353: the default path is a flow run whose steps the child spawns as role subagents (crw flow next, crw flow dispatched) and an issue child is the exception (SP-CHILD-1); the stand-in layer words follow the level table (crw-canon/references/hierarchy.md).",
+      "reason": "CRW-1344: Linear wording became tracking wording (a tracking issue, the tracking repository, a milestone), and the skill catalog no longer lists a Linear skill",
       "hunks": [
         {
           "line": 3,
@@ -42,13 +42,13 @@
             "  short-description: \"Agent-led scoped completion with durable plans and evidence.\"\n"
           ],
           "new": [
-            "description: \"Use for one task's scoped PABCD completion loop. Bare crw-loop means HOTL; explicit explanation, interview, plan-only, read-only, or HITL limits win. A Linear project or initiative request goes to crw-run. Triggers: crw-loop, continue until done, HOTL, repeated PABCD, 루프 돌려, 끝까지 해줘, docs-first.\"\n"
+            "description: \"Use for one task's scoped PABCD completion loop. Bare crw-loop means HOTL; explicit explanation, interview, plan-only, read-only, or HITL limits win. A milestone request goes to crw-run. Triggers: crw-loop, continue until done, HOTL, repeated PABCD, 루프 돌려, 끝까지 해줘, docs-first.\"\n"
           ]
         },
         {
           "line": 28,
           "new": [
-            "This skill runs one task's authorized objective. A request that names a Linear project or initiative is [crw-run](../crw-run/SKILL.md)'s, and which level runs this loop and what goal each level opens is in [hierarchy](../crw-canon/references/hierarchy.md#scope-of-each-level), whose [level table](../crw-canon/references/hierarchy.md#the-levels) names the layers.\n",
+            "This skill runs one task's authorized objective. A request that names a milestone is [crw-run](../crw-run/SKILL.md)'s, and which level runs this loop and what goal each level opens is in [hierarchy](../crw-canon/references/hierarchy.md#scope-of-each-level), whose [level table](../crw-canon/references/hierarchy.md#the-levels) names the layers.\n",
             "\n"
           ]
         },
@@ -132,14 +132,14 @@
           ],
           "new": [
             "- DISPATCH-MANAGED-01 (STRICT): before fanning work out, start from the binding. A\n",
-            "  Linear issue or DAG node (also one the relay holds no assignment for yet) is a flow\n",
+            "  tracking issue or DAG node (also one the relay holds no assignment for yet) is a flow\n",
             "  executor call of the run of the child (project session, relay role `parent`), recorded in the\n",
             "  relay, whose step the child spawns as a role subagent (the default path), or an issue child\n",
             "  started and resumed through `crw-run` (the exception, SP-CHILD-1), never a\n",
             "  `create_thread` lane; the relay refuses a second active or paused assignment of\n",
             "  the same issue and a release past capacity, and those answers are followed, not\n",
             "  routed around by creating a thread by hand. An unresolved binding is not\n",
-            "  permission to take the unmanaged route. Only standalone PABCD with no Linear issue\n",
+            "  permission to take the unmanaged route. Only standalone PABCD with no tracking issue\n",
             "  and no CRW execution binding, and bounded helper delegation, use the rule below.\n",
             "  Details: [Dispatch surfaces](../crw-pabcd/references/dispatch-surfaces.md#dispatch-managed-01-strict--start-from-the-binding-not-from-the-mechanism).\n",
             "- DISPATCH-SURFACE-01 (STRICT): for unmanaged work, name the surface before fanning work out, because\n"
@@ -178,12 +178,12 @@
     },
     {
       "file": "agents/openai.yaml",
-      "reason": "Provide the default prompt required by CRW skill metadata while preserving the oracle invocation policy. CRW-1219: the default prompt sends a Linear project request to crw-run instead of naming crw-run goal mode.",
+      "reason": "CRW-1344: Linear wording became tracking wording (a tracking issue, the tracking repository, a milestone), and the skill catalog no longer lists a Linear skill",
       "hunks": [
         {
           "line": 4,
           "new": [
-            "  default_prompt: \"Use $crw-loop to complete this task with a scoped PABCD loop; a Linear project request goes to crw-run.\"\n"
+            "  default_prompt: \"Use $crw-loop to complete this task with a scoped PABCD loop; a milestone request goes to crw-run.\"\n"
           ]
         }
       ]
@@ -281,7 +281,7 @@
     },
     {
       "file": "references/lane-dispatch.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Colocate the recorded host-bound data with the moved skill helper. Point the host-bound helper at its owning skill and disclose the omitted personal locator without claiming live bound verification. Relocate the packet validation command into the loop skill scripts directory. Quote the resolved helper path so a skill directory containing spaces is usable. CRW-1130 (post-evaluation): the lane packet reference is for unmanaged lanes (a Linear issue or DAG node is a managed relay child through crw-run), the own-wake instruction is scoped to unmanaged coordinators, and a managed goal-free parent is resumed by relay delivery with the existing wake readiness (OPS-8.1, OPS-8.5) and arms no wake of its own. Oracle: loop/references/lane-dispatch.md Nothing wakes the coordinator. CRW-1222: a managed issue or node is an independent relay child or the flow executor call of the project orchestrator's run, never a create_thread lane. CRW-1352: the session layers carry the names of the level table (crw-canon/references/hierarchy.md); crw-run-initiative is retired into crw-run CRW-1396: the first use of the parent or the child gives its relay role id and links the level table (crw-canon/references/hierarchy.md); a native spawn's parent is the spawning session. CRW-1353: the default path is a flow run whose steps the child spawns as role subagents (crw flow next, crw flow dispatched) and an issue child is the exception (SP-CHILD-1); the stand-in layer words follow the level table (crw-canon/references/hierarchy.md).",
+      "reason": "CRW-1344: Linear wording became tracking wording (a tracking issue, the tracking repository, a milestone), and the skill catalog no longer lists a Linear skill",
       "hunks": [
         {
           "line": 3,
@@ -291,7 +291,7 @@
           ],
           "new": [
             "Read when a request fans unmanaged work out across parallel tasks, or when watching more lanes\n",
-            "than one wait can hold. A Linear issue or DAG node is a flow executor call of the run of\n",
+            "than one wait can hold. A tracking issue or DAG node is a flow executor call of the run of\n",
             "[the child](../../crw-canon/references/hierarchy.md#the-levels) (project session, relay role `parent`),\n",
             "recorded in the relay, whose step the child spawns as a role subagent (the default path), or an\n",
             "issue child started through `crw-run` (the exception, SP-CHILD-1), and is not handed to a\n",

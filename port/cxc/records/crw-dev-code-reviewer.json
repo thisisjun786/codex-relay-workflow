@@ -23,7 +23,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "CRW-1220 correction: the quarantine exception names the ci-pipeline file of crw-dev-testing",
+      "reason": "CRW-1344: Linear wording became tracking wording (a tracking issue, the tracking repository, a milestone), and the skill catalog no longer lists a Linear skill",
       "hunks": [
         {
           "line": 3,
@@ -44,9 +44,9 @@
             "## CRW ownership boundary\n",
             "\n",
             "`crw-dev-code-reviewer` reviews code changes and pull requests.\n",
-            "`crw-check` checks delivery against the canonical Linear requirements and issue criteria.\n",
+            "`crw-check` checks delivery against the canonical tracking requirements and issue criteria.\n",
             "`crw-check` also finds contradictions and broken invariants across specifications and evidence.\n",
-            "Use the skill that owns the requested judgment; code review does not certify Linear delivery.\n",
+            "Use the skill that owns the requested judgment; code review does not certify delivery against the tracking issue.\n",
             "The author's side, requesting and receiving review, is `crw-dev` §4.1.\n",
             "\n"
           ]

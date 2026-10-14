@@ -18,7 +18,7 @@ past this project are read from the records that already own them.
 
 ## Roles and the goal each one opens
 
-Three roles run this workflow, each bound to one Linear level, and the role decides what kind of
+Three roles run this workflow, each bound to one tracking level, and the role decides what kind of
 goal the task opens. The bindings themselves are in
 [Scope of each level](../../crw-canon/references/hierarchy.md#scope-of-each-level);
 what follows is the goal convention those roles carry.
@@ -66,7 +66,7 @@ to children, and it is recorded explicitly rather than inferred from an observed
 less exclusive than its name suggests: the policy file has no task-identity field and scopes an
 exception by role and directory, so exclusivity comes from choosing a directory one task works in.
 The id, that directory and the authorization behind them are read from the host policy and the
-Linear record rather than from here.
+tracking record rather than from here.
 
 This is a readback, not an authority. The child default is owned by
 [Default independent execution](../../crw-canon/references/delivery.md#default-independent-execution)
@@ -395,20 +395,20 @@ deliberate deviation from the port, an owner decision recorded in
 the CRW-195 known-defects record of the port, and until it is taken the
 parent declines the steer. Overriding a hook by registration order, intercepting its output,
 patching the plugin cache and writing private state are excluded, and none of them is offered as
-a workaround. The evidence sits in [CRW-29](https://linear.app/jun786/issue/CRW-29) and
-[CRW-145](https://linear.app/jun786/issue/CRW-145), and CRW-145 is a documented defect and
+a workaround. The evidence sits in CRW-29 of the archive and
+CRW-145 of the archive, and CRW-145 is a documented defect and
 proposal held in the backlog, which is not an authorization to execute it.
 
 The supported operation meanwhile is the one above: keep the goal active, decline the steer, and
 spend the continued turn on coordination. A durable resolution waits on the owner decision above
 and on whatever supported interface the evaluation of per-task or profile hook scoping or an
-extension interface in [CRW-129](https://linear.app/jun786/issue/CRW-129), which is deferred,
+extension interface in CRW-129 of the archive, which is deferred,
 establishes.
 
 ## When the host cannot support the parent goal
 
 Return the concrete path, the exact error and the impact to the owner of
-[CRW-29](https://linear.app/jun786/issue/CRW-29). That is the report and the whole of it. Disabling
+CRW-29 of the archive. That is the report and the whole of it. Disabling
 a hook, standing up a fake implementation FSM and calling around the guard are not repairs, and
 they are not offered to the user as options either, because presenting one as a choice is how it
 becomes an approved plan.
@@ -493,7 +493,7 @@ Three claims this does not support:
   safely. [OPS-8.4](operations.md#ops-84-stating-the-scale-that-was-actually-verified) governs
   what may be said about scale.
 - A raised file-descriptor limit is a changed ceiling, not evidence that a higher cap is safe. The
-  exhaustion's cause and repair belong to [CRW-38](https://linear.app/jun786/issue/CRW-38).
+  exhaustion's cause and repair belong to CRW-38 of the archive.
 - A parent counting its own slots is bookkeeping inside one parent, not an atomic host-global
   guarantee. Two parents each inside their own cap can jointly exceed what either observed, and
   the per-parent bound in

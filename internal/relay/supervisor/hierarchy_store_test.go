@@ -11,7 +11,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
 )
 
-// The store seat (CRW-450) is the one supervisor scope no Linear level owns, so a project whose
+// The store seat (CRW-450) is the one supervisor scope no tracking level owns, so a project whose
 // initiative has no supervisor still has somewhere to report. These drive the real walk over a
 // real store rather than a hand-built reading, because the seat is a fact about the store.
 const (

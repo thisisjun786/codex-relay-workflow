@@ -14,7 +14,7 @@ import (
 )
 
 // The store seat: the management session is registered as the relay's store-scope supervisor,
-// the one scope no Linear level owns. These drive the built linkage-bind line, so the argparse
+// the one scope no tracking level owns. These drive the built linkage-bind line, so the argparse
 // spec, the handler and the registry are exercised together.
 const (
 	storeSeatRole = "supervisor"

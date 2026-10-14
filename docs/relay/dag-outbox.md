@@ -207,7 +207,7 @@ documents would read as stale against it.
 
 ## The parent's flow
 
-The procedure is in the crw-run skill (`references/relay.md`, "The Linear summary of a DAG plan"). In order:
+The procedure is in the crw-run skill (`references/relay.md`, "The coordination summary of a DAG plan"). In order:
 
 1. `dag-summary-status --plan P`: a document whose newest entry is owed, or is not up to date, needs a turn. If the plan has moved on, `dag-summary-enqueue --plan P --actor A --document D` first.
 2. `dag-summary-claim --summary S --actor A`: take the newest open entry. An entry that already reads `claimed` (an earlier session of the parent, a restart) is claimed again the same way: only the second claim ends the earlier token.

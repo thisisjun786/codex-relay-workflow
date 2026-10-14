@@ -8,11 +8,11 @@ import (
 	"testing"
 )
 
-// The orchestration skills name their actor and their one job (CRW-1219): crw-loop runs one task, and a Linear project
+// The orchestration skills name their actor and their one job (CRW-1219): crw-loop runs one task, and a milestone
 // request goes to crw-run; the parent exclusion of crw-loop and crw-pabcd is one pointer line to crw-canon/hierarchy.md;
 // crw-pabcd gives up the plan and requirements triggers to the skills that own those jobs; crw-refactor diagnoses and
 // crw-tidy separates its diagnosis from its writes; the numbered plan documents of crw-pabcd are workspace-local evidence
-// that quotes the Linear canon. The inventory map rows of owner S04 point at these checks.
+// that quotes the tracking canon. The inventory map rows of owner S04 point at these checks.
 
 const (
 	loopSkillFile      = "plugins/crw/skills/crw-loop/SKILL.md"
@@ -61,8 +61,8 @@ func repoDescriptions(t *testing.T) map[string]string {
 }
 
 // TestLoopAndPabcdParentExclusionIsOnePointer: the paragraphs that kept the project parent out of the crw-loop and
-// crw-pabcd procedure are one line each that points to the hierarchy; crw-loop's description is one task and sends a Linear
-// project request to crw-run.
+// crw-pabcd procedure are one line each that points to the hierarchy; crw-loop's description is one task and sends a milestone
+// request to crw-run.
 func TestLoopAndPabcdParentExclusionIsOnePointer(t *testing.T) {
 	for _, file := range []string{loopSkillFile, pabcdSkillFile} {
 		body := skillBody(t, file)
@@ -83,7 +83,7 @@ func TestLoopAndPabcdParentExclusionIsOnePointer(t *testing.T) {
 	}
 	description := repoDescriptions(t)["crw-loop"]
 	if !strings.Contains(description, "one task") || !strings.Contains(description, "crw-run") {
-		t.Errorf("the crw-loop description does not say it runs one task and that a Linear project request goes to crw-run: %q", description)
+		t.Errorf("the crw-loop description does not say it runs one task and that a milestone request goes to crw-run: %q", description)
 	}
 	if prompt := splitRead(t, "plugins/crw/skills/crw-loop/agents/openai.yaml"); strings.Contains(prompt, "goal mode") {
 		t.Error("the crw-loop default prompt names crw-run goal mode, which crw-run owns")
@@ -113,10 +113,10 @@ func TestPabcdHasNoPlanTriggers(t *testing.T) {
 }
 
 // TestPabcdPlanDocsAreLocalEvidence: implementation-units.md and phase-control.md write a numbered plan document as
-// workspace-local execution evidence that quotes the Linear canon, and say nowhere that devlog is the canon of a product
+// workspace-local execution evidence that quotes the tracking canon, and say nowhere that devlog is the canon of a product
 // decision. The plan-document format has one link target, implementation-units.md.
 func TestPabcdPlanDocsAreLocalEvidence(t *testing.T) {
-	issueFree := regexp.MustCompile(`(?i)\b(no|without|has no|have no|lacks?)\b[^.]{0,30}\bLinear (issue|record)`)
+	issueFree := regexp.MustCompile(`(?i)\b(no|without|has no|have no|lacks?)\b[^.]{0,30}\btracking (issue|record)`)
 	canonical := regexp.MustCompile(`(?i)devlog[^.]{0,120}\b(canonical|source of truth|SoT)\b|\b(canonical|source of truth|SoT)\b[^.]{0,120}devlog`)
 	for _, file := range []string{
 		"plugins/crw/skills/crw-pabcd/references/implementation-units.md",
@@ -126,17 +126,17 @@ func TestPabcdPlanDocsAreLocalEvidence(t *testing.T) {
 		if !strings.Contains(text, "workspace-local execution evidence") {
 			t.Errorf("%s does not write the numbered plan documents as workspace-local execution evidence", file)
 		}
-		if !strings.Contains(text, "quotes the Linear") {
-			t.Errorf("%s does not say that a plan document quotes the Linear canon", file)
+		if !strings.Contains(text, "quotes the tracking") {
+			t.Errorf("%s does not say that a plan document quotes the tracking canon", file)
 		}
 		if m := canonical.FindString(text); m != "" {
 			t.Errorf("%s makes devlog a canon: %q", file, m)
 		}
 	}
-	// Standalone PABCD has no Linear issue and no CRW execution binding (crw-loop says so); a plan document of that work
+	// Standalone PABCD has no tracking issue and no CRW execution binding (crw-loop says so); a plan document of that work
 	// cannot quote an issue, so each file gives it another source and creates no issue for the citation.
 	if loop := flat(splitRead(t, loopSkillFile)); !issueFree.MatchString(loop) {
-		t.Fatalf("%s no longer allows standalone PABCD without a Linear issue; revisit this check", loopSkillFile)
+		t.Fatalf("%s no longer allows standalone PABCD without a tracking issue; revisit this check", loopSkillFile)
 	}
 	for _, file := range []string{
 		"plugins/crw/skills/crw-pabcd/references/implementation-units.md",
@@ -151,18 +151,18 @@ func TestPabcdPlanDocsAreLocalEvidence(t *testing.T) {
 			}
 		}
 		if sentence == "" {
-			t.Errorf("%s requires the Linear citation of every plan document and has no rule for work with no Linear issue", file)
+			t.Errorf("%s requires the tracking citation of every plan document and has no rule for work with no tracking issue", file)
 			continue
 		}
 		if !regexp.MustCompile(`(?i)request|repository`).MatchString(sentence) {
-			t.Errorf("%s: the rule for work with no Linear issue names no other source: %q", file, sentence)
+			t.Errorf("%s: the rule for work with no tracking issue names no other source: %q", file, sentence)
 		}
 		if regexp.MustCompile(`(?i)\b(create|open|invent)s?\b[^.]{0,40}\bissue`).MatchString(sentence) && !regexp.MustCompile(`(?i)\b(no|not|never|without)\b[^.]{0,30}\b(create|open|invent)|\b(create|open|invent)s?\s+(no|not)\b`).MatchString(sentence) {
-			t.Errorf("%s asks work with no Linear issue to create one: %q", file, sentence)
+			t.Errorf("%s asks work with no tracking issue to create one: %q", file, sentence)
 		}
 	}
-	if !strings.Contains(flat(splitRead(t, "plugins/crw/skills/crw-pabcd/references/phase-control.md")), "linear-holds-canonical-documents") {
-		t.Error("phase-control.md does not link the rule that Linear holds the canonical documents")
+	if !strings.Contains(flat(splitRead(t, "plugins/crw/skills/crw-pabcd/references/phase-control.md")), "tracking-holds-canonical-documents") {
+		t.Error("phase-control.md does not link the rule that the tracking repository holds the canonical documents")
 	}
 	for _, file := range []string{pabcdSkillFile, loopSkillFile, "plugins/crw/skills/crw-pabcd/references/phase-control.md"} {
 		text := splitRead(t, file)
@@ -178,7 +178,7 @@ func TestPabcdPlanDocsAreLocalEvidence(t *testing.T) {
 }
 
 // TestRefactorHasNoWriteProcedure: crw-refactor diagnoses, read-only, for the parent and the top session; a selected
-// repair becomes a Linear issue through crw-add-issue and runs on the ordinary project path. The skill holds no execution
+// repair becomes a tracking issue through crw-add-issue and runs on the ordinary project path. The skill holds no execution
 // procedure and no crw-loop run.
 func TestRefactorHasNoWriteProcedure(t *testing.T) {
 	skill := splitRead(t, refactorSkillFile)
@@ -249,7 +249,7 @@ func TestRefactorHasNoWriteProcedure(t *testing.T) {
 }
 
 // TestTidyJobsSeparated: crw-tidy has two jobs under two headings. Diagnose reads and is open to any actor; Supplement writes,
-// and only the owner of the body written does: the parent for an initiative body, the child for a project or issue body, and
+// and only the owner of the body written does: the parent for a milestone description it opened, the child for a project or issue body, and
 // the parent's store-wide sweep sends each supplement to its owner.
 func TestTidyJobsSeparated(t *testing.T) {
 	skill := splitRead(t, tidySkillFile)
@@ -276,7 +276,7 @@ func TestTidyJobsSeparated(t *testing.T) {
 		}
 	}
 	for _, want := range []string{
-		"the parent for an initiative body",
+		"the parent for a milestone description it opened",
 		"the child for a project or issue body",
 		"store-wide sweep",
 		"Read the record again immediately before the write",
@@ -285,7 +285,7 @@ func TestTidyJobsSeparated(t *testing.T) {
 			t.Errorf("the Supplement section lacks %q", want)
 		}
 	}
-	// hierarchy.md gives each Linear body to one layer and the top session none, so the parent's store-wide sweep is requested
+	// hierarchy.md gives each tracking body to one layer and the top session none, so the parent's store-wide sweep is requested
 	// through crw manage and sends every supplement to the owner of its body; it writes no other layer's record itself.
 	hierarchy := flat(splitRead(t, "plugins/crw/skills/crw-canon/references/hierarchy.md"))
 	if !strings.Contains(hierarchy, "the initiative, project and issue records belong to the layers below it") {

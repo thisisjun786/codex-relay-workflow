@@ -14,7 +14,7 @@ Before choosing a surface, find out what owns the work. Read the binding the tas
 the task packet, the assignment record the relay holds for it, or the DAG node
 ([OPS-7.1](../../crw-run/references/operations.md#ops-71-what-an-assignment-binds) says what an assignment binds).
 
-- **Managed** — a Linear issue or a DAG node, whether the relay already holds an assignment for it
+- **Managed** — a tracking issue or a DAG node, whether the relay already holds an assignment for it
   or not. An issue with no assignment yet is not unmanaged: its first lane is a managed one. A
   managed issue or node is one of two things, and the choice is the plan of [the child](../../crw-canon/references/hierarchy.md#the-levels) (project session, relay role `parent`), not this file's:
   - a flow executor call of the child's run, the default path: the run releases the node to the
@@ -37,8 +37,8 @@ the task packet, the assignment record the relay holds for it, or the DAG node
   ([OPS-8.1](../../crw-run/references/operations.md#ops-81-parent-continuation-and-waiting)): it
   checks the existing wake readiness ([OPS-8.5](../../crw-run/references/operations.md#ops-85-the-goal-free-parents-wake-path))
   and yields only after that readiness is established, never by arming a wake of its own.
-- **Unmanaged** — standalone PABCD with no Linear issue and no CRW execution binding, and bounded
-  helper delegation inside any task. A Linear issue with no assignment yet is not this case. The
+- **Unmanaged** — standalone PABCD with no tracking issue and no CRW execution binding, and bounded
+  helper delegation inside any task. A tracking issue with no assignment yet is not this case. The
   rest of this file applies as written.
 - **Unknown** — the lookup failed, the relay is unavailable, or the identity is ambiguous. That is
   not permission to take the unmanaged route for an independent lane: resolve the binding, or

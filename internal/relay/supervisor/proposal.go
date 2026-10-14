@@ -105,7 +105,7 @@ func (c *Channel) refreshProposal(ctx context.Context, row store.SupervisorMessa
 		return false, err
 	}
 	if !owed {
-		return false, Refusal{"superseded_revision", "the Linear record now confirms this obligation, so the level above already has it" + heldSupersededTail}
+		return false, Refusal{"superseded_revision", "the tracking record now confirms this obligation, so the level above already has it" + heldSupersededTail}
 	}
 	eventID, _ := o.Basis["eventId"].(string)
 	report, err := currentReport(ctx, c.Store, eventID)

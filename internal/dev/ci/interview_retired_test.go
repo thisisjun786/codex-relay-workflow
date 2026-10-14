@@ -74,7 +74,7 @@ func TestDefineRegistersMilestonesAndIssues(t *testing.T) {
 		"the top session (today Sion)", "(repository session, relay role `supervisor`)",
 		"purpose", "desired change", "success evidence", "scope", "open decisions",
 		"one question at a time", "no ritual interview",
-		"](../crw-canon/references/linear-model.md)",
+		"](../crw-canon/references/tracking-model.md)",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("crw-define lacks %q", want)

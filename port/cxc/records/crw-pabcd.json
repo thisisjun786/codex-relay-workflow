@@ -50,7 +50,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Distinguish task implementation P/C from Linear plan/check ownership and exclude the crw-run parent from implementation PABCD. Disambiguate task host-goal execution from crw-run parent goal mode beside the goal firewall. Remove the nonexistent orchestrate skill stub; keep the human chat command and the CRW CLI. CRW-1102: one delivery-authority definition in crw-dev (an applicable user grant, the repository's standing grant, or a scope packet carrying one; a packet is evidence, not consent; no-push and force-push, tag, integration-branch, release and deployment limits kept); the delivery path of the repository is chosen before a PR stack, and PABCD points at the definition instead of restating the approval. Oracle: plugins/codexclaw/skills/dev/SKILL.md:443-446 and pabcd/SKILL.md:87-88. CRW-1130 (post-evaluation): the Delegation model starts from the CRW binding (DISPATCH-MANAGED-01 is applied before any dispatch of an independent lane; a Linear issue or DAG node is a relay child through crw-run, never a create_thread lane) and the thread and subagent choice is scoped to unmanaged work; the dispatch-surfaces reference is read before every authorized dispatch. Oracle: pabcd/SKILL.md Delegation model and pabcd/references/dispatch-surfaces.md:25-31. CRW-1151: the hook hint names the condition DetectTrigger applies (PABCD marker plus request verb; phase patterns choose I/P/A/B/C, with P as the fallback only for a crw-pabcd or pabcd로 request) instead of a bare interview word, and separates the detector result from what the handler injects (the un-armed loop-arm mandate before the hint, the interview-entry policy, the goal-mode drop of an I hint and the P-to-interview promotion, the un-armed loop-arm mandate, the interview-entry policy, passive re-injection in an armed session). CRW-1219: the description drops the plan and requirements triggers (crw-plan, crw-define and crw-interview own them), and the parent-exclusion paragraph is one pointer to hierarchy.md. CRW-1222: the Delegation model names the flow executor call as the second managed surface, and the spawn paragraph points to the spawn policy. CRW-1340: the synchronous Interview is retired with crw-interview; an unclear milestone or issue goes back to its registration (crw-define) and ambiguity during a run goes up as a decision request, so the routes to the Interview are dropped. CRW-1352: the session layers carry the names of the level table (crw-canon/references/hierarchy.md); crw-run-initiative is retired into crw-run CRW-1396: the first use of the parent or the child gives its relay role id and links the level table (crw-canon/references/hierarchy.md); a native spawn's parent is the spawning session. CRW-1353: the default path is a flow run whose steps the child spawns as role subagents (crw flow next, crw flow dispatched) and an issue child is the exception (SP-CHILD-1); the stand-in layer words follow the level table (crw-canon/references/hierarchy.md).",
+      "reason": "CRW-1344: Linear wording became tracking wording (a tracking issue, the tracking repository, a milestone), and the skill catalog no longer lists a Linear skill",
       "hunks": [
         {
           "line": 3,
@@ -76,9 +76,9 @@
         {
           "line": 23,
           "new": [
-            "P here plans one task's implementation; crw-plan decomposes a goal into Linear\n",
-            "projects, milestones and issues. C verifies this task's implementation; crw-check\n",
-            "compares delivered work with canonical Linear documents and issue criteria.\n",
+            "P here plans one task's implementation; crw-plan decomposes a goal into\n",
+            "milestones (projects) and issues. C verifies this task's implementation; crw-check\n",
+            "compares delivered work with canonical tracking documents and issue criteria.\n",
             "Which level runs this procedure, and what goal each level opens, is in [hierarchy](../crw-canon/references/hierarchy.md#scope-of-each-level), whose [level table](../crw-canon/references/hierarchy.md#the-levels) names the layers.\n",
             "\n"
           ]
@@ -223,12 +223,12 @@
             "Choose the surface before dispatching, and start from the binding: before any\n",
             "dispatch of an independent lane, apply\n",
             "[DISPATCH-MANAGED-01](references/dispatch-surfaces.md#dispatch-managed-01-strict--start-from-the-binding-not-from-the-mechanism).\n",
-            "A Linear issue or DAG node (also one the relay holds no assignment for yet) is an\n",
+            "A tracking issue or DAG node (also one the relay holds no assignment for yet) is an\n",
             "independent relay child started and resumed through `crw-run`, or a flow executor call of the run of the child (project session, relay role `parent`) recorded in the relay, never a\n",
             "`create_thread` lane, and the relay's duplicate-assignment and capacity refusals are\n",
             "followed, not routed around by creating a thread by hand. An unresolved binding is\n",
             "not permission to take the unmanaged route. The thread and subagent choice below is\n",
-            "for unmanaged work: standalone PABCD with no Linear issue and no CRW execution\n",
+            "for unmanaged work: standalone PABCD with no tracking issue and no CRW execution\n",
             "binding, and bounded helper delegation inside any task.\n",
             "\n",
             "A **subagent** (`spawn_agent`) is a leaf\n"
@@ -420,7 +420,7 @@
     },
     {
       "file": "references/dispatch-surfaces.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Relocate manifest validation to the loop skill that owns lane helper assets. Explain skill-directory resolution for the moved lane manifest helper. Quote the resolved helper path so a skill directory containing spaces is usable. CRW-1130: start the surface choice from the CRW binding (DISPATCH-MANAGED-01): a Linear issue or DAG node (also one with no assignment yet, whose first lane is the managed start) is an independent relay child through crw-run managed start/resume/dag-release, with the relay's duplicate-assignment and capacity refusals, a read-only projection instead of a second manifest, and relay delivery as the goal-free parent's wake; project parents use read-only and review helpers; standalone PABCD with no Linear issue and no CRW execution binding, and bounded helpers, keep the thread/subagent choice; an unresolved binding is not permission to go unmanaged; a bounded worktree worker's evidence is read in the tree the dispatch assigned. Oracle: pabcd/references/dispatch-surfaces.md:25-31,87,180,230. CRW-1130 (post-evaluation): the worker-evidence sentence states what the SubagentStop gate reads (the native cwd's .crw/evidence) and makes the assigned-tree reading conditional on a runtime that has the evidence-location change. CRW-1222: DISPATCH-MANAGED-01 names the flow executor call of the project orchestrator's run, recorded in the relay, as the second managed surface beside the independent relay child; a native helper's record is still no acceptance or receipt. CRW-1352: the session layers carry the names of the level table (crw-canon/references/hierarchy.md); crw-run-initiative is retired into crw-run CRW-1396: the first use of the parent or the child gives its relay role id and links the level table (crw-canon/references/hierarchy.md); a native spawn's parent is the spawning session. CRW-1353: the default path is a flow run whose steps the child spawns as role subagents (crw flow next, crw flow dispatched) and an issue child is the exception (SP-CHILD-1); the stand-in layer words follow the level table (crw-canon/references/hierarchy.md).",
+      "reason": "CRW-1344: Linear wording became tracking wording (a tracking issue, the tracking repository, a milestone), and the skill catalog no longer lists a Linear skill",
       "hunks": [
         {
           "line": 3,
@@ -449,7 +449,7 @@
             "the task packet, the assignment record the relay holds for it, or the DAG node\n",
             "([OPS-7.1](../../crw-run/references/operations.md#ops-71-what-an-assignment-binds) says what an assignment binds).\n",
             "\n",
-            "- **Managed** — a Linear issue or a DAG node, whether the relay already holds an assignment for it\n",
+            "- **Managed** — a tracking issue or a DAG node, whether the relay already holds an assignment for it\n",
             "  or not. An issue with no assignment yet is not unmanaged: its first lane is a managed one. A\n",
             "  managed issue or node is one of two things, and the choice is the plan of [the child](../../crw-canon/references/hierarchy.md#the-levels) (project session, relay role `parent`), not this file's:\n",
             "  - a flow executor call of the child's run, the default path: the run releases the node to the\n",
@@ -472,8 +472,8 @@
             "  ([OPS-8.1](../../crw-run/references/operations.md#ops-81-parent-continuation-and-waiting)): it\n",
             "  checks the existing wake readiness ([OPS-8.5](../../crw-run/references/operations.md#ops-85-the-goal-free-parents-wake-path))\n",
             "  and yields only after that readiness is established, never by arming a wake of its own.\n",
-            "- **Unmanaged** — standalone PABCD with no Linear issue and no CRW execution binding, and bounded\n",
-            "  helper delegation inside any task. A Linear issue with no assignment yet is not this case. The\n",
+            "- **Unmanaged** — standalone PABCD with no tracking issue and no CRW execution binding, and bounded\n",
+            "  helper delegation inside any task. A tracking issue with no assignment yet is not this case. The\n",
             "  rest of this file applies as written.\n",
             "- **Unknown** — the lookup failed, the relay is unavailable, or the identity is ambiguous. That is\n",
             "  not permission to take the unmanaged route for an independent lane: resolve the binding, or\n",
@@ -621,7 +621,7 @@
     },
     {
       "file": "references/implementation-units.md",
-      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed",
+      "reason": "CRW-1344: Linear wording became tracking wording (a tracking issue, the tracking repository, a milestone), and the skill catalog no longer lists a Linear skill",
       "hunks": [
         {
           "line": 3,
@@ -632,11 +632,11 @@
           ],
           "new": [
             "The numbered plan documents of a unit are workspace-local execution evidence: the plan as it\n",
-            "is carried out in this checkout. Where the work has a Linear issue, each one quotes the Linear issue and documents it implements\n",
-            "(the ID and the revision read), which stay canonical under\n",
-            "[Linear holds canonical documents](../../crw-canon/references/linear-model.md#linear-holds-canonical-documents),\n",
-            "and never replaces them. Standalone work with no Linear issue quotes the original request and the repository's own contract documents instead, and creates no issue to have something to cite. A product decision is made and recorded in Linear; a plan document\n",
-            "points to it, and where the two disagree the Linear record wins and the plan document is\n",
+            "is carried out in this checkout. Where the work has a tracking issue, each one quotes the tracking issue and documents it implements\n",
+            "(the ref and the revision read), which stay canonical under\n",
+            "[Tracking holds canonical documents](../../crw-canon/references/tracking-model.md#tracking-holds-canonical-documents),\n",
+            "and never replaces them. Standalone work with no tracking issue quotes the original request and the repository's own contract documents instead, and creates no issue to have something to cite. A product decision is made and recorded in the tracking repository; a plan document\n",
+            "points to it, and where the two disagree the tracking record wins and the plan document is\n",
             "amended at the next P. This file owns the format of the numbered documents.\n"
           ]
         },
@@ -724,7 +724,7 @@
     },
     {
       "file": "references/phase-control.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Remove the obsolete orchestrate skill invocation; the settled transition uses crw-pabcd and the chat/CLI commands. CRW-1116: the A>B row, its example and the control-surface sentence name auditBlockers, the structured disposition of the blockers a recorded GO-WITH-FIXES (blockers=N) round left. CRW-1219: the documents planUnit names are written as workspace-local execution evidence that quotes the Linear canon where the work has an issue (standalone work quotes its request and the repository's contract documents).",
+      "reason": "CRW-1344: Linear wording became tracking wording (a tracking issue, the tracking repository, a milestone), and the skill catalog no longer lists a Linear skill",
       "hunks": [
         {
           "line": 20,
@@ -738,10 +738,10 @@
         {
           "line": 50,
           "new": [
-            "The numbered documents `planUnit` names are workspace-local execution evidence: where the work has a Linear issue, each quotes the\n",
-            "Linear issue and documents it implements, which stay canonical under\n",
-            "[Linear holds canonical documents](../../crw-canon/references/linear-model.md#linear-holds-canonical-documents);\n",
-            "standalone work with no Linear issue quotes the original request and the repository's own contract documents and creates no issue for it.\n",
+            "The numbered documents `planUnit` names are workspace-local execution evidence: where the work has a tracking issue, each quotes the\n",
+            "tracking issue and documents it implements, which stay canonical under\n",
+            "[Tracking holds canonical documents](../../crw-canon/references/tracking-model.md#tracking-holds-canonical-documents);\n",
+            "standalone work with no tracking issue quotes the original request and the repository's own contract documents and creates no issue for it.\n",
             "The gate checks that the unit exists and holds numbered documents, not what they decide; their\n",
             "format is [Implementation units](implementation-units.md).\n",
             "\n"

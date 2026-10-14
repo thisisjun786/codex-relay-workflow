@@ -118,7 +118,7 @@ Per delivery, from git and, where a pull request exists, from GitHub: the curren
 paged to the end, whether the delivery actually landed on its intended target (the integrator's fast-forward, or the pull request's merge while one is open), and whether
 anything was installed or demonstrated afterwards. Use
 [Merge readiness](merge-readiness.md) for what the checks and reviews
-establish and [Implementation Done](../../crw-canon/references/linear-model.md#implementation-done)
+establish and [Implementation Done](../../crw-canon/references/tracking-model.md#implementation-done)
 for what a landing requires. The Devin and Codex reviews are references and not gates
 ([Devin and Codex reviews are references, not merge gates](merge-readiness.md#devin-and-codex-reviews-are-references-not-merge-gates)): a skipped or
 missing review is recorded as such, never as a review that passed. Read each reviewer's one run as that
@@ -181,7 +181,7 @@ being wrong about which revision it describes.
 
 ## What the checkpoint may do
 
-On the reading branch this call queries and nothing else: no Linear write, no task created or
+On the reading branch this call queries and nothing else: no tracking write, no task created or
 resumed, no message, no wake, no installation, no schedule change. On the checkpoint branch it acts
 inside the approval that already exists. Either way it cancels nothing, and the supervisor and the
 parents keep every obligation they had before the question arrived.

@@ -130,7 +130,7 @@ func installDAGZoneTx(ctx context.Context, db *sql.DB) (err error) {
 }
 
 var dagZone = slices.Concat([]string{
-	// The plan: its identity and the Linear project it belongs to, written once with revision 1. The
+	// The plan: its identity and the tracking project it belongs to, written once with revision 1. The
 	// head revision is MAX(revision_no) of the log, never a column here, so nothing about a plan is updated.
 	`CREATE TABLE IF NOT EXISTS dag_plans (
     plan_id            TEXT PRIMARY KEY,

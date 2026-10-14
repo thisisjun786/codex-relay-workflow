@@ -4,7 +4,7 @@ Here the parent (relay role `parent`) is a relay role, read through [the level t
 
 Where one implementation issue ends, what it must carry, and how to tell that the split
 is finished. The mapping itself belongs to the shared
-[issue-to-PR rule](../../crw-canon/references/linear-model.md#issue-to-pr-mapping); this file is the judgment
+[issue-to-PR rule](../../crw-canon/references/tracking-model.md#issue-to-pr-mapping); this file is the judgment
 `crw-plan` applies while writing a plan, and it cites that rule instead of restating it.
 Read it with the planning rules in [crw-plan](../SKILL.md), which the cases below assume.
 
@@ -22,7 +22,7 @@ A second issue and delivery is forced when any of these holds, because each is a
 
 - the change lands in a different target repository, which is a different merge; a
   repository that is only read, validated or depended on is not a target
-  ([repository resolution](../../crw-canon/references/linear-model.md#resolve-the-implementation-repository));
+  ([repository resolution](../../crw-canon/references/tracking-model.md#resolve-the-implementation-repository));
 - some part must already be landed before the rest can be written or verified — a
   schema, an API or message shape, a published artifact, an installed package, a
   migrated store — so that part becomes a prerequisite issue and the rest depends on it;
@@ -36,7 +36,7 @@ stay in one issue even where each could be verified apart.
 
 Criteria that no merge establishes, such as installation, deployment, live behaviour or
 an external decision, are tracked as their own result under
-[Implementation Done](../../crw-canon/references/linear-model.md#implementation-done) rather than riding along in a
+[Implementation Done](../../crw-canon/references/tracking-model.md#implementation-done) rather than riding along in a
 delivery PR's criteria.
 
 Splitting is forbidden when the parts cannot pass verification apart: a change and the
@@ -98,7 +98,7 @@ tree](../../crw-run/references/merge-readiness.md#build-and-vet-the-merged-tree-
 ## Check the size of an issue
 
 Run `crw skill issue-size check` on each implementation issue this skill writes or refines, giving it the issue as
-Linear returns it (`id`, `title`, `description`) and, where the plan knows them, `deliverables` (the separately
+the GitHub issue JSON mapped to `id`, `title` and `description` ([Use the tracking access](../../crw-canon/references/tracking-model.md#use-the-tracking-access)) and, where the plan knows them, `deliverables` (the separately
 deliverable outputs, one item each: a new package, a command family, a store table, a skill document) and `depends_on`
 (which criterion needs which earlier one; the planner writes it and the command never derives it). The command counts what
 the body states under the headings it knows (completion criteria, research reinforcement, deliverables, verification, scope, in Korean or
@@ -151,11 +151,11 @@ the artifact it delivers and where that artifact lives: a document revision, a r
 decision, a measurement with the method that produced it, an observed state. Its
 completion criterion is that artifact existing, and its verification is something a
 second person can repeat. It carries no repository label and no placeholder PR
-([issue-to-PR rule](../../crw-canon/references/linear-model.md#issue-to-pr-mapping)).
+([issue-to-PR rule](../../crw-canon/references/tracking-model.md#issue-to-pr-mapping)).
 
 When code work has no resolvable target repository, plan the issue anyway with its
-deliverable and criteria, leave the repository label empty
-([operating model](../../crw-canon/references/linear-model.md#linear-operating-model)), and record the decision that
+deliverable and criteria, leave the issue's repository line empty
+([operating model](../../crw-canon/references/tracking-model.md#tracking-operating-model)), and record the decision that
 would resolve it — which repository to create or choose, and who decides — as its own
 non-PR decision issue blocking it. The implementation issue is not ready for dispatch
 until that decision issue is settled. Do not point it at a convenient checkout, and do
@@ -175,7 +175,7 @@ current owner and status. Then write one of these four outcomes before any reass
   by the boundary rule above; where it is, agree the new boundary with the owner first, then
   narrow this issue and make the new one blocked by it. Where the PR was closed without
   merging or can no longer deliver, designate one replacement delivery PR and keep the
-  superseded link ([issue-to-PR rule](../../crw-canon/references/linear-model.md#issue-to-pr-mapping)). Where the owner
+  superseded link ([issue-to-PR rule](../../crw-canon/references/tracking-model.md#issue-to-pr-mapping)). Where the owner
   is no longer active, recover ownership or obtain an authorized reassignment before any
   scope change or dispatch. A live assignment is never narrowed or split before its owner
   has seen the change.
@@ -185,7 +185,7 @@ current owner and status. Then write one of these four outcomes before any reass
 - The merged PR satisfies none of the accepted delivery criteria, such as instrumentation
   that only makes a failure observable, or a reference change. Link it as a contributing
   PR, leave the delivery link empty, keep the issue's status, and treat none of its
-  criteria as met ([Implementation Done](../../crw-canon/references/linear-model.md#implementation-done)).
+  criteria as met ([Implementation Done](../../crw-canon/references/tracking-model.md#implementation-done)).
 - The issue is an existing multi-PR exception. Record the exception on the issue,
   inventory its required deliveries against the criteria still open, and reconcile with
   its current owner before dispatch.
@@ -194,7 +194,7 @@ Leaving the issue open with its boundary undecided is not alignment. It defers t
 decision to the next worker, who inherits an issue whose stated scope is larger than the
 PR it may open. Check what a linked PR does to the issue on merge as well, and record the
 intended link type when a PR will not complete it
-([Implementation Done](../../crw-canon/references/linear-model.md#implementation-done)).
+([Implementation Done](../../crw-canon/references/tracking-model.md#implementation-done)).
 
 Narrowing a delivered issue is a material change to agreed scope. The authorization the
 request already gave carries it when that request covers alignment, and it is returned as
@@ -229,10 +229,10 @@ changes what the next one sees.
    relations, and any project, milestone, document or label it wrote — and compare what is
    observed against what was intended. An implementation issue's project is one of those fields:
    an issue observed with no project, or in a project other than the one intended, is an
-   incomplete write, and a team, a product-family label or a relation does not stand in for it. The child pair line is another of those fields: an implementation issue read back without it is an incomplete write too.
+   incomplete write, and a repository, a product-family label or a `Blocked by:` line does not stand in for it. The child pair line is another of those fields: an implementation issue read back without it is an incomplete write too.
    Report both lists with IDs. An intended relation or
    field that is absent is an incomplete write: repair it on the same IDs rather than
-   creating the item again. Where the connector cannot read something back, report it
+   creating the item again. Where `gh` cannot read something back, report it
    written, unverified, and do not claim it exists.
 5. Compile. Build the handoff from the issues as they were read back (the
    `crw-flow-compile-input/1` document of [Hand the plan to the run](../SKILL.md#hand-the-plan-to-the-run)) and run
@@ -290,7 +290,7 @@ wrong row, and both are fixed here.
 | 14 | A milestone outcome has no issue that delivers it, and the request authorizes the full plan. | 1 new issue created now for that outcome, relations recomputed after it, 0 promised outcomes left unplanned. | Closing check: coverage. |
 | 15 | Two planned issues name the same deliverable in the same repository under different titles, and one of them is blocked by a third issue. | 1 issue kept, the relation to the third issue moved onto it before relations are checked, 0 duplicate deliverables, 0 promised work dropped. | Closing check: duplication. |
 | 16 | A contract was split across two issues, each now blocks the other, and the shared part can merge and be verified alone. | The shared part becomes 1 new first issue blocking both, the 2 edges between them replaced by those relations, 0 external edges dropped. | Closing check: relations. |
-| 17 | The connector writes relations but cannot read them back. | Relations reported written, unverified; 0 relations claimed to exist; the intended list still reported with IDs. | Closing check: read-back unavailable. |
+| 17 | `gh` writes the `Blocked by:` lines and sub-issue links but cannot read them back. | Relations reported written, unverified; 0 relations claimed to exist; the intended list still reported with IDs. | Closing check: read-back unavailable. |
 | 18 | Two issues block each other, neither passes its checks without the other, and no smaller shared part can be verified alone. | The two consolidate into 1 issue keeping every criterion and every external relation, the 2 edges between them removed with the boundary that created them, 0 invented prerequisites, 0 external edges dropped. | Closing check: relations, coupled parts. |
 | 19 | The delivery PR was closed without merging and its branch is gone; the owner is active and the accepted scope is unchanged. | 1 replacement delivery PR designated with the superseded link kept, 0 new issues, scope unchanged. | Align a delivered issue: PR no longer usable. |
 | 20 | An unmerged delivery issue's owner is no longer active. | Ownership recovered or reassignment authorized first; 0 scope changes and 0 dispatch before that. | Align a delivered issue: owner inactive. |

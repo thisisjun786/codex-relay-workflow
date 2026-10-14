@@ -12,11 +12,11 @@ The packets below are for an issue child of a plan with no run. The child of an 
 ## Child task titles
 
 Name each managed issue task as `ISSUE-ID · descriptive task title`,
-for example `JUN-44 · 가격 조회 결과를 검증한다` or
-`JUN-41 · 기간별 사용량을 집계한다`.
+for example `crw-work#44 · 가격 조회 결과를 검증한다` or
+`crw-work#41 · 기간별 사용량을 집계한다`.
 These are formatting examples, not issue assignments.
 
-Use only the real Linear identifier and a Korean description that makes the
+Use only the real issue key (the repository name and the issue number) and a Korean description that makes the
 assigned result clear. The title after ` · ` may be a natural sentence or phrase
 of up to 20 characters, including spaces and punctuation; the issue code and
 separator do not count. Do not abbreviate away the task's meaning just to make
@@ -70,7 +70,7 @@ Retain a verified snapshot when old linked revisions cannot be recovered. Retain
 
 ```text
 Task: [one issue ID and bounded result]
-Parent: [one Linear project ID and verified coordinator task ID, or no project
+Parent: [one milestone ref and verified coordinator task ID, or no milestone
   for a standalone issue; retain the real coordinator task ID if delegated.
   Initiative membership does not assign another project]
 Supervisor: [the initiative ID and task ID of THIS project's designated execution supervisor,
@@ -121,7 +121,7 @@ Context:
   a child that is told only the state directory cannot tell an agreed direct assignment from a
   relay one nobody decided about, and those two call for different behaviour on completion]
 - Canonical criteria, when registered: [criterion ids and the document they came from]
-- Canonical Linear documents: [IDs/URLs and observed revision/date]
+- Canonical tracking documents: [refs/URLs and observed revision/date]
 
 Authorized execution:
 - Sandbox/permission profile and approval policy: [agreed values]
@@ -518,7 +518,7 @@ Return:
   each item and the kinds of refresh. State every item, with `none` where there is none, because an
   item left out reads as not checked.
 - Remaining defects, unverified behavior, and possible integration conflicts.
-- Proposed changes to a Linear record, returned rather than written: the document or issue ID,
+- Proposed changes to a tracking record, returned rather than written: the issue ref,
   the revision you read, the reason, the smallest sufficient change and its evidence.
 Stop after this assigned result; do not auto-start another issue.
 ```
@@ -722,11 +722,11 @@ nothing, and nothing in the relay runs the check on its behalf.
 
 **Seven states, kept apart.** A message read, a send the transport accepted, a relay
 acknowledgement, a criteria verdict, the parent's acceptance, the merge landing and the
-Linear record reaching Done are seven facts with seven different records behind them, and
+tracking issue closing as completed are seven facts with seven different records behind them, and
 `read` has no record at all - nothing in the relay says a recipient read anything. A model
 writing that it has reported is prose and promotes nothing. The packet document holds which
 record answers each, and a state standing above one that is not held is reported as the
-promotion it is. Linear Done is the issue's own status, which the relay's store never holds:
+promotion it is. Done is the issue's own closed state, which the relay's store never holds:
 its outbox confirming a coordination summary is a different fact.
 
 **Activation is three fields.** The invocation being in the assignment, the child having
@@ -834,11 +834,11 @@ host values filled in.
    Source: new here, because no Launch packet rule gives a child a line count. The nearest are the parent's pre-dispatch check
    ([Check the size before dispatch](../SKILL.md#check-the-size-before-dispatch)), "Do not absorb another issue into this task or
    PR" and the `blocked_needs_input` route of `Execution:`. The figure is this project's; a packet may carry another.
-3. **Text on GitHub.** The title, body, commit messages and replies are English. A reply or commit message names no other Linear issue by its id: name it by its title or its pull request number, and never write a project id, a plan or node id or a relay id. The handoff and the coordination record carry the facts a pull request description would carry.
+3. **Text on GitHub.** The title, body, commit messages and replies are English. A reply or commit message names the issue it serves by its `OWNER/NAME#N` ref and no other issue by its number: name another by its title or its pull request number, and never write a plan or node id or a relay id. The handoff and the coordination record carry the facts a pull request description would carry.
 
-   Source: `Language:`, `Title:` and `Issue/PR mapping:` (one issue, one delivery), [Child task titles](#child-task-titles), and the delivery lines of `Return:`. The ban on other ids is new here: Linear's GitHub integration acts on any issue id it reads in this text, and a project id of the form P-<TEAM>-<number> contains one.
+   Source: `Language:`, `Title:` and `Issue/PR mapping:` (one issue, one delivery), [Child task titles](#child-task-titles), and the delivery lines of `Return:`. The ban on other numbers is new here: a closing keyword beside an issue number closes that issue when the text lands, so a commit names only the issue it delivers.
 
-4. **Delivery and base.** Where SCOPE grants publication, you own the commits and the push of your task branch; the integrator fast-forwards the verified merged tree to the integration branch. Where it does not, commit locally or return the frozen diff and say which publication you did not perform. Push your task branch only: no merge into the integration branch, no force-push, rebase or tag, no push to the integration branch or `main`, and no release, installation, service restart, Linear write or change to global settings. Do not chase the integration branch: merge it into your branch with a merge commit only when the integrator reports a conflict (record what you resolved), or when the coordinator's correction asks for a base refresh, which arrives as a new generation and is not new scope: name the kind of each merge (`clean`, `mechanical` or `manual`) and rerun only what that kind needs ([what a handoff discloses](#what-a-handoff-discloses)).
+4. **Delivery and base.** Where SCOPE grants publication, you own the commits and the push of your task branch; the integrator fast-forwards the verified merged tree to the integration branch. Where it does not, commit locally or return the frozen diff and say which publication you did not perform. Push your task branch only: no merge into the integration branch, no force-push, rebase or tag, no push to the integration branch or `main`, and no release, installation, service restart, tracking write or change to global settings. Do not chase the integration branch: merge it into your branch with a merge commit only when the integrator reports a conflict (record what you resolved), or when the coordinator's correction asks for a base refresh, which arrives as a new generation and is not new scope: name the kind of each merge (`clean`, `mechanical` or `manual`) and rerun only what that kind needs ([what a handoff discloses](#what-a-handoff-discloses)).
 
    Source: the `Delivery:` line and the publication bullet of `Execution:`, OPS-9.1 and OPS-9.3 in [Operations contract](operations.md), and [Refresh the base yourself when only the base moved](merge-readiness.md#refresh-the-base-yourself-when-only-the-base-moved), which says why the coordinator refreshes only the candidate about to merge.
 5. **Reviews.** Internal work has no pull request and so no hosted review. Your own independent review, where your workflow runs one, ends on a head and the handoff names it. The independent code review (`crw review`, a reference opinion) is a separate step with its own bullet under `Execution:`; you run it only where the assignment names it, once per head after the local full verification passes. A finding inside this issue's scope is fixed in this change whatever its grade, or refuted from the code in a reply, and a P0 or security finding is fixed before integration whether or not it belongs to this issue; each is checked again on the new head. The rest get your reply with your judgment and are resolved or listed for the backlog where SCOPE says; a finding you would leave unfixed is proposed to the parent, not accepted by you, unless SCOPE grants that standing decision. A High finding of your own review that you would not apply is not yours to close: list it in the handoff as a decision request, or ask first and end the turn blocked. A required check that is not green, a mandatory review that has not finished or a blocking finding left open is BLOCKED: report it as blocked, never as complete with a note.
@@ -1011,7 +1011,7 @@ Execution: [the template's nineteen bullets: own review, publication, review cyc
   escalation, Loop, permissions]
 Verification: [the commands of VERIFY above, each confirmed at the baseline]
 Return: [the template's list: task id, relay receipt, title as published, changed files, per-criterion evidence, model and effort,
-  goal ids, pull request, merge-readiness handoff, disclosures, remaining defects, proposed Linear changes]
+  goal ids, pull request, merge-readiness handoff, disclosures, remaining defects, proposed tracking changes]
 ```
 
 What moved is the standing text: `Workspace ownership:`, `Execution:` and `Return:` are the Launch packet's, and the SOL packet
@@ -1085,7 +1085,7 @@ Initiative / Supervisor: [stable initiative ID, the revision of its record that 
   and the completion boundary were fixed at, and this supervisor's task id]
 Project: [stable project ID and URL, and the parent task id where one already exists]
 Criteria: [the record this project's criteria were read from and its revision, naming which one it
-  is, since the contribution lives in the project record or in the initiative body depending on how
+  is, since the contribution lives in the milestone record or in the supervisor's own record depending on how
   the plan was written; and this project's contribution to the initiative's finish condition.
   Issue-level criteria stay in the issues]
 Scope as read: [this project's membership in the approved set, the completion boundary, and the
@@ -1266,7 +1266,7 @@ Kind: [proposal | acceptance | conditional acceptance | rejection | correction |
   here lets one parent assign work to another, because no parent can. Project handoff is the one
   downward assignment, it belongs to a supervisor alone, and only that project's own parent
   receives it]
-From / To: [each side's role, task id and Linear scope]
+From / To: [each side's role, task id and milestone scope]
 Scope: [the issues, files, interfaces or behaviour this is about, and the base revision]
 Asking: [the action or decision required, or the decision being returned]
 Because: [where the reason lives: the finding, the pull request, the criterion, the receipt]
@@ -1310,8 +1310,8 @@ locator with its digest, go in `Scope` and `Asking`. The **per-criterion verific
 named as a claim the receiver corroborates against that record rather than as a verdict this
 message issues. The **unresolved problems**, a failure, a missing observation or a conflict with
 another scope, go in `Asking` beside the result. The **decisions the receiver owns** go in `Next`,
-and a proposed Linear record change is one of them: it travels under
-[record writes and returned proposals](../../crw-canon/references/linear-model.md#record-writes-and-returned-proposals)
+and a proposed tracking record change is one of them: it travels under
+[record writes and returned proposals](../../crw-canon/references/tracking-model.md#record-writes-and-returned-proposals)
 and the sender has not applied it.
 
 The detail behind those values stays where it already is. A child returns its issue-level delivery
@@ -1616,14 +1616,13 @@ belongs to an installation nobody asked, not to every installation but one.
 
 ## Coordination record
 
-Use the project's linked canonical Linear coordination document as part of the
-management assignment. For a standalone issue, use its existing linked document
-or an owned section in that issue and private issue/task recovery receipts. Where this task
-supervises an initiative, its record is the initiative's own, under the
-[initiative body standard](../../crw-canon/references/linear-model.md#initiative-body-standard)
-with its comments and updates, kept against the stable initiative link: a multi-project initiative
-has no one project document, and supervision state left in a contributing project's record is
-both outside that project's scope and somewhere recovery will not look. A
+Use the milestone's canonical coordination issue as part of the
+management assignment. For a standalone issue, use its own comments
+and private issue/task recovery receipts. Where this task
+supervises several projects, its record is its own, the descriptions of the milestones it opens under the
+[milestone description standard](../../crw-canon/references/tracking-model.md#milestone-description-standard)
+and its decision comments, kept against the stable milestone refs: supervision state left in a contributing milestone's record is
+both outside that milestone's scope and somewhere recovery will not look. A
 project binding is optional; the actual coordinator identity remains required
 when delegating or routing relay delivery. Follow [Integrations](../../crw-canon/references/delivery.md#completion-follow-up-in-an-existing-execution-workflow).
 For explicit read-only scope or unavailable access, return an unsynced update;
@@ -1693,7 +1692,7 @@ needed to resume:
 
 Do not create a new database, daemon, or competing local planning document to hold
 this table. Each worker writes its own reproducible implementation evidence; the
-coordinator writes the authorized Linear summary and verifies it by reading it
+coordinator writes the authorized coordination summary and verifies it by reading it
 back. Keep exact prompts/receipts in private evidence when they contain personal
 data, and publish only the necessary sanitized summary.
 

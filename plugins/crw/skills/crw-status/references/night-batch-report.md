@@ -56,7 +56,7 @@ ended: finished, deadline, budget, stopped), `providers` (`name`, `observed`, `d
 line break or other white space or control run folded to one space, so it never adds a heading or an item
 to the report, and `&`, `<` and `>` are written as `&amp;`, `&lt;` and `&gt;`, so HTML in it is shown as
 text and never as a tag (a fake heading or item) in a viewer that allows HTML in Markdown. The plan the `selected` list comes from is `crw manage batch plan --label LABEL`, which
-reads the Linear issues the caller supplies and selects those in Backlog that carry the label and pass
+reads the issue JSON the caller supplies (one object per issue, with an id or identifier, a state value, labels and a body) and selects those whose state value is Backlog that carry the label and pass
 the release gate (`crw skill issue-ready check`), holding the others with their reasons. An issue the list
 gives twice, even once by its identifier and once by its UUID, is judged once, by its first entry; every
 correspondence of an id and an identifier in the whole list is collected first, so an entry that ties the

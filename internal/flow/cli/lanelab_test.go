@@ -36,6 +36,8 @@ import (
 type labIssue struct {
 	Key, Milestone string
 	After          []string
+	// Regions are the issue's planned regions; node-<key>.txt when none are given.
+	Regions []compile.Region
 }
 
 // laneLab is one world of the lane lab.
@@ -74,6 +76,8 @@ type laneLab struct {
 	tipErr func() error
 	// owner is the thread the plan's author, the project's parent binding and the runs are (labOwner); target the target branch.
 	owner, target string
+	// releaseAnswer, when a test sets it, is given every answer of the relay's release and answers the one the lane reads (CRW-1404).
+	releaseAnswer func(req ops.ReleaseRequest, out ops.ReleaseResult) ops.ReleaseResult
 }
 
 const labOwner = "thread-owner"
@@ -180,6 +184,14 @@ func newLaneLab(t *testing.T, issues ...labIssue) *laneLab {
 	return newLaneLabFor(t, labOwner, "integration", issues...)
 }
 
+// labRegionsOf are the planned regions of a lab issue: its own, or the file node-<key>.txt.
+func labRegionsOf(is labIssue) []compile.Region {
+	if len(is.Regions) > 0 {
+		return is.Regions
+	}
+	return []compile.Region{{Path: "node-" + is.Key + ".txt", Kind: "file"}}
+}
+
 // newLaneLabFor is newLaneLab with the owner thread and the target branch named (a session run's owner is a thread of the fake
 // host).
 func newLaneLabFor(t *testing.T, owner, target string, issues ...labIssue) *laneLab {
@@ -208,7 +220,7 @@ func newLaneLabFor(t *testing.T, owner, target string, issues ...labIssue) *lane
 	seen := map[string]bool{}
 	for _, is := range issues {
 		p.Issues = append(p.Issues, compile.Issue{Key: is.Key, Title: "issue " + is.Key, Criteria: []string{"the work of " + is.Key + " is in node-file of its node"}, Milestone: is.Milestone,
-			After: is.After, Regions: []compile.Region{{Path: "node-" + is.Key + ".txt", Kind: "file"}}})
+			After: is.After, Regions: labRegionsOf(is)})
 		if !seen[is.Milestone] {
 			seen[is.Milestone] = true
 			p.Milestones = append(p.Milestones, compile.Milestone{Key: is.Milestone, Title: "milestone " + is.Milestone, Criteria: []string{is.Milestone + " is integrated"},
@@ -457,6 +469,9 @@ func (r *labRelay) effect(name string, do func() error) error {
 
 func (r *labRelay) Release(ctx context.Context, req ops.ReleaseRequest) (out ops.ReleaseResult, err error) {
 	err = r.effect("release:"+req.Node, func() (e error) { out, e = r.SchedRelay.Release(ctx, req); return })
+	if err == nil && r.l.releaseAnswer != nil {
+		out = r.l.releaseAnswer(req, out)
+	}
 	return
 }
 

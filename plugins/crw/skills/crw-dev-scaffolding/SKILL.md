@@ -52,7 +52,7 @@ MUST preserve mature repo conventions over the default scaffold pattern.
 
 ### Source-of-Truth Placement
 
-**Rule (SCAF-SOT-01):** A product decision is canonical in Linear and the code structure in the repo docs; scaffolding reuses the repository's existing docs placement, local numbering scheme and source-of-truth paths before proposing generic `docs/` + `plans/`, and a scaffold doc links the Linear issue instead of restating the decision.
+**Rule (SCAF-SOT-01):** A product decision is canonical in the tracking repository and the code structure in the repo docs; scaffolding reuses the repository's existing docs placement, local numbering scheme and source-of-truth paths before proposing generic `docs/` + `plans/`, and a scaffold doc links the tracking issue instead of restating the decision.
 
 Keep it light:
 - Cross-link scaffold docs to evidence paths (`path:line`, plan file, ADR, current-architecture note) so future workers can audit why files exist.

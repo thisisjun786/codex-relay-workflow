@@ -1,6 +1,6 @@
 ---
 name: crw-qa
-description: "Manual QA of a built surface (web UI, TUI, CLI, HTTP API, desktop GUI): drive it for real, capture artifacts, probe adversarial inputs, record teardown. Suites are crw-dev-testing; delivery against Linear criteria is crw-check. Triggers: manual QA, QA this, smoke test, visual QA, 수동 QA, 직접 돌려봐."
+description: "Manual QA of a built surface (web UI, TUI, CLI, HTTP API, desktop GUI): drive it for real, capture artifacts, probe adversarial inputs, record teardown. Suites are crw-dev-testing; delivery against the issue criteria is crw-check. Triggers: manual QA, QA this, smoke test, visual QA, 수동 QA, 직접 돌려봐."
 ---
 
 # crw-qa — Manual Surface QA Gate
@@ -36,7 +36,7 @@ Aside, agbrowse and native browser capabilities may drive built UI; none is requ
   surface without a suite has no regression guard. Promote a QA flow to a
   deterministic test (dev-testing §4.1) when it must stay guarded.
 
-- crw-check compares delivered work with canonical Linear documents and issue
+- crw-check compares delivered work with canonical tracking documents and issue
   criteria. This skill drives a built surface before the task's done claim; its
   PASS is evidence that crw-check may read, not a delivery verdict. A delivery
   check does not replace driven-surface QA.

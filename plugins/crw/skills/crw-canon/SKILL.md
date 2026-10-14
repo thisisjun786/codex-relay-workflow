@@ -1,6 +1,6 @@
 ---
 name: crw-canon
-description: "Reference index for the rules that more than one CRW skill reads: the levels, the Linear model, the release gate, the schedule contract, delivery, execution roles, design explanation, repository governance and the skill family. Never invoked by itself; other skills link to its files."
+description: "Reference index for the rules that more than one CRW skill reads: the levels, the tracking model, the release gate, the schedule contract, delivery, execution roles, design explanation, repository governance and the skill family. Never invoked by itself; other skills link to its files."
 ---
 
 # CRW Canon
@@ -12,7 +12,7 @@ The shared library of the plugin. It is reference-only: it has no procedure of i
 | File | What it decides | Read by |
 |---|---|---|
 | [hierarchy.md](references/hierarchy.md) | The layers (top session, parent, child, subagents), the one table that maps them to the relay role ids and Jun's Korean words, who owns and writes what at each layer, how messages and direct coordination between children work, and where each size is set | `crw-run`, `crw-plan`, `crw-define`, `crw-check`, `crw-status`, `crw-tidy`, `crw-loop`, `crw-pabcd` |
-| [linear-model.md](references/linear-model.md) | How goals, projects and issues relate in Linear, which document is canonical where, who writes which record, when an issue is Done, how the implementation repository is resolved | `crw-define`, `crw-plan`, `crw-add-issue`, `crw-run`, `crw-status`, `crw-check`, `crw-tidy`, `crw-refactor` |
+| [tracking-model.md](references/tracking-model.md) | How milestones, issues and labels relate in the tracking repository, which document is canonical where, who writes which record, when an issue is Done, how the implementation repository is resolved | `crw-define`, `crw-plan`, `crw-add-issue`, `crw-run`, `crw-status`, `crw-check`, `crw-tidy`, `crw-refactor` |
 | [release-gate.md](references/release-gate.md) | When an issue may be released to an issue child, and the one bypass | `crw-add-issue`, `crw-plan`, `crw-run`, `crw-tidy` |
 | [schedule-contract.md](references/schedule-contract.md) | The field names, sources and value words of a recorded schedule | `crw-plan`, `crw-status`, `crw-check` |
 | [delivery.md](references/delivery.md) | Who owns each operation, how an issue child starts, how a delivery is integrated, what counts as evidence and handoff | `crw-run`, `crw-plan`, `crw-status`, `crw-check`, `crw-tidy` |
@@ -23,4 +23,4 @@ The shared library of the plugin. It is reference-only: it has no procedure of i
 | [spawn-policy.md](references/spawn-policy.md) | Which agent calls a flow run makes by rule (the structural spawns, the signals and their thresholds, the work done inline), what is recorded for each decision, the two kinds of refusal no option overrides, and the QA calls of the final gate; the rule ids are the constants of `internal/flow/ops/rules.go` | `crw-run`, `crw-status`, `crw-pabcd` |
 | [skill-family.md](references/skill-family.md) | Which skills exist together, who calls each, how a skill is named under each installation, and the invariants every skill follows | the reader of a skill name in any document, and `docs/plugin-packaging.md` |
 
-Planning keeps its own rules in `crw-plan/references/integrations.md`: how a task resolves and binds its Linear project and how an issue's child pair is chosen.
+Planning keeps its own rules in `crw-plan/references/integrations.md`: how a task resolves and binds its milestone and how an issue's child pair is chosen.

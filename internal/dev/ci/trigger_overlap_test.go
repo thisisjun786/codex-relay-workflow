@@ -96,7 +96,7 @@ func TestTriggerOverlapTable(t *testing.T) {
 		}
 	})
 	root := skillsFixture(t, map[string]string{
-		"crw-plan":  "Decompose a goal into Linear issues. Use for a roadmap or 기획.",
+		"crw-plan":  "Decompose a goal into tracking issues. Use for a roadmap or 기획.",
 		"crw-pabcd": "Run the PABCD loop on one task.",
 		"crw-ask":   "Ask clarifying questions. Use for 요구사항 정리.",
 		"crw-qa":    "Manual QA of a surface; also mentions the Roadmap by mistake.",

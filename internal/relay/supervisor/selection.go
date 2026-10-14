@@ -10,7 +10,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 )
 
-// syncVerdictsSQL is the Linear writes a verdict has had, oldest first, for a relationship and an event: what Selection
+// syncVerdictsSQL is the writes to the tracking record a verdict has had, oldest first, for a relationship and an event: what Selection
 // reads for every obligation it is asked about. It reaches them through sync_outbox_relationship_event (CRW-301).
 const syncVerdictsSQL = "SELECT sync_id,state,target,target_ref,external_ref,confirmed_at,last_error FROM sync_outbox WHERE relationship_id = ? AND event_id = ? AND subject_kind = 'verdict' AND target = 'coordination_document' ORDER BY rowid"
 
@@ -36,16 +36,16 @@ func (c *Channel) Selection(ctx context.Context, o Obligation, recipient string,
 	standing := "standing"
 	discharge := "no coordination_document target is configured for this relationship, so there is no record the supervisor reads"
 	if err == nil {
-		discharge = "no Linear record was enqueued for this, so nothing the supervisor reads carries it"
+		discharge = "no tracking record was enqueued for this, so nothing the supervisor reads carries it"
 		if len(records) > 0 {
 			latest := records[len(records)-1].(map[string]any)
 			if latest["target_ref"] != target {
 				discharge = fmt.Sprintf("the current ruling's record is on %s, which is no longer the target for this relationship", latest["target_ref"].(string))
 			} else if latest["state"] == "confirmed" {
 				standing = "discharged"
-				discharge = "the Linear record is confirmed"
+				discharge = "the tracking record is confirmed"
 			} else {
-				discharge = fmt.Sprintf("the Linear record is %v rather than confirmed", latest["state"])
+				discharge = fmt.Sprintf("the tracking record is %v rather than confirmed", latest["state"])
 			}
 		}
 	}

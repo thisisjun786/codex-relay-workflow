@@ -1,6 +1,6 @@
 interface:
   display_name: "CRW Define"
   short_description: "마일스톤과 이슈를 등록하기 전에 불분명한 점과 물을 것을 정리"
-  default_prompt: "$crw-define 이 마일스톤의 목적·바라는 변화·성공 증거·범위·열린 결정을 정리하고, 사람에게 물을 것이 정말 있는지 판단해서 Linear 마일스톤 설명에 반영해줘. 이슈 등록은 아직 하지 마."
+  default_prompt: "$crw-define 이 마일스톤의 목적·바라는 변화·성공 증거·범위·열린 결정을 정리하고, 사람에게 물을 것이 정말 있는지 판단해서 마일스톤 설명에 반영해줘. 이슈 등록은 아직 하지 마."
 policy:
   allow_implicit_invocation: true
