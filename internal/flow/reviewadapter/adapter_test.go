@@ -510,3 +510,169 @@ func TestVerifiedWithABlockingImpactIsVerdictInvalid(t *testing.T) {
 		}
 	})
 }
+
+// TestAdapterRefusesASecondJSONValue: an answer is exactly one JSON value; a second value or trailing data after the first,
+// whatever its shape, makes the answer invalid, in the JSON profile and in Bugbot's envelope.
+func TestAdapterRefusesASecondJSONValue(t *testing.T) {
+	for name, stdout := range map[string]string{
+		"a second answer":           `{"verdict":"verified","findings":[]} {"verdict":"needs_changes","findings":[]}`,
+		"a closing brace":           `{"verdict":"verified","findings":[]}}`,
+		"a closing bracket":         "{\"verdict\":\"verified\",\"findings\":[]}\n]",
+		"a second value on a line":  "{\"verdict\":\"verified\",\"findings\":[]}\n\"more\"\n",
+		"trailing words after JSON": `{"verdict":"verified","findings":[]} done`,
+	} {
+		t.Run("JSON: "+name, func(t *testing.T) {
+			res := check(t, jsonProfile(), fakeRun{stdout: stdout})
+			wantState(t, res, StateInvalid)
+			if res.Verdict != "" || res.Findings != nil {
+				t.Fatalf("an invalid answer keeps no judgment: %+v", res)
+			}
+		})
+	}
+	t.Run("JSON: one answer and trailing whitespace is ok", func(t *testing.T) {
+		wantState(t, check(t, jsonProfile(), fakeRun{stdout: "{\"verdict\":\"verified\",\"findings\":[]}\n \t\n"}), StateOK)
+	})
+	env := strings.TrimSpace(bugbotEnvelope(t, "Bugbot found no bugs."))
+	for name, stdout := range map[string]string{
+		"a second envelope": env + "\n" + env + "\n",
+		"a closing brace":   env + "}\n",
+		"a closing bracket": env + "]",
+	} {
+		t.Run("Bugbot: "+name, func(t *testing.T) {
+			wantState(t, check(t, BugbotProfile(), fakeRun{stdout: stdout}), StateInvalid)
+		})
+	}
+}
+
+// TestBugbotErrorEnvelopeIsQuotaOrToolFailed: cursor-agent can exit 0 with an envelope whose is_error is set. Its text is the
+// tool's own report: a quota text there is quota, any other text is the tool's failure, never an invalid answer.
+func TestBugbotErrorEnvelopeIsQuotaOrToolFailed(t *testing.T) {
+	envelope := func(result string) string {
+		b, err := json.Marshal(map[string]any{"type": "result", "subtype": "error", "is_error": true, "result": result})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b) + "\n"
+	}
+	t.Run("a usage limit", func(t *testing.T) {
+		res := check(t, BugbotProfile(), fakeRun{stdout: envelope("You've hit your usage limit. Upgrade to continue.")})
+		wantState(t, res, StateQuota)
+		if !strings.Contains(res.Detail, "usage limit") {
+			t.Fatalf("detail = %q, want the quota text named", res.Detail)
+		}
+	})
+	t.Run("another error", func(t *testing.T) {
+		res := check(t, BugbotProfile(), fakeRun{stdout: envelope("Connection to the model server was lost.")})
+		wantState(t, res, StateToolFailed)
+		if !strings.Contains(res.Detail, "Connection to the model server was lost.") {
+			t.Fatalf("detail = %q, want the tool's report", res.Detail)
+		}
+		if res.Verdict != "" || res.Findings != nil {
+			t.Fatalf("a failed call keeps no judgment: %+v", res)
+		}
+	})
+	t.Run("an error with no text", func(t *testing.T) {
+		wantState(t, check(t, BugbotProfile(), fakeRun{stdout: envelope("")}), StateToolFailed)
+	})
+}
+
+// TestExecRunKillsLeftoverChildrenAfterTheToolExits: a tool that exits 0 after starting a background child that keeps its stdout
+// open gives its answer; the child is killed with the group instead of holding the call until the streams time out.
+func TestExecRunKillsLeftoverChildrenAfterTheToolExits(t *testing.T) {
+	dir := t.TempDir()
+	script := `sleep 30 & printf '%s' '{"verdict":"verified","findings":[]}'; exit 0`
+	p := JSONProfile("bg", []string{"/bin/sh", "-c", script, "sh"}, "m", "e")
+	start := time.Now()
+	res, err := Adapter{Run: ExecRun, Fingerprint: hashFiles}.Check(t.Context(), Request{Profile: p, Worktree: dir, Prompt: "x", Schema: AnswerSchema, Limit: 20 * time.Second, GuideRev: "g"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantState(t, res, StateOK)
+	if res.Verdict != VerdictVerified {
+		t.Fatalf("result = %+v", res)
+	}
+	if took := time.Since(start); took >= killGrace {
+		t.Fatalf("the call waited %s for the leftover child", took)
+	}
+
+	t.Run("a stream held outside the group ends the call after the grace", func(t *testing.T) {
+		// setsid moves the child out of the tool's group, so the group kill misses it and it holds stdout for 5s; the tool exits
+		// only once the child has left the group (it wrote ready).
+		script := `setsid sh -c ': > ready; exec sleep 5' & while [ ! -e ready ]; do sleep 0.01; done; printf '%s' '{"verdict":"verified","findings":[]}'; exit 0`
+		p := JSONProfile("escaped", []string{"/bin/sh", "-c", script, "sh"}, "m", "e")
+		start := time.Now()
+		stdout, _, exit, err := ExecRun(t.Context(), p, Request{Worktree: t.TempDir(), Prompt: "x"})
+		took := time.Since(start)
+		if err == nil || !strings.Contains(err.Error(), "stayed open") || exit != -1 || took < killGrace || took > 4*time.Second {
+			t.Fatalf("exit %d err %v after %s, want the streams error after the grace", exit, err, took)
+		}
+		if string(stdout) != `{"verdict":"verified","findings":[]}` {
+			t.Fatalf("stdout = %q, want what the tool wrote", stdout)
+		}
+	})
+}
+
+// bugbotNoBugsFixture is a real cursor-agent envelope of a clean Bugbot review
+// (/state/crw/crw-lane-b1-issue-child/evidence/bugbot-U1a-r2.json.raw.json, the ids and usage trimmed).
+const bugbotNoBugsFixture = `{"type":"result","subtype":"success","is_error":false,"duration_ms":289515,"duration_api_ms":289515,"result":"I'll review only the uncommitted changes. Checking the review tool schema, then starting the Bugbot review.Bugbot found no bugs."}` + "\n"
+
+// TestBugbotNoBugsMustBeAffirmative: only prose whose last sentence says that Bugbot found no bugs is a clean review; prose that
+// merely contains the words, negated or hedged, is not an answer.
+func TestBugbotNoBugsMustBeAffirmative(t *testing.T) {
+	t.Run("a real clean review", func(t *testing.T) {
+		res := check(t, BugbotProfile(), fakeRun{stdout: bugbotNoBugsFixture})
+		wantState(t, res, StateOK)
+		if res.Verdict != VerdictVerified || len(res.Findings) != 0 {
+			t.Fatalf("result = %+v", res)
+		}
+	})
+	for _, text := range []string{
+		"Bugbot found no bugs",
+		"Bugbot found no bugs!",
+		"Launching the reviewer.\n\nBugbot found no bugs.\n",
+		"I'll review the diff.  Bugbot found no bugs.",
+	} {
+		t.Run("affirmative: "+text, func(t *testing.T) {
+			res := check(t, BugbotProfile(), fakeRun{stdout: bugbotEnvelope(t, text)})
+			wantState(t, res, StateOK)
+			if res.Verdict != VerdictVerified {
+				t.Fatalf("result = %+v", res)
+			}
+		})
+	}
+	for _, text := range []string{
+		"I could not determine whether Bugbot found no bugs.",
+		"I could not determine whether Bugbot found no bugs",
+		"It is unclear if Bugbot found no bugs; the run was cut short.",
+		"Bugbot found no bugs.\n\nThe review then crashed before it covered the tests.",
+		"Bugbot found no bugs? I could not confirm it.",
+		"Bugbot never said it found no bugs.",
+	} {
+		t.Run("not an answer: "+text, func(t *testing.T) {
+			res := check(t, BugbotProfile(), fakeRun{stdout: bugbotEnvelope(t, text)})
+			wantState(t, res, StateInvalid)
+		})
+	}
+}
+
+// TestBugbotReadsEveryFindingsTable: findings in a second table of the same header are findings, so a blocking one there makes
+// the review needs_changes.
+func TestBugbotReadsEveryFindingsTable(t *testing.T) {
+	header := "| Severity | Location (file:line) | Finding |\n| --- | --- | --- |\n"
+	text := "Bugbot found 2 findings.\n\n" + header +
+		"| low | a.go:3 | The name is unclear. |\n\nA second pass found more.\n\n" + header +
+		"| high | b.go:9 | The loop never ends. |"
+	res := check(t, BugbotProfile(), fakeRun{stdout: bugbotEnvelope(t, text)})
+	wantState(t, res, StateOK)
+	want := []Finding{
+		{ID: FindingID("a.go", "The name is unclear."), Severity: "P3", File: "a.go", Line: 3, Text: "The name is unclear."},
+		{ID: FindingID("b.go", "The loop never ends."), Severity: "P1", File: "b.go", Line: 9, Text: "The loop never ends."},
+	}
+	if res.Verdict != VerdictNeedsChanges || !slices.Equal(res.Findings, want) {
+		t.Fatalf("result = %+v\nwant needs_changes with %+v", res, want)
+	}
+	t.Run("an empty second table is an error", func(t *testing.T) {
+		bad := "Bugbot found 1 finding.\n\n" + header + "| low | a.go:3 | The name is unclear. |\n\nMore:\n\n" + header
+		wantState(t, check(t, BugbotProfile(), fakeRun{stdout: bugbotEnvelope(t, bad)}), StateInvalid)
+	})
+}

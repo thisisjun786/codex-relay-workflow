@@ -7,8 +7,9 @@
 //
 //	worktree_changed  the worktree's fingerprint after the call differs from the one before: the answer is refused whatever it is
 //	tool_failed       the tool did not start, ran past the time limit, or the call broke after the start (output over the cap)
-//	quota             a quota text of the profile (any case) is on stderr or stdout of a call that failed or gave a blank answer
-//	tool_failed       the tool exited non-zero without a quota text
+//	quota             a quota text of the profile (any case) is on stderr or stdout of a call that failed or gave a blank answer,
+//	                  or in the text of an error the tool reported in its own output (the profile's reader gave a *ToolError)
+//	tool_failed       the tool exited non-zero without a quota text, or reported its own error without one
 //	no_answer         the tool exited 0 and its answer is blank
 //	invalid           the answer is not exactly one JSON value valid against the request's schema, has a field the answer does not
 //	                  know, a severity no grade word reads, or an impact outside premerge.Impacts, or its verdict is verified over a
@@ -30,9 +31,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"os/exec"
 	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -145,6 +149,17 @@ type Adapter struct {
 // ErrNotStarted is wrapped by a RunFunc's error when the tool did not start.
 var ErrNotStarted = errors.New("the tool did not start")
 
+// ToolError is the error a profile's answer reader returns when the tool's output is the tool's own report of a failure (an error
+// envelope) rather than an answer; Text is that report. classify reads it as quota when a quota text is in it, else tool_failed.
+type ToolError struct{ Text string }
+
+func (e *ToolError) Error() string {
+	if strings.TrimSpace(e.Text) == "" {
+		return "the tool reported an error with no text"
+	}
+	return "the tool reported an error: " + firstLine([]byte(e.Text))
+}
+
 // call is what one run of the tool gave.
 type call struct {
 	stdout, stderr []byte
@@ -249,6 +264,12 @@ func classify(req Request, schema *jsonschema.Resolved, c call) (State, string, 
 			return StateQuota, fmt.Sprintf("the tool reports its quota spent (%q)", text), "", nil
 		}
 	}
+	if toolErr, ok := errors.AsType[*ToolError](answerErr); ok {
+		if text, ok := quotaText(req.Profile.QuotaTexts, []byte(toolErr.Text), c.stderr); ok {
+			return StateQuota, fmt.Sprintf("the tool reports its quota spent (%q)", text), "", nil
+		}
+		return StateToolFailed, toolErr.Error(), "", nil
+	}
 	if c.exit != 0 {
 		return StateToolFailed, fmt.Sprintf("the tool failed with exit %d: %s", c.exit, firstLine(c.stderr)), "", nil
 	}
@@ -319,8 +340,8 @@ func decodeAnswer(schema *jsonschema.Resolved, answer []byte) (string, []Finding
 	if err := dec.Decode(&v); err != nil {
 		return "", nil, fmt.Errorf("the answer is not JSON: %v", err)
 	}
-	if dec.More() {
-		return "", nil, errors.New("the answer is more than one JSON value")
+	if err := onlyValue(dec); err != nil {
+		return "", nil, fmt.Errorf("the answer is more than one JSON value: %v", err)
 	}
 	if err := schema.Validate(v); err != nil {
 		return "", nil, fmt.Errorf("the answer breaks the schema: %v", err)
@@ -352,6 +373,20 @@ func decodeAnswer(schema *jsonschema.Resolved, answer []byte) (string, []Finding
 		return "", nil, err
 	}
 	return doc.Verdict, findings, nil
+}
+
+// onlyValue reports an error unless dec, having decoded one value, holds nothing but whitespace after it: a second value or any
+// trailing data, even a stray '}' or ']' that dec.More does not see, is an error.
+func onlyValue(dec *json.Decoder) error {
+	var extra json.RawMessage
+	switch err := dec.Decode(&extra); {
+	case err == io.EOF:
+		return nil
+	case err != nil:
+		return err
+	default:
+		return fmt.Errorf("a second value follows: %s", firstLine(extra))
+	}
 }
 
 // normalize applies the impact rules of the flow (CRW-1438) and collapses findings that share an id into the first of them,
@@ -429,6 +464,11 @@ const killGrace = 2 * time.Second
 // ExecRun is the real RunFunc: it runs the profile's argv with the prompt as the last argument, in the worktree, in a process
 // group of its own that is killed when ctx ends (the time limit). A tool that did not start, ran past ctx, or wrote more than
 // the cap is an error.
+//
+// The tool writes into pipes the runner reads itself, so the wait for the tool ends when the tool exits, not when the last
+// holder of its streams closes them: once it has exited, the runner kills what it left running in its group (a background child
+// that inherited stdout keeps the pipe open) and only then collects the output. A stream still open killGrace after that, held by
+// a process that left the group, is an error.
 func ExecRun(ctx context.Context, p Profile, req Request) ([]byte, []byte, int, error) {
 	if len(p.Argv) == 0 {
 		return nil, nil, -1, fmt.Errorf("%w: profile %q has no argv", ErrNotStarted, p.Name)
@@ -436,8 +476,17 @@ func ExecRun(ctx context.Context, p Profile, req Request) ([]byte, []byte, int, 
 	args := append(append([]string{}, p.Argv[1:]...), req.Prompt)
 	cmd := exec.CommandContext(ctx, p.Argv[0], args...)
 	cmd.Dir = req.Worktree
-	stdout, stderr := &capped{max: maxOutput}, &capped{max: maxOutput}
-	cmd.Stdout, cmd.Stderr = stdout, stderr
+	outR, outW, err := os.Pipe()
+	if err != nil {
+		return nil, nil, -1, fmt.Errorf("%w: %w", ErrNotStarted, err)
+	}
+	errR, errW, err := os.Pipe()
+	if err != nil {
+		outR.Close()
+		outW.Close()
+		return nil, nil, -1, fmt.Errorf("%w: %w", ErrNotStarted, err)
+	}
+	cmd.Stdout, cmd.Stderr = outW, errW
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	var killed atomic.Bool
 	cmd.Cancel = func() error {
@@ -445,17 +494,47 @@ func ExecRun(ctx context.Context, p Profile, req Request) ([]byte, []byte, int, 
 		return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 	}
 	cmd.WaitDelay = killGrace
-	err := cmd.Run()
-	if cmd.ProcessState == nil {
-		return nil, nil, -1, fmt.Errorf("%w: %w", ErrNotStarted, err)
+	startErr := cmd.Start()
+	// The tool holds its own copies of the write ends now (or never will): the runner's must close, or the reads never end.
+	outW.Close()
+	errW.Close()
+	if startErr != nil {
+		outR.Close()
+		errR.Close()
+		return nil, nil, -1, fmt.Errorf("%w: %w", ErrNotStarted, startErr)
 	}
-	// The tool has exited: end whatever it left running in its group.
+	stdout, stderr := &capped{max: maxOutput}, &capped{max: maxOutput}
+	var copies sync.WaitGroup
+	for _, s := range []struct {
+		w *capped
+		r *os.File
+	}{{stdout, outR}, {stderr, errR}} {
+		copies.Go(func() { _, _ = io.Copy(s.w, s.r) })
+	}
+	err = cmd.Wait()
+	// The tool has exited: end whatever it left running in its group, which may still hold the streams open.
 	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	drained := make(chan struct{})
+	go func() { copies.Wait(); close(drained) }()
+	var streamsErr error
+	select {
+	case <-drained:
+	case <-time.After(killGrace):
+		outR.Close() // ends the reads a process outside the group still feeds
+		errR.Close()
+		<-drained
+		streamsErr = fmt.Errorf("the tool's output streams stayed open %s after it exited", killGrace)
+	}
+	outR.Close()
+	errR.Close()
 	if killed.Load() || ctx.Err() != nil {
 		return stdout.buf.Bytes(), stderr.buf.Bytes(), -1, fmt.Errorf("the tool was killed: %w", context.Cause(ctx))
 	}
 	if stdout.over || stderr.over {
 		return stdout.buf.Bytes(), stderr.buf.Bytes(), -1, fmt.Errorf("the tool wrote more than %d bytes", maxOutput)
+	}
+	if streamsErr != nil {
+		return stdout.buf.Bytes(), stderr.buf.Bytes(), -1, streamsErr
 	}
 	var exitErr *exec.ExitError
 	if err != nil && !errors.As(err, &exitErr) {

@@ -35,12 +35,14 @@ const (
 	bugbotEffort = "medium"
 )
 
-// BugbotProfile is Cursor's Bugbot through cursor-agent in ask mode, which prints a one-line JSON envelope whose result is prose.
-// The answer reader accepts two shapes of that prose: a markdown table "Severity | Location (file:line) | Finding" (verdict
-// needs_changes when a finding blocks under premerge.Blocks once normalize has given it its impact: a P0-P2 grade, or a security
-// finding; else verified), or no table and "found no bugs" (verified, no findings). Prose that
-// says the review covered only part of the change or dropped a finding ("unchecked", "not clean", "removed"), and prose of any
-// other shape, is not an answer.
+// BugbotProfile is Cursor's Bugbot through cursor-agent in ask mode, which prints one JSON envelope whose result is prose. An
+// envelope with is_error set is the tool's own report of a failure (a *ToolError: quota when a quota text is in it, else
+// tool_failed). The answer reader accepts two shapes of the prose: one or more markdown tables "Severity | Location (file:line) |
+// Finding", whose rows together are the findings (verdict needs_changes when a finding blocks under premerge.Blocks once
+// normalize has given it its impact: a P0-P2 grade, or a security finding; else verified), or no table and a last line that ends
+// with the sentence "Bugbot found no bugs." (verified, no findings). Prose that says the review covered only part of the change or
+// dropped a finding ("unchecked", "not clean", "removed"), prose that only mentions "found no bugs" (negated, hedged, or followed
+// by more), and prose of any other shape, is not an answer.
 //
 // The quota texts are UNCONFIRMED: no real quota sample of the tool has been captured, and the wording is the server's. They are
 // matched only on a failed call or a blank answer, so a finding that quotes one is unaffected. Replace them once a sample exists.
@@ -72,8 +74,15 @@ func bugbotAnswer(stdout []byte) ([]byte, error) {
 	if err := dec.Decode(&env); err != nil {
 		return nil, fmt.Errorf("the output is not cursor-agent's JSON envelope: %v", err)
 	}
-	if dec.More() {
-		return nil, errors.New("the output is more than one JSON envelope")
+	if err := onlyValue(dec); err != nil {
+		return nil, fmt.Errorf("the output is more than one JSON envelope: %v", err)
+	}
+	if env.IsError {
+		text := ""
+		if env.Result != nil {
+			text = *env.Result
+		}
+		return nil, &ToolError{Text: text}
 	}
 	if env.Result == nil {
 		return nil, errors.New("the envelope has no result")
@@ -81,9 +90,6 @@ func bugbotAnswer(stdout []byte) ([]byte, error) {
 	text := *env.Result
 	if strings.TrimSpace(text) == "" {
 		return nil, nil
-	}
-	if env.IsError {
-		return nil, fmt.Errorf("the envelope reports an error: %s", firstLine([]byte(text)))
 	}
 	prose, rows, found, err := findingsTable(text)
 	if err != nil {
@@ -125,43 +131,70 @@ func bugbotAnswer(stdout []byte) ([]byte, error) {
 				doc.Verdict = VerdictNeedsChanges
 			}
 		}
-	case strings.Contains(lower, "found no bugs"):
+	case saysNoBugs(prose):
 	default:
-		return nil, fmt.Errorf("the result has neither a findings table nor %q: %s", "found no bugs", firstLine([]byte(text)))
+		return nil, fmt.Errorf("the result has neither a findings table nor a last sentence %q: %s", "Bugbot found no bugs.", firstLine([]byte(text)))
 	}
 	return json.Marshal(doc)
 }
 
-// findingsTable finds the findings table in text. It returns the prose outside the table, the rows as [severity, location,
-// finding] cells, and whether a table was there; a table without rows, or with a row of fewer cells, is an error.
+// bugbotNoBugs is the sentence of a clean Bugbot review, lower-cased and without its full stop.
+const bugbotNoBugs = "bugbot found no bugs"
+
+// saysNoBugs reports whether prose affirms a clean review: its last non-empty line ends with the sentence "Bugbot found no bugs"
+// (any case, then only '.' or '!'), and that sentence starts the line or follows the end of an earlier sentence. cursor-agent glues
+// its sentences without a space ("...launching the reviewer.Bugbot found no bugs."), so the line may carry earlier sentences;
+// "whether Bugbot found no bugs", "Bugbot found no bugs?" or the sentence followed by more prose are not affirmations.
+func saysNoBugs(prose string) bool {
+	lines := strings.Split(strings.TrimSpace(prose), "\n")
+	last := strings.TrimRight(strings.ToLower(strings.TrimSpace(lines[len(lines)-1])), ".!")
+	before, ok := strings.CutSuffix(last, bugbotNoBugs)
+	if !ok {
+		return false
+	}
+	before = strings.TrimRight(before, " \t")
+	return before == "" || strings.HasSuffix(before, ".") || strings.HasSuffix(before, "!") || strings.HasSuffix(before, "?")
+}
+
+// findingsTable finds every findings table in text. It returns the prose outside the tables, the rows of all of them in order as
+// [severity, location, finding] cells, and whether a table was there; a table without rows, or with a row of fewer cells, is an
+// error.
 func findingsTable(text string) (string, [][3]string, bool, error) {
 	lines := strings.Split(text, "\n")
-	for i, l := range lines {
-		cells, ok := tableCells(l, 3)
+	var prose []string
+	var rows [][3]string
+	found := false
+	for i := 0; i < len(lines); {
+		cells, ok := tableCells(lines[i], 3)
 		if !ok || !equalFold(cells, bugbotTableHeader) {
+			prose = append(prose, lines[i])
+			i++
 			continue
 		}
+		found = true
 		j := i + 1
 		if j < len(lines) {
 			if sep, ok := tableCells(lines[j], 3); ok && strings.Trim(strings.Join(sep, ""), "-: ") == "" {
 				j++
 			}
 		}
-		var rows [][3]string
+		n := len(rows)
 		for ; j < len(lines) && strings.HasPrefix(strings.TrimSpace(lines[j]), "|"); j++ {
 			cells, ok := tableCells(lines[j], 3)
 			if !ok {
-				return "", nil, true, fmt.Errorf("a row of the findings table has fewer than three cells: %s", strings.TrimSpace(lines[j]))
+				return "", nil, true, fmt.Errorf("a row of a findings table has fewer than three cells: %s", strings.TrimSpace(lines[j]))
 			}
 			rows = append(rows, [3]string{cells[0], cells[1], cells[2]})
 		}
-		if len(rows) == 0 {
-			return "", nil, true, errors.New("the findings table has no row")
+		if len(rows) == n {
+			return "", nil, true, errors.New("a findings table has no row")
 		}
-		prose := strings.Join(append(append([]string{}, lines[:i]...), lines[j:]...), "\n")
-		return prose, rows, true, nil
+		i = j
 	}
-	return text, nil, false, nil
+	if !found {
+		return text, nil, false, nil
+	}
+	return strings.Join(prose, "\n"), rows, true, nil
 }
 
 // tableCells splits a markdown table line into n cells; the last cell keeps any further '|'.
