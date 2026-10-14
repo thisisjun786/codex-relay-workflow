@@ -70,7 +70,7 @@ func TestDEL03_a_recipient_outside_the_authorized_scope_is_refused_before_any_tr
 		event := f.readyEvent(regOpts{recipients: []string{parent, "01other-parent"}})
 		_, err := f.delivery.Enqueue(f.ctx, event, "", "01other-parent")
 		requireReason(t, err, RecipientNotAuthorized)
-		if !strings.Contains(Detail(err), "its own parent") {
+		if !strings.Contains(Detail(err), "its own 자식") {
 			t.Fatalf("detail %q", Detail(err))
 		}
 		expected.same("refused", refusalOf(err))

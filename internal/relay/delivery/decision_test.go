@@ -155,7 +155,7 @@ func TestDR01_an_answer_keeps_the_generation_and_reaches_the_child(t *testing.T)
 	if message.thread != child {
 		t.Fatalf("the decision went to %s", message.thread)
 	}
-	for _, want := range []string{"parent decision", "answer", "use the shorter table", d.blocked, "--continues-anchor " + dispatchTurn, "--continuation-actor " + child} {
+	for _, want := range []string{"자식 decision", "answer", "use the shorter table", d.blocked, "--continues-anchor " + dispatchTurn, "--continuation-actor " + child} {
 		if !strings.Contains(message.message, want) {
 			t.Fatalf("the message does not carry %q:\n%s", want, message.message)
 		}
