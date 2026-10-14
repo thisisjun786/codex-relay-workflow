@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -176,6 +177,148 @@ func (j *interruptThenLose) Append(e Event) Event {
 		}
 	}
 	return out
+}
+
+// The B1 seam, its one rule: an interrupt the previous process asked for decides only the turn it was asked for, the turn bound to
+// the step and attempt its row names. A repair step (send_input) the previous process published and the host had not taken when the
+// interrupt came is a turn the resumed process sends, whether the owner takes the step this process publishes again or the file the
+// dead process left: its completed answer completes the call. The turn the interrupt reached - a bound turn, or the repair turn the
+// stop bound before it interrupted it - is held engine_paused, however it ended.
+func TestSessionInterruptIntentDecidesOnlyItsTurn(t *testing.T) {
+	repairPublished := func(rows []Event) bool {
+		for _, r := range rowsNamed(rows, EvStepPublished) {
+			if rowInt(r.Data, "k") == 2 {
+				return true
+			}
+		}
+		return false
+	}
+	t.Run("repair step the owner had not taken", func(t *testing.T) {
+		k := newE2aKit(t, deathAt(EvInterruptRequested))
+		k.orch.answer = func(st Step, _ string, _ int) orchAnswer {
+			switch {
+			case st.K == 1:
+				return orchAnswer{text: "this is not JSON"}
+			case k.phaseNow() == 1:
+				// the owner never takes the repair step the dead process published
+				return orchAnswer{skip: true}
+			}
+			return orchAnswer{edit: "P:" + st.Op}
+		}
+		k.pauseWhen(repairPublished)
+		k.die(e2aBuild)
+		res := k.resume(e2aBuild)
+		got := value[[]any](t, res)
+		rows := k.rowsOf("exe")
+		if got[0] != "completed" {
+			t.Fatalf("the resumed call %v; rows %s; last row %v", got, eventsOf(rows), rows[len(rows)-1].Data)
+		}
+		if want := "prepared,step_published,thread_started,turn_started,step_published,interrupt_requested,turn_started,completed"; eventsOf(rows) != want {
+			t.Errorf("rows %s, want %s", eventsOf(rows), want)
+		}
+		if inputs := k.orch.sentInput(); len(inputs) != 1 {
+			t.Errorf("repair inputs %+v, want the one the resumed process published", inputs)
+		}
+	})
+	t.Run("repair step the owner takes after the restart", func(t *testing.T) {
+		k := newE2aKit(t, deathAt(EvInterruptRequested))
+		k.orch.answer = func(st Step, _ string, _ int) orchAnswer {
+			if st.K == 1 {
+				return orchAnswer{text: "this is not JSON"}
+			}
+			// the owner takes the file the dead process left, once that process is gone
+			for k.phaseNow() == 1 {
+				time.Sleep(time.Millisecond)
+			}
+			return orchAnswer{edit: "P:" + st.Op}
+		}
+		k.pauseWhen(repairPublished)
+		k.die(e2aBuild)
+		for i := 0; i < 5000 && len(k.orch.sentInput()) == 0; i++ {
+			time.Sleep(time.Millisecond)
+		}
+		res := k.resume(e2aBuild)
+		got := value[[]any](t, res)
+		rows := k.rowsOf("exe")
+		if got[0] != "completed" {
+			t.Fatalf("the resumed call %v; rows %s; last row %v", got, eventsOf(rows), rows[len(rows)-1].Data)
+		}
+		if inputs := k.orch.sentInput(); len(inputs) != 1 {
+			t.Errorf("repair inputs %+v, want the one the owner took from the dead process's step", inputs)
+		}
+	})
+	t.Run("repair turn the stop interrupted", func(t *testing.T) {
+		k := newE2aKit(t, nil)
+		// the process dies the moment its stop has interrupted the repair turn, before it ends the call
+		k.cfg.Host = &killOnInterrupt{dyingHost: k.cfg.Host.(*dyingHost)}
+		ctl := &Control{}
+		k.h.cfg.Control = ctl
+		k.orch.answer = func(st Step, _ string, _ int) orchAnswer {
+			if st.K == 1 {
+				return orchAnswer{text: "this is not JSON"}
+			}
+			return orchAnswer{hang: true}
+		}
+		// the run is paused the moment the owner has sent the repair, before it reports it
+		k.orch.onInput = func(Step, string) {
+			if k.phaseNow() == 1 {
+				ctl.Pause("operator", "test")
+			}
+		}
+		k.die(e2aBuild)
+		res := k.resume(e2aBuild)
+		got := value[[]any](t, res)
+		rows := k.rowsOf("exe")
+		if fmt.Sprint(got) != "[held engine_paused]" {
+			t.Fatalf("the resumed call %v, want held engine_paused; rows %s; last row %v", got, eventsOf(rows), rows[len(rows)-1].Data)
+		}
+		var bound []string
+		for _, r := range rowsNamed(rows, EvTurnStarted) {
+			bound = append(bound, rowStr(r.Data, "turn_id"))
+		}
+		if strings.Join(bound, ",") != "agent-1-turn1,agent-1-turn2" {
+			t.Errorf("bound turns %v, want the task turn and the repair turn the stop interrupted; rows %s", bound, eventsOf(rows))
+		}
+		if inputs := k.orch.sentInput(); len(inputs) != 1 {
+			t.Errorf("repair inputs %+v, want one", inputs)
+		}
+	})
+	t.Run("bound turn that ends after the restart", func(t *testing.T) {
+		k := newE2aKit(t, deathAt(EvInterruptRequested))
+		k.orch.answer = func(Step, string, int) orchAnswer { return orchAnswer{hang: true} }
+		k.pauseWhen(func(rows []Event) bool { return len(rowsNamed(rows, EvTurnStarted)) > 0 })
+		k.die(e2aBuild)
+		// the turn the interrupt was asked for ends with a valid answer after the process that asked for it died
+		packet, _ := os.ReadFile(k.orch.spawned()[0].Packet)
+		answer := defaultMessage("", packetSchema(string(packet)))
+		k.host.set("agent-1", func(a *fakeAgent, turn *SessionTurn) {
+			turn.Status, turn.FinalText, turn.FinalPhase, turn.UpdatedAt = "completed", answer, "final_answer", time.Now()
+			a.Status = "idle"
+		})
+		res := k.resume(e2aBuild)
+		got := value[[]any](t, res)
+		rows := k.rowsOf("exe")
+		if fmt.Sprint(got) != "[held engine_paused]" {
+			t.Fatalf("the resumed call %v, want held engine_paused; rows %s; last row %v", got, eventsOf(rows), rows[len(rows)-1].Data)
+		}
+		if want := "prepared,step_published,thread_started,turn_started,interrupt_requested,held"; eventsOf(rows) != want {
+			t.Errorf("rows %s, want %s", eventsOf(rows), want)
+		}
+		if d := rowStr(rows[len(rows)-1].Data, "detail"); d != "the turn ended completed after the engine interrupted it" {
+			t.Errorf("held detail %q", d)
+		}
+	})
+}
+
+// killOnInterrupt is the host of a process that dies right after it interrupted a turn.
+type killOnInterrupt struct {
+	*dyingHost
+}
+
+func (h *killOnInterrupt) Interrupt(ctx context.Context, id, turn string) error {
+	err := h.dyingHost.Interrupt(ctx, id, turn)
+	h.sw.kill()
+	return err
 }
 
 // B2: a repair turn sent to the open subagent records the answer it repairs, so a resumed process whose repair attempt is lost

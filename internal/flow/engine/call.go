@@ -810,18 +810,18 @@ func (c *callRun) setIntent(reason string) {
 	c.mu.Unlock()
 }
 
-// clearIntent drops the intent of a turn that ended without deciding the call (a session attempt that was lost).
-func (c *callRun) clearIntent() {
-	c.mu.Lock()
-	c.intent = ""
-	c.mu.Unlock()
-}
-
-// interrupted is the reason the engine interrupted the call's last turn for, "" when it did not.
+// interrupted is the reason the engine interrupted the call's last turn for, "" when it did not: this process's interrupt of the
+// turn in flight (its context, which beginTurn opens with no intent), or for a session call the interrupt the previous process asked
+// for when the turn the call is on is the one it was asked for (sessionIntent). It is read on the call's goroutine, which alone moves
+// the session call's turn.
 func (c *callRun) interrupted() string {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.intent
+	reason, op := c.intent, c.op
+	c.mu.Unlock()
+	if s := c.sess; reason == "" && s != nil {
+		reason = s.intent.of(op, s.attempt, s.agent, s.turn)
+	}
+	return reason
 }
 
 // interrupt journals the engine's intent to interrupt the turn in flight and then cancels it: the backend sends the

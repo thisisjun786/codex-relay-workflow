@@ -948,7 +948,15 @@ any row is written. `crw flow shadow` replays either from the trace and names th
   `thread/tokenUsage/updated`. A rollout that cannot be read leaves the turn unmeasured: the `tokens_unmeasured` row says `pauses: false`,
   and a session run's token ceiling counts the calls it measured.
 - A pause, a cancellation or a deadline interrupts the bound subagent's running turns and reads the thread until it is no longer
-  active; only then is the call ended `held` (or `superseded`). A call that waited for a dispatch retracts its step.
+  active; only then is the call ended `held` (or `superseded`). A call that waited for a dispatch retracts its step. A step whose
+  subagent is known (a `send_input`, an adopted one) and was not bound yet has the turn that subagent started for it bound first
+  (`turn_started`), so the rows name the turn the interrupt reaches; a spawn step no subagent was bound to has no turn to interrupt.
+- An interrupt goes with the turn it was asked for. In the process that asked for it, that is the turn in flight. For a process
+  that resumes the run it is the turn the rows bound to the step and attempt of the `interrupt_requested` row (its `op`, the step
+  published last before it): that turn, if the resumed call goes on with it, ends `held` for the row's reason whatever it came to. Every
+  other turn starts with no intent: a new attempt after a lost one, a step the resumed process publishes again, a turn the host
+  started for a step after the interrupt (a `send_input` the owner had not taken). The intent is compared where the outcome is
+  read; it is never moved onto another turn.
 - Write isolation is recorded, never enforced (the host gives a subagent its parent's sandbox). With `SessionConfig.Trace` the run
   takes digests of P, of the owner's checkout and of the run's shared state when it binds and when it harvests, and writes a flow
   warning when they differ: `read_role_wrote` (a role that changes nothing), `executor_wrote_outside`, `shared_state_changed`.
@@ -998,7 +1006,7 @@ any row is written. `crw flow shadow` replays either from the trace and names th
 | `step_published` | the intent of a step, committed before the step file and the packet |
 | `thread_started` | a subagent bound to an attempt (one row per attempt and per continuation) |
 | `turn_started` | the turn of a step the subagent took |
-| `interrupt_requested` | the engine's interrupt of the bound turn |
+| `interrupt_requested` | the engine's interrupt of the turn in flight (`reason`, `op`); a resumed process applies it only to the turn bound to that step and attempt |
 | `session_attempt_lost` | an attempt whose subagent will not finish its turn |
 | terminal rows | as for any call |
 | `session_wake` (flow row) | a wake of the owner thread the run staged: `batch`, `wake_id`, `renotify`, `ops`, `owner`, `owner_status`, `waiting_seconds`, `staged` (and `error`) |

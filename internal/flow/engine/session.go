@@ -39,9 +39,27 @@ type sessionCall struct {
 	// prior are the pairs earlier attempts of the call were bound with.
 	prior []Pair
 	// resume is the stage a call that a resumed run goes on with in place starts from; intent is the interrupt the previous
-	// process had asked for the turn it left running.
+	// process asked for, with the turn it was asked for.
 	resume *sessionStage
-	intent string
+	intent sessionIntent
+}
+
+// sessionIntent is an interrupt the previous process asked for (its interrupt_requested row) and the turn it was asked for: the op
+// the row names, the attempt, and the subagent and turn the rows bound to that step - the turn the engine's interrupt reached, which
+// a stop binds before it interrupts it (sessionBindStopped). It decides that turn only: every other turn of the call - a new attempt,
+// a step published again, a turn the host started after the interrupt - starts with no intent (CRW-1384).
+type sessionIntent struct {
+	reason, op  string
+	attempt     int
+	agent, turn string
+}
+
+// of is the reason of the intent for the turn a call is on (its op, attempt, subagent and bound turn), "" for any other turn.
+func (i sessionIntent) of(op string, attempt int, agent, turn string) string {
+	if i.reason == "" || i.turn == "" || i.op != op || i.attempt != attempt || i.agent != agent || i.turn != turn {
+		return ""
+	}
+	return i.reason
 }
 
 // sessionStage is where a session call's rows say it stopped.
@@ -57,7 +75,8 @@ type sessionStage struct {
 	rollout     string
 	pair        Pair
 	note, prev  string
-	intent      string
+	// intent and intentOp are the reason and the op of the last interrupt_requested row among the step's rows
+	intent, intentOp string
 	// seen and calls are what a send_input step's row records of the tokens counted before it: the subagent's rollout total the
 	// earlier turns counted and the call's tokens (a recovered repair turn counts only what it adds).
 	seen, calls Tokens
@@ -308,14 +327,22 @@ func sessionStageOf(rows []Event) *sessionStage {
 				st.kind, st.turn = stageBound, rowStr(d, "turn_id")
 			}
 		case EvSessionAttemptLost:
-			// an interrupt asked for the lost attempt's turn ends with that turn: the next attempt's turn is not one the engine
-			// interrupted (CRW-1384)
-			st.kind, st.intent = stageLost, ""
+			st.kind = stageLost
 		case EvInterruptRequested:
-			st.intent = rowStr(d, "reason")
+			st.intent, st.intentOp = rowStr(d, "reason"), rowStr(d, "op")
 		}
 	}
 	return st
+}
+
+// interrupt is the intent the stage's rows hold, with the turn it was asked for: the turn bound to the step and attempt of the stage
+// when its row names that step's op, else none (an interrupt of a turn whose step the rows never published).
+func (st *sessionStage) interrupt() sessionIntent {
+	in := sessionIntent{reason: st.intent, op: st.intentOp, attempt: st.attempt, agent: st.agent}
+	if st.intentOp == st.op {
+		in.turn = st.turn
+	}
+	return in
 }
 
 // rowTokens reads the Tokens a row member holds (a struct in memory, a JSON object from the store).
@@ -364,12 +391,8 @@ func (c *callRun) sessionRecover(ctx context.Context) (res CallResult, stop bool
 	if res, stop := c.sessionNeedsDirectory(); stop {
 		return res, true, 0, ""
 	}
-	// the interrupt the previous process asked for decides the turn it interrupted: the bound turn, or the turns of the subagent a
-	// published send_input step was for (sessionStop interrupts them). A spawn step no subagent was bound to had nothing to
-	// interrupt, so the turn that takes it is this process's (CRW-1384).
-	if st.kind == stageBound || st.kind == stagePublished && st.action == StepSendInput {
-		s.intent = st.intent
-	}
+	// the interrupt the previous process asked for goes with the turn it was asked for, and decides that turn only (interrupted)
+	s.intent = st.interrupt()
 	bus := c.e.cfg.Session.Bus
 	switch st.kind {
 	case stagePrepared:
@@ -557,10 +580,6 @@ func (c *callRun) sessionTurn(ctx context.Context, k int, op, input string, repa
 	}
 	turnCtx, endTurn := c.beginTurn(ctx, op)
 	defer endTurn()
-	if s.intent != "" {
-		c.setIntent(s.intent)
-		s.intent = ""
-	}
 	for {
 		if s.agent == "" || s.boundK != k {
 			out, res, stop, err := c.sessionBind(turnCtx, ctx, k, op, input, repair)
@@ -576,11 +595,6 @@ func (c *callRun) sessionTurn(ctx context.Context, k int, op, input string, repa
 			return out, CallResult{}, false, err
 		}
 		c.sessionLose(loss)
-		if turnCtx.Err() == nil {
-			// an intent this process took over from the previous one was for the lost attempt's turn; an interrupt of this process
-			// cancelled the turn's context and stays the reason the next bind stops for (CRW-1384)
-			c.clearIntent()
-		}
 		if res, stop := c.gate(ctx); stop {
 			return TurnOutcome{}, res, true, nil
 		}
@@ -728,10 +742,26 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 				return nil, CallResult{}, false, nil
 			}
 		case <-turnCtx.Done():
+			bound = c.sessionBindStopped(ctx, k, op, marker)
 			out, _, err := c.sessionStop(ctx)
 			return &out, CallResult{}, false, err
 		}
 	}
+}
+
+// sessionBindStopped binds, before a stop interrupts it, the turn that the subagent a step was for (a send_input's, an adopted
+// one's) started for the step, so the rows name the turn the engine's interrupt reaches: the one turn an interrupt_requested row
+// decides for a process that resumes the run (sessionIntent). A spawn step no subagent was bound to has none. It says whether it
+// bound one.
+func (c *callRun) sessionBindStopped(ctx context.Context, k int, op, marker string) bool {
+	s := c.sess
+	if s.agent == "" || s.boundK == k && s.turn != "" {
+		return false
+	}
+	vctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Minute)
+	defer cancel()
+	_, ok := c.sessionVerify(vctx, s.agent, k, op, marker, StepSendInput)
+	return ok
 }
 
 // stepUnwritten is the record of a step the bus could not write: step_unwritten flow rows (input_state not_delivered, nothing was
@@ -839,6 +869,7 @@ func (c *callRun) sessionAdopt(turnCtx, ctx context.Context, k int, op, input st
 	var gone time.Time
 	for {
 		if turnCtx.Err() != nil {
+			c.sessionBindStopped(ctx, k, op, marker)
 			out, _, err := c.sessionStop(ctx)
 			return &out, CallResult{}, false, err
 		}

@@ -177,6 +177,8 @@ type orchAnswer struct {
 	after time.Duration
 	// noDispatch spawns the subagent and reports nothing.
 	noDispatch bool
+	// skip leaves the step untaken: the owner never got to that file (a file a process publishes again is a new step it takes).
+	skip bool
 	// pair spawns with this pair instead of the step's.
 	pair *Pair
 	// edit sets the tree (and with head the HEAD) of the call's directory, as the subagent's edits would.
@@ -282,6 +284,9 @@ func (o *fakeOrch) take(st Step) {
 	}
 	if answer != nil {
 		ans = answer(st, string(packet), turns)
+	}
+	if ans.skip {
+		return
 	}
 	if ans.text == "" && ans.fail == "" && !ans.hang && !ans.lose {
 		ans.text = defaultMessage(st.Message, packetSchema(string(packet)))
