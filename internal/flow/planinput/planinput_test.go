@@ -451,6 +451,73 @@ func TestProjectKeyIsComparedWithTheOwnersBinding(t *testing.T) {
 	}
 }
 
+// TestBuildCarriesTheKeyWarningsInTheCompileInput (CRW-1379 c1): the key warnings (project_key_bound, project_key_unchecked) are also a
+// member of the project in the compile input, so the bare input of a pipe carries them to `crw flow compile`; the other warnings of the
+// mapping stay on stderr and in the envelope. A bound key carries none.
+func TestBuildCarriesTheKeyWarningsInTheCompileInput(t *testing.T) {
+	r := func() *fakeReader { return milestone(open(1, "just prose\n")) } // criteria_missing is a warning too
+	res := build(t, r(), Options{Binding: &Binding{Thread: "thread-owner", Scopes: []string{"uuid-1"}}})
+	if !reflect.DeepEqual(rules(res.Warnings), []string{"criteria_missing", "project_key_bound"}) {
+		t.Fatalf("warnings = %v", rules(res.Warnings))
+	}
+	got := res.Input.Projects[0].Warnings
+	if len(got) != 1 || got[0] != res.Warnings[1] || got[0].Rule != "project_key_bound" || !strings.Contains(got[0].Detail, "o/r#3") {
+		t.Errorf("the input carries %+v; want the project_key_bound warning only", got)
+	}
+	res = build(t, r(), Options{Binding: &Binding{}})
+	if got := res.Input.Projects[0].Warnings; len(got) != 1 || got[0].Rule != "project_key_unchecked" {
+		t.Errorf("no thread: the input carries %+v", got)
+	}
+	res = build(t, r(), Options{Binding: &Binding{Thread: "thread-owner", Scopes: []string{"o:r:3"}}})
+	if got := res.Input.Projects[0].Warnings; len(got) != 0 {
+		t.Errorf("a bound key carries %+v", got)
+	}
+	if res = build(t, r(), Options{}); len(res.Input.Projects[0].Warnings) != 0 {
+		t.Errorf("no binding to compare: %+v", res.Input.Projects[0].Warnings)
+	}
+}
+
+// TestPipedPlanInputKeepsTheKeyWarningInTheCompiledPlan (CRW-1379 c1): `crw flow plan-input | crw flow compile --dry-run -` (the bare
+// input, no --envelope) records the key warning in the compile output, which names the milestone ref only plan-input knows; compile's
+// own comparison, with the key bound on its side, adds nothing, and with the thread unbound on its side it does not repeat the warning.
+func TestPipedPlanInputKeepsTheKeyWarningInTheCompiledPlan(t *testing.T) {
+	e := newEnv()
+	e.env["CODEX_THREAD_ID"] = "thread-owner"
+	e.scopes = []string{"uuid-1"}
+	code, piped, errOut := e.run("--milestone", "o/r#3", "--target-repository", "/srv/checkout", "--base-ref", "dev")
+	if code != 0 {
+		t.Fatalf("plan-input: exit %d, stderr %q", code, errOut)
+	}
+	compileWith := func(scopes []string) (compile.Result, string) {
+		d := &compile.Deps{
+			Scopes: func(context.Context, string, string, string) ([]string, error) { return scopes, nil },
+			Getenv: func(k string) string { return e.env[k] },
+		}
+		var out, cErr bytes.Buffer
+		if c := compile.RunWith(bg, d, []string{"--dry-run", "-"}, strings.NewReader(piped), &out, &cErr); c != 0 {
+			t.Fatalf("crw flow compile --dry-run -: exit %d\n%s%s", c, out.String(), cErr.String())
+		}
+		var res compile.Result
+		if err := json.Unmarshal(out.Bytes(), &res); err != nil {
+			t.Fatalf("%v\n%s", err, out.String())
+		}
+		return res, cErr.String()
+	}
+	// compile's side has the key bound: the only record is what plan-input carried
+	res, cErr := compileWith([]string{"o:r:3"})
+	ws := res.Plans[0].Warnings
+	if len(ws) != 1 || ws[0].Rule != "project_key_bound" || !strings.Contains(ws[0].Detail, "o/r#3") || !strings.Contains(ws[0].Detail, "uuid-1") {
+		t.Errorf("the piped plan's warnings = %+v", ws)
+	}
+	if !strings.Contains(cErr, "[project_key_bound]") {
+		t.Errorf("compile's stderr: %q", cErr)
+	}
+	// compile's side finds the key unbound too: the warning plan-input carried is not said twice
+	if res, _ = compileWith([]string{"uuid-1"}); len(res.Plans[0].Warnings) != 1 {
+		t.Errorf("the piped plan's warnings = %+v; want the one plan-input carried", res.Plans[0].Warnings)
+	}
+}
+
 // TestBuildInputErrors (c3): an error of the input is returned with what to pass: a milestone that does not exist (or the token cannot
 // see) and a Ref that is not a milestone of the tracking repository.
 func TestBuildInputErrors(t *testing.T) {

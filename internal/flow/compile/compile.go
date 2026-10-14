@@ -24,6 +24,8 @@ type Options struct {
 	Bases map[string]dag.State
 	// DryRun leaves the revision documents out of the result; the previews are the same.
 	DryRun bool
+	// Binding is compared with each project key, and a key it does not hold is a warning of the plan (CRW-1379); nil compares nothing.
+	Binding *Binding
 }
 
 // Compile turns the handoff into one plan result per project, or refuses all of it with a *Refused. A refused handoff
@@ -191,6 +193,19 @@ func compileProject(in Input, at int, owner map[string]string, opts Options) (Pl
 		}
 		if t.Branch() != t.BaseRef {
 			warn("target_base_ref", "target.base_ref", "the base_ref %q is read as the branch %q: the integration path adds refs/heads/ itself (write the short name)", t.BaseRef, t.Branch())
+		}
+	}
+
+	// what the handoff's writer found and did not refuse (CRW-1379), then the comparison of the project key with the owner's binding,
+	// unless the handoff already carries that warning: both are warnings of the plan and neither refuses or changes the revision
+	carried := map[string]bool{}
+	for _, w := range p.Warnings {
+		carried[w.Rule] = true
+		plan.Warnings = append(plan.Warnings, Warning{Project: p.Key, Rule: w.Rule, Path: w.Issue, Detail: w.Detail})
+	}
+	if b := opts.Binding; b != nil {
+		if w, ok := KeyWarning(p.Key, "", *b, nil); ok && !carried[w.Rule] {
+			plan.Warnings = append(plan.Warnings, Warning{Project: p.Key, Rule: w.Rule, Detail: w.Detail})
 		}
 	}
 

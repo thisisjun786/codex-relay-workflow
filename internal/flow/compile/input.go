@@ -66,6 +66,17 @@ type Project struct {
 	// milestone an issue names has its entry and every entry is named by an issue. They are not part of the plan revision: the run
 	// pins the handoff and reads them from it (crw flow start --handoff).
 	Milestones []Milestone `json:"milestones,omitempty"`
+	// Warnings are what the writer of the handoff found and did not refuse (CRW-1379): `crw flow plan-input` records here that the
+	// project key is not the owner's binding. Compile carries them into the plan's warnings and judges nothing by them; they are
+	// not part of the plan revision.
+	Warnings []InputWarning `json:"warnings,omitempty"`
+}
+
+// InputWarning is a warning a handoff carries: Rule names it, Issue the issue it is about ("" for the project) and Detail says it.
+type InputWarning struct {
+	Rule   string `json:"rule"`
+	Issue  string `json:"issue,omitempty"`
+	Detail string `json:"detail"`
 }
 
 // Milestone is a milestone of a project as the run reads it: its title, its criteria (at least one), the surfaces of its criteria (a

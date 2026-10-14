@@ -18,7 +18,7 @@
 // What cannot be mapped is a warning, never a refusal: a missing criteria section, a region compile would refuse, a size value outside
 // its closed set, a blocker that is closed, outside the milestone or the issue itself, a milestone that is closed or has no open issue,
 // and a project key the owner thread holds no live parent binding of (the comparison `crw flow start` makes as project_key_bound,
-// CRW-1317). Only an input error (a Ref that is not OWNER/NAME#N, a milestone that does not exist, a key the dag cannot hold) stops the command.
+// CRW-1317; this warning is also a member "warnings" of the project in the input, so a pipe into `crw flow compile` keeps it). Only an input error (a Ref that is not OWNER/NAME#N, a milestone that does not exist, a key the dag cannot hold) stops the command.
 package planinput
 
 import (
@@ -41,20 +41,13 @@ type Reader interface {
 	Milestone(ctx context.Context, ref tracking.Ref) (tracking.Milestone, []tracking.Issue, error)
 }
 
-// Warning is something the mapping could not carry over, or a comparison that did not hold.
-type Warning struct {
-	Rule   string `json:"rule"`
-	Issue  string `json:"issue,omitempty"`
-	Detail string `json:"detail"`
-}
+// Warning is something the mapping could not carry over, or a comparison that did not hold. It is the warning a compile input carries
+// (compile.InputWarning).
+type Warning = compile.InputWarning
 
 // Binding is what the project key is compared with: the scope keys of the live parent bindings of the owner thread. Err is why they
 // could not be read.
-type Binding struct {
-	Thread string
-	Scopes []string
-	Err    error
-}
+type Binding = compile.Binding
 
 // Options are what the milestone does not say.
 type Options struct {
@@ -169,6 +162,9 @@ func Build(ctx context.Context, r Reader, ref tracking.Ref, opts Options) (Resul
 	if b := opts.Binding; b != nil {
 		if w, ok := keyWarning(pkey, key, *b); ok {
 			warnings = append(warnings, w)
+			// also a member of the project: the bare input a pipe hands to `crw flow compile` has no envelope, and compile carries it
+			// into the plan's warnings and so into the record of the run (CRW-1379)
+			project.Warnings = append(project.Warnings, w)
 		}
 	}
 	return Result{
@@ -231,38 +227,12 @@ func issueLine(is tracking.Issue, byRef map[string]tracking.Issue, project strin
 }
 
 // keyWarning compares the project key (the encoded form, the scope key `crw flow start` compares) with the scope keys of the owner's
-// live parent bindings. A key the thread is bound to answers nothing. ref is the milestone ref the key stands for.
+// live parent bindings (compile.KeyWarning). A key the thread is bound to answers nothing. ref is the milestone ref the key stands for.
 func keyWarning(key, ref string, b Binding) (Warning, bool) {
-	switch {
-	case b.Thread == "":
-		return Warning{Rule: "project_key_unchecked", Detail: "the project key is not compared with a binding: pass --thread (or run in a session that has CODEX_THREAD_ID) to name the owner thread"}, true
-	case b.Err != nil:
-		return Warning{Rule: "project_key_unchecked", Detail: fmt.Sprintf("the live parent bindings of thread %s cannot be read, so the project key %s (milestone %s) is not compared: %v", b.Thread, key, ref, b.Err)}, true
-	}
-	// exactly, as `crw flow start` and the coordinator's first claim compare it: a key that differs only by case is another key there
-	caseOnly := ""
-	for _, s := range b.Scopes {
-		switch {
-		case s == key:
-			return Warning{}, false
-		case caseOnly == "" && strings.EqualFold(s, key):
-			caseOnly = s
+	return compile.KeyWarning(key, ref, compile.Binding(b), func(scope string) string {
+		if r, err := DecodeKey(scope); err == nil {
+			return scope + " (" + r.String() + ")"
 		}
-	}
-	holds := "thread " + b.Thread + " holds no live parent binding"
-	if len(b.Scopes) > 0 {
-		shown := make([]string, len(b.Scopes))
-		for i, s := range b.Scopes {
-			shown[i] = s
-			if r, err := DecodeKey(s); err == nil {
-				shown[i] = s + " (" + r.String() + ")"
-			}
-		}
-		holds = "thread " + b.Thread + " is the live parent of project " + strings.Join(shown, ", ")
-	}
-	hint := ""
-	if caseOnly != "" {
-		hint = fmt.Sprintf(" (the binding %s differs from %s only by case, and the keys are compared exactly: pass --milestone with the same spelling the binding was made under)", caseOnly, key)
-	}
-	return Warning{Rule: "project_key_bound", Detail: fmt.Sprintf("the plan's project key is %s (milestone %s); %s%s: a plan's project key is the scope_key of the orchestrator's parent binding, and the run's first claim is refused (scope_role_mismatch) under another key", key, ref, holds, hint)}, true
+		return scope
+	})
 }
