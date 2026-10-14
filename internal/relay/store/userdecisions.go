@@ -55,6 +55,16 @@ const userDecisionColumns = "decision_id, fingerprint, kind, context, options_js
 // record that already carries this fingerprint (no new row, merged true) or inserts it (merged
 // false). What it returns is what it stored, so a caller can compare it with what List reads back.
 func (s *Store) Raise(ctx context.Context, record decisions.Record) (decisions.Record, bool, error) {
+	stored, merged, _, err := s.RaiseWhere(ctx, record, nil)
+	return stored, merged, err
+}
+
+// RaiseWhere is Raise with the fold narrowed: folds, when set, says whether the incoming record may
+// fold into an open or raised record of its fingerprint (CRW-1378: a question raised under another
+// management seat is not the record that seat's owner answers). The first record of the fingerprint
+// it accepts, oldest first, takes the fold; when it accepts none the record is inserted, and passed
+// names the records of the same fingerprint it refused. Nil folds into the oldest, as Raise does.
+func (s *Store) RaiseWhere(ctx context.Context, record decisions.Record, folds func(stored, incoming decisions.Record) bool) (decisions.Record, bool, []string, error) {
 	// An absent list is stored as an empty array, so the record Raise returns and the record List
 	// reads back are the same value.
 	if record.Options == nil {
@@ -67,26 +77,36 @@ func (s *Store) Raise(ctx context.Context, record decisions.Record) (decisions.R
 		record.Seen = []decisions.Seen{}
 	}
 	if err := validateUserDecision(record); err != nil {
-		return decisions.Record{}, false, err
+		return decisions.Record{}, false, nil, err
 	}
 	if !slices.Contains(raiseStates, record.State) {
-		return decisions.Record{}, false, fmt.Errorf("%w: %q", ErrUserDecisionState, record.State)
+		return decisions.Record{}, false, nil, fmt.Errorf("%w: %q", ErrUserDecisionState, record.State)
 	}
 	var answer decisions.Record
 	var merged bool
+	var passed []string
 	err := s.Transaction(ctx, func(ctx context.Context, _ *sql.Conn) error {
-		stored, err := s.userDecisionByFingerprint(ctx, record.Fingerprint)
-		switch {
-		case errors.Is(err, sql.ErrNoRows):
+		passed = nil
+		candidates, err := s.userDecisionsByFingerprint(ctx, record.Fingerprint)
+		if err != nil {
+			return err
+		}
+		var stored *decisions.Record
+		for i := range candidates {
+			if folds == nil || folds(candidates[i], record) {
+				stored = &candidates[i]
+				break
+			}
+			passed = append(passed, candidates[i].DecisionID)
+		}
+		if stored == nil {
 			if err := s.insertUserDecision(ctx, record); err != nil {
 				return err
 			}
 			answer, merged = record, false
 			return nil
-		case err != nil:
-			return err
 		}
-		folded, err := foldUserDecision(stored, record)
+		folded, err := foldUserDecision(*stored, record)
 		if err != nil {
 			return err
 		}
@@ -97,9 +117,9 @@ func (s *Store) Raise(ctx context.Context, record decisions.Record) (decisions.R
 		return nil
 	})
 	if err != nil {
-		return decisions.Record{}, false, err
+		return decisions.Record{}, false, nil, err
 	}
-	return answer, merged, nil
+	return answer, merged, passed, nil
 }
 
 // List reads the records the filter selects, oldest first by the real instant of raised_at (and by
@@ -189,14 +209,23 @@ func missingUserDecisionTable(err error) bool {
 	return err != nil && strings.Contains(err.Error(), "no such table: dag_user_decisions")
 }
 
-// userDecisionByFingerprint is the fold candidate: the open or raised record of a fingerprint.
-func (s *Store) userDecisionByFingerprint(ctx context.Context, fingerprint string) (decisions.Record, error) {
-	row, err := s.One(ctx, "SELECT "+userDecisionColumns+" FROM dag_user_decisions"+
-		" WHERE fingerprint = ? AND state IN ("+raiseStatesSQL()+") ORDER BY raised_at, decision_id LIMIT 1", fingerprint)
+// userDecisionsByFingerprint are the fold candidates: the open or raised records of a fingerprint,
+// oldest first.
+func (s *Store) userDecisionsByFingerprint(ctx context.Context, fingerprint string) ([]decisions.Record, error) {
+	rows, err := s.All(ctx, "SELECT "+userDecisionColumns+" FROM dag_user_decisions"+
+		" WHERE fingerprint = ? AND state IN ("+raiseStatesSQL()+") ORDER BY raised_at, decision_id", fingerprint)
 	if err != nil {
-		return decisions.Record{}, err
+		return nil, err
 	}
-	return decodeUserDecision(row)
+	out := make([]decisions.Record, 0, len(rows))
+	for _, row := range rows {
+		record, err := decodeUserDecision(row)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, record)
+	}
+	return out, nil
 }
 
 func (s *Store) insertUserDecision(ctx context.Context, record decisions.Record) error {

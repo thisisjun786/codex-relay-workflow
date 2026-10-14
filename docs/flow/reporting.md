@@ -5,20 +5,51 @@ Here the parent (repository session, relay role `supervisor`) is a layer of [the
 A flow run (a project run, the issue-lane of an issue child) works for the thread that started it: the child
 (project session, relay role `parent`, [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels)), which works for its parent (repository session, relay role `supervisor`). This page says what travels upward, to whom, by which command, and which row of the relay
 store's `flow_events` records it. The rows are described in [journal.md](journal.md); the relay commands the paths end in are in the
-[relay README](../relay/README.md). The relay's own supervisor channel is a different path and carries none of this: its entrances are
-the standing obligation of a relationship child and the fault notice ([supervisor-channel.md](../relay/supervisor-channel.md)).
+[relay README](../relay/README.md). The reports, the escalations and the completion digest go through the relay's supervisor channel as direct
+messages ([supervisor-channel.md](../relay/supervisor-channel.md#direct-messages), CRW-1380); the plan summary notice goes through `crw manage send-parent`.
 
 | What | From | To | By | Recorded as | Pump kind |
 | --- | --- | --- | --- | --- | --- |
-| an escalation of the run (`dispatch_unknown`, `tiers_exhausted`, `blocked_scope`, `size_split`, `restore_snapshot_mismatch`, a configuration fault, the run-level hold `plan_superseded` with the pinned and head revisions and the node, CRW-1291) | the run | the child's thread | `crw manage send-parent` | `escalation`, `escalation_notice` | `run_escalation` |
-| the completion digest | the run | the child's thread | `crw manage send-parent` | `completion_notice` | |
+| an escalation of the run (`dispatch_unknown`, `tiers_exhausted`, `blocked_scope`, `size_split`, `restore_snapshot_mismatch`, a configuration fault, the run-level hold `plan_superseded` with the pinned and head revisions and the node, CRW-1291) | the run | the level above the run's project (the parent's management seat, else a supervisor registered at the initiative's scope, the legacy configuration, else the store seat); a run whose plan names no project: the child's thread | the supervisor channel (`flow_escalation`); else `crw manage send-parent` | `escalation`, `escalation_notice`, `message_delivery` | `run_escalation` |
+| the completion digest | the run | as an escalation | the supervisor channel (`flow_completion`); else `crw manage send-parent` | `completion_notice`, `message_delivery` | |
 | a run that stopped writing | nobody | the parent's thread | the pump | | `run_dead` |
 | the plan summary that is owed | the run, `crw flow apply` | the child's thread | `crw manage send-parent` | `summary_document`, `summary_notice`, `summary_notice_settled` | |
 | the receipt of an oversized issue | the issue child | the child | relay delivery, then `crw flow apply` | `apply_applied`, `apply_refused`, `apply_override` | |
-| a milestone report | the run | the parent above the project (else a supervisor registered at the initiative's scope, the legacy configuration) | `crw flow report-up` through `send-parent --role supervisor` | `report`, `report_delivery`, `report_read` | `report_undelivered`, `report_unread` |
-| a run that started no node (`project_blocked`, CRW-1320) | the run | the parent above the project (else a supervisor registered at the initiative's scope, the legacy configuration) | the writer of `crw flow report-up` through `send-parent --role supervisor` | `report`, `report_delivery`, `report_read` | `report_undelivered`, `report_unread` |
-| a project-level blocker or decision request | the child | the parent above the project (else a supervisor registered at the initiative's scope, the legacy configuration) | `crw flow report-up` | `report`, `report_delivery`, `report_read` | `report_undelivered`, `report_unread` |
-| a decision only Jun can make | the child | the parent above the project (else the store seat, then the parent that holds it) | `crw flow report-up` | `report` | `jun_decision` |
+| a milestone report | the run | the parent above the project (else a supervisor registered at the initiative's scope, the legacy configuration, else the store seat) | the writer of `crw flow report-up` through the supervisor channel (`flow_milestone_report`) | `report`, `report_delivery`, `report_read` | `report_undelivered`, `report_unread` |
+| a run that started no node (`project_blocked`, CRW-1320) | the run | as a milestone report | the writer of `crw flow report-up` through the supervisor channel (`flow_project_blocked`) | `report`, `report_delivery`, `report_read` | `report_undelivered`, `report_unread` |
+| a project-level blocker or decision request | the child | as a milestone report | `crw flow report-up` through the supervisor channel (`flow_project_blocked`, `flow_project_decision_request`) | `report`, `report_delivery`, `report_read` | `report_undelivered`, `report_unread` |
+| a decision only Jun can make | the child | the parent above the project (else the store seat, then the parent that holds it) | `crw flow report-up` through the supervisor channel (`flow_jun_decision_request`); under a supervisor registered at the initiative's scope it stands | `report`, `report_delivery` | `jun_decision` |
+| a step that waits for the owner (a session run, CRW-1348) | the run | the run's owner | the supervisor channel (`session_step_waiting`, `run:<id>`) | `session_wake`, `message_delivery` | |
+
+## Through the supervisor channel
+
+The run (and `crw flow report-up`) hands a report, an escalation and the completion digest to `report.RelaySender`, which stages one
+direct message on the relay's supervisor channel: the relationship is `project:<the project of the run's plan>`, the kind is the
+report's (`flow_milestone_report`, `flow_project_blocked`, `flow_project_decision_request`, `flow_jun_decision_request`) or the notice's
+(`flow_escalation`, `flow_completion`), and the subject is `<run>/<report id>` or `<run>/<logical id>`, so the message id is
+deterministic and the same report staged again is the same message. The channel addresses it to the level above the project - the
+owner of the parent's management seat, else a supervisor registered at the initiative's scope (the legacy initiative supervision), else the single store seat, which is woken like any other recipient - and the relay daemon
+delivers it: a new turn on an idle thread, a resume and a turn on an unloaded one, after the turn on a busy one. The report row and the
+message carry one resolution of the project: the row records the project the report is staged through (`recipient_project`, the
+store seat's decision for Jun included), so the listing the message's evidence names, `crw flow reports --project <project> --unread`,
+lists it. A store seat's report of a run whose plan names no project has no project to be staged through and does not go through `crw
+manage send-parent` either: it stands for the store seat's pump, and `crw flow reports --unread` lists it.
+
+Staging writes only `queued`: the `report_delivery` row the writer appends from the staging says `queued`, with the message id as its
+request id, and an `escalation_notice` or `completion_notice` says `queued` too. What the transport came to is the daemon's to write, in
+the transaction of its settle of the message: a message the host took (dispatched) appends `report_delivery` `accepted` (a report) or
+`message_delivery` `accepted` (any other flow message, a step wake included, with its `wake_id`), and a message held at a cap appends
+`refused` with the hold as its reason: `attempt_cap` or `busy_cap` held by the settle, and `busy_cap` held by the busy deferral, which
+holds a message to a recipient that stayed busy before any transport call, in the transaction of that deferral. Each row is written once
+for its report (or message) and result, in the run's `flow_events` from `1 << 40`; a daemon that dies before its settle commits writes neither the settle nor the row
+(the send is unknown and the channel does not repeat it), one that dies after it leaves both, and neither a second daemon nor a resume of
+the run writes a second row. The daemon may settle the message, or hold it at a cap, before the writer has appended its `queued` row, so a
+`queued` row can follow the `accepted` or `refused` one; a `queued` row never supersedes a settled row (`accepted` or `refused`) before it,
+and the report reads what the settle wrote (`accepted`: not standing; `refused`: standing) for `crw flow reports`, a replay and the pump,
+which all read the rows by `report.SupersedesDelivery`. A staging the channel refuses (nobody above the project, a hierarchy that moved) writes no row: the report
+stands, with the refusal as its reason, and a replay stages it again. A decision only Jun can make is not staged for an initiative-scoped supervisor (an
+initiative-scoped supervisor does not decide for Jun): it stands for the store seat's pump. A notice the channel has no kind for - the plan summary notice, and an
+escalation or completion of a run whose plan names no project - goes through `crw manage send-parent` as described below.
 
 ## Escalations and the completion digest
 
@@ -214,7 +245,8 @@ All of these are rows of `flow_events` (`kind` is the first column of the table,
 | kind | members |
 | --- | --- |
 | `report` | `report_id`, `report_kind`, `run`, `milestone`, `subject`, `plan`, `body_digest`, `body_path`, `logical_id`, `recipient_state` (`management`, `initiative`, `store`, `unregistered_scope`, `unreadable`), `recipient_thread`, `recipient_initiative`, `recipient_project`, `recipient_reason`, `recipient_detail` |
-| `report_delivery` | `report_id`, `result`, `request_id`, `observation`, `reason`, `logical_id` |
+| `report_delivery` | `report_id`, `result`, `request_id`, `observation`, `reason`, `logical_id`; written by the daemon's settle: `report_id`, `result` (`accepted`, `refused`), `request_id`, `message_id`, `turn_id`, `kind`, `subject`, `observation` (the message's state), `reason` (the hold) |
+| `message_delivery` | `message_id`, `kind`, `subject`, `result` (`accepted`, `refused`), `request_id`, `turn_id`, `observation`, `reason`, and `wake_id` for a step wake (the daemon's settle) |
 | `report_read` | `report_id`, `turn` |
 | `summary_document` | `document` |
 | `summary_notice` | `summary_id`, `plan`, `document`, `logical_id`, `run` |

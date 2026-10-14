@@ -406,6 +406,13 @@ func (c *command) start(args []string) int {
 	// a session run binds its owner thread before its process starts (CRW-1316 §9): the hook decides the owner's spawns by the line
 	bound := false
 	if session {
+		// the start lock stands for the run's process until that process holds the run lock: a start that binds the same owner in that
+		// window finds this run live and is not bound (CRW-1372)
+		if startLock, err := takeStartLock(sel.Path, spec.RunID); err != nil {
+			fmt.Fprintf(c.stderr, "crw flow start: warning: %v: another start binding thread %s before this run's process holds its lock may take the thread\n", err, spec.Thread)
+		} else {
+			defer startLock.Release()
+		}
 		res, err := bindOwner(sel.Path, spec.RunID, spec.Thread, table)
 		if w := bindWarning(res, err, spec.Thread, spec.RunID); w != "" {
 			answer.BindWarning = w

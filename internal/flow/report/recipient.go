@@ -19,8 +19,9 @@ const (
 	// management session bound the project owner); Thread names it. It hears every report kind of the project.
 	RecipientManagement = "management"
 	// RecipientStore: the store seat; the recipient of a decision only Jun can make when no management seat stands above the project, and of
-	// the project's other reports when neither a management seat nor an initiative lead does (the walk folded the seat in). No bridge
-	// delivery is made to it: the manager's pump tells it.
+	// the project's other reports when neither a management seat nor an initiative lead does (the walk folded the seat in). RelaySender
+	// delivers to it through the supervisor channel like any other recipient (CRW-1380, D1c d2); ManageSender leaves it to the manager's
+	// pump.
 	RecipientStore = "store"
 	// RecipientUnregistered: nobody stands above the project (no management seat, no initiative lead and no store seat), or the
 	// management seat above it has no live owner.
@@ -36,13 +37,15 @@ type Recipient struct {
 	// binding) for RecipientInitiative, the store seat's for RecipientStore when exactly one is registered.
 	Thread        string
 	InitiativeKey string
-	ProjectKey    string
+	// ProjectKey is the project of the run's plan the recipient was resolved for, "" when the plan names none: the report row keeps it,
+	// the sender stages the report through it, and `crw flow reports --project` lists the report by it.
+	ProjectKey string
 	// Reason is the refusal of the walk that left the report standing.
 	Reason, Detail string
 }
 
-// Deliverable says whether the report goes to a thread through the bridge: the management session above the project, or a legacy
-// initiative lead.
+// Deliverable says whether the report goes to a thread through crw manage send-parent: the management session above the project, or a
+// legacy initiative lead. A sender that answers Delivers (RelaySender) decides for itself.
 func (r Recipient) Deliverable() bool {
 	return (r.State == RecipientManagement || r.State == RecipientInitiative) && r.Thread != ""
 }
@@ -73,7 +76,12 @@ func (r StoreResolver) Recipient(ctx context.Context, plan, kind string) (Recipi
 				return Recipient{State: RecipientManagement, Thread: res.Recipient, ProjectKey: project}, nil
 			}
 		}
+		// the row keeps the project the plan names, the one the sender stages the decision through: the listing the message points
+		// at (crw flow reports --project <project>) finds it
 		rec := Recipient{State: RecipientStore}
+		if planErr == nil {
+			rec.ProjectKey = project
+		}
 		held, err := (&registry.Registry{Store: r.Store}).StoreScopeSupervisor(ctx)
 		if err != nil {
 			return rec, err

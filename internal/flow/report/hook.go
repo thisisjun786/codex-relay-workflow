@@ -10,6 +10,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
 )
 
 // RunHook is the engine's UpwardHook of a run (CRW-1204): what goes up from the run to the orchestrator thread that started it.
@@ -74,7 +75,7 @@ func (h *RunHook) RunFinished(ctx context.Context, _, status string) error {
 		return firstError(err, terr)
 	}
 	text := fmt.Sprintf("[crw flow] run finished run=%s workflow=%s status=%s digest=%s", h.Run, run.Workflow, status, key[strings.LastIndex(key, ":")+1:])
-	res, serr := h.send(ctx, run.Actor, "done-"+shortHash(key), text)
+	res, serr := h.send(ctx, run, supervisor.KindFlowCompletion, "done-"+shortHash(key), text)
 	if serr != nil {
 		return firstError(err, serr)
 	}
@@ -138,7 +139,7 @@ func (h *RunHook) reconcileLocked(ctx context.Context) error {
 		_, err := ReconcileSummary(ctx, SummaryEnv{Store: h.Store, Sched: h.Sched, Rows: h.Rows, Run: h.Run, Plan: run.PlanID, Document: document, Actor: run.Actor, Sender: h.Sender, Wake: h.Wake})
 		errs = append(errs, err)
 	}
-	errs = append(errs, h.escalations(ctx, run.Actor))
+	errs = append(errs, h.escalations(ctx, run))
 	return errors.Join(errs...)
 }
 
@@ -156,7 +157,8 @@ func (h *RunHook) document() string {
 }
 
 // escalations tells the orchestrator thread about each escalation row of the run that was not told yet.
-func (h *RunHook) escalations(ctx context.Context, thread string) error {
+func (h *RunHook) escalations(ctx context.Context, run RunInfo) error {
+	thread := run.Actor
 	var told = map[string]bool{}
 	for _, ev := range h.Journal.Events() {
 		if ev.Kind == engine.KindFlow && ev.Event == KindEscalationNotice {
@@ -180,7 +182,7 @@ func (h *RunHook) escalations(ctx context.Context, thread string) error {
 		if ask := textOr(ev.Data["ask"], ""); ask != "" {
 			text += "\nThe run waits for your decision (" + ask + ")."
 		}
-		res, err := h.send(ctx, thread, "esc-"+id, text)
+		res, err := h.send(ctx, run, supervisor.KindFlowEscalation, "esc-"+id, text)
 		if err != nil {
 			errs = append(errs, err)
 			continue
@@ -195,16 +197,23 @@ func (h *RunHook) escalations(ctx context.Context, thread string) error {
 	return errors.Join(errs...)
 }
 
-// send tells the orchestrator thread: queued, with no look at the thread first, unless the wake-up is proven.
-func (h *RunHook) send(ctx context.Context, thread, logicalID, text string) (SendResult, error) {
+// send tells the orchestrator thread: queued, with no look at the thread first, unless the wake-up is proven. The notice names its
+// supervisor-channel kind, the run and the project of the run's plan: RelaySender stages it for the level above the project (CRW-1380,
+// design CRW-1314 §3), ManageSender sends it to the orchestrator thread as before.
+func (h *RunHook) send(ctx context.Context, run RunInfo, kind, logicalID, text string) (SendResult, error) {
 	if h.Sender == nil {
 		return SendResult{}, errors.New("report: a sender is required to tell the orchestrator thread")
 	}
+	thread := run.Actor
 	queue := true
 	if h.Wake != nil && h.Wake(ctx, thread) {
 		queue = false
 	}
-	return h.Sender.SendParent(ctx, ParentSend{Thread: thread, LogicalID: logicalID, Text: text, Queue: queue})
+	project := ""
+	if run.PlanID != "" {
+		project, _ = ProjectOf(ctx, h.Store, run.PlanID)
+	}
+	return h.Sender.SendParent(ctx, ParentSend{Thread: thread, LogicalID: logicalID, Text: text, Queue: queue, Kind: kind, Run: h.Run, Project: project})
 }
 
 func textOr(v any, fallback string) string {

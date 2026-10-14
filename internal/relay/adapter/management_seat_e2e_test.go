@@ -19,6 +19,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/daemon"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
 )
@@ -43,6 +44,7 @@ type mgmtWorld struct {
 	host  *fakehost.Server
 	d     *daemon.Daemon
 	c     *supervisor.Channel
+	a     *Adapter
 	clock *delivery.FakeClock
 	mu    sync.Mutex
 	turns map[string][]string
@@ -56,6 +58,9 @@ func newMgmtWorld(t *testing.T) *mgmtWorld {
 	}
 	t.Setenv("CODEX_THREAD_BRIDGE_EXECUTION_POLICY", policy)
 	t.Setenv("CODEX_THREAD_ID", "")
+	// the role policy is read once per process: a test that ran before with another one leaves its snapshot
+	registry.ResetRolePolicySnapshot()
+	t.Cleanup(registry.ResetRolePolicySnapshot)
 	w := &mgmtWorld{t: t, ctx: context.Background(), state: filepath.Join(t.TempDir(), "state"), turns: map[string][]string{}}
 	w.host = fakehost.Start(t)
 	w.scriptHost()
@@ -101,6 +106,7 @@ func (w *mgmtWorld) open(recipients ...string) {
 	}
 	a := New(Options{RPC: client, Ledger: l, Policy: execution.Policy{}})
 	w.t.Cleanup(func() { _ = a.Close() })
+	w.a = a
 	w.clock = &delivery.FakeClock{T: 1700000000}
 	w.c = &supervisor.Channel{Store: s, Linkage: supervisor.StoreLinkage{Store: s}, Program: "codex-session-relay", Socket: w.host.SocketPath}
 	w.d = daemon.New(s, a, w.clock, w.c)
@@ -126,7 +132,7 @@ func (w *mgmtWorld) scriptHost() {
 		_ = json.Unmarshal(raw, &params)
 		data := []any{}
 		if params["archived"] == false {
-			for _, id := range []string{mgmtA, mgmtB, mgmtNew, storeSeat, leadA, leadB, leadC} {
+			for _, id := range []string{mgmtA, mgmtB, mgmtNew, storeSeat, leadA, leadB, leadC, ownerA, ownerB, ownerC} {
 				data = append(data, map[string]any{"id": id})
 			}
 		}

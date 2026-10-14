@@ -51,6 +51,12 @@ func (c *command) resume(args []string) int {
 		if err != nil {
 			return c.fail("%v", err)
 		}
+		// a session run's process holds its process lock from before the run lock until after it, as the run process does
+		var process *processLock
+		if spec, err := ReadSpec(sel.Path, run); err == nil {
+			process = c.processLock(sel.Path, spec)
+			defer process.Release()
+		}
 		lock, err := TakeLock(sel.Path, run, "resume", c.now())
 		if err != nil {
 			return c.fail("%v", err)
@@ -66,7 +72,9 @@ func (c *command) resume(args []string) int {
 		defer signal.Stop(sigs)
 		defer pauseOnSignal(sigs, ctl.Control)()
 		ctx := engine.WithControl(c.ctx, ctl.Control)
-		ctx = engine.WithResumeHold(ctx, c.resumeHold(sel.Path, run))
+		hold := c.resumeHold(sel.Path, run)
+		hold.Process = process.Token()
+		ctx = engine.WithResumeHold(ctx, hold)
 		return engine.RunCLI(ctx, eargs, c.stdout, c.stderr)
 	}
 	if *argsJSON != "" || *argsFile != "" || *pool != 0 || *budget != 0 || *repo != "" {
@@ -171,16 +179,12 @@ func budgetLeft(ctx context.Context, st *store.Store, spec Spec) error {
 
 // resumeHold holds a `crw flow resume RUN SCRIPT` the way the run process holds its run (CRW-1348): a spec that names another
 // backend than the one the run's started row records is a mixed resume, refused; a session run keeps at most agents.max_threads - 1
-// calls in flight whatever --pool says, and its owner thread holds the run's orchestrator line while the resume runs (the open line
-// of a run whose process is gone is closed first), which is closed when the run ends. A run with a spec is held to the budget the
-// spec leaves (runBudget).
+// calls in flight whatever --pool says, and its owner thread holds the run's orchestrator line while the resume runs, written right
+// after the resume's started row with the table it pinned (the open line of a run whose process is gone is closed first, CRW-1372),
+// and closed when the run ends. A run with a spec is held to the budget the spec leaves (runBudget).
 func (c *command) resumeHold(state, run string) engine.ResumeHold {
-	hold := engine.ResumeHold{Session: func(owner string, table *engine.Policy, pool int) (int, func()) {
-		res, err := bindOwner(state, run, owner, table)
-		if w := bindWarning(res, err, owner, run); w != "" {
-			fmt.Fprintf(c.stderr, "crw flow %s: warning: %s\n", c.name, w)
-		}
-		return sessionPool(pool, readCodexAgents(c.getenv).MaxThreads), func() {
+	hold := engine.ResumeHold{Session: func(owner string, pool int) (int, func(*engine.Policy), func()) {
+		return sessionPool(pool, readCodexAgents(c.getenv).MaxThreads), c.bindFromStarted(state, run, owner), func() {
 			if _, err := closeOwner(run, owner); err != nil {
 				fmt.Fprintf(c.stderr, "crw flow %s: warning: the orchestrator line of thread %s could not be closed: %v\n", c.name, owner, err)
 			}

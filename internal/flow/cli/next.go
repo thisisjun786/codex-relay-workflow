@@ -3,31 +3,38 @@ package cli
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/bound"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/journal"
 )
 
 // `crw flow next` and `crw flow dispatched` (CRW-1316 §3.2, CRW-1348): the owner thread's side of a session run's step exchange
 // over the run's FileStepBus (<state>/flow/<run>/). next reads the steps the run published and hands them out (a close step's file
-// is removed once handed out) with the run's state, the subagent slots and a hint; a run with no process that is not paused and not
-// over is resumed (`crw flow resume RUN --detach`), and the owner's binding is written again when it is missing. dispatched writes
-// a dispatch report into the run's inbox atomically and waits for the run's answer; the report of a run with no process waits in
-// the inbox for the resume.
+// is removed once handed out) with the run's state, the subagent slots, the spawn formats of the pairs the run's process pinned and a
+// hint; a run with no process that is not paused and not over is resumed (`crw flow resume RUN --detach`). next writes neither the
+// owner's orchestrator line nor a row of the run: the run's process writes both from its own started row, and next reads them
+// (CRW-1372). dispatched writes a dispatch report into the run's inbox atomically and waits for the run's answer; the report of a run
+// with no process waits in the inbox for the resume.
 
-// The states next reports.
+// The states next reports. starting is a run whose process is coming up: it holds the run (or its start holds the start lock) and has
+// not recorded its started row, or not bound the owner's line after it, within the time next reads it again.
 const (
 	NextRunning         = "running"
 	NextWaitingSession  = "waiting_session"
 	NextWaitingDecision = "waiting_decision"
 	NextPaused          = "paused"
 	NextEnded           = "ended"
+	NextStarting        = "starting"
 )
 
 // ToolCall is the host tool call the owner makes for a step, with the argument names of the live declaration.
@@ -54,6 +61,8 @@ type NextEnd struct {
 type NextSlots struct {
 	Limit int `json:"limit"`
 	Open  int `json:"open"`
+	// Agents are the open subagents (wait_agent's targets).
+	Agents []string `json:"agents,omitempty"`
 }
 
 // NextAnswer is the JSON answer of `crw flow next --json`.
@@ -63,10 +72,12 @@ type NextAnswer struct {
 	Ended *NextEnd   `json:"ended,omitempty"`
 	Steps []NextStep `json:"steps"`
 	Slots NextSlots  `json:"slots"`
-	// Spawns are the spawn formats of the six roles.
+	// Spawns are the spawn formats of the six roles: the pairs the run's process pinned in its started row, the role store's when no
+	// process holds the run (a resume reads it), none while the process is starting.
 	Spawns []RoleSpawn `json:"spawn_formats"`
 	Hint   string      `json:"hint"`
-	// Warnings are what next did not find as it should (a binding it wrote again, a resume that did not start).
+	// Warnings are what next did not find as it should (an owner's line that is not the run's process's, a role store that moved since
+	// the process pinned, a resume that did not start).
 	Warnings []string `json:"warnings,omitempty"`
 	// Resumed is the process next started for a run that had none (0: none was started).
 	Resumed int `json:"resumed_pid,omitempty"`
@@ -74,6 +85,10 @@ type NextAnswer struct {
 
 // nextPoll is how often next and dispatched look again while they wait.
 var nextPoll = 500 * time.Millisecond
+
+// startingWait is how long next reads again a run whose process is starting, beyond --wait: a process records its started row and binds
+// the owner's line soon after it holds the run.
+var startingWait = 15 * time.Second
 
 // next is `crw flow next RUN [--wait S] [--json]`.
 func (c *command) next(args []string) int {
@@ -107,35 +122,56 @@ func (c *command) next(args []string) int {
 		return c.fail("%v", err)
 	}
 	bus := engine.NewFileStepBus(RunDir(sel.Path, run))
+	// a run no process holds spawns with the role store when it is resumed; the process that holds it, with the pairs it pinned (below)
 	ans := NextAnswer{Run: run, Steps: []NextStep{}, Spawns: roleSpawns(table)}
 	deadline := time.Now().Add(time.Duration(*wait) * time.Second)
-	first, resumed, bindChecked := "", false, false
+	first, resumed := "", false
 	var steps []engine.Step
 	var info RunInfo
+	var held heldProcess
+	var live bool
+	// until bounds the reads of a process that is starting
+	var until time.Time
 	for {
 		info = c.runInfo(cm, run)
-		live := LockHeld(sel.Path, run)
-		if !live && !resumed && info.State == StateDead && info.Paused == "" {
+		live = LockHeld(sel.Path, run)
+		// a start holds the start lock until its process holds the run lock: that run is starting, not one to resume
+		starting := !live && startLockHeld(sel.Path, run)
+		if !live && !starting && !resumed && info.State == StateDead && info.Paused == "" {
 			// no process, not paused and not over: next resumes the run as `crw flow resume RUN --detach` does
 			resumed = true
 			if pid, err := c.detachResume(sel.Path, spec); err != nil {
 				ans.Warnings = append(ans.Warnings, fmt.Sprintf("no process holds run %s and its resume did not start: %v", run, err))
 			} else {
 				ans.Resumed = pid
-				live = true
-				info.State, info.Live = StateRunning, true
+				info, live = c.runInfo(cm, run), LockHeld(sel.Path, run)
 			}
 		}
-		if live && !bindChecked {
-			bindChecked = true
-			if w := c.checkBinding(sel.Path, spec, table); w != "" {
-				ans.Warnings = append(ans.Warnings, w)
+		held = heldProcess{}
+		if live {
+			// what the process that holds the run recorded, read now: next never takes an earlier process's pins for it (CRW-1372)
+			held = c.heldProcess(cm, sel.Path, spec, table)
+			starting = held.starting
+		}
+		if starting || held.binding {
+			// read again, startingWait at most: past it a starting run is answered as such, and a line not bound is reported
+			if until.IsZero() {
+				until = time.Now().Add(startingWait)
 			}
+			if time.Now().Before(until) {
+				time.Sleep(nextPoll)
+				continue
+			}
+		} else {
+			until = time.Time{}
 		}
 		if steps, err = bus.Steps(); err != nil {
 			return c.fail("the steps of run %s cannot be read: %v", run, err)
 		}
 		state := nextState(info, live, steps)
+		if starting {
+			state = NextStarting
+		}
 		if first == "" {
 			first = state
 		}
@@ -145,11 +181,20 @@ func (c *command) next(args []string) int {
 		}
 		time.Sleep(nextPoll)
 	}
+	switch {
+	case ans.State == NextStarting:
+		// the process has recorded no pairs yet: next prints none rather than an earlier process's or the store's
+		ans.Spawns = []RoleSpawn{}
+	case live:
+		ans.Spawns = roleSpawns(held.table)
+		ans.Warnings = append(ans.Warnings, held.warnings(run, table, ans.Resumed > 0)...)
+	}
 	if ans.State == NextEnded {
 		ans.Ended = &NextEnd{Status: info.Status, State: info.State}
 	}
 	maxThreads := readCodexAgents(c.getenv).MaxThreads
-	ans.Slots = NextSlots{Limit: maxThreads, Open: openSubagents(c.runEvents(cm, run), steps)}
+	agents := openSubagents(c.runEvents(cm, run), steps)
+	ans.Slots = NextSlots{Limit: maxThreads, Open: len(agents), Agents: agents}
 	var closes []string
 	for _, st := range steps {
 		ns := NextStep{Step: st}
@@ -257,21 +302,9 @@ func (c *command) detachResume(state string, spec Spec) (int, error) {
 	return pid, nil
 }
 
-// checkBinding writes the owner's orchestrator line again when it is missing (another line is last, or none), and says so.
-func (c *command) checkBinding(state string, spec Spec, table *engine.Policy) string {
-	res, err := bindOwner(state, spec.RunID, spec.Thread, table)
-	if w := bindWarning(res, err, spec.Thread, spec.RunID); w != "" {
-		return w
-	}
-	if res.Bound {
-		return fmt.Sprintf("the orchestrator binding of thread %s to run %s was missing and is written again", spec.Thread, spec.RunID)
-	}
-	return ""
-}
-
-// openSubagents counts the subagent slots the run's subagents hold: the subagents bound to calls that have not ended, and those
+// openSubagents are the subagents that hold the owner's slots, sorted: the subagents bound to calls that have not ended, and those
 // whose close step waits.
-func openSubagents(events []engine.Event, steps []engine.Step) int {
+func openSubagents(events []engine.Event, steps []engine.Step) []string {
 	open := map[string]bool{}
 	agentOf := map[string][]string{}
 	for _, ev := range events {
@@ -297,8 +330,153 @@ func openSubagents(events []engine.Event, steps []engine.Step) int {
 			open[st.AgentID] = true
 		}
 	}
-	return len(open)
+	out := make([]string, 0, len(open))
+	for a := range open {
+		out = append(out, a)
+	}
+	sort.Strings(out)
+	return out
 }
+
+// heldProcess is what next reads of the process that holds a run (CRW-1372). The process is the one party that records its pairs and
+// writes the owner's orchestrator line while it holds the run: its started row pins the table it runs on and names its process lock,
+// and right after it the process binds the owner's line with that table. next reads both and writes neither.
+type heldProcess struct {
+	// starting: the process has not recorded its started row (the newest started row is an earlier process's, or there is none), so
+	// next has no pairs of it. binding: the row is there and the owner's line after it is not yet.
+	starting, binding bool
+	// table is the role store's table with the pairs and the digest the process's started row pinned (the store's for a row that pinned
+	// none: a run started before the pairs were pinned).
+	table *engine.Policy
+	// repinned is the policy_repinned row after the process's started row: its pairs moved from those an earlier process pinned.
+	repinned *engine.Event
+	// line says what next found of the owner's line when it is not the process's ("" when it is).
+	line string
+}
+
+// heldProcess reads the process that holds the run: the newest started row is that process's when the process lock its token names is
+// held. A newest row whose process lock was let go is an earlier process's, and so is a row that names no process while a process lock
+// of the run is held: the holder has not recorded its row yet (or a command such as crw flow answer holds the run between two
+// processes), and next reads again. A row that names no process while no process lock is held is that of a process of a crw before
+// the process lock, which bound the owner's line before it recorded its row.
+func (c *command) heldProcess(cm *common, state string, spec Spec, store *engine.Policy) heldProcess {
+	run := spec.RunID
+	events := c.runEvents(cm, run)
+	newest := -1
+	for i, ev := range events {
+		if ev.Kind == engine.KindRun && ev.Event == "started" && ev.RunID == run {
+			newest = i
+		}
+	}
+	token := ""
+	if newest >= 0 {
+		token = str(events[newest].Data, "process")
+	}
+	switch {
+	case token != "" && !processHeld(state, run, token):
+		return heldProcess{starting: true}
+	case token == "" && anyProcessHeld(state, run):
+		return heldProcess{starting: true}
+	}
+	out := heldProcess{table: store}
+	if newest >= 0 {
+		if pairs, digest, ok := rowPairs(events[newest]); ok {
+			out.table = withPinnedPairs(store, pairs, digest)
+		}
+		for _, ev := range events[newest+1:] {
+			if ev.Kind == engine.KindRun && ev.Event == engine.EvPolicyRepinned && ev.RunID == run {
+				ev := ev
+				out.repinned = &ev
+			}
+		}
+	}
+	settled, line := ownerLineOf(state, spec, out.table.Digest)
+	// a process of this crw binds right after its started row: the line of a process that started within startingWait and is not
+	// settled yet is read again; an older process's line is what it bound, and is reported
+	out.binding, out.line = token != "" && !settled && processFresh(state, run, token), line
+	return out
+}
+
+// warnings are what next says of the process it read: a line of the owner that is not the process's; for a process next resumed, that
+// it pinned other pairs than the process before it (its policy_repinned row); for one next found, a role store that reads other pairs
+// now than the process pinned. next records none of them: the process records its pairs in its started row, and a resume the change in
+// a policy_repinned row.
+func (h heldProcess) warnings(run string, store *engine.Policy, resumed bool) []string {
+	var out []string
+	if h.line != "" {
+		out = append(out, h.line)
+	}
+	switch {
+	case resumed && h.repinned != nil:
+		out = append(out, fmt.Sprintf("run %s had no process and its resume runs on the role store as it reads now (%s), not on the pairs its earlier process pinned (%s): "+
+			"the resumed process recorded them in its started row and the change in a policy_repinned row; the owner's line and the spawn formats are the resumed process's",
+			run, cell(str(h.repinned.Data, "new")), cell(str(h.repinned.Data, "old"))))
+	case !resumed && h.table.Digest != store.Digest:
+		out = append(out, fmt.Sprintf("the role store changed while run %s lives (its process pinned %s, the store now reads %s): the process runs on the pairs it pinned and the owner's line keeps them, "+
+			"and a resume takes the new ones (recorded then in its started row and a policy_repinned row)", run, cell(h.table.Digest), cell(store.Digest)))
+	}
+	return out
+}
+
+// ownerLineOf reads the owner thread's last line for the process that holds the run, which pinned digest: settled when it is that
+// process's (the run's open line under digest), when another live run holds the thread (one thread binds one live run, so the
+// process could not bind) or when no line can name the owner; line says what next found when it is not the process's line.
+func ownerLineOf(state string, spec Spec, digest string) (settled bool, line string) {
+	run, thread := spec.RunID, spec.Thread
+	if !bound.ValidThreadID(thread) {
+		return true, fmt.Sprintf("the owner %q is not a thread id: no flow-bound line names it, and the spawn hook gives its spawns no role pair", thread)
+	}
+	last, present, err := bound.OrchestratorLine(nil, thread)
+	switch {
+	case err != nil:
+		return false, fmt.Sprintf("the orchestrator line of thread %s cannot be read (%v): the spawn hook decides the owner's spawns by it", thread, err)
+	case present && last.Kind == bound.KindOrchestrator && last.RunID == run && last.PolicyDigest == digest:
+		return true, ""
+	case present && last.Kind != bound.KindClosed && last.RunID != run && validRunID(last.RunID) && runLive(state, last.RunID):
+		return true, fmt.Sprintf("the owner thread %s is bound to run %s, whose process holds its lock: run %s is not bound (one thread binds one live run), so the spawn hook applies run %s's pairs",
+			thread, last.RunID, run, last.RunID)
+	case present && last.Kind == bound.KindOrchestrator && last.RunID == run:
+		return false, fmt.Sprintf("the orchestrator line of thread %s carries run %s's pairs under %s, not those its process pinned (%s): next writes no line; the run's next process binds it after its started row",
+			thread, run, cell(last.PolicyDigest), cell(digest))
+	}
+	return false, fmt.Sprintf("thread %s holds no open line of run %s, so the spawn hook gives the owner's spawns no pair of the run: next writes no line; the run's process binds it after its started row, and its next process when it is resumed",
+		thread, run)
+}
+
+// rowPairs are the role pairs a session run's started row pinned (CRW-1372) and the digest it pinned them under; ok is false for a row
+// that recorded none (a run started before the pairs were recorded): the role store is read as before.
+func rowPairs(ev engine.Event) (map[string]engine.Pair, string, bool) {
+	raw, ok := ev.Data["role_pairs"].(map[string]any)
+	if !ok {
+		return nil, "", false
+	}
+	pairs := map[string]engine.Pair{}
+	for role, v := range raw {
+		p, _ := v.(map[string]any)
+		pairs[role] = engine.Pair{Model: str(p, "model"), Effort: str(p, "effort")}
+	}
+	return pairs, str(ev.Data, "policy_digest"), true
+}
+
+// withPinnedPairs is the table with the pairs and the digest the run pinned in place of the store's.
+func withPinnedPairs(table *engine.Policy, pinned map[string]engine.Pair, digest string) *engine.Policy {
+	out := *table
+	out.Roles = maps.Clone(table.Roles)
+	if out.Roles == nil {
+		out.Roles = map[string]engine.RoleSpec{}
+	}
+	for role, pair := range pinned {
+		spec := out.Roles[role]
+		spec.Pair = pair
+		out.Roles[role] = spec
+	}
+	out.Digest = digest
+	return &out
+}
+
+// KindRoleStoreChanged is a flow row no command writes: the run's process is the one party that records a run's pairs and their change
+// (CRW-1372). The journal of an older run may hold one.
+const KindRoleStoreChanged = "role_store_changed"
 
 // nextHint says what to do next.
 func nextHint(ans NextAnswer, info RunInfo, closes []string) string {
@@ -313,10 +491,13 @@ func nextHint(ans NextAnswer, info RunInfo, closes []string) string {
 		parts = append(parts, fmt.Sprintf("run %s is paused (%s): crw flow resume %s goes on", ans.Run, info.Paused, ans.Run))
 	case NextWaitingDecision:
 		parts = append(parts, fmt.Sprintf("run %s waits for a decision: crw flow show %s lists its questions", ans.Run, ans.Run))
+	case NextStarting:
+		parts = append(parts, fmt.Sprintf("run %s's process is starting: it holds the run and has not recorded its started row or bound the owner's line yet, so no spawn format is given: "+
+			"crw flow next %s --wait 600 --json reads it again", ans.Run, ans.Run))
 	}
 	if len(ans.Steps) > 0 {
 		parts = append(parts, sessionLoop(ans.Run))
-	} else if ans.State != NextEnded {
+	} else if ans.State != NextEnded && ans.State != NextStarting {
 		parts = append(parts, fmt.Sprintf("no step to take: wait_agent(targets=[<open agents>], timeout_ms=600000) on the subagents that work, then crw flow next %s --wait 600 --json", ans.Run))
 	}
 	spawns := 0
@@ -332,7 +513,12 @@ func nextHint(ans NextAnswer, info RunInfo, closes []string) string {
 	if spawns > max(free, 0) {
 		parts = append(parts, fmt.Sprintf("%d of the %d subagent slots (agents.max_threads) are held: spawn_agent fails with `agent thread limit reached` until agents are closed; a step that could not be spawned stays and is shown again", ans.Slots.Open, ans.Slots.Limit))
 	}
-	return strings.Join(parts, ". ")
+	hint := strings.Join(parts, ". ")
+	if len(ans.Slots.Agents) > 0 {
+		targets, _ := json.Marshal(ans.Slots.Agents)
+		hint = strings.ReplaceAll(hint, "[<open agents>]", string(targets))
+	}
+	return hint
 }
 
 func (c *command) printNext(ans NextAnswer) {

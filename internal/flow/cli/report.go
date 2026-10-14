@@ -16,11 +16,14 @@ import (
 
 // sender is the sender of the notices: the relay the command works in (the state directory it resolved and the socket the operator named)
 // goes with every supervisor notice, so `crw manage send-parent` reads the binding there and not in the configuration's relay.
-func (env Environment) sender(statePath, socket string) report.Sender {
+//
+// A report goes through the supervisor channel of the store (RelaySender, CRW-1380); send-parent is the fallback for what the channel
+// has no kind for (the plan summary notice `crw flow apply` reconciles).
+func (env Environment) sender(st *store.Store, statePath, socket string) report.Sender {
 	if env.Sender != nil {
 		return env.Sender
 	}
-	return report.ManageSender{Program: env.Program, State: statePath, Socket: socket}
+	return report.RelaySender{Store: st, Fallback: report.ManageSender{Program: env.Program, State: statePath, Socket: socket}}
 }
 
 func (env Environment) resolver(st *store.Store) report.Resolver {
@@ -65,7 +68,7 @@ func reportUpCmd(ctx context.Context, args []string, env Environment) int {
 		return failure(env, "report-up", err)
 	}
 	defer st.Close()
-	w := &report.Writer{Store: st, Rows: report.ForeignAppender{Store: st, Run: run}, Resolver: env.resolver(st), Sender: env.sender(statePath, socket), ArtifactDir: filepath.Join(statePath, "flow", run, "reports")}
+	w := &report.Writer{Store: st, Rows: report.ForeignAppender{Store: st, Run: run}, Resolver: env.resolver(st), Sender: env.sender(st, statePath, socket), ArtifactDir: filepath.Join(statePath, "flow", run, "reports")}
 	res, err := w.Up(ctx, report.UpRequest{Kind: kind, Run: run, Milestone: milestone, Subject: subject, Body: body})
 	if err != nil {
 		return failure(env, "report-up", err)

@@ -16,6 +16,9 @@ import (
 type SupervisorSend struct {
 	Thread, LogicalID, Text string
 	ReportID, Initiative    string
+	// Kind is the report kind, Run the run it is about, Project the project the recipient was resolved for and Subject the report's
+	// one line: what the supervisor channel stages the report under (RelaySender).
+	Kind, Run, Project, Subject string
 }
 
 // ParentSend is one notice for the orchestrator thread (a run's escalation, its completion digest, the summary that is owed). Queue
@@ -23,6 +26,9 @@ type SupervisorSend struct {
 type ParentSend struct {
 	Thread, LogicalID, Text string
 	Queue                   bool
+	// Kind is the direct kind of the notice on the supervisor channel (flow_escalation, flow_completion; "" for one the channel has no
+	// kind for, the summary notice), Run the run it is about and Project the project of the run's plan (RelaySender).
+	Kind, Run, Project string
 }
 
 // SendResult is what `crw manage send-parent` settled on.

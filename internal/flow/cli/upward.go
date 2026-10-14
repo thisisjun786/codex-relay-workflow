@@ -22,7 +22,9 @@ import (
 func UpwardFactory(st *store.Store, j *journal.Journal, runID, state, socket string) engine.UpwardHook {
 	program, _ := os.Executable()
 	rows := report.JournalAppender{Journal: j, RunID: runID, Store: st}
-	sender := report.ManageSender{Program: program, State: state, Socket: socket}
+	// the reports, the escalations and the completion digest go up through the supervisor channel (CRW-1380); the plan summary notice,
+	// which the channel has no kind for, still goes through crw manage send-parent
+	sender := report.RelaySender{Store: st, Fallback: report.ManageSender{Program: program, State: state, Socket: socket}}
 	reports := &report.Writer{Store: st, Rows: rows, Resolver: report.StoreResolver{Store: st}, Sender: sender, ArtifactDir: filepath.Join(state, "flow", runID, "reports")}
 	return &report.RunHook{Store: st, Sched: &dagsched.Scheduler{Store: st}, Journal: j, Rows: rows, Sender: sender, Run: runID, Reports: reports, Blocked: RunBlocked}
 }

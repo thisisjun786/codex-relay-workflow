@@ -156,6 +156,8 @@ type Engine struct {
 	cfg   Config
 	j     Journal
 	runID string
+	// epoch is which process of the run this is: its started rows, this one's included (the wake id carries it, CRW-1372).
+	epoch int
 	ctx   context.Context
 	// parent is the context the caller gave Run: when it is done, the run ends.
 	parent context.Context
@@ -305,11 +307,28 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 		// the ceiling this process starts with; the first process's is the run's budget a script reads as budget.run (CRW-1327)
 		startedData["token_budget"] = cfg.TokenBudget
 	}
+	if cfg.Session != nil {
+		// the pairs a session run pins: its process binds the owner's line with them (Started), and `crw flow next` reads them as the
+		// pairs the process runs on, never the role store read again (CRW-1372)
+		pairs := map[string]any{}
+		for name, spec := range cfg.Policy.Roles {
+			pairs[name] = map[string]any{"model": spec.Pair.Model, "effort": spec.Pair.Effort}
+		}
+		startedData["role_pairs"] = pairs
+		if cfg.Session.Process != "" {
+			startedData["process"] = cfg.Session.Process
+		}
+	}
 	started := e.j.Append(Event{RunID: e.runID, Kind: KindRun, Event: "started", Data: startedData})
+	e.epoch = startedRows(e.j.Events(), e.runID)
 	if repinned {
 		e.j.Append(Event{RunID: e.runID, Kind: KindRun, Event: EvPolicyRepinned, Data: map[string]any{
 			"old": prior.Digest, "new": cfg.Policy.Digest, "old_source": prior.Source, "new_source": cfg.Policy.Source,
 		}})
+	}
+	if cfg.Session != nil && cfg.Session.Started != nil {
+		// the run's own record first, then what is made from it: the owner's line with the pairs the started row pinned (CRW-1372)
+		cfg.Session.Started(cfg.Policy)
 	}
 
 	e.startSeq = started.Seq
