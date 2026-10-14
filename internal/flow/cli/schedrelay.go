@@ -434,15 +434,23 @@ func (r *SchedRelay) declareRegions(ctx context.Context, plan, node, repository 
 	}
 	// a region is looked up and declared once by its normal form (ops.RegionOf, CRW-1404): another spelling of a planned region (blanks
 	// around it, ./path) is that region, with the plan's change and exclusive flag, and not a second region of the same place that the
-	// relay refuses the whole declaration for
+	// relay refuses the whole declaration for. A planned region's normal form is taken from its fields (ops.RegionFormOf, CRW-1408), and
+	// the plan's own text of it (the manifest's, RegionForm.Text) is that region and is not read again, so a planned path that holds "#" stays
+	// the file or tree the plan states; only a DESIGN edit region is read from its text
 	planned := map[ops.RegionForm]compile.Region{}
+	spelled := map[string]ops.RegionForm{}
 	for _, rg := range is.Regions {
-		planned[ops.RegionOf(rg.String())] = rg
+		form := ops.RegionFormOf(rg.Path, rg.Kind, rg.Key)
+		planned[form] = rg
+		spelled[form.Text()] = form
 	}
 	list := make([]dagsched.Region, 0, len(regions))
 	seen := map[ops.RegionForm]bool{}
 	for _, text := range regions {
-		form := ops.RegionOf(text)
+		form, ok := spelled[strings.TrimSpace(text)]
+		if !ok {
+			form = ops.RegionOf(text)
+		}
 		if seen[form] {
 			continue
 		}

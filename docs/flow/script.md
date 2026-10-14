@@ -360,7 +360,8 @@ Before the relay is asked for the slot, `crw.release` declares the node's admiss
 `dag-region-declare` does; CRW-1391), because the relay's release judgment reads only declarations and an undeclared node overlaps
 every other: without it the second of two nodes `crw.dag` admitted together was held back `defer:edit_overlap`. It declares the
 admission regions of the milestone's other designed nodes that have none as well, since the judgment counts a ready node ranked before
-the released one as a holder. A plan region is declared as the plan states it; an `edit_regions` entry is a file, a tree when it ends in
+the released one as a holder. A plan region is declared as the plan states it, its path, kind and symbol taken from the plan's fields
+and never read from its text again (a planned file or tree whose path holds `#` stays one, CRW-1408); an `edit_regions` entry is a file, a tree when it ends in
 `/` and a symbol after `#`. A node with a declaration in force keeps it (the parent's graded declaration made before the run, or one an
 earlier release made), and a node with no regions on either side is left undeclared. A declaration the relay refuses is a warning, never
 a refusal: the release row records `regions`, `regions_declared` (`declared`, `kept` or `failed`) and the warning `regions_not_declared`

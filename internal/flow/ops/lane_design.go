@@ -415,6 +415,28 @@ func RegionOf(text string) RegionForm {
 	return form
 }
 
+// RegionFormOf is the normal form of a structured region (a plan's compile.Region) taken field by field (CRW-1408): its path cleaned as
+// compile.cleanRegion and the relay's DeclareRegions clean it, its kind (a file when none is named) and its symbol's key. Its text is
+// never parsed, so a path that holds "#" stays the file or tree it is.
+func RegionFormOf(p, kind, key string) RegionForm {
+	if kind == "" {
+		kind = "file"
+	}
+	return RegionForm{Path: path.Clean(strings.TrimSuffix(p, "/")), Kind: kind, Key: key}
+}
+
+// Text is the region as the plan's manifest writes it (compile.Region.String of the cleaned region): the path, the path and "/" for a
+// tree, the path, "#" and the key for a symbol.
+func (f RegionForm) Text() string {
+	switch f.Kind {
+	case "tree":
+		return f.Path + "/"
+	case "symbol":
+		return f.Path + "#" + f.Key
+	}
+	return f.Path
+}
+
 // WarnRegionsNotDeclared is the warning of a release whose admission regions the relay did not declare (CRW-1391): the release goes on
 // as for an undeclared node, which overlaps every other.
 const WarnRegionsNotDeclared = "regions_not_declared"
