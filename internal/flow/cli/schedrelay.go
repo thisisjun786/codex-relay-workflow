@@ -19,6 +19,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/skill"
 )
 
 // SchedRelay is the relay's DAG scheduler as the project lane of a run uses it (ops.Relay over internal/relay/dagsched, CRW-1277). The
@@ -249,6 +250,12 @@ func (r *SchedRelay) Milestone(ctx context.Context, plan, milestone string) (ops
 		for _, rg := range is.Regions {
 			pn.Regions = append(pn.Regions, rg.String())
 		}
+		// the commands of the issue's done condition, read from the body the handoff carries (CRW-1382): the design-stage explorer runs them
+		if strings.TrimSpace(is.Description) != "" {
+			if v, err := skill.CheckIssueReady(skill.ReadyIssue{ID: is.Key, Title: is.Title, Description: is.Description, Labels: is.Labels}); err == nil {
+				pn.EndCondition = v.EndCondition
+			}
+		}
 		out.Nodes = append(out.Nodes, pn)
 	}
 	return out, nil
@@ -320,6 +327,12 @@ func pathElement(s string) string {
 // (Released false, plan_changed), and so does the replay of a release committed under another slice. A release answers the slice of the
 // manifest it committed.
 func (r *SchedRelay) Release(ctx context.Context, req ops.ReleaseRequest) (ops.ReleaseResult, error) {
+	if req.Land {
+		// a land of a node another run holds is answered before the claim: the claim would supersede that run's session (CRW-1354)
+		if run, execution, err := r.heldByAnotherRun(ctx, req.Plan, req.Node); err != nil || run != "" {
+			return ops.ReleaseResult{Reason: ops.ReasonLandNodeHeld, HeldRun: run, HeldExecution: execution}, err
+		}
+	}
 	if err := r.claim(ctx, req.Plan); err != nil {
 		return ops.ReleaseResult{}, err
 	}
@@ -339,7 +352,9 @@ func (r *SchedRelay) Release(ctx context.Context, req ops.ReleaseRequest) (ops.R
 		return ops.ReleaseResult{}, err
 	}
 	defer done()
-	res, err := r.Sched.ReleaseAgent(ctx, req.Plan, req.Node, r.Actor, request, dagsched.AgentReleaseOptions{Role: "executor", Tier: "executor", RunID: r.RunID, Worktree: r.worktreeHandle(req.Node)})
+	// a head made outside a run is released with the pair that wrote it, read back from its author thread (CRW-1354): the execution records it
+	res, err := r.Sched.ReleaseAgent(ctx, req.Plan, req.Node, r.Actor, request, dagsched.AgentReleaseOptions{Role: "executor", Tier: "executor", RunID: r.RunID, Worktree: r.worktreeHandle(req.Node),
+		AuthorModel: req.AuthorModel, AuthorEffort: req.AuthorEffort})
 	if err != nil {
 		if reason, held := holdBack(err); held && reason == ops.ReasonPlanChanged {
 			return r.planChanged(ctx, req.Plan, req.Node)
@@ -353,7 +368,27 @@ func (r *SchedRelay) Release(ctx context.Context, req ops.ReleaseRequest) (ops.R
 		return ops.ReleaseResult{}, errors.Join(err, fmt.Errorf("node %s was released under manifest %s, which the relay does not read back", req.Node, res.ManifestDigest))
 	}
 	slice, _ := body["node_slice_digest"].(string)
-	return ops.ReleaseResult{Released: true, ExecutionID: res.ExecutionID, SlotID: res.SlotID, Replayed: res.Replayed, SliceDigest: slice}, nil
+	run := r.RunID
+	if res.Replayed {
+		// the run of the execution the replay answers: this run's own on a resume, another run's when that run holds the node
+		run = ""
+		if cur, found, err := dagsched.CurrentExecution(ctx, r.q(ctx), req.Plan, req.Node); err != nil {
+			return ops.ReleaseResult{}, err
+		} else if found && cur.Kind == dagsched.ExecutionAgent && cur.Agent.ExecutionID == res.ExecutionID {
+			run = cur.Agent.RunID
+		}
+	}
+	return ops.ReleaseResult{Released: true, ExecutionID: res.ExecutionID, SlotID: res.SlotID, Replayed: res.Replayed, SliceDigest: slice, Run: run}, nil
+}
+
+// heldByAnotherRun is the run and the execution of the node's current agent execution when a run other than this one holds it ("" when
+// none does, or when this run does).
+func (r *SchedRelay) heldByAnotherRun(ctx context.Context, plan, node string) (run, execution string, err error) {
+	cur, found, err := dagsched.CurrentExecution(ctx, r.q(ctx), plan, node)
+	if err != nil || !found || cur.Kind != dagsched.ExecutionAgent || cur.Agent.RunID == r.RunID {
+		return "", "", err
+	}
+	return cur.Agent.RunID, cur.Agent.ExecutionID, nil
 }
 
 // releaseRequest is the dag-release-request/1 the run holds the inputs of for a node: the rule version, the criteria of the node's issue
@@ -469,8 +504,10 @@ func (r *SchedRelay) ReleaseStands(ctx context.Context, plan, node, execution st
 // the run's --child-host document: the parent's and the child's host and settings, and the child's title (the managed start prefixes the
 // node's issue key). The child it admitted, bound to the node, is the answer. A run that holds no host settings, or settings that cannot start a child, is
 // refused with the reason (an input error); a start the managed engine refused or left incomplete, a node the scheduler holds back and
-// every other failure are errors, never a ChildResult with Started false, which the lane would record as a child that is running. The
-// intent and the slot of a start that did not finish stay, and the same release continues it.
+// every other failure are errors. The one ChildResult with Started false is the start under a slice of the plan that is not the node's
+// any more (Reason plan_changed, CRW-1382): the request carries the slice crw.release compared, the managed release compares it, and
+// crw.releaseChild records that no child started and the lane ends the node unreleased. The intent and the slot of a start that did not
+// finish stay, and the same release continues it.
 func (r *SchedRelay) ReleaseChild(ctx context.Context, req ops.ChildRequest) (ops.ChildResult, error) {
 	if r.Child == nil {
 		return ops.ChildResult{}, ErrChildHostUnset
@@ -498,6 +535,9 @@ func (r *SchedRelay) ReleaseChild(ctx context.Context, req ops.ChildRequest) (op
 	request.ScopeRef = "crw-flow:" + r.RunID + "/" + req.Node
 	request.Parent = r.Child.Parent
 	request.Child = r.Child.Child
+	// the node's slice crw.release compared: the managed release compares it when it judges the start and in the transaction that records
+	// it, as Release does (CRW-1288, CRW-1382)
+	request.ExpectedSliceDigest = req.SliceDigest
 	// the managed start sends the host the child's title prefixed with the node's issue key (managed.childTitle), so the title is the document's
 	r.release.Lock()
 	defer r.release.Unlock()
@@ -508,7 +548,10 @@ func (r *SchedRelay) ReleaseChild(ctx context.Context, req ops.ChildRequest) (op
 	defer done()
 	res, err := r.Sched.Release(ctx, req.Plan, req.Node, r.Actor, request)
 	if err != nil {
-		if reason, held := holdBack(err); held {
+		if reason, held := holdBack(err); held && reason == ops.ReasonPlanChanged {
+			// the plan gives the node another slice than the one the flow compared: no child is started, and the answer says why
+			return ops.ChildResult{Reason: ops.ReasonPlanChanged}, nil
+		} else if held {
 			return ops.ChildResult{}, fmt.Errorf("refused:child_held_back: the scheduler holds node %s back (%s): no child is started: %v", req.Node, reason, err)
 		}
 		return ops.ChildResult{}, epochLost(req.Plan, err)
@@ -556,6 +599,10 @@ func worktreeOf(events []engine.Event, node string) string {
 			}
 		case ev.Kind == engine.KindFlow && ev.Event == engine.EvWorktreeRestored && str(ev.Data, "node") == node && ev.Seq > seq:
 			path, seq = str(ev.Data, "path"), ev.Seq
+		case ev.Kind == engine.KindCall && ev.Op == ops.OpRelease && ev.Event == engine.EvCompleted && str(ev.Data, "node") == node && str(ev.Data, "kind") == "land" &&
+			ev.Data["released"] == true && str(ev.Data, "worktree") != "" && ev.Seq > seq:
+			// the worktree a land release checked a head made outside a run out in (CRW-1354)
+			path, seq = str(ev.Data, "worktree"), ev.Seq
 		}
 	}
 	return path

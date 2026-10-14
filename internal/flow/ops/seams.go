@@ -22,6 +22,9 @@ type PlanNode struct {
 	Criteria       []string `json:"criteria"`
 	CriteriaDigest string   `json:"criteria_digest"`
 	SliceDigest    string   `json:"slice_digest"`
+	// EndCondition are the commands of the done condition of the node's issue, read from the body the handoff carries and never run by
+	// the relay (CRW-1382): the design-stage explorer runs them once. Absent when the handoff carries no body or the body names none.
+	EndCondition []string `json:"end_condition,omitempty"`
 }
 
 // Milestone is a milestone of a plan: its nodes in the order the scheduler offers them (dagsched.Ready: critical path, then
@@ -53,6 +56,14 @@ type ReleaseRequest struct {
 	SliceDigest, PlanDigest string
 	// RequestID makes the release idempotent: the same request is the same release.
 	RequestID string
+	// AuthorModel and AuthorEffort are the pair that wrote the node's work when it exists as the node is released: a head made outside a
+	// run, whose author threads the run read back (CRW-1354). The relay records it on the node's execution, and its acceptance judges the
+	// reviewer against it. Empty for a release whose work the run's executors will write.
+	AuthorModel, AuthorEffort string
+	// Land marks the release of a head made outside a run (CRW-1354): a node whose current execution another run holds is answered
+	// Released false with ReasonLandNodeHeld and that run and execution (HeldRun, HeldExecution) before the run claims the plan's
+	// coordinator epoch, so the land takes nothing from the run that holds the node.
+	Land bool
 }
 
 // ReleaseResult is the scheduler's answer to a release. A node it holds back (Released false) names why in Reason
@@ -73,6 +84,9 @@ type ReleaseResult struct {
 	HeadRevision   int64  `json:"head_revision,omitempty"`
 	HeldExecution  string `json:"held_execution,omitempty"`
 	HeldRun        string `json:"held_run,omitempty"`
+	// Run is the run the answered execution was released to: the run asking for a new release, or, for a replay, the run whose release
+	// it replays ("" when the relay does not say). A land of a node another run holds reads it (CRW-1354).
+	Run string `json:"run,omitempty"`
 }
 
 // AcceptRequest asks the relay to accept an agent node's head (dag-accept on the agent path, R05): the premerge record the run
@@ -148,6 +162,10 @@ type ChildRequest struct {
 	DesignDigest      string
 	Reason            string
 	RequestID         string
+	// SliceDigest is the node's slice of the plan crw.release compared (CRW-1382): the relay's managed release compares it with the
+	// node's slice when it judges the start and again in the transaction that records it, as for an executor (CRW-1288), and a slice
+	// that is another starts no child (Started false, plan_changed). An empty SliceDigest compares nothing.
+	SliceDigest string
 }
 
 // ChildResult is the child that was started.

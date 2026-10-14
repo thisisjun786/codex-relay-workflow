@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"syscall"
 	"time"
 
@@ -37,6 +38,22 @@ func (c *command) answer(args []string) int {
 	revision := fs.Int("revision", 0, "the revision of the question the record answers")
 	thread := fs.String("thread", "", "the orchestrator thread that applies the answer (default: CODEX_THREAD_ID)")
 	noResume := fs.Bool("no-resume", false, "append the row and do not resume the run")
+	// the parts of the recorded answer for the questions an ask joins (CRW-1381), by question digest
+	var parts map[string]string
+	fs.Func("answer-for", "DIGEST=TEXT: the part of the recorded answer for one question an ask joins, by its digest (repeatable; text of the record's answer)", func(v string) error {
+		digest, text, ok := strings.Cut(v, "=")
+		if !ok || strings.TrimSpace(digest) == "" || strings.TrimSpace(text) == "" {
+			return fmt.Errorf("--answer-for %q is not DIGEST=TEXT", v)
+		}
+		if parts == nil {
+			parts = map[string]string{}
+		}
+		if _, dup := parts[digest]; dup {
+			return fmt.Errorf("--answer-for names question %s twice", digest)
+		}
+		parts[digest] = text
+		return nil
+	})
 	asJSON := fs.Bool("json", false, "print the answer as JSON")
 	positional, code, ok := parse(fs, args)
 	if !ok {
@@ -66,7 +83,10 @@ func (c *command) answer(args []string) int {
 		return c.fail("%v", err)
 	}
 	defer st.Close()
-	reply, code := c.applyAnswer(st, state, Claim{Decision: *decision, Run: *runID, Node: *node, Question: *question, Revision: *revision, By: by})
+	reply, code := c.applyAnswer(st, state, Claim{Decision: *decision, Run: *runID, Node: *node, Question: *question, Revision: *revision, By: by, Answers: parts})
+	for _, w := range rowWarnings(reply.Row) {
+		fmt.Fprintf(c.stderr, "crw flow answer: warning: %s\n", w)
+	}
 	if reply.Refusal == nil && code == 0 && reply.Applied && !*noResume && !reply.Replayed {
 		pid, err := c.resumeDetached(state, *runID)
 		if err != nil {
@@ -92,6 +112,22 @@ func (c *command) answer(args []string) int {
 		fmt.Fprintln(c.stdout)
 	}
 	return code
+}
+
+// rowWarnings are the warnings of a decision_applied row (CRW-1381).
+func rowWarnings(row map[string]any) []string {
+	var out []string
+	switch w := row["warnings"].(type) {
+	case []string:
+		out = w
+	case []any:
+		for _, x := range w {
+			if s, ok := x.(string); ok {
+				out = append(out, s)
+			}
+		}
+	}
+	return out
 }
 
 // applyAnswer judges the claim against the record and the journal and, when it holds, appends the row under the run lock. It

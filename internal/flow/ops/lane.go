@@ -112,6 +112,9 @@ type Deps struct {
 	Now func() time.Time
 	// Actor is the task that runs the lane (the registered parent of the project).
 	Actor string
+	// LandRoot is the directory the worktree of a head made outside a run is checked out under (the run's directory, CRW-1354); "" refuses
+	// a land release.
+	LandRoot string
 }
 
 // Lane is the set of operations of the project lane.
@@ -234,8 +237,17 @@ func result(v any) json.RawMessage {
 	return b
 }
 
-// digestOf is the sha256 of the canonical JSON of v (maps encode with sorted keys).
+// digestOf is the sha256 of the canonical JSON of v (maps encode with sorted keys). A milestone's is the digest of its plan, which leaves
+// the nodes' end conditions out (planned).
 func digestOf(v any) string {
+	switch m := v.(type) {
+	case Milestone:
+		v = m.planned()
+	case *Milestone:
+		if m != nil {
+			v = m.planned()
+		}
+	}
 	b, err := json.Marshal(v)
 	if err != nil {
 		b = []byte(fmt.Sprint(v))
@@ -266,4 +278,24 @@ func short(s string) string {
 		return s[:12]
 	}
 	return s
+}
+
+// planned is the milestone as the digest of its plan reads it: the nodes without their end conditions (CRW-1382). The end condition is
+// the handoff body's, which the run pins by its digest, not the relay's plan, so it is no change of the plan; and a run that pinned its
+// plan before the milestone carried it compares the same digest after.
+func (m Milestone) planned() Milestone {
+	carries := false
+	for _, n := range m.Nodes {
+		carries = carries || len(n.EndCondition) > 0
+	}
+	if !carries {
+		return m
+	}
+	nodes := make([]PlanNode, len(m.Nodes))
+	for i, n := range m.Nodes {
+		n.EndCondition = nil
+		nodes[i] = n
+	}
+	m.Nodes = nodes
+	return m
 }
