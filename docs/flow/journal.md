@@ -53,9 +53,10 @@ saw. A row is never updated.
 - A session call's `step_published` and `turn_started` rows record the turn's place in the call's conversation in `detail_json`
   (no column holds it): `conversation_turn`, the conversation turn the turn is (the call's task turn 1, its repair 2), and for a turn
   run again (the next attempt of a lost turn, the turn a held call goes on with in place) `replaces_turn`, the turn it replaces. The
-  checkpoint packet of a continuation reads the call's conversation from them, each conversation turn once; a row of a journal written
-  before the place was recorded carries neither and is read by the reconstruction kept for those journals
-  ([script.md](script.md#attempts-restarts-and-continuations)).
+  checkpoint packet of a continuation reads the call's conversation from them, each conversation turn once. A row of a journal written
+  before the place was recorded carries neither: its turn takes the place its step recorded, the `repair` member every
+  `step_published` row has (the task turn 1, the repair 2), a later turn at that place replacing the earlier one, so an older journal
+  is read from recorded members too and never from its held rows or k ([script.md](script.md#attempts-restarts-and-continuations)).
 
 - A command that writes into a run which may be alive (`crw flow apply`, `report-up`, `report-ack`, `report-delivered`;
   [reporting.md](reporting.md)) is not the run's process and numbers its `flow_events` rows from `engine.ForeignSeqBase` (`1 << 40`).

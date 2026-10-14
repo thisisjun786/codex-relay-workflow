@@ -1007,9 +1007,9 @@ any row is written. `crw flow shadow` replays either from the trace and names th
   (`conversation_turn` of its `turn_started` row), each conversation turn once: a turn run again (the next attempt of a lost turn;
   the turn a held call goes on with in place on a new subagent, at the next k) is recorded at the conversation turn of the turn it
   replaces and names that turn (`replaces_turn`), and supersedes it, and the packet is built from that list alone. The place is
-  recorded when the step is published and the turn bound, never read back from held rows or k; a row of a journal written before
-  the place was recorded (no `conversation_turn`) is read by the reconstruction kept for those journals: k, less one for each time a
-  held call went on in place at the next k. The continuation's input digest keeps the handle's own thread chain: a position replays only after every one before it.
+  recorded when the step is published and the turn bound, never read back from held rows or k; a `turn_started` row of a journal
+  written before the place was recorded (no `conversation_turn`) takes it from the `repair` member of the `step_published` row at
+  its k (the task turn 1, the repair 2), and a later such turn at that place replaces the earlier one. The continuation's input digest keeps the handle's own thread chain: a position replays only after every one before it.
 
 | Row | In a session call |
 | --- | --- |

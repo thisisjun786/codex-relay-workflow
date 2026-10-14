@@ -997,33 +997,30 @@ type convTurn struct {
 // (conversation_turn: the call's task turn 1, its repair 2, conversationTurn) and, for a turn run again - the next attempt of a lost
 // turn, the turn a held call goes on with in place on a new subagent - the turn it replaces (replaces_turn). The conversation holds
 // each conversation turn once: a turn takes its place over the turn that held it and takes out the turn it names. A turn_started row
-// of a journal written before the place was recorded (no conversation_turn) is read by the reconstruction kept for those journals
-// only: k, less one for each time the held call went on in place with the next k (the first step_published after a held row at a k
-// past the call's steps).
+// of a journal written before the place was recorded (no conversation_turn) takes it from what its step recorded, the repair member
+// of the step_published row at its k (the task turn 1, the repair 2; the steps of one k are one turn, so they agree), and a later
+// turn at that place replaces the earlier one by the same rule. Nothing is read back from held rows or from k.
 type callConv struct {
 	turns []convTurn
-	// the reconstruction of a row without a recorded conversation turn
-	shift, lastK int
-	held         bool
+	// repairAt is the repair member of the call's step_published rows by k, the place of a turn_started row that records none
+	repairAt map[int]bool
 }
 
-// step and hold read a step_published and a held row for the reconstruction.
+// step reads a step_published row: the repair member of its k.
 func (x *callConv) step(d map[string]any) {
-	k := rowInt(d, "k")
-	if x.held && k > x.lastK {
-		x.shift++
+	if x.repairAt == nil {
+		x.repairAt = map[int]bool{}
 	}
-	x.held, x.lastK = false, max(x.lastK, k)
+	x.repairAt[rowInt(d, "k")] = d["repair"] == true
 }
 
-func (x *callConv) hold() { x.held = true }
-
-// index is the conversation turn of a session turn_started row: the one the row records, else the reconstruction's.
+// index is the conversation turn of a session turn_started row: the one the row records, else the one its step's repair member
+// records.
 func (x *callConv) index(d map[string]any) int {
 	if n := rowInt(d, "conversation_turn"); n > 0 {
 		return n
 	}
-	return rowInt(d, "k") - x.shift
+	return conversationTurn(x.repairAt[rowInt(d, "k")])
 }
 
 // put puts a turn in its conversation turn's place, over the turn that held it, and takes out the turn it names as the one it
@@ -1067,8 +1064,6 @@ func callConversation(rows []Event) *callConv {
 			x = &callConv{}
 		case EvStepPublished:
 			x.step(ev.Data)
-		case EvHeld:
-			x.hold()
 		case EvTurnStarted:
 			if rowStr(ev.Data, "via") == "session" {
 				x.put(convTurn{index: x.index(ev.Data), id: rowStr(ev.Data, "turn_id"), op: rowStr(ev.Data, "op")}, rowStr(ev.Data, "replaces_turn"))
@@ -1119,8 +1114,6 @@ func threadTurns(j Journal, threadID, throughTurn string, session bool, depth in
 		case EvStepPublished:
 			inputOf[rowStr(ev.Data, "op")] = rowStr(ev.Data, "input")
 			convOf(ev.CallID).step(ev.Data)
-		case EvHeld:
-			convOf(ev.CallID).hold()
 		case EvForkRequested:
 			forkReq[ev.CallID] = ev
 		case EvThreadStarted:

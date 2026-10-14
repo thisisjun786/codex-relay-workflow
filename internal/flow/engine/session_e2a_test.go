@@ -781,18 +781,42 @@ return [r.status, fix.status]`))
 	}
 }
 
-// A journal written before the conversation turn was recorded (no conversation_turn, no replaces_turn on its rows) is read by the
-// reconstruction kept for those journals: the checkpoint of a call held and gone on with in place, of a repair finished on a second
-// subagent and of a first turn lost and run again holds each turn of the conversation once, as before.
+// A journal written before the conversation turn was recorded (no conversation_turn, no replaces_turn on its rows) reads each turn's
+// place from what its rows did record: the repair member of the turn's step_published row (the task turn 1, the repair 2), a later
+// turn at a place replacing the earlier one. The checkpoint of a call held and gone on with in place, of a repair finished on a second
+// subagent, of a first turn lost and run again, and of a call held before any subagent took its first step whose repair then finished
+// on another subagent holds the task and the repair once each - nothing is read back from held rows or k.
 func TestSessionConversationOfAJournalWithoutRecordedTurns(t *testing.T) {
+	const repairWant = "[turn 2] Your previous answer did not satisfy the output schema"
+	// heldBeforeTaken is the F1 shape: the owner takes no step of the first run, which is paused (held engine_paused, not_delivered);
+	// the call goes on with that step in place, its task turn answers what is not JSON, and its repair turn comes to repair
+	heldBeforeTaken := func(repair orchAnswer) func(st Step, phase int) orchAnswer {
+		return func(st Step, phase int) orchAnswer {
+			switch {
+			case phase == 1:
+				return orchAnswer{skip: true}
+			case st.K == 1:
+				return orchAnswer{text: "this is not JSON"}
+			case st.K == 2 && st.Attempt == 1:
+				return repair
+			}
+			return orchAnswer{edit: "P:" + st.Op}
+		}
+	}
 	for _, tc := range []struct {
 		name string
 		// answer is what a step of the first call comes to in the first run (phase 1) and after it (phase 2)
 		answer func(st Step, phase int) orchAnswer
+		// pause pauses the first run once its first step is published
+		pause bool
 		// resumes is the number of resumed runs of the call before the continuation (a held call goes on in one)
 		resumes int
 		want    []string
 	}{
+		{name: "held before its first step was taken, repair lost and run again", pause: true, resumes: 1, want: []string{"[turn 1] build node n1", repairWant},
+			answer: heldBeforeTaken(orchAnswer{lose: true})},
+		{name: "held before its first step was taken, repair held and gone on with in place", pause: true, resumes: 2, want: []string{"[turn 1] build node n1", repairWant},
+			answer: heldBeforeTaken(orchAnswer{fail: "usageLimitExceeded"})},
 		{name: "task turn held and gone on with in place", resumes: 1, want: []string{"[turn 1] build node n1"},
 			answer: func(st Step, phase int) orchAnswer {
 				if phase == 1 {
@@ -800,7 +824,7 @@ func TestSessionConversationOfAJournalWithoutRecordedTurns(t *testing.T) {
 				}
 				return orchAnswer{edit: "P:" + st.Op}
 			}},
-		{name: "repair turn held and gone on with in place", resumes: 1, want: []string{"[turn 1] build node n1", "[turn 2] Your previous answer did not satisfy the output schema"},
+		{name: "repair turn held and gone on with in place", resumes: 1, want: []string{"[turn 1] build node n1", repairWant},
 			answer: func(st Step, phase int) orchAnswer {
 				switch {
 				case phase == 2:
@@ -810,7 +834,7 @@ func TestSessionConversationOfAJournalWithoutRecordedTurns(t *testing.T) {
 				}
 				return orchAnswer{fail: "usageLimitExceeded"}
 			}},
-		{name: "repair finished on a second subagent", want: []string{"[turn 1] build node n1", "[turn 2] Your previous answer did not satisfy the output schema"},
+		{name: "repair finished on a second subagent", want: []string{"[turn 1] build node n1", repairWant},
 			answer: func(st Step, _ int) orchAnswer {
 				switch {
 				case st.K == 1:
@@ -843,7 +867,21 @@ func TestSessionConversationOfAJournalWithoutRecordedTurns(t *testing.T) {
 			}
 			one := `const r = await agent.call('build node n1', { agentType: 'executor', label: 'exe', node: 'n1', schema: RECEIPT })
 `
+			if tc.pause {
+				ctl := &Control{}
+				k.h.cfg.Control = ctl
+				go func() {
+					for i := 0; i < 10000; i++ {
+						if len(rowsNamed(k.h.journal.Events(), EvStepPublished)) > 0 {
+							ctl.Pause("operator", "test")
+							return
+						}
+						time.Sleep(time.Millisecond)
+					}
+				}()
+			}
 			value[string](t, k.h.run(one+`return r.status`))
+			k.h.cfg.Control = nil
 			mu.Lock()
 			phase = 2
 			mu.Unlock()
