@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/roles"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/acceptance/premerge"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
@@ -1072,6 +1073,43 @@ func TestVerifiedWithABlockingImpactIsVerdictInvalid(t *testing.T) {
 	}{{"P0", "", true}, {"P2", premerge.MinorSeparable, true}, {"P3", "", false}, {"P3", premerge.MinorSeparable, false}, {"P3", "core_function", true}, {"P3", "cosmetic", true}} {
 		if got := premerge.Blocks(c.severity, c.impact); got != c.blocks {
 			t.Errorf("Blocks(%q, %q) = %v, want %v", c.severity, c.impact, got, c.blocks)
+		}
+	}
+}
+
+// CRW-1438: the reviewer is told the closed impact set its verdict answers with: the packet of crw:lib/packets names every value of
+// premerge.Impacts, that only minor_separable does not block, and that verified over a blocking defect is refused; the reviewer
+// overlay says the same under Output.
+func TestReviewPacketNamesTheImpactVocabulary(t *testing.T) {
+	src := "import { reviewPacket } from 'crw:lib/packets'\nexport const meta = { name: 'review-packet' }\n" +
+		"return reviewPacket('A', { issue: 'CRW-1', criteria_digest: 'd', criteria: ['first'], done_condition: 'done', regions: ['a.go'] }, " +
+		"{ commit: 'h1', changed: ['a.go'], out_of_scope: [] }, { pass: true, command: 'go test ./...', digest: 'v1' }, { round: 1 })\n"
+	prog, err := script.Load(script.Source{Name: "review-packet.js", Text: []byte(src)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := engine.Run(context.Background(), prog, engine.Config{Backend: engine.NewFake(), Policy: engine.FakePolicy()})
+	if err != nil || res.Status != engine.RunCompleted {
+		t.Fatalf("%v %+v", err, res)
+	}
+	var packet string
+	if err := json.Unmarshal(res.Value, &packet); err != nil {
+		t.Fatalf("the review packet is not a string: %v (%s)", err, res.Value)
+	}
+	overlay, err := roles.Overlay("reviewer", roles.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, text := range map[string]string{"the review packet": packet, "the reviewer overlay": overlay} {
+		for _, impact := range premerge.Impacts {
+			if !strings.Contains(text, impact) {
+				t.Errorf("%s does not name the impact %s:\n%s", name, impact, text)
+			}
+		}
+		for _, rule := range []string{"only " + premerge.MinorSeparable + " does not block", "verified over a defect that blocks is refused"} {
+			if !strings.Contains(text, rule) {
+				t.Errorf("%s does not say %q:\n%s", name, rule, text)
+			}
 		}
 	}
 }
