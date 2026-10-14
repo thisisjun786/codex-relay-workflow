@@ -144,14 +144,19 @@ func Build(ctx context.Context, r Reader, ref tracking.Ref, opts Options) (Resul
 		ordered = ordered || len(line.After) > 0
 		project.Issues = append(project.Issues, line)
 	}
-	// compile names the order edge "e:FROM:TO", and the dag holds that id to the same limit as a key
+	// compile names the order edge "e:FROM:TO", and "e:FROM:TO.N" (N from 2) when the plan is revised after the edge was retired; the dag
+	// holds both to the same limit as a key, so the id of the first plan must leave room for the ".2" of the first re-plan
 	for _, line := range project.Issues {
 		for _, a := range line.After {
 			if line.Key == "" || a == "" {
 				continue
 			}
-			if n := edgeIDLength(a, line.Key); n > dag.MaxIDLength {
+			n := edgeIDLength(a, line.Key)
+			switch {
+			case n > dag.MaxIDLength:
 				problems = append(problems, fmt.Sprintf("the order of %s after %s is the dag edge \"e:%s:%s\" of %d characters, over the %d the relay dag allows for an identifier: use a repository with a shorter owner/name", refs[line.Key], refs[a], a, line.Key, n, dag.MaxIDLength))
+			case n+len(ReplanEdgeSuffix) > dag.MaxIDLength:
+				problems = append(problems, fmt.Sprintf("the order of %s after %s is the dag edge \"e:%s:%s\" of %d characters, and a re-plan of the plan names the edge again with a %q suffix (%d characters), over the %d the relay dag allows for an identifier: use a repository with a shorter owner/name", refs[line.Key], refs[a], a, line.Key, n, ReplanEdgeSuffix, n+len(ReplanEdgeSuffix), dag.MaxIDLength))
 			}
 		}
 	}

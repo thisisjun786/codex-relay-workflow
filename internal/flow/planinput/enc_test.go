@@ -83,30 +83,75 @@ func TestEncodeKeyEdgeLengths(t *testing.T) {
 	}
 }
 
-// TestEdgeIDLengthEdges (c1): compile names an order edge "e:FROM:TO"; at 128 characters the edge is accepted, at 129 it is an input
-// error that names both issues.
+// replanEdgeID re-plans the order from a to b the way a plan is revised after its edge was retired: compile names the edge again, so
+// the id e:FROM:TO is used and the new edge is e:FROM:TO.2. It returns the error compile refuses the last revision with, nil when it
+// compiles, and the id the edge got.
+func replanEdgeID(t *testing.T, key, from, to string) (edge string, err error) {
+	t.Helper()
+	line := func(k string, after ...string) compile.Issue {
+		return compile.Issue{Key: k, Title: k, Criteria: []string{k}, After: after}
+	}
+	input := func(withOrder bool) compile.Input {
+		later := line(to)
+		if withOrder {
+			later = line(to, from)
+		}
+		return compile.Input{Schema: compile.InputSchema, Projects: []compile.Project{{
+			Key: key, Target: devTarget, Issues: []compile.Issue{line(from), later},
+		}}}
+	}
+	state := dag.State{PlanID: key}
+	for i, withOrder := range []bool{true, false, true} {
+		res, cerr := compile.Compile(input(withOrder), compile.Options{Bases: map[string]dag.State{key: state}, DryRun: true})
+		if cerr != nil {
+			if i < 2 {
+				t.Fatalf("revision %d of the plan: %v", i+1, cerr)
+			}
+			return "", cerr
+		}
+		plan := res.Plans[0]
+		next, _, vs := dag.Apply(state, *plan.Change)
+		if len(vs) > 0 {
+			t.Fatalf("revision %d does not apply: %v", i+1, vs)
+		}
+		state = next
+	}
+	for _, e := range state.Edges {
+		if e.RetiredRev == 0 {
+			edge = e.EdgeID
+		}
+	}
+	return edge, nil
+}
+
+// TestEdgeIDLengthEdges (CRW-1379 P3): compile names an order edge "e:FROM:TO", and "e:FROM:TO.N" (N from 2) when the plan is revised
+// after the edge was retired, and the dag holds both to 128 characters. An order whose edge id leaves no room for the ".2" a re-plan adds
+// is an input error that names both issues, the length and the suffix, though the first plan would compile; one with room compiles
+// again after a re-plan.
 func TestEdgeIDLengthEdges(t *testing.T) {
 	longRepo := func(n int) string { return "o/" + strings.Repeat("n", n) }
-	// from "o:NAME:1" and to "o:NAME:10": the edge id is 2*len(NAME)+2*3+1+2+1+... computed, not assumed
+	// from "o:NAME:1" and to "o:NAME:N": the edge id is 2+len(from)+1+len(to), computed, not assumed
 	for _, tc := range []struct {
 		name    string
 		repoLen int
-		from    int
 		to      int
 		ok      bool
 	}{
-		{"edge of 127", 58, 1, 2, true},
-		{"edge of 128", 58, 1, 10, true},
-		{"edge of 129", 59, 1, 2, false},
+		{"edge of 125", 57, 2, true},
+		{"edge of 126 and 128 with the re-plan suffix", 57, 10, true},
+		{"edge of 127 and 129 with the re-plan suffix", 58, 2, false},
+		{"edge of 128 and 130 with the re-plan suffix", 58, 10, false},
+		{"edge of 129", 59, 2, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			repo := longRepo(tc.repoLen)
-			a, b := tracking.Ref{Repo: repo, Number: tc.from}, tracking.Ref{Repo: repo, Number: tc.to}
+			a, b := tracking.Ref{Repo: repo, Number: 1}, tracking.Ref{Repo: repo, Number: tc.to}
 			ka, _ := EncodeKey(a)
 			kb, _ := EncodeKey(b)
 			edge := "e:" + ka + ":" + kb
 			ms := tracking.Ref{Repo: repo, Number: 3}
-			bodyB := fmt.Sprintf("## Done when\n- b\nBlocked by: #%d\n", tc.from)
+			kms, _ := EncodeKey(ms)
+			bodyB := "## Done when\n- b\nBlocked by: #1\n"
 			r := &fakeReader{
 				ms: tracking.Milestone{Ref: ms, Title: "m", State: tracking.StateOpen},
 				issues: []tracking.Issue{
@@ -119,21 +164,40 @@ func TestEdgeIDLengthEdges(t *testing.T) {
 				if err != nil {
 					t.Fatalf("an edge of %d characters: %v", len(edge), err)
 				}
-				if len(edge) > dag.MaxIDLength {
+				if len(edge)+len(".2") > dag.MaxIDLength {
 					t.Fatalf("the test edge is %d characters", len(edge))
 				}
 				if _, err := compile.Compile(res.Input, compile.Options{DryRun: true}); err != nil {
 					t.Errorf("compile of an edge of %d characters: %v", len(edge), err)
 				}
+				got, err := replanEdgeID(t, kms, ka, kb)
+				if err != nil || got != edge+".2" {
+					t.Errorf("the re-plan of the order gave the edge %q, %v; want %q", got, err, edge+".2")
+				}
 				return
 			}
-			if len(edge) <= dag.MaxIDLength {
+			if len(edge)+len(".2") <= dag.MaxIDLength {
 				t.Fatalf("the test edge is %d characters", len(edge))
 			}
 			if err == nil {
 				t.Fatalf("an edge of %d characters was built: %+v", len(edge), res.Input)
 			}
-			for _, want := range []string{a.String(), b.String(), fmt.Sprint(len(edge)), "128"} {
+			wants := []string{a.String(), b.String(), fmt.Sprint(len(edge)), "128"}
+			if len(edge) <= dag.MaxIDLength {
+				// the first plan would compile, the re-plan would not: the error says why
+				wants = append(wants, ".2", fmt.Sprint(len(edge)+len(".2")), "re-plan")
+				if _, cerr := compile.Compile(compile.Input{Schema: compile.InputSchema, Projects: []compile.Project{{
+					Key: kms, Target: devTarget, Issues: []compile.Issue{
+						{Key: ka, Title: "a", Criteria: []string{"a"}},
+						{Key: kb, Title: "b", Criteria: []string{"b"}, After: []string{ka}},
+					}}}}, compile.Options{DryRun: true}); cerr != nil {
+					t.Fatalf("the first plan of an edge of %d characters compiles: %v", len(edge), cerr)
+				}
+				if _, rerr := replanEdgeID(t, kms, ka, kb); rerr == nil {
+					t.Errorf("the re-plan of an edge of %d characters compiled: the suffix check is not needed", len(edge))
+				}
+			}
+			for _, want := range wants {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("the error does not say %q: %v", want, err)
 				}
