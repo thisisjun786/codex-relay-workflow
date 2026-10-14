@@ -604,6 +604,87 @@ return r.status`)
 	}
 }
 
+// explorerOn is the fake role table with the explorer on the pair.
+func explorerOn(pair Pair) *Policy {
+	pol := FakePolicy()
+	exp := pol.Roles["explorer"]
+	exp.Pair = pair
+	pol.Roles["explorer"] = exp
+	return pol
+}
+
+// A role whose pair the role table leaves to the host entirely binds its subagent unchecked (pair_unchecked), and a continuation
+// of the call is judged by the same rule: the undecided model is not compared with the pair the host read back, so the
+// continuation runs on a new subagent whose thread_started records the host-read pair, marked pair_unchecked, as the bind does.
+func TestSessionUndecidedModelIsNotComparedOnContinuation(t *testing.T) {
+	k := newSessionKit(t)
+	k.h.cfg.Policy = explorerOn(Pair{})
+	applied := Pair{"claude-fake-haiku", "high"}
+	k.orch.answer = func(Step, string, int) orchAnswer { return orchAnswer{pair: &applied} }
+	res := k.h.run(`const r = await agent.call('look', { agentType: 'explorer', label: 'x' })
+const more = await agent.call('look again', { resume: r, label: 'more' })
+return [r.status, more.status]`)
+	if got := value[[]string](t, res); strings.Join(got, ",") != "completed,completed" {
+		t.Fatalf("statuses %v (the continuation's rows: %v)", got, k.rowsOf("more"))
+	}
+	for _, label := range []string{"x", "more"} {
+		rows := k.rowsOf(label)
+		if got := eventsOf(rows); got != "prepared,step_published,thread_started,turn_started,completed" {
+			t.Errorf("%s: rows %s", label, got)
+			continue
+		}
+		step, ts := rows[1], rows[2]
+		if rowStr(step.Data, "model") != "" || rowStr(step.Data, "effort") != "" {
+			t.Errorf("%s: step_published names %s/%s, want no pair", label, rowStr(step.Data, "model"), rowStr(step.Data, "effort"))
+		}
+		if rowStr(ts.Data, "model") != applied.Model || rowStr(ts.Data, "effort") != applied.Effort || ts.Data["pair_unchecked"] != true || ts.Data["effort_unchecked"] != nil {
+			t.Errorf("%s: thread_started %v, want the host-read pair %v with pair_unchecked", label, ts.Data, applied)
+		}
+	}
+	if n := len(k.orch.spawned()); n != 2 {
+		t.Errorf("%d spawns, want one subagent per call", n)
+	}
+	if info, _ := LookupCall(k.h.journal, k.rowsOf("more")[0].CallID); info.Configured != applied {
+		t.Errorf("the continuation's pair %v, want the host-read %v", info.Configured, applied)
+	}
+}
+
+// A continuation is refused when a decided part of the role's pair differs from the pair the call's subagent was bound with: a call
+// bound pair_unchecked whose role a later run reads with a decided model, or a decided effort, other than the one the host ran is
+// refused pair_refused, and no subagent is spawned for it.
+func TestSessionContinuationOnADecidedPairThatDiffersIsRefused(t *testing.T) {
+	applied := Pair{"claude-fake-haiku", "high"}
+	for _, tc := range []struct {
+		name string
+		now  Pair
+	}{
+		{"model", Pair{"claude-fake-sonnet", "high"}},
+		{"effort", Pair{"claude-fake-haiku", "xhigh"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			k := newSessionKit(t)
+			k.h.cfg.Policy = explorerOn(Pair{})
+			k.orch.answer = func(Step, string, int) orchAnswer { return orchAnswer{pair: &applied} }
+			handle := value[string](t, k.h.run(`const r = await agent.call('look', { agentType: 'explorer', label: 'x' })
+return r.handle`))
+			// a later run of the journal reads a role table that decides the part; the clock read takes the first call's position
+			k.h.cfg.Policy = explorerOn(tc.now)
+			k.h.cfg.Args = mustJSON(map[string]any{"handle": handle})
+			got := value[[]string](t, k.h.run(`await crw.clock()
+const more = await agent.call('look again', { resume: args.handle, label: 'more' })
+return [more.status, more.reason]`))
+			rows := k.rowsOf("more")
+			want := "the thread reads back claude-fake-haiku/high, the role's pair is " + tc.now.Model + "/" + tc.now.Effort
+			if strings.Join(got, ",") != "refused,pair_refused" || eventsOf(rows) != "prepared,refused" || rowStr(rows[1].Data, "detail") != want {
+				t.Errorf("continuation %v, rows %v; want refused pair_refused %q", got, rows, want)
+			}
+			if n := len(k.orch.spawned()); n != 1 {
+				t.Errorf("%d spawns, want only the first call's", n)
+			}
+		})
+	}
+}
+
 func firstReportID(o *fakeOrch) string {
 	o.mu.Lock()
 	defer o.mu.Unlock()

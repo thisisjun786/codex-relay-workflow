@@ -740,9 +740,10 @@ func (c *callRun) sessionVerify(ctx context.Context, agent string, k int, op, ma
 	return DispatchReply{Status: ReplyBound}, true
 }
 
-// sessionPairBinds is the pair rule of a bind: a role whose model the role table leaves to the host binds any subagent
-// (pair_unchecked), a role whose model is set and whose effort is undecided binds a subagent of its model at the effort the host
-// applied (effort_unchecked), and any other role binds a subagent of its pair only.
+// sessionPairBinds is the pair rule of a bind and of a continuation's handle: only the decided parts of the role's pair are
+// compared. A role whose model the role table leaves to the host binds any subagent (pair_unchecked), a role whose model is set
+// and whose effort is undecided binds a subagent of its model at the effort the host applied (effort_unchecked), and any other
+// role binds a subagent of its pair only.
 func sessionPairBinds(want, got Pair) bool {
 	switch {
 	case want.Model == "":

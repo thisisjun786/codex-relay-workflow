@@ -819,7 +819,9 @@ any row is written. `crw flow shadow` replays either from the trace and names th
   A role whose pair the role table leaves to the host is bound without the pair check (`pair_unchecked`); an `agentRole` other
   than the expected agent type is recorded (`session_agent_role_mismatch`) and bound. A role that names a model and leaves its
   effort undecided is bound on its model alone: `thread_started` records the effort the host applied, with `effort_unchecked`, as
-  the call's pair, and a continuation of the call is not refused for that effort. While a step waits, the run also looks the
+  the call's pair. A continuation is judged by the same rule: only the decided parts of the role's pair are compared with the pair
+  the call's subagent was bound with, so a call bound `pair_unchecked` or `effort_unchecked` continues on a new subagent whose bind
+  records the pair it runs, and a decided part that differs is refused (`pair_refused`). While a step waits, the run also looks the
   marker up on the host, so a subagent spawned and never reported is bound all the same.
 - A bind writes `thread_started` (the subagent's `thread_id`, the host-read `model` and `effort`, `cwd` P, `host_cwd`,
   `parent_thread_id`, `agent_role`, `attempt`, `via: session`, `rollout_path`, `marker`, and `prior_pairs`, the pairs earlier
