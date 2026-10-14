@@ -61,7 +61,8 @@ func (h *verifierHost) goRoot(t *testing.T, name, version string) string {
 
 // CRW-1319 (evaluation a48fe518 d1): the preflight shows the verifier's prerequisites as the fact verifier_prerequisites. With
 // neither crw-dev nor go on PATH and nothing configured it is a warning with its reason, and the run starts all the same: the
-// preview lists it with the reason and exits 0, a start spawns the run.
+// preview lists it with the reason and exits 0, a start spawns the run. The runs start on the App Server backend, whose facts are the
+// five and this one (a session run adds its own before it: TestSessionFactsWarnAndNeverBlockTheStart).
 func TestStartShowsTheVerifierPrerequisitesAsAWarnFact(t *testing.T) {
 	w := newWorld(t)
 	td := w.deps()
@@ -69,11 +70,11 @@ func TestStartShowsTheVerifierPrerequisitesAsAWarnFact(t *testing.T) {
 	td.Verifier = func(ctx context.Context, repo string) Fact { return VerifierPrerequisites(ctx, h.env, repo) }
 	lane := []string{"--args", `{"plan":"plan-1","milestone":"M1"}`, "--handoff", defaultHandoff(t), "--repo", h.repo}
 
-	code, out, errOut := td.do(append([]string{"start", "project-lane", "--thread", "thread-owner", "--state", w.state, "--preview"}, lane...)...)
+	code, out, errOut := td.do(append([]string{"start", "project-lane", "--backend", "app-server", "--thread", "thread-owner", "--state", w.state, "--preview"}, lane...)...)
 	if code != 0 || len(td.spawned) != 0 || !strings.Contains(out, "warn  "+FactVerifier) || !strings.Contains(out, "crw-dev") || !strings.Contains(out, "go") {
 		t.Fatalf("a preview with the verifier's tools missing: exit %d, %d processes\n%s%s", code, len(td.spawned), out, errOut)
 	}
-	code, out, errOut = td.do(append([]string{"start", "project-lane", "--thread", "thread-owner", "--state", w.state, "--json"}, lane...)...)
+	code, out, errOut = td.do(append([]string{"start", "project-lane", "--backend", "app-server", "--thread", "thread-owner", "--state", w.state, "--json"}, lane...)...)
 	var ans StartAnswer
 	if code != 0 || len(td.spawned) != 1 || json.Unmarshal([]byte(strings.TrimPrefix(out, "<<spawned>>\n")), &ans) != nil {
 		t.Fatalf("the warning stopped the start: exit %d, %d processes\n%s%s", code, len(td.spawned), out, errOut)

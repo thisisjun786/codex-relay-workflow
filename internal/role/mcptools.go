@@ -60,30 +60,49 @@ func mcpToolError(message string) (MCPToolResult, error) {
 const mcpToolNativeMaxAge = 24 * time.Hour
 const mcpToolProbeTimeout = 5 * time.Second
 
+// Why a catalogue is or is not authoritative, as CatalogAuthority names it.
+const (
+	FreshnessAuthoritative = "authoritative"
+	FreshnessNotFresh      = "not-fresh"      // the catalogue is a stale cache or a failed read, not a fresh one
+	FreshnessNativeUnknown = "native-no-path" // a native catalogue whose file no configuration names
+	FreshnessNativeMissing = "native-missing" // the native file cannot be read
+	FreshnessNativeStale   = "native-stale"   // the native file is older than a day, or dated after the clock
+)
+
 // CatalogIsAuthoritative is mcp.ts:84-93. fetchedAt is not an authority signal:
 // fresh OCX is authoritative; every other source checks the mtime of the native file the catalog was
 // read from: the one its reader resolved when the request started (CRW-1132), and for a catalog that
 // carries none, the one env selects now.
 func CatalogIsAuthoritative(c LiveCatalog, now time.Time, env host.LookupEnv) bool {
+	authoritative, _ := CatalogAuthority(c, now, env)
+	return authoritative
+}
+
+// CatalogAuthority is CatalogIsAuthoritative with the reason: one of the Freshness constants. It reads the native file's
+// modification time and writes nothing, so a caller that must stay read-only (the doctor) may use it (CRW-1360).
+func CatalogAuthority(c LiveCatalog, now time.Time, env host.LookupEnv) (bool, string) {
 	if c.Status != "fresh" {
-		return false
+		return false, FreshnessNotFresh
 	}
 	if c.Source == ModelOcx {
-		return true
+		return true, FreshnessAuthoritative
 	}
 	p := c.nativePath
 	if !c.sourced {
 		p = NativeCatalogPath(env)
 	}
 	if p == "" {
-		return false
+		return false, FreshnessNativeUnknown
 	}
 	info, err := os.Stat(p)
 	if err != nil {
-		return false
+		return false, FreshnessNativeMissing
 	}
 	age := now.Sub(info.ModTime())
-	return age >= 0 && age <= mcpToolNativeMaxAge
+	if age >= 0 && age <= mcpToolNativeMaxAge {
+		return true, FreshnessAuthoritative
+	}
+	return false, FreshnessNativeStale
 }
 
 type MCPSpawnArgs struct {

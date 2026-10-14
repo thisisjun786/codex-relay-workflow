@@ -15,6 +15,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/workflows"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // PreviewNode is a node a run will work on.
@@ -50,6 +51,11 @@ type Plan struct {
 	Facts []Fact `json:"facts"`
 	// Blocked says why the run cannot start (a build without the lane operations, a lane without its compiled milestone).
 	Blocked string `json:"blocked,omitempty"`
+	// Backend is the backend the run starts on (session or app-server).
+	Backend string `json:"backend"`
+	// Spawns are the spawn formats of the six roles a session run's steps are spawned with; Loop is how the owner takes them.
+	Spawns []RoleSpawn `json:"spawn_formats,omitempty"`
+	Loop   string      `json:"loop,omitempty"`
 	// PolicyWarnings are the role table's warnings (CRW-1330: a flow-only key at its compiled default, an undecided role, a
 	// reviewer on an author's family, an execution policy still declaring agent-roles); the run starts on the table and its
 	// started row records them. Absent when there are none.
@@ -62,6 +68,11 @@ type StartAnswer struct {
 	Run   string `json:"run_id,omitempty"`
 	PID   int    `json:"pid,omitempty"`
 	State string `json:"state_dir,omitempty"`
+	// Bound says the owner thread holds the run's orchestrator line; BindWarning why it does not (a session run).
+	Bound       bool   `json:"bound,omitempty"`
+	BindWarning string `json:"bind_warning,omitempty"`
+	// Next is the command the owner takes the run's steps with (a session run).
+	Next string `json:"next,omitempty"`
 }
 
 // start is `crw flow start WORKFLOW`: the preview, then the detached run process, then the run id.
@@ -71,7 +82,8 @@ func (c *command) start(args []string) int {
 	argsFile := fs.String("args-file", "", "a file holding the workflow's args as JSON")
 	thread := fs.String("thread", "", "the orchestrator thread that owns the run (default: CODEX_THREAD_ID)")
 	budget := fs.Int64("token-budget", 0, "the run's token ceiling (0: none; a night batch takes its decision's)")
-	pool := fs.Int("pool", 0, "agent calls in flight at once (default 6)")
+	pool := fs.Int("pool", 0, "agent calls in flight at once (default 6; a session run at most agents.max_threads - 1)")
+	backend := fs.String("backend", BackendSession, "session (the calls are role subagents of the owner thread) or app-server (a thread per call: tests and shadow runs)")
 	decision := fs.String("decision", "", "the decision record a night batch starts from")
 	deadline := fs.String("deadline", "", "an RFC 3339 time the run pauses at")
 	repo := fs.String("repo", "", "the git repository the run's worktrees are made from (default: the working directory's)")
@@ -90,7 +102,10 @@ func (c *command) start(args []string) int {
 	if *budget < 0 {
 		return c.usage("the token budget cannot be negative (0 names none)")
 	}
-	spec := Spec{Schema: SpecSchema, Workflow: positional[0], Thread: *thread, TokenBudget: *budget, Pool: *pool, Deadline: *deadline, Socket: cm.socket, Decision: *decision}
+	if *backend != BackendSession && *backend != BackendAppServer {
+		return c.usage("--backend is session or app-server, not %q", *backend)
+	}
+	spec := Spec{Schema: SpecSchema, Workflow: positional[0], Thread: *thread, TokenBudget: *budget, Pool: *pool, Deadline: *deadline, Socket: cm.socket, Decision: *decision, Backend: *backend}
 	if spec.Thread == "" {
 		spec.Thread = c.getenv("CODEX_THREAD_ID")
 	}
@@ -224,9 +239,16 @@ func (c *command) start(args []string) int {
 		return c.usage("the owner thread is required: --thread T (or CODEX_THREAD_ID)")
 	}
 
-	plan := Plan{Workflow: spec.Workflow, Thread: spec.Thread, TokenBudget: spec.TokenBudget, Pool: spec.Pool, Deadline: spec.Deadline, Decision: spec.Decision, Handoff: handoffSum, Nodes: []PreviewNode{}}
+	plan := Plan{Workflow: spec.Workflow, Thread: spec.Thread, TokenBudget: spec.TokenBudget, Pool: spec.Pool, Deadline: spec.Deadline, Decision: spec.Decision, Handoff: handoffSum, Nodes: []PreviewNode{},
+		Backend: spec.Backend}
 	if plan.Pool <= 0 {
 		plan.Pool = engine.DefaultPool
+	}
+	session := spec.Backend == BackendSession
+	if session {
+		// the owner's host keeps agents.max_threads subagents open at once, one of them its own helper (CRW-1316 §14)
+		spec.Pool = sessionPool(spec.Pool, readCodexAgents(c.getenv).MaxThreads)
+		plan.Pool = spec.Pool
 	}
 	if phases, ok := src.Program.Meta["phases"].([]any); ok {
 		for _, p := range phases {
@@ -241,6 +263,9 @@ func (c *command) start(args []string) int {
 	}
 	rep := engine.DescribePolicy(table, policy)
 	plan.Roles, plan.PolicyWarnings = rep.Roles, rep.Warnings
+	if session {
+		plan.Spawns, plan.Loop = roleSpawns(table), sessionLoop("<run>")
+	}
 	if rep.Source != nil {
 		plan.Policy = *rep.Source
 	} else {
@@ -283,6 +308,18 @@ func (c *command) start(args []string) int {
 		if f, ok := issueReadyFact(*handoffIn, planOf(spec.Args), milestoneArg(spec.Args)); ok {
 			plan.Facts = append(plan.Facts, f)
 		}
+	}
+	// the facts of a session run (CRW-1316 §11): warnings, never a refusal
+	if session {
+		req := sessionFactRequest{Thread: spec.Thread, Table: table, Getenv: c.getenv, Socket: cm.socket, State: cm.state}
+		if sel, err := ResolveState(cm.state, cm.socket); err == nil {
+			req.State = sel.Path
+		}
+		if req.Socket == "" {
+			req.Socket, _ = store.DefaultSocket()
+		}
+		req.Repo, _ = repository(c.ctx, *repo)
+		plan.Facts = append(plan.Facts, sessionFacts(req)...)
 	}
 	if c.Verifier != nil {
 		// the verifier's prerequisites (CRW-1319) do not depend on the store; the fact is a pass or a warning with its reason
@@ -362,10 +399,24 @@ func (c *command) start(args []string) int {
 	if len(short) > 0 {
 		fmt.Fprintf(c.stderr, "crw flow start: warning: the run starts with preflight facts that did not pass: %s (recorded in the run's spec)\n", strings.Join(shortNames, ", "))
 	}
+	// a session run binds its owner thread before its process starts (CRW-1316 §9): the hook decides the owner's spawns by the line
+	bound := false
+	if session {
+		res, err := bindOwner(sel.Path, spec.RunID, spec.Thread, table)
+		if w := bindWarning(res, err, spec.Thread, spec.RunID); w != "" {
+			answer.BindWarning = w
+			fmt.Fprintf(c.stderr, "crw flow start: warning: %s\n", w)
+		}
+		bound = res.Bound || res.Already
+		answer.Bound = bound
+	}
 	dir, _ := os.Getwd()
 	spawned := c.now()
 	pid, err := c.Spawn(c.ctx, SpawnRequest{Spec: spec, State: sel.Path, Dir: dir})
 	if err != nil {
+		if bound {
+			_, _ = closeOwner(spec.RunID, spec.Thread)
+		}
 		return c.fail("the run process cannot be started: %v", err)
 	}
 	if c.Ready != nil {
@@ -374,12 +425,19 @@ func (c *command) start(args []string) int {
 		}
 	}
 	answer.Run, answer.PID, answer.State = spec.RunID, pid, sel.Path
+	if session {
+		answer.Next = "crw flow next " + spec.RunID + " --wait 600 --json"
+		answer.Plan.Loop = sessionLoop(spec.RunID)
+	}
 	if *asJSON {
 		_, _ = c.stdout.Write(JSON(answer))
 		return 0
 	}
 	fmt.Fprintf(c.stdout, "run %s started (process %d)\n", spec.RunID, pid)
 	fmt.Fprintf(c.stdout, "follow it: crw flow watch %s --follow    look at it: crw flow show %s\n", spec.RunID, spec.RunID)
+	if session {
+		fmt.Fprintf(c.stdout, "its steps: %s\n  %s\n", answer.Next, sessionLoop(spec.RunID))
+	}
 	return 0
 }
 
@@ -443,7 +501,7 @@ func nodesOfArgs(_ context.Context, spec Spec, _ Source) (Preview, error) {
 
 func (c *command) printPlan(p Plan) {
 	w := c.stdout
-	fmt.Fprintf(w, "crw flow start %s  (owner thread %s)\n", p.Workflow, cell(p.Thread))
+	fmt.Fprintf(w, "crw flow start %s  (owner thread %s, backend %s)\n", p.Workflow, cell(p.Thread), cell(p.Backend))
 	if len(p.Phases) > 0 {
 		fmt.Fprintf(w, "  phases: %s\n", strings.Join(p.Phases, " > "))
 	}
@@ -461,6 +519,12 @@ func (c *command) printPlan(p Plan) {
 	}
 	for _, warning := range p.PolicyWarnings {
 		fmt.Fprintf(w, "    warning: %s\n", warning)
+	}
+	if len(p.Spawns) > 0 {
+		fmt.Fprintln(w, "  spawn formats of the role subagents:")
+		for _, r := range p.Spawns {
+			fmt.Fprintf(w, "    %-15s %s\n", r.Role, r.Spawn)
+		}
 	}
 	budget := "none"
 	if p.TokenBudget > 0 {

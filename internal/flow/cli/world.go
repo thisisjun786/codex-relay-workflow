@@ -26,8 +26,8 @@ import (
 var OpsFor func(ctx context.Context, req LaneRequest) (LaneWorld, error)
 
 // ProductionWorld is the World of the shipped binary: the relay store the run's journal is persisted in, the App Server
-// connection of its host, and the allocator of its working directories (<state>/flow/<run>/...). The backend binds every engine
-// turn to the run before it starts it, as a resumed run does (agent.BoundConfig), and the run hands what goes up from it to the
+// connection of its host, and the allocator of its working directories (<state>/flow/<run>/...). The backend of a run on the App
+// Server binds every engine turn to the run before it starts it, as a resumed run does (agent.BoundConfig), and the run hands what goes up from it to the
 // hook journal.UpwardFactory makes, when the binary installed one. The store is opened for writing; a store that does not exist
 // is an error, never a new empty store.
 func ProductionWorld(ctx context.Context, req WorldRequest) (World, error) {
@@ -101,13 +101,38 @@ func ProductionWorld(ctx context.Context, req WorldRequest) (World, error) {
 		_ = st.Close()
 		return World{}, err
 	}
-	backend, err = agent.New(agent.Config{Client: client, Allocator: alloc, Threads: threads, Bound: &agent.BoundConfig{RunID: spec.RunID, Policy: table}})
+	kind, err := worldBackend(spec, j.Events(), req.Resume)
+	if err != nil {
+		_ = client.Close()
+		_ = st.Close()
+		return World{}, err
+	}
+	// a run on the App Server binds every engine turn with the explorer pair (agent.BoundConfig); a session run starts no thread
+	// and no turn on that backend, so it is built whatever its explorer's and reviewer's pairs are (an undecided part, CRW-1331)
+	var binding *agent.BoundConfig
+	if kind != BackendSession {
+		binding = &agent.BoundConfig{RunID: spec.RunID, Policy: table}
+	}
+	backend, err = agent.New(agent.Config{Client: client, Allocator: alloc, Threads: threads, Bound: binding})
 	if err != nil {
 		_ = client.Close()
 		_ = st.Close()
 		return World{}, err
 	}
 	w := World{Journal: j, Backend: backend, Policy: table, Ops: lane.Ops, Prover: lane.Prover, InputSnapshot: lane.InputSnapshot}
+	if kind == BackendSession {
+		// a session run (CRW-1316): the steps on the run's bus, the subagents read through the session host adapter, the wakes staged
+		// in the store; the App Server backend stays for what the lane reads of the host (the milestone close's archive)
+		cwd, _ := os.Getwd()
+		sb, sess, err := journal.SessionEnv(journal.SessionEnvRequest{Store: st, Client: client, Allocator: alloc, StateDir: req.State, RunID: spec.RunID, Owner: spec.Thread, OwnerCwd: cwd})
+		if err != nil {
+			backend.Close()
+			_ = client.Close()
+			_ = st.Close()
+			return World{}, err
+		}
+		w.Backend, w.Session = sb, sess
+	}
 	if journal.UpwardFactory != nil {
 		// what goes up from the run (CRW-1204) is handed to the hook the binary installs, as the engine's resume command does
 		// (journal.ResumeEnv): the relay is the one the run is in
@@ -121,6 +146,24 @@ func ProductionWorld(ctx context.Context, req WorldRequest) (World, error) {
 		return errors.Join(j.Close(), client.Close(), st.Close())
 	}
 	return w, nil
+}
+
+// worldBackend is the backend a run's process works on: the spec's for a new run; for a resume the one the run's started row
+// records (engine.RecordedBackend), and a spec that names another one is an input error (a mixed resume), refused before anything
+// is opened on it. A run whose first process stored no started row goes on with the spec's.
+func worldBackend(spec Spec, events []engine.Event, resume bool) (string, error) {
+	named := specBackend(spec)
+	if !resume {
+		return named, nil
+	}
+	recorded, found := engine.StartedBackend(events, spec.RunID)
+	switch {
+	case !found:
+		return named, nil
+	case spec.Backend != "" && recorded != spec.Backend:
+		return "", fmt.Errorf("run %s was started on the %s backend and its spec names the %s backend: a resume goes on with the backend its started row records, and these disagree (a mixed resume is refused)", spec.RunID, recorded, spec.Backend)
+	}
+	return recorded, nil
 }
 
 // RunIdentity is what the run record of a new run holds besides what the engine knows: the owner thread and the plan the run

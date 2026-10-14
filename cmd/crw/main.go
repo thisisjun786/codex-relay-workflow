@@ -17,6 +17,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/journal"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/lint"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/planinput"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/shadow"
 	"github.com/thisisjun786/codex-relay-workflow/internal/gui"
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
@@ -238,8 +239,13 @@ func modes() []mode {
 			if shadow.Handles(c.args) {
 				return shadow.RunCLI(c.ctx, c.args, c.stdout, c.stderr)
 			}
+			// plan-input builds the compile handoff from a milestone of the tracking repository; it only reads (internal/flow/planinput).
+			if planinput.Handles(c.args) {
+				return planinput.RunCLI(c.ctx, c.args, c.stdout, c.stderr)
+			}
 			code := lint.RunCLI(c.ctx, c.args, c.stdout, c.stderr)
 			if len(c.args) > 0 && code == 0 && (c.args[0] == "help" || c.args[0] == "-h" || c.args[0] == "--help") {
+				fmt.Fprintln(c.stdout, planinput.Usage)
 				fmt.Fprintln(c.stdout, shadow.Usage)
 				fmt.Fprintln(c.stdout, flowcli.Usage)
 			}

@@ -46,9 +46,46 @@ type Locked struct {
 	handle *os.File
 }
 
+// Seam lets a test steer a lock wait from the context it passes to the command under test, so
+// a timing test rests on signals rather than on the host's clock and load. A context without one
+// (every product caller) waits on the real clock and says nothing, exactly as before.
+type Seam struct {
+	// Now is the clock a wait's deadline is read on (time.Now when nil).
+	Now func() time.Time
+	// Waiting is called with the lock path each time a wait is about to pause, after the lock was
+	// found held and the deadline not yet past: the test's signal that the command is waiting.
+	Waiting func(path string)
+}
+
+type seamKey struct{}
+
+// WithSeam answers ctx carrying seam; locks taken with the answer wait as seam says.
+func WithSeam(ctx context.Context, seam Seam) context.Context {
+	return context.WithValue(ctx, seamKey{}, seam)
+}
+
+func seamOf(ctx context.Context) Seam {
+	seam, _ := ctx.Value(seamKey{}).(Seam)
+	return seam
+}
+
+// now is the time a wait's deadline is read on.
+func (s Seam) now() time.Time {
+	if s.Now != nil {
+		return s.Now()
+	}
+	return time.Now()
+}
+
 // wait sleeps one polling interval, or answers the context's error once it is done: a
 // cancelled caller stops waiting for a lock at once, and never takes it afterwards.
-func wait(ctx context.Context) error {
+func wait(ctx context.Context, path string) error {
+	if seam := seamOf(ctx); seam.Waiting != nil {
+		seam.Waiting(path)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	timer := time.NewTimer(50 * time.Millisecond)
 	defer timer.Stop()
 	select {
@@ -69,7 +106,8 @@ func Lock(ctx context.Context, target string, timeout time.Duration) (*Locked, e
 		timeout = LockTimeout
 	}
 	path := target + LockSuffix
-	deadline := time.Now().Add(timeout)
+	seam := seamOf(ctx)
+	deadline := seam.now().Add(timeout)
 	for {
 		if err := os.MkdirAll(filepath.Dir(path), 0o777); err != nil {
 			return nil, err
@@ -97,10 +135,10 @@ func Lock(ctx context.Context, target string, timeout time.Duration) (*Locked, e
 			}
 			continue
 		}
-		if time.Now().After(deadline) {
+		if seam.now().After(deadline) {
 			return nil, &Busy{Message: "another run holds " + path}
 		}
-		if err := wait(ctx); err != nil {
+		if err := wait(ctx, path); err != nil {
 			return nil, err
 		}
 	}
@@ -143,7 +181,8 @@ func Promote(ctx context.Context, recordPath string, timeout time.Duration) (*Ex
 	if err != nil {
 		return nil, err
 	}
-	deadline := time.Now().Add(timeout)
+	seam := seamOf(ctx)
+	deadline := seam.now().Add(timeout)
 	for {
 		err := unix.Flock(int(handle.Fd()), unix.LOCK_EX|unix.LOCK_NB)
 		if err == nil {
@@ -153,11 +192,11 @@ func Promote(ctx context.Context, recordPath string, timeout time.Duration) (*Ex
 			_ = handle.Close()
 			return nil, err
 		}
-		if time.Now().After(deadline) {
+		if seam.now().After(deadline) {
 			_ = handle.Close()
 			return nil, &Busy{Message: "another run holds the promotion lock at " + path}
 		}
-		if err := wait(ctx); err != nil {
+		if err := wait(ctx, path); err != nil {
 			_ = handle.Close()
 			return nil, err
 		}

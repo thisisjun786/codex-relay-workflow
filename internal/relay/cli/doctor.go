@@ -342,6 +342,7 @@ func reachability(services dispatch.Services, access store.ProbeAccess) contract
 		{Key: "socketConnect", Value: connect},
 		{Key: "offlineCommands", Value: stringList(offlineCommands)},
 		{Key: "hostRequiredCommands", Value: stringList(hostRequiredCommands)},
+		{Key: "daemonRequiredCommands", Value: stringList(daemonRequiredCommands)},
 	}
 }
 

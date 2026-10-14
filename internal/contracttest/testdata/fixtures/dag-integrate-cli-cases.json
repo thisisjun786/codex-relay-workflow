@@ -94,5 +94,76 @@
         "/nonexistent/record.json"
       ]
     }
+  ],
+  "target-record-missing-checkout": [
+    {
+      "argv": [
+        "dag-integration-target-record",
+        "--integration-ref",
+        "dev-int",
+        "--remote",
+        "origin",
+        "--remote-ref",
+        "dev",
+        "--actor",
+        "parent"
+      ]
+    }
+  ],
+  "target-record-unknown-ref": [
+    {
+      "argv": [
+        "dag-integration-target-record",
+        "--checkout",
+        "/nonexistent/checkout",
+        "--integration-ref",
+        "dev-int",
+        "--remote",
+        "origin",
+        "--remote-ref",
+        "dev",
+        "--actor",
+        "parent"
+      ]
+    }
+  ],
+  "target-check-nothing-recorded": [
+    {
+      "argv": [
+        "dag-integration-target-check"
+      ]
+    }
+  ],
+  "target-check-dash-checkout": [
+    {
+      "argv": [
+        "dag-integration-target-check",
+        "--checkout=-C"
+      ]
+    }
+  ],
+  "integrate-remote-without-ref": [
+    {
+      "sql": "SELECT 1"
+    },
+    {
+      "argv": [
+        "dag-integrate",
+        "--plan",
+        "p",
+        "--actor",
+        "parent",
+        "--checkout",
+        "/nonexistent/checkout",
+        "--integration-ref",
+        "dev-int",
+        "--base",
+        "dev",
+        "--verify",
+        "true",
+        "--remote",
+        "origin"
+      ]
+    }
   ]
 }

@@ -616,10 +616,14 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 	w := e.sessR.register(c.id, k, s.attempt)
 	defer e.sessR.unregister(c.id, w)
 	defer func() { _ = sc.Bus.Retract(c.id, k, s.attempt) }()
+	// the step waits for the owner from its publication to its bind (or the end of the turn): the waker reads it (§10)
+	bound := false
+	defer func() { e.sessW.taken(marker, bound, e.cfg.Now()) }()
 	if action == StepSpawn && recovered {
 		// a subagent the owner thread spawned for this marker before a process could bind it is the step's
 		if id, found, err := sc.Host.FindByMarker(turnCtx, sc.Owner, marker); err == nil && found {
 			if reply, ok := c.sessionVerify(turnCtx, id, k, op, marker, action); ok {
+				bound = true
 				return nil, CallResult{}, false, nil
 			} else if reply.Status == ReplyPairMismatch {
 				c.sessionClose(id, s.attempt)
@@ -632,6 +636,7 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 	if err := sc.Bus.Publish(step); err != nil {
 		return nil, CallResult{}, false, err
 	}
+	e.sessW.published(marker, e.cfg.Now())
 	find := time.NewTicker(6 * sc.poll())
 	defer find.Stop()
 	for {
@@ -641,6 +646,7 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 			_ = sc.Bus.Reply(rep, reply)
 			e.sessR.answered(rep.ID)
 			if ok {
+				bound = true
 				return nil, CallResult{}, false, nil
 			}
 		case <-find.C:
@@ -649,6 +655,7 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 			}
 			if id, found, err := sc.Host.FindByMarker(turnCtx, sc.Owner, marker); err == nil && found {
 				if _, ok := c.sessionVerify(turnCtx, id, k, op, marker, action); ok {
+					bound = true
 					return nil, CallResult{}, false, nil
 				}
 			}

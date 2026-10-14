@@ -220,7 +220,7 @@ func writeState(cwd string, next State, now time.Time, rename func(tmp, finalPat
 		if rewriteLosslessUnpaired(raw) {
 			return fmt.Errorf("refusing to rewrite %s: it holds an unpaired surrogate escape that a rewrite would replace with U+FFFD", finalPath)
 		}
-	case errors.Is(readErr, errNotRegular):
+	case errors.Is(readErr, errNotRegular), errors.Is(readErr, crwdir.ErrLink):
 		return fmt.Errorf("refusing to rewrite %s: %w", finalPath, readErr)
 	case !errors.Is(readErr, fs.ErrNotExist) && !errors.Is(readErr, syscall.EISDIR):
 		return fmt.Errorf("refusing to rewrite %s: it cannot be checked for an unpaired surrogate escape: %w", finalPath, readErr)
@@ -236,7 +236,7 @@ func writeState(cwd string, next State, now time.Time, rename func(tmp, finalPat
 	if err != nil {
 		return err
 	}
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o666)
+	f, err := crwdir.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o666)
 	if err != nil {
 		return err
 	}
@@ -259,22 +259,19 @@ func writeState(cwd string, next State, now time.Time, rename func(tmp, finalPat
 	return nil
 }
 
-// errNotRegular is the answer for a state path that holds something other than a regular file (a FIFO, a device, a socket, or a
-// link to one).
+// errNotRegular is the answer for a state path that holds something other than a regular file (a FIFO, a device or a socket).
 var errNotRegular = errors.New("the path is not a regular file")
 
-// classifyBeforeOpen is the check that runs before the open: lstat the path and, for a symbolic link, stat what it points at, so
-// a FIFO, device or socket (or a link to one) is refused without ever being opened. Opening a device has effects of its own and
-// opening a FIFO releases a peer that waits on it. A dangling link reports fs.ErrNotExist, as the open would.
+// classifyBeforeOpen is the check that runs before the open: lstat the path, so a FIFO, device or socket is refused without
+// ever being opened, and a symbolic link, dangling or not, is refused without being followed (crwdir.ErrLink; CRW-475). Opening a
+// device has effects of its own and opening a FIFO releases a peer that waits on it.
 func classifyBeforeOpen(path string) error {
 	fi, err := os.Lstat(path)
 	if err != nil {
 		return err
 	}
 	if fi.Mode()&os.ModeSymlink != 0 {
-		if fi, err = os.Stat(path); err != nil {
-			return err
-		}
+		return crwdir.NotLink(path)
 	}
 	if !fi.Mode().IsRegular() && !fi.IsDir() {
 		return errNotRegular
@@ -285,14 +282,14 @@ func classifyBeforeOpen(path string) error {
 // readExisting reads the file at path for the lone-surrogate check without ever blocking on it. The path is classified before it
 // is opened (classifyBeforeOpen); the open is then non-blocking, so a FIFO swapped in after the classification returns at once
 // instead of waiting for a writer, and the descriptor is inspected again before any read: only a regular file is read. A
-// directory returns EISDIR (the rename onto it fails by itself later), a missing path fs.ErrNotExist, and a FIFO, device or
-// socket (opening a socket fails with ENXIO) errNotRegular. A symbolic link to a regular file is followed, as the rename's
-// replacement of it was never refused.
+// directory returns EISDIR (the rename onto it fails by itself later), a missing path fs.ErrNotExist, a FIFO, device or socket
+// (opening a socket fails with ENXIO) errNotRegular, and a symbolic link the link refusal: a link at the state file is an input
+// error and is neither read nor replaced.
 func readExisting(path string) ([]byte, error) {
 	if err := classifyBeforeOpen(path); err != nil {
 		return nil, err
 	}
-	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	f, err := crwdir.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
 	if err != nil {
 		if errors.Is(err, syscall.ENXIO) {
 			return nil, errNotRegular
@@ -312,12 +309,11 @@ func readExisting(path string) ([]byte, error) {
 	return io.ReadAll(f)
 }
 
-// makeSessionsDir is ensureCodexclawDir(cwd) then mkdirSync(sessionsDir, { recursive: true }), in that order.
+// makeSessionsDir is ensureCodexclawDir(cwd) then mkdirSync(sessionsDir, { recursive: true }), in that order; a symbolic link at
+// either is refused (crwdir.EnsureSubdir; CRW-475).
 func makeSessionsDir(cwd string) error {
-	if _, err := crwdir.EnsureDir(cwd); err != nil {
-		return err
-	}
-	return os.MkdirAll(filepath.Join(cwd, crwdir.DirName, SessionsSubdir), 0o777)
+	_, err := crwdir.EnsureSubdir(cwd, SessionsSubdir)
+	return err
 }
 
 // writeNew creates path, which must not exist (fs.ErrExist otherwise, nothing touched), writes data, fsyncs and closes it. On any

@@ -94,7 +94,7 @@ func sessionCountersSpent(cwd, sessionID string) bool {
 	if err != nil {
 		return !errors.Is(err, fs.ErrNotExist)
 	}
-	if requireDirectory(dir) != nil {
+	if crwdir.RequireDir(dir) != nil {
 		return true
 	}
 	return slices.ContainsFunc(names, func(n string) bool {

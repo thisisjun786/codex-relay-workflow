@@ -35,6 +35,10 @@ func runIntegrate(ctx context.Context, services dispatch.Services, args dispatch
 	if err != nil {
 		return nil, err
 	}
+	target, err := batchTarget(args)
+	if err != nil {
+		return nil, err
+	}
 	s, err := store.Open(ctx, services.Selection.DBPath(), services.SocketPath)
 	if err != nil {
 		return nil, err
@@ -85,14 +89,15 @@ func runIntegrate(ctx context.Context, services dispatch.Services, args dispatch
 	for i, b := range result.Abandoned {
 		abandoned[i] = b
 	}
-	return contract.OrderedObject{
+	doc := contract.OrderedObject{
 		{Key: "ok", Value: true}, {Key: "schema", Value: SchemaIntegrate}, {Key: "plan_id", Value: result.Plan}, {Key: "batch_id", Value: result.BatchID},
 		{Key: "checkout", Value: result.Checkout}, {Key: "integration_ref", Value: result.Ref}, {Key: "base_ref", Value: result.BaseRef},
 		{Key: "old_head", Value: result.OldHead}, {Key: "new_head", Value: result.NewHead},
 		{Key: "merged", Value: merged}, {Key: "split", Value: split}, {Key: "pending_marks", Value: pending},
 		{Key: "verification", Value: contract.OrderedObject{{Key: "result", Value: result.Verification.Result}, {Key: "tree", Value: result.Verification.TreeHash}, {Key: "digest", Value: result.VerificationDigest}}},
 		{Key: "marked_events", Value: events}, {Key: "already_contained", Value: already}, {Key: "contained_unverified", Value: unverified}, {Key: "reconciled_batches", Value: reconciled}, {Key: "abandoned_batches", Value: abandoned}, {Key: "targets", Value: targets},
-	}, nil
+	}
+	return recordBatchTarget(ctx, sched, target, doc), nil
 }
 
 func runPush(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
@@ -105,10 +110,16 @@ func runPush(ctx context.Context, services dispatch.Services, args dispatch.Args
 	sched := &dagsched.Scheduler{Store: s}
 	// the remote head the push reads is compared with the heads the relay recorded for the integration ref (CRW-1301)
 	result, err := dagsched.PushIntegrationChecked(ctx, args.Text("checkout"), args.Text("remote"), args.Text("remote-ref"), args.Text("integration-ref"), sched.VerifiedMoveOnto, sched.StaleIntegratedNodes, sched.CheckIntegrationTarget)
+	// the target and the head the push read are recorded after the comparison (CRW-1304); a record that cannot be written changes nothing the push did
+	recordErr := recordPushRead(ctx, sched, args, result, err)
 	if err != nil {
-		return nil, err
+		return nil, nameTargetRecordError(err, recordErr)
 	}
-	return pushObject(result), nil
+	doc := pushObject(result)
+	if recordErr != nil {
+		doc = append(doc, pyjson.Field{Key: "target_record_error", Value: recordErr.Error()})
+	}
+	return doc, nil
 }
 
 // pushObject is the document dag-integrate-push prints. stale_nodes is output only (CRW-1026, d2): the integrated nodes of the

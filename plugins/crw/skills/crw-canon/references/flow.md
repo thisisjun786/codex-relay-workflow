@@ -21,6 +21,7 @@ A run is a process that lives for one run and loses nothing when it dies: every 
 | `crw flow audit (--run RUN \| --acceptance ID) [--milestone M] [--json] [--no-record]` | The audit of the reviews behind the agent-path acceptances of a run, read back from the reviewer threads on the run's host (CRW-1206): each acceptance is `ok`, `mismatch` or `unobserved`, and the exit is 1 unless every one is `ok`. Once the run has finished the result is appended to its journal as a `crw.audit` row, unless `--no-record` is given |
 | `crw flow apply`, `crw flow report-up`, `crw flow reports`, `crw flow report-ack`, `crw flow report-delivered` | What reaches up from a run (CRW-1204): the orchestrator applies a child's receipt, lifts a blocker or a decision request, and the lead reads and acknowledges the reports; [docs/flow/reporting.md](../../../../../docs/flow/reporting.md). A run process hands its plan summary, its escalations and its completion digest to the same reporting, whether `crw flow start` or a resume started it |
 | `crw flow status-line --thread T` | The one line the Stop hook prints, when thread T owns a run that is not over; it prints nothing for any other thread |
+| `crw flow plan-input --milestone OWNER/NAME#N [--target-repository DIR --base-ref BRANCH] [--thread T] [--envelope]` | Builds the handoff of `crw flow compile` from one milestone of the tracking repository and prints it; it only reads. See [crw flow plan-input](#crw-flow-plan-input) |
 | `crw flow run --backend fake`, `crw flow roles`, `crw flow compile`, `crw flow lint` | The fake run, the role table, the plan compiler and the script check of the engine |
 | `crw flow trace export`, `crw flow shadow`, `crw flow measure` | The trace tools, which read store copies and trace files and call no agent |
 
@@ -63,6 +64,24 @@ Takes the run from its journal once its run lock is free: with the run's own spe
 ### crw flow recover
 
 The engine's recovery of a call in `recovery_hold`, under the run lock of the run that holds the call. `--adopt THREAD|TURN` takes the thread or turn the operator names after the proofs of the call's cwd, source and history; `--absent` reads the host again and accepts the call only when the same proofs hold as for an automatic outcome. What it relied on is appended to the journal as `recovery_cleared` with its evidence.
+
+### crw flow plan-input
+
+Builds the handoff `crw flow compile` reads (`crw-flow-compile-input/1`) from one milestone of the tracking repository, so that `crw flow plan-input --milestone OWNER/NAME#N | crw flow compile --dry-run -` checks a milestone as it stands. A project owner takes one milestone: the plan's project key is the milestone ref `OWNER/NAME#N`, each open issue of the milestone is one issue line keyed by its ref, and the order is the `Blocked by:` lines of the bodies (a blocker that is an open issue of the milestone becomes `after`). The command reads through the tracking adapter with GET requests (the token is `GH_TOKEN`, `GITHUB_TOKEN` or `gh auth token`) and writes to neither GitHub nor Linear.
+
+The ref is the identity, and the input spells it `OWNER:NAME:N` (`o/r#3` is `o:r:3`), because the relay dag reads a plan's project key, node ids and edge ids as identifiers (a letter or a digit, then letters, digits, `.`, `_`, `:` and `-`, at most 128 characters; the order edge of two issues is `e:FROM:TO`, so both keys fit in 125 characters together). A `:` cannot occur in a GitHub owner or repository name, so the form is unambiguous and reads back to the ref. The project key, the issue keys and `after` of the input, the scope key of the owner's parent binding and the comparison below all use this form; the envelope's `milestone` and `refs` and the warnings show the refs. A key the dag cannot hold, or an order edge over the limit, is an input error that names the refs and the limit; no key is shortened.
+
+The body of an issue is read from a small fixed set of headings, matched without regard to case, level, bold marks and a trailing colon; a section runs to the next heading and a heading inside a code fence is not read.
+
+| Field | Heading | Reading | When the section is missing |
+|---|---|---|---|
+| `criteria` | `끝 조건`, `Done when`, `Acceptance`, `Acceptance criteria` | the bullets (also numbered and checkbox items) | the title is the one criterion, with the warning `criteria_missing` |
+| `regions` | `수정 범위`, `Edit regions`, `Regions` | each bullet names a path in backticks, else its first word; a trailing slash is a tree | no region; the compile default applies |
+| `size_fit`, `size_reason`, `issue_size` | `크기`, `Size`, `Size fit` | lines `size_fit: V`, `size_reason: V`, `issue_size: V` with a value of the closed set | nothing; the compile defaults apply |
+
+`--target-repository` (the absolute path of the checkout) and `--base-ref` (the branch) give the project its target, which compile needs for any order between issues. `--envelope` prints `{schema, milestone, input, refs, warnings}` instead of the bare input, so the warnings are recorded with it; `refs` maps each key of the input back to its `OWNER/NAME#N` ref.
+
+Nothing the mapping cannot carry over refuses: it is a warning, printed on stderr as `crw flow plan-input: warning: [rule] ISSUE: detail` and kept in the envelope's `warnings`. The rules: `criteria_missing`; `region_invalid` (a path that is absolute, leaves the repository or is the root); `size_value` (a value outside the closed set); `blocker_closed`, `blocker_outside_milestone` and `blocker_self` (a `Blocked by:` line that names a closed issue, an issue of another milestone or repository, or the issue itself); `target_missing` (an order and no target); `milestone_closed`; `no_open_issue`; and the two comparisons of the project key with the live parent bindings of the owner thread (`--thread`, default `CODEX_THREAD_ID`, read from the relay store read-only, as `crw flow start` does): `project_key_bound` when the thread holds no live parent binding under the plan's project key (`OWNER:NAME:N`; the keys are compared exactly, as `crw flow start` and the first claim compare them, so a binding that differs only by case is another key, and the warning says so), naming the key, the milestone ref and the bound keys, and `project_key_unchecked` when there is no thread or the bindings cannot be read. Exit 0 built; 2 an input that cannot be used: a ref that is not `OWNER/NAME#N`, a milestone that does not exist, a token the repository refuses.
 
 ### crw flow status-line
 

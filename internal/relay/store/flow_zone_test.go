@@ -303,7 +303,7 @@ func TestZoneShippedSnapshot(t *testing.T) {
 	live := zoneObjects(t, path)
 	shipped := zoneShipped(t)
 	var want []string
-	for _, table := range slices.Concat(flowTables, agentTables, acceptTables) {
+	for _, table := range slices.Concat(flowTables, agentTables, acceptTables, targetTables) {
 		want = append(want, "table "+table, "trigger "+table+"_no_update", "trigger "+table+"_no_delete")
 		for _, g := range zoneKeyGuardsOf(table) {
 			want = append(want, "trigger "+g.name())
@@ -311,7 +311,7 @@ func TestZoneShippedSnapshot(t *testing.T) {
 		want = append(want, "trigger "+table+"_rowid_guard", "trigger "+table+"_rowid_minus1_mark_guard", "trigger "+table+"_rowid_minus1_guard")
 	}
 	for _, g := range zoneNullKeyGuards {
-		if slices.Contains(flowTables, g.table) || slices.Contains(agentTables, g.table) || slices.Contains(acceptTables, g.table) {
+		if slices.Contains(flowTables, g.table) || slices.Contains(agentTables, g.table) || slices.Contains(acceptTables, g.table) || slices.Contains(targetTables, g.table) {
 			want = append(want, "trigger "+g.insertTrigger())
 		}
 	}

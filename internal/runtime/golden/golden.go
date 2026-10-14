@@ -7,13 +7,13 @@ package golden
 import (
 	"bufio"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/unix"
 
@@ -58,6 +58,7 @@ func Helper() {
 	if mode == "" {
 		return
 	}
+	var held *os.File
 	if path, ok := strings.CutPrefix(mode, "flock:"); ok {
 		file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
 		if err != nil {
@@ -66,9 +67,23 @@ func Helper() {
 		if err := unix.Flock(int(file.Fd()), unix.LOCK_EX); err != nil {
 			os.Exit(4)
 		}
+		held = file
 	}
 	fmt.Println("ready")
-	_, _ = io.Copy(io.Discard, os.Stdin)
+	// A line "collect" runs the garbage collector and answers "collected": a test of the helper
+	// itself asks it to, rather than leave to chance whether a collection happens while it waits.
+	lines := bufio.NewScanner(os.Stdin)
+	for lines.Scan() {
+		if lines.Text() == "collect" {
+			runtime.GC()
+			runtime.GC()
+			time.Sleep(50 * time.Millisecond) // the file's cleanup runs on another goroutine
+			fmt.Println("collected")
+		}
+	}
+	// The lock lasts as long as this descriptor is open: the file is kept reachable to the end, or a
+	// collection would close it (its cleanup) and drop the lock under the test that relies on it.
+	runtime.KeepAlive(held)
 	os.Exit(0)
 }
 

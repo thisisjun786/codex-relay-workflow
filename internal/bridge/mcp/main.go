@@ -122,7 +122,15 @@ func Main(ctx context.Context, args []string, env map[string]string, stdin io.Re
 		apply(client)
 	}
 	defer client.Close()
-	server := NewServer(bridge.New(client, store, policy), PackageVersion, stderr)
+	// The relay daemon a report_child call reaches is found by the socket the bridge was started with: the default
+	// one (the relay's own default scope) unless --socket named another (CRW-1297).
+	relaySocket := ""
+	flags.Visit(func(set *flag.Flag) {
+		if set.Name == "socket" {
+			relaySocket = expand(socket, env)
+		}
+	})
+	server := NewServer(bridge.New(client, store, policy), PackageVersion, stderr, WithChildReports(relaySocket))
 	if err := server.Run(ctx, &sdk.IOTransport{Reader: stdin, Writer: stdout}); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, io.EOF) {
 		fmt.Fprintln(stderr, "crw bridge:", err)
 		return 1

@@ -262,13 +262,15 @@ func jsKeyOrder(pairs []MapEntry) []MapEntry {
 
 // appendRow is the tail of appendLedger and appendInterviewEvent, in the oracle's order: the .crw directory, sub below it, the
 // row text, one appended line. A failed step leaves what the earlier ones made. With closeTail, which both appenders set, the line is
-// preceded by a line feed when the file already ends in a line that has none (endsMidLine), in the same write.
+// preceded by a line feed when the file already ends in a line that has none (endsMidLine), in the same write. A symbolic link at
+// .crw, at sub or at the file is refused and nothing is written through it (crwdir.EnsureSubdir, crwdir.OpenFile; CRW-475).
 func appendRow(cwd, sub, name string, row []member, closeTail bool) error {
-	if _, err := crwdir.EnsureDir(cwd); err != nil {
-		return err
+	var parts []string
+	if sub != "" {
+		parts = []string{sub}
 	}
-	dir := filepath.Join(cwd, crwdir.DirName, sub)
-	if err := os.MkdirAll(dir, 0o777); err != nil {
+	dir, err := crwdir.EnsureSubdir(cwd, parts...)
+	if err != nil {
 		return err
 	}
 	line, err := object(row)
@@ -279,21 +281,18 @@ func appendRow(cwd, sub, name string, row []member, closeTail bool) error {
 }
 
 // AppendLedgerLine appends a row already spelled (a pending event's line, CRW-1097) to <state dir>/ledger.jsonl, with the same
-// directory steps and the same tail rule as AppendLedger.
+// directory steps, link refusal and tail rule as AppendLedger.
 func AppendLedgerLine(cwd string, line []byte) error {
-	if _, err := crwdir.EnsureDir(cwd); err != nil {
-		return err
-	}
-	dir := filepath.Join(cwd, crwdir.DirName)
-	if err := os.MkdirAll(dir, 0o777); err != nil {
+	dir, err := crwdir.EnsureDir(cwd)
+	if err != nil {
 		return err
 	}
 	return appendLine(filepath.Join(dir, LedgerFile), append([]byte{}, line...), true)
 }
 
-// appendLine is the one appended line of appendRow and AppendLedgerLine.
+// appendLine is the one appended line of appendRow and AppendLedgerLine; a link at path is refused, not followed.
 func appendLine(path string, line []byte, closeTail bool) error {
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o666)
+	f, err := crwdir.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o666)
 	if err != nil {
 		return err
 	}
@@ -317,7 +316,7 @@ func endsMidLine(f *os.File, path string) bool {
 	if !info.Mode().IsRegular() || info.Size() == 0 {
 		return false
 	}
-	r, err := os.Open(path)
+	r, err := crwdir.OpenFile(path, os.O_RDONLY, 0)
 	if err != nil {
 		return true
 	}
