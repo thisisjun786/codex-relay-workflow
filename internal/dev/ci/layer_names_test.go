@@ -405,19 +405,30 @@ func TestRunInitiativeOffThePath(t *testing.T) {
 // sense of "parent" (this task in its relay role `parent`) is written as the child and "child" as the issue child. The parent
 // (repository session) has its own section at the end of the skill; anywhere before it, outside code spans and link texts, each
 // "parent" is the repository session and says so: "the parent (repository session...". The relay role id `parent` stays a word in
-// code font.
+// code font. The whole file is read (Argon V5 K6): inside the parent's section each "parent" is that section's parent, "the
+// parent" or "the repository's parent", and nowhere does the skill give a word its relay sense.
 func TestRunSkillUsesTheLayerNames(t *testing.T) {
-	for _, p := range runSkillParentProblems(readRepoText(t, runSkillFile)) {
+	text := readRepoText(t, runSkillFile)
+	if !strings.Contains(text, parentSectionAt) {
+		t.Errorf("%s has no section %q", runSkillFile, strings.TrimSpace(parentSectionAt))
+	}
+	for _, p := range runSkillParentProblems(text) {
 		t.Error(p)
 	}
 	t.Run("fixture: the relay sense of parent is caught", func(t *testing.T) {
 		good := "The child (project session, relay role `parent`) reports to [the parent](h.md#the-levels) (repository session, relay role `supervisor`). " +
-			"See [Project parent binding](i.md#project-parent-binding) and `crw manage send-parent`.\n\n## The parent: the repository session\n\nThe parent orders the projects.\n"
+			"See [Project parent binding](i.md#project-parent-binding) and `crw manage send-parent`.\n\n## The parent: the repository session\n\n" +
+			"The parent orders the projects. Everywhere else in this skill the task is the child, and the parent is always this repository session; " +
+			"the parent's record holds it, and it is the repository's parent.\n"
 		if p := runSkillParentProblems(good); len(p) != 0 {
 			t.Errorf("good: %v", p)
 		}
 		if p := runSkillParentProblems("The parent dispatches a child for each issue, and a parent goal waits.\n"); len(p) != 2 {
 			t.Errorf("relay sense: %v", p)
+		}
+		// The sentence K6 found in the parent's own section: a parent that is no section's parent and a relay sense.
+		if p := runSkillParentProblems("Intro.\n## The parent: the repository session\n\nEverywhere else in this skill the task is a child and the word parent keeps its relay sense.\n"); len(p) != 2 {
+			t.Errorf("relay sense in the parent's section: %v", p)
 		}
 	})
 }
@@ -426,29 +437,46 @@ var (
 	parentWord      = regexp.MustCompile(`(?i)\bparents?\b`)
 	runSkillLink    = regexp.MustCompile(`\[[^\]]*\]\([^)]*\)`)
 	parentLabelled  = regexp.MustCompile(`^(\]\([^)]*\))? \(repository session`)
+	sectionParent   = regexp.MustCompile(`(?i)\b(the|repository's) $`)
+	relaySense      = regexp.MustCompile(`(?i)\brelay sense\b`)
 	parentSectionAt = "\n## The parent: the repository session"
 )
 
-// runSkillParentProblems are the uses of "parent" in crw-run's text before the parent's own section that do not name the
-// repository session.
-func runSkillParentProblems(text string) []string {
-	if i := strings.Index(text, parentSectionAt); i >= 0 {
-		text = text[:i]
-	}
+// runSkillProse is crw-run's text as prose: without front matter and code, a link whose text is the parent keeping its target, so
+// the label after it is still seen, and any other link text blanked, since it is a heading's name.
+func runSkillProse(text string) string {
 	body := codeSpans.ReplaceAllString(withoutFrontmatter(text), "``")
-	// a link whose text is the parent keeps its target, so the label after it is still seen; any other link text is a heading's name
 	body = runSkillLink.ReplaceAllStringFunc(body, func(link string) string {
 		if regexp.MustCompile(`(?i)^\[the parent\]`).MatchString(link) {
 			return "the parent" + link[strings.Index(link, "]"):]
 		}
 		return "[]"
 	})
-	flat := normalized(body)
+	return normalized(body)
+}
+
+// runSkillParentProblems are the uses of "parent" in crw-run's text that do not name the repository session: before the parent's
+// own section each one says so, and inside it each one is the section's parent; and any sentence that gives a word its relay sense.
+func runSkillParentProblems(text string) []string {
+	before, section, _ := strings.Cut(text, parentSectionAt)
 	var problems []string
+	flat := runSkillProse(before)
 	for _, m := range parentWord.FindAllStringIndex(flat, -1) {
 		if !parentLabelled.MatchString(flat[m[1]:]) {
 			problems = append(problems, "crw-run: a parent that is not the repository session: ..."+flat[max(0, m[0]-60):min(len(flat), m[1]+40)])
 		}
+	}
+	if section != "" {
+		inSection := runSkillProse(strings.TrimSpace(parentSectionAt) + section)
+		for _, m := range parentWord.FindAllStringIndex(inSection, -1) {
+			if !sectionParent.MatchString(inSection[max(0, m[0]-len("repository's ")):m[0]]) {
+				problems = append(problems, "crw-run: a parent in the parent's section that is not the section's parent: ..."+inSection[max(0, m[0]-60):min(len(inSection), m[1]+40)])
+			}
+		}
+		flat += " " + inSection
+	}
+	for _, m := range relaySense.FindAllStringIndex(flat, -1) {
+		problems = append(problems, "crw-run: a word keeps its relay sense, while the skill names every session by the level table: ..."+flat[max(0, m[0]-80):min(len(flat), m[1]+20)])
 	}
 	return problems
 }
