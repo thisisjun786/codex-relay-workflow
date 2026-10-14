@@ -30,6 +30,45 @@ func TestRunSpentCountsEachTerminalRowOnce(t *testing.T) {
 	}
 }
 
+// TestBudgetRunIsTheFirstProcessCeiling (CRW-1327, Argon F2 on 2a082733): budget.run is the ceiling the run's first process started
+// with, as its started row records it (token_budget): a resume under another ceiling - narrower, wider, none - changes budget.total and
+// not budget.run, and a run started without a ceiling has none in budget.run whatever its resumes are given.
+func TestBudgetRunIsTheFirstProcessCeiling(t *testing.T) {
+	const body = `return [budget.total, budget.run]`
+	h := newHarness(t)
+	h.cfg.TokenBudget = 100
+	if got := value[[]any](t, h.run(body)); fmt.Sprint(got) != "[100 100]" {
+		t.Errorf("the first process: %v", got)
+	}
+	h.cfg.Resume = &ResumeOptions{}
+	for _, c := range []struct {
+		ceiling int64
+		want    string
+	}{{40, "[40 100]"}, {0, "[<nil> 100]"}, {5000, "[5000 100]"}} {
+		h.cfg.TokenBudget = c.ceiling
+		if got := value[[]any](t, h.run(body)); fmt.Sprint(got) != c.want {
+			t.Errorf("a resume under the ceiling %d: %v, want %s", c.ceiling, got, c.want)
+		}
+	}
+	var recorded []int64
+	for _, ev := range h.journal.Events() {
+		if ev.Kind == KindRun && ev.Event == "started" {
+			recorded = append(recorded, rowInt64(ev.Data, "token_budget"))
+		}
+	}
+	if fmt.Sprint(recorded) != "[100 40 0 5000]" {
+		t.Errorf("the started rows record the ceilings %v", recorded)
+	}
+	h = newHarness(t)
+	if got := value[[]any](t, h.run(body)); fmt.Sprint(got) != "[<nil> <nil>]" {
+		t.Errorf("a run without a ceiling: %v", got)
+	}
+	h.cfg.TokenBudget, h.cfg.Resume = 50, &ResumeOptions{}
+	if got := value[[]any](t, h.run(body)); fmt.Sprint(got) != "[50 <nil>]" {
+		t.Errorf("its resume under a ceiling of 50: %v", got)
+	}
+}
+
 // TestSessionTokensKeepTheCachedSplit (CRW-1327): a session call's tokens are the growth of its subagent's rollout total in every
 // part (cached input and reasoning output too), its terminal row records them in the journal's form (cached_input,
 // reasoning_output), and a row of an older version without them reads them as 0.

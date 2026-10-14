@@ -3,6 +3,7 @@ package scenario
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -281,6 +282,61 @@ func TestDesignLoopCapsWarnAndTellTheOrchestrator(t *testing.T) {
 		}
 		if !warned(l, "tokens") || !slices.Contains(escalationReasons(l), "design_loop_tokens") || !told(sender, "design_loop_tokens") {
 			t.Errorf("the explorer tokens of the loop: warned %v, escalations %v, told %+v", warned(l, "tokens"), escalationReasons(l), sender.Parent)
+		}
+	})
+	// the token cap is the one the run's journal fixes (budget.run, the budget its first process started with), so a resume under
+	// another ceiling replays the loop's design_loop_tokens escalation at the same position with the same input and goes on replaying:
+	// it sends no turn and runs no op live (Argon F2 on 2a082733). The first process's ceiling is 10000 (cap 8000): the architect's 7995
+	// and the first audit's 10 reach it at the audit, and the run completes within its budget. The resumes: the same ceiling (the
+	// control), 10005 (cap 8004: the same call reaches it, under another text), 9000 (cap 7200: the architect alone would reach it),
+	// 1000000 (the cap of 5000000 is never reached) and none.
+	t.Run("tokens replayed under another budget", func(t *testing.T) {
+		for _, budget := range []int64{10000, 10005, 9000, 1000000, 0} {
+			t.Run(fmt.Sprint(budget), func(t *testing.T) {
+				l := NewLab(t, twoNodes()...)
+				l.On("^architect$", func(c *Call) *fakehostPlan {
+					p := Say(l.designFor())
+					p.Tokens = 7995
+					return &p
+				})
+				l.Budget = 10000
+				if res := l.Run(); res.Status != engine.RunCompleted {
+					t.Fatalf("run %s: %s", res.Status, res.Error)
+				}
+				if !slices.Contains(escalationReasons(l), "design_loop_tokens") {
+					t.Fatalf("the first process raised no design_loop_tokens: %v", escalationReasons(l))
+				}
+				if !warned(l, "used 8005 tokens by audit round 1") {
+					t.Fatalf("the first process did not reach the cap at the first audit: %v", l.FlowRows("log"))
+				}
+				escalations := len(l.FlowRows(engine.EvEscalation))
+				before := l.LastSeq()
+				l.Budget = budget
+				l.NewProcess("proc-budget")
+				res := l.Resume()
+				if res.Status != engine.RunCompleted {
+					t.Fatalf("the resume under the ceiling %d: run %s: %s", budget, res.Status, res.Error)
+				}
+				if live := turnsSince(l, before); len(live) != 0 {
+					var labels []string
+					for _, ts := range live {
+						labels = append(labels, labelOf(l, ts.call))
+					}
+					t.Errorf("the resume under the ceiling %d sent turns %v: the design loop did not replay", budget, labels)
+				}
+				var ran []string
+				for _, ev := range rowsAfter(l, before) {
+					if ev.Kind == engine.KindCall && (ev.Event == engine.EvCompleted || ev.Event == engine.EvSuperseded) {
+						ran = append(ran, ev.Op+" "+ev.Event)
+					}
+				}
+				if len(ran) != 0 {
+					t.Errorf("the resume under the ceiling %d wrote call rows %v: a position of the run was not replayed", budget, ran)
+				}
+				if n := len(l.FlowRows(engine.EvEscalation)); n != escalations {
+					t.Errorf("the resume under the ceiling %d: %d escalation rows, the first process wrote %d", budget, n, escalations)
+				}
+			})
 		}
 	})
 }

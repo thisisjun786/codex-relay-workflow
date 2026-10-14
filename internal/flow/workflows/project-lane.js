@@ -13,11 +13,12 @@ install(crw)
 
 // The caps of the design loop (one auditedDesign: the DESIGN it starts from, its audit rounds and the architect's fixes; CRW-1327).
 // AUDIT_ROUNDS is the round cap: a DESIGN not approved in that many rounds stops the milestone with the design_audit_rounds
-// escalation (CRW-1347). The token cap is DESIGN_TOKEN_CAP tokens, or DESIGN_TOKEN_WARN of the run's token budget (budget.total, the
-// run's figure across resumes: CRW-1278) when that is lower, so a run without a budget has one too: when the calls of the loop (its
-// architect, audit and fix calls and the explorers of its open questions) have used it, the loop warns once and tells the orchestrator
-// (design_loop_tokens, no ask) and goes on; the engine itself pauses the run at the whole budget. Either cap writes a
-// `warn design_loop_cap` log row.
+// escalation (CRW-1347). The token cap is DESIGN_TOKEN_CAP tokens, or DESIGN_TOKEN_WARN of the run's token budget when that is lower,
+// so a run without a budget has one too: when the calls of the loop (its architect, audit and fix calls and the explorers of its open
+// questions) have used it, the loop warns once and tells the orchestrator (design_loop_tokens, no ask) and goes on; the engine itself
+// pauses the run at the whole budget. Either cap writes a `warn design_loop_cap` log row. The run's budget is budget.run, the one its
+// first process started with, which the journal fixes: a resume under another ceiling (budget.total) reaches the cap at the same
+// call and raises the escalation with the same input, so the loop replays (CRW-1327).
 const AUDIT_ROUNDS = 3
 const DESIGN_TOKEN_CAP = 5000000
 const DESIGN_TOKEN_WARN = 0.8
@@ -36,11 +37,11 @@ for (const n of ms.nodes) for (const c of n.end_condition || []) END_CONDITIONS.
 // the design could not be approved.
 async function auditedDesign(first, tag, context) {
   let arch = first
-  // the tokens of the loop are those its calls report (meta.tokens; crw.explore's tokens for its explorers), the same on a resume
-  // that replays them
-  const cap = budget.total === null ? DESIGN_TOKEN_CAP : Math.min(DESIGN_TOKEN_CAP, budget.total * DESIGN_TOKEN_WARN)
-  const capText = budget.total === null ? 'the cap of DESIGN_TOKEN_CAP ' + DESIGN_TOKEN_CAP + ' tokens (the run has no budget)'
-    : 'the cap of ' + cap + ' tokens (DESIGN_TOKEN_CAP ' + DESIGN_TOKEN_CAP + ', DESIGN_TOKEN_WARN ' + DESIGN_TOKEN_WARN + ' of the run budget of ' + budget.total + ')'
+  // the tokens of the loop are those its calls report (meta.tokens; crw.explore's tokens for its explorers), and its cap is made of
+  // budget.run: both are the same on a resume that replays them, whatever ceiling the resume has
+  const cap = budget.run === null ? DESIGN_TOKEN_CAP : Math.min(DESIGN_TOKEN_CAP, budget.run * DESIGN_TOKEN_WARN)
+  const capText = budget.run === null ? 'the cap of DESIGN_TOKEN_CAP ' + DESIGN_TOKEN_CAP + ' tokens (the run has no budget)'
+    : 'the cap of ' + cap + ' tokens (DESIGN_TOKEN_CAP ' + DESIGN_TOKEN_CAP + ', DESIGN_TOKEN_WARN ' + DESIGN_TOKEN_WARN + ' of the run budget of ' + budget.run + ')'
   let used = 0
   let warned = false
   async function tokenCap(tokens, round) {

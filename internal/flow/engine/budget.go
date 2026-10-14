@@ -50,3 +50,16 @@ func TerminalTokens(ev Event) Tokens {
 	}
 	return RowTokens(ev.Data)
 }
+
+// StartedBudget is the token ceiling the run's first process started with, as its started row records it (token_budget), and 0 for a
+// run started without one (CRW-1327). The journal fixes it: a resume under another ceiling - a narrower --token-budget, none, the
+// ceiling a resume counts from what the run spent - changes the script's budget.total and not this, so what a script decides on
+// budget.run (the design loop's token cap) is the same in every process and replays.
+func StartedBudget(events []Event, runID string) int64 {
+	for _, ev := range events {
+		if ev.Kind == KindRun && ev.RunID == runID && ev.Event == "started" {
+			return rowInt64(ev.Data, "token_budget")
+		}
+	}
+	return 0
+}
