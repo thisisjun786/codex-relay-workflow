@@ -30,9 +30,14 @@ const repositorySessionTitlePrefix = "[CRW] 부모 · "
 
 var slugPart = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 
+// scpHost is the part of an scp-style origin before its colon: a host name, with an optional user before an "@". A
+// space, a path separator or an empty host or user is no host, so the origin names no repository.
+var scpHost = regexp.MustCompile(`^(?:[A-Za-z0-9_.+-]+@)?[A-Za-z0-9_.-]+$`)
+
 // repositorySessionTitle is the repository session's title for a checkout's origin URL: https://host/owner/repo[.git],
-// ssh://[user@]host/owner/repo[.git] or the scp form [user@]host:owner/repo[.git]. A local path, a file URL, a path of
-// more or fewer than two segments or anything else names no repository and gives "".
+// ssh://[user@]host/owner/repo[.git] or the scp form [user@]host:owner/repo[.git]. A local path, a file URL, an scp
+// form whose host is not a host name, a path of more or fewer than two segments or anything else names no repository
+// and gives "".
 func repositorySessionTitle(origin string) string {
 	origin = strings.TrimSpace(origin)
 	var path string
@@ -47,7 +52,7 @@ func repositorySessionTitle(origin string) string {
 		path = u.Path
 	default:
 		host, rest, ok := strings.Cut(origin, ":")
-		if !ok || host == "" {
+		if !ok || !scpHost.MatchString(host) {
 			return ""
 		}
 		path = rest

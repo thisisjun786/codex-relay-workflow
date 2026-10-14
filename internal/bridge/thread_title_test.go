@@ -209,6 +209,16 @@ func TestRepositorySessionTitle(t *testing.T) {
 		"file:///srv/git/o/r.git":         "",
 		"git@github.com:/o/r.git":         "[CRW] 부모 · o/r",
 		"https://user@github.com/o/r.git": "[CRW] 부모 · o/r",
+		// CRW-1313 (Argon V5 K2): the scp form's host is a host, with an optional user, and nothing else.
+		"github.com:o/r.git":       "[CRW] 부모 · o/r",
+		"git@ghe.example.com:o/r":  "[CRW] 부모 · o/r",
+		"bad host:o/r.git":         "",
+		"git@bad host:o/r.git":     "",
+		"a/b:o/r.git":              "",
+		`a\b:o/r.git`:              "",
+		"git@github.com\t:o/r.git": "",
+		"@github.com:o/r.git":      "",
+		"git@:o/r.git":             "",
 	} {
 		if got := repositorySessionTitle(origin); got != want {
 			t.Errorf("repositorySessionTitle(%q) = %q, want %q", origin, got, want)
@@ -332,6 +342,31 @@ func TestAWorktreeNamingFailureWarnsAndRecordsAndNeverRefuses(t *testing.T) {
 			row := <-rows
 			if row["phase"] != "dispatching_initial_prompt" || pyjson.Map(row["initialPrompt"])["state"] != "outcome_unknown" || pyjson.Map(row["titleWarning"])["code"] != c.code {
 				t.Fatalf("the save before the first turn does not say the prompt may have been sent: %v", row)
+			}
+		})
+	}
+}
+
+// An scp-style origin whose host is not a host names no repository: the repository session gets no title and the
+// creation warns and records, as for a checkout with no origin (CRW-1313, Argon V5 K2).
+func TestAnScpOriginWithABadHostNamesNoRepository(t *testing.T) {
+	for _, origin := range []string{"bad host:o/r.git", "a/b:o/r.git"} {
+		t.Run(origin, func(t *testing.T) {
+			warnings := captureTitleWarnings(t)
+			b, host := rolesBridge(t)
+			cwd := gitCheckout(t, origin)
+			namingHost(host, cwd, map[string]any{"type": "dangerFullAccess"}, false)
+			in := createInput(cwd, "title-bad-host")
+			in.Role, in.Model, in.Effort, in.Sandbox, in.Prompt = "supervisor", pyModel, pyEffort, "danger-full-access", "work"
+			receipt, err := b.CreateThread(context.Background(), in)
+			if err != nil || receipt["status"] != "accepted" || receipt["turnId"] != "turn-1" {
+				t.Fatalf("receipt=%v err=%v", receipt, err)
+			}
+			if code := pyjson.Map(receipt["titleWarning"])["code"]; code != "title_unset" || receipt["title"] != nil || host.Count("thread/name/set") != 0 {
+				t.Fatalf("title = %v, titleWarning = %v, thread/name/set x%d", receipt["title"], receipt["titleWarning"], host.Count("thread/name/set"))
+			}
+			if !strings.Contains(warnings.String(), "title_unset") {
+				t.Fatalf("no warning on stderr: %q", warnings.String())
 			}
 		})
 	}
