@@ -197,6 +197,9 @@ func takeProcessLock(state, run string) (*processLock, error) {
 	return nil, fmt.Errorf("the process lock of run %s was removed three times before it was held", run)
 }
 
+// processLockOpened, when set, runs between the creation of a process lock file and its lock (tests: a sweep in that moment).
+var processLockOpened func(path string)
+
 // makeProcessLock makes and holds one process lock file; nil and no error when the file was removed before its lock was held.
 func makeProcessLock(state, run string) (*processLock, error) {
 	var b [processTokenLen / 2]byte
@@ -208,6 +211,9 @@ func makeProcessLock(state, run string) (*processLock, error) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return nil, err
+	}
+	if processLockOpened != nil {
+		processLockOpened(path)
 	}
 	// the file is new and this process's: only a reader's probe (heldAt) can hold its lock, for an instant, so the lock is waited for
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX); err != nil {
