@@ -117,7 +117,7 @@ func ownerPairs(table *engine.Policy) map[string]bound.Pair {
 // its run lock, and the open line of a run without the lock is closed first.
 func bindOwner(state, run, thread string, table *engine.Policy) (bound.BindResult, error) {
 	return bound.BindOrchestrator(bound.OrchestratorBinding{RunID: run, Thread: thread, Digest: table.Digest, Pairs: ownerPairs(table),
-		Live: func(other string) bool { return validRunID(other) && LockHeld(state, other) }})
+		Live: func(other string) bool { return validRunID(other) && runLive(state, other) }})
 }
 
 // closeOwner closes the run's orchestrator line when it is the owner thread's last (the run ended).

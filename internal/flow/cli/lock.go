@@ -103,7 +103,49 @@ func LockHeld(state, run string) bool {
 	if !validRunID(run) {
 		return false
 	}
-	f, err := os.OpenFile(lockPath(state, run), os.O_RDWR|syscall.O_NOFOLLOW, 0)
+	return heldAt(lockPath(state, run))
+}
+
+// The start lock is a file lock on <state>/flow/<run>/start.lock that `crw flow start` holds from before it binds the run's owner thread
+// until the run's process holds the run lock (or the start gave up on it). A start binds before its process exists (CRW-1316 §9), so
+// another start that binds the same owner thread in that window takes the run as live by its start lock, not as a run whose process
+// is gone (CRW-1372: two near-simultaneous starts cannot both bind).
+func startLockPath(state, run string) string { return filepath.Join(RunDir(state, run), "start.lock") }
+
+// takeStartLock takes the start lock of a new run without waiting.
+func takeStartLock(state, run string) (*Lock, error) {
+	if !validRunID(run) {
+		return nil, fmt.Errorf("%q is not a run id", run)
+	}
+	if err := os.MkdirAll(RunDir(state, run), 0o700); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(startLockPath(state, run), os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = f.Close()
+		return nil, fmt.Errorf("the start lock of run %s: %w", run, err)
+	}
+	return &Lock{f: f}, nil
+}
+
+// startLockHeld says whether a start of the run holds its start lock: the run is being started and its process may not hold the
+// run lock yet.
+func startLockHeld(state, run string) bool {
+	if !validRunID(run) {
+		return false
+	}
+	return heldAt(startLockPath(state, run))
+}
+
+// runLive says whether a run is live for the owner binding: its process holds the run lock, or its start holds the start lock.
+func runLive(state, run string) bool { return LockHeld(state, run) || startLockHeld(state, run) }
+
+// heldAt says whether another open file holds the flock of path; a file that is not there is not held.
+func heldAt(path string) bool {
+	f, err := os.OpenFile(path, os.O_RDWR|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		return false
 	}

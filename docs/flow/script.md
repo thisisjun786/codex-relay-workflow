@@ -963,10 +963,12 @@ run's directory `<state>/flow/<run>/` and none writes the journal, which only th
   A pair carries the decided parts of its role only: an undecided role has the empty pair, a role that names a model and leaves its
   effort undecided has the empty effort, and an effort without a model is no role's pair.
   The start writes it, the run process writes it again when it starts or resumes and it is not the last line, and the process
-  closes it when the run ends (`CloseOrchestrator`). A live run is one whose process holds its run lock: the open line of a run
-  without the lock is closed before the new one is written, and a thread holds the line of one live run, so a second start while
-  the first lives warns and does not bind. The read of the thread's last line and the append are one step under a lock of the
-  flow-bound directory, so two near-simultaneous binds of one thread cannot both bind. A thread whose binding cannot be written is warned about; the run starts.
+  closes it when the run ends (`CloseOrchestrator`). A live run is one whose process holds its run lock, or whose start holds its
+  start lock (`<state>/flow/<run>/start.lock`, held from before the start binds until the run's process holds the run lock, since the
+  start binds before its process exists): the open line of a run with neither is closed before the new one is written, and a thread
+  holds the line of one live run, so a second start while the first lives, or is still starting, warns and does not bind. The read
+  of the thread's last line and the append are one step under a lock of the flow-bound directory, so two near-simultaneous starts of
+  one thread cannot both bind, and neither can their two run processes. A thread whose binding cannot be written is warned about; the run starts.
 - The spawn hook decides an orchestrator's spawns by that line. It refuses two: a spawn by a subagent (a leaf) and a full-history
   fork (`full_history_fork_refused`: the fork keeps the parent's pair). Every other spawn is allowed with `model` and
   `reasoning_effort` overwritten from the decided parts of the pair of its role (an undecided effort keeps the `reasoning_effort` the
