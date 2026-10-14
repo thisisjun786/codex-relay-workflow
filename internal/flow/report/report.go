@@ -284,8 +284,8 @@ type reportHistory struct {
 	reads      []Row
 }
 
-// lastDelivery is the delivery row that says what the report's delivery came to: the newest, unless it is a queued row after an
-// accepted one (SupersedesDelivery).
+// lastDelivery is the delivery row that says what the report's delivery came to: the newest, unless it is a queued row after a settled
+// one (SupersedesDelivery).
 func (h reportHistory) lastDelivery() *Row {
 	var last *Row
 	for i := range h.deliveries {
@@ -298,10 +298,11 @@ func (h reportHistory) lastDelivery() *Row {
 
 // SupersedesDelivery says whether a delivery row with result next, written after one with result prev, is what the report's delivery
 // came to. A queued row is the writer's record of its staging, and the relay daemon may claim, send and settle the message (appending
-// accepted) before the writer has appended it (CRW-1380): a queued row after an accepted one does not undo the acceptance. Any other
-// later row stands for the earlier one.
+// accepted) or hold it at a cap (appending refused) before the writer has appended it (CRW-1380): a queued row never supersedes a
+// settled row (accepted or refused) that came before it. Any other later row stands for the earlier one. The flow side's readers and
+// the manager's pump read the rows through it.
 func SupersedesDelivery(prev, next string) bool {
-	return !(prev == ResultAccepted && next == ResultQueued)
+	return !(next == ResultQueued && (prev == ResultAccepted || prev == ResultRefused))
 }
 
 func (w *Writer) history(ctx context.Context, id string) (reportHistory, error) {
@@ -381,7 +382,7 @@ type ReportView struct {
 	ID, Kind, Run, Milestone, Subject, RecordedAt string
 	BodyDigest, BodyPath                          string
 	Recipient                                     Recipient
-	// LastDelivery is the result of the newest delivery row (a queued row after an accepted one aside, SupersedesDelivery), "" when
+	// LastDelivery is the result of the newest delivery row (a queued row after a settled one aside, SupersedesDelivery), "" when
 	// there is none.
 	LastDelivery string
 	RequestID    string

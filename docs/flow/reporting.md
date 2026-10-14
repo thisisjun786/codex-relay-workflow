@@ -42,9 +42,10 @@ the transaction of its settle of the message: a message the host took (dispatche
 holds a message to a recipient that stayed busy before any transport call, in the transaction of that deferral. Each row is written once
 for its report (or message) and result, in the run's `flow_events` from `1 << 40`; a daemon that dies before its settle commits writes neither the settle nor the row
 (the send is unknown and the channel does not repeat it), one that dies after it leaves both, and neither a second daemon nor a resume of
-the run writes a second row. The daemon may settle the message before the writer has appended its `queued` row, so a `queued` row can
-follow the `accepted` one; a `queued` row never supersedes an `accepted` row before it, and the report reads `accepted` (not standing) for
-`crw flow reports`, a replay and the pump. A staging the channel refuses (nobody above the project, a hierarchy that moved) writes no row: the report
+the run writes a second row. The daemon may settle the message, or hold it at a cap, before the writer has appended its `queued` row, so a
+`queued` row can follow the `accepted` or `refused` one; a `queued` row never supersedes a settled row (`accepted` or `refused`) before it,
+and the report reads what the settle wrote (`accepted`: not standing; `refused`: standing) for `crw flow reports`, a replay and the pump,
+which all read the rows by `report.SupersedesDelivery`. A staging the channel refuses (nobody above the project, a hierarchy that moved) writes no row: the report
 stands, with the refusal as its reason, and a replay stages it again. A decision only Jun can make is not staged for a legacy lead (a
 lead does not decide for Jun): it stands for the store seat's pump. A notice the channel has no kind for - the plan summary notice, and an
 escalation or completion of a run whose plan names no project - goes through `crw manage send-parent` as described below.

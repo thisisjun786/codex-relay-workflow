@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/report"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
@@ -265,9 +266,9 @@ func pumpFlowReadAt(ctx context.Context, state string) (pumpFlowData, error) {
 				byID[id] = r
 				order = append(order, id)
 			case "report_delivery":
-				// a queued row after an accepted one does not undo the acceptance: the daemon's settle can land before the writer
-				// appends the queued row of its staging (report.SupersedesDelivery, CRW-1380)
-				if result, _ := doc["result"].(string); byID[id] != nil && !(byID[id].LastDelivery == "accepted" && result == "queued") {
+				// a queued row after a settled one (accepted or refused) does not undo it: the daemon's settle or cap hold can land
+				// before the writer appends the queued row of its staging (CRW-1380); the flow side reads the rows by the same rule
+				if result, _ := doc["result"].(string); byID[id] != nil && report.SupersedesDelivery(byID[id].LastDelivery, result) {
 					byID[id].LastDelivery = result
 				}
 			case "report_read":
