@@ -388,6 +388,7 @@ func (g *fakeGH) run(args ...string) ([]byte, error) {
 
 func useGH(t *testing.T, g *fakeGH) {
 	t.Helper()
+	t.Setenv("GH_HOST", "")
 	saved := runGH
 	runGH = g.run
 	t.Cleanup(func() { runGH = saved })
@@ -408,7 +409,7 @@ func TestGHProbeReadsOnly(t *testing.T) {
 	if access != want {
 		t.Errorf("access = %+v, want %+v", access, want)
 	}
-	if len(g.calls) != 2 || strings.Join(g.calls[0], " ") != "auth status --hostname github.com" || strings.Join(g.calls[1], " ") != "api repos/thisisjun786/crw-work" {
+	if len(g.calls) != 2 || strings.Join(g.calls[0], " ") != "auth status --hostname github.com" || strings.Join(g.calls[1], " ") != "api --hostname github.com repos/thisisjun786/crw-work" {
 		t.Errorf("gh calls: %q", g.calls)
 	}
 	for _, call := range g.calls {
@@ -468,5 +469,170 @@ func TestRunGHMissingBinary(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	if _, err := runGHHost("auth", "status"); !errors.Is(err, exec.ErrNotFound) {
 		t.Errorf("runGHHost without gh on PATH: %v", err)
+	}
+}
+
+// CRW-1359 d1: the sign-in is read on the host gh api goes to (GH_HOST, else github.com), so both
+// calls carry the same --hostname; a blank GH_HOST is the default host.
+func TestGHProbeAsksAuthAndAPIOnTheSameHost(t *testing.T) {
+	for name, tc := range map[string]struct{ env, host string }{
+		"unset": {"", "github.com"}, "blank": {"  \t", "github.com"}, "enterprise": {" ghe.example.com ", "ghe.example.com"},
+	} {
+		g := &fakeGH{api: repoJSON}
+		useGH(t, g)
+		t.Setenv("GH_HOST", tc.env)
+		if _, err := ghProbe("o/n"); err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		want := []string{"auth status --hostname " + tc.host, "api --hostname " + tc.host + " repos/o/n"}
+		if len(g.calls) != 2 || strings.Join(g.calls[0], " ") != want[0] || strings.Join(g.calls[1], " ") != want[1] {
+			t.Errorf("%s: gh calls %q, want %q", name, g.calls, want)
+		}
+	}
+}
+
+// authSplitGH answers auth status with a failure (a second login of the host has a broken token,
+// so gh auth status exits non-zero) while gh api, which uses the active login, works.
+func authSplitGH(api string) *fakeGH {
+	return &fakeGH{auth: &ghError{message: "github.com\n  X Failed to log in to github.com account second (keyring)\n  - The token in keyring is invalid."}, api: api}
+}
+
+// CRW-1359 d1: a broken second login of the host does not make tracking_auth wrong when the active
+// login reads the repository; with no permissions in the answer, or no answer, the sign-in is told
+// as the cause, with the host named.
+func TestGHProbeBrokenSecondLoginDoesNotHideTheActiveOne(t *testing.T) {
+	t.Setenv("GH_HOST", "")
+	useGH(t, authSplitGH(repoJSON))
+	access, err := ghProbe("o/n")
+	if err != nil || !access.Authenticated || !access.CanWriteIssues() {
+		t.Errorf("active login works: %+v, %v", access, err)
+	}
+	useGH(t, authSplitGH(`{"has_issues":true,"private":false}`))
+	if _, err := ghProbe("o/n"); !errors.Is(err, ErrGHUnauthenticated) || !strings.Contains(err.Error(), "github.com") {
+		t.Errorf("no permissions and a failed auth status: %v", err)
+	}
+	broken := authSplitGH("")
+	broken.apiErr = &ghError{message: "gh: Bad credentials (HTTP 401)"}
+	useGH(t, broken)
+	if _, err := ghProbe("o/n"); !errors.Is(err, ErrGHUnauthenticated) {
+		t.Errorf("a failed auth status and a failed api: %v", err)
+	}
+	useGH(t, &fakeGH{auth: &ghError{message: "not logged in"}})
+	t.Setenv("GH_HOST", "ghe.example.com")
+	if _, err := ghProbe("o/n"); !errors.Is(err, ErrGHUnauthenticated) || !strings.Contains(err.Error(), "ghe.example.com") {
+		t.Errorf("the host is not named: %v", err)
+	}
+}
+
+// CRW-1359 d3: an answer with no permissions at all (a fine-grained token, an app token, a token
+// without the scope) is told apart from permissions that are all false, names those causes, and is a
+// warning with the access recorded, never a failure.
+func TestMissingPermissionsAreAWarningThatNamesTheCauses(t *testing.T) {
+	useGH(t, &fakeGH{api: `{"has_issues":true,"private":true}`})
+	t.Setenv("GH_HOST", "")
+	access, err := ghProbe("o/work")
+	if err != nil || !access.PermissionsUnreported {
+		t.Fatalf("probe: %+v, %v", access, err)
+	}
+	file := trackingFile(t, `{"tracking":{"kind":"github","repo":"o/work"}}`)
+	status, findings := CheckTracking(file, func(string) (TrackingAccess, error) { return access, nil }, true)
+	if len(findings) != 1 || findings[0].Level != LevelWarning || findings[0].Check != CheckTrackingPermissions || findings[0].Root != "tracking" {
+		t.Fatalf("findings %+v, want one %s warning", findings, CheckTrackingPermissions)
+	}
+	for _, cause := range []string{"fine-grained", "app token", "scope"} {
+		if !strings.Contains(findings[0].Message, cause) {
+			t.Errorf("the message lacks %q: %s", cause, findings[0].Message)
+		}
+	}
+	if status.Access == nil || !status.Access.PermissionsUnreported || status.Access.IssuesWrite {
+		t.Errorf("the state is not recorded: %+v", status.Access)
+	}
+	if report := (Report{Findings: findings}); len(report.Faults()) != 0 {
+		t.Errorf("a failure: %+v", report.Faults())
+	}
+	// permissions that are reported and all false stay an error; an archived repository stays one
+	_, findings = CheckTracking(file, func(string) (TrackingAccess, error) {
+		return TrackingAccess{Authenticated: true, HasIssues: true}, nil
+	}, true)
+	if len(findings) != 1 || findings[0].Level != LevelError || findings[0].Check != CheckTrackingIssues {
+		t.Errorf("all-false permissions: %+v", findings)
+	}
+	_, findings = CheckTracking(file, func(string) (TrackingAccess, error) {
+		return TrackingAccess{Authenticated: true, HasIssues: true, Archived: true, PermissionsUnreported: true}, nil
+	}, true)
+	if len(findings) != 1 || findings[0].Level != LevelError || !strings.Contains(findings[0].Message, "archived") {
+		t.Errorf("archived without permissions: %+v", findings)
+	}
+}
+
+// CRW-1359 d2: WithTracking keeps the keys of the document in the order they have, puts a new
+// tracking section last and replaces an old one in place, and writes <, > and & as they are.
+func TestWithTrackingKeepsKeyOrderAndDoesNotEscapeHTML(t *testing.T) {
+	doc := `{"zeta":{"note":"a <b> & c","list":[1,2]},"schema":"crw-config/1","alpha":"x>y","tracking":{"kind":"linear"},"mid":null}`
+	out, err := WithTracking([]byte(doc), Tracking{Kind: TrackingGitHub, Repo: "o/n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(out)
+	var order []string
+	for _, key := range []string{`"zeta"`, `"schema"`, `"alpha"`, `"tracking"`, `"mid"`} {
+		order = append(order, key)
+		if i := strings.Index(text, key); i < 0 {
+			t.Fatalf("%s is gone:\n%s", key, text)
+		}
+	}
+	last := -1
+	for _, key := range order {
+		i := strings.Index(text, key+":")
+		if i <= last {
+			t.Errorf("%s is out of order (document order zeta, schema, alpha, tracking, mid):\n%s", key, text)
+		}
+		last = i
+	}
+	for _, literal := range []string{`a <b> & c`, `x>y`} {
+		if !strings.Contains(text, literal) {
+			t.Errorf("%q was escaped:\n%s", literal, text)
+		}
+	}
+	if strings.Contains(text, `\u003c`) || strings.Contains(text, `\u0026`) || strings.Contains(text, `\u003e`) {
+		t.Errorf("HTML escapes in the output:\n%s", text)
+	}
+	if !strings.HasSuffix(text, "}\n") {
+		t.Errorf("no final newline:\n%s", text)
+	}
+	got, err := trackingFile(t, text).Tracking()
+	if err != nil || got != (Tracking{Kind: TrackingGitHub, Repo: "o/n"}) {
+		t.Errorf("round trip: %+v, %v", got, err)
+	}
+	// a new section goes last; writing twice is the same document
+	added, err := WithTracking([]byte(`{"b":1,"a":"<&>"}`), Tracking{Kind: TrackingLinear})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, a, tr := strings.Index(string(added), `"b"`), strings.Index(string(added), `"a"`), strings.Index(string(added), `"tracking"`); !(b < a && a < tr) || !strings.Contains(string(added), `"<&>"`) {
+		t.Errorf("a new section:\n%s", added)
+	}
+	again, err := WithTracking(added, Tracking{Kind: TrackingLinear})
+	if err != nil || string(again) != string(added) {
+		t.Errorf("not idempotent: %v\n%s\n%s", err, added, again)
+	}
+}
+
+// CRW-1359 d2: a document that is not one JSON object is refused, and nothing is written for it.
+func TestWithTrackingRefusesADocumentThatIsNotAnObject(t *testing.T) {
+	for _, doc := range []string{`null`, `[1]`, `"s"`, `7`, `{`, `{"a":1} {"b":2}`, `{"a":1,}`, `{"a"}`} {
+		if out, err := WithTracking([]byte(doc), Tracking{Kind: TrackingGitHub, Repo: "o/n"}); err == nil || out != nil {
+			t.Errorf("%q: written %q, %v", doc, out, err)
+		}
+	}
+	for _, doc := range []string{``, " \n", `{}`} {
+		out, err := WithTracking([]byte(doc), Tracking{Kind: TrackingGitHub, Repo: "o/n"})
+		if err != nil {
+			t.Errorf("%q: %v", doc, err)
+			continue
+		}
+		if got, err := trackingFile(t, string(out)).Tracking(); err != nil || got.Repo != "o/n" {
+			t.Errorf("%q: %+v, %v", doc, got, err)
+		}
 	}
 }

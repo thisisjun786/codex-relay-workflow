@@ -107,17 +107,19 @@ func realPathSafe(p string) string {
 }
 
 // HasValidReceipt reports whether receiptPath (absolute, or relative to cwd) names a non-empty regular file inside the evidence
-// directory that is not itself a symbolic link, lexically and after resolving the links of the root and of the file. The file
-// is never opened. Any failure is false. A link that makes the evidence root itself point elsewhere is accepted, and a path
-// swapped between these checks and its later use is not defended.
+// directory that is not itself a symbolic link, lexically and after resolving the links below the root and of the file. The
+// evidence root and the state directory above it must each be a directory itself: a symbolic link at either holds no valid
+// receipt (port: fixed, CRW-475). The file is never opened. Any failure is false. A path swapped between these checks and its
+// later use is not defended.
 func HasValidReceipt(cwd, receiptPath string) bool {
 	return receiptInside(evidenceRoot(cwd), resolve(cwd, receiptPath))
 }
 
 // receiptInside is the receipt check of HasValidReceipt for a resolved path against an evidence root; the assigned-tree check
-// (AcceptAssignedReceipt) applies it too.
+// (AcceptAssignedReceipt) applies it too. The root and its parent, the state directory, are refused when either is not a
+// directory itself (crwdir.RequireDir), before any link below them is resolved.
 func receiptInside(root, resolved string) bool {
-	if !insideDirectory(resolved, root) {
+	if crwdir.RequireDir(filepath.Dir(root)) != nil || crwdir.RequireDir(root) != nil || !insideDirectory(resolved, root) {
 		return false
 	}
 	if _, err := os.Stat(resolved); err != nil {

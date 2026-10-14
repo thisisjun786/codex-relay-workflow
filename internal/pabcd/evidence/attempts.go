@@ -216,7 +216,7 @@ func WithCounterLock(cwd, sessionID, agentID, turnID string, fn func() error) er
 	if !state.IsCanonicalSessionID(sessionID) { // CRW-1108: refuse before reading or creating an alias
 		return state.ErrNonCanonicalSessionID
 	}
-	dir, err := ensureStateDir(cwd)
+	dir, err := crwdir.EnsureDir(cwd)
 	if err != nil {
 		return err
 	}
@@ -234,14 +234,11 @@ func WriteAttempts(cwd, sessionID, agentID string, attempts int, turnID string) 
 	path := counterPath(cwd, sessionID, agentID, turnID)
 	record := counterRecord{Attempts: attempts}
 	if !ownDirectoryCounter(sessionID, agentID, turnID) {
-		if _, err := crwdir.EnsureDir(cwd); err != nil {
-			return false
-		}
-		if err := os.MkdirAll(filepath.Dir(path), 0o777); err != nil {
+		if _, err := crwdir.EnsureSubdir(cwd, AttemptsSubdir); err != nil { // a link at .crw or the attempts directory is refused (CRW-475)
 			return false
 		}
 	} else {
-		if _, err := ensureRecordDir(cwd, AttemptsSubdir, counterVersionDir, sessionRecordDir(sessionID)); err != nil {
+		if _, err := crwdir.EnsureSubdir(cwd, AttemptsSubdir, counterVersionDir, sessionRecordDir(sessionID)); err != nil {
 			return false
 		}
 		record = counterRecord{Attempts: attempts, SessionID: sessionID, AgentID: agentID, TurnID: turnID}

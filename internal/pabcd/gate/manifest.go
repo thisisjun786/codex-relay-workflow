@@ -87,13 +87,21 @@ func readArtifact(abs, rootReal, label, want string) ([]byte, error) {
 }
 
 // parseArtifactManifest validates a QA receipt's manifest (paths relative to the receipt's directory): each entry, then each
-// identity against the verdict beside it, then each verdict against the entries that name it. The first failure is the refusal.
+// identity against the verdict beside it, then each verdict against the entries that name it. The first failure is the refusal. An
+// evidence root, or a state directory above it, that is a symbolic link is refused before any entry is read.
 func parseArtifactManifest(raw any, receiptPath, cwd string) ([]ArtifactDigest, error) {
 	items, ok := raw.([]any)
 	if !ok || len(items) == 0 {
 		return nil, refuse("artifactManifest must be a non-empty array")
 	}
 	root := resolve(cwd, filepath.Join(crwdir.DirName, evidence.Subdir))
+	// The evidence root and the state directory above it must be directories themselves: a link at either would make every
+	// regular file where it leads an artifact (CRW-475). Links below the root are resolved against the root's real path.
+	for _, dir := range []string{filepath.Dir(root), root} {
+		if err := crwdir.RequireDir(dir); err != nil {
+			return nil, refuse("artifactManifest evidence root %s is refused: %v", root, err)
+		}
+	}
 	rootReal, err := filepath.EvalSymlinks(root)
 	if err != nil {
 		return nil, refuse("artifactManifest evidence root cannot be read: %v", err)

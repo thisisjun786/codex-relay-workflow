@@ -144,12 +144,15 @@ type RunDetail struct {
 	// PolicyPath and PolicyDigest are the execution policy file the run recorded when it started and the digest of its bytes
 	// (the run's last start or repin), both empty for a run on the placeholder table, which reads no file. PolicyRepinnedFrom
 	// is the digest the run held before a resume read another one, empty if no resume did (CRW-1324).
-	PolicyPath         string      `json:"policy_path"`
-	PolicyDigest       string      `json:"policy_digest"`
-	PolicyRepinnedFrom string      `json:"policy_repinned_from,omitempty"`
-	Phases             []PhaseNode `json:"phases"`
-	Nodes              []NodeInfo  `json:"nodes"`
-	Questions          []Question  `json:"questions"`
+	PolicyPath         string `json:"policy_path"`
+	PolicyDigest       string `json:"policy_digest"`
+	PolicyRepinnedFrom string `json:"policy_repinned_from,omitempty"`
+	// PolicyUnrecorded: the run's latest start was journaled before policy_source existed, so its policy file is not known; the
+	// digest is shown when the row has one (CRW-1360).
+	PolicyUnrecorded bool        `json:"policy_unrecorded,omitempty"`
+	Phases           []PhaseNode `json:"phases"`
+	Nodes            []NodeInfo  `json:"nodes"`
+	Questions        []Question  `json:"questions"`
 }
 
 func str(m map[string]any, key string) string {
@@ -452,27 +455,31 @@ func Blocked(rec RunRecord, events []engine.Event) (reasons []string, blocked bo
 }
 
 // recordedPolicy is the policy the run holds: what its latest start recorded, replaced by what a repin recorded after it, and the
-// digest a repin replaced.
-func recordedPolicy(events []engine.Event) (path, digest, repinnedFrom string) {
+// digest a repin replaced. Every start resets the repin: a start that read the digest the run already held repinned nothing, and a
+// repin is journaled after the start it belongs to. unrecorded is true when the latest start predates the policy_source field, so
+// the run's policy file is not known (a row that records an empty policy_source is the placeholder table, not unrecorded). The
+// journal is only read.
+func recordedPolicy(events []engine.Event) (path, digest, repinnedFrom string, unrecorded bool) {
 	for _, e := range events {
 		if e.Kind != engine.KindRun {
 			continue
 		}
 		switch e.Event {
 		case "started":
-			path, digest = str(e.Data, "policy_source"), str(e.Data, "policy_digest")
+			_, recorded := e.Data["policy_source"]
+			path, digest, repinnedFrom, unrecorded = str(e.Data, "policy_source"), str(e.Data, "policy_digest"), "", !recorded
 		case engine.EvPolicyRepinned:
-			path, digest, repinnedFrom = str(e.Data, "new_source"), str(e.Data, "new"), str(e.Data, "old")
+			path, digest, repinnedFrom, unrecorded = str(e.Data, "new_source"), str(e.Data, "new"), str(e.Data, "old"), false
 		}
 	}
-	return path, digest, repinnedFrom
+	return path, digest, repinnedFrom, unrecorded
 }
 
 // Detail builds the tree of a run: its phases with the agent calls made in each, what each plan node has so far, and the
 // questions it asked.
 func Detail(rec RunRecord, events []engine.Event, live bool, pid int) RunDetail {
 	d := RunDetail{RunInfo: Summarize(rec, events, live, pid), Phases: []PhaseNode{}, Nodes: []NodeInfo{}, Questions: Questions(events)}
-	d.PolicyPath, d.PolicyDigest, d.PolicyRepinnedFrom = recordedPolicy(events)
+	d.PolicyPath, d.PolicyDigest, d.PolicyRepinnedFrom, d.PolicyUnrecorded = recordedPolicy(events)
 	order, rows := callRows(events)
 	// the phase a call was made in is the last phase row before its first row
 	phaseOf := map[string]string{}

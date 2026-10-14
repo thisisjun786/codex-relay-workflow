@@ -386,3 +386,83 @@ func TestShowSaysARunHasNoPolicyFile(t *testing.T) {
 		t.Errorf("show does not say the run had no policy file:\n%s", out)
 	}
 }
+
+// CRW-1360 d2: a start that reads the digest the run already holds repins nothing, so show stops
+// printing the earlier "repinned from"; a real repin after that start prints it again. The journal is
+// only read.
+func TestShowClearsRepinnedFromOnALaterUnchangedStart(t *testing.T) {
+	const (
+		path   = "/home/op/.codex/execution-policy.json"
+		first  = "1111111111111111111111111111111111111111111111111111111111111111"
+		second = "2222222222222222222222222222222222222222222222222222222222222222"
+		third  = "3333333333333333333333333333333333333333333333333333333333333333"
+	)
+	w := newWorld(t)
+	r := w.newRun("run-clear", "thread-owner")
+	started := func(digest string) {
+		r.j.Append(engine.Event{RunID: "run-clear", Kind: engine.KindRun, Event: "started", Data: map[string]any{"workflow": "project-lane", "policy_source": path, "policy_digest": digest}})
+	}
+	repinned := func(old, new string) {
+		r.j.Append(engine.Event{RunID: "run-clear", Kind: engine.KindRun, Event: engine.EvPolicyRepinned, Data: map[string]any{"old": old, "new": new, "old_source": path, "new_source": path}})
+	}
+	td := w.deps()
+	show := func() (string, map[string]any) {
+		t.Helper()
+		code, out, errOut := td.doKeep("show", "run-clear", "--state", w.state)
+		if code != 0 {
+			t.Fatalf("exit %d\n%s", code, errOut)
+		}
+		code, js, _ := td.doKeep("show", "run-clear", "--state", w.state, "--json")
+		var d map[string]any
+		if code != 0 || json.Unmarshal([]byte(js), &d) != nil {
+			t.Fatalf("show --json: %d %s", code, js)
+		}
+		return out, d
+	}
+	started(first)
+	started(second)
+	repinned(first, second)
+	if out, d := show(); !strings.Contains(out, "repinned from "+first) || d["policy_repinned_from"] != first {
+		t.Fatalf("a repin right after its start is not shown:\n%s\n%v", out, d)
+	}
+	started(second) // the next start reads the same digest: nothing repinned
+	if out, d := show(); strings.Contains(out, "repinned from") || d["policy_repinned_from"] != nil || !strings.Contains(out, "policy "+path+"  digest "+second) {
+		t.Errorf("a later unchanged start still shows the old repin:\n%s\n%v", out, d)
+	}
+	started(second)
+	repinned(second, third)
+	if out, d := show(); !strings.Contains(out, "policy "+path+"  digest "+third+"  repinned from "+second) || d["policy_repinned_from"] != second {
+		t.Errorf("a real repin after the start is not shown:\n%s\n%v", out, d)
+	}
+}
+
+// CRW-1360 d2: a started row from before policy_source was journaled says the policy is not recorded
+// (with its digest when it has one); only a row that records an empty policy_source is the placeholder
+// table.
+func TestShowDoesNotCallAnOldStartedRowAPlaceholderTable(t *testing.T) {
+	const digest = "4444444444444444444444444444444444444444444444444444444444444444"
+	w := newWorld(t)
+	td := w.deps()
+	for name, tc := range map[string]struct {
+		data map[string]any
+		want string
+	}{
+		"digest only": {map[string]any{"workflow": "project-lane", "policy_digest": digest}, "policy file not recorded  digest " + digest},
+		"neither":     {map[string]any{"workflow": "project-lane"}, "policy not recorded"},
+		"placeholder": {map[string]any{"workflow": "project-lane", "policy_source": "", "policy_digest": ""}, "policy none (placeholder table, no execution policy file)"},
+	} {
+		id := "run-old-" + strings.ReplaceAll(name, " ", "-")
+		r := w.newRun(id, "thread-owner")
+		r.j.Append(engine.Event{RunID: id, Kind: engine.KindRun, Event: "started", Data: tc.data})
+		code, out, errOut := td.doKeep("show", id, "--state", w.state)
+		if code != 0 {
+			t.Fatalf("%s: exit %d\n%s", name, code, errOut)
+		}
+		if !strings.Contains(out, tc.want) {
+			t.Errorf("%s: show lacks %q:\n%s", name, tc.want, out)
+		}
+		if name != "placeholder" && strings.Contains(out, "placeholder table") {
+			t.Errorf("%s: an old row is called a placeholder table:\n%s", name, out)
+		}
+	}
+}
