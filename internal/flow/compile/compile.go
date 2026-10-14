@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"slices"
 	"sort"
@@ -176,8 +177,21 @@ func compileProject(in Input, at int, owner map[string]string, opts Options) (Pl
 	if p.CoordinatorEpoch < 0 {
 		refuse("input", "coordinator_epoch", "coordinator_epoch %d: an epoch is 0 (a plan nobody has claimed) or the epoch of the writing session's claim", p.CoordinatorEpoch)
 	}
-	if t := p.Target; t != nil && (t.Repository == "" || t.BaseRef == "") {
+	if t := p.Target; t != nil && (t.Repository == "" || t.Branch() == "") {
 		refuse("input", "target", "target needs both repository and base_ref")
+	}
+	// the target's form: a run integrates on a local checkout, on the short branch name; another form is read as the run needs it, warned
+	// and not refused (CRW-1317)
+	if t := p.Target; t != nil {
+		warn := func(rule, path, format string, args ...any) {
+			plan.Warnings = append(plan.Warnings, Warning{Project: p.Key, Rule: rule, Path: path, Detail: fmt.Sprintf(format, args...)})
+		}
+		if t.Repository != "" && !filepath.IsAbs(t.Repository) {
+			warn("target_repository", "target.repository", "the repository %q is not an absolute path: a run integrates its nodes on a local checkout and refuses another target (give the checkout's absolute path, the run's --repo)", t.Repository)
+		}
+		if t.Branch() != t.BaseRef {
+			warn("target_base_ref", "target.base_ref", "the base_ref %q is read as the branch %q: the integration path adds refs/heads/ itself (write the short name)", t.BaseRef, t.Branch())
+		}
 	}
 
 	// --- the issues
@@ -688,7 +702,7 @@ func edgeSpec(from *unit, t *Target) dag.Edge {
 	if from.kind == dag.NodeImplementation {
 		e := dag.Edge{Kind: dag.EdgeIntegrated}
 		if t != nil {
-			e.TargetRepository, e.TargetBaseRef = t.Repository, t.BaseRef
+			e.TargetRepository, e.TargetBaseRef = t.Repository, t.Branch()
 		}
 		return e
 	}

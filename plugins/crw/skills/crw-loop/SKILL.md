@@ -46,8 +46,8 @@ the user actually authorized.
 For useful mid-work questions, follow [Async user questions](../crw-dev/references/async-questions.md)
 when the tool is exposed and the host permits it. Leave optional questions without
 expecting replies, keep working and incorporate answers if they arrive. An unanswered
-optional question does not block completion. Interview retains its existing goal
-restrictions; async is not a workaround for a denied question or missing approval.
+optional question does not block completion. Async is not a workaround for a
+denied question or missing approval.
 
 ## Select the smallest sufficient reading path
 

@@ -2,9 +2,11 @@ package cli
 
 import (
 	"encoding/json"
+	"net/url"
 	"sort"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/apply"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/callstate"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
@@ -12,20 +14,21 @@ import (
 
 // The states a run is shown in. A run that is not over has a process (running, paused) or none (dead: a run lock nobody holds
 // and no finished row after the last start); a run that is over is completed, held (it finished, but a call or a wait is left to
-// go on with), cancelled or failed.
+// go on with), blocked (it finished completed and started no node: see Summarize), cancelled or failed.
 const (
 	StateRunning   = "running"
 	StatePaused    = "paused"
 	StateDead      = "dead"
 	StateHeld      = "held"
 	StateCompleted = "completed"
+	StateBlocked   = "blocked"
 	StateCancelled = "cancelled"
 	StateFailed    = "failed"
 )
 
-// Over reports whether a run in this state needs nothing more from its owner: it completed, was cancelled or failed.
+// Over reports whether a run in this state needs nothing more from its owner: it completed, was blocked, was cancelled or failed.
 func Over(state string) bool {
-	return state == StateCompleted || state == StateCancelled || state == StateFailed
+	return state == StateCompleted || state == StateBlocked || state == StateCancelled || state == StateFailed
 }
 
 // RunRecord is the flow_runs row of a run: its identity.
@@ -65,6 +68,16 @@ type RunInfo struct {
 	// HeldReasons are the reasons calls are held for (budget_exhausted, engine_paused, ...), once each.
 	HeldReasons []string `json:"held_reasons,omitempty"`
 	LastSeq     int      `json:"last_seq"`
+	// ItemErrors are the join items that threw in the last process of the run (its item_error rows, engine/scriptvm.go): a lane of
+	// crw.dag whose release failed is one.
+	ItemErrors []ItemError `json:"item_errors,omitempty"`
+}
+
+// ItemError is a join item that threw: the key of the item (the node of a lane), the path of the item and the error it threw.
+type ItemError struct {
+	Item  string `json:"item"`
+	Path  string `json:"path"`
+	Error string `json:"error"`
 }
 
 // Question is a question a run asked the orchestrator (an escalation that carries an ask) and whether a decision answered it.
@@ -128,9 +141,15 @@ type NodeInfo struct {
 // RunDetail is `crw flow show`: the reading of a run and its tree.
 type RunDetail struct {
 	RunInfo
-	Phases    []PhaseNode `json:"phases"`
-	Nodes     []NodeInfo  `json:"nodes"`
-	Questions []Question  `json:"questions"`
+	// PolicyPath and PolicyDigest are the execution policy file the run recorded when it started and the digest of its bytes
+	// (the run's last start or repin), both empty for a run on the placeholder table, which reads no file. PolicyRepinnedFrom
+	// is the digest the run held before a resume read another one, empty if no resume did (CRW-1324).
+	PolicyPath         string      `json:"policy_path"`
+	PolicyDigest       string      `json:"policy_digest"`
+	PolicyRepinnedFrom string      `json:"policy_repinned_from,omitempty"`
+	Phases             []PhaseNode `json:"phases"`
+	Nodes              []NodeInfo  `json:"nodes"`
+	Questions          []Question  `json:"questions"`
 }
 
 func str(m map[string]any, key string) string {
@@ -260,6 +279,13 @@ func Questions(events []engine.Event) []Question {
 }
 
 // Summarize reads the rows of a run: its state, its counts and its last phase. live says whether a process holds the run lock.
+//
+// A run meant to start the nodes of a plan (StartsNodes: a lane workflow, or a run whose arguments name a plan) whose last process finished
+// completed with nothing left to go on with is blocked, not completed, when it started no node (no crw.release released one, no
+// crw.releaseChild released a child and nothing landed, in any process) and join items of its last process threw (the releases of crw.dag
+// that failed are such items). The engine's status of the run stays completed. A run whose last process has a node the scheduler held back
+// unreleased (a wait a resume asks again, CRW-1201), a run where a node started and a run not meant to start one (a judge panel, a scout)
+// keep the state completed.
 func Summarize(rec RunRecord, events []engine.Event, live bool, pid int) RunInfo {
 	info := RunInfo{RunRecord: rec, Live: live, PID: pid}
 	lastStart, lastFinish := -1, -1
@@ -282,9 +308,17 @@ func Summarize(rec RunRecord, events []engine.Event, live bool, pid int) RunInfo
 			info.Phase = str(e.Data, "title")
 		}
 	}
+	heldBack := false
 	for i := lastStart + 1; i < len(events); i++ {
-		if e := events[i]; e.Kind == engine.KindFlow && e.Event == engine.EvRunPaused {
+		e := events[i]
+		switch {
+		case e.Kind == engine.KindFlow && e.Event == engine.EvRunPaused:
 			info.Paused = str(e.Data, "by") + ": " + str(e.Data, "reason")
+		case e.Kind == engine.KindFlow && e.Event == evItemError:
+			info.ItemErrors = append(info.ItemErrors, ItemError{Item: itemKey(e.Path), Path: e.Path, Error: str(e.Data, "error")})
+		case e.Kind == engine.KindCall && e.Op == ops.OpRelease && e.Event == engine.EvCompleted && !releasedRow(e) && str(e.Data, "kind") == "executor" && str(e.Data, "hold") == "":
+			// a node the scheduler held back (no slot, no memory, a region in use, ...): unreleased, and asked again by a resume (CRW-1201)
+			heldBack = true
 		}
 	}
 	order, rows := callRows(events)
@@ -326,8 +360,11 @@ func Summarize(rec RunRecord, events []engine.Event, live bool, pid int) RunInfo
 		info.State = StateRunning
 	case lastFinish > lastStart && info.Status == engine.RunCompleted:
 		info.State = StateCompleted
-		if info.Unsettled > 0 || info.Holds > 0 || info.Waiting > 0 {
+		switch {
+		case info.Unsettled > 0 || info.Holds > 0 || info.Waiting > 0:
 			info.State = StateHeld
+		case len(info.ItemErrors) > 0 && !heldBack && !nodeStarted(events) && StartsNodes(rec, events):
+			info.State = StateBlocked
 		}
 	case lastFinish > lastStart && info.ErrorKind == engine.ErrKindCancelled:
 		info.State = StateCancelled
@@ -339,10 +376,102 @@ func Summarize(rec RunRecord, events []engine.Event, live bool, pid int) RunInfo
 	return info
 }
 
+// evItemError is the row a join item that threw leaves (engine/scriptvm.go, itemFailed).
+const evItemError = "item_error"
+
+// itemKey is the key of a join item from its path (<parent>/<position>:<key>, the key percent-escaped, engine/paths.go).
+func itemKey(path string) string {
+	seg := path[strings.LastIndex(path, "/")+1:]
+	key := seg[strings.Index(seg, ":")+1:]
+	if k, err := url.PathUnescape(key); err == nil {
+		return k
+	}
+	return key
+}
+
+func releasedRow(e engine.Event) bool {
+	released, _ := e.Data["released"].(bool)
+	return released
+}
+
+// nodeStarted says whether any process of the run started a node of its milestone: a crw.release released one to an executor, a
+// crw.releaseChild released an issue child, or a crw.integrate landed one. The reading is the lane's results, never the thread or turn rows
+// of the journal.
+func nodeStarted(events []engine.Event) bool {
+	for _, e := range events {
+		if e.Kind != engine.KindCall || e.Event != engine.EvCompleted {
+			continue
+		}
+		switch {
+		case e.Op == ops.OpRelease && releasedRow(e), e.Op == ops.OpReleaseChild, e.Op == ops.OpIntegrate:
+			return true
+		}
+	}
+	return false
+}
+
+// ProjectLaneWorkflow is the built-in workflow that runs the issue nodes of a milestone.
+const ProjectLaneWorkflow = "project-lane"
+
+// laneWorkflows are the built-in workflows whose run is meant to start the nodes of a plan: the project lane, the issue lane of a child and
+// the night batch.
+var laneWorkflows = map[string]bool{ProjectLaneWorkflow: true, apply.IssueLane: true, NightBatchWorkflow: true}
+
+// StartsNodes says whether a run is meant to start the nodes of a plan, so that a run of it that started none is blocked (CRW-1320): a run of
+// a lane workflow, or a run whose arguments name a plan (the record's plan). The workflow is the record's, else the one the run's first
+// started row names. Another script run (a judge panel, a scout) that fans out and has an item that threw never meant to start a node.
+func StartsNodes(rec RunRecord, events []engine.Event) bool {
+	if rec.PlanID != "" {
+		return true
+	}
+	workflow := rec.Workflow
+	for _, e := range events {
+		if workflow != "" {
+			break
+		}
+		if e.Kind == engine.KindRun && e.Event == "started" {
+			workflow = str(e.Data, "workflow")
+		}
+	}
+	return laneWorkflows[workflow]
+}
+
+// Blocked is the reading `crw flow show` prints and report.RunHook asks for when a run finishes (CRW-1320): whether Summarize shows the
+// run of this record blocked, and the reason of each item that failed (<item>: <error>). The report and the shown state are this one
+// reading.
+func Blocked(rec RunRecord, events []engine.Event) (reasons []string, blocked bool) {
+	info := Summarize(rec, events, false, 0)
+	if info.State != StateBlocked {
+		return nil, false
+	}
+	for _, ie := range info.ItemErrors {
+		reasons = append(reasons, ie.Item+": "+oneLine(ie.Error))
+	}
+	return reasons, true
+}
+
+// recordedPolicy is the policy the run holds: what its latest start recorded, replaced by what a repin recorded after it, and the
+// digest a repin replaced.
+func recordedPolicy(events []engine.Event) (path, digest, repinnedFrom string) {
+	for _, e := range events {
+		if e.Kind != engine.KindRun {
+			continue
+		}
+		switch e.Event {
+		case "started":
+			path, digest = str(e.Data, "policy_source"), str(e.Data, "policy_digest")
+		case engine.EvPolicyRepinned:
+			path, digest, repinnedFrom = str(e.Data, "new_source"), str(e.Data, "new"), str(e.Data, "old")
+		}
+	}
+	return path, digest, repinnedFrom
+}
+
 // Detail builds the tree of a run: its phases with the agent calls made in each, what each plan node has so far, and the
 // questions it asked.
 func Detail(rec RunRecord, events []engine.Event, live bool, pid int) RunDetail {
 	d := RunDetail{RunInfo: Summarize(rec, events, live, pid), Phases: []PhaseNode{}, Nodes: []NodeInfo{}, Questions: Questions(events)}
+	d.PolicyPath, d.PolicyDigest, d.PolicyRepinnedFrom = recordedPolicy(events)
 	order, rows := callRows(events)
 	// the phase a call was made in is the last phase row before its first row
 	phaseOf := map[string]string{}

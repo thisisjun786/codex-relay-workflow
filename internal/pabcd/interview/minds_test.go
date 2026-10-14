@@ -7,8 +7,10 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/hook"
 	I "github.com/thisisjun786/codex-relay-workflow/internal/pabcd/interview"
 )
 
@@ -81,13 +83,21 @@ func TestMindsIDsAndPrompts(t *testing.T) {
 func TestMindsDispatchDirectiveGolden(t *testing.T) {
 	mindsGolden(t, "dispatch", I.MindDispatchDirective)
 }
+
+// TestMindsDispatchOwnerPointer: the recorded dispatch text points at crw-interview's
+// references/mind-dispatch.md. CRW-1340 removed that skill with the Interview, so the text is the oracle
+// record (testdata/minds/dispatch.txt, injected-text.json MIND_DISPATCH_DIRECTIVE) and no hook emits it:
+// the pointer must not resolve to a file the plugin still ships.
 func TestMindsDispatchOwnerPointer(t *testing.T) {
 	ref := regexp.MustCompile(`references/[\w/-]+\.md`).FindString(I.MindDispatchDirective)
 	if ref != "references/mind-dispatch.md" {
 		t.Fatalf("owner pointer=%q", ref)
 	}
-	if _, err := os.Stat(filepath.Join("..", "..", "..", "plugins", "crw", "skills", "crw-interview", ref)); err != nil {
-		t.Fatal(err)
+	if _, err := os.Stat(filepath.Join("..", "..", "..", "plugins", "crw", "skills", "crw-interview", ref)); !os.IsNotExist(err) {
+		t.Fatalf("the retired Interview owner still ships %s (%v)", ref, err)
+	}
+	if hook.InterviewDirective(nil) == "" || strings.Contains(hook.InterviewDirective(nil), "Mind dispatch") {
+		t.Error("the I directive a hook emits still carries the Mind dispatch text")
 	}
 }
 func TestMindsRejectInvalidFields(t *testing.T) {

@@ -48,6 +48,39 @@ func strs(l []any) []string {
 	return out
 }
 
+// TestIssueReadyHeldIsAWarning (CRW-1318): a held answer (not_ready, design_first) exits 0 with the decision unchanged and every
+// reason printed as a warning on stderr; an exception that cannot be used still exits 2, and the help names the exception's keys.
+func TestIssueReadyHeldIsAWarning(t *testing.T) {
+	code, out, errOut := readyCall(readyIssue(t, "## 기준\n\n* c1: 무엇\n", nil))
+	r := decodeReport(t, out)
+	if code != 0 || at(r, "decision") != "not_ready" || len(atList(r, "reasons")) == 0 {
+		t.Fatalf("not_ready: exit %d: %s%s", code, out, errOut)
+	}
+	for _, reason := range strs(atList(r, "reasons")) {
+		if !strings.Contains(errOut, "crw skill issue-ready: warning: CRW-SYN is not_ready: "+reason+"\n") {
+			t.Errorf("the reason %q is not a warning: %s", reason, errOut)
+		}
+	}
+	code, out, errOut = readyCall(readyIssue(t, readyBody, map[string]any{"labels": []string{"설계 먼저"}}))
+	if code != 0 || at(decodeReport(t, out), "decision") != "design_first" || !strings.Contains(errOut, "warning: CRW-SYN is design_first") {
+		t.Errorf("design_first: exit %d: %s%s", code, out, errOut)
+	}
+	if code, out, errOut := readyCall(readyIssue(t, readyBody, nil)); code != 0 || errOut != "" || at(decodeReport(t, out), "decision") != "ready" {
+		t.Errorf("ready prints no warning: exit %d: %s%s", code, out, errOut)
+	}
+	if code, _, errOut := readyCall(readyIssue(t, readyBody, map[string]any{"exception": map[string]any{"issue": "CRW-SYN", "approved_on": "2026-10-09", "statement": "s"}})); code != 2 || !strings.Contains(errOut, "exception") {
+		t.Errorf("an exception with no approver: exit %d: %s", code, errOut)
+	}
+	for _, args := range [][]string{{"issue-ready", "--help"}, {"issue-ready", "check", "--help"}} {
+		code, help, _ := call(args, "")
+		for _, key := range []string{"exception.issue", "exception.approved_by", "exception.approved_on", "exception.statement", "YYYY-MM-DD"} {
+			if code != 0 || !strings.Contains(help, key) {
+				t.Errorf("%v: exit %d, the help does not name %s:\n%s", args, code, key, help)
+			}
+		}
+	}
+}
+
 func TestIssueReadyAcceptsAnIssueWithEveryItem(t *testing.T) {
 	code, out, errOut := readyCall(readyIssue(t, readyBody, nil))
 	if code != 0 || errOut != "" {
@@ -91,7 +124,7 @@ func TestIssueReadyNamesEachMissingItem(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			code, out, errOut := readyCall(readyIssue(t, cut(c.heading), nil))
-			if code != 1 || errOut != "" {
+			if code != 0 || !strings.HasPrefix(errOut, "crw skill issue-ready: warning: CRW-SYN is not_ready: missing ") {
 				t.Fatalf("exit %d: %s%s", code, out, errOut)
 			}
 			r := decodeReport(t, out)
@@ -134,7 +167,7 @@ func TestIssueReadyTakesAPathNamedElsewhereAsTheEditRegion(t *testing.T) {
 func TestIssueReadyNamesEveryMissingItemOfAnEmptyBody(t *testing.T) {
 	code, out, _ := readyCall(readyIssue(t, "## 배경\n\n한 문단 요청.\n", nil))
 	r := decodeReport(t, out)
-	if code != 1 || at(r, "decision") != "not_ready" {
+	if code != 0 || at(r, "decision") != "not_ready" {
 		t.Fatalf("exit %d: %s", code, out)
 	}
 	if got := strings.Join(strs(atList(r, "missing")), ","); got != "criteria,edit_region,decided_answer,red_test,done_condition" {
@@ -149,7 +182,7 @@ func TestIssueReadyDoneConditionNeedsACommand(t *testing.T) {
 	body := strings.Replace(readyBody, "* `go test ./internal/skill -run IssueReady`가 통과한다.", "* 잘 동작한다.", 1)
 	code, out, _ := readyCall(readyIssue(t, body, nil))
 	r := decodeReport(t, out)
-	if code != 1 || strings.Join(strs(atList(r, "missing")), ",") != "done_condition" {
+	if code != 0 || strings.Join(strs(atList(r, "missing")), ",") != "done_condition" {
 		t.Fatalf("exit %d: %s", code, out)
 	}
 	fenced := strings.Replace(readyBody, "* `go test ./internal/skill -run IssueReady`가 통과한다.", "통과해야 한다:\n\n```sh\ngo test ./internal/skill\n```", 1)
@@ -162,7 +195,7 @@ func TestIssueReadyPlaceholderIsNotAnItem(t *testing.T) {
 	body := strings.Replace(readyBody, "해제 판정은 `crw skill issue-ready check`가 한다. 아키텍트 제안과 부모 결정은 이 절에 적는다.", "TBD", 1)
 	code, out, _ := readyCall(readyIssue(t, body, nil))
 	r := decodeReport(t, out)
-	if code != 1 || strings.Join(strs(atList(r, "missing")), ",") != "decided_answer" {
+	if code != 0 || strings.Join(strs(atList(r, "missing")), ",") != "decided_answer" {
 		t.Fatalf("exit %d: %s", code, out)
 	}
 }
@@ -170,7 +203,7 @@ func TestIssueReadyPlaceholderIsNotAnItem(t *testing.T) {
 func TestIssueReadyHoldsADesignFirstLabel(t *testing.T) {
 	for _, labels := range []any{[]string{"codex-relay-workflow", "설계 먼저"}, []map[string]string{{"name": "설계 먼저"}}, []string{"Design-First"}} {
 		code, out, errOut := readyCall(readyIssue(t, readyBody, map[string]any{"labels": labels}))
-		if code != 1 || errOut != "" {
+		if code != 0 || !strings.HasPrefix(errOut, "crw skill issue-ready: warning: CRW-SYN is design_first: design first: ") {
 			t.Fatalf("%v: exit %d: %s%s", labels, code, out, errOut)
 		}
 		r := decodeReport(t, out)
@@ -191,7 +224,7 @@ func TestIssueReadyHoldsAnOpenDesignQuestion(t *testing.T) {
 	body := strings.Replace(readyBody, "## 열린 결정\n\n없음\n", "## 열린 결정\n\n* 판정을 relay 해제 거절로 할지, 스킬 규칙과 점검으로 할지.\n* 라벨 이름.\n", 1)
 	code, out, _ := readyCall(readyIssue(t, body, nil))
 	r := decodeReport(t, out)
-	if code != 1 || at(r, "decision") != "design_first" {
+	if code != 0 || at(r, "decision") != "design_first" {
 		t.Fatalf("exit %d: %s", code, out)
 	}
 	if got := strs(atList(r, "open_questions")); len(got) != 2 || !strings.HasPrefix(got[0], "판정을 relay") {
@@ -208,7 +241,7 @@ func TestIssueReadyHoldsAnOpenDesignQuestion(t *testing.T) {
 func TestIssueReadyReportsDesignFirstAndMissingTogether(t *testing.T) {
 	code, out, _ := readyCall(readyIssue(t, "## 열린 결정\n\n* 무엇을 할지\n", nil))
 	r := decodeReport(t, out)
-	if code != 1 || at(r, "decision") != "design_first" || len(atList(r, "missing")) != 5 {
+	if code != 0 || at(r, "decision") != "design_first" || len(atList(r, "missing")) != 5 {
 		t.Fatalf("exit %d: %s", code, out)
 	}
 }
@@ -296,7 +329,7 @@ func TestIssueReadyHoldsTheIssueThatAskedForTheGate(t *testing.T) {
 		"## 범위 밖\n\n* 하위 에이전트의 모델·역할 지정(CXC 몫).\n\n## 열린 결정\n\n* 판정을 relay 해제 거절로 할지, 스킬 규칙과 crw-tidy 점검으로 할지.\n"
 	code, out, _ := readyCall(readyIssue(t, body, map[string]any{"id": "CRW-1039", "labels": []string{"codex-relay-workflow"}}))
 	r := decodeReport(t, out)
-	if code != 1 || at(r, "decision") != "design_first" || strings.Join(strs(atList(r, "missing")), ",") != "edit_region,decided_answer,red_test,done_condition" {
+	if code != 0 || at(r, "decision") != "design_first" || strings.Join(strs(atList(r, "missing")), ",") != "edit_region,decided_answer,red_test,done_condition" {
 		t.Fatalf("exit %d: %s", code, out)
 	}
 }
@@ -346,7 +379,7 @@ func TestIssueReadyEditRegionNeedsAPath(t *testing.T) {
 	body := strings.Replace(readyBody, "* `internal/skill/issue_ready.go`\n* `plugins/crw/skills/crw-run/SKILL.md`", "* 관련 파일 몇 개\n* related files", 1)
 	code, out, _ := readyCall(readyIssue(t, body, nil))
 	r := decodeReport(t, out)
-	if code != 1 || strings.Join(strs(atList(r, "missing")), ",") != "edit_region" || len(atList(r, "observed", "edit_regions")) != 0 {
+	if code != 0 || strings.Join(strs(atList(r, "missing")), ",") != "edit_region" || len(atList(r, "observed", "edit_regions")) != 0 {
 		t.Fatalf("exit %d: %s", code, out)
 	}
 }
@@ -359,7 +392,7 @@ func TestIssueReadyOutOfScopePathsAreNoEditRegion(t *testing.T) {
 		body := readyBody[:start] + readyBody[end:] + "\n" + heading + "\n\n* `internal/relay/`\n"
 		code, out, _ := readyCall(readyIssue(t, body, nil))
 		r := decodeReport(t, out)
-		if code != 1 || strings.Join(strs(atList(r, "missing")), ",") != "edit_region" || len(atList(r, "observed", "edit_regions")) != 0 {
+		if code != 0 || strings.Join(strs(atList(r, "missing")), ",") != "edit_region" || len(atList(r, "observed", "edit_regions")) != 0 {
 			t.Errorf("%s: exit %d: %s", heading, code, out)
 		}
 	}
@@ -379,7 +412,7 @@ func TestIssueReadyOpenDecisionStartingWithANoneWordIsAQuestion(t *testing.T) {
 		b := strings.Replace(readyBody, "## 열린 결정\n\n없음\n", "## 열린 결정\n\n"+q+"\n", 1)
 		code, out, _ := readyCall(readyIssue(t, b, nil))
 		r := decodeReport(t, out)
-		if code != 1 || at(r, "decision") != "design_first" || len(atList(r, "open_questions")) != 1 {
+		if code != 0 || at(r, "decision") != "design_first" || len(atList(r, "open_questions")) != 1 {
 			t.Errorf("%q: exit %d: %s", q, code, out)
 		}
 	}
@@ -403,7 +436,7 @@ func TestIssueReadyDoneConditionOnlyInACodeBlock(t *testing.T) {
 	// A block with a heading-shaped line is still no new section, and an empty block is no condition.
 	empty := readyBody[:start] + "## 끝 조건\n\n```sh\n```\n\n" + readyBody[end:]
 	code, out, _ := readyCall(readyIssue(t, empty, nil))
-	if code != 1 || strings.Join(strs(atList(decodeReport(t, out), "missing")), ",") != "done_condition" {
+	if code != 0 || strings.Join(strs(atList(decodeReport(t, out), "missing")), ",") != "done_condition" {
 		t.Errorf("an empty block: exit %d: %s", code, out)
 	}
 }
@@ -417,7 +450,7 @@ func wantDesignFirst(t *testing.T, name, body string, questions ...string) {
 	t.Helper()
 	code, out, _ := readyCall(readyIssue(t, body, nil))
 	r := decodeReport(t, out)
-	if code != 1 || at(r, "decision") != "design_first" {
+	if code != 0 || at(r, "decision") != "design_first" {
 		t.Errorf("%s: exit %d: %s", name, code, out)
 		return
 	}
@@ -484,7 +517,7 @@ func TestIssueReadyTestPathsAreNoEditRegion(t *testing.T) {
 	} {
 		code, out, _ := readyCall(readyIssue(t, body, nil))
 		r := decodeReport(t, out)
-		if code != 1 || strings.Join(strs(atList(r, "missing")), ",") != "edit_region" || len(atList(r, "observed", "edit_regions")) != 0 {
+		if code != 0 || strings.Join(strs(atList(r, "missing")), ",") != "edit_region" || len(atList(r, "observed", "edit_regions")) != 0 {
 			t.Errorf("%s: exit %d: %s", name, code, out)
 		}
 	}
@@ -507,7 +540,7 @@ func TestIssueReadyDoneConditionNeedsCommandAndResult(t *testing.T) {
 		"* `TBD`가 통과한다.",
 	} {
 		code, out, _ := readyCall(readyIssue(t, with(text), nil))
-		if code != 1 || strings.Join(strs(atList(decodeReport(t, out), "missing")), ",") != "done_condition" {
+		if code != 0 || strings.Join(strs(atList(decodeReport(t, out), "missing")), ",") != "done_condition" {
 			t.Errorf("%q: exit %d: %s", text, code, out)
 		}
 	}
@@ -533,7 +566,7 @@ func TestIssueReadyNoneEntryIsNoRequiredItem(t *testing.T) {
 			"criteria":       strings.Replace(readyBody, "* c1: 준비 항목이 빠진 이슈의 해제가 이유와 함께 거절된다.\n* c2: 설계 먼저 상태가 보인다.", none, 1),
 		} {
 			code, out, _ := readyCall(readyIssue(t, body, nil))
-			if code != 1 || strings.Join(strs(atList(decodeReport(t, out), "missing")), ",") != item {
+			if code != 0 || strings.Join(strs(atList(decodeReport(t, out), "missing")), ",") != item {
 				t.Errorf("%s as %s: exit %d: %s", none, item, code, out)
 			}
 		}
@@ -560,7 +593,7 @@ func TestIssueReadyCommandLabelIsNoResult(t *testing.T) {
 		"```sh\ngo vet ./internal/skill\ngo test ./internal/skill\n```",
 	} {
 		code, out, _ := readyCall(readyIssue(t, with(text), nil))
-		if code != 1 || strings.Join(strs(atList(decodeReport(t, out), "missing")), ",") != "done_condition" {
+		if code != 0 || strings.Join(strs(atList(decodeReport(t, out), "missing")), ",") != "done_condition" {
 			t.Errorf("%q: exit %d: %s", text, code, out)
 		}
 	}
@@ -605,7 +638,7 @@ func TestIssueReadyRootEditTargetsAreRegions(t *testing.T) {
 	}
 	noEdit := readyBody[:start] + readyBody[end:]
 	code, out, _ := readyCall(readyIssue(t, strings.Replace(noEdit, "* c2: 설계 먼저 상태가 보인다.", "* c2: `web`", 1), nil))
-	if code != 1 || strings.Join(strs(atList(decodeReport(t, out), "missing")), ",") != "edit_region" {
+	if code != 0 || strings.Join(strs(atList(decodeReport(t, out), "missing")), ",") != "edit_region" {
 		t.Errorf("a slashless word in the criteria: exit %d: %s", code, out)
 	}
 }
@@ -621,7 +654,7 @@ func TestIssueReadyDescendantsOfOutOfScopeAreExcluded(t *testing.T) {
 		"\n## 범위 밖\n\n### 메모\n\n#### Decided answer\n\n- `internal/relay/`\n",
 	} {
 		code, out, _ := readyCall(readyIssue(t, without+tail, nil))
-		if code != 1 || strings.Join(strs(atList(decodeReport(t, out), "missing")), ",") != "edit_region" {
+		if code != 0 || strings.Join(strs(atList(decodeReport(t, out), "missing")), ",") != "edit_region" {
 			t.Errorf("%q: exit %d: %s", tail, code, out)
 		}
 	}

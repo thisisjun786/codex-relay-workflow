@@ -11,7 +11,6 @@
     "hook__post-tool-use-capturing-interview-answers__content_block_response",
     "hook__post-tool-use-capturing-interview-answers__ignored_and_disabled",
     "hook__post-tool-use-capturing-interview-answers__partial_and_malformed_rounds",
-    "hook__post-tool-use-capturing-interview-answers__phase_i_reinjects_rescan_directive",
     "hook__post-tool-use-capturing-interview-answers__replay_is_idempotent",
     "hook__post-tool-use-capturing-interview-answers__string_payloads_captured",
     "hook__post-tool-use-capturing-interview-answers__unreadable_goal_db_captures_silently",

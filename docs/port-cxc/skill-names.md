@@ -10,7 +10,7 @@ difference of each ported skill from its original is the record `port/cxc/record
 
 Every ported skill takes its CXC name with the `cxc-` prefix replaced by `crw-`: `ast-grep`, `dev`, `dev-architecture`,
 `dev-backend`, `dev-code-reviewer`, `dev-data`, `dev-debugging`, `dev-devops`, `dev-frontend`, `dev-scaffolding`,
-`dev-security`, `dev-testing`, `dev-uiux-design`, `dev-visualizer`, `interview`, `kwrite`, `loop`, `pabcd`, `qa`, `recall`,
+`dev-security`, `dev-testing`, `dev-uiux-design`, `dev-visualizer`, `kwrite`, `loop`, `pabcd`, `qa`, `recall`,
 `repo-map`, `search`, `worktree-guardian`. The CXC `lunasearch` is a reference of `crw-search`
 (`references/lunasearch.md`) and has no skill of its own.
 
@@ -25,10 +25,11 @@ procedure of the original is `crw-run` goal mode.
 | `orchestrate` | A deprecated redirect stub in the original; not ported. Its subject is merged into `crw-pabcd` and `crw-loop`. |
 | `skill-hub` | A redirect stub in the original; not ported. |
 | `dev-diagram-viewer` | A redirect stub in the original; not ported. Its subject is absorbed into `crw-dev-visualizer`. |
+| `interview` | Ported, then removed by CRW-1340: CRW holds no synchronous interview. An unclear milestone or issue is settled where it is registered (`crw-define`), and ambiguity during a run goes up as a decision request. The name table keeps its row for the replayed fixtures. |
 | `remote` | Out of scope. |
 
 ## Skills CRW wrote
 
 `crw-add-issue`, `crw-canon`, `crw-check`, `crw-define`, `crw-plan`, `crw-refactor`, `crw-run`, `crw-run-initiative`,
 `crw-status` and `crw-tidy` have no original and no record. They are listed in `OwnSkills` in
-`internal/dev/skillport/record.go`; `TestSkillDirectoryCountAtMost34` holds the number of skill directories at 34 or below.
+`internal/dev/skillport/record.go`; `TestSkillDirectoryCountAtMost32` holds the number of skill directories at 32 or below.

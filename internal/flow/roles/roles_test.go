@@ -217,3 +217,109 @@ func repoRoot(t *testing.T) string {
 	}
 	return filepath.Join(filepath.Dir(file), "..", "..", "..")
 }
+
+// sectionOf is the text of the overlay section under the heading, up to the next heading of the same level.
+func sectionOf(overlay, heading string) string {
+	_, rest, ok := strings.Cut(overlay, "\n"+heading+"\n")
+	if !ok {
+		return ""
+	}
+	body, _, _ := strings.Cut(rest, "\n## ")
+	return body
+}
+
+// TestArchitectOverlayExecutorContract (CRW-1321): the architect plans for the executor that will carry the plan out, so its
+// overlay states the executor contract the run enforces - the executor never commits, the run commits with a fixed message,
+// the fields a RECEIPT has, done conditions that are checks of the committed HEAD or of the worktree, and generated assets
+// planned with their generation and verification commands.
+func TestArchitectOverlayExecutorContract(t *testing.T) {
+	overlay, err := Overlay("architect", Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract := sectionOf(overlay, "## Executor contract")
+	if contract == "" {
+		t.Fatal("the architect overlay has no \"## Executor contract\" section")
+	}
+	for _, want := range []string{
+		"The executor never commits",
+		"The run commits",
+		"fixed message `crw <node> <call>`",
+		"request id",
+		"no commit message and no commit body",
+		"RECEIPT",
+		"`outcome`", "`files`", "`verification`", "`summary`", "`gap`", "`research_question`", "`plan_mismatch`",
+		"committed HEAD",
+		"state of the worktree",
+		"`make gui`", "`crw-dev ci gui-drift`",
+		"generation command and its verification command",
+	} {
+		if !strings.Contains(contract, want) {
+			t.Errorf("the executor contract section lacks %q:\n%s", want, contract)
+		}
+	}
+	// The executor overlay is where the commit rule is the executor's own; the architect's contract says the same thing.
+	executor, _ := Overlay("executor", Options{})
+	if !strings.Contains(executor, "makes the commit itself (`crw.commit`)") {
+		t.Error("the executor overlay no longer says the run makes the commit; the architect's contract rests on it")
+	}
+}
+
+// TestArchitectOverlayAuthorityBoundary (CRW-1321, CRW-1347): exceptions to repository rules, other issues' records, policy
+// decisions and execution-environment prerequisites are not the architect's to decide. The overlay says they are raised as open
+// questions with the scope notation of their kind, that a question does not stop the run (no hold), and describes the route an
+// open question takes: never back to the architect, to the orchestrator for a notation of the four kinds, to an explorer otherwise.
+func TestArchitectOverlayAuthorityBoundary(t *testing.T) {
+	overlay, err := Overlay("architect", Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	boundary := sectionOf(overlay, "## Authority boundary")
+	if boundary == "" {
+		t.Fatal("the architect overlay has no \"## Authority boundary\" section")
+	}
+	for _, want := range []string{
+		"You do not decide",
+		"an exception to a rule of the repository",
+		"the record of another issue",
+		"a policy decision",
+		"a prerequisite of the execution environment",
+		"`open_questions`",
+		"does not stop the run",
+		"not a hold",
+		"explorer",
+		"`design_question`",
+		"the orchestrator",
+		"`assumptions`",
+		// the notation the router reads (ops.AuthorityScope): at the start of the scope, the token as given
+		"`scope` that starts with the notation of its kind",
+		"`authority:repo-rule`", "`authority:other-record`", "`authority:policy`", "`authority:environment`",
+		// the route as ops.exploreRoute takes it (lane_decisions.go): no open question is the architect's to answer
+		"What the run does with an open question:",
+		"None is left to you to answer",
+		"whatever `files_needed` lists",
+		"goes to no explorer",
+		"non-blocking ask",
+		"a missing or unknown notation among them",
+		"beyond that cap",
+		"and again before the audit of a re-plan",
+		"each question's route and what it got",
+	} {
+		if !strings.Contains(boundary, want) {
+			t.Errorf("the authority boundary section lacks %q:\n%s", want, boundary)
+		}
+	}
+	// The section no longer says a question of the DESIGN is the architect's to answer or reaches the audit unanswered for that.
+	for _, claim := range []string{"is the asker's to answer", "reaches the audit with no answer", "no route today hands it to a layer above the run", "open question today"} {
+		if strings.Contains(boundary, claim) {
+			t.Errorf("the authority boundary section says %q, which the route no longer does:\n%s", claim, boundary)
+		}
+	}
+	// The section says plainly which questions go to the layers above the run: those with a notation and those beyond the explorer
+	// cap, not every question the architect raises.
+	for _, claim := range []string{"since it is a question for the layers above the run", "(none included)"} {
+		if strings.Contains(boundary, claim) {
+			t.Errorf("the authority boundary section says %q, which the route does not do or does not say plainly:\n%s", claim, boundary)
+		}
+	}
+}

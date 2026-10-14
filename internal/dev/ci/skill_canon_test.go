@@ -670,8 +670,9 @@ func TestKoreanLevelWordsOnlyInHierarchyTable(t *testing.T) {
 
 // The two kinds of key in execution-roles.md are held by two different implementations: the host's
 // execution policy (internal/bridge/execution) accepts the relay roles and refuses any other key, and
-// the helper role store (internal/role) holds the agent roles. The document's Kind column and its
-// get_capabilities rule have to follow that split, not a table of seven keys.
+// the helper role store (internal/role) holds the agent roles, the four helper roles and the two
+// flow-only keys (CRW-1330). The document's Kind column and its get_capabilities rule have to follow
+// that split, not a table of nine keys.
 func TestExecutionRolesKindsMatchTheirPolicies(t *testing.T) {
 	text := readRepoText(t, canonRefDir+"execution-roles.md")
 	kinds := map[string]string{}
@@ -682,7 +683,7 @@ func TestExecutionRolesKindsMatchTheirPolicies(t *testing.T) {
 		kinds[strings.Trim(row[0], "`")] = row[1]
 	}
 	var helperKeys []string
-	for _, r := range role.Roles() {
+	for _, r := range append(role.Roles(), role.FlowOnlyRoles()...) {
 		helperKeys = append(helperKeys, string(r))
 	}
 	relayKeys := []string{execution.Supervisor, execution.Parent, execution.Child}

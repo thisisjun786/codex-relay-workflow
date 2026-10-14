@@ -32,7 +32,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Route Linear project coordination to crw-run goal mode before task activation and exclude project parents from the implementation loop. Replace the removed Node CLI fallback with the installer-owned Go runtime pointer. CRW-1130 (post-evaluation): DISPATCH-MANAGED-01 added before DISPATCH-SURFACE-01 (a Linear issue or DAG node is a relay child through crw-run, never a create_thread lane; an unresolved binding is not permission to go unmanaged), DISPATCH-SURFACE-01 and its parallel-lane request sentence scoped to unmanaged work, and the router row points to the binding check first. Oracle: loop/SKILL.md DISPATCH-SURFACE-01. CRW-1219: the description is one task's loop and sends a Linear project or initiative request to crw-run, and the parent-exclusion paragraph is one pointer to hierarchy.md. CRW-1222: DISPATCH-MANAGED-01 names the flow executor call of the project orchestrator's run as the second managed surface beside the independent relay child.",
+      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. Normalize frontmatter to the repository-supported name and description fields; preserve invocation description and record the removed oracle metadata. Route Linear project coordination to crw-run goal mode before task activation and exclude project parents from the implementation loop. Replace the removed Node CLI fallback with the installer-owned Go runtime pointer. CRW-1130 (post-evaluation): DISPATCH-MANAGED-01 added before DISPATCH-SURFACE-01 (a Linear issue or DAG node is a relay child through crw-run, never a create_thread lane; an unresolved binding is not permission to go unmanaged), DISPATCH-SURFACE-01 and its parallel-lane request sentence scoped to unmanaged work, and the router row points to the binding check first. Oracle: loop/SKILL.md DISPATCH-SURFACE-01. CRW-1219: the description is one task's loop and sends a Linear project or initiative request to crw-run, and the parent-exclusion paragraph is one pointer to hierarchy.md. CRW-1222: DISPATCH-MANAGED-01 names the flow executor call of the project orchestrator's run as the second managed surface beside the independent relay child. CRW-1340: the synchronous Interview is retired with crw-interview; an unclear milestone or issue goes back to its registration (crw-define) and ambiguity during a run goes up as a decision request, so the routes to the Interview are dropped.",
       "hunks": [
         {
           "line": 3,
@@ -68,6 +68,17 @@
           ],
           "new": [
             "For useful mid-work questions, follow [Async user questions](../crw-dev/references/async-questions.md)\n"
+          ]
+        },
+        {
+          "line": 49,
+          "old": [
+            "optional question does not block completion. Interview retains its existing goal\n",
+            "restrictions; async is not a workaround for a denied question or missing approval.\n"
+          ],
+          "new": [
+            "optional question does not block completion. Async is not a workaround for a\n",
+            "denied question or missing approval.\n"
           ]
         },
         {
@@ -184,7 +195,7 @@
     },
     {
       "file": "references/durable-goalplan.md",
-      "reason": "Remove the oracle deprecated goalplan alias from the no-alias CRW invocation table. CRW-1133: the HOTL goal rule passes a user-named token_budget to create_goal instead of omitting it, and the resource bounds name the limit. CRW-1111: retain the steering idempotency, missing-row retry and stored annotate-note contract. CRW-146: list `loop unbind`, the CRW addition that releases a session's goalplan slug from rest (with the chat command `orchestrate unbind`); the oracle has no such verb.",
+      "reason": "Remove the oracle deprecated goalplan alias from the no-alias CRW invocation table. CRW-1133: the HOTL goal rule passes a user-named token_budget to create_goal instead of omitting it, and the resource bounds name the limit. CRW-1111: retain the steering idempotency, missing-row retry and stored annotate-note contract. CRW-146: list `loop unbind`, the CRW addition that releases a session's goalplan slug from rest (with the chat command `orchestrate unbind`); the oracle has no such verb. CRW-1340: the synchronous Interview is retired with crw-interview; an unclear milestone or issue goes back to its registration (crw-define) and ambiguity during a run goes up as a decision request, so the routes to the Interview are dropped.",
       "hunks": [
         {
           "line": 22,
@@ -202,6 +213,33 @@
             "hook does not refuse the field, and `update_goal` is not a budget API.\n",
             "\n",
             "After `create_goal`, run `crw pabcd loop init --objective \"<same text>\"\n"
+          ]
+        },
+        {
+          "line": 35,
+          "old": [
+            "Interview OPEN ASSUMPTIONS, steering decisions, and quality gates.\n"
+          ],
+          "new": [
+            "OPEN ASSUMPTIONS, steering decisions, and quality gates.\n"
+          ]
+        },
+        {
+          "line": 40,
+          "old": [
+            "- Carry Interview OPEN ASSUMPTIONS (`proposed` and `open` entries, with source,\n"
+          ],
+          "new": [
+            "- Carry the plan's OPEN ASSUMPTIONS (`proposed` and `open` entries, with source,\n"
+          ]
+        },
+        {
+          "line": 43,
+          "old": [
+            "  sections with their answer reference (INTERVIEW-ASSUME-01 in crw-interview).\n"
+          ],
+          "new": [
+            "  sections with their answer reference (a decided goalplan decision id).\n"
           ]
         },
         {

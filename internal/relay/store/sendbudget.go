@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"math"
+	"strings"
 	"time"
 )
 
@@ -162,8 +163,33 @@ func OrchestratorParentSQL(parent string) string {
 const OrchestratorTasksSQL = "(SELECT DISTINCT task_id FROM scope_bindings" +
 	" WHERE role = 'parent' AND scope_kind = 'project' AND status IN ('active','paused') AND superseded_by IS NULL)"
 
-// RelationshipIsOrchestrator is whether relationship is of class orchestrator (OrchestratorParentSQL).
+// OrchestratorClassPrefixes are the relationship-id prefixes of the upward supervisor channel that are
+// of class orchestrator by their id alone (CRW-1314 design section 3): "run:<id>" is a flow run waking
+// its orchestrator and "initiative:<key>" a lead reporting to the management seat above its initiative.
+// Neither has a relationships row to read a parent binding from, and each carries every milestone,
+// decision and step of everything below it through that one id, so the ordinary hour cap would stop
+// it where an orchestrator's relationship is not stopped. Only the hour cap follows the class: the
+// recipient's minimum gap between two sends is the same for every class.
+var OrchestratorClassPrefixes = []string{"run:", "initiative:"}
+
+// OrchestratorClassID is whether relationship is of class orchestrator by its id alone
+// (OrchestratorClassPrefixes).
+func OrchestratorClassID(relationship string) bool {
+	for _, prefix := range OrchestratorClassPrefixes {
+		if strings.HasPrefix(relationship, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// RelationshipIsOrchestrator is whether relationship is of class orchestrator: an id of the upward
+// supervisor channel's orchestrator class (OrchestratorClassID), or a relationship whose parent holds
+// the live parent binding of a project (OrchestratorParentSQL).
 func (s *Store) RelationshipIsOrchestrator(ctx context.Context, relationship string) (bool, error) {
+	if OrchestratorClassID(relationship) {
+		return true, nil
+	}
 	row, err := s.One(ctx, "SELECT "+OrchestratorParentSQL("r.parent_task_id")+" AS orchestrator FROM relationships r WHERE r.relationship_id = ?", relationship)
 	if err != nil || row == nil {
 		return false, err

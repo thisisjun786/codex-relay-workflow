@@ -3,9 +3,11 @@ package scenario
 import (
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/acceptance/premerge"
 )
 
@@ -59,6 +61,87 @@ func TestLandingWhileReviewKeepsOneAncestorBase(t *testing.T) {
 	}
 	if !slices.Equal(slices.Sorted(slices.Values(l.Relay.Landed)), []string{"A", "B"}) {
 		t.Errorf("landed %v", l.Relay.Landed)
+	}
+}
+
+// d1 (stableBase): another node lands while B is building, before B is verified. Both worktrees grew from the same commit, so when
+// B is verified and accepted after A has moved the integration tip, stableBase finds the merge-base of B's head and the moved tip:
+// the one common ancestor of the two heads.
+func TestLandingBeforeVerifyKeepsCommonAncestorBase(t *testing.T) {
+	nodes := []NodeSpec{
+		{ID: "A", Issue: "CRW-A", Title: "issue A", Regions: []string{"a/"}},
+		{ID: "B", Issue: "CRW-B", Title: "issue B", Regions: []string{"b/"}},
+	}
+	l := NewLab(t, nodes...)
+	start := l.Tip()
+	bStarted := make(chan struct{})
+	aLanded := make(chan struct{})
+	var bOnce, aOnce sync.Once
+	l.OnRow(func(ev engine.Event) {
+		if ev.Op == ops.OpIntegrate && ev.Event == engine.EvCompleted && str(ev.Data, "node") == "A" {
+			aOnce.Do(func() { close(aLanded) })
+		}
+	})
+	l.On("^review:A:r1$", func(*Call) *fakehostPlan {
+		p := Say(Verdict(true))
+		p.Gate = bStarted
+		return &p
+	})
+	l.On("^build:B:executor$", func(c *Call) *fakehostPlan {
+		c.Edit()
+		bOnce.Do(func() { close(bStarted) })
+		p := Say(Receipt("ready_for_review"))
+		p.Gate = aLanded
+		return &p
+	})
+	got := mustRun(t, l)
+	if got.State != "closed" {
+		t.Fatalf("state %q: %+v; escalations %v", got.State, got, l.FlowRows(engine.EvEscalation))
+	}
+	if !slices.Equal(l.Relay.Landed, []string{"A", "B"}) {
+		t.Fatalf("landed %v, want [A B]", l.Relay.Landed)
+	}
+	var aIntegrateSeq, bVerifySeq int
+	for _, ev := range l.Events() {
+		if ev.Kind == engine.KindCall && ev.Event == engine.EvCompleted {
+			if ev.Op == ops.OpIntegrate && str(ev.Data, "node") == "A" {
+				aIntegrateSeq = ev.Seq
+			}
+			if ev.Op == ops.OpVerify && str(ev.Data, "node") == "B" {
+				bVerifySeq = ev.Seq
+			}
+		}
+	}
+	if aIntegrateSeq == 0 || bVerifySeq <= aIntegrateSeq {
+		t.Fatalf("A integrated at seq %d, B verified at seq %d: A must land before B is verified", aIntegrateSeq, bVerifySeq)
+	}
+	if len(l.Relay.Accepts) != 2 {
+		t.Fatalf("%d acceptances", len(l.Relay.Accepts))
+	}
+	heads := map[string]string{}
+	for _, a := range l.Relay.Accepts {
+		heads[a.Node] = a.Head
+	}
+	common := l.Git("merge-base", heads["A"], heads["B"])
+	if common != start {
+		t.Fatalf("merge-base of A (%s) and B (%s) is %s, want %s", heads["A"], heads["B"], common, start)
+	}
+	for _, a := range l.Relay.Accepts {
+		if out, err := l.gitErr(l.Repo, "merge-base", "--is-ancestor", a.Base, a.Head); err != nil {
+			t.Errorf("node %s: the acceptance base %s is not an ancestor of the head %s: %s", a.Node, a.Base, a.Head, out)
+		}
+		if a.Base != common {
+			t.Errorf("node %s: the acceptance base is %s, the common ancestor of the two heads is %s", a.Node, a.Base, common)
+		}
+		for _, v := range l.Verify.Calls {
+			if v.Node == a.Node && v.Head == a.Head && v.Base != common {
+				t.Errorf("node %s: verified over base %s, want common ancestor %s", a.Node, v.Base, common)
+			}
+		}
+		rec, err := premerge.Decode(a.Premerge)
+		if err != nil || rec.Dev != common {
+			t.Errorf("node %s: the premerge record stands on %q (%v), want %s", a.Node, rec.Dev, err, common)
+		}
 	}
 }
 
@@ -217,5 +300,78 @@ func TestAdmissionFollowsTheEditRegionsOfTheDesign(t *testing.T) {
 	a, b := slices.Index(labels, "build:A:executor"), slices.Index(labels, "build:B:executor")
 	if a < 0 || b < 0 || b < slices.Index(labels, "review:A:r1") {
 		t.Errorf("calls %v: B's executor started before A's lane ended although both edit shared/", labels)
+	}
+	var aLanded engine.Event
+	for _, r := range l.Rows("crw.integrate") {
+		if str(r.Data, "node") == "A" {
+			aLanded = r
+		}
+	}
+	buildB := callNamed(t, l, "build:B:executor")
+	if aLanded.Seq == 0 || buildB.Seq <= aLanded.Seq {
+		t.Errorf("B's executor was prepared at seq %d before A landed at seq %d (calls %v)", buildB.Seq, aLanded.Seq, labels)
+	}
+	alloc, _ := l.Prepared(buildB.ID).Data["allocation"].(map[string]any)
+	if str(alloc, "start_commit") != str(aLanded.Data, "batch_commit") {
+		t.Errorf("B's worktree started at %v, A landed %v", alloc["start_commit"], aLanded.Data["batch_commit"])
+	}
+}
+
+// d7: when a suffix runs crw.tierStep again at the same position over a new checkpoint, crw.stepRecord resolves the conflict with
+// a suffixed step id, and crw:lib/lane's tierStep hands that recorded.id to the executor-t1 call so the call and the persisted
+// flow_step_decisions row carry the same checkpoint id.
+func TestTierStepConflictHandsRecordedIDToExecutorT1(t *testing.T) {
+	l := NewLab(t, oneNode()...)
+	l.Verify.Fail = map[string][]int{"A": {1, 2, 3}}
+	var killed sync.Once
+	l.OnRow(func(ev engine.Event) {
+		if ev.Op == "crw.stepRecord" && ev.Event == engine.EvCompleted {
+			killed.Do(func() { l.Kill() })
+		}
+	})
+	l.Run()
+	firstSteps := l.StepRows()
+	if len(firstSteps) != 1 {
+		t.Fatalf("step rows after the first run: %+v, want one", firstSteps)
+	}
+	commits := l.Rows("crw.commit")
+	if len(commits) != 2 {
+		t.Fatalf("%d commits before the kill, want two", len(commits))
+	}
+	c1, h1 := str(commits[0].Data, "commit"), str(commits[1].Data, "commit")
+	if firstSteps[0].Head != h1 {
+		t.Fatalf("first step checkpoint head %s, want %s", firstSteps[0].Head, h1)
+	}
+	build := callNamed(t, l, "build:A:executor")
+	alloc, _ := l.Prepared(build.ID).Data["allocation"].(map[string]any)
+	l.GitIn(str(alloc, "path"), "reset", "--hard", c1)
+
+	l.NewProcess("proc-2")
+	got := Value[laneResult](t, l.Resume())
+	if got.State != "closed" {
+		t.Fatalf("resume state %q: %+v", got.State, got)
+	}
+	steps := l.StepRows()
+	if len(steps) != 2 {
+		t.Fatalf("step rows %+v, want two (the first checkpoint and the conflict-resolved one)", steps)
+	}
+	commits = l.Rows("crw.commit")
+	h2 := str(commits[2].Data, "commit")
+	if h2 == h1 || steps[1].Head != h2 {
+		t.Fatalf("second step checkpoint head %s, want the suffix commit %s (first was %s)", steps[1].Head, h2, h1)
+	}
+	if steps[1].ID == steps[0].ID || !strings.HasPrefix(steps[1].ID, steps[0].ID+"_") {
+		t.Errorf("step ids %q and %q: the conflict must record a distinct suffixed id", steps[0].ID, steps[1].ID)
+	}
+	t1 := l.CallsOf("executor-t1")
+	if len(t1) != 1 {
+		t.Fatalf("executor-t1 calls %+v, want one", t1)
+	}
+	if t1[0].Step != steps[1].ID {
+		t.Errorf("the executor-t1 call carries step id %q, the persisted row for checkpoint %s is %q", t1[0].Step, h2, steps[1].ID)
+	}
+	t1Alloc, _ := l.Prepared(t1[0].ID).Data["allocation"].(map[string]any)
+	if str(t1Alloc, "start_commit") != steps[1].Head {
+		t.Errorf("executor-t1 started at %v, the persisted step row checkpoint is %s", t1Alloc["start_commit"], steps[1].Head)
 	}
 }

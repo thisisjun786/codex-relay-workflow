@@ -91,6 +91,15 @@ func (c *command) printDetail(d RunDetail) {
 	w := c.stdout
 	fmt.Fprintf(w, "run %s  %s  %s\n", d.RunID, d.Workflow, d.State)
 	fmt.Fprintf(w, "owner %s  plan %s@%d  started %s ago  tokens %d  calls %d\n", cell(d.Owner), cell(d.PlanID), d.PlanRevision, c.since(d.StartedAt), d.Tokens, d.Calls)
+	if d.PolicyPath == "" {
+		fmt.Fprintln(w, "policy none (placeholder table, no execution policy file)")
+	} else {
+		line := "policy " + d.PolicyPath + "  digest " + d.PolicyDigest
+		if d.PolicyRepinnedFrom != "" {
+			line += "  repinned from " + d.PolicyRepinnedFrom
+		}
+		fmt.Fprintln(w, line)
+	}
 	var notes []string
 	if d.Live {
 		notes = append(notes, fmt.Sprintf("process %d holds the run lock", d.PID))
@@ -104,8 +113,15 @@ func (c *command) printDetail(d RunDetail) {
 	if d.Holds > 0 {
 		notes = append(notes, fmt.Sprintf("%d call(s) in recovery_hold: crw flow recover", d.Holds))
 	}
-	if d.Unsettled-d.Holds > 0 {
+	if d.Unsettled-d.Holds > 0 && !d.Live {
+		// while a process holds the run lock the run goes on by itself, and a resume is refused
 		notes = append(notes, fmt.Sprintf("%d call(s) to go on with: crw flow resume %s", d.Unsettled-d.Holds, d.RunID))
+	}
+	if d.State == StateBlocked {
+		notes = append(notes, "no node started: no crw.release released a node and nothing landed")
+	}
+	for _, ie := range d.ItemErrors {
+		notes = append(notes, fmt.Sprintf("item %s failed: %s", cell(ie.Item), oneLine(ie.Error)))
 	}
 	if d.State == StateDead {
 		notes = append(notes, "no process holds the run: crw flow resume "+d.RunID)

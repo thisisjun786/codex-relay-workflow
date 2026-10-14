@@ -42,9 +42,10 @@ type Spec struct {
 	Deadline string `json:"deadline,omitempty"`
 	// Decision is the decision record a night batch was started from.
 	Decision string `json:"decision,omitempty"`
-	// Forced names the preflight facts that failed and were started over with --force.
-	Forced    []string `json:"forced,omitempty"`
-	CreatedAt string   `json:"created_at"`
+	// Preflight is the preflight facts that did not pass (warn or fail) when the run started, as they were read: a fact never
+	// stops the start, so the run's record is where its warnings stay.
+	Preflight []Fact `json:"preflight,omitempty"`
+	CreatedAt string `json:"created_at"`
 }
 
 // NewRunID makes the id of a new run: "run-" and twelve hex digits.

@@ -1,6 +1,23 @@
 // crw:lib/packets: the packets the project lane sends - plain text, built from the journal's facts and nothing else, so the same
 // facts give the same bytes (the digest of a packet is part of the input digest of its call, and a resumed lane must build the
 // packet it built). Every function is pure.
+//
+// A change of a packet's text is therefore a change of the input digest of every call built from it (engine/digest.go): a resume
+// over a journal recorded with the earlier text runs that call live again, and with it the rest of its path. The design audit
+// packet is the case of CRW-1321: a run that recorded its design audit under the earlier text runs design-audit:r1 again on a
+// resume, and crw.designLedger then refuses the first revision again (the ledger has r0 and adds r1 next), so the resumed run ends in
+// that refusal. That resume supersedes the recorded audit and r0 with it, so the binary that started the run refuses the run
+// afterwards as well: a run past its design audit is finished by the binary that started it only while no process of a binary with
+// other audit text has resumed it, and is otherwise started anew. A run that had not reached its design audit is not affected. The
+// open-question routing of CRW-1347 changed the design audit packet again (the AUTHORITY section and the answers, each with its
+// route) and the answers crw.explore hands crw.exploreRecord (each with the reason, the scope and the notation of its route): a run
+// that recorded its open questions under the earlier binary replays its crw.exploreRoute rows and its explorer calls as recorded
+// (their arguments are the same), so the routes of its open questions stay the recorded ones, an inline route among them, and runs
+// crw.exploreRecord live again and, after it, design-audit:r1, the one agent call that runs again; a run past its design audit then
+// comes to the same refusal of crw.designLedger. The
+// role overlays (internal/flow/roles/*.md) are no packet: they are the developer instructions a thread starts with, part of no input
+// digest, so a change of them re-runs nothing; a turn on a thread started earlier runs under the instructions that thread was
+// started with, and a new thread or a fork takes the new text. TestResumeAfterPromptTextChange pins both.
 
 // canon renders a value with its keys in sorted order, so the text does not depend on the order an object was built in.
 export function canon(value) {
@@ -39,12 +56,55 @@ export function architectPacket(ms) {
   ].join('\n\n')
 }
 
+// The executor contract and the authority boundary the design audit holds a DESIGN to (CRW-1321): the architect overlay
+// (internal/flow/roles/architect.md) states the same two to the architect.
+const EXECUTOR_CONTRACT = [
+  '- the executor never commits: its edits stay uncommitted in its own directory, and it runs no branch-level git command;',
+  '- the run commits the directory after the executor\'s turn, with the fixed message `crw <node> <call>` and the request id, so no done condition can ask for text in a commit message or a commit body;',
+  '- the executor reports a RECEIPT (outcome, files, verification, summary, gap, research_question, plan_mismatch), which has no field for a commit, a commit message or the reason for an exception;',
+  '- a done condition is a check that runs at the committed HEAD of the node or a state of the worktree; one that needs the executor to commit first, or a check that compares with HEAD before the run\'s commit exists (as `make gui` does through `crw-dev ci gui-drift`), cannot be carried out;',
+  '- a generated asset is planned with its generation command and its verification command, the verification running at the committed HEAD.',
+]
+const AUTHORITY = [
+  '- an exception to a rule of the repository (scope `authority:repo-rule`);',
+  '- the record of another issue (scope `authority:other-record`);',
+  '- a policy decision (scope `authority:policy`);',
+  '- a prerequisite of the execution environment (scope `authority:environment`).',
+  'A DESIGN that decides one of these, or whose plan depends on one answer to such a question, is a finding. The same question raised as an open question, with the plan resting on an assumption the DESIGN states, is not, also when it reaches this audit unanswered: an open question whose scope starts with the notation of its kind goes to no explorer and is asked of the orchestrator as a design_question escalation that does not stop the milestone, and an open question does not stop the run. Each answer below names the route its question took.',
+]
+
+// answerLines renders the answers of the open questions for the design audit: each question with its route and what it got
+// (CRW-1347), so no question reaches the audit as an empty answer without its route.
+function answerLines(answers) {
+  return list((answers || []).map((a) => {
+    const lines = [(a.id ? a.id + ': ' : '') + a.question, '  route: ' + routeLine(a)]
+    if (a.answer) lines.push('  answer: ' + a.answer)
+    if (a.findings) lines.push('  findings: ' + canon(a.findings))
+    return lines.join('\n')
+  }), 'no open question')
+}
+
+function routeLine(a) {
+  switch (a.route) {
+    case 'spawn':
+      return 'an explorer answered it (call ' + (a.call || 'none') + ')'
+    case 'reuse':
+      return 'reused: ' + (a.reason === 'same_question_in_round' ? 'the same question as another of this DESIGN' : 'the answer an earlier question of the run got')
+    case 'orchestrator':
+      return 'asked of the orchestrator (' + (a.reason || 'design_question') + (a.authority ? ', ' + a.authority : '') + '): no answer in this audit; the run raises it in the design_question escalation when the DESIGN is approved, the milestone goes on and the plan stands on the assumption the DESIGN states'
+    default:
+      return a.route + (a.reason ? ' (' + a.reason + ')' : '') + ': no answer'
+  }
+}
+
 export function designAuditPacket(ms, cand, round) {
   return [
     'ROLE: reviewer. Audit the DESIGN of milestone ' + ms.id + ' (round ' + round + ') before any executor starts. You did not write it and are of another model family than the architect.',
-    'Answer with DESIGN_AUDIT: approved only when every issue node has a plan an executor can carry out inside its edit regions, the decisions are consistent with the plan, and no P0 or P1 finding stands; otherwise needs_changes with the findings the architect must act on.',
+    'Answer with DESIGN_AUDIT: approved only when every issue node has a plan an executor can carry out inside its edit regions, every done condition can be met under the executor contract below, the decisions are consistent with the plan, no decision of the DESIGN is outside the architect\'s authority below, and no P0 or P1 finding stands; otherwise needs_changes with the findings the architect must act on. Check every done condition against the executor contract and every decision against the authority boundary: a done condition the contract cannot meet and a decision outside the authority are each a P1 finding that names its node or decision.',
+    section('EXECUTOR CONTRACT (every done condition must be met under it)', EXECUTOR_CONTRACT),
+    section('OUT-OF-AUTHORITY DECISIONS (the architect raises these as open questions and does not decide them)', AUTHORITY),
     section('DESIGN', [canon(cand.design)]),
-    section('ANSWERS TO THE OPEN QUESTIONS', [canon(cand.answers)]),
+    section('ANSWERS TO THE OPEN QUESTIONS (each with its route and what it got)', answerLines(cand.answers)),
   ].join('\n\n')
 }
 

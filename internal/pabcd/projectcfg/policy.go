@@ -32,8 +32,10 @@ const (
 	PolicyAlways  Policy = "always"
 )
 
-// DefaultPolicy promotes on the first plan request of a unit, and not once a cycle is running.
-const DefaultPolicy = PolicyNewUnit
+// DefaultPolicy promotes no plan request: CRW holds no synchronous interview, so the default flow never
+// opens the Interview (CRW-1340, port: fixed; the oracle's default was new-unit). A project's crw.json
+// may still name new-unit or always.
+const DefaultPolicy = PolicyOff
 
 // IsPolicy is whether value is exactly one of the three policies.
 func IsPolicy(value string) bool {

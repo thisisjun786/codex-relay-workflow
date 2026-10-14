@@ -96,10 +96,10 @@ func TestTriggerOverlapTable(t *testing.T) {
 		}
 	})
 	root := skillsFixture(t, map[string]string{
-		"crw-plan":      "Decompose a goal into Linear issues. Use for a roadmap or 기획.",
-		"crw-pabcd":     "Run the PABCD loop on one task.",
-		"crw-interview": "Ask clarifying questions. Use for 요구사항 정리.",
-		"crw-qa":        "Manual QA of a surface; also mentions the Roadmap by mistake.",
+		"crw-plan":  "Decompose a goal into Linear issues. Use for a roadmap or 기획.",
+		"crw-pabcd": "Run the PABCD loop on one task.",
+		"crw-ask":   "Ask clarifying questions. Use for 요구사항 정리.",
+		"crw-qa":    "Manual QA of a surface; also mentions the Roadmap by mistake.",
 	})
 	done := func(check string, triggers map[string]string) inventoryRow {
 		return inventoryRow{Disposition: "fix", Owner: "S04", Check: []string{check}, Status: "done", Triggers: triggers}
@@ -108,7 +108,7 @@ func TestTriggerOverlapTable(t *testing.T) {
 		return triggerOverlapErrors(root, inventoryMap{Rows: map[string]inventoryRow{"collisions[1]": row}})
 	}
 	t.Run("fixture: phrases in their owner's description only", func(t *testing.T) {
-		expectEqual(t, "ok", run(done("TestTriggerOverlapTable", map[string]string{"기획": "crw-plan", "요구사항 정리": "crw-interview", "plan this": "none"})), []string(nil))
+		expectEqual(t, "ok", run(done("TestTriggerOverlapTable", map[string]string{"기획": "crw-plan", "요구사항 정리": "crw-ask", "plan this": "none"})), []string(nil))
 	})
 	t.Run("fixture: a phrase that two descriptions hold fails, whatever the case", func(t *testing.T) {
 		errs := run(done("TestTriggerOverlapTable", map[string]string{"roadmap": "crw-plan"}))
@@ -117,7 +117,7 @@ func TestTriggerOverlapTable(t *testing.T) {
 	t.Run("fixture: a phrase the owner lacks, a none phrase that is held and an unknown owner fail", func(t *testing.T) {
 		errs := run(done("TestTriggerOverlapTable", map[string]string{"clarifying": "crw-plan", "기획": "none", "plan": "crw-missing"}))
 		expectEqual(t, "errors", errs, []string{
-			"collisions[1]: trigger clarifying must be in the description of crw-plan only, found in [crw-interview]",
+			"collisions[1]: trigger clarifying must be in the description of crw-plan only, found in [crw-ask]",
 			"collisions[1]: trigger plan names the skill crw-missing, which has no SKILL.md",
 			"collisions[1]: trigger 기획 must be in no description, found in crw-plan",
 		})

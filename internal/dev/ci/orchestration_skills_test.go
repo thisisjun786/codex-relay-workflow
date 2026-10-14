@@ -24,7 +24,6 @@ const (
 	uiuxSkillFile      = "plugins/crw/skills/crw-dev-uiux-design/SKILL.md"
 	planSkillFile      = "plugins/crw/skills/crw-plan/SKILL.md"
 	defineSkillFile    = "plugins/crw/skills/crw-define/SKILL.md"
-	interviewSkillFile = "plugins/crw/skills/crw-interview/SKILL.md"
 	hierarchyLink      = "../crw-canon/references/hierarchy.md"
 )
 
@@ -101,9 +100,8 @@ func TestPabcdHasNoPlanTriggers(t *testing.T) {
 		}
 	}
 	for file, phrases := range map[string][]string{
-		planSkillFile:      {"기획", "roadmap"},
-		defineSkillFile:    {"이니셔티브 정의"},
-		interviewSkillFile: {"요구사항 정리"},
+		planSkillFile:   {"기획", "roadmap"},
+		defineSkillFile: {"마일스톤 정의", "요구사항 정리"},
 	} {
 		description := descriptionOf(t, file)
 		for _, phrase := range phrases {
@@ -318,19 +316,24 @@ func TestTidyJobsSeparated(t *testing.T) {
 	}
 }
 
-// TestQuestionEntryPoints: crw-interview owns a task's requirements and catalog discovery, crw-define the initiative intent,
-// and the uiux-design intent protocol asks its caller, or records an assumption when no user is present.
+// TestQuestionEntryPoints: no skill owns an interview or a catalog discovery since CRW-1340 removed crw-interview;
+// crw-define settles a milestone and its issues before registration and says where a run's ambiguity goes, and the
+// uiux-design intent protocol asks its caller, or records an assumption when no user is present.
 func TestQuestionEntryPoints(t *testing.T) {
 	descriptions := repoDescriptions(t)
-	for _, phrase := range []string{"catalog discovery", "clarifying"} {
-		if !strings.Contains(strings.ToLower(descriptions["crw-interview"]), phrase) {
-			t.Errorf("the crw-interview description lacks %q: %q", phrase, descriptions["crw-interview"])
+	if _, ok := descriptions["crw-interview"]; ok {
+		t.Error("crw-interview still has a SKILL.md")
+	}
+	for name, description := range descriptions {
+		for _, phrase := range []string{"catalog discovery", "clarifying"} {
+			if strings.Contains(strings.ToLower(description), phrase) {
+				t.Errorf("the %s description still lists %q: %q", name, phrase, description)
+			}
 		}
 	}
-	interview := skillBody(t, interviewSkillFile)
 	define := flat(skillBody(t, defineSkillFile))
-	if !strings.Contains(flat(interview), "crw-define") || !strings.Contains(define, "crw-interview") {
-		t.Error("crw-interview and crw-define do not name each other's job")
+	if !strings.Contains(define, "decision request") || !strings.Contains(define, "crw-run") {
+		t.Error("crw-define does not send a run's ambiguity to the run's decision request")
 	}
 	uiux := splitRead(t, uiuxSkillFile)
 	if !strings.Contains(uiux, "ask the caller, or record an assumption when no user is present") {
@@ -346,12 +349,11 @@ func TestQuestionEntryPoints(t *testing.T) {
 func TestOrchestrationDescriptionsAreOneJob(t *testing.T) {
 	descriptions := repoDescriptions(t)
 	for skill, neighbours := range map[string][]string{
-		"crw-plan":      {"crw-define", "crw-run"},
-		"crw-define":    {"crw-plan"},
-		"crw-check":     {"crw-run"},
-		"crw-tidy":      {"crw-check", "crw-plan"},
-		"crw-refactor":  {"crw-add-issue"},
-		"crw-interview": {"crw-define"},
+		"crw-plan":     {"crw-define", "crw-run"},
+		"crw-define":   {"crw-plan"},
+		"crw-check":    {"crw-run"},
+		"crw-tidy":     {"crw-check", "crw-plan"},
+		"crw-refactor": {"crw-add-issue"},
 	} {
 		for _, neighbour := range neighbours {
 			if !strings.Contains(descriptions[skill], neighbour) {
