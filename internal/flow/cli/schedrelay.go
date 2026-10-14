@@ -346,7 +346,9 @@ func (r *SchedRelay) Release(ctx context.Context, req ops.ReleaseRequest) (ops.R
 		return ops.ReleaseResult{}, err
 	}
 	defer done()
-	res, err := r.Sched.ReleaseAgent(ctx, req.Plan, req.Node, r.Actor, request, dagsched.AgentReleaseOptions{Role: "executor", Tier: "executor", RunID: r.RunID, Worktree: r.worktreeHandle(req.Node)})
+	// a head made outside a run is released with the pair that wrote it, read back from its author thread (CRW-1354): the execution records it
+	res, err := r.Sched.ReleaseAgent(ctx, req.Plan, req.Node, r.Actor, request, dagsched.AgentReleaseOptions{Role: "executor", Tier: "executor", RunID: r.RunID, Worktree: r.worktreeHandle(req.Node),
+		AuthorModel: req.AuthorModel, AuthorEffort: req.AuthorEffort})
 	if err != nil {
 		if reason, held := holdBack(err); held && reason == ops.ReasonPlanChanged {
 			return r.planChanged(ctx, req.Plan, req.Node)
@@ -571,6 +573,10 @@ func worktreeOf(events []engine.Event, node string) string {
 			}
 		case ev.Kind == engine.KindFlow && ev.Event == engine.EvWorktreeRestored && str(ev.Data, "node") == node && ev.Seq > seq:
 			path, seq = str(ev.Data, "path"), ev.Seq
+		case ev.Kind == engine.KindCall && ev.Op == ops.OpRelease && ev.Event == engine.EvCompleted && str(ev.Data, "node") == node && str(ev.Data, "kind") == "land" &&
+			ev.Data["released"] == true && str(ev.Data, "worktree") != "" && ev.Seq > seq:
+			// the worktree a land release checked a head made outside a run out in (CRW-1354)
+			path, seq = str(ev.Data, "worktree"), ev.Seq
 		}
 	}
 	return path

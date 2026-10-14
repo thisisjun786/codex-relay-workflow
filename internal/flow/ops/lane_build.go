@@ -365,7 +365,10 @@ func (o *reviewOp) Run(_ context.Context, req engine.OpRequest) (engine.OpResult
 func expectedCriteria(r rows, node string) []string {
 	rel, ok := designRowOf(r, node)
 	if !ok {
-		return nil
+		// a head made outside a run is released with no DESIGN (CRW-1354): its release row names the plan and the milestone
+		if rel, ok = releaseRowOf(r, node); !ok {
+			return nil
+		}
 	}
 	n, ok := planNodeOf(r, dataStr(rel, "plan"), dataStr(rel, "milestone"), node)
 	if !ok {

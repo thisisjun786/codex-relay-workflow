@@ -112,6 +112,9 @@ type Deps struct {
 	Now func() time.Time
 	// Actor is the task that runs the lane (the registered parent of the project).
 	Actor string
+	// LandRoot is the directory the worktree of a head made outside a run is checked out under (the run's directory, CRW-1354); "" refuses
+	// a land release.
+	LandRoot string
 }
 
 // Lane is the set of operations of the project lane.

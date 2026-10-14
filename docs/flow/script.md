@@ -421,6 +421,32 @@ acceptance and integration, the close of an execution), `Verifier` (`CILocalVeri
 (`StoreDecisions` writes the relay store), `Threads` (the host the close reads the reviewer threads from and archives them on) and
 `Reporter` (F11) - are interfaces in `internal/flow/ops/seams.go`; the dagsched-backed `Relay` belongs to the run process.
 
+## Landing a head made outside a run
+
+The child decides how the work of an issue is made: a project-lane run, or its own subagents outside any run (CRW-1316 §18.3). A head made
+outside a run lands through the gates of a run, never past them: `internal/flow/workflows/land-head.js` (CRW-1354) is the gate-only
+workflow, `crw flow start land-head --handoff FILE --args '{"plan": P, "milestone": M, "issue": KEY, "head": COMMIT-OR-BRANCH, "authors":
+[THREAD, ...]}'`, where `authors` are the subagent threads that wrote the head. It makes no executor, architect or design-audit call and
+fixes nothing. Its steps:
+
+- `crw.release(plan, node, milestone, {pinned: true, land: {head, authors}})` releases the node to the run with no DESIGN: the head is
+  resolved in the run's repository, each author thread is read back from the host (`thread/read`, the configured pair; `Threads` provides
+  `ThreadConfig`), the plan the relay holds is compared with the plan the run's `crw.milestone` row read (`plan_changed` otherwise), and
+  `Relay.Release` is the agent release with the node's slice and the pair the authors ran on, which the execution row records
+  (`author_model`, `author_effort`; `AgentReleaseOptions` of `ReleaseAgent`, the stored form unchanged). The head is then checked out,
+  detached, in `<state>/flow/<run>/land-wt/<node>-<commit>`, the worktree the row names and the execution's handle points at, and the row
+  records the commit, its tree, its base (the merge-base with the integration tip), the paths it changes and the authors with their pairs.
+- The gates are the lane's: `crw.verify` of that head (verification-record/1 of the exact tree), `crw.review` with a fresh reviewer whose
+  model family has to differ from every author the release observed (`independence_refused` for one of the same family,
+  `independence_unproven` when no author pair was read back), and `crw.land` (`crw.accept`, the relay's agent acceptance, which judges the
+  reviewer against the pair the execution records, then `crw.integrate`). They write the rows they write for a node of a project lane.
+- The only refusals are input errors (no head, a head git does not resolve, authors of more than one model family - one execution row
+  records one author pair - and an issue that is not a node of the milestone) and the gates. A verification that fails, a review that is
+  not verified and a land the relay refuses end the run escalated for the child (`land_verification_failed`, `land_review_needs_changes`,
+  the relay's reason); a review that is not independent escalates as a configuration fault. An author whose pair is not read back, no
+  author named and a path outside the node's regions are warnings of the release row (`land_author_unobserved`, `land_authors_unnamed`,
+  `land_out_of_scope`). A lost epoch ends the run `stopped` with `epoch_lost`.
+
 ## The architect's continuity and the re-plan
 
 **One thread.** The architect has one thread for a milestone. The design ledger (`crw.designLedger`, rows `crw.designLedger`) holds the handle of the

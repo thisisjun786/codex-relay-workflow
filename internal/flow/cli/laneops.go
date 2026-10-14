@@ -178,7 +178,7 @@ func BuildLane(ctx context.Context, req LaneRequest, opt LaneOptions) (LaneWorld
 		reporter = opt.Reporter
 	}
 	lane := ops.NewLane(ops.Deps{RunID: spec.RunID, Repo: req.Repo, Journal: journal, Relay: seam, Verifier: verifier, Decisions: ops.StoreDecisions{DB: req.Store.DB},
-		Threads: req.Threads, Reporter: reporter, Actor: spec.Thread})
+		Threads: req.Threads, Reporter: reporter, Actor: spec.Thread, LandRoot: RunDir(req.State, spec.RunID)})
 	out := LaneWorld{Ops: lane.Ops(), Prover: ops.NewProver(), InputSnapshot: lane.InputSnapshot, Journal: journal}
 	if plan := planOf(spec.Args); plan != "" && ref.Path != "" {
 		out.Base = func(string) (string, error) { return relay.IntegrationTip(ctx, plan) }

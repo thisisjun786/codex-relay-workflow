@@ -56,6 +56,10 @@ type ReleaseRequest struct {
 	SliceDigest, PlanDigest string
 	// RequestID makes the release idempotent: the same request is the same release.
 	RequestID string
+	// AuthorModel and AuthorEffort are the pair that wrote the node's work when it exists as the node is released: a head made outside a
+	// run, whose author threads the run read back (CRW-1354). The relay records it on the node's execution, and its acceptance judges the
+	// reviewer against it. Empty for a release whose work the run's executors will write.
+	AuthorModel, AuthorEffort string
 }
 
 // ReleaseResult is the scheduler's answer to a release. A node it holds back (Released false) names why in Reason

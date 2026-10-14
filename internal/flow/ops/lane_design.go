@@ -366,6 +366,9 @@ type ReleaseOpts struct {
 	// Pinned makes the release compare the live plan with the plan the audited DESIGN stands on in the flow, before Relay.Release, whose
 	// release commit compares the node's slice of that plan again (CRW-1288).
 	Pinned bool `json:"pinned"`
+	// Land is the head made outside a project-lane run that the gate-only workflow land-head lands (CRW-1354, lane_land_head.go): the node
+	// is released with no DESIGN, at the plan the run read, and the head is checked out for the gates. Absent for every other release.
+	Land *LandOpts `json:"land,omitempty"`
 }
 
 // ReasonPlanChanged is the reason of a pinned release whose plan is not the one the audited DESIGN stands on.
@@ -395,6 +398,8 @@ type ReleaseOutcome struct {
 	Hold       string `json:"hold,omitempty"`
 	// Detail is the relay's message of a release refused epoch_lost (CRW-1382): the lane ends unreleased with it.
 	Detail string `json:"detail,omitempty"`
+	// Land is the head a land release checked out for the gates (CRW-1354); absent for every other release.
+	Land *LandHead `json:"land,omitempty"`
 }
 
 func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResult, error) {
@@ -425,6 +430,10 @@ func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRes
 			}
 		}
 		return finish()
+	}
+	// a head made outside a run lands with no DESIGN (CRW-1354): its release is the land's
+	if opts.Land != nil {
+		return o.landRelease(ctx, req, plan, node, ms, opts)
 	}
 	if !ok {
 		out.Reason = "design_missing"
