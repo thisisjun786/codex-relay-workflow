@@ -18,6 +18,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/journal"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/lint"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/planinput"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/shadow"
 	"github.com/thisisjun786/codex-relay-workflow/internal/gui"
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
@@ -240,6 +241,10 @@ func modes() []mode {
 			if shadow.Handles(c.args) {
 				return shadow.RunCLI(c.ctx, c.args, c.stdout, c.stderr)
 			}
+			// plan-input builds the compile handoff from a milestone of the tracking repository; it only reads (internal/flow/planinput).
+			if planinput.Handles(c.args) {
+				return planinput.RunCLI(c.ctx, c.args, c.stdout, c.stderr)
+			}
 			// No command, or one no table serves: the usage of every flow command and the whole choice (CRW-1323 item 31).
 			if len(c.args) == 0 || (!isHelpWord(c.args[0]) && !slices.Contains(flowCommandWords(), c.args[0])) {
 				printFlowUsage(c.stderr)
@@ -265,10 +270,11 @@ func modes() []mode {
 func isHelpWord(word string) bool { return word == "help" || word == "-h" || word == "--help" }
 
 // flowCommandWords are the first words `crw flow` dispatches, in the order its usage prints them: the engine's and lint, the
-// run surface of internal/flow/cli and the trace commands of internal/flow/shadow. The run process's own entry is left out.
+// run surface of internal/flow/cli, the trace commands of internal/flow/shadow and plan-input (internal/flow/planinput). The run
+// process's own entry is left out.
 func flowCommandWords() []string {
 	words := append(slices.Clone(engine.Commands), lint.Command)
-	for _, word := range append(flowcli.Words(), shadow.Commands...) {
+	for _, word := range append(append(flowcli.Words(), shadow.Commands...), planinput.Command) {
 		if !slices.Contains(words, word) {
 			words = append(words, word)
 		}
@@ -279,6 +285,7 @@ func flowCommandWords() []string {
 // printFlowUsage writes the usage lines of every `crw flow` command.
 func printFlowUsage(w io.Writer) {
 	engine.PrintUsage(w)
+	fmt.Fprintln(w, planinput.Usage)
 	fmt.Fprintln(w, shadow.Usage)
 	fmt.Fprintln(w, flowcli.Usage)
 }

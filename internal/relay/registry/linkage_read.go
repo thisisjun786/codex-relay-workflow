@@ -70,6 +70,43 @@ func (r *Registry) storeSeatSuccessor(ctx context.Context) ([]store.Row, error) 
 		"  ORDER BY revision DESC, binding_id", scopeManagement, moved[0].Text("seat"), roleSupervisor)
 }
 
+// ManagementSeatsAbove is the keys of the management seats whose live execution edge stands
+// directly above project (CRW-1314: a management session bound the project owner), sorted. One is
+// the rule, since a project has one upward execution edge; none is a project no management session
+// bound; more than one is a contested hierarchy, for the caller to decide about.
+func (r *Registry) ManagementSeatsAbove(ctx context.Context, project string) ([]string, error) {
+	rows, err := r.Store.All(ctx, "SELECT DISTINCT upper_key FROM scope_links"+
+		"  WHERE lower_kind = ? AND lower_key = ? AND link_kind = ? AND upper_kind = ?"+
+		"    AND status IN ('active','paused') AND superseded_by IS NULL"+
+		"  ORDER BY upper_key", scopeProject, project, linkExec, scopeManagement)
+	if err != nil {
+		return nil, err
+	}
+	seats := make([]string, len(rows))
+	for i, row := range rows {
+		seats[i] = row.Text("upper_key")
+	}
+	return seats, nil
+}
+
+// ManagementSeat reads the management seat keyed seat (CRW-1371): known says whether a supervisor
+// binding was ever made at that key, live or laid down, and live is its live supervisor bindings
+// now. A handover keeps the key and moves the live binding to the successor, so live names the
+// seat's current owner.
+func (r *Registry) ManagementSeat(ctx context.Context, seat string) (live []contract.OrderedObject, known bool, err error) {
+	rows, err := r.Store.All(ctx, "SELECT * FROM scope_bindings WHERE scope_kind = ? AND scope_key = ? AND role = ?"+
+		"  ORDER BY revision DESC, binding_id", scopeManagement, seat, roleSupervisor)
+	if err != nil {
+		return nil, false, err
+	}
+	for _, row := range rows {
+		if isLive(row.Text("status")) && row.Text("superseded_by") == "" {
+			live = append(live, bindingRecord(row))
+		}
+	}
+	return live, len(rows) > 0, nil
+}
+
 // raised is the part of a reader's failure Python does not answer as unreadable: the
 // UnicodeEncodeError a str sqlite3 cannot bind raises (it catches sqlite3.Error only), or nil.
 func raised(err error) error {

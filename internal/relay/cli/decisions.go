@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"crypto/rand"
+	"database/sql"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -10,6 +11,8 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/decisions"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
@@ -88,7 +91,10 @@ func newDecisionID() (string, error) {
 // runDecisionRaise is decision-raise: it builds one crw-user-decision/1 record from the line and
 // stores it (store.Raise folds a repeated question into the record that already carries its
 // fingerprint). The observation of this raise is one seen entry, source "project:<origin-project>",
-// which is how a second project sees a question first raised elsewhere.
+// which is how a second project sees a question first raised elsewhere. A user-grade or
+// delegated-management-grade question names in authority.ref the management seat above its origin
+// project (decisionManagementAuthority, CRW-1371); what that reading cannot settle is warned about
+// in authorityWarning and journaled, and the question is recorded either way.
 func runDecisionRaise(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
 	kind := decisions.Kind(args.Text("kind"))
 	if !decisions.IsKind(kind) {
@@ -158,16 +164,76 @@ func runDecisionRaise(ctx context.Context, services dispatch.Services, args disp
 		return nil, err
 	}
 	defer opened.Close()
+	var warning contract.OrderedObject
+	record.Authority, warning = decisionManagementAuthority(ctx, opened, record.Authority, originProject)
 	stored, merged, err := opened.Raise(ctx, record)
 	if err != nil {
 		return nil, decisionRefusal(err)
 	}
-	return contract.OrderedObject{
+	answer := contract.OrderedObject{
 		{Key: "decisionId", Value: stored.DecisionID},
 		{Key: "fingerprint", Value: stored.Fingerprint},
 		{Key: "merged", Value: merged},
 		{Key: "state", Value: string(stored.State)},
-	}, nil
+	}
+	if warning != nil {
+		// The record stands; the warning is the answer's and one journal row's. A journal that
+		// cannot be written leaves the warning in the answer alone rather than undoing the raise.
+		_ = opened.Transaction(ctx, func(txCtx context.Context, _ *sql.Conn) error {
+			return (&registry.Registry{Store: opened}).Journal(txCtx, "decision_authority_warning", stored.DecisionID, warning, decisionNow())
+		})
+		answer = append(answer, contract.Field{Key: "authorityWarning", Value: warning})
+	}
+	return answer, nil
+}
+
+// decisionManagementAuthority is the authority a question raised from origin is recorded with
+// (CRW-1371, design CRW-1314 §5). A user-grade or delegated-management-grade question names in its
+// ref the management seat whose live execution edge stands directly above the project: the edge a
+// management session wrote when it bound the project owner, read with the origin as the project's
+// key and, when no edge stands above that key, as a flow plan's id (crw manage batch decide raises
+// with the plan as its origin), through the project the plan's header names. The ref names the seat,
+// not its owner, so a handover of the seat moves the answer with it (decisionAnswerProvenance). With
+// no edge the authority is the one given, as before; a parent-class authority is always the
+// raiser's own. What the reading cannot settle is not a refusal: a ref the raiser named that is not
+// the seat is replaced by the seat, and a seat that cannot be read or is contested leaves the
+// authority as given; each returns a warning, and the question is recorded either way.
+func decisionManagementAuthority(ctx context.Context, opened *store.Store, given decisions.Authority, origin string) (decisions.Authority, contract.OrderedObject) {
+	if given.Kind != decisions.AuthorityUser && given.Kind != decisions.AuthorityDelegatedManagement {
+		return given, nil
+	}
+	project := origin
+	seats, err := (&registry.Registry{Store: opened}).ManagementSeatsAbove(ctx, project)
+	if err == nil && len(seats) == 0 {
+		var planProject string
+		var found bool
+		if planProject, found, err = dag.PlanProject(ctx, opened.Querier(ctx), origin); err == nil && found && planProject != origin {
+			project = planProject
+			seats, err = (&registry.Registry{Store: opened}).ManagementSeatsAbove(ctx, project)
+		}
+	}
+	warn := func(reason, detail string) (decisions.Authority, contract.OrderedObject) {
+		return given, contract.OrderedObject{{Key: "reason", Value: reason}, {Key: "detail", Value: detail},
+			{Key: "project", Value: project}, {Key: "given", Value: given.Ref}}
+	}
+	switch {
+	case err != nil:
+		return warn("seat_unreadable", "the management seat above project "+pyvalue.StrRepr(project)+" could not be read ("+err.Error()+
+			"); the question is recorded with the authority as given, so the store seat's rule answers it")
+	case len(seats) == 0:
+		return given, nil
+	case len(seats) > 1:
+		return warn("seat_contested", fmt.Sprintf("%d management seats (%s) stand above project %s; the question is recorded with the authority as given, "+
+			"so the store seat's rule answers it", len(seats), strings.Join(seats, ", "), pyvalue.StrRepr(project)))
+	}
+	seat := seats[0]
+	if given.Ref == "" || given.Ref == seat {
+		return decisions.Authority{Kind: given.Kind, Ref: seat}, nil
+	}
+	return decisions.Authority{Kind: given.Kind, Ref: seat}, contract.OrderedObject{{Key: "reason", Value: "ref_replaced"},
+		{Key: "detail", Value: "a " + given.Kind + "-class question raised from project " + pyvalue.StrRepr(project) + " is answered from the management seat above it, " +
+			pyvalue.StrRepr(seat) + ", so the ref " + pyvalue.StrRepr(given.Ref) + " the raise named was replaced by that seat"},
+		{Key: "project", Value: project}, {Key: "given", Value: given.Ref}, {Key: "seat", Value: seat}}
 }
 
 // runDecisionList is decision-list: a read of the records the filters select.
@@ -224,7 +290,8 @@ func runDecisionAnswer(ctx context.Context, services dispatch.Services, args dis
 	}
 	defer opened.Close()
 	stored, err := opened.Update(ctx, decisionID, func(txCtx context.Context, record decisions.Record) (decisions.Record, error) {
-		if err := decisionAnswerProvenance(txCtx, opened, record, answer); err != nil {
+		answer, err := decisionAnswerProvenance(txCtx, opened, record, answer)
+		if err != nil {
 			return decisions.Record{}, err
 		}
 		answered, err := decisions.ValidateAnswer(record, answer)
@@ -253,22 +320,54 @@ func runDecisionAnswer(ctx context.Context, services dispatch.Services, args dis
 // reached the record rather than the parent's report read back. A grade below them states no such
 // requirement here. Every refusal is made inside the record's transaction, so the record the
 // judgment read is the row the write replaces.
-func decisionAnswerProvenance(ctx context.Context, opened *store.Store, record decisions.Record, answer decisions.Answer) error {
+//
+// A record whose authority.ref names a management seat (decision-raise wrote the seat above the
+// project it was raised from, CRW-1371) is answered by that seat's current owner instead, and an
+// answer that cites the class without a ref takes the record's ref, so the line an answer always
+// ran stays the line it runs. A record without such a ref keeps the store seat's rule. The answer
+// returned is the one ValidateAnswer judges.
+func decisionAnswerProvenance(ctx context.Context, opened *store.Store, record decisions.Record, answer decisions.Answer) (decisions.Answer, error) {
 	grade := strings.TrimSpace(record.Authority.Kind)
 	if grade != decisions.AuthorityUser && grade != decisions.AuthorityDelegatedManagement {
-		return nil
+		return answer, nil
 	}
 	if strings.TrimSpace(answer.Authority.Kind) != grade {
-		return decisionBadInvocation(fmt.Sprintf("a %s-class decision takes an answer that names its own class: give --authority %s", grade, grade))
+		return answer, decisionBadInvocation(fmt.Sprintf("a %s-class decision takes an answer that names its own class: give --authority %s", grade, grade))
 	}
 	if !containsString(decisionUserAnswerVias(), answer.Via) {
-		return decisionBadInvocation(fmt.Sprintf("a %s-class decision is answered through %s; --via %q reads the parent's report, not the user's answer", grade, strings.Join(decisionUserAnswerVias(), ", "), answer.Via))
+		return answer, decisionBadInvocation(fmt.Sprintf("a %s-class decision is answered through %s; --via %q reads the parent's report, not the user's answer", grade, strings.Join(decisionUserAnswerVias(), ", "), answer.Via))
+	}
+	if seat := strings.TrimSpace(record.Authority.Ref); seat != "" {
+		held, known, err := (&registry.Registry{Store: opened}).ManagementSeat(ctx, seat)
+		if err != nil {
+			return answer, err
+		}
+		// The ref names a management seat: the seat's owner now answers, the successor after a
+		// handover, and nobody while the seat has no live owner (the store seat does not stand in
+		// for a seat that exists). A ref that names no management seat is the store seat's case.
+		if known {
+			owner := ""
+			if len(held) == 1 {
+				owner, _ = get(held[0], "taskId").(string)
+				owner = strings.TrimSpace(owner)
+			}
+			if owner == "" {
+				return answer, decisionConflict("authority_unverified", fmt.Sprintf("a %s-class decision raised under management seat %s is answered by that seat's owner, and %d live binding(s) hold the seat", grade, pyvalue.StrRepr(seat), len(held)))
+			}
+			if owner != answer.By {
+				return answer, decisionConflict("authority_unverified", fmt.Sprintf("a %s-class decision raised under management seat %s is answered by that seat's owner %s, and %q is not it", grade, pyvalue.StrRepr(seat), pyvalue.StrRepr(owner), answer.By))
+			}
+			if strings.TrimSpace(answer.Authority.Ref) == "" {
+				answer.Authority.Ref = seat
+			}
+			return answer, nil
+		}
 	}
 	bound, err := (&registry.Registry{Store: opened}).StoreScopeSupervisor(ctx)
 	if err != nil {
 		// A store that cannot be read is a host failure, not a verdict on the recorder: the answer
 		// is not recorded either way, so nothing is accepted.
-		return err
+		return answer, err
 	}
 	// The store seat a manager laid down when it registered its management seat is read through
 	// that management seat (registry.StoreScopeSupervisor, CRW-1333), so the manager keeps
@@ -278,12 +377,12 @@ func decisionAnswerProvenance(ctx context.Context, opened *store.Store, record d
 	// held by another task all refuse. The answer comes from the seat this grade is answered from
 	// or it is not accepted.
 	if len(bound) != 1 {
-		return decisionConflict("authority_unverified", fmt.Sprintf("a %s-class decision is answered by the task the relay's store-scope supervisor binding holds, and %d such binding(s) are live", grade, len(bound)))
+		return answer, decisionConflict("authority_unverified", fmt.Sprintf("a %s-class decision is answered by the task the relay's store-scope supervisor binding holds, and %d such binding(s) are live", grade, len(bound)))
 	}
 	if taskID, _ := get(bound[0], "taskId").(string); strings.TrimSpace(taskID) == answer.By {
-		return nil
+		return answer, nil
 	}
-	return decisionConflict("authority_unverified", fmt.Sprintf("a %s-class decision is answered by the task the relay's store-scope supervisor binding holds, and %q is not it", grade, answer.By))
+	return answer, decisionConflict("authority_unverified", fmt.Sprintf("a %s-class decision is answered by the task the relay's store-scope supervisor binding holds, and %q is not it", grade, answer.By))
 }
 
 // decisionUserAnswerVias is the via vocabulary a user-grade or delegated-management-grade answer
