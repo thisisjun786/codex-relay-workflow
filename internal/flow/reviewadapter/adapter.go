@@ -11,7 +11,8 @@
 //	tool_failed       the tool exited non-zero without a quota text
 //	no_answer         the tool exited 0 and its answer is blank
 //	invalid           the answer is not exactly one JSON value valid against the request's schema, has a field the answer does not
-//	                  know, or a severity no grade word reads
+//	                  know, a severity no grade word reads, or an impact outside premerge.Impacts, or its verdict is verified over a
+//	                  finding that premerge.Blocks (the adapter's form of verdict_invalid)
 //	ok                otherwise: verdict and findings are kept
 //
 // An answer that merely quotes a quota text on a successful call is not quota. Only an ok record carries a verdict and findings;
@@ -30,6 +31,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -40,6 +42,7 @@ import (
 	"github.com/google/jsonschema-go/jsonschema"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/acceptance/premerge"
 	"github.com/thisisjun786/codex-relay-workflow/internal/review"
 )
 
@@ -98,7 +101,8 @@ type Request struct {
 	GuideRev string        // the revision of the review guide the prompt was built from
 }
 
-// Finding is one finding of an ok record. Severity is a grade P0-P3; Impact is passed through as the tool wrote it.
+// Finding is one finding of an ok record. Severity is a grade P0-P3; Impact is one of premerge.Impacts or empty (a security
+// finding that names none gets safety_or_data).
 type Finding struct {
 	ID       string `json:"id"`
 	Severity string `json:"severity"`
@@ -331,25 +335,42 @@ func decodeAnswer(schema *jsonschema.Resolved, answer []byte) (string, []Finding
 		return "", nil, fmt.Errorf("the answer's verdict %q is neither %s nor %s", doc.Verdict, VerdictVerified, VerdictNeedsChanges)
 	}
 	findings := make([]Finding, 0, len(doc.Findings))
+	security := make([]bool, 0, len(doc.Findings))
 	for _, f := range doc.Findings {
 		if f.Line < 0 {
 			return "", nil, fmt.Errorf("finding at %s has a negative line %d", f.File, f.Line)
 		}
-		grade, _, ok := review.NormalizeGrade(f.Severity)
+		grade, sec, ok := review.NormalizeGrade(f.Severity)
 		if !ok {
 			return "", nil, fmt.Errorf("finding at %s:%d has a severity no grade word reads: %q", f.File, f.Line, f.Severity)
 		}
 		findings = append(findings, Finding{ID: FindingID(f.File, f.Text), Severity: string(grade), Impact: f.Impact, File: f.File, Line: f.Line, Text: f.Text})
+		security = append(security, sec)
 	}
-	return doc.Verdict, normalize(findings), nil
+	findings, err := normalize(doc.Verdict, findings, security)
+	if err != nil {
+		return "", nil, err
+	}
+	return doc.Verdict, findings, nil
 }
 
-// normalize collapses findings that share an id into the first of them, keeping the most severe grade and the first non-empty
-// impact, so ids are unique inside a record.
-func normalize(findings []Finding) []Finding {
+// normalize applies the impact rules of the flow (CRW-1438) and collapses findings that share an id into the first of them,
+// keeping the most severe grade and the first blocking impact (else the first non-empty one), so ids are unique inside a record. security[i] is the security
+// flag review.NormalizeGrade read from the severity of findings[i]. In order:
+//   - an impact that is not empty and not one of premerge.Impacts is an error;
+//   - a security finding without an impact gets safety_or_data;
+//   - after the collapse, a verified verdict over a finding that premerge.Blocks is an error naming the finding (the adapter's
+//     form of verdict_invalid).
+func normalize(verdict string, findings []Finding, security []bool) ([]Finding, error) {
 	out := make([]Finding, 0, len(findings))
 	at := map[string]int{}
-	for _, f := range findings {
+	for k, f := range findings {
+		if f.Impact != "" && !slices.Contains(premerge.Impacts, f.Impact) {
+			return nil, fmt.Errorf("finding %s at %s:%d has an impact outside the closed set: %q", f.ID, f.File, f.Line, f.Impact)
+		}
+		if f.Impact == "" && k < len(security) && security[k] {
+			f.Impact = impactSafetyOrData
+		}
 		i, seen := at[f.ID]
 		if !seen {
 			at[f.ID] = len(out)
@@ -359,12 +380,22 @@ func normalize(findings []Finding) []Finding {
 		if f.Severity < out[i].Severity { // "P0" < "P1" < "P2" < "P3"
 			out[i].Severity = f.Severity
 		}
-		if out[i].Impact == "" {
-			out[i].Impact = f.Impact
+		if out[i].Impact == "" || (out[i].Impact == premerge.MinorSeparable && f.Impact != "" && f.Impact != premerge.MinorSeparable) {
+			out[i].Impact = f.Impact // a blocking impact of any duplicate is never hidden by a non-blocking one
 		}
 	}
-	return out
+	if verdict == VerdictVerified {
+		for _, f := range out {
+			if premerge.Blocks(f.Severity, f.Impact) {
+				return nil, fmt.Errorf("the answer is verified over the blocking finding %s at %s:%d (severity %s, impact %q)", f.ID, f.File, f.Line, f.Severity, f.Impact)
+			}
+		}
+	}
+	return out, nil
 }
+
+// impactSafetyOrData is the impact a security finding that names none gets.
+const impactSafetyOrData = "safety_or_data"
 
 // FindingID is the identity of a finding: the file and the text with whitespace collapsed and case folded. The line and the
 // severity are not part of it, so a finding keeps its id when code above it moves.
