@@ -10,6 +10,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -173,6 +175,96 @@ func SettleGuard(leg, raw, answer, rule string, env host.LookupEnv) string {
 	return warnAnswer(reason, RecordDecision(raw, leg, rule, DecisionWarn, env))
 }
 
+// SettleGuardOnce is SettleGuard for a warning whose record a session leaves once (CRW-1387: the child push guard's unreadable lineage of
+// a sub-agent, whose session is mostly no relay child, warned and recorded on every push). once names the warning; the first such warn
+// of a session claims the marker <sha256 of the session's JSON>.<leg>.<once>.once beside the session's records (O_EXCL, so concurrent
+// hooks claim it once) and records the decision; a later one of the same session passes with the same warning and leaves no record. A
+// marker that cannot be made leaves the record as SettleGuard does. An answer that is no deny, and a deny the table keeps at block,
+// are settled as SettleGuard settles them; once "" is SettleGuard.
+func SettleGuardOnce(leg, raw, answer, rule, once string, env host.LookupEnv) string {
+	reason, deny := guardDeny(answer)
+	if !deny || !slug(once) || (rule != "" && Mode(leg, rule) == GuardBlock) {
+		return SettleGuard(leg, raw, answer, rule, env)
+	}
+	if rule == "" {
+		rule = RuleOf(reason)
+	}
+	marker, first := claimOnce(raw, leg, once, env)
+	if !first {
+		return warnAnswer(reason+" This session's first such warning was recorded; this one leaves no record.", false)
+	}
+	recorded := RecordDecision(raw, leg, rule, DecisionWarn, env)
+	if !recorded && marker != "" {
+		_ = os.Remove(marker)
+	}
+	return warnAnswer(reason, recorded)
+}
+
+// claimOnce creates the once marker of a session's warning: first is false only when the marker already exists; marker is the created
+// file, "" when none could be made (no record directory: the caller records as it would without one).
+func claimOnce(raw, leg, once string, env host.LookupEnv) (marker string, first bool) {
+	if !slug(leg) {
+		return "", true
+	}
+	dir, ok := decisionsDir(env)
+	if !ok {
+		return "", true
+	}
+	session, _ := decisionSubjects(raw)
+	digest := sha256.Sum256([]byte(session))
+	path := filepath.Join(dir, hex.EncodeToString(digest[:])+"."+leg+"."+once+".once")
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	switch {
+	case errors.Is(err, fs.ErrExist):
+		return "", false
+	case err != nil:
+		return "", true
+	}
+	if f.Close() != nil {
+		_ = os.Remove(path)
+		return "", true
+	}
+	return path, true
+}
+
+// decisionsDir is <CODEX_HOME>/crw/hook-decisions, made if missing; false for a hook outside a plugin (PLUGIN_ROOT unset) or a directory
+// that cannot be made.
+func decisionsDir(env host.LookupEnv) (string, bool) {
+	if root, _ := env("PLUGIN_ROOT"); root == "" {
+		return "", false
+	}
+	home, set := env("CODEX_HOME")
+	if !set || home == "" {
+		h, err := host.Home(env)
+		if err != nil {
+			return "", false
+		}
+		home = filepath.Join(h, ".codex")
+	}
+	dir := filepath.Join(home, "crw", "hook-decisions")
+	if os.MkdirAll(dir, 0o700) != nil {
+		return "", false
+	}
+	return dir, true
+}
+
+// decisionSubjects are the JSON strings of the session_id and agent_id a hook input names, "null" for one it does not name.
+func decisionSubjects(raw string) (session, agent string) {
+	session, agent = "null", "null"
+	if len(raw) <= MaxStdinBytes {
+		if v, ok := decode(raw); ok {
+			o, _ := v.(map[string]any)
+			if s, _ := o["session_id"].(string); metadata(s) {
+				session = jsnode.JSString(s)
+			}
+			if s, _ := o["agent_id"].(string); metadata(s) {
+				agent = jsnode.JSString(s)
+			}
+		}
+	}
+	return session, agent
+}
+
 // ReleaseGuard is a PreToolUse leg's answer for a hook input it could not read whole: the call passes with a warning and the
 // release is recorded (fail-open). raw is what was read, if anything; it only names the session.
 func ReleaseGuard(leg, raw, cause string, env host.LookupEnv) string {
@@ -198,33 +290,11 @@ func RecordDecision(raw, leg, rule, decision string, env host.LookupEnv) (record
 	if !slug(leg) || !slug(rule) || !slug(decision) {
 		return false
 	}
-	if root, _ := env("PLUGIN_ROOT"); root == "" {
+	dir, ok := decisionsDir(env)
+	if !ok {
 		return false
 	}
-	session, agent := "null", "null"
-	if len(raw) <= MaxStdinBytes {
-		if v, ok := decode(raw); ok {
-			o, _ := v.(map[string]any)
-			if s, _ := o["session_id"].(string); metadata(s) {
-				session = jsnode.JSString(s)
-			}
-			if s, _ := o["agent_id"].(string); metadata(s) {
-				agent = jsnode.JSString(s)
-			}
-		}
-	}
-	home, set := env("CODEX_HOME")
-	if !set || home == "" {
-		h, err := host.Home(env)
-		if err != nil {
-			return false
-		}
-		home = filepath.Join(h, ".codex")
-	}
-	dir := filepath.Join(home, "crw", "hook-decisions")
-	if os.MkdirAll(dir, 0o700) != nil {
-		return false
-	}
+	session, agent := decisionSubjects(raw)
 	digest := sha256.Sum256([]byte(session))
 	record := `{"schemaVersion":1,"sessionId":` + session + `,"agentId":` + agent + `,"leg":` + jsnode.JSString(leg) + `,"rule":` + jsnode.JSString(rule) +
 		`,"decision":` + jsnode.JSString(decision) + `,"decidedAt":"` + time.Now().UTC().Format("2006-01-02T15:04:05.000Z") + `"}` + "\n"

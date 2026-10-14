@@ -450,6 +450,35 @@ the same check; the plain `crw doctor` report and `crw install` never call `gh`.
 report carries `set`, `kind`, `repo` and, once `gh` answered, `access` (the login's permissions and the
 `issues_read` and `issues_write` verdicts).
 
+### The servers `crw manage child-resume` switches off
+
+`crw manage child-resume` brings a `notLoaded` child back under its recorded settings with the MCP servers it names switched off
+(`mcp_servers.<name>.enabled = false` on the resume, then read back as `disabled` through `mcpServerStatus/list`). The names are in
+the `manage` object of the configuration file:
+
+```json
+{"manage": {"child_check": {"disabled_servers": []}}}
+```
+
+| Key | Meaning |
+| --- | --- |
+| `manage.child_check.disabled_servers` | The servers to switch off, a list of names. The default is the empty list: no server is switched off and none is compared. Blank names are dropped. |
+
+`crw config verifier` (the installation's writer of the file) writes the default where the file does not name the key, in a new
+file too, and keeps a list the file already has, an empty one included. A `manage` or `child_check` value that is not an object is
+left as it is.
+
+A file that does not name the key (no file, no `manage` object, no `child_check` section, no key, or `null`) is read as the default
+and is no refusal: `child-resume`, a dry run included, writes `manage.child_check.disabled_servers is not set ...; reading it as
+the default list` to standard error and carries the same text in its report, `disabledServers` with `source` `default`, `servers`
+and `warning`. A list the file names is reported with `source` `config` and no warning. A key that is there but is no list of names
+is still refused as `disabled_servers_unset` (exit 2), before any host read. `crw manage child-check` compares servers, so with
+neither `--disabled` nor a non-empty list it has nothing to compare and still refuses as `disabled_servers_unset`.
+
+A dry run of a `notLoaded` thread ends `settings_unverified` (exit 3): the host reports no settings for a thread until it is
+resumed, and a dry run sends nothing, so it cannot resume to learn them. A real run resumes with the recorded model and effort (the
+record is the child's one authorized pair) and starts the turn only when the host's answer equals the record.
+
 ## Installing the runtime
 
 `crw install` needs a `crw` to run it. The archive carries one, so unpack it anywhere temporary and
@@ -1411,8 +1440,11 @@ record names, it adds a warning to the session's context at every start and resu
 policy path, the two digests (shortened) and the command that repairs it, `crw install register-mcp
 --re-register-policy --execution-policy <path>`, and points to the policy editor (`crw gui`), whose
 write edits the file and re-registers it in one operation, so an edit made there leaves no disagreement.
-The Codex home is `CODEX_HOME` trimmed (a blank one is unset), else `.codex` below the user's home, as the
-installer reads it, and the path in the command is quoted as one shell word. The launcher also refuses to
+The Codex home is `CODEX_HOME` trimmed of the whitespace around it (a blank one is unset), else `.codex` below the
+user's home: the one rule (`pluginwiring.CodexHomeNamed`) the hook, the bridge launcher, `crw install register-mcp`
+(and the other install commands that take `--codex-home`), `crw install features` and `doctor` read it by, so a padded
+`CODEX_HOME` names one directory to all of them. The path in the command is quoted as one shell word, and so is the
+value of a `CODEX_THREAD_BRIDGE_EXECUTION_POLICY_DIGEST` override the warning names. The launcher also refuses to
 start under a `CODEX_THREAD_BRIDGE_EXECUTION_POLICY` or `CODEX_THREAD_BRIDGE_EXECUTION_POLICY_DIGEST` that names
 another policy or digest than the record, whatever the file holds (`internal/pluginwiring`, the comparison
 the launcher makes); the hook compares them with the same code and, before it looks at the file, says that

@@ -429,8 +429,8 @@ async function superseded(node, rel) {
 // orchestrator - an open question of the DESIGN beyond the explorer cap or with an out-of-authority scope notation -, skip),
 // runs the explorers it spawned at most EXPLORER_CONCURRENCY at a time, and records the answers (crw.exploreRecord), so a
 // question of the same digest asked again in the run reuses the answer and names the route it came from (origin). The result lists an answer for each question, the
-// questions that went to the orchestrator thread or that exhausted the asker's research, and the call that failed when an
-// explorer did not complete.
+// questions that went to the orchestrator thread or that exhausted the asker's research, the call that failed when an
+// explorer did not complete, and the tokens the explorers it spawned report (meta.tokens: a design loop counts them, CRW-1327).
 //
 // opts.endConditions are the end condition commands of the milestone's issues ({issue, command}, CRW-1382): the first explorer this
 // fan-out spawns is given them to run once, and its answer names them (end_conditions_asked) so crw.exploreRecord can warn of a command
@@ -442,6 +442,7 @@ export async function explore(kind, questions, ctx, opts) {
   const endsFor = spawn.length && ends.length ? spawn[0].digest : null
   const found = {}
   let failed = null
+  let tokens = 0
   for (const wave of chunks(spawn, EXPLORER_CONCURRENCY)) {
     // the explorer given the end conditions answers FINDINGS_END; every other one is the call it was before CRW-1382 (its packet and
     // its schema), so a run recorded then replays it
@@ -454,6 +455,7 @@ export async function explore(kind, questions, ctx, opts) {
       })), { keys: wave.map((r) => r.digest.slice(0, 12)), label: 'explore' })
     wave.forEach((r, i) => {
       const call = calls[i]
+      tokens += (call && call.meta && call.meta.tokens && call.meta.tokens.total) || 0
       if (!call || call.status !== 'completed') {
         if (!failed) failed = call ? { callId: call.callId, status: call.status, reason: call.reason } : { callId: null, status: 'failed', reason: 'explorer_thrown' }
         return
@@ -494,6 +496,7 @@ export async function explore(kind, questions, ctx, opts) {
     // the questions the run asked that no answer reached and these questions do not raise again: the next ask carries them (CRW-1381)
     carried: plan.carried || [],
     failed,
+    tokens,
   }
 }
 

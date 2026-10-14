@@ -50,9 +50,10 @@ func (c *command) ps(args []string) int {
 		return 0
 	}
 	tw := tabwriter.NewWriter(c.stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "RUN\tSTATE\tWORKFLOW\tOWNER\tCALLS\tOPEN\tHOLD\tASKS\tTOKENS\tSTARTED")
+	fmt.Fprintln(tw, "RUN\tSTATE\tWORKFLOW\tOWNER\tCALLS\tOPEN\tHOLD\tASKS\tTOKENS\tCACHED\tFRESH\tOUTPUT\tSTARTED")
 	for _, i := range shown {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%s\n", i.RunID, i.State, i.Workflow, short(i.Owner), i.Calls, i.Unsettled, i.Holds, i.Waiting, i.Tokens, c.since(i.StartedAt))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\n", i.RunID, i.State, i.Workflow, short(i.Owner), i.Calls, i.Unsettled, i.Holds, i.Waiting, i.Tokens,
+			i.TokenSplit.CachedInput, i.TokenSplit.FreshInput, i.TokenSplit.Output, c.since(i.StartedAt))
 	}
 	_ = tw.Flush()
 	return 0
@@ -90,7 +91,7 @@ func (c *command) show(args []string) int {
 func (c *command) printDetail(d RunDetail) {
 	w := c.stdout
 	fmt.Fprintf(w, "run %s  %s  %s\n", d.RunID, d.Workflow, d.State)
-	fmt.Fprintf(w, "owner %s  plan %s@%d  started %s ago  tokens %d  calls %d\n", cell(d.Owner), cell(d.PlanID), d.PlanRevision, c.since(d.StartedAt), d.Tokens, d.Calls)
+	fmt.Fprintf(w, "owner %s  plan %s@%d  started %s ago  tokens %d (%s)  calls %d\n", cell(d.Owner), cell(d.PlanID), d.PlanRevision, c.since(d.StartedAt), d.Tokens, d.TokenSplit, d.Calls)
 	switch {
 	case d.PolicyPath == "" && d.PolicyUnrecorded && d.PolicyDigest != "":
 		fmt.Fprintln(w, "policy file not recorded  digest "+d.PolicyDigest+" (this run started before the policy file was journaled)")
@@ -145,7 +146,7 @@ func (c *command) printDetail(d RunDetail) {
 				line += "  thread " + a.ThreadID
 			}
 			if a.Tokens > 0 {
-				line += fmt.Sprintf("  tokens %d", a.Tokens)
+				line += fmt.Sprintf("  tokens %d (%s)", a.Tokens, a.TokenSplit)
 			}
 			if a.RecoveryHold {
 				line += "  [recovery_hold]"

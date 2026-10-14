@@ -159,7 +159,8 @@ func TestCRW1370TheLineageLimitIsFourParents(t *testing.T) {
 }
 
 // Anything else the lineage walk cannot read is no binding, never a block: the push passes with the [crw warning] text and a warn record that names the
-// sub-agent and never the command text, a force push onto dev included (the session is not known to be a child).
+// sub-agent and never the command text, a force push onto dev included (the session is not known to be a child). The record is left once per session
+// (CRW-1387).
 func TestCRW1370AnUnreadableLineageFailsOpenWithARecord(t *testing.T) {
 	s1, s2, s3 := lineageThread(1), lineageThread(2), lineageThread(3)
 	for _, c := range []struct {
@@ -184,9 +185,10 @@ func TestCRW1370AnUnreadableLineageFailsOpenWithARecord(t *testing.T) {
 					t.Errorf("%s: %q", command, out)
 				}
 			}
+			// CRW-1387: the unreadable lineage of a session is recorded once, at its first push, not on each one.
 			rs := f.records()
-			if len(rs) != 2 {
-				t.Fatalf("%d decision records, want one per unjudged push (2): %v", len(rs), rs)
+			if len(rs) != 1 {
+				t.Fatalf("%d decision records, want one for the session's two unjudged pushes (1): %v", len(rs), rs)
 			}
 			for _, r := range rs {
 				if r["leg"] != childPushLeg || r["decision"] != "warn" || r["agentId"] != s3 || r["sessionId"] != s2 || r["rule"] == "shared-branch-history" {

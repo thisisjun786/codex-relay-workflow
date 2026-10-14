@@ -10,6 +10,8 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 )
 
+// An exception's pair (provenance exception) is not a declared role pair: CRW-1311's resume-then-compare is for a role_pair of a role with
+// several pairs only, so this send to an unloaded thread is still refused before any resume.
 func Test_test_an_exception_is_not_evidence_that_a_pair_matches_its_roles_policy(t *testing.T) {
 	b, host := testBridge(t)
 	cwd := t.TempDir()

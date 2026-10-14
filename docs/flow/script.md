@@ -124,7 +124,7 @@ target drops to ES2016 (esbuild then lowers async/await to generators) and this 
 | `pipeline(items, ...stages, opts?)` | Runs each item through all stages independently and with no barrier between stages. A stage receives `(previous, item, index)`; a stage that throws makes that item `null` and skips its remaining stages. |
 | `phase(title)`, `log(message)` | Journal a phase or log row. |
 | `args` | The `--args` value. |
-| `budget` | `{total, spent(), remaining()}`: the run's token ceiling (`total` is `null` without one), the tokens spent and the tokens left (`Infinity` without a ceiling). At 80% the engine journals an info row; at 100% the run is paused and a call that would send a request ends `held` with reason `budget_exhausted`. A completed turn whose usage the backend never received counts as unmeasured, not as zero: the engine journals a flow row `tokens_unmeasured`, and under a ceiling pauses the run the same way. |
+| `budget` | `{total, run, spent(), remaining()}`: the run's token ceiling (`total` is `null` without one), the token budget the run's first process started with (`run`, `null` without one), the tokens spent and the tokens left (`Infinity` without a ceiling). A resumed run counts what its earlier processes spent (`Config.SpentBefore`, from the terminal rows of its journal), with a spec or without one, so `spent()` is the run's figure (the `--token-budget` of a resume without a spec is what that resume may spend on top of it). `total` is this process's ceiling, which a resume can narrow; `run` is what the first started row of the run records (`token_budget`, each process's started row records its own ceiling), so it is the same in every process of the run and a script decision made on it replays (CRW-1327). At 80% the engine journals an info row (`budget_warning`, once for the run: a resumed run whose journal holds it writes no second one); at 100% the run is paused and a call that would send a request ends `held` with reason `budget_exhausted`. A completed turn whose usage the backend never received counts as unmeasured, not as zero: the engine journals a flow row `tokens_unmeasured`, and under a ceiling pauses the run the same way. |
 | `workflow(nameOrRef, args)` | Runs another script inline as one step and resolves with what it returns. The called script shares the run's pool, journal and budget, and its calls live on a child path. Nesting is one level: `workflow()` inside a called script throws. `crw flow run` resolves a name to `<name>.js` and `{scriptPath}` to that relative path, inside the script's directory. |
 | `crw.classify(result)` | Maps an executor `CallResult` to one outcome state (below). |
 | `crw.clock()` | The time as an RFC 3339 string, journaled. It occupies a position of its path like a call. |
@@ -327,6 +327,18 @@ acceptances against the reviewer threads on the host and archives the threads wh
 (its delivery is the seam of the issue that owns it). A milestone that cannot go on says why (`crw.milestoneHalt`): a call of the design phase, of the close or of
 a re-plan that did not complete is never read as an approval, a design, a gate, a review or an alignment (`held` and `unknown` hold the milestone, `refused` and
 `null_model` escalate, a gate that failed or cannot be settled and a QA that is INCONCLUSIVE escalate, `superseded` stops).
+
+**The caps of the design loop.** The design loop is one `auditedDesign` of `project-lane.js` (the DESIGN or re-plan delta it starts from, its audit rounds and
+the architect's fixes), and it has two caps, both written in `project-lane.js` beside the loop. The round cap is `AUDIT_ROUNDS` (3): a DESIGN not approved in
+that many rounds stops the milestone with the `design_audit_rounds` escalation, which the run tells the owner thread (CRW-1347). The token cap is
+`DESIGN_TOKEN_CAP` (5,000,000 tokens), or `DESIGN_TOKEN_WARN` (0.8) of the run's token budget (`budget.run`, the budget its first process started with)
+when that is lower, so a run without a budget has the fixed cap. The cap is made of what the journal fixes, the calls' tokens and `budget.run`, not of
+`budget.total`: a resume under another ceiling (a narrower `--token-budget`, or none) reaches the cap at the same call and raises the escalation with the
+same input, so the loop and what follows it replay. The tokens of the loop are those its calls report: the DESIGN's architect call, the audit
+calls, the architect's fixes and the explorers `crw.explore` spawns for the open questions of each round (its result's `tokens`). When they reach the cap, the
+loop raises the `design_loop_tokens` escalation, which asks nothing and goes up to the owner thread, once per loop, and goes on; the engine pauses the
+run at the whole budget (`budget_exhausted`). Reaching either cap writes a log row `warn design_loop_cap rounds: ...` or `warn design_loop_cap tokens: ...`
+(CRW-1327). Neither cap is a block of its own: a warning and a record, the stop at the round cap being CRW-1347's.
 
 **The lane of a node.** `crw.dag` starts a node when the nodes it waits for (a dependency or an order edge; the members of a
 group are chained by order edges) have landed, in the scheduler's order, at most `cap` nodes at once and never two nodes whose
@@ -924,10 +936,14 @@ any row is written. `crw flow shadow` replays either from the trace and names th
   one repair, `null_model`, `completed`.
 - A turn that ended `failed` or `interrupted` with an error is `TurnOutcome.Failed` with its `codexErrorInfo`: a usage or rate limit
   pauses the run, an exceeded context window is a `null_model`, a host failure holds the call, as for any call.
-- Tokens are the rollout's last `token_count` (thread/read `path`), less what the subagent's earlier turns counted (a recovered
-  `send_input` turn takes that and the call's tokens from its `step_published` row, so it counts only what it adds). A rollout that
-  cannot be read leaves the turn unmeasured: the `tokens_unmeasured` row says `pauses: false`, and a session run's token ceiling
-  counts the calls it measured.
+- Tokens are the rollout's last `token_count` (thread/read `path`), less what the subagent's earlier turns counted, in all its parts: the input and its
+  cached part, the output and its reasoning part, the total (`tokens`: `input`, `cached_input`, `output`, `reasoning_output`, `total`; a part that is 0 is left
+  out of the row, and a row written before the parts reads them as 0). A recovered `send_input` turn takes that and the call's tokens, in the same parts, from
+  its `step_published` row (`tokens_seen`, `call_tokens`), so it counts only what it adds. The call's tokens it takes are in no terminal row (the process that
+  counted them died before it ended the call), so the resumed process counts them against the run's figure when it takes them, and the call's terminal row
+  carries them: `RunSpent` and the process's `spent()` count them once. The App Server backend records the same parts from
+  `thread/tokenUsage/updated`. A rollout that cannot be read leaves the turn unmeasured: the `tokens_unmeasured` row says `pauses: false`,
+  and a session run's token ceiling counts the calls it measured.
 - A pause, a cancellation or a deadline interrupts the bound subagent's running turns and reads the thread until it is no longer
   active; only then is the call ended `held` (or `superseded`). A call that waited for a dispatch retracts its step.
 - Write isolation is recorded, never enforced (the host gives a subagent its parent's sandbox). With `SessionConfig.Trace` the run

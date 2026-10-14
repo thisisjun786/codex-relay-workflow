@@ -111,6 +111,8 @@ func Test_test_a_resume_for_the_wrong_role_never_reads_or_resumes_the_thread(t *
 	}
 }
 
+// A supervisor's pair is the user's own selection (expectation record, provenance unverified), not a declared role pair: CRW-1311's
+// resume-then-compare is for a role_pair of a role with several pairs only, so this send is still refused before any resume.
 func Test_test_a_named_supervisor_the_host_has_not_loaded_is_not_resumed_at_all(t *testing.T) {
 	b, host := testBridge(t)
 	policy := `{"roles":{"supervisor":{"expectation":"record"}}}`

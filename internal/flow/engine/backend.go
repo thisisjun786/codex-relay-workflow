@@ -105,12 +105,31 @@ type TurnSpec struct {
 	Started func(turnID string)
 }
 
-// Tokens is a turn's token usage.
+// Tokens is a turn's token usage, in the parts the host reports (a rollout's token_count, the App Server's tokenUsage): the input,
+// of which CachedInput was read from the prompt cache, and the output, of which ReasoningOutput was reasoning (CRW-1327). The two
+// parts are left out of a row when they are 0, and a row written before them reads them as 0.
 type Tokens struct {
-	Input  int64 `json:"input"`
-	Output int64 `json:"output"`
-	Total  int64 `json:"total"`
+	Input           int64 `json:"input"`
+	CachedInput     int64 `json:"cached_input,omitempty"`
+	Output          int64 `json:"output"`
+	ReasoningOutput int64 `json:"reasoning_output,omitempty"`
+	Total           int64 `json:"total"`
 }
+
+// Add is the sum of two usages.
+func (t Tokens) Add(o Tokens) Tokens {
+	return Tokens{Input: t.Input + o.Input, CachedInput: t.CachedInput + o.CachedInput, Output: t.Output + o.Output,
+		ReasoningOutput: t.ReasoningOutput + o.ReasoningOutput, Total: t.Total + o.Total}
+}
+
+// Sub is the usage t has beyond o: the growth of a running total since an earlier reading.
+func (t Tokens) Sub(o Tokens) Tokens {
+	return Tokens{Input: t.Input - o.Input, CachedInput: t.CachedInput - o.CachedInput, Output: t.Output - o.Output,
+		ReasoningOutput: t.ReasoningOutput - o.ReasoningOutput, Total: t.Total - o.Total}
+}
+
+// FreshInput is the input that was not read from the cache: what a cost reading counts at the full input price.
+func (t Tokens) FreshInput() int64 { return t.Input - t.CachedInput }
 
 // TurnOutcome is a terminal turn: its last agent message, or a failure.
 type TurnOutcome struct {

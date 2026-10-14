@@ -138,9 +138,19 @@ role that lists more than one pair is described differently:
   to such a task resumes it without transmitting the recorded pair and compares what the host reports
   with the record, the route a supervisor takes (see Changing an existing task), instead of restoring a
   pair the user has since changed. A role with one pair keeps transmitting it. The bridge's
-  `send_message_to_thread` holds the same line: a pair of such a role is authorized (`role_pair`) but is
-  withheld from a thread the host has not loaded, as `unverified_pair_for_unloaded_thread`, exactly as a
-  supervisor's or an exception's pair is.
+  `send_message_to_thread` takes the same route for a thread the host has not loaded (CRW-1311): a pair of
+  such a role is authorized (`role_pair`), the thread is resumed without transmitting it, and the turn starts
+  only when the model and effort the host reports for the resumed thread equal the request's. Any other
+  answer, another pair or a field the host did not report, starts no turn and is refused as
+  `unverified_pair_for_unloaded_thread`, naming both pairs; the receipt's `pairCheck` records what the host
+  reported, in the record the ledger holds before the turn and in the failed receipt of a send that the
+  resume's settings findings (CRW-1398) refuse first too. A supervisor's or an exception's pair, which no declared pair checks, is still withheld from
+  such a thread before anything is resumed, and a role that declares MCP profiles still needs
+  `expected_settings.mcp_profile` first.
+- in practice a child finishes its turn and the host unloads it about a minute later (`notLoaded`), so
+  put all of a child's work in its first work turn: do not start it with a standby turn and dispatch the
+  work afterwards, and when something must be fixed after its result, rule `needs_changes`, which opens the
+  next generation and carries the correction (the 10-13 F0-2 run, CRW-1311).
 
 ## A pair may cap auto-compaction
 
@@ -386,8 +396,11 @@ nothing for a run in progress. A run process that resumes a run and reads anothe
 only the calls that start a new thread take the new pairs; a continuation keeps the pair of the thread in its
 handle, since the pair of a thread never changes. `crw flow show RUN` prints the path and digest the run holds on a
 `policy` line (and `policy_path` and `policy_digest` in `--json`), the latest of its start and any `policy_repinned`
-event, with the digest a repin replaced; a run on the placeholder table, which reads no store file, prints `policy
-none`. A call's input digest holds its role, model and effort, so a
+event, with the digest a repin replaced (`repinned from <old digest>`); a later start of the run, which pins the
+snapshot again, clears it, so the line names a repin only when one came after the newest start. A run on the
+placeholder table, which reads no store file, prints `policy none`. A run whose `started` row has no
+`policy_source` (it started before the policy file was journaled) prints `policy file not recorded  digest
+<digest>` when the row holds a digest, and `policy not recorded` when it holds none. A call's input digest holds its role, model and effort, so a
 pair that did not change keeps a completed call's digest valid. The spawn hook does not read the store for an
 engine thread: the run writes the helper pairs (`explorer`, `reviewer`) and the digest of its own snapshot to the
 flow binding file and the hook uses that.

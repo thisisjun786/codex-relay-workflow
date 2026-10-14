@@ -389,11 +389,11 @@ func TestResumeCommandLineAndRefusals(t *testing.T) {
 	if code := resumeRunCommand(context.Background(), e, []string{"-h"}); code != 0 || !strings.Contains(out.String(), "usage: crw manage child-resume") {
 		t.Fatalf("-h: exit %d, output %q", code, out.String())
 	}
-	// disabled_servers_unset: the config section names no servers. This is what the command line
-	// answers until a configuration file is loaded (the same seam child-check has).
+	// CRW-1398: a configuration that names no disabled_servers is no refusal (it reads as the default list, with a warning),
+	// so with no configuration file the command goes on to the host; here nobody listens on the default socket.
 	e, out, _ = resumeEnv(t, exe)
-	if code := resumeRunCommand(context.Background(), e, []string{"--relationship", "rel-1", "--message-file", messageFile}); code != usageExit ||
-		!strings.Contains(out.String(), resumeDisabledServersUnset) {
+	if code := resumeRunCommand(context.Background(), e, []string{"--relationship", "rel-1", "--message-file", messageFile}); code != 3 ||
+		strings.Contains(out.String(), resumeDisabledServersUnset) || !strings.Contains(out.String(), "host_unreachable") {
 		t.Fatalf("no disabled servers: exit %d, output %q", code, out.String())
 	}
 	// A relay that fails is assignment_unavailable.

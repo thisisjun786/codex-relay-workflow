@@ -413,3 +413,76 @@ func TestProductionWorldInstallsTheUpwardHook(t *testing.T) {
 		t.Errorf("without a factory the world's hook is %v", upward)
 	}
 }
+
+// TestForegroundResumePausesCleanlyOnSIGUSR1 (CRW-1278): `crw flow pause RUN` sends SIGUSR1 to the process that holds the run lock,
+// and a foreground `crw flow resume RUN SCRIPT` (and `crw flow resume RUN`) answers it as the detached run process does: the run
+// writes run_paused, its calls end held engine_paused, the process is not killed and returns, and a later resume goes on.
+func TestForegroundResumePausesCleanlyOnSIGUSR1(t *testing.T) {
+	for _, path := range []string{"script", "spec"} {
+		t.Run(path, func(t *testing.T) {
+			pw := newProcessWorld(t, twoCalls)
+			scriptResumeEnv(t, pw)
+			run := "run-usr1-" + path
+			resume := func() (int, string, string) {
+				args := []string{"resume", run}
+				if path == "script" {
+					args = append(args, pw.script)
+				}
+				return pw.td.do(append(args, "--state", pw.state)...)
+			}
+			// the first process is paused in its first call
+			sigs := make(chan os.Signal, 2)
+			mode := "inject"
+			pw.handle = func(r engine.FakeRequest) engine.FakeReply {
+				if r.Kind == "turn" && strings.Contains(r.Prompt, "first") {
+					switch mode {
+					case "inject":
+						sigs <- syscall.SIGUSR1
+						time.Sleep(200 * time.Millisecond)
+					case "signal":
+						// what `crw flow pause` does to the lock holder: this process
+						if err := syscall.Kill(os.Getpid(), syscall.SIGUSR1); err != nil {
+							t.Error(err)
+						}
+						time.Sleep(200 * time.Millisecond)
+					}
+				}
+				return engine.FakeReply{}
+			}
+			spec := pw.spec(run, nil)
+			if code, errOut := pw.execute(spec, false, sigs); code != 0 {
+				t.Fatalf("the first process: exit %d %s", code, errOut)
+			}
+			// the foreground resume is paused by a SIGUSR1 sent to its process
+			mode = "signal"
+			if code, out, errOut := resume(); code != 0 {
+				t.Fatalf("the paused resume: exit %d %s %s", code, out, errOut)
+			}
+			info := pw.info(run)
+			if info.Processes != 2 || info.Live || info.State != StateHeld || info.Paused != "operator: crw flow pause" || len(info.HeldReasons) != 1 || info.HeldReasons[0] != engine.ReasonEnginePaused {
+				t.Errorf("the resume did not pause cleanly: %+v", info)
+			}
+			events, _, err := loadRun(pw.world, run)
+			if err != nil {
+				t.Fatal(err)
+			}
+			pauses := 0
+			for _, e := range events {
+				if e.Kind == engine.KindFlow && e.Event == engine.EvRunPaused && e.Data["by"] == "operator" {
+					pauses++
+				}
+			}
+			if pauses != 2 {
+				t.Errorf("%d run_paused rows of the operator, want one for each process", pauses)
+			}
+			// a later resume goes on to the end
+			mode = ""
+			if code, out, errOut := resume(); code != 0 {
+				t.Fatalf("the last resume: exit %d %s %s", code, out, errOut)
+			}
+			if info := pw.info(run); info.State != StateCompleted || info.Processes != 3 {
+				t.Errorf("the run after the pause: %+v", info)
+			}
+		})
+	}
+}

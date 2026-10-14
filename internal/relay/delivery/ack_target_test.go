@@ -46,6 +46,12 @@ func TestAckCarriesTheTargetNoticeAndProceeds(t *testing.T) {
 	if !slices.Equal(append(keysOf(plain), "targetMoved"), keysOf(with)) {
 		t.Fatalf("acknowledgement keys %v differ from the plain %v by more than targetMoved", keysOf(with), keysOf(plain))
 	}
+	// CRW-1395: a notice that is a warning (the child's target has no observed head) is carried as targetUnobserved.
+	warning := Obj{{Key: "warning", Value: "integration_target_unobserved"}, {Key: "targets", Value: []any{}}}
+	warned, _ := run(func(context.Context, *store.Store, string) (Obj, error) { return warning, nil })
+	if got, ok := warned.Lookup("targetUnobserved"); !ok || got.(Obj).Get("warning") != "integration_target_unobserved" || !slices.Equal(append(keysOf(plain), "targetUnobserved"), keysOf(warned)) {
+		t.Fatalf("acknowledgement %v; want the plain one and targetUnobserved", warned)
+	}
 	for name, compare := range map[string]TargetNoticeFunc{
 		"a comparison that finds nothing":        func(context.Context, *store.Store, string) (Obj, error) { return nil, nil },
 		"a comparison that cannot read its rows": func(context.Context, *store.Store, string) (Obj, error) { return notice, errors.New("unreadable row") },

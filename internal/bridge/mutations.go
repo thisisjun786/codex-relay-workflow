@@ -131,6 +131,9 @@ func (b *Bridge) SendMessageToThread(ctx context.Context, in SendMessage) (ledge
 			return &appserver.RPCError{Method: "thread/read", Message: message, Object: map[string]any{"code": "thread_busy", "message": message}}
 		}
 		receipt["statusBeforeResume"] = status
+		// verifyPair is a send to a thread the host has not loaded whose pair is one of several its role declares (CRW-1311): the
+		// thread is resumed without the pair and the turn starts only when the host reports the request's pair for it.
+		var verifyPair *[2]string
 		if status == "notLoaded" {
 			receipt["echoIndependence"] = "not_established"
 			profileRole := in.Role
@@ -147,11 +150,15 @@ func (b *Bridge) SendMessageToThread(ctx context.Context, in SendMessage) (ledge
 				message := fmt.Sprintf("Thread is not loaded; expected_settings.mcp_profile is required before resume because role %q declares MCP profiles %s. This bridge cannot read the relay record or infer the released profile. Use a NEW request id stating the recipient's role and the profile it was released with (child.settings.mcpProfile), not the role's default. For a non-child recipient, state its actual declared role; a role without profiles needs none. The existing pair guard still applies; prefer relay delivery, especially for a role with several pairs. No resume or turn was sent.", profileRole, show(anyStrings(names)))
 				return &appserver.RPCError{Method: "thread/read", Message: message, Object: map[string]any{"code": execution.Missing, "message": message}}
 			}
-			if in.Role != "" && !auth.Pinned {
+			switch {
+			case in.Role != "" && !auth.Pinned && auth.Provenance == "role_pair":
+				// The role runs on one of several declared pairs, so the policy does not say which pair this thread is on, and a
+				// resume carrying the request's pair could move it back from one the user chose since. It is resumed as relay
+				// delivery resumes it, without the pair, and the host's report decides (after the resume, below).
+				verifyPair = &[2]string{contract.Model, contract.ReasoningEffort}
+				contract.Model, contract.ReasoningEffort = "", ""
+			case in.Role != "" && !auth.Pinned:
 				message := "Thread is not loaded and this request's model and effort were not checked against a declared role pair; message withheld"
-				if auth.Provenance == "role_pair" {
-					message = "Thread is not loaded and this role runs on one of several declared pairs, so the policy does not say which pair this thread is on; message withheld"
-				}
 				return &appserver.RPCError{Method: "thread/read", Message: message, Object: map[string]any{"code": "unverified_pair_for_unloaded_thread", "message": message}}
 			}
 		}
@@ -202,6 +209,12 @@ func (b *Bridge) SendMessageToThread(ctx context.Context, in SendMessage) (ledge
 				return err
 			}
 		}
+		// What the host reported for the pair is recorded before the settings findings and before the record that precedes the turn are
+		// written, so a refusal by either, and a send that ends before the turn, still carry it (CRW-1398).
+		var reportedPair [2]string
+		if verifyPair != nil {
+			reportedPair = recordPairCheck(receipt, *verifyPair, observed)
+		}
 		receipt["settings"] = contract.Receipt(observed, "resume")
 		receipt["approvals"] = contract.Approvals(resumed)
 		if _, err = b.Ledger.Save(ctx, receipt); err != nil {
@@ -214,6 +227,11 @@ func (b *Bridge) SendMessageToThread(ctx context.Context, in SendMessage) (ledge
 				message = fmt.Sprintf("Thread approval policy is %s; this request declared %s. Message withheld and NOT delivered; no turn was started. This bridge preserves a thread's approval policy and never sets one, so the way to deliver here is a NEW request id declaring the policy the thread is actually on. Declaring it does not make this bridge an approver: it answers no approval request, and the thread's own client decides every one the turn raises.", show(first.Returned), show(first.Expected))
 			}
 			return &appserver.RPCError{Method: "thread/resume", Message: message, Object: map[string]any{"code": first.Code, "message": message}}
+		}
+		if verifyPair != nil {
+			if refusal := pairRefusal(*verifyPair, reportedPair); refusal != nil {
+				return refusal
+			}
 		}
 		warnResumed(resumed, contract.Sandbox, contract.ExpectedPolicy)
 		if moveErr != nil {
@@ -232,6 +250,55 @@ func (b *Bridge) SendMessageToThread(ctx context.Context, in SendMessage) (ledge
 		return nil
 	}, nil, nil})
 	return result, err
+}
+
+// recordPairCheck is the record of a send to an unloaded thread of a role with several pairs (CRW-1311): the thread was resumed without a
+// pair, and the receipt records what the host reports for it as pairCheck, a match or not. It returns the reported pair.
+func recordPairCheck(receipt ledger.Receipt, want [2]string, observed map[string]any) (reported [2]string) {
+	if model, ok := observed["model"].(string); ok {
+		reported[0] = model
+	}
+	if effort, ok := observed["reasoningEffort"].(string); ok {
+		reported[1] = effort
+	}
+	receipt["pairCheck"] = map[string]any{
+		"requested":   map[string]any{"model": want[0], "reasoningEffort": want[1]},
+		"reported":    map[string]any{"model": nullableText(reported[0]), "reasoningEffort": nullableText(reported[1])},
+		"transmitted": false,
+		"match":       reported == want,
+		"meaning":     "The thread was not loaded and its role declares several pairs, so it was resumed without a pair; the turn starts only when the host reports the request's pair for the resumed thread.",
+	}
+	return reported
+}
+
+// pairRefusal is the check of that send: the turn may start (nil) only when the reported model and effort equal the request's; any other
+// answer, a field the host did not report included, refuses with unverified_pair_for_unloaded_thread naming both pairs, and no turn is started.
+func pairRefusal(want, reported [2]string) error {
+	if reported == want {
+		return nil
+	}
+	shown := func(pair [2]string) string {
+		if pair[0] == "" || pair[1] == "" {
+			return fmt.Sprintf("%s/%s (the host did not report both)", orNone(pair[0]), orNone(pair[1]))
+		}
+		return pair[0] + "/" + pair[1]
+	}
+	message := fmt.Sprintf("Thread was not loaded and its role runs on one of several declared pairs, so it was resumed without a pair; the host reports %s for it, not the request's %s. Message withheld: no turn was started. Send again with a NEW request id naming the pair the thread is on, or deliver through the relay.", shown(reported), shown(want))
+	return &appserver.RPCError{Method: "thread/resume", Message: message, Object: map[string]any{"code": "unverified_pair_for_unloaded_thread", "message": message}}
+}
+
+func nullableText(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
+}
+
+func orNone(s string) string {
+	if s == "" {
+		return "none"
+	}
+	return s
 }
 
 // serverRequests is the part of appserver.Client that records server-to-client requests.

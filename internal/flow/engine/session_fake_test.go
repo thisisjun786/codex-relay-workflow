@@ -595,6 +595,8 @@ type sessionKit struct {
 	cfg    *SessionConfig
 	// jr is the journal the rows are read from when it is not the harness's (the SQLite journal of a resumed process).
 	jr Journal
+	// resumed is the result of the process that resumed the run (runDeath).
+	resumed *Result
 }
 
 func newSessionKit(t *testing.T) *sessionKit {

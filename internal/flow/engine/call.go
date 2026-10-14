@@ -1233,9 +1233,7 @@ func (c *callRun) turnLoop(ctx context.Context, resolved *jsonschema.Resolved, k
 		if err != nil {
 			return c.fromError(ctx, err)
 		}
-		c.tokens.Input += out.Tokens.Input
-		c.tokens.Output += out.Tokens.Output
-		c.tokens.Total += out.Tokens.Total
+		c.tokens = c.tokens.Add(out.Tokens)
 		e.addTokens(out.Tokens.Total)
 		if out.TokensUnmeasured {
 			e.tokensUnmeasured(c, out.TurnID)

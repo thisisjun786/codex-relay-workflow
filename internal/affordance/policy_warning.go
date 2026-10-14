@@ -6,7 +6,6 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/text"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pluginwiring"
 	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 )
@@ -39,7 +38,7 @@ func policyDriftSections(env host.LookupEnv) []harness.ContextSection {
 	case execution.EnvPolicy:
 		text = "[crw] This session was started with " + execution.EnvPolicy + "=" + quote.Shell(drift.Override.Named) + ", but the bridge registration names the execution policy " + drift.Path + ", so the bridge launcher refuses to start and codex-thread-bridge is missing from every new session, this one included. Unset the variable, or register the other file: " + reregister(drift.Override.Named) + "."
 	case execution.EnvDigest:
-		text = "[crw] This session was started with " + execution.EnvDigest + "=" + drift.Override.Named + ", but the bridge registration names the policy " + drift.Path + " with digest " + short(drift.Registered) + ", so the bridge launcher refuses to start and codex-thread-bridge is missing from every new session, this one included. Unset the variable, or register the policy it names with " + reregister(drift.Path) + "."
+		text = "[crw] This session was started with " + execution.EnvDigest + "=" + quote.Shell(drift.Override.Named) + ", but the bridge registration names the policy " + drift.Path + " with digest " + short(drift.Registered) + ", so the bridge launcher refuses to start and codex-thread-bridge is missing from every new session, this one included. Unset the variable, or register the policy it names with " + reregister(drift.Path) + "."
 	default:
 		text = "[crw] The execution policy " + drift.Path + " no longer matches the bridge registration (" + drift.Reason + "), so the bridge launcher refuses to start and codex-thread-bridge is missing from every new session, this one included."
 		if drift.Actual != "" {
@@ -57,11 +56,11 @@ func short(digest string) string {
 	return digest
 }
 
-// codexHomeOf is the Codex home the host reads its records from: CODEX_HOME trimmed as the installer trims it (a blank one is
-// unset), else .codex below the user's home.
+// codexHomeOf is the Codex home the host reads its records from: CODEX_HOME by the rule the launcher, register-mcp and doctor
+// share (pluginwiring.CodexHomeNamed: trimmed, a blank one is unset), else .codex below the user's home.
 func codexHomeOf(env host.LookupEnv) (string, bool) {
 	if value, set := env("CODEX_HOME"); set {
-		if value = text.Trim(value); value != "" {
+		if value = pluginwiring.CodexHomeNamed(value); value != "" {
 			return value, true
 		}
 	}
