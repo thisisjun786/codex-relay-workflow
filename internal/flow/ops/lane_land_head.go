@@ -67,6 +67,8 @@ const (
 	WarnLandAuthorsUnnamed     = "land_authors_unnamed"
 	WarnLandAuthorUnobserved   = "land_author_unobserved"
 	WarnLandOutOfScope         = "land_out_of_scope"
+	WarnLandHeldByEndedRun     = "land_node_held_by_ended_run"
+	WarnLandPairUnrecorded     = "land_author_pair_unrecorded"
 	landAuthorNoReader         = "no_host_reader"
 	landAuthorReadFailed       = "read_failed"
 	landAuthorNullModel        = "null_model"
@@ -98,12 +100,13 @@ func (l *Lane) readAuthors(ctx context.Context, threads []string) ([]LandAuthor,
 			switch {
 			case err != nil:
 				a.Reason = landAuthorReadFailed
-			case model == nil || *model == "":
+			case model == nil || strings.TrimSpace(*model) == "":
 				a.Reason = landAuthorNullModel
 			default:
-				a.Model, a.Observed = *model, true
+				// the pair as the relay judges it: the host's spelling trimmed, so blanks around it are not a malformed receipt (CRW-1397)
+				a.Model, a.Observed = strings.TrimSpace(*model), true
 				if effort != nil {
-					a.Effort = *effort
+					a.Effort = strings.TrimSpace(*effort)
 				}
 			}
 		}
@@ -113,6 +116,15 @@ func (l *Lane) readAuthors(ctx context.Context, threads []string) ([]LandAuthor,
 		out = append(out, a)
 	}
 	return out, warnings
+}
+
+// runOver says whether a run state names a run that has ended (the states of cli.Over: completed, blocked, cancelled, failed).
+func runOver(state string) bool {
+	switch state {
+	case "completed", "blocked", "cancelled", "failed":
+		return true
+	}
+	return false
 }
 
 // landRelease is crw.release(plan, node, milestone, {pinned, land}): see the comment at the top of the file.
@@ -184,7 +196,17 @@ func (o *releaseOp) landRelease(ctx context.Context, req engine.OpRequest, plan,
 	}
 	data["slice_digest"], data["criteria_digest"] = slice, criteria
 	rq := ReleaseRequest{Plan: plan, Node: node, RunID: req.RunID, RequestID: req.RequestID, SliceDigest: slice, PlanDigest: live, Land: true}
-	if pair != nil {
+	unproven := false
+	for _, a := range authors {
+		unproven = unproven || !a.Observed
+	}
+	switch {
+	case pair != nil && unproven:
+		// an author set one of whose threads was not read back is unproven (landAuthorModels): the observed pair would stand on the
+		// execution for authors the run does not know, so the execution records none (CRW-1397), warned and recorded
+		warnings = append(warnings, fmt.Sprintf("%s: an author of the land was not read back, so the node's execution records no author pair (the observed %s %s is on this row)",
+			WarnLandPairUnrecorded, pair.Model, pair.Effort))
+	case pair != nil:
 		rq.AuthorModel, rq.AuthorEffort = pair.Model, pair.Effort
 	}
 	res, err := o.l.d.Relay.Release(ctx, rq)
@@ -195,17 +217,27 @@ func (o *releaseOp) landRelease(ctx context.Context, req engine.OpRequest, plan,
 	if err != nil {
 		return engine.OpResult{}, err
 	}
-	held := func(run, execution string) (engine.OpResult, error) {
+	held := func(run, execution, state string) (engine.OpResult, error) {
 		// the node's current execution is another run's (a run that has not ended, or one killed after its release): a head of it is
 		// accepted only on a review of that run, so this land releases nothing and runs no gate
 		out.Released, out.Reason, out.ExecutionID = false, ReasonLandNodeHeld, ""
 		out.Detail = fmt.Sprintf("node %s is held by run %s (execution %s), which has not given it up: crw flow resume %s goes on with what it holds, and a land of the "+
 			"node waits until that run has ended", node, run, execution, run)
+		if runOver(state) {
+			// a run that has ended is not resumed (CRW-1397): the command that gives its execution up is its cancel; warned and recorded,
+			// the land refuses nothing more than it did
+			out.Detail = fmt.Sprintf("node %s is held by run %s (execution %s), which has ended (%s) without giving it up: crw flow cancel %s gives that execution up "+
+				"and returns its slot, and the node is then landed again", node, run, execution, state, run)
+			data["warnings"] = []string{WarnLandHeldByEndedRun + ": " + out.Detail}
+		}
 		data["held_run"], data["held_execution"], data["execution_id"] = run, execution, ""
+		if state != "" {
+			data["held_run_state"] = state
+		}
 		return finish()
 	}
 	if res.Reason == ReasonLandNodeHeld {
-		return held(res.HeldRun, res.HeldExecution)
+		return held(res.HeldRun, res.HeldExecution, res.HeldRunState)
 	}
 	out.Released, out.Reason, out.ExecutionID = res.Released, res.Reason, res.ExecutionID
 	data["execution_id"], data["slot_id"], data["request_id"] = res.ExecutionID, res.SlotID, req.RequestID
@@ -213,7 +245,7 @@ func (o *releaseOp) landRelease(ctx context.Context, req engine.OpRequest, plan,
 		return finish()
 	}
 	if res.Run != "" && res.Run != req.RunID {
-		return held(res.Run, res.ExecutionID)
+		return held(res.Run, res.ExecutionID, "")
 	}
 	data["slice_digest"] = res.SliceDigest
 	wt, err := o.l.landWorktree(ctx, node, commit)

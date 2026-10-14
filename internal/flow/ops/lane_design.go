@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
@@ -371,6 +373,27 @@ type ReleaseOpts struct {
 	Land *LandOpts `json:"land,omitempty"`
 }
 
+// AdmissionRegions are the regions the lane admits a node by, as crw:lib/lane admissionRegions makes them: the plan's declared regions
+// and then the DESIGN's edit_regions the plan does not name. A node with no regions on either side is undeclared (none), and an
+// undeclared node overlaps every other.
+func AdmissionRegions(plan, edit []string) []string {
+	out := []string{}
+	if len(plan) == 0 || len(edit) == 0 {
+		return out
+	}
+	out = append(out, plan...)
+	for _, r := range edit {
+		if !slices.Contains(out, r) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// WarnRegionsNotDeclared is the warning of a release whose admission regions the relay did not declare (CRW-1391): the release goes on
+// as for an undeclared node, which overlaps every other.
+const WarnRegionsNotDeclared = "regions_not_declared"
+
 // ReasonPlanChanged is the reason of a pinned release whose plan is not the one the audited DESIGN stands on.
 const ReasonPlanChanged = "plan_changed"
 
@@ -400,6 +423,8 @@ type ReleaseOutcome struct {
 	Detail string `json:"detail,omitempty"`
 	// Land is the head a land release checked out for the gates (CRW-1354); absent for every other release.
 	Land *LandHead `json:"land,omitempty"`
+	// Warnings are what the release went on despite (CRW-1391: the node's admission regions the relay did not declare); absent when none.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResult, error) {
@@ -521,8 +546,16 @@ func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRes
 	// the release carries the slice it compared (CRW-1288), which the relay also compares with the slice a replayed release was
 	// committed under; a released row records the slice the relay committed, an unreleased one the slice the flow asked for
 	data["slice_digest"], data["criteria_digest"] = slice, mnode.CriteriaDigest
+	// the regions the lane admitted the node by (crw:lib/lane admissionRegions) are the ones the relay declares for it before the release
+	// (CRW-1391): the relay's own overlap judgment reads only declarations, and an undeclared node overlaps every other
+	regions := AdmissionRegions(mnode.Regions, entry.EditRegions)
+	data["regions"] = regions
+	admitted, err := admittedOthers(r, led, plan, ms, node)
+	if err != nil {
+		return engine.OpResult{}, err
+	}
 	res, err := o.l.d.Relay.Release(ctx, ReleaseRequest{Plan: plan, Node: node, RunID: req.RunID, Revision: out.Revision, DesignDigest: out.DesignDigest, RequestID: req.RequestID,
-		SliceDigest: slice, PlanDigest: digestOf(m)})
+		SliceDigest: slice, PlanDigest: digestOf(m), Regions: regions, Admitted: admitted})
 	if errors.Is(err, ErrEpochLost) {
 		// the fenced write of a run whose plan another session claimed (CRW-1285): the node is not released, the row names the reason,
 		// and the lane ends on it; a resume asks again, and the relay refuses again while the other session holds the plan
@@ -535,6 +568,15 @@ func (o *releaseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRes
 	out.Released, out.Reason, out.ExecutionID = res.Released, res.Reason, res.ExecutionID
 	if res.Released {
 		data["slice_digest"] = res.SliceDigest
+	}
+	if res.RegionsDeclared != "" {
+		data["regions_declared"] = res.RegionsDeclared
+	}
+	if res.RegionsWarning != "" {
+		// fail open: the release went on as for an undeclared node, and the row and the answer say what was not declared and why
+		out.Warnings = []string{fmt.Sprintf("%s: the admission regions %s of node %s were not declared to the relay (%s), so the relay judges the node as undeclared, overlapping every other",
+			WarnRegionsNotDeclared, strings.Join(regions, ", "), node, res.RegionsWarning)}
+		data["warnings"] = out.Warnings
 	}
 	if opts.Pinned && !res.Released && res.Reason == ReasonPlanChanged {
 		// the relay's plan gave the node another slice at its commit: a plan the flow reads again as the pinned one is a change the
@@ -713,6 +755,31 @@ func planNodeOf(r rows, plan, ms, node string) (PlanNode, bool) {
 		}
 	}
 	return PlanNode{}, false
+}
+
+// admittedOthers are the admission regions of the milestone's other nodes the DESIGN of the ledger row plans, by node (ReleaseRequest.Admitted,
+// CRW-1391): the plan of the run's crw.milestone row and the DESIGN's edit_regions, as the lane admits them; a node with none is left out.
+func admittedOthers(r rows, led engine.Event, plan, ms, node string) (map[string][]string, error) {
+	raw, err := json.Marshal(led.Data["design"])
+	if err != nil {
+		return nil, err
+	}
+	d, err := DecodeDesign(raw)
+	if err != nil {
+		return nil, fmt.Errorf("the ledger holds no valid DESIGN: %w", err)
+	}
+	out := map[string][]string{}
+	for _, is := range d.Issues {
+		if is.Node == node {
+			continue
+		}
+		if n, ok := planNodeOf(r, plan, ms, is.Node); ok {
+			if regions := AdmissionRegions(n.Regions, is.EditRegions); len(regions) > 0 {
+				out[is.Node] = regions
+			}
+		}
+	}
+	return out, nil
 }
 
 // designIssue is the plan of a node in the DESIGN a ledger row holds.

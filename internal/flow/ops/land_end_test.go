@@ -31,7 +31,8 @@ func TestAnEndedLandGivesItsReleaseBack(t *testing.T) {
 		t.Errorf("a reason that gives a node up keeps its own close reason: %+v", last)
 	}
 
-	w.relay.closeErr = errors.New("disposition_conflict: the head may have landed")
+	// the relay keeps the execution of a head that may have landed (CRW-1397: only that refusal is close_refused)
+	w.relay.closeErr = fmt.Errorf("%w: disposition_conflict: the head may have landed", ErrCloseConflict)
 	w.must("escalate", "n4", EscalateInfo{Reason: "integration_refused", EndLand: true})
 	row = w.j.Events()[len(w.j.Events())-1]
 	if row.Data["closed"] != false || row.Data["close_refused"] == nil || row.Event != engine.EvCompleted {

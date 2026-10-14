@@ -64,6 +64,16 @@ type ReleaseRequest struct {
 	// Released false with ReasonLandNodeHeld and that run and execution (HeldRun, HeldExecution) before the run claims the plan's
 	// coordinator epoch, so the land takes nothing from the run that holds the node.
 	Land bool
+	// Regions are the node's admission regions (CRW-1391): the plan's regions together with the DESIGN's edit_regions (AdmissionRegions),
+	// empty when either side names none. The relay declares them for the node (dag_node_regions) before it releases it when the node has
+	// no declaration in force, so two nodes the flow admits together are judged by the regions they edit and not as undeclared nodes,
+	// which overlap every other. A declaration that fails is a warning of the release (RegionsWarning), and the release goes on.
+	Regions []string
+	// Admitted are the admission regions of the milestone's other nodes, by node (CRW-1391): the relay's release judgment reads every
+	// ready node ranked before this one as a holder of its declaration, and an undeclared one overlaps every other, so the relay declares
+	// those of them that have no declaration in force too, before the release. A declaration of another node that fails is that node's
+	// own release's to warn of.
+	Admitted map[string][]string
 }
 
 // ReleaseResult is the scheduler's answer to a release. A node it holds back (Released false) names why in Reason
@@ -84,9 +94,18 @@ type ReleaseResult struct {
 	HeadRevision   int64  `json:"head_revision,omitempty"`
 	HeldExecution  string `json:"held_execution,omitempty"`
 	HeldRun        string `json:"held_run,omitempty"`
+	// HeldRunState is, for a land answered ReasonLandNodeHeld, the state of the run that holds the node as the run's records read
+	// (running, dead, held, completed, failed, ...; "" when it is not read): a run that has ended is not resumed, and its execution is
+	// given up with crw flow cancel of that run (CRW-1397).
+	HeldRunState string `json:"held_run_state,omitempty"`
 	// Run is the run the answered execution was released to: the run asking for a new release, or, for a replay, the run whose release
 	// it replays ("" when the relay does not say). A land of a node another run holds reads it (CRW-1354).
 	Run string `json:"run,omitempty"`
+	// RegionsDeclared says what became of the request's admission regions (CRW-1391): declared (this release declared them), kept (the
+	// node had a declaration in force, which stands), failed (the declaration was refused or could not be made: RegionsWarning says why,
+	// and the release went on as for an undeclared node) or "" (no regions were asked for).
+	RegionsDeclared string `json:"regions_declared,omitempty"`
+	RegionsWarning  string `json:"regions_warning,omitempty"`
 }
 
 // AcceptRequest asks the relay to accept an agent node's head (dag-accept on the agent path, R05): the premerge record the run
@@ -182,6 +201,11 @@ const ReasonEpochLost = "epoch_lost"
 // ErrEpochLost is the error kind of that write, as a Relay answers it. Its message opens with refused:epoch_lost:, so the script reads
 // the reason from the error of the op as it reads a refusal (crw:lib/lane), and errors.Is finds the kind through every wrap.
 var ErrEpochLost = errors.New("refused:" + ReasonEpochLost + ": the run lost the coordinator epoch of its plan")
+
+// ErrCloseConflict is the error kind of a close the relay refuses because the node's execution has to stay (CRW-1397): its accepted head
+// landed or may be in the target (a disposition_conflict of AgentClose). A Relay wraps that refusal in it; every other close error is
+// the relay's own, which a gate-only land asks again (a transient error).
+var ErrCloseConflict = errors.New("the relay keeps the node's execution")
 
 // Relay is the DAG scheduler of the relay as the lane uses it.
 type Relay interface {

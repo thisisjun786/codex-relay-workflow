@@ -230,10 +230,16 @@ func (c *command) control(args []string, verb string) int {
 		return c.fail("%v", err)
 	}
 	if Over(info.State) {
-		if verb == "cancel" && info.State == StateCancelled {
-			// a cancel whose process ended before the executions were given up (or whose settlement failed) is finished here
-			if code := c.settleEnded(state, cm, rec); code != 0 {
+		if verb == "cancel" {
+			// a cancel whose process ended before the executions were given up (or whose settlement failed) is finished here, and so are
+			// the executions a run that ended otherwise still holds (a land whose release was not given back, CRW-1397): its cancel gives
+			// them up; a run that ended with none open has nothing to cancel
+			settled, code := c.settleEndedRun(state, cm, rec)
+			if code != 0 {
 				return code
+			}
+			if info.State != StateCancelled && (settled.Closed > 0 || settled.SlotsReturned > 0) {
+				return 0
 			}
 		}
 		fmt.Fprintf(c.stderr, "crw flow %s: run %s is %s: nothing to %s\n", verb, run, info.State, verb)
@@ -281,13 +287,19 @@ func (c *command) control(args []string, verb string) int {
 // settleEnded gives up the executions of a cancelled run whose process has ended: under the run lock, so no process works on the
 // run, from the rows of its journal. A second call finds nothing open.
 func (c *command) settleEnded(state string, cm *common, rec RunRecord) int {
+	_, code := c.settleEndedRun(state, cm, rec)
+	return code
+}
+
+// settleEndedRun is settleEnded with what it gave up.
+func (c *command) settleEndedRun(state string, cm *common, rec RunRecord) (Settlement, int) {
 	write := c.Writer
 	if write == nil {
 		write = OpenWriter
 	}
 	st, wstate, err := write(c.ctx, cm.state, cm.socket)
 	if err != nil {
-		return c.fail("%v", err)
+		return Settlement{}, c.fail("%v", err)
 	}
 	defer st.Close()
 	if wstate != "" {
@@ -295,21 +307,21 @@ func (c *command) settleEnded(state string, cm *common, rec RunRecord) int {
 	}
 	lock, err := TakeLock(state, rec.RunID, "cancel", c.now())
 	if err != nil {
-		return c.fail("the executions of run %s cannot be given up yet: %v", rec.RunID, err)
+		return Settlement{}, c.fail("the executions of run %s cannot be given up yet: %v", rec.RunID, err)
 	}
 	defer lock.Release()
 	events, _, err := journal.Load(c.ctx, st, rec.RunID)
 	if err != nil {
-		return c.fail("%v", err)
+		return Settlement{}, c.fail("%v", err)
 	}
 	settled, err := c.settle(st, rec.RunID, events)
 	if err != nil {
-		return c.fail("%v", err)
+		return Settlement{}, c.fail("%v", err)
 	}
 	if settled.Closed > 0 || settled.SlotsReturned > 0 {
 		fmt.Fprintf(c.stdout, "%d execution(s) of run %s given up, %d slot(s) returned\n", settled.Closed, rec.RunID, settled.SlotsReturned)
 	}
-	return 0
+	return settled, 0
 }
 
 // settle gives up the executions the run's rows show it released and did not end.
