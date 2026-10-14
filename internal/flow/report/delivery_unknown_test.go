@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
 )
 
 // CRW-1390, Argon V5 D3 (P1) of 118a891c: an unknown delivery row (the daemon's record of a send nobody heard back from, held_uncertain)
@@ -178,5 +179,29 @@ func TestAReplayWhoseUncertainSendTheReadbackSettlesAnswersAccepted(t *testing.T
 	views, err := ReportsMatching(ctx, w.st.DB, ReportFilter{Project: testProject})
 	if err != nil || len(views) != 1 || views[0].LastDelivery != ResultAccepted || views[0].Standing {
 		t.Fatalf("crw flow reports reads %+v (%v), want accepted", views, err)
+	}
+}
+
+// A notice of the run (an escalation, the completion digest) has no delivery row the writer reads: the run's notice row records its
+// staging. A notice whose message its recipient read (a reconcile staging it again after the run lost the notice row) is answered as the
+// staged message it is, so the run records the notice; only a report found read is not staged again.
+func TestRelaySenderAnswersANoticeFoundReadAsStaged(t *testing.T) {
+	w := newWorld(t)
+	w.manage(testManagement)
+	s := RelaySender{Store: w.st}
+	p := ParentSend{Kind: supervisor.KindFlowEscalation, Project: testProject, Run: testRun, LogicalID: "esc-esc_1", Text: "[crw flow] run escalation run=run-1"}
+	first, err := s.SendParent(ctx, p)
+	if err != nil || first.Class != ResultQueued {
+		t.Fatalf("the escalation was answered %+v (%v)", first, err)
+	}
+	if _, err := w.st.DB.ExecContext(ctx, "UPDATE supervisor_messages SET state='read' WHERE message_id=?", first.RequestID); err != nil {
+		t.Fatal(err)
+	}
+	again, err := s.SendParent(ctx, p)
+	if err != nil || again.Class != ResultQueued || again.RequestID != first.RequestID || again.Recipient != testManagement {
+		t.Fatalf("the escalation found read was answered %+v (%v), want queued under %s for %s", again, err, first.RequestID, testManagement)
+	}
+	if msgs := w.messages(); len(msgs) != 1 || msgs[0].State != "read" {
+		t.Fatalf("the messages are %+v, want the one read", msgs)
 	}
 }
