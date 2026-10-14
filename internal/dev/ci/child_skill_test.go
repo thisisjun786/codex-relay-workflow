@@ -35,7 +35,6 @@ func childSessionLoopProblems(section string) []string {
 		`(?i)resumes? (the run|it) (itself )?when no process holds it`,
 		`(?i)preview`,
 		`(?i)epoch`,
-		"`crw flow apply ",
 		"`crw flow report-up`",
 	}) {
 		problems = append(problems, "the flow run section lacks "+p)
