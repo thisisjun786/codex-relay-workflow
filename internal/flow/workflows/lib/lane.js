@@ -428,19 +428,21 @@ async function superseded(node, rel) {
 // orchestrator - an open question of the DESIGN beyond the explorer cap or with an out-of-authority scope notation -, skip),
 // runs the explorers it spawned at most EXPLORER_CONCURRENCY at a time, and records the answers (crw.exploreRecord), so a
 // question of the same digest asked again in the run reuses the answer and names the route it came from (origin). The result lists an answer for each question, the
-// questions that went to the orchestrator thread or that exhausted the asker's research, and the call that failed when an
-// explorer did not complete.
+// questions that went to the orchestrator thread or that exhausted the asker's research, the call that failed when an
+// explorer did not complete, and the tokens the explorers it spawned report (meta.tokens: a design loop counts them, CRW-1327).
 export async function explore(kind, questions, ctx) {
   const plan = await crw.exploreRoute(kind, ctx, questions)
   const spawn = plan.routes.filter((r) => r.route === 'spawn')
   const found = {}
   let failed = null
+  let tokens = 0
   for (const wave of chunks(spawn, EXPLORER_CONCURRENCY)) {
     const calls = await parallel(wave.map((r) => () => agent.call(explorerPacket(kind, r, ctx), {
       agentType: 'explorer', node: ctx.node || undefined, head: ctx.head || undefined, schema: FINDINGS, label: 'explore:' + (ctx.node || ctx.milestone) + ':' + r.digest.slice(0, 12),
     })), { keys: wave.map((r) => r.digest.slice(0, 12)), label: 'explore' })
     wave.forEach((r, i) => {
       const call = calls[i]
+      tokens += (call && call.meta && call.meta.tokens && call.meta.tokens.total) || 0
       if (!call || call.status !== 'completed') {
         if (!failed) failed = call ? { callId: call.callId, status: call.status, reason: call.reason } : { callId: null, status: 'failed', reason: 'explorer_thrown' }
         return
@@ -475,6 +477,7 @@ export async function explore(kind, questions, ctx) {
     orchestrator: plan.routes.filter((r) => r.route === 'orchestrator'),
     escalate: plan.routes.filter((r) => r.route === 'escalate'),
     failed,
+    tokens,
   }
 }
 

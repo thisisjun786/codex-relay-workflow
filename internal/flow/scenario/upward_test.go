@@ -184,11 +184,13 @@ func TestMilestoneCloseReportsUpThroughTheReporter(t *testing.T) {
 	}
 }
 
-// TestDesignLoopCapsWarnAndTellTheOrchestrator (CRW-1327): the design loop of the project lane has two caps, AUDIT_ROUNDS rounds and the
-// run's token budget (budget.total, the run's figure across resumes: CRW-1278). Reaching either writes a warning row (warn
+// TestDesignLoopCapsWarnAndTellTheOrchestrator (CRW-1327): the design loop of the project lane has two caps, AUDIT_ROUNDS rounds and a
+// token cap: DESIGN_TOKEN_CAP tokens, or DESIGN_TOKEN_WARN of the run's token budget (budget.total, the run's figure across resumes:
+// CRW-1278) when that is lower, so a run without a budget has one too. The loop's tokens are those of its architect, audit and fix
+// calls and of the explorers crw.explore spawns for its open questions. Reaching either cap writes a warning row (warn
 // design_loop_cap) and tells the orchestrator thread: the round cap through the design_audit_rounds escalation CRW-1347 raises (the
-// milestone stops there as it decided), the token cap - the design loop reaching DESIGN_TOKEN_WARN of the budget - through a
-// design_loop_tokens escalation that asks nothing, and the loop goes on: the DESIGN is recorded and the lanes are released.
+// milestone stops there as it decided), the token cap through a design_loop_tokens escalation that asks nothing, and the loop goes
+// on: the DESIGN is recorded and the lanes are released.
 func TestDesignLoopCapsWarnAndTellTheOrchestrator(t *testing.T) {
 	warned := func(l *Lab, cap string) bool {
 		for _, ev := range l.FlowRows("log") {
@@ -236,6 +238,49 @@ func TestDesignLoopCapsWarnAndTellTheOrchestrator(t *testing.T) {
 		}
 		if len(l.Rows("crw.designLedger")) == 0 || len(l.Rows("crw.release")) == 0 {
 			t.Errorf("the token cap blocked the loop: %d ledger rows, %d releases", len(l.Rows("crw.designLedger")), len(l.Rows("crw.release")))
+		}
+	})
+	// the 10-13 field runs had no budget: an architect call of 6M tokens is past DESIGN_TOKEN_CAP (5M) on its own
+	t.Run("tokens without a budget", func(t *testing.T) {
+		l := NewLab(t, twoNodes()...)
+		sender := l.wireUpward(t, false)
+		l.On("^architect$", func(c *Call) *fakehostPlan {
+			p := Say(l.designFor())
+			p.Tokens = 6_000_000
+			return &p
+		})
+		if res := l.Run(); res.Status != engine.RunCompleted {
+			t.Fatalf("run %s: %s", res.Status, res.Error)
+		}
+		if !warned(l, "tokens") || !slices.Contains(escalationReasons(l), "design_loop_tokens") || !told(sender, "design_loop_tokens") {
+			t.Errorf("the token cap of a run without a budget: warned %v, escalations %v, told %+v", warned(l, "tokens"), escalationReasons(l), sender.Parent)
+		}
+		if len(l.Rows("crw.designLedger")) == 0 || len(l.Rows("crw.release")) == 0 {
+			t.Errorf("the token cap blocked the loop: %d ledger rows, %d releases", len(l.Rows("crw.designLedger")), len(l.Rows("crw.release")))
+		}
+	})
+	// the explorers of the loop's open questions are the loop's tokens: the architect and the audit are 20 of 0.8 * 1500 = 1200, the
+	// explorer's 1200 reach it
+	t.Run("explorer tokens", func(t *testing.T) {
+		l := NewLab(t, oneNode()...)
+		sender := l.wireUpward(t, false)
+		d := l.designFor()
+		d.OpenQuestions = openQuestions(1)
+		l.Design = &d
+		l.Budget = 1500
+		l.On("^explore:", func(c *Call) *fakehostPlan {
+			p := Say(map[string]any{"answer": "answer of the explorer", "evidence": []string{"README.md"}, "verified": []string{}, "inferred": []string{}, "unknown": []string{}})
+			p.Tokens = 1200
+			return &p
+		})
+		if res := l.Run(); res.Status != engine.RunCompleted {
+			t.Fatalf("run %s: %s", res.Status, res.Error)
+		}
+		if len(l.CallsOf("explorer")) != 1 {
+			t.Fatalf("%d explorer calls, want 1", len(l.CallsOf("explorer")))
+		}
+		if !warned(l, "tokens") || !slices.Contains(escalationReasons(l), "design_loop_tokens") || !told(sender, "design_loop_tokens") {
+			t.Errorf("the explorer tokens of the loop: warned %v, escalations %v, told %+v", warned(l, "tokens"), escalationReasons(l), sender.Parent)
 		}
 	})
 }

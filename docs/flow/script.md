@@ -320,12 +320,13 @@ a re-plan that did not complete is never read as an approval, a design, a gate, 
 
 **The caps of the design loop.** The design loop is one `auditedDesign` of `project-lane.js` (the DESIGN or re-plan delta it starts from, its audit rounds and
 the architect's fixes), and it has two caps, both written in `project-lane.js` beside the loop. The round cap is `AUDIT_ROUNDS` (3): a DESIGN not approved in
-that many rounds stops the milestone with the `design_audit_rounds` escalation, which the run tells the orchestrator thread (CRW-1347). The token cap is the
-run's token budget (`budget.total`; the run's figure across its resumes, CRW-1278): when the calls of the loop have used `DESIGN_TOKEN_WARN` (0.8) of it, by the
-tokens their results report, the loop raises the `design_loop_tokens` escalation, which asks nothing and goes up to the orchestrator thread, once per loop, and
-goes on; the engine pauses the run at the whole budget (`budget_exhausted`). A run without a budget has no token cap. Reaching either cap writes a log row
-`warn design_loop_cap rounds: ...` or `warn design_loop_cap tokens: ...` (CRW-1327). Neither cap is a block of its own: a warning and a record, the stop at the
-round cap being CRW-1347's.
+that many rounds stops the milestone with the `design_audit_rounds` escalation, which the run tells the orchestrator thread (CRW-1347). The token cap is
+`DESIGN_TOKEN_CAP` (5,000,000 tokens), or `DESIGN_TOKEN_WARN` (0.8) of the run's token budget (`budget.total`; the run's figure across its resumes, CRW-1278)
+when that is lower, so a run without a budget has the fixed cap. The tokens of the loop are those its calls report: the DESIGN's architect call, the audit
+calls, the architect's fixes and the explorers `crw.explore` spawns for the open questions of each round (its result's `tokens`). When they reach the cap, the
+loop raises the `design_loop_tokens` escalation, which asks nothing and goes up to the orchestrator thread, once per loop, and goes on; the engine pauses the
+run at the whole budget (`budget_exhausted`). Reaching either cap writes a log row `warn design_loop_cap rounds: ...` or `warn design_loop_cap tokens: ...`
+(CRW-1327). Neither cap is a block of its own: a warning and a record, the stop at the round cap being CRW-1347's.
 
 **The lane of a node.** `crw.dag` starts a node when the nodes it waits for (a dependency or an order edge; the members of a
 group are chained by order edges) have landed, in the scheduler's order, at most `cap` nodes at once and never two nodes whose
