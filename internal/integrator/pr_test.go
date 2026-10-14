@@ -285,6 +285,8 @@ func TestPassChecksThePullRequestBeforeItMerges(t *testing.T) {
 		{"merged", func(w *prWorld) { w.fake.SetPull(1, func(p *trackingfake.Pull) { p.State, p.Merged = "closed", true }) }, "done", "the pull request is merged"},
 		{"base", func(w *prWorld) { w.fake.SetPull(1, func(p *trackingfake.Pull) { p.Base = "main" }) }, "blocked", "goes to main, not dev"},
 		{"fork", func(w *prWorld) { w.fake.SetPull(1, func(p *trackingfake.Pull) { p.HeadRepo = "someone/r" }) }, "blocked", "comes from someone/r, not o/r"},
+		// a fork that was deleted: GitHub answers head.repo null, and a head whose repository is not named does not land
+		{"deleted fork", func(w *prWorld) { w.fake.SetPull(1, func(p *trackingfake.Pull) { p.HeadRepo = "" }) }, "blocked", "comes from a repository GitHub no longer names, not o/r"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			w := newPRWorld(t, true)

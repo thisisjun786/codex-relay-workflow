@@ -25,7 +25,8 @@ type Pull struct {
 	Title, Body, Head, Base string
 	State                   string
 	Merged, Draft           bool
-	// HeadRepo is the repository the head branch is in; empty is the fake's own repository.
+	// HeadRepo is the repository the head branch is in: a pull request the fake opens is in the fake's own repository, and an
+	// empty HeadRepo answers head.repo null, as GitHub answers for a fork that was deleted.
 	HeadRepo string
 }
 
@@ -97,7 +98,7 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		p := &Pull{Number: s.next, Title: in.Title, Body: in.Body, Head: in.Head, Base: in.Base, State: "open", Draft: in.Draft}
+		p := &Pull{Number: s.next, Title: in.Title, Body: in.Body, Head: in.Head, Base: in.Base, State: "open", Draft: in.Draft, HeadRepo: s.Repo}
 		s.next++
 		s.pulls[p.Number] = p
 		out := s.pullJSON(p)
@@ -162,7 +163,7 @@ func (s *Server) pullJSON(p *Pull) map[string]any {
 		}
 	}
 	repo := map[string]any{"full_name": s.Repo}
-	headRepo := repo
+	var headRepo any // nil: head.repo null
 	if p.HeadRepo != "" {
 		headRepo = map[string]any{"full_name": p.HeadRepo}
 	}
