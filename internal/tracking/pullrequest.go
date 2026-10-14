@@ -150,25 +150,31 @@ func checkBranch(what, name string) error {
 	return nil
 }
 
-// OpenPullRequest opens the pull request; its body ends with the Carries: line of the issues.
-func (g *GitHub) OpenPullRequest(ctx context.Context, in NewPullRequest) (PullRequest, error) {
+// Check is the refusal OpenPullRequest gives in before it sends anything (ErrInvalidPullRequest), nil when in can be sent.
+func (in NewPullRequest) Check() error {
+	_, err := in.body()
+	return err
+}
+
+// body checks in and makes the body: the text, a blank line and the Carries: line naming each issue once, in order.
+func (in NewPullRequest) body() (string, error) {
 	if err := checkBranch("head", in.Head); err != nil {
-		return PullRequest{}, err
+		return "", err
 	}
 	if err := checkBranch("base", in.Base); err != nil {
-		return PullRequest{}, err
+		return "", err
 	}
 	if in.Head == in.Base {
-		return PullRequest{}, fmt.Errorf("%w: the head %q is the base", ErrInvalidPullRequest, in.Head)
+		return "", fmt.Errorf("%w: the head %q is the base", ErrInvalidPullRequest, in.Head)
 	}
 	if strings.TrimSpace(in.Title) == "" || strings.ContainsAny(in.Title, "\r\n") {
-		return PullRequest{}, fmt.Errorf("%w: the title %q is not one line", ErrInvalidPullRequest, in.Title)
+		return "", fmt.Errorf("%w: the title %q is not one line", ErrInvalidPullRequest, in.Title)
 	}
 	var carried []string
 	seen := map[Ref]bool{}
 	for _, is := range in.Issues {
 		if is.Number <= 0 || !validRepo(is.Repo) {
-			return PullRequest{}, fmt.Errorf("%w: the issue %s is not <owner>/<name>#N", ErrInvalidPullRequest, is)
+			return "", fmt.Errorf("%w: the issue %s is not <owner>/<name>#N", ErrInvalidPullRequest, is)
 		}
 		if !seen[is] {
 			seen[is] = true
@@ -176,11 +182,20 @@ func (g *GitHub) OpenPullRequest(ctx context.Context, in NewPullRequest) (PullRe
 		}
 	}
 	if len(carried) == 0 {
-		return PullRequest{}, fmt.Errorf("%w: a pull request names the issues it carries", ErrInvalidPullRequest)
+		return "", fmt.Errorf("%w: a pull request names the issues it carries", ErrInvalidPullRequest)
 	}
 	body := "Carries: " + strings.Join(carried, ", ")
 	if text := strings.TrimRight(in.Body, "\r\n \t"); text != "" {
 		body = text + "\n\n" + body
+	}
+	return body, nil
+}
+
+// OpenPullRequest opens the pull request; its body ends with the Carries: line of the issues.
+func (g *GitHub) OpenPullRequest(ctx context.Context, in NewPullRequest) (PullRequest, error) {
+	body, err := in.body()
+	if err != nil {
+		return PullRequest{}, err
 	}
 	var a apiPull
 	op := "tracking: open pull request " + in.Head + " -> " + in.Base + " in " + g.repo
