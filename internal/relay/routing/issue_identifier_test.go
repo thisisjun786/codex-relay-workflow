@@ -6,7 +6,7 @@ import (
 )
 
 // An issue identifier is a Linear key (ABC-12) or a tracking ref "<owner>/<name>#N" that
-// internal/tracking.ParseRef reads; nothing else is one.
+// internal/tracking/ref.Parse reads; nothing else is one.
 func TestIssueIdentifierIsALinearKeyOrATrackingRef(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
@@ -82,6 +82,32 @@ func TestIssueIdentifierFieldsTakeATrackingRef(t *testing.T) {
 	if _, err = ReadBinding(binding, nil); err == nil {
 		t.Fatal("a follow-up of a bare repository was read")
 	}
+	t.Run("ReadIncident reads a run's current issue", func(t *testing.T) {
+		t.Parallel()
+		incident := func(currentIssue string) Object {
+			return Object{"schema": "product-incident/1", "product": "crw", "repository": "o/r", "workspace": "ws", "surface": "dev_run", "phase": "development", "component": "editor", "symptom": "cursor_jump", "occurrenceKey": "run-1:step-4", "severity": "notice", "expected": "cancelled", "observedAt": "2026-10-15T00:00:00Z",
+				"context": Object{"currentIssue": currentIssue}}
+		}
+		for _, valid := range []string{"o/r#7", "CRW-9"} {
+			read, err := ReadIncident(incident(valid))
+			if err != nil {
+				t.Fatalf("a current issue %q: %v", valid, err)
+			}
+			if read["context"].(Object)["currentIssue"] != valid {
+				t.Fatalf("currentIssue = %v, want %q", read["context"], valid)
+			}
+		}
+		_, err := ReadIncident(incident("o/r"))
+		refusal, ok := err.(*Refusal)
+		if !ok || refusal.Reason != "route_input_malformed" {
+			t.Fatalf("a current issue of a bare repository: refusal = %#v", err)
+		}
+		for _, want := range []string{"context.currentIssue", "a Linear key like ABC-12 or a tracking ref like owner/name#7"} {
+			if !strings.Contains(refusal.Detail, want) {
+				t.Fatalf("the refusal does not contain %q: %q", want, refusal.Detail)
+			}
+		}
+	})
 }
 
 // A test binding sits on the test target's team: the team of a Linear key is its prefix, and the
