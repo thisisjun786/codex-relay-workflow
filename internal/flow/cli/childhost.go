@@ -1,31 +1,20 @@
 package cli
 
 import (
-	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/flow/compile"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 )
 
-// The host settings of a managed child start (SP-CHILD-1, CRW-1285). A node the architect sized for a child is released as an issue
-// child: dag-release's managed start of a task on the run's host, which needs the settings the parent and the child run with, the
-// child's title and the marker root the start is fingerprinted with. The run holds them as it holds its handoff: `crw flow start
-// --child-host FILE` checks the crw-flow-child-host/1 document, pins its bytes into the run's directory and names the copy and its
-// sha256 in the run's arguments ("child_host"); every process of the run reads the pinned copy. A run started without one starts no
-// child: a node sized for a child is refused with the reason (an input error), never answered as a child that is not running.
+// The host settings of a managed child start (SP-CHILD-1, CRW-1285), kept for schedrelay.go until bundle S. No start takes them any
+// more: `crw flow start` has no --child-host and a run's lane reads no "child_host" argument, so a run holds no host settings and a
+// node sized for a child is refused with the reason (ErrChildHostUnset, an input error), never answered as a child that is not running.
 
 // ChildHostSchema is the schema of the document.
 const ChildHostSchema = "crw-flow-child-host/1"
-
-// ChildHostFile is the name of a run's pinned copy of it.
-const ChildHostFile = "child-host.json"
 
 // ChildHost is the document: the marker root of the managed start, and the parent's and the child's endpoint (dag-release-request/1
 // parent and child: the host, the settings each task runs with, the child's title).
@@ -36,36 +25,9 @@ type ChildHost struct {
 	Child      dagsched.Endpoint `json:"child"`
 }
 
-// FactChildHostUnset is the warn fact of a start whose milestone has an issue the handoff sizes for a child and that names no
-// --child-host (CRW-1382).
-const FactChildHostUnset = "child_host_unset"
-
-// childHostFact warns of the issues of a run's milestone (every issue of the plan's project when the run names no milestone) that the
-// handoff sizes for a child when the start names no --child-host: such a node is refused child_host_unset only when it is released, so the
-// start says so before (warn and record, CRW-1382); the run starts. The architect's DESIGN decides a node's size at the release, so a node
-// the handoff does not size for a child and the DESIGN does is still refused at its release only.
-func childHostFact(in compile.Input, plan, milestone string, named bool) (Fact, bool) {
-	p, ok := HandoffProject(in, plan)
-	if !ok || named {
-		return Fact{}, false
-	}
-	var keys []string
-	for _, is := range p.Issues {
-		if (milestone == "" || is.Milestone == milestone) && is.SizeFit == "child" {
-			keys = append(keys, is.Key)
-		}
-	}
-	if len(keys) == 0 {
-		return Fact{}, false
-	}
-	return Fact{Name: FactChildHostUnset, Level: LevelWarn,
-		Reading: fmt.Sprintf("the handoff sizes %d issue(s) of the run for a child (%s) and the start names no host settings", len(keys), strings.Join(keys, ", ")),
-		Reason:  "a node sized for a child is started with the run's host settings and is refused child_host_unset at its release without them: start the run with --child-host FILE (" + ChildHostSchema + "); the run starts either way (warn and record)"}.leveled(), true
-}
-
 // ErrChildHostUnset is the refusal of a node sized for a child in a run that holds no host settings.
-var ErrChildHostUnset = errors.New("refused:child_host_unset: the run holds no host settings for a managed child start (SP-CHILD-1): start the run with --child-host FILE, a " +
-	ChildHostSchema + " document naming the parent's and the child's host, settings and the child's title")
+var ErrChildHostUnset = errors.New("refused:child_host_unset: the run holds no host settings for a managed child start (SP-CHILD-1): no start gives a run a " +
+	ChildHostSchema + " document any more")
 
 // Problem says why the document cannot start a managed child ("" when it can): the schema, an absolute marker root, the hosts, the
 // settings and the child's title, one host for both (a managed start supports one local host). The settings themselves are judged by the
@@ -94,99 +56,4 @@ func (h ChildHost) Problem() string {
 		return fmt.Sprintf("the parent's host %s is not the child's %s: a managed start supports one local host", h.Parent.HostID, h.Child.HostID)
 	}
 	return ""
-}
-
-// DecodeChildHost reads the document strictly (an unknown member or a second document is refused) and checks it (Problem).
-func DecodeChildHost(raw []byte) (ChildHost, error) {
-	var h ChildHost
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&h); err != nil {
-		return ChildHost{}, fmt.Errorf("the child host settings are not a %s document: %w", ChildHostSchema, err)
-	}
-	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
-		return ChildHost{}, fmt.Errorf("the child host settings hold more than one %s document", ChildHostSchema)
-	}
-	if why := h.Problem(); why != "" {
-		return ChildHost{}, errors.New(why)
-	}
-	return h, nil
-}
-
-// ReadChildHost reads the pinned copy a reference names, checked against the sha256 the run fixed.
-func ReadChildHost(ref HandoffRef) (ChildHost, error) {
-	if !filepath.IsAbs(ref.Path) || !sha256Pattern.MatchString(ref.SHA256) {
-		return ChildHost{}, fmt.Errorf("the child host reference %+v names no absolute file and sha256", ref)
-	}
-	raw, err := os.ReadFile(ref.Path)
-	if err != nil {
-		return ChildHost{}, fmt.Errorf("the child host settings cannot be read: %w", err)
-	}
-	if got := sha256Hex(raw); got != ref.SHA256 {
-		return ChildHost{}, fmt.Errorf("the child host settings %s changed: their sha256 is %s and %s was fixed", ref.Path, got, ref.SHA256)
-	}
-	return DecodeChildHost(raw)
-}
-
-// PinChildHost writes the document's bytes into the run's directory, once, and answers the reference the run's arguments carry.
-func PinChildHost(state, run string, raw []byte) (HandoffRef, error) {
-	if !validRunID(run) {
-		return HandoffRef{}, fmt.Errorf("%q is not a run id", run)
-	}
-	if err := os.MkdirAll(RunDir(state, run), 0o700); err != nil {
-		return HandoffRef{}, err
-	}
-	path := filepath.Join(RunDir(state, run), ChildHostFile)
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return HandoffRef{}, err
-	}
-	if _, err := f.Write(raw); err != nil {
-		_ = f.Close()
-		return HandoffRef{}, err
-	}
-	if err := f.Close(); err != nil {
-		return HandoffRef{}, err
-	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return HandoffRef{}, err
-	}
-	return HandoffRef{Path: abs, SHA256: sha256Hex(raw)}, nil
-}
-
-// ChildHostOf is the child host settings a run's arguments name ("child_host").
-func ChildHostOf(args json.RawMessage) (HandoffRef, bool) {
-	var a struct {
-		ChildHost *HandoffRef `json:"child_host"`
-	}
-	if json.Unmarshal(args, &a) != nil || a.ChildHost == nil {
-		return HandoffRef{}, false
-	}
-	return *a.ChildHost, true
-}
-
-// withChildHost is a run's arguments with the child host reference added as their last member.
-func withChildHost(args json.RawMessage, ref HandoffRef) (json.RawMessage, error) {
-	var obj map[string]json.RawMessage
-	trimmed := bytes.TrimSpace(args)
-	if len(trimmed) == 0 || string(trimmed) == "null" {
-		trimmed = []byte("{}")
-	}
-	if json.Unmarshal(trimmed, &obj) != nil {
-		return nil, errors.New("the workflow's args are not a JSON object, so they cannot name the child host settings")
-	}
-	if _, ok := obj["child_host"]; ok {
-		return nil, errors.New("the args name child host settings of their own: the run's are given with --child-host")
-	}
-	member, err := json.Marshal(ref)
-	if err != nil {
-		return nil, err
-	}
-	out := append([]byte{}, trimmed[:len(trimmed)-1]...)
-	if len(obj) > 0 {
-		out = append(out, ',')
-	}
-	out = append(append(append(out, `"child_host":`...), member...), '}')
-	return compactJSON(out), nil
 }

@@ -5,13 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 
-	"github.com/thisisjun786/codex-relay-workflow/internal/flow/compile"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/managed"
@@ -118,8 +116,7 @@ func childHostDoc(t *testing.T) (ChildHost, *childHost) {
 // child's title (the host receives it prefixed with the node's issue key), the child the start admitted is bound to the node and is the
 // answer (Started, its task), and the same release again answers the same child without a second start. A run with no host settings, or settings missing a field, is refused
 // with the reason before anything is written (an input error); a start the managed engine refuses is an error and binds no child, never
-// a ChildResult with Started false. `crw flow start --child-host FILE` checks the document, refuses one that cannot start a child, and
-// pins it into the run's arguments, from which the lane builds the relay's host settings.
+// a ChildResult with Started false. The relay is given its host settings directly (wireChild): no start pins them since CRW-1417.
 func TestReleaseChildStartsAManagedChildWithHostSettings(t *testing.T) {
 	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"}, labIssue{Key: "A-2", Milestone: "M1"})
 	doc, host := childHostDoc(t)
@@ -201,38 +198,6 @@ func TestReleaseChildStartsAManagedChildWithHostSettings(t *testing.T) {
 	if err != nil || !again.Started || again.Child != res.Child || len(host.created) != 1 {
 		t.Errorf("the same release again: %+v %v (%d threads)", again, err, len(host.created))
 	}
-
-	// crw flow start --child-host: a document that cannot start a child is refused before the run starts
-	write := func(v any) string {
-		raw, err := json.Marshal(v)
-		if err != nil {
-			t.Fatal(err)
-		}
-		path := filepath.Join(t.TempDir(), "child-host.json")
-		if err := os.WriteFile(path, raw, 0o600); err != nil {
-			t.Fatal(err)
-		}
-		return path
-	}
-	before := len(l.td.spawned)
-	code, out, errOut := l.td.do("start", "project-lane", "--args", `{"plan":"plan-1","milestone":"M1"}`, "--handoff", l.file, "--child-host", write(bad), "--thread", labOwner,
-		"--state", l.w.state, "--socket", l.host.SocketPath, "--repo", l.repo)
-	if code == 0 || len(l.td.spawned) != before || !strings.Contains(errOut, "child.title") {
-		t.Errorf("a child host document missing the title: exit %d\n%s%s", code, out, errOut)
-	}
-	spec := l.start("start", "project-lane", "--args", `{"plan":"plan-1","milestone":"M1"}`, "--handoff", l.file, "--child-host", write(doc))
-	ref, ok := ChildHostOf(spec.Args)
-	if !ok || filepath.Dir(ref.Path) != RunDir(l.w.state, spec.RunID) {
-		t.Fatalf("the run's arguments name no pinned child host: %s", spec.Args)
-	}
-	pinned, err := ReadChildHost(ref)
-	if err != nil || pinned.Child.Title != "crw child" || pinned.MarkerRoot != doc.MarkerRoot {
-		t.Errorf("the pinned child host: %+v %v", pinned, err)
-	}
-	built := l.buildLaneWith("run-child00030", l.handoffBytes(nil), map[string]any{"child_host": ref}, LaneOptions{})
-	if built.Child == nil || built.Child.Child.Title != "crw child" || built.Sched.Start == nil || built.Sched.Selectors.MarkerRoot != doc.MarkerRoot {
-		t.Errorf("the lane's relay holds no host settings: %+v", built.Child)
-	}
 }
 
 // TestSchedRelayReleaseChildComparesTheExpectedSlice (CRW-1382 d3): the child start carries the slice the flow compared, as Release does
@@ -261,58 +226,5 @@ func TestSchedRelayReleaseChildComparesTheExpectedSlice(t *testing.T) {
 	res, err := r.ReleaseChild(ctx, req)
 	if err != nil || !res.Started || res.Child == "" || slice == "" {
 		t.Fatalf("the child start under slice %s: %+v %v", slice, res, err)
-	}
-}
-
-// TestChildSizedIssueWithoutChildHostWarnsAtStart (CRW-1382 P3): an issue of the run's milestone that the handoff sizes for a child
-// (size_fit child) is released as an issue child, which needs the run's host settings; a run started without --child-host would learn it
-// only at that release (child_host_unset). The start warns of it: the warn fact child_host_unset, naming the issues, printed and recorded
-// in the run's spec, and the run starts. With --child-host, or with no issue sized for a child, there is no such fact.
-func TestChildSizedIssueWithoutChildHostWarnsAtStart(t *testing.T) {
-	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"}, labIssue{Key: "A-2", Milestone: "M1"})
-	doc, _ := childHostDoc(t)
-	hostFile := filepath.Join(t.TempDir(), "child-host.json")
-	raw, err := json.Marshal(doc)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(hostFile, raw, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	start := func(mutate func(*compile.Input), extra ...string) Spec {
-		t.Helper()
-		file := filepath.Join(t.TempDir(), "handoff.json")
-		if err := os.WriteFile(file, l.handoffBytes(mutate), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		before := len(l.td.spawned)
-		argv := append([]string{"start", "project-lane", "--args", `{"plan":"plan-1","milestone":"M1"}`, "--handoff", file, "--thread", labOwner, "--state", l.w.state,
-			"--socket", l.host.SocketPath, "--repo", l.repo}, extra...)
-		code, out, errOut := l.td.do(argv...)
-		if code != 0 || len(l.td.spawned) != before+1 {
-			t.Fatalf("the start: exit %d\n%s%s", code, out, errOut)
-		}
-		return l.td.spawned[len(l.td.spawned)-1].Spec
-	}
-	factOf := func(spec Spec) *Fact {
-		for _, f := range spec.Preflight {
-			if f.Name == FactChildHostUnset {
-				return &f
-			}
-		}
-		return nil
-	}
-	child := func(in *compile.Input) {
-		in.Projects[0].Issues[1].SizeFit, in.Projects[0].Issues[1].SizeReason = "child", "regions_gt3"
-	}
-	f := factOf(start(child))
-	if f == nil || f.Level != LevelWarn || !strings.Contains(f.Reading, "A-2") || strings.Contains(f.Reading, "A-1") || !strings.Contains(f.Reason, "--child-host") {
-		t.Errorf("a child-sized issue without --child-host: %+v", f)
-	}
-	if f := factOf(start(child, "--child-host", hostFile)); f != nil {
-		t.Errorf("a child-sized issue with --child-host is a fact: %+v", f)
-	}
-	if f := factOf(start(nil)); f != nil {
-		t.Errorf("no child-sized issue is a fact: %+v", f)
 	}
 }
