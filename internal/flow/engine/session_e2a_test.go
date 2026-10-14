@@ -368,3 +368,53 @@ func firstCallOf() func(call string) bool {
 		return call == first
 	}
 }
+
+// A5: the commit an executor call's worktree is to be at is the start commit of the allocation it works in, moved only by the
+// node's crw.commit rows after that allocation: a crw.commit an earlier allocation of the node recorded (a superseded process's,
+// past a suffix's boundary) is not the start of a worktree restored at another commit, so the call's HEAD at that commit is not
+// recorded as moved and crw.commit does not take the earlier commit as its parent.
+func TestSessionStartCommitIsTheAllocationsStart(t *testing.T) {
+	alloc := func(kind, path, start string, attempt int) Event {
+		return Event{RunID: "run-test", Kind: KindCall, CallID: "c_" + path, Op: "agent", Event: EvPrepared,
+			Data: map[string]any{"node": "n1", "allocation": map[string]any{"kind": kind, "attempt": attempt, "path": path, "start_commit": start}}}
+	}
+	commit := func(c string) Event {
+		return Event{RunID: "run-test", Kind: KindCall, CallID: "c_commit_" + c, Op: OpCommit, Event: EvCompleted, Data: map[string]any{"node": "n1", "commit": c}}
+	}
+	for _, tc := range []struct {
+		name   string
+		rows   []Event
+		cwd    string
+		pl     Placement
+		start  string
+		moved  bool
+		headAt string
+	}{
+		{name: "restored after an earlier allocation's commit", rows: []Event{alloc(PlaceFresh, "/w/n1/a1", "base", 1), commit("c-old"), alloc(PlaceRestore, "/w/n1/a2", "c-boundary", 2)},
+			cwd: "/w/n1/a2", pl: Placement{Kind: PlaceRestore, Attempt: 2, Path: "/w/n1/a2", Start: "c-boundary"}, start: "c-boundary", headAt: "c-boundary"},
+		{name: "a commit in the allocation moves it", rows: []Event{alloc(PlaceFresh, "/w/n1/a1", "base", 1), commit("c-old"), alloc(PlaceRestore, "/w/n1/a2", "c-boundary", 2), commit("c-new")},
+			cwd: "/w/n1/a2", pl: Placement{Kind: PlaceContinued, Path: "/w/n1/a2"}, start: "c-new", headAt: "c-new"},
+		{name: "a fix round after the build's commit", rows: []Event{alloc(PlaceFresh, "/w/n1/a1", "base", 1), commit("c-1")},
+			cwd: "/w/n1/a1", pl: Placement{Kind: PlaceContinued, Path: "/w/n1/a1"}, start: "c-1", headAt: "stray", moved: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mem := NewMemoryJournal()
+			for _, r := range tc.rows {
+				mem.Append(r)
+			}
+			placer := newSessPlacer()
+			placer.setHead(tc.cwd, tc.headAt)
+			e := &Engine{j: mem, runID: "run-test", cfg: Config{Backend: placer, Session: &SessionConfig{}}}
+			pl := tc.pl
+			c := &callRun{e: e, id: "c_now", plan: &callPlan{node: "n1", role: "executor", spec: RoleSpec{Family: "executor"}}, placement: &pl, cwd: tc.cwd, sess: &sessionCall{}, path: &pathState{}}
+			if start, _ := c.startCommit(); start != tc.start {
+				t.Errorf("startCommit %q, want %q", start, tc.start)
+			}
+			data := map[string]any{}
+			c.sessionChecks(context.Background(), data)
+			if _, moved := data["executor_head_moved"]; moved != tc.moved {
+				t.Errorf("executor_head_moved %v, want moved %v", data["executor_head_moved"], tc.moved)
+			}
+		})
+	}
+}

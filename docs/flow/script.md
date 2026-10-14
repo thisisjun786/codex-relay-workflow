@@ -948,8 +948,8 @@ any row is written. `crw flow shadow` replays either from the trace and names th
 - Write isolation is recorded, never enforced (the host gives a subagent its parent's sandbox). With `SessionConfig.Trace` the run
   takes digests of P, of the owner's checkout and of the run's shared state when it binds and when it harvests, and writes a flow
   warning when they differ: `read_role_wrote` (a role that changes nothing), `executor_wrote_outside`, `shared_state_changed`.
-- An executor's `HEAD` is compared with the commit its worktree is to be at (the node's last `crw.commit`, else the allocation's
-  start). A subagent that committed moved it: the commit is kept on `refs/crw/flow/<run>/stray/<node>/a<attempt>-<call>` (the
+- An executor's `HEAD` is compared with the commit its worktree is to be at (the node's last `crw.commit` after the allocation the
+  worktree was made or restored for, else that allocation's start). A subagent that committed moved it: the commit is kept on `refs/crw/flow/<run>/stray/<node>/a<attempt>-<call>` (the
   executor calls of one allocation, a build and its fix rounds, each keep their own; the ref is created by a compare-and-swap
   against no ref and never moved) and the
   completed row records `executor_head_moved` (`start`, `head`, `ref`); `crw.commit` commits the pending tree on `start` with the

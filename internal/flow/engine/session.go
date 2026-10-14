@@ -1186,8 +1186,8 @@ func (c *callRun) sessionChecks(ctx context.Context, data map[string]any) {
 	data["executor_head_moved"] = moved
 }
 
-// startCommit is the commit an executor call's worktree is to be at when its turn ends: the result of the node's last crw.commit,
-// else the start commit of the allocation it works in; and that allocation's attempt.
+// startCommit is the commit an executor call's worktree is to be at when its turn ends: the result of the node's last crw.commit
+// after the allocation it works in was recorded, else that allocation's start commit; and that allocation's attempt.
 func (c *callRun) startCommit() (string, int) {
 	node := c.plan.node
 	start, attempt := "", 0
@@ -1202,8 +1202,11 @@ func (c *callRun) startCommit() (string, int) {
 			}
 		case ev.Kind == KindCall && ev.Op == "agent" && ev.Event == EvPrepared && rowStr(ev.Data, "node") == node:
 			if m, ok := ev.Data["allocation"].(map[string]any); ok && rowStr(m, "path") == c.cwd && (rowStr(m, "kind") == PlaceFresh || rowStr(m, "kind") == PlaceRestore) {
-				if start == "" {
-					start = rowStr(m, "start_commit")
+				// the allocation the worktree was made (or restored) for starts at its own start commit: a crw.commit of the node
+				// recorded before it (an earlier allocation's, a superseded process's past a suffix's boundary) is not its start,
+				// and only a commit after it moves it (CRW-1384)
+				if sc := rowStr(m, "start_commit"); sc != "" {
+					start = sc
 				}
 				attempt = rowInt(m, "attempt")
 			}
