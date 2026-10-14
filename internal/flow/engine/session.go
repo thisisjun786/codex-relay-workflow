@@ -308,7 +308,9 @@ func sessionStageOf(rows []Event) *sessionStage {
 				st.kind, st.turn = stageBound, rowStr(d, "turn_id")
 			}
 		case EvSessionAttemptLost:
-			st.kind = stageLost
+			// an interrupt asked for the lost attempt's turn ends with that turn: the next attempt's turn is not one the engine
+			// interrupted (CRW-1384)
+			st.kind, st.intent = stageLost, ""
 		case EvInterruptRequested:
 			st.intent = rowStr(d, "reason")
 		}
@@ -362,7 +364,12 @@ func (c *callRun) sessionRecover(ctx context.Context) (res CallResult, stop bool
 	if res, stop := c.sessionNeedsDirectory(); stop {
 		return res, true, 0, ""
 	}
-	s.intent = st.intent
+	// the interrupt the previous process asked for decides the turn it interrupted: the bound turn, or the turns of the subagent a
+	// published send_input step was for (sessionStop interrupts them). A spawn step no subagent was bound to had nothing to
+	// interrupt, so the turn that takes it is this process's (CRW-1384).
+	if st.kind == stageBound || st.kind == stagePublished && st.action == StepSendInput {
+		s.intent = st.intent
+	}
 	bus := c.e.cfg.Session.Bus
 	switch st.kind {
 	case stagePrepared:
@@ -559,6 +566,11 @@ func (c *callRun) sessionTurn(ctx context.Context, k int, op, input string, repa
 			return out, CallResult{}, false, err
 		}
 		c.sessionLose(loss)
+		if turnCtx.Err() == nil {
+			// an intent this process took over from the previous one was for the lost attempt's turn; an interrupt of this process
+			// cancelled the turn's context and stays the reason the next bind stops for (CRW-1384)
+			c.clearIntent()
+		}
 		if res, stop := c.gate(ctx); stop {
 			return TurnOutcome{}, res, true, nil
 		}

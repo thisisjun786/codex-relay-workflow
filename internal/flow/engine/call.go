@@ -801,6 +801,13 @@ func (c *callRun) setIntent(reason string) {
 	c.mu.Unlock()
 }
 
+// clearIntent drops the intent of a turn that ended without deciding the call (a session attempt that was lost).
+func (c *callRun) clearIntent() {
+	c.mu.Lock()
+	c.intent = ""
+	c.mu.Unlock()
+}
+
 // interrupted is the reason the engine interrupted the call's last turn for, "" when it did not.
 func (c *callRun) interrupted() string {
 	c.mu.Lock()
