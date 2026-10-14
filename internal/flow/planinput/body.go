@@ -99,8 +99,10 @@ func linesOf(secs []section, names []string) (lines []string, found bool) {
 // "Blocked by:" item is an order and not an item, at any indent (tracking.ParseBlockedBy reads it so). With nested, a bullet indented
 // deeper than the item above it is a sub-bullet and part of that item (at any depth, after a blank line too): it joins the item's text.
 // A "Blocked by:" bullet is never joined: under an item it is left out and the item stays the parent of the sub-bullets after it, and a
-// sub-bullet of a "Blocked by:" item is left out with it. Without nested every bullet is an item of its own, the reading of a list of
-// paths.
+// sub-bullet of a "Blocked by:" item is left out with it. An indented line that is not a bullet leaves that state alone: it extends the
+// item above it, or is left out with a "Blocked by:" item, and the sub-bullets after it are read as they were before it. An indented
+// "Blocked by:" line that is not a bullet is read as the bullet is, with or without an item above it, and never joins an item. Without
+// nested every bullet is an item of its own, the reading of a list of paths.
 func bullets(lines []string, nested bool) []string {
 	var out []string
 	cur := -1    // the item a continuation line extends
@@ -108,11 +110,14 @@ func bullets(lines []string, nested bool) []string {
 	parentIndent := 0
 	dropped := false // the sub-bullets deeper than dropIndent belong to a "Blocked by:" item that was left out (nested only)
 	dropIndent := 0
+	follows := false // the line above was a bullet or an indented line of one, not a blank line
 	for _, line := range lines {
 		if strings.TrimSpace(line) == "" {
-			cur = -1
+			cur, follows = -1, false
 			continue
 		}
+		wasFollowing := follows
+		follows = true
 		if m := bulletLine.FindStringSubmatch(line); m != nil {
 			indent := indentOf(m[1])
 			text := strings.TrimSpace(checkbox.ReplaceAllString(strings.TrimSpace(m[2]), ""))
@@ -143,11 +148,25 @@ func bullets(lines []string, nested bool) []string {
 			parent = cur
 			continue
 		}
-		if cur >= 0 && (line[0] == ' ' || line[0] == '\t') {
-			out[cur] = strings.TrimSpace(out[cur] + " " + strings.TrimSpace(line))
-			continue
+		if line[0] == ' ' || line[0] == '\t' {
+			if blockedLine.MatchString(strings.TrimSpace(line)) {
+				// an order in a plain line: not part of any item, whose state it leaves as it is; what is deeper than it leaves with it
+				if at := indentOf(line[:len(line)-len(strings.TrimLeft(line, " \t"))]); nested && (!dropped || at < dropIndent) {
+					dropped, dropIndent = true, at
+				}
+				cur = -1
+				continue
+			}
+			if cur >= 0 {
+				out[cur] = strings.TrimSpace(out[cur] + " " + strings.TrimSpace(line))
+				continue
+			}
+			if wasFollowing && (parent >= 0 || dropped) {
+				// the continuation of a "Blocked by:" item that was left out
+				continue
+			}
 		}
-		cur, parent, dropped = -1, -1, false
+		cur, parent, dropped, follows = -1, -1, false, false
 	}
 	kept := out[:0]
 	for _, b := range out {
