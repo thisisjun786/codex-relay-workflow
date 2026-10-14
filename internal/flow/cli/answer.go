@@ -68,7 +68,7 @@ func (c *command) answer(args []string) int {
 	defer st.Close()
 	reply, code := c.applyAnswer(st, state, Claim{Decision: *decision, Run: *runID, Node: *node, Question: *question, Revision: *revision, By: by})
 	if reply.Refusal == nil && code == 0 && reply.Applied && !*noResume && !reply.Replayed {
-		pid, err := c.resumeDetached(state, *runID)
+		pid, err := c.resumeDetached(st, state, *runID)
 		if err != nil {
 			fmt.Fprintf(c.stderr, "crw flow answer: the answer is applied and the run is not resumed: %v\n", err)
 			code = 1
@@ -139,10 +139,14 @@ func (c *command) applyAnswer(st *store.Store, state string, claim Claim) (Answe
 	return reply, 0
 }
 
-// resumeDetached starts the process of a run again from its journal.
-func (c *command) resumeDetached(state, run string) (int, error) {
+// resumeDetached starts the process of a run again from its journal; a run with nothing left of its spec's budget is refused
+// before (budgetLeft, over the journal in st).
+func (c *command) resumeDetached(st *store.Store, state, run string) (int, error) {
 	spec, err := ReadSpec(state, run)
 	if err != nil {
+		return 0, err
+	}
+	if err := budgetLeft(c.ctx, st, spec); err != nil {
 		return 0, err
 	}
 	dir, _ := os.Getwd()

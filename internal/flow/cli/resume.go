@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/journal"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // resume is `crw flow resume RUN [SCRIPT] [--detach]`. The run is taken from its journal once its run lock is free: a run a process
@@ -26,7 +28,7 @@ func (c *command) resume(args []string) int {
 	argsJSON := fs.String("args", "", "the script's args, as JSON")
 	argsFile := fs.String("args-file", "", "a file holding the script's args as JSON")
 	pool := fs.Int("pool", 0, "agent calls in flight at once (default 6)")
-	budget := fs.Int64("token-budget", 0, "the run's token ceiling (0: none)")
+	budget := fs.Int64("token-budget", 0, "the tokens this resume may spend, at most what the budget of the run's spec leaves (0: that remainder, or none without one)")
 	detach := fs.Bool("detach", false, "go on in a process of its own and return")
 	positional, code, ok := parse(fs, args)
 	if !ok {
@@ -77,6 +79,18 @@ func (c *command) resume(args []string) int {
 	if *detach {
 		if LockHeld(sel.Path, run) {
 			return c.fail("%v %s", ErrRunLive, run)
+		}
+		// a run with nothing left is refused here, before a process is started for it (budgetLeft)
+		if spec.TokenBudget > 0 {
+			r, err := c.reader(cm)
+			if err != nil {
+				return c.fail("%v", err)
+			}
+			err = budgetLeft(c.ctx, r.St, spec)
+			_ = r.Close()
+			if err != nil {
+				return c.fail("%v", err)
+			}
 		}
 		dir, _ := os.Getwd()
 		spawned := c.now()
@@ -137,6 +151,22 @@ func runBudget(spec Spec, spent, asked int64) (int64, error) {
 		asked = left
 	}
 	return spent + asked, nil
+}
+
+// budgetLeft refuses the resume of a run whose spec's budget the run has spent (runBudget over the journal in st): `crw flow resume
+// RUN --detach` and an answer's resume ask it before they start the run process, so the refusal, budget_exhausted with the tokens
+// spent and the decision, is the command's own answer and not a process that takes the run lock and ends at once. The run process
+// judges the budget again under the run lock (execute). A spec without a budget has nothing to refuse.
+func budgetLeft(ctx context.Context, st *store.Store, spec Spec) error {
+	if spec.TokenBudget <= 0 {
+		return nil
+	}
+	events, _, err := journal.LoadLean(ctx, st, spec.RunID)
+	if err != nil {
+		return fmt.Errorf("the journal of run %s cannot be read: %w", spec.RunID, err)
+	}
+	_, err = runBudget(spec, engine.RunSpent(events, spec.RunID).Total, spec.TokenBudget)
+	return err
 }
 
 // resumeHold holds a `crw flow resume RUN SCRIPT` the way the run process holds its run (CRW-1348): a spec that names another

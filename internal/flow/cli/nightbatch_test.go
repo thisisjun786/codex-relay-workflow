@@ -364,6 +364,43 @@ func TestNightBatchResumeDoesNotRefillTheBudget(t *testing.T) {
 	}
 }
 
+// TestDetachedResumeRefusesAnExhaustedBudget (CRW-1278): a run whose spec's budget has nothing left is refused before a run process
+// is started for it: `crw flow resume RUN --detach` (and an answer's resume, which starts the process the same way) reports
+// budget_exhausted and the decision and starts no process, instead of a process that would take the run lock and end at once.
+func TestDetachedResumeRefusesAnExhaustedBudget(t *testing.T) {
+	pw := newProcessWorld(t, threeCalls)
+	run := "run-detach-exhausted"
+	pw.handle = func(r engine.FakeRequest) engine.FakeReply {
+		return engine.FakeReply{Tokens: &engine.Tokens{Input: 50, Output: 10, Total: 60}}
+	}
+	spec := pw.spec(run, func(s *Spec) { s.Decision, s.TokenBudget = "ud-night", 50 })
+	if code, errOut := pw.execute(spec, false, make(chan os.Signal, 1)); code != 0 {
+		t.Fatalf("the first process: exit %d %s", code, errOut)
+	}
+	if info := pw.info(run); info.Tokens != 60 || !contains(info.HeldReasons, engine.ReasonBudgetExhausted) {
+		t.Fatalf("the exhausted run: %+v", info)
+	}
+	before := len(pw.td.spawned)
+	code, out, errOut := pw.td.do("resume", run, "--detach", "--state", pw.state)
+	if code == 0 || !strings.Contains(errOut, engine.ReasonBudgetExhausted) || !strings.Contains(errOut, "60 of the 50 tokens") || !strings.Contains(errOut, "ud-night") || strings.Contains(out, "resumed") {
+		t.Errorf("a detached resume with no budget left: exit %d %q %q", code, out, errOut)
+	}
+	if n := len(pw.td.spawned) - before; n != 0 {
+		t.Errorf("a detached resume with no budget left started %d processes", n)
+	}
+	// a run with budget left is still started (the spec of a new decision)
+	spec.TokenBudget = 1000
+	if err := os.Remove(specPath(pw.state, run)); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteSpec(pw.state, spec); err != nil {
+		t.Fatal(err)
+	}
+	if code, out, errOut := pw.td.do("resume", run, "--detach", "--state", pw.state); code != 0 || len(pw.td.spawned)-before != 1 {
+		t.Errorf("a detached resume with budget left: exit %d %q %q, %d processes", code, out, errOut, len(pw.td.spawned)-before)
+	}
+}
+
 // TestRunBudgetNarrowsTheRemainder (CRW-1278): a resume's ceiling counts what the run spent; a --token-budget narrows the remainder and
 // never widens it, the spec's budget stays the upper bound, and nothing left refuses the resume.
 func TestRunBudgetNarrowsTheRemainder(t *testing.T) {

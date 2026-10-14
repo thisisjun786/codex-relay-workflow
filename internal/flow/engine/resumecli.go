@@ -103,7 +103,7 @@ func resumeCmd(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	argsJSON := fs_.String("args", "", "the script's args, as JSON")
 	argsFile := fs_.String("args-file", "", "a file holding the script's args as JSON")
 	pool := fs_.Int("pool", 0, "agent calls in flight at once (default 6)")
-	budget := fs_.Int64("token-budget", 0, "the run's token ceiling (0: none)")
+	budget := fs_.Int64("token-budget", 0, "the tokens this resume may spend, at most what the budget of the run's spec leaves (0: that remainder, or none without one)")
 	fs_.Usage = func() { fmt.Fprintln(stderr, resumeUsage) }
 	var positional []string
 	rest := args
