@@ -325,6 +325,40 @@ func TestAnswerAppliesOnce(t *testing.T) {
 	}
 }
 
+// TestAnswerDoesNotResumeAnExhaustedBudget (CRW-1278, Argon F5 on 2a082733): the answer's resume starts the run process the way
+// `crw flow resume RUN --detach` does, and a run whose spec's budget it has spent is refused before a process is started
+// (resumeDetached asks budgetLeft): the answer is applied - its row is in the journal -, nothing is spawned, and the command says the
+// run is not resumed with budget_exhausted, the tokens spent and the decision, exiting 1.
+func TestAnswerDoesNotResumeAnExhaustedBudget(t *testing.T) {
+	w := newWorld(t)
+	r := w.newRun("run-q", "thread-owner")
+	r.phase("build")
+	r.completed("c_arch", "architect", "", "thread-arch", 60)
+	r.call("c_ex", "executor", "n1", 2, []string{engine.EvPrepared, engine.EvRefused}, map[string]map[string]any{engine.EvRefused: {"reason": "pair_refused"}})
+	r.flow(engine.EvEscalation, map[string]any{"reason": "pair_refused", "class": "configuration_fault", "node": "n1", "call_id": "c_ex", "escalation_id": "esc_one", "ask": "configuration"})
+	r.finish(engine.RunCompleted, "")
+	r.close()
+	a := &asking{run: r, q: "esc_one", rec: RunRecord{RunID: "run-q", Owner: "thread-owner", PlanID: "plan-1", PlanRevision: 3}}
+	td := w.deps()
+	if err := WriteSpec(w.state, Spec{Schema: SpecSchema, RunID: "run-q", Workflow: "project-lane", Thread: "thread-owner", CreatedAt: "2026-10-12T08:00:00Z", Decision: "ud-night", TokenBudget: 50}); err != nil {
+		t.Fatal(err)
+	}
+	id := a.answered(t, "ud-spent", nil)
+	code, reply, errOut := a.answer(td, id)
+	if code != 1 || !reply.Applied || reply.Refusal != nil || reply.Resumed != 0 {
+		t.Errorf("the answer to a run with no budget left: exit %d %+v %q", code, reply, errOut)
+	}
+	if !strings.Contains(errOut, "not resumed") || !strings.Contains(errOut, engine.ReasonBudgetExhausted) || !strings.Contains(errOut, "60 of the 50 tokens") || !strings.Contains(errOut, "ud-night") {
+		t.Errorf("the refusal of the resume: %q", errOut)
+	}
+	if len(td.spawned) != 0 {
+		t.Errorf("an answer to a run with no budget left started %d processes: %+v", len(td.spawned), td.spawned)
+	}
+	if rows := a.appliedRows(t); len(rows) != 1 {
+		t.Errorf("the answer appended %d decision_applied rows, want 1", len(rows))
+	}
+}
+
 func mustLoad(t *testing.T, w *world) []engine.Event {
 	t.Helper()
 	rows, _, err := loadRun(w, "run-q")
