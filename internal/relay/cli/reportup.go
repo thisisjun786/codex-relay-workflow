@@ -100,6 +100,10 @@ func stagedText(staged map[string]any, key string) string {
 
 var reportUpCommand = dispatch.Command{Name: "report-up", Run: runReportUp}
 
+// reportUpAfterPrecheck runs between report-up's check of a recorded --id and its staging, where a second call can land: a test
+// seam (CRW-1390), nothing in the binary.
+var reportUpAfterPrecheck = func() {}
+
 func init() { dispatch.Register(nil, reportUpCommand) }
 
 func runReportUp(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
@@ -179,6 +183,7 @@ func runReportUp(ctx context.Context, services dispatch.Services, args dispatch.
 			return nil, reportIDReusedExit(err.(reportIDReused), kind, initiative)
 		}
 	}
+	reportUpAfterPrecheck()
 	// sentStands is set when a restatement found the report's message already gone, and heldStands when
 	// the channel refused to stage while the report's unsent message stands: in both the row and the
 	// message keep what they say.
