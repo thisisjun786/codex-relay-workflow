@@ -18,8 +18,9 @@ import (
 //
 //   - flow_runs: a run's escalations (urgent kind run_escalation) and a run that died - its newest process started, did not finish and has written no row of
 //     its own for run_dead_seconds (urgent kind run_dead). A resumed run writes rows again (and a finish of an earlier process says nothing of the newest one), so a second death is another event.
-//   - flow_reports: a decision only Jun can make (urgent kind jun_decision) and a report nobody read for low_priority_seconds (low kind
-//     report_unread: report id, age, the last delivery result).
+//   - flow_reports: a decision only Jun can make that the supervisor channel did not take (urgent kind jun_decision; one the channel
+//     holds or delivered is the channel's, pumpChannelHolds) and a report nobody read for low_priority_seconds (low kind report_unread:
+//     report id, age, the last delivery result).
 //
 // The report_undelivered kind is raised by the supervisor queue flush (pump_supervisor.go), not by a source.
 const (
@@ -146,7 +147,8 @@ type pumpFlowReportsSource struct{}
 
 func (pumpFlowReportsSource) Name() string { return pumpFlowReportsName }
 
-// Collect reads the reports: a decision request for Jun is told at once, a report nobody read is told once it is low_priority_seconds old.
+// Collect reads the reports: a decision request for Jun the supervisor channel did not take is told at once, a report nobody read is told
+// once it is low_priority_seconds old.
 func (pumpFlowReportsSource) Collect(ctx context.Context, e *Env, cfg *Config, st *pumpState, s pumpSettings) pumpSourceResult {
 	data, err := pumpFlowRead(ctx, e, cfg)
 	if err != nil {
@@ -157,7 +159,7 @@ func (pumpFlowReportsSource) Collect(ctx context.Context, e *Env, cfg *Config, s
 	unread := time.Duration(pumpSettingInt(s.LowPrioritySeconds, pumpDefaultLowPrioritySeconds)) * time.Second
 	for _, r := range data.Reports {
 		switch {
-		case r.Kind == "jun_decision_request":
+		case r.Kind == "jun_decision_request" && !pumpChannelHolds(r.LastDelivery):
 			events = append(events, pumpEvent{ID: "jun_decision:" + r.ID, Kind: pumpKindJunDecision,
 				Text: fmt.Sprintf("[flow] decision for Jun report=%s run=%s%s: crw manage decisions records the question and the answer", r.ID, r.Run, pumpFlowDetail(r.Subject))})
 		case !r.Read && now.Sub(r.At) >= unread:
@@ -167,6 +169,16 @@ func (pumpFlowReportsSource) Collect(ctx context.Context, e *Env, cfg *Config, s
 	}
 	sort.SliceStable(events, func(i, j int) bool { return events[i].ID < events[j].ID })
 	return pumpSourceResult{Status: pumpSourceOK, Events: events}
+}
+
+// pumpChannelHolds says whether a report's last delivery row is the supervisor channel's (CRW-1380): the channel holds the message
+// (queued) or the daemon's settle delivered it (accepted). On the 1.0 path a decision only Jun can make goes up that way to the parent
+// above the project, so the pump does not tell the management thread of it a second time (CRW-1390, design CRW-1314 §6 D4); it is read
+// as any report is, and told as report_unread when nobody acknowledged it for low_priority_seconds. A decision the channel did not take -
+// no delivery row (a legacy lead above the project does not decide for Jun, a staging refused, a store seat's report of a run with no
+// project), held at a cap (refused) or sent with an unknown outcome (unknown) - is still the urgent jun_decision.
+func pumpChannelHolds(lastDelivery string) bool {
+	return lastDelivery == report.ResultQueued || lastDelivery == report.ResultAccepted
 }
 
 // pumpFlowReadAt reads the flow rows from the relay store below state, in one read-only snapshot.

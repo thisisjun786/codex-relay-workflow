@@ -50,6 +50,10 @@ type coreBridge struct {
 // manage object of the crw configuration file. A key of that object this type does not
 // name stays in the document and is read with Section.
 type Config struct {
+	// ManagementThread is the thread the pump's management batch goes to. On the CRW 1.0 path the supervisor channel is the
+	// canonical delivery between the parent and its children (CRW-1314: the relay daemon wakes the management seat's owner with
+	// each report, escalation, completion and decision for Jun), so this thread and the batch are superseded there and kept for
+	// reading and for a configuration that has no management seat (CRW-1390).
 	ManagementThread string            `json:"management_thread"`
 	Parents          map[string]string `json:"parents"`
 	Repository       string            `json:"repository"`
