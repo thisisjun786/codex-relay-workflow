@@ -143,7 +143,12 @@ worktree. Reuse the coordinator-prepared checkout. Model and reasoning effort ar
 required; omitting either refuses the request before any call rather than inheriting
 the App Server configuration. Omitting any other setting uses that configuration and
 checks nothing, so supply the ones the assignment depends on: an omitted setting is
-reported but never verified.
+reported but never verified. The bridge names the thread with `thread/name/set` right after
+`thread/start` and before the first turn, by the
+[thread title table](../../crw-canon/references/hierarchy.md#thread-titles): the title given, or for
+role `supervisor` without one the title of the repository session (relay role `supervisor`) from the cwd's origin. A thread it
+cannot name is a `titleWarning` in the receipt (`title_unset`, `title_not_set`) and on standard
+error, and the creation goes on.
 
 It also accepts `role`. Name the role this task is being created for and state a pair the
 host's declared policy reports for it (for a role that lists several, one entry of its `pairs`; for a

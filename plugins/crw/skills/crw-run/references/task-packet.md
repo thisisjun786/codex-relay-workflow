@@ -26,7 +26,8 @@ PR number, model, CI status, or merge status. Keep the execution mode in the
 packet's `Workflow` field and verify runtime behavior separately. A title or a
 chat link does not establish the task's native PR association; keep PR linkage
 separate from naming. An explicit user-supplied title takes precedence over
-this default. This convention names issue children; the management task above them
+this default. This convention names issue children, their row of the one
+[thread title table](../../crw-canon/references/hierarchy.md#thread-titles); the task above them
 is named by [Set the app presentation and record](../../crw-plan/references/integrations.md#set-the-app-presentation-and-record),
 including the product-family prefix that no child title carries.
 Each implementation packet names its
