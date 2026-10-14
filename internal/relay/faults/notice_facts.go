@@ -5,18 +5,39 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/tracking/ref"
 )
 
 var noticeIdentifier = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$`)
-var noticeIssue = regexp.MustCompile(`^(?:[A-Z][A-Z0-9_]{0,15}-[0-9]{1,9}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$`)
+var noticeLinearKey = regexp.MustCompile(`^(?:[A-Z][A-Z0-9_]{0,15}-[0-9]{1,9}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$`)
 var noticeLink = regexp.MustCompile(`^https://linear\.app/[a-z0-9][a-z0-9-]{0,63}/issue/[A-Z][A-Z0-9_]{0,15}-[0-9]{1,9}(?:/[a-z0-9-]{1,120})?$`)
-var noticeIssueURL = regexp.MustCompile(`^https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/issues/[1-9][0-9]{0,8}$`)
+var noticeIssueURL = regexp.MustCompile(`^https://github\.com/([^/]+)/([^/]+)/issues/([1-9][0-9]{0,8})$`)
 var noticeHex = regexp.MustCompile(`^[0-9a-f]{1,64}$`)
 var noticeWrite = regexp.MustCompile(`^write:([A-Za-z0-9]+):(uncertain|failed)$`)
 
+// noticeIssueMax bounds an issue key a notice names: a notice packet stays small, so a tracking ref
+// longer than the text routing accepts is not named.
+const noticeIssueMax = 256
+
+// isNoticeIssue reports whether s is an issue key a notice may name: a Linear key, a UUID, or a
+// tracking ref owner/name#N. The ref is read by the network-free leaf internal/tracking/ref, so
+// there is one rule for owner/name and the number.
+func isNoticeIssue(s string) bool {
+	if noticeLinearKey.MatchString(s) {
+		return true
+	}
+	if len(s) > noticeIssueMax {
+		return false
+	}
+	_, err := ref.Parse(s)
+	return err == nil
+}
+
 // isNoticeLink reports whether s is the link of a published issue a notice may carry: a Linear issue
-// URL, or a GitHub one, https://github.com/<owner>/<name>/issues/<N>, whose owner and name are not
-// "." or "..". The ledger stays offline, so it reads the URL itself and imports no tracking client.
+// URL, or a GitHub one, https://github.com/<owner>/<name>/issues/<N> whose owner, name and number
+// the leaf internal/tracking/ref accepts (the link keeps a 9-digit number). The ledger stays offline:
+// the leaf imports no network client.
 func isNoticeLink(s string) bool {
 	if noticeLink.MatchString(s) {
 		return true
@@ -25,12 +46,8 @@ func isNoticeLink(s string) bool {
 	if m == nil {
 		return false
 	}
-	for _, part := range m[1:3] {
-		if part == "." || part == ".." {
-			return false
-		}
-	}
-	return true
+	_, err := ref.Parse(m[1] + "/" + m[2] + "#" + m[3])
+	return err == nil
 }
 
 // NoticeFacts is faults.notice_facts. Free-text evidence never enters a packet.
@@ -47,18 +64,18 @@ func (l *Ledger) NoticeFacts(ctx context.Context, id string) (map[string]any, er
 	scope := loadsMap(r.Text("scope"))
 	if anchor != nil {
 		where = anchor.Text("relationship_id")
-		if noticeIssue.MatchString(anchor.Text("issue_key")) {
+		if isNoticeIssue(anchor.Text("issue_key")) {
 			issue = anchor.Text("issue_key")
 		}
 	} else if project, ok := scope["projectKey"].(string); ok && noticeIdentifier.MatchString(project) {
 		where = "project:" + project
-		if key, ok := scope["issueKey"].(string); ok && noticeIssue.MatchString(key) {
+		if key, ok := scope["issueKey"].(string); ok && isNoticeIssue(key) {
 			issue = key
 		}
 	}
-	ref := r.Text("external_ref")
-	if noticeIssue.MatchString(ref) || isNoticeLink(ref) {
-		external = ref
+	published := r.Text("external_ref")
+	if isNoticeIssue(published) || isNoticeLink(published) {
+		external = published
 	}
 	raw := r.Text("reason")
 	if strings.HasPrefix(raw, "raised:") {
@@ -66,11 +83,12 @@ func (l *Ledger) NoticeFacts(ctx context.Context, id string) (map[string]any, er
 	} else if p := noticeWrite.FindStringSubmatch(raw); p != nil {
 		reason = "write " + p[1] + " is " + p[2]
 	}
-	return map[string]any{"notificationId": id, "deliveryKey": "relay-notification:" + id, "faultId": r.Text("fault_id"), "kind": r.Text("kind"), "reason": reason, "cycle": r.Get("cycle"), "state": r.Text("state"), "leaseUntil": r.Get("lease_until"), "attempts": r.Get("attempts"), "product": r.Text("fault_product"), "faultClass": r.Text("fault_class"), "severity": r.Text("severity"), "faultState": r.Text("fault_state"), "externalRef": external, "issuePublished": ref != "", "anchor": where, "issueKey": issue}, nil
+	return map[string]any{"notificationId": id, "deliveryKey": "relay-notification:" + id, "faultId": r.Text("fault_id"), "kind": r.Text("kind"), "reason": reason, "cycle": r.Get("cycle"), "state": r.Text("state"), "leaseUntil": r.Get("lease_until"), "attempts": r.Get("attempts"), "product": r.Text("fault_product"), "faultClass": r.Text("fault_class"), "severity": r.Text("severity"), "faultState": r.Text("fault_state"), "externalRef": external, "issuePublished": published != "", "anchor": where, "issueKey": issue}, nil
 }
 
-// IsNoticeIssue reports whether s is an issue key a notice may name: TEAM-123 or a UUID.
-func IsNoticeIssue(s string) bool { return noticeIssue.MatchString(s) }
+// IsNoticeIssue reports whether s is an issue key a notice may name: TEAM-123, a UUID or a tracking
+// ref owner/name#N.
+func IsNoticeIssue(s string) bool { return isNoticeIssue(s) }
 
 // UnfitNotice names the first fact of a notice that is not a value the ledger writes, or "" when each
 // is. The deliverer asks it before it waits on a notice and the channel asks it before it composes one.

@@ -15,7 +15,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
-	"github.com/thisisjun786/codex-relay-workflow/internal/tracking"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tracking/ref"
 )
 
 const ProjectsScope = "__projects__"
@@ -27,20 +27,20 @@ var productPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 var issuePattern = regexp.MustCompile(`^[A-Z][A-Z0-9]*-[0-9]+$`)
 
 // isIssueIdentifier reports whether s names a tracked issue: a Linear key like ABC-12, or a tracking
-// ref "<owner>/<name>#N" as internal/tracking reads it.
+// ref "<owner>/<name>#N" as internal/tracking/ref reads it.
 func isIssueIdentifier(s string) bool {
 	if issuePattern.MatchString(s) {
 		return true
 	}
-	_, err := tracking.ParseRef(s)
+	_, err := ref.Parse(s)
 	return err == nil
 }
 
 // issueTeam is the team an issue belongs to: the prefix of a Linear key, or the repository of a
 // tracking ref.
 func issueTeam(issue string) string {
-	if ref, err := tracking.ParseRef(issue); err == nil {
-		return ref.Repo
+	if parsed, err := ref.Parse(issue); err == nil {
+		return parsed.Repo
 	}
 	return strings.Split(issue, "-")[0]
 }

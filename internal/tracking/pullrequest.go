@@ -126,7 +126,7 @@ type apiPull struct {
 
 func (g *GitHub) pullFrom(a apiPull) PullRequest {
 	pr := PullRequest{
-		Ref: Ref{g.repo, a.Number}, URL: a.HTMLURL, Title: a.Title, Body: a.Body, State: State(a.State), Merged: a.Merged, Draft: a.Draft,
+		Ref: Ref{Repo: g.repo, Number: a.Number}, URL: a.HTMLURL, Title: a.Title, Body: a.Body, State: State(a.State), Merged: a.Merged, Draft: a.Draft,
 		HeadRef: a.Head.Ref, HeadSHA: a.Head.SHA, BaseRef: a.Base.Ref, Issues: ParseCarries(g.repo, a.Body),
 	}
 	if a.Head.Repo != nil {
