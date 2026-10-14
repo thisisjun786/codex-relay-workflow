@@ -996,9 +996,12 @@ any row is written. `crw flow shadow` replays either from the trace and names th
   or that took a step they published, runs nothing.
 - A continuation (`resume: handle`) runs on a new subagent and writes its own `thread_started` row, so the handle chain and the pair
   the relay reads name it. Inside a resume's suffix it never forks: it takes the checkpoint branch (`checkpoint_started`), and its
-  packet carries the journal's record of the handle's turns: for a session subagent the conversation it goes on from, the turns of the calls
-  its handle continues before its own and a later attempt's turns of the call before the turn it started at (the newest of each
-  turn). The continuation's input digest keeps the handle's own thread chain: a position replays only after every one before it.
+  packet carries the journal's record of the handle's turns, each with the input of the step or request it took: for a session
+  subagent the conversation it goes on from, the turns of the calls its handle continues before its own and the call's conversation
+  before the turn its subagent started at. A call's conversation is its turns by turn index, each index once: a turn run again (the
+  next attempt of a lost turn, at the same k; the turn a held call goes on with in place on a new subagent, at the next k) supersedes
+  the turn it replaces, and the packet is built from that list alone. The continuation's input digest keeps the handle's own thread
+  chain: a position replays only after every one before it.
 
 | Row | In a session call |
 | --- | --- |

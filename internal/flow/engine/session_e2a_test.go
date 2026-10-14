@@ -496,6 +496,74 @@ return [r.status, fix.status]`))
 			t.Errorf("the checkpoint holds the lost attempt's turn beside the one that ran it again:\n%s", packet)
 		}
 	})
+	// The A4+B4 seam, its one rule: the conversation is the call's turns by turn index, each index once, the replacement in the place
+	// of the turn it replaces. A held call whose turn was delivered goes on in place with a new subagent at the next k, and that turn
+	// replaces the held one: the record holds the task (and the repair) once.
+	for _, tc := range []struct {
+		name string
+		// held is the k of the turn the call is held in (usageLimitExceeded); the turns before it answer what is not JSON
+		held int
+		want []string
+	}{
+		{name: "task turn held and gone on with in place", held: 1, want: []string{"[turn 1] build node n1"}},
+		{name: "repair turn held and gone on with in place", held: 2, want: []string{"[turn 1] build node n1", "[turn 2] Your previous answer did not satisfy the output schema"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			k := newSessionKit(t)
+			var mu sync.Mutex
+			phase := 1
+			k.orch.answer = func(st Step, _ string, _ int) orchAnswer {
+				mu.Lock()
+				defer mu.Unlock()
+				switch {
+				case phase == 2:
+				case st.K < tc.held:
+					return orchAnswer{text: "this is not JSON"}
+				default:
+					return orchAnswer{fail: "usageLimitExceeded"}
+				}
+				return orchAnswer{edit: "P:" + st.Op}
+			}
+			one := `const r = await agent.call('build node n1', { agentType: 'executor', label: 'exe', node: 'n1', schema: RECEIPT })
+`
+			if got := value[[]any](t, k.h.run(one+`return [r.status, r.reason]`)); got[0] != "held" {
+				t.Fatalf("the first run %v; rows %s", got, eventsOf(k.rowsOf("exe")))
+			}
+			mu.Lock()
+			phase = 2
+			mu.Unlock()
+			k.h.cfg.Resume = &ResumeOptions{}
+			if got := value[string](t, k.h.run(one+`return r.status`)); got != "completed" {
+				t.Fatalf("the held call gone on with %s; rows %s", got, eventsOf(k.rowsOf("exe")))
+			}
+			if n := len(rowsNamed(k.rowsOf("exe"), EvThreadStarted)); n != 2 {
+				t.Fatalf("thread_started rows %d, want the held subagent's and the new one's; rows %s", n, eventsOf(k.rowsOf("exe")))
+			}
+			k.h.cfg.Resume = &ResumeOptions{}
+			got := value[[]string](t, k.h.run(one+`const fix = await agent.call('fix what the review found', { resume: r, label: 'fix', schema: RECEIPT })
+return [r.status, fix.status]`))
+			if strings.Join(got, ",") != "completed,completed" {
+				t.Fatalf("results %v", got)
+			}
+			cp := flowRows(k.h.journal, EvCheckpointStarted)
+			if len(cp) != 1 {
+				t.Fatalf("checkpoint_started rows %v", cp)
+			}
+			packet := rowStr(cp[0].Data, "packet")
+			at := 0
+			for _, w := range tc.want {
+				i := strings.Index(packet[at:], w)
+				if i < 0 {
+					at = -1
+					break
+				}
+				at += i + len(w)
+			}
+			if at < 0 || strings.Count(packet, "[turn ") != len(tc.want) || strings.Count(packet, "[answer of the call]") != 1 {
+				t.Errorf("the checkpoint of a call that went on in place holds the turn it replaced beside its replacement, want %q in order and once each:\n%s", tc.want, packet)
+			}
+		})
+	}
 }
 
 // firstCallOf says whether a step is of the first call the orchestrator saw.
