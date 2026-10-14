@@ -89,6 +89,10 @@ type Config struct {
 	// SummaryDocument is the document the run keeps the plan summary in (crw flow run --summary-document): the run records it in a
 	// row of its journal before the script runs, and the hook reads it from there.
 	SummaryDocument string
+	// Session, when set, runs every agent call as a session call (CRW-1316): the run publishes steps for its owner thread and binds
+	// the subagents it spawns, instead of starting threads through Backend. The run's started row records the backend
+	// (`backend`), and a resume on the other backend is refused.
+	Session *SessionConfig
 }
 
 // SnapshotRequest is a call as the input snapshot sees it.
@@ -177,6 +181,8 @@ type Engine struct {
 	// the node has an outcome nobody can prove).
 	stoppedM sync.Mutex
 	stopped  map[string]string
+	// sessR routes the dispatch reports of a session run (Config.Session) to the calls that wait for them.
+	sessR *sessionRouter
 	// recovery is what reconcile decided for the calls of a resumed run; startSeq is the first row this run's calls write,
 	// and every row before it belongs to a process that no longer exists (or to the reconcile pass that read them).
 	recovery map[string]*Recovery
@@ -258,6 +264,20 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 	if workflow == "" {
 		workflow = prog.Name
 	}
+	backend := BackendAppServer
+	if s := cfg.Session; s != nil {
+		backend = BackendSession
+		if s.Host == nil || s.Bus == nil || s.Owner == "" {
+			return nil, errors.New("engine: a session run needs a session host, a step bus and its owner thread")
+		}
+	}
+	// The run's backend is recorded in its started row: a resume on the other one is an input error, refused before anything
+	// is written (the open calls of the run are threads or subagents of the backend it was started on).
+	if cfg.Resume != nil {
+		if recorded := RecordedBackend(cfg.Journal.Events(), cfg.RunID); recorded != backend && hasStarted(cfg.Journal.Events(), cfg.RunID) {
+			return nil, fmt.Errorf("engine: run %s was started on the %s backend and cannot be resumed on the %s backend: resume it with the backend its started row records", cfg.RunID, recorded, backend)
+		}
+	}
 	rctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	e := &Engine{cfg: cfg, hookSem: make(chan struct{}, 1), j: cfg.Journal, runID: cfg.RunID, ctx: rctx, parent: ctx, cancel: cancel, pool: make(chan struct{}, cfg.Pool), loop: script.NewLoop(), byHandle: map[string]CallResult{}, undelivered: map[string]CallResult{}, turns: map[*callRun]struct{}{}, proofs: map[string]NodeProof{}, boundaries: map[string]*boundary{}, restored: map[string]bool{}}
@@ -267,7 +287,7 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 	e.lineage = lineageOf(e.j, e.runID)
 	startedData := map[string]any{
 		"workflow": workflow, "script_digest": prog.Digest, "helpers": helperDigests(prog), "args_digest": argsDigest,
-		"meta": json.RawMessage(prog.MetaJSON), "policy_source": cfg.Policy.Source, "policy_digest": cfg.Policy.Digest,
+		"meta": json.RawMessage(prog.MetaJSON), "policy_source": cfg.Policy.Source, "policy_digest": cfg.Policy.Digest, "backend": backend,
 	}
 	if len(cfg.Policy.Warnings) > 0 {
 		// what the table's reading warned about (CRW-1330): a run starts on it and keeps the warnings in its record
@@ -293,6 +313,12 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 		}
 		e.prior = newPriorIndex(e.j, e.startSeq)
 		e.sweepOwnDirectories()
+	}
+	var routed chan struct{}
+	if cfg.Session != nil {
+		e.sessR = newSessionRouter()
+		routed = make(chan struct{})
+		go e.routeReports(routed)
 	}
 	e.noteSummaryDocument()
 	if cfg.Upward != nil {
@@ -366,6 +392,9 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 	// run's last one.
 	e.cancel()
 	e.inflight.Wait()
+	if routed != nil {
+		<-routed
+	}
 	if err := journalErr(e.j); err != nil && res.Status == RunCompleted {
 		res.Status, res.ErrorKind, res.Error = RunScriptError, ErrKindEngine, journalError(err).Error()
 	}
@@ -533,11 +562,15 @@ func (e *Engine) addTokens(n int64) {
 
 // tokensUnmeasured journals a completed turn whose usage was never reported. Under a token ceiling the run cannot tell
 // what it has spent any more, so it stops sending requests the way an exhausted budget does.
+//
+// A session call's turn whose rollout could not be read is recorded the same way and pauses nothing (§3.3): the run's ceiling
+// counts the calls it measured.
 func (e *Engine) tokensUnmeasured(c *callRun, turnID string) {
 	ceiling := e.cfg.TokenBudget > 0
+	pauses := ceiling && c.sess == nil
 	e.j.Append(Event{RunID: e.runID, Kind: KindFlow, CallID: c.id, Path: c.path.id, Position: c.position, Op: "agent", Label: c.label, Event: "tokens_unmeasured",
-		Data: map[string]any{"call_id": c.id, "node": c.plan.node, "turn_id": turnID, "ceiling": ceiling}})
-	if ceiling {
+		Data: map[string]any{"call_id": c.id, "node": c.plan.node, "turn_id": turnID, "ceiling": ceiling, "pauses": pauses}})
+	if pauses {
 		e.pause(ReasonBudgetExhausted)
 	}
 }
@@ -628,7 +661,9 @@ func (e *Engine) endSupersede(id string, op *supersedeOp, err error) {
 // call with an outcome nobody can prove.
 func (e *Engine) resume(ctx context.Context) {
 	e.recovery = map[string]*Recovery{}
-	if host, ok := e.cfg.Backend.(ReconHost); ok {
+	// a session run's calls are decided from their own rows when the script reaches them (session.go): reconcile is the App
+	// Server's
+	if host, ok := e.cfg.Backend.(ReconHost); ok && e.cfg.Session == nil {
 		o := e.cfg.Resume
 		wait := o.Wait
 		if wait == nil {

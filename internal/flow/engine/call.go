@@ -160,6 +160,9 @@ func (s *scriptVM) agent(call goja.FunctionCall, plain bool) goja.Value {
 	}
 	path, position := s.open(label)
 	c := &callRun{s: s, e: s.e, plan: p, id: s.e.callID(path.id, position), path: path, position: position, label: label, plain: plain}
+	if s.e.cfg.Session != nil {
+		c.sess = &sessionCall{attempt: 1}
+	}
 	if c.plan.opts.Phase == "" {
 		c.plan.opts.Phase = s.e.phase
 	}
@@ -183,6 +186,7 @@ func (s *scriptVM) agent(call goja.FunctionCall, plain bool) goja.Value {
 			defer s.e.inflight.Done()
 			res := c.execute(s.e.ctx)
 			c.removeOwnDirectory(res)
+			c.sessionEnd(res)
 			c.deliverNow(res)
 		}()
 	}
@@ -314,8 +318,14 @@ func (s *scriptVM) planResume(p *callPlan, refuse func(reason, detail string)) {
 		p.inherited = append(p.inherited, "stepDecision")
 	}
 	// A thread whose pair read back wrong when it started was refused then and stays refused: the handle it carries
-	// continues nothing.
-	if info.Configured != spec.Pair {
+	// continues nothing. A session run compares only the decided parts of the role's pair, at a bind and here: a model the
+	// role leaves to the host (pair_unchecked) and an undecided effort (effort_unchecked) are not compared with what the host
+	// read back, and the continuation's own bind records the pair its subagent runs.
+	held := info.Configured == spec.Pair
+	if e.cfg.Session != nil {
+		held = sessionPairBinds(spec.Pair, info.Configured)
+	}
+	if !held {
 		refuse(ReasonPairRefused, fmt.Sprintf("the thread reads back %s/%s, the role's pair is %s/%s", info.Configured.Model, info.Configured.Effort, spec.Pair.Model, spec.Pair.Effort))
 	}
 }
@@ -367,6 +377,8 @@ type callRun struct {
 	firstK        int
 	// preface is the checkpoint packet a continuation that could not be forked starts its new thread with.
 	preface string
+	// sess is the state of a session call (Config.Session), nil for a call of the App Server path.
+	sess *sessionCall
 
 	// mu guards what an interrupt from another goroutine reads and writes: the last row, the turn in flight and the
 	// engine's intent to interrupt it.
@@ -422,6 +434,9 @@ func (c *callRun) prepare() {
 		"node": p.node, "step_decision": p.step, "phase": p.opts.Phase, "head": p.opts.Head, "cwd": p.opts.Cwd,
 		"input_digest": c.digest, "prompt_digest": digestJSON([]byte(p.prompt)), "context": ctxb, "plain": c.plain, "sandbox": p.spec.Sandbox,
 		"explicit_label": p.explicitLabel, "policy_digest": c.e.cfg.Policy.Digest,
+	}
+	if c.sess != nil {
+		d["backend"] = BackendSession
 	}
 	if c.snapshot != "" {
 		d["input_snapshot"] = c.snapshot
@@ -1051,7 +1066,13 @@ func (c *callRun) execute(ctx context.Context) CallResult {
 	}
 	k, input := 1, p.prompt
 	var pre *recoveredTurn
-	if c.held != nil {
+	if c.sess != nil && c.held == nil && c.sess.resume != nil {
+		var res CallResult
+		var stop bool
+		if res, stop, k, input = c.sessionRecover(ctx); stop {
+			return res
+		}
+	} else if c.held != nil {
 		var res CallResult
 		var stop bool
 		if res, stop, k, input, pre = c.resumeHeld(ctx); stop {
@@ -1068,6 +1089,12 @@ func (c *callRun) execute(ctx context.Context) CallResult {
 			return res
 		}
 		switch {
+		case c.sess != nil:
+			// a session call starts no thread: its subagent is bound when the owner thread reports it (session.go)
+			if res, stop := c.sessionPrepare(ctx); stop {
+				return res
+			}
+			input = c.preface + input
 		case p.resume == nil:
 			if res, stop := c.startThread(ctx); stop {
 				return res
@@ -1171,27 +1198,37 @@ func (c *callRun) turnLoop(ctx context.Context, resolved *jsonschema.Resolved, k
 				}
 			}
 			op := fmt.Sprintf("%s/t%d", c.id, k)
-			intent := map[string]any{"k": k, "op": op, "input": input, "repair": repair}
-			if resend {
-				intent["resend"] = true
-				resend = false
+			if c.sess != nil {
+				// the turn is a step a subagent of the owner thread takes: step_published is its intent row (session.go)
+				c.repairUsed = c.repairUsed || repair
+				var res CallResult
+				var stop bool
+				if out, res, stop, err = c.sessionTurn(ctx, k, op, input, repair); stop {
+					return res
+				}
+			} else {
+				intent := map[string]any{"k": k, "op": op, "input": input, "repair": repair}
+				if resend {
+					intent["resend"] = true
+					resend = false
+				}
+				c.event(EvTurnRequested, intent)
+				if res, down := c.journalDown(); down {
+					return res
+				}
+				c.repairUsed = c.repairUsed || repair
+				turnCtx, endTurn := c.beginTurn(ctx, op)
+				out, err = e.cfg.Backend.RunTurn(turnCtx, TurnSpec{
+					CallID: c.id, Op: op, K: k, ThreadID: c.threadID, Role: p.role, Node: p.node, Pair: p.spec.Pair,
+					Input: "crw-flow-op: " + op + "\n\n" + input, Schema: p.schema, Cwd: c.cwd, Repair: repair, QA: p.qa,
+					Started: func(turnID string) {
+						c.turnIDs = append(c.turnIDs, turnID)
+						c.delivered = true
+						c.event(EvTurnStarted, map[string]any{"k": k, "op": op, "turn_id": turnID})
+					},
+				})
+				endTurn()
 			}
-			c.event(EvTurnRequested, intent)
-			if res, down := c.journalDown(); down {
-				return res
-			}
-			c.repairUsed = c.repairUsed || repair
-			turnCtx, endTurn := c.beginTurn(ctx, op)
-			out, err = e.cfg.Backend.RunTurn(turnCtx, TurnSpec{
-				CallID: c.id, Op: op, K: k, ThreadID: c.threadID, Role: p.role, Node: p.node, Pair: p.spec.Pair,
-				Input: "crw-flow-op: " + op + "\n\n" + input, Schema: p.schema, Cwd: c.cwd, Repair: repair, QA: p.qa,
-				Started: func(turnID string) {
-					c.turnIDs = append(c.turnIDs, turnID)
-					c.delivered = true
-					c.event(EvTurnStarted, map[string]any{"k": k, "op": op, "turn_id": turnID})
-				},
-			})
-			endTurn()
 		}
 		if err != nil {
 			return c.fromError(ctx, err)
@@ -1224,8 +1261,23 @@ func (c *callRun) turnLoop(ctx context.Context, resolved *jsonschema.Resolved, k
 			return c.fromIntent(ctx, "the turn ended completed after the engine interrupted it")
 		}
 		result, verr := c.validate(out.Text, resolved)
+		extracted := false
+		if verr != nil && c.sess != nil && resolved != nil {
+			// a subagent's answer may carry prose before its JSON: the object that ends it is the answer (§3.3)
+			if cand, ok := extractTrailingJSON(out.Text); ok {
+				if r, err := c.validate(cand, resolved); err == nil {
+					result, verr, extracted = r, nil, true
+				}
+			}
+		}
 		if verr == nil {
 			data := map[string]any{"result": string(result), "result_digest": digestJSON(result), "tokens": c.tokens, "repair_used": c.repairUsed}
+			if extracted {
+				data["raw_text"], data["extracted"] = out.Text, true
+			}
+			if c.sess != nil {
+				c.sessionChecks(ctx, data)
+			}
 			if err := c.pendingTree(ctx, data); err != nil {
 				return c.pendingTreeLost(ctx, err, data)
 			}

@@ -327,6 +327,9 @@ func stateOf(id string, rows []Event) *callState {
 			st.turnReq, st.turnStarted, st.last, st.terminal, st.interrupt, st.adopted = ev, Event{}, ev.Event, "", "", false
 		case ev.Event == EvTurnStarted:
 			st.turnStarted, st.last, st.terminal, st.interrupt, st.adopted = ev, ev.Event, "", "", false
+		case ev.Event == EvStepPublished || ev.Event == EvSessionAttemptLost:
+			// a session call's step, or its lost attempt, makes the call open again: it goes on in place
+			st.last, st.terminal, st.adopted = ev.Event, "", false
 		case ev.Event == EvInterruptRequested:
 			st.interrupt = rowStr(d, "reason")
 		case ev.Event == EvRecoveryCleared:
@@ -345,7 +348,7 @@ func stateOf(id string, rows []Event) *callState {
 // intentState says whether the last row is an intent a send may have followed.
 func (s *callState) intentState() bool {
 	switch s.last {
-	case EvThreadRequested, EvForkRequested, EvTurnRequested, EvTurnStarted:
+	case EvThreadRequested, EvForkRequested, EvTurnRequested, EvTurnStarted, EvStepPublished:
 		return true
 	}
 	return false

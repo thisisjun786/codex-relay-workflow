@@ -12,8 +12,9 @@ in-memory journal writes, in the same order, and keeps the engine's sequence num
 of a `flow_calls` row and the `seq` of a `flow_events` row, so reading a run back gives the events and the numbers the engine
 saw. A row is never updated.
 
-- A dispatch intent (`prepared`, `thread_requested`, `fork_requested`, `turn_requested`, `interrupt_requested`) is committed in a
-  transaction of its own before `Append` returns, and so before the request it announces is sent. The rows that wait before it
+- A dispatch intent (`prepared`, `thread_requested`, `fork_requested`, `turn_requested`, `interrupt_requested`, and the
+  `step_published` row of a session call) is committed in a transaction of its own before `Append` returns, and so before the
+  request it announces is sent (for a session call, before its step file and packet are written). The rows that wait before it
   are committed first, in their own transaction, so the order on disk is the order of the run.
 - Every other row is written by the one run process in a batch transaction. It waits in memory until the next intent, the end
   of a call (its terminal row), the run's `started` and `finished` rows, or `Flush`, and is committed then, in order. A crash
@@ -120,6 +121,11 @@ as such:
 - A worktree a resume restored (below) holds the pending tree P of the last build or fix of the replayed prefix. It is the node's
   current worktree from the call that adopts it on, and it proves the calls of the prefix - the call P belongs to and the calls
   before it, which ran in the worktree of an earlier attempt - while its files are P.
+- A session executor whose subagent committed left `HEAD` at a commit of its own. Its completed row records it
+  (`executor_head_moved`: the `start` it was to be at, the `head` and the stray `ref` that keeps it): a `HEAD` that is that recorded
+  head, grew from the last recorded commit and whose tree is the call's pending tree is on the chain, and the call is proven by
+  its pending tree as above; `crw.commit` then commits the pending tree on `start` (its row names the `stray_head` it replaced).
+  Any other `HEAD` off the chain is a foreign commit.
 - The proof is of the state of the files, not a flag: restoring the files restores the proof. Another actor moving the
   integration target does not touch a worktree and does not undo a call that ended.
 

@@ -625,12 +625,15 @@ it opens after that stops it for good: no position, journal row or host request 
 ([journal.md](journal.md) says how, and what a worktree proof reads from it). Each call journals the
 rows `prepared` (written before anything is sent, with the role, pair, node, `stepDecision` and, for a continuation, the
 thread it continues and what it inherited), `thread_requested`, `thread_started`, `turn_requested`, `turn_started` and one
-terminal row (`completed`, `null_model`, `held`, `refused`, `outcome_unknown` or `superseded`). A held row records whether the
+terminal row (`completed`, `null_model`, `held`, `refused`, `outcome_unknown` or `superseded`); a session call writes `step_published`
+in place of `thread_requested` and `turn_requested`, and `session_attempt_lost` for an attempt it lost ([Session calls](#session-calls)).
+A held row records whether the
 call's packet reached the host (`input_state`: `delivered` or `not_delivered`) and the `codexErrorInfo` verbatim; on a backend
 that places calls an executor's held row also carries `p_held`, the working snapshot of its worktree when the failure was
 classified, and its completed row `pending_tree`, the working snapshot when the turn ended. The run record holds the workflow name, the script digest, the helper digests, the digest of `args`, the meta, and
-the path of the helper role store with the canonical digest of the six role pairs (`policy_source`, `policy_digest`), and
-the role table's warnings (`policy_warnings`) when it has any.
+the path of the helper role store with the canonical digest of the six role pairs (`policy_source`, `policy_digest`),
+the role table's warnings (`policy_warnings`) when it has any, and the `backend` the run's calls run on (`session` or
+`app-server`).
 
 The `prepared` row also carries what the resume walk compares: `input_digest` (the prompt, schema, role, pair, node, options,
 context boundary and the joins before the position), `prompt_digest`, `context` and, with `Config.InputSnapshot`, `input_snapshot`.
@@ -767,6 +770,133 @@ When the proof holds, the call goes on in place (the original packet before a th
 delivered turn) and `hold_cleared` is written; where it cannot go on in place (a worktree failure, files that are not the hold
 snapshot, an attempt that waited for an older turn and made nothing) the call runs again as a new attempt. A resume while the
 condition outside the run still holds (the budget, the host's availability) ends the call held again.
+
+## Session calls
+
+A run whose configuration names a session host (`engine.Config.Session`: the host, the step bus, the run's owner thread) runs every
+agent call as a session call (CRW-1316). The owner thread - the project orchestrator - runs the call's turns on role subagents it
+spawns, and the engine starts no thread and no turn of its own: it publishes a step, binds the subagent the owner reports, reads
+its answer from the host and records it in the rows relay acceptance reads. Everything around a turn is the engine's as for any
+call: the `prepared` row and its allocation, the gate, the schema validation and its one repair, the terminal rows, the pending
+tree and the effect proofs.
+
+The run's `started` row records `backend: session` (`app-server` for a run on the App Server; a run that records none is an App
+Server run). A resume runs a journal on the backend it records: a resume on the other backend is refused with the reason before
+any row is written. `crw flow shadow` replays either from the trace and names the recorded backend in its report (`backend`).
+
+### The step
+
+- Every role's call runs in a directory P of its own, made by the placer after the `prepared` row as for any call: the attempt
+  worktree of an executor, a call-private checkout at the `head` option for every other role, the scratch worktree of a QA capture
+  call. P is the call's cwd for every purpose (`pending_tree`, `p_held`, `qa_source`); the cwd the host reports for a subagent is
+  its parent's, and is recorded only as `host_cwd`.
+- A turn is a step. Its intent row `step_published` (k, `op` `<call>/t<k>`, `marker` `<call>/t<k>-a<n>`, `attempt` n, `action`,
+  `input`, `input_digest`, `packet` and `packet_digest`, `role`, `agent_type`, `model`, `effort`, `workspace` P, `agent_id` of a
+  `send_input`, the `note` about earlier attempts) is committed before the packet `steps/<call>/packet-t<k>-a<n>.md` and the step
+  `steps/<call>/t<k>-a<n>.json` are written under `<state>/flow/<run>/` (`engine.FileStepBus`). A step is `spawn` (a first turn, the
+  attempt after a lost one, a continuation, a repair whose subagent is closed) or `send_input` (the repair turn on the open
+  subagent); `close` steps (`steps/<call>/close-a<n>.json`) name a subagent to close.
+- The spawn message is short; the packet holds the rest:
+
+  ```
+  crw-flow-op: <call>/t<k>-a<n>
+  CRW-ROLE: <role>
+
+  Your shell starts in a directory that is NOT your workspace. Your workspace is <P>: run every command with workdir <P> and edit only by absolute paths under <P>.
+  Read the task packet <packet> in full and follow it exactly. You are a leaf subagent: never spawn agents.
+  Your final message is exactly the JSON object the packet names, and nothing else.
+  ```
+
+  A `send_input` message is the marker line and the turn's input. The packet is self-contained: where the subagent works (only
+  under the absolute path P; a role that writes nothing changes nothing; nobody runs `git commit`, `add`, `branch`, `reset` or
+  `checkout`), the role's overlay of `internal/flow/roles` without its native-spawn section, the earlier attempts, for a
+  continuation the packet of the call it continues and a file with that call's answer, the task, and the output contract (the
+  schema the final message satisfies).
+- The owner reports what it spawned with a dispatch report in `<state>/flow/<run>/inbox/` and reads the run's answer from
+  `replies/` (the commands are the CLI's). The run binds a subagent only when the host shows it is the owner thread's
+  (`parentThreadId`), carries the marker in a turn's first user message and is configured with the role's pair. The answers:
+
+  | Reply | When |
+  | --- | --- |
+  | `bound` | the subagent is the step's; its rows are written |
+  | `pair_mismatch` | the subagent runs another pair: close it and spawn again with the role's pair (named); the step stays |
+  | `retry` | the host or the marker turn cannot be read yet |
+  | `refused` | another run, a report without a subagent for a step the run did not publish, or not a subagent of the owner thread |
+  | `close` | the report names an attempt that ended (answered, lost), a step the run did not publish (an early report), or a second subagent for a bound attempt |
+
+  A role whose pair the role table leaves to the host is bound without the pair check (`pair_unchecked`); an `agentRole` other
+  than the expected agent type is recorded (`session_agent_role_mismatch`) and bound. A role that names a model and leaves its
+  effort undecided is bound on its model alone: `thread_started` records the effort the host applied, with `effort_unchecked`, as
+  the call's pair. A continuation is judged by the same rule: only the decided parts of the role's pair are compared with the pair
+  the call's subagent was bound with, so a call bound `pair_unchecked` or `effort_unchecked` continues on a new subagent whose bind
+  records the pair it runs, and a decided part that differs is refused (`pair_refused`). While a step waits, the run also looks the
+  marker up on the host, so a subagent spawned and never reported is bound all the same.
+- A bind writes `thread_started` (the subagent's `thread_id`, the host-read `model` and `effort`, `cwd` P, `host_cwd`,
+  `parent_thread_id`, `agent_role`, `attempt`, `via: session`, `rollout_path`, `marker`, and `prior_pairs`, the pairs earlier
+  attempts of the call were bound with when they differ) and `turn_started` (k, `op`, `turn_id`, `attempt`, `marker`) in one batch;
+  a `send_input` turn writes `turn_started` only. The relay reads the call's pair from its newest `thread_started` row and an
+  author call's earlier pairs from `prior_pairs`.
+
+### The harvest
+
+- The run reads each bound subagent until its marker turn ends. The answer is the turn's last `final_answer` message, or from a
+  provider that sets no phase the last message without one when no commentary came before it; a commentary message is no
+  answer. When prose precedes the JSON, the object that ends the message is taken out of it: the completed row keeps the canonical
+  `result`, its `result_digest`, and the message as it was (`raw_text`, `extracted`). The rest is the engine's: schema validation,
+  one repair, `null_model`, `completed`.
+- A turn that ended `failed` or `interrupted` with an error is `TurnOutcome.Failed` with its `codexErrorInfo`: a usage or rate limit
+  pauses the run, an exceeded context window is a `null_model`, a host failure holds the call, as for any call.
+- Tokens are the rollout's last `token_count` (thread/read `path`), less what the subagent's earlier turns counted. A rollout that
+  cannot be read leaves the turn unmeasured: the `tokens_unmeasured` row says `pauses: false`, and a session run's token ceiling
+  counts the calls it measured.
+- A pause, a cancellation or a deadline interrupts the bound subagent's running turns and reads the thread until it is no longer
+  active; only then is the call ended `held` (or `superseded`). A call that waited for a dispatch retracts its step.
+- Write isolation is recorded, never enforced (the host gives a subagent its parent's sandbox). With `SessionConfig.Trace` the run
+  takes digests of P, of the owner's checkout and of the run's shared state when it binds and when it harvests, and writes a flow
+  warning when they differ: `read_role_wrote` (a role that changes nothing), `executor_wrote_outside`, `shared_state_changed`.
+- An executor's `HEAD` is compared with the commit its worktree is to be at (the node's last `crw.commit`, else the allocation's
+  start). A subagent that committed moved it: the commit is kept on `refs/crw/flow/<run>/stray/<node>/a<attempt>` and the
+  completed row records `executor_head_moved` (`start`, `head`, `ref`); `crw.commit` commits the pending tree on `start` with the
+  observed `HEAD` as the compare-and-swap's old value, and the proof takes the recorded stray `HEAD` whose tree is the pending tree
+  as the call's state ([journal.md](journal.md#the-proofs)). The subagent is closed when the call has its terminal row.
+
+### Attempts, restarts and continuations
+
+- An attempt is lost only when its marker turn is not completed, its thread is `notLoaded`, `systemError` or unknown to the host,
+  and the turn ended interrupted or failed without an error, or has not changed for `SessionConfig.LostAfter` (ten minutes); the
+  thread is read once more before. A thread the host cannot be asked about is not judged, and an active one is waited for.
+  `session_attempt_lost` (`attempt`, `agent_id`, `k`, `turn_id`, `reason`, `host_status`, `turn_status`) is written, the old
+  subagent is closed, and the next attempt spawns in the same allocation; its packet says the previous attempt was cut off, and
+  an executor's says to read `git -C <P> status` and the diff first.
+- One allocation serves every attempt of a call: the App Server reconcile, the live resend and the retirement of a worktree are not
+  used for session calls. A resumed run goes on with an open session call in place, from its last row:
+
+  | Last row | The resumed call |
+  | --- | --- |
+  | `prepared` | publishes the first step (the directory an earlier process made is the call's) |
+  | `step_published` | looks the marker up on the host and binds the subagent it finds; else publishes the same step again |
+  | `thread_started` | adopts the subagent the row names and writes only its `turn_started` (nothing is spawned or published again; one the host does not know for `LostAfter` loses the attempt), then reads it as after `turn_started` |
+  | `turn_started` | reads the bound subagent: harvests a completed turn, waits for a running one, loses a lost one |
+  | `session_attempt_lost` | closes the old subagent and spawns the next attempt |
+
+- A held session call goes on in place after the subagents of its held attempts are shown not running (a running turn is
+  interrupted and the thread read until it is not active): a delivered turn is taken again by a new attempt whose packet says why
+  the previous one stopped; a step that was published and not bound is looked up by its marker first.
+- A new attempt of a node supersedes the open session calls of the previous process only after every subagent they were bound to,
+  or that took a step they published, runs nothing.
+- A continuation (`resume: handle`) runs on a new subagent and writes its own `thread_started` row, so the handle chain and the pair
+  the relay reads name it. Inside a resume's suffix it never forks: it takes the checkpoint branch (`checkpoint_started`), and its
+  packet carries the journal's record of the handle's turns.
+
+| Row | In a session call |
+| --- | --- |
+| `prepared` | as for any call, with `backend: session` and the allocation every attempt shares |
+| `step_published` | the intent of a step, committed before the step file and the packet |
+| `thread_started` | a subagent bound to an attempt (one row per attempt and per continuation) |
+| `turn_started` | the turn of a step the subagent took |
+| `interrupt_requested` | the engine's interrupt of the bound turn |
+| `session_attempt_lost` | an attempt whose subagent will not finish its turn |
+| terminal rows | as for any call |
 
 ## The App Server backend
 

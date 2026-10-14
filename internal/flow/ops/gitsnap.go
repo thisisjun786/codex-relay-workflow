@@ -187,7 +187,11 @@ type CommitRequest struct {
 	// Tree is the snapshot to commit, as recorded (the pending tree P of the call that produced it).
 	Tree string
 	// Parent is the commit the worktree's HEAD must be at; the new commit is its child.
-	Parent  string
+	Parent string
+	// Expect, when set, is the HEAD the worktree must be at instead of Parent: the compare-and-swap moves HEAD from it to the new
+	// commit, whose parent is still Parent. A session executor that committed left HEAD at a stray commit (CRW-1316 §6.3): the
+	// snapshot is committed on the recorded start, over the HEAD that was observed.
+	Expect  string
 	Message string
 }
 
@@ -214,14 +218,18 @@ func Commit(ctx context.Context, git GitFunc, worktree string, req CommitRequest
 	if err != nil {
 		return CommitResult{}, err
 	}
-	if head != req.Parent {
-		return CommitResult{}, fmt.Errorf("%w: HEAD is %s, the parent is %s", ErrHeadMoved, head, req.Parent)
+	expect := req.Parent
+	if req.Expect != "" {
+		expect = req.Expect
+	}
+	if head != expect {
+		return CommitResult{}, fmt.Errorf("%w: HEAD is %s, the parent is %s", ErrHeadMoved, head, expect)
 	}
 	commit, err := git(ctx, worktree, identity, "-c", "commit.gpgsign=false", "commit-tree", req.Tree, "-p", req.Parent, "-m", req.Message)
 	if err != nil {
 		return CommitResult{}, err
 	}
-	if _, err := git(ctx, worktree, nil, "update-ref", "-m", "crw.commit", "HEAD", commit, req.Parent); err != nil {
+	if _, err := git(ctx, worktree, nil, "update-ref", "-m", "crw.commit", "HEAD", commit, expect); err != nil {
 		return CommitResult{}, fmt.Errorf("%w: %v", ErrHeadMoved, err)
 	}
 	if _, err := git(ctx, worktree, nil, "reset", "-q", "--mixed", "HEAD", "--"); err != nil {

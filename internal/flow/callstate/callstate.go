@@ -15,13 +15,17 @@ const (
 	TurnRequested   = "turn_requested"
 	TurnStarted     = "turn_started"
 	Interrupt       = "interrupt_requested"
-	Completed       = "completed"
-	NullModel       = "null_model"
-	Held            = "held"
-	Refused         = "refused"
-	OutcomeUnknown  = "outcome_unknown"
-	Superseded      = "superseded"
-	RecoveryCleared = "recovery_cleared"
+	// StepPublished and SessionAttemptLost are the rows of a session call (CRW-1316): a step it published for the owner thread,
+	// and an attempt whose subagent was lost.
+	StepPublished      = "step_published"
+	SessionAttemptLost = "session_attempt_lost"
+	Completed          = "completed"
+	NullModel          = "null_model"
+	Held               = "held"
+	Refused            = "refused"
+	OutcomeUnknown     = "outcome_unknown"
+	Superseded         = "superseded"
+	RecoveryCleared    = "recovery_cleared"
 )
 
 // DispatchUnknown is the reason of an outcome that nobody could prove.
@@ -56,14 +60,15 @@ func isTerminal(event string) bool {
 }
 
 // Classify reads a call's rows in the order they were written. A prepared row starts an attempt; an intent or a started
-// thread or turn, and a recovery_cleared, make a call that ended open again; the last terminal row decides the rest.
+// thread or turn (a session call's step_published and session_attempt_lost among them), and a recovery_cleared, make a call
+// that ended open again; the last terminal row decides the rest.
 func Classify(rows []Row) Class {
 	var last, terminal, unknownReason string
 	for _, r := range rows {
 		switch r.Event {
 		case Prepared:
 			last, terminal, unknownReason = Prepared, "", ""
-		case ThreadRequested, ForkRequested, ThreadStarted, ForkStarted, TurnRequested, TurnStarted:
+		case ThreadRequested, ForkRequested, ThreadStarted, ForkStarted, TurnRequested, TurnStarted, StepPublished, SessionAttemptLost:
 			last, terminal = r.Event, ""
 		case Interrupt:
 		case RecoveryCleared:
