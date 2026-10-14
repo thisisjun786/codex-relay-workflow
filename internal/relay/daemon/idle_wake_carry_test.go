@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
@@ -87,5 +88,75 @@ func TestIdleWake_reports_a_failed_wake_did_not_apply_are_applied_on_the_next_ti
 				}
 			})
 		}
+	}
+}
+
+// CRW-1349 evaluation d1: the carried reports have a bound. A report whose wake fails on every pass (a
+// per-report failure that is not corruption: here a trigger that refuses only that report's write)
+// would otherwise stay at the head of the carried list and end every later tick before the delivery
+// pass and the supervisor channel run, where before the carry it was dropped once. The failing report
+// is tried on at most three passes; the pass that fails it the last time still ends its tick on the
+// error (I-564), drops it with a note that names it, and carries the reports after it, so the next
+// tick applies them and runs to its end.
+func TestIdleWake_a_report_whose_wake_fails_every_pass_is_dropped_after_its_last_try(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name, poisoned string
+		trigger        func(id string) string
+	}{
+		// The poisoned recipient's delivery wake is refused on every pass.
+		{"the delivery wake", "parent-poisoned", func(string) string {
+			return "BEFORE INSERT ON delivery_wakes WHEN NEW.event_id = 'ev-poisoned'"
+		}},
+		// The supervisor's capped message is refused its release on every pass.
+		{"the supervisor wake", supWakeRecipient, func(id string) string {
+			return "BEFORE UPDATE ON supervisor_messages WHEN OLD.message_id = '" + id + "'"
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			host := &idleHost{}
+			d, s, id := supervisorWakeDaemon(t, host)
+			tickAt(t, d, idleNow)
+			exec(t, s, "UPDATE supervisor_messages SET hold_reason = ? WHERE message_id = ?", delivery.BusyCap, id)
+			seedHeadFor(t, s, "poisoned", "parent-poisoned", idleNow+300)
+			seedHeadFor(t, s, "later", "parent-later", idleNow+300)
+			tickAt(t, d, idleNow+1)
+			exec(t, s, "CREATE TRIGGER crw1349_poisoned "+c.trigger(id)+" BEGIN SELECT RAISE(ABORT, 'injected per-report failure'); END")
+			host.reports = []delivery.IdleReport{{ThreadID: c.poisoned, Status: "idle"}, {ThreadID: "parent-later", Status: "notLoaded"}}
+			failed, dropped, recovered := 0, false, false
+			for k := 0; k < 8 && !recovered; k++ {
+				d.Clock.(*delivery.FakeClock).T = idleNow + 2 + float64(k)
+				r, err := d.Tick(context.Background())
+				for _, note := range r.Notes {
+					if strings.Contains(note, c.poisoned) && strings.Contains(note, "dropped") {
+						dropped = true
+					}
+				}
+				if err != nil {
+					failed++
+					continue
+				}
+				recovered = true
+			}
+			if state := store.HaltStateAt(s.Path); state.Present || d.haltedStore {
+				t.Fatalf("a failure that is not corruption halted the store: %+v", state.Marker)
+			}
+			if !recovered {
+				t.Fatalf("every tick failed on the poisoned report (%d failed ticks): the carried report has no bound", failed)
+			}
+			if failed > 3 {
+				t.Fatalf("%d ticks failed on the poisoned report before it was dropped, want at most 3", failed)
+			}
+			if !dropped {
+				t.Fatal("no note names the poisoned report as dropped")
+			}
+			// The report after it was carried, not lost: its head was woken and attempted before its +300 deadline.
+			if n := count(t, s, "SELECT COUNT(*) FROM journal WHERE kind = 'delivery_deferred_busy' AND subject = 'ev-later'"); n != 1 {
+				t.Fatalf("ev-later has %d busy answers after the recovered tick, want the carried report applied once", n)
+			}
+			// The dropped report is not tried again: a later tick with nothing new runs to its end.
+			tickAt(t, d, idleNow+20)
+		})
 	}
 }
