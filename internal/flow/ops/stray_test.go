@@ -25,7 +25,7 @@ func (f *fx) strayCommit() string {
 func (f *fx) completeMoved(call, start, head string) string {
 	p := f.snapshot()
 	f.add(engine.Event{Kind: engine.KindCall, CallID: call, Op: "agent", Event: engine.EvCompleted, Data: map[string]any{"pending_tree": p,
-		"executor_head_moved": map[string]any{"start": start, "head": head, "ref": engine.StrayRef("run-1", f.node, 1)}}})
+		"executor_head_moved": map[string]any{"start": start, "head": head, "ref": engine.StrayRef("run-1", f.node, 1, call)}}})
 	return p
 }
 
