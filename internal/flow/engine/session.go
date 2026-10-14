@@ -1202,13 +1202,16 @@ func (c *callRun) sessionStop(ctx context.Context, step *stopStep) (TurnOutcome,
 	return TurnOutcome{TurnID: s.turn, Failed: &TurnFailure{Interrupted: true, Message: "the engine interrupted the subagent's turn"}}, nil, nil
 }
 
-// sessionStopBinds says whether a running turn of the subagent is bound, binding it when it is the turn of the step the stop came to.
+// sessionStopBinds says whether a running turn of the subagent is bound, binding it when it is the turn of the step the stop came to
+// and that step is bound to no turn yet. A step bound to a turn keeps it: another running turn that carries the step's marker (the
+// input sent twice) is no turn of the call's rows, so it is neither bound again - a second turn_started that moves the step to it -
+// nor interrupted (CRW-1409).
 func (c *callRun) sessionStopBinds(ctx context.Context, step *stopStep, t SessionTurn) bool {
 	s := c.sess
 	if t.ID == s.turn {
 		return true
 	}
-	if step == nil {
+	if step == nil || s.boundK == step.k && s.turn != "" {
 		return false
 	}
 	if first, _, _ := strings.Cut(t.FirstUserText, "\n"); first != "crw-flow-op: "+step.marker {
