@@ -10,8 +10,10 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	bridgesettings "github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dispatch"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -64,7 +66,7 @@ type command struct {
 }
 
 var commands = []command{
-	{Command: dispatch.Command{Name: "register"}, run: cmdRegister, precheck: registerPrecheck},
+	{Command: dispatch.Command{Name: "register", Validate: registerValidate}, run: cmdRegister, precheck: registerPrecheck},
 	{Command: dispatch.Command{Name: "settings-record", Defaults: map[string]any{"source": "creation_result"}}, run: cmdSettingsRecord, precheck: settingsRecordPrecheck},
 	{Command: dispatch.Command{Name: "settings-show", ReadOnly: true}, run: func(ctx context.Context, r *Registry, p parsed) (any, error) {
 		return r.SettingsShow(ctx, p.text("task"))
@@ -256,6 +258,39 @@ func registerPrecheck(p *parsed) error {
 		p.writes = append(p.writes, settingsWrite{side.task, values, side.role, p.optional(side.exception), side.establish})
 	}
 	return nil
+}
+
+// registerValidate is register's check that needs no store, made by the dispatcher before it admits one: the child's
+// settings state a sandbox that cannot reach the daemon (refuseUnreachableChild), so a refused registration leaves no
+// state directory behind. Settings it cannot read are registerPrecheck's to answer, as before.
+func registerValidate(_ dispatch.Services, args dispatch.Args) error {
+	raw := parsedOf(args).text("child-settings")
+	if raw == "" {
+		return nil
+	}
+	values, err := settingsJSON(raw)
+	if err != nil {
+		return nil
+	}
+	return refuseUnreachableChild(values)
+}
+
+// refuseUnreachableChild is CRW-1298: the child's settings state a sandbox that cannot connect to the relay daemon's
+// control.sock, where a relay child reports (emit, intent-claim, intent-disposition), so registering it is an input error
+// answered before anything is written. The rule is the bridge's own (settings.RelayChildReaches). A sandbox the record
+// does not state as a readable policy object is not judged here: recording the settings refuses it.
+func refuseUnreachableChild(values contract.OrderedObject) error {
+	sandbox, _ := values.Lookup("sandbox")
+	policy := NormalisePolicy(sandbox)
+	if policy == nil {
+		return nil
+	}
+	kind, _ := policy.Lookup("type")
+	access, _ := policy.Lookup("networkAccess")
+	if bridgesettings.RelayChildReaches("", map[string]any{"type": kind, "networkAccess": access}) {
+		return nil
+	}
+	return settingsRefusal(UnsupportedSandboxType, "the child's sandbox "+pyvalue.Repr(kind)+" cannot connect to the relay daemon's control.sock, where a relay child reports (emit, intent-claim, intent-disposition): Codex refuses that connect in a readOnly sandbox and in a workspace-write one without network access; register a child created under a sandbox that reaches it, "+bridgesettings.RelayChildSandboxes+"; the settings are never changed to make a child connect")
 }
 
 func cmdRegister(ctx context.Context, r *Registry, p parsed) (any, error) {

@@ -635,6 +635,46 @@
         "destructiveHint": false,
         "openWorldHint": false
       }
+    },
+    {
+      "name": "report_child",
+      "description": "Report a relay child's receipt or blocked_needs_input to its parent through the relay daemon, for a child whose sandbox cannot connect to the daemon's control.sock.\n\nThis bridge runs outside the child's sandbox, so it reaches the socket a child in a readOnly sandbox, or a workspace-write one without network access, cannot (the connect is refused with EPERM). command is emit, intent-claim or intent-disposition, the only commands a child reports with, and arguments are that command's options exactly as the child would give them to `crw relay` after the command name (for example --relationship, --generation, --outcome blocked_needs_input, --turn-thread, --turn-id, --turn-status). Nothing else is accepted.\n\nThe relay daemon runs the command on its own store and records it. Where it records is the daemon's decision alone: the bridge finds the daemon from its own configuration, never from an argument, so a --state, --socket or --kind-module in arguments (they are no options of the command) and a path that is not absolute (the daemon never reads one relative to the child) are refused and record nothing. A reply with exitCode 0 means the daemon recorded the report; a refusal is an error result carrying the daemon's own answer. With no daemon listening the call fails with an explicit error and records nothing: there is no local store and no fallback. After an error that says the outcome is unknown, retry the same receipt identity, not a new receipt.\n",
+      "inputSchema": {
+        "properties": {
+          "command": {
+            "enum": [
+              "emit",
+              "intent-claim",
+              "intent-disposition"
+            ],
+            "title": "Command",
+            "type": "string"
+          },
+          "arguments": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Arguments",
+            "type": "array"
+          }
+        },
+        "required": [
+          "command",
+          "arguments"
+        ],
+        "title": "report_childArguments",
+        "type": "object"
+      },
+      "outputSchema": {
+        "additionalProperties": true,
+        "title": "report_childDictOutput",
+        "type": "object"
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "openWorldHint": true
+      }
     }
   ]
 }

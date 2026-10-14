@@ -108,10 +108,10 @@ const (
 	socketLimit = 107
 )
 
-// toolNames are the 12 tools the bridge's MCP contract lists (tools/list), sorted.
+// toolNames are the 13 tools the bridge's MCP contract lists (tools/list), sorted.
 var toolNames = []string{
 	"create_thread", "create_worktree_thread", "get_active_turn", "get_capabilities", "get_goal", "get_operation",
-	"list_threads", "pause_goal", "read_thread", "send_message_to_thread", "steer_thread", "wait_thread",
+	"list_threads", "pause_goal", "read_thread", "report_child", "send_message_to_thread", "steer_thread", "wait_thread",
 }
 
 // isolated is one temporary host: every path below lives under root, which is t.TempDir().

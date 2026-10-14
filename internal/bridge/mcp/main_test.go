@@ -199,12 +199,12 @@ func Test_with_no_socket_the_server_still_lists_its_tools_and_explains_the_failu
 		t.Fatalf("the server stopped answering after the failure: %v", err)
 	}
 	s.finish(t)
-	// Then all twelve tools, get_capabilities among them, were listed before and after
+	// Then all thirteen tools, get_capabilities among them, were listed before and after
 	names := []string{}
 	for _, tool := range listed.Tools {
 		names = append(names, tool.Name)
 	}
-	if strings.Join(names, ",") != strings.Join(order, ",") || len(again.Tools) != 12 {
+	if strings.Join(names, ",") != strings.Join(order, ",") || len(again.Tools) != 13 {
 		t.Fatalf("listed %v then %d tools", names, len(again.Tools))
 	}
 	// And create_thread answered with a receipt that says nothing was attempted and why, while a

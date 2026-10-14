@@ -933,7 +933,12 @@ func seededReceipts(t *testing.T, home string, parentSandbox, childSandbox strin
 			t.Fatal(err)
 		}
 	}
-	register(t, home, state, "--parent-settings", settingsJSON(parentCwd, parentSandbox), "--child-settings", settingsJSON(childCwd, childSandbox))
+	// The child's settings are recorded by settings-record: register --child-settings refuses a sandbox without network
+	// access (CRW-1298), and these receipts keep the default sandbox of the settings fixture.
+	register(t, home, state, "--parent-settings", settingsJSON(parentCwd, parentSandbox))
+	if done := golang(t, home, "--state", state, "settings-record", "--task", childTask, "--settings", settingsJSON(childCwd, childSandbox)); done.code != 0 {
+		t.Fatalf("settings-record: %+v", done)
+	}
 	return state
 }
 
