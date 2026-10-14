@@ -144,6 +144,32 @@ func TestSchedRelayMilestoneFromHandoffAndSnapshot(t *testing.T) {
 	}
 }
 
+// TestSchedRelayMilestoneCarriesTheEndConditionCommands (CRW-1382 d2): a node of the milestone carries the commands of its issue's done
+// condition, read from the body the handoff carries (never run), so the design-stage explorer can be given them; an issue whose body the
+// handoff does not carry has none.
+func TestSchedRelayMilestoneCarriesTheEndConditionCommands(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"}, labIssue{Key: "A-2", Milestone: "M1"})
+	raw := l.handoffBytes(func(in *compile.Input) {
+		in.Projects[0].Issues[0].Description = "## 기준\n\n* c1: the node file holds the work.\n\n## 끝 조건\n\n* `go test ./internal/x -run '^TestNodeFile$'` passes.\n"
+	})
+	m, err := l.relayFor("run-endcond0001", raw, 1).Milestone(ctx, l.plan, "M1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range m.Nodes {
+		switch n.Issue {
+		case "A-1":
+			if len(n.EndCondition) != 1 || n.EndCondition[0] != "go test ./internal/x -run '^TestNodeFile$'" {
+				t.Errorf("A-1's end condition: %q", n.EndCondition)
+			}
+		default:
+			if len(n.EndCondition) != 0 {
+				t.Errorf("%s carries no body and has the end condition %q", n.Issue, n.EndCondition)
+			}
+		}
+	}
+}
+
 // TestSchedRelayMilestoneRefusesHandoffNotAtPinnedRevision (CRW-1277 c): the run reads the plan at the revision it pinned, so a handoff
 // that is not the one that revision was compiled from is refused, naming what to do: an issue with no node, and criteria whose digest is
 // not the node's. A plan that moved on after the run pinned it does not change what the run reads.

@@ -121,6 +121,18 @@ export const FINDINGS = obj({
   unknown: texts,
 })
 
+// FINDINGS_END: the answer of the explorer whose packet gave it the end condition commands to run once (CRW-1382): FINDINGS and
+// end_conditions, each command with its exit code and the number of tests it ran. Every other explorer answers FINDINGS as it did
+// before, so a run recorded before CRW-1382 replays its explorer calls on a resume.
+export const FINDINGS_END = obj({
+  answer: text,
+  evidence: texts,
+  verified: texts,
+  inferred: texts,
+  unknown: texts,
+  end_conditions: list(obj({ command: text, exit_code: integer, tests: integer, summary: text })),
+})
+
 const qaVerdict = { type: 'string', enum: ['PASS', 'REVISE', 'FAIL'] }
 const qaFinding = obj({ ref: text, severity: { type: 'string', enum: ['P0', 'P1', 'P2', 'P3'] }, finding: text, evidence: texts })
 

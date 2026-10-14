@@ -124,49 +124,55 @@ func TestReceiveComparesObservationWithBaseline(t *testing.T) {
 }
 
 // c4: no record, a baseline that is not a full commit id, an event with no managed-start intent, an unreadable intent and an ambiguous target compare nothing.
+// A target of the child's plan that has no observation compares nothing too, and its notice is the warning that it has none (CRW-1395).
 func TestReceiveComparesNothingWithoutBothSides(t *testing.T) {
 	foreign := func(r *receiveKit) string { return r.heads["a"] }
 	cases := []struct {
 		name  string
 		setup func(t *testing.T, r *receiveKit)
+		warns bool
 	}{
 		{"a baseline that is an opaque string", func(t *testing.T, r *receiveKit) {
 			r.seed("dispatch-request-2", "dag-input-manifest:"+dig("manifest"))
 			r.observe(t, foreign(r))
-		}},
+		}, false},
 		{"an abbreviated commit id", func(t *testing.T, r *receiveKit) {
 			r.seed("dispatch-request-3", r.base[:12])
 			r.observe(t, foreign(r))
-		}},
+		}, false},
 		{"no intent file", func(t *testing.T, r *receiveKit) {
 			r.seed("dispatch-request-4", nil)
 			r.observe(t, foreign(r))
-		}},
+		}, false},
 		{"an intent file that cannot be read", func(t *testing.T, r *receiveKit) {
 			r.seed("dispatch-request-5", r.base)
 			r.exec("UPDATE managed_start_requests SET marker_root = ?", filepath.Join(t.TempDir(), "no-such-root"))
 			r.observe(t, foreign(r))
-		}},
+		}, false},
 		{"an event no managed-start request started", func(t *testing.T, r *receiveKit) {
 			r.seed("dispatch-request-6", r.base)
 			r.exec("DELETE FROM managed_start_requests")
 			r.observe(t, foreign(r))
-		}},
+		}, false},
 		{"no observation of the recorded target", func(t *testing.T, r *receiveKit) {
 			r.seed("dispatch-request-7", r.base)
 			r.recordTarget(t, "dev-int", "dev")
-		}},
+		}, true},
 		{"an issue no live node of a plan carries", func(t *testing.T, r *receiveKit) {
 			r.seed("dispatch-request-8", r.base)
 			r.observe(t, foreign(r))
 			r.exec("UPDATE relationships SET issue_key = 'CRW-elsewhere'")
-		}},
+		}, false},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			r := newReceiveKit(t)
 			c.setup(t, r)
-			if got := r.notice(t); got != nil {
+			got := r.notice(t)
+			if c.warns && (got == nil || pyjson.Text(got.Get("warning")) != TargetUnobservedWarning) {
+				t.Fatalf("notice %v; want the warning %s", got, TargetUnobservedWarning)
+			}
+			if !c.warns && got != nil {
 				t.Fatalf("notice %v; want a comparison that compares nothing", got)
 			}
 			if faults := targetFaults(t, r.batchKit); len(faults) != 0 {

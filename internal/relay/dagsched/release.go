@@ -916,6 +916,11 @@ type AgentReleaseOptions struct {
 	Role, Tier string
 	// RunID is the flow run the release belongs to, and Worktree the worktree the execution was allocated; both may be empty (a release made by hand).
 	RunID, Worktree string
+	// AuthorModel and AuthorEffort are the pair that wrote the node's work when it is known as the release is decided (CRW-1354): a head made
+	// outside a run, whose authoring thread the run read back from the host before it released the node to land the head. The row records
+	// them (author_model, author_effort) and the agent acceptance judges the reviewer against them as an observed author pair; empty when
+	// the work is still to be written (the run's executor calls are its authors then).
+	AuthorModel, AuthorEffort string
 }
 
 // AgentReleaseResult is what ReleaseAgent answers.
@@ -961,7 +966,7 @@ func (o AgentReleaseOptions) resolved() (AgentReleaseOptions, error) {
 	if strings.TrimSpace(o.Tier) == "" {
 		o.Tier = "executor"
 	}
-	for _, field := range []struct{ name, value string }{{"role", o.Role}, {"tier", o.Tier}, {"run id", o.RunID}, {"worktree", o.Worktree}} {
+	for _, field := range []struct{ name, value string }{{"role", o.Role}, {"tier", o.Tier}, {"run id", o.RunID}, {"worktree", o.Worktree}, {"author model", o.AuthorModel}, {"author effort", o.AuthorEffort}} {
 		if field.value != strings.TrimSpace(field.value) || dag.HasControl(field.value) {
 			return o, refuse(contract.RefusalMalformedReceipt, "the %s %q has whitespace around it or a control character in it", field.name, field.value)
 		}
@@ -1031,7 +1036,7 @@ func (s *Scheduler) ReleaseAgent(ctx context.Context, plan, node, actor string, 
 		attempt, supersedes = end.Attempt+1, end.ExecutionID
 	}
 	row := AgentExecution{ExecutionID: AgentExecutionID(plan, node, j.digest, attempt), PlanID: plan, NodeID: node, Attempt: attempt, Kind: AgentInitial, ManifestDigest: j.digest, Role: opt.Role, Tier: opt.Tier,
-		Worktree: opt.Worktree, RunID: opt.RunID, Actor: actor, Epoch: s.ExpectedEpoch, Supersedes: supersedes}
+		Worktree: opt.Worktree, RunID: opt.RunID, Actor: actor, Epoch: s.ExpectedEpoch, Supersedes: supersedes, AuthorModel: opt.AuthorModel, AuthorEffort: opt.AuthorEffort}
 	if j.base != nil {
 		row.BaseSHA = j.base.SHA
 	}

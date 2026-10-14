@@ -918,7 +918,8 @@ type deathCase struct {
 	// gone makes the host forget attempt 1's subagent before the resume.
 	gone bool
 	// tokens are the rollout totals of agent-1 after its first and its second turn; the resumed call's completed row is to record
-	// the second, and the resumed process to spend only what the turn it harvested added.
+	// the second, the turn it harvested to add only its own, and the run's figure after the resume (the resumed process's, and
+	// RunSpent over the journal) to be the second too.
 	tokens []Tokens
 }
 
@@ -1133,12 +1134,15 @@ return [r.status, r.meta.threadId, r.meta.tokens.total]`
 		k.host.set("agent-1", func(a *fakeAgent, _ *SessionTurn) { a.gone = true })
 	}
 	k.h.cfg.Resume = &ResumeOptions{}
+	// the resumed process counts what the run's journal shows it spent, as crw flow resume seeds it (CRW-1278)
+	k.h.cfg.SpentBefore = RunSpent(resumed.Events(), k.h.cfg.RunID).Total
 	k.orch.answer = func(st Step, _ string, _ int) orchAnswer { return answer(st) }
 	k.orch.onSpawn, k.orch.onInput = nil, nil
 	res, err := Run(ctx, k.h.load(body), k.h.cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
+	k.resumed = res
 	var out []any
 	if err := json.Unmarshal(res.Value, &out); err != nil || len(out) != 3 {
 		t.Fatalf("the resumed run: %s %s %s", res.Status, res.Error, res.Value)
@@ -1182,8 +1186,12 @@ return [r.status, r.meta.threadId, r.meta.tokens.total]`
 		if total := fmt.Sprint(out[2]); total != fmt.Sprint(want.Total) {
 			t.Errorf("the resumed call's tokens total %s, want the rollout's %d", total, want.Total)
 		}
-		if added := want.Total - c.tokens[n-2].Total; res.Spent != added {
-			t.Errorf("the resumed process spent %d tokens, want %d: the turn it recovered counted the turns before it again", res.Spent, added)
+		// the resumed process's figure is the run's (Config.SpentBefore, CRW-1278): the turns before the recovered one are in no terminal
+		// row until the resumed call's, which carries them, so the process counts them once with it and the recovered turn adds only
+		// its own; the journal's figure is the same
+		if spent := RunSpent(k.jr.Events(), k.h.cfg.RunID).Total; res.Spent != want.Total || spent != want.Total {
+			t.Errorf("the resumed process's spent figure %d, the journal's %d, want the rollout's %d once: the turns before the recovered one are counted again or not at all",
+				res.Spent, spent, want.Total)
 		}
 	}
 	return k, got

@@ -167,7 +167,7 @@ type OrchestratorTurns struct {
 }
 
 // ThreadCache is how the executor calls used threads: a call that continues a handle reuses a thread, any other starts one.
-// The journal does not hold cached input tokens, so the reuse figures are the evidence of the cache behavior.
+// The trace does not carry the cached input tokens the journal's rows record, so the reuse figures are the evidence of the cache behavior.
 type ThreadCache struct {
 	Threads        int      `json:"threads_started"`
 	ContinuedCalls int      `json:"continued_calls"`

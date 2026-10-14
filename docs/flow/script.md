@@ -122,7 +122,7 @@ target drops to ES2016 (esbuild then lowers async/await to generators) and this 
 | `pipeline(items, ...stages, opts?)` | Runs each item through all stages independently and with no barrier between stages. A stage receives `(previous, item, index)`; a stage that throws makes that item `null` and skips its remaining stages. |
 | `phase(title)`, `log(message)` | Journal a phase or log row. |
 | `args` | The `--args` value. |
-| `budget` | `{total, spent(), remaining()}`: the run's token ceiling (`total` is `null` without one), the tokens spent and the tokens left (`Infinity` without a ceiling). At 80% the engine journals an info row; at 100% the run is paused and a call that would send a request ends `held` with reason `budget_exhausted`. A completed turn whose usage the backend never received counts as unmeasured, not as zero: the engine journals a flow row `tokens_unmeasured`, and under a ceiling pauses the run the same way. |
+| `budget` | `{total, run, spent(), remaining()}`: the run's token ceiling (`total` is `null` without one), the token budget the run's first process started with (`run`, `null` without one), the tokens spent and the tokens left (`Infinity` without a ceiling). A resumed run counts what its earlier processes spent (`Config.SpentBefore`, from the terminal rows of its journal), with a spec or without one, so `spent()` is the run's figure (the `--token-budget` of a resume without a spec is what that resume may spend on top of it). `total` is this process's ceiling, which a resume can narrow; `run` is what the first started row of the run records (`token_budget`, each process's started row records its own ceiling), so it is the same in every process of the run and a script decision made on it replays (CRW-1327). At 80% the engine journals an info row (`budget_warning`, once for the run: a resumed run whose journal holds it writes no second one); at 100% the run is paused and a call that would send a request ends `held` with reason `budget_exhausted`. A completed turn whose usage the backend never received counts as unmeasured, not as zero: the engine journals a flow row `tokens_unmeasured`, and under a ceiling pauses the run the same way. |
 | `workflow(nameOrRef, args)` | Runs another script inline as one step and resolves with what it returns. The child shares the run's pool, journal and budget, and its calls live on a child path. Nesting is one level: `workflow()` inside a child throws. `crw flow run` resolves a name to `<name>.js` and `{scriptPath}` to that relative path, inside the script's directory. |
 | `crw.classify(result)` | Maps an executor `CallResult` to one outcome state (below). |
 | `crw.clock()` | The time as an RFC 3339 string, journaled. It occupies a position of its path like a call. |
@@ -306,8 +306,16 @@ explorers (SP-EXPL-1), and the ones whose scope carries an out-of-authority nota
 thread in a non-blocking `design_question` escalation: an authority question in the audit round that routed it, approved or not, a
 question beyond the cap once the DESIGN is approved; the escalation's evidence names the question digests it asked, so a later round
 or a re-plan does not ask one again on its own (`asked_in_run`); because only the latest design ask of a run is current for `crw flow answer`,
-an ask carries the questions of the DESIGN the run asked already that no answer has reached, and an orchestrator answer applied to it is the answer of the question from the
-next round on (`answered_by_orchestrator`); a reused answer names the route it came from (`origin`); a reviewer of another model family than the architect audits the DESIGN (`DESIGN_AUDIT`, recorded by
+an ask carries the questions of the DESIGN the run asked already that no answer has reached, and the questions the run asked that no answer has reached and the
+DESIGN no longer raises (`carried` of `crw.exploreRoute`, CRW-1381), and an orchestrator answer applied to it is the answer of the question from the
+next round on (`answered_by_orchestrator`): the part `crw flow answer --answer-for DIGEST=TEXT` gave the question when the ask joins several,
+else the whole answer; a reused answer names the route it came from (`origin`, written only with a value); the first explorer of the first
+DESIGN's first audit round is also given the commands of the done conditions of the milestone's issues (`end_condition` of a node, read
+from the body the handoff carries), runs each once and reports its exit code and the tests it ran in the `end_conditions` of its
+answer (`FINDINGS_END`, the one explorer whose schema has the member; every other explorer answers `FINDINGS` with the packet it had
+before, and a milestone's digest leaves `end_condition` out, so a run recorded before CRW-1382 replays its explorer calls and keeps its
+pinned plan on a resume), which the answer carries into the design audit, and a command that failed, ran no test or was not reported is a
+warning of the `crw.exploreRecord` row (CRW-1382; never a stop); a reviewer of another model family than the architect audits the DESIGN (`DESIGN_AUDIT`, recorded by
 `crw.designAudit`), and `needs_changes` returns the DESIGN to the architect on its own thread; only an approved DESIGN becomes revision
 `r0` of the design ledger (`crw.designLedger`); `crw.dag` runs one lane for each node and the signal path of the milestone
 ([The architect's continuity and the re-plan](#the-architects-continuity-and-the-re-plan)); when every lane landed, `crw.closeMilestone` closes the milestone over
@@ -317,6 +325,18 @@ acceptances against the reviewer threads on the host and archives the threads wh
 (its delivery is the seam of the issue that owns it). A milestone that cannot go on says why (`crw.milestoneHalt`): a call of the design phase, of the close or of
 a re-plan that did not complete is never read as an approval, a design, a gate, a review or an alignment (`held` and `unknown` hold the milestone, `refused` and
 `null_model` escalate, a gate that failed or cannot be settled and a QA that is INCONCLUSIVE escalate, `superseded` stops).
+
+**The caps of the design loop.** The design loop is one `auditedDesign` of `project-lane.js` (the DESIGN or re-plan delta it starts from, its audit rounds and
+the architect's fixes), and it has two caps, both written in `project-lane.js` beside the loop. The round cap is `AUDIT_ROUNDS` (3): a DESIGN not approved in
+that many rounds stops the milestone with the `design_audit_rounds` escalation, which the run tells the orchestrator thread (CRW-1347). The token cap is
+`DESIGN_TOKEN_CAP` (5,000,000 tokens), or `DESIGN_TOKEN_WARN` (0.8) of the run's token budget (`budget.run`, the budget its first process started with)
+when that is lower, so a run without a budget has the fixed cap. The cap is made of what the journal fixes, the calls' tokens and `budget.run`, not of
+`budget.total`: a resume under another ceiling (a narrower `--token-budget`, or none) reaches the cap at the same call and raises the escalation with the
+same input, so the loop and what follows it replay. The tokens of the loop are those its calls report: the DESIGN's architect call, the audit
+calls, the architect's fixes and the explorers `crw.explore` spawns for the open questions of each round (its result's `tokens`). When they reach the cap, the
+loop raises the `design_loop_tokens` escalation, which asks nothing and goes up to the orchestrator thread, once per loop, and goes on; the engine pauses the
+run at the whole budget (`budget_exhausted`). Reaching either cap writes a log row `warn design_loop_cap rounds: ...` or `warn design_loop_cap tokens: ...`
+(CRW-1327). Neither cap is a block of its own: a warning and a record, the stop at the round cap being CRW-1347's.
 
 **The lane of a node.** `crw.dag` starts a node when the nodes it waits for (a dependency or an order edge; the members of a
 group are chained by order edges) have landed, in the scheduler's order, at most `cap` nodes at once and never two nodes whose
@@ -415,6 +435,43 @@ acceptance and integration, the close of an execution), `Verifier` (`CILocalVeri
 (`StoreDecisions` writes the relay store), `Threads` (the host the close reads the reviewer threads from and archives them on) and
 `Reporter` (F11) - are interfaces in `internal/flow/ops/seams.go`; the dagsched-backed `Relay` belongs to the run process.
 
+## Landing a head made outside a run
+
+The child decides how the work of an issue is made: a project-lane run, or its own subagents outside any run (CRW-1316 §18.3). A head made
+outside a run lands through the gates of a run, never past them: `internal/flow/workflows/land-head.js` (CRW-1354) is the gate-only
+workflow, `crw flow start land-head --handoff FILE --args '{"plan": P, "milestone": M, "issue": KEY, "head": COMMIT-OR-BRANCH, "authors":
+[THREAD, ...]}'`, where `authors` are the subagent threads that wrote the head. It makes no executor, architect or design-audit call and
+fixes nothing. Its steps:
+
+- `crw.release(plan, node, milestone, {pinned: true, land: {head, authors}})` releases the node to the run with no DESIGN: the head is
+  resolved in the run's repository, each author thread is read back from the host (`thread/read`, the configured pair; `Threads` provides
+  `ThreadConfig`), the plan the relay holds is compared with the plan the run's `crw.milestone` row read (`plan_changed` otherwise), and
+  `Relay.Release` is the agent release with the node's slice and the pair the authors ran on, which the execution row records
+  (`author_model`, `author_effort`; `AgentReleaseOptions` of `ReleaseAgent`, the stored form unchanged). The head is then checked out,
+  detached, in `<state>/flow/<run>/land-wt/<node>-<commit>`, the worktree the row names and the execution's handle points at, and the row
+  records the commit, its tree, its base (the merge-base with the integration tip), the paths it changes and the authors with their pairs.
+- The gates are the lane's: `crw.verify` of that head (verification-record/1 of the exact tree), `crw.review` with a fresh reviewer whose
+  model family has to differ from every author the release observed (`independence_refused` for one of the same family,
+  `independence_unproven` when the pair of any author it names was not read back), and `crw.land` (`crw.accept`, the relay's agent acceptance, which judges the
+  reviewer against the pair the execution records, then `crw.integrate`). They write the rows they write for a node of a project lane.
+- The only refusals are input errors (no head, a head git does not resolve, authors of more than one model family - one execution row
+  records one author pair - and an issue that is not a node of the milestone) and the gates. A verification that fails, a review that is
+  not verified and a land the relay refuses end the run escalated for the child (`land_verification_failed`, `land_review_needs_changes`,
+  the relay's reason); a review that is not independent escalates as a configuration fault. An author whose pair is not read back, no
+  author named and a path outside the node's regions are warnings of the release row (`land_author_unobserved`, `land_authors_unnamed`,
+  `land_out_of_scope`). A lost epoch ends the run `stopped` with `epoch_lost`.
+- The gate-only lane fixes nothing: the child changes the head and lands it again, in a new run. A land that ends escalated gives its
+  release back - the escalation carries `end_land`, and `crw.escalate` asks the relay to close the node's execution with `land_ended`
+  (`cancelled`, the slot returned in the same transaction; a close the relay refuses, an accepted head whose integration may have moved
+  the target, is the row's `close_refused`) - so the next land is a new release: a new execution of its run, with its worktree and the
+  pair of the authors it names. A hold (a verifier or a reviewer the host cannot run now) keeps the release, and the run goes on with
+  `crw flow resume` or gives the release up with `crw flow cancel`. A node whose current execution another run holds is not released
+  to the land: `crw.release` answers `land_node_held` with that run and its execution, before the run claims the plan's coordinator
+  epoch, and no gate runs.
+- A land-head run is a run of the plan: its release claims the plan's coordinator epoch like any run's, so a run of the same plan that
+  is still going stops `epoch_lost` at its next fenced write (one run orchestrates one plan). A head made outside a run is landed when
+  no other run of its plan is going.
+
 ## The architect's continuity and the re-plan
 
 **One thread.** The architect has one thread for a milestone. The design ledger (`crw.designLedger`, rows `crw.designLedger`) holds the handle of the
@@ -479,8 +536,10 @@ put the handoff first", and nothing is defaulted. Before its first fenced write 
 run id as the session nonce (a resumed process is the same claim); a write after another session claimed the plan is refused
 (`stale_coordinator_epoch`), writes nothing and is the error kind `epoch_lost` (`ops.ErrEpochLost`, whose message opens `refused:epoch_lost:`,
 CRW-1285): a release answers it as `released: false` with the reason `epoch_lost`, and `project-lane.js` ends the lane whose fenced write it
-was (`stopped`, reason `epoch_lost`: no escalation and no further write) and, once its lanes have ended, the run with `{state: 'stopped', reason:
-'epoch_lost', detail}` (a parallel lane stops at its own next fenced write, refused the same way). `release` is `ReleaseAgent` (dag-release-request/1: the base from
+was (`stopped`, reason `epoch_lost`: no escalation and no further write; a release refused so ends the lane `unreleased` with the reason and
+the relay's detail) and, once its lanes have ended, the run with `{state: 'stopped', reason: 'epoch_lost', detail}` (a parallel lane stops at
+its own next fenced write, refused the same way). The steps after the lanes (the close, the reflection, a re-plan, the report) end the run
+the same way when one of them meets the error kind (CRW-1382), instead of ending it in a script error. `release` is `ReleaseAgent` (dag-release-request/1: the base from
 the plan's target, the criteria `c1..cn` of the issue, the pinned handoff as the volatile input, the run's directory as the artifact
 root, the rule version of the executor pair, the script and helper digests, the installed plugin's skills digest and the build, and
 `expected_slice_digest`, the node's slice the flow compared; the answer names the slice of the manifest the relay committed); a
@@ -498,7 +557,12 @@ run the issue-lane workflow, and the answer is the child the start admitted and 
 child. A run with no host settings, or settings missing a field, refuses the node with the reason (`refused:child_host_unset:`,
 `refused:child_host_settings:`, an input error); a start the managed engine refused or left incomplete (`refused:child_not_started:`, its
 intent and slot stay and the same release continues it) and a node the scheduler holds back (`refused:child_held_back:`) are errors, never a
-child that is running (`crw.releaseChild` refuses a relay answer that started nothing, `child_not_started`).
+child that is running (`crw.releaseChild` refuses a relay answer that started nothing, `child_not_started`). The request carries
+`expected_slice_digest`, the node's slice `crw.release` compared when it found the node sized for a child (CRW-1382), and the managed release
+compares it as `ReleaseAgent` does: a plan that gave the node another slice before the start starts no child, the answer is `Started` false
+with `plan_changed`, `crw.releaseChild` records that (`started: false`, the reason, the slice) and the lane ends the node `unreleased` with
+the reason. `crw flow start` warns when the handoff sizes an issue of the run for a child and names no `--child-host` (the warn fact
+`child_host_unset`, recorded in the run's spec; the run starts).
 
 ## The milestone close
 
@@ -870,10 +934,14 @@ any row is written. `crw flow shadow` replays either from the trace and names th
   one repair, `null_model`, `completed`.
 - A turn that ended `failed` or `interrupted` with an error is `TurnOutcome.Failed` with its `codexErrorInfo`: a usage or rate limit
   pauses the run, an exceeded context window is a `null_model`, a host failure holds the call, as for any call.
-- Tokens are the rollout's last `token_count` (thread/read `path`), less what the subagent's earlier turns counted (a recovered
-  `send_input` turn takes that and the call's tokens from its `step_published` row, so it counts only what it adds). A rollout that
-  cannot be read leaves the turn unmeasured: the `tokens_unmeasured` row says `pauses: false`, and a session run's token ceiling
-  counts the calls it measured.
+- Tokens are the rollout's last `token_count` (thread/read `path`), less what the subagent's earlier turns counted, in all its parts: the input and its
+  cached part, the output and its reasoning part, the total (`tokens`: `input`, `cached_input`, `output`, `reasoning_output`, `total`; a part that is 0 is left
+  out of the row, and a row written before the parts reads them as 0). A recovered `send_input` turn takes that and the call's tokens, in the same parts, from
+  its `step_published` row (`tokens_seen`, `call_tokens`), so it counts only what it adds. The call's tokens it takes are in no terminal row (the process that
+  counted them died before it ended the call), so the resumed process counts them against the run's figure when it takes them, and the call's terminal row
+  carries them: `RunSpent` and the process's `spent()` count them once. The App Server backend records the same parts from
+  `thread/tokenUsage/updated`. A rollout that cannot be read leaves the turn unmeasured: the `tokens_unmeasured` row says `pauses: false`,
+  and a session run's token ceiling counts the calls it measured.
 - A pause, a cancellation or a deadline interrupts the bound subagent's running turns and reads the thread until it is no longer
   active; only then is the call ended `held` (or `superseded`). A call that waited for a dispatch retracts its step.
 - Write isolation is recorded, never enforced (the host gives a subagent its parent's sandbox). With `SessionConfig.Trace` the run

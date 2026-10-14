@@ -25,6 +25,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge"
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pluginwiring"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/definition"
 	"github.com/thisisjun786/codex-relay-workflow/internal/runtime/exercise"
@@ -109,9 +110,10 @@ func DefaultDestination(env scope.Env) string {
 	return filepath.Join("~", ".local", "share", "crw-runtime")
 }
 
-// CodexHomeOf is CODEX_HOME as given (runtime_install.py never expands it), or Path.home()/.codex.
+// CodexHomeOf is CODEX_HOME by the rule the hook, the launcher and register-mcp share (pluginwiring.CodexHomeNamed, CRW-1377:
+// trimmed of the whitespace around it, never expanded, a blank one names no home), or Path.home()/.codex.
 func CodexHomeOf(env scope.Env) (string, error) {
-	if named := env.Get("CODEX_HOME"); named != "" {
+	if named := pluginwiring.CodexHomeNamed(env.Get("CODEX_HOME")); named != "" {
 		return named, nil
 	}
 	home, err := record.Home(environ(env))

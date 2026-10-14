@@ -133,6 +133,12 @@ func (s *scriptVM) install() error {
 	} else {
 		_ = b.Set("total", goja.Null())
 	}
+	// the budget the run's first process started with (StartedBudget), the same in every process of the run
+	if t := s.e.runBudget; t > 0 {
+		_ = b.Set("run", t)
+	} else {
+		_ = b.Set("run", goja.Null())
+	}
 	_ = b.Set("spent", func(goja.FunctionCall) goja.Value { return vm.ToValue(s.e.spent.Load()) })
 	_ = b.Set("remaining", func(goja.FunctionCall) goja.Value {
 		t := s.e.cfg.TokenBudget

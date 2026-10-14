@@ -15,8 +15,9 @@ var AckTargetNotice TargetNoticeFunc
 // TargetNoticeFunc is the shape of that comparison: it reads the store and the intent file, and answers the notice or nil.
 type TargetNoticeFunc func(ctx context.Context, s *store.Store, event string) (Obj, error)
 
-// withTargetNotice adds the notice to an acknowledgement's record as targetMoved. The comparison warns and records and the step
-// proceeds: an error of the comparison, like a comparison that finds nothing, leaves the record as it is.
+// withTargetNotice adds the notice to an acknowledgement's record as targetMoved, or, for a notice that is a warning (a target that has no
+// observed head yet, CRW-1395), as targetUnobserved. The comparison warns and records and the step proceeds: an error of the comparison, like
+// a comparison that finds nothing, leaves the record as it is.
 func withTargetNotice(ctx context.Context, a *Ack, event string, record Obj) Obj {
 	if a == nil || a.TargetNotice == nil || a.Store == nil {
 		return record
@@ -24,6 +25,9 @@ func withTargetNotice(ctx context.Context, a *Ack, event string, record Obj) Obj
 	notice, err := a.TargetNotice(ctx, a.Store, event)
 	if err != nil || notice == nil {
 		return record
+	}
+	if _, warning := notice.Lookup("warning"); warning {
+		return append(record, F{Key: "targetUnobserved", Value: notice})
 	}
 	return append(record, F{Key: "targetMoved", Value: notice})
 }

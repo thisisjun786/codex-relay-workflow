@@ -83,7 +83,8 @@ func ProductionWorld(ctx context.Context, req WorldRequest) (World, error) {
 				return World{}, err
 			}
 		}
-		host := hostThreads{BusReader: audit.BusReader{Bus: client.Bus()}, archive: func(ctx context.Context, id string) error { return backend.ArchiveThread(ctx, id) }}
+		host := hostThreads{BusReader: audit.BusReader{Bus: client.Bus()}, archive: func(ctx context.Context, id string) error { return backend.ArchiveThread(ctx, id) },
+			config: func(ctx context.Context, id string) (*string, *string, error) { return backend.ThreadConfig(ctx, id) }}
 		// the milestone report goes up as `crw flow report-up` sends one (F11): its rows in the run's journal, the notice through
 		// `crw manage send-parent` on the relay the run is in
 		program, _ := os.Executable()
@@ -199,9 +200,16 @@ func planOf(args json.RawMessage) string {
 type hostThreads struct {
 	audit.BusReader
 	archive func(ctx context.Context, id string) error
+	config  func(ctx context.Context, id string) (*string, *string, error)
 }
 
 func (h hostThreads) ArchiveThread(ctx context.Context, id string) error { return h.archive(ctx, id) }
+
+// ThreadConfig reads a thread's configured pair back from the host (thread/read, ops.ThreadConfigs): the authors of a head made outside a
+// run that a land release names (CRW-1354).
+func (h hostThreads) ThreadConfig(ctx context.Context, id string) (*string, *string, error) {
+	return h.config(ctx, id)
+}
 
 // repository is the git repository a run's worktrees are made from: the directory the operator named, else the top level of
 // the repository the working directory is in.

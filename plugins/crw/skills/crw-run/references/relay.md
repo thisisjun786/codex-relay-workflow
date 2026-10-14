@@ -185,6 +185,13 @@ dispatches nothing, instead of a child whose claims end `claim_uncorrelated`. Na
 refusal gives. Another spelling of the same directory (dot segments, symlinks) starts; a relative
 path is refused as not absolute; a replay of a started request id is not judged by this check. When
 no daemon answers, the reason says so and names your own environment's root instead.
+A child's whole assignment goes in its first work turn. The host unloads a child about a minute after
+its turn ends (`notLoaded`), so a child started with a standby turn and given its work afterwards may
+already be unloaded when the work arrives, and a follow-up instruction after its result is not the way
+to change it: when something must be fixed, rule `needs_changes`, which opens the next generation and
+carries the correction to the same child. A bridge send to an unloaded child of a role with several
+pairs resumes it without the pair and starts the turn only when the host reports the requested pair
+([bridge](bridge.md)); that is a fallback, not a reason to split the work (the 10-13 F0-2 run, CRW-1311).
 A refused or incomplete result is not permission to create a replacement. `admitted` means
 dispatch only: the child's claim, actual hook firing, receipt and parent judgment still need
 their own evidence. Verify the installed command surface before selecting it; source presence

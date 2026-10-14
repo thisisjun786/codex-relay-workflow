@@ -24,6 +24,8 @@ type NodeSpec struct {
 	// SizeFit is the architect's size_fit for the node's issue (executor when empty).
 	SizeFit, SizeReason string
 	Criteria            []string
+	// EndCondition are the commands of the issue's done condition, as the relay reads them from the body the handoff carries (CRW-1382).
+	EndCondition []string
 }
 
 func (n NodeSpec) criteria() []string {
@@ -54,6 +56,9 @@ type FakeRelay struct {
 	// the scheduler's stale coordinator epoch is); HoldBack holds every release back unreleased with this reason (CRW-1320).
 	ReleaseErr func(node string) error
 	HoldBack   string
+	// BeforeChild, when a test sets it, runs when a child start of the node is asked for, before the relay compares the slice: the window
+	// between crw.release's pinned comparison and the child start (CRW-1382).
+	BeforeChild func(node string)
 	// Surfaces, Grade and Commands are what the plan says of the milestone: the surfaces of its criteria, the work grade and the
 	// required verification commands (CRW-1206).
 	Surfaces []string
@@ -101,7 +106,7 @@ func (r *FakeRelay) Milestone(_ context.Context, plan, milestone string) (ops.Mi
 	ms := ops.Milestone{ID: milestone, Plan: plan, Title: "milestone " + milestone, Criteria: []string{"the milestone is done"}, CriteriaDigest: sha("milestone " + milestone),
 		Surfaces: r.Surfaces, Grade: r.Grade, RequiredCommands: r.Commands}
 	for _, n := range r.nodes {
-		pn := ops.PlanNode{ID: n.ID, Issue: n.Issue, Title: n.Title, After: n.After, Regions: n.Regions, Group: n.Group, Criteria: n.criteria()}
+		pn := ops.PlanNode{ID: n.ID, Issue: n.Issue, Title: n.Title, After: n.After, Regions: n.Regions, Group: n.Group, Criteria: n.criteria(), EndCondition: n.EndCondition}
 		pn.CriteriaDigest = sha(strings.Join(pn.Criteria, "\n"))
 		pn.SliceDigest = sliceOf(n)
 		ms.Nodes = append(ms.Nodes, pn)
@@ -168,10 +173,20 @@ func (r *FakeRelay) ReleaseStands(_ context.Context, _, node, execution string) 
 }
 
 // ReleaseChild implements ops.Relay.
+// Like the relay's managed start, it compares the slice the flow compared with the node's slice of the plan it holds (CRW-1288, CRW-1382):
+// a slice that is another starts no child and answers plan_changed.
 func (r *FakeRelay) ReleaseChild(_ context.Context, req ops.ChildRequest) (ops.ChildResult, error) {
+	if r.BeforeChild != nil {
+		r.BeforeChild(req.Node)
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.Children = append(r.Children, req)
+	for _, n := range r.nodes {
+		if n.ID == req.Node && req.SliceDigest != "" && req.SliceDigest != sliceOf(n) {
+			return ops.ChildResult{Reason: ops.ReasonPlanChanged}, nil
+		}
+	}
 	return ops.ChildResult{Started: true, Child: "child-" + req.Node}, nil
 }
 

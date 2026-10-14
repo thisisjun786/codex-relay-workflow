@@ -1013,7 +1013,9 @@ to resume correctly are stated again rather than assumed to have survived. That 
 same reason the first request named the workflow: naming it once, at creation, is not
 the same as it still being in force ten turns later.
 
-Where a relay holds the assignment, the needs-changes verdict IS the correction: it
+Where a relay holds the assignment, the needs-changes verdict IS the correction (a child that
+finished its turn is unloaded within about a minute, so the work of a generation goes in its first
+turn; see [the managed start sequence](references/relay.md#the-managed-start-sequence)): it
 opens the next execution generation and queues the revision request to the same
 registered child, carrying the superseded event, its digest, and the per-criterion
 findings. Record findings with notes, because a correction with no findings is one

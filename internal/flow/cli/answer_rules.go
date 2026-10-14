@@ -106,6 +106,9 @@ type Claim struct {
 	Revision int
 	// By is who applies the answer (the orchestrator thread, or the operator), written into the row.
 	By string
+	// Answers are the parts of the recorded answer for each question an ask joins, by question digest (CRW-1381): `crw flow answer
+	// --answer-for DIGEST=TEXT`. Empty: the whole answer is every question's.
+	Answers map[string]string
 }
 
 // The refusals of an answer. The code is stable; the detail says what differed.
@@ -120,7 +123,15 @@ const (
 	RefusedStalePlan    = "stale_plan_basis"
 	RefusedAuthority    = "out_of_scope_authority"
 	RefusedApplied      = "already_applied"
+	// RefusedPartQuestion is a part of the answer for a question digest the ask does not join, and RefusedPartText a part that is not
+	// text of the recorded answer (CRW-1381): input errors.
+	RefusedPartQuestion = "unknown_question_digest"
+	RefusedPartText     = "answer_part_not_recorded"
 )
+
+// WarnSingleAnswer is the warning of an answer that gives an ask of several questions no part for some of them: each of those questions
+// takes the whole answer (CRW-1381).
+const WarnSingleAnswer = "single_answer_for_joined_ask"
 
 // Refusal is an answer the run does not apply.
 type Refusal struct {
@@ -192,6 +203,33 @@ func Judge(rec decisions.Record, events []engine.Event, run RunRecord, claim Cla
 	if err := authorityOK(rec, b, run); err != nil {
 		return none, err
 	}
+	// the parts of the answer for the questions the ask joins: each a question of the ask, each text of the recorded answer (CRW-1381)
+	var parts map[string]string
+	for digest, part := range claim.Answers {
+		if !contains(q.Questions, digest) {
+			return none, refuse(RefusedPartQuestion, "question %s joins the questions %s; the answer gives a part for %s", q.ID, strings.Join(q.Questions, ", "), digest)
+		}
+		if strings.TrimSpace(part) == "" || !strings.Contains(rec.AnswerText, part) {
+			return none, refuse(RefusedPartText, "the part %q for question %s is not text of the answer the record %s holds", part, digest, rec.DecisionID)
+		}
+		if parts == nil {
+			parts = map[string]string{}
+		}
+		parts[digest] = part
+	}
+	var warnings []string
+	if len(q.Questions) > 1 {
+		var whole []string
+		for _, d := range q.Questions {
+			if _, ok := parts[d]; !ok {
+				whole = append(whole, d)
+			}
+		}
+		if len(whole) > 0 {
+			warnings = append(warnings, fmt.Sprintf("%s: question %s joins %d questions and the answer gives no part for %s, which take the whole answer (give each its part with --answer-for DIGEST=TEXT)",
+				WarnSingleAnswer, q.ID, len(q.Questions), strings.Join(whole, ", ")))
+		}
+	}
 	// the row of this decision, when there is one, is the application: the same answer again appends nothing
 	for _, e := range events {
 		if e.Kind == engine.KindFlow && e.Event == ops.EvDecisionApplied && str(e.Data, "ask") == q.ID {
@@ -209,6 +247,12 @@ func Judge(rec decisions.Record, events []engine.Event, run RunRecord, claim Cla
 			"id": rec.DecisionID, "option": optionOf(rec), "text": rec.AnswerText, "by": rec.AnsweredBy, "via": rec.AnsweredVia,
 			"answered_at": rec.AnsweredAt, "authority": rec.Authority.Kind, "authority_ref": rec.Authority.Ref,
 		},
+	}
+	if parts != nil {
+		row["decision"].(map[string]any)["answers"] = parts
+	}
+	if len(warnings) > 0 {
+		row["warnings"] = warnings
 	}
 	return Application{Data: row}, nil
 }

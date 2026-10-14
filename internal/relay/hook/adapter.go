@@ -375,7 +375,7 @@ func runAdapter(parent context.Context, args []string, input io.Reader, output i
 		// Other transport failures use Python's ordinary post-identity failure
 		// shape, not a broader exception in the journal reader.
 		record = unreachableRecord(record, dialErr, time.Since(dialStarted))
-		finish("guard_unreachable", "the configured runtime could not be run: "+store.StoredOSErrorText(&os.PathError{Op: "connect", Path: socket, Err: dialErr}), "")
+		finish("guard_unreachable", "the configured runtime could not be run: "+store.StoredOSErrorText(&os.PathError{Op: "connect", Path: socket, Err: dialErr})+controlPathNote(socket, dialErr), "")
 		return 0
 	}
 	guardStarted := time.Now()

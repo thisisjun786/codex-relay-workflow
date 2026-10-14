@@ -131,7 +131,7 @@ The nine measures F17 reads:
 | `outputschema_compliance_ocx` | calls with an output schema that reached validation (completed, or `null_model` after the repair turn): answered at the first turn, after the repair turn, or not; `all`, `via_ocx` (a model whose name does not start with `claude`: this host runs Claude models directly and the others through ocx) and `by_model` |
 | `oversized_threshold_hits` | per node, its tokens and whether it struggled (escalated, or an `executor-t1` call); with `--oversized-tokens N`, the nodes where "above N tokens" and "struggled" agree. Without it `threshold_tokens` and `hits` are `null` |
 | `orchestrator_turns_per_receipt` | turns of `architect` calls over completed executor-family calls |
-| `executor_thread_cache` | executor-family calls that started a thread, calls that continued a handle, turns, the reuse ratio and the turns per thread. The journal holds no cached input tokens; these are the evidence of thread reuse |
+| `executor_thread_cache` | executor-family calls that started a thread, calls that continued a handle, turns, the reuse ratio and the turns per thread. The trace carries no cached input tokens (the journal's rows record them: `crw flow show`); these are the evidence of thread reuse |
 | `recovery_holds_per_run` | per run, the nodes that hold a call with an unknown outcome or whose later calls ended `recovery_hold` |
 | `flow_audit_result` | the trace-level audit: every agent acceptance names a reviewer call that the trace holds, completed, with a reviewer role (`observed`, `unobserved`, `mismatch`, `ok`). `crw flow audit` itself reads the live store and is run by F17 (`live_audit_run` is `false`) |
 

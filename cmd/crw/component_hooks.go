@@ -148,10 +148,18 @@ func componentHooks() []componentHook {
 					return
 				}
 				harness.RecordInvocation(raw, harness.Component, "pre-tool-use-child-push", os.LookupEnv)
+				once := "" // the unreadable lineage of a sub-agent is recorded once per session (CRW-1387); the relay's own record warns every time
 				answer, rule := pabcdhook.ChildPushDecision(raw, func(session, cwd string) pabcdhook.ChildPushBinding {
-					child, parent, err := hook.ChildBinding(c.ctx, session)
+					child, parent, err := childBindingOf(c.ctx, session)
 					if err == nil && !child {
-						child, parent, err = subagentLineageBinding(c.ctx, raw)
+						if child, parent, err = subagentLineageBinding(c.ctx, raw); err != nil {
+							// The marker is for a lineage that cannot be followed to its end; a relay record that could not be read at one hop
+							// is a failure a later walk can pass, so it records as every relay-record failure does (CRW-1398).
+							var walk *lineageWalkError
+							if !errors.As(err, &walk) || !walk.relayRead {
+								once = "unreadable-lineage"
+							}
+						}
 					}
 					switch {
 					case err != nil:
@@ -161,7 +169,7 @@ func componentHooks() []componentHook {
 					}
 					return pabcdhook.ChildPushBinding{Child: true, Own: pabcdhook.ChildPushOwnBranch(c.ctx, cwd, parent)}
 				})
-				done <- harness.SettleGuard(childPushLeg, raw, answer, rule, os.LookupEnv)
+				done <- harness.SettleGuardOnce(childPushLeg, raw, answer, rule, once, os.LookupEnv)
 			}()
 			select {
 			case answer := <-done:
@@ -195,6 +203,10 @@ func componentHooks() []componentHook {
 	}
 }
 
+// childBindingOf is the relay's record of a session for the child push guard; a test replaces it to make that record unreadable for a
+// moment.
+var childBindingOf = hook.ChildBinding
+
 // subagentLineageBinding is the child push guard's fallback for a sub-agent whose session_id the relay does not know as a child
 // (CRW-1370): when the input names an agent_id and a transcript_path, it follows the parent threads of the sub-agent's rollout, at most
 // hook.LineageDepthLimit of them, to a thread the relay holds as a child. An input that is no sub-agent's, or names no transcript, binds nothing
@@ -207,12 +219,26 @@ func subagentLineageBinding(ctx context.Context, raw string) (child bool, parent
 	if json.Unmarshal([]byte(raw), &input) != nil || input.AgentID == "" || input.TranscriptPath == "" {
 		return false, "", nil
 	}
-	child, parentCwd, unreadable := hook.ChildBindingByLineage(ctx, input.TranscriptPath, hook.ChildBinding)
+	relayRead := false
+	child, parentCwd, unreadable := hook.ChildBindingByLineage(ctx, input.TranscriptPath, func(ctx context.Context, session string) (bool, string, error) {
+		isChild, cwd, err := childBindingOf(ctx, session)
+		relayRead = relayRead || err != nil
+		return isChild, cwd, err
+	})
 	if unreadable != "" {
-		return false, "", errors.New(unreadable)
+		return false, "", &lineageWalkError{msg: unreadable, relayRead: relayRead}
 	}
 	return child, parentCwd, nil
 }
+
+// lineageWalkError is why the lineage walk ended without an answer. relayRead is true when it ended at a hop whose relay record could not be
+// read (the walk stops there), not because the lineage itself cannot be followed.
+type lineageWalkError struct {
+	msg       string
+	relayRead bool
+}
+
+func (e *lineageWalkError) Error() string { return e.msg }
 
 // The component rows that are PreToolUse guards, by their registration names (the mode table's keys).
 const (

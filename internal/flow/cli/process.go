@@ -209,9 +209,15 @@ func (c *command) execute(spec Spec, state string, resume bool, sigs <-chan os.S
 		}
 	}
 	args := compactJSON(spec.Args)
+	budget, spent := spec.TokenBudget, int64(0)
 	if resume {
 		if why := notTheRuns(world.Journal, spec.RunID, src.Program.Digest, args); why != "" {
 			return c.fail("%s", why)
+		}
+		// the budget is the run's: what its earlier processes spent counts, and a run with nothing left is not resumed (CRW-1278)
+		spent = engine.RunSpent(world.Journal.Events(), spec.RunID).Total
+		if budget, err = runBudget(spec, spent, spec.TokenBudget); err != nil {
+			return c.fail("%v", err)
 		}
 	}
 	ctx, cancel := context.WithCancel(c.ctx)
@@ -242,7 +248,7 @@ func (c *command) execute(spec Spec, state string, resume bool, sigs <-chan os.S
 		}
 	}
 	cfg := engine.Config{
-		RunID: spec.RunID, Backend: world.Backend, Policy: table, Journal: world.Journal, Args: args, Pool: spec.Pool, TokenBudget: spec.TokenBudget,
+		RunID: spec.RunID, Backend: world.Backend, Policy: table, Journal: world.Journal, Args: args, Pool: spec.Pool, TokenBudget: budget, SpentBefore: spent,
 		Ops: world.Ops, Prover: world.Prover, InputSnapshot: world.InputSnapshot, Workflows: src.Workflows, Control: ctl, OmitSeq: true,
 		Upward: world.Upward, Session: world.Session,
 	}

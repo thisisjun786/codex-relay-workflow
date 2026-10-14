@@ -37,16 +37,7 @@ func loadProofDeadlines(t *testing.T) {
 
 func hookHome(t *testing.T, budget float64) string {
 	t.Helper()
-	home, err := os.MkdirTemp("", "h33-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := os.RemoveAll(home); err != nil {
-			t.Error(err)
-		}
-	})
-	return hookHomeAt(t, home, budget)
+	return hookHomeAt(t, socketDir(t, "h33-"), budget) // control.sock lives below it (CRW-1393)
 }
 
 // hookHomeAt writes hookHome's settings into home.

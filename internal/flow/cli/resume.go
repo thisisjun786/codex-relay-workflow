@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,19 +13,22 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/journal"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // resume is `crw flow resume RUN [SCRIPT] [--detach]`. The run is taken from its journal once its run lock is free: a run a process
 // holds is refused (two processes would write one journal). With a SCRIPT it is the engine's command (the script and the
 // arguments are given), under the run lock and held to the budget and the deadline of the run's spec (specLimits); without one
 // the workflow and the arguments are those the run started with (its spec), and --detach lets the process go on in the background.
+// The budget is the run's: a resume allows what the spec's budget leaves after the tokens the run's journal shows it spent, and
+// one with nothing left is refused (runBudget). A foreground resume pauses on SIGUSR1 (`crw flow pause`) as the run process does.
 func (c *command) resume(args []string) int {
 	fs, cm := c.flags()
 	repo := fs.String("repo", "", "the git repository the run's worktrees are made from")
 	argsJSON := fs.String("args", "", "the script's args, as JSON")
 	argsFile := fs.String("args-file", "", "a file holding the script's args as JSON")
 	pool := fs.Int("pool", 0, "agent calls in flight at once (default 6)")
-	budget := fs.Int64("token-budget", 0, "the run's token ceiling (0: none)")
+	budget := fs.Int64("token-budget", 0, "the tokens this resume may spend, at most what the budget of the run's spec leaves (0: that remainder, or none without one)")
 	detach := fs.Bool("detach", false, "go on in a process of its own and return")
 	positional, code, ok := parse(fs, args)
 	if !ok {
@@ -58,12 +62,17 @@ func (c *command) resume(args []string) int {
 			return c.fail("%v", err)
 		}
 		defer lock.Release()
-		ctx := c.ctx
-		if ctl != nil {
-			ctx = engine.WithControl(ctx, ctl.Control)
-			defer ctl.stop()
+		if ctl == nil {
+			ctl = &deadlineControl{Control: &engine.Control{}}
 		}
-		hold := c.sessionHold(sel.Path, run)
+		defer ctl.stop()
+		// `crw flow pause` signals the lock holder: this process pauses the run as the run process does (process.go)
+		sigs := make(chan os.Signal, 4)
+		signal.Notify(sigs, syscall.SIGUSR1)
+		defer signal.Stop(sigs)
+		defer pauseOnSignal(sigs, ctl.Control)()
+		ctx := engine.WithControl(c.ctx, ctl.Control)
+		hold := c.resumeHold(sel.Path, run)
 		hold.Process = process.Token()
 		ctx = engine.WithResumeHold(ctx, hold)
 		return engine.RunCLI(ctx, eargs, c.stdout, c.stderr)
@@ -78,6 +87,18 @@ func (c *command) resume(args []string) int {
 	if *detach {
 		if LockHeld(sel.Path, run) {
 			return c.fail("%v %s", ErrRunLive, run)
+		}
+		// a run with nothing left is refused here, before a process is started for it (budgetLeft)
+		if spec.TokenBudget > 0 {
+			r, err := c.reader(cm)
+			if err != nil {
+				return c.fail("%v", err)
+			}
+			err = budgetLeft(c.ctx, r.St, spec)
+			_ = r.Close()
+			if err != nil {
+				return c.fail("%v", err)
+			}
 		}
 		dir, _ := os.Getwd()
 		spawned := c.now()
@@ -94,17 +115,74 @@ func (c *command) resume(args []string) int {
 		return 0
 	}
 	sigs := make(chan os.Signal, 4)
-	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
+	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP, syscall.SIGUSR1)
 	defer signal.Stop(sigs)
 	return c.execute(spec, sel.Path, true, sigs)
 }
 
-// sessionHold holds a `crw flow resume RUN SCRIPT` the way the run process holds its run (CRW-1348): a spec that names another
+// pauseOnSignal pauses the run of ctl with the operator's reason for every SIGUSR1 sigs delivers, as the run process does, until
+// the returned stop is called.
+func pauseOnSignal(sigs <-chan os.Signal, ctl *engine.Control) (stop func()) {
+	done := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-done:
+				return
+			case sig := <-sigs:
+				if sig == syscall.SIGUSR1 {
+					ctl.Pause("operator", "crw flow pause")
+				}
+			}
+		}
+	}()
+	return func() { close(done) }
+}
+
+// runBudget is the token ceiling a resume holds a run to (CRW-1278): the budget of its spec is the run's, so a resume allows what the
+// budget leaves after the tokens the run spent (engine.RunSpent over its journal), a --token-budget (asked, 0 for none) narrows that
+// remainder and never widens it, and a run with nothing left is refused with budget_exhausted: more budget is a new decision. The
+// ceiling counts the tokens spent before (engine.Config.SpentBefore). A spec without a budget sets none, unless asked gives this
+// resume one of its own.
+func runBudget(spec Spec, spent, asked int64) (int64, error) {
+	if spec.TokenBudget <= 0 {
+		if asked > 0 {
+			return spent + asked, nil
+		}
+		return 0, nil
+	}
+	left := spec.TokenBudget - spent
+	if left <= 0 {
+		return 0, fmt.Errorf("%s: run %s spent %d of the %d tokens of its spec%s; it is not resumed, and more budget needs a new decision", engine.ReasonBudgetExhausted, spec.RunID, spent, spec.TokenBudget, decisionOf(spec))
+	}
+	if asked <= 0 || asked > left {
+		asked = left
+	}
+	return spent + asked, nil
+}
+
+// budgetLeft refuses the resume of a run whose spec's budget the run has spent (runBudget over the journal in st): `crw flow resume
+// RUN --detach` and an answer's resume ask it before they start the run process, so the refusal, budget_exhausted with the tokens
+// spent and the decision, is the command's own answer and not a process that takes the run lock and ends at once. The run process
+// judges the budget again under the run lock (execute). A spec without a budget has nothing to refuse.
+func budgetLeft(ctx context.Context, st *store.Store, spec Spec) error {
+	if spec.TokenBudget <= 0 {
+		return nil
+	}
+	events, _, err := journal.LoadLean(ctx, st, spec.RunID)
+	if err != nil {
+		return fmt.Errorf("the journal of run %s cannot be read: %w", spec.RunID, err)
+	}
+	_, err = runBudget(spec, engine.RunSpent(events, spec.RunID).Total, spec.TokenBudget)
+	return err
+}
+
+// resumeHold holds a `crw flow resume RUN SCRIPT` the way the run process holds its run (CRW-1348): a spec that names another
 // backend than the one the run's started row records is a mixed resume, refused; a session run keeps at most agents.max_threads - 1
 // calls in flight whatever --pool says, and its owner thread holds the run's orchestrator line while the resume runs, written right
 // after the resume's started row with the table it pinned (the open line of a run whose process is gone is closed first, CRW-1372),
-// and closed when the run ends.
-func (c *command) sessionHold(state, run string) engine.ResumeHold {
+// and closed when the run ends. A run with a spec is held to the budget the spec leaves (runBudget).
+func (c *command) resumeHold(state, run string) engine.ResumeHold {
 	hold := engine.ResumeHold{Session: func(owner string, pool int) (int, func(*engine.Policy), func()) {
 		return sessionPool(pool, readCodexAgents(c.getenv).MaxThreads), c.bindFromStarted(state, run, owner), func() {
 			if _, err := closeOwner(run, owner); err != nil {
@@ -114,6 +192,7 @@ func (c *command) sessionHold(state, run string) engine.ResumeHold {
 	}}
 	if spec, err := ReadSpec(state, run); err == nil {
 		hold.Backend = spec.Backend
+		hold.Budget = func(spent, asked int64) (int64, error) { return runBudget(spec, spent, asked) }
 	}
 	return hold
 }
@@ -131,9 +210,11 @@ func (d *deadlineControl) stop() {
 }
 
 // specLimits holds a `crw flow resume RUN SCRIPT` to the budget and the deadline of the run's spec (a night batch's are the
-// decision's): the engine's command line, with the spec's budget when no --token-budget is given; a --token-budget of 0 (no
-// ceiling), below 0 or above the spec's is refused, a lower one narrows it; and a Control that pauses the run at the spec's
-// deadline (at once when it passed). A run that no `crw flow start` made has no spec and nothing to hold it to.
+// decision's): the engine's command line, with the spec's budget when no --token-budget is given; a --token-budget of 0 is the
+// remainder of the spec's budget as the flag's help says (the same ceiling as none), one below 0 or above the spec's is refused, and a
+// lower one narrows the remainder (what the run already spent counts against the spec's budget: runBudget, applied by the engine's
+// command through resumeHold); and a Control that pauses the run at the spec's deadline (at once when it passed). A run that no
+// `crw flow start` made has no spec and nothing to hold it to.
 func (c *command) specLimits(fs *flag.FlagSet, state, run string, budget int64, eargs []string) ([]string, *deadlineControl, error) {
 	spec, err := ReadSpec(state, run)
 	if errors.Is(err, ErrNoSpec) {
@@ -148,8 +229,8 @@ func (c *command) specLimits(fs *flag.FlagSet, state, run string, budget int64, 
 		switch {
 		case !given:
 			eargs = append(eargs, "--token-budget", strconv.FormatInt(spec.TokenBudget, 10))
-		case budget <= 0 || budget > spec.TokenBudget:
-			return nil, nil, fmt.Errorf("the token budget %d is not within the %d tokens of run %s's spec%s; give a budget from 1 to %d or none", budget, spec.TokenBudget, run, decisionOf(spec), spec.TokenBudget)
+		case budget < 0 || budget > spec.TokenBudget:
+			return nil, nil, fmt.Errorf("the token budget %d is not within the %d tokens of run %s's spec%s; give a budget from 1 to %d, or 0 or none for what the spec's budget leaves", budget, spec.TokenBudget, run, decisionOf(spec), spec.TokenBudget)
 		}
 	}
 	if spec.Deadline == "" {
