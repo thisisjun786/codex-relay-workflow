@@ -206,10 +206,11 @@ func (d *deadlineControl) stop() {
 }
 
 // specLimits holds a `crw flow resume RUN SCRIPT` to the budget and the deadline of the run's spec (a night batch's are the
-// decision's): the engine's command line, with the spec's budget when no --token-budget is given; a --token-budget of 0 (no
-// ceiling), below 0 or above the spec's is refused, a lower one narrows it (what the run already spent counts against it: runBudget,
-// applied by the engine's command through resumeHold); and a Control that pauses the run at the spec's deadline (at once when it
-// passed). A run that no `crw flow start` made has no spec and nothing to hold it to.
+// decision's): the engine's command line, with the spec's budget when no --token-budget is given; a --token-budget of 0 is the
+// remainder of the spec's budget as the flag's help says (the same ceiling as none), one below 0 or above the spec's is refused, and a
+// lower one narrows the remainder (what the run already spent counts against the spec's budget: runBudget, applied by the engine's
+// command through resumeHold); and a Control that pauses the run at the spec's deadline (at once when it passed). A run that no
+// `crw flow start` made has no spec and nothing to hold it to.
 func (c *command) specLimits(fs *flag.FlagSet, state, run string, budget int64, eargs []string) ([]string, *deadlineControl, error) {
 	spec, err := ReadSpec(state, run)
 	if errors.Is(err, ErrNoSpec) {
@@ -224,8 +225,8 @@ func (c *command) specLimits(fs *flag.FlagSet, state, run string, budget int64, 
 		switch {
 		case !given:
 			eargs = append(eargs, "--token-budget", strconv.FormatInt(spec.TokenBudget, 10))
-		case budget <= 0 || budget > spec.TokenBudget:
-			return nil, nil, fmt.Errorf("the token budget %d is not within the %d tokens of run %s's spec%s; give a budget from 1 to %d or none", budget, spec.TokenBudget, run, decisionOf(spec), spec.TokenBudget)
+		case budget < 0 || budget > spec.TokenBudget:
+			return nil, nil, fmt.Errorf("the token budget %d is not within the %d tokens of run %s's spec%s; give a budget from 1 to %d, or 0 or none for what the spec's budget leaves", budget, spec.TokenBudget, run, decisionOf(spec), spec.TokenBudget)
 		}
 	}
 	if spec.Deadline == "" {

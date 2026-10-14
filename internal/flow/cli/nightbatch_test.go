@@ -167,9 +167,10 @@ func TestNightBatchOverridesOnlyNarrowTheDecision(t *testing.T) {
 }
 
 // TestNightBatchResumeKeepsTheDecisionBudget: `crw flow resume RUN SCRIPT` of a run whose spec carries a decision and its budget
-// goes on under the spec's budget and deadline: a --token-budget of 0 (no ceiling), a negative one and one above the spec's are
-// refused before the run is taken, a lower one narrows it, no --token-budget takes the spec's, and the run pauses at the spec's
-// deadline. Without this the engine's command ran the run with no ceiling and no deadline.
+// goes on under the spec's budget and deadline: a negative --token-budget and one above the spec's are refused before the run is
+// taken, a lower one narrows it, no --token-budget takes the spec's (and so does 0, the remainder: TestScriptResumeTokenBudgetZeroIsTheRemainder
+// holds it to the spec's budget, never to no ceiling), and the run pauses at the spec's deadline. Without this the engine's command
+// ran the run with no ceiling and no deadline.
 func TestNightBatchResumeKeepsTheDecisionBudget(t *testing.T) {
 	pw := newProcessWorld(t, twoCalls)
 	prev := engine.ResumeEnv
@@ -217,7 +218,7 @@ func TestNightBatchResumeKeepsTheDecisionBudget(t *testing.T) {
 		}
 	}
 	paused("run-narrow", 100, "2026-10-13T06:00:00Z")
-	for _, budget := range []string{"0", "-1", "101"} {
+	for _, budget := range []string{"-1", "101"} {
 		if code, _, errOut := resume("run-narrow", "--token-budget", budget); code == 0 || !strings.Contains(errOut, "100") {
 			t.Errorf("--token-budget %s: exit %d %q", budget, code, errOut)
 		}
@@ -545,5 +546,28 @@ func TestResumedRunWarnsOfItsBudgetOnce(t *testing.T) {
 	}
 	if w := budgetWarnings(t, pw, run); len(w) != 1 {
 		t.Errorf("the run warned of its budget %d times: %+v", len(w), w)
+	}
+}
+
+// TestScriptResumeTokenBudgetZeroIsTheRemainder (CRW-1278, Argon F6 on 2a082733): an explicit --token-budget 0 of `crw flow resume RUN
+// SCRIPT` is what its help says, the remainder of the spec's budget (as no --token-budget is), never no ceiling: the resume goes on
+// and is held budget_exhausted at the spec's 100 tokens. A --token-budget below 0 is refused and does not take the run.
+func TestScriptResumeTokenBudgetZeroIsTheRemainder(t *testing.T) {
+	pw := newProcessWorld(t, threeCalls)
+	scriptResumeEnv(t, pw)
+	run := "run-zero"
+	pausedRun(t, pw, run, 70, func(s *Spec) { s.Decision, s.TokenBudget = "ud-night", 100 })
+	if code, _, errOut := pw.td.do("resume", run, pw.script, "--state", pw.state, "--token-budget", "-1"); code == 0 || !strings.Contains(errOut, "100") {
+		t.Errorf("--token-budget -1: exit %d %q", code, errOut)
+	}
+	if info := pw.info(run); info.Processes != 1 {
+		t.Fatalf("a refused resume took the run: %+v", info)
+	}
+	code, out, errOut := pw.td.do("resume", run, pw.script, "--state", pw.state, "--token-budget", "0")
+	if code != 0 {
+		t.Fatalf("--token-budget 0: exit %d %s %q", code, out, errOut)
+	}
+	if info := pw.info(run); info.Processes != 2 || info.Tokens != 110 || !contains(info.HeldReasons, engine.ReasonBudgetExhausted) {
+		t.Errorf("the resume under --token-budget 0 did not go on under the remainder: %+v", info)
 	}
 }
