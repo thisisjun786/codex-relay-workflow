@@ -41,18 +41,18 @@ var canonMoved = []canonSection{
 	{"hierarchy.md", "Direct coordination between children"},
 	{"release-gate.md", "The release gate"},
 	{"schedule-contract.md", "Schedule baseline contract"},
-	{"linear-model.md", "Linear operating model"},
-	{"linear-model.md", "Issue-to-PR mapping"},
-	{"linear-model.md", "Record writes and returned proposals"},
-	{"linear-model.md", "Resolve the implementation repository"},
-	{"linear-model.md", "Implementation Done"},
-	{"linear-model.md", "Linear holds canonical documents"},
-	{"linear-model.md", "Where each document type is canonical"},
-	{"linear-model.md", "Classify an existing document"},
-	{"linear-model.md", "Keep the two sides consistent"},
-	{"linear-model.md", "When the implementing repository changes"},
-	{"linear-model.md", "Initiative body standard"},
-	{"linear-model.md", "Use the available Linear capability"},
+	{"tracking-model.md", "Tracking operating model"},
+	{"tracking-model.md", "Issue-to-PR mapping"},
+	{"tracking-model.md", "Record writes and returned proposals"},
+	{"tracking-model.md", "Resolve the implementation repository"},
+	{"tracking-model.md", "Implementation Done"},
+	{"tracking-model.md", "Tracking holds canonical documents"},
+	{"tracking-model.md", "Where each document type is canonical"},
+	{"tracking-model.md", "Classify an existing document"},
+	{"tracking-model.md", "Keep the two sides consistent"},
+	{"tracking-model.md", "When the implementing repository changes"},
+	{"tracking-model.md", "Milestone description standard"},
+	{"tracking-model.md", "Use the tracking access"},
 	{"delivery.md", "Workflow ownership"},
 	{"delivery.md", "Completion follow-up in an existing execution workflow"},
 	{"delivery.md", "Default independent execution"},
@@ -125,7 +125,7 @@ func crwDevStubErrors(root string) []string {
 // planningOnlyHeadings is every heading crw-plan/references/integrations.md keeps: the sections that
 // only planning reads.
 var planningOnlyHeadings = []string{
-	"Linear and implementation workflow integration",
+	"Tracking and implementation workflow integration",
 	"Resolve the project target",
 	"Project parent binding",
 	"Establish the link",
@@ -270,7 +270,7 @@ func TestNoSharedSectionOutsideCanon(t *testing.T) {
 			r.write(canonRefDir+s.File, "# "+s.Heading+"\n")
 		}
 		r.write(canonRefDir+"hierarchy.md", "# Scope of each level\n\n## Direct coordination between children\n")
-		r.write(planIntegrate, "# Linear and implementation workflow integration\n\n## The release gate\n")
+		r.write(planIntegrate, "# Tracking and implementation workflow integration\n\n## The release gate\n")
 		r.write("docs/other.md", "## Direct coordination between children\n")
 		r.commit()
 		joined := strings.Join(sharedSectionOutsideCanonErrors(r.root), "\n")
@@ -278,7 +278,7 @@ func TestNoSharedSectionOutsideCanon(t *testing.T) {
 			"hierarchy.md: heading The message both relations are read by appears 0 times",
 			"docs/other.md: heading Direct coordination between children belongs to crw-canon/references/hierarchy.md",
 			planIntegrate + ": heading The release gate belongs to crw-canon/references/release-gate.md",
-			planIntegrate + ": headings Linear and implementation workflow integration | The release gate; want only the planning sections",
+			planIntegrate + ": headings Tracking and implementation workflow integration | The release gate; want only the planning sections",
 		} {
 			if !strings.Contains(joined, want) {
 				t.Errorf("errors lack %q:\n%s", want, joined)
@@ -832,7 +832,7 @@ func TestCurrentSurfacesUseNoLevelWordOfTheOldMapping(t *testing.T) {
 // A historical record cites the file and the line range it read at its own revision. A line range
 // that the file it now names cannot have, because the file is shorter, is a citation that was
 // rewritten without being re-read.
-var rangeCitation = regexp.MustCompile("`([A-Za-z0-9_./-]*(?:hierarchy|delivery|linear-model|release-gate|schedule-contract|execution-roles|design-explanation|skill-family)\\.md)`\\s*\\(?(\\d+)(?: to (\\d+))?")
+var rangeCitation = regexp.MustCompile("`([A-Za-z0-9_./-]*(?:hierarchy|delivery|tracking-model|release-gate|schedule-contract|execution-roles|design-explanation|skill-family)\\.md)`\\s*\\(?(\\d+)(?: to (\\d+))?")
 
 func TestCitedLineRangesExistInTheCitedCanonFile(t *testing.T) {
 	root := repoRoot()

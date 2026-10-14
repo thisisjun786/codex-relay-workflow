@@ -1,11 +1,11 @@
 ---
 name: crw-run
-description: "Coordinate one Linear project as its child: bind, dispatch, observe, verify, correct, integrate and resume; no goal by default, resumed by a relay event. Also the parent's project order, decisions, reports and 중간점검."
+description: "Coordinate one milestone as its child: bind, dispatch, observe, verify, correct, integrate and resume; no goal by default, resumed by a relay event. Also the parent's project order, decisions, reports and 중간점검."
 ---
 
 # CRW Run
 
-Use the selected Linear project as the planning source and keep this Codex task
+Use the selected milestone as the planning source and keep this Codex task
 as its coordinator: this task is [the child](../crw-canon/references/hierarchy.md#the-levels)
 (project session, relay role `parent`), one per project, and this skill names every session by
 that table. The parent (repository session, relay role `supervisor`) above this project orders the
@@ -42,16 +42,16 @@ owns helper routing; the child does not adopt an issue child's FSM. How an issue
 packet and when a task loops are [crw-loop's lane dispatch](../crw-loop/references/lane-dispatch.md); this
 skill writes the packet and does not restate the issue child's rules.
 
-Read the shared [Linear model](../crw-canon/references/linear-model.md) for Linear document
-authority and tools. Use the available Linear tools
-and relevant workspace Agent Skills for full documents, criteria, and work records.
+Read the shared [tracking model](../crw-canon/references/tracking-model.md) for tracking document
+authority and access. Use `gh` against the tracking repository
+([Use the tracking access](../crw-canon/references/tracking-model.md#use-the-tracking-access)) for full issues, criteria, and work records.
 Restate a bundled scope or model correction to resolve it, and refresh the state from the records when the user
 needs a refreshed briefing. Route roadmap authoring to
 [crw-plan](../crw-plan/SKILL.md) within the user's requested scope.
 
 ## Determine the requested operation
 
-A submitted `$crw-run <Linear project link>` execution request, where a plugin
+A submitted `$crw-run <milestone link>` execution request, where a plugin
 installation exposes this skill as `crw:crw-run`, designates or restores
 this task as the fixed child using [Project parent binding](../crw-plan/references/integrations.md#project-parent-binding)
 and executes the agreed project scope. Record that scope and delivery boundary,
@@ -113,7 +113,7 @@ title, and sidebar pin, then continue the authorized execution here.
 Goal mode is Run's one optional mode: the child holds a native host goal, and the host's
 automatic continuation carries the run across turns. It is entered only by an explicit request for a
 child goal on the project, such as a goal for the run, keeping or restoring a goal the child already
-holds, or `$crw-loop` given a Linear project and coordination intent. In the last case no loop starts:
+holds, or `$crw-loop` given a milestone and coordination intent. In the last case no loop starts:
 say so, and continue here in goal mode. A *loop* is the PABCD completion loop of one task, owned by
 `crw-loop`; goal mode is this mode, and the two are different procedures. The child follows
 [Goal mode](references/goal-mode.md) and never the `crw-loop` or `crw-pabcd` procedure, with or without
@@ -176,7 +176,7 @@ The child carries a project one milestone at a time, and starts one run of the b
   - a `close` step is `close_agent` for the step's agent: a finished subagent holds its slot of `agents.max_threads` until it is closed.
 
   While subagents work, alternate `wait_agent` on the open subagents (a long timeout) with `crw flow next RUN --wait 600 --json`. `crw flow dispatched` binds a subagent once the run has read it on the host (the thread that spawned it, the `crw-flow-op:` marker of its first message and its role's pair); a `pair_mismatch` answer names the subagent to close and the pair to spawn again with, and the step stays. A spawn that fails with `agent thread limit reached` leaves its step too: close what the hint names, then take the step again. The child never copies a subagent's answer into the run: the run reads it from the host, validates and records it, and the child edits no node's directory. `crw flow next` resumes the run itself when no process holds it and it is neither paused nor over, writes the owner binding again when it is missing, and says when the run waits for a decision or is over (`ended`).
-- **What this thread handles.** Besides its steps, the thread handles only two things that need judgment. The first is an escalation of the run: it arrives as a notice from the run, `crw flow show RUN` gives the cause, and the thread decides within its own authority, or hands the decision up (see *What goes up* below), and once the parent (repository session) has recorded its answer in the relay's user-decision record (`crw relay decision-answer`) the thread applies that record with `crw flow answer`, which writes the answer to the run's journal. The second is the receipt of an oversized issue, an issue the architect sized for an issue child: the receipt arrives as a relay delivery, and in that turn the thread runs `crw flow apply --event E --turn T`. Exit 0 is an applied verdict, 1 a refusal (an integrity refusal is also an escalation), 3 `next_turn` (apply it again in a later turn). When the run says a Linear summary is owed, the thread drains it as a record write (claim, write with its own connector, read back, complete); that is not control of the run.
+- **What this thread handles.** Besides its steps, the thread handles only two things that need judgment. The first is an escalation of the run: it arrives as a notice from the run, `crw flow show RUN` gives the cause, and the thread decides within its own authority, or hands the decision up (see *What goes up* below), and once the parent (repository session) has recorded its answer in the relay's user-decision record (`crw relay decision-answer`) the thread applies that record with `crw flow answer`, which writes the answer to the run's journal. The second is the receipt of an oversized issue, an issue the architect sized for an issue child: the receipt arrives as a relay delivery, and in that turn the thread runs `crw flow apply --event E --turn T`. Exit 0 is an applied verdict, 1 a refusal (an integrity refusal is also an escalation), 3 `next_turn` (apply it again in a later turn). When the run says a coordination summary is owed, the thread drains it as a record write (claim, write with `gh`, read back, complete); that is not control of the run.
 - **What this thread does not do.** It does not release, correct, accept or integrate a node of a plan a run owns. It never claims the coordinator epoch of a plan a run holds: the run claims the epoch before its first fenced write, so a `dag-coordinator-claim` by this thread would raise the epoch past the run's, the run's next fenced write would be refused with `stale_coordinator_epoch`, and that milestone ends `incomplete`. An out-of-band `dag-*` transition (a release, an acceptance, an integration or a decision written by hand into a run's plan) is raised as an escalation to the parent (repository session), never made here.
 - **A run that stopped.** `crw flow ps` and `crw flow show` say whether it is `dead`, `held` or over. A run whose process died is taken again with `crw flow resume`, which keeps its claim (`crw flow next` does it for a run no process holds); a call in `recovery_hold` is settled only with `crw flow recover`. `crw flow pause` and `crw flow cancel` follow an instruction, not a hunch.
 - **What goes up.** The run reports each closed milestone to the parent (repository session) itself. This thread lifts a project-level blocker or a decision request with `crw flow report-up`, with the evidence file, because an agent node reports nothing upward on its own.
@@ -260,7 +260,7 @@ them. Higher-priority host/tool restrictions still apply.
 
 | Invocation context | Action |
 |---|---|
-| Submitted `$crw-run <Linear project link>` execution request with no narrower operation | Bind/restore the fixed child and execute the agreed project scope, including successors, with no child goal, ending the turn when only waiting remains once the readiness facts hold; host restrictions and an explicit no-goal limit still apply |
+| Submitted `$crw-run <milestone link>` execution request with no narrower operation | Bind/restore the fixed child and execute the agreed project scope, including successors, with no child goal, ending the turn when only waiting remains once the readiness facts hold; host restrictions and an explicit no-goal limit still apply |
 | Request to create/reuse issue child tasks, a submitted prompt expressing that intent, or clear project delegation after independent tasks were established as the execution workflow | Reuse the responsible task first; create only when needed within that scope and allowed by the host, without another authorization round |
 | Concrete new-task plan followed by the user's acceptance, such as “진행해” or “응” | Execute the accepted plan within its stated scope; do not ask for a creation keyword |
 | Resume of an authorized run, including after compaction | Recover its authorization source, scope, and settings; refresh ownership and prerequisites, then continue the remaining in-scope obligations, including successors. Preserve an explicitly batch-limited assignment; do not repeat approval already covering the scope |
@@ -292,14 +292,14 @@ does not by itself create a goal or prove that a `crw-loop` started.
 
 ## Establish the project baseline
 
-Read the linked Linear project, canonical planning/decision documents, milestone
-descriptions, full issue criteria, and blocking relations through the available
-Linear connector. Inspect the
+Read the milestone and its description, canonical planning/decision documents,
+full issue criteria, sub-issues, and the `Blocked by:` lines through `gh`
+(`crw flow plan-input --milestone OWNER/NAME#N` shows the milestone as a plan input). Inspect the
 repository's applicable guidance, branch, dirty state, worktrees, and relevant
 implementation. Refresh volatile claims before acting. A project's summary prose,
 milestone percentage, issue status, merged PR, and deployed behavior can disagree;
 record the discrepancy rather than silently treating them as equivalent.
-Missing connector access is a concrete limitation, not permission to invent issue details.
+Missing tracking access is a concrete limitation, not permission to invent issue details.
 
 For a standalone issue, read that issue, its linked canonical documents and
 blocking relations directly; project and milestone reads are inapplicable. Keep
@@ -356,17 +356,17 @@ round count is not a reason to send an approved correction upward. Do not invent
 increase concurrency; an issue the [size check](#check-the-size-before-dispatch) flags is reconciled through `crw-plan`'s boundary rules before dispatch, when the concept boundary separates it and a useful split fits the authorized scope.
 One issue runs as one packet and one delivery today (a task branch and its head for the
 integrator, or a pull request where one is named), and a batch keeps those
-separate pairs, under the shared [issue-to-PR mapping](../crw-canon/references/linear-model.md#issue-to-pr-mapping)
+separate pairs, under the shared [issue-to-PR mapping](../crw-canon/references/tracking-model.md#issue-to-pr-mapping)
 and the work-unit rules (`POLICY.md#work-units-review-and-integration` in the CRW repository). Several
 packets for one feature are allowed by policy but are not switched on until their
 support lands. If one issue needs several PRs, or a proposed PR would deliver
 several issues, reconcile the plan through `crw-plan` before new dispatch;
 preserve existing owners and active work.
 
-Keep the human-readable coordination record in the project's linked Linear
-document as part of the management assignment, without a separate recording request.
-For a standalone issue, use its existing linked coordination document or a compact
-owned section in the issue within the authorized recording scope. Keep private
+Keep the human-readable coordination record in the milestone's coordination issue
+(each comment opens with the `[layer · session]` header; the end condition stays in the milestone description),
+as part of the management assignment, without a separate recording request.
+For a standalone issue, use its own comments within the authorized recording scope. Keep private
 recovery receipts keyed by the issue and actual task IDs; no project record or
 project-level child binding is required. If delegation or a relay is used, retain
 the real coordinator task ID and routing identity; projectless does not mean
@@ -374,13 +374,13 @@ coordinatorless. Preserve unrelated issue content on each update.
 For explicit read-only scope or unavailable access, return the unsynced update and
 retain the task's private recovery receipt. Keep raw launch
 receipts and sensitive evidence in an appropriate private location; local
-snapshots point to the Linear document and are not another planning source.
+snapshots point to the issue and are not another planning source.
 Do not store project state or credentials inside this installed skill.
-A DAG plan's Linear summary is the plan's own queue in the relay, drained by the child with its own connector: take an entry, write it, read it back, confirm it, retry only
-that entry ([The Linear summary of a DAG plan](references/relay.md#the-linear-summary-of-a-dag-plan)).
+A DAG plan's coordination summary is the plan's own queue in the relay, drained by the child with its own `gh` write: take an entry, write it, read it back, confirm it, retry only
+that entry ([The coordination summary of a DAG plan](references/relay.md#the-coordination-summary-of-a-dag-plan)).
 
 Before assigning a checkout, apply the shared
-[repository resolution](../crw-canon/references/linear-model.md#resolve-the-implementation-repository)
+[repository resolution](../crw-canon/references/tracking-model.md#resolve-the-implementation-repository)
 and put its verified issue target, remote, integration branch and full baseline
 in the packet. Reuse an existing task's worktree and issue branch on resume;
 classification changes alone never relocate it. Non-PR work can omit those code
@@ -579,7 +579,7 @@ are reported explicitly, with no silent substitution of a different workflow.
 
 ### Check the issue is ready before release
 
-Before an issue gets a packet, a task, a `managed-start` or a DAG release, run `crw skill issue-ready check` on the issue as the Linear tools return it (id, title, description and labels; JSON on stdin or saved to a file), before the size check below. It judges the [release gate](../crw-canon/references/release-gate.md#the-release-gate): registered criteria, edit regions, a decided answer with no design question left, the test cases to write first, and the done condition. Like the size check, its answer never stops the release: a reversible step is warned and recorded, not refused.
+Before an issue gets a packet, a task, a `managed-start` or a DAG release, run `crw skill issue-ready check` on the issue as a GitHub issue gives it once mapped to `id`, `title`, `description` and `labels` (the `gh issue view … --jq` command of [Use the tracking access](../crw-canon/references/tracking-model.md#use-the-tracking-access); JSON on stdin or saved to a file), before the size check below. It judges the [release gate](../crw-canon/references/release-gate.md#the-release-gate): registered criteria, edit regions, a decided answer with no design question left, the test cases to write first, and the done condition. Like the size check, its answer never stops the release: a reversible step is warned and recorded, not refused.
 
 - `ready` (exit 0): the release goes on under the checks below.
 - `not_ready` or `design_first` (exit 0, a warning): the decision says which, and each of the `reasons` is printed on stderr as a warning; it names the missing item and the heading that supplies it, and a `design_first` reason names the label or the open question. Write the reasons into the coordination record beside the launch record and report them to the issue's owner. What the child can supply from the evidence at hand it supplies before the release and runs the check again: the content of a missing heading, and for a `design_first` issue the design (an architect-role proposal and the child's decision, written into the decided answer, the label removed). Otherwise the release goes on (the packet, the task, the `managed-start` or the `dag-release`) with the warning recorded. A held issue never holds the rest of the ready set.
@@ -591,7 +591,7 @@ The relay's release request does not carry the issue body, so the warning is thi
 ### Check the size before dispatch
 
 Before an issue gets a packet, a task or a `managed-start`, and before a DAG release of it (a release goes through `managed-start`),
-run `crw skill issue-size check` on the issue as Linear returns it, its JSON on stdin or saved to a file. The answer is advisory:
+run `crw skill issue-size check` on the issue as a GitHub issue gives it once mapped the same way, its JSON on stdin or saved to a file. The answer is advisory:
 it never blocks a dispatch and never exits non-zero on the count alone. Read the report, not only the
 exit status: `decision`, `reasons`, `limits`, `concept_questions`, `bundle_reason` when one was given, for an over-baseline issue `proposal`, and `observed.unread_headings`. The command counts only
 the sections whose headings it knows, and only criteria written as list items or as rows of a pipe table under such a heading; a list
@@ -639,7 +639,7 @@ for which unreleased nodes share a concept; where no such command or output exis
   own issue, not a re-split of the released one.
 
 This check changes the plan, not the execution, and it dispatches nothing on its own. A plan amendment that rewrites
-completion criteria or closes an absorbed issue is a Linear write, so it needs scope covering that write: where the run is
+completion criteria or closes an absorbed issue is a tracking write, so it needs scope covering that write: where the run is
 authorized only to execute the existing issues, prepare the bundle change and return it as a proposal instead of writing it.
 
 ### Record the pair choice at release
@@ -883,8 +883,8 @@ Describe evidence separately:
 | Verified for integration | Coordinator reviewed the exact revision and acceptance criteria |
 | Receipt recorded, where a relay holds the assignment | The issue child's completion receipt with its revision hash and manifest |
 | Verification decision, where a relay holds the assignment | A verdict at the current head revision, covering the registered criteria and naming the criteria set it was reviewed against |
-| Coordination summary written | The coordinator's own connector write, confirmed by a readback carrying that job's structured record |
-| Merged by the coordinator | Linear criteria and the delivered head's verification checked, then the actual landing on the intended branch verified (for an in-flight pull request, its latest diff, base, head, checks and review resolution) |
+| Coordination summary written | The coordinator's own `gh` write, confirmed by a readback carrying that job's structured record |
+| Merged by the coordinator | The issue's criteria and the delivered head's verification checked, then the actual landing on the intended branch verified (for an in-flight pull request, its latest diff, base, head, checks and review resolution) |
 | Release or deployment | The user's approval for that action, obtained before a merge known to trigger it |
 
 Do not assume a worktree/task returned by a backend appears in the app's project.
@@ -981,7 +981,7 @@ vocabulary names is reported as a blocker against the state that does apply, und
 
 An issue child blocked on a person is answered with a decision, never with a verdict or a message the relay cannot see: the answer goes back through `decision-reply`; for a split approval or a scope change, which open the next generation of the same issue child, `dag-correct` then records that generation for its DAG node; and the issue child's result in it is ruled and accepted like any other. Follow [Answering a child that stopped for input](references/relay.md#answering-a-child-that-stopped-for-input). A message sent outside that route leaves only the trace `admit-turn` records, which the same section names as the fallback.
 
-After integration, apply [Implementation Done](../crw-canon/references/linear-model.md#implementation-done)
+After integration, apply [Implementation Done](../crw-canon/references/tracking-model.md#implementation-done)
 before reporting or recording the issue complete. Read back the one delivery's landing: the commit on the intended branch (the integrator's fast-forward) with its repository and branch, or the pull request's actual merge where one was named. For legacy multi-PR
 scope, verify the reconciled deliveries and their combined coverage instead. Retain
 existing accepted operational criteria and never infer completion from an automatic status alone.
@@ -1167,9 +1167,9 @@ still there. So the close of a run states that once, in one place: every checkou
 branch, temporary artifact, evidence root and background process this run created,
 changed, or is deliberately keeping, each with its owner, the reason it is retained,
 and the next action, including who may release it and on what event. It reuses the
-records that already exist and adds no new store: the project's Linear coordination
-record for the human-readable list, or for a standalone issue the existing linked
-coordination document or this task's owned section in that issue, with the private
+records that already exist and adds no new store: the milestone's coordination
+issue for the human-readable list, or for a standalone issue
+its own comments, with the private
 receipts keyed by the issue and the actual task IDs carrying raw detail under
 [OPS-5.4](references/operations.md#ops-54-evidence-location).
 
@@ -1249,7 +1249,7 @@ not refresh is marked unrefreshed with its observation time rather than reported
 
 A record saying completed is a claim rather than a verdict, and it is corroborated against the
 evidence its own delivery shape requires under
-[Implementation Done](../crw-canon/references/linear-model.md#implementation-done): for implementation work that is
+[Implementation Done](../crw-canon/references/tracking-model.md#implementation-done): for implementation work that is
 the delivery landed in its intended target together with every accepted criterion still
 outstanding beside it, installation or live verification included where the criteria named them;
 for accepted non-PR work it is the agreed observable result, which has no pull request by design.
@@ -1316,7 +1316,7 @@ This section is the work of [the parent](../crw-canon/references/hierarchy.md#th
 | Reads the reports | `crw flow reports --project PROJECT --unread` (`crw flow reports --unread` for every report waiting), `crw flow report-ack REPORT --turn TURN` |
 | Runs the midpoint check | `crw manage checkpoint`, `crw manage checkpoint record` |
 
-Read the shared [Linear model](../crw-canon/references/linear-model.md) for document authority and the [initiative body standard](../crw-canon/references/linear-model.md#initiative-body-standard) for what an initiative record holds. Settling a milestone and its issues belongs to [crw-define](../crw-define/SKILL.md) and the plan to [crw-plan](../crw-plan/SKILL.md).
+Read the shared [tracking model](../crw-canon/references/tracking-model.md) for document authority and the [milestone description standard](../crw-canon/references/tracking-model.md#milestone-description-standard) for what a milestone description holds. Settling a milestone and its issues belongs to [crw-define](../crw-define/SKILL.md) and the plan to [crw-plan](../crw-plan/SKILL.md).
 
 ### Hold the seat, bind the children, hand the seat over
 
@@ -1332,7 +1332,7 @@ An initiative link by itself is not a target. Where a request merely cites one, 
 
 Fix the approved project set and the completion boundary, reuse the existing children and their issue children, and hand each child its project brief through the [coordination message](references/task-packet.md#coordination-message). The project order is the parent's decision: which project goes first, which children run together because their projects share nothing that needs an order, and which wait. A project's child starts only when its prerequisites hold and the cap on children that `crw manage capacity` judges allows it; a project waiting on either stays in the approved set and starts when both hold. Do not plan or dispatch another child's issues, and do not reach into any project's issue children or subagents.
 
-Hold the order in which projects reach a shared target, a shared resource and an unresolved disagreement between children as this layer's decisions ([direct coordination](../crw-canon/references/hierarchy.md#direct-coordination-between-children)). A project is finished on its child's verified outcome, corroborated per subject under [Implementation Done](../crw-canon/references/linear-model.md#implementation-done); the initiative is finished when its finish condition holds on those outcomes. Recovery and restatement of a supervision are in [Initiative supervision](references/initiative-supervision.md#recover-the-supervision). The parent runs without a native goal or an automatic loop; [goal mode](references/goal-mode.md) is a child's optional mode and never the parent's.
+Hold the order in which projects reach a shared target, a shared resource and an unresolved disagreement between children as this layer's decisions ([direct coordination](../crw-canon/references/hierarchy.md#direct-coordination-between-children)). A project is finished on its child's verified outcome, corroborated per subject under [Implementation Done](../crw-canon/references/tracking-model.md#implementation-done); the initiative is finished when its finish condition holds on those outcomes. Recovery and restatement of a supervision are in [Initiative supervision](references/initiative-supervision.md#recover-the-supervision). The parent runs without a native goal or an automatic loop; [goal mode](references/goal-mode.md) is a child's optional mode and never the parent's.
 
 ### Answer what a child raises
 
@@ -1403,7 +1403,7 @@ stop one.
 command records one project per call and the next check sums counts that all start at this check. Record the crossings consumed in the
 coordination record as well. The midpoint check is a diagnosis: it
 records and proposes. Work worth fixing becomes an issue under the concept bundle rules, and anything not worth doing
-now goes to the sweep label Backlog, but both are Linear writes and need scope covering them: where the current authorization
+now stays at the lowest priority label `P3`, but both are tracking writes and need scope covering them: where the current authorization
 does not cover creating or relabeling issues, return the candidates as proposals with the check's evidence instead of writing
 them. The release schedule and the lanes do not stop: a midpoint check never pauses a lane or holds a release.
 

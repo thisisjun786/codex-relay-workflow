@@ -1,8 +1,8 @@
-# Linear and implementation workflow integration
+# Tracking and implementation workflow integration
 
 Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../crw-canon/references/hierarchy.md#the-levels).
 
-The rules that planning and run setup keep to themselves: how a task resolves its Linear project target, how it binds to a project and recovers that binding, and how an issue's child pair is chosen and recorded. What more than one skill reads (the levels, the Linear model, the release gate, the schedule contract, delivery and the execution roles) is in [crw-canon](../../crw-canon/SKILL.md). Apply these rules within the user's assignment and current host permissions.
+The rules that planning and run setup keep to themselves: how a task resolves its milestone target, how it binds to a project and recovers that binding, and how an issue's child pair is chosen and recorded. What more than one skill reads (the levels, the tracking model, the release gate, the schedule contract, delivery and the execution roles) is in [crw-canon](../../crw-canon/SKILL.md). Apply these rules within the user's assignment and current host permissions.
 
 ## Resolve the project target
 
@@ -10,11 +10,11 @@ Use an explicit target for the current operation. When it is omitted, use the
 current assignment and the verified management binding for this task. A
 temporary question or link for another project does not change the persistent
 binding; a change to that binding needs an explicit designation or switch.
-Distinguish Linear project IDs, Codex task/host IDs, Desktop project IDs, and
-repository identity. One repository may support several Linear projects, and
+Distinguish milestone refs (`OWNER/NAME#N`), Codex task/host IDs, Desktop project IDs, and
+repository identity. One repository may support several milestones, and
 a project delivers into one integration target, so work in several repositories is one
-project per repository. Resolve names to stable project
-IDs using the supplied link, verified binding, and semantic scope. If same-name
+project per repository. Resolve names to stable milestone
+refs using the supplied link, verified binding, and semantic scope. If same-name
 candidates remain ambiguous, ask before writing or binding; do not pick by
 title alone. A rename or changed initiative relation does not change a binding, and a title is not
 read the other way either. The management title carries its project's product-family label by the
@@ -37,7 +37,7 @@ Run, goal mode included, performs this setup itself. A binding-only request does
 
 Run, goal mode included, uses this shared setup and recovery procedure before execution.
 
-Make this Codex task the continuing management point for one Linear project.
+Make this Codex task the continuing management point for one milestone.
 Preserve that target across follow-up requests and context recovery. This parent
 orchestrates one project; its independent children each orchestrate one issue
 under the shared [scope of each level](../../crw-canon/references/hierarchy.md#scope-of-each-level), and a
@@ -47,14 +47,14 @@ its children.
 ### Establish the link
 
 Resolve the actual current task ID, host when available, and cwd from the host's
-current identity and supported task tools. Resolve the supplied Linear project
-to its stable ID and URL; read its linked canonical documents and relevant
+current identity and supported task tools. Resolve the supplied milestone
+to its stable ref and URL; read its description, its linked canonical documents and relevant
 current work. Inspect repository identity, applicable guidance, branch,
 worktrees, and dirty changes when a repository is involved. A folder, task
-title, or Desktop project ID is not a Linear project ID.
+title, or Desktop project ID is not a milestone ref.
 
-Look for an existing management binding in the project's linked coordination
-record before changing anything. Match task, host, and project IDs. Reuse the
+Look for an existing management binding in the milestone's coordination
+issue before changing anything. Match task, host, and project IDs. Reuse the
 same binding on repeated requests. If another task is already the coordinator,
 read its recorded ownership and current status without waking it. Ask only
 when the user has not resolved a material ownership conflict.
@@ -67,13 +67,13 @@ inspect another project temporarily does not replace the persistent focus.
 ### Set the app presentation and record
 
 A request to make this the fixed management task covers its matching title,
-sidebar pin, and a compact Linear management record. Respect an explicit title,
+sidebar pin, and a compact management record in the milestone's coordination issue. Respect an explicit title,
 no-rename, unpinned, or read-only constraint.
 
 Use a concise project summary as the management task title, led by the linked
 project's product-family label in brackets, as in `[CRW] 설치형 플러그인 전환`: the
 short outcome the project exists for, named so the title also reads as the task
-that manages it. Write the label the project actually carries, exactly as Linear
+that manages it. Write the family the project actually carries, exactly as the tracking repository
 spells it, without expanding, translating, abbreviating or changing its case, and
 without a table of families kept beside the workspace's own. Initiative membership
 is still not a prefix, and no initiative or multiple initiatives needs no
@@ -87,16 +87,15 @@ prefix. This convention names the child's Codex task, its row of the one
 [thread title table](../../crw-canon/references/hierarchy.md#thread-titles), which also holds the titles of the
 repository session (relay role `supervisor`) and an issue child and says who names a thread and when.
 
-Take the family from the project's product-family label group. The project read
-returns a flat list of label names without the group each belongs to, so the value
-carries its own provenance — the label group where a surface shows it, or the family
-already recorded in this binding with its source — and a list of labels alone is not
-that evidence, because a count is not membership. Exactly one such label is the
-family. None is a legitimate classification rather than an error, and more than one
+Take the family from the product-family labels of the milestone's issues, which are
+spelled `family:NAME`. The prefix is the group, so the value carries its own provenance
+— the `family:` label itself, or the family already recorded in this binding with its
+source — and a label without the prefix is not that evidence, because a name alone is
+not membership. Exactly one family among them is the family. None is a legitimate classification rather than an error, and more than one
 is a question; in both cases leave the title unprefixed, record what is missing as
 part of the unverified state below, and ask instead of choosing. Never read the
-family from the repository, the working directory, the task's model or the Linear
-team key, which often spells the same word and is a different field.
+family from the repository, the working directory, the task's model or the tracking
+repository's name, which often spells the same word and is a different field.
 
 Apply the prefix once. A title already carrying this family keeps it — that is this
 bracket alone, or this bracket separated from the body by a space, since a label may
@@ -126,15 +125,15 @@ read by task ID returns the requested string; a read returning anything else is 
 mismatch to report with both strings rather than a success with a caveat, and no
 read at all is unread rather than a failed write.
 
-Reuse a suitable linked coordination document. When only a canonical planning
-document exists, a compact management section there is sufficient. Read scoped,
-paginated document listings and candidate contents before creating a document.
-Create a small project-linked coordination document only if none is suitable.
+Reuse a suitable coordination issue of the milestone. When only a canonical planning
+issue exists, a compact management comment there is sufficient. Read the paginated
+issue list of the milestone and candidate contents before creating an issue.
+Create a small coordination issue in the milestone only if none is suitable.
 Preserve specifications, unrelated content, and existing human edits.
 
 Record only what supports recovery:
 
-- Stable Linear project ID/URL and canonical document links.
+- Stable milestone ref/URL and canonical document links.
 - Actual management task ID, host when known, and observed task title.
 - Repository identity and checkout path when relevant.
 - Assignment, delivery limits, and the source/date of the user's designation.
@@ -143,24 +142,23 @@ Record only what supports recovery:
   that read exposes unchanged. Whatever it does not expose is read from its owning
   surface or recorded unverified, rather than claimed preserved on its behalf.
 
-Read back the saved document and its project relation. Reconcile uncertain
+Read back the saved comment and its milestone. Reconcile uncertain
 writes by reading before retrying; an accepted request is not a verified result.
-If Linear access is unavailable or writes are outside scope, retain a clearly
+If tracking access is unavailable or writes are outside scope, retain a clearly
 unsynced summary in the task's permitted private location and return the missing
 step. Never store project bindings in installed skills, repository procedures,
-or global memory. A verified title/pin and a verified Linear record are separate
+or global memory. A verified title/pin and a verified tracking record are separate
 claims; neither proves automatic wakeups or background execution.
 
 ### Continue from the fixed project
 
-On recovery, locate this task's recorded binding and refresh live project,
-document, and managed-task state before acting. Use current assignment context
+On recovery, locate this task's recorded binding and refresh live milestone,
+issue, and managed-task state before acting. Use current assignment context
 and scoped recall to find a lost record. A copied binding for another task does
 not assign ownership here. Follow the shared target-resolution rules for
 explicit one-off targets and changes to the persistent link.
 
-Keep the recorded project ID when its name, product labels, or initiative
-relations change. Existing titles are presentation, whether they carry a
+Keep the recorded milestone ref when its name or product labels change. Existing titles are presentation, whether they carry a
 product-family prefix or an initiative one, and neither is a reason to rebind or
 rename during recovery. A project whose family has changed does not have its prefix
 corrected on sight, and existing parents are not renamed in bulk. Refresh the title

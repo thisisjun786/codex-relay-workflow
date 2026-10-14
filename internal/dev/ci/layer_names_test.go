@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"unicode"
+	"unicode/utf8"
 )
 
 // CRW-1352 (Jun 10-14 04:3x, Sion relaying; design-1316 section 18.1): the session layers are named
@@ -210,8 +212,9 @@ func layerLinkProblems(rel, text string) []string {
 		}
 	}
 	body := normalized(withoutFrontmatter(text))
-	problems = append(problems, bareLayerWordProblems(rel, body)...)
-	if (uses || bareLayerWordUsed(rel, body)) && !regexp.MustCompile(`\]\([^)]*hierarchy\.md#the-levels\)`).MatchString(text) {
+	masked := normalized(maskCode(withoutFrontmatter(text)))
+	problems = append(problems, bareLayerWordProblems(rel, body, masked)...)
+	if (uses || bareLayerWordUsed(rel, masked)) && !regexp.MustCompile(`\]\([^)]*hierarchy\.md#the-levels\)`).MatchString(text) {
 		problems = append(problems, rel+": names a layer and does not link hierarchy.md#the-levels")
 	}
 	return problems
@@ -295,8 +298,32 @@ var nonLayerUse = func() *regexp.Regexp {
 	return regexp.MustCompile(`(?i)` + strings.Join(quoted, "|"))
 }()
 
-// bareLayerWordFirsts is the offset of the first bare use of each word in flatText, after the literal
-// non-layer phrases are blanked, whatever their case; a blank keeps the length of what it covers.
+// codeToMask is a fenced block (``` or ~~~) or an inline code span: a command, a schema key or an example,
+// where "the parent" is quoted text and names no session (CRW-1402).
+var codeToMask = regexp.MustCompile("(?s)```.*?```|~~~.*?~~~|`[^`\n]*`")
+
+// maskCode is text with the code blanked, character for character: every non-space character of a code span
+// or fenced block becomes "_" and the spaces and line breaks stay, so normalized(maskCode(text)) and
+// normalized(text) are the same number of bytes with every offset in the same place. The first use is looked for in
+// the masked text and its role id is read from the unmasked one, which keeps the code span `supervisor`
+// of "relay role `supervisor`" intact.
+func maskCode(text string) string {
+	return codeToMask.ReplaceAllStringFunc(text, func(code string) string {
+		var b strings.Builder
+		for _, r := range code {
+			if unicode.IsSpace(r) {
+				b.WriteRune(r)
+			} else {
+				b.WriteString(strings.Repeat("_", utf8.RuneLen(r)))
+			}
+		}
+		return b.String()
+	})
+}
+
+// bareLayerWordFirsts is the offset of the first bare use of each word in masked, the text with its code blanked
+// (maskCode), after the literal non-layer phrases are blanked, whatever their case; a blank keeps the length of
+// what it covers.
 func bareLayerWordFirsts(flatText string) map[string]int {
 	flatText = nonLayerUse.ReplaceAllStringFunc(flatText, func(match string) string { return strings.Repeat("_", len(match)) })
 	firsts := map[string]int{}
@@ -319,13 +346,14 @@ func bareLayerWordUsed(rel, flatText string) bool {
 
 var linkTarget = regexp.MustCompile(`^\]\([^)]*\)`)
 
-func bareLayerWordProblems(rel, flatText string) []string {
+// bareLayerWordProblems looks for the first bare use in masked and reads what follows it in flatText.
+func bareLayerWordProblems(rel, flatText, masked string) []string {
 	if !bareLayerWordChecked(rel) {
 		return nil
 	}
 	var problems []string
 	for _, word := range []string{"parent", "child"} {
-		end, ok := bareLayerWordFirsts(flatText)[word]
+		end, ok := bareLayerWordFirsts(masked)[word]
 		if !ok {
 			continue
 		}
@@ -397,6 +425,31 @@ func TestLayerNamesLinkTheTable(t *testing.T) {
 			t.Errorf("a dispatch case fragment is checked as part of its document: %v", p)
 		}
 	})
+	t.Run("fixture: code spans and fenced blocks hold no layer word (CRW-1402)", func(t *testing.T) {
+		link := " See [the level table](x/hierarchy.md#the-levels)."
+		prose := "The parent (repository session, relay role `supervisor`) decides." + link
+		for name, good := range map[string]string{
+			"a fenced block before the prose":      "```\nthe parent runs the child\n```\n" + prose,
+			"a fenced block with a language":       "```sh\ncrw say the child\n```\n" + prose,
+			"an inline span before the prose":      "Run `the parent` first. " + prose,
+			"code only, so no layer and no link":   "Run `the parent` and `the child`.\n\n```\nthe child\n```\n",
+			"multibyte text before the span":       "가나다 `the parent` 라마바. " + prose,
+			"the role id after the span is intact": "The child (project session, relay role `parent`) runs `the parent` for it." + link,
+		} {
+			if p := layerLinkProblems("docs/a.md", good); len(p) != 0 {
+				t.Errorf("%s: %v", name, p)
+			}
+		}
+		// Code does not hide a prose use: the first bare use in the prose still needs its role id and the link.
+		for name, bad := range map[string]string{
+			"a fenced block, then a bare prose use": "```\nthe parent\n```\nThe parent decides.",
+			"an inline span, then a bare prose use": "Run `the child`. The child decides.",
+		} {
+			if p := layerLinkProblems("docs/a.md", bad); len(p) != 2 {
+				t.Errorf("%s: %v, want the first use and the link", name, p)
+			}
+		}
+	})
 }
 
 // TestRunInitiativeOffThePath: the initiative lead's skill is gone and no 1.0-path file sends anyone to it.
@@ -436,12 +489,35 @@ func TestRunSkillUsesTheLayerNames(t *testing.T) {
 		if p := runSkillParentProblems("The parent dispatches a child for each issue, and a parent goal waits.\n"); len(p) != 2 {
 			t.Errorf("relay sense: %v", p)
 		}
+		// CRW-1402: the word after the parent is read too, so a relay-sense compound in the parent's section is caught.
+		section := "Intro.\n## The parent: the repository session\n\n"
+		for _, bad := range []string{
+			"The parent goal is set when the child starts.\n",
+			"It reads the parent binding of the thread.\n",
+			"Where the parent role is given, the repository's parent thread is named.\n",
+		} {
+			if p := runSkillParentProblems(section + bad); len(p) == 0 {
+				t.Errorf("a relay-sense compound passes in the parent's section: %q", bad)
+			}
+		}
+		for _, good := range []string{
+			"The parent decides, and the parent's goal is the repository's.\n",
+			"The parent orders the projects; the repository's parent (not a child) holds the goal.\n",
+		} {
+			if p := runSkillParentProblems(section + good); len(p) != 0 {
+				t.Errorf("good %q: %v", good, p)
+			}
+		}
 		// The sentence K6 found in the parent's own section: a parent that is no section's parent and a relay sense.
 		if p := runSkillParentProblems("Intro.\n## The parent: the repository session\n\nEverywhere else in this skill the task is a child and the word parent keeps its relay sense.\n"); len(p) != 2 {
 			t.Errorf("relay sense in the parent's section: %v", p)
 		}
 	})
 }
+
+// relayCompound is a noun that follows "parent" in its relay sense (the parent goal, the parent binding, the parent role):
+// in the parent's section, "the parent" is the repository session, which has no such compound (CRW-1402).
+var relayCompound = regexp.MustCompile(`(?i)^ (?:goals?|bindings?|roles?|threads?|tasks?|ids?|keys?|scopes?|reports?|packets?|pairs?|lines?)\b`)
 
 var (
 	parentWord      = regexp.MustCompile(`(?i)\bparents?\b`)
@@ -481,6 +557,8 @@ func runSkillParentProblems(text string) []string {
 		for _, m := range parentWord.FindAllStringIndex(inSection, -1) {
 			if !sectionParent.MatchString(inSection[max(0, m[0]-len("repository's ")):m[0]]) {
 				problems = append(problems, "crw-run: a parent in the parent's section that is not the section's parent: ..."+inSection[max(0, m[0]-60):min(len(inSection), m[1]+40)])
+			} else if relayCompound.MatchString(inSection[m[1]:]) {
+				problems = append(problems, "crw-run: a parent in the parent's section that is a relay-sense compound, not the repository session: ..."+inSection[max(0, m[0]-60):min(len(inSection), m[1]+40)])
 			}
 		}
 		flat += " " + inSection

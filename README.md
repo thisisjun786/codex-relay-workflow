@@ -320,7 +320,7 @@ into dependent issues. Non-PR research or design keeps a verified result instead
 Initiatives represent goals; product family is a project label, while an issue's
 repository label identifies its actual edit target. Project names need no product prefix,
 and views remain the user's choice. See the shared
-[Linear operating model](plugins/crw/skills/crw-canon/references/linear-model.md#linear-operating-model).
+[tracking operating model](plugins/crw/skills/crw-canon/references/tracking-model.md#tracking-operating-model).
 
 `crw-status` reports where the work actually is, by level from the parent (repository session) down to the issue,
 and sends a gap one level down to its owner. When asked what to do next it distinguishes choosing

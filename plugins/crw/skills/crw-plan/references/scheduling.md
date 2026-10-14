@@ -111,7 +111,7 @@ have. Run the contract's four graph checks before writing and report what each o
 settled before the graph is written: correct the edge or the date that is actually wrong and record
 why, and where the available evidence cannot say which of them is wrong, leave that edge an
 explicit unresolved planning dependency instead of dropping it or writing a graph already known to
-be broken. Where the connector cannot write a relation, record the prerequisite as a line naming
+be broken. Where a `Blocked by:` line cannot be written, record the prerequisite as a line naming
 both subjects.
 
 An edge comes from two things and nothing else: a result this subject cannot finish without, and a
@@ -153,9 +153,9 @@ under [Re-evaluating at a checkpoint](#re-evaluating-at-a-checkpoint).
 
 ## Recording the schedule baseline and its changes
 
-Write the schedule baseline, the current approved dates and every change into records Linear
-already holds: the project or initiative update that reports the change, the planning or
-coordination record the project already owns, and a dated comment on the changed subject. Each
+Write the schedule baseline, the current approved dates and every change into records the tracking repository
+already holds: the milestone description edit that reports the change, the planning or
+coordination issue the project already owns, and a dated comment on the changed subject. Each
 entry carries the change's time, the deciding authority, the reason, the scope it covered with
 the stable IDs added and canceled, and the before and after dates. The reason opens with the
 change reason word the contract fixes, so a reader tells a pull-in from an extension without
@@ -231,7 +231,7 @@ would make, under [Authority](#authority) below.
 
 A target read from fast records buys nothing from the rest of the delivery. Review, required
 checks, installation evidence and an unattended round trip are satisfied exactly as they were
-before the target shortened ([Implementation Done](../../crw-canon/references/linear-model.md#implementation-done)), and a
+before the target shortened ([Implementation Done](../../crw-canon/references/tracking-model.md#implementation-done)), and a
 subject waiting on its review, a decision or a host constraint carries that wait cause and stays
 unfinished. A wait is never recorded as a finish. Report a host constraint, a slow review and an
 unmet prerequisite as what they are, because a schedule that hides them is the padded one facing

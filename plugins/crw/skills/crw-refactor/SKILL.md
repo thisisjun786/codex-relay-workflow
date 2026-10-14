@@ -1,6 +1,6 @@
 ---
 name: crw-refactor
-description: "Diagnose structural debt after an initiative cycle, project or sprint from verified delivery and actual code changes. Read-only: recommends up to three bounded repairs, and a chosen one is added as a Linear issue by crw-add-issue. Use for post-cycle refactoring, duplication or compatibility cleanup."
+description: "Diagnose structural debt after a cycle, project or sprint from verified delivery and actual code changes. Read-only: recommends up to three bounded repairs, and a chosen one is added as a tracking issue by crw-add-issue. Use for post-cycle refactoring, duplication or compatibility cleanup."
 ---
 
 # CRW Refactor
@@ -9,15 +9,15 @@ Here the parent (repository session, relay role `supervisor`) and the child (pro
 
 Find what the completed cycle made harder to change, and propose the smallest useful repair. Success means reducing a demonstrated maintenance cost while preserving the features and external contracts the user wants to keep. A tidy-looking diff or a new abstraction is not evidence of that benefit.
 
-Actors: the parent and the top session, who diagnose ([the level table](../crw-canon/references/hierarchy.md#the-levels)); this skill is read-only. Read the shared [Linear model](../crw-canon/references/linear-model.md) for source authority and available tools and [execution roles](../crw-canon/references/execution-roles.md) for role ownership. Use [crw-check](../crw-check/SKILL.md) to establish the delivery boundary. A repair that is chosen becomes a Linear issue through [crw-add-issue](../crw-add-issue/SKILL.md) and runs through [crw-run](../crw-run/SKILL.md) like any other issue. Keep one owner for each operation; this skill adds no runtime, hook, analyzer or completion loop.
+Actors: the parent and the top session, who diagnose ([the level table](../crw-canon/references/hierarchy.md#the-levels)); this skill is read-only. Read the shared [tracking model](../crw-canon/references/tracking-model.md) for source authority and tracking access and [execution roles](../crw-canon/references/execution-roles.md) for role ownership. Use [crw-check](../crw-check/SKILL.md) to establish the delivery boundary. A repair that is chosen becomes a tracking issue through [crw-add-issue](../crw-add-issue/SKILL.md) and runs through [crw-run](../crw-run/SKILL.md) like any other issue. Keep one owner for each operation; this skill adds no runtime, hook, analyzer or completion loop.
 
 ## Establish the requested mode
 
 An initiative-cycle, project or sprint refactoring request gets a diagnosis and a ranked recommendation, and this skill does nothing past that: it implements nothing and starts nothing. “Diagnosis only” and “no merge/deploy” remain binding wherever they were said.
 
-At the end of a verified cycle, offer this bounded pass as the next step when it would serve the user's roadmap. A completed cycle alone does not launch a refactoring task. The diagnosis reads evidence and returns recommendations; it does not edit code or Linear, wake workers or create tasks or goals. An authorized ongoing execution elsewhere continues under its owner.
+At the end of a verified cycle, offer this bounded pass as the next step when it would serve the user's roadmap. A completed cycle alone does not launch a refactoring task. The diagnosis reads evidence and returns recommendations; it does not edit code or the tracking repository, wake workers or create tasks or goals. An authorized ongoing execution elsewhere continues under its owner.
 
-Infer the target cycle from the current assignment, linked Linear records and delivery history. Ask only when different plausible targets would materially change the diagnosis. Continue useful reads while a necessary answer is pending.
+Infer the target cycle from the current assignment, linked tracking records and delivery history. Ask only when different plausible targets would materially change the diagnosis. Continue useful reads while a necessary answer is pending.
 
 ## Verify and pin the cycle
 
@@ -53,12 +53,12 @@ Separate work so each candidate can be checked and reverted on its own when that
 
 Before suggesting a repair, define baseline checks and the observations that would demonstrate reduced cost. Label known failures with their revision, environment and reproduction; distinguish observed failures from reports you could not reproduce. Specify what will count as an introduced regression and which unaffected evidence can be reused. Preserve required coverage and external contracts; a green test with its assertion removed proves nothing.
 
-Return the verified scope and remaining gaps, the ranked candidates, why the first is worth doing now, and meaningful deferred items. This is a recommendation, not an implementation or installation claim. Return it as a reviewable proposal: the skill writes nothing to Linear or the code, and the record of a finding that someone wants kept is the issue added under the next section.
+Return the verified scope and remaining gaps, the ranked candidates, why the first is worth doing now, and meaningful deferred items. This is a recommendation, not an implementation or installation claim. Return it as a reviewable proposal: the skill writes nothing to the tracking repository or the code, and the record of a finding that someone wants kept is the issue added under the next section.
 
 ## Hand a selected candidate to the project path
 
 When the user selects a candidate, restore its evidence and compare it with the current code, active assignments and roadmap. Refresh only what changed. An invalidated candidate returns the concrete discrepancy before an issue is added; stable authorization does not need reconfirmation.
 
-The repair becomes a Linear issue through [crw-add-issue](../crw-add-issue/SKILL.md). The parent drafts the issue body with it (a draft-only request, which writes nothing) and hands the draft to the child of the project that owns the code, as crw-add-issue's callers require; that child registers the issue and then runs it through [crw-run](../crw-run/SKILL.md) as it runs any issue. When the user asks for the issue to be added, the user's request is the write intent for that one issue. Deduplicate against current issues first. Reuse an undelivered issue that already owns the candidate; a new change after a landed delivery needs a new issue and delivery under [issue-to-PR mapping](../crw-canon/references/linear-model.md#issue-to-pr-mapping), and the completed delivery is never reopened just to give the repair an owner. A defect inside the landed issue's own promise reopens that issue instead ([Late review threads](../crw-run/references/merge-readiness.md#late-review-threads)). Where writing the issue is outside the request, return the issue text as a handoff instead.
+The repair becomes a tracking issue through [crw-add-issue](../crw-add-issue/SKILL.md). The parent drafts the issue body with it (a draft-only request, which writes nothing) and hands the draft to the child of the project that owns the code, as crw-add-issue's callers require; that child registers the issue and then runs it through [crw-run](../crw-run/SKILL.md) as it runs any issue. When the user asks for the issue to be added, the user's request is the write intent for that one issue. Deduplicate against current issues first. Reuse an undelivered issue that already owns the candidate; a new change after a landed delivery needs a new issue and delivery under [issue-to-PR mapping](../crw-canon/references/tracking-model.md#issue-to-pr-mapping), and the completed delivery is never reopened just to give the repair an owner. A defect inside the landed issue's own promise reopens that issue instead ([Late review threads](../crw-run/references/merge-readiness.md#late-review-threads)). Where writing the issue is outside the request, return the issue text as a handoff instead.
 
 Put the candidate's scope, evidence, contracts, baseline failures, same-cause search boundary and finish conditions into the issue's criteria, so that the check of the finished issue can show the maintenance benefit and any introduced regression against the pinned baseline. Newly discovered unrelated improvements remain follow-up candidates. An explicit no-merge or no-deploy limit travels with the issue.

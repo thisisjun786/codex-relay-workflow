@@ -60,7 +60,7 @@ func TestSummaryPageSkillAndSpecsNameTheSameCommands(t *testing.T) {
 	if !strings.Contains(readme, "dag-outbox.md") {
 		t.Error("the relay README does not link the page")
 	}
-	if !strings.Contains(skill, "## The Linear summary of a DAG plan") || !strings.Contains(readText(t, "../../../plugins/crw/skills/crw-run/SKILL.md"), "references/relay.md#the-linear-summary-of-a-dag-plan") {
+	if !strings.Contains(skill, "## The coordination summary of a DAG plan") || !strings.Contains(readText(t, "../../../plugins/crw/skills/crw-run/SKILL.md"), "references/relay.md#the-coordination-summary-of-a-dag-plan") {
 		t.Error("the skill's procedure or the link to it is missing")
 	}
 	// the relay holds no Linear credential: nothing of this change reads an environment variable or names a token or a client of Linear

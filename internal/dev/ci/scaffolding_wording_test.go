@@ -20,7 +20,7 @@ var (
 )
 
 // scaffoldingWordingErrors checks the wording of the scaffolding skill against the canon: product
-// decisions live in Linear and the code structure in the repository's docs (SCAF-SOT-01), and the
+// decisions live in the tracking repository and the code structure in the repository's docs (SCAF-SOT-01), and the
 // devlog/_plan model of implementation units is not described there any more.
 func scaffoldingWordingErrors(root string) []string {
 	var errs []string
@@ -33,7 +33,7 @@ func scaffoldingWordingErrors(root string) []string {
 	case rule == "":
 		errs = append(errs, "SKILL.md: no line starting **Rule (SCAF-SOT-01):**")
 	default:
-		for _, want := range []string{"Linear", "product decision", "repo docs", "code structure"} {
+		for _, want := range []string{"tracking repository", "product decision", "repo docs", "code structure"} {
 			if !strings.Contains(rule, want) {
 				errs = append(errs, "SKILL.md: the SCAF-SOT-01 rule does not say "+want+": "+rule)
 			}
@@ -78,7 +78,7 @@ func TestScaffoldingCanonWording(t *testing.T) {
 		}
 		return root
 	}
-	const rule = "**Rule (SCAF-SOT-01):** A product decision is canonical in Linear and the code structure in the repo docs.\n"
+	const rule = "**Rule (SCAF-SOT-01):** A product decision is canonical in the tracking repository and the code structure in the repo docs.\n"
 	t.Run("fixture: the canon wording passes", func(t *testing.T) {
 		expectEqual(t, "errors", scaffoldingWordingErrors(fixture(t, "# S\n\n"+rule, "plain\n")), []string(nil))
 	})

@@ -16,9 +16,9 @@ This skill activates by change-surface for review requests, pre-merge checks, or
 ## CRW ownership boundary
 
 `crw-dev-code-reviewer` reviews code changes and pull requests.
-`crw-check` checks delivery against the canonical Linear requirements and issue criteria.
+`crw-check` checks delivery against the canonical tracking requirements and issue criteria.
 `crw-check` also finds contradictions and broken invariants across specifications and evidence.
-Use the skill that owns the requested judgment; code review does not certify Linear delivery.
+Use the skill that owns the requested judgment; code review does not certify delivery against the tracking issue.
 The author's side, requesting and receiving review, is `crw-dev` §4.1.
 
 ## Review Posture (REVIEW-POSTURE-01)

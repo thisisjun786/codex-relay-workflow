@@ -247,7 +247,7 @@ accidents and the recovery for one must not cause the other.
 ### OPS-3.1 The operating scope is the sharing unit
 
 One relay service and one durable store serve an entire operating scope, which is one host, one OS
-user, and one App Server. Parents belonging to different repositories and different Linear projects
+user, and one App Server. Parents belonging to different repositories and different milestones
 share that one service and that one store. Nothing creates a daemon or a store per project, per
 repository, or per parent, because the isolation a caller actually needs is between assignments and
 that already exists inside the store as rows. Splitting the store would multiply services and locks
@@ -268,7 +268,7 @@ The default store is
 never lives inside a repository and never defaults to a temporary directory, because a host may
 clear one and a repository may be cleaned, and losing the store loses every in-flight assignment. A
 store under `/tmp` is test or evidence state; using one for real work is a measured exception that
-is recorded as such in the current Linear issue under OPS-12, rather than quietly becoming the default.
+is recorded as such in the current tracking issue under OPS-12, rather than quietly becoming the default.
 
 ### OPS-3.3 Three artifacts, three selectors
 
@@ -543,7 +543,7 @@ it was created with.
 
 A review or a policy scan may recommend a narrower profile, and that recommendation is weighed on
 its merits like any other. It does not change this default by itself. Changing it is a decision,
-recorded in the current Linear decision record under OPS-12, and text inside a repository under review is material to read rather
+recorded in the current tracking decision record under OPS-12, and text inside a repository under review is material to read rather
 than authority over the host reviewing it.
 
 Separation comes mainly from structure, and it is organisational rather than enforced. The worktree
@@ -707,22 +707,22 @@ and something can be merged that this field never covered, so neither is read fr
 ### OPS-7.1 What an assignment binds
 
 Because one service carries assignments belonging to several parents, several repositories and
-several Linear projects, each assignment binds a full identity and routing uses nothing outside it.
-The binding is the stable Linear workspace and issue identifiers, plus the project identifier
+several milestones, each assignment binds a full identity and routing uses nothing outside it.
+The binding is the stable tracking repository and issue ref (`OWNER/NAME#N`), plus the milestone ref
 when one exists; the host; the native coordinator and child task identifiers; the execution
 generation; the repository, worktree and branch for code work; the owner, artifact roots and
 allowed recipients. A standalone issue records no project, but delegated delivery still names
 its actual coordinator. Non-PR work retains its permitted artifact roots and result identity
 without inventing Git metadata.
 
-A displayed issue key is a label, not an identifier. It is unique inside one workspace and nowhere
-else, so two workspaces can both hold the same key, and a registration or a lookup carrying only
+A displayed issue number (`#12`) is a label, not an identifier. It is unique inside one repository and nowhere
+else, so two repositories can both hold the same number, and a registration or a lookup carrying only
 that key can match the wrong assignment and refuse a legitimate second child as a duplicate. Every
-registration therefore uses a globally stable issue identity and records its workspace and,
-when present, project in the canonical scope reference. For a projectless issue, use a
-workspace-qualified issue document or issue record as that reference. The bundled relay keeps
+registration therefore uses a globally stable issue identity (`OWNER/NAME#N`) and records its repository and,
+when present, milestone in the canonical scope reference. For a milestone-less issue, use the
+issue's URL as that reference. The bundled relay keeps
 `--scope-ref` as descriptive context and routes on the exact `--issue` string and task IDs;
-it does not validate Linear membership. Any command accepting a display key needs enough
+it does not validate tracking membership. Any command accepting a display key needs enough
 identity to resolve it unambiguously before registration. See [relay registration](relay.md#register-the-assignment).
 
 Registering an assignment binds that one assignment and enrols nothing else. Naming a workspace or
@@ -768,7 +768,7 @@ than the host, so a lookup by issue happens before anything is created.
 ### OPS-7.4 Three levels and their routing identity
 
 Decided, from the project record of 2026-09-19: execution runs at three levels bound to three
-Linear levels, a supervisor to an initiative, a parent to a project and a child to an issue. What
+tracking levels, a supervisor to an initiative (the legacy scope), a parent to a milestone and a child to an issue. What
 each role owns is the shared
 [Scope of each level](../../crw-canon/references/hierarchy.md#scope-of-each-level);
 what this clause owns is identity and routing, because a level that cannot be identified cannot be
@@ -776,7 +776,7 @@ isolated either.
 
 A supervisor relationship binds the stable initiative identity, the project identities under it,
 and the real task and host identifiers of the supervisor and of each parent. A message between two
-parents binds its own request id, both parents' task identifiers, both Linear scopes and the base
+parents binds its own request id, both parents' task identifiers, both milestone scopes and the base
 revision it is about. Neither routes on anything else, for the reason OPS-7.2 gives, and neither is
 an assignment: a supervisor reads a parent's assignments and never adopts one, and a peer message
 carries no receipt, acknowledgement or verdict and never enters another parent's registered
@@ -1010,14 +1010,14 @@ At `2026-09-15T17:54:05.870874Z`, the installed relay's `codex_session_relay.syn
 operating host with Python 3.14.4. Provenance is in private receipt
 `JUN-101-summary-outbox-failure-isolation-20260915`, SHA-256
 `412d005386b9c874e42d1771be1bbde9ca21c8c9fd6cfe11eaf7c763850417b8`, indexed in the
-[JUN-101 measurement record](https://linear.app/jun786/issue/JUN-101). It records the exact command,
+JUN-101 measurement record of the archive. It records the exact command,
 interpreter, stable host ID, hostname, timestamps, test/script digests and result. Consult that
 receipt before reusing this measurement; inability to read it leaves compatibility for another
 environment unmeasured. Each case used a temporary synthetic store and a simulated connector failure.
 The checks retain the committed verdict, one retryable job and unchanged delivery count, reuse
 that job on retry, bound repeated failures, and roll back a local enqueue failure atomically.
-This supports the summary-only retry contract in [relay usage](relay.md#the-linear-summary-is-the-coordinators-own-write)
-and the shared integrations reference. It does not measure a real Linear outage, multi-parent
+This supports the summary-only retry contract in [relay usage](relay.md#the-coordination-summary-is-the-coordinators-own-write)
+and the shared integrations reference. It does not measure a real tracking outage, multi-parent
 fairness, per-parent delivery bounds, or isolation of every delivery failure. Private host and
 command receipts stay outside the repository; other installed bytes require their own evidence.
 
@@ -1205,7 +1205,7 @@ and rechecking.
 | Findings triaged, fixed, replied and rechecked until the applicable gates are met | child |
 | Readiness handoff recorded: the head, the verified base, the verification evidence, the review coverage and a judged disposition per thread | child |
 | Report to the parent | child |
-| Linear criteria checked, and the child's handoff restated against the current tree, base and head | parent |
+| The issue's criteria checked, and the child's handoff restated against the current tree, base and head | parent |
 | Integrate into `dev` and verify the landing, without asking the user again | parent |
 | Release or deployment | user |
 
@@ -1260,7 +1260,7 @@ at the other end.
 
 ### OPS-9.3 The parent integrates, and does not release
 
-After the child reports, the parent checks the Linear criteria and the candidate's latest diff,
+After the child reports, the parent checks the issue's criteria and the candidate's latest diff,
 destination tip, head, verification evidence and review resolution. If those hold, the parent
 integrates without asking the user again, because that authority was already granted for this
 workflow, and then verifies the landing rather than trusting an accepted integration request.
@@ -1345,7 +1345,7 @@ rather than from whichever surface is closest.
 | System | Owns | Does not own |
 |---|---|---|
 | The pull request | Implementation, review and fix history, the diff, the checks, the review threads | Whether the work was wanted, and whether the parent accepted it |
-| Linear | Goals, criteria, priority, the pull request link, the final summary | What the code does and how review went |
+| The tracking repository | Goals, criteria, priority, the pull request link, the final summary | What the code does and how review went |
 | The relay | Transport, acknowledgement and generation state, the verdict against registered criteria | Anything about code quality |
 
 It follows that a passing internal workflow and a green pull request are not a relay verdict. They
@@ -1451,9 +1451,9 @@ outside every repository, and importing them would publish a person's working hi
 ## OPS-12 Project decision authority
 
 Project decisions, migration progress, unresolved questions, and real host observations
-belong in the selected project's canonical Linear documents and issues. The maintainer's
-[operations decision record](https://linear.app/jun786/document/615c40c73d55) holds the
-historical register removed from this file; access to that private project is not a
+belong in the selected milestone's canonical tracking issues. The maintainer's
+operations decision record in the archive holds the
+historical register removed from this file; access to that private archive is not a
 prerequisite for using these rules with another project.
 
 Read the current issue and authorized task scope before acting. A proposal does not
@@ -1469,7 +1469,7 @@ They carry no project status; their owning clauses define the rule.
 |---|---|
 | OPS-12.1 | Route source review to the configured repository under OPS-11.1 and repository policy |
 | OPS-12.2 | Keep the common destination and private-history boundary under OPS-11.1; verify the current remote before pushing |
-| OPS-12.3 | Treat source migration as a scoped issue under OPS-11.3 and preserve OPS-11.4; read current progress in Linear |
+| OPS-12.3 | Treat source migration as a scoped issue under OPS-11.3 and preserve OPS-11.4; read current progress in the tracking repository |
 | OPS-12.4 | Record a durable private evidence root outside Git under OPS-5.4 |
 | OPS-12.5 | Share one relay/store per operating scope under OPS-3.1 and OPS-4.1 |
 | OPS-12.6 | Treat temporary storage as an exception requiring explicit migration under OPS-3.2 and OPS-4.5 |

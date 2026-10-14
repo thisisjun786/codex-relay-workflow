@@ -193,7 +193,6 @@
  
  | Skill | Description |
  |-------|-------------|
- | `linear` | Linear issue/project management |
  | `notion` | Notion API (pages, databases, blocks) |
  | `notion-knowledge-capture` | Capture conversations into Notion |
  | `notion-meeting-intelligence` | Meeting prep with Notion context |

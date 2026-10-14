@@ -130,13 +130,13 @@ func TestPlanSizeRulesWording(t *testing.T) {
 			t.Errorf("Size rules names %q", found)
 		}
 	})
-	t.Run("crw-define sizes an initiative", func(t *testing.T) {
+	t.Run("crw-define sizes a multi-project outcome", func(t *testing.T) {
 		define := normalized(sectionOf(readRepoText(t, "plugins/crw/skills/crw-define/SKILL.md"), "Size rules"))
 		if define == "" {
 			t.Fatal("crw-define/SKILL.md has no Size rules section")
 		}
 		missing := wordingMissing(define, []string{
-			`(?i)initiative is one outcome`,
+			`(?i)serve one outcome, the outcome is written in each description`,
 			`(?i)list[^.]*projects`,
 			`(?i)artifacts? (that )?one project hands to another|hands? to another`,
 			`(?i)run in parallel`,
@@ -244,7 +244,7 @@ func planNodes(from, to int) []dag.Change {
 	return changes
 }
 
-// MaxNodes bounds the live nodes of one plan revision, not the issues a Linear project ever held:
+// MaxNodes bounds the live nodes of one plan revision, not the issues a milestone ever held:
 // a retired node leaves the count. The size rules say what the bound counts, because a project of
 // sixty finished issues and five open ones is not over it.
 func TestPlanLimitIsTheLiveNodesOfOneRevision(t *testing.T) {
@@ -352,7 +352,7 @@ func TestPlanSizeRuleKeepsOneIntegrationTargetPerProject(t *testing.T) {
 		"plugins/crw/skills/crw-plan/SKILL.md",
 		"plugins/crw/skills/crw-plan/references/integrations.md",
 		"plugins/crw/skills/crw-plan/references/issue-boundaries.md",
-		canonRefDir + "linear-model.md",
+		canonRefDir + "tracking-model.md",
 		canonRefDir + "hierarchy.md",
 	} {
 		if got := targetRuleProblems(readRepoText(t, path)); len(got) > 0 {

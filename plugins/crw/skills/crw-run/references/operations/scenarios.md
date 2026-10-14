@@ -162,7 +162,7 @@ retention belongs to the parent that asked for it.
 
 ## S8 Two parents, two projects, one service
 
-Observed: a parent coordinating one Linear project finishes its last assignment while another
+Observed: a parent coordinating one milestone finishes its last assignment while another
 parent, working in a different repository and a different project, still has work in flight on the
 same host. The finishing parent would like to shut things down, and a third process tries to start
 a service because it sees none of its own.
@@ -342,7 +342,7 @@ merging this branch is known to trigger a deployment.
 
 Clauses: OPS-9.3, OPS-10, OPS-12.14.
 
-Action: the parent checks the Linear criteria and the pull request's latest diff, base, head, checks
+Action: the parent checks the issue's criteria and the pull request's latest diff, base, head, checks
 and review resolution. Then, because merging this branch is known to trigger a deployment, it
 obtains the user's approval for that deployment before merging. The order is the substance of this
 scenario: the merge is what fires the trigger, so approval asked afterwards is approval for
@@ -656,7 +656,7 @@ for a landing it does not own. Child delivery, parent acceptance, the merge, ins
 completion and initiative completion stay seven separate claims, so no level reports the level
 above as finished on the strength of one landing.
 
-Preserved: the three bindings by stable Linear ID, each level's own record, the single active owner
+Preserved: the three bindings by stable tracking ref, each level's own record, the single active owner
 of each scope, and the distinction between a verified result and a completed level.
 
 ## S29 One project, several initiatives, still one execution owner
