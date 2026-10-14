@@ -67,6 +67,47 @@ func TestReleaseDeclaresAPlannedRegionInAnotherSpelling(t *testing.T) {
 	}
 }
 
+// TestReleaseDeclaresAPlannedPathWithAHashAsThePlanStatesIt (CRW-1408): a planned region is declared field by field as the plan holds
+// it (path, kind, symbol), not by reading its text again, so a planned file and a planned tree whose paths hold "#" (compile.cleanRegion
+// allows them) stay a file and a tree, and a planned symbol keeps its path with "#" in it; a DESIGN edit region is still read from its
+// text, a symbol after "#".
+func TestReleaseDeclaresAPlannedPathWithAHashAsThePlanStatesIt(t *testing.T) {
+	planned := []compile.Region{
+		{Path: "pkg/a#b.go", Kind: "file", Exclusive: true},
+		{Path: "gen#1", Kind: "tree"},
+		{Path: "pkg/c#d.go", Kind: "symbol", Key: "Run", Change: "delete"},
+	}
+	// the plan's regions as the manifest carries them (compile.Region.String of the cleaned region)
+	plan := []string{"pkg/a#b.go", "gen#1/", "pkg/c#d.go#Run"}
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1", Regions: planned})
+	r := l.buildLane("run-hashes0001", l.handoffBytes(nil), LaneOptions{})
+	node := l.nodeOf["A-1"]
+	regions := ops.AdmissionRegions(plan, []string{" pkg/a#b.go ", "pkg/e.go#Main"})
+	got, err := r.Release(ctx, ops.ReleaseRequest{Plan: l.plan, Node: node, RunID: r.RunID, RequestID: "req-hashes", Regions: regions})
+	if err != nil || !got.Released || got.RegionsDeclared != "declared" || got.RegionsWarning != "" {
+		t.Fatalf("the release with the regions %q: %+v %v", regions, got, err)
+	}
+	held, found, err := r.Sched.NodeRegions(ctx, l.plan, node)
+	if err != nil || !found {
+		t.Fatalf("the node's declaration: %v %v", found, err)
+	}
+	want := map[string]dagsched.Region{
+		"file pkg/a#b.go":   {Path: "pkg/a#b.go", Kind: "file", Change: "edit", Exclusive: true},
+		"tree gen#1":        {Path: "gen#1", Kind: "tree", Change: "edit"},
+		"symbol pkg/c#d.go": {Path: "pkg/c#d.go", Kind: "symbol", Key: "Run", Change: "delete"},
+		"symbol pkg/e.go":   {Path: "pkg/e.go", Kind: "symbol", Key: "Main", Change: "edit"},
+	}
+	if len(held) != len(want) {
+		t.Errorf("the node declares %+v, want the %d planned regions as the plan states them and the DESIGN's symbol", held, len(planned))
+	}
+	for _, rg := range held {
+		w, ok := want[rg.Kind+" "+rg.Path]
+		if !ok || rg.Key != w.Key || rg.Change != w.Change || rg.Exclusive != w.Exclusive {
+			t.Errorf("the node declares %+v, want %+v", rg, w)
+		}
+	}
+}
+
 // TestReleaseOfAnotherRunsReplayNamesItsState: a release the relay answers with the replay of an execution another run holds (the
 // fallback of a land, CRW-1397) carries that run's state as the first answer of land_node_held does, so a land told of a run that has
 // ended names its cancel.
