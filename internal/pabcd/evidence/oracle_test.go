@@ -415,6 +415,9 @@ func TestHasValidReceipt(t *testing.T) {
 		if k.ID == "receipt_name_starts_with_dotdot" || k.ID == "dotdot_directory_name" {
 			want = true // changed (port: fixed, CRW-1112): a name that starts with two dots lies inside the root
 		}
+		if k.ID == "symlinked_evidence_root" || k.ID == "symlinked_state_dir" {
+			want = false // changed (port: fixed, CRW-475): a linked evidence root or state directory holds no valid receipt
+		}
 		if got := HasValidReceipt(cwd, sub(k.Claim, cwd, out)); got != want {
 			t.Errorf("%s: %v, want %v", k.ID, got, want)
 		}

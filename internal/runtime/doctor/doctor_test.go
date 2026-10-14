@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -602,13 +603,25 @@ func TestDoctorOnAGoBinaryHost(t *testing.T) {
 // install runs under it) refuses as Busy instead of waiting for ever.
 func TestDoctorReportsAHeldPromotionLockAndPromotionRefuses(t *testing.T) {
 	h, _, _ := goHost(t, true)
-	_, release := golden.Spawn(t, "", h.record+record.PromotionLockSuffix)
+	lock := h.record + record.PromotionLockSuffix
+	_, release := golden.Spawn(t, "", lock)
 	report := h.diagnose(t)
 	if at(report, "promotionLock", "held") != true || at(report, "promotionLock", "state") != record.Held {
 		t.Fatalf("a held promotion lock: %s", golden.Canon(record.Get(report, "promotionLock")))
 	}
+	// The wait runs out on a test clock that the first pause for the lock moves past its timeout.
+	started := time.Now()
+	var passed atomic.Int64
+	ctx := record.WithSeam(context.Background(), record.Seam{
+		Now: func() time.Time { return started.Add(time.Duration(passed.Load())) },
+		Waiting: func(path string) {
+			if path == lock {
+				passed.Store(int64(time.Hour))
+			}
+		},
+	})
 	var busy *record.Busy
-	if _, err := record.Promote(context.Background(), h.record, 100*time.Millisecond); !errors.As(err, &busy) {
+	if _, err := record.Promote(ctx, h.record, time.Minute); !errors.As(err, &busy) {
 		t.Fatalf("a promotion ran while another held the lock: %v", err)
 	}
 	release()

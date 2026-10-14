@@ -54,7 +54,7 @@ func overflowPath(cwd, sessionID, agentID, turnID string) string {
 // writeOverflow records e beside the main list, replacing the verdict of the same agent and turn. It returns nil only when the
 // record and every directory on its way are durable (CRW-1110): an error leaves the caller's copy of the verdict in place.
 func writeOverflow(cwd, sessionID string, e state.UnverifiedSubagent) error {
-	if _, err := ensureRecordDir(cwd, OverflowSubdir, sessionRecordDir(sessionID)); err != nil {
+	if _, err := crwdir.EnsureSubdir(cwd, OverflowSubdir, sessionRecordDir(sessionID)); err != nil {
 		return err
 	}
 	if err := writeRecord(overflowPath(cwd, sessionID, e.AgentID, e.TurnID), overflowRecord{SessionID: sessionID, AgentID: e.AgentID,

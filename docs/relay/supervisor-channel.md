@@ -696,6 +696,14 @@ handover. A walk that is ambiguous or contested (two upward edges above the proj
 owners, owner drift) is refused as before. A handover of the seat moves the recipient with the
 edge's `upper_task_id`; a message never sent is re-addressed at its next staging.
 
+The answer a decision request asks for belongs to the same seat (CRW-1371). A user-grade or
+delegated-management-grade decision raised from the project (`decision-raise --origin-project`)
+names that management seat in its `authority.ref`, and `decision-answer` accepts the answer only from
+the seat's current owner, so the management session a request woke is the one that answers it, the
+other management session is refused `authority_unverified`, and a handover moves the answer with the
+seat. A record with no management ref keeps the store seat's rule. See
+[linkage](linkage.md#management-seats).
+
 ### Direct messages
 
 `StageDirect` stages the messages the channel carries without an event behind them, the way a fault

@@ -162,19 +162,17 @@ func (e QaEvent) line() string {
 // appendEvent appends the row to its session's ledger: the .crw directory, the interviews directory below it, then one write to a file
 // opened for appending, as the oracle does it; an error leaves what the earlier steps made. The write starts with a line feed when the
 // file already ends in a line that has none (endsMidLine). A session id that sanitising would rewrite, or an empty one, is refused with
-// state.ErrNonCanonicalSessionID before anything is created (CRW-1108).
+// state.ErrNonCanonicalSessionID before anything is created (CRW-1108). A symbolic link at .crw, at the interviews directory or at
+// the ledger is refused and nothing is written through it, as the state package's appender of the same file does (CRW-475).
 func appendEvent(cwd string, e QaEvent) error {
 	if !state.IsCanonicalSessionID(e.SessionID) {
 		return state.ErrNonCanonicalSessionID
 	}
-	if _, err := crwdir.EnsureDir(cwd); err != nil {
+	if _, err := crwdir.EnsureSubdir(cwd, state.InterviewsSubdir); err != nil {
 		return err
 	}
 	path := ledgerPath(cwd, e.SessionID)
-	if err := os.MkdirAll(filepath.Dir(path), 0o777); err != nil {
-		return err
-	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o666)
+	f, err := crwdir.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o666)
 	if err != nil {
 		return err
 	}
@@ -197,7 +195,7 @@ func endsMidLine(f *os.File, path string) bool {
 	if !info.Mode().IsRegular() || info.Size() == 0 {
 		return false
 	}
-	r, err := os.Open(path)
+	r, err := crwdir.OpenFile(path, os.O_RDONLY, 0)
 	if err != nil {
 		return true
 	}

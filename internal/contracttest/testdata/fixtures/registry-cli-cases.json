@@ -24,7 +24,7 @@
     "--parent-settings",
     "{\"sandbox\": {\"type\": \"workspaceWrite\", \"writableRoots\": [], \"networkAccess\": false, \"excludeTmpdirEnvVar\": false, \"excludeSlashTmp\": false}, \"approvalPolicy\": \"never\", \"cwd\": \"/parent\", \"runtimeWorkspaceRoots\": [\"/parent\"], \"model\": \"anthropic/claude-opus-5\", \"reasoningEffort\": \"xhigh\", \"environments\": [{\"environmentId\": \"local\", \"cwd\": \"/parent\", \"runtimeWorkspaceRoots\": [\"/parent\"]}]}",
     "--child-settings",
-    "{\"sandbox\": {\"type\": \"workspaceWrite\", \"writableRoots\": [], \"networkAccess\": false, \"excludeTmpdirEnvVar\": false, \"excludeSlashTmp\": false}, \"approvalPolicy\": \"never\", \"cwd\": \"${HOME}/work\", \"runtimeWorkspaceRoots\": [\"${HOME}/work\"], \"model\": \"anthropic/claude-opus-5\", \"reasoningEffort\": \"xhigh\", \"environments\": [{\"environmentId\": \"local\", \"cwd\": \"${HOME}/work\", \"runtimeWorkspaceRoots\": [\"${HOME}/work\"]}]}"
+    "{\"sandbox\": {\"type\": \"workspaceWrite\", \"writableRoots\": [], \"networkAccess\": true, \"excludeTmpdirEnvVar\": false, \"excludeSlashTmp\": false}, \"approvalPolicy\": \"never\", \"cwd\": \"${HOME}/work\", \"runtimeWorkspaceRoots\": [\"${HOME}/work\"], \"model\": \"anthropic/claude-opus-5\", \"reasoningEffort\": \"xhigh\", \"environments\": [{\"environmentId\": \"local\", \"cwd\": \"${HOME}/work\", \"runtimeWorkspaceRoots\": [\"${HOME}/work\"]}]}"
    ]
   },
   {
@@ -636,7 +636,7 @@
     "--child-role",
     "child",
     "--child-settings",
-    "{\"sandbox\": {\"type\": \"workspaceWrite\", \"writableRoots\": [], \"networkAccess\": false, \"excludeTmpdirEnvVar\": false, \"excludeSlashTmp\": false}, \"approvalPolicy\": \"never\", \"cwd\": \"/w\", \"runtimeWorkspaceRoots\": [\"/w\"], \"model\": \"m\", \"reasoningEffort\": \"x\", \"environments\": []}"
+    "{\"sandbox\": {\"type\": \"workspaceWrite\", \"writableRoots\": [], \"networkAccess\": true, \"excludeTmpdirEnvVar\": false, \"excludeSlashTmp\": false}, \"approvalPolicy\": \"never\", \"cwd\": \"/w\", \"runtimeWorkspaceRoots\": [\"/w\"], \"model\": \"m\", \"reasoningEffort\": \"x\", \"environments\": []}"
    ]
   },
   {

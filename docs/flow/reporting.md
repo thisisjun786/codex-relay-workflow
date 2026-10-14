@@ -201,7 +201,9 @@ notice to `refused/` and tells the flow rows. The parent queue's flush is not ch
 initiative lead reads its reports when a turn starts, `crw flow reports --initiative I --unread`, and acknowledges each
 in that turn, `crw flow report-ack ID --turn T`, which appends a `report_read` row. A report nobody read for `low_priority_seconds` is
 raised to the manager as the low kind `report_unread` (the report, its age, the last delivery result). A decision for Jun is the urgent
-kind `jun_decision`; the manager records the question and Jun's answer with `crw manage decisions`.
+kind `jun_decision`; the manager records the question and Jun's answer with `crw manage decisions`. The relay's decision record of a
+question raised from a project a management session bound names that session's seat, and only the seat's current owner records the
+answer ([linkage](../relay/linkage.md#management-seats), CRW-1371).
 
 ## Rows
 

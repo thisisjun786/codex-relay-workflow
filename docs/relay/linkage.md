@@ -140,8 +140,9 @@ is refused `scope_role_mismatch`. Every reader of the store seat reads a seat la
 this way through the management seat that took it over: with no live store binding, the store
 seat's holder is the live owner of the management seat that superseded the most recently archived
 store binding, so it follows that seat's handovers. A user-grade or delegated-management-grade
-`decision-answer`, the recipient of a `jun_decision_request` and the store-seat fallback of a
-report or a message nobody above receives all keep finding the manager after it registers. A store
+`decision-answer` on a record with no management ref (see below), the recipient of a
+`jun_decision_request` and the store-seat fallback of a report or a message nobody above receives
+all keep finding the manager after it registers. A store
 seat bound again afterwards is live and answers for itself; the thread that laid it down binding it
 again after handing its management seat over reactivates its old row with `superseded_by` cleared
 (`scope_rebound`), so that row is the store seat again.
@@ -194,6 +195,22 @@ project's reports, while the lead's own messages go to the management seat throu
 `initiative:<key>` (see [direct messages](supervisor-channel.md#direct-messages)). An initiative with
 no management edge falls back to the single store seat. No schema changes: the seats and edges are
 new values in `scope_bindings.scope_kind` and `scope_links.upper_kind`, which carry no CHECK.
+
+The answer to a decision reserved for Jun follows the same seat (CRW-1371). A user-grade or
+delegated-management-grade `decision-raise` names in the record's `authority.ref` the management
+seat whose live execution edge stands directly above the origin project (`--origin-project`, read
+as a project's key and, when no edge stands above that key, as a flow plan's id through the project
+its header names, which is how `crw manage batch decide` raises). The ref is the seat's key, not its
+owner. `decision-answer` accepts such a record's answer only from the seat's current owner: the
+successor after a handover, and nobody while the seat has no live owner, each other answerer refused
+`authority_unverified`; an answer that cites the class without a ref takes the record's. A record
+without a management ref (a project with no management edge, or a row raised before the edge stood)
+keeps the store seat's rule above. The grade and via rules are unchanged, and a parent-class ref is
+the raiser's. What the raise cannot settle is not refused: a ref the raiser named that is not the
+seat is replaced by the seat, and a seat that cannot be read or two seats above one project leave
+the authority as given; each is answered under `authorityWarning` (`reason` `ref_replaced`,
+`seat_unreadable` or `seat_contested`) and recorded by one `decision_authority_warning` journal row.
+No schema change: the seat is a value of the record's existing authority object.
 
 ## The transaction protocol
 

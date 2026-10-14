@@ -461,7 +461,11 @@ func linkedStore(t *testing.T, linked string) (cwd, bg string) {
 func TestAStoreThatLeavesTheWorkspaceIsRefused(t *testing.T) {
 	for _, linked := range []string{".crw", ".crw/bg"} {
 		cwd, bg := linkedStore(t, linked)
-		if dir, err := EnsureDir(cwd); !errors.Is(err, ErrOutsideStore) || dir != "" {
+		// A link at .crw itself is refused by crwdir.EnsureDir before the store's own check (CRW-475).
+		refused := func(err error) bool {
+			return errors.Is(err, ErrOutsideStore) || linked == ".crw" && errors.Is(err, crwdir.ErrLink)
+		}
+		if dir, err := EnsureDir(cwd); !refused(err) || dir != "" {
 			t.Errorf("%s: EnsureDir = %q, %v", linked, dir, err)
 		}
 		if err := AtomicWrite(cwd, RecordPath(cwd, "r"), "x"); !errors.Is(err, ErrOutsideStore) {
@@ -470,7 +474,7 @@ func TestAStoreThatLeavesTheWorkspaceIsRefused(t *testing.T) {
 		if err := RemovePath(cwd, DisabledPath(cwd)); !errors.Is(err, ErrOutsideStore) {
 			t.Errorf("%s: RemovePath: %v", linked, err)
 		}
-		if err := appendLedger(cwd, Event{{"event", "x"}}, time.Now); !errors.Is(err, ErrOutsideStore) {
+		if err := appendLedger(cwd, Event{{"event", "x"}}, time.Now); !refused(err) {
 			t.Errorf("%s: appendLedger: %v", linked, err)
 		}
 		if got := names(t, bg); !slices.Equal(got, []string{DisabledFile}) || get(t, filepath.Join(bg, DisabledFile)) != "keep" {

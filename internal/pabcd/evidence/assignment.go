@@ -192,7 +192,7 @@ func NewAssignment(sessionID, worktree string, mode AssignmentMode, now time.Tim
 // still open and unclaimed (removePublished). When that removal fails too, the error says the record is left and where, so the
 // refusal names what the parent has to remove.
 func (a Assignment) Persist(cwd string) error {
-	dir, err := ensureRecordDir(cwd, AssignmentsSubdir, sessionRecordDir(a.SessionID))
+	dir, err := crwdir.EnsureSubdir(cwd, AssignmentsSubdir, sessionRecordDir(a.SessionID))
 	if err != nil {
 		return err
 	}
@@ -220,7 +220,7 @@ var ErrAssignmentExists = errors.New("the evidence assignment is already recorde
 // this call published anything leaves whatever the path holds (another delivery's record, which its child may have claimed); a
 // failure after it published removes only the file it published, while that is still open and unclaimed (CRW-1121, CRW-1124).
 func (a Assignment) PersistNew(cwd string) error {
-	dir, err := ensureRecordDir(cwd, AssignmentsSubdir, sessionRecordDir(a.SessionID))
+	dir, err := crwdir.EnsureSubdir(cwd, AssignmentsSubdir, sessionRecordDir(a.SessionID))
 	if err != nil {
 		return err
 	}
@@ -382,7 +382,7 @@ func writeRecordStaged(path string, v any, publish func(tmp, final string) error
 	return staged, syncDirectory(filepath.Dir(path))
 }
 
-// syncRecordChain makes the directories ensureRecordDir created, or may have created, durable: each directory below cwd/.crw named
+// syncRecordChain makes the directories crwdir.EnsureSubdir created, or may have created, durable: each directory below cwd/.crw named
 // by parts, then cwd/.crw and cwd, deepest first, so the entry of every directory on the way to a record is on stable storage.
 func syncRecordChain(cwd string, parts ...string) error {
 	dirs := []string{stateDir(cwd)}
@@ -650,7 +650,7 @@ func assignedReceiptValid(a Assignment, receipt string) bool {
 		return false
 	}
 	evidenceDir := filepath.Join(a.Root, crwdir.DirName, Subdir)
-	if requireDirectory(filepath.Join(a.Root, crwdir.DirName)) != nil || requireDirectory(evidenceDir) != nil {
+	if crwdir.RequireDir(filepath.Join(a.Root, crwdir.DirName)) != nil || crwdir.RequireDir(evidenceDir) != nil {
 		return false
 	}
 	resolved := resolve(a.Root, receipt)

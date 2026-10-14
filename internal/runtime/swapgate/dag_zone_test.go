@@ -281,6 +281,11 @@ func TestAgentAcceptanceZoneUpgradeFromOldZone(t *testing.T) {
 	zoneExtensionUpgrade(t, []string{"dag_agent_acceptances", "dag_agent_integration_stages"}, "dag_agent_acceptances", "dag_agent_integration_stages")
 }
 
+// CRW-1304: the same for the integration target record, appended after the agent acceptance tables.
+func TestIntegrationTargetZoneUpgradeFromOldZone(t *testing.T) {
+	zoneExtensionUpgrade(t, []string{"dag_integration_targets"}, "dag_integration_targets")
+}
+
 // zoneExtensionUpgrade drops the tables from a store this build opened, which is the zone an earlier build left, and checks the swap gate's three answers: a build that declares them against the old zone
 // extends it (refused until the OPS-4.5 route is taken, naming the tables), the build agrees once it has opened the store, and the earlier build's declaration against a store that has them narrows.
 func zoneExtensionUpgrade(t *testing.T, newTables []string, named ...string) {

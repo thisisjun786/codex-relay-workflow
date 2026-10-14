@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"regexp"
@@ -36,6 +37,9 @@ const (
 	CheckTrackingAuth    = "tracking_auth"
 	CheckTrackingAccess  = "tracking_access"
 	CheckTrackingIssues  = "tracking_issues"
+	// CheckTrackingPermissions is a warning: the repository answer carried no permissions at all, so
+	// whether issues can be read and written is not known.
+	CheckTrackingPermissions = "tracking_permissions"
 )
 
 // trackingRoot is the Root of a tracking finding.
@@ -120,28 +124,96 @@ func (f *File) Tracking() (Tracking, error) {
 
 // WithTracking returns doc, a configuration document (nil or empty for a new one), with its tracking
 // section set to t after the defaults and the spelling are judged. Every other section keeps its
-// value; the document is written indented with its keys in order.
+// value and its place: an existing tracking section is replaced where it stands, a new one goes last.
+// The document is written indented, and <, > and & are written as they are, not as \u003c, \u003e
+// and \u0026, because a user reads and edits this file.
 func WithTracking(doc []byte, t Tracking) ([]byte, error) {
 	t, err := t.normalize()
 	if err != nil {
 		return nil, err
 	}
+	var keys []string
 	sections := map[string]json.RawMessage{}
 	if len(bytes.TrimSpace(doc)) > 0 {
-		if err := json.Unmarshal(doc, &sections); err != nil || sections == nil {
-			return nil, errors.New("the configuration is not a JSON object")
+		if keys, sections, err = orderedSections(doc); err != nil {
+			return nil, err
 		}
 	}
-	value, err := json.Marshal(t)
+	value, err := marshalLiteral(t)
 	if err != nil {
 		return nil, err
+	}
+	if _, ok := sections["tracking"]; !ok {
+		keys = append(keys, "tracking")
 	}
 	sections["tracking"] = value
-	out, err := json.MarshalIndent(sections, "", "  ")
-	if err != nil {
+	var compact bytes.Buffer
+	compact.WriteByte('{')
+	for i, key := range keys {
+		if i > 0 {
+			compact.WriteByte(',')
+		}
+		name, err := marshalLiteral(key)
+		if err != nil {
+			return nil, err
+		}
+		compact.Write(name)
+		compact.WriteByte(':')
+		compact.Write(sections[key])
+	}
+	compact.WriteByte('}')
+	var out bytes.Buffer
+	if err := json.Indent(&out, compact.Bytes(), "", "  "); err != nil {
 		return nil, err
 	}
-	return append(out, '\n'), nil
+	out.WriteByte('\n')
+	return out.Bytes(), nil
+}
+
+var errNotAnObject = errors.New("the configuration is not a JSON object")
+
+// orderedSections reads doc, one JSON object, into the keys of its top level in the order they are
+// written (a repeated key keeps its first place and its last value) and the raw value of each.
+func orderedSections(doc []byte) ([]string, map[string]json.RawMessage, error) {
+	dec := json.NewDecoder(bytes.NewReader(doc))
+	if token, err := dec.Token(); err != nil || token != json.Delim('{') {
+		return nil, nil, errNotAnObject
+	}
+	var keys []string
+	sections := map[string]json.RawMessage{}
+	for dec.More() {
+		token, err := dec.Token()
+		key, ok := token.(string)
+		if err != nil || !ok {
+			return nil, nil, errNotAnObject
+		}
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil {
+			return nil, nil, errNotAnObject
+		}
+		if _, seen := sections[key]; !seen {
+			keys = append(keys, key)
+		}
+		sections[key] = raw
+	}
+	if token, err := dec.Token(); err != nil || token != json.Delim('}') {
+		return nil, nil, errNotAnObject
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return nil, nil, errNotAnObject
+	}
+	return keys, sections, nil
+}
+
+// marshalLiteral is v as compact JSON with <, > and & left as they are.
+func marshalLiteral(v any) (json.RawMessage, error) {
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+	return bytes.TrimRight(buf.Bytes(), "\n"), nil
 }
 
 // TrackingPermissions are the repository permissions GitHub reports for the signed-in login.
@@ -161,6 +233,9 @@ type TrackingAccess struct {
 	Archived      bool                `json:"archived"`
 	HasIssues     bool                `json:"has_issues"`
 	Permissions   TrackingPermissions `json:"permissions"`
+	// PermissionsUnreported: the answer had no permissions object (a fine-grained token, an app
+	// token or a token without the scope gets none), which is not the same as every permission false.
+	PermissionsUnreported bool `json:"permissions_unreported,omitempty"`
 }
 
 // CanReadIssues reports whether the login can read the repository's issues: Issues are on and the
@@ -185,8 +260,9 @@ type TrackingProbe func(repo string) (TrackingAccess, error)
 var (
 	// ErrGHMissing: the gh command is not installed.
 	ErrGHMissing = errors.New("gh is not installed")
-	// ErrGHUnauthenticated: gh is not signed in to github.com.
-	ErrGHUnauthenticated = errors.New("gh is not signed in to github.com")
+	// ErrGHUnauthenticated: gh is not signed in to the host it talks to (GH_HOST, else github.com);
+	// the error that wraps it names the host.
+	ErrGHUnauthenticated = errors.New("gh is not signed in")
 	// ErrRepoUnreachable: the repository does not exist or this login cannot see it.
 	ErrRepoUnreachable = errors.New("the repository is not found or not visible to this login")
 )
@@ -252,6 +328,10 @@ func CheckTracking(file *File, probe TrackingProbe, reportMissing bool) (*Tracki
 		return status, finding(LevelError, CheckTrackingAuth, "gh did not read %s as a signed-in login: run gh auth login", tracking.Repo)
 	case !access.HasIssues:
 		return status, finding(LevelError, CheckTrackingIssues, "%s has Issues turned off (has_issues is false): turn Issues on in the repository settings", tracking.Repo)
+	case access.PermissionsUnreported && access.Archived:
+		return status, finding(LevelError, CheckTrackingIssues, "%s is archived, so its issues are read-only: unarchive it or point tracking.repo at another repository", tracking.Repo)
+	case access.PermissionsUnreported:
+		return status, finding(LevelWarning, CheckTrackingPermissions, "GitHub did not report this login's permissions on %s, so whether it can read and write issues is not known (not a failure). Likely causes: a fine-grained personal access token, a GitHub app token (installation token) or a token without the repo scope does not get a permissions object; check that the token has Issues read and write access to the repository", tracking.Repo)
 	case !access.CanReadIssues():
 		return status, finding(LevelError, CheckTrackingIssues, "this gh login has no permission to read issues of %s: ask for read access", tracking.Repo)
 	case access.Archived:
@@ -302,27 +382,44 @@ func scrub(text string) string {
 	return text
 }
 
-// ghProbe is the host probe: gh must be signed in to github.com, and gh api reads the repository
-// (a GET; no method, field or input flag is ever passed) for its permissions and has_issues.
+// ghHost is the host gh talks to: GH_HOST, else github.com. The sign-in and the repository are read
+// on this one host.
+func ghHost() string {
+	if host := strings.TrimSpace(os.Getenv("GH_HOST")); host != "" {
+		return host
+	}
+	return "github.com"
+}
+
+// ghProbe is the host probe: gh must be signed in to its host (GH_HOST, else github.com; both gh
+// calls carry that --hostname), and gh api reads the repository (a GET; no method, field or input
+// flag is ever passed) for its permissions and has_issues. gh auth status exits non-zero when any
+// login of the host is broken, even when the active one works, so a failed auth status is not
+// final: the repository read decides, and only an answer that proves the active login (it carries
+// permissions) overrides it.
 func ghProbe(repo string) (TrackingAccess, error) {
-	if _, err := runGH("auth", "status", "--hostname", "github.com"); err != nil {
+	host := ghHost()
+	var authErr error
+	if _, err := runGH("auth", "status", "--hostname", host); err != nil {
 		if errors.Is(err, exec.ErrNotFound) {
 			return TrackingAccess{}, ErrGHMissing
 		}
-		return TrackingAccess{}, fmt.Errorf("%w (%s)", ErrGHUnauthenticated, scrub(err.Error()))
+		authErr = fmt.Errorf("%w to %s (%s)", ErrGHUnauthenticated, host, scrub(err.Error()))
 	}
-	out, err := runGH("api", "repos/"+repo)
+	out, err := runGH("api", "--hostname", host, "repos/"+repo)
 	if err != nil {
 		text := scrub(err.Error())
 		switch {
 		case errors.Is(err, exec.ErrNotFound):
 			return TrackingAccess{}, ErrGHMissing
+		case authErr != nil:
+			return TrackingAccess{}, authErr
 		case strings.Contains(text, "HTTP 404"):
 			return TrackingAccess{}, fmt.Errorf("%w (%s)", ErrRepoUnreachable, text)
 		case strings.Contains(text, "HTTP 401"):
-			return TrackingAccess{}, fmt.Errorf("%w (%s)", ErrGHUnauthenticated, text)
+			return TrackingAccess{}, fmt.Errorf("%w to %s (%s)", ErrGHUnauthenticated, host, text)
 		}
-		return TrackingAccess{}, fmt.Errorf("gh api repos/%s: %s", repo, text)
+		return TrackingAccess{}, fmt.Errorf("gh api repos/%s on %s: %s", repo, host, text)
 	}
 	var doc struct {
 		Private     bool                 `json:"private"`
@@ -331,11 +428,19 @@ func ghProbe(repo string) (TrackingAccess, error) {
 		Permissions *TrackingPermissions `json:"permissions"`
 	}
 	if err := json.Unmarshal(out, &doc); err != nil {
+		if authErr != nil {
+			return TrackingAccess{}, authErr
+		}
 		return TrackingAccess{}, fmt.Errorf("gh api repos/%s returned output that is not JSON: %v", repo, err)
+	}
+	if authErr != nil && doc.Permissions == nil {
+		return TrackingAccess{}, authErr
 	}
 	access := TrackingAccess{Authenticated: true, Private: doc.Private, Archived: doc.Archived, HasIssues: doc.HasIssues}
 	if doc.Permissions != nil {
 		access.Permissions = *doc.Permissions
+	} else {
+		access.PermissionsUnreported = true
 	}
 	return access, nil
 }
