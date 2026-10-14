@@ -296,14 +296,15 @@ func (s *scriptVM) planResume(p *callPlan, refuse func(reason, detail string)) {
 	}
 	// A fresh call records a differing effort and runs on its role's pair; a continuation cannot, because the thread's
 	// pair is already fixed: naming another effort is a conflict with what it inherits.
-	// A role whose effort is undecided leaves it to the host: the thread's effort is the one the host applied (its configured pair),
-	// so an explicit effort is compared with that, and with nothing when the host read none back (CRW-1392).
+	// In a session run a role whose effort is undecided leaves it to the host: the thread's effort is the one the host applied to the
+	// call's subagent (its configured pair, effort_unchecked), so an explicit effort is compared with that (CRW-1392). The App Server
+	// path binds a thread only on the role's whole pair, so its thread's effort is the role's.
 	if ef := p.opts.Effort; ef != "" {
 		threadEffort := spec.Pair.Effort
-		if threadEffort == "" {
+		if threadEffort == "" && e.cfg.Session != nil {
 			threadEffort = info.Configured.Effort
 		}
-		if threadEffort != "" && ef != threadEffort {
+		if ef != threadEffort {
 			refuse(ReasonPairRefused, "effort "+ef+" is not the thread's effort "+threadEffort)
 			return
 		}

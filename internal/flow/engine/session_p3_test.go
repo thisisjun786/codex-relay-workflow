@@ -177,6 +177,19 @@ return [r.status, r.reason, more.status, more.reason]`))
 	}
 }
 
+// The App Server path keeps its rule: a thread is bound only on the role's whole pair, so an explicit effort on a continuation of a
+// role whose effort is undecided names an effort the thread does not run, and is refused.
+func TestAppServerContinuationEffortOfAnUndecidedRoleIsRefused(t *testing.T) {
+	h := newHarness(t)
+	h.cfg.Policy = explorerOn(Pair{"claude-fake-haiku", ""})
+	got := value[[]any](t, h.run(`const r = await agent.call('look', { agentType: 'explorer', label: 'x' })
+const more = await agent.call('look again', { resume: r, label: 'more', effort: 'high' })
+return [r.status, more.status, more.reason]`))
+	if fmt.Sprint(got) != "[completed refused pair_refused]" {
+		t.Fatalf("results %v; continuation rows %s", got, eventsOf(h.callRows("more")))
+	}
+}
+
 // CRW-1367 P3: an explicit effort on the continuation of a role whose effort is undecided is compared with the effort the call's
 // subagent ran (the decided part of the thread's pair), not with the empty one: the effort the host applied continues, another is
 // refused pair_refused.
