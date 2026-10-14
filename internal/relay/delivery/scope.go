@@ -4,6 +4,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/layername"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -33,7 +34,9 @@ func assertAssignmentDelivery(r Relationship, kind, recipient string, recipientT
 		return refuse(RecipientNotAuthorized, "%s is not a delivery direction this contract defines, so there is no authorized recipient for it", pyvalue.StrRepr(kind))
 	}
 	if recipient != expected {
-		direction := "parent"
+		// The completion and the merge-turn grant go to the relationship's parent, the 자식 layer;
+		// the revision request goes to the relay child, whose word stays as it is.
+		direction := layername.Name("parent")
 		if kind == Revision {
 			direction = "child"
 		}

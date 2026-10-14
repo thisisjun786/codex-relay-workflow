@@ -106,7 +106,7 @@ func composeWorkCompletion(ctx context.Context, s *store.Store, row Row, receipt
 	manifestRef := completionManifestRefLines(receipt)
 	nonVerification := "a child report is the child describing its own execution, not a verdict"
 	if r["cxc_status"] == "DONE" {
-		nonVerification = "a DONE report is the child proving its own criteria, not the parent's verdict"
+		nonVerification = "a DONE report is the child proving its own criteria, not the 자식's verdict"
 	}
 	restore := restoreSection(r)
 	sections := []reportSection{
@@ -299,7 +299,7 @@ func completionRecordSection(row Row, receipt Obj, request string, r map[string]
 	if purpose == "progress" {
 		kind = "notification"
 	}
-	return reportSection{"relay record", []string{"", "relay record:", "  requestId: " + request, "  eventId: " + event, fmt.Sprintf("  submission: %d  contract: relay-report/1", r["submission_no"]), "  message: " + kind + " - an answer is owed by the recipient", "  messageId: " + messageID + "  child_to_parent/" + purpose + "  envelope: relay-envelope/1", "  relationshipId: " + rid, "  from: child " + sender + "  to: parent " + recipient, "  scope: " + scope, "  observedAt: " + reportValue(r, "recorded_at"), "  executionGeneration: " + pyStr(reportField(receipt, "executionGeneration")), "  attempt: " + pyStr(reportField(receipt, "attempt")), "  outcome: " + pyStr(reportField(receipt, "outcome")), "  revisionHash: " + pyStr(reportField(receipt, "revisionHash"))}, 5, 7, true, false}
+	return reportSection{"relay record", []string{"", "relay record:", "  requestId: " + request, "  eventId: " + event, fmt.Sprintf("  submission: %d  contract: relay-report/1", r["submission_no"]), "  message: " + kind + " - an answer is owed by the recipient", "  messageId: " + messageID + "  child_to_parent/" + purpose + "  envelope: relay-envelope/1", "  relationshipId: " + rid, "  from: child " + sender + "  to: 자식 " + recipient, "  scope: " + scope, "  observedAt: " + reportValue(r, "recorded_at"), "  executionGeneration: " + pyStr(reportField(receipt, "executionGeneration")), "  attempt: " + pyStr(reportField(receipt, "attempt")), "  outcome: " + pyStr(reportField(receipt, "outcome")), "  revisionHash: " + pyStr(reportField(receipt, "revisionHash"))}, 5, 7, true, false}
 }
 
 // respondSection tells the recipient how to answer.

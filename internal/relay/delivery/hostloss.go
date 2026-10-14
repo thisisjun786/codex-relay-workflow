@@ -333,5 +333,5 @@ func ReadUnknownSend(ctx context.Context, adapter Adapter, clock Clock, attempt,
 		}
 		foldedText = " nor in " + strings.Join(ids, ", ") + ", the turns begun by it"
 	}
-	return r.Set("finding", UnknownSendLost).Set("detail", fmt.Sprintf("the recipient keeps no trace of this send: its turn list (%s after %d turns) shows %d turns begun since it, none running, and this attempt's token is not among the %d items since it%s; held for the parent, never sent again", presence.Stop, presence.Scanned, len(presence.Seen), scan.Scanned, foldedText))
+	return r.Set("finding", UnknownSendLost).Set("detail", fmt.Sprintf("the recipient keeps no trace of this send: its turn list (%s after %d turns) shows %d turns begun since it, none running, and this attempt's token is not among the %d items since it%s; held for the 자식, never sent again", presence.Stop, presence.Scanned, len(presence.Seen), scan.Scanned, foldedText))
 }
