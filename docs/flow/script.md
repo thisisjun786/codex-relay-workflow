@@ -867,7 +867,8 @@ any row is written. `crw flow shadow` replays either from the trace and names th
   | --- | --- |
   | `prepared` | publishes the first step (the directory an earlier process made is the call's) |
   | `step_published` | looks the marker up on the host and binds the subagent it finds; else publishes the same step again |
-  | `thread_started`, `turn_started` | reads the bound subagent: harvests a completed turn, waits for a running one, loses a lost one |
+  | `thread_started` | adopts the subagent the row names and writes only its `turn_started` (nothing is spawned or published again; one the host does not know for `LostAfter` loses the attempt), then reads it as after `turn_started` |
+  | `turn_started` | reads the bound subagent: harvests a completed turn, waits for a running one, loses a lost one |
   | `session_attempt_lost` | closes the old subagent and spawns the next attempt |
 
 - A held session call goes on in place after the subagents of its held attempts are shown not running (a running turn is

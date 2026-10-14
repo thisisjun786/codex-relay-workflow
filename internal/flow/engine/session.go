@@ -576,11 +576,16 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 	packetName := PacketName(k, s.attempt)
 	recovered := s.resume != nil && s.resume.kind == stagePublished && s.resume.k == k && s.resume.attempt == s.attempt
 	if recovered {
-		action, agent = s.resume.action, s.resume.agent
+		st := s.resume
+		s.resume = nil
+		action, agent = st.action, st.agent
 		if action == StepSendInput && agent == "" {
 			action = StepSpawn
 		}
-		s.resume = nil
+		if action == StepSpawn && agent != "" {
+			// the attempt's thread_started names its subagent: it is adopted, never spawned again
+			return c.sessionAdopt(turnCtx, ctx, k, op, input, repair, st)
+		}
 	}
 	packet := c.sessionPacket(k, marker, input, repair, action)
 	step := Step{Run: e.runID, Call: c.id, K: k, Attempt: s.attempt, Op: marker, Role: p.role, Action: action, AgentType: agentTypeOf(p.role),
@@ -651,6 +656,40 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 			out, _, err := c.sessionStop(ctx)
 			return &out, CallResult{}, false, err
 		}
+	}
+}
+
+// sessionAdopt goes on with an attempt whose subagent a process bound and then died before it wrote turn_started: the subagent its
+// thread_started row records is the attempt's, so nothing is spawned or published again and only turn_started is written, as a
+// send_input bind writes it (one thread_started per attempt). A recorded subagent the host does not know on reads LostAfter apart
+// loses the attempt, and the next attempt is spawned.
+func (c *callRun) sessionAdopt(turnCtx, ctx context.Context, k int, op, input string, repair bool, st *sessionStage) (*TurnOutcome, CallResult, bool, error) {
+	s, sc, now := c.sess, c.e.cfg.Session, c.e.cfg.Now
+	s.agent, s.rollout, s.pair, s.seen = st.agent, st.rollout, st.pair, Tokens{}
+	s.dropCurrentPair()
+	marker, attempt := sessionOp(op, s.attempt), s.attempt
+	defer func() { _ = sc.Bus.Retract(c.id, k, attempt) }()
+	var gone time.Time
+	for {
+		if turnCtx.Err() != nil {
+			out, _, err := c.sessionStop(ctx)
+			return &out, CallResult{}, false, err
+		}
+		if _, ok := c.sessionVerify(turnCtx, s.agent, k, op, marker, StepSendInput); ok {
+			return nil, CallResult{}, false, nil
+		}
+		_, err := sc.Host.ReadAgent(turnCtx, s.agent)
+		switch {
+		case !errors.Is(err, ErrSessionAgentNotFound):
+			gone = time.Time{}
+		case gone.IsZero():
+			gone = now()
+		case now().Sub(gone) >= sc.lostAfter():
+			s.boundK = k
+			c.sessionLose(&sessionLoss{reason: fmt.Sprintf("the subagent bound before the restart has been unknown to the host for %s", sc.lostAfter()), hostStatus: "notFound"})
+			return c.sessionBind(turnCtx, ctx, k, op, input, repair)
+		}
+		_ = sc.wait(turnCtx, sc.poll())
 	}
 }
 

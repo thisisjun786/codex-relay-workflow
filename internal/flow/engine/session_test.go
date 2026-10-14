@@ -799,28 +799,86 @@ type deathCase struct {
 	lose bool
 	// spawns is how many subagents the call ends up with.
 	spawns int
+	// rows is the call's exact row sequence after the resume: one thread_started per attempt.
+	rows string
+	// noFind makes the resumed process's marker search find nothing, so only the call's own rows name its subagent.
+	noFind bool
+	// gone makes the host forget attempt 1's subagent before the resume.
+	gone bool
+}
+
+// noFindHost is a host whose marker search finds no subagent.
+type noFindHost struct{ *fakeSessionHost }
+
+func (noFindHost) FindByMarker(context.Context, string, string) (string, bool, error) {
+	return "", false, nil
 }
 
 // The run dies at each last-row state of a session call, and a resume goes on from that row in the same allocation: prepared and
 // step_published publish the step again after a marker search (a subagent spawned before it was reported is bound, not spawned
-// again), thread_started and turn_started harvest the bound subagent, and session_attempt_lost goes on with the next attempt.
+// again), thread_started adopts the recorded subagent and turn_started harvests the bound one, and session_attempt_lost goes on
+// with the next attempt. Each case's rows are exact: one thread_started per attempt.
 func TestSessionRunDeathAtEachRow(t *testing.T) {
-	ev := func(name string) func(Event) bool {
-		return func(e Event) bool { return e.Kind == KindCall && e.Event == name }
-	}
+	one := "prepared,step_published,thread_started,turn_started,completed"
 	for _, c := range []deathCase{
-		{name: "prepared", stop: ev(EvPrepared), spawns: 1},
-		{name: "step_published", stop: ev(EvStepPublished), spawns: 1},
-		{name: "spawned before the report", killOnSpawn: true, spawns: 1},
-		{name: "thread_started", stop: ev(EvThreadStarted), spawns: 1},
-		{name: "turn_started", stop: ev(EvTurnStarted), spawns: 1},
-		{name: "session_attempt_lost", stop: ev(EvSessionAttemptLost), lose: true, spawns: 2},
+		{name: "prepared", stop: deathAt(EvPrepared), spawns: 1, rows: one},
+		{name: "step_published", stop: deathAt(EvStepPublished), spawns: 1, rows: one},
+		{name: "spawned before the report", killOnSpawn: true, spawns: 1, rows: one},
+		{name: "thread_started", stop: deathAt(EvThreadStarted), spawns: 1, rows: one},
+		{name: "turn_started", stop: deathAt(EvTurnStarted), spawns: 1, rows: one},
+		{name: "session_attempt_lost", stop: deathAt(EvSessionAttemptLost), lose: true, spawns: 2,
+			rows: "prepared,step_published,thread_started,turn_started,session_attempt_lost,step_published,thread_started,turn_started,completed"},
 	} {
 		t.Run(c.name, func(t *testing.T) { runDeath(t, c) })
 	}
 }
 
-func runDeath(t *testing.T, c deathCase) {
+// deathAt stops the process after it stored the call row.
+func deathAt(name string) func(Event) bool {
+	return func(e Event) bool { return e.Kind == KindCall && e.Event == name }
+}
+
+// A process that dies after it wrote thread_started and before turn_started leaves an attempt whose subagent is recorded: the
+// resumed call adopts that subagent - with the marker search or without it - and writes only the missing turn_started, so the
+// attempt keeps one thread_started, nothing is spawned again, and the harvest reads the recorded subagent's marker turn. A
+// recorded subagent the host no longer knows loses the attempt, and the next attempt has its own thread_started.
+func TestSessionResumeAfterThreadStartedAdoptsTheRecordedAgent(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		noFind, gone bool
+		rows, agent  string
+		spawns       int
+	}{
+		{name: "marker search finds it", rows: "prepared,step_published,thread_started,turn_started,completed", agent: "agent-1", spawns: 1},
+		{name: "marker search finds nothing", noFind: true, rows: "prepared,step_published,thread_started,turn_started,completed", agent: "agent-1", spawns: 1},
+		{name: "recorded subagent gone", gone: true, agent: "agent-2", spawns: 2,
+			rows: "prepared,step_published,thread_started,session_attempt_lost,step_published,thread_started,turn_started,completed"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			k, got := runDeath(t, deathCase{name: "thread_started", stop: deathAt(EvThreadStarted), spawns: tc.spawns, rows: tc.rows, noFind: tc.noFind, gone: tc.gone})
+			rows := k.rowsOf("exe")
+			ts, turn := rowsNamed(rows, EvThreadStarted), rowsNamed(rows, EvTurnStarted)
+			for i, r := range ts {
+				if rowInt(r.Data, "attempt") != i+1 || rowStr(r.Data, "thread_id") != fmt.Sprintf("agent-%d", i+1) {
+					t.Errorf("thread_started %d: %v, want one row per attempt", i, r.Data)
+				}
+			}
+			if len(turn) != 1 || rowStr(turn[0].Data, "turn_id") != tc.agent+"-turn1" {
+				t.Errorf("turn_started %v, want the marker turn of %s", turn, tc.agent)
+			}
+			if got[1] != tc.agent {
+				t.Errorf("the handle's thread %s, want %s", got[1], tc.agent)
+			}
+			if lost := rowsNamed(rows, EvSessionAttemptLost); tc.gone && (len(lost) != 1 || rowStr(lost[0].Data, "agent_id") != "agent-1" || rowInt(lost[0].Data, "attempt") != 1) {
+				t.Errorf("session_attempt_lost %v, want attempt 1 of agent-1", lost)
+			}
+		})
+	}
+}
+
+// runDeath kills a session run's process where the case says, resumes it in a new process, checks what every case shares, and
+// returns the kit and the resumed call's [status, threadId].
+func runDeath(t *testing.T, c deathCase) (*sessionKit, []string) {
 	k := newSessionKit(t)
 	sw := &deadSwitch{}
 	mem := NewMemoryJournal()
@@ -868,6 +926,12 @@ return [r.status, r.meta.threadId]`
 	k.h.cfg.Journal = mem
 	k.cfg.Bus = k.bus
 	k.cfg.Host = k.host
+	if c.noFind {
+		k.cfg.Host = noFindHost{k.host}
+	}
+	if c.gone {
+		k.host.set("agent-1", func(a *fakeAgent, _ *SessionTurn) { a.gone = true })
+	}
 	k.h.cfg.Resume = &ResumeOptions{}
 	k.orch.answer = func(st Step, _ string, _ int) orchAnswer { return orchAnswer{edit: "P:" + st.Op} }
 	k.orch.onSpawn = nil
@@ -880,6 +944,9 @@ return [r.status, r.meta.threadId]`
 		t.Fatalf("the resumed call %v; rows %s", got, eventsOf(k.rowsOf("exe")))
 	}
 	rows := k.rowsOf("exe")
+	if got := eventsOf(rows); c.rows != "" && got != c.rows {
+		t.Errorf("rows %s, want %s", got, c.rows)
+	}
 	if n := len(rowsNamed(rows, EvPrepared)); n != 1 {
 		t.Errorf("%d prepared rows (%s): the resume did not go on in the same allocation", n, eventsOf(rows))
 	}
@@ -896,6 +963,7 @@ return [r.status, r.meta.threadId]`
 	if len(ts) == 0 || got[1] != rowStr(ts[len(ts)-1].Data, "thread_id") {
 		t.Errorf("the handle's thread %s is not the last bound subagent (%v)", got[1], ts)
 	}
+	return k, got
 }
 
 // A continuation after a run restart runs on a new subagent from a checkpoint packet - never a fork - and writes its own
