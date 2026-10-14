@@ -61,6 +61,7 @@ func (r *Runner) DryRun(ctx context.Context, withGate bool) (DryReport, error) {
 		rep.Base = base
 	}
 	var planned []Entry
+	var firstPR *Entry
 	for _, e := range entries {
 		d := DryEntry{Entry: e}
 		if prev, err := readHead(r.qpath(dirRetried, e.Name)); err == nil && prev == e.Head {
@@ -79,15 +80,24 @@ func (r *Runner) DryRun(ctx context.Context, withGate bool) (DryReport, error) {
 		} else {
 			pass = false
 		}
-		if withGate && e.HeadOK {
+		// a pull request has no pre-merge gate: the pass reads the pull request instead, which a dry run does not
+		if withGate && e.HeadOK && e.PR == 0 {
 			note, verdict := r.gate(ctx, e)
 			d.Gate = note
 			pass = verdict == gatePass
 		}
 		rep.Entries = append(rep.Entries, d)
-		if pass && (len(rep.SoloHeads) == 0 || len(planned) == 0) {
+		if pass && e.PR > 0 && (firstPR == nil || e.PR < firstPR.PR) {
+			pe := e
+			firstPR = &pe
+		}
+		if pass && e.PR == 0 && (len(rep.SoloHeads) == 0 || len(planned) == 0) {
 			planned = append(planned, e)
 		}
+	}
+	// a pending pull request is landed alone, before the issue heads
+	if firstPR != nil {
+		planned = []Entry{*firstPR}
 	}
 	for _, e := range planned {
 		rep.Plan = append(rep.Plan, e.Spec())

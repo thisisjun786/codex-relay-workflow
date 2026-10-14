@@ -8,6 +8,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/tracking"
 )
 
 // Report is what one pass reports.
@@ -23,6 +25,8 @@ type Report struct {
 	Ignored []string `json:"ignored,omitempty"`
 	// Retry describes the retry step the pass took after a failed verification.
 	Retry string `json:"retry,omitempty"`
+	// Landing is the record of a pull request's run (CRW-1355), nil for a run of issue heads.
+	Landing *Landing `json:"pull_request_landing,omitempty"`
 }
 
 // Pass runs one pass of the queue: the shell runner's loop body. A stop file ends it before it
@@ -61,6 +65,27 @@ func (r *Runner) Pass(ctx context.Context) Report {
 		rep.Result, rep.Exit = "idle", ExitPushed
 		return rep
 	}
+	// A pending pull request is landed alone, before the issue heads (CRW-1355): one pull request per pass, the lowest number first.
+	var prs, heads []Entry
+	for _, e := range entries {
+		if e.PR > 0 {
+			prs = append(prs, e)
+		} else {
+			heads = append(heads, e)
+		}
+	}
+	if len(prs) > 0 {
+		pr, stop := r.checkPR(ctx, prs[0], &rep)
+		if stop != nil {
+			return *stop
+		}
+		if pr == nil {
+			rep.Result, rep.Exit = "nothing-to-integrate", ExitNothingMerged
+			return rep
+		}
+		return r.run(ctx, rep, []Entry{prs[0]}, pr)
+	}
+	entries = heads
 	solo := len(r.soloPrune(entries)) > 0
 	var batch []Entry
 	for _, e := range entries {
@@ -102,7 +127,11 @@ func (r *Runner) Pass(ctx context.Context) Report {
 		rep.Result, rep.Exit = "nothing-to-integrate", ExitNothingMerged
 		return rep
 	}
+	return r.run(ctx, rep, batch, nil)
+}
 
+// run is one integration run of the batch (or of one pull request's head, with pr) and what the pass does with its result.
+func (r *Runner) run(ctx context.Context, rep Report, batch []Entry, pr *tracking.PullRequest) Report {
 	tag, err := r.reserveTag()
 	if err != nil {
 		r.logf("run tag: %v", err)
@@ -114,7 +143,7 @@ func (r *Runner) Pass(ctx context.Context) Report {
 		specs[i] = e.Spec()
 	}
 	r.logf("%s start %s", tag, strings.Join(specs, " "))
-	out := r.integrate(ctx, tag, batch)
+	out := r.integrate(ctx, tag, batch, pr)
 	if out.Err != nil {
 		if ctx.Err() != nil {
 			return r.cancelled(ctx, rep)
@@ -126,6 +155,18 @@ func (r *Runner) Pass(ctx context.Context) Report {
 	rep.Summary, rep.Exit, rep.Result = out.Summary, out.Exit, out.Summary.Result
 	data, _ := jsonLine(out.Summary)
 	r.logf("%s rc=%d %s", tag, out.Exit, data)
+	if pr != nil {
+		rep.Landing = r.recordLanding(ctx, *pr, out)
+	}
+	if out.Exit == ExitReviewRefused {
+		reason := "review needs_changes"
+		if out.review != nil {
+			reason += ": " + out.review.VerdictFile
+		}
+		for _, e := range out.merged {
+			rep.moved(r, e, dirBlocked, reason)
+		}
+	}
 
 	if out.Exit == ExitPushed || out.Exit == ExitNothingMerged {
 		if out.Exit == ExitPushed {
@@ -148,7 +189,7 @@ func (r *Runner) Pass(ctx context.Context) Report {
 }
 
 // runFileExts are the files a run leaves in runs_dir under its tag.
-var runFileExts = []string{".log", ".out", ".summary.json", ".verify.log", ".json"}
+var runFileExts = []string{".log", ".out", ".summary.json", ".verify.log", ".json", ".review.log", ".review.json", ".pr.json"}
 
 // reserveTag picks the tag of the next run, tag_prefix plus the month, day and time, and
 // reserves it by creating its log exclusively. A tag an earlier run already used (two passes in
