@@ -22,6 +22,8 @@ import (
 // nothing is written and the report stands, so a replay stages it again. A replay that finds its message sent with an unknown outcome
 // (held_uncertain, which the daemon recorded unknown), and a report's replay that finds its message read by its recipient (the readback
 // that settled such a send recorded accepted), answer no class either: nothing new was staged, and the writer answers what the rows read.
+// A notice of the run (an escalation, the completion digest) found held_uncertain or read is answered as staged (queued), so the run
+// writes its notice row and does not stage it again (CRW-1406).
 //
 // Fallback carries what the channel has no kind for: the plan summary notice to the orchestrator thread, and a notice of a run whose plan
 // names no project. It is crw manage send-parent in the binary; nil leaves those notices undelivered (an error).
@@ -122,10 +124,14 @@ func (r RelaySender) stage(ctx context.Context, m supervisor.DirectMessage) (Sen
 	if row, _ := answer["message"].(store.Row); row != nil {
 		switch row.Text("state") {
 		case delivery.HeldUncertain:
-			// the message was sent and nobody heard back what the send did (CRW-1390): the channel leaves it as it is, the daemon recorded
-			// the delivery unknown, and a queued row now would read as if it waited to be sent
-			return SendResult{Reason: delivery.HeldUncertain, Observation: "message " + id + " was sent and what the send did is unknown: it is not staged again, " +
-				"and its delivery reads unknown until the recipient's readback settles it"}, nil
+			if relayReportKind(m.Kind) {
+				// the message was sent and nobody heard back what the send did (CRW-1390): the channel leaves it as it is, the daemon
+				// recorded the delivery unknown, and a queued row now would read as if it waited to be sent. A notice found held_uncertain
+				// is answered as staged (CRW-1406): its notice row, not a delivery row, is what the run records of it, and a run process
+				// that died before that row would otherwise stage the notice again on every reconcile and never record it
+				return SendResult{Reason: delivery.HeldUncertain, Observation: "message " + id + " was sent and what the send did is unknown: it is not staged again, " +
+					"and its delivery reads unknown until the recipient's readback settles it"}, nil
+			}
 		case messageRead:
 			if relayReportKind(m.Kind) {
 				// the recipient's verified readback found the report in its thread, and the delivery row of that settle is written
