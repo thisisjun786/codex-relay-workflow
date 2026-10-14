@@ -1002,7 +1002,7 @@ run's directory `<state>/flow/<run>/` and none writes the journal, which only th
   run's repository other than the run's own `refs/crw/flow/<run>/` (the run moves those itself) and the binding files of the
   flow-bound directory (the hook's ledger and claims are left out: the owner's spawns write them while a subagent works).
 - The session facts of the preview are warnings, never a refusal (CRW-1318): `owner_bound` (the owner can be bound: a thread id, a
-  readable binding, no other live run), `role_models` (the six pairs, a role without one or without an effort, a reviewer of an author's model family),
+  readable binding, no other live run, live as the binding reads it: its process holds the run lock or its start holds the start lock), `role_models` (the six pairs, a role without one or without an effort, a reviewer of an author's model family),
   `owner_state_writable` (the run directory, the flow-bound directory, the control socket and the repository), `subagent_slots`
   (`agents.max_threads` leaves a slot for a call) and `multi_agent_v1` (`features.multi_agent_v2` is off: under V2 the protocol
   stops); `verifier_prerequisites`, the sixth, is judged for every run (CRW-1319).

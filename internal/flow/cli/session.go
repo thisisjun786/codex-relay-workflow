@@ -177,9 +177,10 @@ func sessionFacts(req sessionFactRequest) []Fact {
 			fmt.Sprintf("the owner %q is not a thread id", req.Thread))
 	case err != nil:
 		add(FactOwnerBound, LevelWarn, "the start cannot write the binding the spawn hook decides by; "+sessionProtocolStops, fmt.Sprintf("the flow binding of thread %s cannot be read: %v", req.Thread, err))
-	case present && line.Kind != bound.KindClosed && validRunID(line.RunID) && LockHeld(req.State, line.RunID):
+	case present && line.Kind != bound.KindClosed && validRunID(line.RunID) && runLive(req.State, line.RunID):
+		// live as the binding reads it (bindOwner): the run's process holds the run lock, or its start holds the start lock
 		add(FactOwnerBound, LevelWarn, "one thread binds one live run: this run is not bound, and the hook applies the other run's pairs",
-			fmt.Sprintf("thread %s is bound to run %s, whose process holds its lock", req.Thread, line.RunID))
+			fmt.Sprintf("thread %s is bound to run %s, which lives (its process holds its run lock, or its start holds its start lock)", req.Thread, line.RunID))
 	case present && line.Kind != bound.KindClosed:
 		add(FactOwnerBound, LevelPass, "", fmt.Sprintf("thread %s holds the open line of run %s, which no process holds: the start closes it and binds this run", req.Thread, line.RunID))
 	default:
