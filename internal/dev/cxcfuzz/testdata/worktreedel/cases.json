@@ -137,7 +137,7 @@
   },
   {
     "name": "crw-1066-miss-5720a99f75f1",
-    "input": "{\"command\": \"cd /tmp && rm -rf .\", \"cwd\": \"home/link-into-slot\", \"event\": \"PreToolUse\", \"fs\": [{\"kind\": \"dir\", \"path\": \"home/.codex/worktrees/zk3q/repo\"}, {\"kind\": \"symlink\", \"path\": \"home/link-into-slot\", \"target\": \"${ROOT}/home/.codex/worktrees/zk3q/repo\"}]}",
+    "input": "{\"command\": \"cd deep && rm -rf .\", \"cwd\": \"home/.codex/worktrees/zk3q/repo\", \"event\": \"PreToolUse\", \"fs\": [{\"kind\": \"dir\", \"path\": \"home/.codex/worktrees/zk3q/repo/deep\"}]}",
     "oracle": "{\"decision\": \"deny\", \"reason\": \"[crw: WORKTREE-GUARD-03] blocked `rm -r .`: it deletes this session's own Codex-app-managed worktree (slot: ${ROOT}/home/.codex/worktrees/zk3q). This thread is bound to that worktree; deletion destroys uncommitted work. Remedies: finish and commit here; rename in place (git switch -c / branch -m); teardown of THIS session's worktree is done by the user (archive the thread in the app \\u2014 snapshot preserved \\u2014 or remove it from OUTSIDE this session). See $crw:crw-worktree-guardian.\"}",
     "go": "{\"decision\": \"allow\", \"reason\": \"\"}",
     "tag": "open",
