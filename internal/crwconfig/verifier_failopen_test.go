@@ -115,9 +115,12 @@ func TestConfigVerifierRepairsAMalformedSection(t *testing.T) {
 	if code != 0 || !strings.Contains(errOut, "verifier.go_root") {
 		t.Errorf("a record that leaves the unusable key: exit %d stderr %q", code, errOut)
 	}
-	var doc map[string]map[string]string
+	// (the file also carries the manage.child_check default the installation writes, CRW-1398, so only the verifier section is read)
+	var doc struct {
+		Verifier map[string]string `json:"verifier"`
+	}
 	data, _ := os.ReadFile(path)
-	if json.Unmarshal(data, &doc) != nil || doc["verifier"]["go_root"] != "~/.local/go/go" || doc["verifier"]["crw_dev"] != "tree" {
+	if json.Unmarshal(data, &doc) != nil || doc.Verifier["go_root"] != "~/.local/go/go" || doc.Verifier["crw_dev"] != "tree" {
 		t.Errorf("the file: %s", data)
 	}
 }
