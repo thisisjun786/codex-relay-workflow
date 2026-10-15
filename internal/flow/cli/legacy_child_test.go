@@ -1,11 +1,15 @@
 package cli
 
 import (
+	"context"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // TestLegacyIssueChildRunIsNotResumed (CRW-1415): a run whose journal holds a crw.releaseChild row started an issue child under the
@@ -59,5 +63,153 @@ func TestLegacyIssueChildRunIsNotResumed(t *testing.T) {
 
 	if code, out, errOut := pw.td.do("show", run, "--state", pw.state); code != 0 || !strings.Contains(out, run) {
 		t.Errorf("crw flow show of a legacy issue-child run: exit %d %q %q", code, out, errOut)
+	}
+}
+
+// TestLegacyIssueLaneRunIsNotResumed (CRW-1415, PR #889 round 1): a run started as the retired issue-lane is a legacy issue-child run
+// whatever its journal holds besides. `crw flow resume RUN --detach` refuses it before a process is started, the run process and
+// `crw flow resume RUN /path/to/issue-lane.js` refuse it before a row is written, and `crw flow show` still reads it.
+func TestLegacyIssueLaneRunIsNotResumed(t *testing.T) {
+	pw := newProcessWorld(t, strings.Replace(twoCalls, "name: 'two'", "name: '"+LegacyIssueLaneWorkflow+"'", 1))
+	old := filepath.Join(t.TempDir(), "issue-lane.js")
+	if src, err := os.ReadFile(pw.script); err != nil || os.WriteFile(old, src, 0o644) != nil {
+		t.Fatalf("the old issue-lane script: %v", err)
+	}
+	prev := engine.ResumeEnv
+	t.Cleanup(func() { engine.ResumeEnv = prev })
+	engine.ResumeEnv = func(ctx context.Context, req engine.ResumeEnvRequest) (engine.ResumeSetup, error) {
+		w, err := pw.td.World(ctx, WorldRequest{Spec: Spec{RunID: req.RunID}, State: req.State, Resume: true})
+		if err != nil {
+			return engine.ResumeSetup{}, err
+		}
+		return engine.ResumeSetup{Journal: w.Journal, Backend: w.Backend, Close: w.Close}, nil
+	}
+	run := "run-legacy-lane"
+	pw.handle = func(engine.FakeRequest) engine.FakeReply {
+		return engine.FakeReply{Tokens: &engine.Tokens{Input: 10, Output: 5, Total: 15}}
+	}
+	spec := pw.spec(run, func(s *Spec) { s.Workflow, s.Script = LegacyIssueLaneWorkflow, old })
+	if code, errOut := pw.execute(spec, false, make(chan os.Signal, 1)); code != 0 {
+		t.Fatalf("the old issue-lane run: exit %d %s", code, errOut)
+	}
+	rowsOf := func() int {
+		events, _, err := loadRun(pw.world, run)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(events)
+	}
+	rows := rowsOf()
+
+	code, out, errOut := pw.td.do("resume", run, "--detach", "--state", pw.state)
+	if code == 0 || !strings.Contains(errOut, "legacy issue-child run") || !strings.Contains(errOut, LegacyIssueLaneWorkflow) || len(pw.td.spawned) != 0 {
+		t.Errorf("a detached resume of an issue-lane run: exit %d %q %q, %d processes", code, out, errOut, len(pw.td.spawned))
+	}
+	if code, errOut := pw.execute(spec, true, make(chan os.Signal, 1)); code == 0 || !strings.Contains(errOut, "legacy issue-child run") {
+		t.Errorf("the run process resumed an issue-lane run: exit %d %q", code, errOut)
+	}
+	pw.world.close()
+	code, out, errOut = pw.td.do("resume", run, old, "--state", pw.state)
+	pw.world.open()
+	if code == 0 || !strings.Contains(errOut, "legacy issue-child run") {
+		t.Errorf("crw flow resume RUN issue-lane.js: exit %d %q %q", code, out, errOut)
+	}
+	if got := rowsOf(); got != rows {
+		t.Errorf("the refused resumes wrote rows: %d -> %d", rows, got)
+	}
+	if code, out, errOut := pw.td.do("show", run, "--state", pw.state); code != 0 || !strings.Contains(out, run) {
+		t.Errorf("crw flow show of an issue-lane run: exit %d %q %q", code, out, errOut)
+	}
+}
+
+// legacyAsking is the asking run with the child start of an old project lane in its journal: a legacy issue-child run that waits for
+// an answer.
+func legacyAsking(t *testing.T, w *world) *asking {
+	t.Helper()
+	a := newAsking(t, w)
+	r, err := w.reopen("run-q")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.op("c_child", engine.OpLegacyReleaseChild, map[string]any{"node": "n2", "child": "child-n2", "started": true})
+	r.close()
+	if err := WriteSpec(w.state, Spec{Schema: SpecSchema, RunID: "run-q", Workflow: "project-lane", Thread: "thread-owner", CreatedAt: "2026-10-12T08:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	return a
+}
+
+// TestAnswerRefusesALegacyRun (CRW-1415, PR #889 round 1): `crw flow answer` writes nothing to a legacy issue-child run. With the
+// auto-resume and with --no-resume the answer is refused under the run lock before the claim is judged, with a reason that names the
+// legacy issue-child path, no decision_applied row (no row at all) is appended and no process is started.
+func TestAnswerRefusesALegacyRun(t *testing.T) {
+	w := newWorld(t)
+	a := legacyAsking(t, w)
+	td := w.deps()
+	id := a.answered(t, "ud-legacy", nil)
+	before := len(mustLoad(t, w))
+	for _, extra := range [][]string{nil, {"--no-resume"}} {
+		code, reply, errOut := a.answer(td, id, extra...)
+		if code == 0 || reply.Applied || reply.Refusal == nil || reply.Refusal.Code != RefusedLegacyRun || !strings.Contains(reply.Refusal.Detail, "legacy issue-child run") {
+			t.Errorf("answer %v to a legacy run: exit %d %+v %q", extra, code, reply, errOut)
+		}
+		if got := len(mustLoad(t, w)); got != before || len(a.appliedRows(t)) != 0 {
+			t.Errorf("answer %v to a legacy run wrote rows: %d -> %d", extra, before, got)
+		}
+		if len(td.spawned) != 0 {
+			t.Errorf("answer %v to a legacy run started %d processes", extra, len(td.spawned))
+		}
+	}
+}
+
+// TestNextRefusesALegacyRun (CRW-1415, PR #889 round 1): `crw flow next` of a legacy issue-child run with no process does not wait out
+// --wait and answer running: the refusal of its resume is the command's answer, nonzero, and no process is started.
+func TestNextRefusesALegacyRun(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	fastNextPoll(t)
+	w := newWorld(t)
+	td := w.deps()
+	run, owner := "run-0123456789e1", "01a30000-0000-7000-8000-0000000000e1"
+	spentSessionRun(t, w, run, owner, 0, 10)
+	r, err := w.reopen(run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.op("c_child", engine.OpLegacyReleaseChild, map[string]any{"node": "A", "child": "child-A", "started": true})
+	r.close()
+	spawned := 0
+	td.Spawn = func(context.Context, SpawnRequest) (int, error) {
+		spawned++
+		return os.Getpid(), nil
+	}
+	td.Ready = AwaitLock
+	began := time.Now()
+	code, out, errOut := td.do("next", run, "--wait", "5", "--json", "--state", w.state)
+	if code == 0 || !strings.Contains(errOut, "legacy issue-child run") || spawned != 0 {
+		t.Errorf("next of a legacy run: exit %d, %d processes, %q %q", code, spawned, out, errOut)
+	}
+	if took := time.Since(began); took > 4*time.Second {
+		t.Errorf("next of a legacy run waited %s", took)
+	}
+}
+
+// TestResumeRefusedReadsTheJournalOnce (PR #889 round 1): the refusal of a resume reads the run's journal once, for the legacy check and
+// the budget of a spec that has one.
+func TestResumeRefusedReadsTheJournalOnce(t *testing.T) {
+	w := newWorld(t)
+	run, owner := "run-0123456789e2", "01a30000-0000-7000-8000-0000000000e2"
+	spec := spentSessionRun(t, w, run, owner, 50, 10)
+	loads := 0
+	prev := loadLeanJournal
+	t.Cleanup(func() { loadLeanJournal = prev })
+	loadLeanJournal = func(ctx context.Context, st *store.Store, id string) ([]engine.Event, bool, error) {
+		loads++
+		return prev(ctx, st, id)
+	}
+	if err := resumeRefused(ctx, w.st, spec); err != nil {
+		t.Fatalf("a run with budget left: %v", err)
+	}
+	if loads != 1 {
+		t.Errorf("resumeRefused read the journal %d times", loads)
 	}
 }

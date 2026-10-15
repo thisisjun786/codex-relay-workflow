@@ -440,8 +440,8 @@ func nodeStarted(events []engine.Event) bool {
 const ProjectLaneWorkflow = "project-lane"
 
 // LegacyIssueLaneWorkflow is an old run's workflow, read only: the issue lane of a child, retired with the issue child (CRW-1415). A run
-// record that names it still reads as a lane run.
-const LegacyIssueLaneWorkflow = "issue-lane"
+// record that names it still reads as a lane run; the run is a legacy issue-child run, not resumed (legacyRun).
+const LegacyIssueLaneWorkflow = engine.LegacyIssueLaneWorkflow
 
 // laneWorkflows are the workflows whose run is meant to start the nodes of a plan: the built-in project lane and night batch, and an old
 // run's issue lane of a child.

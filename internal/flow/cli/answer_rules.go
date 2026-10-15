@@ -128,6 +128,8 @@ const (
 	// text of the recorded answer (CRW-1381): input errors.
 	RefusedPartQuestion = "unknown_question_digest"
 	RefusedPartText     = "answer_part_not_recorded"
+	// RefusedLegacyRun is an answer to a legacy issue-child run (CRW-1415): its records are read only, and an answer is not appended.
+	RefusedLegacyRun = "legacy_issue_child_run"
 )
 
 // WarnSingleAnswer is the warning of an answer that gives an ask of several questions no part for some of them: each of those questions

@@ -35,8 +35,12 @@ const (
 `
 )
 
-// oldReleaseChild stands in for the old crw.releaseChild: it started the node's issue child and recorded it.
-type oldReleaseChild struct{ started []string }
+// oldReleaseChild stands in for the old crw.releaseChild: it started the node's issue child and recorded it. afterStart, when set, is
+// called once the child is started and before the op returns (the process ends there).
+type oldReleaseChild struct {
+	started    []string
+	afterStart func()
+}
 
 func (o *oldReleaseChild) Run(_ context.Context, req engine.OpRequest) (engine.OpResult, error) {
 	var a []json.RawMessage
@@ -46,6 +50,9 @@ func (o *oldReleaseChild) Run(_ context.Context, req engine.OpRequest) (engine.O
 	var node string
 	_ = json.Unmarshal(a[0], &node)
 	o.started = append(o.started, node)
+	if o.afterStart != nil {
+		o.afterStart()
+	}
 	child := "child-" + node
 	res, _ := json.Marshal(map[string]any{"node": node, "child": child, "started": true})
 	return engine.OpResult{Result: res, Data: map[string]any{"node": node, "child": child, "started": true}}, nil
@@ -138,5 +145,49 @@ func TestLegacyIssueChildRunIsNotResumedUnderTheNewLane(t *testing.T) {
 	}
 	if rows := l.Rows(ops.OpReleaseChild); len(rows) != 1 || str(rows[0].Data, "child") != "child-A" {
 		t.Errorf("the old run's crw.releaseChild row is not kept as it was: %+v", rows)
+	}
+}
+
+// TestLegacyChildStartWithNoReleaseChildRowIsNotResumed (CRW-1415, PR #889 round 1): the old lane recorded the node's release as a child
+// (crw.release, kind child) and the child's spawn decision before it started the child, and the crw.releaseChild row only after; a
+// process that ended between the child's start and that row left no crw.releaseChild row. The resume of that run under the current lane
+// is refused all the same, before anything is written: it would escalate the node live and leave the started child running.
+func TestLegacyChildStartWithNoReleaseChildRowIsNotResumed(t *testing.T) {
+	l := NewLab(t, NodeSpec{ID: "A", Issue: "CRW-A", Title: "a big issue", Regions: []string{"a/"}, SizeFit: "child", SizeReason: "regions_gt3"})
+	text, err := workflows.Source(cli.ProjectLaneWorkflow)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldLane, err := script.Load(script.Source{Name: "project-lane.js", Text: bytes.Replace(text, []byte(newChildBranch), []byte(oldChildBranch), 1), Dir: workflows.FS})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newLane, err := workflows.Load(cli.ProjectLaneWorkflow)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// the old run: the child is started, and the process ends before its crw.releaseChild row is written
+	child := &oldReleaseChild{afterStart: l.Kill}
+	_, _ = legacyNight(l, oldLane, map[string]engine.Op{"releaseChild": child}, false)
+	l.NewProcess("proc-2")
+	childRelease := 0
+	for _, ev := range l.Rows(ops.OpRelease) {
+		if ev.Event == engine.EvCompleted && str(ev.Data, "node") == "A" && str(ev.Data, "kind") == "child" {
+			childRelease++
+		}
+	}
+	if len(child.started) != 1 || len(l.Rows(ops.OpReleaseChild)) != 0 || childRelease != 1 {
+		t.Fatalf("the old run: children started %v, releaseChild rows %d, child releases of A %d", child.started, len(l.Rows(ops.OpReleaseChild)), childRelease)
+	}
+	escBefore := len(l.FlowRows(engine.EvEscalation))
+	rowsBefore := len(l.Events())
+
+	_, err = legacyNight(l, newLane, nil, true)
+	if err == nil || !strings.Contains(err.Error(), "legacy issue-child run") || !strings.Contains(err.Error(), "node A") {
+		t.Fatalf("the resume under the current lane of a run whose child started with no crw.releaseChild row: %v", err)
+	}
+	if n := len(l.FlowRows(engine.EvEscalation)) - escBefore; n != 0 || len(l.Events()) != rowsBefore {
+		t.Errorf("the refused resume wrote rows: %d escalations, rows %d -> %d", n, rowsBefore, len(l.Events()))
 	}
 }

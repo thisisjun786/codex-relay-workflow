@@ -130,8 +130,9 @@ func rowWarnings(row map[string]any) []string {
 	return out
 }
 
-// applyAnswer judges the claim against the record and the journal and, when it holds, appends the row under the run lock. It
-// returns the exit status of the command.
+// applyAnswer judges the claim against the record and the journal and, when it holds, appends the row under the run lock. A legacy
+// issue-child run (legacyRun) is refused under the lock before the claim is judged: nothing is appended to it. It returns the exit
+// status of the command.
 func (c *command) applyAnswer(st *store.Store, state string, claim Claim) (AnswerReply, int) {
 	reply := AnswerReply{Run: claim.Run}
 	rec, err := st.Get(c.ctx, claim.Decision)
@@ -155,6 +156,11 @@ func (c *command) applyAnswer(st *store.Store, state string, claim Claim) (Answe
 	if err != nil {
 		fmt.Fprintf(c.stderr, "crw flow answer: error: %v\n", err)
 		return reply, 2
+	}
+	// a legacy issue-child run is read only (CRW-1415): no answer is appended to it, whether the run is to be resumed after or not
+	if why := legacyRun(j.Events(), claim.Run, run.Workflow); why != "" {
+		reply.Refusal = &Refusal{Code: RefusedLegacyRun, Detail: why}
+		return reply, 1
 	}
 	app, refusal := Judge(rec, j.Events(), run, claim)
 	if refusal != nil {

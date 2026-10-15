@@ -174,36 +174,53 @@ func moreBudget(spec Spec) string {
 	return fmt.Sprintf("no command raises a run's budget: the budget was given at its start, so more tokens need a new run (crw flow start %s --token-budget N)", workflow)
 }
 
-// budgetLeft refuses the resume of a run whose spec's budget the run has spent (runBudget over the journal in st): `crw flow resume
-// RUN --detach` and an answer's resume ask it before they start the run process, so the refusal, budget_exhausted with the tokens
-// spent and the decision, is the command's own answer and not a process that takes the run lock and ends at once. The run process
-// judges the budget again under the run lock (execute). A spec without a budget has nothing to refuse.
-func budgetLeft(ctx context.Context, st *store.Store, spec Spec) error {
+// budgetLeft refuses the resume of a run whose spec's budget the run has spent (runBudget over the run's rows in events): `crw flow
+// resume RUN --detach` and an answer's resume ask it (through resumeRefused) before they start the run process, so the refusal,
+// budget_exhausted with the tokens spent and the decision, is the command's own answer and not a process that takes the run lock and ends
+// at once. The run process judges the budget again under the run lock (execute). A spec without a budget has nothing to refuse.
+func budgetLeft(spec Spec, events []engine.Event) error {
 	if spec.TokenBudget <= 0 {
 		return nil
 	}
-	events, _, err := journal.LoadLean(ctx, st, spec.RunID)
-	if err != nil {
-		return fmt.Errorf("the journal of run %s cannot be read: %w", spec.RunID, err)
-	}
-	_, err = runBudget(spec, engine.RunSpent(events, spec.RunID).Total, spec.TokenBudget)
+	_, err := runBudget(spec, engine.RunSpent(events, spec.RunID).Total, spec.TokenBudget)
 	return err
 }
 
+// loadLeanJournal reads the rows of a run without their large payloads (journal.LoadLean); a test counts the reads through it.
+var loadLeanJournal = journal.LoadLean
+
+// legacyRunError is the refusal of a legacy issue-child run (legacyRun): a refusal that stands, which no retry lifts. `crw flow next`
+// answers it as its own error and not as a resume that did not start.
+type legacyRunError struct{ why string }
+
+func (e *legacyRunError) Error() string { return e.why }
+
+// legacyRun is why a run is a legacy issue-child run ("" when it is not): its rows (engine.LegacyIssueChild: a crw.releaseChild row, a
+// child release whose spawn the old lane decided, a started row of the retired issue lane), or the workflow its spec or its record names
+// (LegacyIssueLaneWorkflow), CRW-1415. Its records stay read only: nothing is written to it and it is not resumed.
+func legacyRun(events []engine.Event, runID, workflow string) string {
+	if why := engine.LegacyIssueChild(events, runID); why != "" {
+		return why
+	}
+	if workflow == LegacyIssueLaneWorkflow {
+		return fmt.Sprintf("run %s is a legacy issue-child run: its spec names the %s workflow of the retired issue-child path (CRW-1415), which no longer exists; the run is not resumed and nothing is written to it; its records stay read only (crw flow show and the summary read them)", runID, LegacyIssueLaneWorkflow)
+	}
+	return ""
+}
+
 // resumeRefused is why the run of spec is not resumed, asked before a process is started for it (`crw flow resume RUN --detach`, the
-// resume of `crw flow answer` and of `crw flow next`): a legacy issue-child run, whose journal holds a crw.releaseChild row the current
-// project lane does not replay (engine.LegacyIssueChild, CRW-1415), and a run whose spec's budget is spent (budgetLeft). The run process
-// judges both again under the run lock (engine.Run, execute), so the refusal is the command's own answer and not a process that takes the
-// run lock and ends at once.
+// resume of `crw flow answer` and of `crw flow next`): a legacy issue-child run (legacyRun, a *legacyRunError), and a run whose spec's
+// budget is spent (budgetLeft), both over one read of the run's journal. The run process judges both again under the run lock
+// (engine.Run, execute), so the refusal is the command's own answer and not a process that takes the run lock and ends at once.
 func resumeRefused(ctx context.Context, st *store.Store, spec Spec) error {
-	events, _, err := journal.LoadLean(ctx, st, spec.RunID)
+	events, _, err := loadLeanJournal(ctx, st, spec.RunID)
 	if err != nil {
 		return fmt.Errorf("the journal of run %s cannot be read: %w", spec.RunID, err)
 	}
-	if why := engine.LegacyIssueChild(events, spec.RunID); why != "" {
-		return errors.New(why)
+	if why := legacyRun(events, spec.RunID, spec.Workflow); why != "" {
+		return &legacyRunError{why}
 	}
-	return budgetLeft(ctx, st, spec)
+	return budgetLeft(spec, events)
 }
 
 // resumeHold holds a `crw flow resume RUN SCRIPT` the way the run process holds its run (CRW-1348): a spec that names another
