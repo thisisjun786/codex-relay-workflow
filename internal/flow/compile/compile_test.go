@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"regexp"
 	"strings"
 	"testing"
@@ -1035,4 +1036,71 @@ func TestPreviewShowsTheKeptDecisionEdges(t *testing.T) {
 			t.Errorf("refusal %v", r)
 		}
 	})
+}
+
+// bundleHandoff is a handoff JSON whose target is written the way crw-plan writes it for a bundle: the branch the run integrates on
+// (base_ref) and, when given, the branch the bundle's pull request is opened against (pr_base).
+func bundleHandoff(baseRef, prBase string) string {
+	pr := ""
+	if prBase != "" {
+		pr = fmt.Sprintf(`,"pr_base":%q`, prBase)
+	}
+	return fmt.Sprintf(`{"schema":%q,"projects":[{"key":"PX","plan_id":"plan-px","target":{"repository":"/srv/acme/shop","base_ref":%q%s},`+
+		`"issues":[{"key":"A","title":"issue A","criteria":["criterion of A"]},{"key":"B","title":"issue B","criteria":["criterion of B"],"after":["A"]}]}]}`,
+		InputSchema, baseRef, pr)
+}
+
+// TestBundleTargetEqualToThePRBaseIsRefused (CRW-1440): a bundle's run integrates on its own branch and the pull request is opened
+// against pr_base; a base_ref that is the pr_base (written short or as refs/heads/BRANCH) would integrate the nodes straight on the
+// branch the pull request targets, so the handoff is refused at target.base_ref. A distinct pr_base is no edge and no digest change,
+// and the handoff that carries pr_base decodes strictly.
+func TestBundleTargetEqualToThePRBaseIsRefused(t *testing.T) {
+	for _, baseRef := range []string{"dev", "refs/heads/dev"} {
+		in, err := Decode([]byte(bundleHandoff(baseRef, "dev")))
+		if err != nil {
+			t.Fatalf("base_ref %q with pr_base: the handoff does not decode: %v", baseRef, err)
+		}
+		r := mustRefuse(t, in, nil)
+		if !r.Has("input") || len(r.Refusals) != 1 || r.Refusals[0].Path != "target.base_ref" || r.Refusals[0].Project != "PX" ||
+			!strings.Contains(r.Refusals[0].Detail, "pr_base") {
+			t.Errorf("base_ref %q equal to pr_base: refusals %+v", baseRef, r.Refusals)
+		}
+	}
+	// a pr_base written refs/heads/BRANCH is the same branch
+	in, err := Decode([]byte(bundleHandoff("dev", "refs/heads/dev")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r := mustRefuse(t, in, nil); !r.Has("input") || len(r.Refusals) != 1 || r.Refusals[0].Path != "target.base_ref" {
+		t.Errorf("pr_base refs/heads/dev: refusals %+v", r.Refusals)
+	}
+
+	// a bundle branch distinct from pr_base compiles, and pr_base changes no edge and no digest
+	with, err := Decode([]byte(bundleHandoff("bundle/m1", "dev")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if with.Projects[0].Target.PRBase != "dev" {
+		t.Fatalf("pr_base not read: %+v", with.Projects[0].Target)
+	}
+	without, err := Decode([]byte(bundleHandoff("bundle/m1", "")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, b := compileOne(t, with, nil), compileOne(t, without, nil)
+	if len(a.Warnings) != 0 || len(b.Warnings) != 0 {
+		t.Errorf("warnings: %+v / %+v", a.Warnings, b.Warnings)
+	}
+	if da, db := dag.RequestDigest(*a.Change), dag.RequestDigest(*b.Change); da != db || a.Change.RequestID != b.Change.RequestID {
+		t.Errorf("pr_base changed the plan digest: %s != %s", da, db)
+	}
+	ea, eb := edgesOf(a), edgesOf(b)
+	if len(ea) == 0 || len(ea) != len(eb) {
+		t.Fatalf("edges %v / %v", ea, eb)
+	}
+	for k, e := range ea {
+		if !reflect.DeepEqual(eb[k], e) || e.TargetBaseRef != "bundle/m1" {
+			t.Errorf("edge %v: %+v != %+v", k, e, eb[k])
+		}
+	}
 }
