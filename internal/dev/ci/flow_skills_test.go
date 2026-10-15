@@ -104,6 +104,14 @@ func TestFlowControlOwnershipTableWording(t *testing.T) {
 			t.Errorf("crw-dev/SKILL.md lacks %q", want)
 		}
 	}
+	// The background explorers come first (CRW-1466): one for each node of the milestone, at the design head, before the first DESIGN.
+	run := normalized(readRepoText(t, "plugins/crw/skills/crw-run/SKILL.md"))
+	if !strings.Contains(run, "The sequence is fixed: one background explorer for each node of the milestone reads the repository at the design head before the first DESIGN, the architect writes the DESIGN over their findings,") {
+		t.Errorf("crw-run/SKILL.md does not start the fixed sequence with the background explorers")
+	}
+	if !strings.Contains(normalized(section), "1. One background explorer for each node of the milestone, at the design head, then the architect DESIGN of the milestone over their findings.") {
+		t.Errorf("%s: the C4 procedure does not start with the background explorers", flowRef)
+	}
 	// The design audit is the critic's call (CRW-1434): no installed guidance gives it to a reviewer.
 	reviewerAudits := regexp.MustCompile(`(?i)design audit,? by a reviewer|design audit by a reviewer|a reviewer of another model family audits it|reviewer of another model family for the design audit`)
 	for _, path := range []string{flowRef, "plugins/crw/skills/crw-dev/SKILL.md", "plugins/crw/skills/crw-run/SKILL.md", "plugins/crw/skills/crw-canon/references/spawn-policy.md"} {

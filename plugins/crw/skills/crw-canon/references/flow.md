@@ -124,7 +124,7 @@ A flow-managed node is an issue node that the child's run released to an executo
 
 An issue that [crw-dev](../../crw-dev/SKILL.md) classifies as C4 runs in the flow in this order. The numbered steps are the run's own lane; none is a thread's choice.
 
-1. The architect DESIGN of the milestone.
+1. One background explorer for each node of the milestone, at the design head, then the architect DESIGN of the milestone over their findings.
 2. The pre-build design audit, by the critic, a role of its own of another model family than the architect, before any executor starts. `needs_changes` returns to the architect on its own thread, and a replan is audited again. Only an approved DESIGN reaches an executor.
 3. The candidate review of each issue: a fresh reviewer, of another model family than the issue's authors, over each executor head that passed its verification.
 4. After the issues are integrated, the final gate with full verification and the risk record, then reviewer-final over the integrated range.
