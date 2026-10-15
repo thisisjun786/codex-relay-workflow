@@ -2092,7 +2092,8 @@ func profileNames(got []reviewadapter.Request) []string {
 // fallback profile (Bugbot) with the same request. The one completed row keeps the fallback call's record as its result, the Codex
 // record as the answer's fallback, and names the fallback in its data (fallback_from, fallback_state, fallback_model); a fallback that
 // judged holds nothing and is proven. With no fallback wired a quota holds the node as before; a fallback that ends quota again holds
-// unit_check_quota with both records kept; no state other than quota falls back.
+// unit_check_quota with both records kept; a fallback's invalid answer is asked once more of the fallback (retried, first_state
+// invalid), and its second record is the row's result; no state other than quota falls back.
 func TestUnitCheckFallsBackToBugbotOnCodexQuota(t *testing.T) {
 	t.Run("fallback judges", func(t *testing.T) {
 		u := newUCWorld(t)
@@ -2193,6 +2194,57 @@ func TestUnitCheckFallsBackToBugbotOnCodexQuota(t *testing.T) {
 		}
 	})
 
+	// the fallback's own invalid answer is asked once more of the fallback, and the row's retried and first_state are about it
+	for _, second := range []reviewadapter.State{reviewadapter.StateOK, reviewadapter.StateInvalid} {
+		t.Run("quota, then a fallback invalid answer and its retry "+string(second), func(t *testing.T) {
+			u := newUCWorld(t)
+			var fallbacks []string
+			codexWithBugbotFallback(u, &fallbacks)
+			verdict := ""
+			if second == reviewadapter.StateOK {
+				verdict = reviewadapter.VerdictVerified
+			}
+			u.checker.replies = []checkReply{{res: codexRecord(reviewadapter.StateQuota, "")}, {res: checkRecord(reviewadapter.StateInvalid, "")}, {res: checkRecord(second, verdict)},
+				{res: checkRecord(reviewadapter.StateOK, reviewadapter.VerdictVerified)}}
+			ex := u.build("c_ex1", "built\n")
+			out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+			row := u.lastCheck()
+			if names := profileNames(u.checker.got); !slices.Equal(names, []string{"codex-review", "bugbot", "bugbot"}) {
+				t.Fatalf("the checker saw profiles %v, want codex-review, then bugbot twice", names)
+			}
+			if a, b := u.checker.got[1], u.checker.got[2]; a.Prompt != b.Prompt || a.Worktree != b.Worktree || a.GuideRev != b.GuideRev || a.Limit != b.Limit ||
+				a.Base != b.Base || a.Head != b.Head || !bytes.Equal(a.Schema, b.Schema) {
+				t.Errorf("the fallback's retry %+v differs from its first request %+v", b, a)
+			}
+			if !slices.Equal(fallbacks, []string{UnitCheckUncommitted}) {
+				t.Errorf("fallback modes %v", fallbacks)
+			}
+			if out.State != second || out.Verdict != verdict || !out.Retried || out.Hold != "" || out.Model != "grok-4.7-medium" ||
+				out.Fallback == nil || out.Fallback.State != reviewadapter.StateQuota || out.Fallback.Model != "gpt-6-astra" {
+				t.Errorf("answer %+v (fallback %+v)", out, out.Fallback)
+			}
+			want := map[string]any{"state": string(second), "retried": true, "first_state": "invalid", "fallback_from": "codex-review", "fallback_state": "quota",
+				"fallback_model": "gpt-6-astra"}
+			for k, v := range want {
+				if row.Data[k] != v {
+					t.Errorf("row %s = %#v, want %#v", k, row.Data[k], v)
+				}
+			}
+			for _, k := range []string{"hold", "fallback_retried"} {
+				if _, has := row.Data[k]; has {
+					t.Errorf("the row has %s: %v", k, row.Data[k])
+				}
+			}
+			var rec reviewadapter.Result
+			if err := json.Unmarshal(resultOf(row), &rec); err != nil || rec.State != second || rec.Model != "grok-4.7-medium" {
+				t.Errorf("the row's result %+v (%v) is not the Bugbot retry's record", rec, err)
+			}
+			if len(u.checkRows()) != 1 || !u.proven(row) {
+				t.Errorf("%d rows; proven %v", len(u.checkRows()), u.proven(row))
+			}
+		})
+	}
+
 	for _, state := range []reviewadapter.State{reviewadapter.StateNoAnswer, reviewadapter.StateToolFailed} {
 		t.Run("no fallback on "+string(state), func(t *testing.T) {
 			u := newUCWorld(t)
@@ -2282,7 +2334,7 @@ func TestUnitCheckRecordsCodexFindingsOnAPlantedBug(t *testing.T) {
 	if !reflect.DeepEqual(rec, out.Result) || dataStr(row, "verdict") != reviewadapter.VerdictNeedsChanges || row.Data["findings"] != float64(2) || dataStr(row, "tree") != pending {
 		t.Errorf("answer %+v row %v", out, row.Data)
 	}
-	wantArgv := []string{"codex", "review", "--uncommitted", "-c", `model="gpt-6-astra"`, "-c", `model_reasoning_effort="high"`, "-c", `sandbox_mode="read-only"`}
+	wantArgv := []string{"codex", "review", "--uncommitted", "-c", `model="gpt-6-astra"`, "-c", `review_model="gpt-6-astra"`, "-c", `model_reasoning_effort="high"`, "-c", `sandbox_mode="read-only"`}
 	if len(argvs) != 1 || !slices.Equal(argvs[0], wantArgv) {
 		t.Errorf("the tool's argv %q, want %q", argvs, wantArgv)
 	}

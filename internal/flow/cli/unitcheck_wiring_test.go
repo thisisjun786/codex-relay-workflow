@@ -162,8 +162,8 @@ func TestBuildLaneWiresTheUnitCheck(t *testing.T) {
 // TestShippedUnitCheckIsCodexInBothModes (CRW-1463, CRW-1517): the shipped unit check is the review adapter over the tool runner and
 // ops.Snapshot as its fingerprint, so the tree a check saw is the pending tree crw.commit commits; both modes run a Codex review
 // (codex-review, codex-review-committed: gpt-6-astra at high effort by default) and fall back to Bugbot (bugbot, bugbot-committed) on a
-// Codex quota; CRW_UNIT_CHECK_MODEL and CRW_UNIT_CHECK_EFFORT change the Codex profiles and neither Bugbot one, a setting codex cannot
-// be given is refused when the lane is built, and the call is limited to ten minutes.
+// Codex quota; CRW_UNIT_CHECK_MODEL and CRW_UNIT_CHECK_EFFORT change the Codex profiles (model and review_model, and the family the
+// model names) and neither Bugbot one, a setting codex cannot be given or whose family cannot be told is refused when the lane is built, and the call is limited to ten minutes.
 func TestShippedUnitCheckIsCodexInBothModes(t *testing.T) {
 	isolateGit(t)
 	none := func(string) (string, bool) { return "", false }
@@ -186,12 +186,12 @@ func TestShippedUnitCheckIsCodexInBothModes(t *testing.T) {
 		}
 		return false
 	}
-	codex := func(uc *ops.UnitCheck, mode, name, model, effort string) {
+	codex := func(uc *ops.UnitCheck, mode, name, model, effort, family string) {
 		t.Helper()
 		p, err := uc.Profile(mode)
-		if err != nil || p.Name != name || p.Model != model || p.Effort != effort || p.Family != "gpt" ||
-			!argvHas(p, `model="`+model+`"`) || !argvHas(p, `model_reasoning_effort="`+effort+`"`) || p.Args == nil || p.Answer == nil {
-			t.Errorf("the %s profile %+v %v, want %s with %s at %s", mode, p, err, name, model, effort)
+		if err != nil || p.Name != name || p.Model != model || p.Effort != effort || p.Family != family ||
+			!argvHas(p, `model="`+model+`"`) || !argvHas(p, `review_model="`+model+`"`) || !argvHas(p, `model_reasoning_effort="`+effort+`"`) || p.Args == nil || p.Answer == nil {
+			t.Errorf("the %s profile %+v %v, want %s with %s at %s, family %s", mode, p, err, name, model, effort, family)
 		}
 	}
 	bugbot := func(uc *ops.UnitCheck, mode string, want reviewadapter.Profile) {
@@ -201,8 +201,8 @@ func TestShippedUnitCheckIsCodexInBothModes(t *testing.T) {
 			t.Errorf("the %s fallback %+v %v, want %s", mode, p, err, want.Name)
 		}
 	}
-	codex(uc, ops.UnitCheckUncommitted, "codex-review", "gpt-6-astra", "high")
-	codex(uc, ops.UnitCheckCommitted, "codex-review-committed", "gpt-6-astra", "high")
+	codex(uc, ops.UnitCheckUncommitted, "codex-review", "gpt-6-astra", "high", "gpt")
+	codex(uc, ops.UnitCheckCommitted, "codex-review-committed", "gpt-6-astra", "high", "gpt")
 	bugbot(uc, ops.UnitCheckUncommitted, reviewadapter.BugbotProfile())
 	bugbot(uc, ops.UnitCheckCommitted, reviewadapter.BugbotCommittedProfile())
 	if _, err := uc.Profile("other"); err == nil {
@@ -219,8 +219,8 @@ func TestShippedUnitCheckIsCodexInBothModes(t *testing.T) {
 	if err != nil || tuned == nil {
 		t.Fatalf("the shipped unit check with settings %+v %v", tuned, err)
 	}
-	codex(tuned, ops.UnitCheckUncommitted, "codex-review", "o9", "medium")
-	codex(tuned, ops.UnitCheckCommitted, "codex-review-committed", "o9", "medium")
+	codex(tuned, ops.UnitCheckUncommitted, "codex-review", "o9", "medium", "o9")
+	codex(tuned, ops.UnitCheckCommitted, "codex-review-committed", "o9", "medium", "o9")
 	bugbot(tuned, ops.UnitCheckUncommitted, reviewadapter.BugbotProfile())
 	bugbot(tuned, ops.UnitCheckCommitted, reviewadapter.BugbotCommittedProfile())
 
@@ -242,6 +242,22 @@ func TestShippedUnitCheckIsCodexInBothModes(t *testing.T) {
 		if _, err := buildUnitCheckLane(t, newWorld(t), "run-ucbadenv02", newLabUnitChecker().seam(), bad); err != nil {
 			t.Errorf("%s=%q with a named unit check: BuildLane %v", k, v, err)
 		}
+	}
+	// a Claude model records the claude family, and a model whose family cannot be told is refused, naming the variable
+	claude := func(k string) (string, bool) {
+		return map[string]string{"CRW_UNIT_CHECK_MODEL": "anthropic/claude-sonnet-5"}[k], k == "CRW_UNIT_CHECK_MODEL"
+	}
+	if c, err := shippedUnitCheck(claude); err != nil {
+		t.Errorf("a Claude model: %v", err)
+	} else {
+		codex(c, ops.UnitCheckUncommitted, "codex-review", "anthropic/claude-sonnet-5", "high", "claude")
+		codex(c, ops.UnitCheckCommitted, "codex-review-committed", "anthropic/claude-sonnet-5", "high", "claude")
+	}
+	nameless := func(k string) (string, bool) {
+		return map[string]string{"CRW_UNIT_CHECK_MODEL": "-astra"}[k], k == "CRW_UNIT_CHECK_MODEL"
+	}
+	if uc, err := shippedUnitCheck(nameless); err == nil || uc != nil || !strings.Contains(err.Error(), "CRW_UNIT_CHECK_MODEL") || !strings.Contains(err.Error(), "family") {
+		t.Errorf("a model with no family: shipped unit check %+v %v, want an error naming the variable and the family", uc, err)
 	}
 	repo := filepath.Join(t.TempDir(), "repo")
 	if err := os.MkdirAll(repo, 0o755); err != nil {

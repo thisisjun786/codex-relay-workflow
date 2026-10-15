@@ -22,6 +22,9 @@ const codexOneFinding = "유일한 변경이 add 함수의 연산을 덧셈에�
 	"- [P2] add 함수의 덧셈 연산을 복원하세요 — /scratch/lt/codex-base-probe/m.go:3-3\n" +
 	"  `a + b`를 `a - b`로 변경하여 두 번째 인자가 0이 아닌 경우 합 대신 차를 반환합니다. 예를 들어 `add(2, 3)`은 기존의 `5` 대신 `-1`을 반환합니다. 함수 이름과 기존 동작에 맞게 덧셈 연산을 복원해야 합니다.\n"
 
+// codexClean is a clean review's stdout: a summary that says what was reviewed, and no list.
+const codexClean = "The change renames a local variable and keeps every caller's behaviour; no issue needs a change.\n"
+
 // fixedPrint is a fingerprint that never changes, for a worktree that need not exist (the fixture's).
 func fixedPrint(context.Context, string) (string, error) { return "fp", nil }
 
@@ -191,13 +194,88 @@ func TestCodexReviewCleanAnswerIsClean(t *testing.T) {
 	}
 }
 
+// TestCodexReviewFallbackIsNoCleanReview (CRW-1517): Codex 0.154.0 exits 0 and prints a text of its own when the review gave no
+// answer (review_format.rs, REVIEW_FALLBACK_MESSAGE: no overall explanation and no finding) or was interrupted (tasks/review.rs,
+// exit_review_mode with no output); neither is a clean review, nor a text with no list whose summary says the review was aborted or
+// is too short to say what was reviewed: each is invalid. The real one-finding and many-findings samples still read whole.
+func TestCodexReviewFallbackIsNoCleanReview(t *testing.T) {
+	for name, out := range map[string]string{
+		"Codex's text for a review with no answer":        "Reviewer failed to output a response.\n",
+		"Codex's text for an interrupted review":          "Review was interrupted. Please re-run /review and wait for it to complete.\n",
+		"the no-answer text padded":                       "\n  Reviewer failed to output a response.  \n\n",
+		"a review aborted before it inspected a file":     "Review aborted before inspecting any files.\n",
+		"a review that was interrupted":                   "The review was interrupted before it finished.\n",
+		"a Korean review that was stopped":                "리뷰가 중단되었습니다.\n",
+		"a one-word summary":                              "Clean.\n",
+		"a two-word summary":                              "No issues.\n",
+		"a summary of no letters":                         "- - -\n",
+		"the no-answer text over a minor finding's list":  "Reviewer failed to output a response.\n\nReview comment:\n\n- [P3] Name it — /wt/a.go:3\n  A nit.\n",
+		"an aborted review over a minor finding's list":   "Review aborted after a.go.\n\nReview comment:\n\n- [P3] Name it — /wt/a.go:3\n  A nit.\n",
+		"the interrupted text with a line after it":       "Review was interrupted. Please re-run /review and wait for it to complete.\nnothing more\n",
+		"the no-answer text inside a longer clean answer": "The change looks fine. Reviewer failed to output a response.\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			for _, p := range []Profile{CodexReviewProfile(CodexReviewConfig{}), CodexReviewCommittedProfile(CodexReviewConfig{})} {
+				res := codexCheck(t, p, "/wt", fakeRun{stdout: out})
+				if res.State != StateInvalid || res.Verdict != "" || len(res.Findings) != 0 {
+					t.Fatalf("%s over %q = %s %s %+v (%s); want invalid with no verdict", p.Name, out, res.State, res.Verdict, res.Findings, res.Detail)
+				}
+			}
+		})
+	}
+	// a blocking finding needs changes whatever the summary says
+	blocking := "Reviewer failed to output a response.\n\nReview comment:\n\n- [P1] Keep the guard — /wt/a.go:3\n  Body.\n"
+	if res := codexCheck(t, CodexReviewProfile(CodexReviewConfig{}), "/wt", fakeRun{stdout: blocking}); res.State != StateOK || res.Verdict != VerdictNeedsChanges {
+		t.Fatalf("a blocking review = %s %s (%s); want ok needs_changes", res.State, res.Verdict, res.Detail)
+	}
+	fixture, err := os.ReadFile(filepath.Join("testdata", "codex-review-findings.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []struct {
+		name, worktree, out string
+		findings            int
+	}{{"many findings", codexWorktree, string(fixture), 3}, {"one finding", "/scratch/lt/codex-base-probe", codexOneFinding, 1}} {
+		res := codexCheck(t, CodexReviewCommittedProfile(CodexReviewConfig{}), s.worktree, fakeRun{stdout: s.out})
+		if res.State != StateOK || res.Verdict != VerdictNeedsChanges || len(res.Findings) != s.findings {
+			t.Fatalf("the real %s sample = %s %s %d findings (%s); want ok needs_changes with %d", s.name, res.State, res.Verdict, len(res.Findings), res.Detail, s.findings)
+		}
+	}
+}
+
+// TestCodexReviewFamilyIsTheModels (CRW-1517): the profiles name the family of the model they run (execution.ModelFamily, the way
+// the adapter reads a profile with no family), never gpt for any model: a Claude model configured for the review records claude, so
+// the acceptance refuses it over a Claude author. Validate refuses a model whose family cannot be told.
+func TestCodexReviewFamilyIsTheModels(t *testing.T) {
+	for model, family := range map[string]string{"": "gpt", "gpt-6.1-sol": "gpt", "openai/gpt-5.6-sol": "gpt", "anthropic/claude-sonnet-5": "claude", "Claude-Opus-5-5": "claude", "o9": "o9"} {
+		cfg := CodexReviewConfig{Model: model}
+		if err := cfg.Validate(); err != nil {
+			t.Fatalf("Validate(%+v) = %v", cfg, err)
+		}
+		for _, p := range []Profile{CodexReviewProfile(cfg), CodexReviewCommittedProfile(cfg)} {
+			if p.Family != family {
+				t.Fatalf("%s with model %q names family %q; want %q", p.Name, model, p.Family, family)
+			}
+			if res := codexCheck(t, p, "/wt", fakeRun{stdout: codexClean}); res.State != StateOK || res.EngineFamily != family {
+				t.Fatalf("%s with model %q records %s family %q; want ok %q", p.Name, model, res.State, res.EngineFamily, family)
+			}
+		}
+	}
+	for _, model := range []string{"-astra", "openai/", "openai/-x"} {
+		if err := (CodexReviewConfig{Model: model}).Validate(); err == nil || !strings.Contains(err.Error(), "family") {
+			t.Fatalf("Validate(model %q) = %v; want a refusal naming the family", model, err)
+		}
+	}
+}
+
 // TestCodexReviewArgvPerMode (CRW-1517): the uncommitted profile runs `codex review --uncommitted` and the committed one
-// `codex review ... --base <base>`, each with the model, effort and a read-only sandbox as -c overrides and no prompt; the
+// `codex review ... --base <base>`, each with the model (as model and review_model, which Codex's review task prefers), effort and a
+// read-only sandbox as -c overrides and no prompt; the
 // configuration replaces the model and effort, Validate refuses a value that would break the TOML string or is no effort word, and a
 // usage-limit text on a failed call is quota.
 func TestCodexReviewArgvPerMode(t *testing.T) {
 	overrides := func(model, effort string) []string {
-		return []string{"-c", `model="` + model + `"`, "-c", `model_reasoning_effort="` + effort + `"`, "-c", `sandbox_mode="read-only"`}
+		return []string{"-c", `model="` + model + `"`, "-c", `review_model="` + model + `"`, "-c", `model_reasoning_effort="` + effort + `"`, "-c", `sandbox_mode="read-only"`}
 	}
 	argv := func(t *testing.T, p Profile, req Request) []string {
 		t.Helper()
@@ -224,7 +302,7 @@ func TestCodexReviewArgvPerMode(t *testing.T) {
 		if p.Model != "gpt-6-astra" || p.Effort != "high" || p.Family != "gpt" {
 			t.Fatalf("profile %s = model %q effort %q family %q; want gpt-6-astra, high, gpt", p.Name, p.Model, p.Effort, p.Family)
 		}
-		res := codexCheck(t, p, "/wt", fakeRun{stdout: "Clean.\n"})
+		res := codexCheck(t, p, "/wt", fakeRun{stdout: codexClean})
 		if res.State != StateOK || res.PromptSent || res.PromptDigest != digest("") {
 			t.Fatalf("profile %s record = state %s prompt_sent %v digest %s; want ok, false, the empty string's digest", p.Name, res.State, res.PromptSent, res.PromptDigest)
 		}
@@ -233,28 +311,28 @@ func TestCodexReviewArgvPerMode(t *testing.T) {
 	ran := false
 	run := func(context.Context, Profile, Request) ([]byte, []byte, int, error) {
 		ran = true
-		return []byte("Clean.\n"), nil, 0, nil
+		return []byte(codexClean), nil, 0, nil
 	}
 	blank := Request{Profile: c, Worktree: "/wt", Prompt: "p", Schema: AnswerSchema, Limit: time.Minute, GuideRev: "guide-r1"}
 	if _, err := (Adapter{Run: run, Fingerprint: fixedPrint}).Check(t.Context(), blank); err == nil || !strings.Contains(err.Error(), "base") || ran {
 		t.Fatalf("a committed check with a blank base: err %v, ran %v; want a refusal naming the base and no call", err, ran)
 	}
 
-	cfg := CodexReviewConfig{Model: "o9", Effort: "medium"}
+	cfg := CodexReviewConfig{Model: "gpt-6.1-sol", Effort: "medium"}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("Validate(%+v) = %v", cfg, err)
 	}
 	p, c = CodexReviewProfile(cfg), CodexReviewCommittedProfile(cfg)
-	if want := append([]string{"codex", "review", "--uncommitted"}, overrides("o9", "medium")...); !slices.Equal(argv(t, p, req), want) || p.Model != "o9" || p.Effort != "medium" {
+	if want := append([]string{"codex", "review", "--uncommitted"}, overrides("gpt-6.1-sol", "medium")...); !slices.Equal(argv(t, p, req), want) || p.Model != "gpt-6.1-sol" || p.Effort != "medium" {
 		t.Fatalf("configured uncommitted = %q model %q effort %q; want %q", argv(t, p, req), p.Model, p.Effort, want)
 	}
-	if want := append(append([]string{"codex", "review"}, overrides("o9", "medium")...), "--base", "B"); !slices.Equal(argv(t, c, req), want) {
+	if want := append(append([]string{"codex", "review"}, overrides("gpt-6.1-sol", "medium")...), "--base", "B"); !slices.Equal(argv(t, c, req), want) {
 		t.Fatalf("configured committed = %q; want %q", argv(t, c, req), want)
 	}
-	if res := codexCheck(t, p, "/wt", fakeRun{stdout: "Clean.\n"}); res.EngineFamily != "gpt" || res.Model != "o9" {
-		t.Fatalf("configured record = family %q model %q; want gpt, o9", res.EngineFamily, res.Model)
+	if res := codexCheck(t, p, "/wt", fakeRun{stdout: codexClean}); res.EngineFamily != "gpt" || res.Model != "gpt-6.1-sol" {
+		t.Fatalf("configured record = family %q model %q; want gpt, gpt-6.1-sol", res.EngineFamily, res.Model)
 	}
-	if p := CodexReviewProfile(CodexReviewConfig{Model: " o9 ", Effort: " low "}); p.Model != "o9" || p.Effort != "low" || !slices.Contains(p.Argv, `model="o9"`) {
+	if p := CodexReviewProfile(CodexReviewConfig{Model: " gpt-6.1-sol ", Effort: " low "}); p.Model != "gpt-6.1-sol" || p.Effort != "low" || !slices.Contains(p.Argv, `model="gpt-6.1-sol"`) {
 		t.Fatalf("a padded configuration = model %q effort %q argv %q; want the trimmed values", p.Model, p.Effort, p.Argv)
 	}
 	for _, ok := range []CodexReviewConfig{{}, {Model: "  ", Effort: ""}, {Model: "gpt-6.1-sol"}, {Effort: "xhigh"}} {
@@ -262,7 +340,8 @@ func TestCodexReviewArgvPerMode(t *testing.T) {
 			t.Fatalf("Validate(%+v) = %v; want nil", ok, err)
 		}
 	}
-	for _, bad := range []CodexReviewConfig{{Model: `o9"`}, {Model: "o 9"}, {Model: `o\9`}, {Model: "o'9"}, {Effort: "High!"}, {Effort: "High"}, {Effort: "x high"}} {
+	for _, bad := range []CodexReviewConfig{{Model: `o9"`}, {Model: "o 9"}, {Model: `o\9`}, {Model: "o'9"}, {Effort: "High!"}, {Effort: "High"}, {Effort: "x high"},
+		{Model: "-astra"}, {Model: "openai/"}, {Model: "openai/-x"}} {
 		if err := bad.Validate(); err == nil {
 			t.Fatalf("Validate(%+v) = nil; want a refusal", bad)
 		}
