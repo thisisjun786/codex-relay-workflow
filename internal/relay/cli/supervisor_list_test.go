@@ -61,14 +61,15 @@ func (s *listStore) open() *store.Store {
 	return db
 }
 
-// seed stages one message to recipient as the channel's staging writes it, then sets its state.
+// seed stages one message to recipient as the channel's staging writes it, then sets its state. An
+// empty project stages a message with no project (a NULL project_key).
 func (s *listStore) seed(recipient, id, obligationKind, kind, project, state, stagedAt string) {
 	s.t.Helper()
 	db := s.open()
 	defer db.Close()
 	ctx := context.Background()
 	if _, err := db.StageSupervisorMessage(ctx, store.SupervisorMessagesRow{MessageID: id, ObligationID: "obl-" + id, ObligationKind: obligationKind,
-		RelationshipID: "rel-" + project, ProjectKey: sql.NullString{String: project, Valid: true}, Purpose: "report", Kind: kind,
+		RelationshipID: "rel-" + project, ProjectKey: sql.NullString{String: project, Valid: project != ""}, Purpose: "report", Kind: kind,
 		SenderTaskID: "01child", RecipientTaskID: recipient, Subject: "subject-" + id, Packet: "{}", State: "queued", StagedAt: stagedAt, UpdatedAt: stagedAt}); err != nil {
 		s.t.Fatal(err)
 	}
@@ -182,5 +183,52 @@ func TestSupervisorListStaysOutOfDoctorLists(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// TestSupervisorListProjectNoneIsTheNoneCount (CRW-1500): the byProject none count and the
+// --project none list are the same set. One message with no project counts as none and is the one
+// row --project none lists; with a message of a project literally named none added, the count and
+// the list agree at two, and a real project's message is in neither.
+func TestSupervisorListProjectNoneIsTheNoneCount(t *testing.T) {
+	s := newListStore(t)
+	s.seed("01R", "n1", "completion", "notification", "", "queued", "2026-10-13T12:50:01.000000+00:00")
+	s.seed("01R", "p1", "completion", "notification", "P1", "queued", "2026-10-13T12:50:02.000000+00:00")
+	noneCount := func(answer map[string]any) any {
+		counts, _ := answer["counts"].(map[string]any)
+		byProject, _ := counts["byProject"].(map[string]any)
+		return byProject[store.SupervisorListProjectNone]
+	}
+	listedIDs := func(answer map[string]any) []string {
+		var ids []string
+		for _, row := range answer["rows"].([]any) {
+			ids = append(ids, row.(map[string]any)["messageId"].(string))
+		}
+		return ids
+	}
+	before := s.digest()
+	if got := noneCount(s.must("supervisor-list", "--recipient", "01R")); got != float64(1) {
+		t.Fatalf("byProject.none %v, want 1", got)
+	}
+	listed := s.must("supervisor-list", "--recipient", "01R", "--project", "none")
+	if ids := listedIDs(listed); !slices.Equal(ids, []string{"n1"}) {
+		t.Fatalf("--project none listed %v, want [n1]", ids)
+	}
+	if listed["project"] != "none" || listed["rows"].([]any)[0].(map[string]any)["projectKey"] != nil {
+		t.Fatalf("--project none answer %v", listed)
+	}
+	if s.digest() != before {
+		t.Fatal("supervisor-list changed the store")
+	}
+	s.seed("01R", "n2", "completion", "notification", "none", "queued", "2026-10-13T12:50:03.000000+00:00")
+	if got := noneCount(s.must("supervisor-list", "--recipient", "01R")); got != float64(2) {
+		t.Fatalf("byProject.none %v with the none project, want 2", got)
+	}
+	listed = s.must("supervisor-list", "--recipient", "01R", "--project", "none")
+	if ids := listedIDs(listed); !slices.Equal(ids, []string{"n1", "n2"}) {
+		t.Fatalf("--project none listed %v with the none project, want [n1 n2]", ids)
+	}
+	if got := noneCount(listed); got != float64(len(listed["rows"].([]any))) {
+		t.Fatalf("--project none counts none %v and lists %d", got, len(listed["rows"].([]any)))
 	}
 }

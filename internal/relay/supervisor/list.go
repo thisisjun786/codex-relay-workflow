@@ -10,13 +10,15 @@ import (
 // A recipient's queue read whole (CRW-1486/S4, finding 9). List only reads.
 
 // ListRequest is which of a recipient's messages List reads (store.SupervisorListFilter's words:
-// State unsent, pending or all; Hold empty, none or a hold word).
+// Project empty, none or a project key; State unsent, pending or all; Hold empty, none or a hold
+// word).
 type ListRequest struct {
 	Recipient, Project, State, Hold string
 }
 
 // List is a recipient's messages, in sending order, with their counts by state, hold, project and
-// obligation kind. claimable on a row is the channel's own test at now (store.SupervisorClaimableSQL
+// obligation kind. A message with no project counts under none, the set --project none lists.
+// claimable on a row is the channel's own test at now (store.SupervisorClaimableSQL
 // for a row already read): unsent, no hold, due.
 func (c *Channel) List(ctx context.Context, req ListRequest, now float64) (map[string]any, error) {
 	if req.State == "" {
@@ -48,7 +50,7 @@ func (c *Channel) List(ctx context.Context, req ListRequest, now float64) (map[s
 		})
 		count(byState, row.State)
 		count(byHold, textOr(row.HoldReason, store.SupervisorListHoldNone))
-		count(byProject, textOr(row.ProjectKey, "none"))
+		count(byProject, textOr(row.ProjectKey, store.SupervisorListProjectNone))
 		count(byKind, row.ObligationKind)
 	}
 	answer := map[string]any{
