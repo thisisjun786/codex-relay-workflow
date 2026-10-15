@@ -35,12 +35,20 @@ type AcceptOutcome struct {
 	Replayed       bool   `json:"replayed"`
 }
 
-// AcceptOpts are the options of crw.accept: Carried are the ids of the findings the node lane carried past its last unit-check round
-// trip (CRW-1465). Each is read from the node's recorded unit checks and joins the premerge record's defects when the check the
-// acceptance rests on does not name it: after a fix of a failed verification that check judges only the fix, and the carried finding
-// would be missing from the record. An id no check of the node recorded is an error.
+// AcceptOpts are the options of crw.accept: Carried are the findings the node lane carried past its last unit-check round trip
+// (CRW-1465), each by its id and the crw.unitCheck call that carried it. Each is read from that check's record and joins the premerge
+// record's defects when the check the acceptance rests on does not name it: after a fix of a failed verification that check judges only
+// the fix, and the carried finding would be missing from the record. The carrying check is named because a finding id is a file and
+// a text and no grade: a later check may have reported the same finding at another severity. A finding the named check of the node did
+// not record is an error.
 type AcceptOpts struct {
-	Carried []string `json:"carried"`
+	Carried []CarriedFinding `json:"carried"`
+}
+
+// CarriedFinding is a finding the node lane carried: its finding id and the call id of the unit check that carried it.
+type CarriedFinding struct {
+	ID    string `json:"id"`
+	Check string `json:"check"`
 }
 
 func (o *acceptOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResult, error) {
@@ -165,7 +173,11 @@ func (o *acceptOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 			return engine.OpResult{}, err
 		}
 		verdict.Defects = append(verdict.Defects, extra...)
-		verdict.Summary += "; carried " + strings.Join(opts.Carried, ", ")
+		ids := make([]string, 0, len(opts.Carried))
+		for _, c := range opts.Carried {
+			ids = append(ids, c.ID)
+		}
+		verdict.Summary += "; carried " + strings.Join(ids, ", ")
 	}
 	issue := node
 	if is, found, err := issueOf(r, rel, node); err == nil && found {
@@ -218,33 +230,32 @@ func (o *acceptOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 		"basis": basis, "reviewer_call": reviewerCall}}, nil
 }
 
-// carriedDefects are the defects of the carried findings ids that have not a defect among those yet: each is the finding of that id in
-// the newest unit check of the node that recorded it (role unit-check, a judgment), as UnitCheckVerdict turns a finding into a defect.
-func carriedDefects(r rows, node string, ids []string, have []Defect) ([]Defect, error) {
+// carriedDefects are the defects of the carried findings that have not a defect among those yet: each is the finding of its id in the
+// record of the unit check that carried it (a completed crw.unitCheck row of the node with that call id, role unit-check, a
+// judgment), as UnitCheckVerdict turns a finding into a defect.
+func carriedDefects(r rows, node string, carried []CarriedFinding, have []Defect) ([]Defect, error) {
 	var out []Defect
-	for _, id := range ids {
+	for _, c := range carried {
+		id := c.ID
 		if slices.ContainsFunc(have, func(d Defect) bool { return d.Ref == id }) || slices.ContainsFunc(out, func(d Defect) bool { return d.Ref == id }) {
 			continue
 		}
 		var found *reviewadapter.Finding
-		for i := len(r) - 1; i >= 0 && found == nil; i-- {
-			ev := r[i]
-			if ev.Kind != engine.KindCall || ev.Op != OpUnitCheck || ev.Event != engine.EvCompleted || dataStr(ev, "node") != node || dataStr(ev, "role") != execution.AgentUnitCheck {
-				continue
-			}
+		if row, ok := r.opRows(OpUnitCheck).last(func(ev engine.Event) bool {
+			return ev.CallID == c.Check && dataStr(ev, "node") == node && dataStr(ev, "role") == execution.AgentUnitCheck
+		}); ok && c.Check != "" {
 			var res reviewadapter.Result
-			if json.Unmarshal(resultOf(ev), &res) != nil || res.State != reviewadapter.StateOK {
-				continue
-			}
-			for j := range res.Findings {
-				if res.Findings[j].ID == id {
-					found = &res.Findings[j]
-					break
+			if json.Unmarshal(resultOf(row), &res) == nil && res.State == reviewadapter.StateOK {
+				for j := range res.Findings {
+					if res.Findings[j].ID == id {
+						found = &res.Findings[j]
+						break
+					}
 				}
 			}
 		}
 		if found == nil {
-			return nil, fmt.Errorf("crw.accept: node %s: the carried finding %s is in no recorded unit check of the node", node, id)
+			return nil, fmt.Errorf("crw.accept: node %s: the carried finding %s is not in the record of unit check %q of the node", node, id, c.Check)
 		}
 		out = append(out, Defect{Ref: found.ID, Kind: "other", Severity: found.Severity, Impact: found.Impact, Introduced: true, File: found.File, Line: found.Line, Finding: found.Text})
 	}

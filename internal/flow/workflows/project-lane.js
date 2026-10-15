@@ -220,8 +220,8 @@ async function lane(n, rel, sig) {
 // The node's work is judged by its unit check before the run commits it (CRW-1465): crw.unitCheck runs the review tool in Go over the
 // executor's uncommitted changes (no reviewer agent is called). A check with any finding goes back to the same executor thread to be
 // fixed, at most UNIT_CHECK_ROUNDS round trips on a tier; the findings of a check after them are carried, before any tier step: only
-// non-blocking ones and the node lands with them (premerge defects that need no disposition: crw.land hands their ids to crw.accept,
-// and `carried` is in the lane result), a blocking one and the node escalates (ask land, unit_check_carried) with the carried ids.
+// non-blocking ones and the node lands with them (premerge defects that need no disposition: crw.land hands their ids and the checks
+// that carried them to crw.accept, and `carried` is in the lane result), a blocking one and the node escalates (ask land, unit_check_carried) with the carried ids.
 // While round trips are left, the tier evidence (SP-TIER-1, where only a check that rules needs_changes is a reviewed round with a
 // finding) steps the tier before a fix. A check the tool gave no judgment in (quota, no answer) or that had no executor receipt to hand
 // over holds the node (crw.hold, source unit_check), and a resume runs the check again; any other check that judged nothing (the
@@ -249,8 +249,10 @@ async function nodeLane(n, rel, sig) {
   // the unit-check fix round trips of the tier
   let fixes = 0
   // the finding ids carried past the last round trip, kept to the land: a later check of a verification fix judges only that fix, so
-  // crw.land hands them to the acceptance, which reads each from the node's checks into the premerge record
+  // crw.land hands them to the acceptance with the check that carried each (carriedBy), which reads it from that check's record into
+  // the premerge record
   let carried = []
+  const carriedBy = {}
   let ex = null
   let head = null
   // the node's last state (CRW-1469): the findings of its last unit check (none after a check that found nothing), its last
@@ -337,7 +339,12 @@ async function nodeLane(n, rel, sig) {
       if (found.length > 0) {
         if (fixes >= UNIT_CHECK_ROUNDS) {
           // the findings after the last round trip are carried, before any tier step: a blocking one does not land
-          for (const f of found) if (!carried.includes(f.id)) carried.push(f.id)
+          for (const f of found) {
+            if (!carried.includes(f.id)) {
+              carried.push(f.id)
+              carriedBy[f.id] = uc.check_id
+            }
+          }
           if (uc.verdict !== 'verified') {
             const esc = await crw.escalate(node, { reason: 'unit_check_carried', call: ex.callId, ask: 'land', evidence: { carried, check: uc.check_id },
               detail: found.map((f) => f.id + ' ' + f.file + ' ' + f.text).join(' | ') })
@@ -364,7 +371,7 @@ async function nodeLane(n, rel, sig) {
         ev.verification(tier, head.commit, ci.pass, ci.digest)
         last.ci = ci
         if (ci.pass) {
-          const landed = await crw.land(node, carried.length ? { head, ci, carried } : { head, ci })
+          const landed = await crw.land(node, carried.length ? { head, ci, carried: carried.map((id) => ({ id, check: carriedBy[id] })) } : { head, ci })
           if (landed.state === 'landed') return carried.length ? Object.assign(landed, { carried }) : landed
           if (landed.reason === EPOCH_LOST) return { node, state: 'stopped', reason: EPOCH_LOST, detail: landed.detail }
           const esc = await crw.escalate(node, { reason: landed.reason || 'land_refused', detail: landed.detail || '', ask: 'land' })

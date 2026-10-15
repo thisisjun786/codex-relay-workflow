@@ -2264,8 +2264,8 @@ func TestUnitCheckReadsTheAcceptedReceiptWhenItsCopyIsMissing(t *testing.T) {
 // TestAcceptCarriesTheCarriedFindingsIntoThePremergeRecord (CRW-1465, x1436 item 4): the node lane carries a non-blocking finding past
 // its last round trip, and the head then gets a fix (of a failed verification) whose check judges only the fix and finds nothing. The
 // acceptance rests on that last check, and the carried ids the lane passes (crw.accept's opts.carried) are read from the node's recorded
-// checks into the premerge record's defects: without them the record would say nothing of the finding. An id no check of the node
-// recorded is an error, never a defect made up.
+// checks into the premerge record's defects (each with the check that carried it): without them the record would say nothing of the
+// finding. A finding the named check did not record is an error, never a defect made up.
 func TestAcceptCarriesTheCarriedFindingsIntoThePremergeRecord(t *testing.T) {
 	u := newUCWorld(t)
 	minor := reviewadapter.Finding{Severity: "P3", Impact: premerge.MinorSeparable, File: "a.txt", Line: 3, Text: "a name could be clearer"}
@@ -2275,6 +2275,7 @@ func TestAcceptCarriesTheCarriedFindingsIntoThePremergeRecord(t *testing.T) {
 	first.FingerprintBefore, first.FingerprintAfter = u.snapshot(), u.snapshot()
 	u.checker.replies = []checkReply{{res: first}}
 	u.must("unitCheck", "A", ex, map[string]any{"round": 3, "final": true})
+	carriedBy := u.lastCheck().CallID
 	var c1 CommitOutcome
 	_ = json.Unmarshal(u.must("commit", "A", ex, []string{"a.txt"}), &c1)
 	fix := u.build("c_fix", "built and fixed\n")
@@ -2285,7 +2286,7 @@ func TestAcceptCarriesTheCarriedFindingsIntoThePremergeRecord(t *testing.T) {
 	u.must("verify", "A", c2.Commit)
 	capture := &acceptCapture{stubRelay: u.relay}
 	u.lane.d.Relay = capture
-	if _, err := u.op("accept", "A", c2.Commit, map[string]any{"carried": []string{minor.ID}}); err != nil {
+	if _, err := u.op("accept", "A", c2.Commit, map[string]any{"carried": []map[string]any{{"id": minor.ID, "check": carriedBy}}}); err != nil {
 		t.Fatalf("crw.accept with the carried finding: %v", err)
 	}
 	if len(capture.got) != 1 {
@@ -2307,8 +2308,59 @@ func TestAcceptCarriesTheCarriedFindingsIntoThePremergeRecord(t *testing.T) {
 	if len(rec.Dispositions.Items) != 0 {
 		t.Errorf("a carried finding that blocks nothing asks a disposition: %+v", rec.Dispositions.Items)
 	}
-	if _, err := u.op("accept", "A", c2.Commit, map[string]any{"carried": []string{"f_no_such_finding"}}); err == nil || !strings.Contains(err.Error(), "f_no_such_finding") {
-		t.Errorf("crw.accept with a carried id no check recorded: %v", err)
+	for _, c := range []map[string]any{{"id": "f_no_such_finding", "check": carriedBy}, {"id": minor.ID, "check": "c_no_such_check"}} {
+		if _, err := u.op("accept", "A", c2.Commit, map[string]any{"carried": []map[string]any{c}}); err == nil || !strings.Contains(err.Error(), "carried finding") {
+			t.Errorf("crw.accept with a carried finding %v no check recorded: %v", c, err)
+		}
+	}
+}
+
+// TestAcceptReadsACarriedFindingFromTheCheckThatCarriedIt (CRW-1465, x1436 bugbot r4): a finding id names a file and a text, not a
+// grade, so a later check can report the same finding at another severity: here the check that carried it graded it P3, a later check
+// of the next round graded it P2 and the fix answered it. The carried finding is the one of the check that carried it (opts.carried
+// names that check), a P3 that asks no disposition, not the newest check's P2, which would block an acceptance the last check and the
+// verification allow.
+func TestAcceptReadsACarriedFindingFromTheCheckThatCarriedIt(t *testing.T) {
+	u := newUCWorld(t)
+	minor := reviewadapter.Finding{Severity: "P3", Impact: premerge.MinorSeparable, File: "a.txt", Line: 3, Text: "a name could be clearer"}
+	minor.ID = reviewadapter.FindingID(minor.File, minor.Text)
+	graded := minor
+	graded.Severity, graded.Impact = "P2", "core_function"
+	ex := u.build("c_ex1", "built\n")
+	first := checkRecord(reviewadapter.StateOK, reviewadapter.VerdictVerified, minor)
+	first.FingerprintBefore, first.FingerprintAfter = u.snapshot(), u.snapshot()
+	u.checker.replies = []checkReply{{res: first}}
+	u.must("unitCheck", "A", ex, map[string]any{"round": 3, "final": true})
+	carriedBy := u.lastCheck().CallID
+	var c1 CommitOutcome
+	_ = json.Unmarshal(u.must("commit", "A", ex, []string{"a.txt"}), &c1)
+	fix := u.build("c_fix", "built, then graded again\n")
+	again := checkRecord(reviewadapter.StateOK, reviewadapter.VerdictNeedsChanges, graded)
+	again.FingerprintBefore, again.FingerprintAfter = u.snapshot(), u.snapshot()
+	u.checker.replies = []checkReply{{res: again}}
+	u.must("unitCheck", "A", fix, map[string]any{"round": 4})
+	fixed := u.build("c_fix2", "built and fixed\n")
+	u.checkOnTree(u.snapshot())
+	u.must("unitCheck", "A", fixed, map[string]any{"round": 5})
+	var c2 CommitOutcome
+	_ = json.Unmarshal(u.must("commit", "A", fixed, []string{"a.txt"}), &c2)
+	u.must("verify", "A", c2.Commit)
+	capture := &acceptCapture{stubRelay: u.relay}
+	u.lane.d.Relay = capture
+	if _, err := u.op("accept", "A", c2.Commit, map[string]any{"carried": []map[string]any{{"id": minor.ID, "check": carriedBy}}}); err != nil {
+		t.Fatalf("crw.accept with the finding the check %s carried: %v", carriedBy, err)
+	}
+	rec, err := premerge.Decode(capture.got[len(capture.got)-1].Premerge)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range rec.Defects {
+		if d.ID == minor.ID && d.Severity != "P3" {
+			t.Errorf("the carried defect %+v is not the P3 the carrying check graded", d)
+		}
+	}
+	if len(rec.Dispositions.Items) != 0 {
+		t.Errorf("dispositions %+v", rec.Dispositions.Items)
 	}
 }
 
