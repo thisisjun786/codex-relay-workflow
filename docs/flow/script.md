@@ -1027,9 +1027,10 @@ any row is written. `crw flow shadow` replays either from the trace and names th
   role's overlay of `internal/flow/roles` without its native-spawn section, the earlier attempts, for a continuation the packet of
   the call it continues and a file with that call's answer, the task, and the output contract (the schema the final message
   satisfies). An App Server call's turn text ends with the same section (after the task; the journaled input is the script's), and
-  its thread also gets the entries in its shell: the thread/start, thread/fork and every thread/resume the backend sends carry them
-  as the leaf config keys `shell_environment_policy.set.<NAME>`, which Codex applies key by key over the server's own overrides, so
-  the policy the server set stays; a resume that loads the thread again after a host restart would otherwise rebuild it without them.
+  its thread also gets the entries in its shell: the thread/start and thread/fork carry them as the leaf config keys
+  `shell_environment_policy.set.<NAME>`, which Codex applies key by key over the server's own overrides, so the policy the server
+  set stays. A thread resumed after an App Server restart gets the repository tools from its turn text, not from its shell
+  environment.
 - The owner reports what it spawned with a dispatch report in `<state>/flow/<run>/inbox/` and reads the run's answer from
   `replies/` (the commands are the CLI's). The run binds a subagent only when the host shows it is the owner thread's
   (`parentThreadId`), carries the marker in a turn's first user message and is configured with the role's pair. The answers:

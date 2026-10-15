@@ -149,17 +149,10 @@ func (c *Client) WatchCreatedTurn(ctx context.Context, thread string) (*TurnWatc
 // mutation gate until Finish, which would block the delivery's own send. The hold therefore takes no
 // gate and no TurnWatch: it records the root as busy-held, which the release worker treats as not
 // releasable, and the ordinary release path (Finish and its terminal) leaves it standing. The resume
-// carries no overrides (HoldThreadWith carries the caller's) and starts no turn; an already loaded thread only reports its state, so a
+// carries no overrides and starts no turn; an already loaded thread only reports its state, so a
 // busy recipient is never interrupted. A resume the host refuses returns that error and leaves the
 // doubling backoff as the only trigger, which is the behavior when the relay holds nothing.
 func (c *Client) HoldThread(ctx context.Context, thread string) error {
-	return c.HoldThreadWith(ctx, thread, nil)
-}
-
-// HoldThreadWith is HoldThread whose thread/resume carries config: the overrides a host applies when the resume loads the thread
-// again (a cold resume rebuilds the thread's configuration from the host's and these overrides only); a host that still runs the
-// thread ignores them. Nil or empty config sends none, as HoldThread.
-func (c *Client) HoldThreadWith(ctx context.Context, thread string, config map[string]any) error {
 	m := c.subscriptions
 	if m == nil {
 		return &TransportError{Reason: "this client has no subscription manager"}
@@ -215,11 +208,7 @@ func (c *Client) HoldThreadWith(ctx context.Context, thread string, config map[s
 	m.mu.Unlock()
 	c.mu.Unlock()
 	if resume {
-		params := map[string]any{"threadId": thread, "excludeTurns": true}
-		if len(config) > 0 {
-			params["config"] = config
-		}
-		if _, err := c.request(ctx, conn, "thread/resume", params); err != nil {
+		if _, err := c.request(ctx, conn, "thread/resume", map[string]any{"threadId": thread, "excludeTurns": true}); err != nil {
 			// The reply is missing, but the resume may already have landed: a refusal the server
 			// answered is an RPCError and subscribes nothing, while a timeout or a lost socket after
 			// the write can leave a real subscription on this connection with nobody owning it. The

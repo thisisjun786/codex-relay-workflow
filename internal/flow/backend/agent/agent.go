@@ -67,8 +67,6 @@ type Backend struct {
 	tokenTotal map[string]engine.Tokens
 	// orchestrator is the thread BindOrchestrator bound, until CloseOrchestrator.
 	orchestrator string
-	// tools are the run's repository tools (SetRepositoryTools), sent with every thread/resume this backend sends; nil sends none.
-	tools *engine.RepositoryTools
 }
 
 var (
@@ -81,7 +79,6 @@ var (
 	_ engine.Prover       = (*Backend)(nil)
 	_ engine.Owned        = (*Backend)(nil)
 	_ engine.ReconHost    = (*Backend)(nil)
-	_ engine.ToolsTaker   = (*Backend)(nil)
 )
 
 // New returns a backend.
@@ -142,8 +139,7 @@ func (b *Backend) hold(ctx context.Context, thread string) error {
 	if b.client.ThreadHeld(thread) {
 		return nil
 	}
-	// a cold resume rebuilds the thread's configuration: the run's tools go with it (SetRepositoryTools, CRW-1488)
-	if err := b.client.HoldThreadWith(ctx, thread, b.repositoryTools().ShellOverrides()); err != nil {
+	if err := b.client.HoldThread(ctx, thread); err != nil {
 		return requestError(err)
 	}
 	return nil

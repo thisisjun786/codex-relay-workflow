@@ -122,25 +122,3 @@ return [a.status]`))
 		}
 	}
 }
-
-// toolsBackend is a fake backend that takes the run's tools for the threads it loads again (agent.Backend.SetRepositoryTools).
-type toolsBackend struct {
-	*Fake
-	got []*RepositoryTools
-}
-
-func (b *toolsBackend) SetRepositoryTools(t *RepositoryTools) { b.got = append(b.got, t) }
-
-// A run gives its backend the tools before any call, so a thread the backend resumes (a held call after a host restart, a reconcile)
-// is loaded with them.
-func TestRunGivesTheBackendItsTools(t *testing.T) {
-	h := newHarness(t)
-	b := &toolsBackend{Fake: h.fake}
-	h.cfg.Backend = b
-	h.cfg.Tools = testRepositoryTools()
-	value[[]string](t, h.run(`const a = await agent.call('look around', { agentType: 'explorer', label: 'exp' })
-return [a.status]`))
-	if len(b.got) != 1 || b.got[0] != h.cfg.Tools {
-		t.Errorf("the backend was given %v, want the run's tools once", b.got)
-	}
-}

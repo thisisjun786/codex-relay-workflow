@@ -6,7 +6,8 @@ import "strings"
 // runs (verifier.go_root). Every agent call the run starts is given them. Every packet names them: a session call's packet (its
 // subagent shell is the owner session's, which the run cannot set: spawn_agent takes no environment) and the text of every App
 // Server turn. An App Server thread also gets Env in its shell, as the leaf keys ShellOverrides names, on the thread/start or
-// thread/fork that creates it and on the thread/resume that loads it again after a host restart.
+// thread/fork that creates it, per call and with no state kept anywhere. A thread the host loads again after a restart is rebuilt
+// from the host's configuration without them: it learns its go from the section its turn text ends with.
 type RepositoryTools struct {
 	// Env are the KEY=value entries set over a call's inherited environment: exactly the ones the verifier's command gets.
 	Env []string
@@ -33,7 +34,7 @@ func (t *RepositoryTools) PacketSection() string {
 	return b.String()
 }
 
-// ShellOverrides are Env as the config overrides of a thread/start, thread/fork or thread/resume: one leaf key
+// ShellOverrides are Env as the config overrides of a thread/start or thread/fork: one leaf key
 // shell_environment_policy.set.<NAME> for each entry. Codex 0.154 applies a request's override keys one by one, each by its dotted
 // path, over the server's own overrides (app-server config_manager.rs load_with_cli_overrides, config overrides.rs
 // apply_toml_override), so a leaf key changes that variable only and the policy the server set (inherit, exclude, include_only,
@@ -53,12 +54,6 @@ func (t *RepositoryTools) ShellOverrides() map[string]any {
 		return nil
 	}
 	return out
-}
-
-// ToolsTaker is a backend that loads threads again by itself (a resume after a host restart, a reconcile): Run gives it the run's
-// tools before any call, so those threads are loaded with them too.
-type ToolsTaker interface {
-	SetRepositoryTools(*RepositoryTools)
 }
 
 // toolsSuffix is what an App Server turn's text ends with: the packet section after the task, so a thread the host loaded again

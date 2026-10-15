@@ -92,19 +92,3 @@ func (b *Backend) readback(ctx context.Context, id string) (engine.ThreadInfo, e
 }
 
 var errNoTurn = errors.New("turn/start answered without a turn id")
-
-// SetRepositoryTools implements the engine's tools seam (engine.Run gives a backend the run's tools before any call): a thread this
-// backend loads again with thread/resume - a held call's next turn after an App Server restart, a turn reconcile follows - is resumed
-// with the same leaf overrides, because a cold resume rebuilds the thread's configuration from the host's and the resume's own
-// overrides only (Codex 0.154 thread_resume_inner); a thread the host still runs ignores them.
-func (b *Backend) SetRepositoryTools(t *engine.RepositoryTools) {
-	b.mu.Lock()
-	b.tools = t
-	b.mu.Unlock()
-}
-
-func (b *Backend) repositoryTools() *engine.RepositoryTools {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.tools
-}

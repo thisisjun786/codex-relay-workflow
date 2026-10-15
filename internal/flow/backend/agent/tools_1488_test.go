@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
@@ -113,34 +114,50 @@ func TestRepositoryToolsReachForkedThreadShell(t *testing.T) {
 	}
 }
 
-// After an App Server restart a held call's thread is loaded again by the backend's thread/resume, which reloads the configuration:
-// the resume carries the same leaf keys, so the thread still has the tools, and the server's policy stays.
-func TestRepositoryToolsSurviveAColdResume(t *testing.T) {
+// After an App Server restart a thread the flow goes on with is loaded again by a thread/resume, which rebuilds its configuration
+// from the host's: its shell has the server's policy only, and the backend keeps no tools to send with the resume. The turn the run
+// sends there names the tools in its text: the go, the setting and the prefix. Here the first process is killed after it asked for
+// the call's turn and before it sent it; the host restarts; the second process proves the turn absent and sends it on the cold thread.
+func TestAColdResumedTurnNamesTheRepositoryTools(t *testing.T) {
 	e := newEnv(t, withOwner("proc-1"))
 	serverPolicy(e)
 	tools := toolsFor1488()
-	spec := e.policy.Roles["explorer"]
-	th, err := e.backend.StartThread(context.Background(), engine.ThreadSpec{CallID: "c_held", Role: "explorer", Pair: spec.Pair, Sandbox: spec.Sandbox,
-		Cwd: filepath.Join(e.root, "held"), Tools: tools})
-	if err != nil {
-		t.Fatal(err)
+	e.tools = tools
+	e.useClock()
+	e.killAfter(engine.EvTurnRequested)
+	a := calls(e.run(buildScript))["a"]
+	if n := e.count("turn/start"); n != 0 {
+		t.Fatalf("%d turn/start requests reached the host before the kill", n)
+	}
+	thread := str(e.row("a", engine.EvThreadStarted).Data, "thread_id")
+	if got := shellPolicyOf(t, e, thread); !reflect.DeepEqual(got, withTools) {
+		t.Fatalf("the started thread's shell policy is %v, want %v", got, withTools)
 	}
 	e.threads.Restart()
-	if got := shellPolicyOf(t, e, th.ID); !reflect.DeepEqual(got, withTools) {
-		t.Fatalf("before the resume: %v", got)
-	}
-	// the process that goes on with the held call has a backend of its own, which the engine gives the run's tools (engine.Run)
+	e.thaw()
 	e.restart("proc-2")
-	e.backend.SetRepositoryTools(tools)
-	op := "c_held/t2"
-	if _, err := e.backend.RunTurn(context.Background(), engine.TurnSpec{CallID: "c_held", Op: op, K: 2, ThreadID: th.ID, Role: "explorer", Pair: spec.Pair,
-		Input: "crw-flow-op: " + op + "\n\ngo on"}); err != nil {
-		t.Fatal(err)
+	res := e.resumeRun(buildScript)
+	e.expectCompletedOnce(res, "a", a.CallID+"/t1")
+	resumes := e.requests("thread/resume")
+	if len(resumes) == 0 {
+		t.Fatal("the turn on the cold thread sent no thread/resume")
 	}
-	if n := len(e.requests("thread/resume")); n == 0 {
-		t.Fatal("the turn after the restart sent no thread/resume")
+	for _, r := range resumes {
+		if _, has := r.Params["config"]; has {
+			t.Errorf("a thread/resume carries config %v: the backend keeps no tools", r.Params["config"])
+		}
 	}
-	if got := shellPolicyOf(t, e, th.ID); !reflect.DeepEqual(got, withTools) {
-		t.Errorf("the resumed thread's shell policy is %v, want %v", got, withTools)
+	if got := shellPolicyOf(t, e, thread); !reflect.DeepEqual(got, noTools) {
+		t.Errorf("the resumed thread's shell policy is %v, want the server's alone %v", got, noTools)
+	}
+	starts := e.requests("turn/start")
+	if len(starts) != 1 {
+		t.Fatalf("%d turn/start requests, want 1", len(starts))
+	}
+	text := turnText(starts[0].Params)
+	for _, want := range []string{"## Repository tools", tools.Facts[0], "`" + tools.Prefix + "`"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the cold-resumed turn does not name %q:\n%s", want, text)
+		}
 	}
 }
