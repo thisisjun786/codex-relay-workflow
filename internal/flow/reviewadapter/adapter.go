@@ -6,7 +6,8 @@
 // The state of a record is decided in this order (classify); the first rule that holds wins:
 //
 //	worktree_changed  the worktree's fingerprint after the call differs from the one before: the answer is refused whatever it is
-//	tool_failed       the tool did not start, ran past the time limit, or the call broke after the start (output over the cap)
+//	tool_failed       the tool wrote more than the output cap (the runner stops it at the first byte over), did not start, ran past
+//	                  the time limit, or the call broke after the start otherwise
 //	quota             a quota text of the profile (any case) is on stderr or stdout of a call that failed or gave a blank answer,
 //	                  or in the text of an error the tool reported in its own output (the profile's reader gave a *ToolError)
 //	tool_failed       the tool exited non-zero without a quota text, or reported its own error without one
@@ -17,7 +18,8 @@
 //	ok                otherwise: verdict and findings are kept
 //
 // An answer that merely quotes a quota text on a successful call is not quota. Only an ok record carries a verdict and findings;
-// every record names the engine family, model, effort, guide revision, prompt digest and both fingerprints. Findings are graded
+// every record names the engine family (in canonical form: trimmed, lower case, as execution.ModelFamily gives an author's), model,
+// effort, guide revision, prompt digest and both fingerprints. Findings are graded
 // P0-P3 (review.NormalizeGrade) and carry an id that ignores the line (FindingID); findings of one id collapse into one.
 //
 // The adapter reaches the outside only through its seams (Run, Fingerprint), so it imports no store and no flow op.
@@ -133,7 +135,8 @@ type Result struct {
 }
 
 // RunFunc runs the profile's tool once under ctx (which carries the time limit). err is set when the tool did not start (wrapping
-// ErrNotStarted), ctx ended it, or the call broke after the start (its output over the cap); otherwise exit is the tool's exit code.
+// ErrNotStarted), its output went over the cap (wrapping ErrOutputCap), ctx ended it, or the call broke after the start otherwise;
+// otherwise exit is the tool's exit code.
 type RunFunc func(ctx context.Context, p Profile, req Request) (stdout, stderr []byte, exit int, err error)
 
 // FingerprintFunc digests the state of a worktree (a lane passes ops.Snapshot).
@@ -148,6 +151,10 @@ type Adapter struct {
 
 // ErrNotStarted is wrapped by a RunFunc's error when the tool did not start.
 var ErrNotStarted = errors.New("the tool did not start")
+
+// ErrOutputCap is wrapped by a RunFunc's error when the tool wrote more than the output cap to a stream; the runner stopped it at
+// the first byte over.
+var ErrOutputCap = errors.New("the tool wrote more than the output cap")
 
 // ToolError is the error a profile's answer reader returns when the tool's output is the tool's own report of a failure (an error
 // envelope) rather than an answer; Text is that report. classify reads it as quota when a quota text is in it, else tool_failed.
@@ -172,7 +179,7 @@ type call struct {
 // Check validates the request, runs the tool between two fingerprints of the worktree, and returns the record. A Go error means
 // the request or the adapter is wrong, a fingerprint could not be taken, or the caller's ctx ended; it is never a state.
 func (a Adapter) Check(ctx context.Context, req Request) (Result, error) {
-	schema, err := a.validate(req)
+	schema, family, err := a.validate(req)
 	if err != nil {
 		return Result{}, err
 	}
@@ -181,10 +188,7 @@ func (a Adapter) Check(ctx context.Context, req Request) (Result, error) {
 		now = time.Now
 	}
 	sum := sha256.Sum256([]byte(req.Prompt))
-	res := Result{Model: req.Profile.Model, Effort: req.Profile.Effort, EngineFamily: req.Profile.Family, GuideRev: req.GuideRev, PromptDigest: hex.EncodeToString(sum[:])}
-	if res.EngineFamily == "" {
-		res.EngineFamily = execution.ModelFamily(res.Model)
-	}
+	res := Result{Model: req.Profile.Model, Effort: req.Profile.Effort, EngineFamily: family, GuideRev: req.GuideRev, PromptDigest: hex.EncodeToString(sum[:])}
 	if res.FingerprintBefore, err = a.Fingerprint(ctx, req.Worktree); err != nil {
 		return Result{}, fmt.Errorf("reviewadapter: fingerprint before the call: %w", err)
 	}
@@ -206,36 +210,45 @@ func (a Adapter) Check(ctx context.Context, req Request) (Result, error) {
 	return res, nil
 }
 
-// validate refuses a request the adapter cannot run (D4) and resolves its schema.
-func (a Adapter) validate(req Request) (*jsonschema.Resolved, error) {
+// validate refuses a request the adapter cannot run (D4), resolves its schema and gives the engine family the record names: the
+// profile's Family in canonical form (execution.CanonicalFamily), else the family of its model. A family that is blank after the
+// trim or is no family name is unknown, and the request is refused, as one that names no model is.
+func (a Adapter) validate(req Request) (*jsonschema.Resolved, string, error) {
 	p := req.Profile
 	switch {
 	case a.Run == nil:
-		return nil, errors.New("reviewadapter: the adapter has no Run")
+		return nil, "", errors.New("reviewadapter: the adapter has no Run")
 	case a.Fingerprint == nil:
-		return nil, errors.New("reviewadapter: the adapter has no Fingerprint")
+		return nil, "", errors.New("reviewadapter: the adapter has no Fingerprint")
 	case strings.TrimSpace(req.Worktree) == "":
-		return nil, errors.New("reviewadapter: the request names no worktree")
+		return nil, "", errors.New("reviewadapter: the request names no worktree")
 	case len(bytes.TrimSpace(req.Schema)) == 0:
-		return nil, errors.New("reviewadapter: the request has no schema")
+		return nil, "", errors.New("reviewadapter: the request has no schema")
 	case strings.TrimSpace(req.GuideRev) == "":
-		return nil, errors.New("reviewadapter: the request names no guide revision")
+		return nil, "", errors.New("reviewadapter: the request names no guide revision")
 	case req.Limit <= 0:
-		return nil, errors.New("reviewadapter: the request has no time limit")
+		return nil, "", errors.New("reviewadapter: the request has no time limit")
 	case strings.TrimSpace(p.Model) == "" || strings.TrimSpace(p.Effort) == "":
-		return nil, fmt.Errorf("reviewadapter: profile %q names no model or no effort", p.Name)
+		return nil, "", fmt.Errorf("reviewadapter: profile %q names no model or no effort", p.Name)
 	case p.Answer == nil:
-		return nil, fmt.Errorf("reviewadapter: profile %q has no answer reader", p.Name)
+		return nil, "", fmt.Errorf("reviewadapter: profile %q has no answer reader", p.Name)
 	}
 	var sch jsonschema.Schema
 	if err := json.Unmarshal(req.Schema, &sch); err != nil {
-		return nil, fmt.Errorf("reviewadapter: the request's schema: %w", err)
+		return nil, "", fmt.Errorf("reviewadapter: the request's schema: %w", err)
 	}
 	r, err := sch.Resolve(nil)
 	if err != nil {
-		return nil, fmt.Errorf("reviewadapter: the request's schema: %w", err)
+		return nil, "", fmt.Errorf("reviewadapter: the request's schema: %w", err)
 	}
-	return r, nil
+	family, ok := execution.CanonicalFamily(p.Family)
+	if p.Family == "" {
+		family, ok = execution.CanonicalFamily(execution.ModelFamily(p.Model))
+	}
+	if !ok {
+		return nil, "", fmt.Errorf("reviewadapter: profile %q names no known engine family (family %q, model %q)", p.Name, p.Family, p.Model)
+	}
+	return r, family, nil
 }
 
 // classify decides the state of one call in the order of the package doc, and for ok the verdict and findings.
@@ -244,6 +257,9 @@ func classify(req Request, schema *jsonschema.Resolved, c call) (State, string, 
 		return StateWorktreeChanged, "the worktree changed during the call; the answer is refused", "", nil
 	}
 	if c.err != nil {
+		if errors.Is(c.err, ErrOutputCap) {
+			return StateToolFailed, fmt.Sprintf("the tool was stopped: %v", c.err), "", nil
+		}
 		if c.timedOut {
 			return StateToolFailed, fmt.Sprintf("the tool ran past the time limit of %s", req.Limit), "", nil
 		}
@@ -463,7 +479,8 @@ const killGrace = 2 * time.Second
 
 // ExecRun is the real RunFunc: it runs the profile's argv with the prompt as the last argument, in the worktree, in a process
 // group of its own that is killed when ctx ends (the time limit). A tool that did not start, ran past ctx, or wrote more than
-// the cap is an error.
+// the cap is an error. The first byte over the cap on either stream kills the process group at once, so a runaway tool ends the
+// call with the output-cap failure (ErrOutputCap) instead of running on to the time limit.
 //
 // The tool writes into pipes the runner reads itself, so the wait for the tool ends when the tool exits, not when the last
 // holder of its streams closes them: once it has exited, the runner kills what it left running in its group (a background child
@@ -503,7 +520,9 @@ func ExecRun(ctx context.Context, p Profile, req Request) ([]byte, []byte, int, 
 		errR.Close()
 		return nil, nil, -1, fmt.Errorf("%w: %w", ErrNotStarted, startErr)
 	}
-	stdout, stderr := &capped{max: maxOutput}, &capped{max: maxOutput}
+	var overOnce sync.Once
+	stop := func() { overOnce.Do(func() { _ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }) }
+	stdout, stderr := &capped{max: maxOutput, onOver: stop}, &capped{max: maxOutput, onOver: stop}
 	var copies sync.WaitGroup
 	for _, s := range []struct {
 		w *capped
@@ -527,11 +546,12 @@ func ExecRun(ctx context.Context, p Profile, req Request) ([]byte, []byte, int, 
 	}
 	outR.Close()
 	errR.Close()
+	// the reads have ended (drained), so over is settled; an overflow is reported first, since it is why the tool was killed
+	if stdout.over || stderr.over {
+		return stdout.buf.Bytes(), stderr.buf.Bytes(), -1, fmt.Errorf("%w of %d bytes on a stream", ErrOutputCap, maxOutput)
+	}
 	if killed.Load() || ctx.Err() != nil {
 		return stdout.buf.Bytes(), stderr.buf.Bytes(), -1, fmt.Errorf("the tool was killed: %w", context.Cause(ctx))
-	}
-	if stdout.over || stderr.over {
-		return stdout.buf.Bytes(), stderr.buf.Bytes(), -1, fmt.Errorf("the tool wrote more than %d bytes", maxOutput)
 	}
 	if streamsErr != nil {
 		return stdout.buf.Bytes(), stderr.buf.Bytes(), -1, streamsErr
@@ -543,16 +563,21 @@ func ExecRun(ctx context.Context, p Profile, req Request) ([]byte, []byte, int, 
 	return stdout.buf.Bytes(), stderr.buf.Bytes(), cmd.ProcessState.ExitCode(), nil
 }
 
-// capped keeps the first max bytes written to it and notes that more came.
+// capped keeps the first max bytes written to it, notes that more came and calls onOver on the first byte over. It goes on
+// accepting (and dropping) what is written after that, so the reader drains the stream until the stopped tool closes it.
 type capped struct {
-	buf  bytes.Buffer
-	max  int
-	over bool
+	buf    bytes.Buffer
+	max    int
+	over   bool
+	onOver func()
 }
 
 func (c *capped) Write(p []byte) (int, error) {
 	if room := c.max - c.buf.Len(); len(p) > room {
 		c.buf.Write(p[:max(room, 0)])
+		if !c.over && c.onOver != nil {
+			c.onOver()
+		}
 		c.over = true
 		return len(p), nil
 	}

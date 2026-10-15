@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -13,7 +14,8 @@ import (
 
 // Profile is one review tool: how to run it, which model and effort it runs, the texts that mean its quota is spent, and the
 // reader that turns its stdout into a document of AnswerSchema. Family is the engine family when the model id does not name it
-// (empty: execution.ModelFamily of Model).
+// (empty: execution.ModelFamily of Model); the record names it in canonical form (execution.CanonicalFamily), and Check refuses a
+// profile whose family is blank after the trim or no family name.
 type Profile struct {
 	Name       string
 	Argv       []string
@@ -41,8 +43,10 @@ const (
 // Finding", whose rows together are the findings (verdict needs_changes when a finding blocks under premerge.Blocks once
 // normalize has given it its impact: a P0-P2 grade, or a security finding; else verified), or no table and a last line that ends
 // with the sentence "Bugbot found no bugs." (verified, no findings). Prose that says the review covered only part of the change or
-// dropped a finding ("unchecked", "not clean", "removed"), prose that only mentions "found no bugs" (negated, hedged, or followed
-// by more), and prose of any other shape, is not an answer.
+// dropped a finding (bugbotPartial: files skipped, unchecked or not reviewed, a review that did not, could not or only reviewed
+// part, a partial, truncated or incomplete review, a change too large, a review that timed out, a finding removed or dropped, a
+// review not clean), read in the prose outside the tables in any case, prose that only mentions "found no bugs" (negated, hedged,
+// or followed by more), and prose of any other shape, is not an answer.
 //
 // The quota texts are UNCONFIRMED: no real quota sample of the tool has been captured, and the wording is the server's. They are
 // matched only on a failed call or a blank answer, so a finding that quotes one is unaffected. Replace them once a sample exists.
@@ -60,8 +64,19 @@ func BugbotProfile() Profile {
 // bugbotTableHeader is the header of Bugbot's findings table, its cells lower-cased and trimmed.
 var bugbotTableHeader = []string{"severity", "location (file:line)", "finding"}
 
-// bugbotPartial are the words of prose that says the review was not whole.
-var bugbotPartial = []string{"unchecked", "not clean", "removed"}
+// bugbotPartial are the wordings of prose that says the review was not whole: it covered only part of the change, or a finding was
+// dropped. They are matched in lower case, on word boundaries, in the prose outside the findings tables only, so a finding whose
+// text uses one of the words is finding text. Every real complete Bugbot result of the R1, B1 and N1 lanes reads the same with
+// them (none of these wordings is in one).
+var bugbotPartial = regexp.MustCompile(`\b(` + strings.Join([]string{
+	`skip(s|ped|ping)?`,
+	`unchecked`, `unreviewed`, `not (been )?(fully )?(reviewed|checked|covered)`,
+	`(did not|didn['’]t|could not|couldn['’]t|cannot|can['’]t|unable to|failed to) (fully )?(review|check|cover|finish|complete)`,
+	`only (reviewed|checked|covered|looked at)`,
+	`partial(ly)?`, `incomplete`, `truncat(ed|ion)`, `too (large|big|long)`, `timed out`, `cut short`,
+	`\d+ of (the )?\d+ (changed |uncommitted |modified )?files`,
+	`not clean`, `removed`, `dropped`, `omitted`,
+}, "|") + `)\b`)
 
 // bugbotAnswer reads cursor-agent's envelope and turns its result prose into a document of AnswerSchema. A blank result is a
 // blank answer.
@@ -95,11 +110,8 @@ func bugbotAnswer(stdout []byte) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	lower := strings.ToLower(prose)
-	for _, w := range bugbotPartial {
-		if strings.Contains(lower, w) {
-			return nil, fmt.Errorf("the review was not whole (%q): %s", w, firstLine([]byte(prose)))
-		}
+	if w := bugbotPartial.FindString(strings.ToLower(prose)); w != "" {
+		return nil, fmt.Errorf("the review was not whole (%q): %s", w, firstLine([]byte(prose)))
 	}
 	type finding struct {
 		Severity string `json:"severity"`

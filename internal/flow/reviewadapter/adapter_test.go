@@ -676,3 +676,124 @@ func TestBugbotReadsEveryFindingsTable(t *testing.T) {
 		wantState(t, check(t, BugbotProfile(), fakeRun{stdout: bugbotEnvelope(t, bad)}), StateInvalid)
 	})
 }
+
+// TestBugbotRefusesEveryPartialReview: prose outside the findings tables that says the review covered only part of the change
+// (skipped files, files it did not or could not review, a partial or truncated review, a change too large, a review that timed
+// out) makes the result no answer, even when the tables hold only P3 findings that would be verified. The same words inside a
+// finding of a table are finding text and leave a complete review as it is.
+func TestBugbotRefusesEveryPartialReview(t *testing.T) {
+	p3 := "Bugbot found 1 finding in the uncommitted changes.\n\n" +
+		"| Severity | Location (file:line) | Finding |\n| --- | --- | --- |\n" +
+		"| low | internal/quote/quote.go:12 | The helper name does not say what it returns. |"
+	for _, tail := range []string{
+		"It skipped 74 changed files.",
+		"It Skipped 3 files that were too large.",
+		"Bugbot skipped the generated files.",
+		"I did not review internal/bridge.",
+		"I didn't review the tests.",
+		"Bugbot could not review 12 of the files.",
+		"It couldn't review the vendored tree.",
+		"It only reviewed the first 40 files.",
+		"This is a partial review of the change.",
+		"The review was partial.",
+		"The diff was truncated before the review.",
+		"The change is too large to review in one pass.",
+		"The reviewer timed out before it reached the tests.",
+		"It left 41 of the 115 changed files out of the review.",
+		"Some files were not reviewed.",
+		"The review is incomplete.",
+	} {
+		t.Run(tail, func(t *testing.T) {
+			res := check(t, BugbotProfile(), fakeRun{stdout: bugbotEnvelope(t, p3+"\n\n"+tail)})
+			wantState(t, res, StateInvalid)
+			if !strings.Contains(res.Detail, "not whole") {
+				t.Fatalf("detail = %q, want the partial review named", res.Detail)
+			}
+			res = check(t, BugbotProfile(), fakeRun{stdout: bugbotEnvelope(t, tail+"\n\nBugbot found no bugs.")})
+			wantState(t, res, StateInvalid)
+		})
+	}
+	t.Run("the words inside a finding are finding text", func(t *testing.T) {
+		text := "Bugbot found 1 finding in the uncommitted changes.\n\n" +
+			"| Severity | Location (file:line) | Finding |\n| --- | --- | --- |\n" +
+			"| low | internal/quote/quote.go:12 | The loop skipped 3 files and did not review the rest: a partial, truncated read that timed out before it was too large. |"
+		res := check(t, BugbotProfile(), fakeRun{stdout: bugbotEnvelope(t, text)})
+		wantState(t, res, StateOK)
+		if res.Verdict != VerdictVerified || len(res.Findings) != 1 {
+			t.Fatalf("result = %+v", res)
+		}
+	})
+	t.Run("a real complete review reads the same", func(t *testing.T) {
+		wantState(t, check(t, BugbotProfile(), fakeRun{stdout: bugbotNoBugsFixture}), StateOK)
+		wantState(t, check(t, BugbotProfile(), fakeRun{stdout: bugbotEnvelope(t, bugbotTable)}), StateOK)
+	})
+}
+
+// TestExecRunStopsAToolAtTheOutputCap: a tool that writes past the output cap and would go on forever is stopped at the first
+// overflow, well before the time limit, and the call is the output-cap failure, not a timeout.
+func TestExecRunStopsAToolAtTheOutputCap(t *testing.T) {
+	for _, stream := range []string{"stdout", "stderr"} {
+		t.Run(stream, func(t *testing.T) {
+			script := `while :; do cat /dev/zero; done`
+			if stream == "stderr" {
+				script = `while :; do cat /dev/zero >&2; done`
+			}
+			p := JSONProfile("runaway", []string{"/bin/sh", "-c", script, "sh"}, "m", "e")
+			limit := 20 * time.Second
+			ctx, cancel := context.WithTimeout(t.Context(), limit)
+			defer cancel()
+			start := time.Now()
+			_, _, exit, err := ExecRun(ctx, p, Request{Worktree: t.TempDir(), Prompt: "x"})
+			if took := time.Since(start); !errors.Is(err, ErrOutputCap) || exit != -1 || took > 5*time.Second {
+				t.Fatalf("exit %d err %v after %s, want the output-cap failure at once", exit, err, took)
+			}
+			start = time.Now()
+			res, err := Adapter{Run: ExecRun, Fingerprint: hashFiles}.Check(t.Context(), Request{Profile: p, Worktree: t.TempDir(), Prompt: "x", Schema: AnswerSchema, Limit: limit, GuideRev: "g"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			wantState(t, res, StateToolFailed)
+			if took := time.Since(start); !strings.Contains(res.Detail, "output cap") || strings.Contains(res.Detail, "time limit") || took > 5*time.Second {
+				t.Fatalf("detail %q after %s, want the output-cap failure well before the limit of %s", res.Detail, took, limit)
+			}
+		})
+	}
+}
+
+// TestAdapterRecordsACanonicalEngineFamily: a declared family is recorded trimmed and in lower case, the form execution.ModelFamily
+// gives an author's family; a declared family that is blank after the trim or is no family name (a provider prefix, a dash, a
+// space), and a model whose family is blank, are a request Check refuses before the tool runs.
+func TestAdapterRecordsACanonicalEngineFamily(t *testing.T) {
+	a := Adapter{Run: fakeRun{stdout: `{"verdict":"verified","findings":[]}`}.run, Fingerprint: hashFiles}
+	p := jsonProfile()
+	p.Family = " Claude "
+	res, err := a.Check(t.Context(), request(t, p))
+	if err != nil || res.EngineFamily != "claude" {
+		t.Fatalf("a declared ' Claude ': %+v %v", res, err)
+	}
+	p = jsonProfile()
+	p.Model = "Anthropic/Claude-Opus-5"
+	if res, err = a.Check(t.Context(), request(t, p)); err != nil || res.EngineFamily != "claude" {
+		t.Fatalf("the family of a model: %+v %v", res, err)
+	}
+	for name, edit := range map[string]func(*Profile){
+		"a blank family":         func(p *Profile) { p.Family = " \t" },
+		"a prefixed family":      func(p *Profile) { p.Family = "anthropic/claude" },
+		"a model id as a family": func(p *Profile) { p.Family = "claude-opus" },
+		"a family with a space":  func(p *Profile) { p.Family = "cla ude" },
+		"a model of no family":   func(p *Profile) { p.Model = "-opus" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			ran := false
+			a := Adapter{Run: func(context.Context, Profile, Request) ([]byte, []byte, int, error) {
+				ran = true
+				return nil, nil, 0, nil
+			}, Fingerprint: hashFiles}
+			p := jsonProfile()
+			edit(&p)
+			if res, err := a.Check(t.Context(), request(t, p)); err == nil || ran {
+				t.Fatalf("Check took the request (ran %v): %+v %v", ran, res, err)
+			}
+		})
+	}
+}

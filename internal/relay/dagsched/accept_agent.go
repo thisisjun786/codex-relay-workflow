@@ -38,7 +38,8 @@ import (
 //   - a unit check is the completed row of the op crw.unitCheck (kind crw.unitCheck, role unit-check) that carries the plan, the node and the execution; result_bytes is the reviewadapter.Result the check
 //     left (state, verdict, model, effort, engine_family); detail_json names the criteria_digest the check was given, read as a reviewer's is. It is on the head when commit_sha is the head, or, for a
 //     check run before the commit, when commit_sha is empty and tree_digest is the tree of the head (a node without a head: commit_sha empty). Its pair is the model and effort of its result (an op row
-//     has no thread), and its family is the result's engine_family, else the family of its model. A check whose state is not ok gave no judgment: it is no basis and withdraws nothing.
+//     has no thread), and its family is the result's engine_family read trimmed and in lower case (one blank after the trim, or no family name, is unknown: independence_unproven), else the family
+//     of its model. A check whose state is not ok gave no judgment: it is no basis and withdraws nothing.
 //   - the latest reviewer call or unit check of the execution on the head decides, so a later needs_changes of either withdraws an earlier verified.
 //   - the pair a call ran on is the configured pair the host read back for the call's thread: the thread_started row of the call, whose detail_json names model and effort. A continuation (resume) has no thread_started row: its prepared row names resume_of and the pair the thread was read back with (configured_model, configured_effort), and that is its pair.
 //   - an author pair is the pair of a completed call of the node whose role is executor, executor-t1 or architect, whatever execution of the node it ran in, and the pair of the execution rows the node has.
@@ -416,7 +417,14 @@ func (s *Scheduler) agentReview(ctx context.Context, q store.Querier, plan, node
 		if review.Pair.Model == "" {
 			return review, nil, refuse(contract.RefusalDispositionConflict, "%s: unit check %s names no model, so its family is unknown", IndependenceUnproven, review.CallID)
 		}
-		family = check.EngineFamily
+		// the family the check declares is read in the form an author's family is read from its model (trimmed, lower case); one that is blank or no family name is unknown
+		if check.EngineFamily != "" {
+			declared, ok := execution.CanonicalFamily(check.EngineFamily)
+			if !ok {
+				return review, nil, refuse(contract.RefusalDispositionConflict, "%s: unit check %s declares the engine family %q, which is no family name, so its family is unknown", IndependenceUnproven, review.CallID, check.EngineFamily)
+			}
+			family = declared
+		}
 	} else {
 		if review.Pair, err = callPair(ctx, q, review.CallID, run); err != nil {
 			return review, nil, err
@@ -427,6 +435,9 @@ func (s *Scheduler) agentReview(ctx context.Context, q store.Querier, plan, node
 	}
 	if family == "" {
 		family = execution.ModelFamily(review.Pair.Model)
+	}
+	if family == "" {
+		return review, nil, refuse(contract.RefusalDispositionConflict, "%s: the model %s of %s %s names no family, so its family is unknown", IndependenceUnproven, review.Pair.Model, label, review.CallID)
 	}
 	authors, err := authorPairs(ctx, q, plan, node, e)
 	if err != nil {

@@ -190,3 +190,38 @@ func TestAgentStillAcceptsOnAReviewerVerdictOfAnEarlierRun(t *testing.T) {
 	_, err = k.accept("otherrun")
 	wantAgentRefusal(t, "a reviewer call of another run", err, contract.RefusalDispositionConflict, ReviewerMissing)
 }
+
+// The family a unit check declares is read in canonical form (trimmed, lower case), as an author's family is read from its model: ' Claude ' against an
+// author of family claude is the author's own family (independence_refused). A declared family that is blank after the trim, or is not a family name (it
+// carries a provider prefix, a dash or a space), is unknown (independence_unproven), as the family of a check that names no model is. Nothing is written.
+func TestAgentReadsTheDeclaredFamilyOfAUnitCheckCanonically(t *testing.T) {
+	t.Parallel()
+	one := func(n string) agentSpec { return agentSpec{name: n, files: map[string]string{n + ".txt": n + "\n"}} }
+	k := newAgentKit(t, one("spelled"), one("upper"), one("blank"), one("prefixed"), one("model"), one("spaced"))
+	criteria := releaseCriteriaDigest()
+	check := func(node, family string) {
+		t.Helper()
+		k.author(node, authorModel)
+		res := passingUnitCheck()
+		res.Model, res.EngineFamily = reviewerModel, family
+		k.unitCheck(unitCheckCall{node: node, res: res, tree: k.treeOf(k.heads[node]), criteria: criteria})
+	}
+
+	check("spelled", " Claude ")
+	_, err := k.accept("spelled")
+	wantAgentRefusal(t, "a unit check declaring ' Claude ' over an author of family claude", err, contract.RefusalDispositionConflict, IndependenceRefused)
+
+	check("upper", "CLAUDE")
+	_, err = k.accept("upper")
+	wantAgentRefusal(t, "a unit check declaring 'CLAUDE'", err, contract.RefusalDispositionConflict, IndependenceRefused)
+
+	for node, family := range map[string]string{"blank": "  \t", "prefixed": "anthropic/claude", "model": "claude-opus", "spaced": "cla ude"} {
+		check(node, family)
+		_, err = k.accept(node)
+		wantAgentRefusal(t, "a unit check declaring the family "+family, err, contract.RefusalDispositionConflict, IndependenceUnproven)
+	}
+
+	if n := k.agentAcceptanceRows(); n != 0 {
+		t.Fatalf("dag_agent_acceptances holds %d rows after the refusals, want none", n)
+	}
+}
