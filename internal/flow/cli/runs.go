@@ -68,6 +68,9 @@ type RunInfo struct {
 	Status    string `json:"status,omitempty"`
 	ErrorKind string `json:"error_kind,omitempty"`
 	Paused    string `json:"paused,omitempty"`
+	// Outcome is what the script came to (a milestone state, CRW-1487) as the finished row of the run's current end carries it: nil while
+	// a process runs, for a dead or paused run, and when that row carries none, so an older process's outcome is never shown.
+	Outcome *engine.Outcome `json:"outcome,omitempty"`
 	// HeldReasons are the reasons calls are held for (budget_exhausted, engine_paused, ...), once each.
 	HeldReasons []string `json:"held_reasons,omitempty"`
 	LastSeq     int      `json:"last_seq"`
@@ -318,6 +321,7 @@ func Questions(events []engine.Event) []Question {
 func Summarize(rec RunRecord, events []engine.Event, live bool, pid int) RunInfo {
 	info := RunInfo{RunRecord: rec, Live: live, PID: pid}
 	lastStart, lastFinish, lastPaused := -1, -1, -1
+	var outcome *engine.Outcome
 	for i, e := range events {
 		if int64(e.Seq) < engine.ForeignSeqBase {
 			// the cursor of the tree is the run's own last row: a command's row (CRW-1204) is numbered apart (journal.ReadPage)
@@ -335,6 +339,7 @@ func Summarize(rec RunRecord, events []engine.Event, live bool, pid int) RunInfo
 			case "finished":
 				lastFinish = i
 				info.Status, info.ErrorKind = str(e.Data, "status"), str(e.Data, "error_kind")
+				outcome = engine.FinishedOutcome(e.Data)
 			}
 		}
 		if e.Kind == engine.KindFlow && e.Event == "phase" {
@@ -406,6 +411,10 @@ func Summarize(rec RunRecord, events []engine.Event, live bool, pid int) RunInfo
 		info.State = StatePaused
 	default:
 		info.State = StateDead
+	}
+	if lastFinish > lastStart && lastFinish > lastPaused && info.State != StateRunning && info.State != StatePaused {
+		// the outcome of the run's current end only (CRW-1487)
+		info.Outcome = outcome
 	}
 	return info
 }
