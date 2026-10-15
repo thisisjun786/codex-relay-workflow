@@ -708,7 +708,66 @@ func TestSessionEvidenceRefreshGitFailure(t *testing.T) {
 			}
 		}
 	}
-	if held := rowsNamed(k.rowsOf("exe"), EvHeld); len(held) != 1 || !strings.Contains(rowStr(held[0].Data, "detail"), "git") {
-		t.Errorf("held rows %v, want the one that names git's failure", held)
+	if held := rowsNamed(k.rowsOf("exe"), EvHeld); len(held) != 1 || !strings.Contains(rowStr(held[0].Data, "detail"), "git") ||
+		rowStr(held[0].Data, "input_state") != "delivered" {
+		t.Errorf("held rows %v, want the one that names git's failure, with the bound turn's input delivered", held)
+	}
+}
+
+// TestSessionEvidenceRefreshGitFailureRepair: the task turn was delivered and answered with no JSON, the repair step (send_input) is
+// published, and the process dies. The resumed call goes on with that repair, and git fails once while its record is placed again
+// (evidenceRefresh): the call holds evidence_assignment_failed with its input recorded as delivered (the task turn was), never as
+// not_delivered. The next resume then goes on as a held delivered call does: the closed subagent is never sent the repair again, a
+// new attempt takes it, and its answer is accepted (CRW-1496).
+func TestSessionEvidenceRefreshGitFailureRepair(t *testing.T) {
+	arm, spent := failGitOnce(t)
+	k := newEvidenceKit(t, true, ".crw/\n")
+	k.setOrch(func(st Step, _ string, _ int) orchAnswer {
+		if st.K == 1 {
+			return orchAnswer{text: "this is not JSON"}
+		}
+		return orchAnswer{hang: true}
+	}, nil)
+	k.dieAt(t, deathAtK(EvStepPublished, 2), evidenceExe)
+	rows := k.rowsOf("exe")
+	if steps := rowsNamed(rows, EvStepPublished); len(steps) != 2 || rowStr(steps[1].Data, "action") != StepSendInput {
+		t.Fatalf("the dead process left the rows %s, want the repair step published", eventsOf(rows))
+	}
+	first := rowStr(rowsNamed(rows, EvThreadStarted)[0].Data, "thread_id")
+	arm()
+	if got := value[[]any](t, k.h.run(evidenceExe)); got[0] != StatusHeld || got[1] != ReasonEvidenceAssignmentFailed {
+		t.Fatalf("the first resume %v, want held %s (rows %s)", got, ReasonEvidenceAssignmentFailed, eventsOf(k.rowsOf("exe")))
+	}
+	if !spent() {
+		t.Fatal("the resumed process never asked git for the HEAD of the call's directory")
+	}
+	held := rowsNamed(k.rowsOf("exe"), EvHeld)
+	if len(held) != 1 || rowStr(held[0].Data, "input_state") != "delivered" || held[0].Data["repair_used"] != true {
+		t.Errorf("held rows %v, want one with input_state delivered and repair_used", held)
+	}
+	// the second resume: every step is answered at once with the step's own answer
+	var mu sync.Mutex
+	var sentTo []string
+	k.setOrch(func(st Step, _ string, _ int) orchAnswer {
+		if st.Action == StepSendInput {
+			mu.Lock()
+			sentTo = append(sentTo, st.AgentID)
+			mu.Unlock()
+		}
+		return orchAnswer{}
+	}, nil)
+	if got := value[[]any](t, k.h.run(evidenceExe)); got[0] != "completed" {
+		t.Fatalf("the second resume %v, want completed (rows %s)", got, eventsOf(k.rowsOf("exe")))
+	}
+	steps := rowsNamed(k.rowsOf("exe"), EvStepPublished)
+	if last := steps[len(steps)-1]; rowInt(last.Data, "attempt") < 2 || last.Data["repair"] != true || rowStr(last.Data, "action") != StepSpawn {
+		t.Errorf("the step the second resume published %v, want the repair spawned on a new attempt (rows %s)", last.Data, eventsOf(k.rowsOf("exe")))
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, agent := range sentTo {
+		if agent == first {
+			t.Errorf("the closed subagent %s was sent the repair again (rows %s)", first, eventsOf(k.rowsOf("exe")))
+		}
 	}
 }

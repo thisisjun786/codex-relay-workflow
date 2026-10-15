@@ -359,6 +359,14 @@ func (c *callRun) evidenceHold(err error, unbound string) CallResult {
 	return c.terminal(EvHeld, StatusHeld, ReasonEvidenceAssignmentFailed, data)
 }
 
+// evidenceRefreshHold is the held result of a call recovered in place whose record could not be placed again (evidenceRefresh): its
+// step was published, and it may have been delivered, so the held row records the input as it is (inputState), never as
+// not_delivered when a turn of the call was delivered (CRW-1496).
+func (c *callRun) evidenceRefreshHold(err error) CallResult {
+	return c.terminal(EvHeld, StatusHeld, ReasonEvidenceAssignmentFailed, map[string]any{"input_state": c.inputState(),
+		"detail": "the flow evidence assignment of the recovered call could not be placed again: " + err.Error()})
+}
+
 // evidenceStepData adds the step's assignment to its step_published data.
 func (s *sessionCall) evidenceStepData(data map[string]any) {
 	ev := s.evidence

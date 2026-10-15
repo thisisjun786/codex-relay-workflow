@@ -452,7 +452,11 @@ func (c *callRun) sessionRecover(ctx context.Context) (res CallResult, stop bool
 		// the call goes on with its bound subagent or its repair step, so no spawn step places its record again: the record is placed
 		// again here, rooted at the directory as it is now, which may have been recreated since (CRW-1496)
 		if err := c.evidenceRefresh(ctx); err != nil {
-			return c.evidenceHold(err, ""), true, 0, ""
+			// the call holds as it is: its input may have been delivered (the bound turn, the task turn a repair is for), and the held
+			// row says so, so a held call that goes on with a delivered input takes it to a new attempt (sessionResumeHeld) and never
+			// sends a repair to the subagent this hold closes; a published repair is the call's one repair (repair_used)
+			c.repairUsed = c.repairUsed || st.repair
+			return c.evidenceRefreshHold(err), true, 0, ""
 		}
 	}
 	c.firstK = max(st.k, 1)
