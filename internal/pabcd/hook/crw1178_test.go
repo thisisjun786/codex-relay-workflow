@@ -108,10 +108,10 @@ func TestCRW1178SourcelessBytecodeStaysRefusedWithItsCause(t *testing.T) {
 			t.Errorf("a non-GitHub command reads as a GitHub post refusal (%q): %s", bad, gh)
 		}
 	}
-	// A leaf is sent to its parent and keeps the cause.
+	// A leaf is sent to the 자식 that spawned it and keeps the cause.
 	leaf := gatePayload(t, cwd, map[string]any{"agent_id": "leaf", "agent_type": "executor", "tool_name": "Bash", "tool_input": map[string]any{"command": cmd}})
 	reason = gateDeny(t, HandleMemoryWriteGate(leaf, env))
-	if !strings.Contains(reason, "parent") || !strings.Contains(reason, "hidden.pyc") || strings.Contains(reason, "MEMORY-WRITE-GATE") {
+	if !strings.Contains(reason, "the 자식 that spawned you") || !strings.Contains(reason, "hidden.pyc") || strings.Contains(reason, "MEMORY-WRITE-GATE") {
 		t.Errorf("leaf reason: %s", reason)
 	}
 	// A grant still spends on the unreadable program, as before; the decision is unchanged.
