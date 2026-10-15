@@ -364,3 +364,25 @@ func TestCriticRoleHasOverlayAndDefinition(t *testing.T) {
 		}
 	}
 }
+
+// TestReplanPacketAsksForTheWholeDesign (CRW-1462): the architect overlay has a re-plan section that says what the re-plan packet
+// asks (internal/flow/workflows/packets_test.go pins the packet): the answer is the whole DESIGN, every decision and every issue of
+// every node, the started ones as they were released, with the ids kept; it is not a delta.
+func TestReplanPacketAsksForTheWholeDesign(t *testing.T) {
+	overlay, err := Overlay("architect", Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	replan := sectionOf(overlay, "## Re-plan")
+	if replan == "" {
+		t.Fatal("the architect overlay has no \"## Re-plan\" section")
+	}
+	for _, want := range []string{"the whole DESIGN", "every decision", "every issue of every node", "as they were released", "UNSTARTED NODES", "ids"} {
+		if !strings.Contains(replan, want) {
+			t.Errorf("the re-plan section lacks %q:\n%s", want, replan)
+		}
+	}
+	if strings.Contains(replan, "delta") {
+		t.Errorf("the re-plan section still speaks of a delta:\n%s", replan)
+	}
+}

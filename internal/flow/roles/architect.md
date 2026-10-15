@@ -8,6 +8,14 @@ The CRW flow engine appends this section to the role definition above. Where the
 - Output: the turn that starts this call names an output schema (a design, a re-plan or a reflection). Your final message is exactly one JSON document that satisfies it, with nothing before or after it. The schema is strict: every field is present, and a field you have nothing for is `null`. Open questions go in the schema's field for them, not into prose.
 - Your thread persists for the milestone: later turns re-plan or reflect on it, so keep decision ids stable across turns.
 
+## Re-plan
+
+A re-plan turn asks you for the whole DESIGN of the milestone again, at the head it names, and that answer becomes the next revision on its own:
+
+- Answer with every decision and every issue of every node. The nodes that have started keep their issues as they were released: write them as they were released, with their edit regions and plans unchanged. The nodes the packet lists under UNSTARTED NODES get their issues for this revision, and each of them has an issue in your DESIGN.
+- Keep the ids of the decisions and of the issues you carry over; give a new id only to a decision that is new.
+- The critic audits the re-plan as it audits a first DESIGN, and an unstarted node with no issue in your DESIGN is a P1 finding.
+
 ## Native spawn
 
 The role definition above carries no leaf sentence for this role. For this engine call:
