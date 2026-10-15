@@ -324,8 +324,9 @@ func ciLocalStepRoom(tmp string) (length, limit int) {
 // the work root below XDG_STATE_HOME, is refused too when that is long, and the run ends temp_dir_unusable. So the verification's own
 // TMPDIR is chosen by that full nested length: below the caller's TMPDIR when the nesting fits (the caller keeps its disk), else a short
 // directory below /tmp, which the verification's note names; it is made 0700 and removed after the verification. A caller TMPDIR as
-// long as /scratch/crw/integrate/tmp (made below /tmp, so no host path is made), one that fits, the relay's (no TMPDIR: /tmp) and a
-// long one each give crw-dev a TMPDIR ci local takes, with a long XDG_STATE_HOME.
+// long as /scratch/crw/integrate/tmp (made below /tmp, so no host path is made), one that fits, a short link to a long directory
+// (measured at its physical path), the relay's (no TMPDIR: /tmp) and a long one each give crw-dev a TMPDIR ci local takes, with a long
+// XDG_STATE_HOME.
 func TestIntegrationVerifyTmpDirLeavesRoomForCiLocal(t *testing.T) {
 	repo, head := labCommitRepo(t)
 	log := filepath.Join(t.TempDir(), "crw-dev.jsonl")
@@ -357,6 +358,20 @@ func TestIntegrationVerifyTmpDirLeavesRoomForCiLocal(t *testing.T) {
 	}{
 		{"a caller TMPDIR as long as /scratch/crw/integrate/tmp", func(t *testing.T) string { return sized(t, len("/scratch/crw/integrate/tmp")) }},
 		{"a caller TMPDIR whose nesting fits", func(t *testing.T) string { return sized(t, 15) }},
+		// ci local measures the physical path, so a short link to a long directory is as long as the directory
+		{"a short caller TMPDIR that links to a long directory", func(t *testing.T) string {
+			if err := os.MkdirAll(long, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			link := filepath.Join(filepath.Dir(sized(t, 12)), "l")
+			if err := os.Symlink(long, link); err != nil {
+				t.Fatal(err)
+			}
+			if length, limit := ciLocalStepRoom(link + "/crw-01234567"); length >= limit {
+				t.Fatalf("the link %s is too long to show the case", link)
+			}
+			return link
+		}},
 		{"the relay's: no TMPDIR", func(t *testing.T) string { return "" }},
 		{"a long caller TMPDIR", func(t *testing.T) string {
 			if err := os.MkdirAll(long, 0o700); err != nil {

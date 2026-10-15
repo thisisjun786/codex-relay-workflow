@@ -2620,6 +2620,22 @@ func TestUnitCheckHoldsAHeadThatMovedDuringTheCheck(t *testing.T) {
 			held(t, u, decodeCheck(t, raw), *calls, c.on, u.start)
 		})
 	}
+	// with no start recorded for the attempt there is no guard before the check: the HEAD read before the first Check is the HEAD the
+	// check is of, so a commit during it is still seen
+	t.Run("uncommitted: no recorded attempt start, the change was committed during the check", func(t *testing.T) {
+		u := newUCWorld(t)
+		write(t, u.wt, "a.txt", "built\n", 0o644)
+		u.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "c_ex1", Op: "agent", Event: engine.EvPrepared, Data: map[string]any{"role": "executor", "node": "A",
+			"allocation": map[string]any{"kind": engine.PlaceFresh, "path": u.wt, "attempt": 1}}})
+		u.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "c_ex1", Op: "agent", Event: engine.EvCompleted, Data: map[string]any{"pending_tree": u.snapshot()}})
+		if start := rows(u.j.Events()).attemptHead("A"); start != "" {
+			t.Fatalf("the attempt records the start %s; the case is one with none", start)
+		}
+		calls, checker := committing(map[int]bool{1: true}, "", false)
+		u.lane.d.UnitCheck.Checker = checker
+		out := decodeCheck(t, u.must("unitCheck", "A", call("c_ex1", "completed", "claude-x", nil), map[string]any{"round": 1}))
+		held(t, u, out, *calls, 1, u.start)
+	})
 	t.Run("uncommitted: a check that failed on a HEAD that stays is the checker's error", func(t *testing.T) {
 		u := newUCWorld(t)
 		ex := u.build("c_ex1", "built\n")
