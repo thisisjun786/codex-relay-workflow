@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
@@ -73,6 +74,8 @@ type ciRecord struct {
 		Steps  []struct {
 			Name   string `json:"name"`
 			Result string `json:"result"`
+			// Reason is how the step ended: for a failed command, its failing test lines and the last lines of its output (CRW-1469).
+			Reason string `json:"reason"`
 		} `json:"steps"`
 	} `json:"jobs"`
 }
@@ -131,6 +134,9 @@ func (v CILocalVerifier) Verify(ctx context.Context, req VerifyRequest) (VerifyO
 		for _, st := range job.Steps {
 			if st.Result != "passed" && st.Result != "not_applicable" {
 				out.Failures = append(out.Failures, job.Name+"/"+st.Name+": "+st.Result)
+				if st.Result != stepSkipped && st.Reason != "" {
+					out.FailedTests = append(out.FailedTests, failedSteps(job.Name, st.Name, st.Reason))
+				}
 			}
 		}
 	}
@@ -143,6 +149,59 @@ func (v CILocalVerifier) Verify(ctx context.Context, req VerifyRequest) (VerifyO
 		out.Summary = fmt.Sprintf("%s exited %d with result %q", CILocalCommand, code, rec.Result)
 	}
 	return out, nil
+}
+
+// FailedStep is one failed step of a verification record (CRW-1469, CRW-1488 item 16): the job and the step, the tests (`--- FAIL:
+// <Test>`) and the packages (`FAIL\t<pkg>`) its reason names, each once in the order of the reason, and the last lines of the reason.
+// A reason with no such line (a build error, a missing tool, a reason cut before its test lines) has no test and no package, and the
+// tail is what it says.
+type FailedStep struct {
+	Job      string   `json:"job"`
+	Step     string   `json:"step"`
+	Tests    []string `json:"tests"`
+	Packages []string `json:"packages"`
+	Tail     string   `json:"tail"`
+}
+
+// stepSkipped is the result of a step that did not run because an earlier step of its job did not pass: it is a failure of the
+// verification, but its reason says only that, so it names no failed test.
+const stepSkipped = "skipped"
+
+// The tail of a failed step's reason: its last failedTailLines lines, at most failedTailBytes bytes.
+const (
+	failedTailLines = 20
+	failedTailBytes = 2048
+)
+
+// failedSteps reads the reason of a failed step: the tests and the packages its lines name, and its tail. A reason of crw-dev ci local
+// starts with how the command exited ("exit status 1: "), which is not part of its first line of output.
+func failedSteps(job, step, reason string) FailedStep {
+	out := FailedStep{Job: job, Step: step, Tests: []string{}, Packages: []string{}}
+	lines := strings.Split(strings.TrimRight(reason, "\n"), "\n")
+	for i, line := range lines {
+		if i == 0 && strings.HasPrefix(line, "exit status ") {
+			if _, rest, ok := strings.Cut(line, ": "); ok {
+				line = rest
+			}
+		}
+		if rest, ok := strings.CutPrefix(strings.TrimLeft(line, " "), "--- FAIL: "); ok {
+			if name, _, _ := strings.Cut(rest, " "); name != "" && !slices.Contains(out.Tests, name) {
+				out.Tests = append(out.Tests, name)
+			}
+		} else if rest, ok := strings.CutPrefix(line, "FAIL\t"); ok {
+			if pkg := strings.FieldsFunc(rest, func(r rune) bool { return r == '\t' || r == ' ' }); len(pkg) > 0 && !slices.Contains(out.Packages, pkg[0]) {
+				out.Packages = append(out.Packages, pkg[0])
+			}
+		}
+	}
+	if len(lines) > failedTailLines {
+		lines = lines[len(lines)-failedTailLines:]
+	}
+	out.Tail = strings.Join(lines, "\n")
+	if len(out.Tail) > failedTailBytes {
+		out.Tail = strings.ToValidUTF8(out.Tail[len(out.Tail)-failedTailBytes:], "")
+	}
+	return out
 }
 
 // ciRecordDirMade is called with .crw/verify right after ciRecordDir has made and checked it, before its ignore file is

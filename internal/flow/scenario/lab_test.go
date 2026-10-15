@@ -45,6 +45,9 @@ type Lab struct {
 	Threads *fakehost.Threads
 	Relay   *FakeRelay
 	Verify  *FakeVerifier
+	// FailedTests are, by node, the failed tests a failing verification of the node names (the failed_tests of its crw.verify
+	// result, CRW-1469); none is a failing verification whose record names no test, as FakeVerifier answers alone.
+	FailedTests map[string][]ops.FailedStep
 
 	StorePath string
 	Store     *store.Store
@@ -228,10 +231,22 @@ func (l *Lab) spawn(owner string) {
 // newLane makes the lane's operations over the lab's journal, relay and verifier (and the reporter, when the lab has one), with the
 // host of the close.
 func (l *Lab) newLane() {
-	deps := ops.Deps{RunID: l.RunID, Repo: l.Repo, Journal: l.journal, Relay: l.Relay, Verifier: l.Verify, Decisions: l.decisions, Actor: "parent", Reporter: l.Reporter,
+	deps := ops.Deps{RunID: l.RunID, Repo: l.Repo, Journal: l.journal, Relay: l.Relay, Verifier: labVerifier{l}, Decisions: l.decisions, Actor: "parent", Reporter: l.Reporter,
 		Now: func() time.Time { return time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC) }, UnitCheck: l.Checker.seam()}
 	deps.Threads = labThreads{BusReader: audit.BusReader{Bus: l.client.Bus()}, backend: l.backend}
 	l.lane = ops.NewLane(deps)
+}
+
+// labVerifier is the lab's verifier: FakeVerifier's answer, with the failed tests the scenario gives the node when it fails.
+type labVerifier struct{ l *Lab }
+
+// Verify implements ops.Verifier.
+func (v labVerifier) Verify(ctx context.Context, req ops.VerifyRequest) (ops.VerifyOutcome, error) {
+	out, err := v.l.Verify.Verify(ctx, req)
+	if err == nil && !out.Pass {
+		out.FailedTests = v.l.FailedTests[req.Node]
+	}
+	return out, err
 }
 
 // labThreads is the host of the close: the audit reads the reviewer threads through the client of the run process, and the backend
@@ -1039,4 +1054,28 @@ func Finding(severity, text string) reviewadapter.Finding {
 // NeedsChanges is a unit check that rules needs_changes with the findings.
 func NeedsChanges(findings ...reviewadapter.Finding) UnitCheck {
 	return UnitCheck{Verdict: reviewadapter.VerdictNeedsChanges, Findings: findings}
+}
+
+// TestFixCallNamesTheFailedTestsOfTheVerification (CRW-1469, CRW-1488 item 16): the failed tests a failing verification names reach
+// the executor: the crw.verify row records them and the fix call of the node's thread names each failed step's tests, packages and
+// the last lines of its output.
+func TestFixCallNamesTheFailedTestsOfTheVerification(t *testing.T) {
+	l := NewLab(t, oneNode()...)
+	l.Verify.Fail = map[string][]int{"A": {1}}
+	l.FailedTests = map[string][]ops.FailedStep{"A": {{Job: "go-product", Step: "tests", Tests: []string{"TestGuard"}, Packages: []string{"example.com/m/a"},
+		Tail: "    guard_test.go:9: the guard is open\n--- FAIL: TestGuard (0.01s)"}}}
+	if got := mustRun(t, l); got.State != "closed" {
+		t.Fatalf("state %q; calls %v", got.State, l.Labels())
+	}
+	verifies := l.Rows("crw.verify")
+	if len(verifies) < 2 || verifies[0].Data["failed_tests"] == nil || verifies[1].Data["failed_tests"] != nil {
+		t.Fatalf("the verify rows %+v", verifies)
+	}
+	fix := textOfCall(l, callNamed(t, l, "fix:A:executor:r1").ID)
+	for _, want := range []string{"VERIFICATION FAILED (" + ops.CILocalCommand + "):\n- validate/tests: failed\n\nFAILED TESTS (",
+		"\n- go-product/tests: TestGuard (packages example.com/m/a)\n        guard_test.go:9: the guard is open\n    --- FAIL: TestGuard (0.01s)"} {
+		if !strings.Contains(fix, want) {
+			t.Errorf("the fix call lacks %q:\n%s", want, fix)
+		}
+	}
 }

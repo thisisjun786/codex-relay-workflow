@@ -241,7 +241,7 @@ type VerifyRequest struct {
 }
 
 // VerifyOutcome is the verification of a head: the command that ran, whether it passed, the digest of the
-// verification-record/1 it left and the record itself, and the steps that failed.
+// verification-record/1 it left and the record itself, and the steps that failed with the tests they name.
 type VerifyOutcome struct {
 	Pass     bool
 	Command  string
@@ -256,6 +256,10 @@ type VerifyOutcome struct {
 	// verification-record/1, CRW-1328); nil is a record that does not say, which is unknown, never zero. Zero is the warning
 	// no_tests_run of the crw.verify row and the final gate; Pass is the record's either way.
 	TestPackagesRun *int
+	// FailedTests are the failed steps of the record that give a reason, each with the tests and the packages its reason names and
+	// the last lines of it (failedSteps, CRW-1469); none for a verification that passed. The crw.verify row and result carry them as
+	// failed_tests.
+	FailedTests []FailedStep
 }
 
 // WarnNoTestsRun is the warning of a verification whose record says it ran no test (CRW-1328): recorded, never a failure.
