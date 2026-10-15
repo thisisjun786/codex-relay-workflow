@@ -862,7 +862,7 @@ func pumpSignalCapacityText(plan CapacityPlan) string {
 	} else if plan.BranchesUnmeasured != "" {
 		candidates = "unmeasured (" + plan.BranchesUnmeasured + ")"
 	}
-	return pumpTruncate(fmt.Sprintf("[capacity] plan %s (parent %s, family %s) has room for another branch: %d waiting [%s] for %.0f minutes; candidate issue_keys: %s",
+	return pumpTruncate(fmt.Sprintf("[capacity] plan %s (parent (자식) %s, family %s) has room for another branch: %d waiting [%s] for %.0f minutes; candidate issue_keys: %s",
 		plan.Plan, plan.Parent, plan.Family, len(plan.Waiting), strings.Join(plan.Waiting, ", "), plan.WaitingMinutes, candidates), pumpReportLimit)
 }
 

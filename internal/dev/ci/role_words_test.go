@@ -54,6 +54,11 @@ var (
 // name), keyed by roleWordsKey(path, unquoted literal) so a moved line keeps its entry. A role-sense
 // literal never goes here: it is reworded or stays counted in the baseline.
 var nonRoleLiterals = roleWordsAllowed([]struct{ path, literal, reason string }{
+	{"internal/manage/audit_grade.go", "bundle %s: its parent is not a directory", "filesystem: the bundle's parent directory"},
+	{"internal/manage/improve_collect.go", "%s: the parent directory of %s could not be examined: %w", "filesystem: the output file's parent directory"},
+	{"internal/manage/improve_collect.go", "%s: the parent directory of %s is not a directory", "filesystem: the output file's parent directory"},
+	{"internal/manage/improve_collect.go", "%s: the parent directory of %s is not the directory the plan named", "filesystem: the output file's parent directory"},
+	{"internal/manage/memlog.go", "the stat of %d has no parent", "process: the parent process id"},
 	{"internal/relay/dagsched/accept_premerge.go", "git could not read the parents of %s in %s: %v", "git: the parent commits of a merge"},
 	{"internal/relay/dagsched/accept_premerge.go", "the merge %s is not the automatic merge of its parents (a hand-resolved merge or a merge outside the base)", "git: the parent commits of a merge"},
 	{"internal/relay/dagsched/baserefresh_git.go", "its parent's manifest cannot be read apart from its version: ", "git: the plugin manifest of the parent commit"},

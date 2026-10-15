@@ -21,13 +21,6 @@ internal/flow/engine/session.go	1
 internal/flow/ops/gitsnap.go	3
 internal/flow/planinput/cli.go	2
 internal/flow/report/summary.go	1
-internal/manage/audit_grade.go	1
-internal/manage/dagreview_host.go	1
-internal/manage/improve_collect.go	4
-internal/manage/memlog.go	1
-internal/manage/pump_queue.go	1
-internal/manage/pump_signals.go	1
-internal/manage/pump_sources.go	2
 internal/pabcd/cli/orchestrate_status.go	1
 internal/pabcd/cli/plan.go	1
 internal/pabcd/evidence/assignment.go	1
