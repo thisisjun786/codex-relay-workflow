@@ -749,9 +749,14 @@ func QAReceiptOf(verdict string) map[string]any {
 	return map[string]any{"verdict": verdict, "findings": []any{}, "summary": "receipt " + verdict}
 }
 
-// Defect is a defect of a verdict.
+// Defect is a defect of a verdict. Its impact follows the severity, one word of the closed set (CRW-1438): a P0-P2
+// defect is core_function, a P3 defect minor_separable, so the fixture blocks exactly as its severity says.
 func Defect(ref, kind, severity, finding string) map[string]any {
-	return map[string]any{"ref": ref, "kind": kind, "severity": severity, "introduced": false, "impact": "", "inPromise": false, "file": "node.txt", "line": 1, "finding": finding, "evidence_question": nil}
+	impact := "core_function"
+	if severity == "P3" {
+		impact = "minor_separable"
+	}
+	return map[string]any{"ref": ref, "kind": kind, "severity": severity, "introduced": false, "impact": impact, "inPromise": false, "file": "node.txt", "line": 1, "finding": finding, "evidence_question": nil}
 }
 
 // EvidenceDefect is a defect of kind evidence_missing with its question.

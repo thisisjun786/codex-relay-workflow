@@ -292,8 +292,20 @@ func dispositionFor(items []Item) map[string]Item {
 	return byRef
 }
 
-// need is a finding the parent has to dispose of: a criterion that is not PASS, or a defect of P0 to P2 or with an
-// impact other than minor_separable.
+// Impacts is the closed set of the impact of a defect, the one list every writer and reader of a defect names (CRW-1438): the
+// verdict schemas of the flow (ops/schemas.go, crw:lib/schemas) enumerate exactly these words. Only MinorSeparable does not block.
+var Impacts = []string{"core_function", "safety_or_data", "permission_boundary", "criterion_unmet", "regression_introduced", MinorSeparable}
+
+// MinorSeparable is the one impact that does not make a defect blocking.
+const MinorSeparable = "minor_separable"
+
+// Blocks says whether a defect needs a disposition: a severity of P0 to P2, or an impact other than minor_separable. An empty
+// impact (a stored record that gives none) does not block on its own.
+func Blocks(severity, impact string) bool {
+	return severity == "P0" || severity == "P1" || severity == "P2" || (impact != "" && impact != MinorSeparable)
+}
+
+// need is a finding the parent has to dispose of: a criterion that is not PASS, or a defect that Blocks.
 type need struct {
 	ref       string
 	criterion *Criterion
@@ -315,7 +327,7 @@ func findingsNeedingDisposition(r Record) []need {
 	}
 	for i := range r.Defects {
 		d := r.Defects[i]
-		if d.Severity == "P0" || d.Severity == "P1" || d.Severity == "P2" || (d.Impact != "" && d.Impact != "minor_separable") {
+		if Blocks(d.Severity, d.Impact) {
 			out = append(out, need{ref: d.ID, defect: &d})
 		}
 	}

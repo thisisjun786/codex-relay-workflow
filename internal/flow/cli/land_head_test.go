@@ -164,7 +164,7 @@ func (l *laneLab) reviewerSays(needs func() bool) {
 	l.host.Threads().OnTurn(func(r fakehost.TurnRequest) fakehost.TurnPlan {
 		if c := l.callOf(r); c.Role == "reviewer" && needs() {
 			return labSay(map[string]any{"verdict": "needs_changes", "criteria": []any{map[string]any{"id": "c1", "met": false, "evidence": "read the head"}},
-				"defects": []any{map[string]any{"ref": "d1", "kind": "correctness", "severity": "P1", "introduced": true, "impact": "the file is wrong", "inPromise": true,
+				"defects": []any{map[string]any{"ref": "d1", "kind": "correctness", "severity": "P1", "introduced": true, "impact": "core_function", "inPromise": true,
 					"file": "node-A-1.txt", "line": 1, "finding": "the work is incomplete", "evidence_question": nil}}, "summary": "needs changes"})
 		}
 		return l.onTurn(r)

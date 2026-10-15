@@ -32,6 +32,12 @@ func (h *HeadRef) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+// OpUnitCheck is the label of the op that records a unit check (a reviewadapter.Check of a node's work): the name only, its op
+// registers elsewhere. Its completed row carries in Data the role (unit-check), node, execution_id, criteria_digest, tree (the
+// fingerprint the check saw), commit when the check ran on a commit (none before it), and the reviewadapter.Result as result. The
+// relay reads the same row (dagsched agentReview) and crw.accept assembles a premerge record from it.
+const OpUnitCheck = "crw.unitCheck"
+
 // ---- crw.commit ----
 
 // commitOp is crw.commit(node, call, regions): the commit of exactly the working snapshot an executor call recorded
