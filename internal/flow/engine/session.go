@@ -1468,6 +1468,7 @@ func (c *callRun) sessionPacket(k int, marker, input string, repair bool, action
 	}
 	b.WriteString("Never run `git commit`, `git add`, `git branch`, `git reset` or `git checkout`: the run records and commits the work itself.\n")
 	b.WriteString("You are a leaf subagent: never spawn agents.\n\n")
+	b.WriteString(e.cfg.Tools.PacketSection())
 	if text, err := c.roleText(); err == nil && strings.TrimSpace(text) != "" {
 		b.WriteString("## Role instructions\n\n")
 		b.WriteString(strings.TrimSpace(text))

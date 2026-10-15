@@ -1021,9 +1021,13 @@ any row is written. `crw flow shadow` replays either from the trace and names th
 
   A `send_input` message is the marker line and the turn's input. The packet is self-contained: where the subagent works (only
   under the absolute path P; a role that writes nothing changes nothing; nobody runs `git commit`, `add`, `branch`, `reset` or
-  `checkout`), the role's overlay of `internal/flow/roles` without its native-spawn section, the earlier attempts, for a
-  continuation the packet of the call it continues and a file with that call's answer, the task, and the output contract (the
-  schema the final message satisfies).
+  `checkout`), the repository tools when the configuration names them (CRW-1488: a `Repository tools` section with the go of
+  `verifier.go_root`, the file that sets it, and the prefix `PATH=<go_root>/bin:"$PATH" GOROOT=<go_root> GOTOOLCHAIN=local` that
+  every command running go takes, because the subagent's shell is the owner session's and spawn_agent takes no environment), the
+  role's overlay of `internal/flow/roles` without its native-spawn section, the earlier attempts, for a continuation the packet of
+  the call it continues and a file with that call's answer, the task, and the output contract (the schema the final message
+  satisfies). An App Server call's thread gets the same entries in its shell instead (`config.shell_environment_policy.set`,
+  merged over the host's policy) and its role prompt ends with the same section.
 - The owner reports what it spawned with a dispatch report in `<state>/flow/<run>/inbox/` and reads the run's answer from
   `replies/` (the commands are the CLI's). The run binds a subagent only when the host shows it is the owner thread's
   (`parentThreadId`), carries the marker in a turn's first user message and is configured with the role's pair. The answers:

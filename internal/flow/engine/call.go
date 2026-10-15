@@ -937,7 +937,7 @@ func (c *callRun) startThread(ctx context.Context) (CallResult, bool) {
 	if res, down := c.journalDown(); down {
 		return res, true
 	}
-	info, err := e.cfg.Backend.StartThread(ctx, ThreadSpec{CallID: c.id, Role: p.role, Pair: p.spec.Pair, Sandbox: p.spec.Sandbox, Cwd: cwd, Node: p.node, Head: p.opts.Head, Placement: placement, AutoCompactTokenLimit: p.spec.AutoCompactTokenLimit, Send: send, QA: p.qa})
+	info, err := e.cfg.Backend.StartThread(ctx, ThreadSpec{CallID: c.id, Role: p.role, Pair: p.spec.Pair, Sandbox: p.spec.Sandbox, Cwd: cwd, Node: p.node, Head: p.opts.Head, Placement: placement, AutoCompactTokenLimit: p.spec.AutoCompactTokenLimit, Send: send, QA: p.qa, Tools: c.e.cfg.Tools})
 	if err != nil {
 		return c.fromError(ctx, err), true
 	}
@@ -973,7 +973,7 @@ func (c *callRun) forkThread(ctx context.Context) (CallResult, bool) {
 		return res, true
 	}
 	info, err := forker.ForkThread(ctx, ForkSpec{CallID: c.id, Role: p.role, Node: p.node, Pair: p.spec.Pair, Sandbox: p.spec.Sandbox, Cwd: cwd,
-		SourceThreadID: p.resume.ThreadID, ThroughTurnID: p.resume.ThroughTurnID, ThroughOp: throughOp, AutoCompactTokenLimit: p.spec.AutoCompactTokenLimit, Send: send, QA: p.qa})
+		SourceThreadID: p.resume.ThreadID, ThroughTurnID: p.resume.ThroughTurnID, ThroughOp: throughOp, AutoCompactTokenLimit: p.spec.AutoCompactTokenLimit, Send: send, QA: p.qa, Tools: c.e.cfg.Tools})
 	if err != nil {
 		return c.fromError(ctx, err), true
 	}
