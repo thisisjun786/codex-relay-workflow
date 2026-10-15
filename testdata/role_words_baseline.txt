@@ -34,7 +34,7 @@ internal/manage/pump_signals.go	1
 internal/manage/pump_sources.go	2
 internal/manage/pump_supervisor.go	18
 internal/manage/sendparent.go	10
-internal/manage/supervisor.go	20
+internal/manage/supervisor.go	2
 internal/manage/supervisor_settings.go	1
 internal/pabcd/cli/orchestrate_status.go	1
 internal/pabcd/cli/plan.go	1
@@ -71,5 +71,4 @@ internal/skill/base_refresh_mechanical.go	1
 internal/skill/command.go	2
 internal/skill/issue_ready.go	1
 internal/skill/parent_title.go	2
-internal/skill/skill.go	2
 internal/skill/start_policy.go	6
