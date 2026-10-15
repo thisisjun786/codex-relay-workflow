@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/reviewadapter"
 )
 
 // HeadRef is a head as a script hands it to an operation: the commit id, or the object crw.commit answered.
@@ -32,11 +35,251 @@ func (h *HeadRef) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// OpUnitCheck is the label of the op that records a unit check (a reviewadapter.Check of a node's work): the name only, its op
-// registers elsewhere. Its completed row carries in Data the role (unit-check), node, execution_id, criteria_digest, tree (the
-// fingerprint the check saw), commit when the check ran on a commit (none before it), and the reviewadapter.Result as result. The
-// relay reads the same row (dagsched agentReview) and crw.accept assembles a premerge record from it.
-const OpUnitCheck = "crw.unitCheck"
+// OpUnitCheck is the label of crw.unitCheck (unitCheckOp), the op that records a unit check (a reviewadapter.Check of a node's work).
+// Its completed row carries in Data the role (unit-check), node, execution_id, criteria_digest, tree (the fingerprint the check saw),
+// commit when the check ran on a commit (none before it), and the reviewadapter.Result as result. The relay reads the same row
+// (dagsched agentReview) and crw.accept assembles a premerge record from it.
+const OpUnitCheck = "crw." + NameUnitCheck
+
+// ---- crw.unitCheck ----
+
+// UnitChecker runs one unit check; the shipped lane's is reviewadapter.Adapter.
+type UnitChecker interface {
+	Check(context.Context, reviewadapter.Request) (reviewadapter.Result, error)
+}
+
+// UnitCheck is what crw.unitCheck reaches outside the journal: the checker, the profile of the tool for a mode ("uncommitted" or
+// "committed") and the time limit of one call.
+type UnitCheck struct {
+	Checker UnitChecker
+	Profile func(mode string) (reviewadapter.Profile, error)
+	Limit   time.Duration
+}
+
+// The modes of a unit check: the uncommitted changes an executor call left in the node's worktree (the pending tree crw.commit will
+// commit), or the committed range base..head of a checked-out head (land-head).
+const (
+	UnitCheckUncommitted = "uncommitted"
+	UnitCheckCommitted   = "committed"
+)
+
+// UnitCheckGuideRev is the revision of the review guide unitCheckPrompt builds the prompt from.
+const UnitCheckGuideRev = "crw-unit-check/1"
+
+// StateTreeMoved is the state of a unit check that was not run because the node's worktree is no longer the pending tree of the call
+// it was to judge: crw.commit commits that pending tree, so a check of another tree would be on no head.
+const StateTreeMoved = "tree_moved"
+
+// StateHeadMoved is the state of a unit check that was not run because the executor call it was to judge committed its work (its
+// completed row records executor_head_moved and HEAD is not the start it was given): the uncommitted changes are not the change
+// crw.commit commits on that start.
+const StateHeadMoved = "head_moved"
+
+// unitCheckOp is crw.unitCheck(node, call, opts): one unit check of a node's work by the review tool, run in Go through Deps.UnitCheck
+// (no agent call), recorded as one completed row of role unit-check that crw.accept and the relay take as the judgment of the head
+// (CRW-1463). With no opts.commit it judges the uncommitted changes the executor call `call` left in the node's worktree: the
+// worktree's snapshot must be that call's pending tree and its HEAD the start the call was given, else the tool is not run and the row
+// says tree_moved or head_moved (no role: no reader takes it). With opts.commit and opts.base it judges the committed range base..commit checked out in the node's worktree.
+//
+// The op holds nothing itself and never calls the relay. A check whose tool gave no judgment for its quota or no answer is recorded
+// with role unit-check and hold unit_check_<state> on the row and in the answer, and is not proven: the lane holds the node through
+// crw.hold with source unit_check, and a resume asks the tool again. An invalid answer is asked once more with the same request; the
+// second record is kept (retried, first_state invalid). worktree_changed and tool_failed are recorded and proven, for the lane to
+// escalate. A Go error of the checker (a bad request, a fingerprint, the end of the context) is the op's error and writes no row.
+type unitCheckOp struct{ l *Lane }
+
+// UnitCheckOpts are the options of crw.unitCheck.
+type UnitCheckOpts struct {
+	Round  int      `json:"round"`
+	Final  bool     `json:"final"`
+	Commit *HeadRef `json:"commit"`
+	Base   string   `json:"base"`
+}
+
+// UnitCheckOutcome is the answer of crw.unitCheck: the adapter's record (the row's result, which crw.accept and the relay decode as a
+// reviewadapter.Result), the hold the lane is to write (unit_check_quota, unit_check_no_answer; "" for none), whether the record is
+// that of the retry of an invalid answer, the executor call it judged ("" for a committed check) and the call id of the check itself
+// (the reviewer call an acceptance on it names). State is tree_moved for a check that was not run.
+type UnitCheckOutcome struct {
+	reviewadapter.Result
+	Hold    string `json:"hold"`
+	Retried bool   `json:"retried"`
+	Call    string `json:"call"`
+	CheckID string `json:"check_id"`
+}
+
+func (o *unitCheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResult, error) {
+	var node string
+	var ex CallRef
+	var opts UnitCheckOpts
+	if err := args(req.Args, &node, &ex, &opts); err != nil {
+		return engine.OpResult{}, fmt.Errorf("crw.unitCheck(node, call, opts): %w", err)
+	}
+	uc := o.l.d.UnitCheck
+	if uc == nil || uc.Checker == nil || uc.Profile == nil {
+		return engine.OpResult{}, fmt.Errorf("crw.unitCheck: node %s: no unit checker is wired", node)
+	}
+	if node == "" {
+		return engine.OpResult{}, fmt.Errorf("crw.unitCheck: a node is required")
+	}
+	mode, head := UnitCheckUncommitted, ""
+	if opts.Commit != nil && opts.Commit.Commit != "" {
+		mode, head = UnitCheckCommitted, opts.Commit.Commit
+		if opts.Base == "" {
+			return engine.OpResult{}, fmt.Errorf("crw.unitCheck: node %s: a committed check of %s needs the base of its range", node, head)
+		}
+		ex = CallRef{}
+	} else if ex.CallID == "" {
+		return engine.OpResult{}, fmt.Errorf("crw.unitCheck: node %s: an uncommitted check needs the executor call it judges", node)
+	}
+	profile, err := uc.Profile(mode)
+	if err != nil {
+		return engine.OpResult{}, fmt.Errorf("crw.unitCheck: node %s: the %s profile: %w", node, mode, err)
+	}
+	r := rows(req.Journal.Events())
+	wt := r.worktreeOf(node)
+	if wt == "" {
+		return engine.OpResult{}, fmt.Errorf("crw.unitCheck: node %s: no worktree is recorded", node)
+	}
+	g := o.l.d.Git
+	data := map[string]any{"node": node, "mode": mode, "round": opts.Round, "final": opts.Final}
+	snap := ""
+	if mode == UnitCheckUncommitted {
+		data["call"] = ex.CallID
+		term, ok := r.terminal(ex.CallID)
+		pending := ""
+		if ok {
+			pending = dataStr(term, "pending_tree")
+		}
+		if pending == "" {
+			return engine.OpResult{}, fmt.Errorf("crw.unitCheck: node %s: no pending tree is recorded for call %s", node, ex.CallID)
+		}
+		if snap, err = Snapshot(ctx, g, wt); err != nil {
+			return engine.OpResult{}, err
+		}
+		if snap != pending {
+			data["state"], data["tree_moved"], data["pending_tree"], data["tree"] = StateTreeMoved, true, pending, snap
+			out := UnitCheckOutcome{Result: reviewadapter.Result{State: StateTreeMoved, Detail: "the worktree is not the pending tree of call " + ex.CallID + "; the tool was not run",
+				Findings: []reviewadapter.Finding{}}, Call: ex.CallID, CheckID: req.CallID}
+			return engine.OpResult{Result: result(out), Data: data}, nil
+		}
+		// a session executor that committed its work moved HEAD off the start it was given (executor_head_moved): the uncommitted
+		// changes are then not the change crw.commit commits on that start, so the tool would judge an empty or partial diff
+		if moved, ok := term.Data["executor_head_moved"].(map[string]any); ok && str(moved, "start") != "" {
+			at, err := Head(ctx, g, wt)
+			if err != nil {
+				return engine.OpResult{}, err
+			}
+			if at != str(moved, "start") {
+				data["state"], data["pending_tree"], data["head_moved"] = StateHeadMoved, pending, map[string]any{"start": str(moved, "start"), "head": at}
+				out := UnitCheckOutcome{Result: reviewadapter.Result{State: StateHeadMoved, Detail: "the worktree's HEAD " + at + " is not the start " + str(moved, "start") +
+					" of call " + ex.CallID + " (the executor committed); the uncommitted changes are not the change to commit, and the tool was not run", Findings: []reviewadapter.Finding{}},
+					Call: ex.CallID, CheckID: req.CallID}
+				return engine.OpResult{Result: result(out), Data: data}, nil
+			}
+		}
+	} else {
+		// the range is judged in the checkout of its head: a worktree at another commit would be a check of another tree
+		at, err := Head(ctx, g, wt)
+		if err != nil {
+			return engine.OpResult{}, err
+		}
+		if at != head {
+			return engine.OpResult{}, fmt.Errorf("crw.unitCheck: node %s: the worktree %s is at %s, not at the head %s to check", node, wt, at, head)
+		}
+		data["commit"], data["base"] = head, opts.Base
+		// and in a clean checkout of it: a check of edited files would be recorded as the judgment of the commit
+		commitTree, err := TreeOf(ctx, g, wt, head)
+		if err != nil {
+			return engine.OpResult{}, err
+		}
+		if snap, err = Snapshot(ctx, g, wt); err != nil {
+			return engine.OpResult{}, err
+		}
+		if snap != commitTree {
+			data["state"], data["tree_moved"], data["commit_tree"], data["tree"] = StateTreeMoved, true, commitTree, snap
+			out := UnitCheckOutcome{Result: reviewadapter.Result{State: StateTreeMoved, Detail: "the worktree is not the tree of " + head + "; the tool was not run",
+				Findings: []reviewadapter.Finding{}}, CheckID: req.CallID}
+			return engine.OpResult{Result: result(out), Data: data}, nil
+		}
+	}
+	if rel, ok := releaseRowOf(r, node); ok {
+		data["execution_id"], data["criteria_digest"] = dataStr(rel, "execution_id"), dataStr(rel, "criteria_digest")
+	}
+	creq := reviewadapter.Request{Profile: profile, Worktree: wt, Prompt: unitCheckPrompt(r, node, mode, opts.Base, head), Schema: reviewadapter.AnswerSchema, Limit: uc.Limit,
+		GuideRev: UnitCheckGuideRev}
+	res, err := uc.Checker.Check(ctx, creq)
+	if err != nil {
+		return engine.OpResult{}, fmt.Errorf("crw.unitCheck: node %s: %w", node, err)
+	}
+	out := UnitCheckOutcome{Call: ex.CallID, CheckID: req.CallID}
+	if res.State == reviewadapter.StateInvalid {
+		data["first_state"] = string(res.State)
+		if res, err = uc.Checker.Check(ctx, creq); err != nil {
+			return engine.OpResult{}, fmt.Errorf("crw.unitCheck: node %s: the retry of an invalid answer: %w", node, err)
+		}
+		out.Retried = true
+	}
+	if res.Findings == nil {
+		res.Findings = []reviewadapter.Finding{}
+	}
+	out.Result = res
+	switch res.State {
+	case reviewadapter.StateQuota, reviewadapter.StateNoAnswer:
+		out.Hold = "unit_check_" + string(res.State)
+		data["hold"] = out.Hold
+	}
+	data["role"], data["state"], data["verdict"], data["retried"], data["findings"] = execution.AgentUnitCheck, string(res.State), res.Verdict, out.Retried, len(res.Findings)
+	// the tree the check saw: the fingerprint the checker took before the call, else the snapshot the op compared with the pending tree
+	data["tree"] = res.FingerprintBefore
+	if res.FingerprintBefore == "" {
+		data["tree"] = snap
+	}
+	return engine.OpResult{Result: result(out), Data: data}, nil
+}
+
+// Proven: a recorded check stands, whatever it found; one that holds the node (no judgment for the tool's quota or a blank answer) is
+// no result to replay, so a resume asks the tool again.
+func (o *unitCheckOp) Proven(_ context.Context, _ []engine.Event, row engine.Event) (bool, string, error) {
+	if h := dataStr(row, "hold"); h != "" {
+		return false, "the unit check held the node (" + h + ")", nil
+	}
+	return true, "", nil
+}
+
+// unitCheckPrompt is the prompt of a unit check (guide UnitCheckGuideRev): the scope sentence first, in the words the tool's reader
+// expects of its scope (the uncommitted changes of the working tree, or the range base..head), then the node and the criteria of its
+// plan the change is judged against.
+func unitCheckPrompt(r rows, node, mode, base, head string) string {
+	var b strings.Builder
+	if mode == UnitCheckCommitted {
+		fmt.Fprintf(&b, "Review the changes between %s and %s (git diff %s..%s).\n", base, head, base, head)
+	} else {
+		b.WriteString("Review the uncommitted changes in this working tree.\n")
+	}
+	issue := node
+	var criteria []string
+	rel, ok := designRowOf(r, node)
+	if !ok {
+		rel, ok = releaseRowOf(r, node)
+	}
+	if ok {
+		if n, found := planNodeOf(r, dataStr(rel, "plan"), dataStr(rel, "milestone"), node); found {
+			criteria = n.Criteria
+			if n.Issue != "" {
+				issue = n.Issue
+			}
+		}
+	}
+	fmt.Fprintf(&b, "\nThis is the unit check of node %s (issue %s) of a crw run. Report every bug, regression or unmet criterion you find in the change.\n", node, issue)
+	if len(criteria) > 0 {
+		b.WriteString("\nCRITERIA (what the change must do)\n")
+		for i, id := range CriterionIDs(len(criteria)) {
+			fmt.Fprintf(&b, "%s: %s\n", id, criteria[i])
+		}
+	}
+	return b.String()
+}
 
 // ---- crw.commit ----
 
