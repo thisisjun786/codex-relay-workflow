@@ -312,3 +312,34 @@ func TestFixPacketTextIsKept(t *testing.T) {
 		t.Errorf("the verification fix packet\n%q\nwant\n%q", ci, want)
 	}
 }
+
+// TestFixPacketNamesTheFailedTestsOfTheVerification (CRW-1469, CRW-1488 item 16): a failed verification whose result names the failed
+// tests of its record (failed_tests: by failed step, the tests, the packages and the last lines of its output) renders them in the fix
+// packet after the failures, and in the LAST VERIFICATION of a fresh thread's packet; a step that names no test shows its output only.
+// A failed verification with no failed_tests, as every one recorded before them, renders the text it did.
+func TestFixPacketNamesTheFailedTestsOfTheVerification(t *testing.T) {
+	const ci = "{ pass: false, command: 'crw-dev ci local', failures: ['go-product/tests: failed', 'validate/lint: failed'], summary: 'go-product/tests: failed; validate/lint: failed', " +
+		"failed_tests: [{ job: 'go-product', step: 'tests', tests: ['TestGuard', 'TestStore/empty'], packages: ['example.com/m/store'], tail: '--- FAIL: TestGuard (0.01s)\\nFAIL\\texample.com/m/store\\t0.1s' }, " +
+		"{ job: 'validate', step: 'lint', tests: [], packages: [], tail: 'a.go:3: undefined: x' }] }"
+	const steps = "FAILED TESTS (each failed step of the verification record: its tests, its packages and the last lines of its output):\n" +
+		"- go-product/tests: TestGuard, TestStore/empty (packages example.com/m/store)\n" +
+		"    --- FAIL: TestGuard (0.01s)\n    FAIL\texample.com/m/store\t0.1s\n" +
+		"- validate/lint: no test named\n" +
+		"    a.go:3: undefined: x"
+	fix := packetText(t, "fix-packet-failed-tests", "fixPacket", "fixPacket('A', null, "+ci+", null, null)")
+	if want := "ROLE: executor. Node A: fix what the run found, in the same worktree, and answer with RECEIPT again.\n\n" +
+		"VERIFICATION FAILED (crw-dev ci local):\n- go-product/tests: failed\n- validate/lint: failed\n\n" + steps; fix != want {
+		t.Errorf("the fix packet\n%q\nwant\n%q", fix, want)
+	}
+	fresh := packetText(t, "executor-packet-failed-tests", "packet", "packet('n1', "+packetPlan+", null, { findings: [], ci: "+ci+", receipt: null })")
+	if !strings.Contains(fresh, "\n\nLAST VERIFICATION FAILED (crw-dev ci local):\n- go-product/tests: failed\n- validate/lint: failed\n\n"+steps+"\n\n") {
+		t.Errorf("the fresh thread's packet lacks the failed tests:\n%s", fresh)
+	}
+	for _, none := range []string{"", ", failed_tests: []"} {
+		old := packetText(t, "fix-packet-no-failed-tests", "fixPacket", "fixPacket('A', null, { pass: false, command: 'crw-dev ci local', failures: ['validate/tests: failed'], summary: 'validate/tests: failed'"+none+" }, null, null)")
+		if want := "ROLE: executor. Node A: fix what the run found, in the same worktree, and answer with RECEIPT again.\n\n" +
+			"VERIFICATION FAILED (crw-dev ci local):\n- validate/tests: failed"; old != want {
+			t.Errorf("a verification without failed tests (%q): the fix packet\n%q\nwant\n%q", none, old, want)
+		}
+	}
+}

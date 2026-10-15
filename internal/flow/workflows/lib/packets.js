@@ -358,11 +358,25 @@ function findingsSection(title, findings) {
 }
 
 // ciSection renders a verification under the prefix: passed with its command, or failed with its command and its failures (its
-// summary when it names none); no verification, no section.
+// summary when it names none), then the failed tests its record names (failed_tests, CRW-1469: by failed step, its tests, its
+// packages and the last lines of its output); no verification, no section. A failed verification with no failed tests, as every one
+// recorded before them, renders the text it did.
 function ciSection(prefix, ci) {
   if (!ci) return ''
   if (ci.pass) return prefix + ' PASSED (' + ci.command + ')'
-  return section(prefix + ' FAILED (' + ci.command + ')', list(ci.failures && ci.failures.length ? ci.failures : [ci.summary]))
+  const failed = section(prefix + ' FAILED (' + ci.command + ')', list(ci.failures && ci.failures.length ? ci.failures : [ci.summary]))
+  if (!Array.isArray(ci.failed_tests) || ci.failed_tests.length === 0) return failed
+  return failed + '\n\n' + section('FAILED TESTS (each failed step of the verification record: its tests, its packages and the last lines of its output)',
+    ci.failed_tests.map(failedStepLine))
+}
+
+// failedStepLine is one failed step of a verification: its job and step, the tests it names (or that it names none) with their
+// packages, and the last lines of its output indented under it.
+function failedStepLine(s) {
+  const tests = s.tests && s.tests.length ? s.tests.join(', ') : 'no test named'
+  const packages = s.packages && s.packages.length ? ' (packages ' + s.packages.join(', ') + ')' : ''
+  const tail = s.tail ? '\n' + s.tail.split('\n').map((l) => '    ' + l).join('\n') : ''
+  return '- ' + s.job + '/' + s.step + ': ' + tests + packages + tail
 }
 
 // receiptSection renders the summary of a receipt under title; a receipt with no summary, no section.

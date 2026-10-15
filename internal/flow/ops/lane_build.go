@@ -526,6 +526,9 @@ type VerifyResult struct {
 	Base string `json:"base"`
 	// Warnings are what the verification warns of without failing (no_tests_run, CRW-1328); additive.
 	Warnings []string `json:"warnings,omitempty"`
+	// FailedTests are the failed steps of the record with the tests and the packages they name and the last lines of their output
+	// (CRW-1469); additive, absent for a verification that names none.
+	FailedTests []FailedStep `json:"failed_tests,omitempty"`
 }
 
 func (o *verifyOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResult, error) {
@@ -576,6 +579,10 @@ func (o *verifyOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 				res.Failures = out.Failures
 			}
 			record = out.Record
+			if len(out.FailedTests) > 0 {
+				res.FailedTests = out.FailedTests
+				data["failed_tests"] = out.FailedTests
+			}
 			if out.Note != "" {
 				data["verifier_note"] = out.Note
 			}

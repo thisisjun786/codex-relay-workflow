@@ -153,7 +153,11 @@ as such:
 
 **Other effects.** Verify: a record of the same head and command that ran (`crw.verify`); a verification that could not run (the verifier is missing, it left no
 record) is asked again on a resume. The base it names is the merge-base of the head and the integration tip, the commit the node's
-work grew from, which the acceptance of the head uses too. A node released as a child or a split keeps its release row (`crw.release`). Review: a record of the same head and
+work grew from, which the acceptance of the head uses too. A failed verification's row and result carry `failed_tests`, one entry
+for each step of its record that failed and gives a reason (not a step skipped after an earlier failure): `job`, `step`, the `tests` (`--- FAIL: <Test>`) and `packages` (`FAIL\t<pkg>`)
+its reason names and `tail`, the last 20 lines of the reason (at most 2048 bytes); a reason with no such line has no test and no
+package, only the tail. The member is additive (a row without it names no failed test), and the executor's fix packet and a fresh
+thread's packet render it (CRW-1469). A node released as a child or a split keeps its release row (`crw.release`). Review: a record of the same head and
 criteria digest (`crw.review`). Accept: the recorded acceptance is active, not stale, of the same head (the relay says which).
 Integrate: the recorded batch commit is an ancestor of the integration ref; the target moving on keeps it an ancestor. Gate: a
 passing record of the current integration head, the same command set (the plan's required commands joined with `;`) and the same
