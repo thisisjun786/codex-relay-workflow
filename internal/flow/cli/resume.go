@@ -21,7 +21,8 @@ import (
 // arguments are given), under the run lock and held to the budget and the deadline of the run's spec (specLimits); without one
 // the workflow and the arguments are those the run started with (its spec), and --detach lets the process go on in the background.
 // The budget is the run's: a resume allows what the spec's budget leaves after the tokens the run's journal shows it spent, and
-// one with nothing left is refused (runBudget). A foreground resume pauses on SIGUSR1 (`crw flow pause`) as the run process does.
+// one with nothing left is refused (runBudget). A foreground resume pauses on SIGUSR1 (`crw flow pause`) and drains on SIGUSR2
+// (`crw flow answer`) as the run process does.
 func (c *command) resume(args []string) int {
 	fs, cm := c.flags()
 	repo := fs.String("repo", "", "the git repository the run's worktrees are made from")
@@ -51,6 +52,17 @@ func (c *command) resume(args []string) int {
 		if err != nil {
 			return c.fail("%v", err)
 		}
+		if ctl == nil {
+			ctl = &deadlineControl{Control: &engine.Control{}}
+		}
+		defer ctl.stop()
+		// `crw flow pause` (SIGUSR1) and `crw flow answer` (SIGUSR2) signal the lock holder: this process pauses or drains the run as
+		// the run process does (process.go). The signals are taken from before this process's holder record exists, so one sent the
+		// moment it holds the run is not lost (CRW-1492).
+		sigs := make(chan os.Signal, 4)
+		signal.Notify(sigs, syscall.SIGUSR1, syscall.SIGUSR2)
+		defer signal.Stop(sigs)
+		defer pauseOnSignal(sigs, ctl.Control)()
 		// a session run's process holds its process lock from before the run lock until after it, as the run process does
 		var process *processLock
 		if spec, err := ReadSpec(sel.Path, run); err == nil {
@@ -62,20 +74,14 @@ func (c *command) resume(args []string) int {
 			return c.fail("%v", err)
 		}
 		defer lock.Release()
+		if afterResumeLock != nil {
+			afterResumeLock()
+		}
 		sweepProcessLocks(sel.Path, run, process.Token())
 		// a cancelled run is over: it is refused under the run lock, before the engine appends anything (CRW-1495)
 		if code, refused := c.refuseCancelled(cm, run); refused {
 			return code
 		}
-		if ctl == nil {
-			ctl = &deadlineControl{Control: &engine.Control{}}
-		}
-		defer ctl.stop()
-		// `crw flow pause` signals the lock holder: this process pauses the run as the run process does (process.go)
-		sigs := make(chan os.Signal, 4)
-		signal.Notify(sigs, syscall.SIGUSR1)
-		defer signal.Stop(sigs)
-		defer pauseOnSignal(sigs, ctl.Control)()
 		ctx := engine.WithControl(c.ctx, ctl.Control)
 		hold := c.resumeHold(sel.Path, run)
 		hold.Process = process.Token()
@@ -126,13 +132,19 @@ func (c *command) resume(args []string) int {
 		return 0
 	}
 	sigs := make(chan os.Signal, 4)
-	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP, syscall.SIGUSR1)
+	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP, syscall.SIGUSR1, syscall.SIGUSR2)
 	defer signal.Stop(sigs)
 	return c.execute(spec, sel.Path, true, sigs)
 }
 
-// pauseOnSignal pauses the run of ctl with the operator's reason for every SIGUSR1 sigs delivers, as the run process does, until
-// the returned stop is called.
+// afterResumeLock, when set (tests only), runs the moment a SCRIPT foreground resume holds the run lock.
+var afterResumeLock func()
+
+// drainReason is the reason of the drain a SIGUSR2 asks (`crw flow answer` on a run a process holds, CRW-1492).
+const drainReason = "crw flow answer: the run stops at its next boundary for an answer"
+
+// pauseOnSignal pauses the run of ctl with the operator's reason for every SIGUSR1 sigs delivers and drains it by answer for a
+// SIGUSR2, as the run process does, until the returned stop is called.
 func pauseOnSignal(sigs <-chan os.Signal, ctl *engine.Control) (stop func()) {
 	done := make(chan struct{})
 	go func() {
@@ -141,8 +153,11 @@ func pauseOnSignal(sigs <-chan os.Signal, ctl *engine.Control) (stop func()) {
 			case <-done:
 				return
 			case sig := <-sigs:
-				if sig == syscall.SIGUSR1 {
+				switch sig {
+				case syscall.SIGUSR1:
 					ctl.Pause("operator", "crw flow pause")
+				case syscall.SIGUSR2:
+					ctl.Drain("answer", drainReason)
 				}
 			}
 		}
