@@ -206,3 +206,38 @@ func TestOutcomeDocsStateThePrecedence(t *testing.T) {
 		}
 	}
 }
+
+// TestDocsNameTheBundlePullRequestSurface (CRW-1440, CRW-1451, CRW-1457): the docs that tell how a milestone lands through one pull
+// request (script.md and flow.md) name the surface a bundle uses: the command that makes the integration branch, the `pr_base` that
+// marks a handoff as a bundle, the command that opens the pull request from a run, the op that asks the parent to merge it and the rule
+// that it asks once per head. The run skill names the command that makes the branch.
+func TestDocsNameTheBundlePullRequestSurface(t *testing.T) {
+	for _, path := range []string{
+		"../../../docs/flow/script.md",
+		flowRef,
+	} {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(raw)
+		for _, want := range []string{
+			"crw flow pr branch",
+			"pr_base",
+			"crw flow pr open --run",
+			"crw.mergeRequest",
+			"once per head",
+		} {
+			if !strings.Contains(text, want) {
+				t.Errorf("%s does not name the bundle pull request surface: no %q", path, want)
+			}
+		}
+	}
+	raw, err := os.ReadFile("../../../plugins/crw/skills/crw-run/SKILL.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "crw flow pr branch") {
+		t.Error("crw-run/SKILL.md does not name crw flow pr branch")
+	}
+}
