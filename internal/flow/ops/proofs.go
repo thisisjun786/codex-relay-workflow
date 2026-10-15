@@ -27,6 +27,8 @@ const (
 	OpGate = "crw.finalGate"
 	// OpReviewerFinal: range, criteria_digest.
 	OpReviewerFinal = "crw.reviewerFinal"
+	// OpCrosscheck: milestone, head, round, evidence_round, state, reason, hold, verdict (V). The row of crw.crosscheck (crosscheck.go).
+	OpCrosscheck = "crw." + NameCrosscheck
 )
 
 // recordOps are the calls that only record a fact (to the relay, to the parent, to the plan): a recorded one is never sent
@@ -170,6 +172,25 @@ func ReviewerFinalProof(events []engine.Event, rng, criteriaDigest string) Verdi
 	})
 	if !hit {
 		return no("no final review of %s against the criteria %s is recorded", rng, criteriaDigest)
+	}
+	return ok(ev.CallID)
+}
+
+// CrosscheckProof: a crosscheck of the same milestone at the same head, round and evidence round was recorded with an outcome (state
+// verdict, evidence, refused, failed or no_verdict). A crosscheck of another head is no proof, and a held one proves nothing.
+func CrosscheckProof(events []engine.Event, milestone, head string, round, evidenceRound int) Verdict {
+	ev, hit := completed(events, OpCrosscheck, func(d map[string]any) bool {
+		if str(d, "milestone") != milestone || str(d, "head") != head || intOf(d["round"]) != round || intOf(d["evidence_round"]) != evidenceRound || str(d, "hold") != "" {
+			return false
+		}
+		switch str(d, "state") {
+		case CrosscheckStateVerdict, CrosscheckStateEvidence, CrosscheckStateRefused, CrosscheckStateFailed, CrosscheckStateNoVerdict:
+			return true
+		}
+		return false
+	})
+	if !hit {
+		return no("no crosscheck of milestone %s at %s (round %d, evidence round %d) is recorded", milestone, head, round, evidenceRound)
 	}
 	return ok(ev.CallID)
 }

@@ -11,8 +11,9 @@ import (
 // ---- crw.milestoneClose ----
 
 // milestoneCloseOp is crw.milestoneClose(milestone, evidence): the close of a milestone once every lane has landed, over the
-// evidence the close made: the final gate that passed on the head H it pinned (finalgate.go) and the review of reviewer-final that
-// took that gate as its input. The row names the range, the tip the close judged and whether that tip is still the head of the
+// evidence the close made: the final gate that passed on the head H it pinned (finalgate.go) and the review that took that gate as
+// its input - the crosscheck's verdict V (crosscheck.go, evidence member crosscheck) or, for a close made before the crosscheck, the
+// review of reviewer-final (final). The op carries both into its answer as they are and refuses neither. The row names the range, the tip the close judged and whether that tip is still the head of the
 // gate: a target that moved on after the gate - another actor, or a lane that integrated a new head after a resume - makes the gate
 // a judgement of a head that is gone, and the answer says so (moved), so the close judges the new head again. Proven holds only
 // while the integration target is still the tip the row names.
@@ -26,6 +27,11 @@ type CloseResultOutcome struct {
 	Gate      json.RawMessage `json:"gate"`
 	Final     json.RawMessage `json:"final"`
 	Audit     json.RawMessage `json:"audit"`
+	// Crosscheck is the crosscheck's verdict V the close rests on (null for a close without one); Reflection the alignment the
+	// reflection of the close answered (ALIGNED, MISALIGNED, NOT_ASSESSED, NOT_RUN), which the script adds when it reports the close
+	// ("" from crw.milestoneClose itself).
+	Crosscheck json.RawMessage `json:"crosscheck"`
+	Reflection string          `json:"reflection"`
 	// GateHead is the head the gate in the evidence judged; Moved is whether the target is not at it any more.
 	GateHead string `json:"gate_head"`
 	Moved    bool   `json:"moved"`
@@ -34,8 +40,9 @@ type CloseResultOutcome struct {
 func (o *milestoneCloseOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResult, error) {
 	var ms string
 	var evidence struct {
-		Gate  json.RawMessage `json:"gate"`
-		Final json.RawMessage `json:"final"`
+		Gate       json.RawMessage `json:"gate"`
+		Final      json.RawMessage `json:"final"`
+		Crosscheck json.RawMessage `json:"crosscheck"`
 	}
 	if err := args(req.Args, &ms, &evidence); err != nil {
 		var obj struct {
@@ -56,7 +63,8 @@ func (o *milestoneCloseOp) Run(ctx context.Context, req engine.OpRequest) (engin
 	if led, ok := firstLedger(r, ms); ok {
 		base = dataStr(led, "base_tip")
 	}
-	out := CloseResultOutcome{Milestone: ms, Base: base, Tip: tip, Gate: json.RawMessage(`null`), Final: json.RawMessage(`null`), Audit: json.RawMessage(`null`)}
+	out := CloseResultOutcome{Milestone: ms, Base: base, Tip: tip, Gate: json.RawMessage(`null`), Final: json.RawMessage(`null`), Audit: json.RawMessage(`null`),
+		Crosscheck: json.RawMessage(`null`)}
 	if len(evidence.Gate) > 0 {
 		out.Gate = evidence.Gate
 		var g struct {
@@ -68,6 +76,9 @@ func (o *milestoneCloseOp) Run(ctx context.Context, req engine.OpRequest) (engin
 	}
 	if len(evidence.Final) > 0 {
 		out.Final = evidence.Final
+	}
+	if len(evidence.Crosscheck) > 0 {
+		out.Crosscheck = evidence.Crosscheck
 	}
 	return engine.OpResult{Result: result(out), Data: map[string]any{"milestone": ms, "plan": plan, "base": base, "tip": tip, "gate_head": out.GateHead, "moved": out.Moved}}, nil
 }
@@ -86,7 +97,8 @@ func (o *milestoneCloseOp) Proven(ctx context.Context, _ []engine.Event, row eng
 // ---- crw.reportUp ----
 
 // reportUpOp is crw.reportUp(milestone, close): the report of a closed milestone goes up to the initiative lead. The report row is
-// the run's; its delivery is F11's and is asked of the Reporter when one is wired.
+// the run's; its delivery is F11's and is asked of the Reporter when one is wired, with the close's gate, final review, audit,
+// crosscheck and reflection as the close argument carries them.
 type reportUpOp struct{ l *Lane }
 
 func (o *reportUpOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResult, error) {
@@ -101,7 +113,7 @@ func (o *reportUpOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRe
 	delivered := false
 	if o.l.d.Reporter != nil {
 		got, err := o.l.d.Reporter.ReportUp(ctx, Report{Plan: plan, Milestone: ms, Range: CloseRange{Base: closed.Base, Tip: closed.Tip},
-			Close: CloseOutcome{Gate: closed.Gate, Final: closed.Final, Audit: closed.Audit}, RequestID: req.RequestID})
+			Close: CloseOutcome{Gate: closed.Gate, Final: closed.Final, Audit: closed.Audit, Crosscheck: closed.Crosscheck, Reflection: closed.Reflection}, RequestID: req.RequestID})
 		if err != nil {
 			return engine.OpResult{}, err
 		}

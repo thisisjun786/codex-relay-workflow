@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/compile"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
@@ -72,8 +73,10 @@ type laneLab struct {
 	// killBetween kills the process once, between the batch of the integration of this node and its observation.
 	killBetween      string
 	pendingIntegrate string
-	// reports are the milestone reports the runs sent up.
-	reports []string
+	// reports are the milestone reports the runs sent up; reportBodies the body the shipped Reporter would store for each
+	// (report.MilestoneBody of the very ops.Report the op built), in the same order.
+	reports      []string
+	reportBodies []string
 	// tipErr, when a test sets it, is asked before every read of the integration tip the lane makes through the relay, and an error it
 	// answers is the read's (the relay's answer at a step after the lanes, CRW-1382).
 	tipErr func() error
@@ -90,6 +93,8 @@ type laneLab struct {
 	texts map[string]string
 	// uc is the lab's unit checker, the lane's crw.unitCheck tool (UnitChecks scripts it).
 	uc *labUnitChecker
+	// cc is the lab's crosschecker, the engine of crw.crosscheck (Crosschecks scripts it).
+	cc *labCrosschecker
 }
 
 const labOwner = "thread-owner"
@@ -215,7 +220,8 @@ func newLaneLabFor(t *testing.T, owner, target string, issues ...labIssue) *lane
 	for _, name := range []string{dagsched.EnvHostMinAvailableGiB, dagsched.EnvHostMaxSwapPercent, dagsched.EnvHostMaxPressure, dagsched.EnvHostMaxPressureFull} {
 		t.Setenv(name, "")
 	}
-	l := &laneLab{t: t, w: newWorld(t), plan: "plan-1", nodeOf: map[string]string{}, issue: map[string]string{}, owner: owner, target: target, uc: newLabUnitChecker()}
+	l := &laneLab{t: t, w: newWorld(t), plan: "plan-1", nodeOf: map[string]string{}, issue: map[string]string{}, owner: owner, target: target, uc: newLabUnitChecker(),
+		cc: newLabCrosschecker()}
 	l.repo = filepath.Join(t.TempDir(), "repo")
 	if err := os.MkdirAll(l.repo, 0o755); err != nil {
 		t.Fatal(err)
@@ -287,7 +293,7 @@ func newLaneLabFor(t *testing.T, owner, target string, issues ...labIssue) *lane
 			t.Errorf("the run's world hands the lane no reporter of F11: %T", req.Reporter)
 		}
 		return BuildLane(ctx, req, LaneOptions{Verifier: labVerifier{l}, IntegrationVerify: l.verifyMerged, SkillsDigest: "sha256:lab-skills", Reporter: &labReporter{l: l},
-			UnitCheck: l.uc.seam(),
+			UnitCheck: l.uc.seam(), Crosscheck: l.cc.seam(),
 			Relay: func(r *SchedRelay) ops.Relay {
 				r.testAfterBatch = func() error {
 					l.mu.Lock()
@@ -526,6 +532,7 @@ func (r *labReporter) ReportUp(_ context.Context, rep ops.Report) (string, error
 	r.l.mu.Lock()
 	defer r.l.mu.Unlock()
 	r.l.reports = append(r.l.reports, rep.Plan+"/"+rep.Milestone)
+	r.l.reportBodies = append(r.l.reportBodies, string(report.MilestoneBody(rep)))
 	return "rep_" + rep.Milestone, nil
 }
 
@@ -906,4 +913,106 @@ func (l *laneLab) UnitChecks(node, mode string, checks ...labCheck) {
 		node = id
 	}
 	l.uc.script(node, mode, checks...)
+}
+
+// ---- the crosschecker of the lab (CRW-1473) ----
+
+// The lab's crosschecker stands in for the engines the shipped lane's crosscheck runs (shippedCrosscheck): the lane gives it the request
+// crw.crosscheck built, in the real checkout of the pass (Lane.crosscheckWorktree under the run's directory), and it answers a record
+// without running a tool. Its default answer is a verified pass with no finding, by the pair of the profile the op asked for (astra's
+// gpt-6-astra or grok's grok-4.7); a test scripts the answers of a milestone, round, evidence round, pass and attempt in order
+// (Crosschecks) with any reviewadapter.Result. The pass is read from the checkout's name (<ms>-r<round>-e<evidence round>-<pass><attempt>-<head12>).
+
+var labCheckoutName = regexp.MustCompile(`^(.+)-r(\d+)-e(\d+)-([AB])(\d+)-[0-9a-f]+$`)
+
+// labCrosscheckCall is one request the lab's crosschecker was given, with whether its checkout existed during the call.
+type labCrosscheckCall struct {
+	Key     string // <ms>/r<round>/e<evidence round>/<pass><attempt>
+	Request reviewadapter.Request
+	Existed bool
+}
+
+// labCrosschecker is the lab's ops.UnitChecker of crw.crosscheck.
+type labCrosschecker struct {
+	mu    sync.Mutex
+	queue map[string][]reviewadapter.Result
+	calls []labCrosscheckCall
+}
+
+func newLabCrosschecker() *labCrosschecker {
+	return &labCrosschecker{queue: map[string][]reviewadapter.Result{}}
+}
+
+// seam is the crosscheck the lab's lane is given (LaneOptions.Crosscheck): the shipped profiles over the run's directory, no authors
+// (BuildLane sets them from the run's role table) and the shipped checkout.
+func (c *labCrosschecker) seam() *ops.Crosscheck {
+	return &ops.Crosscheck{Checker: c, Limit: time.Minute, Profiles: func(runDir string) ([]reviewadapter.Profile, error) {
+		return []reviewadapter.Profile{reviewadapter.AstraProfile(filepath.Join(runDir, "crosscheck", "answer.strict.json")), reviewadapter.GrokProfile(reviewadapter.AnswerSchema)}, nil
+	}}
+}
+
+// labCrosscheckKey is the key of a pass: milestone, round, evidence round, pass and attempt.
+func labCrosscheckKey(ms string, round, evidenceRound int, pass string, attempt int) string {
+	return fmt.Sprintf("%s/r%d/e%d/%s%d", ms, round, evidenceRound, pass, attempt)
+}
+
+// script queues the answers of the next checks of a pass.
+func (c *labCrosschecker) script(key string, results ...reviewadapter.Result) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.queue[key] = append(c.queue[key], results...)
+}
+
+// requests are the requests the crosschecker was given, in order.
+func (c *labCrosschecker) requests() []labCrosscheckCall {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]labCrosscheckCall(nil), c.calls...)
+}
+
+func (c *labCrosschecker) Check(ctx context.Context, req reviewadapter.Request) (reviewadapter.Result, error) {
+	key := filepath.Base(req.Worktree)
+	if m := labCheckoutName.FindStringSubmatch(key); m != nil {
+		key = m[1] + "/r" + m[2] + "/e" + m[3] + "/" + m[4] + m[5]
+	}
+	_, statErr := os.Stat(req.Worktree)
+	c.mu.Lock()
+	c.calls = append(c.calls, labCrosscheckCall{Key: key, Request: req, Existed: statErr == nil})
+	res := reviewadapter.Result{State: reviewadapter.StateOK, Verdict: reviewadapter.VerdictVerified}
+	if q := c.queue[key]; len(q) > 0 {
+		res, c.queue[key] = q[0], q[1:]
+	}
+	c.mu.Unlock()
+	fp, err := ops.Snapshot(ctx, ops.ExecGit("git"), req.Worktree)
+	if err != nil {
+		return reviewadapter.Result{}, fmt.Errorf("the lab's crosschecker: fingerprint: %w", err)
+	}
+	if res.State == "" {
+		res.State = reviewadapter.StateOK
+	}
+	if res.Findings == nil {
+		res.Findings = []reviewadapter.Finding{}
+	}
+	for i, f := range res.Findings {
+		if f.ID == "" {
+			res.Findings[i].ID = reviewadapter.FindingID(f.File, f.Text)
+		}
+	}
+	if res.EngineFamily == "" {
+		res.EngineFamily = execution.ModelFamily(req.Profile.Model)
+	}
+	if res.Model == "" {
+		res.Model, res.Effort = req.Profile.Model, req.Profile.Effort
+	}
+	sum := sha256.Sum256([]byte(req.Prompt))
+	res.GuideRev, res.PromptDigest, res.FingerprintBefore, res.FingerprintAfter = req.GuideRev, hex.EncodeToString(sum[:]), fp, fp
+	if res.ElapsedMS == 0 {
+		res.ElapsedMS = 1
+	}
+	return res, nil
+}
+
+// Crosschecks scripts the next answers of one pass of a milestone's crosscheck.
+func (l *laneLab) Crosschecks(ms string, round, evidenceRound int, pass string, attempt int, results ...reviewadapter.Result) {
+	l.cc.script(labCrosscheckKey(ms, round, evidenceRound, pass, attempt), results...)
 }
