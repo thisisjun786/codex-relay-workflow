@@ -274,10 +274,16 @@ func resumeRecorded(ctx context.Context, e *Env, cfg *Config, child string) (*re
 // refusal rather than a silent omission: resuming a capped child without its limit is the failure
 // this command exists to prevent, and an unreadable policy means the limit cannot be established.
 //
-// The policy is the one the gate read. The gate is the settings-show subprocess, which reads
-// CODEX_THREAD_BRIDGE_EXECUTION_POLICY from the environment it inherits, so that environment value
-// is authoritative here and manage.bridge.execution_policy is the fallback for a configuration that
-// carries the policy for other commands but leaves the environment unset.
+// The policy is meant to be the one the gate read. The gate is the settings-show subprocess, which
+// reads the policy the relay daemon launches with (CRW-1486/S2): the file the store's launch
+// declaration (launch-policy.json) names when there is one, else CODEX_THREAD_BRIDGE_EXECUTION_POLICY
+// from the environment it inherits, and a declaration that environment contradicts fails the gate.
+// This function reads that environment value first and manage.bridge.execution_policy second (for a
+// configuration that carries the policy for other commands but leaves the environment unset); it does
+// not read the launch declaration. A task the gate confirmed bound to a role was checked against a
+// policy it could read, so when neither names a file here the gate passed on the declaration alone and
+// the limit cannot be established: that is a refusal too, and manage.bridge.execution_policy naming
+// the declared file is the recovery.
 func resumeAutoCompactLimit(e *Env, cfg *Config, settings resumeSettings) (*int64, error) {
 	if settings.CitedException != nil {
 		return nil, nil
@@ -292,6 +298,11 @@ func resumeAutoCompactLimit(e *Env, cfg *Config, settings resumeSettings) (*int6
 	path := strings.TrimSpace(e.Getenv(execution.EnvPolicy))
 	if path == "" {
 		path = strings.TrimSpace(cfg.Bridge.ExecutionPolicy)
+	}
+	if path == "" && settings.BoundRole != "" {
+		return nil, &resumeFailure{Reason: resumeSettingsUnavailable, Detail: "the relay checked this task's settings as " + quote.Value(settings.BoundRole) +
+			" against the execution policy its service declares, and neither " + execution.EnvPolicy + " nor manage.bridge.execution_policy names a file here to resolve the pair's auto-compaction limit from; " +
+			"set manage.bridge.execution_policy to the declared file; nothing was sent"}
 	}
 	if path == "" {
 		return nil, nil
