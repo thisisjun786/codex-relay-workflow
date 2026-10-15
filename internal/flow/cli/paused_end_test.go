@@ -79,6 +79,11 @@ func TestSummarizeReadsAPausedEnd(t *testing.T) {
 		{"a pause ask with no end row", []string{"started", "run_paused"}, false, StateDead, "", "", "operator: crw flow pause"},
 		{"an operator pause then a deadline ask", []string{"started", "run_paused", "run_paused_deadline", "paused"}, false, StatePaused, engine.RunPaused, "", "operator: crw flow pause"},
 		{"a cancel of a paused end after an operator pause then a deadline ask", []string{"started", "run_paused", "run_paused_deadline", "paused", "finished:script_error:cancelled"}, false, StateCancelled, engine.RunScriptError, engine.ErrKindCancelled, "operator: crw flow pause"},
+		// a live run (no end row yet) reads the asker the end row will name: the last ask that ends a run paused, not a later deadline
+		// ask (CRW-1495)
+		{"a live run paused by the operator then asked by its deadline", []string{"started", "run_paused", "run_paused_deadline"}, true, StatePaused, "", "", "operator: crw flow pause"},
+		{"a live run asked only by its deadline", []string{"started", "run_paused_deadline"}, true, StatePaused, "", "", "deadline: the run's deadline T passed"},
+		{"a live run asked by its deadline then paused by the operator", []string{"started", "run_paused_deadline", "run_paused"}, true, StatePaused, "", "", "operator: crw flow pause"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

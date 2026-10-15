@@ -355,11 +355,18 @@ func Summarize(rec RunRecord, events []engine.Event, live bool, pid int) RunInfo
 		}
 	}
 	heldBack := false
+	// endingAsk is whether an ask whose pause ends the run paused (engine.EndsPaused) came after the last start: the run's end row will
+	// name the last such ask, and a later ask that does not end a run paused (a deadline) is not who paused it (CRW-1495)
+	endingAsk := false
 	for i := lastStart + 1; i < len(events); i++ {
 		e := events[i]
 		switch {
 		case e.Kind == engine.KindFlow && e.Event == engine.EvRunPaused:
-			info.Paused = str(e.Data, "by") + ": " + str(e.Data, "reason")
+			by := str(e.Data, "by")
+			if ending := engine.EndsPaused(by); ending || !endingAsk {
+				info.Paused = by + ": " + str(e.Data, "reason")
+				endingAsk = endingAsk || ending
+			}
 		case e.Kind == engine.KindFlow && e.Event == evItemError:
 			info.ItemErrors = append(info.ItemErrors, ItemError{Item: itemKey(e.Path), Path: e.Path, Error: str(e.Data, "error")})
 		case e.Kind == engine.KindCall && e.Op == ops.OpRelease && e.Event == engine.EvCompleted && !releasedRow(e) && str(e.Data, "kind") == "executor" && str(e.Data, "hold") == "":
