@@ -80,10 +80,9 @@ func TestDefineRegistersMilestonesAndIssues(t *testing.T) {
 			t.Errorf("crw-define lacks %q", want)
 		}
 	}
-	// CRW-1431: the parent's label gives the relay role id (the old form) or stands without it (the new form); the unit
-	// that rewrites crw-define (1431-e) tightens this to the new form.
-	if !strings.Contains(body, "(repository session, relay role `supervisor`)") && !strings.Contains(body, "(repository session)") {
-		t.Error("crw-define does not label the parent as the repository session")
+	// CRW-1431: the parent's label is the repository session and carries no relay role id.
+	if !strings.Contains(body, "(repository session)") || strings.Contains(strings.ToLower(body), "relay role") {
+		t.Error("crw-define does not label the parent as the repository session, or still gives a relay role id")
 	}
 	if !regexp.MustCompile(`the top session[^.]*(holds|has) (that|the) conversation with Jun`).MatchString(body) {
 		t.Error("crw-define does not say that the top session holds a needed question's conversation with Jun")

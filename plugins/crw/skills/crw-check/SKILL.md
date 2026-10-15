@@ -5,7 +5,7 @@ description: "Check delivered work against the canonical tracking documents and 
 
 # CRW Check
 
-Here the parent (repository session, relay role `supervisor`) and the child (project session, relay role `parent`) are layers of [the level table](../crw-canon/references/hierarchy.md#the-levels).
+Here the parent (repository session) and the child (project session) are layers of [the level table](../crw-canon/references/hierarchy.md#the-levels).
 
 Check delivered work against what was agreed, using the tracking repository as the canonical source of what was agreed, and find the
 claims or behaviors that cannot both hold. The check is read-only until an existing execution workflow authorizes
