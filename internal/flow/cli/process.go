@@ -187,6 +187,13 @@ func (c *command) execute(spec Spec, state string, resume bool, sigs <-chan os.S
 	defer lock.Release()
 	// the process lock files of processes of the run that died go (CRW-1390)
 	sweepProcessLocks(state, spec.RunID, process.Token())
+	// a cancelled run is over (CRW-1495): a cancel may have ended it after the resume that started this process looked, so it is read
+	// again under the lock, before the world opens and anything is appended
+	if resume {
+		if code, refused := c.refuseCancelled(&common{state: state, socket: spec.Socket}, spec.RunID); refused {
+			return code
+		}
+	}
 	src, err := spec.Load()
 	if err != nil {
 		return c.fail("the workflow of run %s cannot be loaded: %v", spec.RunID, err)
