@@ -584,7 +584,8 @@ func (r *Runner) postLandingComment(ctx context.Context, l *Landing) {
 // no record (its done/ file alone), are left as they are. It answers why the entry is held, "" when it is not: a queue with no
 // tracking adapter cannot post the comment, so the entry waits in pending with the record as it is; a record that cannot be written
 // after the comment went up holds the entry too, since done/ must not stand over a record that still says "not written yet". posted is
-// true when the comment went up and the record says so: that is work the pass did. It is
+// true when the comment went up and the record says so: that is work the pass did. A comment the host refused is recorded and its
+// entry is done, but posted stays false. It is
 // called only by a pass, never by --enqueue-pr or --dry-run. One window stays: a pass that ends between the comment call and the
 // second write, or whose second write fails, leaves "not written yet" for a comment that exists, and the next pass posts it a second
 // time.
@@ -611,7 +612,7 @@ func (r *Runner) repostLandingComment(ctx context.Context, e Entry) (held string
 		return held, false
 	}
 	r.logf("%s %s: the landing comment of %s was posted (%s)", e.Key, e.Head, l.Tag, l.Comment)
-	return "", true
+	return "", l.Comment == commentWritten
 }
 
 // writeLanding writes <tag>.pr.json through <tag>.pr.json.new and answers why it could not.

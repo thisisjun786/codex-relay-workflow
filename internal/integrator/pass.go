@@ -28,7 +28,8 @@ type Report struct {
 	// landed-before-record (status 0) is a pull request whose head was already in the branch with no landing record: the pass wrote the
 	// recovered record (Landing), ran nothing (no Summary) and moved the entry to done/.
 	// comment-reposted (status 0) is a pass whose only work was posting the landing comment of a record that said "not written yet"
-	// and moving its entry to done/: nothing ran and no record was written.
+	// and moving its entry to done/: nothing ran and no record was written. A repost the host refused is not one: the record keeps the
+	// refusal, the entry is done and the pass is nothing-to-integrate.
 	// pushing is the marker a run leaves in its <tag>.summary.json while its push is under way; it is never a pass result.
 	Result  string   `json:"result"`
 	Exit    int      `json:"exit"`

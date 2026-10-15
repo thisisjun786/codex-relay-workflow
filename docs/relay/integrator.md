@@ -137,7 +137,8 @@ the verification-record of the merged tree; the review is a step of the queue th
   the pull requests and issue heads behind it. Status 2 (`error`) is for a pass that did nothing else; a pass that landed work (a run, or a
   recovered landing) keeps that result and its status, with `held` still in the report. A record whose comment says `not written yet` gets
   its comment on the next pass that finds the head landed and the entry moves to `done/`; when that is all the pass did, its result is
-  `comment-reposted` (status 0, no summary, no new record), not `nothing-to-integrate`.
+  `comment-reposted` (status 0, no summary, no new record), not `nothing-to-integrate`. A comment the host refuses is recorded as
+  `not written: <error>` and the entry still moves to `done/`, but that pass is `nothing-to-integrate`: no comment went up.
 - The run merges the head with `merge --no-ff -m "Merge pull request OWNER/NAME#N (<branch>) at <head8> into <branch>"` and verifies the
   merged tree as step 4 and 5 above. Only after a verification that passed does `review_command` run, in the worktree, on that tree:
   `{pr}`, `{pr_number}`, `{head}` (the pull request's head), `{merged}` (the verified commit), `{base}` (the branch before), `{verdict}`
