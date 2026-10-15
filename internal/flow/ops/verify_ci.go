@@ -281,9 +281,14 @@ func ciGitDir(worktree string) (string, error) {
 }
 
 // ciPhysicalDir answers the physical path of spelled, which must be a directory as the kernel resolves it; what names spelled
-// in the error of one that is not.
+// in the error of one that is not. A spelled that cannot be stat'ed (a directory on its path the account may not search, a
+// missing target) is reported by the Stat error itself, wrapped, never as "is not a directory" (CRW-1508 item 3).
 func ciPhysicalDir(worktree, spelled, what string) (string, error) {
-	if info, err := os.Stat(spelled); err != nil || !info.IsDir() {
+	info, err := os.Stat(spelled)
+	if err != nil {
+		return "", fmt.Errorf("%s has no git directory: %s cannot be stat'ed: %w", worktree, what, err)
+	}
+	if !info.IsDir() {
 		return "", fmt.Errorf("%s has no git directory: %s is not a directory", worktree, what)
 	}
 	resolved, err := filepath.EvalSymlinks(spelled)
