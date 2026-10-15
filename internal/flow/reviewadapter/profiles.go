@@ -155,9 +155,12 @@ func bugbotAnswer(stdout []byte) ([]byte, error) {
 const bugbotNoBugs = "bugbot found no bugs"
 
 // bugbotNoBugsScope is the short scope phrase Bugbot may append to its clean sentence ("Bugbot found no bugs in the uncommitted
-// changes."), lower-cased, at the end of the sentence without its full stop. Only these phrases are taken: one that narrows the
-// review ("in the files it could open") or says more is not.
-var bugbotNoBugsScope = regexp.MustCompile(`[ \t]+(in|on|for|across)( the)?( (uncommitted|staged|committed|changed|modified))? (changes|diff|files|code|working tree)$`)
+// changes."), lower-cased, at the end of the sentence without its full stop. It must name the scope the request asks for, all
+// uncommitted changes of the worktree: in/on/for/across, optionally "the", optionally "uncommitted" or "working tree"
+// ("working-tree"), then changes, diff, code or files; or "the working tree". A phrase with any other qualifier (staged,
+// committed, changed, modified, a number, "first N") names another or a narrower scope, and one that says more ("in the files it
+// could open") is not taken either.
+var bugbotNoBugsScope = regexp.MustCompile(`[ \t]+(in|on|for|across)(( the)?( (uncommitted|working[- ]tree))? (changes|diff|code|files)| the working tree)$`)
 
 // saysNoBugs reports whether prose affirms a clean review: its last non-empty line ends with the sentence "Bugbot found no bugs"
 // (any case), optionally followed by a scope phrase (bugbotNoBugsScope), then only '.' or '!', and that sentence starts the line or

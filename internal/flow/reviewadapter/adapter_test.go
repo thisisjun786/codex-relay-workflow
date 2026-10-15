@@ -802,9 +802,11 @@ func TestAdapterRecordsACanonicalEngineFamily(t *testing.T) {
 	}
 }
 
-// TestBugbotNoBugsTakesTheScopePhrase: the affirmative sentence followed only by a short scope phrase ("in the uncommitted
-// changes", "on the diff", "for the staged files", "across the working tree") is a clean review; a phrase that narrows the review
-// ("in the files it could open"), more prose after it, a negated or hedged sentence, and a partial-review word stay refused.
+// TestBugbotNoBugsTakesTheScopePhrase: the affirmative sentence followed only by a short scope phrase that names the scope the
+// request asks for, all uncommitted changes of the worktree ("in the uncommitted changes", "on the diff", "across the working
+// tree"), is a clean review; a phrase that names another or a narrower scope (staged, committed, changed or modified files, a
+// number of files, "the files it could open"), more prose after it, a negated or hedged sentence, and a partial-review word stay
+// refused.
 func TestBugbotNoBugsTakesTheScopePhrase(t *testing.T) {
 	t.Run("the real clean review with a scope phrase", func(t *testing.T) {
 		res := check(t, BugbotProfile(), fakeRun{stdout: bugbotNoBugsScopeFixture})
@@ -817,11 +819,13 @@ func TestBugbotNoBugsTakesTheScopePhrase(t *testing.T) {
 		"Launching the reviewer.Bugbot found no bugs in the uncommitted changes.",
 		"Bugbot found no bugs in uncommitted changes",
 		"Bugbot found no bugs on the diff!",
-		"Bugbot found no bugs for the staged files.",
 		"Bugbot found no bugs across the working tree.",
-		"Bugbot found no bugs in the changed code.",
-		"Bugbot found no bugs in the committed changes.",
-		"BUGBOT FOUND NO BUGS IN THE MODIFIED FILES.",
+		"Bugbot found no bugs in the working tree.",
+		"Bugbot found no bugs for the uncommitted files.",
+		"Bugbot found no bugs on the working-tree diff.",
+		"Bugbot found no bugs in the working tree code.",
+		"BUGBOT FOUND NO BUGS IN THE UNCOMMITTED CHANGES.",
+		"Bugbot found no bugs in the code.",
 	} {
 		t.Run("affirmative: "+text, func(t *testing.T) {
 			res := check(t, BugbotProfile(), fakeRun{stdout: bugbotEnvelope(t, text)})
@@ -833,6 +837,13 @@ func TestBugbotNoBugsTakesTheScopePhrase(t *testing.T) {
 	}
 	for _, text := range []string{
 		"Bugbot found no bugs in the files it could open.",
+		"Bugbot found no bugs for the staged files.",
+		"Bugbot found no bugs in the committed changes.",
+		"Bugbot found no bugs in the changed files.",
+		"Bugbot found no bugs in the modified files.",
+		"Bugbot found no bugs in the staged changes.",
+		"Bugbot found no bugs in the first 40 files.",
+		"Bugbot found no bugs in 41 files.",
 		"Bugbot found no bugs in the uncommitted changes it reviewed.",
 		"Bugbot found no bugs in the uncommitted changes, but the run was cut off.",
 		"Bugbot found no bugs in the uncommitted changes.\n\nThe review then crashed before it covered the tests.",
