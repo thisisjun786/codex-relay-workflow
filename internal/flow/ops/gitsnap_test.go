@@ -319,12 +319,55 @@ func TestScopeTreatsASymbolRegionAsItsFile(t *testing.T) {
 		{[]string{"src/c.txt#G"}, "a.txt,src/deep/d.txt"},
 		{[]string{"src//c.txt"}, "a.txt,src/deep/d.txt"},
 		{[]string{"src/./"}, "a.txt"},
+		// blanks around a region are cleaned, as the relay trims them: a file, a tree and a symbol each
+		{[]string{" a.txt ", " src/ "}, ""},
+		{[]string{" src/c.txt#G "}, "a.txt,src/deep/d.txt"},
 	} {
 		rep, err := Scope(ctx, ExecGit("git"), wt, first, snap, c.regions)
 		if err != nil {
 			t.Fatal(err)
 		}
 		if strings.Join(rep.Changed, ",") != "a.txt,src/c.txt,src/deep/d.txt" {
+			t.Errorf("%q: changed %+v", c.regions, rep)
+		}
+		if got := strings.Join(rep.OutOfScope, ","); got != c.out {
+			t.Errorf("%q: out of scope %q, want %q", c.regions, got, c.out)
+		}
+	}
+}
+
+// A tree covers what lies under it and not a file of its own name (CRW-1445): a node that replaces the directory src with a file
+// src has changed a path outside the region src/, as the prefix rule read it before the normal form. A tree whose text holds "#" covers
+// what its text spells (gen#1/ covers gen#1/x.go), the pair crw.regionsOverlap must also call overlapping.
+func TestScopeReadsATreeAsWhatLiesUnderIt(t *testing.T) {
+	repo, first := newRepo(t)
+	wt := addWorktree(t, repo, "wt", first)
+	if err := os.RemoveAll(filepath.Join(wt, "src")); err != nil {
+		t.Fatal(err)
+	}
+	write(t, wt, "src", "a file now\n", 0o644)
+	write(t, wt, "gen#1/x.go", "package gen\n", 0o644)
+	snap, err := Snapshot(ctx, ExecGit("git"), wt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		regions []string
+		out     string
+	}{
+		{[]string{"src/"}, "gen#1/x.go,src"},
+		{[]string{" src/ "}, "gen#1/x.go,src"},
+		{[]string{"./src/"}, "gen#1/x.go,src"},
+		{[]string{"src"}, "gen#1/x.go,src/c.txt"},
+		{[]string{"src", "src/"}, "gen#1/x.go"},
+		{[]string{"gen#1/"}, "src,src/c.txt"},
+		{[]string{"gen#1/", "src/"}, "src"},
+	} {
+		rep, err := Scope(ctx, ExecGit("git"), wt, first, snap, c.regions)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Join(rep.Changed, ",") != "gen#1/x.go,src,src/c.txt" {
 			t.Errorf("%q: changed %+v", c.regions, rep)
 		}
 		if got := strings.Join(rep.OutOfScope, ","); got != c.out {
@@ -342,6 +385,8 @@ func TestInRegionsReadsASymbolRegionAsItsFile(t *testing.T) {
 		{[]string{"a.go"}, []string{"a.go#F"}, true},
 		{[]string{"a.go", "b.go"}, []string{"a.go#F"}, false},
 		{[]string{"c/1"}, []string{"./c/"}, true},
+		{[]string{"c"}, []string{"c/"}, false},
+		{[]string{"a.go"}, []string{" a.go "}, true},
 		// A planned tree or pattern whose path holds "#" keeps the place its text spells.
 		{[]string{"gen#1/x.go"}, []string{"gen#1/"}, true},
 		{[]string{"a#b.go"}, []string{"a#*.go"}, true},

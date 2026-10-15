@@ -247,7 +247,7 @@ type ScopeReport struct {
 
 // Scope compares tree with the tree of base (a commit or a tree) and sorts the changed paths by the edit regions. A region
 // is read by its normal form (RegionOf: blanks, `./` and doubled slashes cleaned): a tree ends in "/" and covers the paths
-// under it; a symbol `path#key` is its file, since the change set holds files; a file is a path, or a pattern with `*`, `?`
+// under it, not a file of its own name; a symbol `path#key` is its file, since the change set holds files; a file is a path, or a pattern with `*`, `?`
 // or `[` (path.Match, on the whole path). A name with no trailing slash is a file, as the relay reads it. A region's text
 // read as written (a prefix ending in "/", a pattern, or the exact path) also covers what it spells, so a path that holds
 // "#" keeps its place. With no region declared nothing is out of scope.
@@ -300,7 +300,9 @@ func inRegionForm(f RegionForm, p string) bool {
 	case f.Path == ".":
 		return false
 	case f.Kind == "tree":
-		return p == f.Path || strings.HasPrefix(p, f.Path+"/")
+		// what lies under the tree, not a file of its own name: a node that replaces the directory src with a file src changes a
+		// path outside src/, as the prefix rule of the text reads it
+		return strings.HasPrefix(p, f.Path+"/")
 	case strings.ContainsAny(f.Path, "*?["):
 		ok, _ := path.Match(f.Path, p)
 		return ok
