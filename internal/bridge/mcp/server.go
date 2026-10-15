@@ -6,16 +6,19 @@ package mcp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge"
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
 )
 
 // ServerName is the name FastMCP("codex-thread-bridge") reports and the plugin declares.
@@ -175,13 +178,28 @@ type createThreadIn struct {
 // thread/resume and thread/turns/list on it fail with "missing source rollout".
 var errMissingPrompt = &bridge.Invalid{Reason: `prompt is required: a thread created with no first turn has no rollout, so thread/resume and thread/turns/list on it fail with "missing source rollout"`}
 
-// retained reports whether the ledger holds a receipt for id that is more than a reservation nothing was attempted for.
-func (h handlers) retained(ctx context.Context, id string) bool {
+// reservedBeforePrompt refuses a create_thread on a request_id whose receipt is a reservation nothing of which reached
+// the host (not_attempted), when the call cannot resume it: without a prompt, or with other arguments than the
+// reservation's. A reservation is resumed only by a call with its own arguments, and one made without a prompt, before a
+// prompt was required, has none a call may now bring, since resuming it would create a thread with no first turn. Its way
+// on is a new request_id with a prompt. The reservation is never rewritten here.
+func reservedBeforePrompt(id string) error {
+	return &bridge.Invalid{Reason: "request_id " + strconv.Quote(id) + " holds a create_thread reservation that never reached the host (status not_attempted), and this call cannot resume it: " +
+		"a reservation is resumed only by a call with its own arguments, prompt included, and one made without a prompt, before a prompt was required, is not resumed at all, because it would create a thread with no first turn. " +
+		"Create the thread with a prompt under a new request_id; this reservation is left as it is"}
+}
+
+// storedReceipt is the ledger's receipt for id, nil when the ledger holds none. Any other failure to read it is returned:
+// a ledger that cannot be read is not a ledger with no receipt.
+func (h handlers) storedReceipt(ctx context.Context, id string) (ledger.Receipt, error) {
 	if h.b == nil || h.b.Ledger == nil {
-		return false
+		return nil, nil
 	}
 	receipt, err := h.b.Ledger.Get(ctx, id)
-	return err == nil && receipt["status"] != "not_attempted"
+	if errors.Is(err, ledger.ErrUnknown) {
+		return nil, nil
+	}
+	return receipt, err
 }
 
 func (h handlers) createThread(ctx context.Context, in createThreadIn) (map[string]any, error) {
@@ -194,17 +212,34 @@ func (h handlers) createThread(ctx context.Context, in createThreadIn) (map[stri
 	if err != nil {
 		return h.explained("create_thread", nil, err)
 	}
-	// CRW-1486: refused before anything is reserved, so no receipt holds the id and the call that brings a prompt may reuse it.
-	// A request_id the ledger already holds a receipt for (a creation accepted with no prompt before this refusal existed) goes
-	// on to the replay, which answers that receipt, or refuses arguments that differ from it, as any retry is answered.
-	if in.Prompt == nil && !h.retained(ctx, in.RequestID) {
-		return h.explained("create_thread", nil, errMissingPrompt)
+	// CRW-1486: a call without a prompt is refused before anything is reserved, so no receipt holds the id and the call that
+	// brings a prompt may reuse it. A request_id the ledger holds a receipt for with a host effect (a creation accepted with no
+	// prompt before this refusal existed) goes on to the replay, which answers that receipt, or refuses arguments that differ
+	// from it, as any retry is answered. A request_id whose receipt is a not_attempted reservation is refused with the way on
+	// (reservedBeforePrompt), with or without a prompt, and the reservation is not rewritten. A ledger that cannot be read
+	// answers with that failure.
+	if in.Prompt == nil {
+		stored, err := h.storedReceipt(ctx, in.RequestID)
+		switch {
+		case err != nil:
+			return h.explained("create_thread", nil, err)
+		case stored == nil:
+			return h.explained("create_thread", nil, errMissingPrompt)
+		case stored["status"] == "not_attempted":
+			return h.explained("create_thread", nil, reservedBeforePrompt(in.RequestID))
+		}
 	}
 	var roots []string
 	if in.Roots != nil {
 		roots = append([]string{}, *in.Roots...)
 	}
 	out, err := receipt(h.b.CreateThread(ctx, bridge.CreateThread{RequestID: in.RequestID, CWD: in.CWD, Prompt: deref(in.Prompt), Title: deref(in.Title), Sandbox: in.Sandbox, Model: in.Model, ProjectID: deref(in.ProjectID), Effort: in.ReasoningEffort, Exception: deref(in.Exception), Role: deref(in.Role), Roots: roots, Policy: policy}))
+	if errors.Is(err, ledger.ErrConflict) {
+		// Other arguments for a not_attempted reservation (a prompt brought to one made without): the same way on.
+		if stored, readErr := h.storedReceipt(ctx, in.RequestID); readErr == nil && stored != nil && stored["status"] == "not_attempted" {
+			err = reservedBeforePrompt(in.RequestID)
+		}
+	}
 	return h.explained("create_thread", out, err)
 }
 
