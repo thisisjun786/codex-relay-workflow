@@ -69,14 +69,14 @@ func TestASuccessfulCommentRepostIsASuccessfulPass(t *testing.T) {
 	first := w.pass()
 	requireExit(t, first, ExitPushed, "pushed")
 	dev := w.remoteDev()
-	w.interruptComment(first, pr.HeadSHA, "not written yet")
+	w.interruptBeforeComment(first, pr.HeadSHA, "not written yet")
 
 	rep := w.pass()
 	requireExit(t, rep, ExitPushed, resultReportCommentReposted)
 	if rep.Error != "" || len(rep.Held) != 0 {
 		t.Errorf("error %q, held %q", rep.Error, rep.Held)
 	}
-	if c := w.fake.Comments(1); len(c) != 2 {
+	if c := w.fake.Comments(1); len(c) != 1 {
 		t.Errorf("comments %q", c)
 	}
 	if !w.doneFor("pr-1", pr.HeadSHA) || w.pendingHead("pr-1") != "" || w.remoteDev() != dev {
