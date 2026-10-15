@@ -439,6 +439,12 @@ func localExecute(opts localOptions, plan []localJob, current verificationRecord
 	if opts.stepTmp, err = localStepTempDir(opts, root); err != nil {
 		return verificationRecord{}, false, err
 	}
+	// CRW-1489 (B): every record this run makes names where it ran (recordRunEnv).
+	cwd, err := os.Getwd()
+	if err != nil {
+		return verificationRecord{}, false, fmt.Errorf("the run's working directory: %w", err)
+	}
+	runEnv := &recordRunEnv{Cwd: cwd, Root: opts.Root, CallerTmpDir: os.Getenv("TMPDIR"), TmpDir: opts.stepTmp, Home: home}
 	checkoutErr := ""
 	if out, err := runGit(opts.Root, "-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", worktree, current.HeadCommit); err != nil {
 		checkoutErr = fmt.Sprintf("%v%s", err, localReason(string(out)))
@@ -456,6 +462,7 @@ func localExecute(opts localOptions, plan []localJob, current verificationRecord
 		failed.Sealed = true
 		failed.PlanDigest = planDigest(plan)
 		failed.IgnoredEnv = localIgnoredEnv(os.Environ())
+		failed.RunEnv = runEnv
 		failed.Result = localFail
 		failed.Jobs = []recordJob{{Name: "clean worktree", Result: localFail, Steps: []recordStep{{Job: "clean worktree", Name: "git worktree add", Scope: "full", Result: localFailed, Reason: checkoutErr}}}}
 		return failed, false, nil
@@ -473,6 +480,7 @@ func localExecute(opts localOptions, plan []localJob, current verificationRecord
 	record.Sealed = true
 	record.PlanDigest = planDigest(plan)
 	record.IgnoredEnv = localIgnoredEnv(os.Environ())
+	record.RunEnv = runEnv
 	record.Pins = pins
 	record.Tools = localObservedVersions(current.Tools, pins)
 	workflowData, err := os.ReadFile(filepath.Join(worktree, ".github", "workflows", "ci.yml"))
