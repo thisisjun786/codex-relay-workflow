@@ -127,6 +127,30 @@ func TestResumeRefusesABoundTaskWhoseGatePolicyItCannotName(t *testing.T) {
 	}
 }
 
+// A record that only cites its role (no binding) but whose answer carries the digest of the policy the
+// gate read was checked against a policy too: with no file named here to resolve the limit from, the
+// resume is refused rather than sent without the limit (CRW-1486 A1).
+func TestResumeRefusesACitedRoleWhoseGatePolicyItCannotName(t *testing.T) {
+	host := resumeHost(t, "notLoaded")
+	digest := resumePolicyDigest(t, autoCompactResumePolicy(t))
+	answer := strings.Replace(autoCompactResumeSettings, `"citedRole":"child"`, `"citedRole":"child","rolePolicyDigest":"`+digest+`","rolePolicy":"declared"`, 1)
+	exe, _ := resumeRelayScript(t, resumeTestAssignment, answer, 0)
+	e, _, _ := resumeEnv(t, exe)
+	t.Setenv(execution.EnvPolicy, "")
+	cfg := resumeConfig(host, "alpha")
+	cfg.Bridge.ExecutionPolicy = ""
+	_, err := resumeRun(context.Background(), e, cfg, resumeOptions{relationship: "rel-1", message: "m"})
+	var failure *resumeFailure
+	if !errors.As(err, &failure) || failure.Reason != resumeSettingsUnavailable || !strings.Contains(failure.Detail, "manage.bridge.execution_policy") {
+		t.Fatalf("a cited role with a reported digest and no policy file to read the limit from: %v", err)
+	}
+	for _, request := range resumeHostRequests(host) {
+		if request.Method == "thread/resume" || request.Method == "turn/start" {
+			t.Fatalf("the refused resume sent %s", request.Method)
+		}
+	}
+}
+
 // autoCompactBoundSettings is autoCompactResumeSettings as the gate answers a task bound to the child
 // role whose record it found deliverable.
 const autoCompactBoundSettings = `{"task":"01child","usable":true,"deliverable":true,"boundRole":"child","rolePolicy":"declared","settings":{"sandbox":{"type":"readOnly","networkAccess":false},"approvalPolicy":"never","cwd":"/w","runtimeWorkspaceRoots":["/w"],"model":"m","reasoningEffort":"xhigh"}}`
@@ -218,16 +242,22 @@ func launchDeclaredResumeStore(t *testing.T) (state, declared, configured, answe
 	if err := os.WriteFile(filepath.Join(state, "launch-policy.json"), record, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := execution.ReadFile(declared)
-	if err != nil {
-		t.Fatal(err)
-	}
-	policy, err := execution.FromBytes(raw, declared)
-	if err != nil {
-		t.Fatal(err)
-	}
-	answer = strings.Replace(autoCompactBoundSettings, `"rolePolicy":"declared"`, `"rolePolicyDigest":"`+policy.Digest()+`","rolePolicy":"declared"`, 1)
+	answer = strings.Replace(autoCompactBoundSettings, `"rolePolicy":"declared"`, `"rolePolicyDigest":"`+resumePolicyDigest(t, declared)+`","rolePolicy":"declared"`, 1)
 	return state, declared, configured, answer
+}
+
+// resumePolicyDigest is the digest of the policy file at path, as settings-show reports it.
+func resumePolicyDigest(t *testing.T, path string) string {
+	t.Helper()
+	raw, err := execution.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := execution.FromBytes(raw, path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return policy.Digest()
 }
 
 // CRW-1486 A1: with the variable unset the gate checked the bound role against the file the relay's
@@ -245,8 +275,14 @@ func TestResumeRefusesALimitFromAnotherPolicyThanTheGateRead(t *testing.T) {
 	cfg.Bridge.ExecutionPolicy = configured
 	_, err := resumeRun(context.Background(), e, cfg, resumeOptions{relationship: "rel-1", message: "m"})
 	var failure *resumeFailure
-	if !errors.As(err, &failure) || failure.Reason != resumeSettingsUnavailable || !strings.Contains(failure.Detail, configured) || !strings.Contains(failure.Detail, "digest") {
+	if !errors.As(err, &failure) || failure.Reason != resumeSettingsUnavailable || !strings.Contains(failure.Detail, configured) {
 		t.Fatalf("a limit read from %s while the gate read %s: %v", configured, declared, err)
+	}
+	// The detail names both hashes: the one the relay reported and the one of the file read here.
+	for _, digest := range []string{resumePolicyDigest(t, declared), resumePolicyDigest(t, configured)} {
+		if digest == "" || !strings.Contains(failure.Detail, digest) {
+			t.Fatalf("the refusal does not name digest %q: %s", digest, failure.Detail)
+		}
 	}
 	for _, request := range resumeHostRequests(host) {
 		if request.Method == "thread/resume" || request.Method == "turn/start" {
