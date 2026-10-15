@@ -225,7 +225,9 @@ func TestDesignLoopCapsWarnAndTellTheOrchestrator(t *testing.T) {
 	t.Run("tokens", func(t *testing.T) {
 		l := NewLab(t, twoNodes()...)
 		sender := l.wireUpward(t, false)
-		l.Budget = 25 // the architect and the audit are 20: 80% of the budget, spent before any executor
+		// the two background explorers are 2 (outside the design loop, CRW-1466) and the architect and the audit 20: the loop's 20 is 80%
+		// of the budget, spent before any executor
+		l.Budget = 25
 		if res := l.Run(); res.Status != engine.RunCompleted {
 			t.Fatalf("run %s: %s", res.Status, res.Error)
 		}

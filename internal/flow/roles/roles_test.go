@@ -386,3 +386,25 @@ func TestReplanPacketAsksForTheWholeDesign(t *testing.T) {
 		t.Errorf("the re-plan section still speaks of a delta:\n%s", replan)
 	}
 }
+
+// TestArchitectOverlayNamesTheBackgroundFindings (CRW-1466): background explorers run before the architect's first DESIGN, one for
+// each node, and their answers come in the packet's BACKGROUND FINDINGS (internal/flow/cli/lanee2e_test.go pins the packet); the
+// overlay says so, says they are the run's (not the one helper of the call) and that a re-plan has none.
+func TestArchitectOverlayNamesTheBackgroundFindings(t *testing.T) {
+	overlay, err := Overlay("architect", Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bg := sectionOf(overlay, "## Background findings")
+	if bg == "" {
+		t.Fatal("the architect overlay has no \"## Background findings\" section")
+	}
+	for _, want := range []string{"Background explorers run before you", "one question for each node", "BACKGROUND FINDINGS", "A re-plan has no background explorers"} {
+		if !strings.Contains(bg, want) {
+			t.Errorf("the background findings section lacks %q:\n%s", want, bg)
+		}
+	}
+	if spawn := sectionOf(overlay, "## Native spawn"); !strings.Contains(spawn, "The background explorers are the run's, not yours") {
+		t.Errorf("the native spawn section does not set the background explorers apart from the call's helper:\n%s", spawn)
+	}
+}

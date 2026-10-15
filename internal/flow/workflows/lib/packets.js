@@ -49,14 +49,28 @@ function notesSection(notes) {
   return section('FINDINGS OF THE EXPLORER (use them; do not ask again)', notes.map((n) => '- ' + n.question + '\n  ' + n.answer))
 }
 
-export function architectPacket(ms) {
+// architectPacket is the architect's first turn of a milestone. background is the answers of the background explorers that ran before
+// it, one for each node (crw.explore of kind background, CRW-1466): given, the packet carries them as BACKGROUND FINDINGS, each by its
+// id, question, answer and the explorer's findings only - never by its route, reason, scope, notation or origin, so the packet's bytes
+// do not move with the routing metadata a binary records; not given (or empty), the packet is the one it was before CRW-1466.
+export function architectPacket(ms, background) {
   const nodes = ms.nodes.map((n) => n.id + ' (' + n.issue + '): ' + n.title + (n.after.length ? ' after ' + n.after.join(', ') : '') + (n.group ? ' [group ' + n.group + ']' : '') +
     '\n  regions: ' + (n.regions.length ? n.regions.join(', ') : 'undeclared') + '\n  criteria: ' + (n.criteria.length ? n.criteria.join(' | ') : 'none'))
-  return [
+  const parts = [
     'ROLE: architect. Plan milestone ' + ms.id + ' of plan ' + ms.plan + ' (' + ms.title + ').',
     'Answer with DESIGN: the decisions, one plan for each issue node below (its size_fit, edit regions, approach, tests first and done condition), the open questions you cannot answer from what you read, and the risks.',
     section('NODES', nodes),
-  ].join('\n\n')
+  ]
+  if (background && background.length) {
+    parts.push(section('BACKGROUND FINDINGS (an explorer read the repository for each node before you; build on them, and ask as an open question only what they and your own reading leave open)',
+      background.map((a) => {
+        const lines = [(a.id ? a.id + ': ' : '') + a.question]
+        if (a.answer) lines.push('  answer: ' + a.answer)
+        if (a.findings) lines.push('  findings: ' + canon(a.findings))
+        return '- ' + lines.join('\n')
+      })))
+  }
+  return parts.join('\n\n')
 }
 
 // The executor contract and the authority boundary the design audit holds a DESIGN to (CRW-1321): the architect overlay
@@ -265,7 +279,8 @@ export function replanPacket(ms, cur, due, head, misaligned, unstarted) {
 export function explorerPacket(kind, route, ctx, ends) {
   const parts = [
     'ROLE: explorer. Answer one question by reading the repository; do not edit anything.',
-    'ASKED BY: ' + (ctx.node ? 'node ' + ctx.node : 'the architect of milestone ' + ctx.milestone) + ' (' + kind + ')',
+    // a background question is the run's, asked for the architect before its first DESIGN (CRW-1466); every other kind is as before
+    'ASKED BY: ' + (kind === 'background' ? 'the run, in the background of the architect of milestone ' + ctx.milestone : ctx.node ? 'node ' + ctx.node : 'the architect of milestone ' + ctx.milestone) + ' (' + kind + ')',
     'QUESTION: ' + route.question,
     section('FILES NEEDED', list(route.files_needed, 'not named')),
   ]

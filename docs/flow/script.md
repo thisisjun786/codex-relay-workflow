@@ -304,7 +304,15 @@ and a string that is no handle of a result of this run. Like every `crw.*` call,
 
 `internal/flow/workflows/project-lane.js` is the built-in workflow that runs the issues of a milestone (`args`: `plan`, `milestone`,
 and `cap`, the executors at once, default 3). Its steps, in order: `crw.milestone` reads the nodes of the milestone in the order the
-scheduler offers them; the architect answers `DESIGN` once for the milestone (SP-ARCH-1); the open questions of the DESIGN go to
+scheduler offers them; in the phase `explore`, before the architect's first DESIGN, one background question for each node goes to an
+explorer (`crw.explore('background', ...)`, CRW-1466): the question names the node's id, its issue key and its title, its `files_needed` are the
+node's declared regions (none declared: not named), and `crw.exploreRoute` spawns it (`spawned_background`) or reuses an answer of the same
+digest the run has, never inline, never to the owner thread and outside the open questions' cap of the milestone; the explorer calls are
+labelled `explore-bg:<milestone>:<digest12>` (an `explore:` reader never takes one for its own), their route rows carry `inputs.kind`
+`background`, a background explorer that did not complete halts the milestone (`crw.milestoneHalt`, source `explorer`), and a re-plan has
+no such phase; then, in the phase `design`, the architect answers `DESIGN` once for the milestone (SP-ARCH-1) over a packet that carries the
+background answers as `BACKGROUND FINDINGS`, each by its id, question, answer and the explorer's findings and never by its route (the packet is the
+one it was before CRW-1466 when none is given); the open questions of the DESIGN go to
 explorers (SP-EXPL-1), and the ones whose scope carries an out-of-authority notation, or beyond the explorer cap, to the owner thread
 thread in a non-blocking `design_question` escalation: an authority question in the audit round that routed it, approved or not, a
 question beyond the cap once the DESIGN is approved; the escalation's evidence names the question digests it asked, so a later round
@@ -346,7 +354,8 @@ same input, so the loop and what follows it replay. The tokens of the loop are t
 calls, the architect's fixes and the explorers `crw.explore` spawns for the open questions of each round (its result's `tokens`). When they reach the cap, the
 loop raises the `design_loop_tokens` escalation, which asks nothing and goes up to the owner thread, once per loop, and goes on; the engine pauses the
 run at the whole budget (`budget_exhausted`). Reaching either cap writes a log row `warn design_loop_cap rounds: ...` or `warn design_loop_cap tokens: ...`
-(CRW-1327). Neither cap is a block of its own: a warning and a record, the stop at the round cap being CRW-1347's.
+(CRW-1327). Neither cap is a block of its own: a warning and a record, the stop at the round cap being CRW-1347's. The background explorers
+of the phase `explore` are outside the loop and its token cap (one for each node bounds them); the engine's budget counts them like every call.
 
 **The lane of a node.** `crw.dag` starts a node when the nodes it waits for (a dependency or an order edge; the members of a
 group are chained by order edges) have landed, in the scheduler's order, at most `cap` nodes at once and never two nodes whose

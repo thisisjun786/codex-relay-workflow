@@ -370,8 +370,24 @@ type CallInfo struct {
 	Seq                         int
 }
 
-// Calls are the agent calls of the run, in the order they were prepared (a call prepared again by a resume is listed again).
+// BackgroundLabel is the label prefix of the background explorers that run before the architect (CRW-1466): one for each node.
+const BackgroundLabel = "explore-bg:"
+
+// Calls are the agent calls of the run, in the order they were prepared (a call prepared again by a resume is listed again), without
+// the background explorers (BackgroundLabel): the scenarios pin the calls of the design loop and the lanes, and one test pins those
+// (TestExplorersRunBeforeTheArchitectAndTheirFindingsReachItsPacket). Labels, Roles and CallsOf read these. AllCalls has them all.
 func (l *Lab) Calls() []CallInfo {
+	var out []CallInfo
+	for _, c := range l.AllCalls() {
+		if !strings.HasPrefix(c.Label, BackgroundLabel) {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// AllCalls are the agent calls of the run, the background explorers among them, in the order they were prepared.
+func (l *Lab) AllCalls() []CallInfo {
 	var out []CallInfo
 	for _, ev := range l.Events() {
 		if ev.Kind == engine.KindCall && ev.Op == "agent" && ev.Event == engine.EvPrepared {
@@ -467,10 +483,22 @@ func str(m map[string]any, key string) string {
 // SpawnRow is a row of flow_spawn_decisions.
 type SpawnRow struct{ Rule, Decision, Node, Kind, Reason string }
 
-// SpawnRows reads flow_spawn_decisions in the order the rows were written.
+// SpawnRows reads flow_spawn_decisions in the order the rows were written, without the routes of the background questions (their
+// inputs.kind is background, CRW-1466; a reused background question is left out too): BackgroundSpawnRows has those.
 func (l *Lab) SpawnRows() []SpawnRow {
 	l.t.Helper()
-	rows, err := l.Store.DB.Query(`SELECT rule_id, decision, node_id, kind, reason FROM flow_spawn_decisions WHERE run_id = ? ORDER BY rowid`, l.RunID)
+	return l.spawnRows(`json_extract(evidence_json, '$.inputs.kind') IS NOT 'background'`)
+}
+
+// BackgroundSpawnRows are the rows of flow_spawn_decisions of the background questions, in the order they were written.
+func (l *Lab) BackgroundSpawnRows() []SpawnRow {
+	l.t.Helper()
+	return l.spawnRows(`json_extract(evidence_json, '$.inputs.kind') IS 'background'`)
+}
+
+func (l *Lab) spawnRows(where string) []SpawnRow {
+	l.t.Helper()
+	rows, err := l.Store.DB.Query(`SELECT rule_id, decision, node_id, kind, reason FROM flow_spawn_decisions WHERE run_id = ? AND `+where+` ORDER BY rowid`, l.RunID)
 	if err != nil {
 		l.t.Fatal(err)
 	}
@@ -811,6 +839,11 @@ func (l *Lab) defaultPlan(c *Call) fakehost.TurnPlan {
 		return Say(QAReceiptOf("PASS"))
 	case c.Role == "explorer" && strings.HasPrefix(c.Label, "qa-pass:"):
 		return Say(QAPassOf(strings.SplitN(c.Label, ":", 3)[1], "PASS"))
+	case c.Role == "explorer" && strings.HasPrefix(c.Label, BackgroundLabel):
+		// a background explorer costs 1 token (fakehost counts a zero as 10), so a two-node lab's background costs 2
+		p := Say(map[string]any{"answer": "answer of the explorer", "evidence": []string{"README.md"}, "verified": []string{"README.md"}, "inferred": []string{}, "unknown": []string{}})
+		p.Tokens = 1
+		return p
 	case c.Role == "critic" && strings.HasPrefix(c.Label, "design-audit"):
 		return Say(map[string]any{"verdict": "approved", "findings": []any{}, "summary": "the DESIGN holds"})
 	case c.Role == "reviewer":

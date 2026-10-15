@@ -1,9 +1,10 @@
 import { RECEIPT, DESIGN, DESIGN_AUDIT, REFLECTION } from 'crw:lib/schemas'
 import { install } from 'crw:lib/lane'
 import { architectPacket, auditFindings, designAuditPacket, designFixPacket, reflectionPacket, replanPacket, packet, answerPacket, fixPacket } from 'crw:lib/packets'
-export const meta = { name: 'project-lane', description: 'Run the issues of a milestone: architect, design audit by the critic, explorers, one lane per issue node, milestone close and report', phases: ['design', 'build', 'milestone'], args: { plan: 'string', milestone: 'string', cap: 'number' } }
+export const meta = { name: 'project-lane', description: 'Run the issues of a milestone: background explorers, architect, design audit by the critic, explorers, one lane per issue node, milestone close and report', phases: ['explore', 'design', 'build', 'milestone'], args: { plan: 'string', milestone: 'string', cap: 'number' } }
 
-// The project lane. A milestone is designed once by its architect, the DESIGN is audited by the critic, of another model family,
+// The project lane. Explorers first read the repository for each node of the milestone (the background questions, CRW-1466), the
+// milestone is designed once by its architect over what they found, the DESIGN is audited by the critic, of another model family,
 // before any executor starts, every issue node then runs its own lane (an executor, the run's commit and verification, an
 // independent review, the land), and the milestone is closed over what the lanes integrated. Every fact a lane uses comes from
 // the journal: the plan of its issue from the design revision it was released under (crw.issuePlan), the evidence of its tier
@@ -16,7 +17,8 @@ install(crw)
 // escalation (CRW-1347). The token cap is DESIGN_TOKEN_CAP tokens, or DESIGN_TOKEN_WARN of the run's token budget when that is lower,
 // so a run without a budget has one too: when the calls of the loop (its architect, audit and fix calls and the explorers of its open
 // questions) have used it, the loop warns once and tells the orchestrator (design_loop_tokens, no ask) and goes on; the engine itself
-// pauses the run at the whole budget. Either cap writes a `warn design_loop_cap` log row. The run's budget is budget.run, the one its
+// pauses the run at the whole budget. The background explorers that run before the architect are outside the loop and its token cap
+// (one explorer for each node bounds them; the engine's budget counts them like every call). Either cap writes a `warn design_loop_cap` log row. The run's budget is budget.run, the one its
 // first process started with, which the journal fixes: a resume under another ceiling (budget.total) reaches the cap at the same
 // call and raises the escalation with the same input, so the loop replays (CRW-1327).
 const AUDIT_ROUNDS = 3
@@ -157,9 +159,23 @@ async function onSignal(sig) {
   return { result: 'refresh', revision: out.revision, reasons: due.reasons, regions }
 }
 
+// The background questions (CRW-1466, SP-EXPL-1): before the architect's first DESIGN, one question for each node of the milestone goes
+// to an explorer, which reads what the repository holds for it today; the architect's packet carries the answers (BACKGROUND
+// FINDINGS). A question names the node's id, its issue key and its title, so its digest is the node's and never an open question's;
+// its files_needed are the node's declared regions (none declared: not named). crw.exploreRoute spawns each or reuses an answer of the
+// same digest the run has, never inline, never to the orchestrator and outside the open questions' cap. Only the first DESIGN has this
+// phase: a re-plan is the next turn of the architect's thread, which has read them. The end condition commands stay with the first
+// open-question explorer of the design loop.
+function backgroundQuestion(n) {
+  return 'Background of node ' + n.id + ' (' + n.issue + '): ' + n.title + '. What does the repository hold today that the plan of this issue rests on: the files, types, functions and tests it will change or read, the conventions they follow, and what in them must not change?'
+}
+phase('explore')
+const background = await crw.explore('background', ms.nodes.map((n) => ({ id: 'bg-' + n.id, question: backgroundQuestion(n), scope: '', files_needed: n.regions.length ? n.regions : null })), { milestone: ms.id }, {})
+if (background.failed) return crw.milestoneHalt(ms, 'explorer', background.failed.status, background.failed.reason, background.failed.callId)
+
 phase('design')
 await crw.spawnDecision('ARCH_1', 'spawn', { role: 'architect', inputs: { milestone: ms.id, nodes: ms.nodes.length } })
-const first = await agent.call(architectPacket(ms), { agentType: 'architect', schema: DESIGN, label: 'architect' })
+const first = await agent.call(architectPacket(ms, background.answers), { agentType: 'architect', schema: DESIGN, label: 'architect' })
 if (first.status !== 'completed') return crw.milestoneHalt(ms, 'architect', first.status, first.reason, first.callId)
 const designed0 = await auditedDesign(first, '')
 if (!designed0.ok) return designed0.result
