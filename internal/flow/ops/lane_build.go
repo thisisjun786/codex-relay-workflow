@@ -84,7 +84,7 @@ const StateTreeMoved = "tree_moved"
 const StateHeadMoved = "head_moved"
 
 // StateReceiptHeld is the state of an uncommitted unit check that was not run because the executor call it was to judge has no
-// accepted evidence receipt to hand it (CRW-1463, C12): the row and the answer name the hold (receipt_missing, receipt_unverified,
+// accepted evidence receipt to read (CRW-1463, C12): the row and the answer name the hold (receipt_missing, receipt_unverified,
 // receipt_not_copied) the lane writes through crw.hold with source unit_check.
 const StateReceiptHeld = "receipt_held"
 
@@ -102,11 +102,12 @@ const (
 // says tree_moved or head_moved (no role: no reader takes it). With opts.commit and opts.base it judges the committed range base..commit checked out in the node's worktree.
 //
 // An uncommitted check reads the evidence receipt the judged call's completed row records (evidence_receipt, CRW-1463 C12): an accepted
-// receipt's step-bus copy whose bytes hash to its digest goes into the prompt and the row records it (state, sha256, copy, ignored);
-// a call with no evidence_receipt had no assignment and records not_assigned; any other receipt (missing, unverified, accepted but
-// not copied, a copy that cannot be read or does not hash to the digest) is not handed over: the tool is not run, and the row carries
-// the node, the call, the receipt as read and hold receipt_*, with no role, tree or commit, so no reader takes it and a resume reads
-// the receipt again. A committed check judges a range no executor wrote and records no_executor.
+// receipt's step-bus copy whose bytes hash to its digest goes into the prompt, and the row records it (state, sha256, copy, ignored)
+// and whether the tool was given it (handed: the prompt_sent of the call that judged; false for a profile that takes no prompt, such
+// as the Codex review's, CRW-1517); a call with no evidence_receipt had no assignment and records not_assigned; any other receipt
+// (missing, unverified, accepted but not copied, a copy that cannot be read or does not hash to the digest) is not taken: whatever
+// the profile, the tool is not run, and the row carries the node, the call, the receipt as read and hold receipt_*, with no role, tree
+// or commit, so no reader takes it and a resume reads the receipt again. A committed check judges a range no executor wrote and records no_executor.
 //
 // A committed check gives the request the range (Request.Base and Head), which a profile's Args may pass to the tool (the Codex
 // committed profile's --base).
@@ -314,6 +315,16 @@ func (o *unitCheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpR
 		res.Findings = []reviewadapter.Finding{}
 	}
 	out.Result = res
+	// the receipt was read and kept whatever the profile; whether it was handed to the tool is whether the call that judged (the
+	// row's result) was given the prompt that holds it (CRW-1517: a Codex review takes no prompt, a Bugbot fallback does)
+	if receipt.row != nil && str(receipt.row, "state") == "accepted" {
+		rc := make(map[string]any, len(receipt.row)+1)
+		for k, v := range receipt.row {
+			rc[k] = v
+		}
+		rc["handed"] = res.PromptSent
+		data["receipt"] = rc
+	}
 	switch res.State {
 	case reviewadapter.StateQuota, reviewadapter.StateNoAnswer:
 		out.Hold = "unit_check_" + string(res.State)
@@ -340,6 +351,8 @@ func (o *unitCheckOp) Proven(_ context.Context, _ []engine.Event, row engine.Eve
 // unitCheckPrompt is the prompt of a unit check (guide UnitCheckGuideRev): the scope sentence first, in the words the tool's reader
 // expects of its scope (the uncommitted changes of the working tree, or the range base..head), then the node and the criteria of its
 // plan the change is judged against, and in uncommitted mode the executor's accepted evidence receipt (EXECUTOR RECEIPT) when it has one.
+// A tool whose profile takes no prompt (the Codex review's Args leave it out) is not given these bytes; the call's
+// Result.PromptSent says so, and the row's receipt records it as handed false.
 func unitCheckPrompt(r rows, node, mode, base, head string, receipt checkReceipt) string {
 	var b strings.Builder
 	if mode == UnitCheckCommitted {
@@ -394,8 +407,9 @@ func unitCheckPrompt(r rows, node, mode, base, head string, receipt checkReceipt
 // cut at a line end within the limit and the prompt names the file of its whole copy.
 const UnitCheckReceiptPromptLimit = 32 << 10
 
-// checkReceipt is the executor receipt an uncommitted unit check hands the tool: the row it records and, for an accepted receipt,
-// the bytes of its step-bus copy and their digest (body nil for none).
+// checkReceipt is the executor receipt an uncommitted unit check reads and puts in the prompt (which the tool is given only when its
+// profile takes the prompt): the row it records and, for an accepted receipt, the bytes of its step-bus copy and their digest (body nil
+// for none).
 type checkReceipt struct {
 	row    map[string]any
 	body   []byte
