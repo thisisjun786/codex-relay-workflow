@@ -354,7 +354,8 @@ or `null (no dispositions reported)`), and the critic raises a rebuttal it does 
 evidence the run makes itself ([The milestone close](#the-milestone-close)); the architect reflects on the integrated range, on its own thread, and a
 reason to re-plan asks it for the whole DESIGN of the milestone again; `crw.settleReviews` audits the reviews behind the
 acceptances against the reviewer threads on the host and archives the threads whose audit passed, and `crw.reportUp` records the report
-(its delivery is the seam of the issue that owns it). A milestone that cannot go on says why (`crw.milestoneHalt`): a call of the design phase, of the close or of
+(its delivery is the seam of the issue that owns it); for a bundle, `crw.mergeRequest` asks the parent to merge the pull request of the closed
+milestone ("The bundle's pull request" below). A milestone that cannot go on says why (`crw.milestoneHalt`): a call of the design phase, of the close or of
 a re-plan that did not complete is never read as an approval, a design, a gate, a review or an alignment (`held` and `unknown` hold the milestone, `refused` and
 `null_model` escalate, a gate that failed or cannot be settled and a QA that is INCONCLUSIVE escalate, `superseded` stops).
 
@@ -440,6 +441,23 @@ as the relay's acceptance will, and asks the relay for the agent acceptance (R05
 the lane escalates. `crw.integrate` lands the accepted head on the integration target. A refusal of either is an op error that carries
 a closed reason and leaves a refusal row, not a completed row: a resume asks again, and the engine's accepted-node check reads only
 completed `crw.accept` rows.
+
+**The bundle's pull request.** A handoff whose project target names `pr_base` (the branch the pull request goes to, `dev` in practice) is a
+bundle: its run lands its nodes on the target's own `base_ref`, a bundle integration branch that lives in the target checkout, and a
+`base_ref` that equals `pr_base` is refused at compile. `crw flow pr branch --checkout DIR --milestone M [--base dev] [--name BRANCH]`
+makes that branch (`--name` is the handoff's `base_ref`; `bundle/M` by default) at the tip of the local base branch once, reuses a branch that already contains that tip and
+never moves one that does not (exit 2); `crw flow start` refuses a bundle whose branch is not in the target checkout, naming that command,
+before it writes a run, the preview included, and a project without `pr_base` is not checked. When the milestone has closed,
+`crw flow pr open --run RUN --push DIR` opens the one pull request from the run's journal: it refuses unless the run closed its milestone
+and the milestone's crosscheck is verified at the close tip, it takes the issues from the milestone's nodes, builds the body from the run,
+refuses a title or body that leaks a host path, the host name or a thread, call or run id, and pushes exactly the crosschecked tip, never
+forced; it reads the crosscheck of the close from the run's `crw.crosscheck` rows (CRW-1442), so a run with no such row is refused with `crosscheck_missing` and the pull request is opened from a text with `--issue` as before. A script of the bundle then calls `crw.mergeRequest(milestone, {pr, review: {bots, unresolved}})` judges that pull request in order (open and not merged, the
+crosscheck verified at its head, its checks green, no unresolved review comment while the review bots are connected) and either answers
+`{state: "refused", reason}` as a result of the op, writing a row of its own (`pr_not_open`, `crosscheck_missing`, `head_moved`,
+`crosscheck_not_accepted`, `checks_failed`, `checks_pending`, `checks_none`, `comments_unresolved`), or hands a merge request to the
+reporter, which asks the parent to merge. The op is not part of the built-in `project-lane`: a script that calls it needs a lane wired with a pull request reader and a reporter that takes merge requests, and the op is a Go error without them. The request goes once per head: a second call at the same head of the same pull request answers
+again with `repeated` and sends nothing, and a head that moved needs a new crosscheck and a new request. The run never merges the pull
+request; the dev queue does.
 
 **Decisions.** `crw.spawnDecision(rule, decision, info)` appends a `flow_spawn_decisions` row for every decision to spawn, do the work
 inline (SP-INL-1), reuse an answer (SP-INL-2), skip, refuse or hand a question to the owner thread; the explorer routing
