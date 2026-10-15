@@ -33,7 +33,7 @@ func requireNoRoleWords(t *testing.T, what, text string) {
 
 // upwardNoMechanism is the one wording of what a report upward cannot answer (plan D6); the
 // supervisor channel's reach ladder carries the same sentence.
-const upwardNoMechanism = "a report upward is transported and read back, and nothing here records that the 부모 agreed, applied or verified anything; what became of it is read from the tracking record, confirmed"
+const upwardNoMechanism = "a report upward is transported and read back—nothing here records that the 부모 agreed, applied, or verified anything; read the confirmed tracking record for what became of it"
 
 // TestReceptionNoMechanismNamesTheParent: a parent_to_supervisor reach ladder that answers agreed:
 // yes is refused, and the refusal ends with the shared sentence, which names the 부모.
@@ -74,7 +74,7 @@ func TestReceptionNoMechanismNamesTheParent(t *testing.T) {
 // TestReceptionTextNamesTheLayers: what reception tells a reader about a packet it does not cover
 // names the layers. A role that keeps no relationship row (the 부모) is read back through the 부모
 // channel, and a direction whose purpose has no required fields is outside what relay-packet/1
-// covers: the relation of a 자식 and its issue child, and what a 자식 owes upward.
+// covers: the relation of a 자식 and its `child` session, and what a 자식 owes upward.
 func TestReceptionTextNamesTheLayers(t *testing.T) {
 	t.Parallel()
 	t.Run("a receiver that keeps no relationship row", func(t *testing.T) {
@@ -99,7 +99,7 @@ func TestReceptionTextNamesTheLayers(t *testing.T) {
 		if !errors.As(err, &refused) || refused.Reason != "malformed_receipt" {
 			t.Fatalf("a purpose with no required fields was not refused as malformed: %v", err)
 		}
-		want := "relay-packet/1 covers the relation of a 자식 and its issue child and what a 자식 owes upward; supervisor_to_parent is carried by the envelope alone"
+		want := "relay-packet/1 covers the relation of a 자식 and its `child` session and what a 자식 owes upward; supervisor_to_parent is carried by the envelope alone"
 		if refused.Detail != want {
 			t.Errorf("the refusal %q, want %q", refused.Detail, want)
 		}

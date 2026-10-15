@@ -19,7 +19,7 @@ import (
 
 // upwardNoMechanism is the one wording of what a report upward cannot answer (plan D6): the
 // channel's reach ladder, a fault notice's ladder and reception's parent_to_supervisor entry.
-const upwardNoMechanism = "a report upward is transported and read back, and nothing here records that the 부모 agreed, applied or verified anything; what became of it is read from the tracking record, confirmed"
+const upwardNoMechanism = "a report upward is transported and read back—nothing here records that the 부모 agreed, applied, or verified anything; read the confirmed tracking record for what became of it"
 
 // oldUpwardNoMechanism is that sentence as dev 7f21f0069 wrote it, which packets staged before the
 // rewording still carry.

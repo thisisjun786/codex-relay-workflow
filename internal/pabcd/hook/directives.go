@@ -91,7 +91,7 @@ const TriggerAuthorityNote = "[crw: PHASE UNCHANGED — TRIGGER-AUTHORITY-01] A 
 const PAAttestExample = "{\"from\":\"P\",\"to\":\"A\",\"did\":\"...\",\"planUnit\":\"devlog/_plan/YYMMDD_slug\",\"workPhaseId\":\"wp1\"}"
 
 // loopArmProjectBranch is the branch the recipe takes before any of its steps (CRW-1084, port: fixed).
-const loopArmProjectBranch = "Project coordination first (CRW-1084): a request to coordinate a Linear project belongs to $crw:crw-run, goal mode where a native goal for the 자식 was asked for. The 자식 (project session) creates no implementation goalplan or FSM and runs none of steps 1-5 for itself. Only a session that is a dispatched task, or an explicit request to implement a task in this session, continues below.\n"
+const loopArmProjectBranch = "Project coordination first (CRW-1084): a request to coordinate a Linear project belongs to $crw:crw-run in goal mode when a native goal for the 자식 was asked for. The 자식 (project session) creates no implementation goalplan or FSM and runs none of steps 1-5 for itself. Continue below only for a dispatched task session or an explicit request to implement a task in this session.\n"
 
 const loopArmBefore = "[crw: LOOP — orchestrate arming mandate (ORCH-MANDATE-01)]\n" +
 	"Scope first: explicit interview-only, plan-only, HITL, read-only, no-goal, no-FSM, no-tests and no-delegation limits override the bare crw-loop default.\n" +
@@ -144,7 +144,7 @@ const loopScopeParentLine = "This session is registered as a 자식 (project ses
 const loopScopeBefore = "[crw: LOOP — scope choice (ORCH-MANDATE-01)]\n" +
 	"This request names a project or a coordination. Settle the scope before any loop step; this pointer itself starts no goal, goalplan or FSM.\n"
 
-const loopScopeAfter = "- Coordinating a Linear project (independent children, parallel delivery, verification): $crw:crw-run, which creates or reuses a native goal for the 자식 only where one was asked for and follows its goal-mode lifecycle. The 자식 (project session) never follows the crw-loop or crw-pabcd procedure: it creates no implementation goalplan or FSM and enters no PABCD phase for itself, and its children run crw-loop.\n" +
+const loopScopeAfter = "- Coordinating a Linear project (independent `child` sessions, parallel delivery, verification): $crw:crw-run, which creates or reuses a native goal for the 자식 only where one was asked for and follows its goal-mode lifecycle. The 자식 (project session) never follows the crw-loop or crw-pabcd procedure: it creates no implementation goalplan or FSM and enters no PABCD phase for itself, and its `child` sessions run crw-loop.\n" +
 	"- Implementing one task in THIS session, when the user says so explicitly (or this session is a dispatched task that owns its goalplan): $crw:crw-loop and $crw:crw-pabcd. Say which task, and the arming steps come with that request.\n" +
 	"- Unclear: ask once, or take the smaller scope. A project link or the word project is not a role and does not make this session a 자식.\n" +
 	"Explicit interview-only, plan-only, HITL, read-only, no-goal, no-FSM, no-tests and no-delegation limits still win. A mention or quoted example alone is not authorization."

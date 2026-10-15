@@ -76,7 +76,7 @@ func (r RelaySender) SendSupervisor(ctx context.Context, s SupervisorSend) (Send
 		if r.Fallback != nil {
 			return r.Fallback.SendSupervisor(ctx, s)
 		}
-		return SendResult{}, fmt.Errorf("report: report %s names no kind, run and project the 부모 channel stages it under", s.ReportID)
+		return SendResult{}, fmt.Errorf("report: report %s names no kind, run, or project for the 부모 channel to stage it under", s.ReportID)
 	}
 	summary := strings.TrimSpace(s.Subject)
 	if summary == "" {
