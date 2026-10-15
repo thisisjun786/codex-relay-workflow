@@ -734,7 +734,7 @@ digest, so the engine checks each criterion's red-first and mutation-red lines a
 holds the round before any pass (`crosscheck_receipt_missing`, `crosscheck_receipt_unverified`, `crosscheck_receipt_not_copied`,
 `crosscheck_receipt_mismatch`, the row naming the node). The prompt carries refs, never diff bytes: one over `CrosscheckPromptLimit`
 (120 KiB, since the engine takes it as one command-line word) is not sent (`crosscheck_prompt_too_large`). The op serves round 1 only: a
-prior verdict, or another round, is refused `crosscheck_prior_invalid`.
+prior verdict, or another round (an explicit 0 included; a round not given is 1), is refused `crosscheck_prior_invalid`.
 
 **The run directory and the checkouts.** Every file the crosscheck writes lies under the run's directory (`Deps.LandRoot`,
 `<state>/flow/<run>` in the run process), which must be an absolute path: an empty or relative one fails the round before anything is

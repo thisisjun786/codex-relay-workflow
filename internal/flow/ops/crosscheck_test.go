@@ -1016,6 +1016,8 @@ func TestCrosscheckServesRoundOneOnly(t *testing.T) {
 		opts map[string]any
 	}{
 		{"round 2 with no prior", map[string]any{"round": 2}},
+		{"an explicit round 0", map[string]any{"round": 0}},
+		{"round -1", map[string]any{"round": -1}},
 		{"a prior whose verdict is verified", map[string]any{"round": 2, "prior": prior("M1", "verified")}},
 		{"a prior of another milestone", map[string]any{"round": 2, "prior": prior("M2", "needs_changes")}},
 		{"round 1 with a prior", map[string]any{"round": 1, "prior": prior("M1", "needs_changes")}},
@@ -1028,6 +1030,25 @@ func TestCrosscheckServesRoundOneOnly(t *testing.T) {
 			}
 			if len(w.checker.requests()) != 0 || w.checkout.count() != 0 {
 				t.Error("a pass ran or a checkout was made")
+			}
+		})
+	}
+	// a round that is not given (absent, or null) is round 1
+	for name, given := range map[string]bool{"an absent round": false, "a null round": true} {
+		t.Run(name, func(t *testing.T) {
+			w := newCCWorld(t)
+			o := ccOpts(nil)
+			delete(o, "round")
+			if given {
+				o["round"] = nil
+			}
+			raw := w.must(NameCrosscheck, "M1", w.gate(ccHead), o)
+			var out CrosscheckOutcome
+			if err := json.Unmarshal(raw, &out); err != nil {
+				t.Fatal(err)
+			}
+			if out.State != CrosscheckStateVerdict || out.Verdict == nil || out.Verdict.Round != 1 {
+				t.Errorf("outcome %+v", out)
 			}
 		})
 	}

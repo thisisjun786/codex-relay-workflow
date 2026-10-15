@@ -100,9 +100,10 @@ func (e *CrosscheckCheckoutError) Error() string {
 	return fmt.Sprintf("%s: %s: %s", e.Reason, e.Dir, e.Detail)
 }
 
-// CrosscheckOpts are the options of crw.crosscheck. Round 0 is round 1.
+// CrosscheckOpts are the options of crw.crosscheck. A round that is not given (absent or null) is round 1; an explicit round, 0
+// included, is that round.
 type CrosscheckOpts struct {
-	Round   int             `json:"round"`
+	Round   *int            `json:"round"`
 	Prior   json.RawMessage `json:"prior"`
 	Authors json.RawMessage `json:"authors"`
 	Prompts struct {
@@ -260,9 +261,9 @@ func (o *crosscheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.Op
 	if m.Plan != "" {
 		plan = m.Plan
 	}
-	round := opts.Round
-	if round == 0 {
-		round = 1
+	round := 1
+	if opts.Round != nil {
+		round = *opts.Round
 	}
 	data := map[string]any{"milestone": ms, "plan": plan, "head": gate.Head, "round": round, "evidence_round": opts.EvidenceRound}
 	finish := func(out CrosscheckOutcome) (engine.OpResult, error) {
