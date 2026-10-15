@@ -2,6 +2,7 @@ package report
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -306,8 +307,9 @@ func textOr(v any, fallback string) string {
 }
 
 // digestOfRows is the digest of what the run came to: its completed operations and calls and the status, and the outcome when the
-// finished row carries one (its state, reason and lanes: a resume that ends with another outcome is told again). With no outcome the
-// input is the one before CRW-1487, so the keys of the notices told before hold.
+// finished row carries one, as one outcome= member holding the outcome's JSON (every member by its name: the state, reason, source,
+// escalation, milestone, run state and lanes), so a resume that ends with an outcome that differs in any of them is told again. With
+// no outcome the input is the one before CRW-1487, so the keys of the notices told before hold.
 func digestOfRows(events []engine.Event, status string, outcome *engine.Outcome) string {
 	var parts []string
 	for _, ev := range events {
@@ -317,8 +319,9 @@ func digestOfRows(events []engine.Event, status string, outcome *engine.Outcome)
 	}
 	parts = append(parts, "status="+status)
 	if outcome != nil {
-		parts = append(parts, "state="+outcome.State, "reason="+outcome.Reason)
-		parts = append(parts, laneTexts(outcome)...)
+		// an Outcome is strings, lanes of strings and a count: it always encodes, its members in their declared order
+		b, _ := json.Marshal(outcome)
+		parts = append(parts, "outcome="+string(b))
 	}
 	return shortHash(parts...)
 }

@@ -657,6 +657,8 @@ control socket, and prints the result of each acceptance. It exits 0 when every 
 `unobserved`, and 2 for a command line, a store or a run it cannot use. It appends its result to the journal as a `crw.audit` row with a
 call id of its own (`audit_...`), unless `--no-record` is given or the run has not ended: the journal has no `finished` or `run/paused` row
 after its last `started` row (a run that is still writing owns its journal, and so does a resumed process after an earlier process's end).
+The row is appended under the run lock, taken without waiting after the host reads, on the journal opened again under it, where the
+end is read again: while a process holds the run (one that wrote its end row and still reconciles what goes up) nothing is recorded.
 
 **The scenario harness** (`internal/flow/scenario`) runs this script on the engine over the fake App Server host, a temporary relay
 store (the journal and the decision rows), a temporary git repository with an integration branch, a scripted model, a fake relay and
@@ -758,8 +760,10 @@ appends under the run lock: `ask` (the question's id), `node`, `run`, `revision`
 `authority`, `authority_ref`); `crw.decide` reads `ask` and `node`. A run cancelled while no process held it ends with a `finished` row
 of error kind `cancelled` written by `crw flow cancel`. The `finished` row of a completed run whose script returned an object with a
 string `state` carries `outcome`: its `state`, `reason`, `source`, `escalation` and `milestone` (each one line, at most 120 runes) and
-`lanes`, the lanes of its `lanes` array that did not land (`node`, `state`, `reason`, at most 16, with `lanes_more`); the completion
-notice and `crw flow ps` read the outcome from there ([reporting.md](reporting.md)). The state of a run (`running`, `paused`, `dead`, `held`, `completed`,
+`lanes`, the lanes of its `lanes` array that did not land (`node`, `state`, `reason`, at most 16, with `lanes_more`). A value whose
+`milestone` member is itself an object with a string `state` (a night batch returns `{state: closed|incomplete, milestone: <the project
+lane's result>, lanes}`) carries the outcome of that object, and its own state as `run_state`, so a night batch tells the milestone's
+`held`, `escalated` or `stopped` and its reason. The completion notice and `crw flow ps` read the outcome from there ([reporting.md](reporting.md)). The state of a run (`running`, `paused`, `dead`, `held`, `completed`,
 `blocked`, `cancelled`, `failed`) is not a row: it is read from the run lock, the last `started`, `finished` and `run/paused` rows (a
 run no process holds whose last process ended with `run/paused` is `paused`, not `dead`), the calls' rows
 (`internal/flow/callstate`), the questions no `decision_applied` row has answered and, for `blocked`, the lane's own rows. A run meant

@@ -179,6 +179,43 @@ func TestRunFinishedTellsTheMilestoneState(t *testing.T) {
 	}
 }
 
+// The key of a completion notice tells apart every outcome it could tell (CRW-1487): two outcomes that differ in any member (the
+// escalation, the source, the milestone, the run state, a lane, the lanes beyond the cap) have two keys, so a resume that ends with an
+// outcome that differs only there is told again; no outcome keeps the key of the rows and the status alone.
+func TestCompletionKeyTellsEveryOutcomeMemberApart(t *testing.T) {
+	events := []engine.Event{{RunID: testRun, Kind: engine.KindCall, Event: engine.EvCompleted, CallID: "c1"}}
+	base := engine.Outcome{State: "escalated", Reason: "blocked_scope", Source: "lane", Escalation: "esc-1", Milestone: "M1", RunState: "incomplete",
+		Lanes: []engine.OutcomeLane{{Node: "n1", State: "escalated", Reason: "blocked_scope"}}}
+	variants := map[string]func(o *engine.Outcome){
+		"escalation": func(o *engine.Outcome) { o.Escalation = "esc-2" },
+		"source":     func(o *engine.Outcome) { o.Source = "design_audit" },
+		"milestone":  func(o *engine.Outcome) { o.Milestone = "M2" },
+		"run state":  func(o *engine.Outcome) { o.RunState = "closed" },
+		"lanes more": func(o *engine.Outcome) { o.LanesMore = 1 },
+		"lane": func(o *engine.Outcome) {
+			o.Lanes = []engine.OutcomeLane{{Node: "n1", State: "escalated", Reason: "blocked"}}
+		},
+		// a member's value that reads as another member's: the members are named, so they do not run together
+		"reason that reads as a source": func(o *engine.Outcome) { o.Reason, o.Source = "blocked_scope\x00source=lane", "" },
+	}
+	key := digestOfRows(events, "completed", &base)
+	for name, change := range variants {
+		o := base
+		o.Lanes = append([]engine.OutcomeLane(nil), base.Lanes...)
+		change(&o)
+		if got := digestOfRows(events, "completed", &o); got == key {
+			t.Errorf("an outcome that differs in %s keeps the key %s", name, key)
+		}
+	}
+	same := base
+	if digestOfRows(events, "completed", &same) != key {
+		t.Error("the same outcome has another key")
+	}
+	if got, old := digestOfRows(events, "completed", nil), shortHash("c1", "status=completed"); got != old {
+		t.Errorf("the key with no outcome moved: %s, was %s", got, old)
+	}
+}
+
 // The completion notice of a process tells only the outcome of its own finished row (CRW-1487): a finished row of an older process,
 // before the last started row, is not this process's end, so a finish told with no finished row after the last start carries no
 // outcome and keeps the old text.

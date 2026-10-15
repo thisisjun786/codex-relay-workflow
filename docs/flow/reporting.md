@@ -88,8 +88,9 @@ calls) goes the same way when the run finishes (`flow_completion`), as a `comple
 run, status and digest of calls, as when a resume changes nothing) is not sent again. When the run's `finished` row carries an outcome
 (the milestone state the script returned, [script.md](script.md)), the notice says that state instead of the engine status:
 `[crw flow] run finished run=R workflow=W state=<state>[ reason=<reason>][ escalation=<id>][ lanes=<node>:<state>/<reason>,...] digest=D`,
-with the lanes that did not land, so an escalated, incomplete or held milestone is never told `status=completed`; the state, the reason
-and the lanes are part of the digest too, so a resume that ends with another outcome is told again. A run with no outcome keeps the
+with the lanes that did not land, so an escalated, incomplete or held milestone is never told `status=completed`; the whole outcome
+(every member by its name) is part of the digest too, so a resume that ends with an outcome that differs in any member (an escalation
+id, the source, the milestone) is told again. A run with no outcome keeps the
 text `[crw flow] run finished run=R workflow=W status=<status> digest=D` and its digest. A run the operator paused (`crw flow pause`)
 ends with a `run/paused` row and no `finished` row: nothing is told finished, the summary and the escalations are reconciled once more,
 and the completion is told when a resume finishes the run.

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -204,5 +205,72 @@ func TestRunSurfaceServesAudit(t *testing.T) {
 	errOut.Reset()
 	if code := RunWith(context.Background(), &Deps{}, []string{"audit", "--run", "run-1", "--no-record"}, strings.NewReader(""), &out, &errOut); code != 1 || !strings.Contains(out.String(), "mismatch") {
 		t.Errorf("RunWith audit: exit %d, stdout %q, stderr %q", code, out.String(), errOut.String())
+	}
+}
+
+// The binary's environment records under the run lock (AuditSetup.Record, CRW-1487): the row goes to the journal opened again under the
+// lock, never to the one the audit read before it; the end is read again from that journal, so a run a process started again since
+// records nothing; a lock a process holds records nothing; and the journal is closed (the row committed) before the lock is released.
+func TestAuditRecordsUnderTheRunLock(t *testing.T) {
+	fixedClock(t)
+	cases := []struct {
+		name      string
+		ended     bool
+		err       error
+		recorded  bool
+		why       string
+		releasing int
+	}{
+		{"the end read again under the lock", true, nil, true, "", 1},
+		{"a run started again since the audit read it", false, nil, false, "the run has not finished", 1},
+		{"a process holds the run", false, ErrRunLive, false, "a process holds the run", 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			read := acceptedWithNoReview(true)
+			fresh := acceptedWithNoReview(true)
+			readRows, freshRows := len(read.Events()), len(fresh.Events())
+			var order []string
+			prev := AuditEnv
+			AuditEnv = func(_ context.Context, req AuditRequest) (AuditSetup, error) {
+				return AuditSetup{RunID: "run-1", Journal: read, Finished: true, Record: func() (engine.Journal, bool, func() error, error) {
+					order = append(order, "lock")
+					if c.err != nil {
+						return nil, false, nil, c.err
+					}
+					return fresh, c.ended, func() error {
+						order = append(order, "release:"+fmt.Sprint(len(fresh.Events())-freshRows))
+						return nil
+					}, nil
+				}}, nil
+			}
+			t.Cleanup(func() { AuditEnv = prev })
+			code, out, errOut := auditCmd("--run", "run-1", "--json")
+			var rep struct {
+				Recorded bool   `json:"recorded"`
+				Why      string `json:"not_recorded_because"`
+			}
+			_ = json.Unmarshal([]byte(out), &rep)
+			if code != 1 || rep.Recorded != c.recorded || !strings.Contains(rep.Why, c.why) {
+				t.Fatalf("exit %d, %+v, stderr %q", code, rep, errOut)
+			}
+			if len(read.Events()) != readRows {
+				t.Errorf("the row went to the journal read before the lock")
+			}
+			wantFresh := 0
+			if c.recorded {
+				wantFresh = 1
+			}
+			if got := len(fresh.Events()) - freshRows; got != wantFresh {
+				t.Errorf("%d rows appended under the lock, want %d", got, wantFresh)
+			}
+			want := []string{"lock"}
+			if c.releasing == 1 {
+				want = append(want, "release:"+fmt.Sprint(wantFresh))
+			}
+			if strings.Join(order, ",") != strings.Join(want, ",") {
+				t.Errorf("order %v, want %v", order, want)
+			}
+		})
 	}
 }

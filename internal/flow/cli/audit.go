@@ -43,7 +43,13 @@ type AuditSetup struct {
 	// Finished is whether the journal holds the end of the run: only then does the command append a row, because a run that is
 	// still writing owns its journal.
 	Finished bool
-	Close    func() error
+	// Record, when set, is how the command appends its row (the binary's): it takes the run lock without waiting and opens the journal
+	// again under it, so the end is read again from the rows stored by then and the row takes the number after them. ended says whether
+	// that journal holds the end of the run; release closes that journal (it commits the row) and then releases the lock. An error is
+	// a lock a process holds (ErrRunLive) or a journal that could not be opened, and nothing is appended. The host reads come before it,
+	// outside the lock. Without Record the row goes to Journal when Finished (a test's environment).
+	Record func() (j engine.Journal, ended bool, release func() error, err error)
+	Close  func() error
 }
 
 // AuditEnv opens the journal of a run and the host it ran on. The binary installs it (OpenAuditStore); a build that installs nothing cannot
@@ -56,7 +62,7 @@ var AuditNow = time.Now
 // RunAudit serves `crw flow audit`. It prints the result of each acceptance - ok, mismatch or unobserved - and exits 0 when every
 // acceptance audited is ok, 1 when one is a mismatch or is unobserved (unobserved is not a pass), and 2 for a command line, a
 // store or a run it cannot use. The result is appended to the journal of the run as a crw.audit row (kind audit) unless
-// --no-record is given or the run has not finished.
+// --no-record is given, the run has not finished, or a process holds its run lock (AuditSetup.Record).
 func RunAudit(ctx context.Context, args []string, stdout, stderr io.Writer) (code int) {
 	if len(args) == 0 || args[0] != "audit" {
 		fmt.Fprintln(stderr, auditUsage)
@@ -130,12 +136,30 @@ func RunAudit(ctx context.Context, args []string, stdout, stderr io.Writer) (cod
 		why = RefusedLegacyRun + ": " + engine.LegacyIssueChild(events, setup.RunID)
 	case !setup.Finished:
 		why = "the run has not finished: it owns its journal"
+	case setup.Record != nil:
+		// under the run lock, on the journal as it is stored now: a process that wrote the end row may still be appending (CRW-1487)
+		j, ended, release, err := setup.Record()
+		switch {
+		case errors.Is(err, ErrRunLive):
+			why = "a process holds the run: it owns its journal"
+		case err != nil:
+			fmt.Fprintf(stderr, "crw flow audit: error: the result could not be stored: %v\n", err)
+			return 2
+		case !ended:
+			_ = release()
+			why = "the run has not finished: it owns its journal"
+		default:
+			stored := appendAudit(j, setup.RunID, *milestone, results)
+			if err := errors.Join(stored, release()); err != nil {
+				fmt.Fprintf(stderr, "crw flow audit: error: the result could not be stored: %v\n", err)
+				return 2
+			}
+			recorded = true
+		}
 	default:
-		setup.Journal.Append(engine.Event{RunID: setup.RunID, Kind: engine.KindCall, CallID: rowCallID(setup.RunID, results), Path: "audit", Op: audit.Op, Label: audit.Op,
-			Event: engine.EvCompleted, Data: audit.RowData(*milestone, results)})
 		recorded = true
-		if f, ok := setup.Journal.(engine.FailingJournal); ok && f.Err() != nil {
-			fmt.Fprintf(stderr, "crw flow audit: error: the result could not be stored: %v\n", f.Err())
+		if err := appendAudit(setup.Journal, setup.RunID, *milestone, results); err != nil {
+			fmt.Fprintf(stderr, "crw flow audit: error: the result could not be stored: %v\n", err)
 			return 2
 		}
 	}
@@ -199,4 +223,15 @@ func printText(w io.Writer, run string, results []audit.Result, sum audit.Summar
 	} else {
 		fmt.Fprintf(w, "not recorded: %s\n", why)
 	}
+}
+
+// appendAudit appends the result of the audit to the journal of the run as one crw.audit row; the error is the journal's, when it could
+// not store it.
+func appendAudit(j engine.Journal, run, milestone string, results []audit.Result) error {
+	j.Append(engine.Event{RunID: run, Kind: engine.KindCall, CallID: rowCallID(run, results), Path: "audit", Op: audit.Op, Label: audit.Op,
+		Event: engine.EvCompleted, Data: audit.RowData(milestone, results)})
+	if f, ok := j.(engine.FailingJournal); ok && f.Err() != nil {
+		return f.Err()
+	}
+	return nil
 }
