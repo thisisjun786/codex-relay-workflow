@@ -253,10 +253,12 @@ func (r *Runner) pushedRun(ctx context.Context, e Entry) (*Summary, error) {
 	return found, nil
 }
 
-// markerInBranch says whether head, the head a pushing marker names, is in the remote branch. A commit the checkout does not have
-// was never pushed (false): "git rev-parse -q --verify head^{commit}" exits 1 for an absent object. A git that fails otherwise (it
-// cannot start, the context ended, or the ancestor check or the probe exits with a status other than the ones above, 128 among
-// them) is an error: a repository that cannot answer is not a commit that was never pushed.
+// markerInBranch says whether head, the head a pushing marker names, is in the remote branch. When the ancestor check cannot answer
+// (it exits with a status other than 0 and 1, 128 among them), "git cat-file -e head" asks whether the checkout has the object at
+// all (the bare sha: a peeled "head^{commit}" would read the object): status 1 means the checkout lacks the commit, which was never
+// pushed (false); status 0 means the object is there, so the failed ancestor check is a repository or object error, an error. Any
+// other status, and a git that cannot start or whose context ended, is an error too: a repository that cannot answer is not a
+// commit that was never pushed. Only exit codes are read, never stderr, so GIT_TRACE cannot change the answer.
 func (r *Runner) markerInBranch(ctx context.Context, head string) (bool, error) {
 	c := r.Cfg
 	rc, err := r.git(ctx, c.Checkout, nil, "merge-base", "--is-ancestor", head, c.remoteRef())
@@ -269,7 +271,7 @@ func (r *Runner) markerInBranch(ctx context.Context, head string) (bool, error) 
 	case 1:
 		return false, nil
 	}
-	have, err := r.git(ctx, c.Checkout, nil, "rev-parse", "-q", "--verify", head+"^{commit}")
+	have, err := r.git(ctx, c.Checkout, nil, "cat-file", "-e", head)
 	if err != nil {
 		return false, err
 	}
@@ -279,7 +281,7 @@ func (r *Runner) markerInBranch(ctx context.Context, head string) (bool, error) 
 	case 1:
 		return false, nil
 	}
-	return false, fmt.Errorf("git merge-base --is-ancestor exited %d and git rev-parse --verify exited %d", rc, have)
+	return false, fmt.Errorf("git merge-base --is-ancestor exited %d and git cat-file -e exited %d", rc, have)
 }
 
 // recoverLanding writes the one landing record of a pull request entry whose head is in the branch with no record (result
