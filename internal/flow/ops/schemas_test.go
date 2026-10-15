@@ -198,8 +198,8 @@ func TestRuleIDsHaveOneSource(t *testing.T) {
 }
 
 // A DESIGN carries dispositions: null in the first DESIGN and a re-plan answer, and in a design-fix answer one entry per finding
-// id of the fix packet, each folded or rebutted with its reason. The key is required (strict mode), and the disposition is a
-// closed set.
+// id of the fix packet, each folded or rebutted with its reason. The key is required (strict mode) of a fresh answer, a DESIGN
+// recorded before the key existed is read with it null, and the disposition is a closed set.
 func TestDesignDispositionsAreNullableAndClosed(t *testing.T) {
 	design := func(dispositions string) []byte {
 		head := `{"decisions":[],"issues":[{"issue":"CRW-1","node":"n1","size_fit":"executor","size_reason":"","issue_size_decision":"ok",` +
@@ -250,7 +250,14 @@ func TestDesignDispositionsAreNullableAndClosed(t *testing.T) {
 	if _, err := DecodeDesign(design(`[{"finding":"r1.1","disposition":"folded"}]`)); err == nil {
 		t.Error("a disposition without its reason is accepted")
 	}
-	if _, err := DecodeDesign(design(``)); err == nil {
-		t.Error("a DESIGN without the dispositions key is accepted")
+	// a fresh answer without the key breaks the strict schema; a DESIGN an earlier binary recorded without it is read as null
+	if err := Validate(SchemaDesign, design(``)); err == nil {
+		t.Error("the schema accepts a DESIGN without the dispositions key")
+	}
+	if d, err := DecodeDesign(design(``)); err != nil || d.Dispositions != nil {
+		t.Errorf("a DESIGN recorded without the dispositions key: %+v %v, want it read with dispositions null", d, err)
+	}
+	if _, err := DecodeDesign([]byte(`{"decisions":[],"issues":[],"open_questions":[],"risks":[],"dispositions":"none"}`)); err == nil {
+		t.Error("a DESIGN whose dispositions is no list and not null is accepted")
 	}
 }

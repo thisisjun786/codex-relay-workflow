@@ -287,6 +287,90 @@ func TestDesignAuditStillRefusesAnArchitectFamilyCritic(t *testing.T) {
 	}
 }
 
+// A DESIGN an earlier binary journaled has no dispositions member (it came with CRW-1452), in the architect's output and in the
+// design ledger. A run recorded then resumes on this binary and goes on: the replayed audit takes the candidate, the release of a
+// node reads the ledger's DESIGN (its plan and the admission regions of the others), the lane's issuePlan and the final gate's
+// decisions read it too, each with the missing member read as null. A fresh answer of the architect is still held to the strict
+// schema, which requires the member.
+func TestADesignRecordedWithoutDispositionsResumesAndReleases(t *testing.T) {
+	old := func(d Design) json.RawMessage {
+		b, _ := json.Marshal(d)
+		var m map[string]any
+		_ = json.Unmarshal(b, &m)
+		delete(m, "dispositions")
+		b, _ = json.Marshal(m)
+		return b
+	}
+	design := old(designOf("A", "B"))
+	if strings.Contains(string(design), "dispositions") {
+		t.Fatalf("the earlier DESIGN still names dispositions: %s", design)
+	}
+	if err := Validate(SchemaDesign, design); err == nil {
+		t.Fatal("the strict schema a fresh answer is held to accepts a DESIGN without dispositions")
+	}
+	d, err := DecodeDesign(design)
+	if err != nil {
+		t.Fatalf("a DESIGN recorded without dispositions does not decode: %v", err)
+	}
+	if d.Dispositions != nil || len(d.Issues) != 2 {
+		t.Errorf("decoded %+v, want two issues and dispositions null", d)
+	}
+
+	// the first process: the milestone, the audit of the earlier DESIGN and its revision r0 as that binary wrote them, and node A
+	// released; then it stops
+	w := newWorld(t)
+	w.must("milestone", "plan-1", "M")
+	cand := Candidate{Design: design, Answers: json.RawMessage(`[]`)}
+	var audit AuditResult
+	out, err := w.op("designAudit", "M", 1, cand, call("c_arch", "completed", "claude-x", nil),
+		call("c_aud", "completed", "gpt-y", map[string]any{"verdict": "approved", "findings": []any{}, "summary": "ok"}))
+	if err != nil {
+		t.Fatalf("the replayed audit of an earlier DESIGN: %v", err)
+	}
+	_ = json.Unmarshal(out, &audit)
+	if audit.State != AuditApproved {
+		t.Fatalf("audit %+v", audit)
+	}
+	var anyDesign any
+	_ = json.Unmarshal(design, &anyDesign)
+	w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "c_ledger", Op: OpDesignLedger, Event: engine.EvCompleted,
+		Data: map[string]any{"milestone": "M", "revision": FirstRevision, "digest": cand.digest(), "design": anyDesign, "answers": []any{}}})
+	var rel ReleaseOutcome
+	_ = json.Unmarshal(w.must("release", "plan-1", "A", "M"), &rel)
+	if !rel.Released || rel.Revision != FirstRevision {
+		t.Fatalf("release of A before the stop: %+v", rel)
+	}
+
+	// the resumed process: a new lane over the same journal releases B and builds the packets from the earlier DESIGN
+	resumed := &world{t: t, j: w.j, relay: &stubRelay{tip: w.relay.tip}, calls: 100}
+	resumed.lane = NewLane(Deps{RunID: "run-1", Journal: resumed.j, Relay: resumed.relay, Decisions: &MemoryDecisions{}, Actor: "parent", Now: func() time.Time { return time.Date(2026, 10, 12, 10, 0, 0, 0, time.UTC) }})
+	out, err = resumed.op("release", "plan-1", "B", "M")
+	if err != nil {
+		t.Fatalf("release of B after the resume: %v", err)
+	}
+	_ = json.Unmarshal(out, &rel)
+	if !rel.Released || rel.Revision != FirstRevision || rel.DesignDigest != cand.digest() {
+		t.Errorf("release of B after the resume: %+v", rel)
+	}
+	if len(resumed.relay.releases) != 1 || resumed.relay.releases[0].Node != "B" {
+		t.Errorf("the relay was asked %+v", resumed.relay.releases)
+	}
+	for _, node := range []string{"A", "B"} {
+		var plan IssuePlan
+		out, err := resumed.op("issuePlan", node)
+		if err != nil {
+			t.Fatalf("issuePlan %s after the resume: %v", node, err)
+		}
+		_ = json.Unmarshal(out, &plan)
+		if plan.Node != node || plan.Approach != "approach "+node || len(plan.Decisions) != 1 {
+			t.Errorf("issuePlan %s: %+v", node, plan)
+		}
+	}
+	if got := gateDecisions(rows(resumed.j.Events()), "M"); len(got) != 1 || got[0].ID != "D1" || !slices.Equal(got[0].Nodes, []string{"A", "B"}) {
+		t.Errorf("the final gate's decisions of the earlier DESIGN: %+v", got)
+	}
+}
+
 // A lane builds its packet from the revision its node was released under: issuePlan reads the release row and the ledger row of
 // that revision, whatever the ledger has grown since.
 func TestIssuePlanReadsTheReleaseRevision(t *testing.T) {

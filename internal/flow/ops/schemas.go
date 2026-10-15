@@ -409,8 +409,14 @@ type Design struct {
 
 // DecodeDesign reads a DESIGN. Two issues of one DESIGN do not share a node, and an issue that is not an executor's names why
 // (size_reason) in the closed set of the size rules the policy lists.
+//
+// It reads the DESIGNs the run recorded: the candidate of crw.designAudit, the DESIGN crw.designLedger records, and the ledger's DESIGN
+// the release of a node (its plan and the admission regions of the other nodes), crw.issuePlan and the final gate's decisions read.
+// A DESIGN an earlier binary recorded has no dispositions member (CRW-1452 added it): it is read with dispositions null, and the
+// bytes the run recorded, and so every digest made of them, stay as they are. A fresh answer of the architect is held to the
+// schema, which requires the member, by the engine before any operation reads it.
 func DecodeDesign(raw []byte) (Design, error) {
-	d, err := decode[Design](SchemaDesign, raw)
+	d, err := decode[Design](SchemaDesign, withNullDispositions(raw))
 	if err != nil {
 		return d, err
 	}
@@ -425,6 +431,24 @@ func DecodeDesign(raw []byte) (Design, error) {
 		}
 	}
 	return d, nil
+}
+
+// withNullDispositions is a DESIGN recorded without the dispositions member with that member null; any other value is returned as it
+// is, so the schema judges it.
+func withNullDispositions(raw []byte) []byte {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil || m == nil {
+		return raw
+	}
+	if _, ok := m["dispositions"]; ok {
+		return raw
+	}
+	m["dispositions"] = json.RawMessage("null")
+	out, err := json.Marshal(m)
+	if err != nil {
+		return raw
+	}
+	return out
 }
 
 // AuditFinding is one finding of a design audit.
