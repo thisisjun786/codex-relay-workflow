@@ -557,7 +557,9 @@ call and fixes nothing. Its steps:
   author named and a path outside the node's regions are warnings of the release row (`land_author_unobserved`, `land_authors_unnamed`,
   `land_out_of_scope`). A lost epoch ends the run `stopped` with `epoch_lost`.
 - The gate-only lane fixes nothing: the child changes the head and lands it again, in a new run. The fix rounds (CRW-1490):
-  `args.fix_round` (0 when not given) is the round of the child's fix this land is. A check that needs changes at a round under
+  `args.fix_round` (0 when not given) is the round of the child's fix this land is, a non-negative integer; any other value (a string,
+  a negative or fractional number, null) ends the run `refused` with `fix_round_invalid` at its start, before the milestone is read or
+  the node released. A check that needs changes at a round under
   `LAND_FIX_ROUNDS` (2) ends `land_review_needs_changes` with no ask (the child acts), the round and the carried ids on the escalation
   and in the run's value, and the value hands the child a fix packet (`fix`, `landFixPacket`): the findings by id with file, line and
   text, the range as a `git diff` command, the node's criteria, and the land of the fix, a new `crw flow start land-head` run of the

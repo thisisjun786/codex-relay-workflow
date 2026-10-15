@@ -596,3 +596,32 @@ func TestLandHeadEscalatesWhenTheFixRoundsPassTheCap(t *testing.T) {
 		t.Errorf("the land gave its release back %d times, want 1", n)
 	}
 }
+
+// TestLandHeadRefusesAFixRoundThatIsNotANonNegativeInteger (CRW-1490): args.fix_round is the round of the child's fix, 0 when not
+// given and otherwise a non-negative integer. A land-head run given the string "1", -1, 1.5 or null refuses at its start
+// (fix_round_invalid): it reads no milestone, releases nothing, runs no gate and hands no fix packet, so a fix round that is not a
+// count cannot change the cap of the fix rounds.
+func TestLandHeadRefusesAFixRoundThatIsNotANonNegativeInteger(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+	l.needsChanges("A-1")
+	l.outsideHead("A-1", "outside-a1")
+	author := l.authorThread("claude-fake-sonnet", "high")
+	for _, round := range []any{"1", -1, 1.5, nil} {
+		raw, _ := json.Marshal(map[string]any{"plan": l.plan, "milestone": "M1", "issue": "A-1", "head": "outside-a1", "authors": []string{author}, "fix_round": round})
+		spec := l.start("start", "land-head", "--args", string(raw), "--handoff", l.file)
+		res := l.runToEnd(spec.RunID)
+		var v struct{ State, Reason, Detail, Fix string }
+		if res.Status != engine.RunCompleted || json.Unmarshal(res.Value, &v) != nil || v.State != "refused" || v.Reason != "fix_round_invalid" || v.Fix != "" {
+			t.Errorf("fix_round %#v: %s %s %s\n%s", round, res.Status, res.ErrorKind, res.Error, res.Value)
+			continue
+		}
+		for _, e := range l.events() {
+			if e.Kind == engine.KindCall && strings.HasPrefix(e.Op, "crw.") || e.Kind == engine.KindFlow && e.Event == engine.EvEscalation {
+				t.Errorf("fix_round %#v: the refused run has the row %s %s %s", round, e.Kind, e.Op, e.Event)
+			}
+		}
+	}
+	if n := l.count("SELECT COUNT(*) FROM dag_agent_closures"); n != 0 {
+		t.Errorf("%d closures after runs that refused at their start", n)
+	}
+}

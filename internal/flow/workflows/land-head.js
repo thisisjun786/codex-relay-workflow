@@ -19,15 +19,19 @@ export const meta = { name: 'land-head', description: 'Land a head made outside 
 // the run). A hold (a verifier the host cannot run now, or a check the tool gave no judgment for its quota or no answer: crw.hold with
 // source unit_check) keeps the release: the run is resumed (crw flow resume), which asks the tool again, or cancelled (crw flow cancel,
 // which gives the release up). Findings of a verified check that block nothing land as premerge defects.
-// The fix rounds (CRW-1490): args.fix_round (0 when not given) is the round of the child's fix this land is. A check that needs changes
-// at a round under LAND_FIX_ROUNDS ends land_review_needs_changes with no ask - the child acts - with the round and the carried ids on
-// the escalation and in the value, and the value hands the child a fix packet (landFixPacket): the findings, the range, the criteria
-// and the land of the fix with fix_round one more. At LAND_FIX_ROUNDS it ends land_fix_rounds with ask land_fix_rounds, a Question for
-// the 부모, and no fix packet.
+// The fix rounds (CRW-1490): args.fix_round (0 when not given) is the round of the child's fix this land is, a non-negative integer:
+// any other value (a string, a negative or fractional number, null) refuses the run at its start, fix_round_invalid, before the
+// milestone is read, the node released or a fix packet made. A check that needs changes at a round under LAND_FIX_ROUNDS ends
+// land_review_needs_changes with no ask - the child acts - with the round and the carried ids on the escalation and in the value, and
+// the value hands the child a fix packet (landFixPacket): the findings, the range, the criteria and the land of the fix with fix_round
+// one more. At LAND_FIX_ROUNDS it ends land_fix_rounds with ask land_fix_rounds, a Question for the 부모, and no fix packet.
 install(crw)
 
 const LAND_FIX_ROUNDS = 2
-const fixRound = args.fix_round || 0
+const fixRound = args.fix_round === undefined ? 0 : args.fix_round
+if (!Number.isInteger(fixRound) || fixRound < 0) {
+  return { state: 'refused', reason: 'fix_round_invalid', detail: 'args.fix_round is ' + JSON.stringify(args.fix_round) + ', not a non-negative integer (the round of the fix, 0 when not given)' }
+}
 
 const EPOCH_LOST = 'epoch_lost'
 const epochLost = (e) => /refused:epoch_lost:/.test((e && e.message) || '')
