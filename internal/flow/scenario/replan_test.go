@@ -2430,3 +2430,53 @@ func TestRF2ArchitectSuffixWorktreesRemovedAfterTerminal(t *testing.T) {
 		gone(t, held, "completed after the hold")
 	})
 }
+
+// A node whose issue the audited DESIGN sized for a split has started: its lane recorded its design row (released false, kind split)
+// and escalated it as size_split. The signal path counts it so, as crw.releasedPlans does: when A's second plan mismatch makes the
+// signal due and B, sized for a split, is the only other node, no node is left to release under another revision, so the signal
+// skips the re-plan (no_unstarted_node) and no critic packet lists B both as unstarted and as released.
+func TestASplitNodeHasStartedForTheSignal(t *testing.T) {
+	l := NewLab(t, NodeSpec{ID: "A", Issue: "CRW-A", Title: "issue A", Regions: []string{"a/"}}, NodeSpec{ID: "B", Issue: "CRW-B", Title: "issue B", Regions: []string{"b/"}})
+	d := l.designFor()
+	for i := range d.Issues {
+		if d.Issues[i].Node == "B" {
+			d.Issues[i].SizeFit, d.Issues[i].SizeReason, d.Issues[i].IssueSizeDecision = "split", "two packages", "over_line"
+		}
+	}
+	l.Design = &d
+	mismatching(l, "A")
+	fixedOnce(l, "A")
+	// B's size_split leaves the milestone incomplete
+	if got := mustRunIncomplete(t, l); got.State != "incomplete" {
+		t.Fatalf("state %q", got.State)
+	}
+	for _, label := range labelsWithPrefix(l, "replan:s") {
+		t.Errorf("the signal re-planned (%s) with no node left to release: calls %v", label, l.Labels())
+	}
+	skipped := false
+	for _, r := range spawnRowsOf(l, "SP-ARCH-2", "skip") {
+		if r.Reason == "no_unstarted_node" {
+			skipped = true
+		}
+	}
+	if !skipped {
+		t.Errorf("no ARCH_2 skip with no_unstarted_node: %+v", l.SpawnRows())
+	}
+	for _, row := range l.Rows("crw.signalBind") {
+		started, _ := row.Data["started"].([]any)
+		unstarted, _ := row.Data["unstarted"].([]any)
+		if !slices.Contains(started, any("B")) || slices.Contains(unstarted, any("B")) {
+			t.Errorf("signal %v: started %v, unstarted %v, want B started", row.Data["k"], started, unstarted)
+		}
+	}
+	for _, label := range labelsWithPrefix(l, "design-audit:replan-") {
+		text := textOfCall(l, callNamed(t, l, label).ID)
+		_, unstarted, _ := strings.Cut(text, "UNSTARTED NODES")
+		unstarted, _, _ = strings.Cut(unstarted, "\n\n")
+		_, released, _ := strings.Cut(text, "RELEASED PLANS")
+		released, _, _ = strings.Cut(released, "\n\n")
+		if strings.Contains(unstarted, "- B (") && strings.Contains(released, "- B (") {
+			t.Errorf("%s lists B as unstarted and as released:\n%s", label, text)
+		}
+	}
+}

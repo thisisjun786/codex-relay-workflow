@@ -58,9 +58,9 @@ func (o *designHeadOp) Proven(ctx context.Context, ev []engine.Event, row engine
 // ---- crw.releasedPlans ----
 
 // releasedPlansOp is crw.releasedPlans(milestone): for each node of the milestone that has started, the issue plan of the ledger
-// revision it started under, as crw.issuePlan gives it to its lane. A node has started when a release of it stands (released to an
-// executor, as the signal path counts it) or when a design row of it stands that found its issue sized for a split or a child: its
-// lane recorded the row (released false, kind split or child) and escalated the node on that plan. The critic of a re-plan reads them
+// revision it started under, as crw.issuePlan gives it to its lane. A node has started as the signal path counts it (startRowOf): a
+// release of it to an executor stands, or a design row of it stands that found its issue sized for a split or a child, which its lane
+// recorded (released false, kind split or child) before it escalated the node on that plan. The critic of a re-plan reads them
 // (RELEASED PLANS): the whole DESIGN keeps each started node's issue as it started, every field.
 type releasedPlansOp struct{ l *Lane }
 
@@ -84,16 +84,10 @@ func (o *releasedPlansOp) Run(_ context.Context, req engine.OpRequest) (engine.O
 	r := rows(req.Journal.Events())
 	nodes, out := []string{}, []ReleasedPlan{}
 	for _, node := range milestoneNodes(r, ms) {
-		kind := "released"
-		rel, ok := releaseRowOf(r, node)
-		if !ok || r.superseded(rel) {
-			// not released to an executor: started all the same when the design row that stands sized it for a split or a child
-			if rel, ok = designRowOf(r, node); !ok || r.superseded(rel) || dataBool(rel, "released") {
-				continue
-			}
-			if kind = dataStr(rel, "kind"); kind != "split" && kind != "child" {
-				continue
-			}
+		// the started predicate of the signal path (startRowOf): a node it counts started is listed, and only such a node
+		rel, kind, ok := startRowOf(r, node)
+		if !ok {
+			continue
 		}
 		revision := dataStr(rel, "revision")
 		led, ok := ledgerOf(r, ms, revision)
