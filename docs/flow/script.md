@@ -799,8 +799,9 @@ times. A crosscheck that does not verify the range keeps the milestone open, and
   (`crw-add-issue`, a plan revision), fixed by a new executor subagent on a branch from the integration tip, landed with
   `crw flow start land-head`, and the verdict and the landed head reported up. The child hands V and the fix packet up to the parent
   (repository session) with `crw flow report-up`; the run makes no executor call for it. The escalation's id is of the run, the call and
-  the head V judged: a resume after the target moved judges the new head, and its `needs_changes` is a new escalation with the new V, the
-  current question of the milestone, while the escalation of the earlier head keeps its V.
+  V's canonical digest: a resume that judges the range again (the target moved, or a proof error ran the gate again at the same head)
+  and gives another V is a new escalation with the new V, the current question of the milestone, told again, while the earlier
+  escalation keeps its V; the same V again is the same escalation.
 - `refused` (`crosscheck_author_undecided`, `crosscheck_no_independent_engine`, `crosscheck_prior_invalid`): `crosscheck_refused`, ask
   `configuration`, a question for the parent.
 - `failed` (`crosscheck_no_run_dir`, `crosscheck_worktree_dirty`, `crosscheck_worktree_moved`, `crosscheck_prompt_too_large`, a pass that

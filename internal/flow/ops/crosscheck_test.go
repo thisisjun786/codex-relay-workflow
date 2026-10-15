@@ -1083,3 +1083,66 @@ func TestMilestoneCloseCarriesTheCrosscheckEvidence(t *testing.T) {
 		t.Errorf("a close with a needs_changes crosscheck: %v", err)
 	}
 }
+
+// TestACrosscheckEscalationIsOneRowForEachVerdict (CRW-1473): crw.escalate run again under the same call (a resume that judges the
+// same head again, as a proof error makes the gate and the crosscheck run again at the same call position) writes a new escalation row
+// when the crosscheck V it carries changed - a new id, so the new V is stored and told - and none when it carries the same V again (a
+// replay), whatever the head. An escalation with no crosscheck keeps the id of its run and call.
+func TestACrosscheckEscalationIsOneRowForEachVerdict(t *testing.T) {
+	w := newWorld(t)
+	v := func(text string) map[string]any {
+		return map[string]any{"verdict": "needs_changes", "milestone": "M1", "head": ccHead, "round": 1,
+			"findings": []any{map[string]any{"id": reviewadapter.FindingID("a.go", text), "severity": "P1", "impact": "core_function", "file": "a.go", "line": 3, "text": text}}}
+	}
+	escalate := func(call string, evidence map[string]any) EscalateOutcome {
+		t.Helper()
+		info := map[string]any{"reason": "crosscheck_pending", "ask": "crosscheck_pending", "call": "c_cc"}
+		if evidence != nil {
+			info["evidence"] = evidence
+		}
+		raw, err := json.Marshal([]any{nil, info})
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, err := w.lane.Ops()[NameEscalate].Run(context.Background(), engine.OpRequest{RunID: "run-1", CallID: call, RequestID: engine.RequestID("run-1", call), Args: raw, Journal: w.j})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var out EscalateOutcome
+		if err := json.Unmarshal(res.Result, &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	rowsOf := func() map[string]map[string]any {
+		out := map[string]map[string]any{}
+		for _, ev := range w.j.Events() {
+			if ev.Kind == engine.KindFlow && ev.Event == engine.EvEscalation {
+				out[dataStr(ev, "escalation_id")] = ev.Data
+			}
+		}
+		return out
+	}
+	v1, v2 := map[string]any{"crosscheck": v("the first verdict")}, map[string]any{"crosscheck": v("a new verdict of the same head")}
+	first := escalate("c_close", v1)
+	second := escalate("c_close", v2)
+	if first.ID == second.ID {
+		t.Fatalf("a new V of the same head under the same call has the id %s of the first", first.ID)
+	}
+	rows := rowsOf()
+	if len(rows) != 2 {
+		t.Fatalf("%d escalation rows, want one for each V", len(rows))
+	}
+	got, _ := rows[second.ID]["evidence"].(map[string]any)
+	if !jsonEqual(t, got, v2) {
+		t.Errorf("the second row's evidence %v, want V2", got)
+	}
+	// the same V again is the same escalation: no new row
+	if again := escalate("c_close", v2); again.ID != second.ID || len(rowsOf()) != 2 {
+		t.Errorf("the replay of V2: id %s (want %s), %d rows", again.ID, second.ID, len(rowsOf()))
+	}
+	// an escalation without a crosscheck keeps the id of its run and call
+	if plain := escalate("c_other", nil); plain.ID != "esc_"+hashParts("run-1", "c_other")[:24] {
+		t.Errorf("an escalation with no crosscheck has the id %s", plain.ID)
+	}
+}
