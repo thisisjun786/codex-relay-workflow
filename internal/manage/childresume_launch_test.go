@@ -240,3 +240,66 @@ func TestResumeUnboundCitingChildReadsTheDeclarationUnderAHomeRelativeState(t *t
 		t.Fatalf("the resume config carries limit %v, want 300000 from the file declared under ~/relay-store", got)
 	}
 }
+
+// CRW-1506 (astra recheck P1): the resolver judges a declaration readable by reading its path as
+// registry.ResolveRolePolicy reads every configured policy value (str.strip()ped, then spelled as
+// pathlib spells it), so a declaration of "/abs/policy.json/" or " /abs/policy.json " is declared
+// and readable, and a daemon launched on that state reads that file. child-resume reads and names the
+// file the resolver read, not the declaration's raw string (which the kernel answers ENOTDIR for, or
+// cannot find), and the same holds for a path that comes from the environment: the unbound child's
+// environment source and a bound child's environment fallback, both read by the gate the same way.
+func TestResumeReadsThePolicyFileAsTheResolverSpellsIt(t *testing.T) {
+	dir := t.TempDir()
+	declared, configured := filepath.Join(dir, "declared.json"), filepath.Join(dir, "configured.json")
+	for path, limit := range map[string]string{declared: "300000", configured: "550000"} {
+		body := `{"roles": {"child": {"model": "m", "reasoningEffort": "xhigh", "autoCompactTokenLimit": ` + limit + `}}}`
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	record := func(path string) string {
+		raw, _ := json.Marshal(map[string]any{"schemaVersion": 1, "path": path, "declaredAt": "2026-10-15T00:00:00Z", "declaredBy": "test"})
+		return string(raw)
+	}
+	boundDeclared := strings.Replace(autoCompactBoundSettings, `"rolePolicy":"declared"`, `"rolePolicyDigest":"`+resumePolicyDigest(t, declared)+`","rolePolicy":"declared"`, 1)
+	for _, tc := range []struct{ name, answer, declaration, env string }{
+		{name: "unbound citing child, declaration with a trailing slash, environment unset", answer: citedUnboundSettings, declaration: record(declared + "/")},
+		{name: "unbound citing child, declaration with surrounding spaces, environment unset", answer: citedUnboundSettings, declaration: record("  " + declared + " \t")},
+		{name: "unbound citing child, no declaration, environment with a trailing slash", answer: citedUnboundSettings, env: declared + "/"},
+		{name: "bound child, no declaration, environment with a trailing slash", answer: boundDeclared, env: " " + declared + "/ "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			host := resumeHost(t, "notLoaded")
+			exe, _ := resumeRelayScript(t, resumeTestAssignment, tc.answer, 0)
+			e, _, _ := resumeEnv(t, exe)
+			t.Setenv(execution.EnvPolicy, tc.env)
+			state := filepath.Join(t.TempDir(), "relay-store")
+			if err := os.Mkdir(state, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if tc.declaration != "" {
+				if err := os.WriteFile(filepath.Join(state, "launch-policy.json"), []byte(tc.declaration), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			cfg := resumeConfig(host, "alpha")
+			cfg.Relay.State = state
+			cfg.Bridge.ExecutionPolicy = configured
+			if _, err := resumeRun(context.Background(), e, cfg, resumeOptions{relationship: "rel-1", message: "m"}); err != nil {
+				t.Fatalf("want a resume with the limit from %s, got %v", declared, err)
+			}
+			requests := resumeHostRequests(host)
+			if len(requests) < 2 || requests[1].Method != "thread/resume" {
+				t.Fatalf("want thread/resume as the second request, got %v", requests)
+			}
+			var resume map[string]any
+			if err := json.Unmarshal(requests[1].Params, &resume); err != nil {
+				t.Fatal(err)
+			}
+			config, _ := resume["config"].(map[string]any)
+			if got := config["model_auto_compact_token_limit"]; got != float64(300000) {
+				t.Fatalf("the resume config carries limit %v, want 300000 from %s (not %s)", got, declared, configured)
+			}
+		})
+	}
+}

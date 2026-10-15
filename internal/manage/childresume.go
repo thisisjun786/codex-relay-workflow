@@ -15,6 +15,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/stateroot"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/service"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/sandboxroot"
@@ -337,7 +338,8 @@ func resumeAutoCompactLimit(ctx context.Context, e *Env, cfg *Config, settings r
 		path = declared
 	}
 	if path == "" {
-		path = strings.TrimSpace(e.Getenv(execution.EnvPolicy))
+		// The file the gate read for this value (registry.PolicyFile, as for the declaration above).
+		path = registry.PolicyFile(e.Getenv(execution.EnvPolicy))
 	}
 	if path == "" {
 		path = strings.TrimSpace(cfg.Bridge.ExecutionPolicy)
@@ -381,7 +383,10 @@ func resumeAutoCompactLimit(ctx context.Context, e *Env, cfg *Config, settings r
 // over the state directory the run's relay commands select and this run's
 // CODEX_THREAD_BRIDGE_EXECUTION_POLICY. It refuses a declaration the environment contradicts, one that
 // cannot be read, and a declared file that cannot be read. It answers "" only when nothing is declared
-// and the environment is unset, and the caller then falls back to manage.bridge.execution_policy.
+// and the environment is unset, and the caller then falls back to manage.bridge.execution_policy. The
+// path it answers is the one the resolver read (registry.PolicyFile of the declared or stated value),
+// never the raw string, which a declaration of "/cfg/policy.json/" or " /cfg/policy.json " spells
+// otherwise.
 func resumeLaunchPolicyPath(ctx context.Context, e *Env, cfg *Config, role string) (string, error) {
 	state, err := e.relayHelperState(ctx, cfg)
 	if err == nil {
@@ -397,6 +402,8 @@ func resumeLaunchPolicyPath(ctx context.Context, e *Env, cfg *Config, role strin
 		return "", &resumeFailure{Reason: resumeSettingsUnavailable, Detail: "the relay state directory whose launch declaration says which execution policy applies could not be resolved: " + err.Error() + "; nothing was sent"}
 	}
 	resolution := service.ResolveLaunchPolicyAt(state, e.Getenv(execution.EnvPolicy))
+	// The resolution's path is the value as declared (or as the environment states it); the resolver
+	// judged it by reading registry.PolicyFile of it, so that is the file read and named from here.
 	path := pyjson.Text(resolution.Get("path"))
 	var why string
 	switch resolution.Get("source") {
@@ -406,11 +413,11 @@ func resumeLaunchPolicyPath(ctx context.Context, e *Env, cfg *Config, role strin
 		why = "the relay service's launch declaration (launch-policy.json in the state directory " + quote.Value(state) + ") cannot be read"
 	case "record":
 		if resolution.Get("state") == "declared" {
-			return path, nil
+			return registry.PolicyFile(path), nil
 		}
 		why = "the execution policy " + quote.Value(path) + " the relay service's launch declaration (launch-policy.json in the state directory " + quote.Value(state) + ") names cannot be read"
 	case "environment":
-		return path, nil
+		return registry.PolicyFile(path), nil
 	default:
 		return "", nil
 	}

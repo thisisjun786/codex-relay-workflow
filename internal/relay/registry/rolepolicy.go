@@ -84,7 +84,7 @@ func ResolveRolePolicy(env map[string]string) RolePolicy {
 			PublicDetail: "execution policy environment is not configured in this process"}
 	}
 	const unreadable = "configured execution policy is unreadable or invalid"
-	source := store.PathlibSpelling(configured)
+	source := PolicyFile(configured)
 	raw, err := execution.ReadFile(source)
 	if err == nil && nestedTooDeep(raw) {
 		return RolePolicy{Detail: configured + " is nested deeper than the execution policy parser can read", PublicDetail: unreadable}
@@ -103,6 +103,20 @@ func ResolveRolePolicy(env map[string]string) RolePolicy {
 	}
 	digest, _ := summary["digest"].(string)
 	return RolePolicy{Declared: true, policy: policy, digest: digest}
+}
+
+// PolicyFile is the file ResolveRolePolicy reads for a configured execution policy value (a
+// CODEX_THREAD_BRIDGE_EXECUTION_POLICY value, or a path the relay service's launch declaration names):
+// the value str.strip()ped and spelled as Path(value) spells it, so "/cfg/policy.json/" and
+// " /cfg/policy.json " are /cfg/policy.json. A value that strips to nothing names no file, "". Every
+// reader that must read the file a role policy was resolved from reads this path, so the two cannot
+// differ (CRW-1506).
+func PolicyFile(configured string) string {
+	configured = pyvalue.Strip(configured)
+	if configured == "" {
+		return ""
+	}
+	return store.PathlibSpelling(configured)
 }
 
 // nestedTooDeep is whether json.loads(raw, object_pairs_hook=_no_duplicates) raises
