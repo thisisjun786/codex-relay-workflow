@@ -13,6 +13,7 @@ internal/dev/laneparity/realhost.go	1
 internal/flow/engine/session.go	1
 internal/flow/ops/gitsnap.go	3
 internal/flow/planinput/cli.go	2
+internal/flow/report/summary.go	1
 internal/pabcd/cli/orchestrate_status.go	1
 internal/pabcd/cli/plan.go	1
 internal/pabcd/evidence/assignment.go	1

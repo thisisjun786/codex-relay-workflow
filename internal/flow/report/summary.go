@@ -58,7 +58,7 @@ type SummaryOutcome struct {
 
 // SummaryNoticeText is the notice that an entry is owed.
 func SummaryNoticeText(id, plan, document string) string {
-	return fmt.Sprintf("[crw flow] summary_owed summary=%s plan=%s document=%s\nThe plan summary is owed to the document. You are the 자식 (project session) of the project: take the newest entry (`crw relay dag-summary-status --plan %s`), claim it (`dag-summary-claim`), write the document with your Linear connector, read it back and complete it (`dag-summary-complete`). The run and the manager do not claim.",
+	return fmt.Sprintf("[crw flow] summary_owed summary=%s plan=%s document=%s\nThe plan summary is owed to the document. You are the parent of the project: take the newest entry (`crw relay dag-summary-status --plan %s`), claim it (`dag-summary-claim`), write the document with your Linear connector, read it back and complete it (`dag-summary-complete`). The run and the manager do not claim.",
 		id, plan, document, plan)
 }
 

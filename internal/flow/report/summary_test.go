@@ -492,14 +492,18 @@ func TestAForeignCommandReconcilesTheSummaryOfTheOrchestratorsRun(t *testing.T) 
 	}
 }
 
-// CRW-1478: the summary notice goes to env.Actor, the registered 자식 (project session) of the project, and names that layer;
-// layername.Find (the matcher the ci ratchet shares) finds no bare role word in it.
-func TestSummaryNoticeNamesTheChild(t *testing.T) {
+// CRW-1478 split (CRW-1548): the summary notice keeps the words dev 7f21f0069 sends. The flow composes it again on every reconcile
+// and resends it under the fixed logical id summary-<id>, and the manage outbox keys that id to the sha256 of the text it first
+// carried, so a retry in other words of a send an earlier build left undetermined is refused locally. The notice names the 자식
+// (project session) only once CRW-1548 settles such a retry; until then its one bare role word is the summary.go line of
+// testdata/role_words_baseline.txt.
+func TestSummaryNoticeKeepsItsWording(t *testing.T) {
 	text := SummaryNoticeText("sum-1", "plan-1", "doc-1")
-	if !strings.Contains(text, "You are the 자식 (project session) of the project") {
-		t.Errorf("the notice does not name the 자식 (project session):\n%s", text)
+	want := "[crw flow] summary_owed summary=sum-1 plan=plan-1 document=doc-1\nThe plan summary is owed to the document. You are the parent of the project: take the newest entry (`crw relay dag-summary-status --plan plan-1`), claim it (`dag-summary-claim`), write the document with your Linear connector, read it back and complete it (`dag-summary-complete`). The run and the manager do not claim."
+	if text != want {
+		t.Errorf("the summary notice changed its words; a retry under summary-<id> would be refused (CRW-1548):\n got %q\nwant %q", text, want)
 	}
-	if hits := layername.Find(text); len(hits) != 0 {
-		t.Errorf("the notice carries bare role words %v:\n%s", hits, text)
+	if hits := layername.Find(text); len(hits) != 1 || hits[0].Word != "parent" {
+		t.Errorf("the notice carries the bare role words %v, want the one \"parent\" its baseline line counts", hits)
 	}
 }
