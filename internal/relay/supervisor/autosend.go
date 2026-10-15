@@ -61,7 +61,9 @@ func (c *Channel) AutoSend(ctx context.Context, host SendAdapter, now float64, p
 			continue
 		}
 		before, beforeErr := c.transportStarts(ctx, row.MessageID)
-		record, err := c.attempt(ctx, row.MessageID, host, now, 0, "relay-daemon")
+		// The daemon picks its heads; it never names a message, so the hold rule reads its attempt as
+		// a restage, not a send by id.
+		record, err := c.attempt(ctx, row.MessageID, host, now, 0, "relay-daemon", daemonAttempt)
 		if err != nil {
 			after, countErr := c.transportStarts(ctx, row.MessageID)
 			if beforeErr != nil || countErr != nil || after != before {

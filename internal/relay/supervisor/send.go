@@ -211,8 +211,16 @@ func (c *Channel) preflightRate(ctx context.Context, service *delivery.Service, 
 }
 
 func (c *Channel) Attempt(ctx context.Context, id string, adapter SendAdapter, now float64) (map[string]any, error) {
-	return c.attempt(ctx, id, adapter, now, 0, "relay")
+	// The caller names the message (supervisor-send --message): the hold rule reads this attempt as
+	// a send by id.
+	return c.attempt(ctx, id, adapter, now, 0, "relay", byIDAttempt)
 }
+
+// The by-id flag of Channel.attempt, named so that every call reads as the decision it is.
+const (
+	byIDAttempt   = true  // the caller named the message: supervisor-send --message, the fault deliverer
+	daemonAttempt = false // the daemon's pass picked the message as a head
+)
 
 var errQuietNotClaimable = errors.New("supervisor message is not claimable")
 
@@ -426,6 +434,7 @@ type attemptRun struct {
 	adapter  SendAdapter
 	now      float64
 	owner    string
+	byID     bool                        // the caller named the message (byIDAttempt): read asks the hold rule as send_by_id, else as restage
 	row      store.SupervisorMessagesRow // as read before the claim
 	r        Resolution                  // the hierarchy now, which the message must still match
 	at       string                      // the time of the lifecycle gate's journal entry, the claim and the fence: the injected clock when set, else the call's
@@ -452,9 +461,10 @@ type sentReceipt struct {
 // attempt sends one staged message: the steps below in order. A step that can end the attempt returns
 // stop, and the attempt then returns no record and that step's error, which may be nil (a quiet
 // stop); a step that can only fail returns the error. restatements counts the retries this call has
-// made after the proposal was restated at the transport start.
-func (c *Channel) attempt(ctx context.Context, id string, adapter SendAdapter, now float64, restatements int, owner string) (map[string]any, error) {
-	a := &attemptRun{c: c, id: id, adapter: adapter, now: now, owner: owner}
+// made after the proposal was restated at the transport start. byID says the caller named the
+// message (byIDAttempt) rather than the daemon picking it (daemonAttempt); the retry carries it.
+func (c *Channel) attempt(ctx context.Context, id string, adapter SendAdapter, now float64, restatements int, owner string, byID bool) (map[string]any, error) {
+	a := &attemptRun{c: c, id: id, adapter: adapter, now: now, owner: owner, byID: byID}
 	if err := a.read(ctx); err != nil {
 		return nil, err
 	}
@@ -492,7 +502,7 @@ func (c *Channel) attempt(ctx context.Context, id string, adapter SendAdapter, n
 		if restatements >= 2 {
 			return nil, Refusal{"superseded_revision", "the proposal was restated at its transport start three times in one call and nothing was sent; send it again once what it reports has settled"}
 		}
-		return c.attempt(ctx, id, adapter, now, restatements+1, owner)
+		return c.attempt(ctx, id, adapter, now, restatements+1, owner, a.byID)
 	}
 	if !outcome.started {
 		return nil, nil
@@ -501,9 +511,19 @@ func (c *Channel) attempt(ctx context.Context, id string, adapter SendAdapter, n
 }
 
 // read loads the message, recovers a stranded send and releases a hold the live state no longer
-// justifies, so the rest of the attempt sees the row as it stands.
+// justifies, so the rest of the attempt sees the row as it stands. A superseded_by_report hold is
+// asked of the hold rule as send_by_id when the caller named the message and as restage when the
+// daemon picked it: a send by id releases an acknowledged park that is owed, and answers
+// relation_owner_drift when the hierarchy moved; the daemon keeps a park of the same statement.
 func (a *attemptRun) read(ctx context.Context) error {
 	c := a.c
+	entry := entryRestage
+	if a.byID {
+		entry = entrySendByID
+	}
+	if c.onReadEntry != nil {
+		c.onReadEntry(entry)
+	}
 	row, err := c.Get(ctx, a.id)
 	if err != nil {
 		return err
@@ -513,7 +533,7 @@ func (a *attemptRun) read(ctx context.Context) error {
 		return err
 	}
 	if row.HoldReason.String == store.SupervisorHoldSuperseded {
-		if err := c.reopenProposal(ctx, row, delivery.ISOOf(a.now)); err != nil {
+		if _, _, err := c.reopenProposal(ctx, row, delivery.ISOOf(a.now), entry); err != nil {
 			return err
 		}
 		row, err = c.Get(ctx, a.id)
