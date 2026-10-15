@@ -42,7 +42,8 @@ const (
 // tool_failed). The answer reader accepts two shapes of the prose: one or more markdown tables "Severity | Location (file:line) |
 // Finding", whose rows together are the findings (verdict needs_changes when a finding blocks under premerge.Blocks once
 // normalize has given it its impact: a P0-P2 grade, or a security finding; else verified), or no table and a last line that ends
-// with the sentence "Bugbot found no bugs." (verified, no findings). Prose that says the review covered only part of the change or
+// with the sentence "Bugbot found no bugs." or that sentence with a short scope phrase ("... in the uncommitted changes.")
+// (verified, no findings). Prose that says the review covered only part of the change or
 // dropped a finding (bugbotPartial: files skipped, unchecked or not reviewed, a review that did not, could not or only reviewed
 // part, a partial, truncated or incomplete review, a change too large, a review that timed out, a finding removed or dropped, a
 // review not clean), read in the prose outside the tables in any case, prose that only mentions "found no bugs" (negated, hedged,
@@ -153,13 +154,20 @@ func bugbotAnswer(stdout []byte) ([]byte, error) {
 // bugbotNoBugs is the sentence of a clean Bugbot review, lower-cased and without its full stop.
 const bugbotNoBugs = "bugbot found no bugs"
 
+// bugbotNoBugsScope is the short scope phrase Bugbot may append to its clean sentence ("Bugbot found no bugs in the uncommitted
+// changes."), lower-cased, at the end of the sentence without its full stop. Only these phrases are taken: one that narrows the
+// review ("in the files it could open") or says more is not.
+var bugbotNoBugsScope = regexp.MustCompile(`[ \t]+(in|on|for|across)( the)?( (uncommitted|staged|committed|changed|modified))? (changes|diff|files|code|working tree)$`)
+
 // saysNoBugs reports whether prose affirms a clean review: its last non-empty line ends with the sentence "Bugbot found no bugs"
-// (any case, then only '.' or '!'), and that sentence starts the line or follows the end of an earlier sentence. cursor-agent glues
-// its sentences without a space ("...launching the reviewer.Bugbot found no bugs."), so the line may carry earlier sentences;
-// "whether Bugbot found no bugs", "Bugbot found no bugs?" or the sentence followed by more prose are not affirmations.
+// (any case), optionally followed by a scope phrase (bugbotNoBugsScope), then only '.' or '!', and that sentence starts the line or
+// follows the end of an earlier sentence. cursor-agent glues its sentences without a space ("...launching the reviewer.Bugbot found
+// no bugs."), so the line may carry earlier sentences; "whether Bugbot found no bugs", "Bugbot found no bugs?" or the sentence
+// followed by more prose are not affirmations. The partial-review words are read before this, so they still win.
 func saysNoBugs(prose string) bool {
 	lines := strings.Split(strings.TrimSpace(prose), "\n")
 	last := strings.TrimRight(strings.ToLower(strings.TrimSpace(lines[len(lines)-1])), ".!")
+	last = bugbotNoBugsScope.ReplaceAllString(last, "")
 	before, ok := strings.CutSuffix(last, bugbotNoBugs)
 	if !ok {
 		return false

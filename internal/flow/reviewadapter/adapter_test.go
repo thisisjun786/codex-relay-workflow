@@ -616,6 +616,10 @@ func TestExecRunKillsLeftoverChildrenAfterTheToolExits(t *testing.T) {
 // (/state/crw/crw-lane-b1-issue-child/evidence/bugbot-U1a-r2.json.raw.json, the ids and usage trimmed).
 const bugbotNoBugsFixture = `{"type":"result","subtype":"success","is_error":false,"duration_ms":289515,"duration_api_ms":289515,"result":"I'll review only the uncommitted changes. Checking the review tool schema, then starting the Bugbot review.Bugbot found no bugs."}` + "\n"
 
+// bugbotNoBugsScopeFixture is a real cursor-agent envelope of a clean Bugbot review that names its scope after the sentence
+// (/state/crw/crw-lane-n1-relay-layer-words/evidence/bugbot-n1-3a-r1.json.raw.json, the ids and usage trimmed).
+const bugbotNoBugsScopeFixture = `{"type":"result","subtype":"success","is_error":false,"duration_ms":199008,"duration_api_ms":199008,"result":"I'll review only the uncommitted changes with Bugbot. Checking the Task tool schema, then launching the reviewer.Bugbot found no bugs in the uncommitted changes."}` + "\n"
+
 // TestBugbotNoBugsMustBeAffirmative: only prose whose last sentence says that Bugbot found no bugs is a clean review; prose that
 // merely contains the words, negated or hedged, is not an answer.
 func TestBugbotNoBugsMustBeAffirmative(t *testing.T) {
@@ -794,6 +798,52 @@ func TestAdapterRecordsACanonicalEngineFamily(t *testing.T) {
 			if res, err := a.Check(t.Context(), request(t, p)); err == nil || ran {
 				t.Fatalf("Check took the request (ran %v): %+v %v", ran, res, err)
 			}
+		})
+	}
+}
+
+// TestBugbotNoBugsTakesTheScopePhrase: the affirmative sentence followed only by a short scope phrase ("in the uncommitted
+// changes", "on the diff", "for the staged files", "across the working tree") is a clean review; a phrase that narrows the review
+// ("in the files it could open"), more prose after it, a negated or hedged sentence, and a partial-review word stay refused.
+func TestBugbotNoBugsTakesTheScopePhrase(t *testing.T) {
+	t.Run("the real clean review with a scope phrase", func(t *testing.T) {
+		res := check(t, BugbotProfile(), fakeRun{stdout: bugbotNoBugsScopeFixture})
+		wantState(t, res, StateOK)
+		if res.Verdict != VerdictVerified || len(res.Findings) != 0 {
+			t.Fatalf("result = %+v", res)
+		}
+	})
+	for _, text := range []string{
+		"Launching the reviewer.Bugbot found no bugs in the uncommitted changes.",
+		"Bugbot found no bugs in uncommitted changes",
+		"Bugbot found no bugs on the diff!",
+		"Bugbot found no bugs for the staged files.",
+		"Bugbot found no bugs across the working tree.",
+		"Bugbot found no bugs in the changed code.",
+		"Bugbot found no bugs in the committed changes.",
+		"BUGBOT FOUND NO BUGS IN THE MODIFIED FILES.",
+	} {
+		t.Run("affirmative: "+text, func(t *testing.T) {
+			res := check(t, BugbotProfile(), fakeRun{stdout: bugbotEnvelope(t, text)})
+			wantState(t, res, StateOK)
+			if res.Verdict != VerdictVerified {
+				t.Fatalf("result = %+v", res)
+			}
+		})
+	}
+	for _, text := range []string{
+		"Bugbot found no bugs in the files it could open.",
+		"Bugbot found no bugs in the uncommitted changes it reviewed.",
+		"Bugbot found no bugs in the uncommitted changes, but the run was cut off.",
+		"Bugbot found no bugs in the uncommitted changes.\n\nThe review then crashed before it covered the tests.",
+		"Bugbot found no bugs in the uncommitted changes?",
+		"I could not determine whether Bugbot found no bugs in the uncommitted changes.",
+		"It skipped 74 changed files.Bugbot found no bugs in the uncommitted changes.",
+		"Bugbot found no bugs in the 41 uncommitted files it reviewed.",
+		"Bugbot found no bugs in the diff of the first 40 files.",
+	} {
+		t.Run("not an answer: "+text, func(t *testing.T) {
+			wantState(t, check(t, BugbotProfile(), fakeRun{stdout: bugbotEnvelope(t, text)}), StateInvalid)
 		})
 	}
 }
