@@ -4,6 +4,7 @@ package ci
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -539,4 +540,149 @@ func TestRelayDocsKeepLinkedHeadings(t *testing.T) {
 			}
 		})
 	}
+}
+
+// CRW-1553 (N3-6): the words "issue child" are gone from the text a person reads. "Issue child" read as a fifth layer
+// next to the top session, the parent, the child and the subagents; the only layer names are those four
+// (plugins/crw/skills/crw-canon/references/hierarchy.md "The levels"). The relay role id `child` is named by its id
+// ("a `child` session"), never by a layer name, and no new short name is made for it. Every text file under docs/ and
+// plugins/ is read, whatever its extension (a file with a NUL byte or invalid UTF-8 is binary and is skipped), in any
+// case, with "issue" and "child" joined by a hyphen or by any run of whitespace (a line break included): "issue child",
+// "issue children", "issue-child", "Issue Child", "issue\nchild".
+//
+// The exception list below is the only place the words may stay. A line is excepted by its file and its whole
+// trimmed text (not by a line number, so a moved line keeps its entry), and every entry carries the reason the line
+// is not rewritten. An entry whose line is gone, or whose line no longer holds the words, is stale and fails, so the
+// list cannot outlive the text it covers. The rewrite is tools/reword.py of the lane; a line it leaves alone is one
+// that is code (a fenced block or an inline span), quoted message text, or an old record quoted as it was written.
+
+// issueChildWord is the retired layer name: "issue" and "child" joined by a hyphen or by whitespace.
+var issueChildWord = regexp.MustCompile(`(?i)issue(?:-|\s+)child`)
+
+// issueChildException is one line of docs/ or plugins/ that keeps the words.
+type issueChildException struct{ file, line, reason string }
+
+// issueChildExceptions are the lines that keep the words, each with its reason.
+var issueChildExceptions = []issueChildException{
+}
+
+// issueChildHits is each line of text holding the words, as "line N: <trimmed line>"; a match that spans a line
+// break counts on the line it starts on.
+func issueChildHits(text string) []string {
+	var hits []string
+	lines := strings.Split(text, "\n")
+	seen := map[int]bool{}
+	for _, m := range issueChildWord.FindAllStringIndex(text, -1) {
+		n := strings.Count(text[:m[0]], "\n")
+		if !seen[n] {
+			seen[n] = true
+			hits = append(hits, fmt.Sprintf("line %d: %s", n+1, strings.TrimSpace(lines[n])))
+		}
+	}
+	return hits
+}
+
+// issueChildIsText is whether data is a text file: valid UTF-8 with no NUL byte.
+func issueChildIsText(data []byte) bool {
+	return utf8.Valid(data) && !strings.ContainsRune(string(data), 0)
+}
+
+func TestDocsAndPluginsNameNoIssueChild(t *testing.T) {
+	root := repoRoot()
+	excepted := map[string]map[string]string{}
+	for _, e := range issueChildExceptions {
+		if strings.TrimSpace(e.reason) == "" {
+			t.Errorf("exception %s %q has no reason", e.file, e.line)
+		}
+		if excepted[e.file] == nil {
+			excepted[e.file] = map[string]string{}
+		}
+		excepted[e.file][e.line] = e.reason
+	}
+	used := map[string]map[string]bool{}
+	var problems []string
+	for _, top := range []string{"docs", "plugins"} {
+		err := filepath.WalkDir(filepath.Join(root, top), func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() {
+				return nil
+			}
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			if !issueChildIsText(data) {
+				return nil
+			}
+			rel, err := filepath.Rel(root, path)
+			if err != nil {
+				return err
+			}
+			rel = filepath.ToSlash(rel)
+			text := string(data)
+			var left []string
+			lines := strings.Split(text, "\n")
+			for _, hit := range issueChildHits(text) {
+				var n int
+				fmt.Sscanf(hit, "line %d:", &n)
+				line := strings.TrimSpace(lines[n-1])
+				if _, ok := excepted[rel][line]; ok {
+					if used[rel] == nil {
+						used[rel] = map[string]bool{}
+					}
+					used[rel][line] = true
+					continue
+				}
+				left = append(left, hit)
+			}
+			if len(left) > 0 {
+				shown := left
+				if len(shown) > 3 {
+					shown = shown[:3]
+				}
+				problems = append(problems, fmt.Sprintf("%s: %d line(s) still name an issue child, as in\n    %s", rel, len(left), strings.Join(shown, "\n    ")))
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, e := range issueChildExceptions {
+		if !used[e.file][e.line] {
+			problems = append(problems, fmt.Sprintf("stale exception: %s no longer holds the line %q with the words", e.file, e.line))
+		}
+	}
+	if len(problems) > 0 {
+		sort.Strings(problems)
+		t.Errorf("text under docs/ and plugins/ still names an \"issue child\" (%d file(s) and exceptions); name the relay role id `child` by its id (\"a `child` session\") and make no layer name of it, or list the line in issueChildExceptions with the reason:\n  %s", len(problems), strings.Join(problems, "\n  "))
+	}
+
+	t.Run("fixture: every spelling is found and the other words are not", func(t *testing.T) {
+		for _, text := range []string{
+			"the issue child runs", "Issue Child", "ISSUE CHILD", "two issue children", "the issue child's turn",
+			"an issue-child path", "issue\nchild", "issue \t child", "legacy Issue-Child run",
+		} {
+			if len(issueChildHits(text)) != 1 {
+				t.Errorf("%q is not found", text)
+			}
+		}
+		for _, text := range []string{
+			"the issues child sessions", "the `child` session", "an issue of the child", "issue-lane", "child issue", "issue, child",
+		} {
+			if hits := issueChildHits(text); len(hits) != 0 {
+				t.Errorf("%q is found: %v", text, hits)
+			}
+		}
+		if hits := issueChildHits("a\nissue\nchild\nb"); len(hits) != 1 || !strings.HasPrefix(hits[0], "line 2:") {
+			t.Errorf("a match across lines counts on its first line: %v", hits)
+		}
+	})
+	t.Run("fixture: binary files are skipped", func(t *testing.T) {
+		if issueChildIsText([]byte("a\x00b")) || issueChildIsText([]byte{0xff, 0xfe}) || !issueChildIsText([]byte("한글 text")) {
+			t.Error("issueChildIsText misreads a binary or a text file")
+		}
+	})
 }
