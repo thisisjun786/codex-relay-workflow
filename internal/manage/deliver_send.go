@@ -177,6 +177,8 @@ func Deliver(ctx context.Context, e *Env, cfg *Config, m Message) (Outcome, erro
 	if err != nil {
 		return Outcome{}, err
 	}
+	// reworded: the record holds a rewordable notice of this thread in other words (Message.Rewordable).
+	reworded := false
 	if !known {
 		record = deliverNewRecord(e, m)
 		// A steer-only record is written right before its steer is dispatched (below), so an
@@ -188,8 +190,11 @@ func Deliver(ctx context.Context, e *Env, cfg *Config, m Message) (Outcome, erro
 		}
 	} else {
 		// The record belongs to one logical message. A caller that reuses the id for different text or
-		// a different thread is refused rather than told the other message's outcome.
-		if record.TargetThread != m.Thread || record.MessageSHA256 != deliverMessageSHA256(m.Text) {
+		// a different thread is refused rather than told the other message's outcome. A rewordable
+		// notice of the same thread is that message in other words: what its first send did is settled
+		// below, from the record and the bridge, and its new text goes out only if nothing was sent.
+		reworded = m.Rewordable && record.TargetThread == m.Thread && record.MessageSHA256 != deliverMessageSHA256(m.Text)
+		if !reworded && (record.TargetThread != m.Thread || record.MessageSHA256 != deliverMessageSHA256(m.Text)) {
 			return Outcome{Class: deliverClassRefused, RequestID: m.LogicalID},
 				fmt.Errorf("crw manage: the logical id %q already belongs to another message", m.LogicalID)
 		}
@@ -216,6 +221,9 @@ func Deliver(ctx context.Context, e *Env, cfg *Config, m Message) (Outcome, erro
 	// The retry ordinal comes from the record, so a restart continues the sequence it left rather
 	// than minting an id the bridge already holds a receipt for.
 	retries := deliverRetryCount(m.LogicalID, record.RequestID)
+	// The ordinal a retry may reach: the ids a reworded notice took without a refusal carry an ordinal
+	// but spend no retry (deliverAttempt.Reworded).
+	retryCap := deliverRetryCap(record)
 	if known {
 		// The record is unsettled: read the bridge's own receipt before anything is sent, so an
 		// attempt that may already have gone out is never duplicated under a fresh id.
@@ -233,8 +241,13 @@ func Deliver(ctx context.Context, e *Env, cfg *Config, m Message) (Outcome, erro
 			return deliverSettled(cfg, record, Outcome{Class: deliverClassRefused, RequestID: record.RequestID})
 		case deliverReconcileResendSame, deliverReconcileResendNew:
 			excerpt := "get_operation: nothing was sent; resending under the same request id"
-			if verdict == deliverReconcileResendNew || m.SteerOnly {
-				if retries >= deliverRetryLimit {
+			// A reworded notice never reuses the id: the bridge would refuse the new text under it as a
+			// conflict. A not_delivered answer or an id the bridge never recorded spends one of the retries;
+			// a reworded notice the bridge recorded but never attempted changes id only for its words, so
+			// that id is marked and spends none.
+			rewordOnly := reworded && verdict == deliverReconcileResendSame && !m.SteerOnly
+			if verdict == deliverReconcileResendNew || m.SteerOnly || reworded {
+				if retries >= retryCap && !rewordOnly {
 					record.State = deliverStateRefused
 					record.Attempts = append(record.Attempts, deliverAttempt{At: deliverNow(e), Class: deliverClassRefused, ReceiptExcerpt: "get_operation: nothing was sent; the retry cap is spent"})
 					return deliverSettled(cfg, record, Outcome{Class: deliverClassRefused, RequestID: record.RequestID})
@@ -244,8 +257,17 @@ func Deliver(ctx context.Context, e *Env, cfg *Config, m Message) (Outcome, erro
 				record.RequestID = requestID
 				excerpt = "get_operation: nothing was sent; resending under a new request id"
 			}
+			if rewordOnly {
+				retryCap++
+			}
+			if reworded {
+				// Nothing went under the record, so the notice in its new words takes the record over: the
+				// record names the text its new request id carries.
+				record.MessageSHA256 = deliverMessageSHA256(m.Text)
+				excerpt += "; the notice goes in its new words"
+			}
 			record.State = deliverStateUnknown
-			record.Attempts = append(record.Attempts, deliverAttempt{At: deliverNow(e), Class: deliverClassRefused, ReceiptExcerpt: excerpt})
+			record.Attempts = append(record.Attempts, deliverAttempt{At: deliverNow(e), Class: deliverClassRefused, ReceiptExcerpt: excerpt, Reworded: rewordOnly})
 			// A steer-only resend is written when its steer is dispatched: an observation that finds no
 			// active turn then leaves the record as it was, and the next call reaches the same verdict
 			// and the same id instead of spending one more.
@@ -309,7 +331,7 @@ func Deliver(ctx context.Context, e *Env, cfg *Config, m Message) (Outcome, erro
 			// A live not_attempted receipt is a refusal under the issue's contract, and only a
 			// not_delivered refusal is retried, so it settles here. A record that reconciles to
 			// not_attempted is a different case and reuses its id before any send.
-			if !deliverRetryable(reply) || retries >= deliverRetryLimit {
+			if !deliverRetryable(reply) || retries >= retryCap {
 				record.State = deliverStateRefused
 				return deliverSettled(cfg, record, Outcome{Class: class, RequestID: requestID, Receipt: reply.Payload})
 			}
