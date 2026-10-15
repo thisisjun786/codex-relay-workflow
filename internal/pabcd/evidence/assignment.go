@@ -101,9 +101,22 @@ type Assignment struct {
 	TurnID    string         `json:"turnId"`
 
 	AnswerInput string `json:"answerInput,omitempty"` // CRW-1121
+
+	// The fields of a flow assignment (CRW-1482), absent from every other record: Origin is AssignmentOriginFlow, Op the flow
+	// operation (crw-flow-op) the engine dispatched the child for, and ReceiptDigest the hex sha256 of the receipt bytes the
+	// accepting claim read. A record that carries them is version flowAssignmentVersion.
+	Origin        string `json:"origin,omitempty"`
+	Op            string `json:"op,omitempty"`
+	ReceiptDigest string `json:"receiptDigest,omitempty"`
 }
 
-const assignmentVersion = 1
+// assignmentVersion is the version of a record without flow fields; flowAssignmentVersion that of a flow record. A reader of
+// version 1 only refuses a flow record (its strict decoder and its version check), so an older gate meets a flow contract as a
+// contract it cannot read and refuses the receipt, never as a native one.
+const (
+	assignmentVersion     = 1
+	flowAssignmentVersion = 2
+)
 
 // sessionRecordDir is the directory name of a session's records: its sanitised id (cut, for a person to read) and a digest of
 // the exact id, so that two sessions whose ids sanitise alike (a/b and a-b), or one whose id continues another's (s1 and s1-x),
@@ -416,7 +429,19 @@ func readAssignment(path, id string) (Assignment, bool) {
 	if _, err := dec.Token(); err != io.EOF {
 		return Assignment{}, false
 	}
-	return a, a.Version == assignmentVersion && a.ID == id && (a.Mode == AssignTree || a.Mode == AssignNone)
+	return a, recordShapeValid(a) && a.ID == id && (a.Mode == AssignTree || a.Mode == AssignNone)
+}
+
+// recordShapeValid is the version rule: a version 1 record carries no flow field, and a version 2 record is a flow record (origin
+// flow, an op, mode tree). Anything else is refused.
+func recordShapeValid(a Assignment) bool {
+	switch a.Version {
+	case assignmentVersion:
+		return a.Origin == "" && a.Op == "" && a.ReceiptDigest == ""
+	case flowAssignmentVersion:
+		return a.Origin == AssignmentOriginFlow && a.Op != "" && a.Mode == AssignTree
+	}
+	return false
 }
 
 // claimAssignment binds the assignment at path to agentID under its lock, re-reading it inside: an open record is claimed, one
@@ -614,12 +639,23 @@ func childAssignment(cwd, sessionID, agentID, transcriptPath, message string) (A
 	return Assignment{}, NoContract
 }
 
-// JudgeAssignedReceipt judges receipt (absolute, or relative to the assigned tree) of the child agentID against the contract that
+// JudgeAssignedReceipt is JudgeAssignedReceiptTurn without a turn id.
+func JudgeAssignedReceipt(cwd, sessionID, agentID, transcriptPath, message, receipt string) AssignedVerdict {
+	return JudgeAssignedReceiptTurn(cwd, sessionID, agentID, "", transcriptPath, message, receipt)
+}
+
+// JudgeAssignedReceiptTurn judges receipt (absolute, or relative to the assigned tree) of the child agentID against the contract that
 // child was dispatched with (see the rules above) and binds the assignment to the child when the receipt passes. A child with no
 // contract is NoContract and the caller applies the native root; a child whose contract cannot be read is refused, and so is one
 // without an agent id whose transcript names a contract: it can claim nothing, but the contract it was dispatched with stands, and
 // the parent's native tree is no way around it (CRW-1106).
-func JudgeAssignedReceipt(cwd, sessionID, agentID, transcriptPath, message, receipt string) AssignedVerdict {
+//
+// A flow contract (CRW-1482, flow_assignment.go) holds only for a child whose own packet is the engine's dispatch of its op, and
+// its receipt is the one fixed file FlowReceiptPath: receipt "" (a final message that is the RECEIPT JSON alone, with no marker
+// line) means that file, and an explicit receipt must name exactly it. The accepting claim records turnID and the digest of the
+// bytes it read under the record's lock; a later turn of the same child (a repair) claims again and updates both. A native
+// contract is judged as before: it needs an explicit receipt, and its claim records neither.
+func JudgeAssignedReceiptTurn(cwd, sessionID, agentID, turnID, transcriptPath, message, receipt string) AssignedVerdict {
 	if sessionID == "" {
 		return NoContract
 	}
@@ -630,11 +666,19 @@ func JudgeAssignedReceipt(cwd, sessionID, agentID, transcriptPath, message, rece
 	if agentID == "" {
 		return AssignedRefused
 	}
+	var update func(*Assignment) bool
+	if a.Origin == AssignmentOriginFlow {
+		fixed, ok := flowReceiptClaim(a, transcriptPath, receipt)
+		if !ok {
+			return AssignedRefused
+		}
+		receipt, update = fixed, flowClaimUpdate(a, turnID)
+	}
 	if a.Mode != AssignTree || receipt == "" || (a.AgentID != "" && a.AgentID != agentID) || !assignedReceiptValid(a, receipt) {
 		return AssignedRefused
 	}
 	dir := filepath.Join(stateDir(cwd), AssignmentsSubdir, sessionRecordDir(sessionID))
-	if !claimAssignment(filepath.Join(dir, a.ID+".json"), a.ID, sessionID, agentID, nil) {
+	if !claimAssignment(filepath.Join(dir, a.ID+".json"), a.ID, sessionID, agentID, update) {
 		return AssignedRefused
 	}
 	return AssignedAccepted
