@@ -96,3 +96,100 @@ func TestVerifyRecordsTheVerifierNote(t *testing.T) {
 		t.Errorf("a verification without a note recorded one: %v", row.Data)
 	}
 }
+
+// recordingRun is a RunCommand that writes a passing record where --record points and remembers that path.
+func recordingRun(record *string, calls *int) RunCommand {
+	return func(_ context.Context, _ string, _ []string, _ string, args ...string) (int, []byte, error) {
+		*calls++
+		*record = args[slices.Index(args, "--record")+1]
+		return 0, nil, os.WriteFile(*record, []byte(toolsPassRecord), 0o644)
+	}
+}
+
+// within reports whether path is dir or below it.
+func within(dir, path string) bool {
+	rel, err := filepath.Rel(dir, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+}
+
+// CRW-1489: the shipped verifier (cli/laneops.go builds it as CILocalVerifier{Tools: tools}, with no RecordDir) writes its
+// records under the worktree's own git directory, not under the caller's TMPDIR: a lane whose TMPDIR is a shared /tmp no longer
+// puts its record where another lane's run or a sandbox marker can reach it.
+func TestCILocalVerifier_the_default_record_dir_does_not_follow_TMPDIR(t *testing.T) {
+	wt := t.TempDir()
+	if err := os.Mkdir(filepath.Join(wt, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	x := t.TempDir()
+	t.Setenv("TMPDIR", x)
+	if within(x, wt) {
+		t.Fatalf("setup: the worktree %s is under the TMPDIR %s", wt, x)
+	}
+	var record string
+	var calls int
+	v := CILocalVerifier{Tools: crwconfig.VerifierTools{CrwDev: "/x/crw-dev"}, Run: recordingRun(&record, &calls)}
+	head := strings.Repeat("c", 40)
+	out, err := v.Verify(context.Background(), VerifyRequest{Node: "A", Head: head, Worktree: wt})
+	if err != nil || !out.Pass {
+		t.Fatalf("verify: %+v %v", out, err)
+	}
+	if within(x, record) {
+		t.Errorf("the record %s follows TMPDIR %s", record, x)
+	}
+	if want := filepath.Join(wt, ".git", "crw-verify", "verification-record-"+head+".json"); record != want {
+		t.Errorf("the record is %s, want %s", record, want)
+	}
+}
+
+// CRW-1489: in a linked worktree .git is a file naming the per-worktree git directory; the record goes below that directory (an
+// absolute gitdir as it is, a relative one against the worktree), so two lanes of one repository never share a record file.
+func TestCILocalVerifier_a_linked_worktree_records_under_its_gitdir(t *testing.T) {
+	for _, relative := range []bool{false, true} {
+		t.Run(map[bool]string{false: "absolute", true: "relative"}[relative], func(t *testing.T) {
+			base := t.TempDir()
+			wt := filepath.Join(base, "wt")
+			g := filepath.Join(base, "main", ".git", "worktrees", "wt")
+			for _, d := range []string{wt, g} {
+				if err := os.MkdirAll(d, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			target := g
+			if relative {
+				var err error
+				if target, err = filepath.Rel(wt, g); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := os.WriteFile(filepath.Join(wt, ".git"), []byte("gitdir: "+target+"\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("TMPDIR", t.TempDir())
+			var record string
+			var calls int
+			v := CILocalVerifier{Tools: crwconfig.VerifierTools{CrwDev: "/x/crw-dev"}, Run: recordingRun(&record, &calls)}
+			head := strings.Repeat("d", 40)
+			if out, err := v.Verify(context.Background(), VerifyRequest{Node: "A", Head: head, Worktree: wt}); err != nil || !out.Pass {
+				t.Fatalf("verify: %+v %v", out, err)
+			}
+			if want := filepath.Join(g, "crw-verify", "verification-record-"+head+".json"); record != want {
+				t.Errorf("the record is %s, want %s", record, want)
+			}
+		})
+	}
+}
+
+// CRW-1489: a worktree with no git directory has no default record dir; Verify says so before it runs the command.
+func TestCILocalVerifier_no_git_directory_is_an_error_before_the_command(t *testing.T) {
+	var record string
+	var calls int
+	v := CILocalVerifier{Tools: crwconfig.VerifierTools{CrwDev: "/x/crw-dev"}, Run: recordingRun(&record, &calls)}
+	wt := t.TempDir()
+	_, err := v.Verify(context.Background(), VerifyRequest{Node: "A", Head: strings.Repeat("e", 40), Worktree: wt})
+	if err == nil || !strings.Contains(err.Error(), "ci_record_dir") || !strings.Contains(err.Error(), wt) {
+		t.Errorf("no git directory: %v", err)
+	}
+	if calls != 0 {
+		t.Errorf("the command ran %d times", calls)
+	}
+}
