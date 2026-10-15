@@ -12,11 +12,25 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/tracking"
 )
 
+// resultReportLandedBeforeRecord is the pass result of a recovered landing (the hyphenated form, like the other pass results; the
+// record itself says landed_before_record).
+const resultReportLandedBeforeRecord = "landed-before-record"
+
+// resultReportCommentReposted is the pass result of a pass whose only work was posting a landing comment an earlier pass did not
+// get to (status 0).
+const resultReportCommentReposted = "comment-reposted"
+
 // Report is what one pass reports.
 type Report struct {
 	// Result is idle, stopped, locked, nothing-to-integrate, error, or the run's own result
 	// (pushed, nothing-merged, verification-failed(rc=N), dev-moved:<sha>, push-failed; for a pull request also
 	// review-needs-changes, head-moved:<sha> and pull-request-changed).
+	// landed-before-record (status 0) is a pull request whose head was already in the branch with no landing record: the pass wrote the
+	// recovered record (Landing), ran nothing (no Summary) and moved the entry to done/.
+	// comment-reposted (status 0) is a pass whose only work was posting the landing comment of a record that said "not written yet"
+	// and moving its entry to done/: nothing ran and no record was written. A repost the host refused is not one: the record keeps the
+	// refusal, the entry is done and the pass is nothing-to-integrate.
+	// pushing is the marker a run leaves in its <tag>.summary.json while its push is under way; it is never a pass result.
 	Result  string   `json:"result"`
 	Exit    int      `json:"exit"`
 	Error   string   `json:"error,omitempty"`
@@ -77,11 +91,20 @@ func (r *Runner) Pass(ctx context.Context) Report {
 			heads = append(heads, e)
 		}
 	}
+	reposted := false
 	for _, e := range prs {
 		// a head of the pull request that already landed (done/ or its landing record) is done again, with no second record
 		if why := r.landedBefore(e); why != "" {
 			r.logf("%s %s: %s", e.Key, e.Head, why)
+			// a record whose comment an earlier pass did not get to is posted now, once
+			held, reposts := r.repostLandingComment(ctx, e)
+			if held != "" {
+				r.logf("%s %s: %s", e.Key, e.Head, held)
+				rep.Held = append(rep.Held, e.Name+": "+held)
+				continue
+			}
 			rep.moved(r, e, dirDone, why)
+			reposted = reposted || reposts
 			continue
 		}
 		pr, held := r.checkPR(ctx, e, &rep)
@@ -93,12 +116,22 @@ func (r *Runner) Pass(ctx context.Context) Report {
 			rep.Held = append(rep.Held, e.Name+": "+held)
 			continue
 		}
+		if rep.Landing != nil {
+			// checkPR found the head in the branch and recorded its landing after the fact: that is what the pass did. It ends the pass
+			// (one pull request per pass); the pull requests and issue heads behind it wait for the next one, and Held of earlier
+			// pull requests stays in the report without turning the result into an error.
+			rep.Result, rep.Exit = resultReportLandedBeforeRecord, ExitPushed
+			return rep
+		}
 		if pr != nil {
 			return r.run(ctx, rep, []Entry{e}, pr)
 		}
 	}
 	if len(prs) > 0 && len(heads) == 0 {
-		if len(rep.Held) > 0 {
+		if reposted {
+			// a comment posted is work done: the pass succeeded, with held still in the report
+			rep.Result, rep.Exit = resultReportCommentReposted, ExitPushed
+		} else if len(rep.Held) > 0 {
 			rep.Result, rep.Exit, rep.Error = "error", ExitUsage, strings.Join(rep.Held, "; ")
 		} else {
 			rep.Result, rep.Exit = "nothing-to-integrate", ExitNothingMerged
@@ -144,6 +177,10 @@ func (r *Runner) Pass(ctx context.Context) Report {
 		}
 	}
 	if len(batch) == 0 {
+		if reposted {
+			rep.Result, rep.Exit = resultReportCommentReposted, ExitPushed
+			return rep
+		}
 		rep.Result, rep.Exit = "nothing-to-integrate", ExitNothingMerged
 		return rep
 	}
@@ -175,12 +212,21 @@ func (r *Runner) run(ctx context.Context, rep Report, batch []Entry, pr *trackin
 	rep.Summary, rep.Exit, rep.Result = out.Summary, out.Exit, out.Summary.Result
 	data, _ := jsonLine(out.Summary)
 	r.logf("%s rc=%d %s", tag, out.Exit, data)
+	recoverFailed := false
 	if pr != nil {
 		if out.Exit == ExitNothingMerged && len(out.left) == 1 && out.left[0].Reason == reasonAlreadyInDev {
 			// the head reached the branch between the pass's check and its run: recorded once, after the fact
 			l, err := r.recoverLanding(ctx, tag, batch[0], *pr)
 			if err != nil {
+				// not a verdict: the entry stays pending and the pass is held, as a pass whose check could not record it
 				r.logf("%s: %v", pr.Ref, err)
+				held := batch[0].Name + ": the landing could not be recorded, it stays pending: " + err.Error()
+				rep.Held = append(rep.Held, held)
+				rep.Result, rep.Exit, rep.Error = "error", ExitUsage, held
+				recoverFailed = true
+			} else {
+				// the recovery is what the pass did: the same result as a recovery in the check
+				rep.Result, rep.Exit = resultReportLandedBeforeRecord, ExitPushed
 			}
 			rep.Landing = l
 		} else {
@@ -210,6 +256,9 @@ func (r *Runner) run(ctx context.Context, rep Report, batch []Entry, pr *trackin
 			// A head that is already in the branch is done; any other left-out head goes back to
 			// its owner to refresh.
 			if l.Reason == reasonAlreadyInDev {
+				if recoverFailed {
+					continue
+				}
 				rep.moved(r, l.Entry, dirDone, l.Reason)
 			} else {
 				rep.moved(r, l.Entry, dirConflict, l.Reason)

@@ -48,8 +48,8 @@ func TestValidRepo(t *testing.T) {
 }
 
 // The leaf exists so that packages which only parse references (the relay's routing and fault
-// ledger) need not import the GitHub client: its closure holds no network package and not the
-// tracking package itself.
+// ledger) need not import the GitHub client: its closure holds the standard library only, so no
+// network package, not the tracking package and no other module package.
 func TestLeafImportsOnlyThePlatform(t *testing.T) {
 	out, err := exec.Command("go", "list", "-deps", ".").Output()
 	if err != nil {
@@ -61,6 +61,24 @@ func TestLeafImportsOnlyThePlatform(t *testing.T) {
 		}
 		if dep == "github.com/thisisjun786/codex-relay-workflow/internal/tracking" {
 			t.Errorf("dependency %q: the leaf must not import the tracking package", dep)
+		}
+	}
+
+	own, err := exec.Command("go", "list", "-f", "{{.ImportPath}}", ".").Output()
+	if err != nil {
+		t.Fatalf("go list -f ImportPath: %v", err)
+	}
+	self := strings.TrimSpace(string(own))
+	if self == "" {
+		t.Fatal("go list -f ImportPath: empty import path")
+	}
+	nonStd, err := exec.Command("go", "list", "-deps", "-f", "{{if not .Standard}}{{.ImportPath}}{{end}}", ".").Output()
+	if err != nil {
+		t.Fatalf("go list -deps (non-standard): %v", err)
+	}
+	for _, dep := range strings.Fields(string(nonStd)) {
+		if dep != self {
+			t.Errorf("dependency %q: the leaf may import only the standard library", dep)
 		}
 	}
 }
