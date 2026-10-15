@@ -41,7 +41,10 @@ const (
 //
 // A value whose milestone member is itself an object with a string state wraps the milestone's result (a night batch returns
 // {state: closed|incomplete, milestone: the project lane's result, lanes}): the outcome is then read from that object, one level
-// down, so the notice tells the milestone's state and reason, and the value's own state is kept as RunState.
+// down, so the notice tells the milestone's state and reason, and the value's own state is kept as RunState. A milestone member that
+// carries an id is a milestone (crw.milestone hands a script {id, plan, title, nodes, ...}; a script may add its own state), not a
+// wrapped result, and is not read as one (CRW-1495): the outcome is then the value's own. No project-lane or milestone-halt result
+// carries an id member.
 func outcomeOf(value json.RawMessage) *Outcome {
 	top := outcomeObject(value)
 	if top == nil {
@@ -52,9 +55,11 @@ func outcomeOf(value json.RawMessage) *Outcome {
 		return nil
 	}
 	if inner := outcomeObject(top["milestone"]); inner != nil {
-		if o := outcomeOfObject(inner); o != nil {
-			o.RunState = state
-			return o
+		if _, descriptor := inner["id"]; !descriptor {
+			if o := outcomeOfObject(inner); o != nil {
+				o.RunState = state
+				return o
+			}
 		}
 	}
 	return outcomeOfObject(top)
