@@ -155,6 +155,20 @@ func (c *Channel) StageWithReading(ctx context.Context, o Obligation, reading ma
 		}
 		existing, err := c.Store.SupervisorMessage(tx, id)
 		if err == nil {
+			// An omission's frozen reading is checked first: no hold, an acknowledgement's park included,
+			// answers for a reading that contradicts the message. The check reads only the row's frozen
+			// reading, which neither release below changes, and refuses with nothing written.
+			if o.Kind == "unreported" && existing.Reading.Valid {
+				var frozen map[string]any
+				decoder := json.NewDecoder(strings.NewReader(existing.Reading.String))
+				decoder.UseNumber()
+				if err := decoder.Decode(&frozen); err != nil {
+					return err
+				}
+				if frozenObligation := ObservationObligation(frozen); frozenObligation == nil || observationReadingKey(*frozenObligation, frozen) != observationReadingKey(o, reading) {
+					return Refusal{"contradictory_observation", "this omission is already staged as " + strconv.Quote(id) + " from another reading of it, which disagrees with this one about what it is or where it can be read. The staged message keeps the reading it froze; nothing was written"}
+				}
+			}
 			// A park the recipient's acknowledgement set is not released by staging the same statement
 			// to the same endpoints again (CRW-1486: the daemon's staging visit restages every owed
 			// completion on each pass). A new statement (another event or submission) or other
@@ -189,17 +203,6 @@ func (c *Channel) StageWithReading(ctx context.Context, o Obligation, reading ma
 				existing, err = c.Store.SupervisorMessage(tx, id)
 				if err != nil {
 					return err
-				}
-			}
-			if o.Kind == "unreported" && existing.Reading.Valid {
-				var frozen map[string]any
-				decoder := json.NewDecoder(strings.NewReader(existing.Reading.String))
-				decoder.UseNumber()
-				if err := decoder.Decode(&frozen); err != nil {
-					return err
-				}
-				if frozenObligation := ObservationObligation(frozen); frozenObligation == nil || observationReadingKey(*frozenObligation, frozen) != observationReadingKey(o, reading) {
-					return Refusal{"contradictory_observation", "this omission is already staged as " + strconv.Quote(id) + " from another reading of it, which disagrees with this one about what it is or where it can be read. The staged message keeps the reading it froze; nothing was written"}
 				}
 			}
 			submission := submissionOf(report)

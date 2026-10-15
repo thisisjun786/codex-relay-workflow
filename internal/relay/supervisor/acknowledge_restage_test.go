@@ -1,6 +1,9 @@
 package supervisor
 
 import (
+	"encoding/json"
+	"errors"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
@@ -208,5 +211,36 @@ func TestAcknowledgedParkIsReadFromTheNewestSupersededRow(t *testing.T) {
 	pass("2023-11-14T22:16:20.000000+00:00")
 	if got := hold(); got != store.SupervisorHoldSuperseded {
 		t.Fatalf("the second acknowledgement was released by a pass: held %q", got)
+	}
+}
+
+// An acknowledged omission staged again with a reading that disagrees with the one it froze is
+// refused as contradictory_observation, as it is when it carries no park; the park does not answer
+// for a reading that contradicts the message.
+func TestAnAcknowledgedOmissionStillRefusesAContradictoryReading(t *testing.T) {
+	f := fixture24(t)
+	base := omissionReading24(f)
+	o := ObservationObligation(base)
+	staged, err := f.c.StageWithReading(f.ctx, *o, base, "", f.at)
+	if err != nil || staged["staged"] != true {
+		t.Fatalf("the omission was not staged: %v %v", staged, err)
+	}
+	id, _ := staged["messageId"].(string)
+	if answer, err := f.c.Acknowledge(f.ctx, AcknowledgeRequest{Recipient: "supervisor", Actor: "supervisor", Messages: []string{id}, At: f.at}); err != nil || len(answer["parked"].([]string)) != 1 {
+		t.Fatalf("the omission was not parked: %v %v", answer, err)
+	}
+	raw, _ := json.Marshal(base)
+	var changed map[string]any
+	_ = json.Unmarshal(raw, &changed)
+	changed["selectors"].(map[string]any)["session"] = "another"
+	_, err = f.c.StageWithReading(f.ctx, *o, changed, "", f.at)
+	var refusal Refusal
+	if !errors.As(err, &refusal) || refusal.Reason != "contradictory_observation" || !strings.Contains(refusal.Detail, "keeps the reading it froze") {
+		t.Fatalf("an acknowledged omission staged with a contradicting reading: %v", err)
+	}
+	// The same reading again is kept parked.
+	again, err := f.c.StageWithReading(f.ctx, *o, base, "", f.at)
+	if err != nil || again["reason"] != acknowledgedKeptReason {
+		t.Fatalf("the same reading again: %v %v", again, err)
 	}
 }
