@@ -175,6 +175,15 @@ type createThreadIn struct {
 // thread/resume and thread/turns/list on it fail with "missing source rollout".
 var errMissingPrompt = &bridge.Invalid{Reason: `prompt is required: a thread created with no first turn has no rollout, so thread/resume and thread/turns/list on it fail with "missing source rollout"`}
 
+// retained reports whether the ledger holds a receipt for id that is more than a reservation nothing was attempted for.
+func (h handlers) retained(ctx context.Context, id string) bool {
+	if h.b == nil || h.b.Ledger == nil {
+		return false
+	}
+	receipt, err := h.b.Ledger.Get(ctx, id)
+	return err == nil && receipt["status"] != "not_attempted"
+}
+
 func (h handlers) createThread(ctx context.Context, in createThreadIn) (map[string]any, error) {
 	for _, check := range []error{empty(in.Prompt, "prompt", 100000), empty(in.Title, "title", 500), empty(in.ProjectID, "app_server_project_id", 128), empty(in.Exception, "policy_exception", 128), empty(in.Role, "role", 64)} {
 		if check != nil {
@@ -186,7 +195,9 @@ func (h handlers) createThread(ctx context.Context, in createThreadIn) (map[stri
 		return h.explained("create_thread", nil, err)
 	}
 	// CRW-1486: refused before anything is reserved, so no receipt holds the id and the call that brings a prompt may reuse it.
-	if in.Prompt == nil {
+	// A request_id the ledger already holds a receipt for (a creation accepted with no prompt before this refusal existed) goes
+	// on to the replay, which answers that receipt, or refuses arguments that differ from it, as any retry is answered.
+	if in.Prompt == nil && !h.retained(ctx, in.RequestID) {
 		return h.explained("create_thread", nil, errMissingPrompt)
 	}
 	var roots []string

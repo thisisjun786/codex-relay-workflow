@@ -1,13 +1,19 @@
 package mcp
 
 import (
+	"context"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	sdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge"
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
 )
 
 // CRW-1486/S3: a thread created with no first turn has no rollout, so thread/resume and thread/turns/list on it later fail
@@ -64,5 +70,59 @@ func TestCreateThreadRefusesAMissingPrompt(t *testing.T) {
 	s.finish(t)
 	if host.Count("thread/start") != 0 || host.Count("turn/start") != 0 {
 		t.Fatalf("a refused creation reached the host: %v", host.Requests())
+	}
+}
+
+// CRW-1486 fix round 2: a creation the ledger accepted with no prompt before the refusal existed is answered from its receipt
+// when it is retried with the same request_id and arguments; the refusal is for a creation that has not happened.
+func TestCreateThreadRetriedWithoutAPromptReplaysItsStoredReceipt(t *testing.T) {
+	host := fakehost.Start(t)
+	home, env := isolated(t)
+	cwd, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := filepath.Join(home, "ledger")
+	host.Respond("thread/start", fakehost.Reply{Result: map[string]any{"thread": map[string]any{"id": "thread-1", "cwd": cwd}, "cwd": cwd, "runtimeWorkspaceRoots": []any{cwd}, "model": "anthropic/claude-opus-5", "reasoningEffort": "xhigh", "approvalPolicy": "never", "sandbox": map[string]any{"type": "readOnly", "networkAccess": false}}})
+	host.Handle("thread/read", func(json.RawMessage) fakehost.Reply {
+		return fakehost.Reply{Result: map[string]any{"thread": map[string]any{"id": "thread-1", "cwd": cwd, "model": "anthropic/claude-opus-5", "reasoningEffort": "xhigh"}}}
+	})
+	// Before the upgrade: the bridge accepted create_thread without a prompt and kept its receipt.
+	policy, err := execution.FromEnvironment(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical, store, err := ledger.Endpoint(host.SocketPath, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := appserver.New(canonical, appserver.DefaultBounds)
+	earlier, err := bridge.New(client, store, policy).CreateThread(context.Background(), bridge.CreateThread{RequestID: "pre-upgrade", CWD: cwd, Sandbox: "read-only", Model: "anthropic/claude-opus-5", Effort: "xhigh"})
+	client.Close()
+	if closeErr := store.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if err != nil || earlier["status"] != "accepted" {
+		t.Fatalf("the pre-upgrade creation: %v %v", earlier, err)
+	}
+	starts := host.Count("thread/start")
+
+	s := serve(t, []string{"--socket", host.SocketPath, "--state-dir", state}, env)
+	arguments := map[string]any{"request_id": "pre-upgrade", "cwd": cwd, "sandbox": "read-only", "model": "anthropic/claude-opus-5", "reasoning_effort": "xhigh"}
+	result := call(t, s, "create_thread", arguments)
+	if result.IsError {
+		t.Fatalf("the retry of a stored creation was refused: %s", result.Content[0].(*sdk.TextContent).Text)
+	}
+	if replay := structured(t, result); replay["replayed"] != true || replay["threadId"] != earlier["threadId"] {
+		t.Fatalf("the retry is not the stored receipt: %v, stored %v", replay, earlier)
+	}
+	// A request_id the ledger does not hold is still refused.
+	arguments["request_id"] = "post-upgrade"
+	if fresh := call(t, s, "create_thread", arguments); !fresh.IsError || !strings.Contains(fresh.Content[0].(*sdk.TextContent).Text, "prompt is required") {
+		t.Fatalf("a new creation without a prompt was not refused: %v", fresh.Content)
+	}
+	s.finish(t)
+	if host.Count("thread/start") != starts {
+		t.Fatalf("the retry reached the host: %d thread/start after %d", host.Count("thread/start"), starts)
 	}
 }
