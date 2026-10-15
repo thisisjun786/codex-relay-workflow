@@ -29,7 +29,7 @@ func bindFlowCardThread(t *testing.T, kind string) {
 	pair := `{"model":"explorer-model","effort":"high"}`
 	line := `{"run_id":"run-1","thread_id":"` + flowCardThread + `","kind":"engine","call_id":"c_000000000001","role":"executor","nativeAllowance":1,"helperPairs":{"explorer":` + pair + `},"policyDigest":"d"}`
 	if kind == bound.KindOrchestrator {
-		// an orchestrator line carries the pairs of the six roles (CRW-1348); a line without them is no binding the hook reads
+		// an orchestrator line carries the pairs of the orchestrator roles (CRW-1348); a line without them is no binding the hook reads
 		pairs := []string{}
 		for _, role := range bound.OrchestratorRoles {
 			pairs = append(pairs, `"`+role+`":`+pair)

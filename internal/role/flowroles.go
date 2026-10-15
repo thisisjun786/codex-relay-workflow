@@ -11,34 +11,39 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 )
 
-// The flow-only role keys (CRW-1330, CRW-1316 design section 8). A flow run resolves its calls against six roles; four are the
-// helper roles of Roles() and two exist only for the flow. All six are read from the same roles object of the store. Roles() is
-// the CXC oracle's list, which the GUI bundle, the MCP tools and the spawn hooks read, so the two keys are not in it: the helper's
-// list and settings answers never show them, and `crw role helper get|set|reset` take them by name.
+// The flow-only role keys (CRW-1330, CRW-1316 design section 8; the critic CRW-1434). A flow run resolves its calls against seven
+// roles; four are the helper roles of Roles() and three exist only for the flow. All seven are read from the same roles object of
+// the store. Roles() is the CXC oracle's list, which the GUI bundle, the MCP tools and the spawn hooks read, so the three keys are
+// not in it: the helper's list and settings answers never show them, and `crw role helper get|set|reset` take them by name.
 const (
 	ExecutorT1    RoleName = "executor-t1"
 	ReviewerFinal RoleName = "reviewer-final"
+	// Critic audits the architect's design in a flow run's design loop (CRW-1434).
+	Critic RoleName = "critic"
 )
 
-// FlowOnlyRoles is the two flow-only keys.
-func FlowOnlyRoles() []RoleName { return []RoleName{ExecutorT1, ReviewerFinal} }
+// FlowOnlyRoles is the three flow-only keys.
+func FlowOnlyRoles() []RoleName { return []RoleName{ExecutorT1, ReviewerFinal, Critic} }
 
-// FlowRoles is the six roles of a flow run in the order the flow lists them (execution.AgentRoleNames).
+// FlowRoles is the seven roles of a flow run in the order the flow lists them (execution.AgentRoleNames); the critic is last, so
+// a table of the six earlier roles keeps its rows.
 func FlowRoles() []RoleName {
-	return []RoleName{Architect, Executor, ExecutorT1, Reviewer, ReviewerFinal, Explorer}
+	return []RoleName{Architect, Executor, ExecutorT1, Reviewer, ReviewerFinal, Explorer, Critic}
 }
 
-func flowOnlyRole(r RoleName) bool { return r == ExecutorT1 || r == ReviewerFinal }
+func flowOnlyRole(r RoleName) bool { return r == ExecutorT1 || r == ReviewerFinal || r == Critic }
 
 // storeRole reports whether a write or a read by name may address the role: a helper role or a flow-only key.
 func storeRole(r RoleName) bool { return validRole(r) || flowOnlyRole(r) }
 
 // flowCompiledDefaults are the pairs a flow-only key takes when the store holds no usable entry for it (an entry in mode default
 // is undecided instead). They are never the executor's or the reviewer's pair, so a tier step to executor-t1 or a final review
-// stays a step to another pair.
+// stays a step to another pair. The critic's is the final reviewer's pair: a model family other than the architect's, which is
+// what the design audit's independence is judged by.
 var flowCompiledDefaults = map[RoleName][2]string{
 	ExecutorT1:    {"anthropic/claude-sonnet-5-5", "xhigh"},
 	ReviewerFinal: {"gpt-6.1-sol", "xhigh"},
+	Critic:        {"gpt-6.1-sol", "xhigh"},
 }
 
 // FlowRoleState says where a role's pair in a FlowSnapshot came from.
@@ -63,7 +68,7 @@ type FlowRole struct {
 }
 
 // FlowSnapshot is one read of the store as a flow run reads it: the store's path, whether a file is there, the pair of each of
-// the six roles and a warning for every role whose pair is not the store's own complete pair. Reading it never fails and never
+// the seven roles and a warning for every role whose pair is not the store's own complete pair. Reading it never fails and never
 // writes: a store or a role that cannot be used is a warning and an undecided role (or the compiled default of a flow-only key),
 // because a reversible choice is warned and recorded rather than refused (Jun's standing rule).
 type FlowSnapshot struct {
@@ -157,7 +162,7 @@ func (s FlowSnapshot) Role(name RoleName) (FlowRole, bool) {
 	return FlowRole{}, false
 }
 
-// Digest is the canonical digest of the six (model, effort) pairs: SHA-256 of the compact JSON array of [role, model, effort]
+// Digest is the canonical digest of the seven (model, effort) pairs: SHA-256 of the compact JSON array of [role, model, effort]
 // in FlowRoles order, undecided values empty. Nothing else of the store (prompt overrides, fallbacks, member order, other
 // members) is in it, so a run's pinned digest changes exactly when a pair it runs on does.
 func (s FlowSnapshot) Digest() string {
