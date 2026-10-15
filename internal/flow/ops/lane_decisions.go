@@ -180,6 +180,10 @@ const (
 	ExploreOpen     = "open_questions" // SP-EXPL-1: the open questions of the architect
 	ExploreResearch = "research"       // SP-EXPL-2: the research question of an executor receipt
 	ExploreEvidence = "evidence"       // SP-EXPL-3: the evidence_question of a reviewer defect
+	// ExploreBackground is the background question of a milestone node (CRW-1466, under SP-EXPL-1): one for each node, put to an
+	// explorer before the architect's first DESIGN. It spawns an explorer or reuses an answered digest; never inline, never to the
+	// orchestrator, and outside the open questions' cap of the milestone (ExplorersPerMilestone).
+	ExploreBackground = "background"
 )
 
 // The routes a question takes.
@@ -276,7 +280,10 @@ func QuestionDigest(q string) string { return textDigest(normalizeQuestion(q)) }
 //   - otherwise an explorer is spawned (SP-EXPL-1/2/3) - for the open questions at most ExplorersPerMilestone in the milestone, the
 //     rest go to the orchestrator thread as design questions (reason explorer_cap); for a research question at most
 //     ResearchPerTier continuations a tier, then the node escalates as a scope question; for an evidence question at most
-//     EvidenceExplorersPerNode a node.
+//     EvidenceExplorersPerNode a node;
+//   - a background question of a milestone node (ExploreBackground, SP-EXPL-1) that no answer in the run reaches spawns an explorer
+//     (reason spawned_background): it is never answered inline whatever its files_needed, never goes to the orchestrator, and neither
+//     uses nor counts against the open questions' cap of the milestone.
 //
 // A call without a question that is due (an evidence round with no evidence_missing defect) records the skip.
 type exploreRouteOp struct{ l *Lane }
@@ -348,7 +355,7 @@ func (o *exploreRouteOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 	}
 	rule := ""
 	switch kind {
-	case ExploreOpen:
+	case ExploreOpen, ExploreBackground:
 		rule = RuleExpl1
 	case ExploreResearch:
 		rule = RuleExpl2
@@ -409,6 +416,10 @@ func (o *exploreRouteOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 			}
 		case inlineOK:
 			rt.Route, rt.Rule, rt.Reason = RouteInline, RuleInl1, "asker_answers"
+		case kind == ExploreBackground:
+			// a background question is not an open question: it is not inline, has no authority notation, is never asked of the
+			// orchestrator and neither reads nor moves the open questions' cap (spawnedMilestone)
+			rt.Route, rt.Reason = RouteSpawn, "spawned_background"
 		case kind == ExploreOpen && len(asked[rt.Digest]) > 0:
 			if a, ok := orchestratorAnswer(r, asked[rt.Digest], rt.Digest); ok {
 				rt.Route, rt.Rule, rt.Answer, rt.Reason, rt.Origin = RouteReuse, RuleInl2, a, "answered_by_orchestrator", RouteOrchestrator
@@ -604,7 +615,9 @@ func endConditionWarnings(asked []EndConditionAsk, ran []EndConditionRun) []stri
 }
 
 // exploreRecordOp is crw.exploreRecord(kind, context, answers): the answers of a round of questions, kept so that a question of
-// the same digest asked again in the run reuses the answer (SP-INL-2).
+// the same digest asked again in the run reuses the answer (SP-INL-2). A record of kind ExploreBackground keeps the background
+// answers of a milestone's nodes the same way; only a record of the open questions is read for the carried questions and for the
+// end condition commands (CRW-1466).
 type exploreRecordOp struct{ l *Lane }
 
 func (o *exploreRecordOp) Run(_ context.Context, req engine.OpRequest) (engine.OpResult, error) {
