@@ -538,3 +538,137 @@ func TestForegroundResumePausesCleanlyOnSIGUSR1(t *testing.T) {
 		})
 	}
 }
+
+// drainedRows counts, after the last start of the run, the interrupt_requested rows and the run_paused rows by answer.
+func drainedRows(events []engine.Event) (interrupts, drains int) {
+	last := -1
+	for i, e := range events {
+		if e.Kind == engine.KindRun && e.Event == "started" {
+			last = i
+		}
+	}
+	for _, e := range events[last+1:] {
+		switch {
+		case e.Event == engine.EvInterruptRequested:
+			interrupts++
+		case e.Kind == engine.KindFlow && e.Event == engine.EvRunPaused && e.Data["by"] == "answer":
+			drains++
+		}
+	}
+	return interrupts, drains
+}
+
+// TestRunProcessDrainsOnSIGUSR2 (CRW-1492): `crw flow answer` sends SIGUSR2 to the run process that holds the run; the process
+// drains the run (Control.Drain): the turn in flight runs to its end with its tokens, the next call ends held engine_paused, nothing
+// is interrupted, and the run ends paused by `answer` with the process exiting 0 (not cancelled, as any other signal would).
+func TestRunProcessDrainsOnSIGUSR2(t *testing.T) {
+	pw := newProcessWorld(t, twoCalls)
+	spec := pw.spec("run-drain", nil)
+	sigs := make(chan os.Signal, 2)
+	pw.handle = func(r engine.FakeRequest) engine.FakeReply {
+		if r.Kind == "turn" && strings.Contains(r.Prompt, "first") {
+			sigs <- syscall.SIGUSR2
+			time.Sleep(200 * time.Millisecond) // the signal is read while the turn is in flight
+		}
+		return engine.FakeReply{Tokens: &engine.Tokens{Input: 10, Output: 5, Total: 15}}
+	}
+	if code, errOut := pw.execute(spec, false, sigs); code != 0 {
+		t.Fatalf("exit %d %s", code, errOut)
+	}
+	info := pw.info("run-drain")
+	if info.State != StatePaused || info.Live || info.Status != engine.RunPaused || !strings.HasPrefix(info.Paused, "answer: ") || len(info.HeldReasons) != 1 || info.HeldReasons[0] != engine.ReasonEnginePaused {
+		t.Errorf("the drained run: %+v", info)
+	}
+	res, _ := ReadResult(pw.state, "run-drain")
+	if res.Status != engine.RunPaused || string(compactJSON(res.Value)) != `["completed","held","engine_paused"]` || res.Tokens != 15 {
+		t.Errorf("the result: %+v %s", res, res.Value)
+	}
+	events, _, err := loadRun(pw.world, "run-drain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ends := endRowsAfterLastStart(events); strings.Join(ends, ",") != "paused" {
+		t.Errorf("the run rows after the last start: %v, want one paused row", ends)
+	}
+	if interrupts, drains := drainedRows(events); interrupts != 0 || drains != 1 {
+		t.Errorf("%d interrupt_requested rows and %d run_paused rows by answer, want 0 and 1", interrupts, drains)
+	}
+}
+
+// TestForegroundResumeDrainsOnSIGUSR2 (CRW-1492): a foreground `crw flow resume RUN SCRIPT` and `crw flow resume RUN` hold the run as
+// its process does and answer SIGUSR2 as it does: the run ends paused by `answer`, nothing is interrupted, and the command exits 0.
+// The SCRIPT form takes SIGUSR2 from before its holder record exists: a signal sent the moment it holds the run is not lost.
+func TestForegroundResumeDrainsOnSIGUSR2(t *testing.T) {
+	for _, path := range []string{"script", "spec"} {
+		t.Run(path, func(t *testing.T) {
+			pw := newProcessWorld(t, twoCalls)
+			scriptResumeEnv(t, pw)
+			run := "run-usr2-" + path
+			// the first process is paused by the operator in its first call
+			sigs := make(chan os.Signal, 2)
+			mode := "pause"
+			pw.handle = func(r engine.FakeRequest) engine.FakeReply {
+				if r.Kind == "turn" && strings.Contains(r.Prompt, "first") {
+					switch mode {
+					case "pause":
+						sigs <- syscall.SIGUSR1
+						time.Sleep(200 * time.Millisecond)
+					case "signal":
+						// what `crw flow answer` does to the run process that holds the run: this process
+						if err := syscall.Kill(os.Getpid(), syscall.SIGUSR2); err != nil {
+							t.Error(err)
+						}
+						time.Sleep(200 * time.Millisecond)
+					}
+				}
+				return engine.FakeReply{Tokens: &engine.Tokens{Input: 10, Output: 5, Total: 15}}
+			}
+			spec := pw.spec(run, nil)
+			if code, errOut := pw.execute(spec, false, sigs); code != 0 {
+				t.Fatalf("the first process: exit %d %s", code, errOut)
+			}
+			args := []string{"resume", run}
+			if path == "script" {
+				args = append(args, pw.script)
+				// the signal comes the moment the resume holds the run, before its first call
+				mode = ""
+				prev := afterResumeLock
+				t.Cleanup(func() { afterResumeLock = prev })
+				afterResumeLock = func() {
+					if err := syscall.Kill(os.Getpid(), syscall.SIGUSR2); err != nil {
+						t.Error(err)
+					}
+					time.Sleep(200 * time.Millisecond)
+				}
+			} else {
+				mode = "signal"
+			}
+			code, out, errOut := pw.td.do(append(args, "--state", pw.state)...)
+			if code != 0 {
+				t.Fatalf("the drained resume: exit %d %s %s", code, out, errOut)
+			}
+			info := pw.info(run)
+			if info.Processes != 2 || info.Live || info.State != StatePaused || info.Status != engine.RunPaused || !strings.HasPrefix(info.Paused, "answer: ") {
+				t.Errorf("the resume did not drain: %+v", info)
+			}
+			events, _, err := loadRun(pw.world, run)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ends := endRowsAfterLastStart(events); strings.Join(ends, ",") != "paused" {
+				t.Errorf("the run rows after the last start: %v, want one paused row", ends)
+			}
+			if interrupts, drains := drainedRows(events); interrupts != 0 || drains != 1 {
+				t.Errorf("%d interrupt_requested rows and %d run_paused rows by answer after the last start, want 0 and 1", interrupts, drains)
+			}
+			if path == "spec" {
+				// the turn in flight ended with its tokens; the next call is held
+				if res, _ := ReadResult(pw.state, run); res.Status != engine.RunPaused || string(compactJSON(res.Value)) != `["completed","held","engine_paused"]` {
+					t.Errorf("the result of the drained resume: %+v %s", res, res.Value)
+				}
+			} else if !strings.Contains(out, `"status": "paused"`) {
+				t.Errorf("the result of the drained resume: %s", out)
+			}
+		})
+	}
+}
