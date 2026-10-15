@@ -10,7 +10,7 @@ import (
 )
 
 // The review engines of the crosscheck (CRW-1473): astra (gpt-6-astra through codex exec, family gpt) and grok (grok-4.7, family
-// grok), run as the ops crosscheck tool runs them (/state/crw/mgmt/tools-v3/astra-run.sh and crosscheck.sh). ExecRun appends the
+// grok), run as the operator crosscheck tools run them (astra-run.sh and crosscheck.sh). ExecRun appends the
 // prompt as the last argv word and runs the tool in the request's worktree; the schema the tool answers under is part of the argv,
 // since ExecRun never passes Request.Schema to the tool.
 const (

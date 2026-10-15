@@ -12,7 +12,7 @@ import (
 )
 
 // grokEnvelope is the one JSON document grok prints for a --json-schema call, trimmed from a real run
-// (/state/crw/crw-lane-split-1506/critic-r3.json.grok.raw.json): its prose text (here a different, earlier verdict than the
+// (a recorded critic answer): its prose text (here a different, earlier verdict than the
 // structured one), the run's metadata and usage, and the structured answer.
 func grokEnvelope(t *testing.T, structured any, keep bool) string {
 	t.Helper()
@@ -39,7 +39,7 @@ func grokEnvelope(t *testing.T, structured any, keep bool) string {
 }
 
 // astraStream is the JSONL codex exec --json prints, trimmed from a real run
-// (/state/crw/crw-lane-split-1506/critic-r3.json.astra.astra.json.events.jsonl): the thread start, codex's warning as an error
+// (a recorded critic event stream): the thread start, codex's warning as an error
 // item, two prose agent_messages around a command_execution, then the given last messages and turn.completed.
 func astraStream(last ...string) string {
 	lines := []string{
