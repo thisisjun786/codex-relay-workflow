@@ -258,6 +258,53 @@ func TestCloseGateFailsOnAFailedVerificationAndHoldsOnAMissingVerifier(t *testin
 	}
 }
 
+// A reviewer-final verdict that does not verify the range keeps the milestone open (CRW-1471): reviewer-final answers needs_changes
+// with a P1 defect over a passed gate, and the run escalates the milestone from reviewer_final. Nothing reads it as a close: no
+// crw.milestoneClose, no reflection of the architect, no report up, and the one reviewer-final call is not asked again.
+func TestNeedsChangesFinalDoesNotCloseTheMilestone(t *testing.T) {
+	l := NewLab(t, oneNode()...)
+	l.On("^reviewer-final:M1$", func(*Call) *fakehostPlan {
+		p := Say(VerdictFinalNeedsChanges(Defect("f1", "correctness", "P1", "the range breaks the criterion")))
+		return &p
+	})
+	res := l.Run()
+	if res.Status != engine.RunCompleted {
+		t.Fatalf("run %s: %s: %s\ncalls: %v", res.Status, res.ErrorKind, res.Error, l.Labels())
+	}
+	got := Value[closeResult](t, res)
+	if got.State != "escalated" || got.Source != "reviewer_final" || got.Reason != "needs_changes" {
+		t.Fatalf("%+v; calls %v; escalations %v", got, l.Labels(), escalationReasons(l))
+	}
+	if reasons := escalationReasons(l); !slices.Contains(reasons, "reviewer_final_needs_changes") {
+		t.Errorf("escalations %v, want reviewer_final_needs_changes", reasons)
+	}
+	finals := l.Rows("crw.reviewerFinal")
+	if len(finals) != 1 || str(finals[0].Data, "state") != "verdict" || str(finals[0].Data, "verdict") != "needs_changes" {
+		t.Errorf("reviewer-final rows %+v, want one verdict of needs_changes", finals)
+	}
+	if n := len(l.Rows("crw.milestoneClose")); n != 0 {
+		t.Errorf("%d crw.milestoneClose rows: the milestone closed over a final review that needs changes", n)
+	}
+	if n := len(l.Rows("crw.reportUp")); n != 0 {
+		t.Errorf("%d crw.reportUp rows: a milestone that did not close was reported up", n)
+	}
+	if n := len(l.Rows("crw.hold")); n != 0 {
+		t.Errorf("%d crw.hold rows: a verdict is not held", n)
+	}
+	var finalCalls int
+	for _, label := range l.Labels() {
+		if label == "reflection:M1" {
+			t.Errorf("the architect reflected on a range reviewer-final did not verify: %v", l.Labels())
+		}
+		if strings.HasPrefix(label, "reviewer-final:M1") {
+			finalCalls++
+		}
+	}
+	if finalCalls != 1 {
+		t.Errorf("%d reviewer-final calls, want one: a verdict is not asked again; calls %v", finalCalls, l.Labels())
+	}
+}
+
 // A resume of a run that closed does nothing: the gate, the final review, the close, the audit and the archive are all replayed
 // from the journal, and the host is asked for nothing - no call, no read of a thread, no archive.
 func TestResumeAfterAClosedMilestoneRunsNothing(t *testing.T) {

@@ -5,7 +5,9 @@
 //                     receipt when a criterion of the milestone has a driven surface). Evidence that is missing or stale is made at
 //                     H - crw.verify, and the QA calls - and the gate is judged again. A gate that fails or cannot be settled stops
 //                     the close: reviewer-final does not run.
-//   reviewer-final    one reviewer-final call over the range, with the passed gate as its input.
+//   reviewer-final    one reviewer-final call over the range, with the passed gate as its input. Only a verdict of verified
+//                     (accepts) lets the milestone close; any other verdict, needs_changes among them, stops the close
+//                     (CRW-1471), and a call that gave no verdict stops it with the call's own state.
 //   the close         crw.milestoneClose records the tip it judged; a target that moved on after the gate is judged again from
 //                     its new head.
 //
@@ -98,6 +100,12 @@ async function finalReview(ms, g) {
   return rv
 }
 
+// accepts says whether a judgement lets the close go on: a verdict, and one whose word is verified. For reviewer-final x.verdict is
+// the raw VERDICT_FINAL answer; any judgement that carries its word at .verdict is read the same way.
+function accepts(x) {
+  return x.state === 'verdict' && !!x.verdict && x.verdict.verdict === 'verified'
+}
+
 export async function closeMilestone(ms) {
   for (let attempt = 1; attempt <= CLOSE_ATTEMPTS; attempt++) {
     const g = await gate(ms)
@@ -105,6 +113,8 @@ export async function closeMilestone(ms) {
     if (g.state !== 'pass') return gateStop(g)
     const f = await finalReview(ms, g)
     if (f.state !== 'verdict') return stop('reviewer_final', f.state, f.reason, f.call.callId)
+    // a verdict that does not verify the range keeps the milestone open: the script escalates reviewer_final_needs_changes
+    if (!accepts(f)) return stop('reviewer_final', 'needs_changes', 'needs_changes', f.call.callId)
     const close = await crw.milestoneClose(ms.id, { gate: g, final: f })
     if (!close.moved) return { state: 'closed', tip: close.tip, close, gate: g, final: f }
   }

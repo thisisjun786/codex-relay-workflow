@@ -423,7 +423,8 @@ async function closeAndReport() {
   phase('milestone')
   // The close: the final gate over the integrated head (test evidence, and the QA receipt for a driven surface), reviewer-final over
   // the range with the passed gate as its input, and the close recorded over the tip it judged. A gate that fails or cannot be settled
-  // ends the milestone here, and reviewer-final does not run (crw:lib/close).
+  // ends the milestone here, and reviewer-final does not run; a reviewer-final verdict other than verified ends it too, and nothing is
+  // closed, reflected on or reported (crw:lib/close).
   const closed = await crw.closeMilestone(ms)
   if (closed.state !== 'closed') return crw.milestoneHalt(ms, closed.source, closed.status, closed.reason, closed.call)
   // The architect's reflection (SP-ARCH-3): the next turn of its thread, at the integrated head the gate pinned, in a read-only checkout

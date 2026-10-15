@@ -780,6 +780,16 @@ func VerdictFinal(aligned bool) map[string]any {
 	return map[string]any{"verdict": "verified", "criteria": []any{map[string]any{"id": "c1", "met": true, "evidence": "read the range"}}, "defects": []any{}, "alignment": alignment, "summary": "reviewed the range"}
 }
 
+// VerdictFinalNeedsChanges is the answer of reviewer-final that does not verify the range: needs_changes with criterion c1 not met
+// and the defects, and the range ALIGNED with the DESIGN, so only the verdict word keeps the milestone open (CRW-1471).
+func VerdictFinalNeedsChanges(defects ...map[string]any) map[string]any {
+	if defects == nil {
+		defects = []map[string]any{}
+	}
+	return map[string]any{"verdict": "needs_changes", "criteria": []any{map[string]any{"id": "c1", "met": false, "evidence": "read the range"}}, "defects": defects,
+		"alignment": map[string]any{"verdict": "ALIGNED", "drift": []any{}}, "summary": "the range needs changes"}
+}
+
 // Reflection is the answer of the architect's reflection at the close: ALIGNED, or MISALIGNED with the decision D1 departed from.
 func Reflection(aligned bool) map[string]any {
 	if aligned {
