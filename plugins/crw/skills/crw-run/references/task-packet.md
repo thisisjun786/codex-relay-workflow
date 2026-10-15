@@ -100,7 +100,7 @@ Context:
 - Effective model/effort: [values from the request or Default independent execution;
   actual configuration is supplied by creation]
 - Coordinator: [task ID; context only, never a PABCD session binding]
-- Responsible issue child: [existing independent task/host ID, or newly created task from the launch receipt]
+- Responsible `child` session: [existing independent task/host ID, or newly created task from the launch receipt]
 - Assignment route: [reuse / create; current writer state and authorization source]
 - Management marker: [the stable creation request id this launch was issued under, per
   [Prepare and dispatch](../SKILL.md#prepare-and-dispatch)]
@@ -109,7 +109,7 @@ Context:
   and the exact issue identity registration was given, not a display key that differs from it;
   these depend on nothing task creation returns; add the relationship id and current
   generation only where the assignment is already registered, since a newly created
-  issue child's registration needs the task id creation has not returned yet and resolves its
+  `child` session's registration needs the task id creation has not returned yet and resolves its
   own relationship by issue lookup]
 - Determined execution mode: [relay-managed or explicitly direct, with the reason where it is
   direct; the resolved state directory and socket, determined as
@@ -118,7 +118,7 @@ Context:
   measured rather than assumed.
   Determined at managed start or resume per
   [Determine the execution mode](../SKILL.md#determine-the-execution-mode). Carried here because
-  an issue child that is told only the state directory cannot tell an agreed direct assignment from a
+  a `child` session that is told only the state directory cannot tell an agreed direct assignment from a
   relay one nobody decided about, and those two call for different behaviour on completion]
 - Canonical criteria, when registered: [criterion ids and the document they came from]
 - Canonical tracking documents: [refs/URLs and observed revision/date]
@@ -128,12 +128,12 @@ Authorized execution:
 - Delivery: [where the assignment covers publication, the task branch and the head pushed for the integrator, with its local verification record; a pull request is named only where the in-flight transition section of merge-readiness.md applies. Otherwise local commits or a frozen diff. Publication is never inferred from the delivery line alone]
 - External actions: [actions covered by the assignment and shared defaults, with any narrower user limits]
 - Integration owner/target: [coordinator and verified destination; copy the applicable dev default or explicit delivery limit]
-- Operations clauses carried to this issue child: [OPS-5.5 and OPS-9 from
-  [Operations contract](operations.md), cited by id where this issue child can read this
+- Operations clauses carried to this `child` session: [OPS-5.5 and OPS-9 from
+  [Operations contract](operations.md), cited by id where this `child` session can read this
   repository and quoted in full where it cannot. Carry the clause text rather than a
   summary of it: a quotation can be diffed against its source and regenerated when the
   clause moves, and it is the paraphrase that drifts unnoticed. A packet carrying neither
-  sends the issue child the previous workflow]
+  sends the `child` session the previous workflow]
 - Runtime/test data access: [agreed sources and operational limits]
 
 Workspace ownership:
@@ -148,7 +148,7 @@ Workspace ownership:
   something this run created]
 - Your resources: [the checkout, branch and evidence root this assignment owns, with the
   OPS-5.2 columns: created by, editing owner, git metadata owner, retention owner and
-  cleanup authorization, `none automatic` where no cleanup is authorized. For an issue child this
+  cleanup authorization, `none automatic` where no cleanup is authorized. For a `child` session this
   call is creating, name the editing owner by the management marker this launch was issued
   under, since the native task id does not exist until creation returns it; the coordinator
   binds that marker to the id from the creation receipt and reads the record back, and
@@ -176,15 +176,15 @@ Workspace ownership:
   `scratch_root` root `crw config paths` prints), named separately by the packet]
 - Go build resources: [for a task that builds or tests Go code: the build cache, the parallelism and
   the memory limit it works under, each with its reason. Tasks share a host, so whatever one of
-  them leaves unbounded, all of them multiply, and an issue child told only to be careful has no number
-  to apply. An issue child that cannot apply one of the settings below reports that and does not build
+  them leaves unbounded, all of them multiply, and a `child` session told only to be careful has no number
+  to apply. A `child` session that cannot apply one of the settings below reports that and does not build
   without it.
-  Build cache: one directory that every issue child and the child use, on a local file system and on
+  Build cache: one directory that every `child` session and the child use, on a local file system and on
   the volume the `Capacity and large artifacts:` line chose for large output, for example
   `GOCACHE=<scratch volume>/gocache-shared`, in place of a cache per task. A cache per task makes
   every task compile the standard library and each dependency from nothing and leaves a cache
   directory behind for each task. The directory exists before the packet names it and the child keeps it; a
-  issue child exports `GOCACHE` for its own commands (never `go env -w`, which rewrites the user's Go
+  `child` session exports `GOCACHE` for its own commands (never `go env -w`, which rewrites the user's Go
   configuration for every task) and never creates, moves or empties it. Sharing is safe because the
   Go command builds its cache for it: `go help cache` says the cache is safe for concurrent
   invocations, and the comment on `Open` in `cmd/go/internal/cache/cache.go` says that processes on
@@ -220,10 +220,10 @@ Workspace ownership:
   applies only when the packet states it, after the packet's writer has confirmed that the local
   full verification of that tree runs the whole suite (a check that is partial or selected by changed paths does not
   qualify). The packet then records where the repository's contribution rules ask for a full local
-  run and that the override covers it, and the issue child reports that full run with its record and head as the evidence, not a partial pass. A packet that does not state the override leaves the
+  run and that the override covers it, and the `child` session reports that full run with its record and head as the evidence, not a partial pass. A packet that does not state the override leaves the
   repository's local check in force.
   Memory limit: a heavy command, meaning `-race`, `-a`, a load reproduction, a `-count` above 10
-  for example, or one the packet names (a command the issue child cannot place is treated as heavy), runs
+  for example, or one the packet names (a command the `child` session cannot place is treated as heavy), runs
   alone in its own scope of the user's service manager, never as root:
   `systemd-run --user --scope -p MemoryMax=<value> -p MemorySwapMax=0 -p OOMPolicy=kill -- <command>`.
   A command that cannot stay under the limit, once the kernel has failed to reclaim memory, is killed
@@ -233,27 +233,27 @@ Workspace ownership:
   what the service manager would otherwise decide by its own default. Older service managers refuse
   `OOMPolicy` for a scope (this command was tried with systemd 259 only), and
   `systemd-run --user --scope -p OOMPolicy=kill true` says whether the one in use accepts it. Where
-  it does not, the issue child omits `-p OOMPolicy=kill` and keeps the rest: systemd's default then
-  decides what else in the scope ends, so the issue child also checks the command's exit status and stops
+  it does not, the `child` session omits `-p OOMPolicy=kill` and keeps the rest: systemd's default then
+  decides what else in the scope ends, so the `child` session also checks the command's exit status and stops
   what it started, by its recorded process group, that the kill left running. Everything inside one
   scope ends together, so each heavy command gets its own. Keeping the host itself from running out is the
   job of the value and the floor: the packet states the value (for example `8G`), which the child
   sets from the memory the host has free for such commands so that the limits of the heavy commands
   that can run at once, together with what the host already uses, stay below its memory, and the
   floor to start from (for example 15 GB `available` in `free -g`, with swap use below half). The
-  issue child checks the floor again before each heavy command, waits when it is not met, and runs one
+  `child` session checks the floor again before each heavy command, waits when it is not met, and runs one
   heavy command at a time. A command the limit ends is reported with its value and status, and the
-  issue child does not raise the limit to get past it. Where
+  `child` session does not raise the limit to get past it. Where
   `systemd-run --user` or the memory controller is missing, the command is not run unlimited: the
-  issue child says so and relies on the local full verification of the same tree]
-- Processes you start: [carry this rule in the packet's own words, because the issue child works from
+  `child` session says so and relies on the local full verification of the same tree]
+- Processes you start: [carry this rule in the packet's own words, because the `child` session works from
   the packet and may never read this reference. Other tasks build and test on this host at the same
   time, and a command line does not say whose process it is, so a kill that selects by pattern ends
   their runs along with yours: their checks stop without a word, and their owner can spend a long
   time looking for a failure no change of theirs caused. Stop only an OS process you started: by the
   pid you recorded when you started it, by a process group you created for it (for example by
   starting it under `setsid`; a signal to the lone pid of a shell or of `make` can leave its
-  issue children running), or through the handle the execution tool returned for it. Having started a
+  `child` sessions running), or through the handle the execution tool returned for it. Having started a
   process is necessary and not enough: the relay's delivery service is shared, and a child that
   started it still does not end it early ([OPS-4.1](operations.md#ops-41-ownership-is-the-operating-scope-not-a-parent)).
   Never select a target by pattern or name: no `pkill`, no `killall`, no `fuser -k`, and no pid
@@ -432,7 +432,7 @@ Execution:
   `crw-pabcd` using your own session binding, host goal, and goalplan.
   If a required loop capability is absent, report the exact gap before starting.
   `LOOP-DOCS-FIRST-01` applies to your own issue as `crw-loop` states it: a single-cycle issue
-  skips the docs-only first cycle, and an issue child that plans two or more work-phases opens with
+  skips the docs-only first cycle, and a `child` session that plans two or more work-phases opens with
   one, with the roadmap debt for scope found later.
   A correction generation, a base-refresh generation and a separated publication step are not
   the first work-phase of new work, so they do not open `LOOP-DOCS-FIRST-01`'s docs-only cycle.
@@ -772,14 +772,14 @@ SCOPE
 - <the edit surfaces, what is out of scope, shared contracts>
 - <the verified repository and the remote name and URL to push to, baseline commit, worktree, branch, evidence root, prerequisites; the
   project instructions and source to read first>
-- <the permission profile the issue child was created with, the measured write capability of the checkout and its git metadata, and the
+- <the permission profile the `child` session was created with, the measured write capability of the checkout and its git metadata, and the
   fallback where a write is refused>
 - <host values: a short TMPDIR with the socket limit stated, the Go build resources, relay ids, where a finding you leave unfixed is recorded>
 - <the publication scope (push the task branch, or none) and the delivery contract by id: OPS-5.5 and OPS-9 in operations.md>
 
 VERIFY
 - <commands confirmed to exist at the baseline, the acceptance example, the data boundary>
-- <local runs on the packages the change touches; what local full verification on the same tree stands in for, and what this issue child does not verify>
+- <local runs on the packages the change touches; what local full verification on the same tree stands in for, and what this `child` session does not verify>
 
 STOP WHEN
 - Done: <the delivery is in place (the task branch pushed, or a pull request that is open where SCOPE names one), the repository's named verification passes on its head, the one-time reviews are finished or
@@ -1056,7 +1056,7 @@ Return: [actual task ID, result link plus delivered revision/updated-at evidence
   requested/observed title or title-verification limitation;
   criterion evidence, unresolved limitations and next handoff]
 Recovery: [issue-linked record or private receipt, dispatch/turn IDs and actual owner]
-Relay, if used: [exact issue identity, scope reference, real coordinator/issue child IDs,
+Relay, if used: [exact issue identity, scope reference, real coordinator/`child` session IDs,
   state directory and authorized recipients; frozen result/evidence artifact path
   and digest under an authorized root; current generation/receipt outcome]
 Stop after this issue; do not start another issue or create an empty PR.
@@ -1105,7 +1105,7 @@ Authority: [the designation and its date, the limits in force, child-creation au
   so that child merges its own project's pull requests; an explicit no-merge or review-only
   designation arrives as that limit; release and deployment stay the user's unless this
   designation carries them]
-Current state: [locators only: the project's coordination record, its live issue children, its open
+Current state: [locators only: the project's coordination record, its live `child` sessions, its open
   pull requests, and any outcome already verified]
 Retained resources: [locators and ownership for the checkouts, branches, evidence roots,
   temporary artifacts and running processes this project's work is keeping, each with its owner,
@@ -1291,7 +1291,7 @@ Kind: conditional acceptance
 From / To: child of project B, task 01a0...b7; to child of project A, task 01a0...a1
 Scope: same two issues, same base revision
 Asking: nothing yet; accepted on the condition that A lands before B's own review opens
-Because: B's issue child already has a branch at that base
+Because: B's `child` session already has a branch at that base
 Next: A, to report its landing. Until then this is conditional and is not applied evidence
 ```
 

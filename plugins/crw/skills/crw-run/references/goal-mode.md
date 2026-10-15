@@ -265,7 +265,7 @@ Read `get_goal` first, then choose the matching case:
 
 A useful objective identifies the project and scope snapshot, the delivery boundary, coordination record,
 and explicit limits. For example: “Coordinate project <id>'s agreed issues <ids/milestone snapshot>: reuse
-one issue child per issue, dispatch independent ready work, verify results and integrate permitted deliveries
+one `child` session per issue, dispatch independent ready work, verify results and integrate permitted deliveries
 into their intended targets. Finish when all scoped obligations and receipts are reconciled. Preserve
 <limits>.” State in plain words that this is a coordination goal, a project session goal that carries no
 implementation loop, so that a later session reads it before anything else. Keep credentials and raw

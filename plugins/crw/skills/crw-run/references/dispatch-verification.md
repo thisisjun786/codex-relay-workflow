@@ -38,7 +38,7 @@ that follows. What a turn actually ran under is shown by that turn's own record 
 task, and where a claim needs that, the receipt does not supply it.
 
 Each verdict can hold while the next one fails, which is why a single pass/fail for
-"the issue child got its assignment" hides the defect rather than finding it. A packet that
+"the `child` session got its assignment" hides the defect rather than finding it. A packet that
 names the Loop, a creation call that requested it, a receipt that returned the right
 model, and a `child` session that never initialized a goalplan are one consistent observation of
 a failed dispatch, and only the fourth column is wrong.

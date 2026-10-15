@@ -661,7 +661,7 @@ Per `child` session it reports `turnDisposition` over the execution-only outcome
 `failed`, `interrupted` — with `basis` saying how that was decided: `sole`,
 `latest_of_same_outcome` when several events agree, `contested` when two final dispositions
 disagree, and `none` when this generation holds no execution-only disposition at all. `none` is
-not "the issue child is fine": read `reviewable` beside it, which counts and lists the reviewable events
+not "the `child` session is fine": read `reviewable` beside it, which counts and lists the reviewable events
 and says `head: not_derived_here`, because which revision a generation stands on is answered by
 `assignment-show` and `revision-head`, not here. `contested` names no winner on purpose.
 
@@ -1576,8 +1576,8 @@ sending on its own tick.
 codex-session-relay supervisor-select --event <id> [--recipient <supervisor task>]
 
 # What does this project still owe upward? An explicit question, never suppressed.
-# A turn that ended without reporting writes no event. The store derives it where the issue child's
-# relay recorded its claim here; for an issue child that claimed without that, pass its reporting-show
+# A turn that ended without reporting writes no event. The store derives it where the `child` session's
+# relay recorded its claim here; for a `child` session that claimed without that, pass its reporting-show
 # reading.
 codex-session-relay supervisor-standing --project <key> [--observation <file>]...
 
