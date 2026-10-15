@@ -91,6 +91,12 @@ export const DESIGN = obj({
   })),
   open_questions: list(obj({ id: text, question: text, scope: text, files_needed: texts })),
   risks: texts,
+  // dispositions: null in the first DESIGN and in a re-plan answer; a design-fix answer gives one per finding id of the fix
+  // packet (r<round>.<index>), folded into the DESIGN or rebutted, with the reason.
+  dispositions: {
+    type: ['array', 'null'],
+    items: obj({ finding: text, disposition: { type: 'string', enum: ['folded', 'rebutted'] }, reason: text }),
+  },
 })
 
 // DESIGN_AUDIT: the independent audit of a DESIGN before the first executor starts. The auditor is a reviewer of another

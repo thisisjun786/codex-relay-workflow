@@ -187,7 +187,9 @@ func BuildDigest(in DigestInput) BatchDigest {
 		d.Items = append(d.Items, item)
 	}
 	d.Stopped = stoppedWhy(info, in)
-	if mismatch != "" && info.State != StateCancelled && info.State != StateFailed && info.State != StateDead {
+	// a run that was stopped before it could release anything (cancelled, failed, dead, or paused by the operator with no process,
+	// CRW-1487) says so, not that the selection was refused
+	if mismatch != "" && info.State != StateCancelled && info.State != StateFailed && info.State != StateDead && !(info.State == StatePaused && !info.Live) {
 		d.Stopped = "night_batch_selection: the milestone is not the selection (" + mismatch + "); nothing was released"
 	}
 	d.Providers = append(d.Providers, DigestProvider{Name: "token budget", Observed: in.Spec.TokenBudget > 0, Detail: budgetDetail(info.Tokens, in.Spec.TokenBudget, info.TokenSplit)},
@@ -226,6 +228,12 @@ func stoppedWhy(info RunInfo, in DigestInput) string {
 		return "failed: " + cell(info.ErrorKind)
 	case info.State == StateDead:
 		return "the run process ended without finishing the run"
+	case info.State == StatePaused && !info.Live:
+		// the operator paused the run and its process ended paused (CRW-1487)
+		if info.Paused == "" {
+			return "paused"
+		}
+		return "paused by " + info.Paused
 	case info.State == StateRunning || info.State == StatePaused:
 		return "still running"
 	case contains(info.HeldReasons, engine.ReasonBudgetExhausted):

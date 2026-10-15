@@ -196,3 +196,68 @@ func TestRuleIDsHaveOneSource(t *testing.T) {
 		t.Errorf("the native spawn rule is %s, the rule table says %s", NativeRule, RuleNat1)
 	}
 }
+
+// A DESIGN carries dispositions: null in the first DESIGN and a re-plan answer, and in a design-fix answer one entry per finding
+// id of the fix packet, each folded or rebutted with its reason. The key is required (strict mode) of a fresh answer, a DESIGN
+// recorded before the key existed is read with it null, and the disposition is a closed set.
+func TestDesignDispositionsAreNullableAndClosed(t *testing.T) {
+	design := func(dispositions string) []byte {
+		head := `{"decisions":[],"issues":[{"issue":"CRW-1","node":"n1","size_fit":"executor","size_reason":"","issue_size_decision":"ok",` +
+			`"edit_regions":["a.go"],"approach":"a","tests_first":["TestA"],"done_condition":"d","decision_refs":[],"order_after":[],"group":null}],` +
+			`"open_questions":[],"risks":[]`
+		if dispositions == "" {
+			return []byte(head + `}`)
+		}
+		return []byte(head + `,"dispositions":` + dispositions + `}`)
+	}
+	reencode := func(t *testing.T, d Design) map[string]any {
+		t.Helper()
+		b, err := json.Marshal(d)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(b, &m); err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+
+	d, err := DecodeDesign(design(`null`))
+	if err != nil {
+		t.Fatalf("a DESIGN with dispositions null is refused: %v", err)
+	}
+	if m := reencode(t, d); m["dispositions"] != nil {
+		t.Errorf("dispositions null decodes to %v, want null", m["dispositions"])
+	} else if _, has := m["dispositions"]; !has {
+		t.Errorf("a decoded DESIGN has no dispositions field: %v", m)
+	}
+
+	d, err = DecodeDesign(design(`[{"finding":"r1.1","disposition":"folded","reason":"the unit gains the caller"},` +
+		`{"finding":"r1.2","disposition":"rebutted","reason":"the region is not shared"}]`))
+	if err != nil {
+		t.Fatalf("a DESIGN with a folded/rebutted list is refused: %v", err)
+	}
+	got, _ := json.Marshal(reencode(t, d)["dispositions"])
+	want := `[{"disposition":"folded","finding":"r1.1","reason":"the unit gains the caller"},{"disposition":"rebutted","finding":"r1.2","reason":"the region is not shared"}]`
+	if string(got) != want {
+		t.Errorf("dispositions decode to %s, want %s", got, want)
+	}
+
+	if _, err := DecodeDesign(design(`[{"finding":"r1.1","disposition":"ignored","reason":"r"}]`)); err == nil {
+		t.Error("a DESIGN with the disposition ignored is accepted")
+	}
+	if _, err := DecodeDesign(design(`[{"finding":"r1.1","disposition":"folded"}]`)); err == nil {
+		t.Error("a disposition without its reason is accepted")
+	}
+	// a fresh answer without the key breaks the strict schema; a DESIGN an earlier binary recorded without it is read as null
+	if err := Validate(SchemaDesign, design(``)); err == nil {
+		t.Error("the schema accepts a DESIGN without the dispositions key")
+	}
+	if d, err := DecodeDesign(design(``)); err != nil || d.Dispositions != nil {
+		t.Errorf("a DESIGN recorded without the dispositions key: %+v %v, want it read with dispositions null", d, err)
+	}
+	if _, err := DecodeDesign([]byte(`{"decisions":[],"issues":[],"open_questions":[],"risks":[],"dispositions":"none"}`)); err == nil {
+		t.Error("a DESIGN whose dispositions is no list and not null is accepted")
+	}
+}

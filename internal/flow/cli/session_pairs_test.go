@@ -62,7 +62,7 @@ func TestBindOwnerCarriesTheDecidedPartsOfEachRole(t *testing.T) {
 		t.Fatalf("bind: %+v %v", res, err)
 	}
 	got := bound.Lookup(sessOwner)
-	if got.State != bound.Orchestrator || len(got.Line.HelperPairs) != 6 ||
+	if got.State != bound.Orchestrator || len(got.Line.HelperPairs) != len(bound.OrchestratorRoles) ||
 		got.Line.HelperPairs["executor-t1"] != (bound.Pair{Model: "claude-fake-sonnet"}) || got.Line.HelperPairs["explorer"] != (bound.Pair{}) ||
 		got.Line.HelperPairs["executor"] != (bound.Pair{Model: "claude-fake-haiku", Effort: "xhigh"}) {
 		t.Fatalf("the owner's binding: %+v", got)
@@ -82,6 +82,36 @@ func TestRoleModelsFactNamesTheUndecidedPart(t *testing.T) {
 	if fact.Level != LevelWarn || !strings.Contains(fact.Reading, "no pair for explorer") || !strings.Contains(fact.Reading, "no effort for executor-t1") ||
 		!strings.Contains(fact.Reading, "executor-t1 claude-fake-sonnet") || strings.Contains(fact.Reading, "no pair for executor-t1") {
 		t.Fatalf("role_models %+v", fact)
+	}
+}
+
+// CRW-1434: the role_models fact reads the critic too. The design audit refuses a critic of the architect's model family
+// (independence_refused), so a table that gives the critic the architect's family warns; the critic is no review of an executor's
+// work, so only the architect is compared with it.
+func TestRoleModelsFactWarnsOfACriticOfTheArchitectsFamily(t *testing.T) {
+	isolateGit(t)
+	w := newWorld(t)
+	roleModels := func(table *engine.Policy) Fact {
+		for _, f := range sessionFacts(sessionFactRequest{State: w.state, Thread: sessOwner, Table: table, Getenv: func(string) string { return "" }}) {
+			if f.Name == FactRoleModels {
+				return f
+			}
+		}
+		return Fact{}
+	}
+	plain := engine.FakePolicy()
+	if f := roleModels(plain); f.Level != LevelPass || !strings.Contains(f.Reading, "critic "+plain.Roles["critic"].Pair.Model+"/"+plain.Roles["critic"].Pair.Effort) {
+		t.Fatalf("role_models of the fake table: %+v", f)
+	}
+	same := engine.FakePolicy()
+	c := same.Roles["critic"]
+	c.Pair = same.Roles["architect"].Pair
+	same.Roles["critic"] = c
+	family := execution.ModelFamily(c.Pair.Model)
+	f := roleModels(same)
+	if f.Level != LevelWarn || !strings.Contains(f.Reading, "critic and architect are both "+family) || strings.Contains(f.Reading, "critic and executor") ||
+		!strings.Contains(f.Reason, "design audit") {
+		t.Fatalf("role_models of a critic of the architect's family: %+v", f)
 	}
 }
 

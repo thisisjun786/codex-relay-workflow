@@ -74,7 +74,8 @@ var schemaTexts = map[string]string{
 		`"issue_size_decision":{"type":"string","enum":["ok","over_line","over_line_accepted"]},"edit_regions":` + textsJSON + `,"approach":{"type":"string"},"tests_first":` + textsJSON + `,"done_condition":{"type":"string"},"decision_refs":` + textsJSON + `,"order_after":` + textsJSON + `,"group":` + maybeTextJSON + `},` +
 		`"required":["issue","node","size_fit","size_reason","issue_size_decision","edit_regions","approach","tests_first","done_condition","decision_refs","order_after","group"],"additionalProperties":false}},` +
 		`"open_questions":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"question":{"type":"string"},"scope":{"type":"string"},"files_needed":` + textsJSON + `},"required":["id","question","scope","files_needed"],"additionalProperties":false}},` +
-		`"risks":` + textsJSON + `},"required":["decisions","issues","open_questions","risks"],"additionalProperties":false}`,
+		`"risks":` + textsJSON + `,"dispositions":{"type":["array","null"],"items":{"type":"object","properties":{"finding":{"type":"string"},"disposition":{"type":"string","enum":["folded","rebutted"]},"reason":{"type":"string"}},` +
+		`"required":["finding","disposition","reason"],"additionalProperties":false}}},"required":["decisions","issues","open_questions","risks","dispositions"],"additionalProperties":false}`,
 	SchemaDesignAudit: `{"type":"object","properties":{"verdict":{"type":"string","enum":["approved","needs_changes"]},"findings":{"type":"array","items":{"type":"object","properties":{"ref":{"type":"string"},"severity":{"type":"string","enum":` + severities + `},"finding":{"type":"string"},"evidence":` + textsJSON + `},"required":["ref","severity","finding","evidence"],"additionalProperties":false}},"summary":{"type":"string"}},"required":["verdict","findings","summary"],"additionalProperties":false}`,
 	SchemaReflection:  `{"type":"object","properties":{"verdict":{"type":"string","enum":["ALIGNED","MISALIGNED"]},"misaligned":{"type":"array","items":{"type":"object","properties":{"decision_id":{"type":"string"},"observed":{"type":"string"},"affected_nodes":` + textsJSON + `,"evidence":` + textsJSON + `},"required":["decision_id","observed","affected_nodes","evidence"],"additionalProperties":false}}},"required":["verdict","misaligned"],"additionalProperties":false}`,
 	SchemaQACapture: `{"type":"object","properties":{"captures":{"type":"array","items":{"type":"object","properties":{"path":{"type":"string"},"kind":{"type":"string","enum":["screenshot","terminal_capture","response","transcript"]},"shows":{"type":"string"}},"required":["path","kind","shows"],"additionalProperties":false}},` +
@@ -389,18 +390,33 @@ type OpenQuestion struct {
 	FilesNeeded []string `json:"files_needed"`
 }
 
-// Design is the answer of the architect (DESIGN).
+// Disposition is the architect's answer to one design-audit finding in a design-fix: the finding id (r<round>.<index>), folded
+// into the DESIGN or rebutted, and why.
+type Disposition struct {
+	Finding     string `json:"finding"`
+	Disposition string `json:"disposition"`
+	Reason      string `json:"reason"`
+}
+
+// Design is the answer of the architect (DESIGN). Dispositions is nil (null) in the first DESIGN and in a re-plan answer.
 type Design struct {
 	Decisions     []Decision     `json:"decisions"`
 	Issues        []DesignIssue  `json:"issues"`
 	OpenQuestions []OpenQuestion `json:"open_questions"`
 	Risks         []string       `json:"risks"`
+	Dispositions  []Disposition  `json:"dispositions"`
 }
 
 // DecodeDesign reads a DESIGN. Two issues of one DESIGN do not share a node, and an issue that is not an executor's names why
 // (size_reason) in the closed set of the size rules the policy lists.
+//
+// It reads the DESIGNs the run recorded: the candidate of crw.designAudit, the DESIGN crw.designLedger records, and the ledger's DESIGN
+// the release of a node (its plan and the admission regions of the other nodes), crw.issuePlan and the final gate's decisions read.
+// A DESIGN an earlier binary recorded has no dispositions member (CRW-1452 added it): it is read with dispositions null, and the
+// bytes the run recorded, and so every digest made of them, stay as they are. A fresh answer of the architect is held to the
+// schema, which requires the member, by the engine before any operation reads it.
 func DecodeDesign(raw []byte) (Design, error) {
-	d, err := decode[Design](SchemaDesign, raw)
+	d, err := decode[Design](SchemaDesign, withNullDispositions(raw))
 	if err != nil {
 		return d, err
 	}
@@ -415,6 +431,24 @@ func DecodeDesign(raw []byte) (Design, error) {
 		}
 	}
 	return d, nil
+}
+
+// withNullDispositions is a DESIGN recorded without the dispositions member with that member null; any other value is returned as it
+// is, so the schema judges it.
+func withNullDispositions(raw []byte) []byte {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil || m == nil {
+		return raw
+	}
+	if _, ok := m["dispositions"]; ok {
+		return raw
+	}
+	m["dispositions"] = json.RawMessage("null")
+	out, err := json.Marshal(m)
+	if err != nil {
+		return raw
+	}
+	return out
 }
 
 // AuditFinding is one finding of a design audit.

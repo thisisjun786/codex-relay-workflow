@@ -262,6 +262,9 @@ return [r.status, r.reason]`)
 	if got := value[[]any](t, res); fmt.Sprint(got) != "[held engine_paused]" {
 		t.Fatalf("result %v", got)
 	}
+	if res.Status != RunPaused {
+		t.Errorf("a run the operator paused ends %s, want %s", res.Status, RunPaused)
+	}
 	if got := k.host.interrupted(); len(got) != 1 || got[0] != "agent-1/agent-1-turn1" {
 		t.Errorf("interrupts %v", got)
 	}

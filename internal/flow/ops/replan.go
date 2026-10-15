@@ -376,17 +376,36 @@ func planTriggerCall(occurrence, digest string) string {
 	return "plan:" + occurrence + ":" + digest
 }
 
-// lanes says which nodes of the milestone had started and which had not: a node is started from its release on.
+// lanes says which nodes of the milestone had started and which had not: a node is started from its release on, or from the design
+// row that sized it for a split or a child (startRowOf).
 func lanes(r rows, nodes []string) (started, unstarted []string) {
 	started, unstarted = []string{}, []string{}
 	for _, n := range nodes {
-		if rel, ok := releaseRowOf(r, n); ok && !r.superseded(rel) {
+		if _, _, ok := startRowOf(r, n); ok {
 			started = append(started, n)
 		} else {
 			unstarted = append(unstarted, n)
 		}
 	}
 	return started, unstarted
+}
+
+// startRowOf is the row a node started under, and how: a release to an executor that stands (released), or, for a node no executor
+// was released for, the design row that stands and found its issue sized for a split or a child (split, child), which its lane
+// recorded before it escalated the node (size_split). Either is a start: no other revision releases the node, and the plan it
+// started on is the one a re-plan keeps (crw.releasedPlans). It is the one started predicate of the signal path and the re-plan.
+func startRowOf(r rows, node string) (engine.Event, string, bool) {
+	if rel, ok := releaseRowOf(r, node); ok && !r.superseded(rel) {
+		return rel, "released", true
+	}
+	row, ok := designRowOf(r, node)
+	if !ok || r.superseded(row) || dataBool(row, "released") {
+		return engine.Event{}, "", false
+	}
+	if kind := dataStr(row, "kind"); kind == "split" || kind == "child" {
+		return row, kind, true
+	}
+	return engine.Event{}, "", false
 }
 
 // milestoneNodes are the nodes of the milestone in the order the scheduler offers them, as the run read them first.

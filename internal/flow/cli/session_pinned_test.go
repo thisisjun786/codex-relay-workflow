@@ -64,7 +64,7 @@ func TestNextBindsThePairsTheLiveRunPinned(t *testing.T) {
 			t.Fatalf("role %s is bound to %+v, want the pinned %+v", role, got.Line.HelperPairs[role], pair)
 		}
 	}
-	if len(ans.Spawns) != 6 || ans.Spawns[0].Model != "pinned-"+ans.Spawns[0].Role {
+	if len(ans.Spawns) != len(bound.OrchestratorRoles) || ans.Spawns[0].Model != "pinned-"+ans.Spawns[0].Role {
 		t.Fatalf("the spawn formats %+v are not the run's", ans.Spawns)
 	}
 	changed := false

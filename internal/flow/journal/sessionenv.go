@@ -63,6 +63,8 @@ func SessionEnv(req SessionEnvRequest) (*agent.SessionBackend, *engine.SessionCo
 		Bus:   engine.NewFileStepBus(filepath.Join(req.StateDir, "flow", req.RunID)),
 		Owner: req.Owner,
 		Trace: backend.Trace,
+		// the executor steps' evidence assignments are recorded under the directory the run was started in (CRW-1482)
+		EvidenceCwd: req.OwnerCwd,
 	}
 	if req.Store != nil {
 		cfg.Wake = StageWake(req.Store)

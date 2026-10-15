@@ -156,8 +156,10 @@ type Page struct {
 	Cursor int    `json:"cursor"`
 	More   bool   `json:"more"`
 	Rows   []Row  `json:"rows"`
-	// State is the run's state when the page was read, so a follower knows when to stop.
+	// State is the run's state when the page was read, and Live whether a process held the run then, so a follower knows when to
+	// stop: a paused run no process holds gets no row until a resume (CRW-1487).
 	State string `json:"state"`
+	Live  bool   `json:"live,omitempty"`
 }
 
 // TailPoll is the pause between two reads of a waiting Tail: one second, as the relay's journal-tail.
@@ -208,6 +210,6 @@ func page(rec RunRecord, after int, read journal.PageRead, live bool, pid int) P
 		p.Rows = append(p.Rows, Row{Seq: e.Seq, Kind: e.Kind, Event: e.Event, CallID: e.CallID, Op: e.Op, Label: e.Label, Data: e.Data})
 		p.Cursor = e.Seq
 	}
-	p.State = Summarize(rec, read.Lean, live, pid).State
+	p.State, p.Live = Summarize(rec, read.Lean, live, pid).State, live
 	return p
 }

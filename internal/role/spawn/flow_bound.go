@@ -297,11 +297,11 @@ func flowBoundRoleHeader(message string) string {
 	return ""
 }
 
-// flowBoundTaskNameRole is the role a V2 task_name names: one of the six roles itself, or a role and an underscore and more
-// ("reviewer_diff"); "" for any other name. The case is exact.
+// flowBoundTaskNameRole is the role a V2 task_name names: one of the seven roles itself, or a role and an underscore and more
+// ("reviewer_diff", "critic_design"); "" for any other name. The case is exact.
 func flowBoundTaskNameRole(v any) string {
 	name, _ := v.(string)
-	for _, role := range []string{"reviewer-final", "executor-t1", "architect", "executor", "reviewer", "explorer"} {
+	for _, role := range []string{"reviewer-final", "executor-t1", "architect", "executor", "reviewer", "explorer", "critic"} {
 		if name == role || strings.HasPrefix(name, role+"_") {
 			return role
 		}

@@ -73,7 +73,7 @@ func TestNextHandsOutTheStepsOfTheBus(t *testing.T) {
 		t.Fatalf("next: %d %s %s", code, out, errOut)
 	}
 	ans := decodeNext(t, out)
-	if ans.State != NextWaitingSession || len(ans.Steps) != 4 || ans.Slots.Limit != DefaultMaxThreads || ans.Slots.Open != 2 || len(ans.Spawns) != 6 {
+	if ans.State != NextWaitingSession || len(ans.Steps) != 4 || ans.Slots.Limit != DefaultMaxThreads || ans.Slots.Open != 2 || len(ans.Spawns) != len(bound.OrchestratorRoles) {
 		t.Fatalf("answer %+v", ans)
 	}
 	byAction := map[string]NextStep{}
@@ -186,6 +186,24 @@ func TestNextResumesARunWithNoProcess(t *testing.T) {
 	}
 }
 
+// TestNextLeavesAPausedRunPaused (CRW-1487): a run the operator paused ends with a run/paused row and no process; next says it is
+// paused and does not resume it, as it does for a run that is paused while its process is there.
+func TestNextLeavesAPausedRunPaused(t *testing.T) {
+	w := newWorld(t)
+	td := w.deps()
+	p := w.newRun("run-0123456789b1", sessOwner)
+	p.endPaused()
+	p.close()
+	sessionSpec(t, w, p.id)
+	code, out, errOut := td.do("next", p.id, "--json", "--state", w.state)
+	if code != 0 {
+		t.Fatalf("next: %d %s %s", code, out, errOut)
+	}
+	if ans := decodeNext(t, out); ans.State != NextPaused || ans.Resumed != 0 || len(td.spawned) != 0 || !strings.Contains(ans.Hint, "paused") {
+		t.Fatalf("a paused end: %+v %+v", ans, td.spawned)
+	}
+}
+
 func TestDispatchedWritesTheInboxAndPrintsTheReply(t *testing.T) {
 	w := newWorld(t)
 	td := w.deps()
@@ -280,7 +298,7 @@ func TestStartDefaultsToASessionRunAndBindsItsOwner(t *testing.T) {
 	_ = json.Unmarshal([]byte(answerOf(out)), &ans)
 	spec := td.spawned[0].Spec
 	if spec.Backend != BackendSession || ans.Plan.Backend != BackendSession || spec.Pool != 3 || ans.Plan.Pool != 3 || !ans.Bound || ans.BindWarning != "" ||
-		ans.Next != "crw flow next "+spec.RunID+" --wait 600 --json" || len(ans.Plan.Spawns) != 6 || !strings.Contains(ans.Plan.Loop, "close_agent(target=") {
+		ans.Next != "crw flow next "+spec.RunID+" --wait 600 --json" || len(ans.Plan.Spawns) != len(bound.OrchestratorRoles) || !strings.Contains(ans.Plan.Loop, "close_agent(target=") {
 		t.Fatalf("the start: %+v (spec %+v)", ans, spec)
 	}
 	names := map[string]bool{}
@@ -293,7 +311,7 @@ func TestStartDefaultsToASessionRunAndBindsItsOwner(t *testing.T) {
 		}
 	}
 	got := bound.Lookup(sessOwner)
-	if got.State != bound.Orchestrator || got.Line.RunID != spec.RunID || len(got.Line.HelperPairs) != 6 ||
+	if got.State != bound.Orchestrator || got.Line.RunID != spec.RunID || len(got.Line.HelperPairs) != len(bound.OrchestratorRoles) ||
 		got.Line.HelperPairs["executor-t1"].Model != engine.FakePolicy().Roles["executor-t1"].Pair.Model {
 		t.Fatalf("the owner's binding: %+v", got)
 	}

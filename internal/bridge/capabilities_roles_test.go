@@ -44,9 +44,11 @@ func TestCRW1330_CapabilitiesAgentRolesComeFromTheRoleHelperSnapshot(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	// No store yet: the summary is the snapshot's (four undecided roles, the two compiled defaults), never the file's pairs.
+	// No store yet: the summary is the snapshot's (four undecided roles, the compiled defaults of the flow-only keys), never the
+	// file's pairs. It describes every role of the snapshot (role.FlowRoles; the critic joins it, CRW-1434), whatever the file
+	// declares: this file is a six-role one, written before the critic.
 	section := pyjson.Map(capabilitiesWith(t, policy)["agentRoles"])
-	if strings.Contains(pyjson.Text(section["source"]), "policy.json") || len(section["roles"].([]any)) != 6 {
+	if strings.Contains(pyjson.Text(section["source"]), "policy.json") || len(section["roles"].([]any)) != len(role.FlowRoles()) {
 		t.Fatalf("agentRoles %v", section)
 	}
 	for _, entry := range section["roles"].([]any) {
@@ -73,7 +75,19 @@ func TestCRW1330_CapabilitiesAgentRolesComeFromTheRoleHelperSnapshot(t *testing.
 	if byRole["executor"]["model"] != "anthropic/claude-haiku-5" || byRole["executor"]["reasoningEffort"] != "xhigh" || byRole["reviewer-final"]["model"] != "gpt-6.1-sol" || byRole["reviewer-final"]["state"] != "compiled_default" || byRole["architect"]["state"] != "undecided" {
 		t.Fatalf("roles %v", byRole)
 	}
-	if len(section["aliases"].([]any)) != 6 || len(section["warnings"].([]any)) == 0 {
+	// Every role described carries the design's model aliases, the critic's those of the gpt reviewers (CRW-1434).
+	for name, entry := range byRole {
+		want := execution.DefaultModelAliases(name)
+		got, _ := entry["aliases"].([]any)
+		if len(want) == 0 || len(got) != len(want) || got[0] != want[0] {
+			t.Fatalf("role %s aliases %v, want %v", name, got, want)
+		}
+	}
+	if critic := execution.DefaultModelAliases(execution.AgentCritic); len(critic) != 1 || critic[0] != "ocx-gpt-6-1-sol" {
+		t.Fatalf("critic aliases %v", critic)
+	}
+	// The code's alias table: six rows, none for the explorer or the critic (named by agentType).
+	if len(section["aliases"].([]any)) != len(execution.DefaultAliasRows()) || len(section["aliases"].([]any)) != 6 || len(section["warnings"].([]any)) == 0 {
 		t.Fatalf("agentRoles %v", section)
 	}
 	// The relay's policy description (the worker policy receipt) is the file's, unchanged.
@@ -98,7 +112,7 @@ func TestCRW1330_CapabilitiesDescribeTheSnapshotBesideAMalformedSection(t *testi
 		t.Fatalf("a malformed agent-roles section refuses the policy: %v", err)
 	}
 	section := pyjson.Map(capabilitiesWith(t, policy)["agentRoles"])
-	if section == nil || len(section["roles"].([]any)) != 6 || strings.Contains(pyjson.Text(section["source"]), "policy.json") {
+	if section == nil || len(section["roles"].([]any)) != len(role.FlowRoles()) || strings.Contains(pyjson.Text(section["source"]), "policy.json") {
 		t.Fatalf("agentRoles %v", section)
 	}
 	for _, entry := range section["roles"].([]any) {

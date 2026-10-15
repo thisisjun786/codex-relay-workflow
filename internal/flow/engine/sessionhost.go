@@ -111,6 +111,10 @@ type SessionConfig struct {
 	// Process names the process that runs the run (the token of the process lock it holds): its started row records it as
 	// `process`, so a reader tells this process's started row from an earlier process's (CRW-1372). "" records none.
 	Process string
+	// EvidenceCwd is the directory the run was started in (the owner's cwd), under whose .crw state the engine records the flow
+	// evidence assignment of every executor step it publishes (CRW-1482, session_evidence.go): the stop hook judges the child's
+	// receipt against it. "" records none, and the steps, packets and rows are those of before.
+	EvidenceCwd string
 	// Started is called once the run's started row (and its policy_repinned row when it repinned) is in the journal, before the
 	// reconcile of a resume and before any call: it gets the table that row pinned. The run's process binds its owner's
 	// orchestrator line there, from its own record (CRW-1372). nil does nothing.

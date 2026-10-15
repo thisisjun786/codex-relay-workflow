@@ -37,7 +37,9 @@ const (
 	KindSummaryDocument = "summary_document"
 	// KindEscalationNotice records that an escalation row of the run was told to the orchestrator thread.
 	KindEscalationNotice = "escalation_notice"
-	// KindCompletionNotice records the completion digest told to the orchestrator thread.
+	// KindCompletionNotice records the completion digest told to the orchestrator thread: notice_key, status (the engine status), result
+	// and request_id, and, when the run's finished row carries an outcome (engine.Outcome, CRW-1487), its state, its reason and the lanes
+	// that did not land (node:state/reason).
 	KindCompletionNotice = "completion_notice"
 )
 

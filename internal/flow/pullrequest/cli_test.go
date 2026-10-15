@@ -158,10 +158,50 @@ func TestOpenRefusesWhatCannotBeOpened(t *testing.T) {
 		"other command": {"merge"},
 		"show no ref":   {"show"},
 		"show bad ref":  {"show", "--pr", "o/r"},
+		// --remote is a remote name: an option-shaped or path-shaped value is refused before anything is pushed
+		"remote starts with a dash": {"open", "--repo", "o/r", "--head", "crw/m1", "--title", "t", "--issue", "o/r#1", "--push", g.checkout, "--remote", "--receive-pack=x"},
+		"remote is a path":          {"open", "--repo", "o/r", "--head", "crw/m1", "--title", "t", "--issue", "o/r#1", "--push", g.checkout, "--remote", "/tmp/x"},
 	} {
 		if code, _, errOut := run(t, deps(t, fake, g), args...); code != 2 || !strings.Contains(errOut, "usage:") {
 			t.Errorf("%s: exit %d %q, want 2 with the usage", name, code, errOut)
 		}
+	}
+	if n := len(fake.Pulls()); n != 1 {
+		t.Errorf("%d pull requests after the refused inputs, want the first one only", n)
+	}
+}
+
+// TestPushBranchPutsDoubleDashBeforeTheRemote: the push's argv ends the options before the remote, so a remote that reads as an
+// option is never one. A recording git first on PATH keeps the argv; git's own refusal of the pathname is not the oracle.
+func TestPushBranchPutsDoubleDashBeforeTheRemote(t *testing.T) {
+	g := newGitWorld(t)
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("no git")
+	}
+	bin := t.TempDir()
+	log := filepath.Join(bin, "argv.log")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> " + log + "\nexec " + realGit + " \"$@\"\n"
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// exec resolves "git" in the process PATH, so the wrapper goes there (and pushEnv keeps PATH for git's own children)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	tip, _ := pushBranch(context.Background(), g.env, g.checkout, "--receive-pack=x", "crw/m1")
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var push string
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.Contains(line, " push ") {
+			push = line
+		}
+	}
+	tipSHA := strings.TrimSpace(g.git(g.checkout, "rev-parse", "refs/heads/crw/m1"))
+	want := "-C " + g.checkout + " push --porcelain -- --receive-pack=x " + tipSHA + ":refs/heads/crw/m1"
+	if push != want {
+		t.Errorf("push argv\n got %q\nwant %q (returned tip %q)", push, want, tip)
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dag"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/supervisor"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
 )
@@ -102,6 +103,35 @@ func (l *Lab) hookUpward(t *testing.T, sender *scenarioSender) {
 	l.newLane()
 }
 
+// finishedOutcome is the outcome of the run's last finished row (CRW-1487), nil when it has none.
+func finishedOutcome(t *testing.T, l *Lab) *engine.Outcome {
+	t.Helper()
+	var out *engine.Outcome
+	found := false
+	for _, ev := range l.Events() {
+		if ev.Kind == engine.KindRun && ev.Event == "finished" {
+			out, found = engine.FinishedOutcome(ev.Data), true
+		}
+	}
+	if !found {
+		t.Fatal("the run has no finished row")
+	}
+	return out
+}
+
+// completionTexts are the texts of the completion notices the orchestrator thread was sent.
+func completionTexts(s *scenarioSender) []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []string
+	for _, p := range s.Parent {
+		if p.Kind == supervisor.KindFlowCompletion {
+			out = append(out, p.Text)
+		}
+	}
+	return out
+}
+
 // An agent node's blocked signal climbs: the executor's RECEIPT says blocked_scope, the run escalates (its row), the escalation is told to
 // the orchestrator thread that started the run - queued, with the run's own id and the reason - and the orchestrator, who owns the project,
 // lifts it to the initiative lead with `crw flow report-up --kind project_blocked`: a report row and a notice to the lead's thread, after
@@ -115,6 +145,13 @@ func TestAgentBlockedRoutesToOrchestratorThenUp(t *testing.T) {
 	got := mustRunIncomplete(t, l)
 	if state, reason := laneOf(t, got, "A"); state != "escalated" || reason != "blocked_scope" {
 		t.Fatalf("lane A: %s %s", state, reason)
+	}
+	// the finished row carries the milestone state the lane returned, and the completion notice tells it (CRW-1487)
+	if o := finishedOutcome(t, l); o == nil || o.State != got.State || got.State != "incomplete" {
+		t.Fatalf("the finished outcome %+v, the lane's state %q", o, got.State)
+	}
+	if done := completionTexts(sender); len(done) != 1 || !strings.Contains(done[0], "state=incomplete") || !strings.Contains(done[0], "lanes=A:escalated/blocked_scope") || strings.Contains(done[0], "status=completed") {
+		t.Fatalf("the completion notices %q", done)
 	}
 	esc := l.FlowRows(engine.EvEscalation)
 	if len(esc) != 1 || str(esc[0].Data, "reason") != "blocked_scope" {
@@ -215,8 +252,16 @@ func TestDesignLoopCapsWarnAndTellTheOrchestrator(t *testing.T) {
 		l.Sequence("^design-audit:r\\d+$", func(*Call) fakehostPlan {
 			return Say(map[string]any{"verdict": "needs_changes", "findings": []any{map[string]any{"ref": "D1", "severity": "P2", "finding": "no", "evidence": []string{}}}, "summary": "no"})
 		})
-		if res := l.Run(); res.Status != engine.RunCompleted {
+		res := l.Run()
+		if res.Status != engine.RunCompleted {
 			t.Fatalf("run %s: %s", res.Status, res.Error)
+		}
+		// the finished row carries the milestone state the lane returned, and the completion notice tells it (CRW-1487)
+		if o, got := finishedOutcome(t, l), Value[laneResult](t, res); o == nil || o.State != got.State || got.State != "escalated" || o.Reason != "design_audit_rounds" {
+			t.Errorf("the finished outcome %+v, the lane's state %q", o, got.State)
+		}
+		if done := completionTexts(sender); len(done) != 1 || !strings.Contains(done[0], "state=escalated reason=design_audit_rounds") || strings.Contains(done[0], "status=completed") {
+			t.Errorf("the completion notices %q", done)
 		}
 		if !warned(l, "rounds") || !slices.Contains(escalationReasons(l), "design_audit_rounds") || !told(sender, "design_audit_rounds") {
 			t.Errorf("the round cap: warned %v, escalations %v, told %+v", warned(l, "rounds"), escalationReasons(l), sender.Parent)
@@ -225,7 +270,9 @@ func TestDesignLoopCapsWarnAndTellTheOrchestrator(t *testing.T) {
 	t.Run("tokens", func(t *testing.T) {
 		l := NewLab(t, twoNodes()...)
 		sender := l.wireUpward(t, false)
-		l.Budget = 25 // the architect and the audit are 20: 80% of the budget, spent before any executor
+		// the two background explorers are 2 (outside the design loop, CRW-1466) and the architect and the audit 20: the loop's 20 is 80%
+		// of the budget, spent before any executor
+		l.Budget = 25
 		if res := l.Run(); res.Status != engine.RunCompleted {
 			t.Fatalf("run %s: %s", res.Status, res.Error)
 		}

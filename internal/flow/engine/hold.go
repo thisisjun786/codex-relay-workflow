@@ -19,6 +19,8 @@ const continueInstruction = "The previous turn stopped for %s. Continue the same
 type heldResume struct {
 	reason, inputState string
 	repairUsed         bool
+	// unbound is the subagent a session call's held row names as closed unbound (evidence_unbound): the held attempt ended
+	unbound string
 }
 
 // heldInPlace decides a position whose last event is held: it goes on in place, or it is live like a failed position.
@@ -65,7 +67,7 @@ func (c *callRun) heldInPlace(rows []Event, prep Event) bool {
 	c.startSeq = prep.Seq
 	c.suffixCall = true
 	repair, _ := held.Data["repair_used"].(bool)
-	c.held = &heldResume{reason: reason, inputState: rowStr(held.Data, "input_state"), repairUsed: repair}
+	c.held = &heldResume{reason: reason, inputState: rowStr(held.Data, "input_state"), repairUsed: repair, unbound: rowStr(held.Data, "evidence_unbound")}
 	if m, ok := prep.Data["allocation"].(map[string]any); ok {
 		pl := placementFromMap(m)
 		c.placement = &pl

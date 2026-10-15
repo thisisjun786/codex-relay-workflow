@@ -2,6 +2,7 @@ package report
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -71,21 +72,99 @@ func (h *RunHook) RunFinished(ctx context.Context, _, status string) error {
 	if rerr != nil || !ok {
 		return firstError(err, rerr)
 	}
-	key := "done:" + h.Run + ":" + digestOfRows(h.Journal.Events(), status)
+	events := h.Journal.Events()
+	outcome := finishedOutcome(events)
+	key := "done:" + h.Run + ":" + digestOfRows(events, status, outcome)
 	if told, terr := h.recorded(ctx, KindCompletionNotice, "notice_key", key); terr != nil || told {
 		// the completion of this run in this state was told: the send-parent queue path writes a flushed notice again, so it is not asked
 		return firstError(err, terr)
 	}
-	text := fmt.Sprintf("[crw flow] run finished run=%s workflow=%s status=%s digest=%s", h.Run, run.Workflow, status, key[strings.LastIndex(key, ":")+1:])
+	digest := key[strings.LastIndex(key, ":")+1:]
+	text := fmt.Sprintf("[crw flow] run finished run=%s workflow=%s status=%s digest=%s", h.Run, run.Workflow, status, digest)
+	if outcome != nil {
+		// the milestone state the script came to, never "completed" for an escalated, incomplete or held run (CRW-1487)
+		text = fmt.Sprintf("[crw flow] run finished run=%s workflow=%s %s digest=%s", h.Run, run.Workflow, outcomeFields(outcome), digest)
+	}
 	res, serr := h.send(ctx, run, supervisor.KindFlowCompletion, "done-"+shortHash(key), text)
 	if serr != nil {
 		return firstError(err, serr)
 	}
 	if res.Class == "accepted" || res.Class == "queued" {
-		_, _, aerr := h.Rows.AppendOnce(ctx, NewRow{Kind: KindCompletionNotice, Payload: map[string]any{"notice_key": key, "status": status, "result": res.Class, "request_id": res.RequestID}}, "notice_key")
+		payload := map[string]any{"notice_key": key, "status": status, "result": res.Class, "request_id": res.RequestID}
+		if outcome != nil {
+			payload["state"] = outcome.State
+			if outcome.Reason != "" {
+				payload["reason"] = outcome.Reason
+			}
+			if lanes := laneTexts(outcome); len(lanes) > 0 {
+				list := make([]any, len(lanes))
+				for i, l := range lanes {
+					list[i] = l
+				}
+				payload["lanes"] = list
+			}
+		}
+		_, _, aerr := h.Rows.AppendOnce(ctx, NewRow{Kind: KindCompletionNotice, Payload: payload}, "notice_key")
 		err = firstError(err, aerr)
 	}
 	return err
+}
+
+// finishedOutcome is the outcome the finished row of the process that finishes now carries (engine.Outcome): the last finished row
+// after the last started row, which the engine writes before RunFinished. nil when that row carries none or is missing, so the
+// outcome of an older process is never told for this one.
+func finishedOutcome(events []engine.Event) *engine.Outcome {
+	for i := len(events) - 1; i >= 0; i-- {
+		e := events[i]
+		if e.Kind != engine.KindRun {
+			continue
+		}
+		switch e.Event {
+		case "finished":
+			return engine.FinishedOutcome(e.Data)
+		case "started":
+			return nil
+		}
+	}
+	return nil
+}
+
+// outcomeFields are the outcome's members of the completion notice: state=, then reason=, escalation= and lanes= when there are any.
+func outcomeFields(o *engine.Outcome) string {
+	parts := []string{"state=" + noticeValue(o.State)}
+	if o.Reason != "" {
+		parts = append(parts, "reason="+noticeValue(o.Reason))
+	}
+	if o.Escalation != "" {
+		parts = append(parts, "escalation="+noticeValue(o.Escalation))
+	}
+	if lanes := laneTexts(o); len(lanes) > 0 {
+		parts = append(parts, "lanes="+strings.Join(lanes, ","))
+	}
+	return strings.Join(parts, " ")
+}
+
+// laneTexts are the lanes of the outcome that did not land as node:state/reason (node:state with no reason), and +N for the lanes
+// beyond the outcome's cap.
+func laneTexts(o *engine.Outcome) []string {
+	var out []string
+	for _, l := range o.Lanes {
+		t := noticeValue(textOr(l.Node, "-")) + ":" + noticeValue(textOr(l.State, "-"))
+		if l.Reason != "" {
+			t += "/" + noticeValue(l.Reason)
+		}
+		out = append(out, t)
+	}
+	if o.LanesMore > 0 {
+		out = append(out, fmt.Sprintf("+%d", o.LanesMore))
+	}
+	return out
+}
+
+// noticeValue is a value of the notice's key=value line with no white space and no comma in it (the outcome's strings are one line
+// already), so the members of the line stay apart.
+func noticeValue(s string) string {
+	return strings.NewReplacer(" ", "_", ",", ";").Replace(s)
 }
 
 // BlockedReportID is the id of the project_blocked report of a run that started no node: one for the run, whatever process finished it.
@@ -227,13 +306,22 @@ func textOr(v any, fallback string) string {
 	return fallback
 }
 
-// digestOfRows is the digest of what the run came to: its completed operations and calls and the status.
-func digestOfRows(events []engine.Event, status string) string {
+// digestOfRows is the digest of what the run came to: its completed operations and calls and the status, and the outcome when the
+// finished row carries one, as one outcome= member holding the outcome's JSON (every member by its name: the state, reason, source,
+// escalation, milestone, run state and lanes), so a resume that ends with an outcome that differs in any of them is told again. With
+// no outcome the input is the one before CRW-1487, so the keys of the notices told before hold.
+func digestOfRows(events []engine.Event, status string, outcome *engine.Outcome) string {
 	var parts []string
 	for _, ev := range events {
 		if ev.Kind == engine.KindCall && ev.Event == engine.EvCompleted {
 			parts = append(parts, ev.CallID)
 		}
 	}
-	return shortHash(append(parts, "status="+status)...)
+	parts = append(parts, "status="+status)
+	if outcome != nil {
+		// an Outcome is strings, lanes of strings and a count: it always encodes, its members in their declared order
+		b, _ := json.Marshal(outcome)
+		parts = append(parts, "outcome="+string(b))
+	}
+	return shortHash(parts...)
 }

@@ -37,12 +37,12 @@ error. An ad-hoc script has no workflows directory: it imports `crw:lib/<name>` 
 
 `crw flow run` (like every `crw flow` command that resolves calls) reads its role table once, when it starts, from
 the helper role store `CRW_HOME/subagents.json`: the pairs of `architect`, `executor`, `executor-t1`, `reviewer`,
-`reviewer-final` and `explorer`, with the code's alias table (see
+`reviewer-final`, `explorer` and `critic`, with the code's alias table (see
 [role-execution-policy.md](../role-execution-policy.md#the-agent-roles-of-a-flow-run)). The execution policy's
 `agent-roles` and `agent-aliases` sections are not read; a file that still declares them is a warning, and one whose
 sections do not parse still loads, with the sections ignored and the loader's reason as another warning. The run record
-keeps the store's path and the canonical digest of the six pairs, and the warnings of the table (a flow-only key at
-its compiled default, an undecided role, a reviewer on an author's model family). A test with no store runs on the
+keeps the store's path and the canonical digest of the seven pairs, and the warnings of the table (a flow-only key at
+its compiled default, an undecided role, a reviewer on an author's model family, a critic on the architect's). A test with no store runs on the
 fake backend's placeholder table. `crw flow roles` prints the table, the source, the digest and the warnings.
 
 ## File format
@@ -133,7 +133,7 @@ target drops to ES2016 (esbuild then lowers async/await to generators) and this 
 | `crw.recordedSignal(milestone, k)` | The signal `k` of the milestone as an earlier process recorded it and the journal still stands on it (its triggers, the digest of the signal before it and the `attempt` it was bound with, `"live:<n>"` or empty), or `null`. A read, like the next one. |
 | `crw.priorRelease(node)` | The release of the node that an earlier process recorded and the journal still stands on, with the revision it was made under, the number of the signal that made that revision and `refused`, the releases of the lane's path before it that compared another plan (`plan_changed`), or `null`. |
 
-`opts` of a call: `agentType` (`architect`, `executor`, `executor-t1`, `reviewer`, `reviewer-final`, `explorer`), `schema`,
+`opts` of a call: `agentType` (`architect`, `executor`, `executor-t1`, `reviewer`, `reviewer-final`, `explorer`, `critic`), `schema`,
 `label`, `phase`, `node`, `worktree` or `cwd`, `head`, `resume`, `stepDecision`, `qa` (below), and the Claude-style `model`, `effort` and
 `isolation`. The other `crw.*` members are the operations and composites of [the project lane](#the-project-lane); each operation is an
 `engine.Op` registered in `Config.Ops`, takes a position of its path like a call, and a resume replays it only while its effect still
@@ -163,18 +163,19 @@ do not write), no pending tree (what the call edits there is discarded; it is ne
 ## Roles, pairs and aliases
 
 A fresh call names a role with `agentType`. A role has a fixed model and effort (its pair), a role family (`executor` and
-`executor-t1` form one, `reviewer` and `reviewer-final` form one, `architect` and `explorer` are alone) and a sandbox:
+`executor-t1` form one, `reviewer` and `reviewer-final` form one, `architect`, `explorer` and `critic` are alone) and a sandbox:
 `workspace-write` for `executor` and `executor-t1`, the only roles that write (to their call's own cwd), `read-only` for
-the others. The role table is the helper role store's six pairs, read once per run (see the policy paragraph of the
+the others. The role table is the helper role store's seven pairs, read once per run (see the policy paragraph of the
 run options above); a test with no store runs on the fake backend's placeholder pairs and the same alias table.
 
 - With a role key as `agentType`, a `model` option must be absent, the role's model or an alias of its model family
-  (`haiku`: `executor` and `explorer`; `sonnet`: `executor-t1`; `opus`: `architect`; `ocx-gpt-6-1-sol`: `reviewer` and
-  `reviewer-final`); otherwise the call is `refused` with reason `pair_refused`.
+  (`haiku`: `executor` and `explorer`; `sonnet`: `executor-t1`; `opus`: `architect`; `ocx-gpt-6-1-sol`: `reviewer`,
+  `reviewer-final` and `critic`); otherwise the call is `refused` with reason `pair_refused`.
 - A call without a role key is looked up in the alias table by (a non-role `agentType` string, else the `model` alias;
   `effort`; `isolation`), the most specific matching row deciding: `opus` is `architect`; `haiku` with
   `isolation: 'worktree'` is `executor`; `sonnet` is `executor-t1`; `ocx-gpt-6-1-sol` (as `model` or as `agentType`)
-  with `effort: 'xhigh'` is `reviewer-final`, otherwise `reviewer`.
+  with `effort: 'xhigh'` is `reviewer-final`, otherwise `reviewer`. No alias row names `critic`: a critic call names it by
+  `agentType`.
 - `haiku` without isolation is ambiguous. Claude runs it in a shared checkout; a CRW call has a write cwd of its own that
   no other call shares, so the call is `refused` with reason `policy_refused`, cause `alias_ambiguous` (the intent row
   and the refusal row carry `cause`), and the detail names both fixes: `isolation: 'worktree'` for a build (role
@@ -303,11 +304,26 @@ and a string that is no handle of a result of this run. Like every `crw.*` call,
 
 `internal/flow/workflows/project-lane.js` is the built-in workflow that runs the issues of a milestone (`args`: `plan`, `milestone`,
 and `cap`, the executors at once, default 3). Its steps, in order: `crw.milestone` reads the nodes of the milestone in the order the
-scheduler offers them; the architect answers `DESIGN` once for the milestone (SP-ARCH-1); the open questions of the DESIGN go to
+scheduler offers them; in the phase `explore`, the run samples one design head, the integration tip of the run's plan (`crw.designHead`, recorded once,
+so a resume reads the same head): every background explorer, the architect's first call and every call of the first DESIGN's audit loop (the open
+questions' explorers, design-answers, the critic and its retry, design-fix) name it as their `head`, so they read one commit whatever lands on the target meanwhile, the architect's checkout, and so the head `r0` records the DESIGN ran at, is made at it, and the explorer's packet
+(`READ AT:`) and the architect's `BACKGROUND FINDINGS` name it; before the architect's first DESIGN, one background question for each node goes to an
+explorer (`crw.explore('background', ...)`, CRW-1466): the question names the node's id, its issue key and its title, its `files_needed` are the
+node's declared regions (none declared: not named), and `crw.exploreRoute` spawns it (`spawned_background`) or reuses an answer of the same
+digest the run has, never inline, never to the owner thread and outside the open questions' cap of the milestone; the explorer calls are
+labelled `explore-bg:<milestone>:<digest12>` (an `explore:` reader never takes one for its own), their route rows carry `inputs.kind`
+`background`, a background explorer that did not complete halts the milestone (`crw.milestoneHalt`, source `explorer`), and a re-plan has
+no such phase; then, in the phase `design`, the architect answers `DESIGN` once for the milestone (SP-ARCH-1) over a packet that carries the
+background answers as `BACKGROUND FINDINGS`, each by its id, question, answer and the explorer's findings and never by its route (the packet is the
+one it was before CRW-1466 when none is given); the open questions of the DESIGN go to
 explorers (SP-EXPL-1), and the ones whose scope carries an out-of-authority notation, or beyond the explorer cap, to the owner thread
 thread in a non-blocking `design_question` escalation: an authority question in the audit round that routed it, approved or not, a
 question beyond the cap once the DESIGN is approved; the escalation's evidence names the question digests it asked, so a later round
-or a re-plan does not ask one again on its own (`asked_in_run`); because only the latest design ask of a run is current for `crw flow answer`,
+or a re-plan does not ask one again on its own (`asked_in_run`); an explorer's answer is reused for the same question at the same head only: the explorers
+of a re-plan read the head it pins, and the digest of an open question asked there is made of its text and that head (the first DESIGN's open questions
+are read at its design head and keep the digest of their text: every answer of that loop reads the one head), so a question of the first DESIGN,
+or of a re-plan at another head, goes to an explorer again and counts against the cap, while a question that goes to the owner thread keeps the digest
+of its text, so it is asked once in the run and its answer holds at every head; because only the latest design ask of a run is current for `crw flow answer`,
 an ask carries the questions of the DESIGN the run asked already that no answer has reached, and the questions the run asked that no answer has reached and the
 DESIGN no longer raises (`carried` of `crw.exploreRoute`, CRW-1381), and an answer of the owner thread applied to it is the answer of the question from the
 next round on (`answered_by_orchestrator`): the part `crw flow answer --answer-for DIGEST=TEXT` gave the question when the ask joins several,
@@ -319,28 +335,41 @@ before, and a milestone's digest leaves `end_condition` out, so a run recorded b
 pinned plan on a resume), which the answer carries into the design audit, and a command that failed, ran no test or was not reported is a
 warning of the `crw.exploreRecord` row (CRW-1382; never a stop), and a first round that spawns no explorer (a DESIGN with no open
 question to explore) runs none of them, which its `crw.exploreRecord` row records once as the warning `end_condition_not_run` naming each
-command and its issue (CRW-1397; warn only); a reviewer of another model family than the architect audits the DESIGN (`DESIGN_AUDIT`, recorded by
-`crw.designAudit`), and `needs_changes` returns the DESIGN to the architect on its own thread; only an approved DESIGN becomes revision
+command and its issue (CRW-1397; warn only); when a question of the round got an answer (an explorer's findings, or an answer the run has
+reused), the answers go back to the architect on its own thread before the critic reads the DESIGN (`design-answers:<tag>r<round>`, CRW-1466): the
+packet renders each answered question by its id, question, answer and findings, never by its route, and the architect answers with the DESIGN again,
+dispositions null; that DESIGN is the one the critic audits and the one a design-fix and the ledger resume, and a question the architect raises in it
+reaches the critic with no answer, which is a P1 finding, and is routed in the next round (a round whose questions got no answer has no such turn);
+the critic (`agentType: 'critic'`, a role of its own, of another model family than the architect;
+the `AUDIT` spawn decision names it) audits the DESIGN (`DESIGN_AUDIT`, recorded by `crw.designAudit`, which judges the independence by the model
+families of the two calls' pairs, never by the role), and `needs_changes` returns the DESIGN to the architect on its own thread: the design-fix packet
+names each finding by its id `r<round>.<index>` (the index 1-based in the audit's findings) and the architect answers the DESIGN with `dispositions`,
+one for each id, `folded` or `rebutted` with its reason (null in the first DESIGN, in a design-answers answer and in a re-plan answer; the schema
+requires the member of every answer, and a DESIGN a run recorded before the member existed is read with it null wherever the run reads a recorded
+DESIGN: the audit's candidate, the ledger, the release of a node, `crw.issuePlan` and the final gate's decisions); from the second round on the critic's packet
+carries `PRIOR FINDINGS`, every finding of the earlier rounds with what the fix answer reported of it (`folded` or `rebutted` and the reason, `not reported`,
+or `null (no dispositions reported)`), and the critic raises a rebuttal it does not accept again under the same ref (CRW-1452); only an approved DESIGN becomes revision
 `r0` of the design ledger (`crw.designLedger`); `crw.dag` runs one lane for each node and the signal path of the milestone
 ([The architect's continuity and the re-plan](#the-architects-continuity-and-the-re-plan)); when every lane landed, `crw.closeMilestone` closes the milestone over
 evidence the run makes itself ([The milestone close](#the-milestone-close)); the architect reflects on the integrated range, on its own thread, and a
-reason to re-plan makes the DESIGN delta; `crw.settleReviews` audits the reviews behind the
+reason to re-plan asks it for the whole DESIGN of the milestone again; `crw.settleReviews` audits the reviews behind the
 acceptances against the reviewer threads on the host and archives the threads whose audit passed, and `crw.reportUp` records the report
 (its delivery is the seam of the issue that owns it). A milestone that cannot go on says why (`crw.milestoneHalt`): a call of the design phase, of the close or of
 a re-plan that did not complete is never read as an approval, a design, a gate, a review or an alignment (`held` and `unknown` hold the milestone, `refused` and
 `null_model` escalate, a gate that failed or cannot be settled and a QA that is INCONCLUSIVE escalate, `superseded` stops).
 
-**The caps of the design loop.** The design loop is one `auditedDesign` of `project-lane.js` (the DESIGN or re-plan delta it starts from, its audit rounds and
-the architect's fixes), and it has two caps, both written in `project-lane.js` beside the loop. The round cap is `AUDIT_ROUNDS` (3): a DESIGN not approved in
+**The caps of the design loop.** The design loop is one `auditedDesign` of `project-lane.js` (the DESIGN or the re-plan's whole DESIGN it starts from, its audit rounds,
+the architect's design-answers turns and its fixes), and it has two caps, both written in `project-lane.js` beside the loop. The round cap is `AUDIT_ROUNDS` (3): a DESIGN not approved in
 that many rounds stops the milestone with the `design_audit_rounds` escalation, which the run tells the owner thread (CRW-1347). The token cap is
 `DESIGN_TOKEN_CAP` (5,000,000 tokens), or `DESIGN_TOKEN_WARN` (0.8) of the run's token budget (`budget.run`, the budget its first process started with)
 when that is lower, so a run without a budget has the fixed cap. The cap is made of what the journal fixes, the calls' tokens and `budget.run`, not of
 `budget.total`: a resume under another ceiling (a narrower `--token-budget`, or none) reaches the cap at the same call and raises the escalation with the
-same input, so the loop and what follows it replay. The tokens of the loop are those its calls report: the DESIGN's architect call, the audit
-calls, the architect's fixes and the explorers `crw.explore` spawns for the open questions of each round (its result's `tokens`). When they reach the cap, the
+same input, so the loop and what follows it replay. The tokens of the loop are those its calls report: the architect call it starts from (the DESIGN or the re-plan), the audit
+calls, the architect's design-answers turns and fixes, and the explorers `crw.explore` spawns for the open questions of each round (its result's `tokens`). When they reach the cap, the
 loop raises the `design_loop_tokens` escalation, which asks nothing and goes up to the owner thread, once per loop, and goes on; the engine pauses the
 run at the whole budget (`budget_exhausted`). Reaching either cap writes a log row `warn design_loop_cap rounds: ...` or `warn design_loop_cap tokens: ...`
-(CRW-1327). Neither cap is a block of its own: a warning and a record, the stop at the round cap being CRW-1347's.
+(CRW-1327). Neither cap is a block of its own: a warning and a record, the stop at the round cap being CRW-1347's. The background explorers
+of the phase `explore` are outside the loop and its token cap (one for each node bounds them); the engine's budget counts them like every call.
 
 **The lane of a node.** `crw.dag` starts a node when the nodes it waits for (a dependency or an order edge; the members of a
 group are chained by order edges) have landed, in the scheduler's order, at most `cap` nodes at once and never two nodes whose
@@ -502,21 +531,25 @@ fixes nothing. Its steps:
 ## The architect's continuity and the re-plan
 
 **One thread.** The architect has one thread for a milestone. The design ledger (`crw.designLedger`, rows `crw.designLedger`) holds the handle of the
-thread, and every completed architect turn moves it on: the DESIGN (and the fixes the audit asked for), the REFLECTION at the close
-(`crw.reflection`) and the DESIGN delta of a re-plan are the turns of that thread, one after the other (`agent.call` with `resume`, which
+thread, and every completed architect turn moves it on: the DESIGN (and its design-answers turns and the fixes the audit asked for), the REFLECTION at the close
+(`crw.reflection`) and the whole DESIGN of a re-plan are the turns of that thread, one after the other (`agent.call` with `resume`, which
 `crw.currentDesign` hands the script). A call that did not complete is never read as ALIGNED or as a DESIGN: `held` and `unknown` hold the milestone
 (the resume goes on with the same call as its next turn), `refused` and `null_model` escalate (`crw.milestoneHalt`). The REFLECTION turn
-(SP-ARCH-3) and the delta name the head they judge (`head`, above): the REFLECTION the integrated head the final gate pinned, a re-plan during the run
+(SP-ARCH-3) and the re-plan name the head they judge (`head`, above): the REFLECTION the integrated head the final gate pinned, a re-plan during the run
 the tip of the integration target that its signal row recorded when it decided to re-plan. The packet names the head, the range from the head the
 DESIGN ran at (for the first revision the commit the architect's checkout was made at, which a lane that lands during the audit does not move),
 and the head each node landed with.
 
 **Revisions.** The ledger holds revisions `r0`, `r1`, ...: a revision is recorded only over an approved audit of its own, made after the revision before it
-(the delta goes through the same audit rounds as a DESIGN, `needs_changes` returning it to the architect on the same thread), and the nodes that have not started are
+(the re-plan's DESIGN goes through the same audit rounds as the first DESIGN, `needs_changes` returning it to the architect on the same thread; the critic's packet
+carries `RELEASED PLANS`, the plan each started node was released with as `crw.releasedPlans` reads it from the revision of its release - the whole issue, every field, and the whole
+decisions its `decision_refs` name; a node whose issue was sized for a split or a child started too (its lane recorded the design row and escalated it), is
+listed with that plan and is no unstarted node of the re-plan - and a started node whose issue differs from it in any field, or a decision such a plan names that the DESIGN drops or changes
+in any field, is a P1 finding), and the nodes that have not started are
 released under a revision only after that, because the signal that re-plans keeps every new release back until it is decided. A lane that started keeps the
 revision it was released under; it ends under it and lands or is held as usual. Each revision records the slice digest of every node of the plan it was made
 against - for a revision after the first, the plan the architect and the auditor evaluated (`plan` of `crw.replanSignals`, handed to `crw.designLedger`), so that a plan revision made while
-the delta was audited is a change the next signal counts against the revision - and a release records the slice of the node as the plan is when the node is released (read again at the release: a plan that
+the re-plan's DESIGN was audited is a change the next signal counts against the revision - and a release records the slice of the node as the plan is when the node is released (read again at the release: a plan that
 cannot be read, or that has dropped the node, releases nothing).
 
 **The numbers (SP-ARCH-2).** `crw.replanSignals` writes two numbers to the journal: the RECEIPTs that report a `plan_mismatch`, of lanes released under the revision that stands (each call
@@ -529,9 +562,11 @@ alignment says. Every decision - to re-plan, and to skip it with its reason - is
 RECEIPT of an executor call of a lane is a trigger (`sig.receipt`), and so is a plan revision a lane reads before its release (`crw.planRead` answers `changed` when the plan is another than the one the audited DESIGN stands on, and `judging` when a signal in flight read this very plan; `sig.plan`; the trigger is `plan:<occurrence>:<digest>`, once per observed occurrence). The occurrence names the newest standing observation of another digest, or the first ledger row (journal.md); concurrent reads of the same occurrence coalesce, but P0 → P1 → P2 → P1 takes a new signal for the return to P1. Its lane waits for that signal's decision and any required DESIGN audit, not the earlier signal for P1. Replayed reads and recorded signal members preserve the same identity, including the legacy key of a read recorded without an occurrence. The path `signals:<milestone>` takes the triggers that have arrived, in the order of the
 journal and not the order they finished in, into one signal at a time, and the triggers that arrive while a signal runs are taken together by the next one.
 A signal is `crw.signalBind` (its input: the number `k`, the triggers as (call, digest) and the result digest of the signal before it; the row records what had started and
-what had not, the tip of the integration target and the plan revision read), a join of one item, the child path `signal:<milestone>:<k>`, which runs
-`onSignal`, and `crw.signalDone` (continue, refresh or halt, and the revision it made). While a signal is decided no lane is released and the scheduler admits no node: a node that read a changed plan revision waits until the signal that took that trigger is decided, live or replayed, and is released under the revision that stands then. Every release of `crw.dag` compares the plan (`crw.release(plan, node, milestone, {pinned: true})`): the plan the relay has when `crw.release` reads it, in the flow and before `Relay.Release`, is compared with the plan the audited DESIGN stands on, and a node whose plan is another is not released (`plan_changed`). The release is a compare-and-swap on that plan (CRW-1288): `Relay.Release` carries the node's slice of the compared plan, and the relay compares it with the node's slice of the plan's head when it judges the release and again in the transaction that reserves the slot and records the release, so a plan change between the flow's comparison and that commit releases nothing either (`plan_changed`; the relay's refusal is `plan_revision_conflict`). Either way the lane reads the plan again - a trigger - and asks again once its signal re-planned and audited a delta for that plan or judged it and kept the revision. A dag without `onSignal` leaves such a node `unreleased`. A relay refusal while the plan the flow reads again is still the pinned one (`relay_plan_changed`) is a plan revision the run does not follow: the run reads its plan at the revision it pinned (CRW-1277 c) and the relay releases from the plan's head, so no signal comes of that change. The release raises the run-level hold `plan_superseded` (CRW-1291): an escalation of the node that asks the parent and names the revision the run pinned, the relay's head revision and the node, which the run tells the child's thread like any escalation ([reporting.md](reporting.md)). While the hold stands no node of the run is released (`plan_superseded`, the relay is not asked) and nothing restarts on its own, a resume included. The execution the relay still holds for the node (a release the run never recorded, whose replay the relay refused) is closed with the hold when it is the run's, which returns its slot, and recorded with its run otherwise. The actions are the parent's: end or cancel the run (`crw flow cancel`) and start a new run on the new revision, or answer the hold's question (`crw flow answer`, then `crw flow resume`), which closes that node by escalation (`plan_superseded`) and lifts that hold: the other held nodes ask the relay again, and each one the new revision changed raises a hold of its own, so answering takes one round per changed node (cancelling the run and starting a new one is the shorter way). Lanes released before the hold go on to their integration. The project lane ends `held` (`plan_superseded`) while the hold stands. The operating rule follows: a plan is not changed while a trial run runs on it. The relay answers the replay of a release only to a request that expects the slice the release was committed under, so a release the relay committed before the run recorded it is not answered as a release under the slice of a plan that changed since. `onSignal` of the project lane
-counts the numbers and, when a reason stands and a node has not started, runs the re-plan: the delta, its audit rounds, the revision; a re-plan that cannot be done halts the milestone,
+what had not - a node has started when a release of it to an executor stands, or the design row that stands sized its issue for a split or a child
+(its lane escalated it), the predicate `crw.releasedPlans` lists by too, so a milestone whose other nodes are all sized so skips the re-plan
+(`no_unstarted_node`) -, the tip of the integration target and the plan revision read), a join of one item, the child path `signal:<milestone>:<k>`, which runs
+`onSignal`, and `crw.signalDone` (continue, refresh or halt, and the revision it made). While a signal is decided no lane is released and the scheduler admits no node: a node that read a changed plan revision waits until the signal that took that trigger is decided, live or replayed, and is released under the revision that stands then. Every release of `crw.dag` compares the plan (`crw.release(plan, node, milestone, {pinned: true})`): the plan the relay has when `crw.release` reads it, in the flow and before `Relay.Release`, is compared with the plan the audited DESIGN stands on, and a node whose plan is another is not released (`plan_changed`). The release is a compare-and-swap on that plan (CRW-1288): `Relay.Release` carries the node's slice of the compared plan, and the relay compares it with the node's slice of the plan's head when it judges the release and again in the transaction that reserves the slot and records the release, so a plan change between the flow's comparison and that commit releases nothing either (`plan_changed`; the relay's refusal is `plan_revision_conflict`). Either way the lane reads the plan again - a trigger - and asks again once its signal re-planned and audited a DESIGN for that plan or judged it and kept the revision. A dag without `onSignal` leaves such a node `unreleased`. A relay refusal while the plan the flow reads again is still the pinned one (`relay_plan_changed`) is a plan revision the run does not follow: the run reads its plan at the revision it pinned (CRW-1277 c) and the relay releases from the plan's head, so no signal comes of that change. The release raises the run-level hold `plan_superseded` (CRW-1291): an escalation of the node that asks the parent and names the revision the run pinned, the relay's head revision and the node, which the run tells the child's thread like any escalation ([reporting.md](reporting.md)). While the hold stands no node of the run is released (`plan_superseded`, the relay is not asked) and nothing restarts on its own, a resume included. The execution the relay still holds for the node (a release the run never recorded, whose replay the relay refused) is closed with the hold when it is the run's, which returns its slot, and recorded with its run otherwise. The actions are the parent's: end or cancel the run (`crw flow cancel`) and start a new run on the new revision, or answer the hold's question (`crw flow answer`, then `crw flow resume`), which closes that node by escalation (`plan_superseded`) and lifts that hold: the other held nodes ask the relay again, and each one the new revision changed raises a hold of its own, so answering takes one round per changed node (cancelling the run and starting a new one is the shorter way). Lanes released before the hold go on to their integration. The project lane ends `held` (`plan_superseded`) while the hold stands. The operating rule follows: a plan is not changed while a trial run runs on it. The relay answers the replay of a release only to a request that expects the slice the release was committed under, so a release the relay committed before the run recorded it is not answered as a release under the slice of a plan that changed since. `onSignal` of the project lane
+counts the numbers and, when a reason stands and a node has not started, runs the re-plan: the whole DESIGN, its audit rounds, the revision; a re-plan that cannot be done halts the milestone,
 and no node that has not started is released. A refresh gives the signal's outcome the admission regions of the nodes under the revision it made (`regions`: the plan's regions with the `edit_regions` of that DESIGN), which the scheduler reads for the nodes that have not been admitted and for the nodes it admitted that have not yet been released: before its release a node is checked once more against the nodes that hold their regions (released, or about to be), and waits for the end of the one it overlaps. When the reason stands after the last node started the close judges the same numbers.
 
 **A resume.** A signal is replayed with the membership its row recorded (`crw.recordedSignal`), whatever order the lanes replay in now, and only when each of its triggers was
@@ -655,7 +690,10 @@ keeps the thread. `crw flow audit` is the same audit on demand.
 opens the relay store the journal of the run is in (an acceptance given alone is looked up in the store), connects to the App Server
 control socket, and prints the result of each acceptance. It exits 0 when every acceptance is `ok`, 1 when one is a `mismatch` or is
 `unobserved`, and 2 for a command line, a store or a run it cannot use. It appends its result to the journal as a `crw.audit` row with a
-call id of its own (`audit_...`), unless `--no-record` is given or the run has not finished (a run that is still writing owns its journal).
+call id of its own (`audit_...`), unless `--no-record` is given or the run has not ended: the journal has no `finished` or `run/paused` row
+after its last `started` row (a run that is still writing owns its journal, and so does a resumed process after an earlier process's end).
+The row is appended under the run lock, taken without waiting after the host reads, on the journal opened again under it, where the
+end is read again: while a process holds the run (one that wrote its end row and still reconciles what goes up) nothing is recorded.
 
 **The scenario harness** (`internal/flow/scenario`) runs this script on the engine over the fake App Server host, a temporary relay
 store (the journal and the decision rows), a temporary git repository with an integration branch, a scripted model, a fake relay and
@@ -729,7 +767,7 @@ A held row records whether the
 call's packet reached the host (`input_state`: `delivered` or `not_delivered`) and the `codexErrorInfo` verbatim; on a backend
 that places calls an executor's held row also carries `p_held`, the working snapshot of its worktree when the failure was
 classified, and its completed row `pending_tree`, the working snapshot when the turn ended. The run record holds the workflow name, the script digest, the helper digests, the digest of `args`, the meta, and
-the path of the helper role store with the canonical digest of the six role pairs (`policy_source`, `policy_digest`),
+the path of the helper role store with the canonical digest of the seven role pairs (`policy_source`, `policy_digest`),
 the role table's warnings (`policy_warnings`) when it has any, and the `backend` the run's calls run on (`session` or
 `app-server`).
 
@@ -746,12 +784,23 @@ A backend that places calls adds to a call's rows: the `allocation` member of `p
 
 The run surface (`crw flow`, [flow.md](../../plugins/crw/skills/crw-canon/references/flow.md#the-crw-flow-command-table)) adds the rows it writes
 and reads. A pause asked for from outside the engine (`crw flow pause`, a run deadline) is one `run_paused` flow row (`by`, `reason`)
-and then the calls that would send end held `engine_paused`. An answer to a wait is the `decision_applied` flow row `crw flow answer`
+and then the calls that would send end held `engine_paused`. A process the operator paused (`by` `operator`) that would end completed
+ends with a `run/paused` row (`status` `paused`, and the `by` and `reason` of the operator's last ask) instead of the `finished` row:
+the engine's status is `paused`, the run process exits 0 and the hook tells no completion; a deadline, a token budget or a quota
+pause ends with the `finished` row as before. A pause asked once the process has decided its end (while it writes its end row or tells
+its completion) is refused and writes no row, so the `run_paused` rows and the end row agree. `crw flow show`, the digest and `crw flow
+next` say who paused a run that ended paused from the `by` and `reason` of its `run/paused` row, not from a later deadline ask. An answer to a wait is the `decision_applied` flow row `crw flow answer`
 appends under the run lock: `ask` (the question's id), `node`, `run`, `revision`, `attempt`, `plan_basis`, `scope`, `target`, `action`,
 `class` (`escalation` or `jun_decision`), `applied_by` and the `decision` (`id`, `option`, `text`, `by`, `via`, `answered_at`,
 `authority`, `authority_ref`); `crw.decide` reads `ask` and `node`. A run cancelled while no process held it ends with a `finished` row
-of error kind `cancelled` written by `crw flow cancel`. The state of a run (`running`, `paused`, `dead`, `held`, `completed`,
-`blocked`, `cancelled`, `failed`) is not a row: it is read from the run lock, the last `started` and `finished` rows, the calls' rows
+of error kind `cancelled` written by `crw flow cancel`. The `finished` row of a completed run whose script returned an object with a
+string `state` carries `outcome`: its `state`, `reason`, `source`, `escalation` and `milestone` (each one line, at most 120 runes) and
+`lanes`, the lanes of its `lanes` array that did not land (`node`, `state`, `reason`, at most 16, with `lanes_more`). A value whose
+`milestone` member is itself an object with a string `state` (a night batch returns `{state: closed|incomplete, milestone: <the project
+lane's result>, lanes}`) carries the outcome of that object, and its own state as `run_state`, so a night batch tells the milestone's
+`held`, `escalated` or `stopped` and its reason. The completion notice and `crw flow ps` read the outcome from there ([reporting.md](reporting.md)). The state of a run (`running`, `paused`, `dead`, `held`, `completed`,
+`blocked`, `cancelled`, `failed`) is not a row: it is read from the run lock, the last `started`, `finished` and `run/paused` rows (a
+run no process holds whose last process ended with `run/paused` is `paused`, not `dead`), the calls' rows
 (`internal/flow/callstate`), the questions no `decision_applied` row has answered and, for `blocked`, the lane's own rows. A run meant
 to start the nodes of a plan (a run of `project-lane` or `night-batch`, an old run of an issue child's lane, or a run whose arguments name a `plan`) whose last
 process finished `completed` with nothing left to go on with is `blocked` when no process of it started a node (no completed
@@ -1049,7 +1098,7 @@ run's directory `<state>/flow/<run>/` and none writes the journal, which only th
 - `crw flow start WORKFLOW [--backend session|app-server]` starts a session run by default; `--backend app-server` opens a thread
   per call, for the tests and shadow runs. The spec records the `backend`. A session run's pool is `min(pool, agents.max_threads - 1)`
   (the owner keeps a slot for a helper of its own; `agents.max_threads` is read from `<CODEX_HOME>/config.toml`, default 6), the
-  preview lists the spawn format of each of the six roles (`spawn_agent(agent_type, message, model, reasoning_effort,
+  preview lists the spawn format of each of the seven roles (`spawn_agent(agent_type, message, model, reasoning_effort,
   fork_context=false)`) and the six session facts below, and the answer names the command the steps are taken with
   (`next`). Before the process starts the owner thread is bound (below).
 - `crw flow next RUN [--wait S] [--json]` answers the run's `state` (`running`, `waiting_session`, `waiting_decision`, `paused`,
@@ -1092,8 +1141,10 @@ run's directory `<state>/flow/<run>/` and none writes the journal, which only th
   (the foreground command through `engine.ResumeHold`): at most `agents.max_threads - 1` calls in flight whatever `--pool` says,
   and the owner thread bound to the run while the resume runs and its line closed when the run ends.
 - The owner thread is bound to a session run by the `orchestrator` line of its flow-bound file (`internal/flow/bound`
-  `BindOrchestrator`: `kind: orchestrator`, `run_id`, the `policyDigest` of the role table and the `helperPairs` of the six roles
-  architect, executor, executor-t1, reviewer, reviewer-final, explorer; `Line.Validate` takes no orchestrator line without the six).
+  `BindOrchestrator`: `kind: orchestrator`, `run_id`, the `policyDigest` of the role table and the `helperPairs` of the seven roles
+  architect, executor, executor-t1, reviewer, reviewer-final, explorer, critic; `Line.Validate` takes no orchestrator line without
+  the first six; the critic is optional, so the open line of a run an earlier crw bound stays readable and its critic spawns are
+  undecided).
   A pair carries the decided parts of its role only: an undecided role has the empty pair, a role that names a model and leaves its
   effort undecided has the empty effort, and an effort without a model is no role's pair.
   The start writes it before any process of the run exists. While a process holds the run, that process is the one party that writes
@@ -1114,10 +1165,10 @@ run's directory `<state>/flow/<run>/` and none writes the journal, which only th
   fork (`full_history_fork_refused`: the fork keeps the parent's pair). Every other spawn is allowed with `model` and
   `reasoning_effort` overwritten from the decided parts of the pair of its role (an undecided effort keeps the `reasoning_effort` the
   spawn was sent, and an undecided role keeps the whole spawn, with the warning `role_undecided`): the role the first `CRW-ROLE:` line of the message header names when it
-  is exactly one of the six (a parser of the flow-bound path; the ordinary path's oracle parser is unchanged), else the role of
+  is exactly one of the seven (a parser of the flow-bound path; the ordinary path's oracle parser is unchanged), else the role of
   the `agent_type` (worker is executor), else explorer. The ledger line (`decisions/<owner>.jsonl`) records the `role`, the `op` of
   the `crw-flow-op:` first line, and a `warning` where the table has one: `role_agent_type_mismatch` (the header role does not pair
-  with the agent_type: executor-t1 with executor, reviewer-final with reviewer, the others with their own name), `unrecorded_spawn`
+  with the agent_type: executor-t1 with executor, reviewer-final and critic with reviewer, the others with their own name), `unrecorded_spawn`
   (no step marker) or `unrecorded_author` (no marker, an executor's or architect's type). A ledger that cannot be written allows the
   spawn and says so on stderr, and a flow-bound directory or file that cannot be trusted is read as no binding, with a stderr
   warning: no spawn is refused for it. The run joins the ledger's `op` with the owner turn's `collabAgentToolCall` items to find the
@@ -1138,7 +1189,7 @@ run's directory `<state>/flow/<run>/` and none writes the journal, which only th
   run's repository other than the run's own `refs/crw/flow/<run>/` (the run moves those itself) and the binding files of the
   flow-bound directory (the hook's ledger and claims are left out: the owner's spawns write them while a subagent works).
 - The session facts of the preview are warnings, never a refusal (CRW-1318): `owner_bound` (the owner can be bound: a thread id, a
-  readable binding, no other live run, live as the binding reads it: its process holds the run lock or its start holds the start lock), `role_models` (the six pairs, a role without one or without an effort, a reviewer of an author's model family),
+  readable binding, no other live run, live as the binding reads it: its process holds the run lock or its start holds the start lock), `role_models` (the seven pairs, a role without one or without an effort, a reviewer of an author's model family, a critic of the architect's),
   `owner_state_writable` (the run directory, the flow-bound directory, the control socket and the repository), `subagent_slots`
   (`agents.max_threads` leaves a slot for a call) and `multi_agent_v1` (`features.multi_agent_v2` is off: under V2 the protocol
   stops); `verifier_prerequisites`, the sixth, is judged for every run (CRW-1319).

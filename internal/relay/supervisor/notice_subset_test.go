@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -222,7 +223,10 @@ func TestNoticeSubset_Compose(t *testing.T) {
 		{"unfit notice: kind", func(n map[string]any) { n["kind"] = "weird" }, nil},
 		{"unfit notice: fault id", func(n map[string]any) { n["faultId"] = "XYZ" }, nil},
 		{"issue is not an issue key", func(n map[string]any) { n["issueKey"] = "not an issue" }, nil},
+		{"issue is a tracking ref", func(n map[string]any) { n["issueKey"] = "o/r#7" }, nil},
+		{"issue is a refused tracking ref", func(n map[string]any) { n["issueKey"] = "o/r#0" }, nil},
 	}
+	refusals := map[string]string{}
 	for _, c := range cases {
 		notice, live := nsNotice(), nsLive()
 		if c.notice != nil {
@@ -233,6 +237,25 @@ func TestNoticeSubset_Compose(t *testing.T) {
 		}
 		packet, err := composeNoticeForTest(notice, live, nsAt, "evidence line")
 		golden.CheckJSON(t, c.name, map[string]any{"packet": nsPlain(packet), "error": nsError(err)})
+		var noticeErr *faults.NoticeError
+		if errors.As(err, &noticeErr) {
+			refusals[c.name] = noticeErr.Detail
+		}
+	}
+	// The refusal names the whole set composeNotice accepts, pinned here so a regenerated golden cannot
+	// quietly drop the tracking ref form.
+	for _, name := range []string{"issue is not an issue key", "issue is a refused tracking ref"} {
+		detail, ok := refusals[name]
+		if !ok {
+			t.Errorf("%s: composeNotice did not refuse", name)
+			continue
+		}
+		if !strings.Contains(detail, "(TEAM-123, a UUID or owner/name#N)") {
+			t.Errorf("%s: refusal detail %q does not name the TEAM-123, UUID and owner/name#N forms", name, detail)
+		}
+	}
+	if _, ok := refusals["issue is a tracking ref"]; ok {
+		t.Errorf("a valid tracking ref was refused: %q", refusals["issue is a tracking ref"])
 	}
 }
 

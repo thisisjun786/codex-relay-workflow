@@ -31,7 +31,7 @@ func seqOf(t *testing.T, l *Lab, what string, keep func(engine.Event) bool) int 
 	return 0
 }
 
-// The first executor starts after an approved audit of the DESIGN, by a reviewer of another model family than the architect: the
+// The first executor starts after an approved audit of the DESIGN, by the critic, of another model family than the architect: the
 // audit is recorded as a design_audit row before the first release, and the release before the first executor call.
 func TestDesignAuditBeforeFirstExecutor(t *testing.T) {
 	l := NewLab(t, twoNodes()...)
@@ -52,7 +52,7 @@ func TestDesignAuditBeforeFirstExecutor(t *testing.T) {
 	if arch == "" || rev == "" || execution.ModelFamily(arch) == execution.ModelFamily(rev) {
 		t.Errorf("the audit was not independent: architect %q, auditor %q", arch, rev)
 	}
-	if l.Labels()[1] != "design-audit:r1" || l.Roles()[1] != "reviewer" {
+	if l.Labels()[1] != "design-audit:r1" || l.Roles()[1] != "critic" {
 		t.Errorf("calls %v", l.Labels())
 	}
 }
@@ -219,17 +219,18 @@ var earlierExplorers = map[string][3]string{
 const earlierMilestoneDigest = "5cbd767ee536ad48e19c4c78d76960971b476e71271307c2b23bbe245ff25460"
 
 // TestARunRecordedBeforeTheEndConditionResumesItsExplorers (CRW-1382, post-evaluation d4): the end condition changes nothing a run
-// recorded before it replays. An explorer given no end condition is the call the earlier binary made - the same packet, the same FINDINGS
-// schema, the same input digest - so a run whose explorers were recorded before CRW-1382 replays them on a resume instead of running them
-// live again (and coming to the design ledger's refusal of a run past its design audit); only the explorer given the commands has the
-// packet section and the schema member end_conditions. The milestone's digest leaves the end condition out, so the plan a run pinned
+// recorded before it replays. An explorer given no end condition has the packet and the FINDINGS schema the earlier binary gave it; only
+// the explorer given the commands has the packet section and the schema member end_conditions. Its input digest is not the earlier
+// binary's: the call names the design head the first DESIGN's phase samples (crw.designHead), which the earlier binary's calls did not
+// carry, and the head is part of a call's input. The milestone's digest leaves the end condition out, so the plan a run pinned
 // before CRW-1382 is the plan the relay holds after it, whatever end condition the handoff's bodies carry.
 func TestARunRecordedBeforeTheEndConditionResumesItsExplorers(t *testing.T) {
 	check := func(t *testing.T, l *Lab, given string) {
 		t.Helper()
 		seen := 0
 		for _, ev := range l.Events() {
-			if ev.Kind != engine.KindCall || ev.Op != "agent" || ev.Event != engine.EvPrepared || str(ev.Data, "role") != "explorer" {
+			// the background explorers (CRW-1466) came after the earlier binary: the open questions' explorers are the ones it made
+			if ev.Kind != engine.KindCall || ev.Op != "agent" || ev.Event != engine.EvPrepared || str(ev.Data, "role") != "explorer" || strings.HasPrefix(ev.Label, BackgroundLabel) {
 				continue
 			}
 			want, ok := earlierExplorers[ev.Label]
@@ -244,8 +245,11 @@ func TestARunRecordedBeforeTheEndConditionResumesItsExplorers(t *testing.T) {
 				}
 				continue
 			}
-			if got != want {
-				t.Errorf("explorer %s: prompt, schema and input digests %v, the earlier binary's %v: a resume of a run recorded before CRW-1382 runs it live again", ev.Label, got, want)
+			if got[0] != want[0] || got[1] != want[1] {
+				t.Errorf("explorer %s: prompt and schema digests %v, the earlier binary's %v", ev.Label, got[:2], want[:2])
+			}
+			if str(ev.Data, "head") == "" || got[2] == want[2] {
+				t.Errorf("explorer %s: head %q and input digest %s, want the design head in its input", ev.Label, str(ev.Data, "head"), got[2])
 			}
 		}
 		if seen != 2 {
@@ -366,7 +370,9 @@ func TestExplorerSignalAndInlineThresholds(t *testing.T) {
 // whose turn has ended; a question whose scope carries the notation of an out-of-authority kind goes to no explorer and is asked
 // of the orchestrator in the design_question escalation, with its scope, while the milestone goes on to its close; a question
 // with an unknown notation goes to an explorer. The design audit packet shows each question's route and what it got, and the
-// audit of a re-plan routes its open questions the same way, reusing the answer an explorer gave in the run.
+// audit of a re-plan routes its open questions the same way: an explorer's answer reads the head it was given, so the re-plan, which
+// pins the integrated head, asks its explorer questions again at that head, while the authority question it raises again is not
+// asked again.
 func TestOpenQuestionRoutesThroughDesignAudit(t *testing.T) {
 	l := NewLab(t, twoNodes()...)
 	d := l.designFor()
@@ -392,11 +398,22 @@ func TestOpenQuestionRoutesThroughDesignAudit(t *testing.T) {
 	if got.State != "replanned" {
 		t.Fatalf("%+v; calls %v", got, l.Labels())
 	}
-	// two explorers, both before the first audit: the small question and the one with an unknown notation; none for the authority
-	// question, and none in the re-plan, whose questions were answered in the run or go to the orchestrator again
+	// four explorers: before the first audit the small question and the one with an unknown notation, at the design head, and the
+	// same two again in the re-plan, at the head it pins (an answer about the first DESIGN's checkout is no answer about it); none for the authority
+	// question, which goes to the orchestrator again
 	explorers := l.CallsOf("explorer")
-	if len(explorers) != 2 {
-		t.Errorf("%d explorer calls, want 2: %v", len(explorers), l.Labels())
+	if len(explorers) != 4 {
+		t.Errorf("%d explorer calls, want 4: %v", len(explorers), l.Labels())
+	}
+	atHead := 0
+	for _, ev := range l.Events() {
+		// every explorer reads a pinned head: the first DESIGN's its design head, the re-plan's the head it pins
+		if ev.Kind == engine.KindCall && ev.Op == "agent" && ev.Event == engine.EvPrepared && str(ev.Data, "role") == "explorer" && !strings.HasPrefix(ev.Label, BackgroundLabel) && str(ev.Data, "head") != "" {
+			atHead++
+		}
+	}
+	if atHead != 4 {
+		t.Errorf("%d open-question explorers at a pinned head, want all four", atHead)
 	}
 	for _, c := range explorers {
 		if text := textOfCall(l, c.ID); strings.Contains(text, "ship the flag") {
@@ -419,7 +436,7 @@ func TestOpenQuestionRoutesThroughDesignAudit(t *testing.T) {
 	for _, r := range spawnRowsOf(l, ops.RuleInl2, "reuse") {
 		counts[key{r.Decision, r.Reason}]++
 	}
-	if want := map[key]int{{"spawn", ""}: 2, {"orchestrator", "out_of_authority"}: 1, {"orchestrator", "asked_in_run"}: 1, {"reuse", "answered_in_run"}: 2}; !reflect.DeepEqual(counts, want) {
+	if want := map[key]int{{"spawn", ""}: 4, {"orchestrator", "out_of_authority"}: 1, {"orchestrator", "asked_in_run"}: 1}; !reflect.DeepEqual(counts, want) {
 		t.Errorf("the routes of the open questions %v, want %v (the first audit and the re-plan, which asks nothing again, CRW-1366)", counts, want)
 	}
 	// each audit packet shows every question with its route and what it got
@@ -440,9 +457,6 @@ func TestOpenQuestionRoutesThroughDesignAudit(t *testing.T) {
 			}
 		}
 		explorerRoute := "route: an explorer answered it (call "
-		if label != "design-audit:r1" {
-			explorerRoute = "route: reused: the answer an earlier question of the run got"
-		}
 		for _, want := range []string{
 			"small: is the flag documented?\n  " + explorerRoute, "answer: yes, README.md says so",
 			"odd: who pays for the runner?\n  " + explorerRoute, "answer: the repository does not say",
@@ -584,7 +598,13 @@ func TestOrchestratorAnswerIsUsedOnTheNextAuditRound(t *testing.T) {
 		t.Errorf("design-audit:r2 answers lack %q:\n%s", want, r2)
 	}
 	// the record: each reused answer carries the route it came from
-	records := l.Rows(ops.OpExploreRecord)
+	// the open questions' records (the background questions' record, CRW-1466, is left out)
+	var records []engine.Event
+	for _, row := range l.Rows(ops.OpExploreRecord) {
+		if str(row.Data, "kind") == ops.ExploreOpen {
+			records = append(records, row)
+		}
+	}
 	if len(records) != 2 {
 		t.Fatalf("%d crw.exploreRecord rows, want one for each round", len(records))
 	}
@@ -1008,7 +1028,8 @@ func TestResumeAfterPromptTextChange(t *testing.T) {
 // A run whose open questions were routed by the binary before CRW-1347 (crw.explore handed crw.exploreRecord answers without the
 // reason, the scope and the notation of their routes) and that a binary of CRW-1347 resumes (the header of crw:lib/packets): the
 // crw.exploreRoute rows and the explorer calls replay as recorded, crw.exploreRecord runs again with the answers of the new
-// binary, design-audit:r1 is the one agent call that runs live, and crw.designLedger refuses the first revision again.
+// binary, design-audit:r1 is the one agent call whose input changed (the architect's design-answers turn after the record runs
+// again as part of the suffix, over the input it recorded, CRW-1466), and crw.designLedger refuses the first revision again.
 func TestResumeAfterOpenQuestionRoutingChange(t *testing.T) {
 	l := NewLab(t, oneNode()...)
 	d := l.designFor()
@@ -1017,7 +1038,10 @@ func TestResumeAfterOpenQuestionRoutingChange(t *testing.T) {
 		{ID: "policy", Question: "does the project ship the flag in 1.0?", Scope: "authority:policy", FilesNeeded: []string{}},
 	}
 	l.Design = &d
-	l.Lib = libWith(t, "lane.js", "route: r.route, reason: r.reason || '', scope: r.scope || '', authority: r.authority || '', answer,", "route: r.route, answer,")
+	// the binary before CRW-1347 had no background questions (CRW-1466 came after it): it strips the routes of the open questions'
+	// answers only, so the background record and the architect call before the design loop replay as they would for such a run
+	l.Lib = libWith(t, "lane.js", "route: r.route, reason: r.reason || '', scope: r.scope || '', authority: r.authority || '', answer,",
+		"route: r.route, ...(kind === 'background' ? { reason: r.reason || '', scope: r.scope || '', authority: r.authority || '' } : {}), answer,")
 	if got := mustRun(t, l); got.State != "closed" {
 		t.Fatalf("state %q", got.State)
 	}
@@ -1029,13 +1053,26 @@ func TestResumeAfterOpenQuestionRoutingChange(t *testing.T) {
 	for _, c := range l.LiveCalls(before) {
 		labels = append(labels, c.Label)
 	}
-	if !slices.Equal(labels, []string{"design-audit:r1"}) {
-		t.Errorf("live calls %v, want the design audit only", labels)
+	// crw.exploreRecord runs live, so every later position of the path is the resume's suffix (engine/opcall.go): the architect's
+	// design-answers turn (CRW-1466) runs again with it, but over the input it recorded - its packet renders no routing metadata - so
+	// design-audit:r1 is the one agent call whose input changed
+	if !slices.Equal(labels, []string{"design-answers:r1", "design-audit:r1"}) {
+		t.Errorf("live calls %v, want the design-answers turn of the suffix and the design audit", labels)
+	}
+	digests := map[bool][]string{}
+	for _, ev := range l.Events() {
+		if ev.Kind == engine.KindCall && ev.Op == "agent" && ev.Event == engine.EvPrepared && (ev.Label == "design-answers:r1" || ev.Label == "design-audit:r1") {
+			digests[ev.Seq > before] = append(digests[ev.Seq > before], ev.Label+" "+str(ev.Data, "input_digest"))
+		}
+	}
+	if len(digests[false]) != 2 || len(digests[true]) != 2 || digests[false][0] != digests[true][0] || digests[false][1] == digests[true][1] {
+		t.Errorf("input digests before the resume %v and after it %v: want design-answers:r1's the same and design-audit:r1's changed", digests[false], digests[true])
 	}
 	ran := map[string]int{}
 	refused := false
 	for _, ev := range rowsAfter(l, before) {
-		if ev.Kind == engine.KindCall && ev.Event == engine.EvCompleted {
+		// the open questions' record is the one this test is about: a background questions' record (CRW-1466) is not counted
+		if ev.Kind == engine.KindCall && ev.Event == engine.EvCompleted && (ev.Op != ops.OpExploreRecord || str(ev.Data, "kind") == ops.ExploreOpen) {
 			ran[ev.Op]++
 		}
 		if ev.Kind == engine.KindCall && ev.Op == ops.OpDesignLedger && ev.Event == engine.EvRefused {

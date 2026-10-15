@@ -46,13 +46,15 @@ const sessionLabRoles = `{"roles": {
   "executor-t1": {"mode": "model", "model": "anthropic/claude-sonnet-5-5", "effort": "xhigh"},
   "reviewer": {"mode": "model", "model": "gpt-6.1-sol", "effort": "high"},
   "reviewer-final": {"mode": "model", "model": "gpt-6.1-sol", "effort": "xhigh"},
-  "explorer": {"mode": "model", "model": "anthropic/claude-haiku-5", "effort": "low"}}}`
+  "explorer": {"mode": "model", "model": "anthropic/claude-haiku-5", "effort": "low"},
+  "critic": {"mode": "model", "model": "gpt-6.1-sol", "effort": "xhigh"}}}`
 
 // sessionLabPairs are the pairs of sessionLabRoles (the architect's effort undecided).
 var sessionLabPairs = map[string]engine.Pair{
 	"architect": {Model: "anthropic/claude-opus-5-5"}, "executor": {Model: "anthropic/claude-haiku-5", Effort: "medium"},
 	"executor-t1": {Model: "anthropic/claude-sonnet-5-5", Effort: "xhigh"}, "reviewer": {Model: "gpt-6.1-sol", Effort: "high"},
 	"reviewer-final": {Model: "gpt-6.1-sol", Effort: "xhigh"}, "explorer": {Model: "anthropic/claude-haiku-5", Effort: "low"},
+	"critic": {Model: "gpt-6.1-sol", Effort: "xhigh"},
 }
 
 // ownerEffort is the reasoning effort of the owner thread: a subagent spawned with no effort runs on it.
@@ -89,16 +91,8 @@ type sessionLab struct {
 // openGate lets A-1's first executor finish.
 func (k *sessionLab) openGate() { k.gateOnce.Do(func() { close(k.gateA1) }) }
 
-// agentTypeFor is the spawn_agent agent_type of a role.
-func agentTypeFor(role string) string {
-	switch role {
-	case "executor-t1":
-		return "executor"
-	case "reviewer-final":
-		return "reviewer"
-	}
-	return role
-}
+// agentTypeFor is the spawn_agent agent_type of a role: the hook's own (bound.AgentTypeOf), so the lab and the hook cannot drift.
+func agentTypeFor(role string) string { return bound.AgentTypeOf(role) }
 
 type sessionSpawn struct {
 	step NextStep
@@ -131,6 +125,9 @@ func newSessionLab(t *testing.T) *sessionLab {
 	// the owner thread is the first thread the lab's fake host makes
 	owner := fmt.Sprintf("0190a000-0000-7000-8000-%012x", 1)
 	l := newLaneLabFor(t, owner, "dev", labIssue{Key: "A-1", Milestone: "M1"}, labIssue{Key: "A-2", Milestone: "M1"})
+	// the run is started in the repository (ProductionWorld's OwnerCwd is the process cwd): the evidence records of its executor steps
+	// go under the lab's repository, never under the source tree (CRW-1482)
+	t.Chdir(l.repo)
 	// nobody declares the nodes' edit regions before the run (CRW-1391): crw.release declares each node's admission regions (the plan's
 	// and the DESIGN's edit_regions) before the relay's release, so the two nodes of disjoint regions run at once with no owner's help
 	dir := filepath.Join(t.TempDir(), "crw")

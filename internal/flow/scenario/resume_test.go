@@ -186,10 +186,14 @@ func TestMilestoneCloseRerunsAfterLaneSuffix(t *testing.T) {
 	}
 	// the second lane to land merged into the first; the target loses that merge
 	kept, lost := l.Relay.Landed[0], l.Relay.Landed[1]
-	var keptBatch string
+	var keptBatch, lostPath string
 	for _, r := range l.Rows("crw.integrate") {
 		if str(r.Data, "node") == kept {
 			keptBatch = str(r.Data, "batch_commit")
+		}
+		// the path of the lost lane's integrate call: its position on root follows the design and explore phases (CRW-1466)
+		if str(r.Data, "node") == lost {
+			lostPath = r.Path
 		}
 	}
 	l.Git("update-ref", IntegrationRef, keptBatch)
@@ -212,7 +216,7 @@ func TestMilestoneCloseRerunsAfterLaneSuffix(t *testing.T) {
 			ranLive = append(ranLive, live{ev.Op, ev.Path})
 		}
 	}
-	want := []live{{"crw.integrate", "root/10:" + lost}, {"crw.finalGate", "root"}, {"crw.verify", "root"}, {"crw.finalGate", "root"}, {"crw.spawnDecision", "root"},
+	want := []live{{"crw.integrate", lostPath}, {"crw.finalGate", "root"}, {"crw.verify", "root"}, {"crw.finalGate", "root"}, {"crw.spawnDecision", "root"},
 		{"crw.reviewerFinal", "root"}, {"crw.milestoneClose", "root"}, {"crw.currentDesign", "root"}, {"crw.spawnDecision", "root"}, {"crw.reflection", "root"},
 		{"crw.replanSignals", "root"}, {"crw.spawnDecision", "root"}, {"crw.audit", "root"}, {"crw.archive", "root"}, {"crw.reportUp", "root"}}
 	if !slices.Equal(ranLive, want) {

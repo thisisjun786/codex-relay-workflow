@@ -12,7 +12,8 @@ const EvRunPaused = "run_paused"
 
 // Control is the handle of a running script that its process keeps: the process of `crw flow pause` and of a run deadline asks the
 // run to stop sending requests through it. It is bound to the engine when Run starts; a pause asked before that is applied
-// the moment the run starts, and a pause asked after the run ended changes nothing.
+// the moment the run starts, and a pause asked once the run decided its end (its end row and its completion), or after the run
+// ended, changes nothing and writes no row.
 type Control struct {
 	mu      sync.Mutex
 	e       *Engine
@@ -59,8 +60,25 @@ func (c *Control) bind(e *Engine) {
 	}
 }
 
+// endsPaused are the askers whose pause ends the run paused (a run/paused row, no finished row, no completion notice): the operator's
+// `crw flow pause`. A deadline ask is the run's own limit, as a token budget and a quota are: the run finishes completed with its calls
+// held.
+var endsPaused = map[string]bool{"operator": true}
+
+// pauseOnAsk applies an ask of the Control. An ask that comes once the run decided its end (Run reads endAsk for the last time) is
+// refused: it writes no run_paused row and pauses nothing, because the end row and the completion the run tells are already the ones
+// of an end without it. The row and endAsk are set under endM, so an ask is either wholly before that decision or refused.
 func (e *Engine) pauseOnAsk(by, reason string) {
+	e.endM.Lock()
+	if e.endDecided {
+		e.endM.Unlock()
+		return
+	}
 	e.j.Append(Event{RunID: e.runID, Kind: KindFlow, Event: EvRunPaused, Data: map[string]any{"by": by, "reason": reason}})
+	if endsPaused[by] {
+		e.endAsk = &pauseAsk{by, reason}
+	}
+	e.endM.Unlock()
 	e.pause(ReasonEnginePaused)
 	e.interruptTurns(ReasonEnginePaused)
 }

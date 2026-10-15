@@ -1577,3 +1577,7 @@ The CXC relay accepts an implementation node only on its pull request and reads 
 ## CRW-1066 — differential-fuzz throughput
 
 The fuzz campaigns judged one case at a time, started one `python3` per pyjson request and spent a third of a state case in the home guard; the harness now judges cases side by side, reuses its json.tool processes and prepares roots once, with the pyjson case-count basis left as a proposal for Jun; port: fixed (harness, no CXC oracle behavior). Details are in [CRW-1066](known-defects/CRW-1066.md).
+
+## CRW-1482 — a flow run's executor receipt is judged in its call worktree
+
+The stop hook looked for a session flow run executor's receipt under the owner's native cwd, where the child never writes, and its final message (the RECEIPT JSON alone) had no `EVIDENCE_RECORDED` line: three blocks, then a tombstone, on every executor path of the 1209 field trial (C9); port: fixed (CRW's flow engine, extending CRW-1115). The engine records a flow assignment for each executor step (root = the call worktree, op = the step's marker) and names its one receipt file in the spawn message; the hook accepts that file without a marker line and refuses a receipt anywhere else with a reason that names it; the completed row records `evidence_receipt` with a copy on the step bus for the acceptance path. Details and limits are in [CRW-1482](known-defects/CRW-1482.md).

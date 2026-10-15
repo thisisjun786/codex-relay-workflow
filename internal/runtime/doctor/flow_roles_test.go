@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-// CRW-1330 (CRW-1316 S1): `crw doctor flow-roles` shows the helper role store the flow reads its six pairs from, and warns when the
+// CRW-1330 (CRW-1316 S1): `crw doctor flow-roles` shows the helper role store the flow reads its seven pairs from, and warns when the
 // execution policy still declares agent-roles, which the flow no longer reads.
 func TestCRW1330_DoctorFlowRolesWarnsAboutAnUnreadAgentRolesSection(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "crw")
@@ -39,10 +39,10 @@ func TestCRW1330_DoctorFlowRolesWarnsAboutAnUnreadAgentRolesSection(t *testing.T
 		return code, report, out.String()
 	}
 	code, report, text := run()
-	if code != 0 || report["store"] != store || report["present"] != true || len(report["roles"].([]any)) != 6 || len(report["digest"].(string)) != 64 {
+	if code != 0 || report["store"] != store || report["present"] != true || len(report["roles"].([]any)) != 7 || len(report["digest"].(string)) != 64 {
 		t.Fatalf("exit %d: %s", code, text)
 	}
-	for _, want := range []string{"agent-roles", "no longer reads", policy, "family", "executor-t1", "undecided"} {
+	for _, want := range []string{"agent-roles", "no longer reads", policy, "family", "executor-t1", "critic", "undecided"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the report lacks %q:\n%s", want, text)
 		}

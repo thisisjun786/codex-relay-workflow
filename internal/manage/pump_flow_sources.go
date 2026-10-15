@@ -51,7 +51,9 @@ type pumpFlowEscalation struct {
 // pumpFlowRunRow is the liveness of one run.
 type pumpFlowRunRow struct {
 	Run, Actor string
-	Finished   bool
+	// Finished is set when the run's newest process ended it: a finished row, or the run/paused row of an operator pause (no process holds
+	// a paused run until `crw flow resume`), after its last started row. A run_paused flow row alone does not end the run.
+	Finished bool
 	// OpenCall is set when the run has an agent call that began and has no terminal row: a turn is (or was, if the process died) in flight.
 	OpenCall bool
 	Last     time.Time
@@ -220,7 +222,7 @@ func pumpFlowReadAt(ctx context.Context, state string) (pumpFlowData, error) {
 			return err
 		}
 		runs, err := q.QueryContext(ctx, `SELECT r.run_id, r.actor_task_id, r.started_at,
- EXISTS (SELECT 1 FROM flow_events e WHERE e.run_id = r.run_id AND e.kind = 'finished' AND e.seq < ? AND e.seq > COALESCE((SELECT MAX(s.seq) FROM flow_events s WHERE s.run_id = r.run_id AND s.kind = 'started' AND s.seq < ? AND json_extract(s.payload_json, '$._kind') = 'run'), 0)),
+ EXISTS (SELECT 1 FROM flow_events e WHERE e.run_id = r.run_id AND (e.kind = 'finished' OR (e.kind = 'paused' AND json_extract(e.payload_json, '$._kind') = 'run')) AND e.seq < ? AND e.seq > COALESCE((SELECT MAX(s.seq) FROM flow_events s WHERE s.run_id = r.run_id AND s.kind = 'started' AND s.seq < ? AND json_extract(s.payload_json, '$._kind') = 'run'), 0)),
  COALESCE((SELECT MAX(recorded_at) FROM flow_calls c WHERE c.run_id = r.run_id), ''),
  EXISTS (SELECT 1 FROM flow_calls c WHERE c.run_id = r.run_id AND c.kind = 'agent' AND NOT EXISTS (SELECT 1 FROM flow_calls t WHERE t.run_id = c.run_id AND t.call_id = c.call_id AND t.event IN ('completed', 'null_model', 'held', 'refused', 'outcome_unknown', 'superseded'))),
  COALESCE((SELECT MAX(recorded_at) FROM flow_events e WHERE e.run_id = r.run_id AND e.seq < ?), '')

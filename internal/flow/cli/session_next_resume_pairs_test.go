@@ -112,7 +112,7 @@ func ownerLines(t *testing.T, thread string) int {
 
 func noPinnedSpawns(t *testing.T, ans NextAnswer, model func(role string) string) {
 	t.Helper()
-	if len(ans.Spawns) != 6 {
+	if len(ans.Spawns) != len(bound.OrchestratorRoles) {
 		t.Fatalf("the spawn formats %+v", ans.Spawns)
 	}
 	for _, sp := range ans.Spawns {

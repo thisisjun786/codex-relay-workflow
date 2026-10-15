@@ -82,8 +82,8 @@ func TestOverlayAppendsToEmbeddedPrompt(t *testing.T) {
 	if _, err := Prompt("child", Options{}); err == nil {
 		t.Error("a relay role has no overlay")
 	}
-	// The second tier and the final reviewer are built on the definitions of their families.
-	for role, family := range map[string]string{"executor-t1": "executor", "reviewer-final": "reviewer"} {
+	// The second tier, the final reviewer and the critic are built on the definitions of their families.
+	for role, family := range map[string]string{"executor-t1": "executor", "reviewer-final": "reviewer", "critic": "reviewer"} {
 		a, _ := Base(role)
 		b, _ := Base(family)
 		if a != b {
@@ -121,7 +121,7 @@ func TestOverlayReplacesLeafSentence(t *testing.T) {
 	}{
 		{"executor", Options{}, true}, {"executor-t1", Options{}, true}, {"architect", Options{}, true},
 		{"reviewer", Options{}, true}, {"reviewer-final", Options{}, true},
-		{"explorer", Options{}, false}, {"executor", Options{QA: true}, false},
+		{"explorer", Options{}, false}, {"critic", Options{}, false}, {"executor", Options{QA: true}, false},
 	} {
 		base, _ := Base(row.role)
 		overlay, err := Overlay(row.role, row.opts)
@@ -142,6 +142,9 @@ func TestOverlayReplacesLeafSentence(t *testing.T) {
 			}
 		} else if row.role != "architect" || !strings.Contains(overlay, "carries no leaf sentence") {
 			t.Errorf("%s: the definition has no LEAF sentence and the overlay does not say so", label)
+		}
+		if got, want := NativeHelpers(row.role, row.opts), map[bool]int{true: 1, false: 0}[row.helper]; got != want {
+			t.Errorf("%s: NativeHelpers gives %d, but the overlay allows %d", label, got, want)
 		}
 		switch {
 		case row.helper && (!helper.MatchString(overlay) || none.MatchString(overlay)):
@@ -268,7 +271,8 @@ func TestArchitectOverlayExecutorContract(t *testing.T) {
 // TestArchitectOverlayAuthorityBoundary (CRW-1321, CRW-1347): exceptions to repository rules, other issues' records, policy
 // decisions and execution-environment prerequisites are not the architect's to decide. The overlay says they are raised as open
 // questions with the scope notation of their kind, that a question does not stop the run (no hold), and describes the route an
-// open question takes: never back to the architect, to the orchestrator for a notation of the four kinds, to an explorer otherwise.
+// open question takes: never back to the architect, to the orchestrator for a notation of the four kinds, to an explorer otherwise;
+// and that the answers come back to the architect's thread before the design audit, where it answers with the DESIGN again (CRW-1466).
 func TestArchitectOverlayAuthorityBoundary(t *testing.T) {
 	overlay, err := Overlay("architect", Options{})
 	if err != nil {
@@ -298,6 +302,9 @@ func TestArchitectOverlayAuthorityBoundary(t *testing.T) {
 		"What the run does with an open question:",
 		"None is left to you to answer",
 		"whatever `files_needed` lists",
+		// the answers go back to the architect's thread before the critic (CRW-1466)
+		"come back to your thread before the design audit",
+		"you answer with the DESIGN again",
 		"goes to no explorer",
 		"non-blocking ask",
 		"a missing or unknown notation among them",
@@ -321,5 +328,104 @@ func TestArchitectOverlayAuthorityBoundary(t *testing.T) {
 		if strings.Contains(boundary, claim) {
 			t.Errorf("the authority boundary section says %q, which the route does not do or does not say plainly:\n%s", claim, boundary)
 		}
+	}
+}
+
+// TestCriticRoleHasOverlayAndDefinition (CRW-1434): the critic is a seventh role of an engine call. It has no definition
+// file of its own: its thread is built on the reviewer definition (it spawns as agent_type reviewer), followed by its own
+// overlay, which names the LEAF sentence and allows no helper.
+func TestCriticRoleHasOverlayAndDefinition(t *testing.T) {
+	found := false
+	for _, name := range Names {
+		if name == "critic" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("critic is not a role of an engine call: %v", Names)
+	}
+	if Names[len(Names)-1] != "critic" {
+		t.Errorf("the critic is not the last role, every older table keeps its rows: %v", Names)
+	}
+	overlay, err := Overlay("critic", Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(overlay, "# CRW flow overlay: critic\n") {
+		t.Errorf("the critic overlay does not open with its heading: %q", firstLine(overlay))
+	}
+	if !strings.Contains(overlay, `begins "`+LeafSentence+`"`) || !strings.Contains(overlay, "does not apply to this engine call") {
+		t.Error("the critic overlay does not name the LEAF sentence and say it is replaced")
+	}
+	base, err := Base("critic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewer, _ := Base("reviewer")
+	if base != reviewer {
+		t.Error("the critic is not built on the reviewer definition")
+	}
+	for _, want := range []string{"DESIGN_AUDIT", "PRIOR FINDINGS", "rollback", "same `ref`"} {
+		if !strings.Contains(overlay, want) {
+			t.Errorf("the critic overlay lacks %q", want)
+		}
+	}
+}
+
+// TestReplanPacketAsksForTheWholeDesign (CRW-1462): the architect overlay has a re-plan section that says what the re-plan packet
+// asks (internal/flow/workflows/packets_test.go pins the packet): the answer is the whole DESIGN, every decision and every issue of
+// every node, the started ones as they were released, with the ids kept; it is not a delta.
+func TestReplanPacketAsksForTheWholeDesign(t *testing.T) {
+	overlay, err := Overlay("architect", Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	replan := sectionOf(overlay, "## Re-plan")
+	if replan == "" {
+		t.Fatal("the architect overlay has no \"## Re-plan\" section")
+	}
+	for _, want := range []string{"the whole DESIGN", "every decision", "every issue of every node", "as they were released", "UNSTARTED NODES", "ids"} {
+		if !strings.Contains(replan, want) {
+			t.Errorf("the re-plan section lacks %q:\n%s", want, replan)
+		}
+	}
+	if strings.Contains(replan, "delta") {
+		t.Errorf("the re-plan section still speaks of a delta:\n%s", replan)
+	}
+}
+
+// TestArchitectOverlayNamesTheBackgroundFindings (CRW-1466): background explorers run before the architect's first DESIGN, one for
+// each node, and their answers come in the packet's BACKGROUND FINDINGS (internal/flow/cli/lanee2e_test.go pins the packet); the
+// overlay says so, says they are the run's (not the one helper of the call) and that a re-plan has none.
+func TestArchitectOverlayNamesTheBackgroundFindings(t *testing.T) {
+	overlay, err := Overlay("architect", Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bg := sectionOf(overlay, "## Background findings")
+	if bg == "" {
+		t.Fatal("the architect overlay has no \"## Background findings\" section")
+	}
+	for _, want := range []string{"Background explorers run before you", "one question for each node", "BACKGROUND FINDINGS", "A re-plan has no background explorers"} {
+		if !strings.Contains(bg, want) {
+			t.Errorf("the background findings section lacks %q:\n%s", want, bg)
+		}
+	}
+	if spawn := sectionOf(overlay, "## Native spawn"); !strings.Contains(spawn, "The background explorers are the run's, not yours") {
+		t.Errorf("the native spawn section does not set the background explorers apart from the call's helper:\n%s", spawn)
+	}
+}
+
+// TestRollbackIsAskedInRisksAndCheckedThere: the critic checks a plan's rollback, and the DESIGN has no field of its own for it, so
+// the critic's rule names the field it reads (risks) and the architect overlay asks for the rollback there.
+func TestRollbackIsAskedInRisksAndCheckedThere(t *testing.T) {
+	critic, _ := Overlay("critic", Options{})
+	architect, _ := Overlay("architect", Options{})
+	const rule = "for a change to stored data or a behaviour change, `risks` must say how it rolls back"
+	if !strings.Contains(critic, rule) {
+		t.Errorf("the critic's rollback rule does not name the field it reads: want %q", rule)
+	}
+	if !strings.Contains(architect, "For a change to stored data or a behaviour change, say in `risks` how it rolls back") {
+		t.Error("the architect overlay does not ask for the rollback in risks, which the critic checks")
 	}
 }

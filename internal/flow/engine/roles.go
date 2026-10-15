@@ -33,7 +33,7 @@ type AliasReport struct {
 }
 
 // PolicyReport is what `crw flow roles` shows: where the role table was read from (the helper role store), its digest (the
-// canonical digest of the six pairs the run pins), the pair of each role, the alias table a call is resolved against, and
+// canonical digest of the seven pairs the run pins), the pair of each role, the alias table a call is resolved against, and
 // the warnings of the table and of the execution policy file.
 type PolicyReport struct {
 	// Source and Digest are null for the placeholder table of the fake backend.

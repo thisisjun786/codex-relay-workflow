@@ -36,15 +36,20 @@ func TestIsNoticeIssue(t *testing.T) {
 func TestNoticeFactsIssueKeyTakesATrackingRef(t *testing.T) {
 	t.Parallel()
 	const key = "o/r#7"
-	insert := func(t *testing.T, scope, externalRef string, relationship bool) map[string]any {
+	insert := func(t *testing.T, scope, externalRef, relationshipKey string) map[string]any {
 		t.Helper()
 		l, ctx := testLedger(t)
 		statements := []string{
 			"INSERT INTO fault_ledger (fault_id, product, fault_class, component, severity, signature, scope, scope_key, state, first_seen_at, last_seen_at, updated_at, external_ref) VALUES ('abc123','crw','report_omitted','c','broken','{}','" + scope + "','P','open','t','t','t','" + externalRef + "')",
 			"INSERT INTO fault_notifications (notification_id, fault_id, product, kind, cycle, state, created_at, updated_at) VALUES ('n1','abc123','crw','blocking',1,'pending','t','t')",
 		}
-		if relationship {
-			statements = append([]string{"INSERT INTO relationships (relationship_id, issue_key, status, parent_task_id, parent_host_id, child_task_id, child_host_id, execution_generation, artifact_roots, allowed_recipients, created_at, updated_at) VALUES ('rel-1','" + key + "','active','pt','ph','ct','ch',1,'[]','[]','t','t')"}, statements...)
+		// A non-empty relationshipKey adds the relationship row the scope's issueKey finds (dAnchor), so
+		// the anchor branch of NoticeFacts runs. Keys with a quote or newline are never inserted.
+		if relationshipKey != "" {
+			if strings.ContainsAny(relationshipKey, "'\n") {
+				t.Fatalf("relationship key %q cannot be inserted as SQL text", relationshipKey)
+			}
+			statements = append([]string{"INSERT INTO relationships (relationship_id, issue_key, status, parent_task_id, parent_host_id, child_task_id, child_host_id, execution_generation, artifact_roots, allowed_recipients, created_at, updated_at) VALUES ('rel-1','" + relationshipKey + "','active','pt','ph','ct','ch',1,'[]','[]','t','t')"}, statements...)
 		}
 		for _, statement := range statements {
 			if _, err := l.Store.Q(ctx).ExecContext(ctx, statement); err != nil {
@@ -59,21 +64,21 @@ func TestNoticeFactsIssueKeyTakesATrackingRef(t *testing.T) {
 	}
 	t.Run("scope", func(t *testing.T) {
 		t.Parallel()
-		facts := insert(t, `{"projectKey":"P","issueKey":"`+key+`"}`, "", false)
+		facts := insert(t, `{"projectKey":"P","issueKey":"`+key+`"}`, "", "")
 		if facts["issueKey"] != key || facts["anchor"] != "project:P" {
 			t.Fatalf("issueKey = %v, anchor = %v", facts["issueKey"], facts["anchor"])
 		}
 	})
 	t.Run("anchor", func(t *testing.T) {
 		t.Parallel()
-		facts := insert(t, `{"projectKey":"P","issueKey":"`+key+`"}`, "", true)
+		facts := insert(t, `{"projectKey":"P","issueKey":"`+key+`"}`, "", key)
 		if facts["issueKey"] != key || facts["anchor"] != "rel-1" {
 			t.Fatalf("issueKey = %v, anchor = %v", facts["issueKey"], facts["anchor"])
 		}
 	})
 	t.Run("external_ref", func(t *testing.T) {
 		t.Parallel()
-		facts := insert(t, `{"projectKey":"P"}`, key, false)
+		facts := insert(t, `{"projectKey":"P"}`, key, "")
 		if facts["externalRef"] != key {
 			t.Fatalf("externalRef = %v", facts["externalRef"])
 		}
@@ -84,7 +89,19 @@ func TestNoticeFactsIssueKeyTakesATrackingRef(t *testing.T) {
 		}
 		t.Run("refused/"+bad[:min(len(bad), 20)], func(t *testing.T) {
 			t.Parallel()
-			facts := insert(t, `{"projectKey":"P","issueKey":"`+bad+`"}`, "", false)
+			facts := insert(t, `{"projectKey":"P","issueKey":"`+bad+`"}`, "", "")
+			if facts["issueKey"] != nil {
+				t.Fatalf("issueKey = %v, want nil", facts["issueKey"])
+			}
+		})
+		// The same refused value as a relationship row the scope finds: the anchor branch runs
+		// (anchor is the row's id) and its own filter still withholds the issue key.
+		t.Run("refused-anchor/"+bad[:min(len(bad), 20)], func(t *testing.T) {
+			t.Parallel()
+			facts := insert(t, `{"projectKey":"P","issueKey":"`+bad+`"}`, "", bad)
+			if facts["anchor"] != "rel-1" {
+				t.Fatalf("anchor = %v, want rel-1 (the anchor branch did not run)", facts["anchor"])
+			}
 			if facts["issueKey"] != nil {
 				t.Fatalf("issueKey = %v, want nil", facts["issueKey"])
 			}
@@ -93,7 +110,18 @@ func TestNoticeFactsIssueKeyTakesATrackingRef(t *testing.T) {
 	t.Run("refused/long", func(t *testing.T) {
 		t.Parallel()
 		long := strings.Repeat("a", 200) + "/" + strings.Repeat("b", 60) + "#7"
-		facts := insert(t, `{"projectKey":"P","issueKey":"`+long+`"}`, "", false)
+		facts := insert(t, `{"projectKey":"P","issueKey":"`+long+`"}`, "", "")
+		if facts["issueKey"] != nil {
+			t.Fatalf("issueKey = %v, want nil", facts["issueKey"])
+		}
+	})
+	t.Run("refused-anchor/long", func(t *testing.T) {
+		t.Parallel()
+		long := strings.Repeat("a", 200) + "/" + strings.Repeat("b", 60) + "#7"
+		facts := insert(t, `{"projectKey":"P","issueKey":"`+long+`"}`, "", long)
+		if facts["anchor"] != "rel-1" {
+			t.Fatalf("anchor = %v, want rel-1 (the anchor branch did not run)", facts["anchor"])
+		}
 		if facts["issueKey"] != nil {
 			t.Fatalf("issueKey = %v, want nil", facts["issueKey"])
 		}

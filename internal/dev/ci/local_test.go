@@ -77,7 +77,11 @@ func localFixturePlan(command string) []localJob {
 	}}
 }
 
-// localRunOptions is a run over the fixture, with the given table.
+// localRunOptions is a run over the fixture, with the given table. The step TMPDIR's socket limit is
+// lifted and the .git walk stops below the TMPDIR in force when it is called, so an ordinary engine
+// test always takes candidate a whatever a long TMPDIR or a stray /tmp/.git on the host would say
+// (CRW-1489). A test that sets TMPDIR calls it after the t.Setenv, and a test of the candidates
+// replaces both fields on the value it returns.
 func localRunOptions(repo *localFixture, plan []localJob, record string) localOptions {
 	return localOptions{
 		Root:          repo.root,
@@ -87,6 +91,8 @@ func localRunOptions(repo *localFixture, plan []localJob, record string) localOp
 		Plan:          plan,
 		WorkRoot:      repo.work,
 		allowTempRoot: true,
+		socketLimit:   4096,
+		gitCeilings:   []string{localTempDir(), os.TempDir()},
 	}
 }
 

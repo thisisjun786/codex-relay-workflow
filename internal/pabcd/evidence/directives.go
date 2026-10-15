@@ -21,6 +21,21 @@ func VerifierDirective(attempt int) string {
 	}, " ")
 }
 
+// VerifierDirectiveFor is the reason of the block that sends back a child with a flow contract (CRW-1482): the attempt it is on and
+// the one absolute file its receipt goes to, which the engine already named in its spawn message and packet. The child's final
+// message stays the one JSON value its packet names, so no marker line is asked for. The generic VerifierDirective is unchanged.
+func VerifierDirectiveFor(attempt int, receiptPath string) string {
+	return strings.Join([]string{
+		"Your completion is unverified — no evidence receipt was recorded.",
+		fmt.Sprintf("This is attempt %d of %d.", attempt, MaxAttempts),
+		"Actually run the relevant checks (build/tests/commands) and write the commands, their output",
+		"(red before, green after) and your judgement to the file `" + receiptPath + "`.",
+		"That exact file is your receipt; a receipt anywhere else does not count.",
+		"Your final message stays exactly the JSON object your packet names: no `EVIDENCE_RECORDED` line is needed after it.",
+		"Do not claim done without the receipt. Do not keep repeating the same answer — this budget is bounded.",
+	}, " ")
+}
+
 // EscalationDirective is the reason the oracle's gate gave when the budget was spent and it still blocked. Nothing calls it any
 // more, because the budget became terminal (a tombstone and a release), and its text still says "fail-closed"; it is ported
 // for completeness.

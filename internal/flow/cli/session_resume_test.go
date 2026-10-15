@@ -99,7 +99,7 @@ func TestForegroundResumeOfASessionRunBindsTheOwnerAndCapsThePool(t *testing.T) 
 	}
 	waitFor(t, "a step of the resumed run", func() bool { return len(spawns()) > 0 })
 	// read before any `crw flow next`, which would write a missing line itself
-	if got := bound.Lookup(k.owner); got.State != bound.Orchestrator || got.Line.RunID != run || len(got.Line.HelperPairs) != 6 {
+	if got := bound.Lookup(k.owner); got.State != bound.Orchestrator || got.Line.RunID != run || len(got.Line.HelperPairs) != len(bound.OrchestratorRoles) {
 		t.Fatalf("the owner's binding while the foreground resume runs: %+v", got)
 	}
 	time.Sleep(time.Second) // the engine publishes the steps of a batch together
