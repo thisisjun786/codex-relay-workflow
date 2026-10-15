@@ -495,10 +495,11 @@ leaves them, and `--keep` keeps them on purpose (it prints each path). Three kin
 Nothing removes them. The first two sit in a directory only this command uses, so a `crw-ci-local-*` or `t<8 hex>` name
 there is a run's own. The `ci<8 hex>` name is short and generic, and the caller's `TMPDIR` is often shared (`/tmp`), so
 the code never deletes by that name: another tool's directory could match. Read the list before you remove anything.
-To see the ones more than a day old (a younger one may belong to a run in progress), which removes nothing:
+Set `root` to the `--work-root` you passed, if any. To see the ones more than a day old (a younger one may belong to a run in progress), which removes nothing:
 
 ```sh
-find -H "${XDG_STATE_HOME:-$HOME/.local/state}/crw-ci-local" -mindepth 1 -maxdepth 1 -type d \( -name 'crw-ci-local-*' -o -name 't????????' \) -mtime +0
+root="${XDG_STATE_HOME:-$HOME/.local/state}/crw-ci-local"  # or the --work-root you passed
+find -H "$root" -mindepth 1 -maxdepth 1 -type d \( -name 'crw-ci-local-*' -o -name 't????????' \) -mtime +0
 find -H "${TMPDIR:-/tmp}" -mindepth 1 -maxdepth 1 -type d -name 'ci????????' -mtime +0
 ```
 
@@ -507,7 +508,8 @@ checked them and no run of yours is still going (use the second line for the `ci
 yours):
 
 ```sh
-find -H "${XDG_STATE_HOME:-$HOME/.local/state}/crw-ci-local" -mindepth 1 -maxdepth 1 -type d \( -name 'crw-ci-local-*' -o -name 't????????' \) -mtime +0 \
+root="${XDG_STATE_HOME:-$HOME/.local/state}/crw-ci-local"  # or the --work-root you passed
+find -H "$root" -mindepth 1 -maxdepth 1 -type d \( -name 'crw-ci-local-*' -o -name 't????????' \) -mtime +0 \
   -exec sh -c 'chmod -R u+rwX -- "$@" && rm -rf -- "$@"' sh {} +
 find -H "${TMPDIR:-/tmp}" -mindepth 1 -maxdepth 1 -type d -name 'ci????????' -mtime +0 \
   -exec sh -c 'chmod -R u+rwX -- "$@" && rm -rf -- "$@"' sh {} +
