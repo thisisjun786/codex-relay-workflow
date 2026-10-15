@@ -135,11 +135,26 @@ func TestCloseDocsNameTheCrosscheck(t *testing.T) {
 				d.script = strings.Replace(d.script, "## The milestone close", "## Other", 1)
 				return d
 			},
-			"no op":       func(d closeDocs) closeDocs { d.script = strings.Replace(d.script, "`crw.crosscheck(", "`crw.check(", 1); return d },
-			"no rule":     func(d closeDocs) closeDocs { d.script = strings.Replace(d.script, "only minor_separable", "minor_separable", 1); return d },
-			"no pending":  func(d closeDocs) closeDocs { d.script = strings.Replace(d.script, "`crosscheck_pending`", "`pending`", 1); return d },
-			"no run dir":  func(d closeDocs) closeDocs { d.script = strings.Replace(d.script, "`crosscheck_no_run_dir`", "", 1); return d },
-			"no decision": func(d closeDocs) closeDocs { d.script = strings.Replace(d.script, "the parent's decision", "a default", 1); return d },
+			"no op": func(d closeDocs) closeDocs {
+				d.script = strings.Replace(d.script, "`crw.crosscheck(", "`crw.check(", 1)
+				return d
+			},
+			"no rule": func(d closeDocs) closeDocs {
+				d.script = strings.Replace(d.script, "only minor_separable", "minor_separable", 1)
+				return d
+			},
+			"no pending": func(d closeDocs) closeDocs {
+				d.script = strings.Replace(d.script, "`crosscheck_pending`", "`pending`", 1)
+				return d
+			},
+			"no run dir": func(d closeDocs) closeDocs {
+				d.script = strings.Replace(d.script, "`crosscheck_no_run_dir`", "", 1)
+				return d
+			},
+			"no decision": func(d closeDocs) closeDocs {
+				d.script = strings.Replace(d.script, "the parent's decision", "a default", 1)
+				return d
+			},
 			"gpt row on astra": func(d closeDocs) closeDocs {
 				d.script = strings.Replace(d.script, "| a gpt author | grok |", "| a gpt author | astra |", 1)
 				return d
@@ -148,10 +163,16 @@ func TestCloseDocsNameTheCrosscheck(t *testing.T) {
 				d.script = strings.Replace(d.script, "| an undecided author pair | refused `crosscheck_author_undecided` |\n", "", 1)
 				return d
 			},
-			"no fix rounds": func(d closeDocs) closeDocs { d.script = strings.Replace(d.script, "`land_fix_rounds`", "the cap", 1); return d },
-			"no row":        func(d closeDocs) closeDocs { d.journal = strings.Replace(d.journal, "`crw.crosscheck`", "a row", 1); return d },
-			"no body line":  func(d closeDocs) closeDocs { d.journal = strings.Replace(d.journal, "`Crosscheck:`", "", 1); return d },
-			"run silent":    func(d closeDocs) closeDocs { d.run = "nothing goes up"; return d },
+			"no fix rounds": func(d closeDocs) closeDocs {
+				d.script = strings.Replace(d.script, "`land_fix_rounds`", "the cap", 1)
+				return d
+			},
+			"no row": func(d closeDocs) closeDocs {
+				d.journal = strings.Replace(d.journal, "`crw.crosscheck`", "a row", 1)
+				return d
+			},
+			"no body line": func(d closeDocs) closeDocs { d.journal = strings.Replace(d.journal, "`Crosscheck:`", "", 1); return d },
+			"run silent":   func(d closeDocs) closeDocs { d.run = "nothing goes up"; return d },
 		} {
 			if p := closeDocsProblems(mutate(good), rule); len(p) == 0 {
 				t.Errorf("%s: the changed text is accepted", label)
