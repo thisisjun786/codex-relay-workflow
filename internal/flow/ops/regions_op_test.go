@@ -10,7 +10,7 @@ import (
 
 // TestRegionsOverlapMatchesTheRelay pins RegionsOverlap (CRW-1441) to the relay's own judgement: for each pair of region texts, the
 // answer is the pinned one, it is dagsched.Overlaps of the regions as cli/schedrelay.go declares a DESIGN edit region read from its
-// text (written out field by field here, not through relayRegion), and it does not depend on the order of the two sides.
+// text (written out field by field here, not through LaneRegion.readings), and it does not depend on the order of the two sides.
 func TestRegionsOverlapMatchesTheRelay(t *testing.T) {
 	file := func(p string) dagsched.Region { return dagsched.Region{Path: p, Kind: "file"} }
 	tree := func(p string) dagsched.Region { return dagsched.Region{Path: p, Kind: "tree"} }
@@ -72,6 +72,94 @@ func TestRegionsOverlapMatchesTheRelay(t *testing.T) {
 	}
 }
 
+// TestRegionsOverlapReadsARegionAsScopeDoes pins the other half of the rule: a region text is also read as Scope reads it (its text as
+// written: a prefix ending in "/", a pattern, the exact path), so a pair Scope calls covered is never called non-overlapping, where the
+// DESIGN-text reading alone (RegionOf) makes a planned tree or pattern whose path holds "#" a symbol of another file.
+func TestRegionsOverlapReadsARegionAsScopeDoes(t *testing.T) {
+	for _, p := range []struct {
+		x, y string
+		want bool
+	}{
+		// RegionOf makes both symbols of the file gen (keys 1/ and 1/x.go); Scope reads gen#1/ as the tree gen#1
+		{"gen#1/", "gen#1/x.go", true},
+		{"gen#1/", "gen#2/x.go", false},
+		{"a#*.go", "a#b.go", true},
+		{"a#*.go", "a#b.txt", false},
+		{"*.go", "a.go", true},
+		{"src/*.go#F", "src/a.go", true},
+		{"pkg/a#b.go", "pkg/a#b.go", true},
+	} {
+		if got := RegionsOverlap([]string{p.x}, []string{p.y}); got != p.want {
+			t.Errorf("RegionsOverlap([%q], [%q]) = %v, want %v", p.x, p.y, got, p.want)
+		}
+		if got := RegionsOverlap([]string{p.y}, []string{p.x}); got != p.want {
+			t.Errorf("RegionsOverlap([%q], [%q]) = %v, want %v (not symmetric)", p.y, p.x, got, p.want)
+		}
+	}
+	regions := []string{"a.go", "a.go#F", "./a.go", " a.go ", "src/", " src/ ", "src", "src/./", "src//c.txt", "gen#1/", "a#*.go", "*.go",
+		"src/*.go#F", "pkg/a#b.go", "src/c.txt#G"}
+	paths := []string{"a.go", " a.go", "src", "src/a.go", "src/c.txt", "gen#1/x.go", "a#b.go", "pkg/a#b.go", "pkg/a", "b.go"}
+	for _, r := range regions {
+		for _, p := range paths {
+			if inRegion(r, p) && !RegionsOverlap([]string{r}, []string{p}) {
+				t.Errorf("Scope reads the region %q as covering %q, RegionsOverlap says they do not overlap", r, p)
+			}
+		}
+	}
+}
+
+// TestRegionsOverlapKeepsAPlannedChange pins the planned form of a region (CRW-1441): an object {text, change, exclusive} carries the
+// plan's change and exclusive flag to the relay's rule, as DeclareRegions stores them, so a planned delete or rename of a symbol holds
+// its whole file and an exclusive region overlaps every region; a bare text is an edit, as before.
+func TestRegionsOverlapKeepsAPlannedChange(t *testing.T) {
+	sym := func(p, key, change string, exclusive bool) dagsched.Region {
+		return dagsched.Region{Path: p, Kind: "symbol", Key: key, Change: change, Exclusive: exclusive}
+	}
+	for _, p := range []struct {
+		name   string
+		x, y   LaneRegion
+		rx, ry dagsched.Region
+		want   bool
+	}{
+		{"a bare text is an edit", LaneRegion{Text: "a.go#F"}, LaneRegion{Text: "a.go#G"}, sym("a.go", "F", "", false), sym("a.go", "G", "", false), false},
+		{"an edit", LaneRegion{Text: "a.go#F", Change: "edit"}, LaneRegion{Text: "a.go#G"}, sym("a.go", "F", "edit", false), sym("a.go", "G", "", false), false},
+		{"a delete holds its file", LaneRegion{Text: "a.go#F", Change: "delete"}, LaneRegion{Text: "a.go#G"}, sym("a.go", "F", "delete", false), sym("a.go", "G", "", false), true},
+		{"a rename holds its file", LaneRegion{Text: "a.go#F", Change: "rename"}, LaneRegion{Text: "a.go#G"}, sym("a.go", "F", "rename", false), sym("a.go", "G", "", false), true},
+		{"a delete holds only its place", LaneRegion{Text: "a.go#F", Change: "delete"}, LaneRegion{Text: "b.go#G"}, sym("a.go", "F", "delete", false), sym("b.go", "G", "", false), false},
+		{"an exclusive region holds everything", LaneRegion{Text: "a.go#F", Exclusive: true}, LaneRegion{Text: "b.go#G"}, sym("a.go", "F", "", true), sym("b.go", "G", "", false), true},
+	} {
+		t.Run(p.name, func(t *testing.T) {
+			relay := dagsched.Overlaps(p.rx, p.ry)
+			if relay != p.want {
+				t.Fatalf("dagsched.Overlaps(%+v, %+v) = %v, the pinned answer is %v", p.rx, p.ry, relay, p.want)
+			}
+			if got := LaneRegionsOverlap([]LaneRegion{p.x}, []LaneRegion{p.y}); got != relay {
+				t.Errorf("LaneRegionsOverlap(%+v, %+v) = %v, the relay answers %v", p.x, p.y, got, relay)
+			}
+			if got := LaneRegionsOverlap([]LaneRegion{p.y}, []LaneRegion{p.x}); got != relay {
+				t.Errorf("LaneRegionsOverlap(%+v, %+v) = %v, the relay answers %v (not symmetric)", p.y, p.x, got, relay)
+			}
+		})
+	}
+	// the argument shape: a text, or an object; an object with a field the op does not know, or a change the relay does not know, is refused
+	var got []LaneRegion
+	if err := json.Unmarshal([]byte(`["a.go#F", {"text": "b.go#G", "change": "delete"}, {"text": "c/", "exclusive": true}]`), &got); err != nil {
+		t.Fatal(err)
+	}
+	want := []LaneRegion{{Text: "a.go#F"}, {Text: "b.go#G", Change: "delete"}, {Text: "c/", Exclusive: true}}
+	if !slices.Equal(got, want) {
+		t.Errorf("decoded %+v, want %+v", got, want)
+	}
+	if b, _ := json.Marshal(got); string(b) != `["a.go#F",{"text":"b.go#G","change":"delete"},{"text":"c/","exclusive":true}]` {
+		t.Errorf("encoded %s: a region with no change and no hold is its text, any other the object", b)
+	}
+	for _, bad := range []string{`[{"path": "a.go"}]`, `[{"text": "a.go", "change": "move"}]`, `[7]`} {
+		if err := json.Unmarshal([]byte(bad), &got); err == nil {
+			t.Errorf("%s decoded without an error", bad)
+		}
+	}
+}
+
 // TestRegionOpsAnswerThroughTheLane runs crw.regionsOverlap and crw.admissionRegions as the engine installs them from Lane.Ops: the
 // script gets the JSON answer, an absent edit list is undeclared (admissionRegions answers [], never null), and the row of each op
 // stays proven on a resume.
@@ -95,6 +183,23 @@ func TestRegionOpsAnswerThroughTheLane(t *testing.T) {
 	}
 	if got := string(w.must(NameAdmissionRegions, []string{"a.go"}, nil)); got != "[]" {
 		t.Errorf("admissionRegions([a.go], null) = %s, want []", got)
+	}
+	deleteF := map[string]any{"text": "a.go#F", "change": "delete"}
+	if got := string(w.must(NameRegionsOverlap, []any{"b.go", deleteF}, []string{"a.go#G"})); got != "true" {
+		t.Errorf("regionsOverlap([b.go, {a.go#F delete}], [a.go#G]) = %s, want true", got)
+	}
+	if got := string(w.must(NameRegionsOverlap, []any{map[string]any{"text": "a.go#F", "exclusive": true}}, []string{"b.go"})); got != "true" {
+		t.Errorf("regionsOverlap([{a.go#F exclusive}], [b.go]) = %s, want true", got)
+	}
+	if got := string(w.must(NameRegionsOverlap, []string{"a.go#F"}, []string{"a.go#G"})); got != "false" {
+		t.Errorf("regionsOverlap([a.go#F], [a.go#G]) = %s, want false", got)
+	}
+	// a planned region keeps its change through admission, and an edit region that names it in another spelling is that region
+	if got := string(w.must(NameAdmissionRegions, []any{deleteF}, []string{"./a.go#F", "b.go"})); got != `[{"text":"a.go#F","change":"delete"},"b.go"]` {
+		t.Errorf("admissionRegions([{a.go#F delete}], [./a.go#F, b.go]) = %s", got)
+	}
+	if _, err := w.op(NameRegionsOverlap, []any{map[string]any{"text": "a.go", "change": "move"}}, []string{"b.go"}); err == nil {
+		t.Error("regionsOverlap with an unknown change did not fail")
 	}
 	if _, err := w.op(NameRegionsOverlap, []string{"a.go"}, []string{"b.go"}, []string{"c.go"}); err == nil {
 		t.Error("regionsOverlap with three arguments did not fail")
