@@ -285,7 +285,7 @@ func (c *Channel) claim(ctx context.Context, id string, r Resolution, now float6
 		if err != nil {
 			return err
 		}
-		live, err := c.Resolve(tx, current.RelationshipID)
+		live, err := c.ResolveFor(tx, current.RelationshipID, rowGrade(current))
 		if err != nil {
 			return err
 		}
@@ -531,10 +531,10 @@ func (a *attemptRun) eligible(ctx context.Context) (stop bool, err error) {
 }
 
 // resolve reads the live hierarchy. A hierarchy that no longer names the message's endpoints holds
-// the message as unaddressed and refuses.
+// the message as unaddressed and refuses. It reads at the message's grade (rowGrade), as its staging did.
 func (a *attemptRun) resolve(ctx context.Context) error {
 	c, row := a.c, a.row
-	r, err := c.Resolve(ctx, row.RelationshipID)
+	r, err := c.ResolveFor(ctx, row.RelationshipID, rowGrade(row))
 	if err != nil {
 		var refusal Refusal
 		if errors.As(err, &refusal) {
@@ -708,7 +708,7 @@ func (a *attemptRun) fence(tx context.Context, out *transportOutcome) error {
 // fenceHierarchy cancels the claim when the hierarchy moved between the claim and the transport.
 func (a *attemptRun) fenceHierarchy(tx context.Context, out *transportOutcome) (done bool, err error) {
 	c, row, requestID, attemptNo := a.c, a.row, a.claimed.requestID, a.claimed.attemptNo
-	live, err := c.Resolve(tx, row.RelationshipID)
+	live, err := c.ResolveFor(tx, row.RelationshipID, rowGrade(row))
 	if err == nil && live != a.r {
 		err = Refusal{"relation_owner_drift", "message " + pyvalue.StrRepr(a.id) + " names " + pyvalue.StrRepr(row.SenderTaskID) + " reporting to " + pyvalue.StrRepr(row.RecipientTaskID) + " for project " + pyvalue.StrRepr(row.ProjectKey.String) + ", and the linkage now says " + pyvalue.StrRepr(live.Sender) + " reports to " + pyvalue.StrRepr(live.Recipient) + " for project " + pyvalue.StrRepr(live.ProjectKey)}
 	}

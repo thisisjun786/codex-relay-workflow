@@ -135,6 +135,38 @@ service is shared: one relay and one store serve the whole operating scope, so s
 scope's start and not one parent's, and a later parent finding the lock held is finding the service
 it should be using.
 
+## After a verified start, the configuration's supervisor section
+
+This host never reaches a start, so nothing below runs here; it shows where the next step reads
+from once a start succeeds. The repository's parent (repository session, relay role `supervisor`,
+[the level table](../../../crw-canon/references/hierarchy.md#the-levels)) registers its management seat with
+`crw manage supervisor register` from a turn of its own thread. Its working directory and settings
+file come from the configuration only (`--cwd` and `--settings-file` are refused on its command line);
+the thread may be named with `--task` (else `CODEX_THREAD_ID`) and the host with `--host`. It reads the `manage.supervisor`
+object of the crw configuration file (`CRW_CONFIG`, else `crw/config.json` below
+`${XDG_CONFIG_HOME:-$HOME/.config}`; `crw manage config` reports the file a run reads). The values
+are this host's facts, so the example names their shape and not their contents:
+
+```json
+{
+  "schema": "crw-config/1",
+  "manage": {
+    "supervisor": {
+      "task_id": "<the parent's thread id, used when neither --task nor CODEX_THREAD_ID names one>",
+      "host_id": "<the host the management seat is bound on, used when --host names none>",
+      "cwd": "<the parent's working directory>",
+      "settings_file": "<a JSON file of the parent's execution settings, which the pair record cites>"
+    }
+  }
+}
+```
+
+A run left with no host (no `host_id` and no `--host`) or no `settings_file`, which a run that reads
+no file at all always is, is refused `supervisor_unconfigured` before the relay is called, and the refusal names each missing key
+(`manage.supervisor.host_id`, `manage.supervisor.settings_file`) and the file the run read, or says it
+read none and where one is looked for. `crw manage supervisor show` needs the thread alone (`--task`,
+else `CODEX_THREAD_ID`, else `task_id`). The values are recorded on the host, never in this repository.
+
 ## What this example does not establish
 
 It does not show a runtime update, which moves a whole verified combination and is covered by

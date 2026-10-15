@@ -691,13 +691,42 @@ above the project, in this order:
    `recipient.scopeKind` is `management`;
 2. without one, the live supervisor of the initiative above the project (the legacy lead);
    `initiative`;
-3. without either, the single store seat (folded in by `withStoreSeat`); `store`.
+3. without either, the single store seat (folded in by `withStoreSeat`); `store`. A store seat its
+   holder laid down when it took its management seat (CRW-1333) is read through that management
+   seat, and read that way it answers only for a user-grade message (below).
 
 A management edge whose seat has no live owner is refused `unregistered_scope` rather than falling
 through to the store seat, because the seat that should hear the message exists and waits for its
 handover. A walk that is ambiguous or contested (two upward edges above the project, competing
 owners, owner drift) is refused as before. A handover of the seat moves the recipient with the
 edge's `upper_task_id`; a message never sent is re-addressed at its next staging.
+
+Every message has a grade for the level that hears it (CRW-1486, `grade.go`). A user-grade message
+is a decision the user owes (`answerOwedBy` `user`): the event path's `decision_request`, the direct
+kinds `jun_decision_request` and `flow_jun_decision_request`, and a fault notice of kind `decision`.
+Every other message is notification-grade, a decision the recipient owes (`lead_decision_request`,
+`flow_project_decision_request`) included. A live store seat answers for both grades. A store seat
+read through the management seat that took it over answers only for a user-grade one: for any other
+the walk is refused `unregistered_scope`, its detail naming that management seat, so a parent that
+took the store seat over hears through it the decisions Jun owes and not every other project's
+completions, blocks, reports and escalations. The same holds for `initiative:<key>`: a lead's
+message with no management edge above its initiative finds nobody above unless it is user-grade or
+a live store seat stands.
+
+One message is read at one grade throughout its life. Staging derives the grade from what the
+message is (the obligation's kind, the direct kind, the notice's kind), and every later step derives
+it from the stored row (`kind` `decision` with one of those obligation kinds): the claim, the
+transport fence, the reopen of a held message, and `supervisor-standing`'s `report_held` gaps, which
+resolve once per relationship and grade so a waiting `decision_request` the seat still hears is not
+named held beside a completion it does not. A message staged while the parent held the live store
+seat, and refused this way once it registers, is held at its next claim like any message the
+hierarchy gives no addressee (`hierarchy_unresolved`, journal `supervisor_message_unaddressed`; a
+`deferred_busy` one once it is due again) and released by `reopenAddressed` when a management edge
+above its project or a live store seat names its endpoints again. No hold word, column, state or
+journal kind is new. The decision-answer authority, the store capacity declarer and the flow side's
+recipient of a decision only Jun can make still read the store seat through its successor, as
+[linkage](linkage.md#management-seats) describes. A reader that only asks who hears a notification
+(selection, the flow report's recipient, `report-up`'s lead check) reads at the notification grade.
 
 The answer a decision request asks for belongs to the same seat (CRW-1371). A user-grade or
 delegated-management-grade decision raised from the project (`decision-raise --origin-project`)
@@ -718,8 +747,8 @@ The kinds, the relationship each one goes through and the two ends are:
 
 | obligation_kind | relationship | from | to |
 | --- | --- | --- | --- |
-| `lead_report`, `lead_decision_request`, `lead_blocked`, `jun_decision_request` | `initiative:<key>` | the initiative's lead | the management seat above it (the store seat when no management edge stands) |
-| `flow_milestone_report`, `flow_project_blocked`, `flow_project_decision_request`, `flow_jun_decision_request`, `flow_escalation`, `flow_completion`, `flow_no_node_started` | `project:<key>` | the project's owner (its owner thread) | [the level above the project](#the-level-above-a-project): its management seat, else a legacy lead, else the store seat |
+| `lead_report`, `lead_decision_request`, `lead_blocked`, `jun_decision_request` | `initiative:<key>` | the initiative's lead | the management seat above it (the store seat when no management edge stands, a laid-down one for `jun_decision_request` only) |
+| `flow_milestone_report`, `flow_project_blocked`, `flow_project_decision_request`, `flow_jun_decision_request`, `flow_escalation`, `flow_completion`, `flow_no_node_started` | `project:<key>` | the project's owner (its owner thread) | [the level above the project](#the-level-above-a-project): its management seat, else a legacy lead, else the store seat (a laid-down one for `flow_jun_decision_request` only) |
 | `session_step_waiting` | `run:<id>` | the run | its owner, `flow_runs.actor_task_id` |
 
 `blocked` and `decision_request` are not among them: those are the event path's kinds, re-derived
@@ -919,6 +948,15 @@ relationship and a turn; `reporting-show` needs a state directory, a marker root
 an assignment and a session too, so a line built from the obligation alone looked like a
 command and could not be run. With the reading, the reading is frozen on the row and the
 recheck line in `supervisor-show` is rendered whole.
+
+### A recipient's whole queue
+
+One command reads one recipient's queue through the store API (CRW-1486) and reaches no host.
+`supervisor-list --recipient <task> [--project <key>] [--state unsent|all] [--hold <word>|none]` only
+reads: the messages in sending order with their state, hold, staging time, next eligible time and
+whether the channel would claim them now, and counts by state, hold, project and obligation kind. It is
+not in `doctor`'s command lists. The procedure is in
+[operations](operations.md#reading-a-supervisor-recipients-queue).
 
 ## What a readback is not
 

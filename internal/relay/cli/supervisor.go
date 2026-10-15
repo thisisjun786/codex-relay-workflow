@@ -398,6 +398,28 @@ var supervisorShowCommand = dispatch.Command{Name: "supervisor-show", ReadOnly: 
 	return answerValue(result), nil
 }}
 
+// supervisor-list (CRW-1486/S4, finding 9): a recipient's queue read whole through the store API.
+
+var supervisorListCommand = dispatch.Command{Name: "supervisor-list", ReadOnly: true, Run: func(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
+	recipient, ok := args.TruthyString("recipient")
+	if !ok {
+		return nil, &dispatch.UsageError{Detail: "the message list reads one recipient's messages: --recipient names the task they are addressed to", Code: contract.ExitUsage}
+	}
+	project, _ := args.String("project")
+	state, _ := args.TruthyString("state")
+	hold, _ := args.String("hold")
+	c, close, err := supervisorChannel(ctx, services)
+	if err != nil {
+		return nil, err
+	}
+	defer close()
+	answer, err := c.List(ctx, supervisor.ListRequest{Recipient: recipient, Project: project, State: state, Hold: hold}, clockNow())
+	if err != nil {
+		return nil, supervisorResult(err)
+	}
+	return answerValue(answer), nil
+}}
+
 func requireSupervisorHost(services dispatch.Services, name, why string) error {
 	if services.SocketPath == "" {
 		return &dispatch.UsageError{Detail: name + " needs --socket: " + why, Code: contract.ExitUsage}

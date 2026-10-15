@@ -160,7 +160,10 @@ func projectStateValue(value any) any {
 	}
 }
 
-// ReportHolds names claimable reports whose live hierarchy currently refuses them.
+// ReportHolds names claimable reports whose live hierarchy currently refuses them. The hierarchy is
+// read once per relationship and grade of its waiting obligations (obligationGrade), so a decision the
+// user owes that the seat above still hears is not named held beside a completion that it does not
+// (CRW-1486/S4). The obligations of one relationship refused alike are one hold, in standing order.
 func (c *Channel) ReportHolds(ctx context.Context, standing map[string]any) ([]map[string]any, error) {
 	obligations, _ := standing["standing"].([]any)
 	newest := map[string]string{}
@@ -171,7 +174,11 @@ func (c *Channel) ReportHolds(ctx context.Context, standing map[string]any) ([]m
 	for _, row := range rows {
 		newest[row.Get("obligation_id").(string)] = row.Get("state").(string)
 	}
-	waiting := map[string][]string{}
+	type waitingObligation struct {
+		id    string
+		grade Grade
+	}
+	waiting := map[string][]waitingObligation{}
 	order := []string{}
 	for _, raw := range obligations {
 		o, ok := raw.(map[string]any)
@@ -192,17 +199,47 @@ func (c *Channel) ReportHolds(ctx context.Context, standing map[string]any) ([]m
 		if _, ok := waiting[rid]; !ok {
 			order = append(order, rid)
 		}
-		waiting[rid] = append(waiting[rid], id)
+		kind, _ := o["kind"].(string)
+		waiting[rid] = append(waiting[rid], waitingObligation{id, obligationGrade(Obligation{Kind: kind})})
 	}
 	holds := []map[string]any{}
 	for _, rid := range order {
-		_, err := c.Resolve(ctx, rid)
-		var refusal Refusal
-		if errors.As(err, &refusal) {
-			holds = append(holds, map[string]any{"schema": "supervisor-obligation/1", "gap": "report_held", "relationId": rid, "obligationIds": waiting[rid], "reason": refusal.Reason, "detail": refusal.Detail})
-		} else if err != nil {
-			return nil, err
+		refused := map[Grade]*Refusal{}
+		read := map[Grade]bool{}
+		for _, one := range waiting[rid] {
+			if read[one.grade] {
+				continue
+			}
+			read[one.grade] = true
+			_, err := c.ResolveFor(ctx, rid, one.grade)
+			var refusal Refusal
+			if errors.As(err, &refusal) {
+				refused[one.grade] = &refusal
+			} else if err != nil {
+				return nil, err
+			}
 		}
+		// One hold per distinct refusal, in the order its first obligation stands.
+		var held []map[string]any
+		for _, one := range waiting[rid] {
+			refusal := refused[one.grade]
+			if refusal == nil {
+				continue
+			}
+			var hold map[string]any
+			for _, existing := range held {
+				if existing["reason"] == refusal.Reason && existing["detail"] == refusal.Detail {
+					hold = existing
+					break
+				}
+			}
+			if hold == nil {
+				hold = map[string]any{"schema": "supervisor-obligation/1", "gap": "report_held", "relationId": rid, "obligationIds": []string{}, "reason": refusal.Reason, "detail": refusal.Detail}
+				held = append(held, hold)
+			}
+			hold["obligationIds"] = append(hold["obligationIds"].([]string), one.id)
+		}
+		holds = append(holds, held...)
 	}
 	return holds, nil
 }

@@ -82,7 +82,10 @@ func (c *Channel) StageWithReading(ctx context.Context, o Obligation, reading ma
 	if at == "" {
 		at = time.Now().UTC().Format("2006-01-02T15:04:05.000000+00:00")
 	}
-	r, err := c.ResolveRecipient(ctx, o.RelationID, expectRecipient)
+	// The grade is the obligation's as it stands now (a blocked or decision_request is restated from
+	// its newest raising event above), and every resolve of this staging reads at it.
+	grade := obligationGrade(o)
+	r, err := c.ResolveRecipientFor(ctx, o.RelationID, expectRecipient, grade)
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +111,7 @@ func (c *Channel) StageWithReading(ctx context.Context, o Obligation, reading ma
 		c.beforeStageLock()
 	}
 	err = c.Store.Compose(ctx, func(tx context.Context, _ *sql.Conn) error {
-		live, err := c.Resolve(tx, o.RelationID)
+		live, err := c.ResolveFor(tx, o.RelationID, grade)
 		if err != nil {
 			return err
 		}

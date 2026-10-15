@@ -25,8 +25,10 @@ type NoticeChannel struct {
 // The deliverer in faults asks the channel through this interface, so faults never imports this package.
 var _ faults.NoticeChannel = NoticeChannel{}
 
-func (n NoticeChannel) Resolve(ctx context.Context, anchor string) (map[string]any, error) {
-	r, err := n.Channel.Resolve(ctx, anchor)
+// Resolve is who is above anchor for a notice; userGrade is true for a notice of kind decision, the
+// user's (noticeGrade), which a store seat laid down for a management seat still carries.
+func (n NoticeChannel) Resolve(ctx context.Context, anchor string, userGrade bool) (map[string]any, error) {
+	r, err := n.Channel.ResolveFor(ctx, anchor, gradeOf(userGrade))
 	if err != nil {
 		return nil, err
 	}

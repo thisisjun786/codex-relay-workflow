@@ -730,6 +730,23 @@ last successfully polled, and the backlog per assignment. A failed read updates 
 time and never the success time, so an anchor whose first read failed reads as never polled
 rather than fresh. Process liveness is reported separately and is never counted as health.
 
+## Reading a supervisor recipient's queue
+
+A recipient's supervisor messages (the upward channel, see [the supervisor
+channel](supervisor-channel.md)) go out one head at a time in the order they were staged, so a queue
+that grew while the recipient could not take a turn is read as a whole, through the store API and
+never with a hand-written query (CRW-1486).
+
+`supervisor-list --recipient <task> [--project <key>] [--state unsent|all] [--hold <word>|none]` is
+read-only: the recipient's messages in sending order (`messageId`, `relationshipId`, `projectKey`,
+`kind`, `obligationKind`, `subject`, `state`, `holdReason`, `stagedAt`, `nextEligibleAt`, and
+`claimable`, the channel's own test of unsent, unheld and due), with counts by state, hold, project and
+obligation kind (`supervisor-list/1`). `unsent`, the default, is what still waits: queued, deferred
+busy or withheld before a send. `--hold none` lists the messages that carry no hold.
+
+A message that waits on a busy recipient is not a backlog: it is deferred with the busy backoff and
+woken by the recipient's idle edge ([the supervisor channel](supervisor-channel.md#the-surface)).
+
 ## When the host loses an accepted turn
 
 An accepted `turn/start` is a transport fact, not a turn the host keeps. CRW-124's H0 rehearsal

@@ -10,11 +10,11 @@ messages ([supervisor-channel.md](../relay/supervisor-channel.md#direct-messages
 
 | What | From | To | By | Recorded as | Pump kind |
 | --- | --- | --- | --- | --- | --- |
-| an escalation of the run (`dispatch_unknown`, `tiers_exhausted`, `blocked_scope`, `size_split`, `restore_snapshot_mismatch`, a configuration fault, the run-level hold `plan_superseded` with the pinned and head revisions and the node, CRW-1291) | the run | the level above the run's project (the parent's management seat, else a supervisor registered at the initiative's scope, the legacy configuration, else the store seat); a run whose plan names no project: the child's thread | the supervisor channel (`flow_escalation`); else `crw manage send-parent` | `escalation`, `escalation_notice`, `message_delivery` | `run_escalation` |
+| an escalation of the run (`dispatch_unknown`, `tiers_exhausted`, `blocked_scope`, `size_split`, `restore_snapshot_mismatch`, a configuration fault, the run-level hold `plan_superseded` with the pinned and head revisions and the node, CRW-1291) | the run | the level above the run's project (the parent's management seat, else a supervisor registered at the initiative's scope, the legacy configuration, else a live store seat); a run whose plan names no project: the child's thread | the supervisor channel (`flow_escalation`); else `crw manage send-parent` | `escalation`, `escalation_notice`, `message_delivery` | `run_escalation` |
 | the completion digest (`state=`, `reason=`, `lanes=` of the milestone state the run came to; none for a run the operator paused) | the run | as an escalation | the supervisor channel (`flow_completion`); else `crw manage send-parent` | `completion_notice`, `message_delivery` | |
 | a run that stopped writing | nobody | the pump's management thread | the pump | | `run_dead` |
 | the plan summary that is owed | the run | the child's thread | `crw manage send-parent` | `summary_document`, `summary_notice`, `summary_notice_settled` | |
-| a milestone report | the run | the parent above the project (else a supervisor registered at the initiative's scope, the legacy configuration, else the store seat) | the writer of `crw flow report-up` through the supervisor channel (`flow_milestone_report`) | `report`, `report_delivery`, `report_read` | `report_undelivered`, `report_unread` |
+| a milestone report | the run | the parent above the project (else a supervisor registered at the initiative's scope, the legacy configuration, else a live store seat) | the writer of `crw flow report-up` through the supervisor channel (`flow_milestone_report`) | `report`, `report_delivery`, `report_read` | `report_undelivered`, `report_unread` |
 | a run that started no node (`project_blocked`, CRW-1320) | the run | as a milestone report | the writer of `crw flow report-up` through the supervisor channel (`flow_project_blocked`) | `report`, `report_delivery`, `report_read` | `report_undelivered`, `report_unread` |
 | a project-level blocker or decision request | the child | as a milestone report | `crw flow report-up` through the supervisor channel (`flow_project_blocked`, `flow_project_decision_request`) | `report`, `report_delivery`, `report_read` | `report_undelivered`, `report_unread` |
 | a decision only Jun can make | the child | the parent above the project (else the store seat, then the parent that holds it) | `crw flow report-up` through the supervisor channel (`flow_jun_decision_request`); under a supervisor registered at the initiative's scope it stands | `report`, `report_delivery` | `jun_decision`, only for one the channel did not take |
@@ -27,7 +27,8 @@ direct message on the relay's supervisor channel: the relationship is `project:<
 report's (`flow_milestone_report`, `flow_project_blocked`, `flow_project_decision_request`, `flow_jun_decision_request`) or the notice's
 (`flow_escalation`, `flow_completion`), and the subject is `<run>/<report id>` or `<run>/<logical id>`, so the message id is
 deterministic and the same report staged again is the same message. The channel addresses it to the level above the project - the
-owner of the parent's management seat, else a supervisor registered at the initiative's scope (the legacy initiative supervision), else the single store seat, which is woken like any other recipient - and the relay daemon
+owner of the parent's management seat, else a supervisor registered at the initiative's scope (the legacy initiative supervision), else the single store seat, which is woken like any other recipient (a store seat laid down for a management seat answers only for a
+decision only Jun can make, below) - and the relay daemon
 delivers it: a new turn on an idle thread, a resume and a turn on an unloaded one, after the turn on a busy one. The report row and the
 message carry one resolution of the project: the row records the project the report is staged through (`recipient_project`, the
 store seat's decision for Jun included), so the listing the message's evidence names, `crw flow reports --project <project> --unread`,
@@ -182,7 +183,10 @@ standing: it has a row and no delivery, and `crw flow reports --unread` and the 
 same parent when one stands above the project, and is delivered; otherwise it is addressed to the store seat, as it always
 was, and is never delivered through the bridge (an initiative-scoped supervisor does not decide for Jun). A parent that registered its management seat (`crw
 manage supervisor register`) laid its store seat down, and the store seat is then read through that management seat
-([linkage](../relay/linkage.md#management-seats)), so the report still names the parent's thread. The notice of a report to a
+([linkage](../relay/linkage.md#management-seats)): a `jun_decision_request` still names the parent's thread and is staged to it
+(`flow_jun_decision_request` is user-grade), while any other report of a project no management edge stands above (a child that bound
+itself) finds nobody above (`recipient_state` `unregistered_scope`) and stays standing until a management edge stands above the project or a
+live store seat stands (CRW-1486, [grades](../relay/supervisor-channel.md#the-level-above-a-project)). The notice of a report to a
 parent names `crw flow reports --project P --unread` for its project, so two parents each read their own
 projects' reports and not the other's; the notice of any other report with no initiative names `crw flow reports --unread`.
 

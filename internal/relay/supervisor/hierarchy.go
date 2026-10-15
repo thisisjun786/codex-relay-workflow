@@ -48,17 +48,27 @@ type Refusal struct {
 
 func (r Refusal) Error() string { return r.Detail }
 
+// Resolve is who is above relationshipID for a notification: ResolveFor at GradeNotification. It is
+// the reading of a caller that only asks who hears a notification (selection, the flow report's
+// notification recipient, report-up); a caller that holds a message passes that message's grade.
 func (c *Channel) Resolve(ctx context.Context, relationshipID string) (Resolution, error) {
+	return c.ResolveFor(ctx, relationshipID, GradeNotification)
+}
+
+// ResolveFor is who is above relationshipID for a message of grade: the same walk for every grade,
+// except that a store seat read through the management seat that took it over answers only for a
+// GradeUser message (CRW-1486/S4). Every resolve of one message's life passes the same grade.
+func (c *Channel) ResolveFor(ctx context.Context, relationshipID string, grade Grade) (Resolution, error) {
 	if key, ok := strings.CutPrefix(relationshipID, prefixProject); ok {
-		return c.resolveNoticeProject(ctx, key)
+		return c.resolveNoticeProject(ctx, key, grade)
 	}
 	if key, ok := strings.CutPrefix(relationshipID, prefixInitiative); ok {
-		return c.resolveInitiative(ctx, key)
+		return c.resolveInitiative(ctx, key, grade)
 	}
 	if id, ok := strings.CutPrefix(relationshipID, prefixRun); ok {
 		return c.resolveRun(ctx, id)
 	}
-	reading, err := c.hierarchyReading(ctx, relationshipID)
+	reading, err := c.hierarchyReading(ctx, relationshipID, grade)
 	if err != nil {
 		return Resolution{}, err
 	}
@@ -80,13 +90,14 @@ const scopeKindInitiative = "initiative"
 // hierarchyReading is the hierarchy a resolution is decided from: the linkage walk, with the
 // store-scope supervisor folded in as a level of its own when the walk named no initiative
 // supervisor. The folded level keeps the seat's own scope kind, and that is the record of the
-// substitution: the recipient came from the store scope, not from an initiative.
-func (c *Channel) hierarchyReading(ctx context.Context, relationshipID string) (map[string]any, error) {
+// substitution: the recipient came from the store scope, not from an initiative. grade is the
+// message's (withStoreSeat).
+func (c *Channel) hierarchyReading(ctx context.Context, relationshipID string, grade Grade) (map[string]any, error) {
 	reading, err := c.Linkage.Up(ctx, relationshipID)
 	if err != nil {
 		return nil, err
 	}
-	return c.withStoreSeat(ctx, reading, "relationship "+pyvalue.StrRepr(relationshipID))
+	return c.withStoreSeat(ctx, reading, "relationship "+pyvalue.StrRepr(relationshipID), grade)
 }
 
 // withStoreSeat folds the store seat into a readable walk that named a project owner and no level
@@ -96,7 +107,12 @@ func (c *Channel) hierarchyReading(ctx context.Context, relationshipID string) (
 // initiative supervisor or a management level above the project, or whose project owner is missing,
 // is handed back untouched, so a seat that could not answer for a report the level above owns never
 // decides one; a management level whose seat has no live owner is resolveLevels' refusal, not a fold.
-func (c *Channel) withStoreSeat(ctx context.Context, reading map[string]any, where string) (map[string]any, error) {
+//
+// A store seat its holder laid down for its management seat (CRW-1333) is read through that seat,
+// and read that way it folds only for a GradeUser message (CRW-1486/S4): for any other grade the
+// walk is refused unregistered_scope, as it is for a store with no seat, once the reading is
+// otherwise settled (an unsettled one is handed back for resolveReading to refuse as it stands).
+func (c *Channel) withStoreSeat(ctx context.Context, reading map[string]any, where string, grade Grade) (map[string]any, error) {
 	if c.Store == nil || reading["readable"] != true {
 		return reading, nil
 	}
@@ -124,6 +140,12 @@ func (c *Channel) withStoreSeat(ctx context.Context, reading map[string]any, whe
 	held, err := (&registry.Registry{Store: c.Store}).StoreScopeSupervisor(ctx)
 	if err != nil {
 		return unreadableReading(err), nil
+	}
+	if grade != GradeUser && heldThroughManagementSeat(held) {
+		if err := settledReading(reading, where); err != nil {
+			return reading, nil
+		}
+		return nil, successorRefusal(held, "the project of "+where)
 	}
 	if len(held) > 1 {
 		candidates := make([]any, len(held))
@@ -313,9 +335,15 @@ func pythonRepr(value any) string {
 	}
 }
 
-// Ensure the caller's expectation never silently overrides the current hierarchy.
+// ResolveRecipient is ResolveRecipientFor a notification.
 func (c *Channel) ResolveRecipient(ctx context.Context, relationshipID, expected string) (Resolution, error) {
-	resolved, err := c.Resolve(ctx, relationshipID)
+	return c.ResolveRecipientFor(ctx, relationshipID, expected, GradeNotification)
+}
+
+// ResolveRecipientFor is ResolveFor at grade, refused when the caller expected another recipient:
+// the caller's expectation never silently overrides the current hierarchy.
+func (c *Channel) ResolveRecipientFor(ctx context.Context, relationshipID, expected string, grade Grade) (Resolution, error) {
+	resolved, err := c.ResolveFor(ctx, relationshipID, grade)
 	if err != nil {
 		return Resolution{}, err
 	}
