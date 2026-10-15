@@ -27,6 +27,7 @@ func TestSupervisorCLIUsageNamesTheLayers(t *testing.T) {
 		want string
 	}{
 		{"a recipient with a project", []string{"--state", state, "supervisor-stage", "--project", "PRJ-1", "--recipient", "01someone"}, "--recipient names the 부모 ONE message is addressed to, "},
+		{"no subject", []string{"--state", state, "supervisor-stage"}, "a staging needs a subject: --event for one event's obligation, "},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			var out, errOut bytes.Buffer

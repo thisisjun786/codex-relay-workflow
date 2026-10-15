@@ -51,7 +51,6 @@ internal/policystore/check.go	3
 internal/relay/adapter/cli.go	1
 internal/relay/childcleanup/clean.go	1
 internal/relay/childcleanup/gate.go	3
-internal/relay/cli/supervisor.go	1
 internal/relay/faults/ledger.go	1
 internal/relay/hook/childlineage.go	3
 internal/relay/hook/peer.go	1
