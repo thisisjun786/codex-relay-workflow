@@ -25,6 +25,7 @@ type launchPolicyStore struct {
 	home   string
 	state  string
 	policy string
+	cwd    string
 }
 
 // newLaunchPolicyStore is a store holding launchPolicyTask bound as a parent with settings the
@@ -35,20 +36,16 @@ func newLaunchPolicyStore(t *testing.T) *launchPolicyStore {
 	home := tempHome(t)
 	state := ownerOnlyState(t, home, "launch-policy")
 	testsupport.Create(t, filepath.Join(state, "relay.sqlite3"), "", "go")
-	s := &launchPolicyStore{t: t, home: home, state: state, policy: filepath.Join(home, "policy.json")}
+	s := &launchPolicyStore{t: t, home: home, state: state, policy: filepath.Join(home, "policy.json"), cwd: filepath.Join(home, "work")}
 	s.writePolicy(s.policy, "anthropic/claude-opus-5")
-	cwd := filepath.Join(home, "work")
-	if err := os.MkdirAll(cwd, 0o755); err != nil {
+	if err := os.MkdirAll(s.cwd, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv(execution.EnvPolicy, s.policy)
 	registry.ResetRolePolicySnapshot()
 	t.Cleanup(registry.ResetRolePolicySnapshot)
 	s.must("linkage-bind", "--role", "parent", "--scope", "PROJ-1", "--task", launchPolicyTask, "--host", "host")
-	settings := `{"sandbox": {"type": "workspaceWrite", "writableRoots": ["` + cwd + `"], "networkAccess": false, "excludeTmpdirEnvVar": false, "excludeSlashTmp": false}, ` +
-		`"approvalPolicy": "never", "cwd": "` + cwd + `", "runtimeWorkspaceRoots": ["` + cwd + `"], "model": "anthropic/claude-opus-5", "reasoningEffort": "xhigh", ` +
-		`"environments": [{"environmentId": "local", "cwd": "` + cwd + `", "runtimeWorkspaceRoots": ["` + cwd + `"]}]}`
-	s.must("settings-record", "--task", launchPolicyTask, "--settings", settings)
+	s.must("settings-record", "--task", launchPolicyTask, "--settings", s.settings("anthropic/claude-opus-5"))
 	os.Unsetenv(execution.EnvPolicy)
 	registry.ResetRolePolicySnapshot()
 	return s
@@ -62,6 +59,14 @@ func (s *launchPolicyStore) writePolicy(path, parentModel string) {
 	}
 }
 
+// settings is the record of a task working in the store's cwd on model at reasoning effort xhigh.
+func (s *launchPolicyStore) settings(model string) string {
+	cwd := s.cwd
+	return `{"sandbox": {"type": "workspaceWrite", "writableRoots": ["` + cwd + `"], "networkAccess": false, "excludeTmpdirEnvVar": false, "excludeSlashTmp": false}, ` +
+		`"approvalPolicy": "never", "cwd": "` + cwd + `", "runtimeWorkspaceRoots": ["` + cwd + `"], "model": "` + model + `", "reasoningEffort": "xhigh", ` +
+		`"environments": [{"environmentId": "local", "cwd": "` + cwd + `", "runtimeWorkspaceRoots": ["` + cwd + `"]}]}`
+}
+
 func (s *launchPolicyStore) declare(text string) {
 	s.t.Helper()
 	if err := os.WriteFile(filepath.Join(s.state, "launch-policy.json"), []byte(text), 0o600); err != nil {
@@ -71,6 +76,13 @@ func (s *launchPolicyStore) declare(text string) {
 
 func (s *launchPolicyStore) declarePath(path string) {
 	s.declare(`{"schemaVersion": 1, "path": "` + path + `", "declaredAt": "2026-10-15T00:00:00Z", "declaredBy": "cli"}`)
+}
+
+// run is one registry CLI command against the store in a fresh process snapshot.
+func (s *launchPolicyStore) run(argv ...string) answer {
+	s.t.Helper()
+	registry.ResetRolePolicySnapshot()
+	return goCLI(s.t, append([]string{"--state", s.state}, argv...)...)
 }
 
 func (s *launchPolicyStore) must(argv ...string) map[string]any {
@@ -158,5 +170,47 @@ func TestSettingsShowWithNoLaunchDeclarationAnswersFromTheEnvironment(t *testing
 	if finding["code"] != "role_policy_unconfigured" || answer["rolePolicy"] != "unresolved" ||
 		finding["detail"] != execution.EnvPolicy+" is not set in this process, so no role policy can be read" {
 		t.Fatalf("neither a declaration nor the variable: %v", finding)
+	}
+}
+
+// CRW-1486 A4: settings-record checks the pair against the declared file with the variable unset. The
+// declared file authorizes the parent role on another model than the one the bound task was recorded
+// with, so re-recording that pair is refused and the declared pair is recorded. A command that read
+// this process's environment instead (unset: no role policy) would accept either.
+func TestSettingsRecordChecksTheDeclaredLaunchPolicy(t *testing.T) {
+	s := newLaunchPolicyStore(t)
+	declared := filepath.Join(s.home, "declared-policy.json")
+	s.writePolicy(declared, "anthropic/claude-sonnet-5")
+	s.declarePath(declared)
+	refused := s.run("settings-record", "--task", launchPolicyTask, "--settings", s.settings("anthropic/claude-opus-5"))
+	if refused.code == 0 || object(t, refused.stdout)["reason"] != "role_binding_mismatch" {
+		t.Fatalf("settings-record of a pair %s does not authorize for the bound role: exit %d %s", declared, refused.code, refused.stdout)
+	}
+	if got := s.run("settings-record", "--task", launchPolicyTask, "--settings", s.settings("anthropic/claude-sonnet-5")); got.code != 0 {
+		t.Fatalf("settings-record of the pair %s authorizes: exit %d %s", declared, got.code, got.stdout)
+	}
+	want := registry.ResolveRolePolicy(map[string]string{execution.EnvPolicy: declared}).Digest()
+	if answer := s.show(); answer["rolePolicyDigest"] != want || answer["deliverable"] != true {
+		t.Fatalf("settings-show after recording the declared pair: %v", answer)
+	}
+}
+
+// CRW-1486 A4: linkage-bind checks the task's recorded settings against the declared file with the
+// variable unset. A task recorded on a pair the declared file does not authorize for the parent role
+// is not bound as one; a task recorded on the declared pair is.
+func TestLinkageBindChecksTheDeclaredLaunchPolicy(t *testing.T) {
+	s := newLaunchPolicyStore(t)
+	declared := filepath.Join(s.home, "declared-policy.json")
+	s.writePolicy(declared, "anthropic/claude-sonnet-5")
+	s.declarePath(declared)
+	const opus, sonnet = "01launchopus", "01launchsonnet"
+	s.must("settings-record", "--task", opus, "--settings", s.settings("anthropic/claude-opus-5"))
+	s.must("settings-record", "--task", sonnet, "--settings", s.settings("anthropic/claude-sonnet-5"))
+	refused := s.run("linkage-bind", "--role", "parent", "--scope", "PROJ-2", "--task", opus, "--host", "host")
+	if refused.code == 0 || object(t, refused.stdout)["reason"] != "role_binding_mismatch" {
+		t.Fatalf("linkage-bind of a task on a pair %s does not authorize for the role: exit %d %s", declared, refused.code, refused.stdout)
+	}
+	if got := s.run("linkage-bind", "--role", "parent", "--scope", "PROJ-3", "--task", sonnet, "--host", "host"); got.code != 0 {
+		t.Fatalf("linkage-bind of a task on the pair %s authorizes: exit %d %s", declared, got.code, got.stdout)
 	}
 }
