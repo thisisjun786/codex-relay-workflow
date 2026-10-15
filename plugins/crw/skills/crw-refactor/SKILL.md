@@ -5,7 +5,7 @@ description: "Diagnose structural debt after a cycle, project or sprint from ver
 
 # CRW Refactor
 
-Here the parent (repository session, relay role `supervisor`) and the child (project session, relay role `parent`) are layers of [the level table](../crw-canon/references/hierarchy.md#the-levels).
+Here the parent (repository session) and the child (project session) are layers of [the level table](../crw-canon/references/hierarchy.md#the-levels).
 
 Find what the completed cycle made harder to change, and propose the smallest useful repair. Success means reducing a demonstrated maintenance cost while preserving the features and external contracts the user wants to keep. A tidy-looking diff or a new abstraction is not evidence of that benefit.
 
