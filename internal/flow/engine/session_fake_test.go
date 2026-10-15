@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -300,8 +301,16 @@ func (o *fakeOrch) take(st Step) {
 		if ans.pair != nil {
 			pair = *ans.pair
 		}
+		cwd := orchCwd
+		if o.placer != nil {
+			o.placer.mu.Lock()
+			if o.placer.hostCwd != "" {
+				cwd = o.placer.hostCwd
+			}
+			o.placer.mu.Unlock()
+		}
 		o.host.agents[agent] = &fakeAgent{SessionAgent: SessionAgent{ThreadID: agent, ParentThreadID: sessionOwner, Model: pair.Model, Effort: pair.Effort,
-			Cwd: orchCwd, AgentRole: st.AgentType, Status: "active", RolloutPath: "/rollout/" + agent}}
+			Cwd: cwd, AgentRole: st.AgentType, Status: "active", RolloutPath: "/rollout/" + agent}}
 		o.host.order = append(o.host.order, agent)
 	}
 	a := o.host.agents[agent]
@@ -405,6 +414,20 @@ type sessPlacer struct {
 	heads       map[string]string
 	kept        map[string]string
 	established []string
+	// real, when set, places every directory under that root and makes it a real directory there (CRW-1482): realGit makes each a
+	// git checkout, whose .gitignore holds realIgnore when that is set. hostCwd, when set, is the cwd the host reports for every
+	// subagent the fake owner spawns (orchCwd otherwise). The default kit sets none of them, so its /w/<node>/a1 paths stay.
+	real, realIgnore string
+	realGit          bool
+	hostCwd          string
+}
+
+// realPath is the directory path a placement gets: under real when it is set.
+func (p *sessPlacer) realPath(path string) string {
+	if p.real == "" {
+		return path
+	}
+	return filepath.Join(p.real, path)
 }
 
 func newSessPlacer() *sessPlacer {
@@ -425,23 +448,50 @@ func (p *sessPlacer) Place(req PlaceRequest) (Placement, error) {
 		if start == "" {
 			start = "base"
 		}
-		return Placement{Kind: PlaceCall, Path: "/w/call/" + req.CallID, Start: start, Fork: req.Fork && req.Continues != nil}, nil
+		return Placement{Kind: PlaceCall, Path: p.realPath("/w/call/" + req.CallID), Start: start, Fork: req.Fork && req.Continues != nil}, nil
 	}
 	if req.Continues != nil {
-		return Placement{Kind: PlaceContinued, Path: "/w/" + req.Node + "/a1", Start: "base", Fork: req.Fork}, nil
+		return Placement{Kind: PlaceContinued, Path: p.realPath("/w/" + req.Node + "/a1"), Start: "base", Fork: req.Fork}, nil
 	}
-	return Placement{Kind: PlaceFresh, Attempt: 1, Path: "/w/" + req.Node + "/a1", Start: "base"}, nil
+	return Placement{Kind: PlaceFresh, Attempt: 1, Path: p.realPath("/w/" + req.Node + "/a1"), Start: "base"}, nil
 }
 
 func (p *sessPlacer) Establish(_ context.Context, _ PlaceRequest, pl Placement) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.real != "" {
+		if err := p.makeReal(pl.Path); err != nil {
+			return err
+		}
+	}
 	p.established = append(p.established, pl.Path)
 	if _, ok := p.heads[pl.Path]; !ok {
 		p.heads[pl.Path] = pl.Start
 	}
 	if _, ok := p.trees[pl.Path]; !ok {
 		p.trees[pl.Path] = "T0"
+	}
+	return nil
+}
+
+// makeReal makes path a real directory (a git checkout with realGit) once.
+func (p *sessPlacer) makeReal(path string) error {
+	if _, err := os.Stat(path); err == nil {
+		return nil
+	}
+	if err := os.MkdirAll(path, 0o755); err != nil {
+		return err
+	}
+	if !p.realGit {
+		return nil
+	}
+	cmd := exec.Command("git", "init", "-q", path)
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git init %s: %v: %s", path, err, out)
+	}
+	if p.realIgnore != "" {
+		return os.WriteFile(filepath.Join(path, ".gitignore"), []byte(p.realIgnore), 0o644)
 	}
 	return nil
 }

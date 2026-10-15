@@ -46,6 +46,9 @@ type sessionCall struct {
 	// that step's turn replaces: the step_published and turn_started rows of the step record both (CRW-1384).
 	conv     int
 	replaces string
+	// evidence is the flow evidence assignment of the attempt's spawn, nil when the call's steps get none (session_evidence.go,
+	// CRW-1482).
+	evidence *sessionEvidence
 }
 
 // conversationTurn is the turn of its call's conversation a session step's turn is: the call's task turn is 1 and its one repair 2,
@@ -417,6 +420,8 @@ func (c *callRun) sessionRecover(ctx context.Context) (res CallResult, stop bool
 		s.resume = nil
 		// the step of the lost attempt was taken: a file the dead process left of it is no step to take
 		_ = bus.Retract(c.id, st.k, st.attempt)
+		// the lost attempt's unclaimed record goes with it (the process that lost it may have died before it removed it)
+		c.evidenceDrop()
 		s.attempt = st.attempt + 1
 		s.note = c.lostNote(st.agent)
 		s.lastText = st.prev
@@ -488,6 +493,7 @@ func (c *callRun) sessionRestore(rows []Event) {
 			c.delivered = true
 		}
 	}
+	c.evidenceRestore(rows)
 }
 
 // dropCurrentPair takes the pair of the subagent the call goes on with out of the earlier attempts' pairs.
@@ -628,6 +634,7 @@ func (c *callRun) sessionLose(l *sessionLoss) {
 	c.event(EvSessionAttemptLost, map[string]any{"attempt": s.attempt, "agent_id": s.agent, "k": s.boundK, "turn_id": s.turn, "reason": l.reason,
 		"host_status": l.hostStatus, "turn_status": l.turnStatus})
 	c.sessionClose(s.agent, s.attempt)
+	c.evidenceDrop()
 	s.note = c.lostNote(s.agent)
 	s.prior = append(s.prior, s.pair)
 	s.attempt++
@@ -642,10 +649,16 @@ func (c *callRun) sessionClose(agent string, attempt int) {
 	_ = c.e.cfg.Session.Bus.Publish(Step{Run: c.e.runID, Call: c.id, Attempt: attempt, Role: c.plan.role, Action: StepClose, AgentID: agent})
 }
 
-// sessionEnd closes the subagent of a call that has its terminal row.
+// sessionEnd closes the subagent of a call that has its terminal row, and removes the attempt's unclaimed evidence record: a call
+// held with its step published and no subagent bound keeps it, because the owner may still spawn for that step and the held call
+// that goes on publishes it again with that record (sessionResumeHeld); a held call whose subagent is closed here goes on with a
+// new attempt, which records its own.
 func (c *callRun) sessionEnd(res CallResult) {
 	if c.sess == nil || res.Status == StatusUnknown {
 		return
+	}
+	if res.Status != StatusHeld || c.sess.agent != "" {
+		c.evidenceDrop()
 	}
 	c.sessionClose(c.sess.agent, c.sess.attempt)
 }
@@ -674,8 +687,20 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 			action = StepSpawn
 		}
 		if action == StepSpawn && agent != "" {
-			// the attempt's thread_started names its subagent: it is adopted, never spawned again
+			// the attempt's thread_started names its subagent: it is adopted, never spawned again, and goes on with the evidence record
+			// its step was published with (open, or claimed by the subagent before the restart)
+			if c.evidenceGated() {
+				if err := c.ensureEvidence(marker); err != nil {
+					return nil, c.evidenceHold(err), true, nil
+				}
+			}
 			return c.sessionAdopt(turnCtx, ctx, k, op, input, repair, st)
+		}
+	}
+	if action == StepSpawn && c.evidenceGated() {
+		// the step's evidence record is written before its step_published row, and a step published again reuses it (CRW-1482)
+		if err := c.ensureEvidence(marker); err != nil {
+			return nil, c.evidenceHold(err), true, nil
 		}
 	}
 	packet := c.sessionPacket(k, marker, input, repair, action)
@@ -695,6 +720,9 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 		}
 		if agent != "" {
 			data["agent_id"] = agent
+		}
+		if action == StepSpawn {
+			s.evidenceStepData(data)
 		}
 		if action == StepSendInput {
 			// what the turns before it counted: a process that recovers this turn counts only the tokens it adds
@@ -723,6 +751,9 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 		// the owner took the step before this process published it again: it is bound, never spawned or sent again
 		bound = true
 		return nil, CallResult{}, false, nil
+	}
+	if res, held := c.evidenceUnbound(); held {
+		return nil, res, true, nil
 	}
 	// a step that cannot be written (a full disk) was sent to nobody: it is recorded as not dispatched and written again, and the
 	// call waits as for any step (CRW-1367; never an unknown outcome or a hold of the node)
@@ -759,10 +790,16 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 				bound = true
 				return nil, CallResult{}, false, nil
 			}
+			if res, held := c.evidenceUnbound(); held {
+				return nil, res, true, nil
+			}
 		case <-find.C:
 			if c.sessionFind(turnCtx, k, op, marker, action, false) {
 				bound = true
 				return nil, CallResult{}, false, nil
+			}
+			if res, held := c.evidenceUnbound(); held {
+				return nil, res, true, nil
 			}
 		case <-turnCtx.Done():
 			bound = c.sessionBindStopped(ctx, k, op, marker)
@@ -933,11 +970,13 @@ func (c *callRun) sessionAdopt(turnCtx, ctx context.Context, k int, op, input st
 }
 
 // spawnMessage is the spawn_agent message of a step (§3.1): the marker, the role and the directory, and the packet that holds the rest.
+// A step with an evidence assignment ends with its [CRW-EVIDENCE-ASSIGNMENT:<id>] block and the receipt file (CRW-1482), after the
+// text of before, so every reader of the first lines reads them as before.
 func (c *callRun) spawnMessage(marker, packet string) string {
 	return "crw-flow-op: " + marker + "\nCRW-ROLE: " + c.plan.role + "\n\n" +
 		"Your shell starts in a directory that is NOT your workspace. Your workspace is " + c.cwd + ": run every command with workdir " + c.cwd +
 		" and edit only by absolute paths under " + c.cwd + ".\nRead the task packet " + packet + " in full and follow it exactly. You are a leaf subagent: never spawn agents.\n" +
-		"Your final message is exactly the JSON object the packet names, and nothing else."
+		"Your final message is exactly the JSON object the packet names, and nothing else." + c.sess.evidenceMessage(marker)
 }
 
 // sessionVerify checks the subagent a report (or a marker search) names against the step and, when it holds, binds it: the rows
@@ -980,13 +1019,19 @@ func (c *callRun) sessionVerify(ctx context.Context, agent string, k int, op, ma
 			Data: map[string]any{"call_id": c.id, "agent_id": agent, "agent_role": ag.AgentRole, "agent_type": t}})
 	}
 	if action == StepSpawn {
+		data := map[string]any{}
+		if reply, ok := c.evidenceBind(agent, marker, ag.Cwd, data); !ok {
+			return reply, false
+		}
 		if sc.Trace != nil {
 			if d, err := sc.Trace(ctx, c.cwd); err == nil {
 				s.trace = &d
 			}
 		}
-		data := map[string]any{"thread_id": agent, "model": ag.Model, "effort": ag.Effort, "cwd": c.cwd, "host_cwd": ag.Cwd, "parent_thread_id": ag.ParentThreadID,
-			"agent_role": ag.AgentRole, "attempt": s.attempt, "via": "session", "rollout_path": ag.RolloutPath, "marker": marker}
+		for key, v := range map[string]any{"thread_id": agent, "model": ag.Model, "effort": ag.Effort, "cwd": c.cwd, "host_cwd": ag.Cwd, "parent_thread_id": ag.ParentThreadID,
+			"agent_role": ag.AgentRole, "attempt": s.attempt, "via": "session", "rollout_path": ag.RolloutPath, "marker": marker} {
+			data[key] = v
+		}
 		switch {
 		case want.Model == "":
 			data["pair_unchecked"] = true
@@ -1295,10 +1340,13 @@ func (e *Engine) sessionQuiesce(ctx context.Context, callID string, rows []Event
 	return nil
 }
 
-// sessionChecks are the record-time checks of a completed session turn (§6): the trace digests compared with the bind's, and an
-// executor's HEAD compared with the commit its attempt started from.
+// sessionChecks are the record-time checks of a completed session turn (§6): the receipt its evidence assignment holds, the trace
+// digests compared with the bind's, and an executor's HEAD compared with the commit its attempt started from.
 func (c *callRun) sessionChecks(ctx context.Context, data map[string]any) {
 	e, s, sc := c.e, c.sess, c.e.cfg.Session
+	// the receipt the stop hook accepted, for every call with an evidence assignment (the QA capture call too, which writes no node
+	// worktree): what R2's acceptance reads (CRW-1482)
+	c.evidenceReceipt(data)
 	if sc.Trace != nil && s.trace != nil {
 		if now, err := sc.Trace(ctx, c.cwd); err == nil {
 			warn := func(event, detail string) {
@@ -1419,6 +1467,7 @@ func (c *callRun) sessionPacket(k int, marker, input string, repair bool, action
 		b.WriteString("## What to do now\n\n")
 	}
 	b.WriteString(strings.TrimSpace(input) + "\n\n")
+	b.WriteString(s.evidencePacket())
 	b.WriteString("## Output contract\n\n")
 	if p.schema != nil {
 		b.WriteString("Your final message is exactly one JSON value that satisfies this schema, with nothing before or after it:\n\n```json\n")
