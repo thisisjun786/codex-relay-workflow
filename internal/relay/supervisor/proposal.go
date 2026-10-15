@@ -305,10 +305,31 @@ func (c *Channel) holdSuperseded(ctx context.Context, id, requestID string, atte
 	if err := c.Store.SettleSupervisorAttempt(ctx, requestID, "withheld_pre_send", "no", 1, sql.NullString{}, record, at); err != nil {
 		return err
 	}
-	if _, err := c.Store.SettleSupervisorMessage(ctx, id, "queued", sql.NullFloat64{}, sql.NullString{String: store.SupervisorHoldSuperseded, Valid: true}, at, "sending", attemptNo, sql.NullString{String: owner, Valid: true}); err != nil {
+	// The hold rule's derive entry: superseded_by_report is set only on a message with no hold, and
+	// only that set journals supervisor_message_superseded, so the newest such row stays the one of
+	// the write that set the hold the message carries (holdKindOf). A message that came to carry a
+	// hold while it was sending is settled and keeps it, and nothing is journaled.
+	current, err := c.Get(ctx, id)
+	if err != nil {
 		return err
 	}
-	_, err := c.Store.Q(ctx).ExecContext(ctx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_superseded',?,?)", at, id, pyjson.Dumps(contract.OrderedObject{{Key: "requestId", Value: requestID}, {Key: "detail", Value: detail}}, pyjson.Options{}))
+	kind, err := holdKindOf(ctx, c.Store, current)
+	if err != nil {
+		return err
+	}
+	verdict, _, err := holdDecision(kind, holdChange{Entry: entryDerive}, nil)
+	if err != nil {
+		return err
+	}
+	var hold sql.NullString
+	if verdict == holdSet {
+		hold = sql.NullString{String: store.SupervisorHoldSuperseded, Valid: true}
+	}
+	moved, err := c.Store.SettleSupervisorMessage(ctx, id, "queued", sql.NullFloat64{}, hold, at, "sending", attemptNo, sql.NullString{String: owner, Valid: true})
+	if err != nil || !moved || verdict != holdSet {
+		return err
+	}
+	_, err = c.Store.Q(ctx).ExecContext(ctx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_superseded',?,?)", at, id, pyjson.Dumps(contract.OrderedObject{{Key: "requestId", Value: requestID}, {Key: "detail", Value: detail}}, pyjson.Options{}))
 	return err
 }
 
