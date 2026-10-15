@@ -138,3 +138,25 @@ func TestAnAcknowledgedCompletionSentByIdGoesOut(t *testing.T) {
 		t.Fatalf("the parked message sent by id: record %v sends %d", record, host.sends)
 	}
 }
+
+// A direct caller that names no time gets the channel's clock, as every other channel writer does:
+// no row or journal entry is written with an empty time.
+func TestAcknowledgeWithNoTimeWritesTheChannelsClock(t *testing.T) {
+	f := fixture24(t)
+	_, staged := f.staged(t)
+	id, _ := staged["messageId"].(string)
+	if _, err := f.c.Acknowledge(f.ctx, AcknowledgeRequest{Recipient: "supervisor", Actor: "supervisor", Messages: []string{id}}); err != nil {
+		t.Fatal(err)
+	}
+	row, err := f.c.Get(f.ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var at string
+	if err := f.s.DB.QueryRowContext(f.ctx, "SELECT at FROM journal WHERE kind='supervisor_message_superseded' AND subject=? ORDER BY rowid DESC LIMIT 1", id).Scan(&at); err != nil {
+		t.Fatal(err)
+	}
+	if row.HoldReason.String != store.SupervisorHoldSuperseded || row.UpdatedAt == "" || at == "" {
+		t.Fatalf("an acknowledgement with no time wrote updated_at %q and journal at %q (hold %q)", row.UpdatedAt, at, row.HoldReason.String)
+	}
+}

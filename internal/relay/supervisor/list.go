@@ -104,7 +104,7 @@ func (c *Channel) List(ctx context.Context, req ListRequest, now float64) (map[s
 // AcknowledgeRequest is one acknowledgement: the recipient whose messages are parked, the task that
 // parks them (written into each journal row), and either the bulk form (AllInformational, narrowed
 // to one project and to messages staged before a time) or the messages named by id. At is the
-// time written on the rows.
+// time written on the rows, the channel's clock when empty.
 type AcknowledgeRequest struct {
 	Recipient, Actor string
 	AllInformational bool
@@ -123,6 +123,9 @@ type AcknowledgeRequest struct {
 func (c *Channel) Acknowledge(ctx context.Context, req AcknowledgeRequest) (map[string]any, error) {
 	if req.AllInformational == (len(req.Messages) > 0) {
 		return nil, Refusal{"malformed_receipt", "an acknowledgement parks either the recipient's informational notifications or the messages it names, one of the two"}
+	}
+	if req.At == "" {
+		req.At = c.nowISO()
 	}
 	parked := []string{}
 	skipped := []any{}
