@@ -2,6 +2,7 @@ package supervisor
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -469,6 +470,262 @@ func TestSupervisorHoldRuleTable(t *testing.T) {
 			}
 		})
 	}
+	for _, scene := range holdRuleScenes {
+		t.Run(scene.name, scene.run)
+	}
+}
+
+// holdRuleScene is a row of the store-backed table whose scene a holdRuleRow cannot state: a hold
+// that lands at a commit boundary inside an attempt, a settle whose stored hold differs from the one
+// it asks for, or an entry called directly. Each scene asserts what it pins itself.
+type holdRuleScene struct {
+	name string
+	run  func(t *testing.T)
+}
+
+// holdRuleScenes are filled by the units that bring their behaviour (plan-r3 section 4).
+var holdRuleScenes = []holdRuleScene{
+	// claim (U4): an acknowledgement that commits after the attempt read the message and before its
+	// claim (raceHost.ReadThread runs in the lifecycle gate, outside any transaction) leaves the
+	// message parked: the claim refuses a held message quietly, so nothing is claimed or sent.
+	{"claim_race/acknowledged", func(t *testing.T) {
+		w := newHoldWorld(t, "event")
+		host := &raceHost{guardHost: w.host, onRead: func() {
+			w.acknowledge(t)
+			if w.answer != acknowledgeParked {
+				t.Fatalf("the acknowledgement in the race left the message: %s", w.answer)
+			}
+		}}
+		w.now += 60
+		if record, err := w.c.Attempt(w.ctx, w.id, host, w.now); record != nil || err != nil {
+			t.Fatalf("the attempt answered %v %v, want a quiet stop", record, err)
+		}
+		if host.onRead != nil {
+			t.Fatal("the attempt never read the recipient's thread, so the race never ran")
+		}
+		w.expectParked(t, holdAcknowledged, "queued", 0)
+		if n := w.count(t, "SELECT count(*) FROM supervisor_attempts WHERE message_id=?"); n != 0 {
+			t.Fatalf("the claim of a parked message wrote %d attempt rows, want none", n)
+		}
+		if n := w.journalRows(t, "supervisor_message_attempted"); n != 0 {
+			t.Fatalf("the claim of a parked message journaled %d attempts, want none", n)
+		}
+		if host.sends != 0 {
+			t.Fatalf("a parked message was sent %d times", host.sends)
+		}
+	}},
+	// settle (U4): a hold that lands while the message is sending (only a store an older build wrote
+	// holds one) is kept when the host answers withheld, and it is the hold the attempt records.
+	{"withheld_fence/held_while_sending", func(t *testing.T) {
+		w := newHoldWorld(t, "event")
+		w.c.beforeTransport = func() { w.setHoldSQL(t, store.SupervisorHoldSuperseded, AcknowledgeCommand) }
+		host := &raceHost{guardHost: w.host, withhold: true}
+		w.now += 60
+		if record, err := w.c.Attempt(w.ctx, w.id, host, w.now); err != nil || record["deliveryState"] != "withheld_pre_send" {
+			t.Fatalf("the attempt answered %v %v, want withheld_pre_send", record, err)
+		}
+		w.expectParked(t, holdAcknowledged, "withheld_pre_send", 1)
+		if got := w.attemptedHold(t); got != store.SupervisorHoldSuperseded {
+			t.Fatalf("the attempt recorded the hold %q, want the stored %q", got, store.SupervisorHoldSuperseded)
+		}
+	}},
+	// settleWithheld (U4, characterization since U3's store settle): a hold that lands while sending
+	// is kept when the transport fence cancels the claim.
+	{"withheld_fence/held_while_sending/fence_cancels", func(t *testing.T) {
+		w := newHoldWorld(t, "event")
+		w.c.beforeTransport = func() {
+			w.setHoldSQL(t, store.SupervisorHoldSuperseded, AcknowledgeCommand)
+			moveDevinSupervisor(t, w.f)
+		}
+		w.now += 60
+		var refusal Refusal
+		if record, err := w.c.Attempt(w.ctx, w.id, w.host, w.now); record != nil || !errors.As(err, &refusal) || refusal.Reason != "relation_owner_drift" {
+			t.Fatalf("the attempt answered %v %v, want the fence's relation_owner_drift", record, err)
+		}
+		w.expectParked(t, holdAcknowledged, "queued", 1)
+		if w.host.sends != 0 {
+			t.Fatalf("a cancelled claim was sent %d times", w.host.sends)
+		}
+	}},
+	// settle (U4): a flow message whose hold landed while sending, withheld by the host with no cap
+	// asked for: the stored word is kept, the run's delivery row is refused with it, and the attempt
+	// records it.
+	{"settle_effective_hold/flow_withheld", func(t *testing.T) {
+		w := newHoldWorld(t, "flow")
+		w.c.beforeTransport = func() { w.setHoldSQL(t, store.SupervisorHoldSuperseded, AcknowledgeCommand) }
+		w.expectEffectiveHold(t, &raceHost{guardHost: w.host, withhold: true}, store.SupervisorHoldSuperseded)
+	}},
+	// settle (U4): the stored hold differs from the cap the settle asks for: the stored one is kept
+	// and is the one recorded.
+	{"settle_effective_hold/flow_capped", func(t *testing.T) {
+		w := newHoldWorld(t, "flow")
+		capped := delivery.DefaultPolicy().CapFor("send")
+		w.exec(t, "UPDATE supervisor_messages SET attempt_count=? WHERE message_id=?", capped-1, w.id)
+		w.c.beforeTransport = func() { w.setHoldSQL(t, delivery.BusyCap, "") }
+		w.expectEffectiveHold(t, &raceHost{guardHost: w.host, withhold: true}, delivery.BusyCap)
+	}},
+	// holdSuperseded (U4): a claim found obsolete at its transport start, on a message that came to
+	// carry a hold while sending, journals no superseded row, so the kind still reads as the
+	// acknowledgement's park.
+	{"park_order/superseded_on_held", func(t *testing.T) {
+		w := newHoldWorld(t, "event")
+		w.c.beforeTransport = func() {
+			w.setHoldSQL(t, store.SupervisorHoldSuperseded, AcknowledgeCommand)
+			dischargeInTrackingRecord(t, w.f)
+		}
+		w.now += 60
+		var refusal Refusal
+		if record, err := w.c.Attempt(w.ctx, w.id, w.host, w.now); record != nil || !errors.As(err, &refusal) || refusal.Reason != "superseded_revision" {
+			t.Fatalf("the attempt answered %v %v, want superseded_revision", record, err)
+		}
+		if n := w.supersededRows(t); n != 1 {
+			t.Fatalf("the message has %d superseded rows, want only the acknowledgement's", n)
+		}
+		w.expectParked(t, holdAcknowledged, "queued", 1)
+	}},
+	// park_order (U4): the same obsolete claim on a message with no hold derives the hold and
+	// journals one superseded row, as on dev.
+	{"park_order/superseded_on_none", func(t *testing.T) {
+		w := newHoldWorld(t, "event")
+		w.c.beforeTransport = func() { dischargeInTrackingRecord(t, w.f) }
+		w.now += 60
+		var refusal Refusal
+		if _, err := w.c.Attempt(w.ctx, w.id, w.host, w.now); !errors.As(err, &refusal) || refusal.Reason != "superseded_revision" {
+			t.Fatalf("the attempt answered %v, want superseded_revision", err)
+		}
+		if n := w.supersededRows(t); n != 1 {
+			t.Fatalf("the message has %d superseded rows, want the one the derived hold journaled", n)
+		}
+		w.expectParked(t, holdDerived, "queued", 1)
+	}},
+	// defer (U4): deferMessage and deferBusy called with an acknowledged message write nothing.
+	{"defer/acknowledged", func(t *testing.T) {
+		w := newHoldWorld(t, "event")
+		w.setHold(t, "acknowledged")
+		row, err := w.c.Get(w.ctx, w.id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		w.now += 60
+		if err := w.c.deferMessage(w.ctx, row, row.State, "", delivery.ISOOf(w.now), w.now+5); err != nil {
+			t.Fatal(err)
+		}
+		w.expectParked(t, holdAcknowledged, "queued", 0)
+		if err := w.c.deferMessage(w.ctx, row, "withheld_pre_send", delivery.AttemptCap, delivery.ISOOf(w.now), w.now+60); err != nil {
+			t.Fatal(err)
+		}
+		w.expectParked(t, holdAcknowledged, "queued", 0)
+		if err := w.c.deferBusy(w.ctx, row, w.now); err != nil {
+			t.Fatal(err)
+		}
+		w.expectParked(t, holdAcknowledged, "queued", 0)
+		if n := w.journalRows(t, "supervisor_message_deferred"); n != 0 {
+			t.Fatalf("a deferral of a parked message journaled %d rows, want none", n)
+		}
+		after, err := w.c.Get(w.ctx, w.id)
+		if err != nil || after.NextEligibleAt != row.NextEligibleAt || after.UpdatedAt != row.UpdatedAt {
+			t.Fatalf("a deferral of a parked message wrote it: %+v -> %+v (%v)", row, after, err)
+		}
+	}},
+}
+
+// raceHost is the world's host with two hooks: onRead runs once, on the first read of the
+// recipient's thread (the lifecycle gate, after the attempt read and checked the message and
+// before its claim, outside any transaction); withhold answers every send as one the host refused
+// before starting it (thread/read failed: withheld_pre_send, nothing sent, safe to retry).
+type raceHost struct {
+	*guardHost
+	onRead   func()
+	withhold bool
+}
+
+func (h *raceHost) ReadThread(ctx context.Context, id string) (delivery.ThreadFacts, error) {
+	if read := h.onRead; read != nil {
+		h.onRead = nil
+		read()
+	}
+	return h.guardHost.ReadThread(ctx, id)
+}
+
+func (h *raceHost) SendMessage(ctx context.Context, id, thread, message string, settings *delivery.TaskSettings) (delivery.Obj, error) {
+	if !h.withhold {
+		return h.guardHost.SendMessage(ctx, id, thread, message, settings)
+	}
+	return delivery.Obj{{Key: "status", Value: delivery.FailedStatus}, {Key: "requestId", Value: id}, {Key: "error", Value: "thread/read: the thread could not be read"}}, nil
+}
+
+// expectParked checks that the message is unsent in state, carries superseded_by_report or another
+// word read as kind, and was attempted attempts times.
+func (w *holdWorld) expectParked(t *testing.T, kind holdKind, state string, attempts int64) {
+	t.Helper()
+	row, err := w.c.Get(w.ctx, w.id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := holdKindOf(w.ctx, w.s, row)
+	if err != nil || got != kind || row.State != state || row.AttemptCount != attempts {
+		t.Fatalf("the message is %s with hold %v (kind %q, %v) after %d attempts, want %s with a hold read as %q after %d", row.State, row.HoldReason, got, err, row.AttemptCount, state, kind, attempts)
+	}
+}
+
+// expectEffectiveHold runs one attempt of the world's flow message on host, whose settle finds word
+// stored on the message, and checks the word is kept and is what the attempt and the run record.
+func (w *holdWorld) expectEffectiveHold(t *testing.T, host SendAdapter, word string) {
+	t.Helper()
+	w.now += 60
+	if record, err := w.c.Attempt(w.ctx, w.id, host, w.now); err != nil || record["deliveryState"] != "withheld_pre_send" {
+		t.Fatalf("the attempt answered %v %v, want withheld_pre_send", record, err)
+	}
+	row, err := w.c.Get(w.ctx, w.id)
+	if err != nil || row.HoldReason.String != word || row.State != "withheld_pre_send" {
+		t.Fatalf("the settled message is %s with hold %v (%v), want withheld_pre_send held %q", row.State, row.HoldReason, err, word)
+	}
+	if got := w.attemptedHold(t); got != word {
+		t.Fatalf("the attempt recorded the hold %q, want the stored %q", got, word)
+	}
+	rows := w.f.flowRows(t, flowRecordRun)
+	if len(rows) != 1 || rows[0].payload["result"] != FlowDeliveryRefused || rows[0].payload["reason"] != word || rows[0].payload["observation"] != "withheld_pre_send" {
+		t.Fatalf("the run's delivery rows are %+v, want one refused with %q", rows, word)
+	}
+}
+
+// attemptedHold is the holdReason of the message's newest supervisor_message_attempted row.
+func (w *holdWorld) attemptedHold(t *testing.T) string {
+	t.Helper()
+	var detail string
+	if err := w.s.DB.QueryRowContext(w.ctx, "SELECT detail FROM journal WHERE kind='supervisor_message_attempted' AND subject=? ORDER BY seq DESC LIMIT 1", w.id).Scan(&detail); err != nil {
+		t.Fatal(err)
+	}
+	var attempted struct {
+		HoldReason *string `json:"holdReason"`
+	}
+	if err := json.Unmarshal([]byte(detail), &attempted); err != nil {
+		t.Fatal(err)
+	}
+	if attempted.HoldReason == nil {
+		return ""
+	}
+	return *attempted.HoldReason
+}
+
+// journalRows counts the message's journal rows of kind.
+func (w *holdWorld) journalRows(t *testing.T, kind string) int {
+	t.Helper()
+	var n int
+	if err := w.s.DB.QueryRowContext(w.ctx, "SELECT count(*) FROM journal WHERE kind=? AND subject=?", kind, w.id).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// count runs a count query bound to the message id.
+func (w *holdWorld) count(t *testing.T, query string) int {
+	t.Helper()
+	var n int
+	if err := w.s.DB.QueryRowContext(w.ctx, query, w.id).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
 }
 
 // holdWorld is one message in one world, the host its turns are opened on (a turn is an attempt of
@@ -507,6 +764,11 @@ func newHoldWorld(t *testing.T, kind string) *holdWorld {
 		w.ctx, w.s, w.c = w.direct.ctx, w.direct.s, w.direct.channel()
 		w.text = "milestone one is done"
 		w.id = w.stageDirect(t)
+	case "flow":
+		// A flow run's report (IsFlowKind), whose settle appends the run's delivery row (CRW-1380).
+		w.f = flowRecordFixture(t)
+		w.ctx, w.s, w.c = w.f.ctx, w.f.s, w.f.c
+		w.id = w.f.stageFlow(t, KindFlowMilestoneReport, flowRecordRun, "rep-1")
 	case "notice":
 		w.notice = newNoticeWorld(t)
 		w.notice.seed(t, nsSeed{signature: nsRelationSig, scope: nsProjectScope})
