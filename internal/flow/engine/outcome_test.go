@@ -56,6 +56,21 @@ func TestFinishedRowCarriesTheOutcome(t *testing.T) {
 				"return { state: 'escalated', source, reason: reason || status, call: callId, escalation: esc.id }\n",
 			want: &Outcome{State: "escalated", Source: "architect", Reason: "refused", Escalation: "esc-2"},
 		},
+		{
+			// night-batch.js:40, the project lane's result nested as milestone (CRW-1487): the outcome is read one level down
+			name: "night batch wraps the lane result",
+			body: "const result = { state: 'escalated', source: 'design_audit', reason: 'design_audit_rounds', escalation: 'esc-3' }\n" +
+				"return { state: result.state === 'closed' ? 'closed' : 'incomplete', decision: 'd-1', nodes: ['n1'], lanes: result.lanes || [], milestone: result }\n",
+			want: &Outcome{State: "escalated", Source: "design_audit", Reason: "design_audit_rounds", Escalation: "esc-3", RunState: "incomplete"},
+		},
+		{
+			// CRW-1495: a milestone descriptor (what crw.milestone hands a script) carries an id; it is a milestone, not a wrapped
+			// result, so the outcome is the value's own state
+			name: "milestone descriptor is not a wrapper",
+			body: "const ms = { id: 'M1', state: 'open' }\n" +
+				"return { state: 'ok', milestone: ms }\n",
+			want: &Outcome{State: "ok"},
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

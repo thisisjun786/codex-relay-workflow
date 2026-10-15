@@ -798,7 +798,12 @@ string `state` carries `outcome`: its `state`, `reason`, `source`, `escalation` 
 `lanes`, the lanes of its `lanes` array that did not land (`node`, `state`, `reason`, at most 16, with `lanes_more`). A value whose
 `milestone` member is itself an object with a string `state` (a night batch returns `{state: closed|incomplete, milestone: <the project
 lane's result>, lanes}`) carries the outcome of that object, and its own state as `run_state`, so a night batch tells the milestone's
-`held`, `escalated` or `stopped` and its reason. The completion notice and `crw flow ps` read the outcome from there ([reporting.md](reporting.md)). The state of a run (`running`, `paused`, `dead`, `held`, `completed`,
+`held`, `escalated` or `stopped` and its reason. A `milestone` member that carries an `id` is a milestone (what `crw.milestone` hands
+a script), not a result, and is not read as one. The outcome state is read in this order: the `milestone` object without an `id`
+and with a non-empty string `state` is the wrapped result, and its state wins; a `milestone` member that carries an `id`, or that
+has no non-empty string `state`, is not read as one, and otherwise the top-level string `state` is the outcome state. A value whose
+own `state` is not a non-empty string has no outcome. It is told in place of
+`status=completed` (a script that wants `status=completed` returns no `state`). The completion notice and `crw flow ps` read the outcome from there ([reporting.md](reporting.md)). The state of a run (`running`, `paused`, `dead`, `held`, `completed`,
 `blocked`, `cancelled`, `failed`) is not a row: it is read from the run lock, the last `started`, `finished` and `run/paused` rows (a
 run no process holds whose last process ended with `run/paused` is `paused`, not `dead`), the calls' rows
 (`internal/flow/callstate`), the questions no `decision_applied` row has answered and, for `blocked`, the lane's own rows. A run meant

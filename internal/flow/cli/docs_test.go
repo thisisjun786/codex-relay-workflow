@@ -169,3 +169,40 @@ func TestFlowRefDescribesThePausedEnd(t *testing.T) {
 		t.Error("journal.md does not name the run/paused row")
 	}
 }
+
+// TestOutcomeDocsStateThePrecedence: the three docs that tell which state a finished run reports (reporting.md, script.md and flow.md)
+// state the rule outcomeOf applies: the milestone member that is an object without an id and with a non-empty string state is the
+// wrapped result; a milestone member that carries an id is not read as one; otherwise the top-level string state is the outcome.
+func TestOutcomeDocsStateThePrecedence(t *testing.T) {
+	// The phrase that says a milestone member carrying an id, or without a non-empty string state, is not read as the wrapper.
+	// Each doc words it differently, so each names its own sentence.
+	notRead := map[string]string{
+		"../../../docs/flow/reporting.md": "and is not read; a `milestone` member without",
+		"../../../docs/flow/script.md":    "and is not read as one. The outcome state",
+		flowRef:                           "is not read as one, and otherwise",
+	}
+	for _, path := range []string{
+		"../../../docs/flow/reporting.md",
+		"../../../docs/flow/script.md",
+		flowRef,
+	} {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(raw)
+		for _, want := range []string{
+			"without an `id`",
+			"non-empty string `state`",
+			"wrapped result",
+			"carries an `id`",
+			"otherwise the top-level string `state`",
+			"non-empty string has no outcome",
+			notRead[path],
+		} {
+			if !strings.Contains(text, want) {
+				t.Errorf("%s does not state the outcome precedence: no %q", path, want)
+			}
+		}
+	}
+}

@@ -65,6 +65,10 @@ func (c *Control) bind(e *Engine) {
 // held.
 var endsPaused = map[string]bool{"operator": true}
 
+// EndsPaused is whether a pause asked by the asker by ends the run paused (endsPaused): a reader of a run's rows names the last such ask
+// as who paused it, as the run's end row will.
+func EndsPaused(by string) bool { return endsPaused[by] }
+
 // pauseOnAsk applies an ask of the Control. An ask that comes once the run decided its end (Run reads endAsk for the last time) is
 // refused: it writes no run_paused row and pauses nothing, because the end row and the completion the run tells are already the ones
 // of an end without it. The row and endAsk are set under endM, so an ask is either wholly before that decision or refused.
