@@ -279,3 +279,14 @@ return a.status`
 		}
 	})
 }
+
+// TestEndsPausedNamesTheAskersThatEndARunPaused (CRW-1495): the operator's pause ends a run paused and a deadline ask does not, so a
+// reader of the rows (cli Summarize) names the operator as who paused a run a later deadline ask also asked.
+func TestEndsPausedNamesTheAskersThatEndARunPaused(t *testing.T) {
+	if !EndsPaused("operator") {
+		t.Errorf("an operator pause does not end a run paused")
+	}
+	if EndsPaused("deadline") {
+		t.Errorf("a deadline ask ends a run paused")
+	}
+}

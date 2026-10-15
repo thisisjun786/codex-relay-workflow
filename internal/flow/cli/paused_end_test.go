@@ -79,6 +79,11 @@ func TestSummarizeReadsAPausedEnd(t *testing.T) {
 		{"a pause ask with no end row", []string{"started", "run_paused"}, false, StateDead, "", "", "operator: crw flow pause"},
 		{"an operator pause then a deadline ask", []string{"started", "run_paused", "run_paused_deadline", "paused"}, false, StatePaused, engine.RunPaused, "", "operator: crw flow pause"},
 		{"a cancel of a paused end after an operator pause then a deadline ask", []string{"started", "run_paused", "run_paused_deadline", "paused", "finished:script_error:cancelled"}, false, StateCancelled, engine.RunScriptError, engine.ErrKindCancelled, "operator: crw flow pause"},
+		// a live run (no end row yet) reads the asker the end row will name: the last ask that ends a run paused, not a later deadline
+		// ask (CRW-1495)
+		{"a live run paused by the operator then asked by its deadline", []string{"started", "run_paused", "run_paused_deadline"}, true, StatePaused, "", "", "operator: crw flow pause"},
+		{"a live run asked only by its deadline", []string{"started", "run_paused_deadline"}, true, StatePaused, "", "", "deadline: the run's deadline T passed"},
+		{"a live run asked by its deadline then paused by the operator", []string{"started", "run_paused_deadline", "run_paused"}, true, StatePaused, "", "", "operator: crw flow pause"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -194,5 +199,72 @@ func TestPausedEndReadersNameTheEndRowsAsker(t *testing.T) {
 	}
 	if !strings.Contains(out, "  paused by operator: crw flow pause; no process holds the run: crw flow resume run-shown goes on\n") || strings.Contains(out, "deadline") {
 		t.Errorf("show names the deadline, or not the operator:\n%s", out)
+	}
+}
+
+// TestCancelOfARunNoProcessHoldsMarksOnlyADeadRunDead (CRW-1495): a cancel of a run no process holds writes one finished row,
+// cancelled, and that row says `dead: true` only when the rows it read under the run lock show a dead run (a start with no end).
+// A paused end (the operator paused the run and its process ended paused) and a held run (it finished completed with a call held)
+// had no process because they ended, not because their process died: their cancel row has no dead member.
+func TestCancelOfARunNoProcessHoldsMarksOnlyADeadRunDead(t *testing.T) {
+	w := newWorld(t)
+	paused := w.newRun("run-paused", "thread-owner")
+	paused.endPaused()
+	paused.close()
+	held := w.newRun("run-held", "thread-owner")
+	held.hold("c_h", "executor", "A")
+	held.finish(engine.RunCompleted, "")
+	held.close()
+	w.newRun("run-dead", "thread-owner").close()
+	td := w.deps()
+	cases := []struct {
+		run   string
+		state string
+		dead  bool
+	}{
+		{"run-paused", StatePaused, false},
+		{"run-held", StateHeld, false},
+		{"run-dead", StateDead, true},
+	}
+	for _, c := range cases {
+		t.Run(c.run, func(t *testing.T) {
+			events, _, err := loadRun(w, c.run)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := Summarize(RunRecord{RunID: c.run}, events, false, 0).State; got != c.state {
+				t.Fatalf("before the cancel the run is %q, want %q", got, c.state)
+			}
+			if code, out, errOut := td.do("cancel", c.run, "--state", w.state); code != 0 || !strings.Contains(out, "had no process; it is cancelled") {
+				t.Fatalf("cancel: %d %q %q", code, out, errOut)
+			}
+			events, _, err = loadRun(w, c.run)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var finished []engine.Event
+			for _, e := range events {
+				if e.Kind == engine.KindRun && e.Event == "finished" {
+					finished = append(finished, e)
+				}
+			}
+			if len(finished) == 0 {
+				t.Fatalf("no finished row after the cancel: %v", events)
+			}
+			last := finished[len(finished)-1]
+			if last.Data["error_kind"] != engine.ErrKindCancelled || last.Data["by"] != "operator" {
+				t.Errorf("the cancel row: %v", last.Data)
+			}
+			dead, has := last.Data["dead"]
+			if c.dead && dead != true {
+				t.Errorf("the cancel row of a dead run has dead %v (present %t): %v", dead, has, last.Data)
+			}
+			if !c.dead && has {
+				t.Errorf("the cancel row of a %s run has a dead member %v: %v", c.state, dead, last.Data)
+			}
+			if got := Summarize(RunRecord{RunID: c.run}, events, false, 0).State; got != StateCancelled {
+				t.Errorf("after the cancel the run is %q", got)
+			}
+		})
 	}
 }

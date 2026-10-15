@@ -61,6 +61,12 @@ func stopRun(cwd string, env host.LookupEnv) StopAnswer {
 	return StopHandle(StopPayload{Cwd: cwd, SessionID: stopSID}, "linux", env)
 }
 
+// stopRunWith is stopRun with the source check the Stop investigates with (src), so a test injects its check, budget and grace
+// for its own Stop without a package variable.
+func stopRunWith(cwd string, env host.LookupEnv, src stopSource) StopAnswer {
+	return stopHandleWith(StopPayload{Cwd: cwd, SessionID: stopSID}, "linux", env, state.WithSessionLock, nil, src)
+}
+
 // stopBlockReason decodes a block answer, failing the case on anything else.
 func stopBlockReason(t *testing.T, a StopAnswer) string {
 	t.Helper()

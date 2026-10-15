@@ -49,12 +49,11 @@ func TestStopGoalIdleBlockNamesACorruptBindingRefusal(t *testing.T) {
 // the bound worktree is the problem.
 func TestStopGoalIdleBlockNamesABoundSourceWithoutIdentity(t *testing.T) {
 	cwd, env := stopIdleRig(t, false)
-	old := stopCheckBound
-	stopCheckBound = func(context.Context, string, string) sourcesession.GateResult {
+	src := defaultStopSource()
+	src.check = func(context.Context, string, string) sourcesession.GateResult {
 		return sourcesession.GateResult{Reason: "oracle text", Cause: sourcesession.CauseBoundUnavailable}
 	}
-	defer func() { stopCheckBound = old }()
-	got := stopBlockReason(t, stopRun(cwd, env))
+	got := stopBlockReason(t, stopRunWith(cwd, env, src))
 	want := stopIdleHead +
 		stopIdleRefused("its bound source worktree has no resolvable git source identity") +
 		stopIdleChain("") + stopIdleWork
@@ -66,12 +65,11 @@ func TestStopGoalIdleBlockNamesABoundSourceWithoutIdentity(t *testing.T) {
 // A git that could not answer is named with its failure, and the bind command and the arming command are both withheld.
 func TestStopGoalIdleBlockNamesAFailedGitProbe(t *testing.T) {
 	cwd, env := stopIdleRig(t, false)
-	old := stopCheckBound
-	stopCheckBound = func(context.Context, string, string) sourcesession.GateResult {
+	src := defaultStopSource()
+	src.check = func(context.Context, string, string) sourcesession.GateResult {
 		return sourcesession.GateResult{Reason: "oracle text", Cause: sourcesession.CauseProbeFailed, Probe: errors.New("git exited with\nstatus 128")}
 	}
-	defer func() { stopCheckBound = old }()
-	got := stopBlockReason(t, stopRun(cwd, env))
+	got := stopBlockReason(t, stopRunWith(cwd, env, src))
 	want := stopIdleHead +
 		"The next work-phase cannot be armed from this workspace: git could not read the source tree (git exited with status 128), and a goalplan-bound cycle cannot be closed without a resolved source identity (C -> D needs a test receipt bound to a commit), so entering P is refused. Binding a git source tree does not clear this (binding runs the same git); make git work for this workspace first.\n" +
 		stopIdleChain("") + stopIdleWork
@@ -80,25 +78,23 @@ func TestStopGoalIdleBlockNamesAFailedGitProbe(t *testing.T) {
 	}
 }
 
-// stopCountChecks replaces the source check with a counting one that answers "cannot arm, unbound".
-func stopCountChecks(t *testing.T) *int {
-	t.Helper()
+// stopCountChecks returns the source check of a Stop that counts its calls and answers "cannot arm, unbound", with the counter.
+func stopCountChecks() (*int, stopSource) {
 	calls := 0
-	old := stopCheckBound
-	stopCheckBound = func(context.Context, string, string) sourcesession.GateResult {
+	src := defaultStopSource()
+	src.check = func(context.Context, string, string) sourcesession.GateResult {
 		calls++
 		return sourcesession.GateResult{Reason: "none", Cause: sourcesession.CauseUnavailable}
 	}
-	t.Cleanup(func() { stopCheckBound = old })
-	return &calls
+	return &calls, src
 }
 
 // The total-cap release answers only the systemMessage; it investigates no source.
 func TestStopGoalIdleTotalCapReleaseInvestigatesNoSource(t *testing.T) {
 	cwd, env := stopIdleRig(t, false)
 	sessionHookStateFile(t, cwd, stopSID, func(s *state.State) { s.StopBlockTotal = StopMaxBlocksTotal })
-	calls := stopCountChecks(t)
-	if a := stopRun(cwd, env); a.Stdout != stopSystemMessage(stopTotalCapMessage) {
+	calls, src := stopCountChecks()
+	if a := stopRunWith(cwd, env, src); a.Stdout != stopSystemMessage(stopTotalCapMessage) {
 		t.Fatalf("not the total-cap release: %+v", a)
 	}
 	if *calls != 0 {
@@ -109,12 +105,12 @@ func TestStopGoalIdleTotalCapReleaseInvestigatesNoSource(t *testing.T) {
 // A spent per-phase budget releases without investigating the source, on the first release and on the latched ones after it.
 func TestStopGoalIdlePhaseCapReleaseInvestigatesNoSource(t *testing.T) {
 	cwd, env := stopIdleRig(t, false)
-	calls := stopCountChecks(t)
+	calls, src := stopCountChecks()
 	for i := 1; i <= StopMaxBlocks; i++ {
-		stopBlockReason(t, stopRun(cwd, env))
+		stopBlockReason(t, stopRunWith(cwd, env, src))
 	}
 	for i := 0; i < 2; i++ {
-		if a := stopRun(cwd, env); a != (StopAnswer{}) {
+		if a := stopRunWith(cwd, env, src); a != (StopAnswer{}) {
 			t.Fatalf("release %d after the per-phase cap: %+v", i+1, a)
 		}
 	}
