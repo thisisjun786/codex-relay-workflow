@@ -41,6 +41,9 @@ var (
 	fbExecutor      = bound.Pair{Model: "executor-model", Effort: "xhigh"}
 	fbExecutorT1    = bound.Pair{Model: "executor-t1-model", Effort: "xhigh"}
 	fbReviewerFinal = bound.Pair{Model: "reviewer-final-model", Effort: "xhigh"}
+	// the seventh pair (CRW-1434): orchestratorLine is a line the earlier binary wrote, without it; orchestratorLineWithCritic
+	// is today's
+	fbCritic = bound.Pair{Model: "critic-model", Effort: "xhigh"}
 )
 
 // fbRig is a home with a flow-bound directory and the hook's environment.
@@ -92,6 +95,11 @@ func orchestratorLine(thread string) string {
 	return `{"run_id":"run-fb","thread_id":"` + thread + `","kind":"orchestrator","nativeAllowance":null,"helperPairs":{"explorer":` + fbPairJSON(fbExplorer) +
 		`,"reviewer":` + fbPairJSON(fbReviewer) + `,"architect":` + fbPairJSON(fbArchitect) + `,"executor":` + fbPairJSON(fbExecutor) +
 		`,"executor-t1":` + fbPairJSON(fbExecutorT1) + `,"reviewer-final":` + fbPairJSON(fbReviewerFinal) + `},"policyDigest":"sha256:fb"}` + "\n"
+}
+
+func orchestratorLineWithCritic(thread string) string {
+	line := orchestratorLine(thread)
+	return strings.Replace(line, `},"policyDigest"`, `,"critic":`+fbPairJSON(fbCritic)+`},"policyDigest"`, 1)
 }
 
 func closedLine(thread string) string {
@@ -855,5 +863,51 @@ func TestStandaloneHookUnchanged(t *testing.T) {
 		if got := InferRole(c.agentType, c.message); string(got) != c.want {
 			t.Errorf("InferRole(%v, %q) = %s, want %s", c.agentType, c.message, got, c.want)
 		}
+	}
+}
+
+// CRW-1434: the critic is the seventh role of an orchestrator line. It spawns as agent_type reviewer (bound.AgentTypeOf), so a
+// critic step with its CRW-ROLE header, or a V2 task_name critic_..., gets the critic pair with no mismatch warning. On the open
+// line of a run the earlier binary bound (six pairs, no critic) the line still validates and a critic spawn keeps what it was sent,
+// with the undecided warning; every other role keeps its pair.
+func TestOrchestratorCriticSpawnGetsTheCriticPair(t *testing.T) {
+	if got := flowBoundTaskNameRole("critic_design_r1"); got != "critic" {
+		t.Fatalf("task_name critic_design_r1 names %q", got)
+	}
+	if got := flowBoundTaskNameRole("critics"); got != "" {
+		t.Fatalf("task_name critics names %q", got)
+	}
+	r := newFBRig(t)
+	r.write(fbThreadA, orchestratorLineWithCritic(fbThreadA), 0o600)
+	cipher := strconv.Quote(spawnV2Fernet())
+	cases := []struct{ name, input string }{
+		{"critic header", `{"agent_type":"reviewer","message":"crw-flow-op: c_1/t1-a1\nCRW-ROLE: critic\nTASK: audit the design"}`},
+		{"critic task_name", `{"agent_type":"reviewer","task_name":"critic_design","fork_turns":"none","message":` + cipher + `}`},
+	}
+	for i, c := range cases {
+		out := r.spawn(fbThreadA, fmt.Sprintf("tool-c%d", i), c.input)
+		if got := fbPairOf(r.expectAllowed(out)); got != fbCritic {
+			t.Fatalf("%s: pair %+v, want %+v", c.name, got, fbCritic)
+		}
+	}
+	for _, d := range r.decisions(fbThreadA) {
+		if d.Decision != bound.DecisionAllowed || d.Role != "critic" || strings.Contains(d.Warning, flowBoundWarnRoleMismatch) || strings.Contains(d.Warning, flowBoundWarnRoleUndecided) {
+			t.Fatalf("a critic spawn's decision: %+v", d)
+		}
+	}
+	// the line of a run the earlier binary bound: no critic pair
+	old := newFBRig(t)
+	old.bindOrchestrator(fbThreadA)
+	if got := fbPairOf(old.expectAllowed(old.spawn(fbThreadA, "tool-r", `{"agent_type":"reviewer","message":"CRW-ROLE: reviewer\nTASK: x"}`))); got != fbReviewer {
+		t.Fatalf("a reviewer spawn on a six-pair line: %+v", got)
+	}
+	decision, reason, _ := fbDecision(t, old.spawn(fbThreadA, "tool-c", `{"agent_type":"reviewer","message":"CRW-ROLE: critic\nTASK: audit","model":"sent-model","reasoning_effort":"low"}`))
+	if decision == "deny" {
+		t.Fatalf("a critic spawn on a six-pair line is refused: %s", reason)
+	}
+	d := old.decisions(fbThreadA)
+	last := d[len(d)-1]
+	if len(d) != 2 || last.Decision != bound.DecisionAllowed || last.Role != "critic" || !strings.Contains(last.Warning, flowBoundWarnRoleUndecided+": the run's role table leaves critic undecided") || last.AppliedModel != "" {
+		t.Fatalf("a critic spawn on a six-pair line: %+v", d)
 	}
 }

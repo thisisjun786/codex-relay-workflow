@@ -69,8 +69,8 @@ type Line struct {
 	// NativeAllowance is how many native helpers the call may spawn (0 or 1); nil on an orchestrator or a closed line.
 	NativeAllowance *int `json:"nativeAllowance"`
 	// HelperPairs are the pairs the hook applies to an allowed helper: explorer for an engine line, from the pinned policy of the
-	// run; for an orchestrator line the pairs of the six roles (OrchestratorRoles) the role subagents of a session run are spawned
-	// with.
+	// run; for an orchestrator line the pairs of the seven roles (OrchestratorRoles) the role subagents of a session run are
+	// spawned with (a line written before CRW-1434 has no critic pair).
 	HelperPairs  map[string]Pair `json:"helperPairs,omitempty"`
 	PolicyDigest string          `json:"policyDigest"`
 }
@@ -137,13 +137,15 @@ func (l Line) Validate(thread string) error {
 		if l.NativeAllowance != nil {
 			return errors.New("an orchestrator line has no nativeAllowance")
 		}
-		// the pair of each of the six roles the hook overwrites a role subagent's spawn with (CRW-1316 §9), its decided parts only
-		// (CRW-1331): an undecided role of the helper role store (CRW-1330) has the empty pair, and its spawns keep the host's
+		// the pair of each of the seven roles the hook overwrites a role subagent's spawn with (CRW-1316 §9), its decided parts
+		// only (CRW-1331): an undecided role of the helper role store (CRW-1330) has the empty pair, and its spawns keep the host's
 		// default; a role that names a model and leaves its effort undecided has the empty effort, and its spawns keep the effort
-		// they were sent. An effort without a model is no role's pair.
+		// they were sent. An effort without a model is no role's pair. The critic (CRW-1434) is optional: the open line of a run
+		// the earlier binary bound carries the six other pairs, and the hook reads its missing critic as the undecided pair.
 		for _, role := range OrchestratorRoles {
 			p, ok := l.HelperPairs[role]
 			switch {
+			case !ok && optionalOrchestratorRoles[role]:
 			case !ok:
 				return fmt.Errorf("the line has no %s helper pair", role)
 			case p.Model == "" && p.Effort != "":

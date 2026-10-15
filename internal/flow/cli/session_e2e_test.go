@@ -326,10 +326,10 @@ return [a.status, b.status, c.status, a.output, b.output, c.output]
 		t.Fatal(err)
 	}
 	run := started.Run
-	if started.Plan.Backend != BackendSession || !started.Bound || !strings.Contains(started.Next, "crw flow next "+run) || len(started.Plan.Spawns) != 6 {
+	if started.Plan.Backend != BackendSession || !started.Bound || !strings.Contains(started.Next, "crw flow next "+run) || len(started.Plan.Spawns) != len(bound.OrchestratorRoles) {
 		t.Fatalf("the start: %+v", started)
 	}
-	if got := bound.Lookup(k.owner); got.State != bound.Orchestrator || got.Line.RunID != run || len(got.Line.HelperPairs) != 6 {
+	if got := bound.Lookup(k.owner); got.State != bound.Orchestrator || got.Line.RunID != run || len(got.Line.HelperPairs) != len(bound.OrchestratorRoles) {
 		t.Fatalf("the owner's binding after the start: %+v", got)
 	}
 
