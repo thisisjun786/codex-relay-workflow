@@ -254,11 +254,9 @@ func (r *Runner) pushedRun(ctx context.Context, e Entry) (*Summary, error) {
 }
 
 // markerInBranch says whether head, the head a pushing marker names, is in the remote branch. A commit the checkout does not have
-// was never pushed (false): "git rev-parse -q --verify head^{commit}" exits 1 with nothing on stderr for an absent object. The
-// same exit 1 with an object error on stderr (a commit object that exists but cannot be read, such as an emptied loose object) is
-// an error, not an absent commit. A git that fails otherwise (it cannot start, the context ended, or the ancestor check or the
-// probe exits with a status other than the ones above, 128 among them) is an error too: a repository that cannot answer is not a
-// commit that was never pushed.
+// was never pushed (false): "git rev-parse -q --verify head^{commit}" exits 1 for an absent object. A git that fails otherwise (it
+// cannot start, the context ended, or the ancestor check or the probe exits with a status other than the ones above, 128 among
+// them) is an error: a repository that cannot answer is not a commit that was never pushed.
 func (r *Runner) markerInBranch(ctx context.Context, head string) (bool, error) {
 	c := r.Cfg
 	rc, err := r.git(ctx, c.Checkout, nil, "merge-base", "--is-ancestor", head, c.remoteRef())
@@ -271,8 +269,7 @@ func (r *Runner) markerInBranch(ctx context.Context, head string) (bool, error) 
 	case 1:
 		return false, nil
 	}
-	var probeErr bytes.Buffer
-	have, err := r.Exec(ctx, Cmd{Argv: []string{c.Git, "-C", c.Checkout, "rev-parse", "-q", "--verify", head + "^{commit}"}, Env: r.gitEnv(), Stdout: io.Discard, Stderr: &probeErr})
+	have, err := r.git(ctx, c.Checkout, nil, "rev-parse", "-q", "--verify", head+"^{commit}")
 	if err != nil {
 		return false, err
 	}
@@ -280,9 +277,6 @@ func (r *Runner) markerInBranch(ctx context.Context, head string) (bool, error) 
 	case 0:
 		return false, fmt.Errorf("git merge-base --is-ancestor exited %d", rc)
 	case 1:
-		if msg := strings.TrimSpace(probeErr.String()); msg != "" {
-			return false, fmt.Errorf("git merge-base --is-ancestor exited %d and git rev-parse --verify exited 1 with an object error: %s", rc, msg)
-		}
 		return false, nil
 	}
 	return false, fmt.Errorf("git merge-base --is-ancestor exited %d and git rev-parse --verify exited %d", rc, have)
