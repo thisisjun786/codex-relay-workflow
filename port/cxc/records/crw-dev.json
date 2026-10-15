@@ -62,7 +62,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "CRW-1431: the skill text names the project session and the repository session by layer and carries no relay role id CRW-1442: the C4 lane ends with the crosscheck of the milestone close in place of reviewer-final",
+      "reason": "CRW-1431: the skill text names the project session and the repository session by layer and carries no relay role id. CRW-1442: the C4 lane ends with the crosscheck of the milestone close in place of reviewer-final",
       "hunks": [
         {
           "line": 3,
