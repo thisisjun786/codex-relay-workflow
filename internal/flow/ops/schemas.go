@@ -74,7 +74,8 @@ var schemaTexts = map[string]string{
 		`"issue_size_decision":{"type":"string","enum":["ok","over_line","over_line_accepted"]},"edit_regions":` + textsJSON + `,"approach":{"type":"string"},"tests_first":` + textsJSON + `,"done_condition":{"type":"string"},"decision_refs":` + textsJSON + `,"order_after":` + textsJSON + `,"group":` + maybeTextJSON + `},` +
 		`"required":["issue","node","size_fit","size_reason","issue_size_decision","edit_regions","approach","tests_first","done_condition","decision_refs","order_after","group"],"additionalProperties":false}},` +
 		`"open_questions":{"type":"array","items":{"type":"object","properties":{"id":{"type":"string"},"question":{"type":"string"},"scope":{"type":"string"},"files_needed":` + textsJSON + `},"required":["id","question","scope","files_needed"],"additionalProperties":false}},` +
-		`"risks":` + textsJSON + `},"required":["decisions","issues","open_questions","risks"],"additionalProperties":false}`,
+		`"risks":` + textsJSON + `,"dispositions":{"type":["array","null"],"items":{"type":"object","properties":{"finding":{"type":"string"},"disposition":{"type":"string","enum":["folded","rebutted"]},"reason":{"type":"string"}},` +
+		`"required":["finding","disposition","reason"],"additionalProperties":false}}},"required":["decisions","issues","open_questions","risks","dispositions"],"additionalProperties":false}`,
 	SchemaDesignAudit: `{"type":"object","properties":{"verdict":{"type":"string","enum":["approved","needs_changes"]},"findings":{"type":"array","items":{"type":"object","properties":{"ref":{"type":"string"},"severity":{"type":"string","enum":` + severities + `},"finding":{"type":"string"},"evidence":` + textsJSON + `},"required":["ref","severity","finding","evidence"],"additionalProperties":false}},"summary":{"type":"string"}},"required":["verdict","findings","summary"],"additionalProperties":false}`,
 	SchemaReflection:  `{"type":"object","properties":{"verdict":{"type":"string","enum":["ALIGNED","MISALIGNED"]},"misaligned":{"type":"array","items":{"type":"object","properties":{"decision_id":{"type":"string"},"observed":{"type":"string"},"affected_nodes":` + textsJSON + `,"evidence":` + textsJSON + `},"required":["decision_id","observed","affected_nodes","evidence"],"additionalProperties":false}}},"required":["verdict","misaligned"],"additionalProperties":false}`,
 	SchemaQACapture: `{"type":"object","properties":{"captures":{"type":"array","items":{"type":"object","properties":{"path":{"type":"string"},"kind":{"type":"string","enum":["screenshot","terminal_capture","response","transcript"]},"shows":{"type":"string"}},"required":["path","kind","shows"],"additionalProperties":false}},` +
@@ -389,12 +390,21 @@ type OpenQuestion struct {
 	FilesNeeded []string `json:"files_needed"`
 }
 
-// Design is the answer of the architect (DESIGN).
+// Disposition is the architect's answer to one design-audit finding in a design-fix: the finding id (r<round>.<index>), folded
+// into the DESIGN or rebutted, and why.
+type Disposition struct {
+	Finding     string `json:"finding"`
+	Disposition string `json:"disposition"`
+	Reason      string `json:"reason"`
+}
+
+// Design is the answer of the architect (DESIGN). Dispositions is nil (null) in the first DESIGN and in a re-plan answer.
 type Design struct {
 	Decisions     []Decision     `json:"decisions"`
 	Issues        []DesignIssue  `json:"issues"`
 	OpenQuestions []OpenQuestion `json:"open_questions"`
 	Risks         []string       `json:"risks"`
+	Dispositions  []Disposition  `json:"dispositions"`
 }
 
 // DecodeDesign reads a DESIGN. Two issues of one DESIGN do not share a node, and an issue that is not an executor's names why
