@@ -96,7 +96,11 @@ applies),
 `result`, `seconds` and `reason`, and `testPackagesRun` (CRW-1328, additive): the count of go test packages whose tests
 ran, read from the package result lines go test prints (`[no tests to run]`, `[no test files]` and a build failure ran none); it is
 absent when no step printed such a line and from every record written before it, which a reader takes as unknown, never as zero, and
-a count of 0 changes no result (the flow's gate warns `no_tests_run`). `digest` is the sha256 of the
+a count of 0 changes no result (the flow's gate warns `no_tests_run`), and `runEnv` (CRW-1489, additive): where the run ran,
+as `cwd` (the directory `crw-dev` ran in), `root` (the repository root it verified), `callerTmpDir` (the caller's `TMPDIR`,
+empty when it was unset), `tmpDir` (the fresh `TMPDIR` its steps got) and `home` (the run's own `HOME`). These are paths,
+written as they are. A failed checkout's record carries it too. It is absent from every record written before it, which a
+reader takes as unknown, and it is not a reuse key: a reused record keeps the `runEnv` of the run that verified it. `digest` is the sha256 of the
 canonical serialization: the record as JSON with its keys sorted, no indentation and no HTML
 escaping, and the `digest` member removed. A tool whose observed version differs from its
 pin is named in `pinMismatch`, and such a record is never reused.

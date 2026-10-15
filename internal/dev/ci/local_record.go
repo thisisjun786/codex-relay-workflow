@@ -69,8 +69,23 @@ type verificationRecord struct {
 	// TestPackagesRun is the count of go test packages the run's steps ran tests in (CRW-1328, local_testcount.go): additive, absent
 	// from a record whose steps printed no go test result and from every record written before it, which a reader takes as unknown,
 	// never as zero. Zero says no test ran; the result is the steps' as before.
-	TestPackagesRun *int   `json:"testPackagesRun,omitempty"`
-	Digest          string `json:"digest"`
+	TestPackagesRun *int `json:"testPackagesRun,omitempty"`
+	// RunEnv names where the run ran (CRW-1489, recordRunEnv): additive, absent from every record written before it.
+	RunEnv *recordRunEnv `json:"runEnv,omitempty"`
+	Digest string        `json:"digest"`
+}
+
+// recordRunEnv is where a run ran (CRW-1489): the directory crw-dev ran in, the repository root it verified,
+// the caller's TMPDIR ("" when it was unset), the fresh TMPDIR its steps got and the run's own HOME. The values
+// are paths, not variable contents, and are written as they are. The member is additive: records written
+// before it do not have it, and a reader takes its absence as unknown. It is not a reuse key (localReuse):
+// a reused record keeps the runEnv of the run that verified it.
+type recordRunEnv struct {
+	Cwd          string `json:"cwd"`
+	Root         string `json:"root"`
+	CallerTmpDir string `json:"callerTmpDir"`
+	TmpDir       string `json:"tmpDir"`
+	Home         string `json:"home"`
 }
 
 // recordJob is one GitHub check the run performed: validate, secrets, skill-scripts-node, gui,
@@ -232,7 +247,8 @@ func externalGoFlags(flags string) bool {
 // localReuse decides whether a record already answers for the current state. Every key must
 // match; the head commit is deliberately not one of them (answer 4), because a rebase that keeps
 // the tree is the same verification, and a different commit with the same tree is too. A record
-// that did not pass, or that carries a pin mismatch, is never reused.
+// that did not pass, or that carries a pin mismatch, is never reused. runEnv is deliberately not compared
+// (CRW-1489): where a run ran is not what it verified, and the reused record keeps the runEnv it was made with.
 func localReuse(reused, current verificationRecord) (bool, string) {
 	switch {
 	case reused.Schema != recordSchema:

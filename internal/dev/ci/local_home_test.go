@@ -4,6 +4,7 @@ package ci
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/homeguard"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 )
 
 // CRW-1186 evaluation d5: the tool-version probes make their directories in TMPDIR while the current
@@ -406,5 +408,236 @@ func TestLocal_the_probes_keep_the_callers_TMPDIR(t *testing.T) {
 	t.Setenv("TMPDIR", x)
 	if env := localProbeEnv(filepath.Join(t.TempDir(), "home"), "/usr/bin"); !localContains(env, "TMPDIR="+x) {
 		t.Errorf("the probe environment does not carry the caller's TMPDIR %s: %v", x, env)
+	}
+}
+
+// localWhereStep is a step that writes its $TMPDIR and $HOME, one per line, to marker.
+func localWhereStep(marker string) string {
+	return fmt.Sprintf("printf '%%s\\n%%s' \"$TMPDIR\" \"$HOME\" > %q", marker)
+}
+
+// localReadWhere is the TMPDIR and HOME a localWhereStep wrote.
+func localReadWhere(t *testing.T, marker string) (string, string) {
+	t.Helper()
+	tmp, home, ok := strings.Cut(localReadMarker(t, marker), "\n")
+	if !ok {
+		t.Fatalf("the marker %s holds no HOME line", marker)
+	}
+	return tmp, home
+}
+
+// CRW-1489 (B): the record names where it ran: the directory crw-dev ran in, the repository root, the
+// caller's TMPDIR, and the TMPDIR and HOME its steps saw. The member is written, a reader of the record
+// accepts it, and the relay's own digest of the record's bytes is the digest it carries.
+func TestLocal_the_record_names_where_it_ran(t *testing.T) {
+	callerTmp := t.TempDir()
+	marker := filepath.Join(t.TempDir(), "where")
+	t.Setenv("TMPDIR", callerTmp)
+	repo := newLocalFixture(t)
+	record := filepath.Join(t.TempDir(), "record.json")
+	opts := localRunOptions(repo, localFixturePlan(localWhereStep(marker)), record)
+	made, _, err := localVerify(opts, "", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if made.Result != localPass {
+		t.Fatalf("the run is %q: %#v", made.Result, made.Jobs)
+	}
+	stepTmp, stepHome := localReadWhere(t, marker)
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := recordRunEnv{Cwd: cwd, Root: repo.root, CallerTmpDir: callerTmp, TmpDir: stepTmp, Home: stepHome}
+	if made.RunEnv == nil || *made.RunEnv != want {
+		t.Fatalf("the record's runEnv is %+v, want %+v", made.RunEnv, want)
+	}
+	sealed, err := writeRecord(record, made)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatal(err)
+	}
+	member, ok := fields["runEnv"].(map[string]any)
+	if !ok {
+		t.Fatalf("the written record has no runEnv object: %s", raw)
+	}
+	for name, value := range map[string]string{"cwd": cwd, "root": repo.root, "callerTmpDir": callerTmp, "tmpDir": stepTmp, "home": stepHome} {
+		if member[name] != value {
+			t.Errorf("runEnv.%s = %v, want %q", name, member[name], value)
+		}
+	}
+	back, err := readRecord(record)
+	if err != nil {
+		t.Fatalf("the record does not read back: %v", err)
+	}
+	if back.RunEnv == nil || *back.RunEnv != want {
+		t.Errorf("the record reads back with runEnv %+v, want %+v", back.RunEnv, want)
+	}
+	digest, err := dagsched.VerificationRecordDigest(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if digest != sealed.Digest {
+		t.Errorf("the relay's digest of the record is %s, the record carries %s", digest, sealed.Digest)
+	}
+}
+
+// CRW-1489 (B): a checkout that fails still makes a record, and that record names where it ran too.
+func TestLocal_a_failed_checkout_record_names_where_it_ran(t *testing.T) {
+	callerTmp := t.TempDir()
+	t.Setenv("TMPDIR", callerTmp)
+	repo := newLocalFixture(t)
+	runGit(repo.root, "config", "filter.up.smudge", "tr a-z A-Z")
+	runGit(repo.root, "config", "filter.up.clean", "tr A-Z a-z")
+	repo.write(".gitattributes", "file.txt filter=up\n")
+	repo.commit()
+	record := filepath.Join(t.TempDir(), "record.json")
+	made, _, err := localVerify(localRunOptions(repo, localFixturePlan("cat file.txt"), record), "", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if made.Result != localFail {
+		t.Fatalf("the record passes a checkout that a filter changed (result %q)", made.Result)
+	}
+	if made.RunEnv == nil {
+		t.Fatal("the failed checkout's record names no runEnv")
+	}
+	if filepath.Dir(made.RunEnv.TmpDir) != callerTmp || !localStepTmpName("ci").MatchString(filepath.Base(made.RunEnv.TmpDir)) {
+		t.Errorf("the failed checkout's runEnv.tmpDir is %q, want ci<8 hex> directly below %s", made.RunEnv.TmpDir, callerTmp)
+	}
+	if made.RunEnv.Home == "" || filepath.Base(made.RunEnv.Home) != "home" {
+		t.Errorf("the failed checkout's runEnv.home is %q, want the run's own home", made.RunEnv.Home)
+	}
+	if made.RunEnv.CallerTmpDir != callerTmp || made.RunEnv.Root != repo.root {
+		t.Errorf("the failed checkout's runEnv is %+v", made.RunEnv)
+	}
+}
+
+// CRW-1489 (B): the member is additive. A record without it (every record written before it) has no
+// runEnv member, reads back, and keeps its digest: dropping the member from a record that has one and
+// resealing it by the canonical rule gives the digest the record without it was sealed with.
+func TestLocal_a_record_written_before_runEnv_still_reads(t *testing.T) {
+	base := verificationRecord{Runner: "local", Repository: "fixture", HeadCommit: "abc", Result: localPass, Sealed: true, IgnoredEnv: []string{}}
+	old, err := sealRecord(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(old)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatal(err)
+	}
+	if _, has := fields["runEnv"]; has {
+		t.Errorf("a record with no runEnv writes the member: %s", raw)
+	}
+	path := filepath.Join(t.TempDir(), "old.json")
+	if _, err := writeRecord(path, base); err != nil {
+		t.Fatal(err)
+	}
+	back, err := readRecord(path)
+	if err != nil {
+		t.Fatalf("a record written without runEnv does not read: %v", err)
+	}
+	if back.RunEnv != nil || back.Digest != old.Digest {
+		t.Errorf("the record reads back with runEnv %+v and digest %s, want none and %s", back.RunEnv, back.Digest, old.Digest)
+	}
+	withEnv := base
+	withEnv.RunEnv = &recordRunEnv{Cwd: "/c", Root: "/r", CallerTmpDir: "", TmpDir: "/t/ci0000abcd", Home: "/t/run/home"}
+	sealed, err := sealRecord(withEnv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sealed.Digest == old.Digest {
+		t.Error("the runEnv member is not part of the digest")
+	}
+	raw, err = json.Marshal(sealed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields = map[string]any{}
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		t.Fatal(err)
+	}
+	member, ok := fields["runEnv"].(map[string]any)
+	if !ok {
+		t.Fatalf("a record with runEnv lacks the member: %s", raw)
+	}
+	if got, has := member["callerTmpDir"]; !has || got != "" {
+		t.Errorf("an unset caller TMPDIR is %v (present %v), want an empty string", got, has)
+	}
+	delete(fields, "runEnv")
+	dropped, err := json.Marshal(fields)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, err := dagsched.VerificationRecordDigest(dropped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if digest != old.Digest {
+		t.Errorf("without its runEnv the record reseals to %s, the record written before it carries %s", digest, old.Digest)
+	}
+}
+
+// CRW-1489 (B): runEnv is not a reuse key. Two runs of one tree under different caller TMPDIRs: the
+// second is answered by the first's record, which keeps the runEnv of the run that verified it.
+func TestLocalReuse_runEnv_is_not_a_reuse_key(t *testing.T) {
+	// The key comparison alone: records that differ only in runEnv match.
+	a := verificationRecord{Schema: recordSchema, Result: localPass, RunEnv: &recordRunEnv{TmpDir: "/a", CallerTmpDir: "/x"}}
+	b := verificationRecord{Schema: recordSchema, Result: localPass, RunEnv: &recordRunEnv{TmpDir: "/b", CallerTmpDir: "/y"}}
+	if ok, why := localReuse(a, b); !ok {
+		t.Errorf("records that differ only in runEnv do not match: %s", why)
+	}
+	if ok, why := localReuse(a, verificationRecord{Schema: recordSchema, Result: localPass}); !ok {
+		t.Errorf("a record with runEnv does not match a current state without it: %s", why)
+	}
+	first := t.TempDir()
+	t.Setenv("TMPDIR", first)
+	repo := newLocalFixture(t)
+	node := localToolVersions(localPathEnv(nil))["node"]
+	if node == "" {
+		t.Skip("no node on PATH, so the fixture's Node pin cannot match this host")
+	}
+	if workflow := strings.Replace(localFixtureWorkflow, "'24.20.0'", "'"+node+"'", 1); workflow != localFixtureWorkflow {
+		repo.write(".github/workflows/ci.yml", workflow)
+		repo.commit()
+	}
+	record := filepath.Join(t.TempDir(), "record.json")
+	opts := localRunOptions(repo, localFixturePlan("echo hello"), record)
+	made, reused, err := localVerify(opts, "", io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reused || made.Result != localPass || len(made.PinMismatch) != 0 {
+		t.Fatalf("the first run: reused %v, result %q, pin mismatch %v", reused, made.Result, made.PinMismatch)
+	}
+	if made.RunEnv == nil || made.RunEnv.CallerTmpDir != first {
+		t.Fatalf("the first run's runEnv is %+v, want the caller TMPDIR %s", made.RunEnv, first)
+	}
+	if _, err := writeRecord(record, made); err != nil {
+		t.Fatal(err)
+	}
+	second := t.TempDir()
+	t.Setenv("TMPDIR", second)
+	opts = localRunOptions(repo, localFixturePlan("echo hello"), filepath.Join(t.TempDir(), "again.json"))
+	again, reused, err := localVerify(opts, record, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reused {
+		t.Fatal("a run under another caller TMPDIR is not answered by the record: runEnv acted as a reuse key")
+	}
+	if again.RunEnv == nil || *again.RunEnv != *made.RunEnv {
+		t.Errorf("the reused record's runEnv is %+v, want the verifying run's %+v", again.RunEnv, made.RunEnv)
 	}
 }
