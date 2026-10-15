@@ -105,6 +105,31 @@ func ResolveLaunchPolicyAt(state, environment string) Object {
 	return set(answer, "state", "unreadable", "detail", p.Detail)
 }
 
+func init() { registry.LaunchRolePolicy = launchRolePolicy }
+
+// launchRolePolicy is registry.LaunchRolePolicy: the role policy a daemon launched on state reads,
+// mapped from ResolveLaunchPolicyAt's source. A declaration is read from the file it names; with no
+// declaration the answer is this process's environment snapshot itself (registry.EnvironmentRolePolicy,
+// its once-per-process reading and its words); a declaration that cannot be read, or that the
+// variable contradicts, is an unresolved policy carrying the resolver's reason and recovery, which
+// the registry answers as it answers any policy it cannot read (role_policy_unconfigured).
+func launchRolePolicy(state string) registry.RolePolicy {
+	resolution := ResolveLaunchPolicyAt(state, os.Getenv(execution.EnvPolicy))
+	detail, hint := pyjson.Text(resolution.Get("detail")), pyjson.Text(resolution.Get("hint"))
+	switch resolution.Get("source") {
+	case "record":
+		return registry.ResolveRolePolicy(map[string]string{execution.EnvPolicy: pyjson.Text(resolution.Get("path"))})
+	case "unreadable_record":
+		if record := stateFile(state, "launch-policy.json"); !strings.Contains(detail, record) {
+			detail = record + ": " + detail
+		}
+		return registry.RolePolicy{Detail: detail, PublicDetail: hint}
+	case "conflict":
+		return registry.RolePolicy{Detail: detail, PublicDetail: hint}
+	}
+	return registry.EnvironmentRolePolicy()
+}
+
 // canonicalPolicyPath is canonical_policy_path: one spelling of a policy file for comparing two
 // (canonical_socket's formula), or the value itself where the OS refuses the path.
 func canonicalPolicyPath(value string) string {
