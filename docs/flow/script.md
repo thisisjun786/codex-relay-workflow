@@ -655,7 +655,10 @@ keeps the thread. `crw flow audit` is the same audit on demand.
 opens the relay store the journal of the run is in (an acceptance given alone is looked up in the store), connects to the App Server
 control socket, and prints the result of each acceptance. It exits 0 when every acceptance is `ok`, 1 when one is a `mismatch` or is
 `unobserved`, and 2 for a command line, a store or a run it cannot use. It appends its result to the journal as a `crw.audit` row with a
-call id of its own (`audit_...`), unless `--no-record` is given or the run has not finished (a run that is still writing owns its journal).
+call id of its own (`audit_...`), unless `--no-record` is given or the run has not ended: the journal has no `finished` or `run/paused` row
+after its last `started` row (a run that is still writing owns its journal, and so does a resumed process after an earlier process's end).
+The row is appended under the run lock, taken without waiting after the host reads, on the journal opened again under it, where the
+end is read again: while a process holds the run (one that wrote its end row and still reconciles what goes up) nothing is recorded.
 
 **The scenario harness** (`internal/flow/scenario`) runs this script on the engine over the fake App Server host, a temporary relay
 store (the journal and the decision rows), a temporary git repository with an integration branch, a scripted model, a fake relay and
@@ -746,12 +749,23 @@ A backend that places calls adds to a call's rows: the `allocation` member of `p
 
 The run surface (`crw flow`, [flow.md](../../plugins/crw/skills/crw-canon/references/flow.md#the-crw-flow-command-table)) adds the rows it writes
 and reads. A pause asked for from outside the engine (`crw flow pause`, a run deadline) is one `run_paused` flow row (`by`, `reason`)
-and then the calls that would send end held `engine_paused`. An answer to a wait is the `decision_applied` flow row `crw flow answer`
+and then the calls that would send end held `engine_paused`. A process the operator paused (`by` `operator`) that would end completed
+ends with a `run/paused` row (`status` `paused`, and the `by` and `reason` of the operator's last ask) instead of the `finished` row:
+the engine's status is `paused`, the run process exits 0 and the hook tells no completion; a deadline, a token budget or a quota
+pause ends with the `finished` row as before. A pause asked once the process has decided its end (while it writes its end row or tells
+its completion) is refused and writes no row, so the `run_paused` rows and the end row agree. `crw flow show`, the digest and `crw flow
+next` say who paused a run that ended paused from the `by` and `reason` of its `run/paused` row, not from a later deadline ask. An answer to a wait is the `decision_applied` flow row `crw flow answer`
 appends under the run lock: `ask` (the question's id), `node`, `run`, `revision`, `attempt`, `plan_basis`, `scope`, `target`, `action`,
 `class` (`escalation` or `jun_decision`), `applied_by` and the `decision` (`id`, `option`, `text`, `by`, `via`, `answered_at`,
 `authority`, `authority_ref`); `crw.decide` reads `ask` and `node`. A run cancelled while no process held it ends with a `finished` row
-of error kind `cancelled` written by `crw flow cancel`. The state of a run (`running`, `paused`, `dead`, `held`, `completed`,
-`blocked`, `cancelled`, `failed`) is not a row: it is read from the run lock, the last `started` and `finished` rows, the calls' rows
+of error kind `cancelled` written by `crw flow cancel`. The `finished` row of a completed run whose script returned an object with a
+string `state` carries `outcome`: its `state`, `reason`, `source`, `escalation` and `milestone` (each one line, at most 120 runes) and
+`lanes`, the lanes of its `lanes` array that did not land (`node`, `state`, `reason`, at most 16, with `lanes_more`). A value whose
+`milestone` member is itself an object with a string `state` (a night batch returns `{state: closed|incomplete, milestone: <the project
+lane's result>, lanes}`) carries the outcome of that object, and its own state as `run_state`, so a night batch tells the milestone's
+`held`, `escalated` or `stopped` and its reason. The completion notice and `crw flow ps` read the outcome from there ([reporting.md](reporting.md)). The state of a run (`running`, `paused`, `dead`, `held`, `completed`,
+`blocked`, `cancelled`, `failed`) is not a row: it is read from the run lock, the last `started`, `finished` and `run/paused` rows (a
+run no process holds whose last process ended with `run/paused` is `paused`, not `dead`), the calls' rows
 (`internal/flow/callstate`), the questions no `decision_applied` row has answered and, for `blocked`, the lane's own rows. A run meant
 to start the nodes of a plan (a run of `project-lane` or `night-batch`, an old run of an issue child's lane, or a run whose arguments name a `plan`) whose last
 process finished `completed` with nothing left to go on with is `blocked` when no process of it started a node (no completed

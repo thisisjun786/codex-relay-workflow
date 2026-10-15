@@ -188,7 +188,8 @@ func streamRunEvents(w http.ResponseWriter, r *http.Request, id string, after in
 		}
 		flusher.Flush()
 		after = page.Cursor
-		if len(page.Rows) == 0 && !page.More && (flowcli.Over(page.State) || page.State == flowcli.StateDead || page.State == flowcli.StateHeld) {
+		// a run no process holds gets no row until it is resumed: dead, held, and paused with no process (CRW-1487)
+		if len(page.Rows) == 0 && !page.More && (flowcli.Over(page.State) || page.State == flowcli.StateDead || page.State == flowcli.StateHeld || (page.State == flowcli.StatePaused && !page.Live)) {
 			fmt.Fprintf(w, "event: end\ndata: {\"state\":%q,\"cursor\":%d}\n\n", page.State, after)
 			flusher.Flush()
 			return

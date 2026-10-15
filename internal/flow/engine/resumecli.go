@@ -244,7 +244,8 @@ func resumeCmd(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		fmt.Fprintf(stderr, "crw flow resume: error: %v\n", err)
 		return 2
 	}
-	if res.Status != RunCompleted {
+	// a run the operator paused ended as asked (CRW-1487): a resume goes on with it
+	if res.Status != RunCompleted && res.Status != RunPaused {
 		return 1
 	}
 	return 0

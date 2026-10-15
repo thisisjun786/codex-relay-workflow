@@ -286,7 +286,8 @@ func (c *command) execute(spec Spec, state string, resume bool, sigs <-chan os.S
 	if err := writeResult(state, spec.RunID, res, c.now()); err != nil {
 		fmt.Fprintf(c.stderr, "crw flow %s: error: the result of run %s could not be written: %v\n", c.name, spec.RunID, err)
 	}
-	if res.Status != engine.RunCompleted {
+	// a run the operator paused ended as asked (CRW-1487): a resume goes on with it
+	if res.Status != engine.RunCompleted && res.Status != engine.RunPaused {
 		return 1
 	}
 	return 0

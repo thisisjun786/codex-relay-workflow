@@ -186,6 +186,24 @@ func TestNextResumesARunWithNoProcess(t *testing.T) {
 	}
 }
 
+// TestNextLeavesAPausedRunPaused (CRW-1487): a run the operator paused ends with a run/paused row and no process; next says it is
+// paused and does not resume it, as it does for a run that is paused while its process is there.
+func TestNextLeavesAPausedRunPaused(t *testing.T) {
+	w := newWorld(t)
+	td := w.deps()
+	p := w.newRun("run-0123456789b1", sessOwner)
+	p.endPaused()
+	p.close()
+	sessionSpec(t, w, p.id)
+	code, out, errOut := td.do("next", p.id, "--json", "--state", w.state)
+	if code != 0 {
+		t.Fatalf("next: %d %s %s", code, out, errOut)
+	}
+	if ans := decodeNext(t, out); ans.State != NextPaused || ans.Resumed != 0 || len(td.spawned) != 0 || !strings.Contains(ans.Hint, "paused") {
+		t.Fatalf("a paused end: %+v %+v", ans, td.spawned)
+	}
+}
+
 func TestDispatchedWritesTheInboxAndPrintsTheReply(t *testing.T) {
 	w := newWorld(t)
 	td := w.deps()

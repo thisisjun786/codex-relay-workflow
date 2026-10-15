@@ -11,5 +11,10 @@
 // the store read-only and never create it. The commands that write a run's journal (`answer`, and the run process itself) hold
 // the run lock, so the journal has one writer at a time.
 //
+// A process ends a run with a finished row, or, when the operator paused it (`crw flow pause`, CRW-1487), with a run/paused row
+// and no finished row: the process exits 0, nothing is told finished, `ps` and `show` read the run paused while no process holds
+// it, a follow of it ends, and `crw flow resume` goes on with it. A pause of the run's own limits (a deadline, a token budget, a
+// quota) finishes the run completed with its calls held.
+//
 // The reference of the commands is plugins/crw/skills/crw-canon/references/flow.md.
 package cli
