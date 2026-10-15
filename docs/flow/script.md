@@ -766,7 +766,7 @@ it, is an engine change. Round 1 by the authors' families:
 | an undecided author pair | refused `crosscheck_author_undecided` |
 
 **The verdict.** The two passes run together, each one check of the review adapter; an `invalid` answer is asked once more. A pass that
-read no repository is void (`not_read`: under the floors of its engine profile on the commands it ran, the tokens it read and the time it
+read no repository is void (`not_read`: under the floors of its engine profile on the commands it ran that succeeded, the tokens it read and the time it
 took, CRW-1504): when both passes are void the round gives no verdict at once (`no_verdict`, `crosscheck_no_verdict`); when one is, that
 pass alone runs once more on a fresh checkout (attempt 2; the first attempt stays in V's passes as `voided`), and a second void attempt
 gives no verdict too. A pass that failed (`worktree_changed`, `tool_failed`, `invalid` after its retry, or a state the op has no rule for,

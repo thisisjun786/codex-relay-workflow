@@ -108,8 +108,8 @@ func grokAnswer(stdout []byte, _ Request) ([]byte, error) {
 // request's schema, written by the caller): `codex exec -m gpt-6-astra -c model_reasoning_effort=high -s read-only
 // --skip-git-repo-check --ephemeral --output-schema <schemaFile> --json <prompt>`, the prompt being the positional word ExecRun
 // appends. codex prints a JSONL event stream; its answer is the text of the last completed agent_message (astraAnswer) and its usage
-// the commands it ran and the cached tokens of its turn (astraUsage). Its floors are the ops tool's (astra-run.sh): a pass that ran
-// fewer than 3 commands or under 45 s read no repository (not_read).
+// the commands it ran that succeeded and the cached tokens of its turn (astraUsage). Its floors are the ops tool's (astra-run.sh): a
+// pass that ran fewer than 3 commands that succeeded or under 45 s read no repository (not_read).
 func AstraProfile(schemaFile string) Profile {
 	return Profile{
 		Name: "astra",
@@ -126,9 +126,11 @@ func AstraProfile(schemaFile string) Profile {
 	}
 }
 
-// astraUsage reads codex's JSONL event stream as the ops tool reads it (astra-run.sh): the commands are the item.completed events
-// whose item is a command_execution, and the cached tokens are the cached_input_tokens of the last turn.completed event's usage. A
-// line that is not a JSON event is skipped; a stream with no turn.completed event that has a usage object reports no usage.
+// astraUsage reads codex's JSONL event stream: the commands are the item.completed events whose item is a command_execution that
+// succeeded (status completed and exit_code 0; a failed one is status failed with its exit code, and one with no exit code is not
+// counted), so commands that read nothing do not pass the floor, and the cached tokens are the cached_input_tokens of the last
+// turn.completed event's usage. A line that is not a JSON event is skipped; a stream with no turn.completed event that has a usage
+// object reports no usage.
 func astraUsage(stdout []byte) (Usage, bool) {
 	var u Usage
 	ok := false
@@ -138,7 +140,9 @@ func astraUsage(stdout []byte) (Usage, bool) {
 		var ev struct {
 			Type string `json:"type"`
 			Item struct {
-				Type string `json:"type"`
+				Type     string `json:"type"`
+				Status   string `json:"status"`
+				ExitCode *int   `json:"exit_code"`
 			} `json:"item"`
 			Usage *struct {
 				CachedInputTokens int64 `json:"cached_input_tokens"`
@@ -149,7 +153,9 @@ func astraUsage(stdout []byte) (Usage, bool) {
 		}
 		switch {
 		case ev.Type == "item.completed" && ev.Item.Type == "command_execution":
-			u.Commands++
+			if ev.Item.Status == "completed" && ev.Item.ExitCode != nil && *ev.Item.ExitCode == 0 {
+				u.Commands++
+			}
 		case ev.Type == "turn.completed" && ev.Usage != nil:
 			u.CacheRead, ok = ev.Usage.CachedInputTokens, true
 		}

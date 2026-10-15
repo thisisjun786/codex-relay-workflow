@@ -307,8 +307,8 @@ func grokUsageEnvelope(t *testing.T, usage map[string]any) string {
 
 // TestEngineProfilesReadTheirUsage: each crosscheck engine reads its usage from its own output and carries the floors of the ops
 // tool it replaces. grok reads the envelope's usage, the first non-zero of cache_read_input_tokens, cacheReadInputTokens,
-// input_tokens and inputTokens (crosscheck.sh), with floors 100000 cached tokens and 60 s; astra counts the completed
-// command_execution items and reads turn.completed's cached_input_tokens, with floors 3 commands and 45 s (astra-run.sh). Output
+// input_tokens and inputTokens (crosscheck.sh), with floors 100000 cached tokens and 60 s; astra counts the command_execution
+// items that succeeded and reads turn.completed's cached_input_tokens, with floors 3 commands and 45 s (astra-run.sh). Output
 // that reports no usage is none. Bugbot and a JSON tool have no usage reader and no floors, so they are never voided. Through the
 // adapter, the real fixtures of both engines are ok over their floors and not_read under them.
 func TestEngineProfilesReadTheirUsage(t *testing.T) {
@@ -391,5 +391,39 @@ func TestEngineProfilesReadTheirUsage(t *testing.T) {
 			t.Fatalf("result = %+v", res)
 		}
 		wantState(t, checkFor(t, astra, fakeRun{stdout: cmd + "\n" + cmd + "\n" + astraStream(astraAnswerText)}, 44*time.Second), StateNotRead)
+	})
+}
+
+// TestAstraCountsOnlyTheCommandsThatSucceeded (CRW-1504): a command counts toward the floor only when its command_execution item
+// completed with exit code 0 (status completed). The failed shape is codex's own (codex-cli 0.154.0, a crosscheck's events.jsonl): exit_code
+// 1 and status failed. Three failed commands over 45 s and a usage report read no repository: the pass is void (not_read), and two
+// failed commands beside one that succeeded count one.
+func TestAstraCountsOnlyTheCommandsThatSucceeded(t *testing.T) {
+	astra := AstraProfile("/run/answer.strict.json")
+	failed := `{"type":"item.completed","item":{"id":"item_15","type":"command_execution","command":"/usr/bin/zsh -lc \"rg -n 'type Escal' internal/flow/ops/*escal*\"","aggregated_output":"zsh:1: no matches found: internal/flow/ops/*escal*\n","exit_code":1,"status":"failed"}}`
+	failed2 := `{"type":"item.completed","item":{"id":"item_16","type":"command_execution","command":"/usr/bin/zsh -lc 'sed -n 1,9p nope.go'","aggregated_output":"sed: can't read nope.go\n","exit_code":2,"status":"failed"}}`
+	noExit := `{"type":"item.completed","item":{"id":"item_17","type":"command_execution","command":"/usr/bin/zsh -lc 'ls'","aggregated_output":"","status":"completed"}}`
+	ok := `{"type":"item.completed","item":{"id":"item_18","type":"command_execution","command":"/usr/bin/zsh -lc 'ls'","aggregated_output":"a.go\n","exit_code":0,"status":"completed"}}`
+	turn := `{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":4}}`
+	for name, c := range map[string]struct {
+		lines []string
+		want  int
+	}{
+		"three failed commands":          {[]string{failed, failed2, failed, turn}, 0},
+		"two failed and one that passed": {[]string{failed, ok, failed2, turn}, 1},
+		"a command with no exit code":    {[]string{noExit, ok, turn}, 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if u, read := astra.Usage([]byte(strings.Join(c.lines, "\n"))); !read || u != (Usage{CacheRead: 4, Commands: c.want}) {
+				t.Fatalf("usage %+v %v, want %d commands", u, read, c.want)
+			}
+		})
+	}
+	t.Run("three failed commands are a void pass through the adapter", func(t *testing.T) {
+		res := checkFor(t, astra, fakeRun{stdout: strings.Join([]string{failed, failed2, failed}, "\n") + "\n" + astraStream(astraAnswerText)}, 50*time.Second)
+		wantState(t, res, StateNotRead)
+		if res.Commands != 1 || res.Verdict != "" || len(res.Findings) != 0 {
+			t.Fatalf("result = %+v, want the one command of the fixture that succeeded and no verdict", res)
+		}
 	})
 }
