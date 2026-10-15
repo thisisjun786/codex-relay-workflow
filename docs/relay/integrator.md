@@ -83,8 +83,9 @@ Run files, in `runs_dir`: `<tag>.log`, `<tag>.out` and `<tag>.summary.json` (`ta
 `result`, the shell runner's own shape), `<tag>.verify.log`, and the verification record `<tag>.json` that `verify_command` writes.
 Right before the push the run writes `"result": "pushing"` into its summary, a marker the run's own result overwrites. The marker must be on disk before the push starts: when `runs_dir` refuses the write (full or read-only), nothing is pushed, the pass reports `error` (status 2) and the entry stays in `pending/`; a push that landed with no
 `pushed` summary behind it (the signal ended the call after git exited 0) leaves the marker, and the recovery of that landing accepts it when its head
-is in the branch, so the run's verification record and review verdict are still found. A git that cannot answer whether the marker's head is in the branch
-holds the entry (it stays in `pending/` with the reason in `held`, no record is written, the marker stays) and the next pass asks again. `pushing` is a marker,
+is in the branch, so the run's verification record and review verdict are still found. The runs of the entry are read newest first (by tag) and the first that names a push
+wins, a `pushed` summary or a marker whose head is in the branch; a marker whose head the checkout lacks was never pushed and is passed over for older evidence. A git that cannot answer whether the marker's head
+is in the branch (its commit object is unreadable: the existence check `git cat-file -e <head>` finds the object, but the ancestor check fails) holds the entry (it stays in `pending/` with the reason in `held`, no record is written, the marker stays) and the next pass asks again. Only a marker newer than every other evidence can hold the entry this way: an unreadable older marker behind a newer `pushed` summary or a newer marker in the branch is never asked. `pushing` is a marker,
 never a pass result.
 
 ### Exit status
