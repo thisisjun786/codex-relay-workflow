@@ -783,9 +783,12 @@ A backend that places calls adds to a call's rows: the `allocation` member of `p
 `restore_snapshot_mismatch`, `dispatch_unknown`) with the call and node they stopped.
 
 The run surface (`crw flow`, [flow.md](../../plugins/crw/skills/crw-canon/references/flow.md#the-crw-flow-command-table)) adds the rows it writes
-and reads. A pause asked for from outside the engine (`crw flow pause`, a run deadline) is one `run_paused` flow row (`by`, `reason`)
-and then the calls that would send end held `engine_paused`. A process the operator paused (`by` `operator`) that would end completed
-ends with a `run/paused` row (`status` `paused`, and the `by` and `reason` of the operator's last ask) instead of the `finished` row:
+and reads. A pause asked for from outside the engine (`crw flow pause`, a run deadline, the drain of `crw flow answer`) is one `run_paused` flow row (`by`, `reason`)
+and then the calls that would send end held `engine_paused`. The operator's pause (SIGUSR1) and a deadline interrupt the turns in flight;
+the drain of an answer to a run a process holds (SIGUSR2, `by` `answer`) lets them end and holds each call's next request, and is
+asked once (a second drain, or a drain after a pause, writes no row). A process the operator or an answer paused (`by` `operator` or
+`answer`) that would end completed ends with a `run/paused` row (`status` `paused`, and the `by` and `reason` of the last such ask)
+instead of the `finished` row:
 the engine's status is `paused`, the run process exits 0 and the hook tells no completion; a deadline, a token budget or a quota
 pause ends with the `finished` row as before. A pause asked once the process has decided its end (while it writes its end row or tells
 its completion) is refused and writes no row, so the `run_paused` rows and the end row agree. `crw flow show`, the digest and `crw flow
@@ -1124,7 +1127,8 @@ run's directory `<state>/flow/<run>/` and none writes the journal, which only th
   started row when the process lock it names is held, or a newest row that names no process (one of a process of a crw before the
   process lock, which bound before it recorded its row) when no process lock of the run is held. A run whose holder has not recorded
   its started row yet (the newest row names a process lock that was let go, or names none while a process lock of the run is held:
-  the holder is coming up, or a command such as `crw flow answer` holds the run between two processes), or whose start holds its
+  the holder is coming up, or a command that writes a row holds the run lock for a moment: an answer holds it from the end of the
+  process it drained until its row is stored, and the resume it starts takes the lock after it), or whose start holds its
   start lock, is `starting`: next reads it again, up to 15 seconds whatever `--wait` says, never takes an earlier process's pins for
   the holder's and resumes nothing; still starting then, it answers `starting` with no spawn formats and a hint to ask again (at once
   without `--wait`, else when the state changes or `--wait` runs out). A holder that took its process lock less than 15 seconds ago,
