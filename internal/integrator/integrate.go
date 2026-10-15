@@ -13,8 +13,14 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/tracking"
 )
 
+// resultPushing is the marker a run writes into <tag>.summary.json right before its push: the push may land with no
+// "pushed" summary behind it (the signal ended the call after git exited 0), and the recovery of that landing accepts the
+// marker when its head is in the branch. It is never a pass result; the run's own result overwrites it.
+const resultPushing = "pushing"
+
 // Summary is what one integration run reports, in the shell script's own shape: the heads
 // merged as "node=head" and the heads left out as "node:reason", each list space-separated.
+// Result is the run's result, or resultPushing in the summary of a run that ended during its push.
 type Summary struct {
 	Tag     string `json:"tag"`
 	Base    string `json:"base"`
@@ -247,6 +253,9 @@ func (r *Runner) integrate(ctx context.Context, tag string, entries []Entry, pr 
 	if err != nil || now != base {
 		return finish("dev-moved:"+now, ExitMoved)
 	}
+	// The marker first: a push the signal ended after it landed leaves this summary for the recovery to find (finish overwrites it).
+	sum.Result = resultPushing
+	r.writeSummary(sum)
 	// Never forced: no plus, no --force, so a remote that moved refuses the push.
 	if rc, err := r.git(ctx, wt, logf, "push", c.Remote, head+":refs/heads/"+c.Branch); err != nil || rc != 0 {
 		if ctx.Err() != nil {

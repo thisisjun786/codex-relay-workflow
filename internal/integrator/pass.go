@@ -23,6 +23,7 @@ type Report struct {
 	// review-needs-changes, head-moved:<sha> and pull-request-changed).
 	// landed-before-record (status 0) is a pull request whose head was already in the branch with no landing record: the pass wrote the
 	// recovered record (Landing), ran nothing (no Summary) and moved the entry to done/.
+	// pushing is the marker a run leaves in its <tag>.summary.json while its push is under way; it is never a pass result.
 	Result  string   `json:"result"`
 	Exit    int      `json:"exit"`
 	Error   string   `json:"error,omitempty"`
