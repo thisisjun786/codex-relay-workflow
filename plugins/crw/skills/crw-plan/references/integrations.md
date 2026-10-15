@@ -84,8 +84,9 @@ projects by stable ID under the shared target rules before binding. If their
 management titles would be indistinguishable, append a short project-ID suffix. Do
 not rename the initiative or project itself, whose own name needs no product
 prefix. This convention names the child's Codex task, its row of the one
-[thread title table](../../crw-canon/references/hierarchy.md#thread-titles), which also holds the titles of the
-repository session and a `child` session and says who names a thread and when.
+[thread title table](../../crw-canon/references/hierarchy.md#thread-titles), which also holds the title of the
+repository session and says who names a thread and when; the title of a `child` session is the rule of
+[Child task titles](../../crw-run/references/task-packet.md#child-task-titles).
 
 Take the family from the product-family labels of the milestone's issues, which are
 spelled `family:NAME`. The prefix is the group, so the value carries its own provenance
