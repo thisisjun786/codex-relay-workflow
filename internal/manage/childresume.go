@@ -13,7 +13,9 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/stateroot"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/service"
 	"github.com/thisisjun786/codex-relay-workflow/internal/sandboxroot"
 )
 
@@ -294,7 +296,16 @@ func resumeRecorded(ctx context.Context, e *Env, cfg *Config, child string) (*re
 // (rolePolicyDigest); a file read here with another digest is not that policy (the declaration names
 // another file, or the file changed since), so its limit could be another pair's, and that is a
 // refusal as well, with the same recovery (CRW-1486 A1).
-func resumeAutoCompactLimit(e *Env, cfg *Config, settings resumeSettings) (*int64, error) {
+//
+// A child bound to no role that only cites one gets no role finding and no digest from the gate, so
+// nothing above tells whether the file read here is the one a delivery would read. For that child this
+// function asks the relay service's launch declaration itself (service.ResolveLaunchPolicyAt, the
+// resolver the daemon launches through, over this run's state directory and environment): a
+// declaration that the environment contradicts, or one that cannot be read, is a refusal naming the
+// resolver's reason and recovery. Every other child is unchanged: a bound one is refused by the gate
+// itself, one that cites no role sends no limit, and a declaration that agrees with the environment, or
+// none, leaves the files read as above (CRW-1486/S2 B1).
+func resumeAutoCompactLimit(ctx context.Context, e *Env, cfg *Config, settings resumeSettings) (*int64, error) {
 	if settings.CitedException != nil {
 		return nil, nil
 	}
@@ -304,6 +315,11 @@ func resumeAutoCompactLimit(e *Env, cfg *Config, settings resumeSettings) (*int6
 	}
 	if role == "" {
 		return nil, nil
+	}
+	if settings.BoundRole == "" {
+		if err := resumeLaunchDeclarationAgrees(ctx, e, cfg, role); err != nil {
+			return nil, err
+		}
 	}
 	path := strings.TrimSpace(e.Getenv(execution.EnvPolicy))
 	if path == "" {
@@ -342,6 +358,29 @@ func resumeAutoCompactLimit(e *Env, cfg *Config, settings resumeSettings) (*int6
 	}
 	return nil, nil
 }
+
+// resumeLaunchDeclarationAgrees refuses a resume of a child that cites role without a binding when the
+// relay service's launch declaration contradicts this run's CODEX_THREAD_BRIDGE_EXECUTION_POLICY or
+// cannot be read. The state directory is the one the run's relay commands use.
+func resumeLaunchDeclarationAgrees(ctx context.Context, e *Env, cfg *Config, role string) error {
+	state, err := e.relayHelperState(ctx, cfg)
+	if err != nil {
+		return &resumeFailure{Reason: resumeSettingsUnavailable, Detail: "the relay state directory whose launch declaration says which execution policy applies could not be resolved: " + err.Error() + "; nothing was sent"}
+	}
+	resolution := service.ResolveLaunchPolicyAt(state, e.Getenv(execution.EnvPolicy))
+	var why string
+	switch resolution.Get("source") {
+	case "conflict":
+		why = "the relay service's launch declaration contradicts " + execution.EnvPolicy
+	case "unreadable_record":
+		why = "the relay service's launch declaration (launch-policy.json in the state directory " + quote.Value(state) + ") cannot be read"
+	default:
+		return nil
+	}
+	return &resumeFailure{Reason: resumeSettingsUnavailable, Detail: "this task's record cites role " + quote.Value(role) + " and is bound to none, so the relay checked no execution policy for it, and " + why +
+		": " + pyjson.Text(resolution.Get("detail")) + "; " + pyjson.Text(resolution.Get("hint")) + "; the pair's auto-compaction limit cannot be told from the file a delivery would read; nothing was sent"}
+}
+
 func resumeSandboxMode(sandbox map[string]any) (string, error) {
 	kind, _ := sandbox["type"].(string)
 	mode := resumeSettingsModes[kind]
@@ -499,7 +538,7 @@ func resumeRun(ctx context.Context, e *Env, cfg *Config, opts resumeOptions) (*r
 	// CRW-1265: the resume runs the child at the recorded cwd with the recorded roots and sandbox; the
 	// rule is asked about them, the dry run included, and its verdict is a warning (CRW-1308).
 	warnResumeRoot(settings, mode)
-	limit, err := resumeAutoCompactLimit(e, cfg, *settings)
+	limit, err := resumeAutoCompactLimit(ctx, e, cfg, *settings)
 	if err != nil {
 		return nil, err
 	}
