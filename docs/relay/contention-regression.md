@@ -44,7 +44,7 @@ reproduce.
 | 5 | Two children (project sessions) from different repositories and Linear projects on one shared store: acknowledgement and revision driven concurrently, completion intake and outbox claim checked sequentially | `test_delivery.py` CrossAssignmentDelivery; `test_fairness.py` SharedChildTurns; `test_sync_outbox.py` Readback, ClaimFencing | `test_multi_parent_isolation.py` | injected |
 | 6 | One child busy, failing or at its retry limit, and one paused, cancelled or archived, while the other keeps progressing | `test_fairness.py` DeliveryFairness; `test_delivery.py` Bounds, HostLifecycle | `test_multi_parent_isolation.py` | injected |
 | 7 | Daemon run-limit exit and restart, duplicate startup on the same and on a different store, and an assignment outliving four hours | `test_daemon.py` Bounds, Instance; `test_service.py` Ownership, FourHourBoundary; `test_cli.py` ContestedSocket | `test_operational_scale.py` | mixed |
-| 8 | A declared count of children and of issue children, and an event volume, measured for queue depth, ticks to drain and send ceilings | none; new ground | `test_operational_scale.py` | mixed |
+| 8 | A declared count of children and of `child` sessions, and an event volume, measured for queue depth, ticks to drain and send ceilings | none; new ground | `test_operational_scale.py` | mixed |
 
 Criterion 4 is the one row with no new test. `test_anchor_binding.py` already drives
 needs_changes into the next generation through real entry points with no test-side

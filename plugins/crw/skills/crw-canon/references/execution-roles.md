@@ -14,7 +14,7 @@ Two kinds of key are in the table. The relay roles `supervisor`, `parent` and `c
 |---|---|---|---|---|
 | `supervisor` | relay role | the parent's management seat, through which the store seat is read once it registers, for a decision the user owes only ([hierarchy.md](hierarchy.md#the-levels)) | its own recorded setting | Jun, directly |
 | `parent` | relay role | the child (the relay's `parent` names the child of [hierarchy.md](hierarchy.md#the-levels)) | the role policy's `parent` entry | the policy |
-| `child` | relay role | issue child | one of the pairs the policy declares for `child`, chosen per issue | the policy for which pairs exist; [Child pair by issue type](../../crw-plan/references/integrations.md#child-pair-by-issue-type) for which issue gets which |
+| `child` | relay role | `child` session | one of the pairs the policy declares for `child`, chosen per issue | the policy for which pairs exist; [Child pair by issue type](../../crw-plan/references/integrations.md#child-pair-by-issue-type) for which issue gets which |
 | `architect` | agent role | proposes a design and checks a plan against the repository, read-only | the helper role store (`crw role helper`) | the operator, through `crw role helper` |
 | `executor` | agent role | makes one bounded change inside a stated write scope | the helper role store (`crw role helper`) | the operator, through `crw role helper` |
 | `explorer` | agent role | answers a scoped question about the code, read-only | the helper role store (`crw role helper`) | the operator, through `crw role helper` |

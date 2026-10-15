@@ -1,6 +1,6 @@
 # Root and descendant thread subscription lifetime
 
-The sessions in this document are named by [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and an issue child is no layer.
+The sessions in this document are named by [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and a `child` session (a code id, not a layer) is no layer.
 
 The bridge and relay release the App Server root subscriptions they own after
 finishing their useful observations and confirming the delivered turn ended.
@@ -166,9 +166,9 @@ and the checked host observations. The residual race is another client starting
 a turn on that descendant between its final re-read and archive. Archival is
 reversible with `thread/unarchive`, which restores visibility, not an interrupted
 turn. A host API with an atomic idle precondition would be needed to remove that race.
-The managed resend gate's own archive has the same window: another client may archive the issue child
+The managed resend gate's own archive has the same window: another client may archive the `child` session
 between the gate's idle read and its `thread/archive`, and that case is not distinguished from
-this call's reply being lost, so a listing that shows the issue child archived after an unanswered
+this call's reply being lost, so a listing that shows the `child` session archived after an unanswered
 archive continues as if this call had applied it.
 
 The isolated reproduction used a fresh home and socket, a synthetic Responses
@@ -198,14 +198,14 @@ loaded after this connection releases it.
 
 ## Recovery from other loaded MCP settings
 
-An idle issue child already loaded under other MCP settings ignores overrides on subsequent resumes.
+An idle `child` session already loaded under other MCP settings ignores overrides on subsequent resumes.
 The relay keeps `settings_not_preserved` on `mcpServers` and names the recovery in its detail. Only
 after a completed durable turn and confirmation that its rollout is resumable, release all root
 subscriptions and observe `thread/read` reporting `notLoaded`. Other clients may retain subscriptions,
 and unloading is the host's decision. If it remains loaded, an operator can use `thread/archive` then
 `thread/unarchive`; the next relay delivery resumes under the recorded MCP profile. Never unload a
-never-run root. The relay performs one automatic archive of an issue child: the managed start's orphan
-archive below, which replaces the issue child instead of lowering it.
+never-run root. The relay performs one automatic archive of a `child` session: the managed start's orphan
+archive below, which replaces the `child` session instead of lowering it.
 
 A managed start waits for its standby turn inside the call. It holds the creation's turn watch
 open from the creation until the wait is over, reads the watch's `turn/completed` first and the
@@ -224,48 +224,48 @@ the watch. A turn seen to end is kept for the business step and is not asked of
 the host again, so the watch's proof of completion survives its release. The watch is let go once
 the wait is over and on every way out of the call.
 
-When the standby turn has ended and the issue child is not yet recorded, the start judges the issue child.
-An issue child is an orphan when the host reports it `idle` (loaded) with a model, reasoning effort or
+When the standby turn has ended and the `child` session is not yet recorded, the start judges the `child` session.
+A `child` session is an orphan when the host reports it `idle` (loaded) with a model, reasoning effort or
 working directory other than the request's, or when the adapter, which resolves the MCP profile of
-the issue child's role against the host as a resume does, finds that the thread's `mcpServerStatus/list`
+the `child` session's role against the host as a resume does, finds that the thread's `mcpServerStatus/list`
 differs from the profile's expectation (a thread read does not report MCP servers), and its history
 is exactly the recorded standby turn:
 a resume cannot change the settings of a thread the host holds loaded, so no business turn could
 start on it under the recorded profile, and nothing else lives on it. The start then archives the
-orphan once and creates the issue child again under the same managed request, as it creates again after
+orphan once and creates the `child` session again under the same managed request, as it creates again after
 a creation that left no usable thread: the new creation has a bridge operation id derived from the
-request and the attempt, and at most three creations are made (`maxCreationAttempts`). An issue child
+request and the attempt, and at most three creations are made (`maxCreationAttempts`). A `child` session
 whose history shows any other turn (`business_identity_unobserved`), or whose history cannot be
 read completely (`lifecycle_unknown`), is somebody's work or unknown: it is never archived or
 replaced and the start is held. When the creations are spent the start stops `creation_unknown`
-with `creationReconciliation` `attempts_exhausted` and the last issue child stays where it is.
+with `creationReconciliation` `attempts_exhausted` and the last `child` session stays where it is.
 
-A standby that has not ended when the bound passes is not judged: the issue child is recorded and
-registered and the start answers `standby_incomplete`. A registered issue child cannot be replaced (the
-reservation publishes one issue child per request), so the call that later finds the standby ended
-reads the issue child once more before the business turn: an orphan by the rule above is held as
+A standby that has not ended when the bound passes is not judged: the `child` session is recorded and
+registered and the start answers `standby_incomplete`. A registered `child` session cannot be replaced (the
+reservation publishes one `child` session per request), so the call that later finds the standby ended
+reads the `child` session once more before the business turn: an orphan by the rule above is held as
 `incomplete` / `recipient_not_idle` (`creationReconciliation` `standby_orphan_held`) with nothing
 archived, created or sent, instead of sending a turn whose failure would stay on the request. Once the
-host has unloaded the issue child (another client closing it, or an operator's `thread/archive` then
+host has unloaded the `child` session (another client closing it, or an operator's `thread/archive` then
 `thread/unarchive`), the resume applies the recorded settings and the business turn goes out.
 
 An orphan is replaced only when the host would let a business turn start on it, whatever way its
 standby turn ended (`completed`, `interrupted` or `failed`): before the archive the start asks the
-host-ready questions of the business step about the old issue child, and a goal the host holds `paused`,
-`usageLimited` or `budgetLimited`, an issue child that takes no direct input, or an archived or unknown one,
+host-ready questions of the business step about the old `child` session, and a goal the host holds `paused`,
+`usageLimited` or `budgetLimited`, a `child` session that takes no direct input, or an archived or unknown one,
 holds the request as `incomplete` with that code (`recipient_paused`, `recipient_usage_limited`,
 `recipient_budget_limited`, `recipient_cannot_accept_input`, `recipient_archived`, `lifecycle_unknown`)
 at the `business` stage and `creationReconciliation` `standby_orphan_held`, with nothing archived,
-created or sent. The next call judges the issue child again and replaces it once the hold has gone.
+created or sent. The next call judges the `child` session again and replaces it once the hold has gone.
 
 The archive is a host effect and is bounded by its journal rows. The readiness policy and the ledger
 are asked again before it; a `managed_standby_orphan` row with `archive` `attempting` is written
 before the host call, on a context the caller's cancellation does not end, and a second row
 closes it (`ok`, `refused` when the host answered with its own JSON-RPC error, or `skipped` when
-the last `thread/read` before the archive no longer showed an idle issue child, or could not be read:
+the last `thread/read` before the archive no longer showed an idle `child` session, or could not be read:
 the start then answers `incomplete` / `recipient_not_idle` (`lifecycle_unknown` for an unreadable
-issue child), `standby_orphan_held`, registers nothing and sends nothing, and a repeat judges the issue child again). An archive whose answer
-is lost may have applied, and another client may have unarchived and loaded the issue child again since:
+`child` session), `standby_orphan_held`, registers nothing and sends nothing, and a repeat judges the `child` session again). An archive whose answer
+is lost may have applied, and another client may have unarchived and loaded the `child` session again since:
 neither the archived listing nor a second archive can settle that, so the start answers `incomplete`
 `lifecycle_unknown` (`creationReconciliation` `standby_orphan_held`) and the `attempting` row, which
 no later row closes, keeps every repeat of the request, in this process or after a restart, from
@@ -274,7 +274,7 @@ the next creation.
 
 A business send that certainly failed before `turn/start` is retained under its original bridge
 operation ID and the start answers `incomplete` / `business_failed`; a new operation ID is not
-derived for it, and the relay neither lowers nor archives the registered issue child. The managed request,
+derived for it, and the relay neither lowers nor archives the registered `child` session. The managed request,
 fingerprint, slot, relationship, generation and routing dispatch ID never change.
 
 A request that already holds `managed_resend_unloaded` rows from the earlier unload-and-resend
@@ -284,12 +284,12 @@ read; an accepted successor passes the bridge ledger's fingerprint-aware lookup 
 packet before replaying admission, never starting a turn again, and another operation or message
 occupying its ID is refused. The newest row of the business attempt decides whether a successor
 that has no attempt yet may be sent: only the closing row of a lowering that archived (`ok`, or
-`reply_lost`) and unarchived (`ok`) the issue child does, and then only when the host lists exactly the
-recorded standby turn with no continuation cursor and reports the same issue child as `notLoaded`, as the
+`reply_lost`) and unarchived (`ok`) the `child` session does, and then only when the host lists exactly the
+recorded standby turn with no continuation cursor and reports the same `child` session as `notLoaded`, as the
 closing row recorded. A begin row without a closing row, and a closing row that records no
 finished lowering (`archive` `none` or `unknown`, an `unarchive` that failed), hold as
 `recipient_not_idle` with no archive and no send, whatever the host reports now (another client may
-have unloaded the issue child); so does a closing row whose issue child the host still holds loaded.
+have unloaded the `child` session); so does a closing row whose `child` session the host still holds loaded.
 Unknown outcomes, started or rejected deliveries, attempted `turn/start`, malformed effect evidence
 and failures without affirmative pre-turn evidence are held, as before; an explicit pre-turn effect
 trace must be empty or contain exactly one `thread/resume`. The final business guard repeats the
@@ -311,7 +311,7 @@ business resume, with overrides transmitted and a settings refusal. They do not 
 the intervening load to a client. An external client's identity and the live same-request
 DAG recovery after runtime replacement remain separate operational verification.
 
-A thread-bridge fallback to an unloaded issue child must state its actual role and released
+A thread-bridge fallback to an unloaded `child` session must state its actual role and released
 `expected_settings.mcp_profile`. Without one the bridge refuses before resume when that role declares
 profiles, or the role is omitted on a host that declares profiles for the `child` role. It cannot reliably read the
 relay's record or choose a default on behalf of the caller. An unnamed recipient whose role is not `child` is also refused in

@@ -1,6 +1,6 @@
 # Midpoint check
 
-The sessions in this document are named by [the level table](../../crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and an issue child is no layer.
+The sessions in this document are named by [the level table](../../crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and a `child` session (a code id, not a layer) is no layer.
 
 One word from Jun, 중간점검 or '현재 어디까지 됐어?', arriving in the parent (repository session) that leads an
 initiative. The answer is a short report covering everything that leadership holds and, where the
@@ -19,7 +19,7 @@ branch, an execution approval still in force, is what this file is mostly about.
 
 The request will usually carry no link at all, so take the scope from this task's own verified
 binding: the initiative ID, the approved project set fixed at designation, each project's child,
-and each child's issue children. Walk it down by stable ID. A project that looks related, a worktree
+and each child's `child` sessions. Walk it down by stable ID. A project that looks related, a worktree
 sitting on disk, or a task whose title mentions the product is not in scope unless the binding
 reaches it.
 
@@ -43,7 +43,7 @@ on hand is too old or too thin to rely on, report that project's criteria state 
 route it to check. A midpoint check that starts auditing criteria has become the audit it was
 supposed to be cheaper than.
 
-Per task, child and issue child alike, from the host rather than from its last report: `active` with a
+Per task, child and `child` session alike, from the host rather than from its last report: `active` with a
 turn id, `idle`, `notLoaded`, or `systemError`, and when its last turn ended and how. The
 [bridge](bridge.md) owns those readings and the rule that `notLoaded` and
 a system error are neither running nor finished. A task that has not reported for a day may be
@@ -132,7 +132,7 @@ thread, reported as its own row with its grade and whose move it is
 A list of green rows is not a report. What makes a midpoint check worth asking for is the places
 where two levels disagree, and four of them recur:
 
-- The child is idle while its issue children's work is still outstanding AND nothing will bring it back.
+- The child is idle while its `child` sessions' work is still outstanding AND nothing will bring it back.
   Idle alone is not the blocker: under event-driven handoff a child answers, returns to idle, and
   a delivered event starts its next turn, which
   [OPS-8.1](operations.md#ops-81-parent-continuation-and-waiting) owns.
@@ -140,14 +140,14 @@ where two levels disagree, and four of them recur:
   [Before a parent may wait idle](start-policy.md#before-a-parent-may-wait-idle),
   read from there rather than from a shorter copy here, because the fact it calls the one usually
   skipped is the one a checkpoint skips too. The blockers are an idle child with no such path,
-  whose issue child's result sits unread until someone restarts it by hand; a child
+  whose `child` session's result sits unread until someone restarts it by hand; a child
   [OPS-8.2](operations.md#ops-82-busy-paused-cancelled-and-archived-parents)
   puts out of reach, by its own state, its goal status or its assignment's, which nothing resumes
   automatically whatever arrives for it; and a delivery already held after its retry budget ran out,
   which [OPS-8.5](operations.md#ops-85-the-goal-free-parents-wake-path)
   records as terminal and recoverable only by a fresh execution generation. That last one reads as
   an ordinary quiet queue unless held rows are read, so read them.
-- An issue child ended its turn waiting on a judgement. Its work is not blocked by a defect; it is blocked
+- A `child` session ended its turn waiting on a judgement. Its work is not blocked by a defect; it is blocked
   by an unanswered question, and the question has an owner who has not seen it.
 - The newest report and the newest delivery read describe different states. The report is stale, or
   the delivery moved after it, and the summary everybody is reading is no longer true.
@@ -187,7 +187,7 @@ inside the approval that already exists. Either way it cancels nothing, and the 
 children keep every obligation they had before the question arrived.
 
 The initiative level coordinates and does not descend. It hands work to children and performs
-neither an issue child's implementation, CI or review nor a child's technical judgement, acceptance or
+neither a `child` session's implementation, CI or review nor a child's technical judgement, acceptance or
 merge. The progress rules Run owns and the handoff shapes in
 [Coordination message](task-packet.md#coordination-message) and the
 [restoration block](task-packet.md#restoration-block) are consumed as they
@@ -195,7 +195,7 @@ stand.
 
 One reconciliation pass, and that is the whole budget. Read the children, deliver at most one new
 coordination fact or one restoration handoff per child that needs it, read the resulting state
-again, and report. Do not select issues, judge readiness, create or recreate an issue child, judge CI or
+again, and report. Do not select issues, judge readiness, create or recreate a `child` session, judge CI or
 review, accept a delivery, merge anything, or open a polling loop or a retry queue. A second pass is
 a checkpoint Jun asks for, not a loop this one starts. That boundary is what keeps a scheduler from
 growing inside Status where Run already owns one.
@@ -203,12 +203,12 @@ growing inside Status where Run already owns one.
 | Observed on a responsible child | What the checkpoint does |
 |---|---|
 | `active` with a turn id | nothing that starts it again. Steer only genuinely new information into that exact turn, and nothing at all when there is none |
-| `idle` at the current read, holding an unprocessed issue child result, a decision it was asked for, or a blocker observed cleared, with no handoff for it still in flight | resume it through the existing supported path, carrying the restoration block. The item's current state decides this row, not how recently continuation was last seen working, and an accepted handoff whose turn has ended without consuming the item is a failed delivery rather than a reason to stay silent. A delivery already held after its retry budget ran out is not revived by that resume: the child's own drain on entry is what finds it, and [OPS-8.5](operations.md#ops-85-the-goal-free-parents-wake-path) makes a fresh execution generation the only recovery |
+| `idle` at the current read, holding an unprocessed `child` session result, a decision it was asked for, or a blocker observed cleared, with no handoff for it still in flight | resume it through the existing supported path, carrying the restoration block. The item's current state decides this row, not how recently continuation was last seen working, and an accepted handoff whose turn has ended without consuming the item is a failed delivery rather than a reason to stay silent. A delivery already held after its retry budget ran out is not revived by that resume: the child's own drain on entry is what finds it, and [OPS-8.5](operations.md#ops-85-the-goal-free-parents-wake-path) makes a fresh execution generation the only recovery |
 | `idle` with nothing to coordinate, waiting on a real dependency | record the dependency and what will release it, and send nothing. A dependency wait is not a stall |
 | paused or archived, holding an assignment [OPS-8.2](operations.md#ops-82-busy-paused-cancelled-and-archived-parents) records as inactive, or under an explicit no-contact or report-only limit | no contact. Report the state and the exact resume action its owner has to take. Cancellation is an assignment status there rather than an observable task state, so report it as the assignment's and never infer it from a turn that merely ended |
 | `notLoaded`, `systemError`, a read that failed, or a transport that refused the send | unverified or failed, never success. Say what could not be established and what would establish it |
 
-Nothing here recreates an issue child, duplicates a resume, or nudges a child that is already moving.
+Nothing here recreates a `child` session, duplicates a resume, or nudges a child that is already moving.
 
 ### The idle row needs more than the word idle
 
@@ -229,7 +229,7 @@ active turn moved between the read and the send, reclassify instead of retrying 
 A checkpoint that reports 진행시켰다 when it only sent something has reported the wrong thing. These
 are five separate facts and they are written separately: the action this call requested; the
 transport accepting or refusing it; the child observed active or resumed afterwards; the child
-assigning its issue child the follow-up; and that issue child's work observed moving. A receipt establishes the
+assigning its `child` session the follow-up; and that `child` session's work observed moving. A receipt establishes the
 second and says nothing about the other four.
 
 Existing IDs, owners, model, effort, permissions and task records are preserved exactly as they
@@ -265,8 +265,8 @@ delivery states mean are in
 ### M1 One supervision, several parents, mixed task states
 
 Observed: the approved set holds three projects; one child is `active` with a turn, one is
-`idle`, one is `notLoaded`, and their issue children are spread across all three states.
-Action: report each project's own state. For the idle child with a working issue child, read its wake
+`idle`, one is `notLoaded`, and their `child` sessions are spread across all three states.
+Action: report each project's own state. For the idle child with a working `child` session, read its wake
 path first and call it a blocker only where that path is missing, where OPS-8.2 puts the child or
 its assignment out of reach, or where a delivery is already held under OPS-8.5.
 `notLoaded` is neither running nor finished, so read that task again once before
@@ -314,7 +314,7 @@ for.
 
 ### M7 A child result arrived and the parent went idle
 
-Observed: the execution approval is still in force, an issue child returned its delivery, and its child
+Observed: the execution approval is still in force, a `child` session returned its delivery, and its child
 has been idle since before that result landed, with the result unprocessed in the coordination
 record.
 Action: on the checkpoint branch, re-read the result's state and the child's. Send nothing where
@@ -327,7 +327,7 @@ restoration block, then read its state again and report both what was sent and w
 after. A child that is idle now with the result still unprocessed is resumed whether or not its
 continuation was seen working at some point after the result landed. On the reading branch, report
 the unprocessed result and send nothing.
-Preserved: the child, its binding and its issue child, and the difference between a send and a result.
+Preserved: the child, its binding and its `child` session, and the difference between a send and a result.
 
 ### M8 The parent is already active
 
@@ -421,5 +421,5 @@ Preserved: the goal lifecycle's own owner, and an accurate reason for the stall.
 Observed: a delivery's record was handed over, and a review thread, from Devin or Codex or from any other reviewer,
 now sits on its head that the record's `threadsSeen` does not list. The relay's restatement would read it as `late_finding`, resolved or not.
 Action: report it as its own row, with the thread, its reading against this issue's scope, the stage of the delivery and whose move it is. The handling follows [Late review threads](merge-readiness.md#late-review-threads); a status call reads the thread and triages, replies to and resolves nothing.
-Preserved: the issue child's judged dispositions, the coordinator's own triage, and the difference between a review
+Preserved: the `child` session's judged dispositions, the coordinator's own triage, and the difference between a review
 that finished and a record that saw it.

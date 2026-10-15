@@ -13,6 +13,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/audit"
 	flowcli "github.com/thisisjun786/codex-relay-workflow/internal/flow/cli"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 )
 
 // The close of a milestone (CRW-1206, F13) on the whole stack of the scenario harness: the real agent backend on the fake App Server
@@ -51,8 +52,9 @@ func escalationReasons(l *Lab) []string {
 }
 
 // A milestone with a web criterion at C3: the run makes the test evidence at the integrated head, the QA capture call and both
-// oracle passes, the synthesis on the capture call's thread, and reviewer-final with the passed gate. The audit reads every
-// reviewer thread back from the host, and the threads of the acceptances that passed are archived - those only.
+// oracle passes, the synthesis on the capture call's thread, and reviewer-final with the passed gate. Every acceptance rests on a unit
+// check of its node (CRW-1465): the audit vouches for it on its crw.unitCheck row and the executor's pair, reads no thread from the
+// host, and archives nothing, since no reviewer thread was started.
 func TestCloseWithOraclePassesAuditsAndArchives(t *testing.T) {
 	l := NewLab(t, twoNodes()...)
 	l.Relay.Surfaces, l.Relay.Grade = []string{"logic", "web"}, "C3"
@@ -110,76 +112,72 @@ func TestCloseWithOraclePassesAuditsAndArchives(t *testing.T) {
 	if rules["SP-QA-1"] != 1 || rules["SP-QA-2"] != 2 || rules["SP-REVF-1"] != 1 {
 		t.Errorf("rules %v", rules)
 	}
-	// the audit read both reviewer threads from the host and found them as recorded; both were archived after it
-	if got.Audit.OK != 2 || got.Audit.Mismatch != 0 || got.Audit.Unobserved != 0 || got.Archived != 2 {
+	// the audit vouched for both acceptances on their unit-check rows; no reviewer thread was started, read or archived
+	if got.Audit.OK != 2 || got.Audit.Mismatch != 0 || got.Audit.Unobserved != 0 || got.Archived != 0 {
 		t.Fatalf("audit %+v, archived %d", got.Audit, got.Archived)
 	}
-	var reviewerThreads []string
-	for _, ev := range l.Events() {
-		if ev.Kind == engine.KindCall && ev.Op == "agent" && ev.Event == engine.EvThreadStarted && strings.HasPrefix(l.labelOfCall(ev.CallID), "review:") {
-			reviewerThreads = append(reviewerThreads, str(ev.Data, "thread_id"))
+	for _, c := range l.Calls() {
+		if c.Role == "reviewer" || strings.HasPrefix(c.Label, "review:") {
+			t.Errorf("a reviewer call %q", c.Label)
 		}
 	}
-	archived := l.Archived()
-	if len(reviewerThreads) != 2 || !slices.Equal(slices.Sorted(slices.Values(archived)), slices.Sorted(slices.Values(reviewerThreads))) {
-		t.Errorf("archived %v, reviewer threads %v", archived, reviewerThreads)
+	if archived := l.Archived(); len(archived) != 0 {
+		t.Errorf("archived %v, want nothing: a unit check has no thread", archived)
 	}
-	// the audit rows are the kind of the row the audit leaves
+	// the audit rows are the kind of the row the audit leaves; each result names the unit-check row and no thread
 	rows := l.Rows(audit.Op)
 	if len(rows) != 1 || len(audit.Passed(l.Events())) != 2 {
 		t.Errorf("audit rows %d, passed %v", len(rows), audit.Passed(l.Events()))
 	}
-}
-
-func (l *Lab) labelOfCall(id string) string {
-	for _, c := range l.Calls() {
-		if c.ID == id {
-			return c.Label
+	for _, r := range audit.Passed(l.Events()) {
+		if r.Subject.Basis != audit.BasisUnitCheck || r.Thread != "" || len(r.Checks) == 0 || r.Checks[0].Name != audit.CheckUnitCheck {
+			t.Errorf("an audit result %+v, want one on the unit-check row with no thread", r)
 		}
 	}
-	return ""
 }
 
-// A reviewer thread the host does not show in full is unobserved: not a pass, not a mismatch. The milestone still closes, that
-// acceptance keeps its thread, and the other one is archived.
+// An acceptance the audit cannot fully observe is unobserved: not a pass, not a mismatch. On a unit check (CRW-1465) what can go
+// unobserved is the pair of the executor that wrote the head: here the thread of B's executor records no model. The milestone still
+// closes, B's acceptance is unobserved, A's is ok, nothing is escalated, and nothing is archived (a unit check has no thread to keep or
+// to archive).
 func TestCloseKeepsTheThreadOfAnAcceptanceItCouldNotObserve(t *testing.T) {
 	l := NewLab(t, twoNodes()...)
-	l.On("^review:B:r1$", func(*Call) *fakehostPlan {
-		p := Say(Verdict(true))
-		p.SummaryOnly = true
-		p.ItemsListError = map[string]any{"code": -32600, "message": "items are not available"}
-		return &p
+	l.Rewrite(func(ev engine.Event) engine.Event {
+		if ev.Kind == engine.KindCall && ev.Op == "agent" && ev.Event == engine.EvThreadStarted && ev.Label == "build:B:executor" {
+			d := map[string]any{}
+			for k, v := range ev.Data {
+				if k != "model" {
+					d[k] = v
+				}
+			}
+			ev.Data = d
+		}
+		return ev
 	})
 	got := closeOf(t, l)
-	if got.State != "closed" || got.Audit.OK != 1 || got.Audit.Unobserved != 1 || got.Audit.Mismatch != 0 || got.Archived != 1 {
+	if got.State != "closed" || got.Audit.OK != 1 || got.Audit.Unobserved != 1 || got.Audit.Mismatch != 0 || got.Archived != 0 {
 		t.Fatalf("%+v", got)
 	}
-	var reviewerA string
-	for _, ev := range l.Events() {
-		if ev.Kind == engine.KindCall && ev.Event == engine.EvThreadStarted && l.labelOfCall(ev.CallID) == "review:A:r1" {
-			reviewerA = str(ev.Data, "thread_id")
-		}
-	}
-	if archived := l.Archived(); !slices.Equal(archived, []string{reviewerA}) || reviewerA == "" {
-		t.Errorf("archived %v, want the reviewer thread of A (%s) only", archived, reviewerA)
+	if archived := l.Archived(); len(archived) != 0 {
+		t.Errorf("archived %v, want nothing", archived)
 	}
 	if reasons := escalationReasons(l); slices.Contains(reasons, "audit_mismatch") {
 		t.Errorf("escalations %v: an unobserved acceptance is not a mismatch", reasons)
 	}
 }
 
-// What is on the host is the evidence, not what the journal says: a reviewer thread whose last message is not the result the
-// journal recorded (the digest differs) is a mismatch. The orchestrator is told, and the thread is kept.
+// The unit check an acceptance rests on (CRW-1465) must have judged the criteria the node was released with: a crw.unitCheck row that
+// names another criteria digest than the node's release is a mismatch. The orchestrator is told, and nothing is archived.
 func TestCloseEscalatesAnAuditMismatchAndKeepsTheThread(t *testing.T) {
 	l := NewLab(t, oneNode()...)
-	// the journal keeps a digest of another result than the thread on the host holds
+	// the check's row names a criteria digest the node was not released with
 	l.Rewrite(func(ev engine.Event) engine.Event {
-		if ev.Kind == engine.KindCall && ev.Op == "agent" && ev.Event == engine.EvCompleted && strings.HasPrefix(ev.Label, "review:A") {
+		if ev.Kind == engine.KindCall && ev.Op == ops.OpUnitCheck && ev.Event == engine.EvCompleted && str(ev.Data, "node") == "A" {
 			d := map[string]any{}
 			for k, v := range ev.Data {
 				d[k] = v
 			}
-			d["result_digest"] = strings.Repeat("0", 64)
+			d["criteria_digest"] = strings.Repeat("0", 64)
 			ev.Data = d
 		}
 		return ev
@@ -265,7 +263,7 @@ func TestCloseGateFailsOnAFailedVerificationAndHoldsOnAMissingVerifier(t *testin
 func TestResumeAfterAClosedMilestoneRunsNothing(t *testing.T) {
 	l := NewLab(t, oneNode()...)
 	l.Relay.Surfaces, l.Relay.Grade = []string{"web"}, "C2"
-	if got := closeOf(t, l); got.State != "closed" || got.Archived != 1 {
+	if got := closeOf(t, l); got.State != "closed" || got.Archived != 0 || got.Audit.OK != 1 {
 		t.Fatalf("%+v", got)
 	}
 	archivedBefore := len(l.Archived())
@@ -292,10 +290,10 @@ func TestResumeAfterAClosedMilestoneRunsNothing(t *testing.T) {
 	}
 }
 
-// `crw flow audit` over the store of a run that closed: it opens the store the run's journal is in, reads the reviewer threads back
-// from the host the run used, finds every acceptance ok, and leaves its result in the journal (a row of kind crw.audit with its own
-// call id). An acceptance given alone is found in the store. A host that cannot be reached is not a pass: the same command finds
-// every acceptance unobserved and exits 1.
+// `crw flow audit` over the store of a run that closed: it opens the store the run's journal is in, finds every acceptance ok, and
+// leaves its result in the journal (a row of kind crw.audit with its own call id). An acceptance given alone is found in the store.
+// Every acceptance rests on a unit check (CRW-1465), which the audit vouches for on its row: no reviewer thread is read, so a host
+// that cannot be reached changes nothing, and the same command finds every acceptance ok and exits 0.
 func TestFlowAuditCommandAuditsARunFromItsStore(t *testing.T) {
 	l := NewLab(t, twoNodes()...)
 	if got := closeOf(t, l); got.State != "closed" || got.Audit.OK != 2 {
@@ -350,11 +348,11 @@ func TestFlowAuditCommandAuditsARunFromItsStore(t *testing.T) {
 		t.Fatalf("exit %d: %v %s", code, rep, errOut)
 	}
 
-	// the host cannot be reached: nobody listens on its socket any more
+	// the host cannot be reached: nobody listens on its socket any more, and the audit of a unit-check acceptance reads nothing there
 	l.Host.Close()
 	code, rep, _ = audit_("--run", l.RunID, "--socket", l.Host.SocketPath, "--no-record")
 	summary, _ := rep["summary"].(map[string]any)
-	if code != 1 || summary["unobserved"] != float64(2) || summary["ok"] != float64(0) {
+	if code != 0 || summary["unobserved"] != float64(0) || summary["ok"] != float64(2) {
 		t.Errorf("an unreachable host: exit %d, %v", code, rep)
 	}
 }

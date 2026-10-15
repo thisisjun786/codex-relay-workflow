@@ -162,7 +162,7 @@ func childPushDestroys(p childPush) string {
 
 // ChildPushInputUnreadAnswer is the deny of a leg whose input could not be read whole: the command it carries is not known.
 func ChildPushInputUnreadAnswer() string {
-	reason := "[crw CHILD-PUSH-GUARD] 통합은 자식·통합기 몫 (integration is the 자식's and the integrator's): the hook input cannot be read whole, so whether the command pushes another branch is not known."
+	reason := "[crw CHILD-PUSH-GUARD] 통합은 자식·통합기 몫 (integration is the 자식's and the integrator's): cannot tell whether the command pushes another branch because the hook input cannot be read in full."
 	return editAnswer("deny", reason, reason)
 }
 
@@ -326,7 +326,7 @@ var childPushFlags = map[string]bool{"--set-upstream": true, "--force": true, "-
 // childPushJudge is why one push is refused for a child whose own branch is own, or "" when it pushes own only.
 func childPushJudge(p childPush, own string) string {
 	if own == "" {
-		return "this session has no branch of its own (its checkout has none, an integration branch or a name under refs/, heads/, tags/ or remotes/, or the 자식's checkout has the same)"
+		return "this session has no branch of its own (its checkout is on no branch, an integration branch, a name under refs/, heads/, tags/, or remotes/, or the same branch as the 자식's checkout)"
 	}
 	if p.feed {
 		return "find or xargs gives the push its words"

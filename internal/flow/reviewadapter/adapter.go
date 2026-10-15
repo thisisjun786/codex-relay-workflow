@@ -105,6 +105,10 @@ type Request struct {
 	Schema   []byte        // the JSON Schema the answer must satisfy (AnswerSchema)
 	Limit    time.Duration // the time limit of the call
 	GuideRev string        // the revision of the review guide the prompt was built from
+	// Base and Head are the committed range base..head a committed check asks about (land-head's check, CRW-1468), both empty for a
+	// check of the uncommitted changes. A profile whose reader reads a range (Profile.Ranged) needs both, and its reader is given
+	// them with the request: an answer about any other range, or one that names none, is no answer.
+	Base, Head string
 }
 
 // Finding is one finding of an ok record. Severity is a grade P0-P3; Impact is one of premerge.Impacts or empty (a security
@@ -232,6 +236,8 @@ func (a Adapter) validate(req Request) (*jsonschema.Resolved, string, error) {
 		return nil, "", fmt.Errorf("reviewadapter: profile %q names no model or no effort", p.Name)
 	case p.Answer == nil:
 		return nil, "", fmt.Errorf("reviewadapter: profile %q has no answer reader", p.Name)
+	case p.Ranged && (strings.TrimSpace(req.Base) == "" || strings.TrimSpace(req.Head) == ""):
+		return nil, "", fmt.Errorf("reviewadapter: profile %q judges a committed range and the request names none (base %q, head %q)", p.Name, req.Base, req.Head)
 	}
 	var sch jsonschema.Schema
 	if err := json.Unmarshal(req.Schema, &sch); err != nil {
@@ -272,7 +278,7 @@ func classify(req Request, schema *jsonschema.Resolved, c call) (State, string, 
 	var answerErr error
 	blank := len(bytes.TrimSpace(c.stdout)) == 0
 	if !blank && c.exit == 0 {
-		answer, answerErr = req.Profile.Answer(c.stdout)
+		answer, answerErr = req.Profile.Answer(c.stdout, req)
 		blank = answerErr == nil && len(bytes.TrimSpace(answer)) == 0
 	}
 	if c.exit != 0 || blank {

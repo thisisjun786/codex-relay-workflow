@@ -6,6 +6,8 @@ import (
 
 	"github.com/dop251/goja/ast"
 	"github.com/dop251/goja/token"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 )
 
 // The lifecycle of one executor node, as an automaton over the states a node can be in:
@@ -13,7 +15,12 @@ import (
 //	init -build-> built -commit-> committed -verify-> verified -review-> reviewed -land-> landed
 //
 // with a commit allowed again from built, verified or reviewed (a fix round), a build allowed again until the node has
-// landed (a rebuild, the second tier), and a land allowed once, from reviewed.
+// landed (a rebuild, the second tier), and a land allowed once, from reviewed. A land release (crw.release with a land key:
+// land-head.js checks out a committed head made outside the run) moves a node that is before the build or built to
+// committed. Next to its phase a node has a checked flag, which is no phase: a crw.unitCheck of the node, legal while it is
+// built (before the commit, also after a fix) or verified (a committed head), sets it; a build, a resumed executor call of
+// the node (a fix changes the tree) and a land release clear it; a commit and a verify keep it (the commit commits the
+// checked tree). A land is also allowed from verified when the node is checked: build, unit check, commit, verify, land.
 const (
 	pInit uint8 = 1 << iota
 	pBuilt
@@ -51,6 +58,8 @@ type state struct {
 	// run, and the node reaches its phase only when the name is read (awaited, passed on, returned). Where paths meet, a
 	// name may hold a different call on each: it keeps them all.
 	pend map[*binding]pendSet
+	// checked are the node slots a unit check of the current tree holds for on every path that reaches the point.
+	checked map[string]bool
 }
 
 // pending is a lifecycle event that has been invoked and not yet shown to complete: the slot of its node, its phase, the
@@ -60,8 +69,10 @@ type state struct {
 // committed, verified or reviewed nor takes a started land back. paths says whether that generation is still the
 // node's on every path that meets at the point (current), on none (superseded), or on some (both bits).
 type pending struct {
-	slot  string
-	ev    uint8
+	slot string
+	ev   uint8
+	// check is set for a unit check: its completion sets the node's checked flag and leaves its phase where it is.
+	check bool
 	call  *ast.CallExpression
 	paths uint8
 }
@@ -117,14 +128,17 @@ func (p pendSet) holds(c *ast.CallExpression) bool {
 }
 
 func newState() *state {
-	return &state{phases: map[string]uint8{}, labels: map[string]bool{}, steps: map[*binding]bool{}, pend: map[*binding]pendSet{}}
+	return &state{phases: map[string]uint8{}, labels: map[string]bool{}, steps: map[*binding]bool{}, pend: map[*binding]pendSet{}, checked: map[string]bool{}}
 }
 
 func (s *state) dead() bool { return !s.live }
 func (s *state) kill()      { s.live = false }
 
 func (s *state) clone() *state {
-	c := &state{live: s.live, author: s.author, phases: make(map[string]uint8, len(s.phases)), labels: make(map[string]bool, len(s.labels)), steps: make(map[*binding]bool, len(s.steps)), pend: make(map[*binding]pendSet, len(s.pend))}
+	c := &state{live: s.live, author: s.author, phases: make(map[string]uint8, len(s.phases)), labels: make(map[string]bool, len(s.labels)), steps: make(map[*binding]bool, len(s.steps)), pend: make(map[*binding]pendSet, len(s.pend)), checked: make(map[string]bool, len(s.checked))}
+	for k := range s.checked {
+		c.checked[k] = true
+	}
 	for k, v := range s.pend {
 		c.pend[k] = v.clone()
 	}
@@ -140,8 +154,8 @@ func (s *state) clone() *state {
 	return c
 }
 
-// join merges the state of another path into s: the phases of a node may be any of both, a label is used or a name holds
-// a step only when it does on both, the author is known only when both agree, and a name may hold any pending call
+// join merges the state of another path into s: the phases of a node may be any of both, a label is used, a name holds
+// a step or a node is checked only when it is on both, the author is known only when both agree, and a name may hold any pending call
 // either path gives it (or none, where one path gives it none). The result is the same whichever state joins the other.
 func (s *state) join(o *state) {
 	switch {
@@ -162,6 +176,11 @@ func (s *state) join(o *state) {
 	for k := range s.steps {
 		if !o.steps[k] {
 			delete(s.steps, k)
+		}
+	}
+	for k := range s.checked {
+		if !o.checked[k] {
+			delete(s.checked, k)
 		}
 	}
 	for k, have := range s.pend {
@@ -190,8 +209,13 @@ func (s *state) join(o *state) {
 }
 
 func (s *state) equal(o *state) bool {
-	if s.live != o.live || s.author != o.author || len(s.phases) != len(o.phases) || len(s.labels) != len(o.labels) || len(s.steps) != len(o.steps) || len(s.pend) != len(o.pend) {
+	if s.live != o.live || s.author != o.author || len(s.phases) != len(o.phases) || len(s.labels) != len(o.labels) || len(s.steps) != len(o.steps) || len(s.pend) != len(o.pend) || len(s.checked) != len(o.checked) {
 		return false
+	}
+	for k := range s.checked {
+		if !o.checked[k] {
+			return false
+		}
 	}
 	for k, v := range s.pend {
 		if ov, ok := o.pend[k]; !ok || !v.equal(ov) {
@@ -401,7 +425,7 @@ func (w *walker) hasLifecycle() bool {
 	found := false
 	w.walkOwn(func(n any) {
 		if c, ok := n.(*ast.CallExpression); ok {
-			if obj, name := w.s.a.callee(c); obj == "crw" && lifecycleOp(name) != 0 {
+			if w.s.a.callEvent(c).from != 0 {
 				found = true
 			}
 		}
@@ -410,12 +434,17 @@ func (w *walker) hasLifecycle() bool {
 	return found
 }
 
-// eventNode is the node a crw.commit, crw.verify, crw.review or crw.land call names: its first argument.
+// eventNode is the node a lifecycle call names: the second argument of a crw.release (plan, node, milestone, options),
+// the first of a crw.commit, crw.verify, crw.review, crw.land or crw.unitCheck.
 func (a *analysis) eventNode(c *ast.CallExpression) string {
-	if len(c.ArgumentList) == 0 {
+	i := 0
+	if _, name := a.callee(c); name == "release" {
+		i = 1
+	}
+	if len(c.ArgumentList) <= i {
 		return ""
 	}
-	return a.nodeKey(c.ArgumentList[0])
+	return a.nodeKey(c.ArgumentList[i])
 }
 
 // buildNode is the node a fresh executor call starts: its node option ("" when the call states none).
@@ -436,7 +465,7 @@ func (w *walker) collectNodes() {
 		if !ok {
 			return
 		}
-		if obj, name := a.callee(c); obj == "crw" && lifecycleOp(name) != 0 {
+		if a.callEvent(c).from != 0 {
 			events = append(events, a.eventNode(c))
 		} else if call, ok := a.agentFacts(c, w.fn, w.s.policy); ok && call.family == "executor" && !call.resume {
 			w.buildKeys[a.buildNode(call)] = true
@@ -461,21 +490,7 @@ func (w *walker) slot(key string) string {
 	return ""
 }
 
-func lifecycleOp(name string) uint8 {
-	switch name {
-	case "commit":
-		return pCommitted
-	case "verify":
-		return pVerified
-	case "review":
-		return pReviewed
-	case "land":
-		return pLanded
-	}
-	return 0
-}
-
-// legalFrom are the phases an event may happen in.
+// legalFrom are the phases an event may happen in. A land is also legal from verified when the node is checked (event).
 var legalFrom = map[uint8]uint8{
 	pBuilt:     pInit | pBuilt | pCommitted | pVerified | pReviewed,
 	pCommitted: pBuilt | pVerified | pReviewed,
@@ -484,7 +499,93 @@ var legalFrom = map[uint8]uint8{
 	pLanded:    pReviewed,
 }
 
-var eventNames = map[uint8]string{pBuilt: "build", pCommitted: "crw.commit", pVerified: "crw.verify", pReviewed: "crw.review", pLanded: "crw.land"}
+// lifeEvent is one lifecycle event: the phase it moves the node to (none for a unit check), the phases it is legal from,
+// whether it is a unit check (it sets the checked flag), and its name for a finding. A call is a lifecycle call when from
+// is not zero.
+type lifeEvent struct {
+	to, from uint8
+	check    bool
+	name     string
+}
+
+var (
+	buildEvent       = lifeEvent{to: pBuilt, from: legalFrom[pBuilt], name: "build"}
+	unitCheckEvent   = lifeEvent{from: pBuilt | pVerified, check: true, name: "crw.unitCheck"}
+	landReleaseEvent = lifeEvent{to: pCommitted, from: pInit | pBuilt, name: "crw.release with land"}
+)
+
+// lifecycleEvent is the event a crw.<op> call is, for both walks: the static one (callEvent reads landRelease off the
+// text) and the trace twin (off the release row). A release is an event only when it is a land release; any other op is
+// none (the zero value).
+func lifecycleEvent(op string, landRelease bool) lifeEvent {
+	switch op {
+	case "commit":
+		return lifeEvent{to: pCommitted, from: legalFrom[pCommitted], name: "crw.commit"}
+	case "verify":
+		return lifeEvent{to: pVerified, from: legalFrom[pVerified], name: "crw.verify"}
+	case "review":
+		return lifeEvent{to: pReviewed, from: legalFrom[pReviewed], name: "crw.review"}
+	case "land":
+		return lifeEvent{to: pLanded, from: legalFrom[pLanded], name: "crw.land"}
+	case "unitCheck":
+		return unitCheckEvent
+	case "release":
+		if landRelease {
+			return landReleaseEvent
+		}
+	}
+	return lifeEvent{}
+}
+
+// callEvent is the lifecycle event a call is, when it is one: a crw.release is a land release when its fourth argument is
+// an object literal with a land key (one held by a name is not seen: no script passes one).
+func (a *analysis) callEvent(c *ast.CallExpression) lifeEvent {
+	obj, name := a.callee(c)
+	if obj != "crw" {
+		return lifeEvent{}
+	}
+	return lifecycleEvent(name, name == "release" && len(c.ArgumentList) > 3 && objectHasKey(c.ArgumentList[3], "land"))
+}
+
+// objectHasKey reports whether an expression is an object literal with the key: a non-computed key that is a name or a
+// string, or a shorthand property of that name (the key forms dag and agentFacts read).
+func objectHasKey(e ast.Expression, key string) bool {
+	lit, ok := e.(*ast.ObjectLiteral)
+	if !ok {
+		return false
+	}
+	for _, p := range lit.Value {
+		switch pp := p.(type) {
+		case *ast.PropertyKeyed:
+			if pp.Computed {
+				continue
+			}
+			switch k := pp.Key.(type) {
+			case *ast.Identifier:
+				if string(k.Name) == key {
+					return true
+				}
+			case *ast.StringLiteral:
+				if string(k.Value) == key {
+					return true
+				}
+			}
+		case *ast.PropertyShort:
+			if string(pp.Name.Name) == key {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// landFrom are the phases a land of a node is legal from: reviewed, and verified when the node is checked.
+func landFrom(le lifeEvent, checked bool) uint8 {
+	if le.to == pLanded && checked {
+		return le.from | pVerified
+	}
+	return le.from
+}
 
 // deferral says a lifecycle call's promise is not awaited where the call is made: it is dropped (no names), or held by
 // names one of which has to be read before the event is complete.
@@ -627,13 +728,13 @@ func (w *walker) consume(n any, m use) {
 	}
 }
 
-// lifecycleCall is the crw.commit, crw.verify, crw.review or crw.land call an expression is, if it is one.
+// lifecycleCall is the lifecycle call (callEvent) an expression is, if it is one.
 func (w *walker) lifecycleCall(e ast.Expression) *ast.CallExpression {
 	c, ok := e.(*ast.CallExpression)
 	if !ok {
 		return nil
 	}
-	if obj, name := w.s.a.callee(c); obj == "crw" && lifecycleOp(name) != 0 {
+	if w.s.a.callEvent(c).from != 0 {
 		return c
 	}
 	return nil
@@ -643,7 +744,9 @@ func (w *walker) lifecycleCall(e ast.Expression) *ast.CallExpression {
 // pending. Each call the name may hold counts for its own paths: the node reaches the call's phase only where the call
 // is of the node's current generation (on every path it is in that phase, on none it stays where it is, on some it may
 // be in either), and a node stays where it is on a path where the name holds no call or a call of another node. The
-// phase after the read is the union over the alternatives.
+// phase after the read is the union over the alternatives. A unit check leaves the phase where it is; it makes the node
+// checked only when the name holds that check on every path and the check is of the node's current generation on all of
+// them.
 func (w *walker) complete(bd *binding, st *state) {
 	p, ok := st.pend[bd]
 	if !ok {
@@ -667,6 +770,10 @@ func (w *walker) complete(bd *binding, st *state) {
 	}
 	next := map[string]uint8{}
 	for _, alt := range p.alts {
+		if alt.check {
+			next[alt.slot] |= phase(alt.slot)
+			continue
+		}
 		switch alt.paths {
 		case pathCurrent:
 			next[alt.slot] |= alt.ev
@@ -681,6 +788,11 @@ func (w *walker) complete(bd *binding, st *state) {
 			mask |= phase(slot)
 		}
 		st.phases[slot] = mask
+	}
+	if !p.partial && len(p.alts) > 0 && !slices.ContainsFunc(p.alts, func(alt pending) bool {
+		return !alt.check || alt.paths != pathCurrent || alt.slot != p.alts[0].slot
+	}) {
+		st.checked[p.alts[0].slot] = true
 	}
 }
 
@@ -713,8 +825,9 @@ func (w *walker) completeIn(n any, st *state) {
 // in, so a path the text cannot rule out is not a violation; the node then goes on in the event's phase. The call's
 // promise has to settle for the phase to be reached: a call whose promise is dropped never gets the node there, and a
 // call held by a name gets it there where the name is read (anywhere the text can read it counts: the lint does not
-// follow the promise further). The call itself starts the event whether its promise is awaited or not (started).
-func (w *walker) event(ev uint8, node string, line int, st *state, def *deferral) {
+// follow the promise further). The call itself starts the event whether its promise is awaited or not (started). A unit
+// check changes no phase: its settled promise sets the node's checked flag, which a build or a land release clears.
+func (w *walker) event(le lifeEvent, node string, line int, st *state, def *deferral) {
 	if st.dead() || !w.life {
 		return
 	}
@@ -723,15 +836,20 @@ func (w *walker) event(ev uint8, node string, line int, st *state, def *deferral
 	if !ok {
 		cur = pBuilt
 	}
-	if cur&legalFrom[ev] == 0 {
+	ev := le.to
+	if cur&landFrom(le, st.checked[slot]) == 0 {
 		switch {
 		case ev == pLanded && cur == pLanded:
 			w.s.add(RuleLandTwice, line, "", "crw.land runs a second time for the node: land happens at most once")
 		case ev == pLanded:
-			w.s.add(RuleLandWithoutReview, line, "", "crw.land runs while the node is %s: a land needs a completed review of the committed head (commit, verify, review)", phaseList(cur))
+			w.s.add(RuleLandWithoutReview, line, "", "crw.land runs while the node is %s: a land needs a completed review or a unit check of the head (commit, verify, review; or unit check, commit, verify)", phaseList(cur))
 		default:
-			w.s.add(RuleLifecycleOrder, line, "", "%s runs while the node is %s: the order is build, then rounds of commit, verify, review, then land", eventNames[ev], phaseList(cur))
+			w.s.add(RuleLifecycleOrder, line, "", "%s runs while the node is %s: the order is build, then rounds of commit, verify, review (a unit check before the commit or after the verify), then land", le.name, phaseList(cur))
 		}
+	}
+	if le == buildEvent || le == landReleaseEvent {
+		// A new tree: no check holds for it.
+		delete(st.checked, slot)
 	}
 	if ev == pBuilt || ev == pCommitted || ev == pLanded {
 		// A new generation of the node starts with the call, whether or not its promise is awaited.
@@ -744,12 +862,18 @@ func (w *walker) event(ev uint8, node string, line int, st *state, def *deferral
 		}
 	}
 	if def == nil {
-		st.phases[slot] = ev
+		if le.check {
+			st.checked[slot] = true
+		} else {
+			st.phases[slot] = ev
+		}
 		return
 	}
-	st.phases[slot] = started(ev, cur)
+	if !le.check {
+		st.phases[slot] = started(ev, cur)
+	}
 	for _, bd := range def.bds {
-		st.pend[bd] = pendSet{alts: []pending{{slot: slot, ev: ev, call: def.call, paths: pathCurrent}}}
+		st.pend[bd] = pendSet{alts: []pending{{slot: slot, ev: ev, check: le.check, call: def.call, paths: pathCurrent}}}
 	}
 }
 
@@ -1374,10 +1498,10 @@ func (w *walker) expr(n any, st *state) {
 func (w *walker) call(c *ast.CallExpression, st *state) {
 	a := w.s.a
 	line := a.lineOf(c)
-	obj, name := a.callee(c)
-	switch {
-	case obj == "crw" && lifecycleOp(name) != 0:
-		w.event(lifecycleOp(name), a.eventNode(c), line, st, w.deferred[c])
+	obj, _ := a.callee(c)
+	switch le := a.callEvent(c); {
+	case le.from != 0:
+		w.event(le, a.eventNode(c), line, st, w.deferred[c])
 	case obj == "agent":
 		call, _ := a.agentFacts(c, w.fn, w.s.policy)
 		w.agent(call, st)
@@ -1411,11 +1535,122 @@ func (w *walker) agent(call *agentCall, st *state) {
 		}
 		return
 	}
-	if call.role == "" || call.resume {
+	if call.resume {
+		w.resumed(call, st)
+		return
+	}
+	if call.role == "" {
 		return
 	}
 	if call.family == "executor" {
 		st.author = call.modelFamily
-		w.event(pBuilt, a.buildNode(call), call.line, st, nil)
+		w.event(buildEvent, a.buildNode(call), call.line, st, nil)
+	}
+}
+
+// resumed clears the checked flag a resumed executor call takes from its node: a fix changes the tree the check saw, so
+// neither a check that has settled nor one whose promise a name still holds counts for the tree after it. When the text
+// does not show which thread the call continues, it may be any node's executor, and no node stays checked.
+func (w *walker) resumed(call *agentCall, st *state) {
+	a := w.s.a
+	root := a.resumeRoot(call.opts["resume"], w.s.policy, 0)
+	if root != nil && root.family != "executor" {
+		return
+	}
+	all, slot := root == nil, ""
+	if root != nil {
+		slot = w.slot(a.buildNode(root))
+	}
+	for k := range st.checked {
+		if all || k == slot {
+			delete(st.checked, k)
+		}
+	}
+	for _, v := range st.pend {
+		for i := range v.alts {
+			if v.alts[i].check && (all || v.alts[i].slot == slot) {
+				v.alts[i].paths = pathSuperseded
+			}
+		}
+	}
+}
+
+// resumeRoot is the fresh agent call whose thread a resume option continues, as far as the text shows (resumeFamily's
+// walk): nil when the option is not a handle of a single agent call.
+func (a *analysis) resumeRoot(e ast.Expression, policy *engine.Policy, depth int) *agentCall {
+	if depth > 8 || e == nil {
+		return nil
+	}
+	switch x := e.(type) {
+	case *ast.AwaitExpression:
+		return a.resumeRoot(x.Argument, policy, depth+1)
+	case *ast.DotExpression:
+		if x.Identifier.Name == "handle" || x.Identifier.Name == "output" {
+			return a.resumeRoot(x.Left, policy, depth+1)
+		}
+	case *ast.CallExpression:
+		call, ok := a.agentFacts(x, nil, policy)
+		if !ok {
+			return nil
+		}
+		if call.resume {
+			return a.resumeRoot(call.opts["resume"], policy, depth+1)
+		}
+		return call
+	case *ast.Identifier:
+		b := a.refs[x]
+		if b == nil || b.opaque || len(b.assigned) == 0 {
+			return nil
+		}
+		// A value that continues the name's own thread (ex = agent.call(..., { resume: ex })) is the same thread: it
+		// says nothing new about the root.
+		var root *agentCall
+		for _, v := range b.assigned {
+			if a.continues(v, b) {
+				continue
+			}
+			r := a.resumeRoot(v, policy, depth+1)
+			if r == nil || root != nil && r.node != root.node {
+				return nil
+			}
+			root = r
+		}
+		return root
+	}
+	return nil
+}
+
+// continues reports whether an expression is an agent call that resumes the thread the binding holds.
+func (a *analysis) continues(e ast.Expression, b *binding) bool {
+	for {
+		aw, ok := e.(*ast.AwaitExpression)
+		if !ok {
+			break
+		}
+		e = aw.Argument
+	}
+	c, ok := e.(*ast.CallExpression)
+	if !ok {
+		return false
+	}
+	call, ok := a.agentFacts(c, nil, nil)
+	if !ok || !call.resume {
+		return false
+	}
+	r := call.opts["resume"]
+	for {
+		switch x := r.(type) {
+		case *ast.AwaitExpression:
+			r = x.Argument
+			continue
+		case *ast.DotExpression:
+			if x.Identifier.Name == "handle" || x.Identifier.Name == "output" {
+				r = x.Left
+				continue
+			}
+		case *ast.Identifier:
+			return a.refs[x] == b
+		}
+		return false
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -383,5 +384,89 @@ func TestCILocalVerifier_a_verify_dir_swapped_for_a_link_is_not_written_through(
 	}
 	if calls != 0 {
 		t.Errorf("the command ran %d times", calls)
+	}
+}
+
+// TestVerifyRecordsTheFailedTestsOfTheRecord (CRW-1469, CRW-1488 item 16): the verifier reads the reason of each failed step of the
+// record and names the tests (`--- FAIL: <Test>`) and the packages (`FAIL\t<pkg>\t`) it gives, with the last 20 lines of the reason
+// (at most 2048 bytes); a reason with no such line (a build error, a reason cut before its test lines) gives the tail only. A step that
+// passed, did not apply, was skipped after an earlier failure or has no reason names nothing. The crw.verify row and its result
+// carry them as failed_tests; a verification that passed carries none.
+func TestVerifyRecordsTheFailedTestsOfTheRecord(t *testing.T) {
+	testsReason := "exit status 1: === RUN   TestGuard\n    guard_test.go:9: the guard is open\n--- FAIL: TestGuard (0.01s)\n=== RUN   TestStore\n" +
+		"    --- FAIL: TestStore/empty (0.00s)\n--- FAIL: TestStore (0.00s)\n--- FAIL: TestGuard (0.01s)\nFAIL\nFAIL\texample.com/m/store\t0.123s\n" +
+		"ok  \texample.com/m/other\t0.050s\nFAIL\texample.com/m/guard [build failed]\nFAIL"
+	var cut []string
+	for i := 1; i <= 30; i++ {
+		cut = append(cut, "a.go:"+strings.Repeat("9", 3)+": undefined: name"+strings.Repeat("x", i))
+	}
+	long := strings.Repeat("é", 2000) // 4000 bytes on one line
+	step := func(name, result, reason string) map[string]any {
+		return map[string]any{"name": name, "result": result, "reason": reason}
+	}
+	rec := map[string]any{"schema": "verification-record/1", "result": "fail", "digest": "sha256:ee", "jobs": []any{
+		map[string]any{"name": "go-product", "result": "fail", "steps": []any{
+			step("vet", "passed", "a reason of a step that passed"), step("tests", "failed", testsReason), step("race", "skipped", "an earlier step of this job did not pass"),
+		}},
+		map[string]any{"name": "validate", "result": "fail", "steps": []any{
+			step("lint", "failed", "exit status 2: "+strings.Join(cut, "\n")), step("docs", "not_applicable", "--- FAIL: TestNotRun"), step("quiet", "failed", ""),
+		}},
+		map[string]any{"name": "secrets", "result": "fail", "steps": []any{step("scan", "missing_tool", long)}},
+	}}
+	raw, _ := json.Marshal(rec)
+	run := func(_ context.Context, _ string, _ []string, _ string, args ...string) (int, []byte, error) {
+		return 1, nil, os.WriteFile(args[slices.Index(args, "--record")+1], raw, 0o644)
+	}
+	v := CILocalVerifier{Tools: crwconfig.VerifierTools{GoRoot: "/opt/go"}, RecordDir: t.TempDir(), Run: run}
+	out, err := v.Verify(context.Background(), VerifyRequest{Node: "A", Head: strings.Repeat("a", 40), Worktree: toolsTree(t)})
+	if err != nil || out.Pass {
+		t.Fatalf("the verification: %+v %v", out, err)
+	}
+	want := []FailedStep{
+		{Job: "go-product", Step: "tests", Tests: []string{"TestGuard", "TestStore/empty", "TestStore"}, Packages: []string{"example.com/m/store", "example.com/m/guard"}, Tail: testsReason},
+		{Job: "validate", Step: "lint", Tests: []string{}, Packages: []string{}, Tail: strings.Join(cut[10:], "\n")},
+		{Job: "secrets", Step: "scan", Tests: []string{}, Packages: []string{}, Tail: strings.Repeat("é", 1024)},
+	}
+	if !reflect.DeepEqual(out.FailedTests, want) {
+		t.Fatalf("failed tests\n%+v\nwant\n%+v", out.FailedTests, want)
+	}
+	if !slices.Equal(out.Failures, []string{"go-product/tests: failed", "go-product/race: skipped", "validate/lint: failed", "validate/quiet: failed", "secrets/scan: missing_tool"}) {
+		t.Errorf("the failures changed: %v", out.Failures)
+	}
+
+	w := newWorld(t)
+	ver := fakeVerifier{out: out}
+	w.lane.d.Verifier = &ver
+	var res VerifyResult
+	_ = json.Unmarshal(w.must("verify", "A", strings.Repeat("a", 40)), &res)
+	if !reflect.DeepEqual(res.FailedTests, want) {
+		t.Errorf("the result's failed tests\n%+v\nwant\n%+v", res.FailedTests, want)
+	}
+	row := w.j.Events()[len(w.j.Events())-1]
+	b, _ := json.Marshal(row.Data["failed_tests"])
+	var recorded []FailedStep
+	if err := json.Unmarshal(b, &recorded); err != nil || !reflect.DeepEqual(recorded, want) {
+		t.Errorf("the row's failed_tests %s (%v)", b, err)
+	}
+
+	ver.out = VerifyOutcome{Pass: true, Command: CILocalCommand, Digest: "sha256:ab", Summary: "pass"}
+	result := w.must("verify", "A", strings.Repeat("b", 40))
+	if row := w.j.Events()[len(w.j.Events())-1]; row.Data["failed_tests"] != nil || strings.Contains(string(result), "failed_tests") {
+		t.Errorf("a passed verification names failed tests: %v %s", row.Data, result)
+	}
+}
+
+// TestFailedStepsReadsATimedOutStep (DI item 11(a), the probe TestDIFVFailedStepsReasons): crw-dev ci local writes the reason of a step
+// it stopped at its time limit as "timeout: exit status N: ..." (dev/ci/local.go); the prefix is how the command ended, not output, so a
+// "--- FAIL:" line right after it names its test as it does after "exit status N: " alone.
+func TestFailedStepsReadsATimedOutStep(t *testing.T) {
+	for _, reason := range []string{
+		"exit status 1: --- FAIL: TestA (0.01s)\n...\nFAIL\tpkg/y\t0.3s",
+		"timeout: exit status 1: --- FAIL: TestA (0.01s)\n...\nFAIL\tpkg/y\t0.3s",
+	} {
+		got := failedSteps("go", "tests", reason)
+		if !slices.Equal(got.Tests, []string{"TestA"}) || !slices.Equal(got.Packages, []string{"pkg/y"}) {
+			t.Errorf("reason %q: tests %v packages %v, want [TestA] [pkg/y]", reason, got.Tests, got.Packages)
+		}
 	}
 }

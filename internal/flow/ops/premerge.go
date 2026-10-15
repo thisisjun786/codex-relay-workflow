@@ -68,8 +68,9 @@ func AssemblePremerge(in PremergeInput) (premerge.Record, error) {
 // node's plan (expect) passes on the evidence of the passing verification of the head (its digest) and of the check (its call)
 // that left no blocking finding; each finding is a defect named by its finding id. A check that gave no judgment, that did not
 // verify, or that verified over a finding that blocks is no verified verdict (an error). An empty expect gives a verdict with no
-// criterion, which AssemblePremerge refuses: a node whose plan names no criterion is never accepted on a unit check.
-func UnitCheckVerdict(res reviewadapter.Result, call, verification string, expect []string) (ReviewVerdict, error) {
+// criterion, which AssemblePremerge refuses: a node whose plan names no criterion is never accepted on a unit check. receipt is the
+// sha256 of the executor's evidence receipt the check was handed ("" for none); the evidence and the summary name it.
+func UnitCheckVerdict(res reviewadapter.Result, call, verification string, expect []string, receipt string) (ReviewVerdict, error) {
 	switch {
 	case res.State != reviewadapter.StateOK:
 		return ReviewVerdict{}, fmt.Errorf("unit check %s gave no judgment (state %s)", call, res.State)
@@ -87,6 +88,10 @@ func UnitCheckVerdict(res reviewadapter.Result, call, verification string, expec
 		family = execution.ModelFamily(res.Model)
 	}
 	evidence := fmt.Sprintf("verification %s of the head passed; unit check %s (%s %s) left no blocking finding", verification, call, family, res.Model)
+	if receipt != "" {
+		evidence += "; executor receipt " + receipt
+		v.Summary += "; executor receipt " + receipt
+	}
 	for _, id := range expect {
 		v.Criteria = append(v.Criteria, Criterion{ID: id, Met: true, Evidence: evidence})
 	}

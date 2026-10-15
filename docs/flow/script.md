@@ -398,8 +398,8 @@ with the relay's reason, and the release goes on as for an undeclared node.
 
 | `crw.classify` state | The one transition |
 | --- | --- |
-| `ready` | commit, verify, review, land |
-| `self_failed` (the executor reports `failed` or `budget_exhausted`) | the run commits and verifies the worktree anyway and reviews it when the verification passes; the report is no evidence |
+| `ready` | unit check, commit, verify, land (the unit check below judges the call's uncommitted work before the commit) |
+| `self_failed` (the executor reports `failed` or `budget_exhausted`) | as `ready`: the run runs the unit check of the worktree anyway, then commits and verifies it; the report is no evidence |
 | `research` | `crw.explore` answers the question (SP-EXPL-2: an answer of the run is reused, at most two research continuations on a tier), and the same executor thread goes on with the answer; never a tier step |
 | `scope` | `crw.escalate` with `blocked_scope`: the relay closes the node's execution and takes its slot back (R07) |
 | `null_model` | the first one: a fresh thread of the same tier in a new attempt worktree at the node's last commit; the second in a row is tier evidence |
@@ -408,7 +408,37 @@ with the relay's reason, and the release goes on as for an undeclared node.
 | `refused` | `crw.escalate` as a configuration fault, then `crw.decide`: the lane goes on, with a fresh thread of the same tier, only when the run journal has the `decision_applied` row of that escalation and node |
 | `superseded` | the lane stops |
 
-**Review.** `crw.review(node, plan, head, ci, opts)` is a fresh reviewer thread over the committed head (SP-REV-1), with the record
+**Unit check.** `crw.unitCheck(node, call, opts)` judges a node's work before `crw.commit` commits it (CRW-1465): the run runs the
+review tool itself, in Go through the review adapter, over the uncommitted changes the executor call `call` left in the node's
+worktree, so no reviewer agent is called and no reviewer thread is made for a node (row `crw.unitCheck`,
+[journal.md](journal.md#the-proofs)). The tree it judges is the call's pending tree, the one `crw.commit` then commits, so the
+acceptance takes the check as the judgment of the head that commit makes; a worktree that is no longer that tree is not checked
+(`tree_moved`), nor one whose `HEAD` is not the commit the node's attempt is at, the start of its worktree or the node's last commit
+since (`head_moved`: the executor committed its work itself, whatever the backend). The prompt carries the node's criteria and, when the backend
+assigned the executor an evidence receipt, the receipt's accepted copy; a receipt that cannot be handed over holds the node (below). A
+check with any finding, blocking or not, goes back to the same executor thread (`fix:<node>:<tier>:r<round>`, the findings in the fix
+packet), and the fixed tree is checked again, at most two round trips on a tier (`UNIT_CHECK_ROUNDS`); the check after them is
+`final` and its findings are carried, before any tier step: when none blocks (verdict `verified`) the node is committed, verified and
+landed with them as pre-merge defects that need no disposition (`crw.land` hands their ids and the checks that carried them to
+`crw.accept`, which reads each from that check's record into the premerge record, also when the check the acceptance rests on judged
+only a later fix), and the lane result names them (`carried`); a blocking one escalates
+`unit_check_carried` (ask `land`, the carried ids and each finding's file and text) and nothing lands. A finding is named by its file
+and its text, never its line (`reviewadapter.FindingID`). A check the tool gave no judgment in (`quota`, `no_answer`) or that had no
+executor receipt to hand over (`receipt_missing`, `receipt_unverified`, `receipt_not_copied`) holds the node through `crw.hold` with
+source `unit_check`, as a verification that could not run does. After `quota` or `no_answer` a resume asks the tool again; after
+`receipt_not_copied` it reads the receipt again, its step-bus copy or, in its place, the receipt where the hook accepted it when that
+still hashes to its digest, so the hold clears once the receipt can be read; `receipt_missing` and
+`receipt_unverified` stand on the executor call's own record, which a resume does not change, so a resume holds the node again until
+the child acts on the hold. Any other check that judged nothing (`tree_moved`, `head_moved`, `worktree_changed`, `tool_failed`, an invalid answer asked twice) escalates
+`unit_check_<state>` as a configuration question. A fix turn that answers `needs_research` goes through the research route on the
+same thread. A failed verification of the committed head goes back to the same thread as well, and its fix is checked again before
+the next commit; while round trips are left, standing tier evidence steps the tier before a fix round. A commit holds only checked
+work, so a fresh thread (a tier step, a rebuild) starts at the node's last commit and the uncommitted trees of the attempt it leaves
+are abandoned there (its packet carries their last findings and receipt); a resume replays the calls that made them as recorded facts,
+since nothing reads their effect again, and runs none of them live (journal.md, the proofs).
+
+**Review.** `crw.review(node, plan, head, ci, opts)` is the old reviewer path, kept for the journals of old runs: neither the project
+lane nor `land-head` calls it, nor `crw.reviewHalt` or `crw.exploreEvidence`. It is a fresh reviewer thread over the committed head (SP-REV-1), with the record
 of its answer (`crw.review` row: node, head, criteria digest, state). The state is `verdict` only for a completed, valid `VERDICT` of a
 reviewer whose model family differs from every author of the node (the node's executors and the architect); a `verified` verdict
 names no unmet criterion and no defect of P0 to P2, and a defect of kind `evidence_missing` carries its `evidence_question`. The
@@ -424,8 +454,9 @@ a defect records the skip.
 
 **Tier evidence (SP-TIER-1).** `crw:lib/evidence` keeps the evidence of one node and tier from the results the lane feeds it: (a)
 `needs_changes` in two consecutive reviewed rounds with a finding digest in both (`FindingDigest`: kind, file, line and the words of
-the finding), (b) the required verification failing on two consecutive committed heads, (c) `null_model` on two consecutive executor
-calls of the tier, (d) four reviewed rounds without a verified verdict. `crw.tierStep` then mints the step decision and
+the finding), and in the node lane two consecutive unit checks that rule `needs_changes` and share a finding id (file and text, no
+line; a verified check's findings block nothing and are no evidence: what is left of them after the round trips is carried), (b) the required verification failing on two consecutive committed heads, (c) `null_model` on two consecutive executor
+calls of the tier, (d) four reviewed rounds (reviews or unit checks) without a verified verdict. `crw.tierStep` then mints the step decision and
 `crw.stepRecord` appends the `flow_step_decisions` row (the rule, the letter of the evidence, the evidence ids, the head and tree of
 the node's last commit as the checkpoint; the step id is the engine's, or that id with a digest of the decision when the stored row of
 that id describes another checkpoint, which a suffix that runs again at the same position can reach); only then does a fresh `executor-t1` call start, in a new worktree at that commit,
@@ -433,8 +464,10 @@ carrying the id. The same evidence on `executor-t1` is SP-TIER-2: the node escal
 execution and returns its slot. A self-reported failure, `needs_research`, `blocked_scope`, a single `null_model`, `null_unknown` and
 every held, refused or superseded result are never evidence.
 
-**Land.** `crw.land` is `crw.accept` and then `crw.integrate`. `crw.accept` needs the passing verification record and the verified
-review of the head in the journal, assembles the premerge-record/1 from the verdict (a code step: `ops.AssemblePremerge`), judges it
+**Land.** `crw.land` is `crw.accept` and then `crw.integrate`. `crw.accept` needs the passing verification record of the head in the
+journal and its judgment: the completed `crw.unitCheck` row of role `unit-check` on the head (its commit, or its tree equal to the
+head's) with result state `ok` and verdict `verified` (`ops.UnitCheckVerdict`), or, on the old reviewer path, the verified review of the
+head. It assembles the premerge-record/1 from that verdict (a code step: `ops.AssemblePremerge`), judges it
 as the relay's acceptance will, and asks the relay for the agent acceptance (R05); every finding that needs a disposition is
 `blocking` by default, and only the owner thread separates or carries one, so such a head is `land_refused` (`premerge_blocked`) and
 the lane escalates. `crw.integrate` lands the accepted head on the integration target. A refusal of either is an op error that carries
@@ -457,8 +490,9 @@ inline (SP-INL-1), reuse an answer (SP-INL-2), skip, refuse or hand a question t
 | `issuePlan(node)` | the node's entry of the DESIGN of its release revision | always |
 | `commit(node, call, regions)` | the commit of the call's recorded `pending_tree` (`commit`, `parent`, `tree`, `out_of_scope`, the receipt's outcome and `plan_mismatch`) | the commit is on the history of the node's worktree |
 | `verify(node, head, opts)` | the verification (`ok`, `command`, `digest`, the record); a verification that could not run is `ran: false`, not a failure. With no node, `opts` names the milestone, the command and the base: the verification of the integrated head for the final gate, in a worktree of the repository | always while it ran |
-| `review(node, head, criteriaDigest, call, opts)` | the `ReviewResult` | always |
-| `accept(node, head)` / `integrate(node, head, acceptanceId)` | the acceptance id / the batch commit and the target tip | the acceptance is active and not stale / the batch commit is on the target |
+| `unitCheck(node, call, opts)` | the unit check of the node's work by the review tool, run in Go (no agent call): uncommitted mode over the changes executor call `call` left, or, with `opts.commit` and `opts.base`, committed mode over `base..commit`; the `reviewadapter.Result`, the `hold` the lane is to write (`unit_check_quota`, `unit_check_no_answer`, `receipt_*`), `retried`, the judged call and the check's id | always, but a check that names a `hold` (asked again) |
+| `review(node, head, criteriaDigest, call, opts)` | the `ReviewResult` (the old reviewer path) | always |
+| `accept(node, head, opts)` / `integrate(node, head, acceptanceId)` | the acceptance id (`opts.carried`: the findings the node lane carried, each `{id, check}`, read from the record of the check that carried it into the premerge record's defects) / the batch commit and the target tip | the acceptance is active and not stale / the batch commit is on the target |
 | `escalate(node, info)` / `hold(node, info)` | the escalation flow row and, for `tiers_exhausted`, `blocked_scope` and `size_split`, the relay's close of the execution; the hold (the relay is told, nothing is closed) | always |
 | `decide(node, ask)` | whether a `decision_applied` row answers the ask | no applied row has appeared since |
 | `spawnDecision`, `stepRecord`, `exploreRoute`, `exploreRecord` | the decision rows and the answers the reuse reads | always |
@@ -476,7 +510,8 @@ inline (SP-INL-1), reuse an answer (SP-INL-2), skip, refuse or hand a question t
 
 The composites (`crw:lib/lane` and `crw:lib/close`, made members of `crw` by `install(crw)`; they take no position of their own): `crw.dag`,
 `crw.review`, `crw.reviewHalt`, `crw.explore`, `crw.exploreEvidence`, `crw.land`, `crw.tierStep`, `crw.evidence`, `crw.skip`,
-`crw.closeMilestone`, `crw.settleReviews` and `crw.milestoneHalt`. `crw.dag` takes an `onSignal` function (below). The seams the operations are built on - `Relay` (the scheduler: milestone, release, agent
+`crw.closeMilestone`, `crw.settleReviews` and `crw.milestoneHalt`; `crw.review`, `crw.reviewHalt` and `crw.exploreEvidence` are the old
+reviewer path, kept for the journals of old runs, and no shipped script calls them. `crw.dag` takes an `onSignal` function (below). The seams the operations are built on - `Relay` (the scheduler: milestone, release, agent
 acceptance and integration, the close of an execution), `Verifier` (`CILocalVerifier` runs `crw-dev ci local` through the verifier's tools of the configuration, [the verifier's tools](../runtime-install.md#the-verifiers-tools)), `Decisions`
 (`StoreDecisions` writes the relay store), `Threads` (the host the close reads the reviewer threads from and archives them on) and
 `Reporter` (F11) - are interfaces in `internal/flow/ops/seams.go`; the dagsched-backed `Relay` belongs to the run process.
@@ -486,8 +521,8 @@ acceptance and integration, the close of an execution), `Verifier` (`CILocalVeri
 The child decides how the work of an issue is made: a project-lane run, or its own subagents outside any run (CRW-1316 §18.3). A head made
 outside a run lands through the gates of a run, never past them: `internal/flow/workflows/land-head.js` (CRW-1354) is the gate-only
 workflow, `crw flow start land-head --handoff FILE --args '{"plan": P, "milestone": M, "issue": KEY, "head": COMMIT-OR-BRANCH, "authors":
-[THREAD, ...]}'`, where `authors` are the subagent threads that wrote the head. It makes no executor, architect or design-audit call and
-fixes nothing. Its steps:
+[THREAD, ...]}'`, where `authors` are the subagent threads that wrote the head. It makes no executor, architect, design-audit or reviewer
+call and fixes nothing. Its steps:
 
 - `crw.release(plan, node, milestone, {pinned: true, land: {head, authors}})` releases the node to the run with no DESIGN: the head is
   resolved in the run's repository, each author thread is read back from the host (`thread/read`, the configured pair; `Threads` provides
@@ -496,19 +531,25 @@ fixes nothing. Its steps:
   (`author_model`, `author_effort`; `AgentReleaseOptions` of `ReleaseAgent`, the stored form unchanged). The head is then checked out,
   detached, in `<state>/flow/<run>/land-wt/<node>-<commit>`, the worktree the row names and the execution's handle points at, and the row
   records the commit, its tree, its base (the merge-base with the integration tip), the paths it changes and the authors with their pairs.
-- The gates are the lane's: `crw.verify` of that head (verification-record/1 of the exact tree), `crw.review` with a fresh reviewer whose
-  model family has to differ from every author the release observed (`independence_refused` for one of the same family,
-  `independence_unproven` when the pair of any author it names was not read back), and `crw.land` (`crw.accept`, the relay's agent acceptance, which judges the
-  reviewer against the pair the execution records, then `crw.integrate`). They write the rows they write for a node of a project lane.
+- The gates are the lane's: `crw.verify` of that head (verification-record/1 of the exact tree), one unit check in the committed mode,
+  `crw.unitCheck(node, null, {commit: head, base: head.base})` (CRW-1468): the review tool run in Go over `base..head` of the land
+  checkout, with no reviewer call; a head made outside a run has no executor, so the check's row records the receipt `no_executor`. The
+  committed profile's reader takes an answer only when it names the requested range `base..head` by its commit ids and no other range,
+  so until that profile is replaced a clean answer that names no range or another one fails closed as `unit_check_invalid`. Then
+  `crw.land` (`crw.accept` on that check, the relay's agent acceptance, which judges the check's model family against the pair the
+  execution records: `independence_refused` for a check of the authors' family, `independence_unproven` when the pair of any author it
+  names was not read back; then `crw.integrate`). They write the rows they write for a node of a project lane.
 - The only refusals are input errors (no head, a head git does not resolve, authors of more than one model family - one execution row
   records one author pair - and an issue that is not a node of the milestone) and the gates. Named limit: authors of more than one model
-  family are refused `land_author_families_mixed` before any gate, even where a reviewer of a third family would be independent of all of
+  family are refused `land_author_families_mixed` before any gate, even where a check of a third family would be independent of all of
   them, because the execution row holds one author pair; lifting it changes the relay's stored form, so such a head is landed one family's
   work at a time, or made in a project-lane run (CRW-1397). A land one of whose named authors is not read back records no author pair on
   the execution (`land_author_pair_unrecorded`, a warning of the row: the observed pair would stand for authors the run does not know),
-  and the review is `independence_unproven`; the pairs the host reads back are trimmed. A verification that fails, a review that is
-  not verified and a land the relay refuses end the run escalated for the child (`land_verification_failed`, `land_review_needs_changes`,
-  the relay's reason); a review that is not independent escalates as a configuration fault. An author whose pair is not read back, no
+  and the acceptance is `independence_unproven`; the pairs the host reads back are trimmed. A verification that fails, a check that
+  finds a blocking defect and a land the relay refuses end the run escalated for the child (`land_verification_failed`,
+  `land_review_needs_changes` with the ids of the check's findings carried on the escalation, the relay's reason); a check that gives no
+  judgment (`unit_check_<state>`) and a check that is not independent escalate as a configuration fault. The findings of a verified check
+  that block nothing land as premerge defects. An author whose pair is not read back, no
   author named and a path outside the node's regions are warnings of the release row (`land_author_unobserved`, `land_authors_unnamed`,
   `land_out_of_scope`). A lost epoch ends the run `stopped` with `epoch_lost`.
 - The gate-only lane fixes nothing: the child changes the head and lands it again, in a new run. A land that ends escalated gives its
@@ -517,8 +558,9 @@ fixes nothing. Its steps:
   worktree and the pair of the authors it names. Only the relay's refusal to close an execution that has to stay (its accepted head
   landed or may be in the target, a `disposition_conflict`) is the row's `close_refused`; any other relay error is asked again in place,
   and one that keeps failing is the op's error, so the run ends on it rather than leaving its execution current under a run that has
-  ended (CRW-1397). A hold (a verifier or a reviewer the host cannot run now) keeps the release, and the run goes on with
-  `crw flow resume` or gives the release up with `crw flow cancel`. A node whose current execution another run holds is not released
+  ended (CRW-1397). A hold - a verifier the host cannot run now (`verify_unavailable`), or a check the tool gave no judgment for its
+  quota or no answer (`crw.hold` with source `unit_check`) - keeps the release, and the run goes on with `crw flow resume`, which asks
+  the tool again, or gives the release up with `crw flow cancel`. A node whose current execution another run holds is not released
   to the land: `crw.release` answers `land_node_held` with that run and its execution, before the run claims the plan's coordinator
   epoch, and no gate runs. The answer names what settles it: `crw flow resume` of a run that has not ended, and `crw flow cancel` of
   one that has (the row records `held_run_state` and the warning `land_node_held_by_ended_run`), whose cancel gives up the executions
@@ -711,7 +753,7 @@ report, not a finding.
 
 | Rule | What it finds |
 | --- | --- |
-| `lifecycle_land_twice`, `lifecycle_land_without_review`, `lifecycle_order` | A lifecycle automaton per executor node and per function that calls `crw.commit`, `crw.verify`, `crw.review` or `crw.land`: build once (a rebuild is allowed until the node has landed), then rounds of commit, verify, review, then land at most once, from a completed review. A call starts its event where it runs and completes where its promise is used: awaited, returned, passed on or kept by the expression around it (the right side of `&&`, `||` or `??`, the left side of `||` or `??`, the last part of a sequence, a branch of `?:`, the value of an assignment), or read (passed on, closed over, `{ p }`) through a name that holds it. A promise whose value is discarded never completes: a call used as a statement, under `void` or another unary operator, in a sequence but its last part, on the left of `&&`, in a test, a comparison, arithmetic or an untagged template, and a held name read only in such a place; a stored promise that nothing reads leaves the node where it was, so `crw.review(...)` without `await` is not a review a later `crw.land` can follow. Started is enough for two rules: a second `crw.land` is a land twice whether or not the first was awaited, and a `crw.commit` started after a review leaves the node built (a change no round has committed), so the land needs a new round. A build, commit or land of a node, started, begins a new generation of it: a promise of an earlier call of that node that settles afterwards belongs to the head before it, so it neither makes the new head committed, verified or reviewed nor takes a started land back (an old `crw.review` awaited after a new `crw.commit` or after `crw.land` changes nothing). Where paths meet, a name keeps every call it may hold there, each with its own generation, and reading it puts the node in any phase one of those paths reaches, so the result does not depend on which branch the text lists first: `let r = crw.review(...)`, then a new round on one branch and `r = crw.review(...)` of the current head on the other, then `await r` and `crw.land`, has a reviewed path and is no finding in either branch order. A `break` or `continue` with a label goes to the statement the label names. A node is named by the `node` option of its executor call and by the first argument of the `crw.*` calls, so the phase of one node never stands for another's; a node the function does not build is taken as built. A violation is reported when it is illegal on every path that reaches it; the finally block of a try is checked from the state at the end of the body or handler and from the state of each completion that leaves through it (a throw no handler takes, a return, a break or continue to a loop outside the try), and that completion then goes on where it was going with the state the block leaves, unless the block returns, throws, breaks or continues itself. A handler starts from the state before the body or after any call in it, and an exception it takes no longer reaches the finally block. |
+| `lifecycle_land_twice`, `lifecycle_land_without_review`, `lifecycle_order` | A lifecycle automaton per executor node and per function that calls `crw.commit`, `crw.verify`, `crw.review`, `crw.unitCheck`, `crw.land` or a land release: build once (a rebuild is allowed until the node has landed), then rounds of commit, verify, review, then land at most once, in one of two ways: from a completed review, or, the second way, from verified when a completed unit check of the node's current tree stands (build, unit check, commit, verify, land; also release(land), verify, unit check, land). A `crw.unitCheck` is legal while the node is built (before the commit, also after a fix) or verified (a committed head) and changes no phase: it sets the node's checked flag (in the journal only a completed `crw.unitCheck` row of role `unit-check` whose `state` is `ok` with a `verdict`: a check held for the tool's quota or a blank answer judged nothing), which a build, a resumed executor call of the node (a fix changes the tree) and a land release clear and a commit and a verify keep; where paths meet, a node is checked only when it is checked on every path. A land release is a `crw.release` whose fourth argument is an object literal with a `land` key (in the journal, a completed `crw.release` row with `kind` `land` and `released` true): `land-head` checks out a committed head, so it moves a node before the build or built to committed; any other release is no event, and an identifier as the fourth argument is none either. A call starts its event where it runs and completes where its promise is used: awaited, returned, passed on or kept by the expression around it (the right side of `&&`, `||` or `??`, the left side of `||` or `??`, the last part of a sequence, a branch of `?:`, the value of an assignment), or read (passed on, closed over, `{ p }`) through a name that holds it. A promise whose value is discarded never completes: a call used as a statement, under `void` or another unary operator, in a sequence but its last part, on the left of `&&`, in a test, a comparison, arithmetic or an untagged template, and a held name read only in such a place; a stored promise that nothing reads leaves the node where it was, so `crw.review(...)` without `await` is not a review a later `crw.land` can follow. Started is enough for two rules: a second `crw.land` is a land twice whether or not the first was awaited, and a `crw.commit` started after a review leaves the node built (a change no round has committed), so the land needs a new round. A build, commit or land of a node, started, begins a new generation of it: a promise of an earlier call of that node that settles afterwards belongs to the head before it, so it neither makes the new head committed, verified or reviewed nor takes a started land back (an old `crw.review` awaited after a new `crw.commit` or after `crw.land` changes nothing). Where paths meet, a name keeps every call it may hold there, each with its own generation, and reading it puts the node in any phase one of those paths reaches, so the result does not depend on which branch the text lists first: `let r = crw.review(...)`, then a new round on one branch and `r = crw.review(...)` of the current head on the other, then `await r` and `crw.land`, has a reviewed path and is no finding in either branch order. A `break` or `continue` with a label goes to the statement the label names. A node is named by the `node` option of its executor call and by the first argument of the `crw.*` calls, so the phase of one node never stands for another's; a node the function does not build is taken as built. A violation is reported when it is illegal on every path that reaches it; the finally block of a try is checked from the state at the end of the body or handler and from the state of each completion that leaves through it (a throw no handler takes, a return, a break or continue to a loop outside the try), and that completion then goes on where it was going with the state the block leaves, unless the block returns, throws, breaks or continues itself. A handler starts from the state before the body or after any call in it, and an exception it takes no longer reaches the finally block. |
 | `reviewer_family_same` | A review call (its prompt is `crw.reviewPacket(...)` or its label starts with `review`) whose model family (`claude`, `gpt`, taken from the model of its role's pair) is the model family of the author call before it. A role is not a family: an `explorer` on the executor's model is no independent review. A continuation (`resume:`) is judged by the pair of the thread it continues. The dry run judges the pair each call was configured with. |
 | `label_duplicate` | A label used twice on one path, or on a call that a loop with at least two rounds shown by the text (`for (let i = 0; i < 3; i++)`, `for (const x of [..])`) runs every round: no break, continue, return or throw in the loop, and no condition between the loop and the call. The first round of a `do … while` counts as one run, so `do { … } while (false)` uses its labels once. Any other repeat is judged by the dry run, which sees whether the call really repeats. Calls without a label do not count. |
 | `executor_t1_without_step_decision` | An `executor-t1` call without a `stepDecision`, or whose `stepDecision` is not the id `crw.tierStep` returned earlier on the same path and not overwritten since (the walk follows assignments through branches and loops). A plain function call stays on its caller's path, so a helper that reads the id from its closure or a parameter is left to the dry run; a function given to `parallel`, `pipeline` or `crw.dag` runs on a child path, and a decision it reads from the function that starts it is refused. A continuation inherits it from its handle. The dry run refuses an id that no `crw.tierStep` returned on the path. |
@@ -784,9 +826,12 @@ A backend that places calls adds to a call's rows: the `allocation` member of `p
 `restore_snapshot_mismatch`, `dispatch_unknown`) with the call and node they stopped.
 
 The run surface (`crw flow`, [flow.md](../../plugins/crw/skills/crw-canon/references/flow.md#the-crw-flow-command-table)) adds the rows it writes
-and reads. A pause asked for from outside the engine (`crw flow pause`, a run deadline) is one `run_paused` flow row (`by`, `reason`)
-and then the calls that would send end held `engine_paused`. A process the operator paused (`by` `operator`) that would end completed
-ends with a `run/paused` row (`status` `paused`, and the `by` and `reason` of the operator's last ask) instead of the `finished` row:
+and reads. A pause asked for from outside the engine (`crw flow pause`, a run deadline, the drain of `crw flow answer`) is one `run_paused` flow row (`by`, `reason`)
+and then the calls that would send end held `engine_paused`. The operator's pause (SIGUSR1) and a deadline interrupt the turns in flight;
+the drain of an answer to a run a process holds (SIGUSR2, `by` `answer`) lets them end and holds each call's next request, and is
+asked once (a second drain, or a drain after a pause, writes no row). A process the operator or an answer paused (`by` `operator` or
+`answer`) that would end completed ends with a `run/paused` row (`status` `paused`, and the `by` and `reason` of the last such ask)
+instead of the `finished` row:
 the engine's status is `paused`, the run process exits 0 and the hook tells no completion; a deadline, a token budget or a quota
 pause ends with the `finished` row as before. A pause asked once the process has decided its end (while it writes its end row or tells
 its completion) is refused and writes no row, so the `run_paused` rows and the end row agree. `crw flow show`, the digest and `crw flow
@@ -803,12 +848,14 @@ lane's result>, lanes}`) carries the outcome of that object, and its own state a
 a script), not a result, and is not read as one. The outcome state is read in this order: the `milestone` object without an `id`
 and with a non-empty string `state` is the wrapped result, and its state wins; a `milestone` member that carries an `id`, or that
 has no non-empty string `state`, is not read as one, and otherwise the top-level string `state` is the outcome state. A value whose
-own `state` is not a non-empty string has no outcome. It is told in place of
+own `state` is not a non-empty string has no outcome. The top-level string `state` of a completed script is its outcome
+whatever that state means to the script: the engine does not restrict its values (the repository's workflows return the
+milestone's state). It is told in place of
 `status=completed` (a script that wants `status=completed` returns no `state`). The completion notice and `crw flow ps` read the outcome from there ([reporting.md](reporting.md)). The state of a run (`running`, `paused`, `dead`, `held`, `completed`,
 `blocked`, `cancelled`, `failed`) is not a row: it is read from the run lock, the last `started`, `finished` and `run/paused` rows (a
 run no process holds whose last process ended with `run/paused` is `paused`, not `dead`), the calls' rows
 (`internal/flow/callstate`), the questions no `decision_applied` row has answered and, for `blocked`, the lane's own rows. A run meant
-to start the nodes of a plan (a run of `project-lane` or `night-batch`, an old run of an issue child's lane, or a run whose arguments name a `plan`) whose last
+to start the nodes of a plan (a run of `project-lane` or `night-batch`, an old run of a `child` session's lane, or a run whose arguments name a `plan`) whose last
 process finished `completed` with nothing left to go on with is `blocked` when no process of it started a node (no completed
 `crw.release` row released one, no `crw.releaseChild` row an older build recorded released a child, no `crw.integrate` row landed one) and items of its joins threw
 in its last process (`item_error` rows: a lane of `crw.dag` whose `crw.release` failed is one). The engine's status of the run stays
@@ -1129,7 +1176,8 @@ run's directory `<state>/flow/<run>/` and none writes the journal, which only th
   started row when the process lock it names is held, or a newest row that names no process (one of a process of a crw before the
   process lock, which bound before it recorded its row) when no process lock of the run is held. A run whose holder has not recorded
   its started row yet (the newest row names a process lock that was let go, or names none while a process lock of the run is held:
-  the holder is coming up, or a command such as `crw flow answer` holds the run between two processes), or whose start holds its
+  the holder is coming up, or a command that writes a row holds the run lock for a moment: an answer holds it from the end of the
+  process it drained until its row is stored, and the resume it starts takes the lock after it), or whose start holds its
   start lock, is `starting`: next reads it again, up to 15 seconds whatever `--wait` says, never takes an earlier process's pins for
   the holder's and resumes nothing; still starting then, it answers `starting` with no spawn formats and a hint to ask again (at once
   without `--wait`, else when the state changes or `--wait` runs out). A holder that took its process lock less than 15 seconds ago,

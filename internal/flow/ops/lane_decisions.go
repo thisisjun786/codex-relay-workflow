@@ -286,9 +286,13 @@ func headDigest(q, head string) string { return textDigest(normalizeQuestion(q) 
 //   - an open question whose scope starts with the notation of an out-of-authority kind (AuthorityScope) goes to the orchestrator
 //     thread as a design question and to no explorer (reason out_of_authority); the milestone goes on;
 //   - otherwise an explorer is spawned (SP-EXPL-1/2/3) - for the open questions at most ExplorersPerMilestone in the milestone, the
-//     rest go to the orchestrator thread as design questions (reason explorer_cap); for a research question at most
-//     ResearchPerTier continuations a tier, then the node escalates as a scope question; for an evidence question at most
+//     rest go to the orchestrator thread as design questions (reason explorer_cap); for an evidence question at most
 //     EvidenceExplorersPerNode a node;
+//   - a research question of a node gets at most ResearchPerTier continuations a tier, the spawned and the reused (an answer of
+//     the run, this node's or another's) alike; the next one - answered in the run or not, whatever files it names - escalates the
+//     node as a scope question (reason research_cap): a question the asker could answer itself (SP-INL-1) that was answered is
+//     still a reuse, and only an unanswered one of those (inline) is no continuation. This op is the only counter of the cap
+//     (CRW-1470);
 //   - a background question of a milestone node (ExploreBackground, SP-EXPL-1) that no answer in the run reaches spawns an explorer
 //     (reason spawned_background): it is never answered inline whatever its files_needed, never goes to the orchestrator, and neither
 //     uses nor counts against the open questions' cap of the milestone.
@@ -375,25 +379,28 @@ func (o *exploreRouteOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 	r := rows(req.Journal.Events())
 	answered := answeredDigests(r)
 	asked := askedDigests(r)
-	spawnedMilestone, spawnedNode, spawnedTier := 0, 0, 0
+	// researchedTier counts the research continuations of the node on the tier: the spawned and the reused routes alike
+	// (CRW-1470); the others count the spawned explorers
+	spawnedMilestone, spawnedNode, researchedTier := 0, 0, 0
 	for _, prior := range r.opRows(OpExploreRoute) {
 		pctx := routeContext(prior)
+		pkind := dataStr(prior, "kind")
 		list, _ := prior.Data["routes"].([]any)
 		for _, item := range list {
-			if rt, _ := item.(map[string]any); str(rt, "route") != RouteSpawn {
+			rt, _ := item.(map[string]any)
+			proute := str(rt, "route")
+			if pkind == ExploreResearch && kind == ExploreResearch && pctx.Node != "" && pctx.Node == ec.Node && pctx.Tier == ec.Tier &&
+				(proute == RouteSpawn || proute == RouteReuse) {
+				researchedTier++
+			}
+			if proute != RouteSpawn {
 				continue
 			}
-			pkind := dataStr(prior, "kind")
 			if pkind == ExploreOpen && kind == ExploreOpen && pctx.Milestone == ec.Milestone {
 				spawnedMilestone++
 			}
-			if pctx.Node != "" && pctx.Node == ec.Node {
-				if pkind == ExploreEvidence && kind == ExploreEvidence {
-					spawnedNode++
-				}
-				if pkind == ExploreResearch && kind == ExploreResearch && pctx.Tier == ec.Tier {
-					spawnedTier++
-				}
+			if pctx.Node != "" && pctx.Node == ec.Node && pkind == ExploreEvidence && kind == ExploreEvidence {
+				spawnedNode++
 			}
 		}
 	}
@@ -416,7 +423,14 @@ func (o *exploreRouteOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 			rt.Files = []string{}
 		}
 		inlineOK := kind == ExploreResearch && q.FilesNeeded != nil && (len(q.FilesNeeded) <= InlineFiles || inRegions(q.FilesNeeded, ec.Regions))
+		// a question the asker could answer (inlineOK) is still reused when it was answered or is a repeat of the round: the reuse is
+		// a continuation, which the cap counts as it counts a spawn
+		reused := answered[rt.Digest] != nil || first[key] != 0
 		switch {
+		case kind == ExploreResearch && (!inlineOK || reused) && researchedTier >= ResearchPerTier:
+			// before the reuse: a continuation past the cap escalates whether its question was answered in the run or not, whatever
+			// files it names; only an unanswered question the asker answers itself (inline) is no continuation of the cap
+			rt.Route, rt.Reason = RouteEscalate, "research_cap"
 		case answered[rt.Digest] != nil:
 			a := answered[rt.Digest]
 			rt.Route, rt.Rule, rt.Answer, rt.Reason, rt.Origin = RouteReuse, RuleInl2, a.answer, "answered_in_run", a.origin
@@ -449,8 +463,6 @@ func (o *exploreRouteOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 		case kind == ExploreOpen && spawnedMilestone >= ExplorersPerMilestone:
 			rt.Digest = text
 			rt.Route, rt.Reason = RouteOrchestrator, "explorer_cap"
-		case kind == ExploreResearch && spawnedTier >= ResearchPerTier:
-			rt.Route, rt.Reason = RouteEscalate, "research_cap"
 		case kind == ExploreEvidence && spawnedNode >= EvidenceExplorersPerNode:
 			rt.Route, rt.Reason = RouteSkip, "evidence_cap"
 		default:
@@ -458,11 +470,12 @@ func (o *exploreRouteOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 			switch kind {
 			case ExploreOpen:
 				spawnedMilestone++
-			case ExploreResearch:
-				spawnedTier++
 			case ExploreEvidence:
 				spawnedNode++
 			}
+		}
+		if kind == ExploreResearch && (rt.Route == RouteSpawn || rt.Route == RouteReuse) {
+			researchedTier++
 		}
 		if first[key] == 0 {
 			first[key] = i + 1

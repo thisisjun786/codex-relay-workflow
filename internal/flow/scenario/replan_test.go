@@ -15,6 +15,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/reviewadapter"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/workflows"
 )
@@ -147,7 +148,7 @@ func TestReviewerFinalMisalignedReplansSameArchitect(t *testing.T) {
 	if got.State != "replanned" || got.Revision != "r1" || !slices.Equal(got.Reasons, []string{"reviewer_final_misaligned"}) || got.Reflection != "ALIGNED" || got.Final != "MISALIGNED" {
 		t.Fatalf("%+v; calls %v", got, l.Labels())
 	}
-	want := []string{"architect", "design-audit:r1", "build:A:executor", "review:A:r1", "build:B:executor", "review:B:r1", "reviewer-final:M1", "reflection:M1", "replan:close", "design-audit:replan-close:r1"}
+	want := []string{"architect", "design-audit:r1", "build:A:executor", "build:B:executor", "reviewer-final:M1", "reflection:M1", "replan:close", "design-audit:replan-close:r1"}
 	if labels := l.Labels(); !slices.Equal(labels, want) {
 		t.Fatalf("calls %v, want %v", labels, want)
 	}
@@ -381,9 +382,15 @@ func mismatching(l *Lab, nodes ...string) {
 	}
 }
 
-// reviewsAfterFix scripts the verdicts of a node: needs_changes (a fix and a second RECEIPT follow), then verified.
+// fixedOnce scripts the unit checks of a node: the check of round 1 has one finding (a fix and a second RECEIPT follow), the later
+// ones none. The answer is the round's, in every process: a resume that checks round 1 again is answered as the first process was.
 func fixedOnce(l *Lab, node string) {
-	reviews(l, node, Verdict(false, Defect("d1", "correctness", "P2", "fix this")), Verdict(true))
+	l.OnUnitCheck(func(c CheckInfo) (UnitCheck, bool) {
+		if c.Node != node || c.Round != 1 {
+			return UnitCheck{}, false
+		}
+		return NeedsChanges(Finding("P2", "fix this")), true
+	})
 }
 
 // threeNodes are A, which B and C wait for.
@@ -808,7 +815,13 @@ func TestReplanRefreshesAdmissionRegions(t *testing.T) {
 	if c < b {
 		first, second, b, c = "C", "B", c, b
 	}
-	if b < 0 || c < 0 || c < slices.Index(labels, "review:"+first+":r1") {
+	firstLanded := 0
+	for _, r := range l.Rows("crw.integrate") {
+		if str(r.Data, "node") == first {
+			firstLanded = r.Seq
+		}
+	}
+	if b < 0 || c < 0 || firstLanded == 0 || callNamed(t, l, "build:"+second+":executor").Seq <= firstLanded {
 		t.Errorf("calls %v: the executor of %s started before the lane of %s ended although the revision gives both shared/", labels, second, first)
 	}
 }
@@ -895,14 +908,11 @@ func planRevisionWorld(t *testing.T, stop func(engine.Event) bool) *Lab {
 	t.Helper()
 	l := NewLab(t, fourNodes()...)
 	gate := make(chan struct{})
-	l.On("^review:A:r1$", func(*Call) *fakehostPlan {
-		p := Say(Verdict(true))
-		p.Gate = gate
-		return &p
-	})
+	// A's unit check answers once the plan was revised
+	l.UnitChecks("A", UnitCheck{Gate: gate})
 	var once, stopped atomic.Bool
 	l.OnRow(func(ev engine.Event) {
-		// the signal of A's RECEIPT is decided; the plan is revised after it, and A's review goes on
+		// the signal of A's RECEIPT is decided; the plan is revised after it, and A's unit check goes on
 		if ev.Kind == engine.KindCall && ev.Op == "crw.signalDone" && ev.Event == engine.EvCompleted && once.CompareAndSwap(false, true) {
 			for _, id := range []string{"B", "C"} {
 				l.Relay.ChangeNode(id, func(n *NodeSpec) { n.Regions = append(slices.Clone(n.Regions), id+"-more/") })
@@ -1069,8 +1079,8 @@ func editBuildOf(node string) func(string) string {
 // editBuildOfWith is editBuildOf with the text the prompt ends with.
 func editBuildOfWith(node, mark string) func(string) string {
 	return func(text string) string {
-		return strings.Replace(text, "return agent.call(packet(node, plan, checkpoint, notes), opts)",
-			"return agent.call(packet(node, plan, checkpoint, notes) + (node === '"+node+"' ? '\\n\\n"+mark+"' : ''), opts)", 1)
+		return strings.Replace(text, "return agent.call(packet(node, plan, checkpoint, last), opts)",
+			"return agent.call(packet(node, plan, checkpoint, last) + (node === '"+node+"' ? '\\n\\n"+mark+"' : ''), opts)", 1)
 	}
 }
 
@@ -1100,8 +1110,8 @@ func supersededCalls(l *Lab, since int) map[string]bool {
 }
 
 // supersededWorld is the run the two resume scenarios start from: node A, whose RECEIPTs report two plan mismatches (signal 2 makes
-// r1), and node Z, whose lane starts after r1 was recorded, so that the nodes waiting for Z are released under r1. The review of A's
-// last round is held (the host is overloaded): A is not accepted when the run ends, incomplete.
+// r1), and node Z, whose lane starts after r1 was recorded, so that the nodes waiting for Z are released under r1. The unit check of
+// A's last round is held (the tool's quota): A is not accepted when the run ends, incomplete.
 type supersededWorld struct {
 	l      *Lab
 	edited atomic.Bool
@@ -1132,13 +1142,12 @@ func newSupersededWorld(t *testing.T, setup supersededSetup) *supersededWorld {
 	w := &supersededWorld{l: NewLab(t, nodes...)}
 	l := w.l
 	l.Cap = setup.Cap
-	// the rule that holds the last review of A back is asked before the one that answers it
-	l.On("^review:A:r2$", func(*Call) *fakehostPlan {
-		if w.edited.Load() {
-			return nil
+	// the rule that holds the last unit check of A back is asked before the scripted answers
+	l.OnUnitCheck(func(c CheckInfo) (UnitCheck, bool) {
+		if c.Node != "A" || c.Round != 2 || w.edited.Load() {
+			return UnitCheck{}, false
 		}
-		p := Fail("serverOverloaded")
-		return &p
+		return UnitCheck{State: reviewadapter.StateQuota}, true
 	})
 	mismatchingWhile(l, func() bool { return !w.edited.Load() }, "A")
 	fixedOnce(l, "A")
@@ -1270,8 +1279,8 @@ func TestSupersededTriggerSupersedesSignalAndRevision(t *testing.T) {
 
 // A recorded trigger of a lane that ran a call live in the resume does not come any more, and the signal path does not wait for the lane
 // to end to know it. The earlier process made its second signal of two RECEIPTs of A - the build and the fix round, which both came
-// while the re-plan of the first signal was being made. The resume runs A's build again (its prompt was edited) and A's first review now
-// verifies, so the fix round is not made: the second signal is bound live, with A's new RECEIPT, while A's review still waits.
+// while the re-plan of the first signal was being made. The resume runs A's build again (its prompt was edited) and A's first unit check
+// now finds nothing, so the fix round is not made: the second signal is bound live, with A's new RECEIPT, while A's check still waits.
 func TestLiveLaneSettlesItsRecordedTriggerAtOnce(t *testing.T) {
 	nodes := []NodeSpec{
 		{ID: "Z", Issue: "CRW-Z", Title: "issue Z", Regions: []string{"z/"}},
@@ -1306,18 +1315,16 @@ func TestLiveLaneSettlesItsRecordedTriggerAtOnce(t *testing.T) {
 		p.Gate = replanGate
 		return &p
 	})
-	l.On("^review:A:r\\d+$", func(c *Call) *fakehostPlan {
-		var p fakehostPlan
+	l.OnUnitCheck(func(c CheckInfo) (UnitCheck, bool) {
 		switch {
+		case c.Node != "A":
+			return UnitCheck{}, false
 		case resumed.Load():
-			p = Say(Verdict(true))
-			p.Gate = reviewGate
-		case c.Label == "review:A:r1":
-			p = Say(Verdict(false, Defect("d1", "correctness", "P2", "fix this")))
-		default:
-			p = Fail("serverOverloaded")
+			return UnitCheck{Gate: reviewGate}, true
+		case c.Round == 1:
+			return NeedsChanges(Finding("P2", "fix this")), true
 		}
-		return &p
+		return UnitCheck{State: reviewadapter.StateQuota}, true
 	})
 	var seenFix, seenBind1 atomic.Bool
 	l.OnRow(func(ev engine.Event) {
@@ -1374,7 +1381,7 @@ func TestLiveLaneSettlesItsRecordedTriggerAtOnce(t *testing.T) {
 		t.Fatalf("resume: %s; calls %v; escalations %v", res.Value, l.Labels(), escalationReasons(l))
 	}
 	if byTimeout.Load() {
-		t.Fatalf("the second signal was not bound while A's review waited: the signal path waited for the RECEIPT of A's fix round, which the resume does not make")
+		t.Fatalf("the second signal was not bound while A's unit check waited: the signal path waited for the RECEIPT of A's fix round, which the resume does not make")
 	}
 	if c := labelsWithPrefix(l, "fix:A:"); len(c) != 1 {
 		t.Errorf("the fix rounds of A %v: the resume made one again", c)
@@ -1415,7 +1422,7 @@ func TestLaneUnderSupersededRevisionRebindsOrReruns(t *testing.T) {
 			t.Errorf("release_rebind rows for %v", nodes)
 		}
 		for _, c := range w.l.LiveCalls(before) {
-			if strings.Contains(c.Label, ":B:") || strings.Contains(c.Label, ":C:") || strings.HasPrefix(c.Label, "review:B") || strings.HasPrefix(c.Label, "review:C") {
+			if strings.Contains(c.Label, ":B:") || strings.Contains(c.Label, ":C:") {
 				t.Errorf("the lane of %q ran live", c.Label)
 			}
 		}
@@ -1475,8 +1482,14 @@ func TestLaneUnderSupersededRevisionRebindsOrReruns(t *testing.T) {
 		for _, c := range w.l.LiveCalls(before) {
 			live[c.Label] = true
 		}
-		if !live["build:B:executor"] || !live["review:B:r1"] {
-			t.Errorf("live calls %v: the lane of B runs from its first position", live)
+		checked := false
+		for _, ev := range rowsAfter(w.l, before) {
+			if ev.Kind == engine.KindCall && ev.Op == ops.OpUnitCheck && ev.Event == engine.EvCompleted && str(ev.Data, "node") == "B" {
+				checked = true
+			}
+		}
+		if !live["build:B:executor"] || !checked {
+			t.Errorf("live calls %v (B checked again: %v): the lane of B runs from its first position", live, checked)
 		}
 		if !supersededCalls(w.l, before)[oldBuild.ID] {
 			t.Errorf("the build of B the first process made was not superseded")
@@ -1504,7 +1517,7 @@ func TestLaneUnderSupersededRevisionRebindsOrReruns(t *testing.T) {
 			t.Fatalf("refusals %+v", refused)
 		}
 		for _, c := range w.l.LiveCalls(before) {
-			if c.Node == "B" || strings.Contains(c.Label, ":B:") || strings.HasPrefix(c.Label, "review:B") {
+			if c.Node == "B" || strings.Contains(c.Label, ":B:") {
 				t.Errorf("the lane of B ran %q although an acceptance rests on it", c.Label)
 			}
 		}
@@ -1513,11 +1526,11 @@ func TestLaneUnderSupersededRevisionRebindsOrReruns(t *testing.T) {
 
 // A resume that finds a signal it cannot replay (the trigger ran again) does not release a node it has not released before while it
 // waits to know: the node would stand under a revision that is about to be superseded and would land on its DESIGN with no rebind.
-// Here the process ended after the review of Z, so B and Y (which wait for Z) were never released; Z lands in the resume, the signal
+// Here the process ended after the unit check of Z, so B and Y (which wait for Z) were never released; Z lands in the resume, the signal
 // that made r1 cannot replay (A's build prompt changed) and the nodes are released under r0, at the default cap.
 func TestUnreleasedNodeNotReleasedUnderRevisionAboutToBeSuperseded(t *testing.T) {
 	stop := func(ev engine.Event) bool {
-		return ev.Kind == engine.KindCall && ev.Op == "agent" && ev.Event == engine.EvCompleted && ev.Label == "review:Z:r1"
+		return ev.Kind == engine.KindCall && ev.Op == ops.OpUnitCheck && ev.Event == engine.EvCompleted && str(ev.Data, "node") == "Z"
 	}
 	w := newSupersededWorld(t, supersededSetup{After: []string{"B", "Y"}, Stop: stop})
 	l := w.l
@@ -1557,12 +1570,12 @@ func TestSignalMembershipFromJournal(t *testing.T) {
 	}
 	l := NewLab(t, nodes...)
 	var resumed atomic.Bool
-	l.On("^review:", func(*Call) *fakehostPlan {
+	// every unit check of the first process is held (the tool's quota)
+	l.OnUnitCheck(func(CheckInfo) (UnitCheck, bool) {
 		if resumed.Load() {
-			return nil
+			return UnitCheck{}, false
 		}
-		p := Fail("serverOverloaded")
-		return &p
+		return UnitCheck{State: reviewadapter.StateQuota}, true
 	})
 	l.On("^build:A:executor$", func(c *Call) *fakehostPlan {
 		if resumed.Load() {
@@ -1973,12 +1986,12 @@ func TestReplanHeldResumesAsTheNextTurn(t *testing.T) {
 func TestLiveTriggerWithTheSameDigestSupersedesItsSignal(t *testing.T) {
 	l := NewLab(t, twoNodes()...)
 	var edited atomic.Bool
-	l.On("^review:A:r2$", func(*Call) *fakehostPlan {
-		if edited.Load() {
-			return nil
+	// the unit check of A's fix round is held (the tool's quota) until A's build prompt is edited
+	l.OnUnitCheck(func(c CheckInfo) (UnitCheck, bool) {
+		if c.Node != "A" || c.Round != 2 || edited.Load() {
+			return UnitCheck{}, false
 		}
-		p := Fail("serverOverloaded")
-		return &p
+		return UnitCheck{State: reviewadapter.StateQuota}, true
 	})
 	mismatchingWhile(l, func() bool { return true }, "A")
 	fixedOnce(l, "A")
@@ -2031,12 +2044,12 @@ func TestLiveTriggerWithTheSameDigestSupersedesItsSignal(t *testing.T) {
 func TestUnchangedResumeAfterALiveTriggerResumeIsZeroLive(t *testing.T) {
 	l := NewLab(t, twoNodes()...)
 	var edited atomic.Bool
-	l.On("^review:A:r2$", func(*Call) *fakehostPlan {
-		if edited.Load() {
-			return nil
+	// the unit check of A's fix round is held (the tool's quota) until A's build prompt is edited
+	l.OnUnitCheck(func(c CheckInfo) (UnitCheck, bool) {
+		if c.Node != "A" || c.Round != 2 || edited.Load() {
+			return UnitCheck{}, false
 		}
-		p := Fail("serverOverloaded")
-		return &p
+		return UnitCheck{State: reviewadapter.StateQuota}, true
 	})
 	mismatchingWhile(l, func() bool { return true }, "A")
 	fixedOnce(l, "A")
@@ -2085,17 +2098,16 @@ func TestUnchangedResumeAfterALiveTriggerResumeIsZeroLive(t *testing.T) {
 // A second resume that runs a trigger again after a resume that already did supersedes what the first one made: each live attempt of a
 // recorded signal is bound with an attempt of its own (live:<n>, one more than the row it does not replay), so its arguments are never
 // those of the row the earlier resume bound live, even when every trigger answers the digest it answered. A stays unaccepted after the
-// second process (the review of its last round is still held), the third process changes A's build prompt once more, and the fourth
+// second process (the unit check of its last round is still held), the third process changes A's build prompt once more, and the fourth
 // process changes nothing.
 func TestSecondLiveTriggerResumeSupersedesTheRevisionOfTheFirst(t *testing.T) {
 	l := NewLab(t, twoNodes()...)
 	var stage atomic.Int32
-	l.On("^review:A:r2$", func(*Call) *fakehostPlan {
-		if stage.Load() >= 2 {
-			return nil
+	l.OnUnitCheck(func(c CheckInfo) (UnitCheck, bool) {
+		if c.Node != "A" || c.Round != 2 || stage.Load() >= 2 {
+			return UnitCheck{}, false
 		}
-		p := Fail("serverOverloaded")
-		return &p
+		return UnitCheck{State: reviewadapter.StateQuota}, true
 	})
 	mismatchingWhile(l, func() bool { return true }, "A")
 	fixedOnce(l, "A")
@@ -2232,7 +2244,13 @@ func TestReplanRegionsCoverTheNodesAdmittedButNotReleased(t *testing.T) {
 	if c < b {
 		first, second, b, c = "C", "B", c, b
 	}
-	if b < 0 || c < 0 || c < slices.Index(labels, "review:"+first+":r1") {
+	firstLanded := 0
+	for _, r := range l.Rows("crw.integrate") {
+		if str(r.Data, "node") == first {
+			firstLanded = r.Seq
+		}
+	}
+	if b < 0 || c < 0 || firstLanded == 0 || callNamed(t, l, "build:"+second+":executor").Seq <= firstLanded {
 		t.Errorf("calls %v: the executor of %s started before the lane of %s ended although the revision gives both shared/", labels, second, first)
 	}
 }
@@ -2317,17 +2335,16 @@ func TestRF2ArchitectSuffixWorktreesRemovedAfterTerminal(t *testing.T) {
 			t.Errorf("%s: the architect suffix turn %s at head %s retains its call-private worktree %s (stat=%v)", when, f.label, f.head, f.path, err)
 		}
 	}
-	// world: the review of A's fix is held until the build prompt of A is edited; the resume with the edit runs A's lane and the
+	// world: the unit check of A's fix is held until the build prompt of A is edited; the resume with the edit runs A's lane and the
 	// signals after it again, and the re-plan they make continues the architect thread of the first process on a fork
 	world := func(t *testing.T) (*Lab, *atomic.Bool) {
 		lab := NewLab(t, twoNodes()...)
 		var edited atomic.Bool
-		lab.On("^review:A:r2$", func(*Call) *fakehostPlan {
-			if edited.Load() {
-				return nil
+		lab.OnUnitCheck(func(c CheckInfo) (UnitCheck, bool) {
+			if c.Node != "A" || c.Round != 2 || edited.Load() {
+				return UnitCheck{}, false
 			}
-			plan := Fail("serverOverloaded")
-			return &plan
+			return UnitCheck{State: reviewadapter.StateQuota}, true
 		})
 		mismatchingWhile(lab, func() bool { return true }, "A")
 		fixedOnce(lab, "A")

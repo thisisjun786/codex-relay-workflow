@@ -2,6 +2,8 @@ package scenario
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -21,6 +23,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/journal"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/reviewadapter"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/workflows"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -42,6 +45,9 @@ type Lab struct {
 	Threads *fakehost.Threads
 	Relay   *FakeRelay
 	Verify  *FakeVerifier
+	// FailedTests are, by node, the failed tests a failing verification of the node names (the failed_tests of its crw.verify
+	// result, CRW-1469); none is a failing verification whose record names no test, as FakeVerifier answers alone.
+	FailedTests map[string][]ops.FailedStep
 
 	StorePath string
 	Store     *store.Store
@@ -78,6 +84,11 @@ type Lab struct {
 	// packet or overlay text would run (CRW-1321).
 	Lib    fs.FS
 	Prompt func(role string, qa bool) (string, error)
+	// Source, when set, is the text of the project lane the lab runs in place of the embedded one (reviewerLane: the project lane
+	// with the old reviewer path's node lane).
+	Source []byte
+	// Checker is the lab's unit checker, the tool behind crw.unitCheck (CRW-1465): a scenario scripts it with UnitChecks.
+	Checker *LabChecker
 }
 
 // hookJournal wraps the run's journal: a process that dies writes no more rows, and a test can look at every row as it is written.
@@ -148,7 +159,7 @@ func writeFile(t *testing.T, path, content string) {
 func NewLab(t *testing.T, nodes ...NodeSpec) *Lab {
 	t.Helper()
 	isolate(t)
-	l := &Lab{t: t, RunID: "run-f08", Policy: engine.FakePolicy(), owner: "proc-1", Nodes: nodes}
+	l := &Lab{t: t, RunID: "run-f08", Policy: engine.FakePolicy(), owner: "proc-1", Nodes: nodes, Checker: newLabChecker()}
 	l.Root = t.TempDir()
 	l.Repo = filepath.Join(l.Root, "repo")
 	l.State = filepath.Join(l.Root, "state")
@@ -223,10 +234,22 @@ func (l *Lab) spawn(owner string) {
 // newLane makes the lane's operations over the lab's journal, relay and verifier (and the reporter, when the lab has one), with the
 // host of the close.
 func (l *Lab) newLane() {
-	deps := ops.Deps{RunID: l.RunID, Repo: l.Repo, Journal: l.journal, Relay: l.Relay, Verifier: l.Verify, Decisions: l.decisions, Actor: "parent", Reporter: l.Reporter,
-		Now: func() time.Time { return time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC) }}
+	deps := ops.Deps{RunID: l.RunID, Repo: l.Repo, Journal: l.journal, Relay: l.Relay, Verifier: labVerifier{l}, Decisions: l.decisions, Actor: "parent", Reporter: l.Reporter,
+		Now: func() time.Time { return time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC) }, UnitCheck: l.Checker.seam()}
 	deps.Threads = labThreads{BusReader: audit.BusReader{Bus: l.client.Bus()}, backend: l.backend}
 	l.lane = ops.NewLane(deps)
+}
+
+// labVerifier is the lab's verifier: FakeVerifier's answer, with the failed tests the scenario gives the node when it fails.
+type labVerifier struct{ l *Lab }
+
+// Verify implements ops.Verifier.
+func (v labVerifier) Verify(ctx context.Context, req ops.VerifyRequest) (ops.VerifyOutcome, error) {
+	out, err := v.l.Verify.Verify(ctx, req)
+	if err == nil && !out.Pass {
+		out.FailedTests = v.l.FailedTests[req.Node]
+	}
+	return out, err
 }
 
 // labThreads is the host of the close: the audit reads the reviewer threads through the client of the run process, and the backend
@@ -279,7 +302,10 @@ func (l *Lab) Rewrite(fn func(engine.Event) engine.Event) {
 
 // Config is the engine configuration of the lab's run.
 func (l *Lab) Config(resume bool) engine.Config {
-	cfg := engine.Config{Backend: l.backend, Policy: l.Policy, Journal: l.journal, RunID: l.RunID, TokenBudget: l.Budget, Ops: l.lane.Ops(), InputSnapshot: l.lane.InputSnapshot,
+	laneOps := l.lane.Ops()
+	// the lab's checker is told the round of the check it answers (its rules key on it, as they keyed on a review's label)
+	laneOps[ops.NameUnitCheck] = labCheckOp{laneOps[ops.NameUnitCheck]}
+	cfg := engine.Config{Backend: l.backend, Policy: l.Policy, Journal: l.journal, RunID: l.RunID, TokenBudget: l.Budget, Ops: laneOps, InputSnapshot: l.lane.InputSnapshot,
 		Prover: ops.NewProver(), Upward: l.Upward, Now: func() time.Time { return time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC) }}
 	if resume {
 		cfg.Resume = &engine.ResumeOptions{Wait: func(context.Context, time.Duration) error { return nil }, Grace: time.Millisecond, Skew: time.Hour, OpenWait: 10 * time.Millisecond, Poll: time.Millisecond}
@@ -305,10 +331,13 @@ func (l *Lab) Resume() *engine.Result { l.t.Helper(); return l.exec(true, l.Args
 func (l *Lab) exec(resume bool, args json.RawMessage) *engine.Result {
 	l.t.Helper()
 	prog, err := workflows.Load("project-lane")
-	if l.Lib != nil {
-		text, serr := workflows.Source("project-lane")
-		if serr != nil {
-			l.t.Fatal(serr)
+	if l.Lib != nil || l.Source != nil {
+		text := l.Source
+		if text == nil {
+			var serr error
+			if text, serr = workflows.Source("project-lane"); serr != nil {
+				l.t.Fatal(serr)
+			}
 		}
 		prog, err = script.Load(script.Source{Name: "project-lane.js", Text: text, Dir: workflows.FS, Lib: l.Lib})
 	}
@@ -775,26 +804,6 @@ func QAReceiptOf(verdict string) map[string]any {
 	return map[string]any{"verdict": verdict, "findings": []any{}, "summary": "receipt " + verdict}
 }
 
-// Defect is a defect of a verdict. Its impact follows the severity, one word of the closed set (CRW-1438): a P0-P2
-// defect is core_function, a P3 defect minor_separable, so the fixture blocks exactly as its severity says.
-func Defect(ref, kind, severity, finding string) map[string]any {
-	impact := "core_function"
-	if severity == "P3" {
-		impact = "minor_separable"
-	}
-	return map[string]any{"ref": ref, "kind": kind, "severity": severity, "introduced": false, "impact": impact, "inPromise": false, "file": "node.txt", "line": 1, "finding": finding, "evidence_question": nil}
-}
-
-// EvidenceDefect is a defect of kind evidence_missing with its question.
-func EvidenceDefect(ref, question string, files ...string) map[string]any {
-	d := Defect(ref, "evidence_missing", "P2", "cannot tell from the head: "+question)
-	if files == nil {
-		files = []string{}
-	}
-	d["evidence_question"] = map[string]any{"question": question, "files_needed": files}
-	return d
-}
-
 func (l *Lab) designFor() ops.Design {
 	if l.Design != nil {
 		return *l.Design
@@ -870,3 +879,209 @@ func (l *Lab) Tip() string { return l.git(l.Repo, "rev-parse", IntegrationRef) }
 
 // Archived are the threads the host was asked to archive, in order.
 func (l *Lab) Archived() []string { return l.Threads.Archived() }
+
+// ---- the unit checker (CRW-1465) ----
+
+// The lab's unit checker stands in for the review tool the shipped lane runs before every commit of a node (crw.unitCheck): the lane
+// gives it the request the op built, and it answers a record without running a tool. Its default answer is a verified check with no
+// finding by Bugbot's pair (engine family grok, model grok-4.7-medium, effort medium), of another family than the lab's executors; a
+// scenario scripts the answers of a node's checks in order (UnitChecks), and a scripted answer's Do runs before it answers, where a
+// scenario hooked the reviewer of the node before. The node is read from the prompt (the op's prompt names it).
+
+// CheckModel is the model of the lab's unit checker.
+const CheckModel = "grok-4.7-medium"
+
+// UnitCheck is one answer of the lab's unit checker. An empty State is ok, with the verdict verified unless one is given; Err makes the
+// call fail with that Go error; Do runs before the answer, and the answer waits for Gate to close (as a held turn of the host waits
+// for its gate) or for the end of the check's context, which fails the check.
+type UnitCheck struct {
+	State    reviewadapter.State
+	Verdict  string
+	Findings []reviewadapter.Finding
+	Err      error
+	Do       func()
+	Gate     <-chan struct{}
+}
+
+// UnitCheckCall is one request the lab's unit checker was given.
+type UnitCheckCall struct {
+	Node    string
+	Request reviewadapter.Request
+}
+
+// LabChecker is the lab's ops.UnitChecker.
+type LabChecker struct {
+	mu    sync.Mutex
+	queue map[string][]UnitCheck
+	calls []UnitCheckCall
+	rules []func(CheckInfo) (UnitCheck, bool)
+}
+
+// CheckInfo is what a rule of the lab's checker is given: the node, the round of the node lane the check is of (its crw.unitCheck
+// opts.round, the round a review's label named before CRW-1465) and the ordinal of the check of the node (from 1, counted over the
+// lab's life, every process's checks included).
+type CheckInfo struct {
+	Node     string
+	Round, N int
+}
+
+type labRoundKey struct{}
+
+// labCheckOp is the lane's crw.unitCheck with the round of the call handed to the lab's checker through the context.
+type labCheckOp struct{ engine.Op }
+
+func (o labCheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResult, error) {
+	var args []json.RawMessage
+	var opts struct {
+		Round int `json:"round"`
+	}
+	if json.Unmarshal(req.Args, &args) == nil && len(args) > 2 {
+		_ = json.Unmarshal(args[2], &opts)
+	}
+	return o.Op.Run(context.WithValue(ctx, labRoundKey{}, opts.Round), req)
+}
+
+var labCheckNode = regexp.MustCompile(`unit check of node (\S+) `)
+
+func newLabChecker() *LabChecker { return &LabChecker{queue: map[string][]UnitCheck{}} }
+
+func (u *LabChecker) seam() *ops.UnitCheck {
+	return &ops.UnitCheck{Checker: u, Limit: time.Minute, Profile: func(mode string) (reviewadapter.Profile, error) {
+		return reviewadapter.JSONProfile("lab-check-"+mode, []string{"lab-unit-check"}, CheckModel, "medium"), nil
+	}}
+}
+
+// Calls are the requests the checker was given for a node (every node when it is empty), in order.
+func (u *LabChecker) Calls(node string) []UnitCheckCall {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	var out []UnitCheckCall
+	for _, c := range u.calls {
+		if node == "" || c.Node == node {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func (u *LabChecker) Check(ctx context.Context, req reviewadapter.Request) (reviewadapter.Result, error) {
+	node := ""
+	if m := labCheckNode.FindStringSubmatch(req.Prompt); m != nil {
+		node = m[1]
+	}
+	u.mu.Lock()
+	u.calls = append(u.calls, UnitCheckCall{Node: node, Request: req})
+	n := 0
+	for _, c := range u.calls {
+		if c.Node == node {
+			n++
+		}
+	}
+	rules := slices.Clone(u.rules)
+	u.mu.Unlock()
+	round, _ := ctx.Value(labRoundKey{}).(int)
+	c, ruled := UnitCheck{}, false
+	for _, rl := range rules {
+		if c, ruled = rl(CheckInfo{Node: node, Round: round, N: n}); ruled {
+			break
+		}
+	}
+	if !ruled {
+		u.mu.Lock()
+		if q := u.queue[node]; len(q) > 0 {
+			c, u.queue[node] = q[0], q[1:]
+		}
+		u.mu.Unlock()
+	}
+	if c.Do != nil {
+		c.Do()
+	}
+	if c.Gate != nil {
+		select {
+		case <-c.Gate:
+		case <-ctx.Done():
+			return reviewadapter.Result{}, ctx.Err()
+		}
+	}
+	if c.Err != nil {
+		return reviewadapter.Result{}, c.Err
+	}
+	if c.State == "" {
+		c.State = reviewadapter.StateOK
+	}
+	verdict := ""
+	findings := []reviewadapter.Finding{}
+	if c.State == reviewadapter.StateOK {
+		verdict = c.Verdict
+		if verdict == "" {
+			verdict = reviewadapter.VerdictVerified
+		}
+		for _, f := range c.Findings {
+			if f.ID == "" {
+				f.ID = reviewadapter.FindingID(f.File, f.Text)
+			}
+			findings = append(findings, f)
+		}
+	}
+	fp, err := ops.Snapshot(ctx, ops.ExecGit("git"), req.Worktree)
+	if err != nil {
+		return reviewadapter.Result{}, fmt.Errorf("the lab's unit checker: fingerprint: %w", err)
+	}
+	sum := sha256.Sum256([]byte(req.Prompt))
+	return reviewadapter.Result{State: c.State, Verdict: verdict, Findings: findings, EngineFamily: "grok", Model: CheckModel, Effort: "medium", GuideRev: req.GuideRev,
+		PromptDigest: hex.EncodeToString(sum[:]), FingerprintBefore: fp, FingerprintAfter: fp, ElapsedMS: 1}, nil
+}
+
+// UnitChecks scripts the answers of the next unit checks of a node, in order; a check no script answers is verified with no finding.
+func (l *Lab) UnitChecks(node string, checks ...UnitCheck) {
+	l.Checker.mu.Lock()
+	defer l.Checker.mu.Unlock()
+	l.Checker.queue[node] = append(l.Checker.queue[node], checks...)
+}
+
+// OnUnitCheck scripts the checker with a rule asked before the scripted answers: an answer fn gives with true is the check's. Rules
+// are asked in the order they were added.
+func (l *Lab) OnUnitCheck(fn func(CheckInfo) (UnitCheck, bool)) {
+	l.Checker.mu.Lock()
+	defer l.Checker.mu.Unlock()
+	l.Checker.rules = append(l.Checker.rules, fn)
+}
+
+// Finding is a finding of a unit check on the node's file. Its impact follows the severity: a P0-P2 finding is
+// core_function and blocks, a P3 finding is minor_separable and does not.
+func Finding(severity, text string) reviewadapter.Finding {
+	impact := "core_function"
+	if severity == "P3" {
+		impact = "minor_separable"
+	}
+	return reviewadapter.Finding{Severity: severity, Impact: impact, File: "node.txt", Line: 1, Text: text}
+}
+
+// NeedsChanges is a unit check that rules needs_changes with the findings.
+func NeedsChanges(findings ...reviewadapter.Finding) UnitCheck {
+	return UnitCheck{Verdict: reviewadapter.VerdictNeedsChanges, Findings: findings}
+}
+
+// TestFixCallNamesTheFailedTestsOfTheVerification (CRW-1469, CRW-1488 item 16): the failed tests a failing verification names reach
+// the executor: the crw.verify row records them and the fix call of the node's thread names each failed step's tests, packages and
+// the last lines of its output.
+func TestFixCallNamesTheFailedTestsOfTheVerification(t *testing.T) {
+	l := NewLab(t, oneNode()...)
+	l.Verify.Fail = map[string][]int{"A": {1}}
+	l.FailedTests = map[string][]ops.FailedStep{"A": {{Job: "go-product", Step: "tests", Tests: []string{"TestGuard"}, Packages: []string{"example.com/m/a"},
+		Tail: "    guard_test.go:9: the guard is open\n--- FAIL: TestGuard (0.01s)"}}}
+	if got := mustRun(t, l); got.State != "closed" {
+		t.Fatalf("state %q; calls %v", got.State, l.Labels())
+	}
+	verifies := l.Rows("crw.verify")
+	if len(verifies) < 2 || verifies[0].Data["failed_tests"] == nil || verifies[1].Data["failed_tests"] != nil {
+		t.Fatalf("the verify rows %+v", verifies)
+	}
+	fix := textOfCall(l, callNamed(t, l, "fix:A:executor:r1").ID)
+	for _, want := range []string{"VERIFICATION FAILED (" + ops.CILocalCommand + "):\n- validate/tests: failed\n\nFAILED TESTS (",
+		"\n- go-product/tests: TestGuard (packages example.com/m/a)\n        guard_test.go:9: the guard is open\n    --- FAIL: TestGuard (0.01s)"} {
+		if !strings.Contains(fix, want) {
+			t.Errorf("the fix call lacks %q:\n%s", want, fix)
+		}
+	}
+}

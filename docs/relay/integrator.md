@@ -1,11 +1,11 @@
 # The integration queue: `crw manage integrate`
 
-The sessions in this document are named by [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and an issue child is no layer.
+The sessions in this document are named by [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and a `child` session (a code id, not a layer) is no layer.
 
 `crw manage integrate` is the product form of the shell queue runner that merges gated heads onto `dev`. It covers the
 plain-head path, where the queue holds a commit per issue and the runner merges, verifies and pushes, and the pull request of a
 milestone ([Pull requests](#pull-requests-pr-unit-landing)). It reads and writes no relay
-record. A node's `merged` mark, the reach observation and the relationship and issue child clean-up still belong to the project session that owns the
+record. A node's `merged` mark, the reach observation and the relationship and `child` session clean-up still belong to the project session that owns the
 node (see [DAG scheduler](dag-scheduler.md), "Commit acceptance and local integration"); the queue does not replace them and does not decide
 who may integrate. Code: `internal/integrator` (the logic) and `internal/manage/integrate.go` (the command).
 

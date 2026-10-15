@@ -1,6 +1,6 @@
 # Merge readiness
 
-The sessions in this document are named by [the level table](../../crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and an issue child is no layer.
+The sessions in this document are named by [the level table](../../crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and a `child` session (a code id, not a layer) is no layer.
 
 Use before integration, together with the target repository's policy and the
 [shared authorization and review rules](../../crw-canon/references/delivery.md#default-dev-integration).
@@ -31,7 +31,7 @@ Neither the GitHub Codex review nor Devin Review is a CRW completion or merge ga
 request either one, re-request it after a push, or wait for a fresh-head review or a settling
 period. Jun's decision of 2026-10-03 lets each run once per pull request, Codex when the pull
 request is opened and Devin when it becomes ready for review, and that one run of each is
-awaited within the waiting budget below before the issue child's receipt, as
+awaited within the waiting budget below before the `child` session's receipt, as
 [Devin and Codex reviews are references, not merge gates](#devin-and-codex-reviews-are-references-not-merge-gates)
 says. Anything beyond that run requires a new explicit user decision; an old assignment, review comment, or pending check
 does not supply one. Record a skipped or absent run as such, never as a successful review.
@@ -46,7 +46,7 @@ do not bypass the rule or silently change repository settings.
 Existing findings remain subject to the triage below, regardless of their author.
 A reviewer that is not a gate does not excuse a confirmed defect or justify resolving its
 threads without evidence. Refresh stale launch and recovery instructions on the
-same child and issue child tasks; preserve their work and dependency gates.
+same child and `child` session tasks; preserve their work and dependency gates.
 
 ## Check the verification evidence
 
@@ -93,7 +93,7 @@ requirement, waive an existing one, or claim readiness when necessary validation
 A local verification run the child starts for that route follows the `Processes you start:` line of
 the [Launch packet](task-packet.md#launch-packet): it records its pid when it starts or runs under
 `timeout`, and is stopped only by that pid, its own process group or the handle the execution tool
-returned for it, never by pattern or name, because issue children run their own tests on the same host at
+returned for it, never by pattern or name, because `child` sessions run their own tests on the same host at
 the same time.
 
 ## Inspect review content and coverage
@@ -157,7 +157,7 @@ review already available or obtain a permitted local review. Record the gap and
 continue when the repository's requirements and relevant review coverage are met.
 Do not wait for every historical or possible future reviewer. The one run each of Devin
 and Codex makes on a pull request is the exception: it is awaited within the waiting
-budget below before the issue child's receipt
+budget below before the `child` session's receipt
 ([Devin and Codex reviews are references, not merge gates](#devin-and-codex-reviews-are-references-not-merge-gates)).
 Fallback review cannot replace required CI, a required review source, or mandatory formal approval.
 Inspection does not authorize enabling integrations, new paid usage, or sending
@@ -167,15 +167,15 @@ private source to another service.
 
 Devin Review and the GitHub Codex review are references. Neither is a merge gate, and a run that is
 skipped or never shows is not waited for. Each runs once per pull request, Devin when the pull request
-becomes ready for review and Codex when it is opened, and the merge waits for neither. The issue child does wait
+becomes ready for review and Codex when it is opened, and the merge waits for neither. The `child` session does wait
 for that one run of each, within the waiting budget below, before it emits its receipt. A review thread that reaches the head after the receipt is found outside
 the record's `threadsSeen` when the child restates it, and the handoff no longer describes the candidate.
 A thread the child judges minor it dispositions itself
 ([a late thread the parent dispositions itself](#a-late-thread-the-parent-dispositions-itself)); for any
-other the candidate goes back for a round trip while a correction can still reach the issue child
+other the candidate goes back for a round trip while a correction can still reach the `child` session
 ([Recheck, integrate, and record](#recheck-integrate-and-record)). [Late review threads](#late-review-threads)
 says who handles such a thread by its reading against this issue's scope and the stage of the candidate, what applies where the installed
-relay cannot record that disposition, and what holds once no correction can reach the issue child. The relay's restatement catches a late
+relay cannot record that disposition, and what holds once no correction can reach the `child` session. The relay's restatement catches a late
 review thread only: a late finding that lives in a reviewer's summary comment is not caught, so the child
 also reads each reviewer's summary comment again right before it merges.
 
@@ -195,20 +195,20 @@ A candidate integrates when all three hold on one and the same tree:
 3. the local gates pass: the checks the repository names for the change, run through the repository's
    permitted local validation route.
 
-Gate 1 is the repository's own verification, not a restatement of the issue child's handoff. Under the
+Gate 1 is the repository's own verification, not a restatement of the `child` session's handoff. Under the
 push-only procedure the integrator produces it on the merged tree and fast-forwards `dev` to that
 tree; the coordinator still checks the criteria and the diff before the landing, and where it runs the
-integration itself it reads the record rather than the issue child's own numbers.
+integration itself it reads the record rather than the `child` session's own numbers.
 
-Gate 2 is the coordinator's own verification, not a restatement of the issue child's handoff. It is the
-exception to the rule that the coordinator reads an issue child's result that still applies instead of producing
+Gate 2 is the coordinator's own verification, not a restatement of the `child` session's handoff. It is the
+exception to the rule that the coordinator reads a `child` session's result that still applies instead of producing
 it again ([Observe and verify](../SKILL.md#observe-and-verify)). That rule and
 [OPS-9.3](operations.md#ops-93-the-parent-integrates-and-does-not-release) keep governing what the coordinator
-re-derives from the issue child's handoff: thread coverage, check runs and review dispositions, which it does not
+re-derives from the `child` session's handoff: thread coverage, check runs and review dispositions, which it does not
 paginate or triage again.
 
 The coordinator's own local runs, the re-run of gate 2 and the local gates of gate 3, happen on a host
-that every issue child builds on, so they take the settings the launch packet gave the issue child
+that every `child` session builds on, so they take the settings the launch packet gave the `child` session
 ([`Go build resources:`](task-packet.md#launch-packet)): the shared build cache, `GOFLAGS=-p=4`, the
 packages the change touches, a `-count` (normally `-count=1`) for a result it will rely on (a
 `(cached)` line can be another task's run), and `-race`, a large `-count` or a load reproduction only
@@ -258,20 +258,20 @@ own, which is normal.
 **The waiting budget.** For the optional external reviewers the fixed time is a waiting budget, never
 evidence that a review stalled or finished (the work-unit rules (`POLICY.md#work-units-review-and-integration` in the CRW repository)).
 It runs 45 minutes from the review's first signal; a skip ends the wait at once. When the budget is used up
-and the review is still running, the issue child records it as **pending (not complete)** in the handoff and goes on.
+and the review is still running, the `child` session records it as **pending (not complete)** in the handoff and goes on.
 The wait is released that way only where the candidate's required independent review has already read the
 current head and every important finding it raised has a recorded disposition; where that independent review
-is missing, the issue child obtains it through the existing approved path before it hands off. Never record a pending
+is missing, the `child` session obtains it through the existing approved path before it hands off. Never record a pending
 review as done, skipped or passed.
 
 When neither reviewer shows a signal of any kind (no status, no comment, no reaction) 30 minutes after the
 pull request became ready (Devin) or was opened (Codex), the handoff says `review unavailable (no signal)`
-and the issue child goes on. A description or row status that is not in the table is a signal: record it exactly as read and keep
-waiting, inside the same budget. The skill does not guess its meaning; an issue child that cannot tell whether the run is still going asks
+and the `child` session goes on. A description or row status that is not in the table is a signal: record it exactly as read and keep
+waiting, inside the same budget. The skill does not guess its meaning; a `child` session that cannot tell whether the run is still going asks
 through the usual `blocked_needs_input` route, as for any question only a person can answer. When only one
-reviewer is silent while the other has run, the issue child applies the same 30 minutes to the silent one, records
+reviewer is silent while the other has run, the `child` session applies the same 30 minutes to the silent one, records
 it as `no signal by <time>`, goes on, and says in the handoff that it applied the rule to one reviewer. The
-coordinator stated the rule for both reviewers silent, so this extension is the issue child's assumption until the
+coordinator stated the rule for both reviewers silent, so this extension is the `child` session's assumption until the
 coordinator decides it, and a later finding from the silent reviewer is a late finding like any other
 ([Late review threads](#late-review-threads)).
 
@@ -309,14 +309,14 @@ finding inside this issue's scope and of every P0 and security finding, with its
 they name the three gates. A skipped, missing or unrecognised status is never recorded as a pass.
 
 A packet gate line about Devin is read as: if a Devin review exists, every finding in it is judged by this issue's scope and the rules below, and no new Devin review is awaited. The merge does not
-wait for Devin, and the issue child's wait for the one run is the step above.
+wait for Devin, and the `child` session's wait for the one run is the step above.
 
 ### Late review threads
 
 This rule covers a late finding on any delivered head, whichever reviewer wrote it. For a task branch the integrator holds the candidate before the fast-forward and grades the thread by the same scope rule; the acceptance, correction and merge-turn steps that follow are the relay's mechanics for an in-flight pull request. A late finding is judged by the scope rule of [What each finding needs before the receipt](#what-each-finding-needs-before-the-receipt): one inside this issue's promise is fixed in this same issue, a P0 or security finding is fixed before the merge whatever its scope, a separable finding outside the promise is a follow-up with its own context, impact and outcome, and a P3 is recorded. The forge reading that finds one (`merge-evidence --restate`) applies to in-flight pull requests only ([In-flight pull requests (transition)](#in-flight-pull-requests-transition)); for internal work the coordinator grades a late finding by the rule below.
 
 A review thread is late when it is on the candidate's head and is not in the record's `threadsSeen`: the
-reviewer's one run ended after the issue child's receipt, or a reviewer that showed no signal for 30 minutes posted
+reviewer's one run ended after the `child` session's receipt, or a reviewer that showed no signal for 30 minutes posted
 afterwards. `merge-evidence --restate` is the one reader that compares a thread with the record. It reports each
 late thread as `late_finding`, resolved or not and whatever its grade, and a record with a late finding no longer
 describes the candidate. A reply or a resolved thread does not remove that reading. A record that lists the thread
@@ -334,41 +334,41 @@ detachable follow-up. One whose real effect is in a blocking class is handled as
 conditional acceptance, and a P0 or a security thread is never minor whatever it touches. A thread from any other
 reviewer is read against this issue's scope in the same way.
 
-**A minor thread** is the coordinator's to triage, because nothing in the code is asked of the issue child. What the
+**A minor thread** is the coordinator's to triage, because nothing in the code is asked of the `child` session. What the
 coordinator can do depends on the relay it runs, and `codex-session-relay merge-evidence --help` shows which:
 
 - *The installed `merge-evidence` lists `--late-dispositions`.* The coordinator replies on the thread, resolves it
   on the forge and records its judgement in the file that option reads
   ([a late thread the parent dispositions itself](#a-late-thread-the-parent-dispositions-itself)). The restatement
-  then no longer reads the thread as late, nothing goes back to the issue child, and no correction route is needed, so
+  then no longer reads the thread as late, nothing goes back to the `child` session, and no correction route is needed, so
   this holds at every stage up to the merge, the acceptance included. A disposition names one head: after a push
   or the child's base refresh the thread is recorded again for the new head.
 - *It does not.* The option is in this repository's source and the installed relay may be older; installing is a
   separate step. The temporary procedure below applies, and it needs a correction route, so it is limited by stage.
 
 **A thread inside this issue's scope**, a P0 or security thread in or out of scope, a blocking thread, or a
-thread the coordinator cannot classify without reconstructing the issue child's reasoning, is not recorded by the
-coordinator. It goes to the issue child as an ordinary correction (a fix or an answer from the code) while a correction
-can reach the issue child, and after that the candidate is held.
+thread the coordinator cannot classify without reconstructing the `child` session's reasoning, is not recorded by the
+coordinator. It goes to the `child` session as an ordinary correction (a fix or an answer from the code) while a correction
+can reach the `child` session, and after that the candidate is held.
 
 **Before the acceptance.** In a DAG-managed project that is a node `dag-ready` does not yet read as accepted; in
 a project with no plan it lasts until the merged mark. A merge turn of the candidate that is merging or of
 unknown effect is resolved first (`merge-turn-resolve`) and the case read again, and one that landed means the
 work is on the target (see After the merge below). A merge turn the coordinator holds is returned with the
-reason (`merge-turn-release`) and not kept while the candidate waits for the issue child. The correction route is the
+reason (`merge-turn-release`) and not kept while the candidate waits for the `child` session. The correction route is the
 needs-changes ruling on the same receipt, which the relay allows while nothing rests on the ruling; its steps are
 those of [A base conflict after the ruling and before the acceptance](#a-base-conflict-after-the-ruling-and-before-the-acceptance),
 with this correction in place of the base-refresh one. In a DAG-managed project the generation is also recorded for
 the node, as the first way of opening a generation in
 the scheduler's account (`docs/relay/dag-scheduler.md#three-ways-to-open-the-generation` in the CRW repository) has it:
 `dag-correct --prepare` prints the instruction line, the ruling carries that line in its restoration finding, and
-`dag-correct` then binds the generation. Without that, `dag-accept` refuses the issue child's new result as
+`dag-correct` then binds the generation. Without that, `dag-accept` refuses the `child` session's new result as
 `stale_generation`.
 
 - A thread inside this issue's scope, a P0 or security thread in or out of scope, a blocking thread, or a
   thread the coordinator cannot classify: an ordinary correction. It carries the restoration block, names the
-  head and each thread, and asks the issue child to fix the finding or answer it with code evidence, so a thread that
-  needs only a rebuttal takes this route too. The issue child pushes and reruns checks only if it changed something,
+  head and each thread, and asks the `child` session to fix the finding or answer it with code evidence, so a thread that
+  needs only a rebuttal takes this route too. The `child` session pushes and reruns checks only if it changed something,
   and emits again. The candidate does not merge meanwhile.
 - A minor thread where the installed relay cannot record the disposition: the temporary procedure in [Late threads on an in-flight pull request](#late-threads-on-an-in-flight-pull-request-temporary-procedure), which applies only to an in-flight pull request.
 
@@ -377,7 +377,7 @@ second ruling, and `dag-correct` records a correction of a stale result (step 6 
 [a base conflict after the ruling and before the acceptance](#a-base-conflict-after-the-ruling-and-before-the-acceptance))
 or of a result that is accepted and still current, when the generation was opened by hand under a reason that states
 the correction (`needs_changes_revision` or `accepted_result_correction`) and the node has not landed. That is the
-route a late thread takes: the coordinator opens the next generation by hand, sends the issue child the instruction line
+route a late thread takes: the coordinator opens the next generation by hand, sends the `child` session the instruction line
 `dag-correct --prepare` printed, binds the turn with `generation-bind`, records it with `dag-correct --manifest-digest`,
 and takes the corrected result with `dag-accept --supersedes`; the accepted head is held back from the lane and from
 a bundle while that generation is open, so the candidate does not merge meanwhile. A minor thread that the installed
@@ -396,18 +396,18 @@ listed for the backlog with its own context, impact and outcome, a blocking one 
 issue for the area it touches, and a P0 or security one is fixed before the merge and raised as a correction
 issue if it arrives after it.
 
-**Why this is not a re-triage, and its limits.** The child restates the issue child's handoff and does not judge again
-what the issue child judged ([OPS-9.3](operations.md#ops-93-the-parent-integrates-and-does-not-release)). A late thread is one
-the issue child never saw, so the coordinator's grading of it is the first judgment and not a second one, and every
-thread in `threadsSeen` stays the issue child's. In the temporary procedure the coordinator removes no disagreement
-itself: the record returns to the issue child and is rebuilt by it. A recorded disposition is the one other case
-OPS-9.3 and OPS-9.4 name. The coordinator never edits the issue child's handoff, never lists a late thread in a record as
-if the issue child had seen it, and never reads its own triage as a verdict or a merge. The verdict, the acceptance and
+**Why this is not a re-triage, and its limits.** The child restates the `child` session's handoff and does not judge again
+what the `child` session judged ([OPS-9.3](operations.md#ops-93-the-parent-integrates-and-does-not-release)). A late thread is one
+the `child` session never saw, so the coordinator's grading of it is the first judgment and not a second one, and every
+thread in `threadsSeen` stays the `child` session's. In the temporary procedure the coordinator removes no disagreement
+itself: the record returns to the `child` session and is rebuilt by it. A recorded disposition is the one other case
+OPS-9.3 and OPS-9.4 name. The coordinator never edits the `child` session's handoff, never lists a late thread in a record as
+if the `child` session had seen it, and never reads its own triage as a verdict or a merge. The verdict, the acceptance and
 the merge turn still run on a record that has seen the thread or a disposition for it, and nothing lands on the integration branch without it.
 
 ## The independent review is a reference opinion
 
-An issue child may run the independent code review (`crw review`) on its pull request's head and state what
+A `child` session may run the independent code review (`crw review`) on its pull request's head and state what
 it did with the result in an `independentReview` item: on the receipt (`emit --independent-review <file>`)
 and as the `independentReview` member of its handoff record. The result is a reference opinion, like the
 Devin and Codex reviews and unlike [the three gates](#the-three-gates). The merge waits for no
@@ -415,7 +415,7 @@ independent review, a missing one stops nothing, and nothing in this section cha
 `current`, its problems, the verdict or the exit code of `merge-evidence`.
 
 **Read the raw artifact.** The item names the review's output file by `artifact.path` and the sha256 of
-its bytes. Read that file, not the issue child's summary of it: its findings and grades, the `needsContext`
+its bytes. Read that file, not the `child` session's summary of it: its findings and grades, the `needsContext`
 findings the reviewer could not judge from the material it was given, and the status and reason. An
 unusable reviewer call (`invalidReviewerCalls`, and the calls of the artifact recorded as invalid) is
 not a review that found nothing, so a `partial` or `unavailable` status is read as a review that
@@ -442,14 +442,14 @@ the record states the item. Every warning code starts `independent_review_`:
 
 | Code | The reading found | What the child does |
 | --- | --- | --- |
-| `absent` | the record states no item | read the handoff for why: the review did not run, or the issue child did not say so |
-| `malformed` | the item is not the shape the contract states | ask the issue child to restate it; read the artifact if the path is in it |
+| `absent` | the record states no item | read the handoff for why: the review did not run, or the `child` session did not say so |
+| `malformed` | the item is not the shape the contract states | ask the `child` session to restate it; read the artifact if the path is in it |
 | `unreadable` | the artifact's path is missing, not a regular file or over 8 MiB | open it yourself or ask for the file |
-| `sha256_mismatch` | the file's bytes are not the stated sha256 | the file changed after the issue child described it: read it as it is, and say so |
+| `sha256_mismatch` | the file's bytes are not the stated sha256 | the file changed after the `child` session described it: read it as it is, and say so |
 | `artifact_invalid` | the file is not a schema v1 review artifact | treat the review as unusable |
 | `status_differs` | the item's status is not the artifact's | trust the artifact |
 | `head_differs` | the artifact covers another head and the candidate head is not the head the record is about, or the stated patch-id is missing or different | run the patch-id check above |
-| `disposition_missing` | the relay grades a finding of the artifact as P0, P1 or security and it has no disposition; an in-scope finding of any grade needs one too, by [What each finding needs before the receipt](#what-each-finding-needs-before-the-receipt) | ask the issue child, or judge the finding yourself by its impact |
+| `disposition_missing` | the relay grades a finding of the artifact as P0, P1 or security and it has no disposition; an in-scope finding of any grade needs one too, by [What each finding needs before the receipt](#what-each-finding-needs-before-the-receipt) | ask the `child` session, or judge the finding yourself by its impact |
 | `disposition_unknown` | a disposition names a finding the artifact does not have | the item and the artifact disagree: trust the artifact |
 
 A warning is a question to read the artifact, never a reason to return the candidate by itself. A
@@ -464,18 +464,18 @@ The commit path is the default: an implementation node is accepted with its loca
 
 The integration is one batch. dag-integrate merges the ready accepted candidates onto the local integration branch in a temporary worktree, verifies the merged tree with the --verify command (for example, a script whose first line is #!/bin/sh and that runs crw-dev ci local --commit "$CRW_VERIFY_HEAD" --base "$CRW_VERIFY_BASE" --record "$CRW_VERIFY_RECORD" --runner local), and moves the branch only if that verification passed. A candidate that breaks the merged tree, or that depends on one, is left out and returned to its child with the reason; a candidate that only conflicted with a removed candidate integrates on the retry. Then dag-integrate-push fast-forwards the remote dev to the same commit. Never force it: a remote dev that holds a commit the integration branch does not contain is refused with merge_base_mismatch, and the child resolves that divergence first. When the remote cannot be reached the push is deferred (outcome deferred); run dag-integrate-push again once it answers, because the batch and the merged marks already stand and are not repeated. A merged mark that could not be written is shown as mark_pending and completed by the next dag-integrate run. Observe the landing with dag-integration-observe --target on the integration branch. Then, as the last step of every integrator pass, run `crw relay dag-integration-target-check` once (it reads each recorded target's remote branch, records a move outside the integration path as the `integration_target_moved` fault, and stores the head it read for the acknowledgement comparison; it never reverts, pushes or blocks). The relay's daemon never runs it, so this step is where the periodic check lives; a pass that integrates nothing still runs it.
 
-No later step waits for a pull request. dag-merge-judge answers a commit-accepted node from the relay's records (eligible, stale_criteria or predecessor_not_landed) and reads no forge; dag-merge-request refuses it, because it lands through dag-integrate, so do not ask the merge lane for it. A pull-request node that waits for a commit-accepted predecessor sees that predecessor as landed once dag-integrate moved it and dag-integration-observe recorded it on the integration branch. When the base moved and the issue child merged it in a generation you opened by hand and ruled verified, record it with dag-base-refresh: the relay takes the head that generation's ruling fixed, and no pull request is read. Then give the record of the refreshed head with dag-accept --commit <refreshed head> --base <the base it merged> --checkout <dir> --verification <its record> --premerge <a record naming the refreshed head>; it is a replay of the same acceptance, and dag-integrate holds the node as premerge_head_mismatch until it is given.
+No later step waits for a pull request. dag-merge-judge answers a commit-accepted node from the relay's records (eligible, stale_criteria or predecessor_not_landed) and reads no forge; dag-merge-request refuses it, because it lands through dag-integrate, so do not ask the merge lane for it. A pull-request node that waits for a commit-accepted predecessor sees that predecessor as landed once dag-integrate moved it and dag-integration-observe recorded it on the integration branch. When the base moved and the `child` session merged it in a generation you opened by hand and ruled verified, record it with dag-base-refresh: the relay takes the head that generation's ruling fixed, and no pull request is read. Then give the record of the refreshed head with dag-accept --commit <refreshed head> --base <the base it merged> --checkout <dir> --verification <its record> --premerge <a record naming the refreshed head>; it is a replay of the same acceptance, and dag-integrate holds the node as premerge_head_mismatch until it is given.
 
 A batch leaves out a candidate that only breaks the set with others: it is reported as `not_proven_failing` and stays ready for the next batch. Only a candidate that fails when verified alone is reported as `verification_failed`. A candidate whose criteria changed after its acceptance is not ready until it is revalidated, and the relay does not re-verify an integration branch for a criteria change by itself. `dag-integrate-push` pushes only a tip the relay moved the branch onto (a verified batch row for that head); a commit added on top of it is refused with `merge_base_mismatch`, and the remote is not moved.
 
-Read `target_moved` in the push document, or `integration_target_moved` at the end of a refusal's detail, as well as the outcome. It means the remote branch held a head the relay never recorded for the integration ref (until the target is recorded, a head recorded for another integration ref counts as recorded), so something outside the integration path moved it (for example an issue child that pushed to dev, or a pull request merged into it). The push still did only what it would have done, and a broken `integration_target_moved` fault with a blocking notice to the parent is already recorded. Do not undo or force the remote. Report the fault id and the remote head to the parent in your next report, find out who moved the branch, and let the parent clear the fault through `fault-fix`, `fault-reverify` and `fault-resolve`.
+Read `target_moved` in the push document, or `integration_target_moved` at the end of a refusal's detail, as well as the outcome. It means the remote branch held a head the relay never recorded for the integration ref (until the target is recorded, a head recorded for another integration ref counts as recorded), so something outside the integration path moved it (for example a `child` session that pushed to dev, or a pull request merged into it). The push still did only what it would have done, and a broken `integration_target_moved` fault with a blocking notice to the parent is already recorded. Do not undo or force the remote. Report the fault id and the remote head to the parent in your next report, find out who moved the branch, and let the parent clear the fault through `fault-fix`, `fault-reverify` and `fault-resolve`.
 
 
 ## Judge a finding by its impact
 
 Whether a finding blocks is decided by what it does to this change at its current
 head. The child that owns the criteria makes that classification against the list
-below. The issue child triages, fixes what blocks, prepares the evidence and the
+below. The `child` session triages, fixes what blocks, prepares the evidence and the
 current-head readiness, and proposes the rest.
 
 Whether a finding is fixed before the merge is decided first by this issue's scope
@@ -503,7 +503,7 @@ A finding BLOCKS, and is never conditionally accepted, when it is any of these:
 - an unmet required review gate or the repository's named verification.
 
 A blocking finding is fixed in this change, or the candidate is reported
-blocked. One that arrives after the issue child has finished its rounds is raised to the
+blocked. One that arrives after the `child` session has finished its rounds is raised to the
 child rather than absorbed silently, and the child decides whether it belongs to
 this issue or to a successor.
 
@@ -533,19 +533,19 @@ of the classes above.
 
 ### Conditional acceptance, and what recording one costs
 
-The child that owns the criteria owns this judgment, and an issue child does not grant its
+The child that owns the criteria owns this judgment, and a `child` session does not grant its
 own. A child may instead grant it in the assignment as a bounded standing decision,
 stating the bound it covers. Either way, each acceptance records five things or is
 not recorded:
 
 The exchange that produces one is small, and it happens before the handoff rather
-than as another review round. The issue child sends the finding, its own reading of the
+than as another review round. The `child` session sends the finding, its own reading of the
 effect and the separability, and what it proposes; the child answers accept or fix.
 What the child decides is the criteria-and-purpose question only, which is whether
 this residue matters for what the issue is for. It does not re-read the diff,
-re-triage the thread, or re-derive the finding: those stay the issue child's under
+re-triage the thread, or re-derive the finding: those stay the `child` session's under
 [OPS-9.3](operations.md#ops-93-the-parent-integrates-and-does-not-release), and a child
-that finds itself reconstructing the finding has crossed into the issue child's round and
+that finds itself reconstructing the finding has crossed into the `child` session's round and
 returns it instead.
 
 1. the exact finding, quoted or linked to its thread;
@@ -563,10 +563,10 @@ clear a gate without assessing what the finding actually does is the thing this
 section exists to forbid, and it is worse than another round, because the round
 costs time while the false record costs the reader their trust in every other one.
 
-An acceptance recorded by an issue child is that issue child ASSERTING a decision the child
+An acceptance recorded by a `child` session is that `child` session ASSERTING a decision the child
 made, and no transport here authenticates the claim. So the child's pre-merge
 restatement confirms each accepted disposition against a decision it actually made,
-and an acceptance it does not recognise returns the candidate to that issue child
+and an acceptance it does not recognise returns the candidate to that `child` session
 fail-closed, exactly as any other disagreement between the record and the re-read
 does under [OPS-9.4](operations.md#ops-94-a-new-head-invalidates-the-review-it-outran).
 This is the one disposition that legitimises a defect the candidate still carries,
@@ -620,7 +620,7 @@ new head invalidating the review it outran.
 ## Pre-merge evaluation
 
 Once the candidate verification evidence is in place (the local verification-record PASS on the merged tree, and any hosted run the repository still reads has finished), and before the verdict, the child
-evaluates that head by independent grading rather than by the issue child's own numbers. It
+evaluates that head by independent grading rather than by the `child` session's own numbers. It
 grades the head as it stands on a tree merged with the current tip of the candidate's
 destination branch (its `dev` in this repository, as
 [Identify the candidate and gates](#identify-the-candidate-and-gates) pins it), so the
@@ -644,13 +644,13 @@ prevent.
 `crw manage premerge dispose <record> --ref <criterion or defect id> --class <class> --note <text>` then writes the child's
 disposition of one finding into the same record. `dag-accept` takes the record with `--premerge @<record>`.
 
-The evaluation does not restate the issue child's handoff. The issue child judged the findings its
+The evaluation does not restate the `child` session's handoff. The `child` session judged the findings its
 own rounds produced ([OPS-9.3](operations.md#ops-93-the-parent-integrates-and-does-not-release));
-what the child grades anew is the findings the issue child never saw (a late thread) and the
+what the child grades anew is the findings the `child` session never saw (a late thread) and the
 whole candidate as one reading — the criteria against the tree that would land, and any
 defect that reading finds — because that is the independent grading the verdict stands
-on. It does not re-triage a finding the issue child already judged and disposed of; a
-disagreement between the two readings returns the candidate to the issue child fail-closed.
+on. It does not re-triage a finding the `child` session already judged and disposed of; a
+disagreement between the two readings returns the candidate to the `child` session fail-closed.
 
 ## Recheck, integrate, and record
 
@@ -661,9 +661,9 @@ author is an optional reviewer. Use the repository's merge method and the host's
 expected-head guard; preserve required base-update or merge-queue behavior.
 
 For an in-flight pull request, `merge-evidence --restate <record>` is that re-read: it takes a fresh reading of its
-own and grades the issue child's record against it, rather than reading the issue child's own
+own and grades the `child` session's record against it, rather than reading the `child` session's own
 numbers back. A thread that arrived on the same head and is not in the record's
-`threadsSeen` invalidates the record, which returns to the issue child that produced it while a correction can
+`threadsSeen` invalidates the record, which returns to the `child` session that produced it while a correction can
 still reach it, unless the child has judged that thread itself and recorded the judgement
 ([below](#a-late-thread-the-parent-dispositions-itself)). [Late review threads](#late-review-threads) says which
 threads each way covers and what holds when neither is open.
@@ -680,7 +680,7 @@ A late thread it has dispositioned is the other, under the heading below.
 
 A late review thread outside this issue's scope whose residue is separable and whose impact is not blocking, that the child judges minor under
 [impact](#judge-a-finding-by-its-impact) — one outside this issue's scope whose residue stands on its
-own — need not go back to the issue child. The child answers it on the thread, resolves it on the forge, and
+own — need not go back to the `child` session. The child answers it on the thread, resolves it on the forge, and
 records its judgement in a file that the same command reads:
 
     codex-session-relay merge-evidence --repository <owner/name> --pull-request <N> \
@@ -694,8 +694,8 @@ reading it, and prints each entry under `restatement.lateDispositions`, which th
 the merge record. A disposition names one head, so after a push or a base refresh it does not carry
 to the new head. A thread still unresolved on the forge fails the reading, and a P0 or security
 finding is not recorded this way: it is fixed before the merge whether or not it belongs to this issue,
-and while a correction can still reach the issue child it returns to the issue child. The file format and the refusals are in
-`docs/relay/coordination.md`, "A review thread that arrives after the issue child's record".
+and while a correction can still reach the `child` session it returns to the `child` session. The file format and the refusals are in
+`docs/relay/coordination.md`, "A review thread that arrives after the `child` session's record".
 
 Serialize integrations sharing a target. Verify the actual landing and resulting
 destination revision; an accepted or queued merge request is not a completed merge.
@@ -707,16 +707,16 @@ integration, and deployment as separate claims.
 
 ### After the merge and the integration observation: release the child's threads
 
-A finished issue child stays loaded on the shared App Server, and so do the sub-threads it started, each with its own MCP helper processes; a day of runs leaves hundreds. A thread stays loaded while a
+A finished `child` session stays loaded on the shared App Server, and so do the sub-threads it started, each with its own MCP helper processes; a day of runs leaves hundreds. A thread stays loaded while a
 connection is subscribed to it: the one that created or resumed it (the child's bridge process, the relay daemon that delivered to it), and for a sub-thread the one subscribed to its child. Release
 them yourself once the work is over, after `assignment-mark merged` and, for a plan node, `dag-integration-observe` answering `integrated` true:
 
     codex-session-relay --state "$RELAY_STATE" --socket "$SOCK" child-cleanup --relationship <rel> --actor <own task id> --dry-run
     codex-session-relay --state "$RELAY_STATE" --socket "$SOCK" child-cleanup --relationship <rel> --actor <own task id>
 
-It refuses, before any App Server call, unless no correction can still be sent to the issue child: you are the relationship's child; it is live or closed (not paused, cancelled or handed to another
-relationship); a `merged` mark counts for its current head, generation, revision and criteria; no other live relationship names the issue child; nothing is still owed; and, for a plan node, the accepted head
-stands on that mark and has landed on every target. It then archives the loaded threads of the issue child's subtree (`thread/archive`), deepest sub-threads first and the issue child last, after reading the subtree
+It refuses, before any App Server call, unless no correction can still be sent to the `child` session: you are the relationship's child; it is live or closed (not paused, cancelled or handed to another
+relationship); a `merged` mark counts for its current head, generation, revision and criteria; no other live relationship names the `child` session; nothing is still owed; and, for a plan node, the accepted head
+stands on that mark and has landed on every target. It then archives the loaded threads of the `child` session's subtree (`thread/archive`), deepest sub-threads first and the `child` session last, after reading the subtree
 a second time right before the first archive, and touches nothing that is not loaded; `codex unarchive <thread id>` undoes it. Exit 2 carries the report with `ok` false: `held_active` or `held_incomplete` (something in the subtree is running, or it could not be established
 exactly, so nothing was archived: run it again later), `failed`, or `no_rollout_left_loaded` (a sub-thread that never ran a turn cannot be archived and unloads about a minute after its owner's connection
 closes; the relay never deletes it). A repeat after a complete cleanup changes nothing. Record in the coordination record which threads were released and which stayed.
@@ -735,7 +735,7 @@ finding ([Return corrections to the existing
 task](../SKILL.md#return-corrections-to-the-existing-task)).
 
 1. **Every item is there.** A handoff for a pull request with no `disclosures` member, or with an
-   item left out, does not describe the candidate and returns to the same issue child like any other
+   item left out, does not describe the candidate and returns to the same `child` session like any other
    disagreement between the record and the re-read
    ([OPS-9.4](operations.md#ops-94-a-new-head-invalidates-the-review-it-outran)). `none` and
    `ran: false` are answers; silence is not.
@@ -749,8 +749,8 @@ task](../SKILL.md#return-corrections-to-the-existing-task)).
    accepted under [conditional acceptance](#conditional-acceptance-and-what-recording-one-costs)
    with its five records. Or a fix is required. A finding in a blocking class under
    [impact](#judge-a-finding-by-its-impact) always gets this answer, whatever label the review gave
-   it and whatever the issue child concluded: it is fixed, or the candidate is reported blocked. A verdict
-   that does not name a request is incomplete. Where the issue child asked first and ended its turn
+   it and whatever the `child` session concluded: it is fixed, or the candidate is reported blocked. A verdict
+   that does not name a request is incomplete. Where the `child` session asked first and ended its turn
    `blocked_needs_input`, the answer goes back through `decision-reply`, then the DAG reflection when the criteria changed ([Answering a child that stopped for input](relay.md#answering-a-child-that-stopped-for-input)), and the request cites it.
 
 3. **Every commit after the review is accounted for.** With a `reviewedHead`,
@@ -769,11 +769,11 @@ task](../SKILL.md#return-corrections-to-the-existing-task)).
    the assignment's baseline commit and only merges are compared:
    `git rev-list --first-parent --merges <baseline>..<head>` names exactly the merge commits of the
    entries plus any merge listed in `commitsAfter` as not a merge of the base, so a base merge
-   nobody listed does not escape the refresh checks, while ordinary commits are the issue child's own work
+   nobody listed does not escape the refresh checks, while ordinary commits are the `child` session's own work
    and are not listed one by one. The handoff's independence then rests on the hosted review and the
    child's own reading, and the verdict says so.
 
-4. **Each refresh is the kind it says.** A refresh the issue child made is proved by the same check as one
+4. **Each refresh is the kind it says.** A refresh the `child` session made is proved by the same check as one
    the child made ([Refresh the base yourself when only the base
    moved](#refresh-the-base-yourself-when-only-the-base-moved)). For every entry, of any kind, first
    read the merge's parents with `git rev-list --parents -n 1 <head>`: there are exactly two, the
@@ -784,7 +784,7 @@ task](../SKILL.md#return-corrections-to-the-existing-task)).
    parent as the base, and it only runs for a `clean` entry. A field that disagrees with the actual
    parents is a wrong receipt: the entry returns to be corrected and the checks run again. Only when
    the actual parents show that the commit is not a merge of the base, because it has not exactly
-   two parents or its second parent is not on the observed base, is what it brings in the issue child's
+   two parents or its second parent is not on the observed base, is what it brings in the `child` session's
    own change; it then belongs in `commitsAfter` and is judged by impact. Then, for an entry named
    `clean`, run
    `crw skill base-refresh check --repo <a checkout that has fetched both heads and the base> --previous <previous> --head <head> --base origin/dev`
@@ -794,7 +794,7 @@ task](../SKILL.md#return-corrections-to-the-existing-task)).
    - Exit 1 is read by its reason. `no_update`: the entry names a refresh that did not happen, so
      it is dropped. `not_built_on_previous`: a wrong anchor, more than a hundred merges or a walk
      that reached the base, so the anchor is corrected. `not_a_merge` and `not_from_base`: a commit
-     that is not a merge of the base lies in the range. It is the issue child's own change, belongs in
+     that is not a merge of the base lies in the range. It is the `child` session's own change, belongs in
      `commitsAfter` and gets an independent check of that delta by impact, not of the whole diff.
      `merge_conflicts` and `tree_differs`: the merge carries resolutions or edits, so it is not
      `clean`, and it stays a `baseRefresh` entry. It is reclassified `mechanical` or `manual` by the
@@ -807,8 +807,8 @@ task](../SKILL.md#return-corrections-to-the-existing-task)).
    For a `mechanical` or `manual` entry, `git show --remerge-diff <head>` prints the merge's
    resolutions and each one must be a listed hunk: an unlisted resolution, or an edit riding in the
    merge, returns the entry. The child reproduces a mechanical hunk's rule and compares; for a
-   manual entry it compares the scope and result of the issue child's independent check with the hunks,
-   because that check is the issue child's and the child does not repeat it.
+   manual entry it compares the scope and result of the `child` session's independent check with the hunks,
+   because that check is the `child` session's and the child does not repeat it.
 
 5. **The paths are the ones changed.** `git diff --name-only origin/dev...<head>` against
    `changedPaths`: a path left out, or placed in the wrong region, means the record does not
@@ -820,11 +820,11 @@ task](../SKILL.md#return-corrections-to-the-existing-task)).
    record](#recheck-integrate-and-record)). Nothing else consumes them yet, and that record is where
    a later calibration of the declarations can read them.
 
-6. **Sibling impact is read before the merge order is chosen.** The registry entries the issue child added
+6. **Sibling impact is read before the merge order is chosen.** The registry entries the `child` session added
    are what a union check keeps when the next sibling's branch is refreshed onto this one, and a
    shared interface it changed is what that sibling must read first. A finding that needs a
    sibling's work to change is the child's to route, through the relay or the coordination record;
-   the issue child does not settle it and does not message the sibling. That sibling's next correction
+   the `child` session does not settle it and does not message the sibling. That sibling's next correction
    carries the landing and the expected conflicts in its [restoration
    block](task-packet.md#restoration-block).
 
@@ -866,7 +866,7 @@ Read the answer by its first line and its exit status:
   `test_compile_failed` and `list_failed` mean the merge does not build or vet: a needs-changes
   finding, the first one of the verdict, with the restoration block. It names the package and quotes
   the first lines of the output (for a redeclared identifier, both declarations), and the candidate
-  returns to the same issue child, which merges the base and renames
+  returns to the same `child` session, which merges the base and renames
   ([Return corrections to the existing task](../SKILL.md#return-corrections-to-the-existing-task)).
   `merge_conflict` is git's, not a build finding: nothing was built, and the candidate is handled as
   a base conflict is, below. `head_on_base` means the head has already landed or the wrong base was
@@ -912,7 +912,7 @@ relay's own mechanism on a pull request; the repository's rule is the integrator
 fast-forward in [The three gates](#the-three-gates).
 
 While the dev ruleset still requires pull requests (until the protection change in docs/CI.md takes effect after CRW-965 is installed), an in-flight pull request has to contain the tip of its base, so each landing leaves
-the other candidates behind. Returning a candidate to its issue child for that alone costs a whole
+the other candidates behind. Returning a candidate to its `child` session for that alone costs a whole
 generation (merge the base, wait for every job and the review, report again) and changes nothing the
 child had verified. When nothing else is wrong the child updates the branch itself, once, and
 proves what it produced. The merge gate does not change: after the update every condition of it has
@@ -924,9 +924,9 @@ measured, D-16). A landing leaves every other in-flight pull request behind, and
 touch them: a refresh restarts every required job, and a head refreshed early is behind again after
 the next landing. One merge never starts a refresh of the remaining pull requests, and a child does
 not refresh a queue ahead of its turn to save time later. A candidate that is not next waits, with
-the head its issue child reported.
+the head its `child` session reported.
 
-Do it only when all three hold at the head P that the issue child reported and the child verified (a
+Do it only when all three hold at the head P that the `child` session reported and the child verified (a
 later refresh of the same candidate is a further step of its own, below):
 
 1. The base is the only thing wrong. `merge-evidence --restate <the child's record>` reports exactly
@@ -951,7 +951,7 @@ the head you verified, and never by rebase, reset or force-push:
 
 A 202 says the forge accepted the request, not that the branch moved: read the pull request until
 its head is no longer the one you verified. A 422 whose message names a merge conflict is a conflict
-(below). Any other 422, such as a head that moved because the issue child pushed, leaves the branch
+(below). Any other 422, such as a head that moved because the `child` session pushed, leaves the branch
 untouched and means the verification described a head that is gone, so start again from the top.
 
 On the new head N nothing about P carries over. Before the merge:
@@ -977,13 +977,13 @@ On the new head N nothing about P carries over. Before the merge:
   `dev_tip` of the evidence line in `--base`. There is no hand-run substitute: plain git commands
   in a checkout follow its replace refs, merge drivers and attributes, and what they print is not
   this answer. Where the installed `crw` does not list `base-refresh` among the `crw skill`
-  families, the child does not refresh, and the candidate goes back to its issue child as it did before
+  families, the child does not refresh, and the candidate goes back to its `child` session as it did before
   this rule.
 - **The safe side.** A refusal, and an exit 2 that a second ask does not clear, leaves N
-  unaccepted. The candidate goes back to its issue child under the needs-changes route below, naming N
+  unaccepted. The candidate goes back to its `child` session under the needs-changes route below, naming N
   and quoting the first line and the `facts:` line, except where the refusal itself names a step
   the child takes first: the stepwise proof of a chain and the re-pin after a moved base, both
-  below. `git range-diff` of the issue child's commits as seen from P and from N, and the paths a
+  below. `git range-diff` of the `child` session's commits as seen from P and from N, and the paths a
   `tree_differs` names, decide what the correction says; neither turns a refusal into a pass, and
   nothing else in this procedure accepts a head the check refused. One possible cause of a
   `tree_differs` on an update the forge made without reporting a conflict is rename handling: the
@@ -991,7 +991,7 @@ On the new head N nothing about P carries over. Before the merge:
   merges with its own settings and limits, and on a repository that renames files the two can
   differ. A difference can only make the trees differ, so it ends in a refusal and never in a pass.
 - **Every job and the review, on N.** `merge-evidence` on N, without `--restate` because the
-  issue child's record names P, must exit 0: each required job a success at its newest attempt, reviews and
+  `child` session's record names P, must exit 0: each required job a success at its newest attempt, reviews and
   threads read to the end, and the candidate no longer behind. Jobs still pending, and a reading that
   is unknown or stale, are waiting: read again. The `Devin Review` commit status
   (`gh api repos/OWNER/REPO/commits/N/status`) is not a gate and is not waited for at this step:
@@ -1010,7 +1010,7 @@ On the new head N nothing about P carries over. Before the merge:
   id> --failed`, which asks for the rerun and proves nothing) and ask the judge again: it reads the
   newest attempt of each job and answers `eligible` (its reason says "after a recorded failure (a
   flaky check)", which is the flake ledger) or, on a second failure, `evicted`, and the candidate
-  goes back to its issue child naming N. In a project with no plan there is no judge: the child makes
+  goes back to its `child` session naming N. In a project with no plan there is no judge: the child makes
   the same single rerun by hand, reads the new attempt through `merge-evidence` on N (the newest
   attempt of each job counts), and adds one to `ci_reruns` in the merge record, with the job, the
   failed run id and attempt, and the passing attempt. Three sequences, in both modes: a failure and
@@ -1039,7 +1039,7 @@ and the check says `not_from_base` (that commit is not an ancestor of D); `not_t
 the commit named was newer than the one merged (a pull request's `base.sha` was read for D), or that
 the base moved again since. Read the tip of the base from the forge again, T, and run the check with
 `--base T`. Exit 0 means N's second parent is T, so N is current and proved; any refusal sends the
-candidate back to its issue child. `--base` is only ever a tip read from the forge: never a head's second
+candidate back to its `child` session. `--base` is only ever a tip read from the forge: never a head's second
 parent, and never a commit that no forge reading named as the tip. The check proves an update
 against whatever commit it is named, and an ancestor of the base that was never its tip passes as
 readily (a commit of a merged side branch, or an intermediate commit of a push that moved the base
@@ -1047,22 +1047,22 @@ by several commits).
 
 Then merge as above: reread the head and base, merge with the expected-head guard on N.
 
-**What still goes back to the issue child.** A conflict comes before an update: the forge refused the
+**What still goes back to the `child` session.** A conflict comes before an update: the forge refused the
 call, or the state reads `DIRTY`. When every conflicting file lies in a place the plan declared
 `mechanical`, the child settles the conflict itself ([Resolve a mechanical conflict
-yourself](#resolve-a-mechanical-conflict-yourself)); a conflict anywhere else is the issue child's.
+yourself](#resolve-a-mechanical-conflict-yourself)); a conflict anywhere else is the `child` session's.
 That update did not happen, so the branch is where the last one
 left it: at P when this was the first attempt, at the newest head the child made when it was a
 repeat. The correction is the old base-refresh correction that names that head and the conflicting
 base, and it carries the [restoration block](task-packet.md#restoration-block) when an earlier
-refresh already moved the branch past what the issue child holds. Everything else is found on a head the
+refresh already moved the branch past what the `child` session holds. Everything else is found on a head the
 child made: a refusal from `base-refresh check`; a required job that failed on N again after its one
 rerun; a thread on N outside `threadsSeen` that the child has not dispositioned for N (a disposition
 names one head), or a blocking finding on N under
 [impact](#judge-a-finding-by-its-impact) (what holds once the node is accepted is in
 [Late review threads](#late-review-threads)). A `Devin Review` status, failed or not, is not on this list
 ([Devin and Codex reviews are references, not merge gates](#devin-and-codex-reviews-are-references-not-merge-gates)).
-Those corrections name N and not P, and carry the restoration block because the issue child's worktree is now behind its branch. Waiting is not a reason to
+Those corrections name N and not P, and carry the restoration block because the `child` session's worktree is now behind its branch. Waiting is not a reason to
 return it. The route is otherwise the
 [needs-changes route](../SKILL.md#return-corrections-to-the-existing-task), unchanged. A conflict that shows after the verdict and before the acceptance takes that route on the same receipt: [a base conflict after the ruling and before the acceptance](#a-base-conflict-after-the-ruling-and-before-the-acceptance).
 
@@ -1071,11 +1071,11 @@ it.** This paragraph is the pull-request path, which is optional: a node accepte
 default) reads no forge, its head is the one the ruling fixed, and it lands through `dag-integrate`
 ([Integrate a node by its commit](#integrate-a-node-by-its-commit-no-pull-request)). On the
 pull-request path `dag-accept` records the head the forge shows as the accepted head and takes none from the
-issue child's report; a head that moves afterwards reads `stale_head` at `dag-merge-judge` and
+`child` session's report; a head that moves afterwards reads `stale_head` at `dag-merge-judge` and
 `dag-merge-request`, leaves the node `blocked:stale_head`, and the same output cannot be accepted at
 the new head (`merge_candidate_moved`); the exception is a head that [a base refresh the child made after the acceptance](#a-base-refresh-the-child-made-after-the-acceptance) records. An acceptance reads no CI, no review and no thread
 (`docs/relay/dag-scheduler.md`, "Accepting a result"), so the order is: the verdict `verified` (given with `verdict --verified-head P`, the head the verdict judged, so the relay holds P with the ruling), the
-update and the base-refresh check on N, `dag-accept --checkout <the parent's checkout>` (it records N, after proving from the ruling's P that N is P plus merges of the base: with no checkout a refreshed head is `malformed_receipt`, an N the rules cannot prove is `disposition_conflict` with `tree_differs` and goes back to the issue child; a ruling that recorded no head is accepted as before, and N equal to P needs no checkout), `dag-merge-judge` for the
+update and the base-refresh check on N, `dag-accept --checkout <the parent's checkout>` (it records N, after proving from the ruling's P that N is P plus merges of the base: with no checkout a refreshed head is `malformed_receipt`, an N the rules cannot prove is `disposition_conflict` with `tree_differs` and goes back to the `child` session; a ruling that recorded no head is accepted as before, and N equal to P needs no checkout), `dag-merge-judge` for the
 jobs on N (`checks_pending` is waited on; the first failure is the `retry_same_sha` above),
 `merge-evidence` on N for the reviews and threads, which the judge does not read,
 `dag-merge-request`, the merge lane, the merge, `assignment-mark merged`,
@@ -1096,7 +1096,7 @@ Read the review threads on N against the record's `threadsSeen`, and each review
 before `dag-accept`. It is a check added to the order above and moves none of its steps: the jobs are still read after the acceptance, the
 reviews and threads again after it, and the restatement immediately before merging stays. Before the acceptance
 a late thread still has a correction route and after it none has
-([Late review threads](#late-review-threads)), so this is the last point at which one reaches the issue child. It
+([Late review threads](#late-review-threads)), so this is the last point at which one reaches the `child` session. It
 compares threads with the record and reads the summary comments for findings, and does not need a restatement of the
 record of P on N, which names another head.
 
@@ -1162,8 +1162,8 @@ check's `evidence:` line exactly as printed (previous head, dev tip, new head, t
 applied), one line per step when the candidate was refreshed more than once (after a conflict settled by
 a mechanical rule also the `applied:` lines and the wording given in [Resolve a mechanical conflict
 yourself](#resolve-a-mechanical-conflict-yourself)), and the
-`merge-evidence` verdict on N, because `--expected-event` pins the issue child's report, which names P:
-the merged head and the receipt revision differ, as they already do after an issue child's base refresh,
+`merge-evidence` verdict on N, because `--expected-event` pins the `child` session's report, which names P:
+the merged head and the receipt revision differ, as they already do after a `child` session's base refresh,
 and the evidence text is the only place that difference is explained. The merge record in the
 coordination record carries the same lines. The child copies them from the check's output; it
 does not retype the fields.
@@ -1202,7 +1202,7 @@ An entry for a candidate that was refreshed once and landed after one rerun read
 - Conflicts are counted as episodes, for the base reason only. An episode is one occasion on which
   the only block on a candidate was the base. It is handled when the child's refresh passed the
   check (`base-refresh check`, or `base-refresh mechanical` for a conflict settled by a rule), and returned
-  when the candidate went back to its issue child for the base: a forge conflict the rules do not settle, a
+  when the candidate went back to its `child` session for the base: a forge conflict the rules do not settle, a
   refusal, an exit 2 that a second ask did not clear, a `stale_base`, a merge state still
   `UNKNOWN`. Each episode has one record, whether or not the candidate lands later; a candidate
   that needs no refresh has none.
@@ -1249,15 +1249,15 @@ The temporary procedure for a minor thread, when the installed relay cannot reco
   2. Reply on each thread with the judgment and its evidence, then resolve it. `merge-evidence` refuses a
      record with a thread unresolved, so a thread listed for the backlog is replied to and resolved as well, the
      reply naming the follow-up owner and the trigger that reopens it.
-  3. Send the issue child the minimal correction: the needs-changes ruling with one finding that carries the restoration
+  3. Send the `child` session the minimal correction: the needs-changes ruling with one finding that carries the restoration
      block. The finding names the head (it has not moved), lists each late thread by URL with the coordinator's
-     disposition and the reply that holds it, and asks only that the issue child read the review threads on that head
+     disposition and the reply that holds it, and asks only that the `child` session read the review threads on that head
      again to the end, rebuild the handoff for the same head with those threads in `threadsSeen` and each
      disposition as the coordinator recorded it (an accepted one carries `addressedBy` naming the reply, with the
      `followUpOwner` and `reopenTrigger` it states), and emit it again as the first receipt of the new generation.
-     It asks for no code change, no push and no review, and the issue child reuses what still applies to the same head.
+     It asks for no code change, no push and no review, and the `child` session reuses what still applies to the same head.
   4. Read the new record with `merge-evidence --restate` like any record. That checks coverage only: every
-     thread is in `threadsSeen` and none is unresolved. The dispositions the issue child lists for the late threads are
+     thread is in `threadsSeen` and none is unresolved. The dispositions the `child` session lists for the late threads are
      the coordinator's, so the coordinator itself compares each one with its own reply, as it does for any
      acceptance ([the child's acceptance](#conditional-acceptance-and-what-recording-one-costs)).
 
@@ -1379,15 +1379,15 @@ declared, and one for every node whose landing the conflict comes from (`dag-rea
 the holders, keeps at most 16 rows and says by `basis_omitted` when it dropped some). The check takes the
 rule of a place only when every declaration given names it, as the scheduler's overlap judgement does, and
 it cannot know that the set it was given is complete: a child that cannot name every node does not go on, and
-the candidate goes back to its issue child. Where the installed `crw skill base-refresh` does not list `mechanical`
+the candidate goes back to its `child` session. Where the installed `crw skill base-refresh` does not list `mechanical`
 among its commands, the child does not settle a conflict either.
 
-1. Read D, the tip of the base, from the forge as for any refresh. In a checkout of your own (never the issue child's
+1. Read D, the tip of the base, from the forge as for any refresh. In a checkout of your own (never the `child` session's
    worktree, never one that holds other work), fetch P and D, check P out in a worktree of its own and merge D
    with a merge commit: `git merge --no-ff -m "Merge branch 'dev' into <branch>" <D>`. `git diff --name-only
    --diff-filter=U` lists the conflicting files. A file no declaration covers, a conflict that is not a change
    both sides made to one text file (a deleted or renamed file, a binary file, a link), and a place whose rule
-   is `renumber` end it here: `git merge --abort`, and the candidate goes back to its issue child (below). The one
+   is `renumber` end it here: `git merge --abort`, and the candidate goes back to its `child` session (below). The one
    exception is the plugin manifest's version line, which no declaration has to settle with one agreed rule: settle it as the
    paragraph after the rules below says, and abort only when it is anything else.
 2. Settle each conflicting file by its rule and by nothing else. A file that merged cleanly stays as git made it.
@@ -1485,17 +1485,17 @@ regeneration, and "plugin.json version regenerated" for the manifest. Copy the `
 add the `merge-evidence` verdict on N, as for any refresh. A pass is a fact about the resolution: it does not say that a
 job, a review or a merge happened on N.
 
-**What goes back to the issue child.** A refusal, an exit 2 that a second ask does not clear, a conflict in a file no
+**What goes back to the `child` session.** A refusal, an exit 2 that a second ask does not clear, a conflict in a file no
 declaration covers or whose declaration the child cannot complete, a place whose rule is `renumber`, and a
 conflict of any other kind. The correction is the base-refresh correction: it names P, the base tip and the
-conflicting files, quotes the refusal, and says which rule the plan declared for each place. The issue child resolves
+conflicting files, quotes the refusal, and says which rule the plan declared for each place. The `child` session resolves
 the rest, and the hunks it settled by a rule are `mechanical` in its handoff ([What a handoff
-discloses](task-packet.md#what-a-handoff-discloses)); the child may run the same check on the issue child's merge
-(`--previous` the head it verified, `--head` the issue child's merge commit) instead of reproducing the hunks by hand.
+discloses](task-packet.md#what-a-handoff-discloses)); the child may run the same check on the `child` session's merge
+(`--previous` the head it verified, `--head` the `child` session's merge commit) instead of reproducing the hunks by hand.
 
 ### A base conflict after the ruling and before the acceptance
 
-The verdict `verified` was given, and before `dag-accept` (or, in a project with no plan, before the merged mark) the base conflicts: the forge refuses the update, the state reads `DIRTY`, or another project's landing changed the head you refreshed. A conflict whose every file lies in a `mechanical` place is the child's to settle first ([Resolve a mechanical conflict yourself](#resolve-a-mechanical-conflict-yourself)); any other candidate goes back to its issue child, and the way is the needs-changes ruling on the same receipt: the relay replaces a `verified` ruling by `needs_changes` while nothing rests on it, opens the next generation and queues the correction to the same issue child. (A criteria re-review that is open is decided first, as it always was.) It needs nothing from a conflict handling of the child's own.
+The verdict `verified` was given, and before `dag-accept` (or, in a project with no plan, before the merged mark) the base conflicts: the forge refuses the update, the state reads `DIRTY`, or another project's landing changed the head you refreshed. A conflict whose every file lies in a `mechanical` place is the child's to settle first ([Resolve a mechanical conflict yourself](#resolve-a-mechanical-conflict-yourself)); any other candidate goes back to its `child` session, and the way is the needs-changes ruling on the same receipt: the relay replaces a `verified` ruling by `needs_changes` while nothing rests on it, opens the next generation and queues the correction to the same `child` session. (A criteria re-review that is open is decided first, as it always was.) It needs nothing from a conflict handling of the child's own.
 
 1. **Check that nothing rests on the ruling.** Read `codex-session-relay --state "$RELAY_STATE" assignment-show --relationship <rel>`: the state is `verified` and the head is the event you ruled. No `dag-accept` was recorded for the node: `dag-ready --plan <plan>` reads it as `verifying`, and a node with an acceptance never does (it reads `done:accepted`, `done:integrated`, `stale` or `blocked:stale_head`, an accepted node whose head moved). No `assignment-mark --mark merged` was either. A merge turn of this candidate that you hold is `holding` (`merge-turn-show` names its state); one that is `merging` or of unknown effect is resolved first (`merge-turn-resolve`), and one that landed means the work is on the target, which new work corrects and a ruling does not.
 2. **Rule `needs_changes` on the same receipt:**
@@ -1504,21 +1504,21 @@ The verdict `verified` was given, and before `dag-accept` (or, in a project with
          --verdict-turn <own turn> --restoration <criterion id> \
          --finding '<criterion id>=needs_changes:<the correction and its restoration block>'
 
-   The finding carries the [restoration block](task-packet.md#restoration-block): the head P the verdict named, the head N the branch has now, the conflicting base D and the paths the forge or `git merge-tree` names, the siblings' landings, and that this correction asks only for the base to be brought up to date (the issue child merges the base, names the kind of each merge and reruns that kind's checks and no more).
-3. **Read the answer, not the exit code.** A ruling that was replaced answers the new record: `verdict` is `needs_changes`, `nextExecutionGeneration` is the generation the issue child will report in, and `_supersedes` names the verified ruling it replaced; `assignment-show` then reads `needs_changes`.
-4. **Release the turn you hold** once the ruling is given, because the issue child works on the next generation and the lane must not wait for it: `merge-turn-release --turn <turn> --actor <id> --disposition returned --reason '<what invalidated the readiness>'`.
-5. **An older relay changed nothing.** An answer that is still `verified` and carries `_replay` means the installed relay is older than this rule and answered a different verdict with the recorded one: nothing reached the issue child and `assignment-show` still reads `verified`. Do not repeat the call, and do not open a parallel path to the issue child (the rule of [Return corrections to the existing task](../SKILL.md#return-corrections-to-the-existing-task)). Record the correction as undelivered on the assignment and hand the decision to whoever owns it, as for a relay that does not carry the restoration declaration.
-6. **A refusal says what remains**, with its reason, and wrote nothing: the verified ruling stands. `disposition_conflict` names the cause: a plan accepted the event, the work is marked merged, or a merge turn is merging, of unknown effect or landed. `stale_generation`, `superseded_revision`, `revision_ambiguous` and `relationship_not_active` say that the receipt is not the head of an active relationship, and each names its route. After the acceptance the relay takes no second ruling (unless a criteria re-review is open), so a verdict is not the way back for a candidate returned for any reason after it, a second job failure, a thread outside `threadsSeen` or `stale_base` included. The DAG records a correction of a stale node whose reading says `correct`, and of a result that is accepted and still current when the generation was opened by hand under a reason that states the correction (see [Late review threads](#late-review-threads)); a result that is current with any other open reason is refused, and what the refusal names is what to change. The one exception is a base that moved after the acceptance: the issue child merges the base in a generation opened by hand and the child records it with `dag-base-refresh` ([a base refresh the child made after the acceptance](#a-base-refresh-the-child-made-after-the-acceptance)).
-7. **When the issue child reports again** in the new generation, the receipt is a new event: acknowledge it and rule it as for any receipt ([the parent verifies](relay.md#the-parent-verifies): `claim`, `ack-proof`, `ack`, `verdict`), and refresh the base yourself if only the base moved again, as above. The issue child declares the receipt it replaces by its revision hash with `--supersedes-revision` only when it reports again inside the same generation.
+   The finding carries the [restoration block](task-packet.md#restoration-block): the head P the verdict named, the head N the branch has now, the conflicting base D and the paths the forge or `git merge-tree` names, the siblings' landings, and that this correction asks only for the base to be brought up to date (the `child` session merges the base, names the kind of each merge and reruns that kind's checks and no more).
+3. **Read the answer, not the exit code.** A ruling that was replaced answers the new record: `verdict` is `needs_changes`, `nextExecutionGeneration` is the generation the `child` session will report in, and `_supersedes` names the verified ruling it replaced; `assignment-show` then reads `needs_changes`.
+4. **Release the turn you hold** once the ruling is given, because the `child` session works on the next generation and the lane must not wait for it: `merge-turn-release --turn <turn> --actor <id> --disposition returned --reason '<what invalidated the readiness>'`.
+5. **An older relay changed nothing.** An answer that is still `verified` and carries `_replay` means the installed relay is older than this rule and answered a different verdict with the recorded one: nothing reached the `child` session and `assignment-show` still reads `verified`. Do not repeat the call, and do not open a parallel path to the `child` session (the rule of [Return corrections to the existing task](../SKILL.md#return-corrections-to-the-existing-task)). Record the correction as undelivered on the assignment and hand the decision to whoever owns it, as for a relay that does not carry the restoration declaration.
+6. **A refusal says what remains**, with its reason, and wrote nothing: the verified ruling stands. `disposition_conflict` names the cause: a plan accepted the event, the work is marked merged, or a merge turn is merging, of unknown effect or landed. `stale_generation`, `superseded_revision`, `revision_ambiguous` and `relationship_not_active` say that the receipt is not the head of an active relationship, and each names its route. After the acceptance the relay takes no second ruling (unless a criteria re-review is open), so a verdict is not the way back for a candidate returned for any reason after it, a second job failure, a thread outside `threadsSeen` or `stale_base` included. The DAG records a correction of a stale node whose reading says `correct`, and of a result that is accepted and still current when the generation was opened by hand under a reason that states the correction (see [Late review threads](#late-review-threads)); a result that is current with any other open reason is refused, and what the refusal names is what to change. The one exception is a base that moved after the acceptance: the `child` session merges the base in a generation opened by hand and the child records it with `dag-base-refresh` ([a base refresh the child made after the acceptance](#a-base-refresh-the-child-made-after-the-acceptance)).
+7. **When the `child` session reports again** in the new generation, the receipt is a new event: acknowledge it and rule it as for any receipt ([the parent verifies](relay.md#the-parent-verifies): `claim`, `ack-proof`, `ack`, `verdict`), and refresh the base yourself if only the base moved again, as above. The `child` session declares the receipt it replaces by its revision hash with `--supersedes-revision` only when it reports again inside the same generation.
 
 ### A base refresh the child made after the acceptance
 
-**The child's own refresh comes first (CRW-916).** When the candidate is the one about to merge, the child updates the branch inside its own turn ([Refresh the base yourself when only the base moved](#refresh-the-base-yourself-when-only-the-base-moved)) and records it with `dag-base-refresh` in the acceptance's own generation: the head moves and the generation does not, so the node integrates on that generation's own merged mark, and a bundle leader that fell back to the single lane keeps moving. What follows is the case where that is not possible and the work goes back to the same issue child.
+**The child's own refresh comes first (CRW-916).** When the candidate is the one about to merge, the child updates the branch inside its own turn ([Refresh the base yourself when only the base moved](#refresh-the-base-yourself-when-only-the-base-moved)) and records it with `dag-base-refresh` in the acceptance's own generation: the head moves and the generation does not, so the node integrates on that generation's own merged mark, and a bundle leader that fell back to the single lane keeps moving. What follows is the case where that is not possible and the work goes back to the same `child` session.
 
-In a DAG-managed project the node is accepted (`dag-ready` reads it `done:accepted`), the base moved after `dag-accept`, and the candidate cannot go back by a second ruling, and a base-only change is recorded by `dag-base-refresh`, not by `dag-correct`. The way back to the same issue child is a generation you open by hand that asks for the merge of the base and nothing else. Once that generation is ruled `verified`, `dag-base-refresh` records that the acceptance also stands on it, after the relay has proved from git that its head is the accepted head plus merges of the base. A node accepted on its pull request is then judged and merged through the lane at that head, and the node integrates on it; a node accepted by its commit takes the record of that head with `dag-accept --commit` and integrates through `dag-integrate` (step 5). A generation that holds more than that, the issue child's own work, is a correction: it is opened by hand under a reason that states the correction and recorded with `dag-correct --manifest-digest`, as Correcting a result that was accepted and is still current (`docs/relay/dag-scheduler.md#correcting-a-result-that-was-accepted-and-is-still-current` in the CRW repository) sets out. The rule and its refusals are in `docs/relay/dag-scheduler.md`, "A base refresh of an accepted node".
+In a DAG-managed project the node is accepted (`dag-ready` reads it `done:accepted`), the base moved after `dag-accept`, and the candidate cannot go back by a second ruling, and a base-only change is recorded by `dag-base-refresh`, not by `dag-correct`. The way back to the same `child` session is a generation you open by hand that asks for the merge of the base and nothing else. Once that generation is ruled `verified`, `dag-base-refresh` records that the acceptance also stands on it, after the relay has proved from git that its head is the accepted head plus merges of the base. A node accepted on its pull request is then judged and merged through the lane at that head, and the node integrates on it; a node accepted by its commit takes the record of that head with `dag-accept --commit` and integrates through `dag-integrate` (step 5). A generation that holds more than that, the `child` session's own work, is a correction: it is opened by hand under a reason that states the correction and recorded with `dag-correct --manifest-digest`, as Correcting a result that was accepted and is still current (`docs/relay/dag-scheduler.md#correcting-a-result-that-was-accepted-and-is-still-current` in the CRW repository) sets out. The rule and its refusals are in `docs/relay/dag-scheduler.md`, "A base refresh of an accepted node".
 
-1. **Check the premise.** `dag-ready --plan <plan>` reads the node `done:accepted` (a node that reads `stale` goes through its stale reading's action, not this: a plan revision that changed only the node's criteria reads `stale:criteria_changed` with the action `revalidate`, and for it `generation-open` and `generation-bind` are refused, because nothing is sent to the issue child and a generation opened by hand could be neither recorded nor accepted - register the criteria with `criteria-register` when the reading says so, rule the same output `verified` again, `dag-accept` it again, and only then refresh the base; see docs/relay/dag-scheduler.md, "An accepted node whose plan revision changed only its criteria"); `assignment-show --relationship <rel>` shows the relationship at the accepted generation; no merge turn of the candidate is merging, of unknown effect or landed.
-2. **Open the generation and send the instruction.** Open it by hand ([a fresh execution generation](relay.md#a-fresh-execution-generation)) and dispatch the issue child through the transport that dispatched it, with the instruction: merge `origin/dev` into the branch with a merge commit, resolve only the conflicts git reports, change nothing else, push, name every file it resolved by hand and how, and report `ready_for_review` in the new generation.
+1. **Check the premise.** `dag-ready --plan <plan>` reads the node `done:accepted` (a node that reads `stale` goes through its stale reading's action, not this: a plan revision that changed only the node's criteria reads `stale:criteria_changed` with the action `revalidate`, and for it `generation-open` and `generation-bind` are refused, because nothing is sent to the `child` session and a generation opened by hand could be neither recorded nor accepted - register the criteria with `criteria-register` when the reading says so, rule the same output `verified` again, `dag-accept` it again, and only then refresh the base; see docs/relay/dag-scheduler.md, "An accepted node whose plan revision changed only its criteria"); `assignment-show --relationship <rel>` shows the relationship at the accepted generation; no merge turn of the candidate is merging, of unknown effect or landed.
+2. **Open the generation and send the instruction.** Open it by hand ([a fresh execution generation](relay.md#a-fresh-execution-generation)) and dispatch the `child` session through the transport that dispatched it, with the instruction: merge `origin/dev` into the branch with a merge commit, resolve only the conflicts git reports, change nothing else, push, name every file it resolved by hand and how, and report `ready_for_review` in the new generation.
 
        codex-session-relay --state "$RELAY_STATE" generation-open --relationship <rel> \
          --dispatch-request-id <new stable id> --reason needs_changes_revision
@@ -1532,13 +1532,13 @@ In a DAG-managed project the node is accepted (`dag-ready` reads it `done:accept
        codex-session-relay --state "$RELAY_STATE" dag-base-refresh --plan <plan> --node <node> \
          --actor <the child's task id> --checkout <checkout> --expect-epoch <the epoch you hold>
 
-   The answer carries `refresh_id`, `execution_generation`, `head_sha`, the proof `steps` (one per merge, oldest first) and `resolved_paths`. Every conflict file retains its blob in `steps`; an optional `rule` names a mechanical resolution proved by the refreshed node's declaration, every identifiable contributing node's agreeing declaration, and the shared checker. An unidentified path-changing base landing or a missing/disagreeing declaration requires the exact `--resolved` name. `resolved_paths` contains only files still requiring a manual name (if any hop needs one, that path stays in the set). Name exactly that set, including no rule-proved extra files. A rule mismatch is `tree_differs` naming the file and rule and cannot be overridden by naming it; an evaluator error is `merge_target_unreadable`. `renumber` is unchecked and refused. Automatic regeneration additionally requires two independent absent-output reconstructions of each original tree (previous head, base parent and new head). All candidate-declared regeneration outputs are removed and Git metadata is replaced by an input-only repository before each witness; this excludes HEAD/history recovery and circular output copies. Any reconstruction failure makes that path manual, including partly generated files such as the version-only `plugin.json` (the plugin manifest's version line is the exception named above: when no declaration settles it with one agreed rule, the built-in `regenerate:plugin-version` rule proves it from the head's own payload and the file is not in `resolved_paths`). Eligible paths still pass the existing head evaluator. Commands run each tree's own code with the caller's rights and the existing per-run timeout, not in a sandbox. See [the exact rule](region-grades.md#record-an-accepted-nodes-base-refresh). A build without the linked checker requires manual names; a valid older record replays its stored names without evaluating again. A refusal `disposition_conflict` that says the merges "resolved these files by hand: [...]" is not a failure: read each named file at the head (`git -C <checkout> show <head>:<path>`), confirm that it carries the resolution the issue child reported and nothing else, and repeat the call with `--resolved <path>` once per file, exactly the files named. Any other refusal names a closed code (`no_update`, `not_built_on_accepted`, `not_a_merge`, `not_from_base`, `tree_differs`, `chain_too_long`): the generation is not a base refresh, and nothing was written. `merge_target_unreadable` names a missing commit or an evaluator failure: fetch and retry only for a missing commit; for a command error or timeout, address the stated evaluation failure before retrying. Calling again with the same facts is a replay.
+   The answer carries `refresh_id`, `execution_generation`, `head_sha`, the proof `steps` (one per merge, oldest first) and `resolved_paths`. Every conflict file retains its blob in `steps`; an optional `rule` names a mechanical resolution proved by the refreshed node's declaration, every identifiable contributing node's agreeing declaration, and the shared checker. An unidentified path-changing base landing or a missing/disagreeing declaration requires the exact `--resolved` name. `resolved_paths` contains only files still requiring a manual name (if any hop needs one, that path stays in the set). Name exactly that set, including no rule-proved extra files. A rule mismatch is `tree_differs` naming the file and rule and cannot be overridden by naming it; an evaluator error is `merge_target_unreadable`. `renumber` is unchecked and refused. Automatic regeneration additionally requires two independent absent-output reconstructions of each original tree (previous head, base parent and new head). All candidate-declared regeneration outputs are removed and Git metadata is replaced by an input-only repository before each witness; this excludes HEAD/history recovery and circular output copies. Any reconstruction failure makes that path manual, including partly generated files such as the version-only `plugin.json` (the plugin manifest's version line is the exception named above: when no declaration settles it with one agreed rule, the built-in `regenerate:plugin-version` rule proves it from the head's own payload and the file is not in `resolved_paths`). Eligible paths still pass the existing head evaluator. Commands run each tree's own code with the caller's rights and the existing per-run timeout, not in a sandbox. See [the exact rule](region-grades.md#record-an-accepted-nodes-base-refresh). A build without the linked checker requires manual names; a valid older record replays its stored names without evaluating again. A refusal `disposition_conflict` that says the merges "resolved these files by hand: [...]" is not a failure: read each named file at the head (`git -C <checkout> show <head>:<path>`), confirm that it carries the resolution the `child` session reported and nothing else, and repeat the call with `--resolved <path>` once per file, exactly the files named. Any other refusal names a closed code (`no_update`, `not_built_on_accepted`, `not_a_merge`, `not_from_base`, `tree_differs`, `chain_too_long`): the generation is not a base refresh, and nothing was written. `merge_target_unreadable` names a missing commit or an evaluator failure: fetch and retry only for a missing commit; for a command error or timeout, address the stated evaluation failure before retrying. Calling again with the same facts is a replay.
 5. **Merge through the lane**, as for any accepted candidate, at the head the record names. A node accepted by its commit does not use the lane: give the record of the refreshed head with `dag-accept --commit` and run `dag-integrate` ([Integrate a node by its commit](#integrate-a-node-by-its-commit-no-pull-request)); the rest of this step is for a node accepted on its pull request. `dag-merge-judge` and `dag-merge-request` compare the pull request with the head the acceptance stands on, which after the record is that head, so the refreshed pull request is judged (the jobs on it are read there, `checks_pending` is waited on, the first failure is the `retry_same_sha` above) and gets its turn for that head. Then the lane's own steps, unchanged: acknowledge the grant, `merge-turn-check` on that head, the merge on the forge (`gh pr merge --match-head-commit <head>`), `merge-turn-land`, and the merge marked on that generation's event:
 
        codex-session-relay --state "$RELAY_STATE" assignment-mark --relationship <rel> --mark merged \
          --evidence '<the merge commit and the refresh_id>' --actor <id> --expected-event <the event of generation n>
 
-   A pull request at a head no record names (the issue child pushed again, or the head holds more than merges of the base) is `stale_head` and gets no turn: make the record again for the new head (step 4 proves it from the accepted head), or return it to the issue child. `merge-turn-check` wants the head that the newest generation's report names, written whole: a report that names an abbreviated head is refused there until the issue child names the whole head.
+   A pull request at a head no record names (the `child` session pushed again, or the head holds more than merges of the base) is `stale_head` and gets no turn: make the record again for the new head (step 4 proves it from the accepted head), or return it to the `child` session. `merge-turn-check` wants the head that the newest generation's report names, written whole: a report that names an abbreviated head is refused there until the `child` session names the whole head.
 6. **Observe the landing:**
 
        codex-session-relay --state "$RELAY_STATE" dag-integration-observe --plan <plan> --node <node> \
@@ -1550,9 +1550,9 @@ In a DAG-managed project the node is accepted (`dag-ready` reads it `done:accept
 
 ### A generation opened by hand and never sent
 
-The verdict `verified` was given, the base moved before `dag-accept`, and the child opened the next generation by hand for the issue child to merge it, then refreshed the branch itself ([above](#refresh-the-base-yourself-when-only-the-base-moved)) and never sent the instruction line. The relationship now stands on a generation that holds nothing, and no route takes the node: `dag-accept` refuses `stale_generation` ("generation N of R is not recorded as an execution of the node"), `dag-correct` says the result is not stale, a second ruling is refused because the event is not the head of the current generation, `dag-base-refresh` needs an acceptance, and `assignment-mark --expected-event` the event you ruled is refused `revision_ambiguous` because the current generation has no report. `dag-generation-withdraw` closes the generation, puts the relationship back on the one before it, and the node goes on as if it had not been opened. The rule and its refusals are in `docs/relay/dag-scheduler.md`, "A generation opened by hand and never sent".
+The verdict `verified` was given, the base moved before `dag-accept`, and the child opened the next generation by hand for the `child` session to merge it, then refreshed the branch itself ([above](#refresh-the-base-yourself-when-only-the-base-moved)) and never sent the instruction line. The relationship now stands on a generation that holds nothing, and no route takes the node: `dag-accept` refuses `stale_generation` ("generation N of R is not recorded as an execution of the node"), `dag-correct` says the result is not stale, a second ruling is refused because the event is not the head of the current generation, `dag-base-refresh` needs an acceptance, and `assignment-mark --expected-event` the event you ruled is refused `revision_ambiguous` because the current generation has no report. `dag-generation-withdraw` closes the generation, puts the relationship back on the one before it, and the node goes on as if it had not been opened. The rule and its refusals are in `docs/relay/dag-scheduler.md`, "A generation opened by hand and never sent".
 
-1. **Check the premise.** `assignment-show --relationship <rel>` shows the relationship on generation N with no report in it, and the event you ruled `verified` is in generation N-1. The instruction line for generation N reached the issue child in no message, and no turn was bound with `generation-bind`. If the issue child may have been told, do not withdraw: bind the turn that carried the instruction and take the issue child's report in that generation, because a withdrawn generation can never be bound and a report in it is refused.
+1. **Check the premise.** `assignment-show --relationship <rel>` shows the relationship on generation N with no report in it, and the event you ruled `verified` is in generation N-1. The instruction line for generation N reached the `child` session in no message, and no turn was bound with `generation-bind`. If the `child` session may have been told, do not withdraw: bind the turn that carried the instruction and take the `child` session's report in that generation, because a withdrawn generation can never be bound and a report in it is refused.
 2. **Withdraw it.** From the child that owns the node:
 
        codex-session-relay --state "$RELAY_STATE" dag-generation-withdraw --plan <plan> --node <node> \

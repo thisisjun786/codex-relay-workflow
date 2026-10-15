@@ -245,6 +245,8 @@ type CallProof struct {
 	Pending string `json:"pending"`
 	// Committed is set when a recorded commit on the chain covers the call.
 	Committed bool `json:"committed"`
+	// Abandoned is set for a call of a retired attempt that no recorded commit carries: a later fresh attempt left its work (Prover.earlier).
+	Abandoned bool `json:"abandoned,omitempty"`
 	Proven    bool `json:"proven"`
 	Why       string
 	seq       int
@@ -267,12 +269,23 @@ type NodeProof struct {
 	// InvalidFrom is the first call whose effect is no longer there; it and every later call are not proven.
 	InvalidFrom string      `json:"invalid_from,omitempty"`
 	Calls       []CallProof `json:"calls"`
+	// Earlier are the executor calls of the attempts before the current one (their worktrees were retired: a tier step, a rebuild),
+	// each proven by a recorded commit of its own attempt that carries its state and that the current HEAD descends from, or, when no
+	// recorded commit carries it, by the fresh attempt that abandoned it (Prover.earlier).
+	Earlier []CallProof `json:"earlier,omitempty"`
 }
 
-// Proven reports whether the effect of an executor call of the current attempt holds. A call that is not one of them (a call
-// of a retired attempt, a call that recorded no state) is not proven.
+// Proven reports whether the effect of an executor call holds: a call of the current attempt by the worktree, a call of a retired
+// attempt by a commit of its attempt the current worktree grew from, or by the fresh attempt that abandoned its uncommitted work. A call
+// that is none of them (a call of a retired attempt whose commit the current worktree did not grow from, a call that recorded no state)
+// is not proven.
 func (n *NodeProof) Proven(callID string) bool {
 	for _, c := range n.Calls {
+		if c.CallID == callID {
+			return c.Proven
+		}
+	}
+	for _, c := range n.Earlier {
 		if c.CallID == callID {
 			return c.Proven
 		}
@@ -357,6 +370,7 @@ func (p Prover) Node(ctx context.Context, events []engine.Event, node string) (*
 	if np.Snapshot, err = Snapshot(ctx, p.Git, np.Worktree); err != nil {
 		return nil, err
 	}
+	np.Earlier = p.earlier(ctx, events, node, calls, current, mine, np)
 	// the recorded chain: the attempt's start, then each recorded commit; k is the last of them that HEAD descends from
 	chain := []string{np.Start}
 	for _, c := range commits {
@@ -480,6 +494,89 @@ func (p Prover) Node(ctx context.Context, events []engine.Event, node string) (*
 		invalidate(len(after)-1, "the working files are none of the recorded states: they changed after the call")
 	}
 	return np, nil
+}
+
+// earlier proves the executor calls of the attempts before the current one, whose worktrees were retired (a tier step, a rebuild) and
+// are never read. A recorded commit of the node covers a call of such an attempt as a commit covers the current attempt's calls (its
+// tree is the pending tree of the latest call of the same attempt recorded before it, and the call is that one or one before it):
+// a covered call is proven when such a commit is an ancestor of the current HEAD, since its work is then in the history of the worktree
+// the node goes on in, and not proven otherwise (the history it was carried in is gone). A call no recorded commit covers left only
+// uncommitted work in its attempt, and a fresh attempt of the node prepared after it ended abandoned that work: a fresh attempt starts
+// at the node's last commit and takes nothing of an earlier attempt's working files (the node lane's tier step and rebuild, whose
+// packet carries the last findings instead), so nothing reads the call's effect again and the call is proven as the recorded fact it
+// is. A git error reading the ancestry proves nothing; it never fails the proof of the current attempt.
+func (p Prover) earlier(ctx context.Context, events []engine.Event, node string, calls []attemptCall, current *attemptCall, mine []*attemptCall, np *NodeProof) []CallProof {
+	inMine := map[string]bool{}
+	for _, c := range mine {
+		inMine[c.id] = true
+	}
+	var commits []engine.Event
+	for _, ev := range events {
+		if ev.Kind == engine.KindCall && ev.Op == OpCommit && ev.Event == engine.EvCompleted && ev.Seq < current.prepared && str(ev.Data, "node") == node &&
+			str(ev.Data, "commit") != "" && str(ev.Data, "tree") != "" {
+			commits = append(commits, ev)
+		}
+	}
+	ancestor := map[string]bool{}
+	descends := func(commit string) bool {
+		if ok, seen := ancestor[commit]; seen {
+			return ok
+		}
+		ok, err := IsAncestor(ctx, p.Git, np.Worktree, commit, np.Head)
+		ancestor[commit] = err == nil && ok
+		return ancestor[commit]
+	}
+	// abandoned: a fresh attempt of the node in another worktree was prepared after the call ended
+	abandoned := func(c *attemptCall) bool {
+		for j := range calls {
+			g := &calls[j]
+			if k, _ := g.alloc["kind"].(string); k == engine.PlaceFresh && str(g.alloc, "path") != "" && str(g.alloc, "path") != c.cwd && g.prepared > c.termSeq {
+				return true
+			}
+		}
+		return false
+	}
+	var out []CallProof
+	for i := range calls {
+		c := &calls[i]
+		if c.termSeq == 0 || c.pending == "" || c.prepared >= current.prepared || inMine[c.id] {
+			continue
+		}
+		cp := CallProof{CallID: c.id, Role: c.role, Event: c.event, Pending: c.pending, seq: c.termSeq}
+		covered := false
+		for _, cm := range commits {
+			tree := str(cm.Data, "tree")
+			if cm.Seq <= c.termSeq {
+				continue
+			}
+			latest := 0
+			for j := range calls {
+				g := &calls[j]
+				if g.cwd == c.cwd && g.prepared < current.prepared && g.termSeq > 0 && g.termSeq < cm.Seq && g.pending == tree {
+					latest = max(latest, g.termSeq)
+				}
+			}
+			if latest == 0 || c.termSeq > latest {
+				continue
+			}
+			covered = true
+			if descends(str(cm.Data, "commit")) {
+				cp.Committed, cp.Proven = true, true
+				break
+			}
+		}
+		switch {
+		case cp.Proven:
+		case covered:
+			cp.Why = "a call of a retired attempt whose recorded commit the current HEAD does not descend from"
+		case abandoned(c):
+			cp.Abandoned, cp.Proven = true, true
+		default:
+			cp.Why = "a call of a retired attempt that no recorded commit carries and no fresh attempt abandoned"
+		}
+		out = append(out, cp)
+	}
+	return out
 }
 
 // nodeCalls reads the executor calls of a node from the journal, in the order they were prepared.

@@ -9,6 +9,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/reviewadapter"
 )
 
 // twoMilestones is the plan of the two-milestone fixture: M1 holds A-1 and A-2 (A-2 after A-1), M2 holds B-1 after A-2.
@@ -137,8 +138,8 @@ func TestDesignAuditCarriesPriorFindingsAndDispositionsFromRoundTwo(t *testing.T
 
 // TestReplanCriticAndExplorerCallsCarryTheSignalHead (CRW-1458): a re-plan's critic and explorer calls are made at the head of the
 // signal, as the re-plan's architect turn is. Three issues in one milestone, C-1 then A-1 then B-1: C-1 lands first, so the integration
-// tip the signal reads is not the head the DESIGN ran at. A-1's build and fix RECEIPTs each report a plan mismatch (its first review
-// asks for a fix with one P2 defect), and the second makes the milestone re-plan while B-1 has not started. The re-plan's DESIGN raises
+// tip the signal reads is not the head the DESIGN ran at. A-1's build and fix RECEIPTs each report a plan mismatch (its first unit
+// check asks for a fix with one P2 finding), and the second makes the milestone re-plan while B-1 has not started. The re-plan's DESIGN raises
 // the first DESIGN's open question again and one the first did not; an explorer's answer reads one head, so both go to explorers in its
 // audit round. The re-plan's audit and explorer calls pin the signal's tip, and the critic's packet names the head, the range from the DESIGN's base and the heads landed (C-1); the first DESIGN's audit
 // and explorer calls pin the design head its phase sampled and the critic's packet has no HEAD line; B-1 is released after the re-plan.
@@ -150,6 +151,9 @@ func TestReplanCriticAndExplorerCallsCarryTheSignalHead(t *testing.T) {
 	l.designEdit = func(d *ops.Design) { d.OpenQuestions = []ops.OpenQuestion{first} }
 	// the number of effect-bearing relay calls made when the re-plan's architect turn ran
 	replanAt := -1
+	// A-1's first unit check asks for a fix with one P2 finding
+	l.UnitChecks("A-1", ops.UnitCheckUncommitted, labCheck{Verdict: reviewadapter.VerdictNeedsChanges, Findings: []reviewadapter.Finding{{Severity: "P2", Impact: "core_function",
+		File: "node-A-1.txt", Line: 1, Text: "fix this"}}})
 	l.turn = func(c labCall, r fakehost.TurnRequest) (fakehost.TurnPlan, bool) {
 		switch {
 		case strings.HasPrefix(c.Label, "replan:"):
@@ -168,8 +172,6 @@ func TestReplanCriticAndExplorerCallsCarryTheSignalHead(t *testing.T) {
 			return labSay(d), true
 		case strings.HasPrefix(c.Label, "build:"+nodeA+":") || strings.HasPrefix(c.Label, "fix:"+nodeA+":"):
 			return l.executorTurn(c, map[string]any{"plan_mismatch": "the plan assumed something else: " + c.Label}), true
-		case c.Label == "review:"+nodeA+":r1":
-			return labSay(labVerdict(false, labDefect("d1", "P2", "fix this"))), true
 		}
 		return fakehost.TurnPlan{}, false
 	}
@@ -570,4 +572,277 @@ func TestArchitectContinuesOnItsThreadWithExplorerAnswersBeforeTheCritic(t *test
 	if !strings.Contains(critic, revised) {
 		t.Errorf("the critic did not audit the DESIGN design-answers:r1 answered with:\n%s", critic)
 	}
+}
+
+// ---- the unit check of the node lane (CRW-1465) ----
+
+// unitCheckRun starts a project lane run of M1 on the lab and runs it to its end; it answers the run's value.
+func unitCheckRun(t *testing.T, l *laneLab) (Result, map[string]any) {
+	t.Helper()
+	spec := l.start("start", "project-lane", "--args", fmt.Sprintf(`{"plan":%q,"milestone":"M1"}`, l.plan), "--handoff", l.file)
+	res := l.runToEnd(spec.RunID)
+	var v map[string]any
+	if res.Status != engine.RunCompleted || json.Unmarshal(res.Value, &v) != nil {
+		t.Fatalf("the run: %s %s %s\n%s", res.Status, res.ErrorKind, res.Error, res.Value)
+	}
+	return res, v
+}
+
+// laneOfValue is the lane result of a node in a run's value.
+func laneOfValue(t *testing.T, v map[string]any, node string) map[string]any {
+	t.Helper()
+	lanes, _ := v["lanes"].([]any)
+	for _, ln := range lanes {
+		if m, ok := ln.(map[string]any); ok && m["node"] == node {
+			return m
+		}
+	}
+	t.Fatalf("no lane of %s in %v", node, v)
+	return nil
+}
+
+// labCalls are the agent calls of the lab's last process, as their prepared rows name them (label, role, the call they continue).
+func labCalls(l *laneLab) []struct{ ID, Label, Role, ResumeOf string } {
+	var out []struct{ ID, Label, Role, ResumeOf string }
+	for _, e := range l.events() {
+		if e.Kind == engine.KindCall && e.Op == "agent" && e.Event == engine.EvPrepared {
+			out = append(out, struct{ ID, Label, Role, ResumeOf string }{e.CallID, e.Label, str(e.Data, "role"), str(e.Data, "resume_of")})
+		}
+	}
+	return out
+}
+
+// TestNodeLaneRunsTheUnitCheckBeforeTheCommitAndMakesNoReviewerCall (CRW-1465): the node lane checks the executor's uncommitted work
+// with crw.unitCheck before the run commits it, then commits, verifies, accepts and integrates the head; no reviewer is called for the
+// node and no crw.review row is written. The relay's acceptance rests on the crw.unitCheck row (its call and the checker's model).
+func TestNodeLaneRunsTheUnitCheckBeforeTheCommitAndMakesNoReviewerCall(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+	node := l.nodeOf["A-1"]
+	// a reviewer of the node, were one called, would block the head
+	l.turn = func(c labCall, r fakehost.TurnRequest) (fakehost.TurnPlan, bool) {
+		if c.Role == "reviewer" {
+			return labSay(labVerdict(false, labDefect("d1", "P1", "a reviewer was called"))), true
+		}
+		return fakehost.TurnPlan{}, false
+	}
+	res, _ := unitCheckRun(t, l)
+	l.closed(res)
+	at := map[string]int{}
+	check := ""
+	for i, e := range l.events() {
+		if e.Kind != engine.KindCall || e.Event != engine.EvCompleted || str(e.Data, "node") != node {
+			continue
+		}
+		switch e.Op {
+		case ops.OpUnitCheck, ops.OpCommit, ops.OpVerify, ops.OpAccept, ops.OpIntegrate:
+			if _, seen := at[e.Op]; !seen {
+				at[e.Op] = i
+			}
+			if e.Op == ops.OpUnitCheck {
+				check = e.CallID
+				if str(e.Data, "role") != "unit-check" || str(e.Data, "mode") != ops.UnitCheckUncommitted || str(e.Data, "call") == "" {
+					t.Errorf("the unit-check row: %v", e.Data)
+				}
+			}
+		case ops.OpReview:
+			t.Errorf("a crw.review row of %s: %v", node, e.Data)
+		}
+	}
+	order := []string{ops.OpUnitCheck, ops.OpCommit, ops.OpVerify, ops.OpAccept, ops.OpIntegrate}
+	for i, op := range order {
+		if _, ok := at[op]; !ok {
+			t.Fatalf("no completed %s row of %s: %v", op, node, at)
+		}
+		if i > 0 && at[order[i-1]] >= at[op] {
+			t.Errorf("%s (row %d) is not before %s (row %d)", order[i-1], at[order[i-1]], op, at[op])
+		}
+	}
+	for _, c := range labCalls(l) {
+		if c.Role == "reviewer" || strings.HasPrefix(c.Label, "review:") {
+			t.Errorf("a reviewer call %s (%s)", c.Label, c.Role)
+		}
+	}
+	reqs := l.uc.requests()
+	if len(reqs) != 1 || reqs[0].Node != node || reqs[0].Mode != ops.UnitCheckUncommitted {
+		t.Errorf("the unit checks asked: %+v", reqs)
+	}
+	var call, model string
+	if err := l.w.st.DB.QueryRow("SELECT reviewer_call_id, reviewer_model FROM dag_agent_acceptances WHERE node_id = ?", node).Scan(&call, &model); err != nil {
+		t.Fatal(err)
+	}
+	if call != check || model != labCheckModel {
+		t.Errorf("the acceptance rests on %s (%s), want the unit check %s (%s)", call, model, check, labCheckModel)
+	}
+}
+
+// TestUnitCheckFindingGoesBackToTheSameExecutorThread (CRW-1465): a unit check with a finding sends the finding back to the executor on its
+// own thread (fix:<node>:<tier>:r<round>, a continuation of the build), and the fix packet names the finding by its id, file and text.
+// The fix turn answers needs_research: the lane answers it through the research branch on the same thread, and the next unit check of
+// the continuation's work is verified, so the node lands with one commit.
+func TestUnitCheckFindingGoesBackToTheSameExecutorThread(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+	node := l.nodeOf["A-1"]
+	f := reviewadapter.Finding{Severity: "P2", Impact: "core_function", File: "node-A-1.txt", Line: 1, Text: "the file misses the second line"}
+	l.UnitChecks("A-1", ops.UnitCheckUncommitted, labCheck{Verdict: reviewadapter.VerdictNeedsChanges, Findings: []reviewadapter.Finding{f}})
+	l.turn = func(c labCall, r fakehost.TurnRequest) (fakehost.TurnPlan, bool) {
+		if strings.HasPrefix(c.Label, "fix:"+node+":") {
+			return l.executorTurn(c, map[string]any{"outcome": "needs_research", "research_question": "which line does the check want?"}), true
+		}
+		return fakehost.TurnPlan{}, false
+	}
+	res, _ := unitCheckRun(t, l)
+	l.closed(res)
+	byLabel := map[string]struct{ ID, Label, Role, ResumeOf string }{}
+	var labels []string
+	for _, c := range labCalls(l) {
+		byLabel[c.Label] = c
+		labels = append(labels, c.Label)
+	}
+	build, fix, research := byLabel["build:"+node+":executor"], byLabel["fix:"+node+":executor:r1"], byLabel["research:"+node+":executor:r2"]
+	if build.ID == "" || fix.ID == "" || research.ID == "" {
+		t.Fatalf("the calls %v: want the build, the fix of round 1 and the research continuation of round 2", labels)
+	}
+	if fix.ResumeOf != build.ID || research.ResumeOf != fix.ID {
+		t.Errorf("the fix continues %q and the research %q, want the executor's own thread: %s then %s", fix.ResumeOf, research.ResumeOf, build.ID, fix.ID)
+	}
+	explorers := 0
+	for _, c := range labCalls(l) {
+		if c.Role == "explorer" && strings.HasPrefix(c.Label, "explore:") && strings.Contains(c.Label, node) {
+			explorers++
+		}
+	}
+	if explorers != 1 {
+		t.Errorf("%d explorers of the node's research question, want 1: %v", explorers, labels)
+	}
+	l.mu.Lock()
+	text := l.texts[fix.Label]
+	l.mu.Unlock()
+	id := reviewadapter.FindingID(f.File, f.Text)
+	for _, want := range []string{"UNIT CHECK (needs_changes", "[P2] " + id + " node-A-1.txt:1 the file misses the second line", "needs_research"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the fix packet lacks %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "REVIEW (") || strings.Contains(text, "CRITERIA NOT MET") {
+		t.Errorf("the fix packet of a unit check renders a reviewer's verdict:\n%s", text)
+	}
+	if n := len(l.uc.requests()); n != 2 {
+		t.Errorf("%d unit checks, want the build's and the research continuation's", n)
+	}
+	commits := 0
+	for _, e := range l.events() {
+		if e.Kind == engine.KindCall && e.Op == ops.OpCommit && e.Event == engine.EvCompleted && str(e.Data, "node") == node {
+			commits++
+		}
+	}
+	if commits != 1 {
+		t.Errorf("%d commits of the node, want one after the verified check", commits)
+	}
+}
+
+// TestUnitCheckStopsAfterTwoRoundTripsAndCarriesTheRest (CRW-1465): a unit check with findings gets at most two fix round trips on a tier.
+// Three checks each find a different blocking finding: the executor fixes twice, the third check is final and gets no fix, and the node
+// escalates (ask land, unit_check_carried) with the carried finding ids; nothing is committed after it and nothing is accepted. When the
+// third check is verified with a P3 finding only, the node lands and the finding is carried: in the lane result and as a defect of the
+// premerge record of the acceptance.
+func TestUnitCheckStopsAfterTwoRoundTripsAndCarriesTheRest(t *testing.T) {
+	finding := func(sev, text string) reviewadapter.Finding {
+		impact := "core_function"
+		if sev == "P3" {
+			impact = "minor_separable"
+		}
+		return reviewadapter.Finding{Severity: sev, Impact: impact, File: "node-A-1.txt", Line: 1, Text: text}
+	}
+	nc := func(f reviewadapter.Finding) labCheck {
+		return labCheck{Verdict: reviewadapter.VerdictNeedsChanges, Findings: []reviewadapter.Finding{f}}
+	}
+	f1, f2 := finding("P2", "the first thing is wrong"), finding("P2", "a second thing is wrong")
+	fixesOf := func(l *laneLab, node string) []string {
+		var out []string
+		for _, c := range labCalls(l) {
+			if strings.HasPrefix(c.Label, "fix:"+node+":") {
+				out = append(out, c.Label)
+			}
+		}
+		return out
+	}
+	finals := func(l *laneLab, node string) []bool {
+		var out []bool
+		for _, e := range l.events() {
+			if e.Kind == engine.KindCall && e.Op == ops.OpUnitCheck && e.Event == engine.EvCompleted && str(e.Data, "node") == node {
+				b, _ := e.Data["final"].(bool)
+				out = append(out, b)
+			}
+		}
+		return out
+	}
+
+	t.Run("a blocking finding after two round trips escalates", func(t *testing.T) {
+		l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+		node := l.nodeOf["A-1"]
+		f3 := finding("P1", "a third thing is wrong")
+		l.UnitChecks("A-1", ops.UnitCheckUncommitted, nc(f1), nc(f2), nc(f3))
+		_, v := unitCheckRun(t, l)
+		if ln := laneOfValue(t, v, node); ln["state"] != "escalated" || ln["reason"] != "unit_check_carried" {
+			t.Fatalf("the lane of %s: %v", node, ln)
+		}
+		if fixes := fixesOf(l, node); strings.Join(fixes, ",") != "fix:"+node+":executor:r1,fix:"+node+":executor:r2" {
+			t.Errorf("the fix calls %v, want two", fixes)
+		}
+		if n := len(l.uc.requests()); n != 3 {
+			t.Errorf("%d unit checks, want 3", n)
+		}
+		if got := finals(l, node); fmt.Sprint(got) != "[false false true]" {
+			t.Errorf("the final flags of the checks %v, want only the third final", got)
+		}
+		var esc []engine.Event
+		for _, e := range l.events() {
+			if e.Kind == engine.KindFlow && e.Event == engine.EvEscalation && str(e.Data, "node") == node {
+				esc = append(esc, e)
+			}
+		}
+		id3 := reviewadapter.FindingID(f3.File, f3.Text)
+		if len(esc) != 1 || str(esc[0].Data, "reason") != "unit_check_carried" || str(esc[0].Data, "ask") != "land" || !strings.Contains(str(esc[0].Data, "detail"), id3+" node-A-1.txt "+f3.Text) {
+			t.Fatalf("the escalations of %s: %+v", node, esc)
+		}
+		ev, _ := esc[0].Data["evidence"].(map[string]any)
+		if carried, _ := ev["carried"].([]any); len(carried) != 1 || carried[0] != id3 {
+			t.Errorf("the escalation carries %v, want [%s]", ev, id3)
+		}
+		for _, e := range l.events() {
+			if e.Kind == engine.KindCall && (e.Op == ops.OpCommit || e.Op == ops.OpAccept) && e.Event == engine.EvCompleted && str(e.Data, "node") == node {
+				t.Errorf("a %s row after the carried blocking finding: %v", e.Op, e.Data)
+			}
+		}
+		if n := l.count("SELECT COUNT(*) FROM dag_agent_acceptances WHERE node_id = ?", node); n != 0 {
+			t.Errorf("%d acceptances of %s", n, node)
+		}
+	})
+
+	t.Run("a P3 finding after two round trips lands carried", func(t *testing.T) {
+		l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+		node := l.nodeOf["A-1"]
+		f3 := finding("P3", "a name could be clearer")
+		l.UnitChecks("A-1", ops.UnitCheckUncommitted, nc(f1), nc(f2), labCheck{Verdict: reviewadapter.VerdictVerified, Findings: []reviewadapter.Finding{f3}})
+		res, v := unitCheckRun(t, l)
+		l.closed(res)
+		id3 := reviewadapter.FindingID(f3.File, f3.Text)
+		ln := laneOfValue(t, v, node)
+		if carried, _ := ln["carried"].([]any); ln["state"] != "landed" || len(carried) != 1 || carried[0] != id3 {
+			t.Fatalf("the lane of %s: %v, want landed with %s carried", node, ln, id3)
+		}
+		if fixes := fixesOf(l, node); len(fixes) != 2 {
+			t.Errorf("the fix calls %v, want two", fixes)
+		}
+		if got := finals(l, node); fmt.Sprint(got) != "[false false true]" {
+			t.Errorf("the final flags of the checks %v", got)
+		}
+		var pm string
+		if err := l.w.st.DB.QueryRow("SELECT premerge_json FROM dag_agent_acceptances WHERE node_id = ?", node).Scan(&pm); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(pm, id3) {
+			t.Errorf("the premerge record does not carry %s:\n%s", id3, pm)
+		}
+	})
 }

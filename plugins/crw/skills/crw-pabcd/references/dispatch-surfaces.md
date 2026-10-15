@@ -1,6 +1,6 @@
 # Dispatch surfaces — thread or subagent
 
-The sessions in this document are named by [the level table](../../crw-canon/references/hierarchy.md#the-levels): the child is the project session, and an issue child is no layer.
+The sessions in this document are named by [the level table](../../crw-canon/references/hierarchy.md#the-levels): the child is the project session, and a `child` session (a code id, not a layer) is no layer.
 
 Read before choosing how to fan work out. This file owns the choice between
 surfaces for unmanaged work; a CRW-managed lane is chosen first by
@@ -22,17 +22,17 @@ the task packet, the assignment record the relay holds for it, or the DAG node
     subagent (a leaf) as `crw flow next` names it and reports it with `crw flow dispatched`, and the
     call, its commits, its review and its acceptance are rows of the run's journal and the DAG records
     ([the flow commands](../../crw-canon/references/flow.md), [the spawn policy](../../crw-canon/references/spawn-policy.md)).
-  - an issue child, only for a plan with no flow run: started and resumed
+  - a `child` session, only for a plan with no flow run: started and resumed
     through `crw-run` on the exception path of one oversized issue, with the managed
     start, the DAG release and their bridge recovery, pair/profile, capacity and receipt rules. A
-    node a flow run's architect sizes for a child starts no issue child: the project lane escalates
+    node a flow run's architect sizes for a child starts no `child` session: the project lane escalates
     it as `size_split` with detail `child_retired`. It is never a desktop `create_thread` lane.
 
   Either way the relay refuses a second active or paused assignment of the same issue and a release
   past capacity; those answers are followed, not routed around by creating a thread by hand. The
   child's own thread spawns the run's role subagents for the steps `crw flow next` hands it, and helpers
   of its own for its judgment (recorded, SP-NAT-1); it edits no node's directory. The implementation of
-  an issue is its run's executor call or its issue child's, and a step's subagent is a leaf that spawns
+  an issue is its run's executor call or its `child` session's, and a step's subagent is a leaf that spawns
   nothing. The manifest of
   managed lanes is a read-only projection of the relay assignments and DAG records (and, for a run,
   its journal), not a second file to keep. A goal-free parent is resumed by relay delivery

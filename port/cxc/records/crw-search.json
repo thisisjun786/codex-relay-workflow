@@ -29,7 +29,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "CRW-1431: the skill text names the project session and the repository session by layer and carries no relay role id",
+      "reason": "CRW-1553: the relay role `child` is named by its id (\"a `child` session\"), not as an issue child",
       "hunks": [
         {
           "line": 3,
@@ -86,7 +86,7 @@
             "\n",
             "## For a dispatcher\n",
             "\n",
-            "Read by [the parent](../crw-canon/references/hierarchy.md#the-levels) (repository session), a child or an issue child that sends helpers out to search. A\n",
+            "Read by [the parent](../crw-canon/references/hierarchy.md#the-levels) (repository session), a child or a `child` session (a code id, not a layer) that sends helpers out to search. A\n",
             "helper that only searches reads the ladder above and nothing here.\n",
             "\n"
           ]
@@ -215,9 +215,9 @@
     },
     {
       "file": "references/lunasearch.md",
-      "reason": "CRW-1431: the skill text names the project session and the repository session by layer and carries no relay role id",
+      "reason": "CRW-1553: the relay role `child` is named by its id (\"a `child` session\"), not as an issue child",
       "add": true,
-      "sha256": "3694313c91eae1888fb749bb96c3fc72b5454f4f75fa0adacfc1b68d83e5fcc5"
+      "sha256": "0fae86d0217b6eaa765732502f7eae855d9aa57a987911f320a74f5970ee115d"
     },
     {
       "file": "references/query-rewrite.md",

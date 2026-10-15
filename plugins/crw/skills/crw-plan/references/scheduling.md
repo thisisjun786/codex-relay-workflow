@@ -142,8 +142,8 @@ causes. Four shapes do exactly that, and none of them is written: placing subjec
 day, holding a whole project until its batch is ready, giving each issue a fixed number of days,
 and adding a buffer again at each stage when the records already carried that wait once.
 
-A preparation step belongs inside the issue child that needs it. Where a subject is already running and
-part of its work does not depend on what it waits on, that part runs first in the same issue child. It
+A preparation step belongs inside the `child` session (a code id, not a layer) that needs it. Where a subject is already running and
+part of its work does not depend on what it waits on, that part runs first in the same `child` session. It
 becomes no issue, no relation and no second assignment, because a wish to parallelize never splits
 an issue ([issue boundaries](issue-boundaries.md#decide-the-boundary)).
 
@@ -289,7 +289,7 @@ rule here states a period.
 | 2 | The same three where the execution side states room for two and the records show each of them finishing inside that window. | All three carry D0, because the slot the first pair frees opens again inside the window; the first two carry `none` and are the startable batch, and the third carries `host` naming the stated limit until that slot opens; 0 days added, 0 limits invented. | Concurrency is read, not created. |
 | 3 | Prerequisite A is confirmed merged on the morning of D0; successor B's current target is D2 and `provisional`; the checkpoint carries schedule-change authority; records show hours. | B re-evaluated in that same turn to D0, with 1 entry opening `pulled in` naming A, before D2 and after D0, and the schedule baseline still D2 and readable; 0 entries overwritten, 0 waits for D2. | Checkpoint: pull-in. |
 | 4 | The same as 3 with no schedule-change authority. | 0 writes; 1 replan request to the session that owns the schedule naming B and A's confirmed result; B still reads D2 in the data. | Authority. |
-| 5 | Issue C waits on contract G, and C also needs a fixture that G does not affect. | The fixture runs first inside the issue child already holding C; 0 new issues, 0 new relations, 0 second assignments; C's wait cause stays `prerequisite` naming G. | Preparation inside the issue child. |
+| 5 | Issue C waits on contract G, and C also needs a fixture that G does not affect. | The fixture runs first inside the `child` session already holding C; 0 new issues, 0 new relations, 0 second assignments; C's wait cause stays `prerequisite` naming G. | Preparation inside the `child` session. |
 | 6 | Issues D and E change separate regions of one file and need nothing from each other. | 0 ordering relations, both carry D0 and `none`, both in the startable batch. | Separate regions are not an edge. |
 | 7 | The same two where the regions overlap, neither needs the other's result, and the records show both finishing inside one window even when they run in turn. | Exactly 1 ordering relation, in whichever direction the plan records, with the reason for that choice recorded; both carry D0 and the later subject carries `shared surface` naming the region; 0 extra days, 0 unrecorded orderings. | A region two subjects change. |
 | 8 | Contract G lands under an authorized plan write; the three implementations and the verification that waited on it are otherwise independent; each of the four carries a current target of D2 and an earliest day of D0 once G is confirmed. | The 4 relations stay as the record of what they needed; all 4 wait causes leave `prerequisite`; 4 moves to D0, each with 1 entry opening `pulled in` and naming G; 0 relations deleted, 0 subjects held for a second round, 0 baselines overwritten. | Delivery ends the wait, not the edge. |

@@ -5,7 +5,7 @@ discovery, then hands every candidate back to the main agent, which runs the `cr
 (Tier 1 discover, Tier 2 open the source) to settle each claim. Luna discovers; `crw-search` proves; the
 main model synthesizes. Never use the lane without this handoff: Luna snippets are leads, not evidence.
 
-Run by a task that may dispatch helpers: [the parent](../../crw-canon/references/hierarchy.md#the-levels) (repository session), a child, or an issue child
+Run by a task that may dispatch helpers: [the parent](../../crw-canon/references/hierarchy.md#the-levels) (repository session), a child, or a `child` session (a code id, not a layer)
 with helpers of its own. A leaf helper cannot fan out. Trigger phrases: Luna search, `루나검색`, `루나 서치`,
 `병렬 웹검색`, `싸게 많이 찾아봐`, cheap or broad web discovery, many source sweeps.
 
