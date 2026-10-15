@@ -161,7 +161,9 @@ func BuildLane(ctx context.Context, req LaneRequest, opt LaneOptions) (LaneWorld
 	}
 	unitCheck := opt.UnitCheck
 	if unitCheck == nil {
-		unitCheck = shippedUnitCheck()
+		if unitCheck, err = shippedUnitCheck(getenv); err != nil {
+			return LaneWorld{}, err
+		}
 	}
 	lane := ops.NewLane(ops.Deps{RunID: spec.RunID, Repo: req.Repo, Journal: journal, Relay: seam, Verifier: verifier, Decisions: ops.StoreDecisions{DB: req.Store.DB},
 		Threads: req.Threads, Reporter: reporter, Actor: spec.Thread, LandRoot: RunDir(req.State, spec.RunID), UnitCheck: unitCheck})
@@ -175,25 +177,53 @@ func BuildLane(ctx context.Context, req LaneRequest, opt LaneOptions) (LaneWorld
 // shippedUnitCheckLimit is the time limit of one call of the shipped unit check's tool.
 const shippedUnitCheckLimit = 10 * time.Minute
 
-// shippedUnitCheck is the unit check of the shipped lane (CRW-1463): the review adapter over the tool runner (reviewadapter.ExecRun) with
-// ops.Snapshot as its fingerprint, the value of an executor call's pending tree and of crw.commit's tree, so the tree an uncommitted check
-// saw is the tree of the head its node commits. The uncommitted mode runs Bugbot (reviewadapter.BugbotProfile); the committed mode
-// (land-head's range, CRW-1468) runs Bugbot with the range's scope reader (reviewadapter.BugbotCommittedProfile).
-func shippedUnitCheck() *ops.UnitCheck {
+// The settings of the shipped unit check's Codex review (CRW-1517), read from the lane's environment; blank or unset: the defaults
+// (reviewadapter.CodexReviewConfig).
+const (
+	unitCheckModelEnv  = "CRW_UNIT_CHECK_MODEL"
+	unitCheckEffortEnv = "CRW_UNIT_CHECK_EFFORT"
+)
+
+// shippedUnitCheck is the unit check of the shipped lane (CRW-1463, CRW-1517): the review adapter over the tool runner
+// (reviewadapter.ExecRun) with ops.Snapshot as its fingerprint, the value of an executor call's pending tree and of crw.commit's tree, so
+// the tree an uncommitted check saw is the tree of the head its node commits. Both modes run a Codex review by default: the uncommitted
+// mode reviewadapter.CodexReviewProfile, the committed mode (land-head's range, CRW-1468) reviewadapter.CodexReviewCommittedProfile,
+// with the model and effort of CRW_UNIT_CHECK_MODEL and CRW_UNIT_CHECK_EFFORT (getenv). Bugbot is the fallback when Codex's quota is
+// spent: reviewadapter.BugbotProfile and reviewadapter.BugbotCommittedProfile, which the settings do not change. The error is a setting
+// codex cannot be given (reviewadapter.CodexReviewConfig.Validate), naming the variable, so a bad setting stops the lane when it is built.
+func shippedUnitCheck(getenv func(string) (string, bool)) (*ops.UnitCheck, error) {
+	model, _ := getenv(unitCheckModelEnv)
+	effort, _ := getenv(unitCheckEffortEnv)
+	if err := (reviewadapter.CodexReviewConfig{Model: model}).Validate(); err != nil {
+		return nil, fmt.Errorf("%s: %w", unitCheckModelEnv, err)
+	}
+	if err := (reviewadapter.CodexReviewConfig{Effort: effort}).Validate(); err != nil {
+		return nil, fmt.Errorf("%s: %w", unitCheckEffortEnv, err)
+	}
+	cfg := reviewadapter.CodexReviewConfig{Model: model, Effort: effort}
 	git := ops.ExecGit("git")
 	return &ops.UnitCheck{
 		Checker: reviewadapter.Adapter{Run: reviewadapter.ExecRun, Fingerprint: func(ctx context.Context, dir string) (string, error) { return ops.Snapshot(ctx, git, dir) }},
 		Profile: func(mode string) (reviewadapter.Profile, error) {
 			switch mode {
 			case ops.UnitCheckUncommitted:
+				return reviewadapter.CodexReviewProfile(cfg), nil
+			case ops.UnitCheckCommitted:
+				return reviewadapter.CodexReviewCommittedProfile(cfg), nil
+			}
+			return reviewadapter.Profile{}, fmt.Errorf("the shipped unit check has no mode %q", mode)
+		},
+		Fallback: func(mode string) (reviewadapter.Profile, error) {
+			switch mode {
+			case ops.UnitCheckUncommitted:
 				return reviewadapter.BugbotProfile(), nil
 			case ops.UnitCheckCommitted:
 				return reviewadapter.BugbotCommittedProfile(), nil
 			}
-			return reviewadapter.Profile{}, fmt.Errorf("the shipped unit check has no mode %q", mode)
+			return reviewadapter.Profile{}, fmt.Errorf("the shipped unit check has no fallback for mode %q", mode)
 		},
 		Limit: shippedUnitCheckLimit,
-	}
+	}, nil
 }
 
 // ShippedRunnableCommand says why the shipped lane's verifier cannot run a required command of a milestone ("" when it can): the

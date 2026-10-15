@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -17,10 +18,20 @@ import (
 )
 
 // The wiring of crw.unitCheck (CRW-1463): the lane the shipped binary builds installs the op over the unit check LaneOptions names, and
-// over the shipped one (shippedUnitCheck: Bugbot through the review adapter) when it names none.
+// over the shipped one (shippedUnitCheck: a Codex review through the review adapter, Bugbot on a Codex quota) when it names none.
 
 // unitCheckLane builds the lane of a run whose script calls a crw.* operation, with the unit check uc (nil: the shipped one).
 func unitCheckLane(t *testing.T, w *world, run string, uc *ops.UnitCheck) LaneWorld {
+	t.Helper()
+	lw, err := buildUnitCheckLane(t, w, run, uc, func(string) (string, bool) { return "", false })
+	if err != nil {
+		t.Fatal(err)
+	}
+	return lw
+}
+
+// buildUnitCheckLane is unitCheckLane with the environment getenv and BuildLane's error answered.
+func buildUnitCheckLane(t *testing.T, w *world, run string, uc *ops.UnitCheck, getenv func(string) (string, bool)) (LaneWorld, error) {
 	t.Helper()
 	j, err := journal.Open(context.Background(), w.st, run, journal.Identity{}, journal.Options{Immediate: true})
 	if err != nil {
@@ -35,12 +46,8 @@ func unitCheckLane(t *testing.T, w *world, run string, uc *ops.UnitCheck) LaneWo
 	}
 	req := LaneRequest{WorldRequest: WorldRequest{Spec: Spec{Schema: SpecSchema, RunID: run, Workflow: "x", Script: laneful, Thread: labOwner}, State: w.state},
 		Store: w.st, Journal: j, Policy: &engine.Policy{Roles: map[string]engine.RoleSpec{"executor": pair("claude-fake-haiku"), "reviewer": pair("gpt-fake-sol")}}}
-	lw, err := BuildLane(context.Background(), req, LaneOptions{Verifier: &labNoVerifier{}, IntegrationVerify: func(context.Context, string, []string) error { return nil },
-		SkillsDigest: "sha256:lab-skills", Getenv: func(string) (string, bool) { return "", false }, UnitCheck: uc})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return lw
+	return BuildLane(context.Background(), req, LaneOptions{Verifier: &labNoVerifier{}, IntegrationVerify: func(context.Context, string, []string) error { return nil },
+		SkillsDigest: "sha256:lab-skills", Getenv: getenv, UnitCheck: uc})
 }
 
 // labNoVerifier is a verifier the wiring test never asks.
@@ -152,28 +159,89 @@ func TestBuildLaneWiresTheUnitCheck(t *testing.T) {
 	}
 }
 
-// TestShippedUnitCheckIsTheBugbotAdapter (CRW-1463): the shipped unit check is the review adapter over the tool runner and ops.Snapshot
-// as its fingerprint, so the tree a check saw is the pending tree crw.commit commits; the uncommitted mode runs Bugbot, the committed mode
-// runs Bugbot with the range's scope reader (CRW-1468), and the call is limited to ten minutes.
-func TestShippedUnitCheckIsTheBugbotAdapter(t *testing.T) {
+// TestShippedUnitCheckIsCodexInBothModes (CRW-1463, CRW-1517): the shipped unit check is the review adapter over the tool runner and
+// ops.Snapshot as its fingerprint, so the tree a check saw is the pending tree crw.commit commits; both modes run a Codex review
+// (codex-review, codex-review-committed: gpt-6-astra at high effort by default) and fall back to Bugbot (bugbot, bugbot-committed) on a
+// Codex quota; CRW_UNIT_CHECK_MODEL and CRW_UNIT_CHECK_EFFORT change the Codex profiles and neither Bugbot one, a setting codex cannot
+// be given is refused when the lane is built, and the call is limited to ten minutes.
+func TestShippedUnitCheckIsCodexInBothModes(t *testing.T) {
 	isolateGit(t)
-	uc := shippedUnitCheck()
-	if uc == nil || uc.Limit != shippedUnitCheckLimit || shippedUnitCheckLimit != 10*time.Minute {
-		t.Fatalf("shipped unit check %+v", uc)
+	none := func(string) (string, bool) { return "", false }
+	uc, err := shippedUnitCheck(none)
+	if err != nil || uc == nil || uc.Limit != shippedUnitCheckLimit || shippedUnitCheckLimit != 10*time.Minute {
+		t.Fatalf("shipped unit check %+v %v", uc, err)
 	}
 	a, ok := uc.Checker.(reviewadapter.Adapter)
 	if !ok || a.Run == nil || a.Fingerprint == nil {
 		t.Fatalf("the shipped checker %T is not the review adapter with its seams", uc.Checker)
 	}
-	p, err := uc.Profile("uncommitted")
-	if err != nil || p.Name != reviewadapter.BugbotProfile().Name || p.Model != reviewadapter.BugbotProfile().Model {
-		t.Errorf("the uncommitted profile %+v %v", p, err)
+	if uc.Profile == nil || uc.Fallback == nil {
+		t.Fatalf("the shipped unit check names no profile or no fallback: %+v", uc)
 	}
-	if p, err := uc.Profile("committed"); err != nil || p.Name != reviewadapter.BugbotCommittedProfile().Name || p.Model != reviewadapter.BugbotCommittedProfile().Model || p.Answer == nil {
-		t.Errorf("the committed profile %+v %v", p, err)
+	argvHas := func(p reviewadapter.Profile, elem string) bool {
+		for _, a := range p.Argv {
+			if a == elem {
+				return true
+			}
+		}
+		return false
 	}
+	codex := func(uc *ops.UnitCheck, mode, name, model, effort string) {
+		t.Helper()
+		p, err := uc.Profile(mode)
+		if err != nil || p.Name != name || p.Model != model || p.Effort != effort || p.Family != "gpt" ||
+			!argvHas(p, `model="`+model+`"`) || !argvHas(p, `model_reasoning_effort="`+effort+`"`) || p.Args == nil || p.Answer == nil {
+			t.Errorf("the %s profile %+v %v, want %s with %s at %s", mode, p, err, name, model, effort)
+		}
+	}
+	bugbot := func(uc *ops.UnitCheck, mode string, want reviewadapter.Profile) {
+		t.Helper()
+		p, err := uc.Fallback(mode)
+		if err != nil || p.Name != want.Name || p.Model != want.Model || p.Effort != want.Effort || !slices.Equal(p.Argv, want.Argv) {
+			t.Errorf("the %s fallback %+v %v, want %s", mode, p, err, want.Name)
+		}
+	}
+	codex(uc, ops.UnitCheckUncommitted, "codex-review", "gpt-6-astra", "high")
+	codex(uc, ops.UnitCheckCommitted, "codex-review-committed", "gpt-6-astra", "high")
+	bugbot(uc, ops.UnitCheckUncommitted, reviewadapter.BugbotProfile())
+	bugbot(uc, ops.UnitCheckCommitted, reviewadapter.BugbotCommittedProfile())
 	if _, err := uc.Profile("other"); err == nil {
 		t.Error("an unknown mode has a profile")
+	}
+	if _, err := uc.Fallback("other"); err == nil {
+		t.Error("an unknown mode has a fallback")
+	}
+
+	// the settings change both Codex profiles and neither Bugbot one
+	env := map[string]string{"CRW_UNIT_CHECK_MODEL": "o9", "CRW_UNIT_CHECK_EFFORT": "medium"}
+	set := func(k string) (string, bool) { v, ok := env[k]; return v, ok }
+	tuned, err := shippedUnitCheck(set)
+	if err != nil || tuned == nil {
+		t.Fatalf("the shipped unit check with settings %+v %v", tuned, err)
+	}
+	codex(tuned, ops.UnitCheckUncommitted, "codex-review", "o9", "medium")
+	codex(tuned, ops.UnitCheckCommitted, "codex-review-committed", "o9", "medium")
+	bugbot(tuned, ops.UnitCheckUncommitted, reviewadapter.BugbotProfile())
+	bugbot(tuned, ops.UnitCheckCommitted, reviewadapter.BugbotCommittedProfile())
+
+	// a setting codex cannot be given is refused, naming the variable, and stops the lane when it is built
+	for k, v := range map[string]string{"CRW_UNIT_CHECK_MODEL": `a"b`, "CRW_UNIT_CHECK_EFFORT": "High!"} {
+		bad := func(key string) (string, bool) {
+			if key == k {
+				return v, true
+			}
+			return "", false
+		}
+		if uc, err := shippedUnitCheck(bad); err == nil || uc != nil || !strings.Contains(err.Error(), k) {
+			t.Errorf("%s=%q: shipped unit check %+v %v, want an error naming the variable", k, v, uc, err)
+		}
+		if _, err := buildUnitCheckLane(t, newWorld(t), "run-ucbadenv01", nil, bad); err == nil || !strings.Contains(err.Error(), k) {
+			t.Errorf("%s=%q: BuildLane %v, want the refused setting", k, v, err)
+		}
+		// a lane that names its own unit check does not read the settings
+		if _, err := buildUnitCheckLane(t, newWorld(t), "run-ucbadenv02", newLabUnitChecker().seam(), bad); err != nil {
+			t.Errorf("%s=%q with a named unit check: BuildLane %v", k, v, err)
+		}
 	}
 	repo := filepath.Join(t.TempDir(), "repo")
 	if err := os.MkdirAll(repo, 0o755); err != nil {
