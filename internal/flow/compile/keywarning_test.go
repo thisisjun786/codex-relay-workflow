@@ -25,7 +25,7 @@ func ruleCounts(ws []Warning) map[string]int {
 // compile; it refuses nothing and is no part of the revision (the same request id and changes with and without it).
 func TestHandoffWarningsAreCarriedIntoThePlanWarnings(t *testing.T) {
 	raw := `{"schema":"crw-flow-compile-input/1","projects":[{"key":"o:r:3","warnings":[` +
-		`{"rule":"project_key_bound","detail":"the plan's project key is o:r:3 (milestone o/r#3); thread t holds no live parent binding"},` +
+		`{"rule":"project_key_bound","detail":"the plan's project key is o:r:3 (milestone o/r#3); thread t holds no live 자식 binding"},` +
 		`{"rule":"criteria_missing","issue":"o/r#1","detail":"the title is the one criterion"}],` +
 		`"issues":[{"key":"o:r:1","title":"a","criteria":["c"]}]}]}`
 	in, err := Decode([]byte(raw))
@@ -42,7 +42,7 @@ func TestHandoffWarningsAreCarriedIntoThePlanWarnings(t *testing.T) {
 			t.Fatalf("dry=%v: a carried warning refused the handoff: %v", dry, err)
 		}
 		want := []Warning{
-			{Project: "o:r:3", Rule: "project_key_bound", Detail: "the plan's project key is o:r:3 (milestone o/r#3); thread t holds no live parent binding"},
+			{Project: "o:r:3", Rule: "project_key_bound", Detail: "the plan's project key is o:r:3 (milestone o/r#3); thread t holds no live 자식 binding"},
 			{Project: "o:r:3", Rule: "criteria_missing", Path: "o/r#1", Detail: "the title is the one criterion"},
 		}
 		if got := res.Plans[0].Warnings; !reflect.DeepEqual(got, want) {
@@ -84,7 +84,7 @@ func TestCompileComparesTheProjectKeyWithTheBinding(t *testing.T) {
 		{"no binding compares nothing", nil, map[string]int{}, ""},
 		{"bound", &Binding{Thread: "t", Scopes: []string{"x:y:1", "o:r:3"}}, map[string]int{}, ""},
 		{"another key", &Binding{Thread: "t", Scopes: []string{"3b46bc6e-uuid"}}, map[string]int{"project_key_bound": 1}, "3b46bc6e-uuid"},
-		{"no binding at all", &Binding{Thread: "t"}, map[string]int{"project_key_bound": 1}, "holds no live parent binding"},
+		{"no binding at all", &Binding{Thread: "t"}, map[string]int{"project_key_bound": 1}, "holds no live 자식 binding"},
 		{"case only", &Binding{Thread: "t", Scopes: []string{"O:R:3"}}, map[string]int{"project_key_bound": 1}, "only by case"},
 		{"no thread", &Binding{}, map[string]int{"project_key_unchecked": 1}, "--thread"},
 		{"unreadable", &Binding{Thread: "t", Err: errors.New("no relay store at /x")}, map[string]int{"project_key_unchecked": 1}, "no relay store at /x"},

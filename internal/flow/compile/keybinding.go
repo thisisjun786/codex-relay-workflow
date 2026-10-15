@@ -36,7 +36,7 @@ func KeyWarning(key, ref string, b Binding, show func(string) string) (InputWarn
 	case b.Thread == "":
 		return InputWarning{Rule: RuleProjectKeyUnchecked, Detail: "the project key is not compared with a binding: pass --thread (or run in a session that has CODEX_THREAD_ID) to name the owner thread"}, true
 	case b.Err != nil:
-		return InputWarning{Rule: RuleProjectKeyUnchecked, Detail: fmt.Sprintf("the live parent bindings of thread %s cannot be read, so the project key %s%s is not compared: %v", b.Thread, key, of, b.Err)}, true
+		return InputWarning{Rule: RuleProjectKeyUnchecked, Detail: fmt.Sprintf("the live 자식 bindings of thread %s cannot be read, so the project key %s%s is not compared: %v", b.Thread, key, of, b.Err)}, true
 	}
 	// exactly, as `crw flow start` and the coordinator's first claim compare it: a key that differs only by case is another key there
 	caseOnly := ""
@@ -48,7 +48,7 @@ func KeyWarning(key, ref string, b Binding, show func(string) string) (InputWarn
 			caseOnly = s
 		}
 	}
-	holds := "thread " + b.Thread + " holds no live parent binding"
+	holds := "thread " + b.Thread + " holds no live 자식 binding"
 	if len(b.Scopes) > 0 {
 		shown := make([]string, len(b.Scopes))
 		for i, s := range b.Scopes {
@@ -57,13 +57,13 @@ func KeyWarning(key, ref string, b Binding, show func(string) string) (InputWarn
 				shown[i] = show(s)
 			}
 		}
-		holds = "thread " + b.Thread + " is the live parent of project " + strings.Join(shown, ", ")
+		holds = "thread " + b.Thread + " is the live 자식 of project " + strings.Join(shown, ", ")
 	}
 	hint := ""
 	if caseOnly != "" {
 		hint = fmt.Sprintf(" (the binding %s differs from %s only by case, and the keys are compared exactly: pass the key with the same spelling the binding was made under)", caseOnly, key)
 	}
-	return InputWarning{Rule: RuleProjectKeyBound, Detail: fmt.Sprintf("the plan's project key is %s%s; %s%s: a plan's project key is the scope_key of the orchestrator's parent binding, and the run's first claim is refused (scope_role_mismatch) under another key", key, of, holds, hint)}, true
+	return InputWarning{Rule: RuleProjectKeyBound, Detail: fmt.Sprintf("the plan's project key is %s%s; %s%s: a plan's project key is the scope_key of the orchestrator's 자식 binding, and the run's first claim is refused (scope_role_mismatch) under another key", key, of, holds, hint)}, true
 }
 
 // ReadScopes reads the project keys of the live parent bindings of thread from the relay store of the state, read-only: the reading

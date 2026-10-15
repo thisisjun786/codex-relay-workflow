@@ -63,7 +63,7 @@ func TestChildPushGuardLegReadsTheRelayStore(t *testing.T) {
 	// CRW-1307: the child's refusals warn (the push passes with the refusal as a warning), except a force, delete or --mirror
 	// push onto dev or main, which stays a deny.
 	for _, c := range []struct{ session, cwd, command, want string }{
-		{"kid", kid, "git push origin HEAD:dev", "통합은 부모·통합기 몫"}, {"kid", kid, "git push origin HEAD:r2-x", ""}, {"kid", kid, "git push -u origin HEAD", "names no destination"},
+		{"kid", kid, "git push origin HEAD:dev", "통합은 자식·통합기 몫"}, {"kid", kid, "git push origin HEAD:r2-x", ""}, {"kid", kid, "git push -u origin HEAD", "names no destination"},
 		{"par", parent, "git push origin HEAD:dev", ""}, {"kid", parent, "git push origin HEAD:dev", "no branch of its own"},
 	} {
 		_, warned := guardWarning(answer(c.session, c.cwd, c.command))
@@ -72,7 +72,7 @@ func TestChildPushGuardLegReadsTheRelayStore(t *testing.T) {
 		}
 	}
 	for _, command := range []string{"git push -f origin HEAD:dev", "git push --delete origin main", "git push --mirror origin"} {
-		if out := answer("kid", kid, command); !strings.Contains(out, `"permissionDecision":"deny"`) || !strings.Contains(out, "통합은 부모·통합기 몫") {
+		if out := answer("kid", kid, command); !strings.Contains(out, `"permissionDecision":"deny"`) || !strings.Contains(out, "통합은 자식·통합기 몫") {
 			t.Errorf("kid: %s: %s", command, out)
 		}
 	}
