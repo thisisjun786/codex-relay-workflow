@@ -424,15 +424,15 @@ The spread is the disk, not the suite. In run 1 one test, `TestPumpSignalCapacit
 took 229 s and its neighbours 17 to 33 s, where run 2 and the earlier runs took under 1 s each: the host's I/O pressure
 (`/proc/pressure/io`, `full avg10` 19 to 41) stalled every fsync for minutes. A run on an idle disk is a fraction of
 the 10 minute bound; one that meets a stall can come within seconds of it (run 1 ended at 591 s of 600 s).
-`go test -race -gcflags=all=-d=checkptr=0 -count=1` takes longer than the default `-timeout` here (it timed out at
-600 s once, and with `-timeout 30m` took 1,351 s at load 18 to 20); the race run is a developer check, not a CI step,
-so pass a larger `-timeout` to it.
+Measured with the pointer check off, `go test -race -gcflags=all=-d=checkptr=0 -count=1` takes longer than the default
+`-timeout` here (it timed out at 600 s once, and with `-timeout 30m` took 1,351 s at load 18 to 20); the race run is a
+developer check, not a CI step, so pass a larger `-timeout` to it.
 
 - The overlap combinations (CRW-991) are parallel subtests: each has its own state directory, fake bridge and
   clock, and the parent test sets the homes once, because `t.Setenv` is refused in a parallel test
   (`pumpTestEnvHomeless`). Names, the 375 combinations and every assertion are unchanged. Run it with
-  `-race -gcflags=all=-d=checkptr=0` after a change: with checkptr on, the relay store's own pointer arithmetic
-  stops any test that opens a store.
+  plain `-race` after a change; the relay store's pointer access passes the pointer check, so a test that opens a
+  store runs under it.
 - `premergeTestNewRepo` built a git remote and a clone with sixteen git commands per test (the pre-merge tests made 2,917 of
   the 5,833 processes of a run). It builds each repository spec once, under a directory the run removes, and copies the
   pair, then sets the copy's origin with `git remote set-url origin`, so a `TMPDIR` whose name holds a backslash, a tab or
