@@ -141,8 +141,14 @@ this way through the management seat that took it over: with no live store bindi
 seat's holder is the live owner of the management seat that superseded the most recently archived
 store binding, so it follows that seat's handovers. A user-grade or delegated-management-grade
 `decision-answer` on a record with no management ref (see below), the recipient of a
-`jun_decision_request` and the store-seat fallback of a report or a message nobody above receives
-all keep finding the parent after it registers. A store
+`jun_decision_request` and the capacity declarer keep finding the parent after it registers. The
+supervisor channel's store-seat fallback does so only for a message whose decision the user owes
+(CRW-1486, [grades](supervisor-channel.md#the-level-above-a-project)): a completion, a block, a
+report or an escalation of a project or an initiative no management edge stands above finds nobody
+above (`unregistered_scope`) instead of reaching the parent through the seat it laid down, and one
+staged while the seat was live is held `hierarchy_unresolved` until an edge or a live store seat
+names someone. A parent hears its own projects through the edges it writes when it binds their
+children (below). A store
 seat bound again afterwards is live and answers for itself; the thread that laid it down binding it
 again after handing its management seat over reactivates its old row with `superseded_by` cleared
 (`scope_rebound`), so that row is the store seat again.
@@ -189,11 +195,12 @@ The walk up from an issue or a project reaches whatever stands above the project
 directly above the project is the recipient of the project's upward messages: a relationship's
 report, a `project:<key>` notice and the direct project kinds go to the owner of that seat (see [the
 supervisor channel](supervisor-channel.md#the-level-above-a-project)). Without one, a legacy
-initiative-scoped supervisor is the recipient, and without that the single store seat. A management level above an
+initiative-scoped supervisor is the recipient, and without that the single store seat (a store seat laid
+down for a management seat only for a decision the user owes, above). A management level above an
 initiative is not a project's recipient: the lead stands between and stays the recipient of the
 project's reports, while the lead's own messages go to the management seat through
 `initiative:<key>` (see [direct messages](supervisor-channel.md#direct-messages)). An initiative with
-no management edge falls back to the single store seat. No schema changes: the seats and edges are
+no management edge falls back to the single store seat, on the same terms. No schema changes: the seats and edges are
 new values in `scope_bindings.scope_kind` and `scope_links.upper_kind`, which carry no CHECK.
 
 The answer to a decision reserved for Jun follows the same seat (CRW-1371). A user-grade or

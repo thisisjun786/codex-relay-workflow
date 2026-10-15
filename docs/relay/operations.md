@@ -564,6 +564,15 @@ cause when a later pre-send refusal is what holds the delivery now; that refusal
 names it with its recovery. An accepted narrowing settled by reconciliation is journaled
 (`delivery_settings_noted`) as the sender's settlement journals it, once per request.
 
+The registry commands the recovery names read the policy the daemon launches with, not the one the
+shell that runs them happens to carry (CRW-1486): `settings-show`, `settings-record` and
+`linkage-bind` take the file the store's launch declaration names (`service declare
+--execution-policy`, kept as `launch-policy.json` in the state directory) when there is one, and the
+process's `CODEX_THREAD_BRIDGE_EXECUTION_POLICY` only when there is none. A declaration that cannot be
+read, or one the variable contradicts by naming another file, answers as a policy the relay cannot read
+(`role_policy_unconfigured`, `rolePolicy` `unresolved`) with the reason in its detail, so the check
+an operator runs and the check a delivery meets agree. With no declaration the answer is unchanged.
+
 The cause is read where each transition wrote it, never from the time-ordered failure rows: the
 settlement row of the latest settled attempt (`settingsRefusal`, written by the sender and by
 reconciliation) or a pre-send withhold that took effect (`delivery_presend_withheld`), whichever
@@ -729,6 +738,37 @@ Observation health is reported beside it: staged event ages, when each current a
 last successfully polled, and the backlog per assignment. A failed read updates the attempt
 time and never the success time, so an anchor whose first read failed reads as never polled
 rather than fresh. Process liveness is reported separately and is never counted as health.
+
+## Reading a supervisor recipient's queue
+
+A recipient's supervisor messages (the upward channel, see [the supervisor
+channel](supervisor-channel.md)) go out one head at a time in the order they were staged, so a queue
+that grew while the recipient could not take a turn is read and cleared as a whole, through the store
+API and never with a hand-written query (CRW-1486).
+
+`supervisor-list --recipient <task> [--project <key>] [--state unsent|all] [--hold <word>|none]` is
+read-only: the recipient's messages in sending order (`messageId`, `relationshipId`, `projectKey`,
+`kind`, `obligationKind`, `subject`, `state`, `holdReason`, `stagedAt`, `nextEligibleAt`, and
+`claimable`, the channel's own test of unsent, unheld and due), with counts by state, hold, project and
+obligation kind (`supervisor-list/1`). `unsent`, the default, is what still waits: queued, deferred
+busy or withheld before a send. `--hold none` lists the messages that carry no hold.
+
+`supervisor-acknowledge --recipient <task> --actor <task>` parks old notifications without a turn
+each. `--all-informational [--project <key>] [--staged-before <ISO time with offset>]` parks the
+recipient's unsent messages that report something finished (`completion`, `flow_completion`,
+`flow_milestone_report`, `lead_report`); `--message <id>`, repeatable, parks the named messages of any
+notification kind, a `blocked` one included. A parked message is held `superseded_by_report` with one
+`supervisor_message_superseded` journal row naming `supervisor-acknowledge` and the actor, all in one
+store transaction, and the update is guarded so a message an attempt may have sent is never parked.
+What is left is reported per message with its reason: `answer_owed` (a decision), `fault_notice` (its
+own channel parks it), `claimed` (a send is under way or may have gone), `not_unsent`, `held`,
+`not_informational` (a block, an escalation, a design question or a land review under the bulk form),
+`not_found` and `other_recipient`. Staging what a parked message is for again releases it, as it
+releases any superseded message.
+
+A message that waits on a busy recipient is not a backlog: it is deferred with the busy backoff and
+woken by the recipient's idle edge ([the supervisor channel](supervisor-channel.md#the-surface)), and
+acknowledging older messages does not move it sooner.
 
 ## When the host loses an accepted turn
 
