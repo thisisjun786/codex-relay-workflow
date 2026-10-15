@@ -511,8 +511,8 @@ acceptance and integration, the close of an execution), `Verifier` (`CILocalVeri
 The child decides how the work of an issue is made: a project-lane run, or its own subagents outside any run (CRW-1316 §18.3). A head made
 outside a run lands through the gates of a run, never past them: `internal/flow/workflows/land-head.js` (CRW-1354) is the gate-only
 workflow, `crw flow start land-head --handoff FILE --args '{"plan": P, "milestone": M, "issue": KEY, "head": COMMIT-OR-BRANCH, "authors":
-[THREAD, ...]}'`, where `authors` are the subagent threads that wrote the head. It makes no executor, architect or design-audit call and
-fixes nothing. Its steps:
+[THREAD, ...]}'`, where `authors` are the subagent threads that wrote the head. It makes no executor, architect, design-audit or reviewer
+call and fixes nothing. Its steps:
 
 - `crw.release(plan, node, milestone, {pinned: true, land: {head, authors}})` releases the node to the run with no DESIGN: the head is
   resolved in the run's repository, each author thread is read back from the host (`thread/read`, the configured pair; `Threads` provides
@@ -521,19 +521,23 @@ fixes nothing. Its steps:
   (`author_model`, `author_effort`; `AgentReleaseOptions` of `ReleaseAgent`, the stored form unchanged). The head is then checked out,
   detached, in `<state>/flow/<run>/land-wt/<node>-<commit>`, the worktree the row names and the execution's handle points at, and the row
   records the commit, its tree, its base (the merge-base with the integration tip), the paths it changes and the authors with their pairs.
-- The gates are the lane's: `crw.verify` of that head (verification-record/1 of the exact tree), `crw.review` with a fresh reviewer whose
-  model family has to differ from every author the release observed (`independence_refused` for one of the same family,
-  `independence_unproven` when the pair of any author it names was not read back), and `crw.land` (`crw.accept`, the relay's agent acceptance, which judges the
-  reviewer against the pair the execution records, then `crw.integrate`). They write the rows they write for a node of a project lane.
+- The gates are the lane's: `crw.verify` of that head (verification-record/1 of the exact tree), one unit check in the committed mode,
+  `crw.unitCheck(node, null, {commit: head, base: head.base})` (CRW-1468): the review tool run in Go over `base..head` of the land
+  checkout, with no reviewer call; a head made outside a run has no executor, so the check's row records the receipt `no_executor`. Then
+  `crw.land` (`crw.accept` on that check, the relay's agent acceptance, which judges the check's model family against the pair the
+  execution records: `independence_refused` for a check of the authors' family, `independence_unproven` when the pair of any author it
+  names was not read back; then `crw.integrate`). They write the rows they write for a node of a project lane.
 - The only refusals are input errors (no head, a head git does not resolve, authors of more than one model family - one execution row
   records one author pair - and an issue that is not a node of the milestone) and the gates. Named limit: authors of more than one model
-  family are refused `land_author_families_mixed` before any gate, even where a reviewer of a third family would be independent of all of
+  family are refused `land_author_families_mixed` before any gate, even where a check of a third family would be independent of all of
   them, because the execution row holds one author pair; lifting it changes the relay's stored form, so such a head is landed one family's
   work at a time, or made in a project-lane run (CRW-1397). A land one of whose named authors is not read back records no author pair on
   the execution (`land_author_pair_unrecorded`, a warning of the row: the observed pair would stand for authors the run does not know),
-  and the review is `independence_unproven`; the pairs the host reads back are trimmed. A verification that fails, a review that is
-  not verified and a land the relay refuses end the run escalated for the child (`land_verification_failed`, `land_review_needs_changes`,
-  the relay's reason); a review that is not independent escalates as a configuration fault. An author whose pair is not read back, no
+  and the acceptance is `independence_unproven`; the pairs the host reads back are trimmed. A verification that fails, a check that
+  finds a blocking defect and a land the relay refuses end the run escalated for the child (`land_verification_failed`,
+  `land_review_needs_changes` with the ids of the check's findings carried on the escalation, the relay's reason); a check that gives no
+  judgment (`unit_check_<state>`) and a check that is not independent escalate as a configuration fault. The findings of a verified check
+  that block nothing land as premerge defects. An author whose pair is not read back, no
   author named and a path outside the node's regions are warnings of the release row (`land_author_unobserved`, `land_authors_unnamed`,
   `land_out_of_scope`). A lost epoch ends the run `stopped` with `epoch_lost`.
 - The gate-only lane fixes nothing: the child changes the head and lands it again, in a new run. A land that ends escalated gives its
@@ -542,8 +546,9 @@ fixes nothing. Its steps:
   worktree and the pair of the authors it names. Only the relay's refusal to close an execution that has to stay (its accepted head
   landed or may be in the target, a `disposition_conflict`) is the row's `close_refused`; any other relay error is asked again in place,
   and one that keeps failing is the op's error, so the run ends on it rather than leaving its execution current under a run that has
-  ended (CRW-1397). A hold (a verifier or a reviewer the host cannot run now) keeps the release, and the run goes on with
-  `crw flow resume` or gives the release up with `crw flow cancel`. A node whose current execution another run holds is not released
+  ended (CRW-1397). A hold - a verifier the host cannot run now (`verify_unavailable`), or a check the tool gave no judgment for its
+  quota or no answer (`crw.hold` with source `unit_check`) - keeps the release, and the run goes on with `crw flow resume`, which asks
+  the tool again, or gives the release up with `crw flow cancel`. A node whose current execution another run holds is not released
   to the land: `crw.release` answers `land_node_held` with that run and its execution, before the run claims the plan's coordinator
   epoch, and no gate runs. The answer names what settles it: `crw flow resume` of a run that has not ended, and `crw flow cancel` of
   one that has (the row records `held_run_state` and the warning `land_node_held_by_ended_run`), whose cancel gives up the executions

@@ -215,3 +215,113 @@ func TestUnitCheckDocsNameTheNodeLaneUnitCheck(t *testing.T) {
 		}
 	})
 }
+
+// CRW-1468: land-head judges the head it lands by one unit check in the committed mode (crw.unitCheck with opts.commit and opts.base:
+// the review tool run in Go over base..head of the land checkout, no reviewer call). A head made outside a run has no executor, so the
+// check records the receipt no_executor; a check that finds a blocking defect ends the land land_review_needs_changes with its finding
+// ids carried, and a check the tool gave no judgment for (quota, no answer) holds with source unit_check and keeps the release. The
+// pages a reader takes land-head from say so: script.md's "Landing a head made outside a run", crw-run's account of a change made
+// another way, and the land-head entry of the flow command table.
+
+const landHeadJS = "internal/flow/workflows/land-head.js"
+
+// landHeadCallsTheCommittedCheck is whether land-head.js calls crw.unitCheck with a commit and a base, the form the pages describe.
+func landHeadCallsTheCommittedCheck(script string) bool {
+	return regexp.MustCompile(`crw\.unitCheck\([^)]*\bcommit:[^)]*\bbase:`).MatchString(script)
+}
+
+// landHeadSectionUnitCheckProblems judges script.md's section on landing a head made outside a run.
+func landHeadSectionUnitCheckProblems(script string) []string {
+	section := sectionOf(script, "Landing a head made outside a run")
+	if section == "" {
+		return []string{"script.md has no section \"Landing a head made outside a run\""}
+	}
+	flat := normalized(section)
+	var problems []string
+	for _, p := range wordingMissing(flat, []string{
+		"`crw.unitCheck\\(",
+		`(?i)committed mode`,
+		"`base\\.\\.head`",
+		`(?i)no reviewer call`,
+		"`no_executor`",
+		"`land_review_needs_changes`[^.]*carried",
+		"source `unit_check`",
+		`(?i)resume[^.]*asks the tool again`,
+	}) {
+		problems = append(problems, "the land-head section lacks "+p)
+	}
+	for _, p := range []string{"`crw.review`", "fresh reviewer", "a reviewer the host cannot run"} {
+		if strings.Contains(flat, p) {
+			problems = append(problems, "the land-head section still names the reviewer path: "+p)
+		}
+	}
+	return problems
+}
+
+// landHeadLineUnitCheckProblems judges one line that names what land-head runs: crw-run's account of a change made another way, or
+// the land-head entry of the flow command table.
+func landHeadLineUnitCheckProblems(line string) []string {
+	var problems []string
+	if line == "" {
+		return []string{"there is no line naming land-head"}
+	}
+	if !regexp.MustCompile("(?i)unit check in the committed mode[^;)]*`?base\\.\\.head`?[^;)]*another model family than (its|the) authors").MatchString(line) {
+		problems = append(problems, "the land-head line does not name the committed-mode unit check of base..head by another model family than the authors")
+	}
+	if regexp.MustCompile(`(?i)a review by another model family`).MatchString(line) {
+		problems = append(problems, "the land-head line still names a review by another model family")
+	}
+	return problems
+}
+
+// lineContaining is the first line of text that contains every one of the substrings.
+func lineContaining(text string, subs ...string) string {
+	for _, line := range lines(text) {
+		ok := true
+		for _, s := range subs {
+			if !strings.Contains(line, s) {
+				ok = false
+				break
+			}
+		}
+		if ok {
+			return strings.TrimSpace(line)
+		}
+	}
+	return ""
+}
+
+func TestUnitCheckDocsNameTheLandHeadCommittedCheck(t *testing.T) {
+	if !landHeadCallsTheCommittedCheck(readRepoText(t, landHeadJS)) {
+		t.Errorf("%s does not call crw.unitCheck with a commit and a base", landHeadJS)
+	}
+	if p := landHeadSectionUnitCheckProblems(readRepoText(t, scriptDocPath)); len(p) > 0 {
+		t.Errorf("%s:\n  %s", scriptDocPath, strings.Join(p, "\n  "))
+	}
+	if p := landHeadLineUnitCheckProblems(lineContaining(readRepoText(t, runSkillFile), "A change made another way lands", "land-head")); len(p) > 0 {
+		t.Errorf("%s:\n  %s", runSkillFile, strings.Join(p, "\n  "))
+	}
+	if p := landHeadLineUnitCheckProblems(lineContaining(readRepoText(t, flowRef), "| `crw flow start WORKFLOW", "`land-head` lands")); len(p) > 0 {
+		t.Errorf("%s:\n  %s", flowRef, strings.Join(p, "\n  "))
+	}
+
+	t.Run("fixture: the reviewer-path wording is reported", func(t *testing.T) {
+		old := "## Landing a head made outside a run\n\n- The gates are the lane's: `crw.verify` of that head, `crw.review` with a fresh reviewer whose model family\n" +
+			"  has to differ from every author, and `crw.land`. A hold (a verifier or a reviewer the host cannot run now) keeps the release.\n\n## Next\n"
+		got := strings.Join(landHeadSectionUnitCheckProblems(old), "\n")
+		for _, want := range []string{"crw.unitCheck", "committed mode", "no reviewer call", "no_executor", "land_review_needs_changes", "source `unit_check`", "asks the tool again", "still names the reviewer path: `crw.review`", "fresh reviewer", "a reviewer the host cannot run"} {
+			if !strings.Contains(got, want) {
+				t.Errorf("no problem names %q:\n%s", want, got)
+			}
+		}
+		if p := landHeadLineUnitCheckProblems("`land-head` lands a head (verification, a review by another model family than the authors, acceptance and integration)"); len(p) != 2 {
+			t.Errorf("the old land-head line gives %d problems, want 2: %v", len(p), p)
+		}
+		if p := landHeadLineUnitCheckProblems("`land-head` lands a head (verification, a unit check in the committed mode over `base..head` by another model family than the authors, acceptance and integration)"); len(p) != 0 {
+			t.Errorf("the new land-head line gives problems: %v", p)
+		}
+		if landHeadCallsTheCommittedCheck("await crw.review(node, head, digest, call)") || !landHeadCallsTheCommittedCheck("crw.unitCheck(node, null, { commit: head, base: head.base })") {
+			t.Error("landHeadCallsTheCommittedCheck does not tell the committed call from the review")
+		}
+	})
+}
