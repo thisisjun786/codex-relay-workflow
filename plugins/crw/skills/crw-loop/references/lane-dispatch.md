@@ -2,7 +2,7 @@
 
 Read when a request fans unmanaged work out across parallel tasks, or when watching more lanes
 than one wait can hold. A tracking issue or DAG node is a flow executor call of the run of
-[the child](../../crw-canon/references/hierarchy.md#the-levels) (project session, relay role `parent`),
+[the child](../../crw-canon/references/hierarchy.md#the-levels) (project session),
 recorded in the relay, whose step the child spawns as a role subagent (the default path), or an
 issue child started through `crw-run` (the exception), and is not handed to a
 `create_thread` lane by this file; apply

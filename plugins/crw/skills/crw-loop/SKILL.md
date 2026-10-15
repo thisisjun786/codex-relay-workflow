@@ -88,7 +88,7 @@ Keep explicit-only skills and leaf-safe delivery restrictions intact.
 
 - DISPATCH-MANAGED-01 (STRICT): before fanning work out, start from the binding. A
   tracking issue or DAG node (also one the relay holds no assignment for yet) is a flow
-  executor call of the run of the child (project session, relay role `parent`), recorded in the
+  executor call of the run of the child (project session), recorded in the
   relay, whose step the child spawns as a role subagent (the default path), or an issue child
   started and resumed through `crw-run` (the exception), never a
   `create_thread` lane; the relay refuses a second active or paused assignment of
