@@ -83,7 +83,9 @@ Run files, in `runs_dir`: `<tag>.log`, `<tag>.out` and `<tag>.summary.json` (`ta
 `result`, the shell runner's own shape), `<tag>.verify.log`, and the verification record `<tag>.json` that `verify_command` writes.
 Right before the push the run writes `"result": "pushing"` into its summary, a marker the run's own result overwrites; a push that landed with no
 `pushed` summary behind it (the signal ended the call after git exited 0) leaves the marker, and the recovery of that landing accepts it when its head
-is in the branch, so the run's verification record and review verdict are still found. `pushing` is a marker, never a pass result.
+is in the branch, so the run's verification record and review verdict are still found. A git that cannot answer whether the marker's head is in the branch
+holds the entry (it stays in `pending/` with the reason in `held`, no record is written, the marker stays) and the next pass asks again. `pushing` is a marker,
+never a pass result.
 
 ### Exit status
 
@@ -164,7 +166,8 @@ the verification-record of the merged tree; the review is a step of the queue th
   `not written yet` (the record is written first, so a pass that ended before the comment call leaves it), `written`, or `not written: <reason>`
   (GitHub refused; final). The next pass that finds the head landed posts the comment of a `not written yet` record once and writes the file again; a `written`
   or refused comment is never posted again. One window stays: a pass that ends between the comment call and that second write leaves `not written yet` for a comment
-  that exists, and the next pass posts it a second time.
+  that exists, and the next pass posts it a second time. A queue with no tracking adapter cannot post it: the entry stays in `pending/` with the reason in `held`
+  and the record is left as it is.
 - A failed verification is retried as for a head alone: once with the same head, then the file is blocked.
 
 ## Command

@@ -89,7 +89,11 @@ func (r *Runner) Pass(ctx context.Context) Report {
 		if why := r.landedBefore(e); why != "" {
 			r.logf("%s %s: %s", e.Key, e.Head, why)
 			// a record whose comment an earlier pass did not get to is posted now, once
-			r.repostLandingComment(ctx, e)
+			if held := r.repostLandingComment(ctx, e); held != "" {
+				r.logf("%s %s: %s", e.Key, e.Head, held)
+				rep.Held = append(rep.Held, e.Name+": "+held)
+				continue
+			}
 			rep.moved(r, e, dirDone, why)
 			continue
 		}
@@ -191,12 +195,15 @@ func (r *Runner) run(ctx context.Context, rep Report, batch []Entry, pr *trackin
 	rep.Summary, rep.Exit, rep.Result = out.Summary, out.Exit, out.Summary.Result
 	data, _ := jsonLine(out.Summary)
 	r.logf("%s rc=%d %s", tag, out.Exit, data)
+	recoverFailed := false
 	if pr != nil {
 		if out.Exit == ExitNothingMerged && len(out.left) == 1 && out.left[0].Reason == reasonAlreadyInDev {
 			// the head reached the branch between the pass's check and its run: recorded once, after the fact
 			l, err := r.recoverLanding(ctx, tag, batch[0], *pr)
 			if err != nil {
 				r.logf("%s: %v", pr.Ref, err)
+				rep.Held = append(rep.Held, batch[0].Name+": the landing record could not be written, it stays pending: "+err.Error())
+				recoverFailed = true
 			}
 			rep.Landing = l
 		} else {
@@ -226,6 +233,9 @@ func (r *Runner) run(ctx context.Context, rep Report, batch []Entry, pr *trackin
 			// A head that is already in the branch is done; any other left-out head goes back to
 			// its owner to refresh.
 			if l.Reason == reasonAlreadyInDev {
+				if recoverFailed {
+					continue
+				}
 				rep.moved(r, l.Entry, dirDone, l.Reason)
 			} else {
 				rep.moved(r, l.Entry, dirConflict, l.Reason)
