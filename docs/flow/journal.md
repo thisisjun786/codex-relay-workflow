@@ -221,9 +221,11 @@ round is refused `crosscheck_prior_invalid`), `evidence_round` (0), `state` (`ve
 `reason` (of a refused, failed or no_verdict round), `detail`, `hold` (of a held round: `crosscheck_quota` and `crosscheck_no_answer` when a
 pass gave no judgment, `crosscheck_receipt_missing`, `crosscheck_receipt_unverified`, `crosscheck_receipt_not_copied` and
 `crosscheck_receipt_mismatch` with the `node` when an executor receipt could not be handed over), `engine_family` and `model` once an engine
-was chosen, `passes` (each attempt of each pass: `pass` `A` or `B`, `attempt`, `state`, `elapsed_ms`, `model`, `prompt_digest`, `voided`
+was chosen, `passes` (each attempt of each pass: `pass` `A` or `B`, `attempt`, `state`, `verdict` (the pass's own word, `verified` or
+`needs_changes`, of an `ok` answer; absent for an attempt that gave none), `elapsed_ms`, `model`, `prompt_digest`, `voided`
 for an attempt that read no repository, `retried` for the one retry of an invalid answer, `detail`), `cleanup` when a checkout could not be
-removed, and `verdict`, the verdict V of a round that judged (null otherwise): the word (`verified` or `needs_changes`), the merged
+removed, and `verdict`, the verdict V of a round that judged (null otherwise): the word (`verified` or `needs_changes`; `verified` only
+when no merged finding blocks and every pass's own `verdict` is verified), the merged
 `findings`, `carried` and `follow_ups` (the findings that do not block, by id and as one line each), `guide_rev`, `engine_family`,
 `engine_families`, `model`, `round`, `evidence_round`, `milestone`, `plan`, `head`, `base`, `run`, `author_families` and `authors` (each
 author with its `source` `role` or `call`, its `name`, `model` and `family`), `receipts` (each node's receipt `state` and `sha256`),
