@@ -3,6 +3,7 @@ package workflows
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strings"
 	"testing"
 
@@ -110,4 +111,63 @@ func TestCriticReplanPacketListsUnstartedNodes(t *testing.T) {
 	if strings.Contains(first, "UNSTARTED NODES") || strings.Contains(first, "unstarted node") {
 		t.Errorf("the critic packet of the first DESIGN names unstarted nodes:\n%s", first)
 	}
+}
+
+// TestCriticPacketPriorFindingsRendersEveryDisposition (CRW-1452): from the second round on, the critic's PRIOR FINDINGS lists each
+// finding of the earlier rounds by id with the architect's disposition of it: folded or rebutted with its reason, not reported when
+// the answer named no disposition of it, null when the round's answer had no dispositions at all; a disposition that names no
+// finding of its round is listed on its own line. The first round has no such section, and a second round with no prior round
+// says none.
+func TestCriticPacketPriorFindingsRendersEveryDisposition(t *testing.T) {
+	cand := "{ design: { decisions: [], issues: [] }, answers: [] }"
+	prior := "[" +
+		"{ round: 1, findings: auditFindings(1, [" +
+		"{ ref: 'a.go', severity: 'P1', finding: 'fold me' }, " +
+		"{ ref: 'b.go', severity: 'P2', finding: 'rebut me' }, " +
+		"{ ref: 'c.go', severity: 'P3', finding: 'forget me' }]), " +
+		"dispositions: [" +
+		"{ finding: 'r1.1', disposition: 'folded', reason: 'done in D2' }, " +
+		"{ finding: 'r1.2', disposition: 'rebutted', reason: 'outside the milestone' }, " +
+		"{ finding: 'r1.9', disposition: 'folded', reason: 'a mistyped id' }] }, " +
+		"{ round: 2, findings: auditFindings(2, [{ ref: 'd.go', severity: 'P1', finding: 'still open' }]), dispositions: null }]"
+	packet := packetText(t, "critic-prior-packet", "designAuditPacket, auditFindings", "designAuditPacket(ms, "+cand+", 3, "+prior+", undefined)")
+	got, ok := priorFindingsOf(packet)
+	if !ok {
+		t.Fatalf("the critic packet of round 3 has no PRIOR FINDINGS:\n%s", packet)
+	}
+	want := []string{
+		"- r1.1 [P1] a.go: fold me -> folded: done in D2",
+		"- r1.2 [P2] b.go: rebut me -> rebutted: outside the milestone",
+		"- r1.3 [P3] c.go: forget me -> not reported",
+		"- r1.9 (no finding of round 1 has this id) -> folded: a mistyped id",
+		"- r2.1 [P1] d.go: still open -> null (no dispositions reported)",
+	}
+	if !slices.Equal(got, want) {
+		t.Errorf("PRIOR FINDINGS of round 3:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	empty := packetText(t, "critic-no-prior-packet", "designAuditPacket", "designAuditPacket(ms, "+cand+", 2, [], undefined)")
+	if got, _ := priorFindingsOf(empty); !slices.Equal(got, []string{"- none"}) {
+		t.Errorf("the critic packet of round 2 with no prior round lists %q, want none:\n%s", got, empty)
+	}
+	first := packetText(t, "critic-round-one-packet", "designAuditPacket, auditFindings", "designAuditPacket(ms, "+cand+", 1, "+prior+", undefined)")
+	if strings.Contains(first, "PRIOR FINDINGS") {
+		t.Errorf("the critic packet of round 1 has PRIOR FINDINGS:\n%s", first)
+	}
+}
+
+// priorFindingsOf is the list of the PRIOR FINDINGS section of a critic packet: the "- " lines after its heading.
+func priorFindingsOf(packet string) ([]string, bool) {
+	_, rest, ok := strings.Cut(packet, "PRIOR FINDINGS")
+	if !ok {
+		return nil, false
+	}
+	_, rest, _ = strings.Cut(rest, ":\n")
+	var out []string
+	for _, line := range strings.Split(rest, "\n") {
+		if !strings.HasPrefix(line, "- ") {
+			break
+		}
+		out = append(out, line)
+	}
+	return out, true
 }
