@@ -33,7 +33,7 @@ type statementSide struct {
 // freshKey is the statement key of a freshly composed packet.
 func (s statementSide) freshKey(t *testing.T) string {
 	t.Helper()
-	key, err := freshStatementKey(s.columns, s.packet, statementReading{})
+	key, err := freshStatementKey(s.columns, s.packet)
 	if err != nil {
 		t.Fatalf("fresh statement key: %v", err)
 	}

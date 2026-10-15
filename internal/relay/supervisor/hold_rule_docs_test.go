@@ -39,11 +39,6 @@ func TestHoldRuleDocsTableMatchesDecision(t *testing.T) {
 		seen[label] = true
 		for i, kind := range holdRuleDocsKinds {
 			cell := row[i+1]
-			// A direct message's re-address keeps a cap word (StageDirect clears only
-			// superseded_by_report and hierarchy_unresolved): the cell says so beside the rule's verdict.
-			if kind == holdOther && strings.HasPrefix(label, "readdress,") && !strings.Contains(cell, holdRuleDocsDirectCapWord) {
-				t.Errorf("row %q, kind other: the docs say %q, want it to name the direct path's exception %q", label, cell, holdRuleDocsDirectCapWord)
-			}
 			for _, change := range changes {
 				if problem := holdRuleDocsCellMatches(cell, kind, change); problem != "" {
 					t.Errorf("row %q, kind %s (%+v): the docs say %q, %s", label, kind, change, cell, problem)
@@ -57,10 +52,6 @@ func TestHoldRuleDocsTableMatchesDecision(t *testing.T) {
 		}
 	}
 }
-
-// holdRuleDocsDirectCapWord is the note the readdress rows' other cells carry: StageDirect's
-// re-address leaves a cap word on a direct message, though the rule answers release for the cell.
-const holdRuleDocsDirectCapWord = "a direct message keeps a cap word"
 
 // holdRuleDocsKinds are the hold kind columns of the documented table, in order.
 var holdRuleDocsKinds = []holdKind{holdNone, holdOther, holdDerived, holdAcknowledged, holdNotice}
@@ -199,36 +190,4 @@ func holdRuleDocsTable(doc string) ([][]string, error) {
 		return nil, errors.New("the hold rule section has no table")
 	}
 	return rows, nil
-}
-
-// TestReaddressOfACapWordByPath is the characterization the documented readdress rows' other cells
-// rest on (DI P3 of 30252780; behaviour as on dev): a message held under a cap word whose recipient
-// moved is released when an event's message is staged again, and keeps the cap word, re-addressed to
-// the new recipient, when a direct message's sender stages it again.
-func TestReaddressOfACapWordByPath(t *testing.T) {
-	for _, c := range []struct {
-		world, entry string
-		kept         bool
-	}{{"event", "stage", false}, {"direct", "direct_stage", true}} {
-		t.Run(c.world, func(t *testing.T) {
-			w := newHoldWorld(t, c.world)
-			w.setHoldSQL(t, "attempt_cap", "")
-			before, err := w.c.Get(w.ctx, w.id)
-			if err != nil {
-				t.Fatal(err)
-			}
-			w.apply(t, "other_recipient")
-			w.enter(t, c.entry)
-			row, err := w.c.Get(w.ctx, w.id)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if row.RecipientTaskID == before.RecipientTaskID {
-				t.Fatalf("the %s message was not re-addressed (still to %s)", c.world, row.RecipientTaskID)
-			}
-			if kept := row.HoldReason.String == "attempt_cap"; kept != c.kept {
-				t.Fatalf("the %s message re-addressed with a cap word holds %q, want kept %v", c.world, row.HoldReason.String, c.kept)
-			}
-		})
-	}
 }

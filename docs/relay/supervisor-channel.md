@@ -967,22 +967,12 @@ word) is `other` and keeps its own release path. `superseded_by_report` on a fau
 acknowledgement (`acknowledged`) or does not (`derived`, which is also how every row written before
 the key existed reads). Because the hold is set only from no hold, and each such set journals one
 such row in its own transaction, the newest row is the one that set the hold the message carries now;
-a release journals `supervisor_message_reopened`, never that kind. A re-address that keeps a hold (an
-acknowledged park whose recipient stays) writes its `supervisor_message_readdressed` row with
-`releasedHold` null and the added key `keptHold` naming the word it kept; a row without `keptHold`
-released what `releasedHold` names, as before.
+a release journals `supervisor_message_reopened`, never that kind.
 
 A statement is what the message says, not its bytes (`statementKey`): its obligation, event and
 submission and the content fields of its packet. Seat, scope, sender and observation time are routing
 and never make a new statement, so the daemon's pass, a restart, the direct sender repeating its
-report and a rotated sender session all stage the same statement again. Two texts of a direct
-message are read the same way: the default evidence pointer, the one `supervisor-show --message <id>`
-line the channel writes when the sender gives no evidence (whatever executable path and store
-directory the staging process spelled it with; a pointer the sender gives is compared as written),
-and the reporter
-notice `report-up` writes ahead of a proxy report's text (which names the lead of the moment). When
-only the sender session moved, a statement that differs only in naming the old sender or the new one
-is the same statement too, so a lead handover alone never releases a park.
+report and a rotated sender session all stage the same statement again.
 
 | entry | none | other | derived | acknowledged | notice |
 | --- | --- | --- | --- | --- | --- |
@@ -991,19 +981,12 @@ is the same statement too, so a lead handover alone never releases a park.
 | claim | keep (claimable) | refuse | refuse | refuse | refuse |
 | settle, a hold word asked | set | keep | keep | keep | keep |
 | settle, no hold word asked | keep | keep | keep | keep | keep |
-| readdress, recipient moved | keep | release (a direct message keeps a cap word) | release | release | release |
-| readdress, sender moved only | keep | release (a direct message keeps a cap word) | release | keep | release |
+| readdress, recipient moved | keep | release | release | release | release |
+| readdress, sender moved only | keep | release | release | keep | release |
 | restage, recipient moved | keep | keep (re-addressing releases it) | release | release | release |
 | restage, same recipient | keep | keep (its own path) | if owed | same statement: keep, else if owed | release (reserved again) |
 | send_by_id, recipient or sender moved | keep (answers `relation_owner_drift`: stage it again) | keep | keep | keep | keep |
 | send_by_id, same endpoints | keep | keep (its own path) | if owed | if owed | if owed |
-
-Re-addressing an `other` hold differs by path, as it did before the rule: an event's or an
-omission's message re-addressed by `supervisor-stage` is released whatever its word, while a direct
-message re-addressed by its sender's staging is released from `hierarchy_unresolved` only and keeps a
-cap word (`busy_cap`, `attempt_cap`), which moves with it to the new recipient and keeps its own
-release path. `holdDecision` answers release for the cell; `StageDirect`'s update clears only
-`superseded_by_report` and `hierarchy_unresolved`.
 
 *if owed* releases the hold when what the message is for is still owed through it, and keeps it when
 it is not; the channel answers that (it may restate the message, as the release it allows would), and

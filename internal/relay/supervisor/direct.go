@@ -360,39 +360,15 @@ func (c *Channel) directHoldReleases(ctx context.Context, row store.SupervisorMe
 	if err != nil {
 		return false, "", err
 	}
-	// The sender gave no evidence when every pointer of m is blank (composeDirect then writes its
-	// default pointer): only then is a stored default pointer read as the show line alone.
-	reading := statementReading{defaultEvidence: true}
-	for _, pointer := range m.Evidence {
-		if strings.TrimSpace(pointer) != "" {
-			reading.defaultEvidence = false
-		}
-	}
-	stored, err := storedStatementKey(rowStatementColumns(row), row.Packet, reading)
+	stored, err := rowStatementKey(row)
 	if err != nil {
 		return false, "", err
 	}
-	fresh, err := freshStatementKey(directStatementColumns(m), packet, reading)
+	fresh, err := freshStatementKey(directStatementColumns(m), packet)
 	if err != nil {
 		return false, "", err
 	}
 	sameRecipient, sameSender := row.RecipientTaskID == live.Recipient, row.SenderTaskID == live.Sender
-	sameStatement := stored == fresh
-	// The sender-only keep, before any release: when only the sender session moved, a statement that
-	// differs only in naming the old sender or the new one (a proxy report's notice names the lead of
-	// the moment, CRW-1500 crosscheck B2) is the same statement, so the restage keeps an acknowledged
-	// park as the readdress entry does; a statement that still differs with both senders masked is
-	// new and the restage releases it when owed.
-	if !sameStatement && sameRecipient && !sameSender {
-		reading.masked = []string{row.SenderTaskID, live.Sender}
-		if stored, err = storedStatementKey(rowStatementColumns(row), row.Packet, reading); err != nil {
-			return false, "", err
-		}
-		if fresh, err = freshStatementKey(directStatementColumns(m), packet, reading); err != nil {
-			return false, "", err
-		}
-		sameStatement = stored == fresh
-	}
 	owed := func() (bool, error) {
 		_, err := c.refreshProposal(ctx, row, live, at, 0)
 		if refusal := new(Refusal); errors.As(err, refusal) && refusal.Reason == "superseded_revision" {
@@ -400,7 +376,7 @@ func (c *Channel) directHoldReleases(ctx context.Context, row store.SupervisorMe
 		}
 		return err == nil, err
 	}
-	verdict, why, err := holdDecision(kind, holdChange{Entry: entryRestage, SameStatement: sameStatement, SameRecipient: sameRecipient, SameSender: sameSender}, owed)
+	verdict, why, err := holdDecision(kind, holdChange{Entry: entryRestage, SameStatement: stored == fresh, SameRecipient: sameRecipient, SameSender: sameSender}, owed)
 	if err != nil || verdict == holdRelease || !moved {
 		return verdict == holdRelease, why, err
 	}

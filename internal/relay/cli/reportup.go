@@ -159,7 +159,7 @@ func runReportUp(ctx context.Context, services dispatch.Services, args dispatch.
 		case reportedBy != lead.Sender:
 			reporterIsLead = false
 			warning = "the calling thread " + pyvalue.StrRepr(reportedBy) + " is not the initiative's lead " + pyvalue.StrRepr(lead.Sender) + "; the report is sent in the lead's name, and the message and the report row say who reported it"
-			text = supervisor.ProxyReporterNotice(reportedBy, lead.Sender) + text
+			text = "Reported by thread " + reportedBy + ", which is not the initiative's lead (" + lead.Sender + ").\n\n" + text
 		default:
 			reporterIsLead = true
 		}

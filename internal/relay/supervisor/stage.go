@@ -214,7 +214,7 @@ func (c *Channel) StageWithReading(ctx context.Context, o Obligation, reading ma
 					if err != nil {
 						return err
 					}
-					now, err := freshStatementKey(obligationStatementColumns(o, report.submission), freshPacket, statementReading{})
+					now, err := freshStatementKey(obligationStatementColumns(o, report.submission), freshPacket)
 					if err != nil {
 						return err
 					}
