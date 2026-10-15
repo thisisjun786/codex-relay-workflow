@@ -665,6 +665,47 @@ func TestResearchCapCountsReuseAndEscalatesOnce(t *testing.T) {
 	}
 }
 
+// TestResearchCapHoldsForAReuseTheAskerCouldAnswer (CRW-1470, x1436 round 2 item 1): the cap of the research continuations of a tier
+// holds for a reuse whatever the files the question names. A question with no file or one file (or files inside the regions) is one the
+// asker could answer itself (SP-INL-1), but an answered one is still reused, a continuation like any other: past the cap it escalates
+// research_cap, with files_needed nil, empty and one file alike. An unanswered such question below the cap stays inline and counts nothing.
+func TestResearchCapHoldsForAReuseTheAskerCouldAnswer(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		files []string
+	}{{"files_needed nil", nil}, {"files_needed empty", []string{}}, {"one file", []string{"x.go"}}, {"inside the regions", []string{"c/1", "c/2", "c/3", "c/4"}}} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newWorld(t)
+			ec := ExploreContext{Node: "C", Tier: "executor", Regions: []string{"c/"}}
+			route := func(question string, files []string) Route {
+				t.Helper()
+				var plan RoutePlan
+				_ = json.Unmarshal(w.must("exploreRoute", ExploreResearch, ec, []Question{{Question: question, FilesNeeded: files}}), &plan)
+				if len(plan.Routes) != 1 {
+					t.Fatalf("routes %+v", plan.Routes)
+				}
+				return plan.Routes[0]
+			}
+			first := route("which module owns the case?", nil)
+			if first.Route != RouteSpawn {
+				t.Fatalf("first research question: %+v", first)
+			}
+			w.must("exploreRecord", ExploreResearch, ec, []Answer{{Digest: first.Digest, Question: first.Question, Answer: "the store", Route: first.Route, Origin: first.Origin}})
+			if rt := route("which module owns the case?", nil); rt.Route != RouteReuse {
+				t.Fatalf("the second continuation: %+v, want the reuse", rt)
+			}
+			if rt := route("which module owns the case?", tc.files); rt.Route != RouteEscalate || rt.Reason != "research_cap" {
+				t.Errorf("a third continuation whose answered question names files %v: %+v, want escalate research_cap", tc.files, rt)
+			}
+			if tc.files != nil {
+				if rt := route("a question the asker answers", tc.files); rt.Route != RouteInline {
+					t.Errorf("an unanswered question the asker answers: %+v, want inline", rt)
+				}
+			}
+		})
+	}
+}
+
 // The open questions of a DESIGN (CRW-1347): none takes the inline route, whatever its files_needed; a question whose scope starts
 // with one of the four notations of the out-of-authority kinds goes to the orchestrator as a non-blocking ask and to no explorer;
 // a missing, unknown or longer notation goes to an explorer; the cap of the milestone counts only explorers, and the questions
