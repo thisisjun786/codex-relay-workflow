@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/layername"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -488,5 +489,17 @@ func TestAForeignCommandReconcilesTheSummaryOfTheOrchestratorsRun(t *testing.T) 
 	w.verdict("A", "needs_changes", "the guard is missing", "and the loop")
 	if out, err = ReconcileSummary(ctx, env); err != nil || !out.Enqueued || out.Intents != 1 || len(w.entries()) != 2 {
 		t.Fatalf("second outcome %+v %v", out, err)
+	}
+}
+
+// CRW-1478: the summary notice goes to env.Actor, the registered 자식 (project session) of the project, and names that layer;
+// layername.Find (the matcher the ci ratchet shares) finds no bare role word in it.
+func TestSummaryNoticeNamesTheChild(t *testing.T) {
+	text := SummaryNoticeText("sum-1", "plan-1", "doc-1")
+	if !strings.Contains(text, "You are the 자식 (project session) of the project") {
+		t.Errorf("the notice does not name the 자식 (project session):\n%s", text)
+	}
+	if hits := layername.Find(text); len(hits) != 0 {
+		t.Errorf("the notice carries bare role words %v:\n%s", hits, text)
 	}
 }
