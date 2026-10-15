@@ -24,10 +24,12 @@ type fakeRuns struct {
 	infos []flowcli.RunInfo
 	rows  map[string][]flowcli.Row
 	state map[string]string
+	// live is whether a process holds a run (Page.Live)
+	live map[string]bool
 }
 
 func newFakeRuns() *fakeRuns {
-	return &fakeRuns{rows: map[string][]flowcli.Row{}, state: map[string]string{}}
+	return &fakeRuns{rows: map[string][]flowcli.Row{}, state: map[string]string{}, live: map[string]bool{}}
 }
 
 func (f *fakeRuns) add(run, state string, n int) {
@@ -76,12 +78,12 @@ func (f *fakeRuns) Tail(ctx context.Context, run string, after, limit int, wait 
 	for {
 		f.mu.Lock()
 		rows, known := f.rows[run]
-		state := f.state[run]
+		state, live := f.state[run], f.live[run]
 		f.mu.Unlock()
 		if !known {
 			return flowcli.Page{}, fmt.Errorf("%w: %s", flowcli.ErrNoRun, run)
 		}
-		p := flowcli.Page{Run: run, After: after, Cursor: after, Rows: []flowcli.Row{}, State: state}
+		p := flowcli.Page{Run: run, After: after, Cursor: after, Rows: []flowcli.Row{}, State: state, Live: live}
 		for _, r := range rows {
 			if r.Seq > after {
 				if len(p.Rows) == limit {
@@ -328,6 +330,55 @@ func TestRunsSSEResumeFromCursor(t *testing.T) {
 	resp4.Body.Close()
 	if resp3.StatusCode != http.StatusNotFound || resp4.StatusCode != http.StatusBadRequest {
 		t.Errorf("unknown run %d, bad cursor %d", resp3.StatusCode, resp4.StatusCode)
+	}
+}
+
+// TestRunsSSEEndsOnAPausedRunWithNoProcess (CRW-1487): the stream of a run that ended paused, with no process to write more, ends
+// with an `end` event that says paused, as it ends on a dead or a held run; while a process still holds the paused run the stream
+// stays open.
+func TestRunsSSEEndsOnAPausedRunWithNoProcess(t *testing.T) {
+	f := newFakeRuns()
+	f.add("run-p", flowcli.StatePaused, 2)
+	useRuns(t, f)
+	old := runsEventWait
+	runsEventWait = 50 * time.Millisecond
+	defer func() { runsEventWait = old }()
+	ts, _ := streamServer(t)
+	resp, body, cancel := openStream(t, ts, "/api/runs/run-p/events", "")
+	defer cancel()
+	defer resp.Body.Close()
+	if rows := readEvents(t, body, "row", 2); len(rows) != 2 {
+		t.Fatalf("the rows: %+v", rows)
+	}
+	if end := readEvents(t, body, "end", -1); len(end) != 1 || !strings.Contains(end[0].Data, `"state":"paused"`) || !strings.Contains(end[0].Data, `"cursor":2`) {
+		t.Errorf("the end of the stream: %+v", end)
+	}
+
+	// a paused run its process still holds: the stream ends only once the process let the run go
+	f.add("run-pl", flowcli.StatePaused, 1)
+	f.mu.Lock()
+	f.live["run-pl"] = true
+	f.mu.Unlock()
+	resp2, body2, cancel2 := openStream(t, ts, "/api/runs/run-pl/events", "")
+	defer cancel2()
+	defer resp2.Body.Close()
+	if rows := readEvents(t, body2, "row", 1); len(rows) != 1 {
+		t.Fatalf("the rows of the live run: %+v", rows)
+	}
+	var released time.Time
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		f.mu.Lock()
+		released = time.Now()
+		f.live["run-pl"] = false
+		f.mu.Unlock()
+	}()
+	end := readEvents(t, body2, "end", -1)
+	f.mu.Lock()
+	at := released
+	f.mu.Unlock()
+	if len(end) != 1 || at.IsZero() || !strings.Contains(end[0].Data, `"state":"paused"`) {
+		t.Errorf("the stream of a paused run its process holds ended before the process let it go: %+v", end)
 	}
 }
 

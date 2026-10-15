@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/layername"
 )
 
 // The table below ports the branches of premerge_gate.py (the oracle, CRW-952 inputs) one by one. Each case
@@ -256,5 +257,43 @@ func TestDigestIsCanonical(t *testing.T) {
 	}
 	if dc == da {
 		t.Fatal("a changed number must change the digest (numbers are kept as written)")
+	}
+}
+
+// CRW-1443: a premerge finding that the 자식 must dispose of names the layer (자식), never the relay
+// role id written as a bare word. layername.Find (the matcher the ci ratchet shares) must find no
+// bare role word in the refusal detail.
+func TestPremergeFindingNamesLayers(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		mutate func(*Record)
+		reason contract.RefusalReason
+		names  string
+	}{
+		{name: "blocking item", mutate: func(r *Record) {
+			r.Dispositions.Items = []Item{{Ref: "c9", Class: "blocking", Note: "fix it first"}}
+		}, reason: contract.RefusalPremergeBlocked, names: "c9 is blocking (자식 decision)"},
+		{name: "undisposed finding", mutate: func(r *Record) {
+			r.Criteria["c1"] = Criterion{Verdict: "PARTIAL", Evidence: "x"}
+		}, reason: contract.RefusalPremergeUndisposed, names: "c1 has no 자식 disposition"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			r := baseRecord()
+			c.mutate(&r)
+			rec, err := Decode(mustRaw(t, r))
+			if err == nil {
+				err = Judge(rec, Options{})
+			}
+			var refusal *Refusal
+			if !errors.As(err, &refusal) || refusal.Reason != c.reason {
+				t.Fatalf("judgment %v, want a %s refusal", err, c.reason)
+			}
+			if !strings.Contains(refusal.Detail, c.names) {
+				t.Errorf("refusal detail %q does not name %q", refusal.Detail, c.names)
+			}
+			if hits := layername.Find(refusal.Detail); len(hits) > 0 {
+				t.Errorf("refusal detail %q names a role id where a person reads a layer (write 자식): %v", refusal.Detail, hits)
+			}
+		})
 	}
 }

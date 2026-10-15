@@ -12,9 +12,10 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 )
 
-// The states a run is shown in. A run that is not over has a process (running, paused) or none (dead: a run lock nobody holds
-// and no finished row after the last start); a run that is over is completed, held (it finished, but a call or a wait is left to
-// go on with), blocked (it finished completed and started no node: see Summarize), cancelled or failed.
+// The states a run is shown in. A run that is not over has a process (running, paused) or none: paused (the operator paused it,
+// and its last process ended with a run/paused row after its last start, CRW-1487: `crw flow resume` goes on with it) or dead (a
+// run lock nobody holds and no end row after the last start); a run that is over is completed, held (it finished, but a call or a
+// wait is left to go on with), blocked (it finished completed and started no node: see Summarize), cancelled or failed.
 const (
 	StateRunning   = "running"
 	StatePaused    = "paused"
@@ -63,10 +64,15 @@ type RunInfo struct {
 	// TokenSplit is Tokens in its parts (CRW-1327).
 	TokenSplit TokenSplit `json:"token_split"`
 	Phase      string     `json:"phase,omitempty"`
-	// Status and ErrorKind are those of the last finished row; Paused says who paused the run and why.
+	// Status and ErrorKind are those of the last finished row; Paused says who paused the run and why: the by and reason of the
+	// run/paused end row of a run that ended paused, also when a cancel of that paused end follows it, else the last run_paused ask
+	// of the current process.
 	Status    string `json:"status,omitempty"`
 	ErrorKind string `json:"error_kind,omitempty"`
 	Paused    string `json:"paused,omitempty"`
+	// Outcome is what the script came to (a milestone state, CRW-1487) as the finished row of the run's current end carries it: nil while
+	// a process runs, for a dead or paused run, and when that row carries none, so an older process's outcome is never shown.
+	Outcome *engine.Outcome `json:"outcome,omitempty"`
 	// HeldReasons are the reasons calls are held for (budget_exhausted, engine_paused, ...), once each.
 	HeldReasons []string `json:"held_reasons,omitempty"`
 	LastSeq     int      `json:"last_seq"`
@@ -316,7 +322,10 @@ func Questions(events []engine.Event) []Question {
 // keep the state completed.
 func Summarize(rec RunRecord, events []engine.Event, live bool, pid int) RunInfo {
 	info := RunInfo{RunRecord: rec, Live: live, PID: pid}
-	lastStart, lastFinish := -1, -1
+	lastStart, lastFinish, lastPaused := -1, -1, -1
+	var outcome *engine.Outcome
+	// pausedBy is who paused the run and why, as the last run/paused end row says (its by and reason)
+	pausedBy := ""
 	for i, e := range events {
 		if int64(e.Seq) < engine.ForeignSeqBase {
 			// the cursor of the tree is the run's own last row: a command's row (CRW-1204) is numbered apart (journal.ReadPage)
@@ -327,9 +336,18 @@ func Summarize(rec RunRecord, events []engine.Event, live bool, pid int) RunInfo
 			case "started":
 				info.Processes++
 				lastStart = i
+			case "paused":
+				// the end of a process the operator paused (engine.RunPaused): no finished row, no error kind
+				lastPaused = i
+				info.Status, info.ErrorKind = engine.RunPaused, ""
+				pausedBy = ""
+				if by := str(e.Data, "by"); by != "" {
+					pausedBy = by + ": " + str(e.Data, "reason")
+				}
 			case "finished":
 				lastFinish = i
 				info.Status, info.ErrorKind = str(e.Data, "status"), str(e.Data, "error_kind")
+				outcome = engine.FinishedOutcome(e.Data)
 			}
 		}
 		if e.Kind == engine.KindFlow && e.Event == "phase" {
@@ -348,6 +366,12 @@ func Summarize(rec RunRecord, events []engine.Event, live bool, pid int) RunInfo
 			// a node the scheduler held back (no slot, no memory, a region in use, ...): unreleased, and asked again by a resume (CRW-1201)
 			heldBack = true
 		}
+	}
+	if lastPaused > lastStart && pausedBy != "" {
+		// a run that ended paused was paused by the asker its end row names: a later ask that does not end a run paused (a deadline)
+		// is a run_paused row too, and it is not who paused the run. A cancel of that paused end (a finished row after it, with no
+		// start between) keeps the asker: the run was paused by it before it was cancelled
+		info.Paused = pausedBy
 	}
 	order, rows := callRows(events)
 	held := map[string]bool{}
@@ -396,8 +420,15 @@ func Summarize(rec RunRecord, events []engine.Event, live bool, pid int) RunInfo
 		info.State = StateCancelled
 	case lastFinish > lastStart:
 		info.State = StateFailed
+	case lastPaused > lastStart:
+		// the operator paused the run and its process ended paused (a cancel since is a finished row after it, above)
+		info.State = StatePaused
 	default:
 		info.State = StateDead
+	}
+	if lastFinish > lastStart && lastFinish > lastPaused && info.State != StateRunning && info.State != StatePaused {
+		// the outcome of the run's current end only (CRW-1487)
+		info.Outcome = outcome
 	}
 	return info
 }

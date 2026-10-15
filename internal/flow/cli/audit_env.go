@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/audit"
@@ -52,15 +53,46 @@ func OpenAuditStore(ctx context.Context, req AuditRequest) (AuditSetup, error) {
 		return AuditSetup{}, err
 	}
 	client := appserver.New(socket, appserver.DefaultBounds)
-	finished := false
-	for _, ev := range j.Events() {
-		if ev.Kind == engine.KindRun && ev.Event == "finished" {
-			finished = true
+	// the row is appended under the run lock, on the journal opened again under it (CRW-1487): the end row of a run is written before
+	// its process is done with the journal (a paused end reconciles the summary and the escalations after it), and a journal opened
+	// before the last of those rows would number its row as one of them
+	record := func() (engine.Journal, bool, func() error, error) {
+		lock, err := TakeLock(selection.Path, run, "audit", time.Now())
+		if err != nil {
+			return nil, false, nil, err
 		}
+		fresh, err := journal.Open(ctx, st, run, journal.Identity{}, journal.Options{})
+		if err != nil {
+			lock.Release()
+			return nil, false, nil, err
+		}
+		return fresh, runEnded(fresh.Events()), func() error {
+			defer lock.Release()
+			return fresh.Close()
+		}, nil
 	}
-	return AuditSetup{RunID: run, Journal: j, Reader: audit.BusReader{Bus: client.Bus()}, Finished: finished, Close: func() error {
+	return AuditSetup{RunID: run, Journal: j, Reader: audit.BusReader{Bus: client.Bus()}, Finished: runEnded(j.Events()), Record: record, Close: func() error {
 		return errors.Join(j.Close(), client.Close(), st.Close())
 	}}, nil
+}
+
+// runEnded says whether the last process of the run ended it: a finished row, or the run/paused row of a run the operator paused
+// (CRW-1487), after the last started row. Such an end leaves the journal to nobody; an end of an earlier process that a later start
+// follows (a resume) does not, because the resumed process numbers its rows on from the stored ones (the pump's rule, too).
+func runEnded(events []engine.Event) bool {
+	ended := false
+	for _, ev := range events {
+		if ev.Kind != engine.KindRun {
+			continue
+		}
+		switch ev.Event {
+		case "started":
+			ended = false
+		case "finished", "paused":
+			ended = true
+		}
+	}
+	return ended
 }
 
 // RunOfAcceptance is the run that holds an acceptance, searched in the rows of the store. An acceptance that no run holds, or that

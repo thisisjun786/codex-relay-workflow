@@ -16,7 +16,7 @@ import (
 
 // projectReadingLimits is assignment.PROJECT_READING_LIMITS.
 const projectReadingLimits = "A reading of what this project's children report, not a completion verdict. The strongest " +
-	"state is complete_candidate: integration and verification are the parent's judgment and are " +
+	"state is complete_candidate: integration and verification are the 자식's judgment and are " +
 	"not visible here. A child's own goal status is never consulted; each assignment's state is " +
 	"derived from receipts, verdicts and marks against the current head, generation and " +
 	"revision. unreadable, unregistered and ambiguous are three different answers and none of " +
@@ -65,7 +65,7 @@ func ProjectStateReading(ctx context.Context, project string, reader ProjectRead
 		}
 		sortStrings(competing)
 		return reading("ambiguous", true, attached, outstanding, contract.Field{Key: "competingOwners", Value: strList(competing)},
-			contract.Field{Key: "basis", Value: "the project has more than one live owner, so which parent this reading is about is not decided here"})
+			contract.Field{Key: "basis", Value: "the project has more than one live owner, so which 자식 this reading is about is not decided here"})
 	}
 	if len(attached) == 0 {
 		return reading("unregistered", true, []string{}, []string{},

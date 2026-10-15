@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"regexp"
 	"strings"
@@ -96,6 +97,28 @@ func TestShowTreeIncludesRecoveryHold(t *testing.T) {
 	}
 	if _, _, errOut := td.do("pause", "run-a", "--state", w.state); errOut != "" {
 		t.Errorf("pause: %q", errOut)
+	}
+}
+
+// TestWatchEndsOnAPausedRunWithNoProcess (CRW-1487): a follow of a run that ended paused, with no process to write more, ends as it
+// does on a dead or a held run instead of waiting for rows nobody writes.
+func TestWatchEndsOnAPausedRunWithNoProcess(t *testing.T) {
+	w := newWorld(t)
+	r := w.newRun("run-wp", "thread-owner")
+	r.endPaused()
+	r.close()
+	td := w.deps()
+	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	var out, errOut bytes.Buffer
+	w.close()
+	code := RunWith(cctx, td.Deps, []string{"watch", "run-wp", "--follow", "--wait", "1", "--state", w.state}, strings.NewReader(""), &out, &errOut)
+	w.open()
+	if cctx.Err() != nil {
+		t.Fatalf("the follow of a paused end with no process did not end: exit %d\n%s%s", code, out.String(), errOut.String())
+	}
+	if code != 0 || !strings.Contains(out.String(), "state paused") {
+		t.Errorf("the follow: exit %d\n%s%s", code, out.String(), errOut.String())
 	}
 }
 

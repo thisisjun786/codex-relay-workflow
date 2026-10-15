@@ -318,7 +318,7 @@ func TestDecisionGenerationIsNotRecordedUnlessTheChildWasToldAndThePlanHoldsWhat
 		w.revise("dp-r2")
 		w.register()
 		w.deliver(w.mustDecide("split_approval", drDigest()))
-		w.refused("someone-else", "scope_role_mismatch", "not the parent")
+		w.refused("someone-else", "scope_role_mismatch", "not the 자식 that holds relationship")
 	})
 	t.Run("what the child consumed was superseded since it was dispatched", func(t *testing.T) {
 		w := newDRWorldOn(t, "B")

@@ -33,7 +33,7 @@ func (d StoreDelivery) Channel(ctx context.Context, relationship sql.NullString,
 	}
 	parent, _ := row.Get("parent_task_id").(string)
 	if parent != recipient {
-		return fmt.Sprintf("assignment %s is addressed to parent %s, not to %s", pyvalue.StrRepr(rid), pyvalue.StrRepr(parent), pyvalue.StrRepr(recipient)), "", nil
+		return fmt.Sprintf("assignment %s is addressed to 자식 %s, not to %s", pyvalue.StrRepr(rid), pyvalue.StrRepr(parent), pyvalue.StrRepr(recipient)), "", nil
 	}
 	scope, err := d.Store.One(ctx, "SELECT project_key FROM relationship_scope WHERE relationship_id = ?", rid)
 	if err != nil {

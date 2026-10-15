@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -437,6 +438,15 @@ func (c *callRun) prepare() {
 	if reason, detail := c.restoreBoundary(); reason != "" {
 		c.prepHold = &Refusal{Reason: reason, Detail: detail}
 	}
+	if c.sess != nil {
+		// a call a resumed run prepares again: the flow evidence records of its ended attempts go with them, before the new prepared
+		// row (an open attempt is superseded, and releases its records, once its subagents run nothing: endOpenCalls)
+		if rows := c.e.prior.rowsOf(c.id, "agent"); len(rows) > 0 {
+			if st := stateOf(c.id, rows); st.terminal != "" && st.terminal != EvOutcomeUnknown {
+				c.e.evidenceRelease(rows)
+			}
+		}
+	}
 	d := map[string]any{
 		"role": p.role, "family": p.spec.Family, "model": p.spec.Pair.Model, "effort": p.spec.Pair.Effort,
 		"requested_model": p.requested.Model, "requested_effort": p.requested.Effort,
@@ -446,6 +456,17 @@ func (c *callRun) prepare() {
 	}
 	if c.sess != nil {
 		d["backend"] = BackendSession
+		if c.evidenceGated() {
+			// the directories the call's flow evidence records are written under, for a resumed run started elsewhere or one whose
+			// owner read fails: EvidenceCwd, and the owner thread's cwd when the host reports one that differs (CRW-1482)
+			ev := c.e.cfg.Session.EvidenceCwd
+			d["evidence_cwd"] = ev
+			cwds := []string{ev}
+			if owner := c.e.evidenceOwnerCwd(c.e.ctx); owner != "" && filepath.Clean(owner) != filepath.Clean(ev) {
+				cwds = append(cwds, owner)
+			}
+			d["evidence_cwds"] = cwds
+		}
 	}
 	if c.snapshot != "" {
 		d["input_snapshot"] = c.snapshot
@@ -1522,7 +1543,8 @@ func ownDirectoryOfRows(rows []Event) string {
 }
 
 // supersededRow writes the superseded row the engine itself ends an agent call of an earlier process with, deciding the directory of
-// the call's own as callRun.terminal does - a superseded call is not an unknown outcome - and removes it after the row.
+// the call's own as callRun.terminal does - a superseded call is not an unknown outcome - and removes it after the row. The flow
+// evidence records its attempts still hold open go with it (evidenceRelease).
 func (e *Engine) supersededRow(callID string, rows []Event, first Event, data map[string]any) {
 	dir := ownDirectoryOfRows(rows)
 	if dir != "" {
@@ -1532,6 +1554,7 @@ func (e *Engine) supersededRow(callID string, rows []Event, first Event, data ma
 	if dir != "" {
 		e.removeOwnDirectory(callID, dir)
 	}
+	e.evidenceRelease(rows)
 }
 
 // creationDirectory makes the directory a call's new thread (a start, a fork, a checkpoint thread) is created in. A directory of the

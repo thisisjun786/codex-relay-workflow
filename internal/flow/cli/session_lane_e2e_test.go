@@ -125,6 +125,9 @@ func newSessionLab(t *testing.T) *sessionLab {
 	// the owner thread is the first thread the lab's fake host makes
 	owner := fmt.Sprintf("0190a000-0000-7000-8000-%012x", 1)
 	l := newLaneLabFor(t, owner, "dev", labIssue{Key: "A-1", Milestone: "M1"}, labIssue{Key: "A-2", Milestone: "M1"})
+	// the run is started in the repository (ProductionWorld's OwnerCwd is the process cwd): the evidence records of its executor steps
+	// go under the lab's repository, never under the source tree (CRW-1482)
+	t.Chdir(l.repo)
 	// nobody declares the nodes' edit regions before the run (CRW-1391): crw.release declares each node's admission regions (the plan's
 	// and the DESIGN's edit_regions) before the relay's release, so the two nodes of disjoint regions run at once with no owner's help
 	dir := filepath.Join(t.TempDir(), "crw")

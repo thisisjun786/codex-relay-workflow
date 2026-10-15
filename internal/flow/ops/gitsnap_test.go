@@ -295,3 +295,105 @@ func TestScopeKeepsPathsWithLeadingSpace(t *testing.T) {
 		})
 	}
 }
+
+// A region is read by its normal form (CRW-1445): a symbol region `path#key` is its file (the change set has files, not
+// symbols), and the blanks, `./` and doubled slashes of the text are cleaned as RegionOf cleans them. A name with no
+// trailing slash is a file, as the relay reads it, so `src` does not cover `src/c.txt`.
+func TestScopeTreatsASymbolRegionAsItsFile(t *testing.T) {
+	repo, first := newRepo(t)
+	wt := addWorktree(t, repo, "wt", first)
+	write(t, wt, "src/c.txt", "inside\n", 0o644)
+	write(t, wt, "src/deep/d.txt", "inside too\n", 0o644)
+	write(t, wt, "a.txt", "outside\n", 0o644)
+	snap, err := Snapshot(ctx, ExecGit("git"), wt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		regions []string
+		out     string
+	}{
+		{[]string{"a.txt#F", "src/c.txt#G"}, "src/deep/d.txt"},
+		{[]string{"./a.txt", "src/"}, ""},
+		{[]string{"src"}, "a.txt,src/c.txt,src/deep/d.txt"},
+		{[]string{"src/c.txt#G"}, "a.txt,src/deep/d.txt"},
+		{[]string{"src//c.txt"}, "a.txt,src/deep/d.txt"},
+		{[]string{"src/./"}, "a.txt"},
+		// blanks around a region are cleaned, as the relay trims them: a file, a tree and a symbol each
+		{[]string{" a.txt ", " src/ "}, ""},
+		{[]string{" src/c.txt#G "}, "a.txt,src/deep/d.txt"},
+	} {
+		rep, err := Scope(ctx, ExecGit("git"), wt, first, snap, c.regions)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Join(rep.Changed, ",") != "a.txt,src/c.txt,src/deep/d.txt" {
+			t.Errorf("%q: changed %+v", c.regions, rep)
+		}
+		if got := strings.Join(rep.OutOfScope, ","); got != c.out {
+			t.Errorf("%q: out of scope %q, want %q", c.regions, got, c.out)
+		}
+	}
+}
+
+// A tree covers what lies under it and not a file of its own name (CRW-1445): a node that replaces the directory src with a file
+// src has changed a path outside the region src/, as the prefix rule read it before the normal form. A tree whose text holds "#" covers
+// what its text spells (gen#1/ covers gen#1/x.go), the pair crw.regionsOverlap must also call overlapping.
+func TestScopeReadsATreeAsWhatLiesUnderIt(t *testing.T) {
+	repo, first := newRepo(t)
+	wt := addWorktree(t, repo, "wt", first)
+	if err := os.RemoveAll(filepath.Join(wt, "src")); err != nil {
+		t.Fatal(err)
+	}
+	write(t, wt, "src", "a file now\n", 0o644)
+	write(t, wt, "gen#1/x.go", "package gen\n", 0o644)
+	snap, err := Snapshot(ctx, ExecGit("git"), wt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		regions []string
+		out     string
+	}{
+		{[]string{"src/"}, "gen#1/x.go,src"},
+		{[]string{" src/ "}, "gen#1/x.go,src"},
+		{[]string{"./src/"}, "gen#1/x.go,src"},
+		{[]string{"src"}, "gen#1/x.go,src/c.txt"},
+		{[]string{"src", "src/"}, "gen#1/x.go"},
+		{[]string{"gen#1/"}, "src,src/c.txt"},
+		{[]string{"gen#1/", "src/"}, "src"},
+	} {
+		rep, err := Scope(ctx, ExecGit("git"), wt, first, snap, c.regions)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Join(rep.Changed, ",") != "gen#1/x.go,src,src/c.txt" {
+			t.Errorf("%q: changed %+v", c.regions, rep)
+		}
+		if got := strings.Join(rep.OutOfScope, ","); got != c.out {
+			t.Errorf("%q: out of scope %q, want %q", c.regions, got, c.out)
+		}
+	}
+}
+
+// inRegions (the inline routing check) reads its regions as Scope does.
+func TestInRegionsReadsASymbolRegionAsItsFile(t *testing.T) {
+	for _, c := range []struct {
+		files, regions []string
+		want           bool
+	}{
+		{[]string{"a.go"}, []string{"a.go#F"}, true},
+		{[]string{"a.go", "b.go"}, []string{"a.go#F"}, false},
+		{[]string{"c/1"}, []string{"./c/"}, true},
+		{[]string{"c"}, []string{"c/"}, false},
+		{[]string{"a.go"}, []string{" a.go "}, true},
+		// A planned tree or pattern whose path holds "#" keeps the place its text spells.
+		{[]string{"gen#1/x.go"}, []string{"gen#1/"}, true},
+		{[]string{"a#b.go"}, []string{"a#*.go"}, true},
+		{[]string{"pkg/a#b.go"}, []string{"pkg/a#b.go"}, true},
+	} {
+		if got := inRegions(c.files, c.regions); got != c.want {
+			t.Errorf("inRegions(%q, %q) = %v, want %v", c.files, c.regions, got, c.want)
+		}
+	}
+}

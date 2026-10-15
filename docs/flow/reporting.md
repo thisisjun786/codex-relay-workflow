@@ -11,7 +11,7 @@ messages ([supervisor-channel.md](../relay/supervisor-channel.md#direct-messages
 | What | From | To | By | Recorded as | Pump kind |
 | --- | --- | --- | --- | --- | --- |
 | an escalation of the run (`dispatch_unknown`, `tiers_exhausted`, `blocked_scope`, `size_split`, `restore_snapshot_mismatch`, a configuration fault, the run-level hold `plan_superseded` with the pinned and head revisions and the node, CRW-1291) | the run | the level above the run's project (the parent's management seat, else a supervisor registered at the initiative's scope, the legacy configuration, else the store seat); a run whose plan names no project: the child's thread | the supervisor channel (`flow_escalation`); else `crw manage send-parent` | `escalation`, `escalation_notice`, `message_delivery` | `run_escalation` |
-| the completion digest | the run | as an escalation | the supervisor channel (`flow_completion`); else `crw manage send-parent` | `completion_notice`, `message_delivery` | |
+| the completion digest (`state=`, `reason=`, `lanes=` of the milestone state the run came to; none for a run the operator paused) | the run | as an escalation | the supervisor channel (`flow_completion`); else `crw manage send-parent` | `completion_notice`, `message_delivery` | |
 | a run that stopped writing | nobody | the pump's management thread | the pump | | `run_dead` |
 | the plan summary that is owed | the run | the child's thread | `crw manage send-parent` | `summary_document`, `summary_notice`, `summary_notice_settled` | |
 | a milestone report | the run | the parent above the project (else a supervisor registered at the initiative's scope, the legacy configuration, else the store seat) | the writer of `crw flow report-up` through the supervisor channel (`flow_milestone_report`) | `report`, `report_delivery`, `report_read` | `report_undelivered`, `report_unread` |
@@ -85,11 +85,19 @@ its notice goes to the child's thread that started it with `crw manage send-pare
 esc-<escalation id> --queue` (a run cannot prove that a send wakes a thread, so the notice goes into the parent queue and the pump
 delivers it), and the row names that thread. The completion digest (the run, its workflow, its status and a digest of its completed
 calls) goes the same way when the run finishes (`flow_completion`), as a `completion_notice` row; a completion that row names (the same
-run, status and digest of calls, as when a resume changes nothing) is not sent again.
+run, status and digest of calls, as when a resume changes nothing) is not sent again. When the run's `finished` row carries an outcome
+(the milestone state the script returned, [script.md](script.md)), the notice says that state instead of the engine status:
+`[crw flow] run finished run=R workflow=W state=<state>[ reason=<reason>][ escalation=<id>][ lanes=<node>:<state>/<reason>,...] digest=D`,
+with the lanes that did not land, so an escalated, incomplete or held milestone is never told `status=completed`; the whole outcome
+(every member by its name) is part of the digest too, so a resume that ends with an outcome that differs in any member (an escalation
+id, the source, the milestone) is told again. A run with no outcome keeps the
+text `[crw flow] run finished run=R workflow=W status=<status> digest=D` and its digest. A run the operator paused (`crw flow pause`)
+ends with a `run/paused` row and no `finished` row: nothing is told finished, the summary and the escalations are reconciled once more,
+and the completion is told when a resume finishes the run.
 
 The pump's management thread hears the same escalations from the pump: a source reads the escalation rows of the relay store,
 read-only, and raises the urgent kind `run_escalation`. The first read only notes where the rows end, so the history of a store is not sent. A run that started,
-did not finish (the newest process of the run: the finish of an earlier process of a resumed run does not count) and has written no row of its own for `run_dead_seconds` (default 1800; rows a command wrote into it do not count) is the
+did not end (no `finished` row and no `run/paused` row of the newest process of the run: the end of an earlier process of a resumed run does not count, and a run the operator paused is not dead) and has written no row of its own for `run_dead_seconds` (default 1800; rows a command wrote into it do not count) is the
 urgent kind `run_dead`; it is told again only when it was resumed and stopped again. An agent turn writes no row of the run while it is in
 flight, so a run with an open agent call (a call that began and has no terminal row) is judged by the longer of `run_dead_seconds` and six
 hours.
@@ -245,7 +253,7 @@ All of these are rows of `flow_events` (`kind` is the first column of the table,
 | `summary_notice` | `summary_id`, `plan`, `document`, `logical_id`, `run` |
 | `summary_notice_settled` | `summary_id`, `plan`, `document`, `result` (`accepted`, `queued`, `obsolete`, `refused`), `request_id`, `logical_id`, `run` |
 | `escalation_notice` | `escalation_id`, `result`, `request_id`, `thread` (the thread the notice was addressed to) |
-| `completion_notice` | `notice_key`, `status`, `result`, `request_id` |
+| `completion_notice` | `notice_key`, `status` (the engine status), `result`, `request_id`, and with an outcome `state`, `reason` and `lanes` (`node:state/reason` of each lane that did not land) |
 | `apply_applied`, `apply_refused`, `apply_override` | an older build's rows of a receipt application, read by nothing and written by no command now: `event`, `head`, `verdict` or `reason`, and what the check found |
 
 A run process appends its rows to its own journal, so they carry the journal's sequence numbers. A command (`report-up`, `report-ack`,

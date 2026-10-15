@@ -137,7 +137,7 @@ func (s *Service) otherPullRequestRefusal(ctx context.Context, live store.MergeT
 	}
 	bound := identityText(live.PRNumber, live.RelationshipID, "candidate head "+pyvalue.StrRepr(live.CandidateHead))
 	named := identityText(asked.PR, asked.Relationship, "")
-	because := "A parent holds one turn per target and a request for another pull request is not answered with the turn it already has"
+	because := "A 자식 holds one turn per target and a request for another pull request is not answered with the turn it already has"
 	if contradicted, unrecorded := compareClaim(live, asked); len(contradicted) == 0 {
 		because = "The turn does not record the " + strings.Join(unrecorded, " and the ") + " this request names, so the request cannot be confirmed as a repeat of it, and a matching commit does not settle that because two pull requests can point at one commit; it is not answered with the turn"
 	}
