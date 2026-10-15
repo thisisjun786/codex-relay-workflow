@@ -2505,6 +2505,162 @@ func TestUnitCheckJudgesOnlyTheTreeItSnapped(t *testing.T) {
 	})
 }
 
+// TestUnitCheckHoldsAHeadThatMovedDuringTheCheck (CRW-1557): a check is also the judgment of the HEAD the worktree is at when the op
+// starts it. A process that commits the executor's pending change while the tool runs leaves every snapshot as it was (the files are
+// the same), but the uncommitted diff the tool reads is then empty, so its verified answer is no review of the change crw.commit
+// commits. The op reads HEAD before and after each Check, the first one and the retry of an invalid answer; when HEAD moved, even to
+// a commit of the same tree, it records no verdict: the row says head_moved (start, head) with no role, as the guard before the check
+// does, and crw.accept finds no unit check to rest on.
+func TestUnitCheckHoldsAHeadThatMovedDuringTheCheck(t *testing.T) {
+	// committing answers verified (the fingerprints of the unchanged tree) after it committed the worktree on the given calls (1-based);
+	// the first answer is first when that is set
+	// erring makes a call that committed fail as a checker whose fingerprint after the call failed does (adapter.go)
+	var erring bool
+	committing := func(on map[int]bool, first reviewadapter.State, allowEmpty bool) (*int, UnitChecker) {
+		n := 0
+		return &n, checkFunc(func(ctx context.Context, req reviewadapter.Request) (reviewadapter.Result, error) {
+			n++
+			if on[n] {
+				commit := []string{"-c", "commit.gpgsign=false", "commit", "-q", "-m", fmt.Sprintf("committed during check %d", n)}
+				if allowEmpty {
+					commit = append(commit, "--allow-empty")
+				} else {
+					gitIn(t, req.Worktree, "add", "-A")
+				}
+				gitIn(t, req.Worktree, commit...)
+				if erring {
+					return reviewadapter.Result{}, errors.New("the fingerprint after the call: no space left on device")
+				}
+			}
+			res := checkRecord(reviewadapter.StateOK, reviewadapter.VerdictVerified)
+			if n == 1 && first != "" {
+				res = checkRecord(first, "")
+			}
+			fp, err := Snapshot(ctx, ExecGit("git"), req.Worktree)
+			if err != nil {
+				return reviewadapter.Result{}, err
+			}
+			res.FingerprintBefore, res.FingerprintAfter = fp, fp
+			return res, nil
+		})
+	}
+	held := func(t *testing.T, u *ucWorld, out UnitCheckOutcome, calls, want int, start string) {
+		t.Helper()
+		row := u.lastCheck()
+		moved, _ := row.Data["head_moved"].(map[string]any)
+		now := gitIn(t, u.wt, "rev-parse", "HEAD")
+		if out.State != StateHeadMoved || out.Verdict != "" || calls != want || dataStr(row, "state") != StateHeadMoved || dataStr(row, "role") != "" ||
+			str(moved, "start") != start || str(moved, "head") != now {
+			t.Fatalf("%d checker calls (want %d), answer %+v, row %v: a check during which HEAD moved from %s to %s", calls, want, out, row.Data, start, now)
+		}
+		if _, has := row.Data["verdict"]; has {
+			t.Errorf("a head_moved row records a verdict: %v", row.Data["verdict"])
+		}
+		if !u.proven(row) {
+			t.Error("a head_moved row is not proven")
+		}
+	}
+	t.Run("uncommitted: the change was committed during the check", func(t *testing.T) {
+		u := newUCWorld(t)
+		ex := u.build("c_ex1", "built\n")
+		pending := u.snapshot()
+		calls, checker := committing(map[int]bool{1: true}, "", false)
+		u.lane.d.UnitCheck.Checker = checker
+		out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+		held(t, u, out, *calls, 1, u.start)
+		if u.snapshot() != pending {
+			t.Fatal("the commit changed the tree; the case is a HEAD that moved on the same tree")
+		}
+		if dataStr(u.lastCheck(), "pending_tree") != pending {
+			t.Errorf("row %v names no pending tree %s", u.lastCheck().Data, pending)
+		}
+	})
+	t.Run("uncommitted: the change was committed during the retry", func(t *testing.T) {
+		u := newUCWorld(t)
+		ex := u.build("c_ex1", "built\n")
+		calls, checker := committing(map[int]bool{2: true}, reviewadapter.StateInvalid, false)
+		u.lane.d.UnitCheck.Checker = checker
+		out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+		held(t, u, out, *calls, 2, u.start)
+		if !out.Retried || u.lastCheck().Data["retried"] != true {
+			t.Errorf("answer %+v, row %v: the hold of the retry says it was the retry", out, u.lastCheck().Data)
+		}
+	})
+	t.Run("committed: HEAD moved on the same tree during the check", func(t *testing.T) {
+		u := newUCWorld(t)
+		ex := u.build("c_ex1", "built\n")
+		var commit CommitOutcome
+		_ = json.Unmarshal(u.must("commit", "A", ex, []string{"a.txt"}), &commit)
+		u.must("verify", "A", commit.Commit)
+		calls, checker := committing(map[int]bool{1: true}, "", true)
+		u.lane.d.UnitCheck.Checker = checker
+		out := decodeCheck(t, u.must("unitCheck", "A", nil, map[string]any{"commit": commit, "base": u.start, "final": true}))
+		held(t, u, out, *calls, 1, commit.Commit)
+		if _, err := u.op("accept", "A", commit.Commit); err == nil || ReasonOf(err.Error()) != "reviewer_missing" {
+			t.Errorf("crw.accept of %s on a check during which HEAD moved: %v, want reviewer_missing", commit.Commit, err)
+		}
+	})
+	// a call that committed and then failed (its fingerprint after the call) is held head_moved too, not the checker's error
+	for _, c := range []struct {
+		name  string
+		on    int
+		first reviewadapter.State
+	}{{"uncommitted: a check that committed and then failed", 1, ""}, {"uncommitted: a retry that committed and then failed", 2, reviewadapter.StateInvalid}} {
+		t.Run(c.name, func(t *testing.T) {
+			erring = true
+			defer func() { erring = false }()
+			u := newUCWorld(t)
+			ex := u.build("c_ex1", "built\n")
+			calls, checker := committing(map[int]bool{c.on: true}, c.first, false)
+			u.lane.d.UnitCheck.Checker = checker
+			raw, err := u.op("unitCheck", "A", ex, map[string]any{"round": 1})
+			if err != nil {
+				t.Fatalf("a check that failed after HEAD moved is the checker's error: %v", err)
+			}
+			held(t, u, decodeCheck(t, raw), *calls, c.on, u.start)
+		})
+	}
+	// with no start recorded for the attempt there is no guard before the check: the HEAD read before the first Check is the HEAD the
+	// check is of, so a commit during it is still seen
+	t.Run("uncommitted: no recorded attempt start, the change was committed during the check", func(t *testing.T) {
+		u := newUCWorld(t)
+		write(t, u.wt, "a.txt", "built\n", 0o644)
+		u.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "c_ex1", Op: "agent", Event: engine.EvPrepared, Data: map[string]any{"role": "executor", "node": "A",
+			"allocation": map[string]any{"kind": engine.PlaceFresh, "path": u.wt, "attempt": 1}}})
+		u.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "c_ex1", Op: "agent", Event: engine.EvCompleted, Data: map[string]any{"pending_tree": u.snapshot()}})
+		if start := rows(u.j.Events()).attemptHead("A"); start != "" {
+			t.Fatalf("the attempt records the start %s; the case is one with none", start)
+		}
+		calls, checker := committing(map[int]bool{1: true}, "", false)
+		u.lane.d.UnitCheck.Checker = checker
+		out := decodeCheck(t, u.must("unitCheck", "A", call("c_ex1", "completed", "claude-x", nil), map[string]any{"round": 1}))
+		held(t, u, out, *calls, 1, u.start)
+	})
+	t.Run("uncommitted: a check that failed on a HEAD that stays is the checker's error", func(t *testing.T) {
+		u := newUCWorld(t)
+		ex := u.build("c_ex1", "built\n")
+		u.lane.d.UnitCheck.Checker = checkFunc(func(context.Context, reviewadapter.Request) (reviewadapter.Result, error) {
+			return reviewadapter.Result{}, errors.New("the fingerprint after the call failed")
+		})
+		if _, err := u.op("unitCheck", "A", ex, map[string]any{"round": 1}); err == nil || !strings.Contains(err.Error(), "the fingerprint after the call failed") {
+			t.Fatalf("a failed check on an unmoved HEAD: %v", err)
+		}
+		if n := len(u.checkRows()); n != 0 {
+			t.Errorf("%d crw.unitCheck rows for a checker error", n)
+		}
+	})
+	t.Run("uncommitted: a HEAD that stays is judged", func(t *testing.T) {
+		u := newUCWorld(t)
+		ex := u.build("c_ex1", "built\n")
+		calls, checker := committing(nil, reviewadapter.StateInvalid, false)
+		u.lane.d.UnitCheck.Checker = checker
+		out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+		if out.State != reviewadapter.StateOK || !out.Retried || *calls != 2 || dataStr(u.lastCheck(), "role") != "unit-check" {
+			t.Fatalf("%d checker calls, answer %+v", *calls, out)
+		}
+	})
+}
+
 // ---- the executor receipt of a unit check (CRW-1463, C12) ----
 
 // receiptCopy writes bytes as the step-bus copy of an executor's evidence receipt under a temporary directory and answers its absolute

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -241,12 +242,13 @@ func CILocalIntegration(tools crwconfig.VerifierTools, notes io.Writer) dagsched
 		if command.Note != "" && notes != nil {
 			fmt.Fprintf(notes, "[crw note] integration verification: %s\n", command.Note)
 		}
-		// the fresh TMPDIR is integrationTmpPrefix plus at most 10 digits below the caller's: ci local makes each step's TMPDIR below it
-		// and refuses one that leaves no room for a test's Unix socket under the host's path limit (temp_dir_unusable), so the name is
-		// kept short, and HOME is below it
-		tmp, err := os.MkdirTemp("", integrationTmpPrefix)
+		// the fresh TMPDIR is chosen by the length ci local nests below it (integrationTempDir), and HOME is below it
+		tmp, skipped, err := integrationTempDir(os.TempDir())
 		if err != nil {
 			return &dagsched.IntegrationVerifierHostError{Detail: fmt.Sprintf("the verification's own HOME and TMPDIR could not be made: %v", err)}
+		}
+		if skipped != "" && notes != nil {
+			fmt.Fprintf(notes, "[crw note] integration verification: its TMPDIR is %s, not below the caller's: %s\n", tmp, skipped)
 		}
 		defer func() {
 			if err := removeTree(tmp); err != nil && notes != nil {
@@ -268,8 +270,84 @@ func CILocalIntegration(tools crwconfig.VerifierTools, notes io.Writer) dagsched
 	}
 }
 
-// integrationTmpPrefix is the name prefix of an integration verification's own TMPDIR below the caller's.
+// integrationTmpPrefix is the name prefix of an integration verification's own TMPDIR: integrationTmpPrefix and 8 lowercase hex.
 const integrationTmpPrefix = "crw-"
+
+// integrationTmpNameLen is the length of the name integrationTempDir gives the verification's own TMPDIR.
+const integrationTmpNameLen = len(integrationTmpPrefix) + 8
+
+// integrationCiLocalNest is what ci local adds below the TMPDIR it is given before a test's socket name ends (dev/ci/local.go
+// localStepTempDir, its first candidate): the step TMPDIR /ci<8 hex> it makes there (localStepDirLen) and the 67 bytes the longest
+// socket a test binds adds below that (localStepSocketSuffix).
+const integrationCiLocalNest = len("/ci") + 8 + 67
+
+// integrationSocketLimit is the host's Unix socket path limit, as ci local takes it (localSocketLimit): 104 bytes on darwin and 108
+// elsewhere.
+func integrationSocketLimit() int {
+	if runtime.GOOS == "darwin" {
+		return 104
+	}
+	return 108
+}
+
+// integrationTmpFallback is the short parent integrationTempDir falls back to when the caller's TMPDIR leaves ci local no room.
+const integrationTmpFallback = "/tmp"
+
+// integrationTempDir makes the integration verification's own TMPDIR (mode 0700; the caller removes it): <parent>/crw-<8 hex>, below
+// the first parent whose nesting leaves ci local room. ci local makes each step's TMPDIR below the one it is given and refuses one that
+// leaves no room for a test's Unix socket under the host's path limit; its other candidate, the work root below XDG_STATE_HOME, is
+// refused as well when that is long (the default ~/.local/state/crw-ci-local already gives 112 bytes on a /home/<user> home), and the
+// run then ends temp_dir_unusable (CRW-1557). So the whole nested length is counted before anything is made, of the parent's physical
+// path as ci local measures it (filepath.EvalSymlinks): the parent, the name, ci local's step directory and the socket under the limit.
+// The candidates are the caller's TMPDIR (callerTmp, the verification then keeps the caller's disk) and integrationTmpFallback; a
+// candidate that does not resolve or does not fit is not made, and when none fits the error names each one's reason. skipped names why
+// the caller's TMPDIR was passed over ("" when the directory is below it), for the verification's note: the fallback moves the steps'
+// temporary files to another disk.
+func integrationTempDir(callerTmp string) (dir, skipped string, err error) {
+	limit := integrationSocketLimit()
+	var reasons []string
+	for _, candidate := range []string{callerTmp, integrationTmpFallback} {
+		if !filepath.IsAbs(candidate) {
+			reasons = append(reasons, fmt.Sprintf("%q is not absolute", candidate))
+			continue
+		}
+		parent, err := filepath.EvalSymlinks(candidate)
+		if err != nil {
+			reasons = append(reasons, fmt.Sprintf("%s does not resolve: %v", candidate, err))
+			continue
+		}
+		if length := len(parent) + 1 + integrationTmpNameLen + integrationCiLocalNest; length >= limit {
+			reasons = append(reasons, fmt.Sprintf("%s gives ci local a socket path of %d bytes, not under the limit %d", parent, length, limit))
+			continue
+		}
+		made, err := integrationMkTmp(parent)
+		if err == nil {
+			return made, strings.Join(reasons, "; "), nil
+		}
+		reasons = append(reasons, fmt.Sprintf("%s: %v", parent, err))
+	}
+	return "", "", fmt.Errorf("no TMPDIR leaves ci local room for a test's socket: %s", strings.Join(reasons, "; "))
+}
+
+// integrationMkTmp makes <parent>/<integrationTmpPrefix><8 lowercase hex> (mode 0700), a name of a fixed width, so its length is known
+// before it exists.
+func integrationMkTmp(parent string) (string, error) {
+	for try := 0; try < 16; try++ {
+		var random [4]byte
+		if _, err := rand.Read(random[:]); err != nil {
+			return "", err
+		}
+		dir := filepath.Join(parent, integrationTmpPrefix+hex.EncodeToString(random[:]))
+		err := os.Mkdir(dir, 0o700)
+		if err == nil {
+			return dir, nil
+		}
+		if !errors.Is(err, os.ErrExist) {
+			return "", err
+		}
+	}
+	return "", fmt.Errorf("no free %s<8 hex> name below %s after 16 tries", integrationTmpPrefix, parent)
+}
 
 // integrationKeptEnv is what the integration verification keeps of the caller's environment: the variables ci local lets a step
 // inherit except TMPDIR (dev/ci/local.go localInheritedEnv), and ci local's own heavy-check gate (CRW_CI_HEAVY_GATE), so the host's

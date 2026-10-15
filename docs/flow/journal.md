@@ -212,7 +212,10 @@ at (the `start` the judged call's row records under `executor_head_moved`, else 
 `state` `tree_moved`, `commit_tree` and `tree`; a check whose tool judged another tree than the one the op snapped for it (the worktree
 changed after the snap, before the call or before the retry of an invalid answer: the tool's fingerprint, or the worktree after the call,
 is not the snapped tree) is no judgment either and has `state` `tree_moved`, `tree_moved` true, the snapped tree (`commit_tree`, or
-`pending_tree`) and the `tree` it saw; and a receipt that could not be read leaves `receipt` and `hold` with no
+`pending_tree`) and the `tree` it saw; a check during which the worktree's `HEAD` moved (it is read before and after each call, also one
+that failed, the first and the retry of an invalid answer; a commit of the same tree moves it too, and empties the uncommitted diff the tool reads) is
+no judgment either and has `state` `head_moved`, `head_moved` (`start`, the `HEAD` the check is of, and `head`) and the snapped tree
+(`commit_tree`, or `pending_tree`); and a receipt that could not be read leaves `receipt` and `hold` with no
 `tree` and no `commit`; neither reader takes such a row. A check is proven unless its row names a `hold`: a resume runs the check that held the
 node again (it asks the tool, or reads the receipt, again), and the hold itself is the `crw.hold` row the lane writes after it (`source` `unit_check`), as for a
 verification that could not run. An error of the tool's runner (a bad request, a fingerprint that could not be taken) writes no row.

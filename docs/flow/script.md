@@ -414,7 +414,9 @@ worktree, so no reviewer agent is called and no reviewer thread is made for a no
 [journal.md](journal.md#the-proofs)). The tree it judges is the call's pending tree, the one `crw.commit` then commits, so the
 acceptance takes the check as the judgment of the head that commit makes; a worktree that is no longer that tree is not checked
 (`tree_moved`), nor one whose `HEAD` is not the commit the node's attempt is at, the start of its worktree or the node's last commit
-since (`head_moved`: the executor committed its work itself, whatever the backend). The prompt carries the node's criteria and, when the backend
+since (`head_moved`: the executor committed its work itself, whatever the backend), and a check during which `HEAD` moved, even to a
+commit of the same tree, is no judgment (`head_moved`: `HEAD` is read before and after each call of the tool, also one that failed).
+During the check, as at its start, a moved `HEAD` escalates (`unit_check_head_moved`, below), and a resume keeps it escalated. The prompt carries the node's criteria and, when the backend
 assigned the executor an evidence receipt, the receipt's accepted copy; a receipt that cannot be handed over holds the node (below). A
 check with any finding, blocking or not, goes back to the same executor thread (`fix:<node>:<tier>:r<round>`, the findings in the fix
 packet), and the fixed tree is checked again, at most two round trips on a tier (`UNIT_CHECK_ROUNDS`); the check after them is
