@@ -175,17 +175,19 @@ row; `tree` (the fingerprint the check saw, the snapshot `crw.commit` commits as
 `findings` (their count); `retried` and `first_state` `invalid` when an invalid answer was asked once more and the second record kept;
 `hold` (`unit_check_quota`, `unit_check_no_answer`, or `receipt_missing`, `receipt_unverified`, `receipt_not_copied` when the executor's
 evidence receipt could not be read) when the lane is to hold the node; `receipt` (the executor's evidence receipt as the check read it:
-`state` `accepted` with its `sha256`, `copy` and `ignored`, `not_assigned` when the call was given none, or `no_executor` for a committed
-check); and `result`, the `reviewadapter.Result` (state, verdict, findings with their line-free ids, engine family, model, effort, guide
+`state` `accepted` with its `sha256`, `copy` and `ignored`, or, when the backend could not copy it to the step bus or the copy cannot be
+read, with the `path` it was read from in place of the copy (where the hook accepted it, the bytes still hashing to the `sha256`) and the
+`copy_error`; `not_assigned` when the call was given none, or `no_executor` for a committed check); and `result`, the `reviewadapter.Result` (state, verdict, findings with their line-free ids, engine family, model, effort, guide
 revision, prompt digest, both fingerprints). `crw.accept` and the relay take a row of role `unit-check` whose result state is `ok` and that is
 on the head (its `commit`, or its `tree` equal to the head's tree) as the judgment of the head. A check that was not run names no role: when
 the worktree is no longer the judged call's pending tree the row has `state` `tree_moved`, `tree_moved` true, `pending_tree` and `tree`
-(the tool is not run, since `crw.commit` commits the pending tree); when the judged call committed its work itself (its row records
-`executor_head_moved` and `HEAD` is not its `start`) the row has `state` `head_moved` and `head_moved` (`start`, `head`), since the
-uncommitted changes are not the change `crw.commit` commits on that start; a committed check whose checkout is not the commit's tree has
+(the tool is not run, since `crw.commit` commits the pending tree); when the worktree's `HEAD` is not the commit the node's attempt is
+at (the `start` the judged call's row records under `executor_head_moved`, else the start of the attempt's worktree or the node's last
+`crw.commit` since), as when the executor committed its work itself on any backend, the row has `state` `head_moved` and `head_moved`
+(`start`, `head`), since the uncommitted changes are not the change `crw.commit` commits on that start; a committed check whose checkout is not the commit's tree has
 `state` `tree_moved`, `commit_tree` and `tree`; and a receipt that could not be read leaves `receipt` and `hold` with no
-`tree` and no `commit`; neither reader takes such a row. A check is proven unless its row names a `hold`: a resume asks the tool again for
-the check that held the node, and the hold itself is the `crw.hold` row the lane writes after it (`source` `unit_check`), as for a
+`tree` and no `commit`; neither reader takes such a row. A check is proven unless its row names a `hold`: a resume runs the check that held the
+node again (it asks the tool, or reads the receipt, again), and the hold itself is the `crw.hold` row the lane writes after it (`source` `unit_check`), as for a
 verification that could not run. An error of the tool's runner (a bad request, a fingerprint that could not be taken) writes no row.
 
 **The design ledger and the signals.** A row `crw.designLedger` is a revision of the milestone's ledger (`revision`, `digest`, `design`, `answers`,

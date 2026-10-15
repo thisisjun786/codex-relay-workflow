@@ -6,10 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
@@ -187,17 +189,23 @@ func (o *unitCheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpR
 				Findings: []reviewadapter.Finding{}}, Call: ex.CallID, CheckID: req.CallID}
 			return engine.OpResult{Result: result(out), Data: data}, nil
 		}
-		// a session executor that committed its work moved HEAD off the start it was given (executor_head_moved): the uncommitted
-		// changes are then not the change crw.commit commits on that start, so the tool would judge an empty or partial diff
+		// an executor that committed its work moved HEAD off the commit the node's attempt is at: the uncommitted changes are then not
+		// the change crw.commit commits on that commit, so the tool would judge an empty or partial diff. The commit is the start the
+		// session backend records for the call when it saw HEAD move (executor_head_moved), else the attempt's own (attemptHead), so a
+		// backend that records no move (the App Server's) is read the same way.
+		start := r.attemptHead(node)
 		if moved, ok := term.Data["executor_head_moved"].(map[string]any); ok && str(moved, "start") != "" {
+			start = str(moved, "start")
+		}
+		if start != "" {
 			at, err := Head(ctx, g, wt)
 			if err != nil {
 				return engine.OpResult{}, err
 			}
-			if at != str(moved, "start") {
-				data["state"], data["pending_tree"], data["head_moved"] = StateHeadMoved, pending, map[string]any{"start": str(moved, "start"), "head": at}
-				out := UnitCheckOutcome{Result: reviewadapter.Result{State: StateHeadMoved, Detail: "the worktree's HEAD " + at + " is not the start " + str(moved, "start") +
-					" of call " + ex.CallID + " (the executor committed); the uncommitted changes are not the change to commit, and the tool was not run", Findings: []reviewadapter.Finding{}},
+			if at != start {
+				data["state"], data["pending_tree"], data["head_moved"] = StateHeadMoved, pending, map[string]any{"start": start, "head": at}
+				out := UnitCheckOutcome{Result: reviewadapter.Result{State: StateHeadMoved, Detail: "the worktree's HEAD " + at + " is not the commit " + start +
+					" the attempt of call " + ex.CallID + " is at (the executor committed); the uncommitted changes are not the change to commit, and the tool was not run", Findings: []reviewadapter.Finding{}},
 					Call: ex.CallID, CheckID: req.CallID}
 				return engine.OpResult{Result: result(out), Data: data}, nil
 			}
@@ -330,7 +338,7 @@ func unitCheckPrompt(r rows, node, mode, base, head string, receipt checkReceipt
 			b.WriteByte('\n')
 		}
 		if len(body) < len(receipt.body) {
-			fmt.Fprintf(&b, "(the receipt is %d bytes; the first %d are above; the whole receipt is the file %s)\n", len(receipt.body), len(body), str(receipt.row, "copy"))
+			fmt.Fprintf(&b, "(the receipt is %d bytes; the first %d are above; the whole receipt is the file %s)\n", len(receipt.body), len(body), receipt.file)
 		}
 	}
 	return b.String()
@@ -347,11 +355,17 @@ type checkReceipt struct {
 	row    map[string]any
 	body   []byte
 	digest string
+	// file is the file the bytes were read from: the step-bus copy, or the receipt where the hook accepted it
+	file string
 }
 
 // executorReceipt reads the evidence receipt the completed row of an executor call records (engine evidenceReceipt): the receipt to
 // hand the check, or the hold of a receipt that cannot be handed over and why. The copy is the absolute step-bus path the backend
-// wrote; the op reads that path only and never builds one.
+// wrote; the op reads that path only and never builds one. When the backend could not copy the receipt (copy_error) or its copy cannot
+// be read, the receipt is read where the hook accepted it (the absolute path the row records, in the executor's worktree) and handed
+// over when it still hashes to the receipt's digest; the row then records that path and the copy's error. So receipt_not_copied, a
+// failure of the copy, clears when the check runs again (a resume) and the receipt can be read; missing and unverified receipts stand on
+// the call's own record, which no resume changes.
 func executorReceipt(term engine.Event) (checkReceipt, string, string) {
 	raw, present := term.Data["evidence_receipt"]
 	if !present || raw == nil {
@@ -369,26 +383,83 @@ func executorReceipt(term engine.Event) (checkReceipt, string, string) {
 		return checkReceipt{}, "receipt_unverified", "the executor's evidence receipt is " + state + ": " + str(er, "detail")
 	}
 	cp, digest := str(er, "copy"), str(er, "sha256")
+	var body []byte
+	why := ""
 	switch {
 	case cp == "":
-		return checkReceipt{}, "receipt_not_copied", "the accepted evidence receipt was not copied to the step bus: " + str(er, "copy_error")
+		why = "the accepted evidence receipt was not copied to the step bus: " + str(er, "copy_error")
 	case !filepath.IsAbs(cp):
-		return checkReceipt{}, "receipt_not_copied", "the copy " + cp + " of the accepted evidence receipt is not an absolute step-bus path"
+		why = "the copy " + cp + " of the accepted evidence receipt is not an absolute step-bus path"
 	case digest == "":
 		return checkReceipt{}, "receipt_unverified", "the accepted evidence receipt names no sha256"
+	default:
+		b, err := os.ReadFile(cp)
+		if err != nil {
+			why = "the copy of the accepted evidence receipt cannot be read: " + err.Error()
+		} else {
+			body = b
+		}
 	}
-	body, err := os.ReadFile(cp)
-	if err != nil {
-		return checkReceipt{}, "receipt_not_copied", "the copy of the accepted evidence receipt cannot be read: " + err.Error()
+	row := map[string]any{"state": "accepted", "sha256": digest}
+	file := cp
+	if body == nil {
+		// no copy to read: the receipt where the hook accepted it, when the row names it by an absolute path
+		orig := str(er, "path")
+		if digest == "" {
+			return checkReceipt{}, "receipt_not_copied", why
+		}
+		if orig == "" || !filepath.IsAbs(orig) {
+			return checkReceipt{}, "receipt_not_copied", why + "; the row names no absolute path of the receipt the hook accepted"
+		}
+		b, err := readReceiptFile(orig)
+		if err != nil {
+			return checkReceipt{}, "receipt_not_copied", why + "; the receipt the hook accepted cannot be read either: " + err.Error()
+		}
+		body, file = b, orig
+		row["path"] = orig
+		if ce := str(er, "copy_error"); ce != "" {
+			row["copy_error"] = ce
+		} else {
+			row["copy_error"] = why
+		}
+	} else {
+		row["copy"] = cp
 	}
 	if sum := sha256.Sum256(body); hex.EncodeToString(sum[:]) != digest {
-		return checkReceipt{}, "receipt_unverified", "the copy " + cp + " of the accepted evidence receipt does not hash to its sha256 " + digest
+		return checkReceipt{}, "receipt_unverified", "the receipt " + file + " of the accepted evidence receipt does not hash to its sha256 " + digest
 	}
-	row := map[string]any{"state": "accepted", "sha256": digest, "copy": cp}
 	if ig, ok := er["ignored"].(bool); ok {
 		row["ignored"] = ig
 	}
-	return checkReceipt{row: row, body: body, digest: digest}, "", ""
+	return checkReceipt{row: row, body: body, digest: digest, file: file}, "", ""
+}
+
+// receiptFileLimit is the most bytes of an evidence receipt read in place of its copy, the stop hook's own limit (16 MiB).
+const receiptFileLimit = 16 << 20
+
+// readReceiptFile reads an evidence receipt where the hook accepted it: a regular file, not through a symbolic link, of at most
+// receiptFileLimit bytes (the step-bus copy, which the backend wrote, is read as it is).
+func readReceiptFile(path string) ([]byte, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
+	body, err := io.ReadAll(io.LimitReader(f, receiptFileLimit+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > receiptFileLimit {
+		return nil, fmt.Errorf("%s is larger than %d bytes", path, receiptFileLimit)
+	}
+	return body, nil
 }
 
 // ---- crw.commit ----

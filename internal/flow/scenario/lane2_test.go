@@ -259,6 +259,36 @@ func TestUnitCheckOfAMovedTreeEscalatesNoFix(t *testing.T) {
 	}
 }
 
+// An executor that commits its own work (here an App Server executor, whose backend records no executor_head_moved) leaves an
+// uncommitted tree with nothing in it to judge (CRW-1463, DI 11c): the check reads the worktree's HEAD against the commit the attempt
+// started at, does not run the tool, and the node escalates unit_check_head_moved as a configuration question; nothing is committed by
+// the run and nothing lands.
+func TestUnitCheckOfAnExecutorThatCommittedItsWorkEscalates(t *testing.T) {
+	l := NewLab(t, oneNode()...)
+	l.On("^build:A:executor$", func(c *Call) *fakehostPlan {
+		c.Edit()
+		l.GitIn(c.Cwd, "add", "-A")
+		l.GitIn(c.Cwd, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "the executor committed its own work")
+		p := Say(Receipt("ready_for_review"))
+		return &p
+	})
+	got := mustRunIncomplete(t, l)
+	if state, reason := laneOf(t, got, "A"); state != "escalated" || reason != "unit_check_head_moved" {
+		t.Fatalf("lane A: %s %s; calls %v", state, reason, l.Labels())
+	}
+	checkOnly(t, l, []string{"architect", "design-audit:r1", "build:A:executor"})
+	if n := len(l.Checker.Calls("A")); n != 0 {
+		t.Errorf("the tool was run %d times on an executor's own commit", n)
+	}
+	if n := len(l.Rows("crw.commit")); n != 0 || len(l.Relay.Landed) != 0 {
+		t.Errorf("%d commits, landed %v", n, l.Relay.Landed)
+	}
+	rows := l.FlowRows(engine.EvEscalation)
+	if len(rows) != 1 || str(rows[0].Data, "ask") != "configuration" || str(rows[0].Data, "reason") != "unit_check_head_moved" {
+		t.Errorf("escalations %+v", rows)
+	}
+}
+
 // A unit check whose tool failed, or whose worktree changed under it, escalates as a configuration question, and nothing is fixed.
 func TestUnitCheckToolFailureEscalatesNoFix(t *testing.T) {
 	for _, state := range []reviewadapter.State{reviewadapter.StateToolFailed, reviewadapter.StateWorktreeChanged} {

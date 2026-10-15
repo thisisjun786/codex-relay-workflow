@@ -413,7 +413,8 @@ review tool itself, in Go through the review adapter, over the uncommitted chang
 worktree, so no reviewer agent is called and no reviewer thread is made for a node (row `crw.unitCheck`,
 [journal.md](journal.md#the-proofs)). The tree it judges is the call's pending tree, the one `crw.commit` then commits, so the
 acceptance takes the check as the judgment of the head that commit makes; a worktree that is no longer that tree is not checked
-(`tree_moved`, or `head_moved` when the call committed its work itself). The prompt carries the node's criteria and, when the backend
+(`tree_moved`), nor one whose `HEAD` is not the commit the node's attempt is at, the start of its worktree or the node's last commit
+since (`head_moved`: the executor committed its work itself, whatever the backend). The prompt carries the node's criteria and, when the backend
 assigned the executor an evidence receipt, the receipt's accepted copy; a receipt that cannot be handed over holds the node (below). A
 check with any finding, blocking or not, goes back to the same executor thread (`fix:<node>:<tier>:r<round>`, the findings in the fix
 packet), and the fixed tree is checked again, at most two round trips on a tier (`UNIT_CHECK_ROUNDS`); the check after them is
@@ -422,8 +423,11 @@ pre-merge defects that need no disposition, and the lane result names them (`car
 `unit_check_carried` (ask `land`, the carried ids and each finding's file and text) and nothing lands. A finding is named by its file
 and its text, never its line (`reviewadapter.FindingID`). A check the tool gave no judgment in (`quota`, `no_answer`) or that had no
 executor receipt to hand over (`receipt_missing`, `receipt_unverified`, `receipt_not_copied`) holds the node through `crw.hold` with
-source `unit_check`, as a verification that could not run does, and a resume asks the tool again; any other check that judged
-nothing (`tree_moved`, `head_moved`, `worktree_changed`, `tool_failed`, an invalid answer asked twice) escalates
+source `unit_check`, as a verification that could not run does. After `quota` or `no_answer` a resume asks the tool again; after
+`receipt_not_copied` it reads the receipt again, its step-bus copy or, in its place, the receipt where the hook accepted it when that
+still hashes to its digest, so the hold clears once the receipt can be read; `receipt_missing` and
+`receipt_unverified` stand on the executor call's own record, which a resume does not change, so a resume holds the node again until
+the child acts on the hold. Any other check that judged nothing (`tree_moved`, `head_moved`, `worktree_changed`, `tool_failed`, an invalid answer asked twice) escalates
 `unit_check_<state>` as a configuration question. A fix turn that answers `needs_research` goes through the research route on the
 same thread. A failed verification of the committed head goes back to the same thread as well, and its fix is checked again before
 the next commit; when the tier evidence stands, the tier step comes before any fix round.

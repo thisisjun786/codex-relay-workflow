@@ -1817,12 +1817,13 @@ func newUCWorld(t *testing.T) *ucWorld {
 	return u
 }
 
-// build edits the worktree and writes the rows of an executor call of A that completed with the pending tree of the worktree.
+// build edits the worktree and writes the rows of an executor call of A that completed with the pending tree of the worktree. The call
+// is placed in the worktree at the commit its HEAD is at, as a backend places a fresh call.
 func (u *ucWorld) build(callID, body string) CallRef {
 	u.t.Helper()
 	write(u.t, u.wt, "a.txt", body, 0o644)
 	u.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: callID, Op: "agent", Event: engine.EvPrepared, Data: map[string]any{"role": "executor", "node": "A",
-		"allocation": map[string]any{"kind": engine.PlaceFresh, "path": u.wt, "start_commit": u.start, "attempt": 1}}})
+		"allocation": map[string]any{"kind": engine.PlaceFresh, "path": u.wt, "start_commit": gitIn(u.t, u.wt, "rev-parse", "HEAD"), "attempt": 1}}})
 	u.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: callID, Op: "agent", Event: engine.EvCompleted, Data: map[string]any{"pending_tree": u.snapshot()}})
 	return call(callID, "completed", "claude-x", nil)
 }
@@ -2160,6 +2161,104 @@ func TestUnitCheckRefusesAMovedHead(t *testing.T) {
 	if _, err := u.op("accept", "A", commit.Commit); err == nil || ReasonOf(err.Error()) != "reviewer_missing" {
 		t.Errorf("crw.accept after a head_moved check: %v, want reviewer_missing", err)
 	}
+}
+
+// TestUnitCheckRefusesAHeadTheExecutorCommittedWithoutARecord (CRW-1463, DI 11c): a backend that records no executor_head_moved (the
+// App Server's) still has the worktree's HEAD read against the commit the node's attempt is at: the start of its placement, or the
+// node's last commit since. An executor that committed its own work leaves an uncommitted tree with nothing in it to judge, so the tool
+// is not run and the row says head_moved with no role; crw.accept of the commit made on it is refused. A HEAD at the attempt's last
+// recorded commit is the start of a fix and is checked.
+func TestUnitCheckRefusesAHeadTheExecutorCommittedWithoutARecord(t *testing.T) {
+	u := newUCWorld(t)
+	u.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "c_ex1", Op: "agent", Event: engine.EvPrepared, Data: map[string]any{"role": "executor", "node": "A",
+		"allocation": map[string]any{"kind": engine.PlaceFresh, "path": u.wt, "start_commit": u.start, "attempt": 1}}})
+	write(t, u.wt, "a.txt", "built\n", 0o644)
+	gitIn(t, u.wt, "add", "-A")
+	gitIn(t, u.wt, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "the executor committed its own work")
+	own := gitIn(t, u.wt, "rev-parse", "HEAD")
+	u.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "c_ex1", Op: "agent", Event: engine.EvCompleted, Data: map[string]any{"pending_tree": u.snapshot()}})
+	ex := call("c_ex1", "completed", "claude-x", nil)
+	out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+	if len(u.checker.got) != 0 || out.State != StateHeadMoved {
+		t.Fatalf("%d checker calls, answer %+v: a check of an executor that committed its own work", len(u.checker.got), out)
+	}
+	row := u.lastCheck()
+	moved, _ := row.Data["head_moved"].(map[string]any)
+	if dataStr(row, "state") != StateHeadMoved || str(moved, "start") != u.start || str(moved, "head") != own || dataStr(row, "role") != "" || !u.proven(row) {
+		t.Errorf("row %v", row.Data)
+	}
+	var commit CommitOutcome
+	_ = json.Unmarshal(u.must("commit", "A", ex, []string{"a.txt"}), &commit)
+	u.must("verify", "A", commit.Commit)
+	if _, err := u.op("accept", "A", commit.Commit); err == nil || ReasonOf(err.Error()) != "reviewer_missing" {
+		t.Errorf("crw.accept after a head_moved check: %v, want reviewer_missing", err)
+	}
+	// a fix that starts at the attempt's last recorded commit (the commit just made) is at the right HEAD and is checked
+	u.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "c_fix", Op: "agent", Event: engine.EvPrepared, Data: map[string]any{"role": "executor", "node": "A",
+		"allocation": map[string]any{"kind": engine.PlaceContinued}}})
+	write(t, u.wt, "a.txt", "fixed\n", 0o644)
+	u.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "c_fix", Op: "agent", Event: engine.EvCompleted, Data: map[string]any{"pending_tree": u.snapshot()}})
+	u.checkOnTree(u.snapshot())
+	if out := decodeCheck(t, u.must("unitCheck", "A", call("c_fix", "completed", "claude-x", nil), map[string]any{"round": 2})); out.State != reviewadapter.StateOK || len(u.checker.got) != 1 {
+		t.Errorf("the check of a fix at the last recorded commit: %+v, %d checker calls", out, len(u.checker.got))
+	}
+}
+
+// TestUnitCheckReadsTheAcceptedReceiptWhenItsCopyIsMissing (CRW-1463, x1436 item 7): an accepted receipt the backend could not copy to
+// the step bus (copy_error, no copy) is read where the hook accepted it (its path) when that file still hashes to the receipt's digest:
+// the check runs with it, and the row records the receipt with its path and the copy error. When the receipt cannot be read there
+// either the node holds receipt_not_copied, not proven; the check run again once the file can be read (a resume) runs the tool, so the
+// hold clears.
+func TestUnitCheckReadsTheAcceptedReceiptWhenItsCopyIsMissing(t *testing.T) {
+	body := "RED-FIRST: go test -run TestA ./a: FAIL TestA\n"
+	t.Run("the original is read", func(t *testing.T) {
+		u := newUCWorld(t)
+		orig, digest := receiptCopy(t, body)
+		ex := u.buildWithReceipt("c_ex1", "built\n", map[string]any{"assignment": "as1", "state": "accepted", "path": orig, "sha256": digest, "agent_id": "agent-1",
+			"copy_error": "the step bus is full"})
+		u.checkOnTree(u.snapshot())
+		out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+		if out.Hold != "" || out.State != reviewadapter.StateOK || len(u.checker.got) != 1 {
+			t.Fatalf("answer %+v, %d checker calls: the receipt the hook accepted is readable", out, len(u.checker.got))
+		}
+		if p := u.checker.got[0].Prompt; !strings.Contains(p, "EXECUTOR RECEIPT") || !strings.Contains(p, body) {
+			t.Errorf("the prompt does not carry the receipt:\n%s", p)
+		}
+		row := u.lastCheck()
+		rc := checkReceiptOf(row)
+		if str(rc, "state") != "accepted" || str(rc, "sha256") != digest || str(rc, "path") != orig || str(rc, "copy_error") != "the step bus is full" || str(rc, "copy") != "" {
+			t.Errorf("the row's receipt %v", rc)
+		}
+		if dataStr(row, "role") != "unit-check" || !u.proven(row) {
+			t.Errorf("row %v", row.Data)
+		}
+	})
+	t.Run("a hold that clears on a resume", func(t *testing.T) {
+		u := newUCWorld(t)
+		orig := filepath.Join(t.TempDir(), "receipt.md")
+		sum := sha256.Sum256([]byte(body))
+		digest := hex.EncodeToString(sum[:])
+		ex := u.buildWithReceipt("c_ex1", "built\n", map[string]any{"assignment": "as1", "state": "accepted", "path": orig, "sha256": digest, "copy_error": "the step bus is full"})
+		out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+		if out.Hold != "receipt_not_copied" || len(u.checker.got) != 0 || u.proven(u.lastCheck()) {
+			t.Fatalf("answer %+v, %d checker calls: neither the copy nor the receipt can be read", out, len(u.checker.got))
+		}
+		if err := os.WriteFile(orig, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		u.checkOnTree(u.snapshot())
+		out = decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+		if out.Hold != "" || out.State != reviewadapter.StateOK || len(u.checker.got) != 1 {
+			t.Errorf("the check run again once the receipt can be read: %+v, %d checker calls", out, len(u.checker.got))
+		}
+		// the bytes that are there must still be the ones the hook accepted
+		if err := os.WriteFile(orig, []byte("changed since\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1})); out.Hold != "receipt_unverified" || len(u.checker.got) != 1 {
+			t.Errorf("a receipt whose bytes changed since: %+v", out)
+		}
+	})
 }
 
 // ---- the executor receipt of a unit check (CRW-1463, C12) ----
