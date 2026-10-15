@@ -51,14 +51,6 @@ type Message struct {
 	Role      string
 	Settings  coreSettings
 	SteerOnly bool
-	// Rewordable says the logical id names one notice, not one wording: a retry may carry it in other
-	// words than its record was written for. The plan-summary notice (summary-<id>) is one: the run
-	// composes its text again on every retry, and a later build may word it differently (CRW-1478). A
-	// record of the same thread that holds another text is then not refused. It is settled from the
-	// record and the bridge's answer for its request id, as any unsettled record is. The new text
-	// takes the record over only when the bridge holds nothing sent under it, and goes out under a new
-	// request id, because the bridge keys a request id to the arguments it first carried.
-	Rewordable bool
 }
 
 // Outcome is what a delivery settled on: its class, the request id it stands under, and the
@@ -90,22 +82,6 @@ type deliverAttempt struct {
 	At             string `json:"at"`
 	Class          string `json:"class"`
 	ReceiptExcerpt string `json:"receipt_excerpt"`
-	// Reworded marks the attempt where a rewordable notice took the record over in new words under a
-	// new request id that no refusal asked for (Message.Rewordable, CRW-1478): that id's ordinal is not
-	// one of the retries deliverRetryLimit counts. A record written before CRW-1478 has none.
-	Reworded bool `json:"reworded,omitempty"`
-}
-
-// deliverRetryCap is the highest retry ordinal a record's request id may reach: deliverRetryLimit,
-// plus one for each id the record took only for new words (deliverAttempt.Reworded).
-func deliverRetryCap(record deliverRecord) int {
-	limit := deliverRetryLimit
-	for _, attempt := range record.Attempts {
-		if attempt.Reworded {
-			limit++
-		}
-	}
-	return limit
 }
 
 // deliverReply is one tool call's answer: a transport failure, a tool error, or a receipt.

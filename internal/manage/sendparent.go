@@ -96,10 +96,7 @@ func sendParentDispatch(ctx context.Context, e *Env, cfg *Config, parsed sendPar
 		}
 		return sendParentReport(e, sendParentClassQueued, "", logicalID)
 	}
-	// A plan-summary notice names its summary entry, not its words: the run composes it again on every retry, and a retry of a send an
-	// earlier build made in other words settles that send instead of being refused (Message.Rewordable, CRW-1478).
-	out, err := Deliver(ctx, e, cfg, Message{LogicalID: logicalID, Thread: parsed.thread, Text: string(text), Role: "parent", Settings: cfg.Settings.Parent,
-		Rewordable: summaryIsLogical(logicalID)})
+	out, err := Deliver(ctx, e, cfg, Message{LogicalID: logicalID, Thread: parsed.thread, Text: string(text), Role: "parent", Settings: cfg.Settings.Parent})
 	if err != nil {
 		fmt.Fprintf(e.Stderr, "crw manage send-parent: error: %v\n", err)
 	}
