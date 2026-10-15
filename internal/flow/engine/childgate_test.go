@@ -97,8 +97,8 @@ func TestResumeRefusesARunWhoseChildWorkflowChanged(t *testing.T) {
 		})
 	}
 
-	// the label does not say whether the run named the child or gave its scriptPath: a name that resolves is the child compared, and
-	// a scriptPath of the same text that still resolves to the old source does not accept the changed one
+	// a run that named its child is resolved by the name (the row's ref): a scriptPath of the same text that still resolves to the old
+	// source does not accept the changed one
 	t.Run("the name decides", func(t *testing.T) {
 		h := newHarness(t)
 		v1, v2 := kid(t, "child work"), kid(t, "child work, changed")
@@ -137,5 +137,169 @@ func TestResumeRefusesARunWhoseChildWorkflowChanged(t *testing.T) {
 		if n := len(h.fake.Requests()) - mark; n != 0 {
 			t.Errorf("the resume sent %d requests", n)
 		}
+	})
+}
+
+// withoutRef is the journal as a build that did not record the reference kind of a child wrote it: every workflow_opened row without
+// its ref.
+func (h *harness) withoutRef() {
+	h.t.Helper()
+	old := NewMemoryJournal()
+	for _, ev := range h.journal.Events() {
+		if ev.Kind == KindFlow && ev.Event == "workflow_opened" {
+			if _, ok := ev.Data["ref"]; !ok {
+				h.t.Fatalf("the workflow_opened row %+v records no ref", ev)
+			}
+			data := map[string]any{}
+			for k, v := range ev.Data {
+				if k != "ref" {
+					data[k] = v
+				}
+			}
+			ev.Data = data
+		}
+		old.Append(ev)
+	}
+	h.journal = old
+	h.cfg.Journal = old
+}
+
+// openedRef is the ref of the run's workflow_opened row.
+func (h *harness) openedRef() string {
+	h.t.Helper()
+	for _, ev := range h.journal.Events() {
+		if ev.Kind == KindFlow && ev.Event == "workflow_opened" {
+			return rowStr(ev.Data, "ref")
+		}
+	}
+	h.t.Fatal("no workflow_opened row")
+	return ""
+}
+
+// A resume resolves a child the way the run referred to it, as its workflow_opened row records (ref): a name and a scriptPath of the same
+// text may read different files ('kid' is kid.js by its name and the file kid by its path), and the unchanged child of either kind
+// resumes. A row written before the kind was recorded is resolved both ways: when only one resolves, or both read the same source, the
+// source is compared as before; when both resolve to different sources the row cannot say which one ran, and the resume is refused,
+// naming both and how to go on, before anything is written.
+func TestResumeResolvesTheChildAsTheRunReferredToIt(t *testing.T) {
+	prog := func(t *testing.T, name, prompt string) *script.Program {
+		t.Helper()
+		p, err := script.Load(script.Source{Name: name, Text: []byte(header + "const r = await agent.call('" + prompt + "', { agentType: 'explorer', label: 'kid' }); return r.status\n")})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	// two children: kid.js, which workflow('kid') reads, and the file kid, which workflow({scriptPath: 'kid'}) reads
+	type world struct{ named, pathed *script.Program }
+	resolver := func(w *world) func(name, path string) (*script.Program, error) {
+		return func(name, path string) (*script.Program, error) {
+			switch {
+			case name == "kid" && w.named != nil:
+				return w.named, nil
+			case path == "kid" && w.pathed != nil:
+				return w.pathed, nil
+			}
+			return nil, errors.New("unknown workflow " + name + path)
+		}
+	}
+	accepted := func(t *testing.T, h *harness, body string) {
+		t.Helper()
+		mark := len(h.fake.Requests())
+		res, err := h.resumeErr(body)
+		if err != nil || res.Status != RunCompleted {
+			t.Fatalf("the unchanged child was refused: %v %+v", err, res)
+		}
+		if n := len(h.fake.Requests()) - mark; n != 0 {
+			t.Errorf("the unchanged resume sent %d requests", n)
+		}
+	}
+	refused := func(t *testing.T, h *harness, body string, want ...string) {
+		t.Helper()
+		rows := len(h.journal.Events())
+		mark := len(h.fake.Requests())
+		_, err := h.resumeErr(body)
+		if err == nil {
+			t.Fatalf("the resume was accepted, want a refusal naming %q", want)
+		}
+		for _, w := range want {
+			if !strings.Contains(err.Error(), w) {
+				t.Errorf("the refusal %q does not name %q", err, w)
+			}
+		}
+		if n := len(h.journal.Events()); n != rows {
+			t.Errorf("the refused resume wrote rows: %d -> %d", rows, n)
+		}
+		if n := len(h.fake.Requests()) - mark; n != 0 {
+			t.Errorf("the refused resume sent %d requests", n)
+		}
+	}
+	byPath, byName := `return await workflow({ scriptPath: 'kid' })`, `return await workflow('kid')`
+
+	t.Run("a scriptPath beside a name that reads another file", func(t *testing.T) {
+		h := newHarness(t)
+		w := &world{named: prog(t, "kid.js", "the named child"), pathed: prog(t, "kid", "the child at the path")}
+		h.cfg.Workflows = resolver(w)
+		if res := h.run(byPath); res.Status != RunCompleted {
+			t.Fatalf("the first run: %s %s", res.Status, res.Error)
+		}
+		accepted(t, h, byPath)
+		if ref := h.openedRef(); ref != "script" {
+			t.Fatalf("the workflow_opened row records ref %q, want script", ref)
+		}
+		old := w.pathed
+		w.pathed = prog(t, "kid", "the child at the path, changed")
+		refused(t, h, byPath, "kid", old.Digest, w.pathed.Digest)
+	})
+
+	t.Run("a name beside a scriptPath that reads another file", func(t *testing.T) {
+		h := newHarness(t)
+		w := &world{named: prog(t, "kid.js", "the named child"), pathed: prog(t, "kid", "the child at the path")}
+		h.cfg.Workflows = resolver(w)
+		if res := h.run(byName); res.Status != RunCompleted {
+			t.Fatalf("the first run: %s %s", res.Status, res.Error)
+		}
+		if ref := h.openedRef(); ref != "name" {
+			t.Fatalf("the workflow_opened row records ref %q, want name", ref)
+		}
+		accepted(t, h, byName)
+		// the file at the path is no child of this run: it may go
+		w.pathed = nil
+		accepted(t, h, byName)
+	})
+
+	t.Run("a row without ref, one reference resolves", func(t *testing.T) {
+		h := newHarness(t)
+		w := &world{pathed: prog(t, "kid", "the child at the path")}
+		h.cfg.Workflows = resolver(w)
+		h.run(byPath)
+		h.withoutRef()
+		accepted(t, h, byPath)
+		old := w.pathed
+		w.pathed = prog(t, "kid", "the child at the path, changed")
+		refused(t, h, byPath, "kid", old.Digest, w.pathed.Digest)
+	})
+
+	t.Run("a row without ref, both references read the same source", func(t *testing.T) {
+		h := newHarness(t)
+		same := prog(t, "kid.js", "the child")
+		w := &world{named: same, pathed: same}
+		h.cfg.Workflows = resolver(w)
+		h.run(byPath)
+		h.withoutRef()
+		accepted(t, h, byPath)
+	})
+
+	t.Run("a row without ref, both references read different sources", func(t *testing.T) {
+		h := newHarness(t)
+		w := &world{named: prog(t, "kid.js", "the named child"), pathed: prog(t, "kid", "the child at the path")}
+		h.cfg.Workflows = resolver(w)
+		h.run(byPath)
+		h.withoutRef()
+		// the source at the path is the one the run ran, but the row does not say so: the resume does not guess
+		refused(t, h, byPath, "kid.js", w.named.Digest, w.pathed.Digest, "does not say whether", "move or rename one of the two", "start a new run")
+		// with only the source the run ran left, the row is unambiguous again
+		w.named = nil
+		accepted(t, h, byPath)
 	})
 }

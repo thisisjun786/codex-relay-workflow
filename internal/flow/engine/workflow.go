@@ -50,8 +50,14 @@ func (s *scriptVM) workflow(call goja.FunctionCall) goja.Value {
 	label := "workflow:" + name + scriptPath
 	path, position := s.open(label)
 	id := s.e.callID(path.id, position)
+	// the row records the child's digest and how the run referred to it (ref: its name or its scriptPath; the label holds the text
+	// only), so a resume resolves the child the same way (ChangedChild)
+	ref := WorkflowRefName
+	if scriptPath != "" {
+		ref = WorkflowRefScript
+	}
 	s.e.j.Append(Event{RunID: s.e.runID, Kind: KindFlow, Path: path.id, Position: position, Op: "workflow", Label: label, Event: "workflow_opened",
-		Data: map[string]any{"call_id": id, "script_digest": prog.Digest}})
+		Data: map[string]any{"call_id": id, "script_digest": prog.Digest, "ref": ref}})
 
 	promise, resolve, reject := s.vm.NewPromise()
 	// Only the scripts of this run can settle the child, so waiting for it does not keep the loop running: a child
