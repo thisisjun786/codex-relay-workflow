@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path"
 	"strings"
@@ -32,8 +33,9 @@ const (
 // LaneRegion is a region as the lane hands it to crw.regionsOverlap and crw.admissionRegions: its text (`a.go`, `src/`, `a.go#F`)
 // and, for a region the plan states, the plan's change (edit, rename or delete; none is an edit) and exclusive flag (the declarer's
 // whole-repository hold). In JSON it is either the bare text, which keeps the meaning a text always had (an edit, no hold), or the
-// object {"text": ..., "change": ..., "exclusive": ...}; an object with another field, or a change the relay does not know, is refused.
-// A region with no change and no hold is written back as its text.
+// object {"text": ..., "change": ..., "exclusive": ...}. null, an empty or blank text, an object with no text or with another field,
+// and a change the relay does not know are refused, so a malformed list is an error, never a declared list that names no place. An
+// edit with no hold is written back as its text.
 type LaneRegion struct {
 	Text      string `json:"text"`
 	Change    string `json:"change,omitempty"`
@@ -42,8 +44,14 @@ type LaneRegion struct {
 
 // UnmarshalJSON reads the text form and the object form.
 func (r *LaneRegion) UnmarshalJSON(raw []byte) error {
+	if string(bytes.TrimSpace(raw)) == "null" {
+		return errors.New("a region is a text or an object {text, change, exclusive}, not null")
+	}
 	var s string
 	if json.Unmarshal(raw, &s) == nil {
+		if strings.TrimSpace(s) == "" {
+			return errors.New("a region's text is empty")
+		}
 		*r = LaneRegion{Text: s}
 		return nil
 	}
@@ -54,6 +62,9 @@ func (r *LaneRegion) UnmarshalJSON(raw []byte) error {
 	if err := dec.Decode(&p); err != nil {
 		return fmt.Errorf("a region is a text or an object {text, change, exclusive}: %w", err)
 	}
+	if strings.TrimSpace(p.Text) == "" {
+		return errors.New("a region object names no text")
+	}
 	switch p.Change {
 	case "", "edit", "rename", "delete":
 	default:
@@ -63,9 +74,9 @@ func (r *LaneRegion) UnmarshalJSON(raw []byte) error {
 	return nil
 }
 
-// MarshalJSON writes a region with no change and no hold as its text, any other as the object.
+// MarshalJSON writes a region that is an edit (no change, or "edit") with no hold as its text, any other as the object.
 func (r LaneRegion) MarshalJSON() ([]byte, error) {
-	if r.Change == "" && !r.Exclusive {
+	if (r.Change == "" || r.Change == "edit") && !r.Exclusive {
 		return json.Marshal(r.Text)
 	}
 	type plain LaneRegion
@@ -106,18 +117,96 @@ func (r LaneRegion) readings() []dagsched.Region {
 }
 
 // readingsOverlap is whether two readings may touch one place: by the relay's rule (dagsched.Overlaps), or because one of them is a
-// pattern (a file or symbol whose path holds `*`, `?` or `[`) that matches the path of the other, as Scope matches a pattern on a whole
-// path. The relay reads a pattern as the literal path it spells; the lane is more careful, never less.
+// pattern (a path that holds `*`, `?` or `[`, which Scope matches on a whole path) and the two are not proven disjoint (globsMayMeet).
+// The relay reads a pattern as the literal path it spells; the lane is more careful, never less.
 func readingsOverlap(a, b dagsched.Region) bool {
-	return dagsched.Overlaps(a, b) || patternCovers(a, b) || patternCovers(b, a)
+	return dagsched.Overlaps(a, b) || globsMayMeet(a, b)
 }
 
-func patternCovers(pat, r dagsched.Region) bool {
-	if pat.Repository != r.Repository || pat.Kind == "tree" || r.Kind == "tree" || !strings.ContainsAny(pat.Path, "*?[") {
+// globsMayMeet is whether two readings, one of them at least a pattern, may name one path: false only when they are proven
+// disjoint. A file or symbol is the paths its path matches (a symbol is its file here, whatever its key); a tree is the paths under
+// it and, as the relay holds it, its own path. A character class or an escape on either side is never proven disjoint (a class can
+// match "/", and cleaning the path can move one); otherwise the proof compares the literal parts, since `*` and `?` never match "/":
+// two readings are disjoint when the literal text before their first wildcard, or after their last for two files, cannot be the same
+// on both, or when their path segments cannot pair up: a different number of segments for two files, a file with fewer segments
+// than a tree, or two segments of one position that cannot match one name.
+func globsMayMeet(a, b dagsched.Region) bool {
+	if a.Repository != b.Repository || (!isGlob(a.Path) && !isGlob(b.Path)) {
 		return false
 	}
-	ok, _ := path.Match(pat.Path, r.Path)
-	return ok
+	if strings.ContainsAny(a.Path+b.Path, `[\`) {
+		return true
+	}
+	ap, bp := path.Clean(a.Path), path.Clean(b.Path)
+	if !literalEndsMeet(ap, bp, a.Kind != "tree" && b.Kind != "tree") {
+		return false
+	}
+	as, bs := strings.Split(ap, "/"), strings.Split(bp, "/")
+	switch {
+	case a.Kind == "tree" && b.Kind == "tree":
+	case a.Kind == "tree":
+		if len(bs) < len(as) {
+			return false
+		}
+	case b.Kind == "tree":
+		if len(as) < len(bs) {
+			return false
+		}
+	default:
+		if len(as) != len(bs) {
+			return false
+		}
+	}
+	for i := 0; i < min(len(as), len(bs)); i++ {
+		if !segmentsMeet(as[i], bs[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func isGlob(p string) bool { return strings.ContainsAny(p, "*?[") }
+
+// literalEndsMeet is whether two paths' literal heads (the text before the first wildcard) can be the same, and, when both are files
+// (a tree's paths go on past it), their literal tails (the text after the last wildcard) too.
+func literalEndsMeet(a, b string, tails bool) bool {
+	ha, hb := a, b
+	if i := strings.IndexAny(a, "*?"); i >= 0 {
+		ha = a[:i]
+	}
+	if i := strings.IndexAny(b, "*?"); i >= 0 {
+		hb = b[:i]
+	}
+	if !strings.HasPrefix(ha, hb) && !strings.HasPrefix(hb, ha) {
+		return false
+	}
+	if !tails {
+		return true
+	}
+	ta, tb := a, b
+	if i := strings.LastIndexAny(a, "*?"); i >= 0 {
+		ta = a[i+1:]
+	}
+	if i := strings.LastIndexAny(b, "*?"); i >= 0 {
+		tb = b[i+1:]
+	}
+	return strings.HasSuffix(ta, tb) || strings.HasSuffix(tb, ta)
+}
+
+// segmentsMeet is whether two path segments with no class and no escape can match one name: two literals when they are equal, a
+// pattern and a literal when the pattern matches it, two patterns unless their literal ends differ.
+func segmentsMeet(x, y string) bool {
+	switch gx, gy := isGlob(x), isGlob(y); {
+	case !gx && !gy:
+		return x == y
+	case !gy:
+		ok, _ := path.Match(x, y)
+		return ok
+	case !gx:
+		ok, _ := path.Match(y, x)
+		return ok
+	}
+	return literalEndsMeet(x, y, true)
 }
 
 // RegionsOverlap is LaneRegionsOverlap of bare texts: every region an edit, none a hold.

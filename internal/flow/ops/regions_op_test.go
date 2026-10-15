@@ -106,6 +106,52 @@ func TestRegionsOverlapReadsARegionAsScopeDoes(t *testing.T) {
 			}
 		}
 	}
+	// two regions Scope reads as covering one path (their glob languages intersect on it) overlap
+	regions = append(regions, "a*.go", "*b.go", "?.go", "[ab].go", "src/*/x.go", "src/*/*.go", "src/b/", "*/x.go", "src/[ab]*.go", "*_test.go")
+	paths = append(paths, "ab.go", "src/b/x.go", "src/b/y.go", "src/ab.go", "x/x.go", "a_test.go", "src/b/x_test.go")
+	for _, x := range regions {
+		for _, y := range regions {
+			for _, p := range paths {
+				if inRegion(x, p) && inRegion(y, p) && !RegionsOverlap([]string{x}, []string{y}) {
+					t.Errorf("Scope reads %q and %q as both covering %q, RegionsOverlap says they do not overlap", x, y, p)
+				}
+			}
+		}
+	}
+}
+
+// TestRegionsOverlapKeepsIntersectingPatternsTogether pins two regions where at least one is a pattern (a path with `*`, `?` or `[`):
+// they overlap unless they are proven disjoint (PR #896). Two patterns that both match one path (a*.go and *b.go both match ab.go)
+// overlap though neither matches the other's text, and so do a pattern with a directory wildcard and a tree it can reach into.
+func TestRegionsOverlapKeepsIntersectingPatternsTogether(t *testing.T) {
+	for _, p := range []struct {
+		x, y string
+		want bool
+	}{
+		{"a*.go", "*b.go", true},
+		{"*.go", "*_test.go", true},
+		{"?.go", "[ab].go", true},
+		{"src/*/x.go", "src/b/", true},
+		{"src/*/x.go", "src/", true},
+		{"*/x.go", "src/b/", false},
+		{"src/*/", "src/b/x.go", true},
+		{"src/*/x.go", "src/[ab]/*.go", true},
+		// proven disjoint: a literal part that differs, or a different number of path segments (no wildcard matches "/")
+		{"a*.go", "b*.go", false},
+		{"*.go", "*.txt", false},
+		{"src/*.go", "docs/*.go", false},
+		{"a/*.go", "a/b/*.go", false},
+		{"src/*/x.go", "docs/", false},
+		{"src/*/x.go", "src/b/y/", false},
+		{"src/*/x.go", "src/b/y.go", false},
+	} {
+		if got := RegionsOverlap([]string{p.x}, []string{p.y}); got != p.want {
+			t.Errorf("RegionsOverlap([%q], [%q]) = %v, want %v", p.x, p.y, got, p.want)
+		}
+		if got := RegionsOverlap([]string{p.y}, []string{p.x}); got != p.want {
+			t.Errorf("RegionsOverlap([%q], [%q]) = %v, want %v (not symmetric)", p.y, p.x, got, p.want)
+		}
+	}
 }
 
 // TestRegionsOverlapKeepsAPlannedChange pins the planned form of a region (CRW-1441): an object {text, change, exclusive} carries the
@@ -157,6 +203,38 @@ func TestRegionsOverlapKeepsAPlannedChange(t *testing.T) {
 		if err := json.Unmarshal([]byte(bad), &got); err == nil {
 			t.Errorf("%s decoded without an error", bad)
 		}
+	}
+}
+
+// TestRegionOpsRefuseARegionWithNoText pins the argument shape against a member that names no place (PR #896): null, an empty or
+// blank text and an object with no text are refused through the op's JSON arguments, so a malformed list is an error and never a
+// declared list that overlaps nothing. A null list stays undeclared. A planned edit with no hold is written as its text.
+func TestRegionOpsRefuseARegionWithNoText(t *testing.T) {
+	w := newWorld(t)
+	for _, bad := range []any{
+		[]any{nil},
+		[]any{"a.go", nil},
+		[]string{""},
+		[]string{"  "},
+		[]any{map[string]any{"text": ""}},
+		[]any{map[string]any{"change": "delete"}},
+		[]any{map[string]any{"text": " ", "exclusive": true}},
+	} {
+		if out, err := w.op(NameRegionsOverlap, bad, []string{"a.go"}); err == nil {
+			t.Errorf("regionsOverlap(%v, [a.go]) = %s, want an error", bad, out)
+		}
+		if out, err := w.op(NameRegionsOverlap, []string{"a.go"}, bad); err == nil {
+			t.Errorf("regionsOverlap([a.go], %v) = %s, want an error", bad, out)
+		}
+		if out, err := w.op(NameAdmissionRegions, bad, []string{"a.go"}); err == nil {
+			t.Errorf("admissionRegions(%v, [a.go]) = %s, want an error", bad, out)
+		}
+	}
+	if got := string(w.must(NameRegionsOverlap, nil, []string{"a.go"})); got != "true" {
+		t.Errorf("regionsOverlap(null, [a.go]) = %s, want true", got)
+	}
+	if b, _ := json.Marshal([]LaneRegion{{Text: "a.go", Change: "edit"}, {Text: "b.go", Change: "edit", Exclusive: true}}); string(b) != `["a.go",{"text":"b.go","change":"edit","exclusive":true}]` {
+		t.Errorf("encoded %s: an edit with no hold is its text", b)
 	}
 }
 
