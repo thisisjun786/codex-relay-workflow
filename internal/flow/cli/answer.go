@@ -146,7 +146,8 @@ func (c *command) applyAnswer(st *store.Store, state string, claim Claim) (Answe
 		fmt.Fprintf(c.stderr, "crw flow answer: error: %v\n", err)
 		return reply, 2
 	}
-	lock, err := TakeLock(state, claim.Run, "answer", c.now())
+	// a writer that holds the run lock for a moment (an audit, another answer, a cancel) is waited out, briefly (CRW-1495 item 6)
+	lock, err := takeLockPastWriters(state, claim.Run, "answer", c.now(), writerWait)
 	if err != nil {
 		reply.Refusal = &Refusal{Code: "run_live", Detail: err.Error() + "; an answer is applied to the journal of a run no process holds (crw flow pause " + claim.Run + " first)"}
 		return reply, 1
@@ -315,7 +316,7 @@ func (c *command) settleEndedRun(state string, cm *common, rec RunRecord) (Settl
 	if wstate != "" {
 		state = wstate
 	}
-	lock, err := TakeLock(state, rec.RunID, "cancel", c.now())
+	lock, err := takeLockPastWriters(state, rec.RunID, "cancel", c.now(), writerWait)
 	if err != nil {
 		return Settlement{}, c.fail("the executions of run %s cannot be given up yet: %v", rec.RunID, err)
 	}
@@ -359,7 +360,7 @@ func (c *command) cancelDead(state string, cm *common, rec RunRecord) int {
 	if wstate != "" {
 		state = wstate
 	}
-	lock, err := TakeLock(state, rec.RunID, "cancel", c.now())
+	lock, err := takeLockPastWriters(state, rec.RunID, "cancel", c.now(), writerWait)
 	if err != nil {
 		return c.fail("%v", err)
 	}
@@ -367,6 +368,13 @@ func (c *command) cancelDead(state string, cm *common, rec RunRecord) int {
 	j, err := journal.Open(c.ctx, st, rec.RunID, journal.Identity{}, journal.Options{Immediate: true})
 	if err != nil {
 		return c.fail("%v", err)
+	}
+	// a cancel that read the run before another cancel (or the run's own end) stored its end row finds the run over under the lock:
+	// it appends nothing, so two cancels of one run write one end row (CRW-1495 item 6)
+	if now := Summarize(rec, j.Events(), false, 0).State; Over(now) {
+		_ = j.Close()
+		fmt.Fprintf(c.stderr, "crw flow cancel: run %s is %s: nothing to cancel\n", rec.RunID, now)
+		return 1
 	}
 	// the run's executions are given up before the run is marked cancelled: a run that is cancelled in the journal and still holds
 	// slots is hidden from monitoring and blocks the nodes that overlap it. A failure leaves the run as it was, so the cancel can be

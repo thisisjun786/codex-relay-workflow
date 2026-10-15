@@ -175,7 +175,8 @@ func (c *command) execute(spec Spec, state string, resume bool, sigs <-chan os.S
 	// a session run's process holds its process lock from before the run lock until after it (its started row names the token)
 	process := c.processLock(state, spec)
 	defer process.Release()
-	lock, err := TakeLock(state, spec.RunID, "_run", c.now())
+	// a writer that holds the run lock for a moment (an audit, an answer, a cancel) is waited out, briefly (CRW-1495 item 6)
+	lock, err := takeLockPastWriters(state, spec.RunID, "_run", c.now(), writerWait)
 	if err != nil {
 		fmt.Fprintf(c.stderr, "crw flow %s: %v\n", c.name, err)
 		if errors.Is(err, ErrRunLive) {

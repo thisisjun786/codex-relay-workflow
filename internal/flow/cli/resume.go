@@ -57,7 +57,7 @@ func (c *command) resume(args []string) int {
 			process = c.processLock(sel.Path, spec)
 			defer process.Release()
 		}
-		lock, err := TakeLock(sel.Path, run, "resume", c.now())
+		lock, err := takeLockPastWriters(sel.Path, run, "resume", c.now(), writerWait)
 		if err != nil {
 			return c.fail("%v", err)
 		}
@@ -86,8 +86,16 @@ func (c *command) resume(args []string) int {
 		return c.fail("%v", err)
 	}
 	if *detach {
-		if LockHeld(sel.Path, run) {
-			return c.fail("%v %s", ErrRunLive, run)
+		// a run process that holds the run refuses the resume; a writer's hold (an audit, an answer, a cancel) is waited out, briefly
+		// (CRW-1495 item 6)
+		for deadline := time.Now().Add(writerWait); ; time.Sleep(20 * time.Millisecond) {
+			live, _, holder := runHolder(sel.Path, run)
+			if !live && holder == "" {
+				break
+			}
+			if live || !time.Now().Before(deadline) {
+				return c.fail("%v %s", ErrRunLive, run)
+			}
 		}
 		// a legacy issue-child run and a run with nothing left are refused here, before a process is started for it (resumeRefused)
 		r, err := c.reader(cm)
