@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/jsonschema-go/jsonschema"
 )
@@ -78,6 +79,7 @@ func TestGrokProfileReadsTheStructuredOutput(t *testing.T) {
 	if p.Name != "grok" || p.Model != "grok-4.7" || p.Effort == "" || p.Ranged {
 		t.Fatalf("profile = %+v", p)
 	}
+	p = unmetered(p) // the reader is under test here; the floors are TestEngineProfilesReadTheirUsage's
 	structured := map[string]any{"verdict": "needs_changes", "findings": []any{
 		map[string]any{"severity": "P1", "impact": "core_function", "file": "a.go", "line": 12, "text": "the loop never ends"},
 	}}
@@ -120,6 +122,7 @@ func TestAstraProfileReadsTheLastAgentMessage(t *testing.T) {
 	if p.Name != "astra" || p.Model != "gpt-6-astra" || p.Effort != "high" || p.Ranged {
 		t.Fatalf("profile = %+v", p)
 	}
+	p = unmetered(p) // the reader is under test here; the floors are TestEngineProfilesReadTheirUsage's
 	t.Run("the last agent message is the answer and a null impact is absent", func(t *testing.T) {
 		res := check(t, p, fakeRun{stdout: astraStream(astraAnswerText)})
 		wantState(t, res, StateOK)
@@ -280,4 +283,113 @@ func toStrings(v any) []string {
 		out = append(out, s)
 	}
 	return out
+}
+
+// unmetered is p without its floors: a check of it is never voided, so a test of its answer reader needs no fake clock.
+func unmetered(p Profile) Profile {
+	p.MinCacheRead, p.MinCommands, p.MinElapsed = 0, 0, 0
+	return p
+}
+
+// grokUsageEnvelope is a grok envelope with a verified structured answer and the given usage object (none when usage is nil).
+func grokUsageEnvelope(t *testing.T, usage map[string]any) string {
+	t.Helper()
+	env := map[string]any{"text": "done", "structuredOutput": map[string]any{"verdict": "verified", "findings": []any{}}}
+	if usage != nil {
+		env["usage"] = usage
+	}
+	b, err := json.Marshal(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+// TestEngineProfilesReadTheirUsage: each crosscheck engine reads its usage from its own output and carries the floors of the ops
+// tool it replaces. grok reads the envelope's usage, the first non-zero of cache_read_input_tokens, cacheReadInputTokens,
+// input_tokens and inputTokens (crosscheck.sh), with floors 100000 cached tokens and 60 s; astra counts the completed
+// command_execution items and reads turn.completed's cached_input_tokens, with floors 3 commands and 45 s (astra-run.sh). Output
+// that reports no usage is none. Bugbot and a JSON tool have no usage reader and no floors, so they are never voided. Through the
+// adapter, the real fixtures of both engines are ok over their floors and not_read under them.
+func TestEngineProfilesReadTheirUsage(t *testing.T) {
+	grok := GrokProfile(AnswerSchema)
+	if grok.Usage == nil || grok.MinCacheRead != 100000 || grok.MinCommands != 0 || grok.MinElapsed != 60*time.Second {
+		t.Fatalf("grok floors: cache %d, commands %d, elapsed %s, usage reader %v", grok.MinCacheRead, grok.MinCommands, grok.MinElapsed, grok.Usage != nil)
+	}
+	astra := AstraProfile("/run/answer.strict.json")
+	if astra.Usage == nil || astra.MinCacheRead != 0 || astra.MinCommands != 3 || astra.MinElapsed != 45*time.Second {
+		t.Fatalf("astra floors: cache %d, commands %d, elapsed %s, usage reader %v", astra.MinCacheRead, astra.MinCommands, astra.MinElapsed, astra.Usage != nil)
+	}
+	for _, p := range []Profile{BugbotProfile(), BugbotCommittedProfile(), JSONProfile("fake", []string{"fake-tool"}, "grok-4.7-medium", "medium")} {
+		if p.Usage != nil || p.MinCacheRead != 0 || p.MinCommands != 0 || p.MinElapsed != 0 {
+			t.Fatalf("profile %s has a usage reader or a floor: %+v", p.Name, p)
+		}
+	}
+
+	t.Run("grok reads the envelope's usage and its fallbacks", func(t *testing.T) {
+		if u, ok := grok.Usage([]byte(grokEnvelope(t, nil, true))); !ok || u != (Usage{CacheRead: 2729216}) {
+			t.Fatalf("the real fixture: %+v %v", u, ok)
+		}
+		for name, c := range map[string]struct {
+			usage map[string]any
+			want  int64
+		}{
+			"camel case cache read":           {map[string]any{"cacheReadInputTokens": 5000}, 5000},
+			"input tokens":                    {map[string]any{"input_tokens": 7000}, 7000},
+			"camel case input tokens":         {map[string]any{"inputTokens": 9000}, 9000},
+			"a zero cache read falls through": {map[string]any{"cache_read_input_tokens": 0, "input_tokens": 7000}, 7000},
+			"every name zero":                 {map[string]any{"cache_read_input_tokens": 0, "input_tokens": 0}, 0},
+		} {
+			t.Run(name, func(t *testing.T) {
+				if u, ok := grok.Usage([]byte(grokUsageEnvelope(t, c.usage))); !ok || u != (Usage{CacheRead: c.want}) {
+					t.Fatalf("usage = %+v %v, want %d", u, ok, c.want)
+				}
+			})
+		}
+		for name, out := range map[string]string{
+			"no usage":           grokUsageEnvelope(t, nil),
+			"a usage of no name": grokUsageEnvelope(t, map[string]any{"output_tokens": 10}),
+			"not an envelope":    "the review is done",
+		} {
+			if u, ok := grok.Usage([]byte(out)); ok {
+				t.Fatalf("%s: usage %+v read", name, u)
+			}
+		}
+	})
+	t.Run("astra counts its commands and reads the cached tokens", func(t *testing.T) {
+		if u, ok := astra.Usage([]byte(astraStream(astraAnswerText))); !ok || u != (Usage{CacheRead: 1039360, Commands: 1}) {
+			t.Fatalf("the real fixture: %+v %v", u, ok)
+		}
+		cmd := `{"type":"item.completed","item":{"id":"c","type":"command_execution","command":"ls","exit_code":0,"status":"completed"}}`
+		started := `{"type":"item.started","item":{"id":"c","type":"command_execution","command":"ls","status":"in_progress"}}`
+		stream := strings.Join([]string{started, cmd, started, cmd, cmd, "not an event",
+			`{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":4}}`}, "\n")
+		if u, ok := astra.Usage([]byte(stream)); !ok || u != (Usage{CacheRead: 4, Commands: 3}) {
+			t.Fatalf("three commands: %+v %v", u, ok)
+		}
+		if u, ok := astra.Usage([]byte(strings.Join([]string{cmd, cmd, cmd}, "\n"))); ok {
+			t.Fatalf("a stream without turn.completed: usage %+v read", u)
+		}
+	})
+	t.Run("through the adapter the floors decide", func(t *testing.T) {
+		structured := map[string]any{"verdict": "verified", "findings": []any{}}
+		wantState(t, checkFor(t, grok, fakeRun{stdout: grokEnvelope(t, structured, true)}, 61*time.Second), StateOK)
+		res := checkFor(t, grok, fakeRun{stdout: grokEnvelope(t, structured, true)}, 59*time.Second)
+		wantState(t, res, StateNotRead)
+		if res.CacheReadTokens != 2729216 || res.ElapsedMS != 59000 {
+			t.Fatalf("result = %+v", res)
+		}
+		cmd := `{"type":"item.completed","item":{"id":"c","type":"command_execution","command":"ls","exit_code":0,"status":"completed"}}`
+		res = checkFor(t, astra, fakeRun{stdout: astraStream(astraAnswerText)}, 50*time.Second)
+		wantState(t, res, StateNotRead)
+		if res.Commands != 1 || res.CacheReadTokens != 1039360 {
+			t.Fatalf("result = %+v", res)
+		}
+		res = checkFor(t, astra, fakeRun{stdout: cmd + "\n" + cmd + "\n" + astraStream(astraAnswerText)}, 50*time.Second)
+		wantState(t, res, StateOK)
+		if res.Commands != 3 || res.Verdict != VerdictNeedsChanges {
+			t.Fatalf("result = %+v", res)
+		}
+		wantState(t, checkFor(t, astra, fakeRun{stdout: cmd + "\n" + cmd + "\n" + astraStream(astraAnswerText)}, 44*time.Second), StateNotRead)
+	})
 }

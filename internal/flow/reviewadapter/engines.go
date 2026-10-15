@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"time"
 )
 
 // The review engines of the crosscheck (CRW-1473): astra (gpt-6-astra through codex exec, family gpt) and grok (grok-4.7, family
@@ -27,7 +28,8 @@ var engineQuotaTexts = []string{"usage limit", "rate limit", "resource_exhausted
 
 // GrokProfile is grok-4.7 through the grok CLI with schema as its --json-schema: `grok -m grok-4.7 --always-approve
 // --disable-web-search --json-schema <schema> -p <prompt>`, the prompt being the word ExecRun appends after -p. grok prints one JSON
-// envelope; its answer is the envelope's structuredOutput (grokAnswer).
+// envelope; its answer is the envelope's structuredOutput (grokAnswer) and its usage the envelope's usage (grokUsage). Its floors are
+// the ops tool's (crosscheck.sh): a pass that read fewer than 100000 cached tokens or ran under 60 s read no repository (not_read).
 func GrokProfile(schema []byte) Profile {
 	word := string(schema)
 	var compact bytes.Buffer
@@ -41,7 +43,41 @@ func GrokProfile(schema []byte) Profile {
 		Effort:     grokEffort,
 		QuotaTexts: slices.Clone(engineQuotaTexts),
 		Answer:     grokAnswer,
+		Usage:      grokUsage,
+		// the floors of crosscheck.sh (MIN_CACHE, MIN_SECS)
+		MinCacheRead: 100000,
+		MinElapsed:   60 * time.Second,
 	}
+}
+
+// grokUsage reads the usage object of grok's envelope as the ops tool reads it (crosscheck.sh): the cached tokens are the first
+// non-zero of cache_read_input_tokens, cacheReadInputTokens, input_tokens and inputTokens (the input tokens stand in when the cache
+// read is absent), zero when each it has is zero. grok reports no commands. Output that is not exactly one envelope, an envelope
+// without a usage object, or a usage object with none of the four names, reports no usage.
+func grokUsage(stdout []byte) (Usage, bool) {
+	var env struct {
+		Usage map[string]json.RawMessage `json:"usage"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(stdout))
+	if dec.Decode(&env) != nil || onlyValue(dec) != nil || env.Usage == nil {
+		return Usage{}, false
+	}
+	found := false
+	for _, name := range []string{"cache_read_input_tokens", "cacheReadInputTokens", "input_tokens", "inputTokens"} {
+		raw, ok := env.Usage[name]
+		if !ok {
+			continue
+		}
+		var n int64
+		if json.Unmarshal(raw, &n) != nil {
+			continue
+		}
+		found = true
+		if n != 0 {
+			return Usage{CacheRead: n}, true
+		}
+	}
+	return Usage{}, found
 }
 
 // grokAnswer reads grok's envelope: exactly one JSON document, whose structuredOutput, re-marshalled, is the answer. An envelope
@@ -71,7 +107,9 @@ func grokAnswer(stdout []byte, _ Request) ([]byte, error) {
 // AstraProfile is gpt-6-astra through codex exec, read-only, answering under the strict schema in schemaFile (StrictSchema of the
 // request's schema, written by the caller): `codex exec -m gpt-6-astra -c model_reasoning_effort=high -s read-only
 // --skip-git-repo-check --ephemeral --output-schema <schemaFile> --json <prompt>`, the prompt being the positional word ExecRun
-// appends. codex prints a JSONL event stream; its answer is the text of the last completed agent_message (astraAnswer).
+// appends. codex prints a JSONL event stream; its answer is the text of the last completed agent_message (astraAnswer) and its usage
+// the commands it ran and the cached tokens of its turn (astraUsage). Its floors are the ops tool's (astra-run.sh): a pass that ran
+// fewer than 3 commands or under 45 s read no repository (not_read).
 func AstraProfile(schemaFile string) Profile {
 	return Profile{
 		Name: "astra",
@@ -81,7 +119,45 @@ func AstraProfile(schemaFile string) Profile {
 		Effort:     astraEffort,
 		QuotaTexts: slices.Clone(engineQuotaTexts),
 		Answer:     astraAnswer,
+		Usage:      astraUsage,
+		// the floors of astra-run.sh (MIN_CMDS, MIN_SECS)
+		MinCommands: 3,
+		MinElapsed:  45 * time.Second,
 	}
+}
+
+// astraUsage reads codex's JSONL event stream as the ops tool reads it (astra-run.sh): the commands are the item.completed events
+// whose item is a command_execution, and the cached tokens are the cached_input_tokens of the last turn.completed event's usage. A
+// line that is not a JSON event is skipped; a stream with no turn.completed event that has a usage object reports no usage.
+func astraUsage(stdout []byte) (Usage, bool) {
+	var u Usage
+	ok := false
+	sc := bufio.NewScanner(bytes.NewReader(stdout))
+	sc.Buffer(make([]byte, 0, 64<<10), maxOutput)
+	for sc.Scan() {
+		var ev struct {
+			Type string `json:"type"`
+			Item struct {
+				Type string `json:"type"`
+			} `json:"item"`
+			Usage *struct {
+				CachedInputTokens int64 `json:"cached_input_tokens"`
+			} `json:"usage"`
+		}
+		if json.Unmarshal(bytes.TrimSpace(sc.Bytes()), &ev) != nil {
+			continue
+		}
+		switch {
+		case ev.Type == "item.completed" && ev.Item.Type == "command_execution":
+			u.Commands++
+		case ev.Type == "turn.completed" && ev.Usage != nil:
+			u.CacheRead, ok = ev.Usage.CachedInputTokens, true
+		}
+	}
+	if sc.Err() != nil {
+		return Usage{}, false
+	}
+	return u, ok
 }
 
 // astraAnswer reads codex's JSONL event stream: the answer is the text of the last item.completed event whose item is an
