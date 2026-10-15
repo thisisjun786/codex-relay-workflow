@@ -91,11 +91,12 @@ func SpawnDetached(ctx context.Context, req SpawnRequest) (int, error) {
 }
 
 // AwaitLock waits until the process of a run holds the run lock, or has ended after leaving a result (a run that finished before
-// the first look), and says so when the process ended without either. since is the time the process was started at.
+// the first look), and says so when the process ended without either. since is the time the process was started at. Only a run
+// process's hold counts (runHolder): a writer that holds the lock in the instant after the spawn is not the spawned process.
 func AwaitLock(ctx context.Context, state, run string, pid int, since time.Time) error {
 	deadline := time.Now().Add(15 * time.Second)
 	for {
-		if LockHeld(state, run) {
+		if live, _, _ := runHolder(state, run); live {
 			return nil
 		}
 		if processGone(pid) {

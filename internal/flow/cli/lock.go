@@ -15,11 +15,14 @@ import (
 	"time"
 )
 
-// The run lock is a file lock (flock) on <state>/flow/<run>/run.lock. The process that runs a run, and the command that appends
-// a row to the journal of a run that no process holds (`crw flow answer`), take it for as long as they write; the kernel
-// releases it when the holder dies, so a run whose lock is free is a run no process works on and `crw flow resume` or
-// `crw flow recover` may take it from its journal. The holder writes its pid into the file while it holds the lock, so a
-// reader that finds the lock held knows whom `crw flow pause` and `crw flow cancel` signal.
+// The run lock is a file lock (flock) on <state>/flow/<run>/run.lock. The process that runs a run (`_run`, `resume`), and the
+// commands that append rows to the journal of a run that no process holds and run no script (the writers: `audit`, `answer`,
+// `cancel`, `recover`), take it for as long as they write; the kernel releases it when the holder dies, so a run whose lock is
+// free is a run no process works on and `crw flow resume` or `crw flow recover` may take it from its journal. The holder writes
+// its pid and command into the file while it holds the lock, so a reader that finds the lock held knows whom `crw flow pause`
+// and `crw flow cancel` signal, and whether the holder is a run process at all: a writer's hold is not one (runHolder), and its
+// pid is never signalled (CRW-1495 item 6). Release empties the record before it lets the lock go, so a free lock holds no pid
+// except after a crash (the kernel freed the flock and Release did not run); every read of the record tests the flock first.
 
 // ErrRunLive is the refusal of a command that needs the run lock when a process holds it.
 var ErrRunLive = errors.New("a process holds the run")
@@ -91,11 +94,13 @@ func TakeLock(state, run, command string, now time.Time) (*Lock, error) {
 	return &Lock{f: f}, nil
 }
 
-// Release releases the lock. The pid record stays in the file, and means nothing once the lock is free.
+// Release releases the lock. It empties the holder record first (best effort: an error is ignored and the lock is let go all the
+// same), so a free lock names no holder; a record left by a holder that crashed means nothing once the lock is free.
 func (l *Lock) Release() {
 	if l == nil || l.f == nil {
 		return
 	}
+	_ = l.f.Truncate(0)
 	_ = syscall.Flock(int(l.f.Fd()), syscall.LOCK_UN)
 	_ = l.f.Close()
 	l.f = nil
@@ -324,24 +329,85 @@ func heldAt(path string) bool {
 	return false
 }
 
-// LockHolder is the pid the holder of the run lock wrote into it. It is read for a lock that is held: the holder writes its pid
-// after it took the lock, so a read in that instant waits a moment for it.
+// LockHolder is the pid the holder of the run lock wrote into it, and false when the lock is free or its record names no process.
 func LockHolder(state, run string) (int, bool) {
+	rec, _ := lockHolderRecord(state, run)
+	return rec.PID, rec.PID > 1
+}
+
+// lockHolderRecord reads the record of the holder of the run lock. Each try first tests the flock: a lock found free answers
+// held == false at once (a holder letting go is never read as an unnamed holder), and a record left by a crashed holder is never
+// read for a free lock. The holder writes its record after it took the lock, so a held lock whose record cannot be read yet is
+// read again, up to 20 times 10 ms apart; still unreadable then, it answers held with an empty record (the holder is unknown).
+func lockHolderRecord(state, run string) (lockRecord, bool) {
 	if !validRunID(run) {
-		return 0, false
+		return lockRecord{}, false
 	}
+	path := lockPath(state, run)
 	for i := 0; i < 20; i++ {
-		raw, err := os.ReadFile(lockPath(state, run))
+		if !heldAt(path) {
+			return lockRecord{}, false
+		}
+		raw, err := os.ReadFile(path)
 		if errors.Is(err, fs.ErrNotExist) {
-			return 0, false
+			return lockRecord{}, false
 		}
 		var rec lockRecord
 		if err == nil && json.Unmarshal(raw, &rec) == nil && rec.PID > 1 {
-			return rec.PID, true
+			return rec, true
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	return 0, false
+	return lockRecord{}, true
+}
+
+// writerCommand says whether a holder's command is a writer: a command that takes a free run lock to append rows and runs no script
+// (audit, answer, cancel, recover). `_run` and `resume` are run processes; an empty or unknown command (a record not written yet, an
+// older binary) is not a writer, so it is read as a run process, as before.
+func writerCommand(cmd string) bool {
+	switch cmd {
+	case "audit", "answer", "cancel", "recover":
+		return true
+	}
+	return false
+}
+
+// runHolder is the holder of the run lock as a reader sees it: live when the lock is held and the holder is not a writer. A run
+// that is not live answers pid 0 (a free lock, and a writer's hold, whose pid is never reported to a reader); a live run answers the
+// record's pid, 0 when the record cannot be read (the holder is unknown and is not signalled). command is the record's command in
+// every case. Code that must judge the raw holder reads lockHolderRecord itself.
+func runHolder(state, run string) (live bool, pid int, command string) {
+	rec, held := lockHolderRecord(state, run)
+	if !held {
+		return false, 0, ""
+	}
+	if writerCommand(rec.Command) {
+		return false, 0, rec.Command
+	}
+	return true, rec.PID, rec.Command
+}
+
+// writerWait is how long a command that needs the run lock waits for a writer's hold to end (a variable, so tests can shorten it).
+var writerWait = 2 * time.Second
+
+// takeLockPastWriters takes the run lock as TakeLock does, but waits a writer out: while the lock is held by a writer (or is free
+// again by the next look) it takes again every 20 ms until wait has passed. Any other holder, or the wait passed, answers TakeLock's
+// error (ErrRunLive wrapped).
+func takeLockPastWriters(state, run, command string, now time.Time, wait time.Duration) (*Lock, error) {
+	deadline := time.Now().Add(wait)
+	for {
+		l, err := TakeLock(state, run, command, now)
+		if err == nil || !errors.Is(err, ErrRunLive) {
+			return l, err
+		}
+		if rec, held := lockHolderRecord(state, run); held && !writerCommand(rec.Command) {
+			return nil, err
+		}
+		if !time.Now().Before(deadline) {
+			return nil, err
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 func itoa(n int) string { return strconv.Itoa(n) }
