@@ -201,9 +201,15 @@ func (r *Runner) run(ctx context.Context, rep Report, batch []Entry, pr *trackin
 			// the head reached the branch between the pass's check and its run: recorded once, after the fact
 			l, err := r.recoverLanding(ctx, tag, batch[0], *pr)
 			if err != nil {
+				// not a verdict: the entry stays pending and the pass is held, as a pass whose check could not record it
 				r.logf("%s: %v", pr.Ref, err)
-				rep.Held = append(rep.Held, batch[0].Name+": the landing record could not be written, it stays pending: "+err.Error())
+				held := batch[0].Name + ": the landing could not be recorded, it stays pending: " + err.Error()
+				rep.Held = append(rep.Held, held)
+				rep.Result, rep.Exit, rep.Error = "error", ExitUsage, held
 				recoverFailed = true
+			} else {
+				// the recovery is what the pass did: the same result as a recovery in the check
+				rep.Result, rep.Exit = resultReportLandedBeforeRecord, ExitPushed
 			}
 			rep.Landing = l
 		} else {

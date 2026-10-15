@@ -331,7 +331,9 @@ func (r *Runner) recoverLanding(ctx context.Context, tag string, e Entry, pr tra
 	}
 	l.Warnings = append(l.Warnings, "the head was in "+r.Cfg.Branch+" before its landing was recorded; this record is written after the fact")
 	r.logf("%s %s: in %s with no landing record: recovered record %s", pr.Ref, e.Head, r.Cfg.Branch, tag)
-	r.publishLanding(ctx, l)
+	if err := r.publishLanding(ctx, l); err != nil {
+		return nil, err
+	}
 	return l, nil
 }
 
@@ -403,7 +405,7 @@ func (r *Runner) checkPR(ctx context.Context, e Entry, rep *Report) (*tracking.P
 	if in {
 		l, err := r.recoverLanding(ctx, "", e, pr)
 		if err != nil {
-			return nil, "the landing record could not be written, it stays pending: " + err.Error()
+			return nil, "the landing could not be recorded, it stays pending: " + err.Error()
 		}
 		rep.Landing = l
 		rep.moved(r, e, dirDone, "landed before its record: "+filepath.Join(r.Cfg.RunsDir, l.Tag+".pr.json"))
@@ -533,7 +535,13 @@ func (r *Runner) recordLanding(ctx context.Context, pr tracking.PullRequest, out
 		l.Warnings = append(l.Warnings, l.Review.Note+": dev moves on the verification-record alone (CRW-1306)")
 		r.logf("%s %s: %s", pr.Ref, pr.HeadSHA, l.Review.Note)
 	}
-	r.publishLanding(ctx, l)
+	if err := r.publishLanding(ctx, l); err != nil {
+		// dev already moved: the entry goes to done/ (its landing stands) and the comment still goes up when no record holds its state
+		r.logf("%s %s: %v", pr.Ref, pr.HeadSHA, err)
+		if l.Comment == commentNotWrittenYet {
+			r.postLandingComment(ctx, l)
+		}
+	}
 	return l
 }
 
@@ -547,12 +555,16 @@ const (
 )
 
 // publishLanding writes <tag>.pr.json, then puts the same record on the pull request as a comment and writes the file again
-// with what the comment became.
-func (r *Runner) publishLanding(ctx context.Context, l *Landing) {
+// with what the comment became. A record that cannot be written is an error: when the first write fails no comment is posted
+// (nothing would remember it), and l.Comment stays commentNotWrittenYet; when the second fails the comment is posted and the file
+// still says "not written yet".
+func (r *Runner) publishLanding(ctx context.Context, l *Landing) error {
 	l.Comment = commentNotWrittenYet
-	r.writeLanding(l)
+	if err := r.writeLanding(l); err != nil {
+		return err
+	}
 	r.postLandingComment(ctx, l)
-	r.writeLanding(l)
+	return r.writeLanding(l)
 }
 
 // postLandingComment puts the landing record on the pull request as a comment headed [dev queue · <tag>] and sets l.Comment to what
@@ -570,9 +582,11 @@ func (r *Runner) postLandingComment(ctx context.Context, l *Landing) {
 // repostLandingComment posts the comment of the landing record of e that an earlier pass left "not written yet" (it ended between
 // the record and the comment call) and writes the record again. A record whose comment is written or was refused, and an entry with
 // no record (its done/ file alone), are left as they are. It answers why the entry is held, "" when it is not: a queue with no
-// tracking adapter cannot post the comment, so the entry waits in pending with the record as it is. It is called only by a pass,
-// never by --enqueue-pr or --dry-run. One window stays: a pass that ends between the comment call and the second write leaves "not
-// written yet" for a comment that exists, and the next pass posts it a second time.
+// tracking adapter cannot post the comment, so the entry waits in pending with the record as it is; a record that cannot be written
+// after the comment went up holds the entry too, since done/ must not stand over a record that still says "not written yet". It is
+// called only by a pass, never by --enqueue-pr or --dry-run. One window stays: a pass that ends between the comment call and the
+// second write, or whose second write fails, leaves "not written yet" for a comment that exists, and the next pass posts it a second
+// time.
 func (r *Runner) repostLandingComment(ctx context.Context, e Entry) string {
 	path := r.findLanding(e.PR, e.Head)
 	if path == "" {
@@ -590,20 +604,30 @@ func (r *Runner) repostLandingComment(ctx context.Context, e Entry) string {
 		return "the landing comment of " + l.Tag + " cannot be posted, it stays pending: the queue has no tracking adapter"
 	}
 	r.postLandingComment(ctx, &l)
-	r.writeLanding(&l)
+	if err := r.writeLanding(&l); err != nil {
+		held := "the landing comment of " + l.Tag + " was posted (" + l.Comment + ") but its record could not be written, it stays pending: " + err.Error()
+		r.logf("%s %s: %s", e.Key, e.Head, held)
+		return held
+	}
 	r.logf("%s %s: the landing comment of %s was posted (%s)", e.Key, e.Head, l.Tag, l.Comment)
 	return ""
 }
 
-func (r *Runner) writeLanding(l *Landing) {
+// writeLanding writes <tag>.pr.json through <tag>.pr.json.new and answers why it could not.
+func (r *Runner) writeLanding(l *Landing) error {
 	data, err := json.MarshalIndent(l, "", "  ")
 	if err != nil {
-		return
+		return fmt.Errorf("landing record %s: %w", l.Tag, err)
 	}
 	path := filepath.Join(r.Cfg.RunsDir, l.Tag+".pr.json")
-	if err := os.WriteFile(path+".new", append(data, '\n'), 0o664); err == nil {
-		_ = os.Rename(path+".new", path)
+	if err := os.WriteFile(path+".new", append(data, '\n'), 0o664); err != nil {
+		return fmt.Errorf("landing record %s could not be written: %w", path, err)
 	}
+	if err := os.Rename(path+".new", path); err != nil {
+		_ = os.Remove(path + ".new")
+		return fmt.Errorf("landing record %s could not be written: %w", path, err)
+	}
+	return nil
 }
 
 // landingText is the comment body of a landing record.

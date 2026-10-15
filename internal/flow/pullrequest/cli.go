@@ -14,7 +14,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"regexp"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/gitprobe"
@@ -36,7 +35,7 @@ merge is done by the dev queue (crw manage integrate --enqueue-pr REF, then its 
 
   open   opens the pull request in OWNER/NAME from --head onto --base (default dev). Its body is --body (or the file) followed by one
          line "Carries: REF, REF" naming the issues it carries (--issue, repeated or comma-separated, OWNER/NAME#N, at least one).
-         With --push DIR the head branch of the checkout DIR is pushed to --remote (default origin; a remote name such as origin, not a URL or a path) first, never forced: a push the
+         With --push DIR the head branch of the checkout DIR is pushed to --remote (default origin; a remote configured in DIR, such as origin or team/review, not a URL or a path) first, never forced: a push the
          remote refuses opens nothing.
   show   reads the pull request: state, merged, head commit, head and base branch, the issues it carries; --checks adds the check
          runs and commit statuses of its head and their judgment (none, pending, success, failure).
@@ -223,8 +222,15 @@ func RunWith(ctx context.Context, d *Deps, args []string, stdout, stderr io.Writ
 		if err := in.Check(); err != nil {
 			return usage("%v", err)
 		}
-		if *push != "" && !remoteNameRE.MatchString(*remote) {
-			return usage("--remote %q is not a remote name", *remote)
+		if *push != "" {
+			// a configured remote of the checkout and nothing else, refused before anything is pushed
+			configured, err := configuredRemote(ctx, d.Env, *push, *remote)
+			if err != nil {
+				return failed("%v; nothing is pushed and no pull request is opened", err)
+			}
+			if !configured {
+				return usage("--remote %q is not a remote configured in %s", *remote, *push)
+			}
 		}
 		var ans Answer
 		if *push != "" {
@@ -281,9 +287,35 @@ func RunWith(ctx context.Context, d *Deps, args []string, stdout, stderr io.Writ
 	return usage("unknown command %q: open or show", sub)
 }
 
-// remoteNameRE is what --remote may be with --push: a configured remote's name (origin, upstream, my-fork.2), never an option
-// (leading dash), a path or a URL (a slash, a colon).
-var remoteNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+// configuredRemote says whether name is one of the remotes the checkout configures (git remote): any name git lists, team/review
+// and foo@bar included. A value that starts with a dash is never one, and a URL or a path is not a configured name.
+func configuredRemote(ctx context.Context, env []string, checkout, name string) (bool, error) {
+	if name == "" || strings.HasPrefix(name, "-") {
+		return false, nil
+	}
+	list, err := gitIn(ctx, env, checkout, "remote")
+	if err != nil {
+		return false, fmt.Errorf("the remotes of %s could not be listed: %w", checkout, err)
+	}
+	for _, line := range strings.Split(list, "\n") {
+		if line == name {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// gitIn runs git in the checkout with the push's environment and answers its trimmed standard output.
+func gitIn(ctx context.Context, env []string, checkout string, args ...string) (string, error) {
+	var out, errb bytes.Buffer
+	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", checkout}, args...)...)
+	cmd.Env = pushEnv(env)
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("git %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(errb.String()))
+	}
+	return strings.TrimSpace(out.String()), nil
+}
 
 // pushEnv is the environment of the push's git calls: env (nil is the process environment) without the routing variables
 // (GIT_DIR, GIT_WORK_TREE, GIT_OBJECT_DIRECTORY, GIT_NAMESPACE, ...), so -C names the repository, and GIT_TERMINAL_PROMPT=0 in
@@ -295,16 +327,7 @@ func pushEnv(env []string) []string {
 // pushBranch pushes refs/heads/<branch> of the checkout to the remote's branch of the same name, never forced, and returns the commit
 // it pushed.
 func pushBranch(ctx context.Context, env []string, checkout, remote, branch string) (string, error) {
-	gitOut := func(args ...string) (string, error) {
-		var out, errb bytes.Buffer
-		cmd := exec.CommandContext(ctx, "git", append([]string{"-C", checkout}, args...)...)
-		cmd.Env = pushEnv(env)
-		cmd.Stdout, cmd.Stderr = &out, &errb
-		if err := cmd.Run(); err != nil {
-			return "", fmt.Errorf("git %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(errb.String()))
-		}
-		return strings.TrimSpace(out.String()), nil
-	}
+	gitOut := func(args ...string) (string, error) { return gitIn(ctx, env, checkout, args...) }
 	tip, err := gitOut("rev-parse", "--verify", "refs/heads/"+branch+"^{commit}")
 	if err != nil {
 		return "", fmt.Errorf("push: the checkout %s has no branch %s: %w", checkout, branch, err)
