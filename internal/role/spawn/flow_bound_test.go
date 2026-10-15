@@ -731,6 +731,26 @@ func TestFlowBoundZeroAllowanceRefused(t *testing.T) {
 	}
 }
 
+// The critic (CRW-1434) spawns no helper: the line a critic turn of the real backend writes allows none, and the hook refuses the
+// thread's first spawn with native_limit_refused.
+func TestFlowBoundCriticTurnRefusesANativeSpawn(t *testing.T) {
+	r := newFBRig(t)
+	h := newFBHost(t)
+	_, thread := h.boundThread("critic", fbCall1)
+	line, present, err := bound.ReadLast(r.dir, thread)
+	spawnHookMust(t, err)
+	if !present || line.Role != "critic" || line.CallID != fbCall1 || line.NativeAllowance == nil || *line.NativeAllowance != 0 {
+		t.Errorf("the critic turn wrote a line of role %q with allowance %d (present %v), want a critic line that allows no helper", line.Role, line.Allowance(), present)
+	}
+	r.expectRefused(r.spawn(thread, "tool-1", `{"agent_type":"explorer","message":"TASK: q"}`), bound.ReasonNativeLimitRefused)
+	if r.claimCount(thread) != 0 {
+		t.Fatal("a claim for a critic call, which may spawn nothing")
+	}
+	if d := r.decisions(thread); len(d) != 1 || d[0].Decision != bound.DecisionRefused || d[0].Reason != bound.ReasonNativeLimitRefused || d[0].CallID != fbCall1 {
+		t.Fatalf("ledger %+v", d)
+	}
+}
+
 // CRW-SUBSPAWN-ALLOWED mints no grant on a bound thread, engine or orchestrator, and a subagent of a bound session is a leaf.
 func TestFlowBoundRecursionTokenNotMinted(t *testing.T) {
 	r := newFBRig(t)

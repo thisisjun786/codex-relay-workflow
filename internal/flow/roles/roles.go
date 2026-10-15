@@ -35,6 +35,16 @@ type Options struct {
 	QA bool
 }
 
+// NativeHelpers is how many native helpers a call of the role may spawn, as its overlay states: none for an explorer call, a
+// critic call and the QA capture call, one explorer helper for every other call. The flow binding gives a call's line this
+// allowance, so the spawn hook enforces what the overlay tells the thread.
+func NativeHelpers(role string, opts Options) int {
+	if opts.QA || role == "explorer" || role == "critic" {
+		return 0
+	}
+	return 1
+}
+
 // Separator joins the role definition and the overlay.
 const Separator = "\n\n"
 

@@ -8,6 +8,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/bound"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/roles"
 )
 
 // This file is the run's half of F14 (CRW-1207): which Codex threads are the run's own, told to the native spawn hook through
@@ -30,8 +31,9 @@ type BoundConfig struct {
 	Policy *engine.Policy
 	// Writer appends the lines; nil is a writer over bound.Dir.
 	Writer *bound.Writer
-	// NativeAllowance is how many native helpers the call of a turn may spawn (0 or 1); nil gives 0 to an explorer call and to
-	// the QA capture call (SP-QA-1, the turns marked qa: the run starts the oracle passes itself) and 1 to every other.
+	// NativeAllowance is how many native helpers the call of a turn may spawn (0 or 1); nil gives what the role's overlay states
+	// (roles.NativeHelpers): 0 to an explorer call, to a critic call and to the QA capture call (SP-QA-1, the turns marked qa:
+	// the run starts the oracle passes itself), 1 to every other.
 	NativeAllowance func(engine.TurnSpec) int
 }
 
@@ -66,10 +68,7 @@ func (c *BoundConfig) allowance(spec engine.TurnSpec) int {
 	if c.NativeAllowance != nil {
 		return min(1, max(0, c.NativeAllowance(spec)))
 	}
-	if spec.Role == bound.HelperExplorer || spec.QA {
-		return 0
-	}
-	return 1
+	return roles.NativeHelpers(spec.Role, roles.Options{QA: spec.QA})
 }
 
 // bindError is a binding that could not be written, as an explicit answer the engine holds the call for.

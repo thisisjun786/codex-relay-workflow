@@ -143,6 +143,9 @@ func TestOverlayReplacesLeafSentence(t *testing.T) {
 		} else if row.role != "architect" || !strings.Contains(overlay, "carries no leaf sentence") {
 			t.Errorf("%s: the definition has no LEAF sentence and the overlay does not say so", label)
 		}
+		if got, want := NativeHelpers(row.role, row.opts), map[bool]int{true: 1, false: 0}[row.helper]; got != want {
+			t.Errorf("%s: NativeHelpers gives %d, but the overlay allows %d", label, got, want)
+		}
 		switch {
 		case row.helper && (!helper.MatchString(overlay) || none.MatchString(overlay)):
 			t.Errorf("%s: the overlay must allow one explorer helper", label)
