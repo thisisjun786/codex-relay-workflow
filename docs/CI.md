@@ -112,7 +112,8 @@ output, at most 4 KB; a Go test that outlived its `-timeout` is named with a `ti
 so a load timeout reads as a timeout, not as a verdict on the code. The steps inherit `PATH`.
 They do not inherit `TMPDIR`: a run gives its steps a fresh, empty `TMPDIR` of its own (CRW-1489),
 `ci<8 hex>` directly below the caller's `TMPDIR` or, when that does not fit, `t<8 hex>` directly
-below the work root, and removes it after the run (`--keep` keeps and prints it). A candidate's
+below the work root, and removes it after the run (`--keep` keeps and prints it; a run killed before
+its cleanup leaves it, see [Leftover verify trees](#leftover-verify-trees)). A candidate's
 parent is taken at its physical place, resolved from the value as written the way the kernel
 resolves it (links followed before a `..`, not a lexical clean first, so `/a/link/../tmp` is the
 `tmp` beside link's target, not `/a/tmp`); a value that does not resolve is skipped with its
@@ -479,6 +480,41 @@ checked the list and no test run of yours is still going:
 find -H "${TMPDIR:-/tmp}" -mindepth 1 -maxdepth 1 -type d -name 'crw-relay-test-*' -mtime +0 \
   -exec sh -c 'chmod -R u+rwX -- "$@" && rm -rf -- "$@"' sh {} +
 ```
+
+## Leftover verify trees
+
+A `crw-dev ci local` run removes its trees in a deferred cleanup, so a run killed by SIGKILL or by a timeout
+leaves them, and `--keep` keeps them on purpose (it prints each path). Three kinds can remain:
+
+- `crw-ci-local-*`, the run's worktree and home, directly in the work root (default `~/.local/state/crw-ci-local`, or the
+  `--work-root` you passed);
+- `t<8 hex>`, the steps' `TMPDIR`, directly in the work root, when the caller's `TMPDIR` did not fit;
+- `ci<8 hex>`, the steps' `TMPDIR`, directly in the caller's `TMPDIR` (`/tmp` when it is unset), when that fit. This is
+  the usual one.
+
+Nothing removes them. The first two sit in a directory only this command uses, so a `crw-ci-local-*` or `t<8 hex>` name
+there is a run's own. The `ci<8 hex>` name is short and generic, and the caller's `TMPDIR` is often shared (`/tmp`), so
+the code never deletes by that name: another tool's directory could match. Read the list before you remove anything.
+To see the ones more than a day old (a younger one may belong to a run in progress), which removes nothing:
+
+```sh
+find -H "${XDG_STATE_HOME:-$HOME/.local/state}/crw-ci-local" -mindepth 1 -maxdepth 1 -type d \( -name 'crw-ci-local-*' -o -name 't????????' \) -mtime +0
+find -H "${TMPDIR:-/tmp}" -mindepth 1 -maxdepth 1 -type d -name 'ci????????' -mtime +0
+```
+
+A step's test may leave read-only directories. To remove the ones the lists show, repairing permissions first, once you have
+checked them and no run of yours is still going (use the second line for the `ci????????` list only if every name in it is
+yours):
+
+```sh
+find -H "${XDG_STATE_HOME:-$HOME/.local/state}/crw-ci-local" -mindepth 1 -maxdepth 1 -type d \( -name 'crw-ci-local-*' -o -name 't????????' \) -mtime +0 \
+  -exec sh -c 'chmod -R u+rwX -- "$@" && rm -rf -- "$@"' sh {} +
+find -H "${TMPDIR:-/tmp}" -mindepth 1 -maxdepth 1 -type d -name 'ci????????' -mtime +0 \
+  -exec sh -c 'chmod -R u+rwX -- "$@" && rm -rf -- "$@"' sh {} +
+```
+
+A killed run's worktree may still be registered in the checkout it came from; `git worktree prune` there drops the
+registrations whose directory is gone.
 
 ## Plugin package
 
