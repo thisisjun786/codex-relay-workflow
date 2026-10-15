@@ -51,14 +51,34 @@ const (
 //
 // The quota texts are UNCONFIRMED: no real quota sample of the tool has been captured, and the wording is the server's. They are
 // matched only on a failed call or a blank answer, so a finding that quotes one is unaffected. Replace them once a sample exists.
+//
+// BugbotProfile is the uncommitted mode: its clean sentence takes the scope phrases of bugbotNoBugsScope.uncommitted.
 func BugbotProfile() Profile {
+	p := bugbotCall("bugbot")
+	p.Answer = bugbotAnswer(bugbotNoBugsScope.uncommitted)
+	return p
+}
+
+// BugbotCommittedProfile is the committed mode of the unit check (CRW-1468: land-head's check of base..head): the same cursor-agent
+// call as BugbotProfile, whose prompt names the range, with an answer reader that takes the range's scope phrases
+// (bugbotNoBugsScope.committed: "in the changes between <base> and <head>", "in the committed changes", "in <base>..<head>") and
+// refuses a result whose prose outside the findings tables names the uncommitted, staged or unstaged changes or the working tree: the
+// range is checked in a clean checkout of its head, so a review of any of those reviewed nothing of the range. Whether cursor-agent reviews a range
+// is UNCONFIRMED (no real committed-mode sample yet); the reader is tested on synthetic envelopes of the uncommitted mode's shape.
+func BugbotCommittedProfile() Profile {
+	p := bugbotCall("bugbot-committed")
+	p.Answer = bugbotAnswer(bugbotNoBugsScope.committed)
+	return p
+}
+
+// bugbotCall is the cursor-agent call both Bugbot profiles make, under the profile's name and without its answer reader.
+func bugbotCall(name string) Profile {
 	return Profile{
-		Name:       "bugbot",
+		Name:       name,
 		Argv:       []string{"cursor-agent", "-p", "--mode", "ask", "--trust", "--model", bugbotModel, "--output-format", "json"},
 		Model:      bugbotModel,
 		Effort:     bugbotEffort,
 		QuotaTexts: []string{"usage limit", "rate limit", "resource_exhausted", "too many requests", "429", "spend limit", "upgrade"},
-		Answer:     bugbotAnswer,
 	}
 }
 
@@ -79,9 +99,14 @@ var bugbotPartial = regexp.MustCompile(`\b(` + strings.Join([]string{
 	`not clean`, `removed`, `dropped`, `omitted`,
 }, "|") + `)\b`)
 
-// bugbotAnswer reads cursor-agent's envelope and turns its result prose into a document of AnswerSchema. A blank result is a
-// blank answer.
-func bugbotAnswer(stdout []byte) ([]byte, error) {
+// bugbotAnswer is the answer reader of a Bugbot profile whose scope is scope: it reads cursor-agent's envelope and turns its result
+// prose into a document of AnswerSchema. A blank result is a blank answer. Prose outside the findings tables that names a scope the
+// profile refuses (scope.wrong) is not an answer, and a clean sentence takes only the profile's scope phrases (scope.phrase).
+func bugbotAnswer(scope bugbotScope) func(stdout []byte) ([]byte, error) {
+	return func(stdout []byte) ([]byte, error) { return readBugbot(stdout, scope) }
+}
+
+func readBugbot(stdout []byte, scope bugbotScope) ([]byte, error) {
 	var env struct {
 		Result  *string `json:"result"`
 		IsError bool    `json:"is_error"`
@@ -114,6 +139,11 @@ func bugbotAnswer(stdout []byte) ([]byte, error) {
 	if w := bugbotPartial.FindString(strings.ToLower(prose)); w != "" {
 		return nil, fmt.Errorf("the review was not whole (%q): %s", w, firstLine([]byte(prose)))
 	}
+	if scope.wrong != nil {
+		if w := scope.wrong.FindString(strings.ToLower(prose)); w != "" {
+			return nil, fmt.Errorf("the review names another scope (%q): %s", w, firstLine([]byte(prose)))
+		}
+	}
 	type finding struct {
 		Severity string `json:"severity"`
 		File     string `json:"file"`
@@ -144,7 +174,7 @@ func bugbotAnswer(stdout []byte) ([]byte, error) {
 				doc.Verdict = VerdictNeedsChanges
 			}
 		}
-	case saysNoBugs(prose):
+	case saysNoBugs(prose, scope.phrase):
 	default:
 		return nil, fmt.Errorf("the result has neither a findings table nor a last sentence %q: %s", "Bugbot found no bugs.", firstLine([]byte(text)))
 	}
@@ -154,23 +184,55 @@ func bugbotAnswer(stdout []byte) ([]byte, error) {
 // bugbotNoBugs is the sentence of a clean Bugbot review, lower-cased and without its full stop.
 const bugbotNoBugs = "bugbot found no bugs"
 
-// bugbotNoBugsScope is the short scope phrase Bugbot may append to its clean sentence ("Bugbot found no bugs in the uncommitted
-// changes."), lower-cased, at the end of the sentence without its full stop. It must name the scope the request asks for, all
-// uncommitted changes of the worktree: in/on/for/across, optionally "the", optionally "uncommitted" or "working tree"
-// ("working-tree"), then changes, diff, code or files; or "the working tree". A phrase with any other qualifier (staged,
-// committed, changed, modified, a number, "first N") names another or a narrower scope, and one that says more ("in the files it
-// could open") is not taken either.
-var bugbotNoBugsScope = regexp.MustCompile(`[ \t]+(in|on|for|across)(( the)?( (uncommitted|working[- ]tree))? (changes|diff|code|files)| the working tree)$`)
+// bugbotScope is what a Bugbot profile's reader takes as the scope of its request: phrase is the short scope phrase Bugbot may append
+// to its clean sentence ("Bugbot found no bugs in the uncommitted changes."), matched lower-cased at the end of the sentence without
+// its full stop; wrong, when set, is a scope named anywhere in the prose outside the findings tables that makes the result no answer.
+type bugbotScope struct {
+	phrase, wrong *regexp.Regexp
+}
+
+// bugbotRev is a revision a committed scope phrase names, lower-cased: a commit id of 7 to 64 hex digits (optionally in backticks),
+// or "the base", "the head"; bugbotRange is a range of two of them: "between <a> and <b>", "from <a> to <b>", or "<a>..<b>" /
+// "<a>...<b>". A symbolic ref (HEAD, HEAD~1, a branch) is not taken: the request names its range by commit ids, and "HEAD~1..HEAD"
+// names a range that may be narrower than the one asked for. The reader does not see the request, so a phrase naming other commit
+// ids than the request's is not caught here.
+const (
+	bugbotRev   = "(the (base|head)|`?[0-9a-f]{7,64}`?)"
+	bugbotDots  = bugbotRev + `\.\.\.?` + bugbotRev
+	bugbotRange = "((between|from) " + bugbotRev + " (and|to) " + bugbotRev + "|(in |of |for )?" + bugbotDots + ")"
+)
+
+// bugbotNoBugsScope is the scope reader of each Bugbot profile (one regexp per profile).
+//
+// uncommitted: the phrase must name the scope the request asks for, all uncommitted changes of the worktree: in/on/for/across,
+// optionally "the", optionally "uncommitted" or "working tree" ("working-tree"), then changes, diff, code or files; or "the working
+// tree". A phrase with any other qualifier (staged, committed, changed, modified, a number, "first N") names another or a narrower
+// scope, and one that says more ("in the files it could open") is not taken either.
+//
+// committed: the phrase must name the range the request asks for: in/on/for/across, optionally "the", optionally "committed", then
+// changes, diff, code, files, commits, range or commit range, optionally followed by the range (bugbotRange) and the request's own
+// "(git diff <base>..<head>)"; or the range alone ("in <base>..<head>"). "uncommitted", "working tree", "staged" or any other
+// qualifier is not taken, and prose outside the tables that names the uncommitted changes, the working tree or the staged (or
+// unstaged) changes is no answer: the range is checked in a clean checkout, where each of those is empty.
+var bugbotNoBugsScope = struct {
+	uncommitted, committed bugbotScope
+}{
+	uncommitted: bugbotScope{phrase: regexp.MustCompile(`[ \t]+(in|on|for|across)(( the)?( (uncommitted|working[- ]tree))? (changes|diff|code|files)| the working tree)$`)},
+	committed: bugbotScope{
+		phrase: regexp.MustCompile(`[ \t]+(in|on|for|across)(( the)?( committed)? (changes|diff|code|files|commits|range|commit range)( ` + bugbotRange + `)?| ` + bugbotDots + `)( \(git diff ` + bugbotDots + `\))?$`),
+		wrong:  regexp.MustCompile(`\b(uncommitted|working[- ]tree|(un)?staged|staging area)\b`),
+	},
+}
 
 // saysNoBugs reports whether prose affirms a clean review: its last non-empty line ends with the sentence "Bugbot found no bugs"
-// (any case), optionally followed by a scope phrase (bugbotNoBugsScope), then only '.' or '!', and that sentence starts the line or
+// (any case), optionally followed by the profile's scope phrase (bugbotScope.phrase), then only '.' or '!', and that sentence starts the line or
 // follows the end of an earlier sentence. cursor-agent glues its sentences without a space ("...launching the reviewer.Bugbot found
 // no bugs."), so the line may carry earlier sentences; "whether Bugbot found no bugs", "Bugbot found no bugs?" or the sentence
 // followed by more prose are not affirmations. The partial-review words are read before this, so they still win.
-func saysNoBugs(prose string) bool {
+func saysNoBugs(prose string, scope *regexp.Regexp) bool {
 	lines := strings.Split(strings.TrimSpace(prose), "\n")
 	last := strings.TrimRight(strings.ToLower(strings.TrimSpace(lines[len(lines)-1])), ".!")
-	last = bugbotNoBugsScope.ReplaceAllString(last, "")
+	last = scope.ReplaceAllString(last, "")
 	before, ok := strings.CutSuffix(last, bugbotNoBugs)
 	if !ok {
 		return false

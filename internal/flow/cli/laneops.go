@@ -178,7 +178,7 @@ const shippedUnitCheckLimit = 10 * time.Minute
 // shippedUnitCheck is the unit check of the shipped lane (CRW-1463): the review adapter over the tool runner (reviewadapter.ExecRun) with
 // ops.Snapshot as its fingerprint, the value of an executor call's pending tree and of crw.commit's tree, so the tree an uncommitted check
 // saw is the tree of the head its node commits. The uncommitted mode runs Bugbot (reviewadapter.BugbotProfile); the committed mode
-// (land-head's range) is refused until its profile is wired.
+// (land-head's range, CRW-1468) runs Bugbot with the range's scope reader (reviewadapter.BugbotCommittedProfile).
 func shippedUnitCheck() *ops.UnitCheck {
 	git := ops.ExecGit("git")
 	return &ops.UnitCheck{
@@ -188,7 +188,7 @@ func shippedUnitCheck() *ops.UnitCheck {
 			case ops.UnitCheckUncommitted:
 				return reviewadapter.BugbotProfile(), nil
 			case ops.UnitCheckCommitted:
-				return reviewadapter.Profile{}, errors.New("the shipped unit check's committed mode is not wired")
+				return reviewadapter.BugbotCommittedProfile(), nil
 			}
 			return reviewadapter.Profile{}, fmt.Errorf("the shipped unit check has no mode %q", mode)
 		},
