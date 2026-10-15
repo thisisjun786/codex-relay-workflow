@@ -1083,6 +1083,18 @@
   {"flag":"--event","required":true},
   {"flag":"--ack-turn","required":true,"help":"the caller's own turn id: the claim's turn, the acknowledgement's turn and the verdict's turn"},
   {"flag":"--verdict-file","required":true,"help":"a JSON object of the verdict command's options: verdict, criterion, finding, criteria, restoration, reason, expect-criteria-digest, verified-head"}]},
+{"name":"supervisor-list","summary":"one recipient's supervisor messages in the order the channel sends them, with counts by state, hold, project and obligation kind (CRW-1486). Reads only, through the read-only store","options":[
+  {"flag":"--recipient","required":true,"help":"the task the messages are addressed to"},
+  {"flag":"--project","help":"only this project's messages"},
+  {"flag":"--state","choices":["unsent","all"],"help":"unsent (the default): queued, deferred busy or withheld before a send; all: every state"},
+  {"flag":"--hold","help":"only messages carrying this hold word, or none for messages with no hold"}]},
+{"name":"supervisor-acknowledge","summary":"parks a recipient's old notifications without a turn each (CRW-1486): an unsent message with no hold that no attempt may have sent is held superseded_by_report, with one supervisor_message_superseded journal row naming supervisor-acknowledge and the actor, all in one transaction. A decision, a fault notice and a message being sent are never parked; each message left is reported with its reason. Staging what a parked message is for again releases it","options":[
+  {"flag":"--recipient","required":true,"help":"the task the messages are addressed to"},
+  {"flag":"--actor","required":true,"help":"the task that acknowledges them, written into each journal row"},
+  {"flag":"--all-informational","kind":"true","help":"every message no send of which has settled whose kind reports something finished (completion, flow_completion, flow_milestone_report, lead_report); a block, an escalation and every other kind is left not_informational"},
+  {"flag":"--message","kind":"append","help":"a message id to park, whatever its notification kind; repeat for several"},
+  {"flag":"--project","help":"with --all-informational: only this project's messages"},
+  {"flag":"--staged-before","help":"with --all-informational: only messages staged before this ISO 8601 time (with its offset, such as 2026-10-13T12:50:00Z)"}],"groups":[{"required":true,"options":["--all-informational","--message"]}]},
 {"name":"job","commands":true,"summary":"workspace-local background jobs"},
 {"name":"job run","summary":"run [--note TEXT] [--json] -- <command...>","options":[{"flag":"--note"},{"flag":"--json","kind":"true"}]},
 {"name":"job list","options":[{"flag":"--json","kind":"true"}]},
