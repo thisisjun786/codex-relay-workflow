@@ -74,7 +74,8 @@ func (p *placedFake) Snapshot(ctx context.Context, path string) (string, error) 
 // TestBuildLaneWiresTheUnitCheck (CRW-1463): BuildLane installs crw.unitCheck in the run's operations; a script that builds a node in a
 // worktree and calls crw.unitCheck on the call reaches the unit check LaneOptions names (the lab's checker), which is given the node's
 // worktree in the uncommitted mode, and the run's journal keeps the row of role unit-check. With no unit check named the shipped one is
-// wired: the op answers the shipped profile's refusal of the committed mode, not that no checker is wired.
+// wired: the op takes the shipped committed profile (CRW-1468) and stops at the journal that records no worktree, not that no checker is
+// wired.
 func TestBuildLaneWiresTheUnitCheck(t *testing.T) {
 	isolateGit(t)
 	w := newWorld(t)
@@ -146,14 +147,14 @@ func TestBuildLaneWiresTheUnitCheck(t *testing.T) {
 	}
 	_, err = op.Run(context.Background(), engine.OpRequest{RunID: "run-ucwire0002", CallID: "c1", RequestID: "req-c1", Args: json.RawMessage(`["A", null, {"commit": "abc", "base": "def"}]`),
 		Journal: engine.NewMemoryJournal()})
-	if err == nil || !strings.Contains(err.Error(), "committed mode is not wired") || strings.Contains(err.Error(), "no unit checker is wired") {
+	if err == nil || !strings.Contains(err.Error(), "no worktree is recorded") || strings.Contains(err.Error(), "no unit checker is wired") || strings.Contains(err.Error(), "profile") {
 		t.Errorf("the shipped unit check in the committed mode: %v", err)
 	}
 }
 
 // TestShippedUnitCheckIsTheBugbotAdapter (CRW-1463): the shipped unit check is the review adapter over the tool runner and ops.Snapshot
 // as its fingerprint, so the tree a check saw is the pending tree crw.commit commits; the uncommitted mode runs Bugbot, the committed mode
-// is refused until its profile is wired, and the call is limited to ten minutes.
+// runs Bugbot with the range's scope reader (CRW-1468), and the call is limited to ten minutes.
 func TestShippedUnitCheckIsTheBugbotAdapter(t *testing.T) {
 	isolateGit(t)
 	uc := shippedUnitCheck()
@@ -168,8 +169,8 @@ func TestShippedUnitCheckIsTheBugbotAdapter(t *testing.T) {
 	if err != nil || p.Name != reviewadapter.BugbotProfile().Name || p.Model != reviewadapter.BugbotProfile().Model {
 		t.Errorf("the uncommitted profile %+v %v", p, err)
 	}
-	if _, err := uc.Profile("committed"); err == nil || !strings.Contains(err.Error(), "committed mode is not wired") {
-		t.Errorf("the committed profile: %v", err)
+	if p, err := uc.Profile("committed"); err != nil || p.Name != reviewadapter.BugbotCommittedProfile().Name || p.Model != reviewadapter.BugbotCommittedProfile().Model || p.Answer == nil {
+		t.Errorf("the committed profile %+v %v", p, err)
 	}
 	if _, err := uc.Profile("other"); err == nil {
 		t.Error("an unknown mode has a profile")

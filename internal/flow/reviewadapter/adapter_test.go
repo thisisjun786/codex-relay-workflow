@@ -858,3 +858,110 @@ func TestBugbotNoBugsTakesTheScopePhrase(t *testing.T) {
 		})
 	}
 }
+
+// TestBugbotCommittedProfileReadsTheRangeScope (CRW-1468): the committed-mode profile is the same Bugbot call as BugbotProfile, but
+// its clean-answer reader takes the scope phrases of a committed range ("in the changes between <base> and <head>", "in the
+// committed changes", "in <base>..<head>") and refuses the uncommitted, staged or working-tree scope, in the scope phrase or anywhere
+// in the prose outside the tables (a range check that reviewed the working tree reviewed the clean checkout, not the range); BugbotProfile
+// keeps refusing "committed"; a findings table reads the same in both. A range named by symbolic refs (HEAD~1..HEAD, a branch) is
+// refused: the request names its range by commit ids.
+func TestBugbotCommittedProfileReadsTheRangeScope(t *testing.T) {
+	committed, uncommitted := BugbotCommittedProfile(), BugbotProfile()
+	if committed.Name == uncommitted.Name || !slices.Equal(committed.Argv, uncommitted.Argv) || committed.Model != uncommitted.Model ||
+		committed.Effort != uncommitted.Effort || committed.Family != uncommitted.Family || !slices.Equal(committed.QuotaTexts, uncommitted.QuotaTexts) || committed.Answer == nil {
+		t.Fatalf("the committed profile %+v is not the Bugbot call of %+v under its own name", committed, uncommitted)
+	}
+	for _, text := range []string{
+		"Bugbot found no bugs.",
+		"Bugbot found no bugs in the changes between 3f2a91c and 8be04d7.",
+		"Bugbot found no bugs in the changes between 3f2a91c0d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9 and 8be04d7.",
+		"Bugbot found no bugs in the changes from 3f2a91c to 8be04d7!",
+		"Bugbot found no bugs in the diff between `3f2a91c` and `8be04d7`.",
+		"Bugbot found no bugs in the changes between the base and the head.",
+		"Bugbot found no bugs in the committed changes.",
+		"Bugbot found no bugs in the commits between 3f2a91c and 8be04d7.",
+		"Bugbot found no bugs in 3f2a91c..8be04d7.",
+		"Bugbot found no bugs in `3f2a91c..8be04d7`.",
+		"Bugbot found no bugs in the range 3f2a91c..8be04d7.",
+		"Bugbot found no bugs in the diff 3f2a91c..8be04d7.",
+		"Bugbot found no bugs in the changes between 3f2a91c and 8be04d7 (git diff 3f2a91c..8be04d7).",
+		"I'll review the changes between 3f2a91c and 8be04d7.Bugbot found no bugs in the committed changes.",
+		"Bugbot found no bugs on the diff.",
+		"BUGBOT FOUND NO BUGS IN THE CHANGES BETWEEN 3F2A91C AND 8BE04D7.",
+	} {
+		t.Run("committed clean: "+text, func(t *testing.T) {
+			res := check(t, committed, fakeRun{stdout: bugbotEnvelope(t, text)})
+			wantState(t, res, StateOK)
+			if res.Verdict != VerdictVerified || len(res.Findings) != 0 {
+				t.Fatalf("result = %+v", res)
+			}
+		})
+	}
+	for _, text := range []string{
+		"Bugbot found no bugs in the uncommitted changes.",
+		"Bugbot found no bugs in the working tree.",
+		"Bugbot found no bugs on the working-tree diff.",
+		"Bugbot found no bugs in the working tree code.",
+		"Bugbot found no bugs for the uncommitted files.",
+		"I'll review only the uncommitted changes. Checking the review tool schema, then starting the Bugbot review.Bugbot found no bugs.",
+		"I'll review the working tree.Bugbot found no bugs in the committed changes.",
+		"Bugbot found no bugs in the staged changes.",
+		"I reviewed the staged changes.Bugbot found no bugs.",
+		"I reviewed the unstaged changes.Bugbot found no bugs in the committed changes.",
+		"Nothing is in the staging area.Bugbot found no bugs.",
+		"Bugbot found no bugs in the changes between 3f2a91c and 8be04d7 it reviewed.",
+		"Bugbot found no bugs in the changes between 3f2a91c and the files it could open.",
+		"Bugbot found no bugs in the first 40 files.",
+		"Bugbot found no bugs in HEAD..HEAD.",
+		"Bugbot found no bugs in the changes between HEAD~1 and HEAD.",
+		"Bugbot found no bugs in the changes between main and 8be04d7.",
+		"Bugbot found no bugs in origin/main..8be04d7.",
+		"Bugbot found no bugs in the changes between 3f2a91 and 8be04d7.",
+		"Bugbot found no bugs in the changes between 3f2a91c and 8be04d7?",
+		"It skipped 74 changed files.Bugbot found no bugs in the changes between 3f2a91c and 8be04d7.",
+		"Bugbot found no bugs in the changes between 3f2a91c and 8be04d7.\n\nThe review then crashed before it covered the tests.",
+	} {
+		t.Run("committed not an answer: "+text, func(t *testing.T) {
+			wantState(t, check(t, committed, fakeRun{stdout: bugbotEnvelope(t, text)}), StateInvalid)
+		})
+	}
+	t.Run("the real uncommitted clean reviews are no committed answer", func(t *testing.T) {
+		wantState(t, check(t, committed, fakeRun{stdout: bugbotNoBugsFixture}), StateInvalid)
+		wantState(t, check(t, committed, fakeRun{stdout: bugbotNoBugsScopeFixture}), StateInvalid)
+		wantState(t, check(t, uncommitted, fakeRun{stdout: bugbotNoBugsFixture}), StateOK)
+		wantState(t, check(t, uncommitted, fakeRun{stdout: bugbotNoBugsScopeFixture}), StateOK)
+	})
+	for _, text := range []string{
+		"Bugbot found no bugs in the committed changes.",
+		"Bugbot found no bugs in the changes between 3f2a91c and 8be04d7.",
+		"Bugbot found no bugs in 3f2a91c..8be04d7.",
+	} {
+		t.Run("uncommitted not an answer: "+text, func(t *testing.T) {
+			wantState(t, check(t, uncommitted, fakeRun{stdout: bugbotEnvelope(t, text)}), StateInvalid)
+		})
+	}
+	t.Run("a findings table reads the same in both", func(t *testing.T) {
+		table := "Bugbot found 2 findings.\n\n" +
+			"| Severity | Location (file:line) | Finding |\n| --- | --- | --- |\n" +
+			"| medium | internal/quote/quote.go:25 | An empty string panics with an index out of range. |\n" +
+			"| low | internal/quote/quote.go:12 | The helper name does not say what it returns. |"
+		a := check(t, committed, fakeRun{stdout: bugbotEnvelope(t, table)})
+		b := check(t, uncommitted, fakeRun{stdout: bugbotEnvelope(t, table)})
+		wantState(t, a, StateOK)
+		wantState(t, b, StateOK)
+		if a.Verdict != VerdictNeedsChanges || a.Verdict != b.Verdict || len(a.Findings) != 2 || !slices.Equal(a.Findings, b.Findings) {
+			t.Fatalf("committed %+v\nuncommitted %+v", a, b)
+		}
+	})
+	t.Run("a committed findings table whose prose names the working tree is no answer", func(t *testing.T) {
+		wantState(t, check(t, committed, fakeRun{stdout: bugbotEnvelope(t, bugbotTable)}), StateInvalid)
+		wantState(t, check(t, uncommitted, fakeRun{stdout: bugbotEnvelope(t, bugbotTable)}), StateOK)
+	})
+	t.Run("a committed error envelope is the tool's report", func(t *testing.T) {
+		b, err := json.Marshal(map[string]any{"type": "result", "subtype": "error", "is_error": true, "result": "You've hit your usage limit."})
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantState(t, check(t, committed, fakeRun{stdout: string(b) + "\n"}), StateQuota)
+	})
+}
