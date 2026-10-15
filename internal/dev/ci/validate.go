@@ -437,6 +437,13 @@ func Validate(args []string, stdout, stderr io.Writer) int {
 	}
 	blobErrs, blobSummary := largeBlobCheck(root, os.Getenv)
 	errs = append(errs, blobErrs...)
+	// The commit titles of the same range, a warning only (CRW-1511): judged on a pass that has a base.
+	var titleWarnings []string
+	if len(blobErrs) == 0 && blobSummary != "" {
+		if base, err := largeBlobRange(root, os.Getenv); err == nil && base != "" {
+			titleWarnings = commitTitleWarnings(root, base)
+		}
+	}
 	if err := refactorBacklogError(root); err != nil {
 		errs = append(errs, err.Error())
 	}
@@ -448,6 +455,9 @@ func Validate(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "Validated %d skills, local link paths and no Python outside skill assets.\n", count)
 	if blobSummary != "" {
 		fmt.Fprintln(stdout, blobSummary)
+	}
+	for _, warning := range titleWarnings {
+		fmt.Fprintln(stdout, warning)
 	}
 	if modNote != "" {
 		fmt.Fprintln(stdout, modNote)
