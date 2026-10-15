@@ -168,7 +168,7 @@ func TestAttemptCharacterization_an_unknown_message_is_refused_before_anything_i
 	since := journalSeq(t, f)
 	record, err := f.c.Attempt(f.ctx, "no-such-message", host, charNow)
 	var refusal Refusal
-	if record != nil || !errors.As(err, &refusal) || refusal.Reason != "not_claimable" || refusal.Detail != "no supervisor message is staged as 'no-such-message'" {
+	if record != nil || !errors.As(err, &refusal) || refusal.Reason != "not_claimable" || refusal.Detail != "no 부모 message is staged as 'no-such-message'" {
 		t.Fatalf("record %v err %v", record, err)
 	}
 	if journalSeq(t, f) != since || len(host.sends) != 0 {
