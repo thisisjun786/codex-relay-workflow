@@ -1,11 +1,11 @@
 # The integration queue: `crw manage integrate`
 
-Here the parent (relay role `parent`) is a relay role, read through [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+The sessions in this document are named by [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and an issue child is no layer.
 
 `crw manage integrate` is the product form of the shell queue runner that merges gated heads onto `dev`. It covers the
 plain-head path, where the queue holds a commit per issue and the runner merges, verifies and pushes, and the pull request of a
 milestone ([Pull requests](#pull-requests-pr-unit-landing)). It reads and writes no relay
-record. A node's `merged` mark, the reach observation and the relationship and child clean-up still belong to the parent that owns the
+record. A node's `merged` mark, the reach observation and the relationship and issue child clean-up still belong to the project session that owns the
 node (see [DAG scheduler](dag-scheduler.md), "Commit acceptance and local integration"); the queue does not replace them and does not decide
 who may integrate. Code: `internal/integrator` (the logic) and `internal/manage/integrate.go` (the command).
 
@@ -107,7 +107,7 @@ use up the run another member is owed. A new head under the same issue number st
 
 ## Pull requests (PR-unit landing)
 
-A project session (relay role `parent`) lands its milestone through one pull request. The plan's target `base_ref` is the milestone integration branch, so
+A project session lands its milestone through one pull request. The plan's target `base_ref` is the milestone integration branch, so
 `crw.integrate` lands each node there exactly as it lands one on `dev` (merge commit, verification of the merged tree, compare-and-swap
 of the branch). The project session then opens one pull request from that branch toward `dev`, naming the issues it carries
 (`crw flow pr open`, which pushes the branch first), and puts it into this queue with `crw manage integrate --enqueue-pr OWNER/NAME#N`.
