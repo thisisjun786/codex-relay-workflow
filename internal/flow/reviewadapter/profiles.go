@@ -25,7 +25,14 @@ type Profile struct {
 	QuotaTexts []string
 	// Answer reads the tool's stdout for the request it answers: a reader of a committed range (Ranged) reads the range from the
 	// request (Request.Base, Request.Head) and takes only an answer about it.
+	// The request also names the worktree the tool ran in (Request.Worktree), so a reader of a tool that prints absolute paths under
+	// it can make them relative (FindingID hashes the file).
 	Answer func(stdout []byte, req Request) ([]byte, error)
+	// Args gives the arguments the runner puts after Argv for a request. Nil: the prompt alone, as the last argument. A tool that
+	// takes no prompt, or takes the request's range as arguments, returns its own (Request.Base); the record then names the bytes it
+	// was given (Result.PromptSent and PromptDigest: the prompt only when the arguments hold it). It is called more than once for one
+	// request (Check, then the runner), so it must give the same arguments each time; an error refuses the request before any call.
+	Args func(req Request) ([]string, error)
 	// Ranged is set for a profile that judges a committed range: Check refuses a request that names no range (Base and Head).
 	Ranged bool
 }
