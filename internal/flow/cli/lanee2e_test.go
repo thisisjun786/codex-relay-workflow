@@ -133,3 +133,104 @@ func TestDesignAuditCarriesPriorFindingsAndDispositionsFromRoundTwo(t *testing.T
 		t.Errorf("the second round's critic packet lacks %q:\n%s", want, r2)
 	}
 }
+
+// TestReplanCriticAndExplorerCallsCarryTheSignalHead (CRW-1458): a re-plan's critic and explorer calls are made at the head of the
+// signal, as the re-plan's architect turn is. Three issues in one milestone, C-1 then A-1 then B-1: C-1 lands first, so the integration
+// tip the signal reads is not the head the DESIGN ran at. A-1's build and fix RECEIPTs each report a plan mismatch (its first review
+// asks for a fix with one P2 defect), and the second makes the milestone re-plan while B-1 has not started. The re-plan's DESIGN raises
+// one open question the first did not, so an explorer runs in its audit round. The re-plan's audit and explorer calls pin the signal's
+// tip, and the critic's packet names the head, the range from the DESIGN's base and the heads landed (C-1); the first DESIGN's audit
+// and explorer calls pin no head and the critic's packet has no HEAD line; B-1 is released after the re-plan.
+func TestReplanCriticAndExplorerCallsCarryTheSignalHead(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "C-1", Milestone: "M1"}, labIssue{Key: "A-1", Milestone: "M1", After: []string{"C-1"}}, labIssue{Key: "B-1", Milestone: "M1", After: []string{"A-1"}})
+	nodeA, nodeB, nodeC := l.nodeOf["A-1"], l.nodeOf["B-1"], l.nodeOf["C-1"]
+	first := ops.OpenQuestion{ID: "q1", Question: "which file holds the base text?", Scope: "repo", FilesNeeded: []string{"README.md"}}
+	again := ops.OpenQuestion{ID: "q2", Question: "which node's file did the landed range add?", Scope: "repo", FilesNeeded: []string{"README.md"}}
+	l.designEdit = func(d *ops.Design) { d.OpenQuestions = []ops.OpenQuestion{first} }
+	// the number of effect-bearing relay calls made when the re-plan's architect turn ran
+	replanAt := -1
+	l.turn = func(c labCall, r fakehost.TurnRequest) (fakehost.TurnPlan, bool) {
+		switch {
+		case strings.HasPrefix(c.Label, "replan:"):
+			l.mu.Lock()
+			replanAt = len(l.effects)
+			l.mu.Unlock()
+			d := l.design()
+			d.OpenQuestions = append(d.OpenQuestions, again)
+			return labSay(d), true
+		case strings.HasPrefix(c.Label, "build:"+nodeA+":") || strings.HasPrefix(c.Label, "fix:"+nodeA+":"):
+			return l.executorTurn(c, map[string]any{"plan_mismatch": "the plan assumed something else: " + c.Label}), true
+		case c.Label == "review:"+nodeA+":r1":
+			return labSay(labVerdict(false, labDefect("d1", "P2", "fix this"))), true
+		}
+		return fakehost.TurnPlan{}, false
+	}
+	spec := l.start("start", "project-lane", "--args", fmt.Sprintf(`{"plan":%q,"milestone":"M1"}`, l.plan), "--handoff", l.file)
+	l.closed(l.runToEnd(spec.RunID))
+
+	var replans []string
+	heads := map[string]string{}
+	var firstExplore, replanExplore []string
+	for _, e := range l.events() {
+		if e.Kind != engine.KindCall || e.Event != engine.EvPrepared || e.Label == "" {
+			continue
+		}
+		heads[e.Label] = str(e.Data, "head")
+		if strings.HasPrefix(e.Label, "replan:") {
+			replans = append(replans, e.Label)
+		}
+		if strings.HasPrefix(e.Label, "explore:") {
+			if len(replans) == 0 {
+				firstExplore = append(firstExplore, e.Label)
+			} else {
+				replanExplore = append(replanExplore, e.Label)
+			}
+		}
+	}
+	if len(replans) != 1 {
+		t.Fatalf("the re-plan calls %v (want one); effects %v", replans, l.effects)
+	}
+	tag := strings.TrimPrefix(replans[0], "replan:")
+	tip := heads[replans[0]]
+	base := l.git(l.repo, "rev-parse", "main")
+	if tip == "" || tip == base {
+		t.Fatalf("the re-plan's head %q (the DESIGN's base %s): C-1 landed before the signal", tip, base)
+	}
+	audit := "design-audit:replan-" + tag + ":r1"
+	if heads[audit] != tip {
+		t.Errorf("the re-plan's audit call %s pins head %q, want the signal's tip %s; heads %v", audit, heads[audit], tip, heads)
+	}
+	for label, head := range heads {
+		if strings.HasPrefix(label, "design-audit:replan-"+tag+":") && head != tip {
+			t.Errorf("the re-plan's audit call %s pins head %q, want %s", label, head, tip)
+		}
+	}
+	if len(replanExplore) != 1 || heads[replanExplore[0]] != tip {
+		t.Errorf("the re-plan's explorer calls %v (want one, at head %s); heads %v", replanExplore, tip, heads)
+	}
+	if len(firstExplore) != 1 || heads[firstExplore[0]] != "" || heads["design-audit:r1"] != "" {
+		t.Errorf("the first DESIGN's explorer calls %v and audit pin heads %v, want one explorer and no head", firstExplore, heads)
+	}
+	l.mu.Lock()
+	r1, rp := l.texts["design-audit:r1"], l.texts[audit]
+	at := replanAt
+	effects := append([]string(nil), l.effects...)
+	l.mu.Unlock()
+	if r1 == "" || strings.Contains(r1, "HEAD: ") || strings.Contains(r1, "LANDED HEADS") {
+		t.Errorf("the first DESIGN's critic packet names a head:\n%s", r1)
+	}
+	for _, want := range []string{"HEAD: " + tip, "RANGE: " + base + ".." + tip, "LANDED HEADS:\n- " + nodeC + ": ", "read-only checkout of the pinned head"} {
+		if !strings.Contains(rp, want) {
+			t.Errorf("the re-plan's critic packet lacks %q:\n%s", want, rp)
+		}
+	}
+	release := -1
+	for i, e := range effects {
+		if e == "release:"+nodeB {
+			release = i
+		}
+	}
+	if at < 0 || release < at {
+		t.Errorf("B-1 was released at effect %d, the re-plan ran after %d effects: %v", release, at, effects)
+	}
+}
