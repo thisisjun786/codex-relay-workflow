@@ -1,7 +1,10 @@
 package ops
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +17,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/reviewadapter"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/roles"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/acceptance/premerge"
@@ -566,11 +570,12 @@ func TestExploreRouting(t *testing.T) {
 	if plan.Routes[0].Route != RouteReuse || plan.Routes[0].Answer != "zero" {
 		t.Errorf("a question answered in the run: %+v", plan.Routes[0])
 	}
-	// a node gets two research continuations on a tier; the third question is a scope question
+	// a node gets two research continuations on a tier, the reuse above being the first (CRW-1470); the third question and every
+	// one after it is a scope question
 	for i := 1; i <= 3; i++ {
 		_ = json.Unmarshal(w.must("exploreRoute", ExploreResearch, ExploreContext{Node: "A", Tier: "executor"}, []Question{{Question: fmt.Sprintf("research %d", i)}}), &plan)
 		want := RouteSpawn
-		if i == 3 {
+		if i >= 2 {
 			want = RouteEscalate
 		}
 		if plan.Routes[0].Route != want {
@@ -606,6 +611,98 @@ func TestExploreRouting(t *testing.T) {
 		if rt.Route != RouteInline || rt.Rule != RuleInl1 || rt.Reason != "asker_answers" {
 			t.Errorf("research question %d: %+v, want SP-INL-1 inline", i, rt)
 		}
+	}
+}
+
+// The research cap of a tier (SP-EXPL-2, CRW-1470) counts every research continuation of the node on the tier, the spawned and the
+// reused alike, and only crw.exploreRoute counts it: after a spawn and a reuse the next question escalates as research_cap, and so
+// does a third request whose question was answered in the run. A reuse of another node's answer counts for this node's tier, and
+// the other tier keeps its own two.
+func TestResearchCapCountsReuseAndEscalatesOnce(t *testing.T) {
+	w := newWorld(t)
+	route := func(node, tier, question string) Route {
+		t.Helper()
+		var plan RoutePlan
+		_ = json.Unmarshal(w.must("exploreRoute", ExploreResearch, ExploreContext{Node: node, Tier: tier}, []Question{{Question: question}}), &plan)
+		if len(plan.Routes) != 1 {
+			t.Fatalf("routes %+v", plan.Routes)
+		}
+		return plan.Routes[0]
+	}
+	answer := func(node, tier string, rt Route, text string) {
+		t.Helper()
+		w.must("exploreRecord", ExploreResearch, ExploreContext{Node: node, Tier: tier}, []Answer{{Digest: rt.Digest, Question: rt.Question, Answer: text, Route: rt.Route, Origin: rt.Origin}})
+	}
+	// spawn, then reuse of that answer, then a new question: the third continuation escalates
+	first := route("A", "executor", "which module owns the case?")
+	if first.Route != RouteSpawn {
+		t.Fatalf("first research question: %+v", first)
+	}
+	answer("A", "executor", first, "the store")
+	if rt := route("A", "executor", "which module owns the case?"); rt.Route != RouteReuse || rt.Answer != "the store" {
+		t.Fatalf("the answered question again: %+v", rt)
+	}
+	if rt := route("A", "executor", "a new question"); rt.Route != RouteEscalate || rt.Reason != "research_cap" {
+		t.Errorf("a third continuation after a spawn and a reuse: %+v, want escalate research_cap", rt)
+	}
+	// a third request that is itself a reuse escalates too
+	if rt := route("A", "executor", "which module owns the case?"); rt.Route != RouteEscalate || rt.Reason != "research_cap" {
+		t.Errorf("a third continuation whose question was answered: %+v, want escalate research_cap", rt)
+	}
+	// node B reuses A's answer: that is its first continuation on the tier; one spawn more, then the cap
+	if rt := route("B", "executor", "which module owns the case?"); rt.Route != RouteReuse {
+		t.Fatalf("node B reuses the answer of A: %+v", rt)
+	}
+	if rt := route("B", "executor", "B's own question"); rt.Route != RouteSpawn {
+		t.Errorf("node B's second continuation: %+v, want spawn", rt)
+	}
+	if rt := route("B", "executor", "B's third question"); rt.Route != RouteEscalate || rt.Reason != "research_cap" {
+		t.Errorf("node B's third continuation: %+v, want escalate research_cap", rt)
+	}
+	// the next tier of A counts on its own
+	if rt := route("A", "executor-t1", "which module owns the case?"); rt.Route != RouteReuse {
+		t.Errorf("executor-t1 of A: %+v, want the reuse", rt)
+	}
+}
+
+// TestResearchCapHoldsForAReuseTheAskerCouldAnswer (CRW-1470, x1436 round 2 item 1): the cap of the research continuations of a tier
+// holds for a reuse whatever the files the question names. A question with no file or one file (or files inside the regions) is one the
+// asker could answer itself (SP-INL-1), but an answered one is still reused, a continuation like any other: past the cap it escalates
+// research_cap, with files_needed nil, empty and one file alike. An unanswered such question below the cap stays inline and counts nothing.
+func TestResearchCapHoldsForAReuseTheAskerCouldAnswer(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		files []string
+	}{{"files_needed nil", nil}, {"files_needed empty", []string{}}, {"one file", []string{"x.go"}}, {"inside the regions", []string{"c/1", "c/2", "c/3", "c/4"}}} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newWorld(t)
+			ec := ExploreContext{Node: "C", Tier: "executor", Regions: []string{"c/"}}
+			route := func(question string, files []string) Route {
+				t.Helper()
+				var plan RoutePlan
+				_ = json.Unmarshal(w.must("exploreRoute", ExploreResearch, ec, []Question{{Question: question, FilesNeeded: files}}), &plan)
+				if len(plan.Routes) != 1 {
+					t.Fatalf("routes %+v", plan.Routes)
+				}
+				return plan.Routes[0]
+			}
+			first := route("which module owns the case?", nil)
+			if first.Route != RouteSpawn {
+				t.Fatalf("first research question: %+v", first)
+			}
+			w.must("exploreRecord", ExploreResearch, ec, []Answer{{Digest: first.Digest, Question: first.Question, Answer: "the store", Route: first.Route, Origin: first.Origin}})
+			if rt := route("which module owns the case?", nil); rt.Route != RouteReuse {
+				t.Fatalf("the second continuation: %+v, want the reuse", rt)
+			}
+			if rt := route("which module owns the case?", tc.files); rt.Route != RouteEscalate || rt.Reason != "research_cap" {
+				t.Errorf("a third continuation whose answered question names files %v: %+v, want escalate research_cap", tc.files, rt)
+			}
+			if tc.files != nil {
+				if rt := route("a question the asker answers", tc.files); rt.Route != RouteInline {
+					t.Errorf("an unanswered question the asker answers: %+v, want inline", rt)
+				}
+			}
+		})
 	}
 }
 
@@ -1696,4 +1793,957 @@ func TestAcceptAssemblesPremergeFromAUnitCheckRecord(t *testing.T) {
 			t.Errorf("review last %v: basis %s grader %+v (%v), want %s", reviewLast, w.relay.got[0].ReviewerCall, rec.Grader, err, want)
 		}
 	}
+}
+
+// ---- crw.unitCheck (CRW-1463) ----
+
+// checkReply is one answer of a scripted unit checker: the record it gives, or the Go error it fails with.
+type checkReply struct {
+	res reviewadapter.Result
+	err error
+}
+
+// scriptedChecker is a UnitChecker that answers its replies in order (the last one again when they run out) and keeps every request.
+type scriptedChecker struct {
+	replies []checkReply
+	got     []reviewadapter.Request
+}
+
+func (c *scriptedChecker) Check(ctx context.Context, req reviewadapter.Request) (reviewadapter.Result, error) {
+	c.got = append(c.got, req)
+	r := checkReply{res: checkRecord(reviewadapter.StateOK, reviewadapter.VerdictVerified)}
+	if n := len(c.replies); n > 0 {
+		r = c.replies[min(len(c.got), n)-1]
+	}
+	// a record that names no tree of its own (checkRecord's "fp") saw the worktree as the adapter fingerprints it
+	if r.err == nil && r.res.FingerprintBefore == "fp" && req.Worktree != "" {
+		if fp, err := Snapshot(ctx, ExecGit("git"), req.Worktree); err == nil {
+			r.res.FingerprintBefore, r.res.FingerprintAfter = fp, fp
+		}
+	}
+	return r.res, r.err
+}
+
+// checkRecord is a record of a state, with the pair and the fingerprints the lab's checker names.
+func checkRecord(state reviewadapter.State, verdict string, findings ...reviewadapter.Finding) reviewadapter.Result {
+	if findings == nil {
+		findings = []reviewadapter.Finding{}
+	}
+	return reviewadapter.Result{State: state, Verdict: verdict, Findings: findings, EngineFamily: "grok", Model: "grok-4.7-medium", Effort: "medium", GuideRev: UnitCheckGuideRev,
+		PromptDigest: "pd-check", FingerprintBefore: "fp", FingerprintAfter: "fp", ElapsedMS: 1}
+}
+
+// ucCriteria is the criteria digest of node A in a ucWorld.
+var ucCriteria = strings.Repeat("c", 64)
+
+// ucWorld is a lane world with node A released (execution exec-A, criteria digest ucCriteria, two criteria) and a real git worktree an
+// executor call of A ran in.
+type ucWorld struct {
+	*world
+	repo, wt, start string
+	checker         *scriptedChecker
+	modes           []string
+}
+
+func newUCWorld(t *testing.T) *ucWorld {
+	t.Helper()
+	w := newWorld(t)
+	w.relay.plan = planOfNodes(map[string]string{"A": "a1"}, "A")
+	w.relay.plan.Nodes[0].Criteria = []string{"the first thing holds", "the second thing holds"}
+	w.relay.plan.Nodes[0].CriteriaDigest = ucCriteria
+	w.ledgered(true, designOf("A"))
+	w.must("release", "plan-1", "A", "M")
+	repo, first := newRepo(t)
+	u := &ucWorld{world: w, repo: repo, start: first, wt: addWorktree(t, repo, "attempt1", first), checker: &scriptedChecker{}}
+	w.relay.tip = first
+	w.lane.d.Verifier = &fakeVerifier{out: VerifyOutcome{Pass: true, Command: CILocalCommand, Digest: strings.Repeat("d", 64), Summary: "pass", Failures: []string{}}}
+	w.lane.d.UnitCheck = &UnitCheck{Checker: u.checker, Limit: time.Minute, Profile: func(mode string) (reviewadapter.Profile, error) {
+		u.modes = append(u.modes, mode)
+		return reviewadapter.JSONProfile("lab-"+mode, []string{"lab-check"}, "grok-4.7-medium", "medium"), nil
+	}}
+	return u
+}
+
+// build edits the worktree and writes the rows of an executor call of A that completed with the pending tree of the worktree. The call
+// is placed in the worktree at the commit its HEAD is at, as a backend places a fresh call.
+func (u *ucWorld) build(callID, body string) CallRef {
+	u.t.Helper()
+	write(u.t, u.wt, "a.txt", body, 0o644)
+	u.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: callID, Op: "agent", Event: engine.EvPrepared, Data: map[string]any{"role": "executor", "node": "A",
+		"allocation": map[string]any{"kind": engine.PlaceFresh, "path": u.wt, "start_commit": gitIn(u.t, u.wt, "rev-parse", "HEAD"), "attempt": 1}}})
+	u.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: callID, Op: "agent", Event: engine.EvCompleted, Data: map[string]any{"pending_tree": u.snapshot()}})
+	return call(callID, "completed", "claude-x", nil)
+}
+
+func (u *ucWorld) snapshot() string {
+	u.t.Helper()
+	snap, err := Snapshot(context.Background(), ExecGit("git"), u.wt)
+	if err != nil {
+		u.t.Fatal(err)
+	}
+	return snap
+}
+
+// checkRows are the completed crw.unitCheck rows of the journal.
+func (u *ucWorld) checkRows() rows { return rows(u.j.Events()).opRows(OpUnitCheck) }
+
+// lastCheck is the newest crw.unitCheck row; the test fails when there is none.
+func (u *ucWorld) lastCheck() engine.Event {
+	u.t.Helper()
+	r := u.checkRows()
+	if len(r) == 0 {
+		u.t.Fatal("no crw.unitCheck row was written")
+	}
+	return r[len(r)-1]
+}
+
+func (u *ucWorld) proven(row engine.Event) bool {
+	u.t.Helper()
+	ok, _, err := u.lane.Ops()[NameUnitCheck].Proven(context.Background(), u.j.Events(), row)
+	if err != nil {
+		u.t.Fatal(err)
+	}
+	return ok
+}
+
+func decodeCheck(t *testing.T, raw json.RawMessage) UnitCheckOutcome {
+	t.Helper()
+	var out UnitCheckOutcome
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("the answer of crw.unitCheck: %v (%s)", err, raw)
+	}
+	return out
+}
+
+// TestUnitCheckRecordsTheAdapterResult (CRW-1463): crw.unitCheck runs the adapter on the node's worktree and writes one completed row
+// in the shape crw.accept and the relay read: role unit-check, the node, the execution and criteria digest of its release, the tree the
+// check saw (in a real git worktree: the pending tree, which crw.commit commits), the judged call and the round, and the adapter's
+// record as result. crw.accept takes that row as the basis of the head. With a commit and a base it is the check of a committed head.
+func TestUnitCheckRecordsTheAdapterResult(t *testing.T) {
+	u := newUCWorld(t)
+	finding := reviewadapter.Finding{Severity: "P3", Impact: premerge.MinorSeparable, File: "a.txt", Line: 1, Text: "a nit"}
+	var prompts []string
+	var ranges [][2]string
+	u.lane.d.UnitCheck.Checker = reviewadapter.Adapter{
+		Run: func(_ context.Context, _ reviewadapter.Profile, req reviewadapter.Request) ([]byte, []byte, int, error) {
+			prompts = append(prompts, req.Prompt)
+			ranges = append(ranges, [2]string{req.Base, req.Head})
+			b, _ := json.Marshal(map[string]any{"verdict": "verified", "findings": []any{map[string]any{"severity": finding.Severity, "impact": finding.Impact, "file": finding.File, "line": finding.Line, "text": finding.Text}}})
+			return b, nil, 0, nil
+		},
+		Fingerprint: func(ctx context.Context, dir string) (string, error) { return Snapshot(ctx, ExecGit("git"), dir) },
+	}
+	ex := u.build("c_ex1", "built\n")
+	pending := u.snapshot()
+	out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+	if out.State != reviewadapter.StateOK || out.Verdict != reviewadapter.VerdictVerified || out.Hold != "" || out.Retried || out.Call != "c_ex1" || len(out.Findings) != 1 ||
+		out.Findings[0].ID != reviewadapter.FindingID("a.txt", "a nit") {
+		t.Errorf("answer %+v", out)
+	}
+	row := u.lastCheck()
+	want := map[string]any{"role": "unit-check", "node": "A", "execution_id": "exec-A", "criteria_digest": ucCriteria, "tree": pending, "call": "c_ex1", "round": float64(1),
+		"final": false, "retried": false, "state": "ok", "mode": "uncommitted"}
+	for k, v := range want {
+		if row.Data[k] != v {
+			t.Errorf("row %s = %#v, want %#v", k, row.Data[k], v)
+		}
+	}
+	for _, k := range []string{"commit", "head", "base", "hold"} {
+		if _, has := row.Data[k]; has {
+			t.Errorf("an uncommitted check's row has %s: %v", k, row.Data[k])
+		}
+	}
+	var rec reviewadapter.Result
+	if err := json.Unmarshal(resultOf(row), &rec); err != nil || !reflect.DeepEqual(rec, out.Result) {
+		t.Errorf("the row's result %+v (%v) is not the answer's record %+v", rec, err, out.Result)
+	}
+	if rec.FingerprintBefore != pending || rec.Model != "grok-4.7-medium" || rec.EngineFamily != "grok" || rec.GuideRev != UnitCheckGuideRev {
+		t.Errorf("record %+v", rec)
+	}
+	if !u.proven(row) {
+		t.Error("a check that gave a judgment is not proven")
+	}
+	if len(prompts) != 1 || !strings.Contains(prompts[0], "Review the uncommitted changes in this working tree.") || !strings.Contains(prompts[0], "node A") ||
+		!strings.Contains(prompts[0], "c1: the first thing holds") || !strings.Contains(prompts[0], "c2: the second thing holds") {
+		t.Errorf("prompt %q", prompts)
+	}
+	if !slices.Equal(u.modes, []string{"uncommitted"}) {
+		t.Errorf("profile modes %v", u.modes)
+	}
+
+	// the commit of the checked pending tree is the head the check is on: crw.accept assembles its premerge record from the check
+	var commit CommitOutcome
+	_ = json.Unmarshal(u.must("commit", "A", ex, []string{"a.txt"}), &commit)
+	if commit.Tree != dataStr(row, "tree") {
+		t.Fatalf("the commit's tree %s is not the tree the check saw %s", commit.Tree, dataStr(row, "tree"))
+	}
+	u.must("verify", "A", commit.Commit)
+	capture := &acceptCapture{stubRelay: u.relay}
+	u.lane.d.Relay = capture
+	if _, err := u.op("accept", "A", commit.Commit); err != nil {
+		t.Fatalf("crw.accept on the unit check: %v", err)
+	}
+	if len(capture.got) != 1 || capture.got[0].ReviewerCall != row.CallID || capture.got[0].CriteriaDigest != ucCriteria {
+		t.Fatalf("accept requests %+v, want one on the check %s", capture.got, row.CallID)
+	}
+
+	// a committed check: no call, the commit and the base on the row, the range in the prompt
+	out = decodeCheck(t, u.must("unitCheck", "A", nil, map[string]any{"commit": commit, "base": u.start, "final": true}))
+	row = u.lastCheck()
+	if out.State != reviewadapter.StateOK || out.Call != "" || dataStr(row, "commit") != commit.Commit || dataStr(row, "base") != u.start || dataStr(row, "mode") != "committed" ||
+		dataStr(row, "role") != "unit-check" || row.Data["final"] != true || dataStr(row, "call") != "" {
+		t.Errorf("committed check: answer %+v row %v", out, row.Data)
+	}
+	scope := fmt.Sprintf("Review the changes between %s and %s (git diff %s..%s).", u.start, commit.Commit, u.start, commit.Commit)
+	if len(prompts) != 2 || !strings.Contains(prompts[1], scope) || strings.Contains(prompts[1], "uncommitted") {
+		t.Errorf("committed prompt %q, want %q", prompts[len(prompts)-1], scope)
+	}
+	if !slices.Equal(u.modes, []string{"uncommitted", "committed"}) {
+		t.Errorf("profile modes %v", u.modes)
+	}
+	// the request names the range a committed profile's reader takes an answer about, and an uncommitted one names none
+	if len(ranges) != 2 || ranges[0] != [2]string{} || ranges[1] != [2]string{u.start, commit.Commit} {
+		t.Errorf("the requests' ranges %v, want none and %s..%s", ranges, u.start, commit.Commit)
+	}
+	// a committed check of a checkout with edits is not run: the row is role-less, so no reader takes it as the judgment of the commit
+	write(t, u.wt, "a.txt", "edited after the commit\n", 0o644)
+	got := len(prompts)
+	out = decodeCheck(t, u.must("unitCheck", "A", nil, map[string]any{"commit": commit, "base": u.start}))
+	row = u.lastCheck()
+	if out.State != StateTreeMoved || len(prompts) != got || dataStr(row, "role") != "" || dataStr(row, "commit_tree") != commit.Tree || row.Data["tree_moved"] != true {
+		t.Errorf("a committed check of a dirty checkout: answer %+v row %v, %d tool calls", out, row.Data, len(prompts)-got)
+	}
+	write(t, u.wt, "a.txt", "built\n", 0o644)
+	// a committed check needs its base
+	if _, err := u.op("unitCheck", "A", nil, map[string]any{"commit": commit.Commit}); err == nil || !strings.Contains(err.Error(), "base") {
+		t.Errorf("a committed check without a base: %v", err)
+	}
+}
+
+// TestUnitCheckQuotaHoldsTheNode (CRW-1463): a check that gave no judgment because the tool's quota is spent or it answered nothing is
+// recorded with role unit-check, its record and hold unit_check_<state>; the answer names the same hold, the row is not proven (a resume
+// asks again) and the op asks the relay nothing. The lane's crw.hold with that reason and source unit_check writes the hold row and closes
+// the execution, and the op run again calls the checker again.
+func TestUnitCheckQuotaHoldsTheNode(t *testing.T) {
+	for _, state := range []reviewadapter.State{reviewadapter.StateQuota, reviewadapter.StateNoAnswer} {
+		t.Run(string(state), func(t *testing.T) {
+			u := newUCWorld(t)
+			u.checker.replies = []checkReply{{res: checkRecord(state, "")}}
+			ex := u.build("c_ex1", "built\n")
+			releases, closes := len(u.relay.releases), len(u.relay.closes)
+			out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+			hold := "unit_check_" + string(state)
+			if out.State != state || out.Hold != hold {
+				t.Errorf("answer %+v, want state %s hold %s", out, state, hold)
+			}
+			row := u.lastCheck()
+			if dataStr(row, "role") != "unit-check" || dataStr(row, "hold") != hold || dataStr(row, "state") != string(state) {
+				t.Errorf("row %v", row.Data)
+			}
+			var rec reviewadapter.Result
+			if err := json.Unmarshal(resultOf(row), &rec); err != nil || rec.State != state {
+				t.Errorf("the row's result %+v %v", rec, err)
+			}
+			if u.proven(row) {
+				t.Error("a check held for its tool is proven: a resume would not ask again")
+			}
+			if len(u.relay.releases) != releases || len(u.relay.closes) != closes {
+				t.Errorf("the op called the relay: releases %d closes %d", len(u.relay.releases)-releases, len(u.relay.closes)-closes)
+			}
+			var held HoldOutcome
+			_ = json.Unmarshal(u.must("hold", "A", map[string]any{"reason": out.Hold, "call": ex.CallID, "source": "unit_check"}), &held)
+			hr, ok := rows(u.j.Events()).opRows(OpHold).last(func(engine.Event) bool { return true })
+			if !held.Held || !ok || dataStr(hr, "source") != "unit_check" || dataStr(hr, "reason") != hold || dataStr(hr, "call") != "c_ex1" {
+				t.Errorf("hold %+v row %v", held, hr.Data)
+			}
+			if len(u.relay.closes) != closes+1 || u.relay.closes[len(u.relay.closes)-1].Node != "A" {
+				t.Errorf("the hold closed %+v", u.relay.closes)
+			}
+			u.checker.replies = nil
+			again := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+			if len(u.checker.got) != 2 || again.State != reviewadapter.StateOK || again.Hold != "" {
+				t.Errorf("the check run again: %d checker calls, answer %+v", len(u.checker.got), again)
+			}
+		})
+	}
+}
+
+// TestUnitCheckRetriesAnInvalidAnswerOnce (CRW-1463): an invalid answer is asked once more with the same request; the second record is
+// the one the row keeps, with retried and first_state invalid. A second invalid answer is the record (proven, no hold): no third call.
+func TestUnitCheckRetriesAnInvalidAnswerOnce(t *testing.T) {
+	for _, second := range []reviewadapter.State{reviewadapter.StateOK, reviewadapter.StateInvalid} {
+		t.Run(string(second), func(t *testing.T) {
+			u := newUCWorld(t)
+			verdict := ""
+			if second == reviewadapter.StateOK {
+				verdict = reviewadapter.VerdictVerified
+			}
+			u.checker.replies = []checkReply{{res: checkRecord(reviewadapter.StateInvalid, "")}, {res: checkRecord(second, verdict)}, {res: checkRecord(reviewadapter.StateOK, "verified")}}
+			ex := u.build("c_ex1", "built\n")
+			out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 2}))
+			if len(u.checker.got) != 2 {
+				t.Fatalf("%d checker calls, want 2", len(u.checker.got))
+			}
+			if a, b := u.checker.got[0], u.checker.got[1]; a.Prompt != b.Prompt || a.Worktree != b.Worktree || a.GuideRev != b.GuideRev || a.Limit != b.Limit ||
+				a.Profile.Name != b.Profile.Name || !bytes.Equal(a.Schema, b.Schema) {
+				t.Errorf("the retry's request %+v differs from the first %+v", b, a)
+			}
+			row := u.lastCheck()
+			if out.State != second || !out.Retried || out.Hold != "" || row.Data["retried"] != true || dataStr(row, "first_state") != "invalid" || dataStr(row, "state") != string(second) {
+				t.Errorf("answer %+v row %v", out, row.Data)
+			}
+			if len(u.checkRows()) != 1 || !u.proven(row) {
+				t.Errorf("%d rows; proven %v", len(u.checkRows()), u.proven(row))
+			}
+		})
+	}
+}
+
+// TestUnitCheckErrorWritesNoRow (CRW-1463): a Go error of the checker (a bad request, a fingerprint that could not be taken, the end of
+// the context) is the op's error and leaves no row; so is a lane with no unit checker wired, a profile that cannot be had for the mode,
+// and an uncommitted check with no judged call or no pending tree.
+func TestUnitCheckErrorWritesNoRow(t *testing.T) {
+	u := newUCWorld(t)
+	ex := u.build("c_ex1", "built\n")
+	u.checker.replies = []checkReply{{err: errors.New("reviewadapter: fingerprint before the call: boom")}}
+	if _, err := u.op("unitCheck", "A", ex, map[string]any{"round": 1}); err == nil || !strings.Contains(err.Error(), "boom") {
+		t.Errorf("a checker error: %v", err)
+	}
+	// the invalid answer's retry that fails is the op's error too
+	u.checker.replies = []checkReply{{res: checkRecord(reviewadapter.StateInvalid, "")}, {err: context.Canceled}}
+	u.checker.got = nil
+	if _, err := u.op("unitCheck", "A", ex, nil); !errors.Is(err, context.Canceled) || len(u.checker.got) != 2 {
+		t.Errorf("a retry that failed: %v after %d calls", err, len(u.checker.got))
+	}
+	u.checker.replies = nil
+	u.checker.got = nil
+	if _, err := u.op("unitCheck", "A", nil, map[string]any{"round": 1}); err == nil || !strings.Contains(err.Error(), "call") {
+		t.Errorf("an uncommitted check with no call: %v", err)
+	}
+	if _, err := u.op("unitCheck", "A", call("c_none", "completed", "claude-x", nil), nil); err == nil || !strings.Contains(err.Error(), "pending tree") {
+		t.Errorf("a call with no pending tree: %v", err)
+	}
+	profile := u.lane.d.UnitCheck.Profile
+	u.lane.d.UnitCheck.Profile = func(string) (reviewadapter.Profile, error) {
+		return reviewadapter.Profile{}, errors.New("committed mode is not wired")
+	}
+	if _, err := u.op("unitCheck", "A", ex, nil); err == nil || !strings.Contains(err.Error(), "not wired") {
+		t.Errorf("a profile that cannot be had: %v", err)
+	}
+	u.lane.d.UnitCheck.Profile = profile
+	if len(u.checker.got) != 0 {
+		t.Errorf("the checker was asked %d times", len(u.checker.got))
+	}
+	u.lane.d.UnitCheck = nil
+	if _, err := u.op("unitCheck", "A", ex, nil); err == nil || !strings.Contains(err.Error(), "no unit checker is wired") {
+		t.Errorf("no unit checker: %v", err)
+	}
+	if n := len(u.checkRows()); n != 0 {
+		t.Errorf("%d crw.unitCheck rows after errors", n)
+	}
+}
+
+// TestUnitCheckRefusesAMovedTree (CRW-1463): when the worktree is no longer the pending tree of the judged call, the tool is not run:
+// the row records state tree_moved with both trees and no role (so neither reader takes it), it is proven, and crw.accept of the commit
+// of that pending tree is refused reviewer_missing.
+func TestUnitCheckRefusesAMovedTree(t *testing.T) {
+	u := newUCWorld(t)
+	ex := u.build("c_ex1", "built\n")
+	pending := u.snapshot()
+	write(t, u.wt, "src/c.txt", "an edit after the call\n", 0o644)
+	moved := u.snapshot()
+	out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+	if len(u.checker.got) != 0 {
+		t.Fatalf("the checker was asked %d times on a moved tree", len(u.checker.got))
+	}
+	if out.State != StateTreeMoved || out.Hold != "" {
+		t.Errorf("answer %+v", out)
+	}
+	row := u.lastCheck()
+	if dataStr(row, "state") != StateTreeMoved || row.Data["tree_moved"] != true || dataStr(row, "pending_tree") != pending || dataStr(row, "tree") != moved ||
+		dataStr(row, "node") != "A" || dataStr(row, "call") != "c_ex1" {
+		t.Errorf("row %v", row.Data)
+	}
+	if _, has := row.Data["role"]; has {
+		t.Errorf("a tree_moved row names a role: %v", row.Data["role"])
+	}
+	if !u.proven(row) {
+		t.Error("a tree_moved row is not proven")
+	}
+	write(t, u.wt, "src/c.txt", "gamma\n", 0o644)
+	var commit CommitOutcome
+	_ = json.Unmarshal(u.must("commit", "A", ex, []string{"a.txt"}), &commit)
+	u.must("verify", "A", commit.Commit)
+	if _, err := u.op("accept", "A", commit.Commit); err == nil || ReasonOf(err.Error()) != "reviewer_missing" {
+		t.Errorf("crw.accept after a tree_moved check: %v, want reviewer_missing", err)
+	}
+}
+
+// TestUnitCheckRefusesAMovedHead (CRW-1463): an executor call that committed its own work (its completed row records
+// executor_head_moved and HEAD is that stray commit) leaves no uncommitted change to review, while crw.commit commits the whole pending
+// tree on the recorded start: the tool is not run, the row says head_moved with no role, and crw.accept of that commit is refused.
+func TestUnitCheckRefusesAMovedHead(t *testing.T) {
+	u := newUCWorld(t)
+	write(t, u.wt, "a.txt", "built\n", 0o644)
+	gitIn(t, u.wt, "add", "-A")
+	gitIn(t, u.wt, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "the subagent committed")
+	stray := gitIn(t, u.wt, "rev-parse", "HEAD")
+	u.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "c_ex1", Op: "agent", Event: engine.EvPrepared, Data: map[string]any{"role": "executor", "node": "A",
+		"allocation": map[string]any{"kind": engine.PlaceFresh, "path": u.wt, "start_commit": u.start, "attempt": 1}}})
+	u.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "c_ex1", Op: "agent", Event: engine.EvCompleted, Data: map[string]any{"pending_tree": u.snapshot(),
+		"executor_head_moved": map[string]any{"start": u.start, "head": stray, "ref": engine.StrayRef("run-1", "A", 1, "c_ex1")}}})
+	ex := call("c_ex1", "completed", "claude-x", nil)
+	out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+	if len(u.checker.got) != 0 || out.State != StateHeadMoved {
+		t.Fatalf("%d checker calls, answer %+v", len(u.checker.got), out)
+	}
+	row := u.lastCheck()
+	moved, _ := row.Data["head_moved"].(map[string]any)
+	if dataStr(row, "state") != StateHeadMoved || str(moved, "start") != u.start || str(moved, "head") != stray || dataStr(row, "role") != "" || !u.proven(row) {
+		t.Errorf("row %v", row.Data)
+	}
+	var commit CommitOutcome
+	_ = json.Unmarshal(u.must("commit", "A", ex, []string{"a.txt"}), &commit)
+	u.must("verify", "A", commit.Commit)
+	if _, err := u.op("accept", "A", commit.Commit); err == nil || ReasonOf(err.Error()) != "reviewer_missing" {
+		t.Errorf("crw.accept after a head_moved check: %v, want reviewer_missing", err)
+	}
+}
+
+// TestUnitCheckRefusesAHeadTheExecutorCommittedWithoutARecord (CRW-1463, DI 11c): a backend that records no executor_head_moved (the
+// App Server's) still has the worktree's HEAD read against the commit the node's attempt is at: the start of its placement, or the
+// node's last commit since. An executor that committed its own work leaves an uncommitted tree with nothing in it to judge, so the tool
+// is not run and the row says head_moved with no role; crw.accept of the commit made on it is refused. A HEAD at the attempt's last
+// recorded commit is the start of a fix and is checked.
+func TestUnitCheckRefusesAHeadTheExecutorCommittedWithoutARecord(t *testing.T) {
+	u := newUCWorld(t)
+	u.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "c_ex1", Op: "agent", Event: engine.EvPrepared, Data: map[string]any{"role": "executor", "node": "A",
+		"allocation": map[string]any{"kind": engine.PlaceFresh, "path": u.wt, "start_commit": u.start, "attempt": 1}}})
+	write(t, u.wt, "a.txt", "built\n", 0o644)
+	gitIn(t, u.wt, "add", "-A")
+	gitIn(t, u.wt, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "the executor committed its own work")
+	own := gitIn(t, u.wt, "rev-parse", "HEAD")
+	u.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "c_ex1", Op: "agent", Event: engine.EvCompleted, Data: map[string]any{"pending_tree": u.snapshot()}})
+	ex := call("c_ex1", "completed", "claude-x", nil)
+	out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+	if len(u.checker.got) != 0 || out.State != StateHeadMoved {
+		t.Fatalf("%d checker calls, answer %+v: a check of an executor that committed its own work", len(u.checker.got), out)
+	}
+	row := u.lastCheck()
+	moved, _ := row.Data["head_moved"].(map[string]any)
+	if dataStr(row, "state") != StateHeadMoved || str(moved, "start") != u.start || str(moved, "head") != own || dataStr(row, "role") != "" || !u.proven(row) {
+		t.Errorf("row %v", row.Data)
+	}
+	var commit CommitOutcome
+	_ = json.Unmarshal(u.must("commit", "A", ex, []string{"a.txt"}), &commit)
+	u.must("verify", "A", commit.Commit)
+	if _, err := u.op("accept", "A", commit.Commit); err == nil || ReasonOf(err.Error()) != "reviewer_missing" {
+		t.Errorf("crw.accept after a head_moved check: %v, want reviewer_missing", err)
+	}
+	// a fix that starts at the attempt's last recorded commit (the commit just made) is at the right HEAD and is checked
+	u.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "c_fix", Op: "agent", Event: engine.EvPrepared, Data: map[string]any{"role": "executor", "node": "A",
+		"allocation": map[string]any{"kind": engine.PlaceContinued}}})
+	write(t, u.wt, "a.txt", "fixed\n", 0o644)
+	u.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "c_fix", Op: "agent", Event: engine.EvCompleted, Data: map[string]any{"pending_tree": u.snapshot()}})
+	u.checkOnTree(u.snapshot())
+	if out := decodeCheck(t, u.must("unitCheck", "A", call("c_fix", "completed", "claude-x", nil), map[string]any{"round": 2})); out.State != reviewadapter.StateOK || len(u.checker.got) != 1 {
+		t.Errorf("the check of a fix at the last recorded commit: %+v, %d checker calls", out, len(u.checker.got))
+	}
+}
+
+// TestUnitCheckReadsTheAcceptedReceiptWhenItsCopyIsMissing (CRW-1463, x1436 item 7): an accepted receipt the backend could not copy to
+// the step bus (copy_error, no copy) is read where the hook accepted it (its path) when that file still hashes to the receipt's digest:
+// the check runs with it, and the row records the receipt with its path and the copy error. When the receipt cannot be read there
+// either the node holds receipt_not_copied, not proven; the check run again once the file can be read (a resume) runs the tool, so the
+// hold clears.
+func TestUnitCheckReadsTheAcceptedReceiptWhenItsCopyIsMissing(t *testing.T) {
+	body := "RED-FIRST: go test -run TestA ./a: FAIL TestA\n"
+	t.Run("the original is read", func(t *testing.T) {
+		u := newUCWorld(t)
+		orig, digest := receiptCopy(t, body)
+		ex := u.buildWithReceipt("c_ex1", "built\n", map[string]any{"assignment": "as1", "state": "accepted", "path": orig, "sha256": digest, "agent_id": "agent-1",
+			"copy_error": "the step bus is full"})
+		u.checkOnTree(u.snapshot())
+		out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+		if out.Hold != "" || out.State != reviewadapter.StateOK || len(u.checker.got) != 1 {
+			t.Fatalf("answer %+v, %d checker calls: the receipt the hook accepted is readable", out, len(u.checker.got))
+		}
+		if p := u.checker.got[0].Prompt; !strings.Contains(p, "EXECUTOR RECEIPT") || !strings.Contains(p, body) {
+			t.Errorf("the prompt does not carry the receipt:\n%s", p)
+		}
+		row := u.lastCheck()
+		rc := checkReceiptOf(row)
+		if str(rc, "state") != "accepted" || str(rc, "sha256") != digest || str(rc, "path") != orig || str(rc, "copy_error") != "the step bus is full" || str(rc, "copy") != "" {
+			t.Errorf("the row's receipt %v", rc)
+		}
+		if dataStr(row, "role") != "unit-check" || !u.proven(row) {
+			t.Errorf("row %v", row.Data)
+		}
+	})
+	t.Run("a hold that clears on a resume", func(t *testing.T) {
+		u := newUCWorld(t)
+		orig := filepath.Join(t.TempDir(), "receipt.md")
+		sum := sha256.Sum256([]byte(body))
+		digest := hex.EncodeToString(sum[:])
+		ex := u.buildWithReceipt("c_ex1", "built\n", map[string]any{"assignment": "as1", "state": "accepted", "path": orig, "sha256": digest, "copy_error": "the step bus is full"})
+		out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+		if out.Hold != "receipt_not_copied" || len(u.checker.got) != 0 || u.proven(u.lastCheck()) {
+			t.Fatalf("answer %+v, %d checker calls: neither the copy nor the receipt can be read", out, len(u.checker.got))
+		}
+		if err := os.WriteFile(orig, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		u.checkOnTree(u.snapshot())
+		out = decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+		if out.Hold != "" || out.State != reviewadapter.StateOK || len(u.checker.got) != 1 {
+			t.Errorf("the check run again once the receipt can be read: %+v, %d checker calls", out, len(u.checker.got))
+		}
+		// the bytes that are there must still be the ones the hook accepted
+		if err := os.WriteFile(orig, []byte("changed since\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1})); out.Hold != "receipt_unverified" || len(u.checker.got) != 1 {
+			t.Errorf("a receipt whose bytes changed since: %+v", out)
+		}
+	})
+}
+
+// TestAcceptCarriesTheCarriedFindingsIntoThePremergeRecord (CRW-1465, x1436 item 4): the node lane carries a non-blocking finding past
+// its last round trip, and the head then gets a fix (of a failed verification) whose check judges only the fix and finds nothing. The
+// acceptance rests on that last check, and the carried ids the lane passes (crw.accept's opts.carried) are read from the node's recorded
+// checks into the premerge record's defects (each with the check that carried it): without them the record would say nothing of the
+// finding. A finding the named check did not record is an error, never a defect made up.
+func TestAcceptCarriesTheCarriedFindingsIntoThePremergeRecord(t *testing.T) {
+	u := newUCWorld(t)
+	minor := reviewadapter.Finding{Severity: "P3", Impact: premerge.MinorSeparable, File: "a.txt", Line: 3, Text: "a name could be clearer"}
+	minor.ID = reviewadapter.FindingID(minor.File, minor.Text)
+	ex := u.build("c_ex1", "built\n")
+	first := checkRecord(reviewadapter.StateOK, reviewadapter.VerdictVerified, minor)
+	first.FingerprintBefore, first.FingerprintAfter = u.snapshot(), u.snapshot()
+	u.checker.replies = []checkReply{{res: first}}
+	u.must("unitCheck", "A", ex, map[string]any{"round": 3, "final": true})
+	carriedBy := u.lastCheck().CallID
+	var c1 CommitOutcome
+	_ = json.Unmarshal(u.must("commit", "A", ex, []string{"a.txt"}), &c1)
+	fix := u.build("c_fix", "built and fixed\n")
+	u.checkOnTree(u.snapshot())
+	u.must("unitCheck", "A", fix, map[string]any{"round": 4, "final": true})
+	var c2 CommitOutcome
+	_ = json.Unmarshal(u.must("commit", "A", fix, []string{"a.txt"}), &c2)
+	u.must("verify", "A", c2.Commit)
+	capture := &acceptCapture{stubRelay: u.relay}
+	u.lane.d.Relay = capture
+	if _, err := u.op("accept", "A", c2.Commit, map[string]any{"carried": []map[string]any{{"id": minor.ID, "check": carriedBy}}}); err != nil {
+		t.Fatalf("crw.accept with the carried finding: %v", err)
+	}
+	if len(capture.got) != 1 {
+		t.Fatalf("accept requests %+v", capture.got)
+	}
+	rec, err := premerge.Decode(capture.got[0].Premerge)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var carried *premerge.Defect
+	for i := range rec.Defects {
+		if rec.Defects[i].ID == minor.ID {
+			carried = &rec.Defects[i]
+		}
+	}
+	if carried == nil || carried.Severity != "P3" || carried.Impact != premerge.MinorSeparable || !strings.Contains(carried.What, minor.Text) {
+		t.Fatalf("the premerge defects %+v do not hold the carried finding %s", rec.Defects, minor.ID)
+	}
+	if len(rec.Dispositions.Items) != 0 {
+		t.Errorf("a carried finding that blocks nothing asks a disposition: %+v", rec.Dispositions.Items)
+	}
+	for _, c := range []map[string]any{{"id": "f_no_such_finding", "check": carriedBy}, {"id": minor.ID, "check": "c_no_such_check"}} {
+		if _, err := u.op("accept", "A", c2.Commit, map[string]any{"carried": []map[string]any{c}}); err == nil || !strings.Contains(err.Error(), "carried finding") {
+			t.Errorf("crw.accept with a carried finding %v no check recorded: %v", c, err)
+		}
+	}
+}
+
+// TestAcceptReadsACarriedFindingFromTheCheckThatCarriedIt (CRW-1465, x1436 bugbot r4): a finding id names a file and a text, not a
+// grade, so a later check can report the same finding at another severity: here the check that carried it graded it P3, a later check
+// of the next round graded it P2 and the fix answered it. The carried finding is the one of the check that carried it (opts.carried
+// names that check), a P3 that asks no disposition, not the newest check's P2, which would block an acceptance the last check and the
+// verification allow.
+func TestAcceptReadsACarriedFindingFromTheCheckThatCarriedIt(t *testing.T) {
+	u := newUCWorld(t)
+	minor := reviewadapter.Finding{Severity: "P3", Impact: premerge.MinorSeparable, File: "a.txt", Line: 3, Text: "a name could be clearer"}
+	minor.ID = reviewadapter.FindingID(minor.File, minor.Text)
+	graded := minor
+	graded.Severity, graded.Impact = "P2", "core_function"
+	ex := u.build("c_ex1", "built\n")
+	first := checkRecord(reviewadapter.StateOK, reviewadapter.VerdictVerified, minor)
+	first.FingerprintBefore, first.FingerprintAfter = u.snapshot(), u.snapshot()
+	u.checker.replies = []checkReply{{res: first}}
+	u.must("unitCheck", "A", ex, map[string]any{"round": 3, "final": true})
+	carriedBy := u.lastCheck().CallID
+	var c1 CommitOutcome
+	_ = json.Unmarshal(u.must("commit", "A", ex, []string{"a.txt"}), &c1)
+	fix := u.build("c_fix", "built, then graded again\n")
+	again := checkRecord(reviewadapter.StateOK, reviewadapter.VerdictNeedsChanges, graded)
+	again.FingerprintBefore, again.FingerprintAfter = u.snapshot(), u.snapshot()
+	u.checker.replies = []checkReply{{res: again}}
+	u.must("unitCheck", "A", fix, map[string]any{"round": 4})
+	fixed := u.build("c_fix2", "built and fixed\n")
+	u.checkOnTree(u.snapshot())
+	u.must("unitCheck", "A", fixed, map[string]any{"round": 5})
+	var c2 CommitOutcome
+	_ = json.Unmarshal(u.must("commit", "A", fixed, []string{"a.txt"}), &c2)
+	u.must("verify", "A", c2.Commit)
+	capture := &acceptCapture{stubRelay: u.relay}
+	u.lane.d.Relay = capture
+	if _, err := u.op("accept", "A", c2.Commit, map[string]any{"carried": []map[string]any{{"id": minor.ID, "check": carriedBy}}}); err != nil {
+		t.Fatalf("crw.accept with the finding the check %s carried: %v", carriedBy, err)
+	}
+	rec, err := premerge.Decode(capture.got[len(capture.got)-1].Premerge)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range rec.Defects {
+		if d.ID == minor.ID && d.Severity != "P3" {
+			t.Errorf("the carried defect %+v is not the P3 the carrying check graded", d)
+		}
+	}
+	if len(rec.Dispositions.Items) != 0 {
+		t.Errorf("dispositions %+v", rec.Dispositions.Items)
+	}
+}
+
+// checkFunc is a UnitChecker of one function.
+type checkFunc func(context.Context, reviewadapter.Request) (reviewadapter.Result, error)
+
+func (f checkFunc) Check(ctx context.Context, req reviewadapter.Request) (reviewadapter.Result, error) {
+	return f(ctx, req)
+}
+
+// TestUnitCheckJudgesOnlyTheTreeItSnapped (CRW-1468, x1436 round 2 item 2): a check is the judgment of the tree the op snapped for it
+// (the commit's tree in committed mode, the pending tree in uncommitted mode), and of no other. When the worktree changes after that snap
+// and before a Check, or before the retry of an invalid answer, the tool judged another tree, which the adapter's fingerprints (before and
+// after the call, both of the changed tree) do not reveal on their own: the op holds that tree moved (state tree_moved, no role), never
+// records the answer as the judgment, and crw.accept of the commit is refused. A committed row names its commit, so no reader would
+// compare its tree.
+func TestUnitCheckJudgesOnlyTheTreeItSnapped(t *testing.T) {
+	// moving answers ok after it changed the worktree on the given calls (1-based); the fingerprints are those of the changed tree
+	moving := func(u *ucWorld, on map[int]bool, first reviewadapter.State) (*int, UnitChecker) {
+		n := 0
+		return &n, checkFunc(func(ctx context.Context, req reviewadapter.Request) (reviewadapter.Result, error) {
+			n++
+			if on[n] {
+				write(t, req.Worktree, "a.txt", fmt.Sprintf("changed before check %d\n", n), 0o644)
+			}
+			res := checkRecord(reviewadapter.StateOK, reviewadapter.VerdictVerified)
+			if n == 1 && first != "" {
+				res = checkRecord(first, "")
+			}
+			fp, err := Snapshot(ctx, ExecGit("git"), req.Worktree)
+			if err != nil {
+				return reviewadapter.Result{}, err
+			}
+			res.FingerprintBefore, res.FingerprintAfter = fp, fp
+			return res, nil
+		})
+	}
+	// a head made with no check of its own (as land-head's head, made outside a run): the committed check is its only judgment
+	committedHead := func(u *ucWorld) CommitOutcome {
+		ex := u.build("c_ex1", "built\n")
+		var commit CommitOutcome
+		_ = json.Unmarshal(u.must("commit", "A", ex, []string{"a.txt"}), &commit)
+		u.must("verify", "A", commit.Commit)
+		return commit
+	}
+	refused := func(t *testing.T, u *ucWorld, commit CommitOutcome, out UnitCheckOutcome, calls, want int) {
+		t.Helper()
+		row := u.lastCheck()
+		if out.State != StateTreeMoved || calls != want || dataStr(row, "state") != StateTreeMoved || row.Data["tree_moved"] != true || dataStr(row, "role") != "" {
+			t.Fatalf("%d checker calls, answer %+v, row %v: a check of a tree that moved after its snap", calls, out, row.Data)
+		}
+		if _, err := u.op("accept", "A", commit.Commit); err == nil || ReasonOf(err.Error()) != "reviewer_missing" {
+			t.Errorf("crw.accept of %s on a check of another tree: %v, want reviewer_missing", commit.Commit, err)
+		}
+	}
+	t.Run("committed: the tree moved before the check", func(t *testing.T) {
+		u := newUCWorld(t)
+		commit := committedHead(u)
+		calls, checker := moving(u, map[int]bool{1: true}, "")
+		u.lane.d.UnitCheck.Checker = checker
+		out := decodeCheck(t, u.must("unitCheck", "A", nil, map[string]any{"commit": commit, "base": u.start, "final": true}))
+		refused(t, u, commit, out, *calls, 1)
+	})
+	t.Run("committed: the tree moved before the retry", func(t *testing.T) {
+		u := newUCWorld(t)
+		commit := committedHead(u)
+		calls, checker := moving(u, map[int]bool{2: true}, reviewadapter.StateInvalid)
+		u.lane.d.UnitCheck.Checker = checker
+		out := decodeCheck(t, u.must("unitCheck", "A", nil, map[string]any{"commit": commit, "base": u.start, "final": true}))
+		refused(t, u, commit, out, *calls, 2)
+	})
+	t.Run("committed: a tree that stays is judged", func(t *testing.T) {
+		u := newUCWorld(t)
+		commit := committedHead(u)
+		calls, checker := moving(u, nil, reviewadapter.StateInvalid)
+		u.lane.d.UnitCheck.Checker = checker
+		out := decodeCheck(t, u.must("unitCheck", "A", nil, map[string]any{"commit": commit, "base": u.start, "final": true}))
+		if out.State != reviewadapter.StateOK || !out.Retried || *calls != 2 || dataStr(u.lastCheck(), "role") != "unit-check" {
+			t.Fatalf("%d checker calls, answer %+v", *calls, out)
+		}
+		if _, err := u.op("accept", "A", commit.Commit); err != nil {
+			t.Errorf("crw.accept on the committed check: %v", err)
+		}
+	})
+	t.Run("uncommitted: the tree moved before the check", func(t *testing.T) {
+		u := newUCWorld(t)
+		ex := u.build("c_ex1", "built\n")
+		calls, checker := moving(u, map[int]bool{1: true}, "")
+		u.lane.d.UnitCheck.Checker = checker
+		out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+		row := u.lastCheck()
+		if out.State != StateTreeMoved || *calls != 1 || dataStr(row, "role") != "" || row.Data["tree_moved"] != true {
+			t.Fatalf("%d checker calls, answer %+v, row %v", *calls, out, row.Data)
+		}
+	})
+}
+
+// ---- the executor receipt of a unit check (CRW-1463, C12) ----
+
+// receiptCopy writes bytes as the step-bus copy of an executor's evidence receipt under a temporary directory and answers its absolute
+// path and the hex sha256 the receipt row names.
+func receiptCopy(t *testing.T, body string) (path, digest string) {
+	t.Helper()
+	path = filepath.Join(t.TempDir(), "evidence-as1.md")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256([]byte(body))
+	return path, hex.EncodeToString(sum[:])
+}
+
+// buildWithReceipt is build with the evidence_receipt the session backend records on the executor call's completed row.
+func (u *ucWorld) buildWithReceipt(callID, body string, receipt map[string]any) CallRef {
+	u.t.Helper()
+	ex := u.build(callID, body)
+	evs := u.j.Events()
+	last := evs[len(evs)-1]
+	if last.CallID != callID || last.Event != engine.EvCompleted {
+		u.t.Fatalf("build did not end with the completed row of %s", callID)
+	}
+	u.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: callID, Op: "agent", Event: engine.EvCompleted,
+		Data: map[string]any{"pending_tree": dataStr(last, "pending_tree"), "evidence_receipt": receipt}})
+	return ex
+}
+
+// checkOnTree has the scripted checker answer a clean record that saw tree (the pending tree crw.commit commits), so crw.accept finds
+// the check on the commit's tree.
+func (u *ucWorld) checkOnTree(tree string) {
+	rec := checkRecord(reviewadapter.StateOK, reviewadapter.VerdictVerified)
+	rec.FingerprintBefore, rec.FingerprintAfter = tree, tree
+	u.checker.replies = []checkReply{{res: rec}}
+}
+
+// checkReceiptOf is the receipt a unit-check row records.
+func checkReceiptOf(row engine.Event) map[string]any {
+	m, _ := row.Data["receipt"].(map[string]any)
+	return m
+}
+
+// TestUnitCheckCarriesTheExecutorReceiptToTheCheckAndTheAcceptance (CRW-1463, C12): an uncommitted check of a call whose completed row
+// records an accepted evidence receipt with its step-bus copy reads the copy, puts its bytes in the prompt (EXECUTOR RECEIPT), and records
+// the receipt (state, sha256, copy, ignored) on its row; crw.accept on that row names the executor receipt in the premerge evidence.
+func TestUnitCheckCarriesTheExecutorReceiptToTheCheckAndTheAcceptance(t *testing.T) {
+	u := newUCWorld(t)
+	body := "RED-FIRST: go test -run TestA ./a: FAIL TestA\nMUTATION-RED: a.go:3 flipped: FAIL TestA\n"
+	copyPath, digest := receiptCopy(t, body)
+	ex := u.buildWithReceipt("c_ex1", "built\n", map[string]any{"assignment": "as1", "state": "accepted", "path": "/p/receipt.md", "sha256": digest,
+		"agent_id": "agent-1", "turn_id": "turn-1", "turn_match": true, "copy": copyPath, "ignored": true})
+	u.checkOnTree(u.snapshot())
+	out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+	if out.State != reviewadapter.StateOK || out.Hold != "" {
+		t.Fatalf("answer %+v", out)
+	}
+	if len(u.checker.got) != 1 {
+		t.Fatalf("%d checker calls, want 1", len(u.checker.got))
+	}
+	prompt := u.checker.got[0].Prompt
+	if !strings.Contains(prompt, "EXECUTOR RECEIPT") || !strings.Contains(prompt, body) || !strings.Contains(prompt, digest) {
+		t.Errorf("the prompt does not carry the executor receipt:\n%s", prompt)
+	}
+	if i, j := strings.Index(prompt, "Review the uncommitted changes"), strings.Index(prompt, "EXECUTOR RECEIPT"); i != 0 || j < i {
+		t.Errorf("the scope sentence is not first, before the receipt:\n%s", prompt)
+	}
+	row := u.lastCheck()
+	rc := checkReceiptOf(row)
+	if str(rc, "state") != "accepted" || str(rc, "sha256") != digest || str(rc, "copy") != copyPath || rc["ignored"] != true {
+		t.Errorf("the row's receipt %v", rc)
+	}
+	if dataStr(row, "role") != "unit-check" || !u.proven(row) {
+		t.Errorf("row %v", row.Data)
+	}
+	var commit CommitOutcome
+	_ = json.Unmarshal(u.must("commit", "A", ex, []string{"a.txt"}), &commit)
+	u.must("verify", "A", commit.Commit)
+	capture := &acceptCapture{stubRelay: u.relay}
+	u.lane.d.Relay = capture
+	if _, err := u.op("accept", "A", commit.Commit); err != nil {
+		t.Fatalf("crw.accept on the unit check: %v", err)
+	}
+	if len(capture.got) != 1 || capture.got[0].ReviewerCall != row.CallID {
+		t.Fatalf("accept requests %+v", capture.got)
+	}
+	rec, err := premerge.Decode(capture.got[0].Premerge)
+	if err != nil {
+		t.Fatalf("premerge: %v", err)
+	}
+	if len(rec.Criteria) != 2 {
+		t.Fatalf("criteria %+v", rec.Criteria)
+	}
+	for id, c := range rec.Criteria {
+		if !strings.Contains(c.Evidence, "executor receipt "+digest) {
+			t.Errorf("criterion %s evidence %q does not name the executor receipt", id, c.Evidence)
+		}
+	}
+
+	// a receipt longer than the prompt can carry (the tool takes the prompt as one argument) is cut at a line end and names its copy
+	long := strings.Repeat("RED-FIRST: go test -run TestA ./a: FAIL TestA, a line of the receipt\n", 4000)
+	longPath, longDigest := receiptCopy(t, long)
+	snapBefore := u.snapshot()
+	u.buildWithReceipt("c_ex_long", "built\n", map[string]any{"assignment": "as2", "state": "accepted", "sha256": longDigest, "copy": longPath})
+	if u.snapshot() != snapBefore {
+		t.Fatal("the long-receipt call moved the tree")
+	}
+	u.checkOnTree(snapBefore)
+	decodeCheck(t, u.must("unitCheck", "A", call("c_ex_long", "completed", "claude-x", nil), map[string]any{"round": 1}))
+	lp := u.checker.got[len(u.checker.got)-1].Prompt
+	if len(lp) > UnitCheckReceiptPromptLimit+4096 || !strings.Contains(lp, longPath) || !strings.Contains(lp, fmt.Sprintf("the receipt is %d bytes", len(long))) {
+		t.Errorf("a long receipt's prompt is %d bytes, names its copy %v", len(lp), strings.Contains(lp, longPath))
+	}
+	if rc := checkReceiptOf(u.lastCheck()); str(rc, "state") != "accepted" || str(rc, "sha256") != longDigest {
+		t.Errorf("the long receipt's row %v", rc)
+	}
+}
+
+// TestUnitCheckHoldsWithoutAnAcceptedReceipt (CRW-1463, C12): a receipt the backend recorded as missing or unverified, an accepted one
+// that was not copied to the step bus, whose copy cannot be read or whose bytes do not hash to its digest, is no receipt to hand the
+// check: the tool is not run, the row carries the node, the call, the receipt as read and hold receipt_*, and no role, adapter record,
+// tree or commit; it is not proven, the lane's crw.hold with that reason writes source unit_check, and crw.accept is refused
+// reviewer_missing. A call with no evidence_receipt had no assignment: the check runs and records receipt not_assigned. A committed
+// check has no executor: it reads no receipt and records receipt no_executor.
+func TestUnitCheckHoldsWithoutAnAcceptedReceipt(t *testing.T) {
+	cases := []struct {
+		name, hold string
+		receipt    func(t *testing.T) map[string]any
+	}{
+		{"missing", "receipt_missing", func(*testing.T) map[string]any {
+			return map[string]any{"assignment": "as1", "state": "missing", "detail": "the stop hook never accepted a receipt for the assignment"}
+		}},
+		{"unverified", "receipt_unverified", func(*testing.T) map[string]any {
+			return map[string]any{"assignment": "as1", "state": "unverified", "detail": "the assignment was claimed by agent-2, not by the bound subagent agent-1"}
+		}},
+		{"copy_error", "receipt_not_copied", func(*testing.T) map[string]any {
+			return map[string]any{"assignment": "as1", "state": "accepted", "path": "/p/receipt.md", "sha256": strings.Repeat("e", 64), "agent_id": "agent-1",
+				"copy_error": "the step bus is full"}
+		}},
+		{"unreadable_copy", "receipt_not_copied", func(t *testing.T) map[string]any {
+			return map[string]any{"assignment": "as1", "state": "accepted", "sha256": strings.Repeat("e", 64), "copy": filepath.Join(t.TempDir(), "gone.md")}
+		}},
+		{"digest_mismatch", "receipt_unverified", func(t *testing.T) map[string]any {
+			p, _ := receiptCopy(t, "the bytes on the bus\n")
+			_, other := receiptCopy(t, "the bytes the hook accepted\n")
+			return map[string]any{"assignment": "as1", "state": "accepted", "sha256": other, "copy": p}
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			u := newUCWorld(t)
+			receipt := c.receipt(t)
+			ex := u.buildWithReceipt("c_ex1", "built\n", receipt)
+			out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+			if len(u.checker.got) != 0 {
+				t.Fatalf("the checker was asked %d times without an accepted receipt", len(u.checker.got))
+			}
+			if out.Hold != c.hold || out.Call != "c_ex1" {
+				t.Errorf("answer %+v, want hold %s", out, c.hold)
+			}
+			row := u.lastCheck()
+			if dataStr(row, "node") != "A" || dataStr(row, "call") != "c_ex1" || dataStr(row, "hold") != c.hold {
+				t.Errorf("row %v", row.Data)
+			}
+			if !reflect.DeepEqual(checkReceiptOf(row), receipt) {
+				t.Errorf("the row's receipt %v is not the receipt as read %v", checkReceiptOf(row), receipt)
+			}
+			for _, k := range []string{"role", "tree", "commit"} {
+				if _, has := row.Data[k]; has {
+					t.Errorf("a receipt hold row has %s: %v", k, row.Data[k])
+				}
+			}
+			var rec reviewadapter.Result
+			if err := json.Unmarshal(resultOf(row), &rec); err != nil || rec.Model != "" || rec.PromptDigest != "" || rec.FingerprintBefore != "" || rec.State == reviewadapter.StateOK {
+				t.Errorf("a receipt hold row carries an adapter record: %+v %v", rec, err)
+			}
+			if u.proven(row) {
+				t.Error("a receipt hold is proven: a resume would not look at the receipt again")
+			}
+			var held HoldOutcome
+			_ = json.Unmarshal(u.must("hold", "A", map[string]any{"reason": out.Hold, "call": ex.CallID, "source": "unit_check"}), &held)
+			hr, ok := rows(u.j.Events()).opRows(OpHold).last(func(engine.Event) bool { return true })
+			if !held.Held || !ok || dataStr(hr, "source") != "unit_check" || dataStr(hr, "reason") != c.hold {
+				t.Errorf("hold %+v row %v", held, hr.Data)
+			}
+			var commit CommitOutcome
+			_ = json.Unmarshal(u.must("commit", "A", ex, []string{"a.txt"}), &commit)
+			u.must("verify", "A", commit.Commit)
+			if _, err := u.op("accept", "A", commit.Commit); err == nil || ReasonOf(err.Error()) != "reviewer_missing" {
+				t.Errorf("crw.accept after a receipt hold: %v, want reviewer_missing", err)
+			}
+		})
+	}
+
+	t.Run("not_assigned", func(t *testing.T) {
+		u := newUCWorld(t)
+		ex := u.build("c_ex1", "built\n")
+		u.checkOnTree(u.snapshot())
+		out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+		row := u.lastCheck()
+		if len(u.checker.got) != 1 || out.Hold != "" || dataStr(row, "role") != "unit-check" || !reflect.DeepEqual(checkReceiptOf(row), map[string]any{"state": "not_assigned"}) {
+			t.Errorf("%d checker calls, answer %+v, row %v", len(u.checker.got), out, row.Data)
+		}
+		if strings.Contains(u.checker.got[0].Prompt, "EXECUTOR RECEIPT") {
+			t.Errorf("a check with no assignment has a receipt section:\n%s", u.checker.got[0].Prompt)
+		}
+		// and the acceptance on it names no executor receipt
+		var commit CommitOutcome
+		_ = json.Unmarshal(u.must("commit", "A", ex, []string{"a.txt"}), &commit)
+		u.must("verify", "A", commit.Commit)
+		capture := &acceptCapture{stubRelay: u.relay}
+		u.lane.d.Relay = capture
+		if _, err := u.op("accept", "A", commit.Commit); err != nil || len(capture.got) != 1 {
+			t.Fatalf("crw.accept on a check with no assignment: %v %+v", err, capture.got)
+		}
+		rec, err := premerge.Decode(capture.got[0].Premerge)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for id, c := range rec.Criteria {
+			if strings.Contains(c.Evidence, "executor receipt") {
+				t.Errorf("criterion %s evidence %q names a receipt the check had none of", id, c.Evidence)
+			}
+		}
+	})
+
+	t.Run("committed", func(t *testing.T) {
+		u := newUCWorld(t)
+		// the call's receipt would hold an uncommitted check; a committed check judges a range with no executor and reads none
+		ex := u.buildWithReceipt("c_ex1", "built\n", map[string]any{"assignment": "as1", "state": "missing"})
+		var commit CommitOutcome
+		_ = json.Unmarshal(u.must("commit", "A", ex, []string{"a.txt"}), &commit)
+		out := decodeCheck(t, u.must("unitCheck", "A", nil, map[string]any{"commit": commit, "base": u.start, "final": true}))
+		row := u.lastCheck()
+		if len(u.checker.got) != 1 || out.Hold != "" || out.State != reviewadapter.StateOK || dataStr(row, "role") != "unit-check" ||
+			!reflect.DeepEqual(checkReceiptOf(row), map[string]any{"state": "no_executor"}) {
+			t.Errorf("%d checker calls, answer %+v, row %v", len(u.checker.got), out, row.Data)
+		}
+		if strings.Contains(u.checker.got[0].Prompt, "EXECUTOR RECEIPT") {
+			t.Errorf("a committed check has a receipt section:\n%s", u.checker.got[0].Prompt)
+		}
+	})
 }

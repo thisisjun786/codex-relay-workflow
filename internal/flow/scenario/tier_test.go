@@ -61,31 +61,36 @@ func onlyStep(t *testing.T, l *Lab, node, letter string) (StepRow, CallInfo) {
 	return s, t1[0]
 }
 
-// Two consecutive needs_changes with one finding in both: SP-TIER-1 (a). The step is recorded, and only then does an executor-t1
-// thread start, on the last commit.
+// Two consecutive unit checks with one finding in both (by its id: the file and the text): SP-TIER-1 (a). The step is recorded,
+// and only then does an executor-t1 thread start; no head was committed on the executor tier (a check comes before every commit), so
+// it starts at the node's base.
 func TestTierStepOnRepeatedFinding(t *testing.T) {
 	l := NewLab(t, oneNode()...)
-	same := Defect("d1", "correctness", "P1", "the guard is missing")
-	reviews(l, "A", Verdict(false, same), Verdict(false, same), Verdict(true))
+	same := Finding("P1", "the guard is missing")
+	l.UnitChecks("A", NeedsChanges(same), NeedsChanges(same))
 	got := mustRun(t, l)
 	if got.State != "closed" {
 		t.Fatalf("state %q: %+v", got.State, got)
 	}
-	want := []string{"architect", "design-audit:r1", "build:A:executor", "review:A:r1", "fix:A:executor:r1", "review:A:r2", "build:A:executor-t1", "review:A:r3", "reviewer-final:M1", "reflection:M1"}
+	want := []string{"architect", "design-audit:r1", "build:A:executor", "fix:A:executor:r1", "build:A:executor-t1", "reviewer-final:M1", "reflection:M1"}
 	if labels := l.Labels(); !slices.Equal(labels, want) {
 		t.Fatalf("calls %v, want %v", labels, want)
 	}
 	step, _ := onlyStep(t, l, "A", ops.TierEvidenceFinding)
-	if reviewers, ok := stepEvidence(t, step)["reviewer_calls"].([]any); !ok || len(reviewers) != 2 {
-		t.Errorf("the step names its reviewer calls: %s", step.Evidence)
+	ev := stepEvidence(t, step)
+	if checks, ok := ev["unit_check_calls"].([]any); !ok || len(checks) != 2 {
+		t.Errorf("the step names its unit-check calls: %s", step.Evidence)
 	}
-	// the checkpoint is the last commit the node had when the step was taken: the one before the executor-t1's own
+	if reviewers, _ := ev["reviewer_calls"].([]any); len(reviewers) != 0 {
+		t.Errorf("the step names reviewer calls: %s", step.Evidence)
+	}
+	// nothing was committed before the step: the only commit is the executor-t1's
 	commits := l.Rows("crw.commit")
-	if len(commits) != 3 {
-		t.Fatalf("%d commits, want three", len(commits))
+	if len(commits) != 1 {
+		t.Fatalf("%d commits, want the executor-t1's only", len(commits))
 	}
-	if before := str(commits[1].Data, "commit"); step.Head != before {
-		t.Errorf("checkpoint head %s, the last commit before the step is %s", step.Head, before)
+	if step.Head != "" && step.Head != l.Base {
+		t.Errorf("checkpoint head %s, want the node's base %s", step.Head, l.Base)
 	}
 	if rows := l.Rows("crw.stepRecord"); len(rows) != 1 {
 		t.Errorf("%d crw.stepRecord rows", len(rows))
@@ -93,7 +98,7 @@ func TestTierStepOnRepeatedFinding(t *testing.T) {
 }
 
 // The required verification fails on two consecutive committed heads: SP-TIER-1 (b). The heads are fixed on the executor's thread
-// first; no reviewer sees a head that failed its verification.
+// first, and every fix is unit-checked again before its commit; no reviewer is called.
 func TestTierStepOnTwoFailingHeads(t *testing.T) {
 	l := NewLab(t, oneNode()...)
 	l.Verify.Fail = map[string][]int{"A": {1, 2}}
@@ -101,34 +106,41 @@ func TestTierStepOnTwoFailingHeads(t *testing.T) {
 	if got.State != "closed" {
 		t.Fatalf("state %q: %+v", got.State, got)
 	}
-	want := []string{"architect", "design-audit:r1", "build:A:executor", "fix:A:executor:r1", "build:A:executor-t1", "review:A:r3", "reviewer-final:M1", "reflection:M1"}
+	want := []string{"architect", "design-audit:r1", "build:A:executor", "fix:A:executor:r1", "build:A:executor-t1", "reviewer-final:M1", "reflection:M1"}
 	if labels := l.Labels(); !slices.Equal(labels, want) {
 		t.Fatalf("calls %v, want %v", labels, want)
 	}
 	onlyStep(t, l, "A", ops.TierEvidenceVerify)
-	if n := len(l.CallsOf("reviewer")); n != 1 {
-		t.Errorf("%d reviewer calls (one review; the audit is the critic's)", n)
+	if n := len(l.CallsOf("reviewer")); n != 0 {
+		t.Errorf("%d reviewer calls (the audit is the critic's, the checks the tool's)", n)
+	}
+	if n := len(l.Checker.Calls("A")); n != 3 {
+		t.Errorf("%d unit checks, want the build's, the fix's and the executor-t1's", n)
 	}
 }
 
-// Four reviewed rounds on the tier without a verified verdict, each with a finding of its own: SP-TIER-1 (d).
-func TestRoundCapStepsTier(t *testing.T) {
+// Three unit checks on the tier, each with a finding of its own (CRW-1465): the executor fixes twice, and the third check's blocking
+// finding is carried: the node escalates (ask land, unit_check_carried) before the round cap of SP-TIER-1 (d) is reached, which four
+// reviewed rounds without a verified verdict would be. No tier step is taken and nothing is committed.
+func TestUnitCheckRoundCapCarriesBeforeTheTierCap(t *testing.T) {
 	l := NewLab(t, oneNode()...)
-	reviews(l, "A",
-		Verdict(false, Defect("d1", "correctness", "P2", "first finding")),
-		Verdict(false, Defect("d2", "test_gap", "P2", "second finding")),
-		Verdict(false, Defect("d3", "scope", "P2", "third finding")),
-		Verdict(false, Defect("d4", "maintainability", "P2", "fourth finding")),
-		Verdict(true))
-	got := mustRun(t, l)
-	if got.State != "closed" {
-		t.Fatalf("state %q: %+v", got.State, got)
+	l.UnitChecks("A", NeedsChanges(Finding("P2", "first finding")), NeedsChanges(Finding("P2", "second finding")), NeedsChanges(Finding("P2", "third finding")))
+	got := mustRunIncomplete(t, l)
+	if state, reason := laneOf(t, got, "A"); state != "escalated" || reason != "unit_check_carried" {
+		t.Fatalf("lane A: %s %s", state, reason)
 	}
-	want := []string{"architect", "design-audit:r1", "build:A:executor", "review:A:r1", "fix:A:executor:r1", "review:A:r2", "fix:A:executor:r2", "review:A:r3", "fix:A:executor:r3", "review:A:r4", "build:A:executor-t1", "review:A:r5", "reviewer-final:M1", "reflection:M1"}
+	want := []string{"architect", "design-audit:r1", "build:A:executor", "fix:A:executor:r1", "fix:A:executor:r2"}
 	if labels := l.Labels(); !slices.Equal(labels, want) {
 		t.Fatalf("calls %v, want %v", labels, want)
 	}
-	onlyStep(t, l, "A", ops.TierEvidenceRounds)
+	esc := l.FlowRows(engine.EvEscalation)
+	if len(esc) != 1 || str(esc[0].Data, "ask") != "land" || !strings.Contains(str(esc[0].Data, "detail"), "third finding") {
+		t.Errorf("escalations %+v", esc)
+	}
+	if n := len(l.Rows("crw.commit")); n != 0 {
+		t.Errorf("%d commits", n)
+	}
+	noTierStep(t, l)
 }
 
 // The same evidence on executor-t1 ends the tiers: no second step, no third executor, the node escalates as tiers_exhausted, and
@@ -234,7 +246,7 @@ func TestNoTierStepOnSingleNull(t *testing.T) {
 	if got.State != "closed" {
 		t.Fatalf("state %q", got.State)
 	}
-	want := []string{"architect", "design-audit:r1", "build:A:executor", "rebuild:A:executor:r1", "review:A:r2", "reviewer-final:M1", "reflection:M1"}
+	want := []string{"architect", "design-audit:r1", "build:A:executor", "rebuild:A:executor:r1", "reviewer-final:M1", "reflection:M1"}
 	if labels := l.Labels(); !slices.Equal(labels, want) {
 		t.Fatalf("calls %v, want %v", labels, want)
 	}
@@ -260,15 +272,15 @@ func TestSecondConsecutiveNullModelStepsTier(t *testing.T) {
 	if got.State != "closed" {
 		t.Fatalf("state %q: %+v", got.State, got)
 	}
-	want := []string{"architect", "design-audit:r1", "build:A:executor", "rebuild:A:executor:r1", "build:A:executor-t1", "review:A:r3", "reviewer-final:M1", "reflection:M1"}
+	want := []string{"architect", "design-audit:r1", "build:A:executor", "rebuild:A:executor:r1", "build:A:executor-t1", "reviewer-final:M1", "reflection:M1"}
 	if labels := l.Labels(); !slices.Equal(labels, want) {
 		t.Fatalf("calls %v, want %v", labels, want)
 	}
 	onlyStep(t, l, "A", ops.TierEvidenceNull)
 }
 
-// An executor that reports failed or budget_exhausted about itself is not evidence: the run commits and verifies the worktree
-// anyway, reviews what verification passes, and takes no step.
+// An executor that reports failed or budget_exhausted about itself is not evidence: the run checks, commits and verifies the
+// worktree anyway, lands what passes, and takes no step.
 func selfReported(t *testing.T, outcome string) {
 	t.Helper()
 	l := NewLab(t, oneNode()...)
@@ -280,7 +292,7 @@ func selfReported(t *testing.T, outcome string) {
 	if got.State != "closed" {
 		t.Fatalf("state %q: %+v", got.State, got)
 	}
-	want := []string{"architect", "design-audit:r1", "build:A:executor", "review:A:r1", "reviewer-final:M1", "reflection:M1"}
+	want := []string{"architect", "design-audit:r1", "build:A:executor", "reviewer-final:M1", "reflection:M1"}
 	if labels := l.Labels(); !slices.Equal(labels, want) {
 		t.Fatalf("calls %v, want %v", labels, want)
 	}
@@ -312,7 +324,7 @@ func TestNeedsResearchResumesSameExecutor(t *testing.T) {
 		t.Fatalf("state %q: %+v", got.State, got)
 	}
 	labels := l.Labels()
-	if len(labels) != 8 || labels[6] != "reviewer-final:M1" || labels[7] != "reflection:M1" || labels[2] != "build:A:executor" || !strings.HasPrefix(labels[3], "explore:A:") || labels[4] != "research:A:executor:r1" || labels[5] != "review:A:r2" {
+	if len(labels) != 7 || labels[5] != "reviewer-final:M1" || labels[6] != "reflection:M1" || labels[2] != "build:A:executor" || !strings.HasPrefix(labels[3], "explore:A:") || labels[4] != "research:A:executor:r1" {
 		t.Fatalf("calls %v", labels)
 	}
 	build, research := callNamed(t, l, "build:A:executor"), callNamed(t, l, "research:A:executor:r1")

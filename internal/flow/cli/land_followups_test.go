@@ -9,6 +9,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/reviewadapter"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/decisions"
 )
@@ -132,9 +133,10 @@ func TestLandHeadLeavesTheAuthorPairOfAnUnprovenSetEmpty(t *testing.T) {
 	}
 }
 
-// TestAcceptOfANodeAnotherRunHolds (item 6): the acceptance a run asks for a node whose current execution another run holds is refused
-// by the relay - the review it rests on has to be a call of the run that holds the execution (reviewer_missing) - and writes nothing:
-// no acceptance, and the execution stays the other run's.
+// TestAcceptOfANodeAnotherRunHolds (item 6, CRW-1468): the acceptance a run asks for a node whose current execution another run holds is
+// refused by the relay - the review it rests on has to be a call of the run that holds the execution (reviewer_missing) - and writes
+// nothing: no acceptance, and the execution stays the other run's. A verified unit check of the head that the asking run recorded for
+// that execution (a crw.unitCheck row of role unit-check in its journal) is no such call either: the refusal stays reviewer_missing.
 func TestAcceptOfANodeAnotherRunHolds(t *testing.T) {
 	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
 	node := l.nodeOf["A-1"]
@@ -166,6 +168,16 @@ func TestAcceptOfANodeAnotherRunHolds(t *testing.T) {
 	}
 
 	r2 := l.buildLane("run-other0002", l.handoffBytes(nil), LaneOptions{})
+	// the asking run's own unit check of the head, recorded on the execution the first run holds
+	check, _ := json.Marshal(reviewadapter.Result{State: reviewadapter.StateOK, Verdict: reviewadapter.VerdictVerified, Findings: []reviewadapter.Finding{}, EngineFamily: "grok",
+		Model: labCheckModel, Effort: "medium", GuideRev: ops.UnitCheckGuideRev})
+	r2.Journal.Append(engine.Event{RunID: r2.RunID, Kind: engine.KindRun, Event: "started", Data: map[string]any{"workflow": "x", "script_digest": "sha256:x", "args_digest": "sha256:x"}})
+	r2.Journal.Append(engine.Event{RunID: r2.RunID, Kind: engine.KindCall, Op: ops.OpUnitCheck, Event: engine.EvCompleted, CallID: "uc-other", Data: map[string]any{
+		"role": "unit-check", "node": node, "mode": ops.UnitCheckCommitted, "execution_id": rel.ExecutionID, "commit": head, "base": base, "state": "ok", "verdict": "verified",
+		"receipt": map[string]any{"state": ops.ReceiptNoExecutor}, "result": string(check)}})
+	if n := l.count("SELECT COUNT(*) FROM flow_calls WHERE run_id = ? AND kind = ? AND role = 'unit-check' AND execution_id = ? AND commit_sha = ?", r2.RunID, ops.OpUnitCheck, rel.ExecutionID, head); n != 1 {
+		t.Fatalf("the asking run's unit check of the head is not in flow_calls: %d rows", n)
+	}
 	got, err := r2.Accept(ctx, ops.AcceptRequest{Plan: l.plan, Node: node, Head: head, Base: base, Verification: record, Premerge: json.RawMessage(`{}`), RequestID: "req-other"})
 	if err != nil || got.Accepted || got.Reason != dagsched.ReviewerMissing {
 		t.Fatalf("the acceptance another run asks for the first run's execution: %+v %v", got, err)

@@ -20,6 +20,9 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/bound"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/reviewadapter"
+	"github.com/thisisjun786/codex-relay-workflow/internal/harness"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/role"
 	"github.com/thisisjun786/codex-relay-workflow/internal/role/spawn"
@@ -76,8 +79,6 @@ type sessionLab struct {
 	order     []string
 	closes    []string
 	replies   []string
-	// reviewHeads are the HEADs of the reviewers' directories when they were spawned, by call.
-	reviewHeads map[string]string
 	// the scenario's marks
 	auditKilled, restarted, parallel, late bool
 	gateA1                                 chan struct{}
@@ -138,9 +139,11 @@ func newSessionLab(t *testing.T) *sessionLab {
 		t.Fatal(err)
 	}
 	t.Setenv("CRW_HOME", dir)
+	// the evidence contract of the executor steps is on: the SubagentStop hook accepts each executor's receipt (stopWithReceipt)
+	t.Setenv("CRW_PABCD", "on")
 	t.Setenv(execution.EnvPolicy, "")
 	t.Setenv(execution.EnvDigest, "")
-	k := &sessionLab{laneLab: l, owner: owner, taken: map[string]bool{}, subagents: map[string]sessionSpawn{}, reviewHeads: map[string]string{}, builders: map[string]string{}, gateA1: make(chan struct{})}
+	k := &sessionLab{laneLab: l, owner: owner, taken: map[string]bool{}, subagents: map[string]sessionSpawn{}, builders: map[string]string{}, gateA1: make(chan struct{})}
 
 	// the owner thread: the project session, idle after a turn of its own (its spawn items go into its last turn)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -362,12 +365,10 @@ func (k *sessionLab) runningSubagents() []string {
 	return out
 }
 
-// verdictNeedsChanges is the first review of A-1: one defect the fix round answers.
-func verdictNeedsChanges() fakehost.TurnPlan {
-	return labSay(map[string]any{"verdict": "needs_changes", "criteria": []any{map[string]any{"id": "c1", "met": false, "evidence": "node-A-1.txt has one line"}},
-		"defects": []any{map[string]any{"ref": "c1", "kind": "correctness", "severity": "P2", "introduced": true, "impact": "core_function", "inPromise": true,
-			"file": "node-A-1.txt", "line": 1, "finding": "the file needs the line of the fix round", "evidence_question": nil}},
-		"summary": "one more line"})
+// checkNeedsChanges is the first unit check of A-1 (CRW-1465): one finding the fix round answers.
+func checkNeedsChanges() labCheck {
+	return labCheck{Verdict: reviewadapter.VerdictNeedsChanges, Findings: []reviewadapter.Finding{{Severity: "P2", Impact: "core_function", File: "node-A-1.txt", Line: 1,
+		Text: "the file needs the line of the fix round"}}}
 }
 
 // spawn is what the owner does for a spawn step: the answer the role gives (the lab's model, with the scenario's turns), the spawn
@@ -386,8 +387,6 @@ func (k *sessionLab) spawn(st NextStep) string {
 	case c.Role == "executor" && c.Label == "build:"+k.nodeOf["A-2"]+":executor" && st.Attempt == 1:
 		// A-2's first executor attempt is still running when the App Server restarts
 		plan = fakehost.TurnPlan{Hang: true}
-	case c.Role == "reviewer" && c.Label == "review:"+k.nodeOf["A-1"]+":r1":
-		plan = verdictNeedsChanges()
 	}
 	k.mu.Lock()
 	k.tools++
@@ -409,19 +408,66 @@ func (k *sessionLab) spawn(st NextStep) string {
 	model, _ := hook.Out.Updated["model"].(string)
 	effort, _ := hook.Out.Updated["reasoning_effort"].(string)
 	agentType, _ := hook.Out.Updated["agent_type"].(string)
-	if strings.HasPrefix(c.Label, "review:") {
-		// the reviewer's directory P is a checkout at the head under review (the call removes it when it ends)
-		head := k.git(st.Workspace, "rev-parse", "HEAD")
-		k.mu.Lock()
-		k.reviewHeads[st.Call] = head
-		k.mu.Unlock()
+	// an executor step names the evidence receipt its subagent writes (CRW-1482): the subagent writes it, and the host's SubagentStop
+	// hands it to the stop hook, which accepts it, before the turn ends; the unit check of the node reads it (CRW-1463, C12)
+	receipt := c9ReceiptRe.FindStringSubmatch(st.Message)
+	writes := receipt != nil && !plan.Hang && (c.Role == "executor" || c.Role == "executor-t1")
+	var stopped chan struct{}
+	rollout := ""
+	if writes {
+		rollout = filepath.Join(k.t.TempDir(), "rollout.jsonl")
+		if plan.Gate == nil {
+			stopped = make(chan struct{})
+			plan.Gate = stopped
+		}
 	}
-	agent := k.host.Threads().Spawn(fakehost.SubagentSpec{Parent: k.owner, ToolUseID: toolUse, AgentType: agentType, Model: model, Effort: effort, Message: st.Message, Plan: plan})
+	agent := k.host.Threads().Spawn(fakehost.SubagentSpec{Parent: k.owner, ToolUseID: toolUse, AgentType: agentType, Model: model, Effort: effort, Message: st.Message,
+		RolloutPath: rollout, Plan: plan})
+	if writes {
+		k.stopWithReceipt(agent, agentType, st.Message, receipt[1], rollout, plan.Message)
+		if stopped != nil {
+			close(stopped)
+		}
+	}
 	k.mu.Lock()
 	k.subagents[agent] = sessionSpawn{step: st, call: c}
 	k.order = append(k.order, agent)
 	k.mu.Unlock()
 	return agent
+}
+
+// stopWithReceipt is an executor subagent's evidence receipt and the SubagentStop of its turn: it writes the receipt at the file its
+// message names, the rollout whose first own UserMessage is the message, and sends the stop through the hook's registered leg, which
+// accepts the receipt.
+func (k *sessionLab) stopWithReceipt(agent, agentType, message, receipt, rollout, final string) {
+	k.t.Helper()
+	if err := os.WriteFile(receipt, []byte("$ go test ./node\nFAIL\n$ go test ./node\nok\n"), 0o644); err != nil {
+		k.t.Fatal(err)
+	}
+	view, ok := k.host.Threads().Thread(agent)
+	if !ok || len(view.Turns) == 0 {
+		k.t.Fatalf("the subagent %s: %+v", agent, view)
+	}
+	turn := view.Turns[len(view.Turns)-1].ID
+	var b bytes.Buffer
+	for _, line := range []any{
+		map[string]any{"type": "session_meta", "payload": map[string]any{"id": agent, "session_id": k.owner}},
+		map[string]any{"type": "event_msg", "payload": map[string]any{"type": "item_completed", "thread_id": agent, "turn_id": turn,
+			"item": map[string]any{"type": "UserMessage", "id": "u1", "content": []any{map[string]any{"type": "text", "text": message}}}}},
+	} {
+		raw, _ := json.Marshal(line)
+		b.Write(append(raw, '\n'))
+	}
+	if err := os.WriteFile(rollout, b.Bytes(), 0o644); err != nil {
+		k.t.Fatal(err)
+	}
+	raw, _ := json.Marshal(map[string]any{"hook_event_name": "SubagentStop", "cwd": k.repo, "session_id": k.owner, "agent_type": agentType,
+		"agent_id": agent, "turn_id": turn, "last_assistant_message": final, "agent_transcript_path": rollout})
+	var out, stderr bytes.Buffer
+	if code := harness.Hook(context.Background(), []string{"subagent-stop", "--leg", "subagent-stop-verifying-evidence"}, bytes.NewReader(raw), &out, &stderr,
+		os.LookupEnv, harness.Legs()); code != 0 || stderr.Len() != 0 || out.Len() != 0 {
+		k.t.Fatalf("the stop of %s: exit %d: %s %s", agent, code, out.String(), stderr.String())
+	}
 }
 
 // take is the owner's handling of one step it was handed: each step once.
@@ -503,6 +549,8 @@ func (k *sessionLab) take(st NextStep) {
 
 func TestSessionProjectMilestoneEndToEndOnTheFakeHost(t *testing.T) {
 	k := newSessionLab(t)
+	// A-1's first unit check finds something: its fix round runs after the App Server restart
+	k.UnitChecks("A-1", ops.UnitCheckUncommitted, checkNeedsChanges())
 	k.w.close() // the run's processes open the store for writing; the test reads it read-only
 	// the first process dies right after the architect's completed row
 	k.stopAt = func(e engine.Event) bool {
@@ -688,8 +736,13 @@ func TestSessionProjectMilestoneEndToEndOnTheFakeHost(t *testing.T) {
 	if body, err := exec.Command("git", "-C", k.repo, "show", "dev:node-A-1.txt").CombinedOutput(); err != nil || !strings.Contains(string(body), "fix:") {
 		t.Errorf("the fix round's work is not on dev: %v %s", err, body)
 	}
-	// the reviewers read the node's head in a checkout of their own, not the owner's cwd
-	ownerHead := k.git(k.repo, "rev-parse", "HEAD")
+	// every node is accepted on its unit check (CRW-1465): the relay's acceptance names the crw.unitCheck call, the checker's model and no
+	// reviewer thread (a unit check is a run of the review tool, not an agent), and the check read the executor's directory P, apart
+	// from the owner's cwd
+	checkedIn := map[string][]string{}
+	for _, r := range k.uc.requests() {
+		checkedIn[r.Node] = append(checkedIn[r.Node], r.Request.Worktree)
+	}
 	for _, key := range []string{"A-1", "A-2"} {
 		node := k.nodeOf[key]
 		var reviewCall, head, revThread, revModel, revEffort string
@@ -699,23 +752,27 @@ func TestSessionProjectMilestoneEndToEndOnTheFakeHost(t *testing.T) {
 				t.Fatalf("the acceptance of %s: %v", key, err)
 			}
 		})
-		rows := k.rows(reviewCall)
-		var ts sessionRow
-		for _, r := range rows {
-			if r.event == engine.EvThreadStarted {
-				ts = r
+		var check *sessionRow
+		for _, r := range k.rows(reviewCall) {
+			if r.event == engine.EvCompleted {
+				r := r
+				check = &r
 			}
 		}
-		// the relay's acceptance read the reviewer from the session call's newest thread_started row
-		if revThread == "" || revThread != ts.data["thread_id"] || revModel != ts.data["model"] || revEffort != ts.data["effort"] || revModel != sessionLabPairs["reviewer"].Model {
-			t.Errorf("the acceptance of %s: reviewer %s %s/%s, the call's thread_started %v", key, revThread, revModel, revEffort, ts.data)
+		if check == nil || revThread != "" || revModel != labCheckModel || revEffort != "medium" {
+			t.Errorf("the acceptance of %s: call %s thread %q %s/%s, want a completed unit check of %s with no thread", key, reviewCall, revThread, revModel, revEffort, labCheckModel)
 		}
-		cwd, _ := ts.data["cwd"].(string)
-		if cwd == k.repo || ts.data["host_cwd"] != k.repo {
-			t.Errorf("the reviewer of %s ran in %s (host cwd %v)", key, cwd, ts.data["host_cwd"])
+		dirs := checkedIn[node]
+		if len(dirs) == 0 {
+			t.Errorf("%s was never unit-checked", key)
 		}
-		if got := k.reviewHeads[reviewCall]; got != head || got == ownerHead {
-			t.Errorf("the reviewer of %s read %s in %s, the node's head is %s and the owner's cwd is at %s", key, got, cwd, head, ownerHead)
+		for _, d := range dirs {
+			if d == "" || d == k.repo {
+				t.Errorf("the unit check of %s read %q, the owner's cwd is %s", key, d, k.repo)
+			}
+		}
+		if key == "A-1" && len(dirs) != 2 {
+			t.Errorf("A-1 was unit-checked %d times, want the build's and the fix round's", len(dirs))
 		}
 	}
 	// the owner's line was closed when the run ended

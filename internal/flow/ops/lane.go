@@ -43,6 +43,7 @@ const (
 	NameCommit         = "commit"
 	NameVerify         = "verify"
 	NameReview         = "review"
+	NameUnitCheck      = "unitCheck"
 	NameStepRecord     = "stepRecord"
 	NameAccept         = "accept"
 	NameIntegrate      = "integrate"
@@ -114,6 +115,9 @@ type Deps struct {
 	// LandRoot is the directory the worktree of a head made outside a run is checked out under (the run's directory, CRW-1354); "" refuses
 	// a land release.
 	LandRoot string
+	// UnitCheck is what crw.unitCheck runs the unit check of a node with (CRW-1463); nil answers that no unit checker is wired, never a
+	// passing check.
+	UnitCheck *UnitCheck
 }
 
 // Lane is the set of operations of the project lane.
@@ -149,6 +153,7 @@ func (l *Lane) Ops() map[string]engine.Op {
 		NameCommit:           &commitOp{l},
 		NameVerify:           &verifyOp{l},
 		NameReview:           &reviewOp{l},
+		NameUnitCheck:        &unitCheckOp{l},
 		NameStepRecord:       &stepRecordOp{l},
 		NameAccept:           &acceptOp{l},
 		NameIntegrate:        &integrateOp{l},

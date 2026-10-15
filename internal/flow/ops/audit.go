@@ -62,6 +62,8 @@ func (o *auditOp) Proven(ctx context.Context, ev []engine.Event, row engine.Even
 // archiveOp is crw.archive(milestone): it archives the reviewer thread of each acceptance of the milestone that has an audit
 // pass row in the journal, and no other. It reads the rows, not what the script says. A thread already archived is not archived
 // again, and an archive the host refuses is recorded and does not stop the close (the thread is kept, and the next close tries).
+// An acceptance on a unit check has no reviewer thread (the check is a run of the review tool, CRW-1465), and neither does a pass
+// that names none: such an acceptance is neither archived nor kept.
 type archiveOp struct{ l *Lane }
 
 // ArchivedThread is one thread the close archived or kept.
@@ -89,10 +91,13 @@ func (o *archiveOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRes
 	already := archivedThreads(events)
 	out := ArchiveOutcome{Milestone: ms, Archived: []ArchivedThread{}, Kept: []ArchivedThread{}}
 	for _, s := range audit.Subjects(events) {
-		if s.Milestone != ms {
+		if s.Milestone != ms || s.Basis == audit.BasisUnitCheck {
 			continue
 		}
 		pass, ok := passed[s.AcceptanceID]
+		if ok && pass.Thread == "" {
+			continue
+		}
 		entry := ArchivedThread{AcceptanceID: s.AcceptanceID, Node: s.Node, Thread: pass.Thread}
 		switch {
 		case !ok:

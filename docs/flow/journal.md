@@ -157,6 +157,13 @@ as such:
   recorded commit, the pending tree P of a build or fix journaled after that commit, or the P_held of an executor call held after
   it. A call is proven when the snapshot is its own P (or an earlier call's, which leaves the later calls unproven). A snapshot
   that is none of them breaks the proof from the latest build or fix after the last valid commit.
+- A call of a retired attempt (the node went on in a fresh worktree: a tier step, a rebuild) is judged without its worktree, which is
+  never read. A call that a recorded commit of the node made in that attempt covers, by the rule above over that attempt's calls, is
+  proven while the current `HEAD` descends from that commit (its work is in the history the node goes on from) and not otherwise. A
+  call no recorded commit covers left only uncommitted work, which a fresh attempt of the node prepared after it abandoned (a fresh
+  attempt starts at the node's last commit and takes none of an earlier attempt's working files: the node lane's tier step before
+  any commit, a rebuild after a checked fix): nothing reads its effect again, and it is proven as the recorded fact it is. A call of
+  an attempt no fresh one followed is the current attempt's.
 - A worktree a resume restored (below) holds the pending tree P of the last build or fix of the replayed prefix. It is the node's
   current worktree from the call that adopts it on, and it proves the calls of the prefix - the call P belongs to and the calls
   before it, which ran in the worktree of an earlier attempt - while its files are P.
@@ -170,7 +177,11 @@ as such:
 
 **Other effects.** Verify: a record of the same head and command that ran (`crw.verify`); a verification that could not run (the verifier is missing, it left no
 record) is asked again on a resume. The base it names is the merge-base of the head and the integration tip, the commit the node's
-work grew from, which the acceptance of the head uses too. A node released as a child or a split keeps its release row (`crw.release`). Review: a record of the same head and
+work grew from, which the acceptance of the head uses too. A failed verification's row and result carry `failed_tests`, one entry
+for each step of its record that failed and gives a reason (not a step skipped after an earlier failure): `job`, `step`, the `tests` (`--- FAIL: <Test>`) and `packages` (`FAIL\t<pkg>`)
+its reason names and `tail`, the last 20 lines of the reason (at most 2048 bytes); a reason with no such line has no test and no
+package, only the tail. The member is additive (a row without it names no failed test), and the executor's fix packet and a fresh
+thread's packet render it (CRW-1469). A node released as a child or a split keeps its release row (`crw.release`). Review: a record of the same head and
 criteria digest (`crw.review`). Accept: the recorded acceptance is active, not stale, of the same head (the relay says which).
 Integrate: the recorded batch commit is an ancestor of the integration ref; the target moving on keeps it an ancestor. Gate: a
 passing record of the current integration head, the same command set (the plan's required commands joined with `;`) and the same
@@ -179,6 +190,32 @@ target has left is not replayed: the gate judges the new head). Reviewer-final: 
 digest (`crw.reviewerFinal`). The test evidence of the gate is a `crw.verify` row with no node (the verification of the integrated head,
 which names the milestone), and the QA evidence a `crw.qaReceipt` row (it holds the identity of the tree the capture call ended in, which the completed row of a QA call records as `qa_source`); each is judged fresh by the identity of the head it stands on
 (`source.Compare`).
+
+**Unit check.** A row `crw.unitCheck` is one unit check of a node's work, run by the run itself (the op runs the review tool through
+the review adapter; no agent call, no reviewer thread). Its data: `node`; `mode` (`uncommitted`: the changes the judged executor call left in
+the node's worktree, or `committed`: the range `base..commit` checked out in it); `call` (the executor call it judged, uncommitted mode) or
+`commit` and `base` (committed mode); `round` and `final` as the lane passed them; `execution_id` and `criteria_digest` of the node's release
+row; `tree` (the fingerprint the check saw, the snapshot `crw.commit` commits as its `tree`); `role` `unit-check`; `state`, `verdict` and
+`findings` (their count); `retried` and `first_state` `invalid` when an invalid answer was asked once more and the second record kept;
+`hold` (`unit_check_quota`, `unit_check_no_answer`, or `receipt_missing`, `receipt_unverified`, `receipt_not_copied` when the executor's
+evidence receipt could not be read) when the lane is to hold the node; `receipt` (the executor's evidence receipt as the check read it:
+`state` `accepted` with its `sha256`, `copy` and `ignored`, or, when the backend could not copy it to the step bus or the copy cannot be
+read, with the `path` it was read from in place of the copy (where the hook accepted it, the bytes still hashing to the `sha256`) and the
+`copy_error`; `not_assigned` when the call was given none, or `no_executor` for a committed check); and `result`, the `reviewadapter.Result` (state, verdict, findings with their line-free ids, engine family, model, effort, guide
+revision, prompt digest, both fingerprints). `crw.accept` and the relay take a row of role `unit-check` whose result state is `ok` and that is
+on the head (its `commit`, or its `tree` equal to the head's tree) as the judgment of the head. A check that was not run names no role: when
+the worktree is no longer the judged call's pending tree the row has `state` `tree_moved`, `tree_moved` true, `pending_tree` and `tree`
+(the tool is not run, since `crw.commit` commits the pending tree); when the worktree's `HEAD` is not the commit the node's attempt is
+at (the `start` the judged call's row records under `executor_head_moved`, else the start of the attempt's worktree or the node's last
+`crw.commit` since), as when the executor committed its work itself on any backend, the row has `state` `head_moved` and `head_moved`
+(`start`, `head`), since the uncommitted changes are not the change `crw.commit` commits on that start; a committed check whose checkout is not the commit's tree has
+`state` `tree_moved`, `commit_tree` and `tree`; a check whose tool judged another tree than the one the op snapped for it (the worktree
+changed after the snap, before the call or before the retry of an invalid answer: the tool's fingerprint, or the worktree after the call,
+is not the snapped tree) is no judgment either and has `state` `tree_moved`, `tree_moved` true, the snapped tree (`commit_tree`, or
+`pending_tree`) and the `tree` it saw; and a receipt that could not be read leaves `receipt` and `hold` with no
+`tree` and no `commit`; neither reader takes such a row. A check is proven unless its row names a `hold`: a resume runs the check that held the
+node again (it asks the tool, or reads the receipt, again), and the hold itself is the `crw.hold` row the lane writes after it (`source` `unit_check`), as for a
+verification that could not run. An error of the tool's runner (a bad request, a fingerprint that could not be taken) writes no row.
 
 **The design ledger and the signals.** A row `crw.designLedger` is a revision of the milestone's ledger (`revision`, `digest`, `design`, `answers`,
 `architect_call` and `architect_handle`, the `signal` that made it, `base_tip` - the head the DESIGN ran at: for `r0` the start commit of the architect's call-private checkout as the architect's `prepared` row records it (reached through `resume_of` from a design fix that went on in that directory), never the integration tip read after the audit, and `""` when no placement recorded one; for a later revision the head its re-plan pinned - and `slices`, the slice digest of every node of the plan it was made
@@ -193,7 +230,14 @@ digest), `attempt` (`live:<n>` for a recorded signal that could not replay, `n` 
 **Audit.** A row `crw.audit` (the call row of the audit, written by `crw.audit` in a run and by `crw flow audit` beside it) holds the
 audit results of acceptances: `results`, each with the acceptance id, the node, the head, the reviewer call, the thread and turn it read,
 the checks and the state (`ok`, `mismatch`, `unobserved`). The newest row that audits an acceptance decides whether it passed
-(`audit.Passed`); a reviewer thread is archived only for an acceptance that passed (`crw.archive`).
+(`audit.Passed`); a reviewer thread is archived only for an acceptance that passed (`crw.archive`). The completed `crw.accept` row names what the acceptance rests
+on: `basis` (`review`, or `unit_check`) and `reviewer_call` (the reviewer's call, or the call of the `crw.unitCheck` row), besides
+`node`, `head`, `acceptance_id`, `premerge_digest` and `plan`; an older row names neither and is audited on the newest verified
+`crw.review` of its head. An acceptance on a unit check rests on no reviewer thread: its audit checks that row (`unit_check_row`: a
+completed check of the node with role `unit-check`, state `ok`, verdict `verified` over no blocking finding, on the head by its `commit` or by the head's recorded tree, under the
+criteria digest of the node's release) and the executor pair, reads nothing from the host and names no thread, and `crw.archive`
+neither archives nor keeps anything for it. A land-head acceptance has no executor call, so its executor pair and its result are
+`unobserved`.
 
 **Recording calls.** `escalate`, `reportUp`, `hold`, `tierStep`, `spawnDecision`, `stepRecord`, `exploreRoute`, `exploreRecord`, `designAudit`, `designLedger`, `qaReceipt`, `qaCapture`, `reviewerFinal`, `audit`, `archive`, `replanSignals`, `currentDesign`, `reflection`, `signalBind`, `signalDone`, `signalClose`, `designHead` and `releasedPlans` only record a fact. `releaseChild` was the old project lane's start of a node's `child` session (a code id, not a layer); no
 script calls it and no lane installs it now (CRW-1415). A run whose journal holds a `crw.releaseChild` row is a legacy `child`-session run, and

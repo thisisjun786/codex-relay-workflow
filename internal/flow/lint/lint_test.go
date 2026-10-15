@@ -12,8 +12,12 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/dop251/goja/ast"
+	"github.com/dop251/goja/parser"
+
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/workflows"
 )
 
 const fixtures = "../../../testdata/flow/lint"
@@ -1166,5 +1170,180 @@ let r = crw.review('n', head, null)
 		if r := lintStatic(t, prefix+body+land); !slices.Contains(rules(r), RuleLandWithoutReview) {
 			t.Errorf("%s: no path reviewed the current head: %v", name, r.Diagnostics)
 		}
+	}
+}
+
+// TestTraceLintTakesOnlyAUnitCheckThatJudged (CRW-1465, x1436 round 2 item 4): in a trace, a crw.unitCheck row checks the node only when
+// the tool gave a judgment (state ok, with a verdict). A check held for the tool's quota or a blank answer is recorded with role unit-check
+// too (and a hold), and one with no verdict judged nothing: a land after either and a commit and a verification is a land with no review
+// or unit check of the head. A check that judged, needs_changes included, checks the node.
+func TestTraceLintTakesOnlyAUnitCheckThatJudged(t *testing.T) {
+	ev := func(op string, data map[string]any) engine.Event {
+		d := map[string]any{"node": "n"}
+		for k, v := range data {
+			d[k] = v
+		}
+		return engine.Event{Kind: engine.KindCall, Event: engine.EvCompleted, Op: op, Path: "root", Data: d}
+	}
+	built := engine.Event{Kind: engine.KindCall, Event: engine.EvPrepared, Op: "agent", Path: "root", Label: "build", Data: map[string]any{"family": "executor", "role": "executor", "node": "n"}}
+	for name, c := range map[string]struct {
+		check map[string]any
+		want  []string
+	}{
+		"quota":          {map[string]any{"role": "unit-check", "state": "quota", "verdict": "", "hold": "unit_check_quota"}, []string{RuleLandWithoutReview}},
+		"no answer":      {map[string]any{"role": "unit-check", "state": "no_answer", "hold": "unit_check_no_answer"}, []string{RuleLandWithoutReview}},
+		"no verdict":     {map[string]any{"role": "unit-check", "state": "ok", "verdict": ""}, []string{RuleLandWithoutReview}},
+		"verified":       {map[string]any{"role": "unit-check", "state": "ok", "verdict": "verified"}, nil},
+		"needs changes":  {map[string]any{"role": "unit-check", "state": "ok", "verdict": "needs_changes"}, nil},
+		"no role at all": {map[string]any{"state": "tree_moved", "tree_moved": true}, []string{RuleLandWithoutReview}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			events := []engine.Event{built, ev("crw.unitCheck", c.check), ev("crw.commit", nil), ev("crw.verify", nil), ev("crw.land", nil)}
+			if got := rules(Report{Diagnostics: traceDiagnostics(&engine.Result{Status: engine.RunCompleted}, events, nil)}); !slices.Equal(got, c.want) {
+				t.Errorf("trace rules %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
+// A unit check of the head is the second way to land (CRW-1465): build, unit check, commit, verify, land; and a land release
+// (crw.release with a land key) checks out a committed head. Each case runs through the static walk (callEvent on a script)
+// and through the trace twin (lifecycleEvent on journal rows), so the one predicate is tested on both inputs.
+func TestLintLandsAUnitCheckedHead(t *testing.T) {
+	const build = "let ex = await agent.call('build', { agentType: 'executor', node: 'n', label: 'build' })\n"
+	const commitVerifyLand = "const head = await crw.commit('n', ex)\nconst ci = await crw.verify('n', head)\nreturn crw.land('n', { head, ci })"
+	const fix = "ex = await agent.call('fix', { resume: ex, label: 'fix' })\n"
+	const landRelease = "const rel = await crw.release(args.plan, 'n', 'm', { pinned: true, land: { head: 'h', authors: [] } })\n"
+	row := func(op string, data map[string]any) engine.Event {
+		d := map[string]any{"node": "n"}
+		for k, v := range data {
+			d[k] = v
+		}
+		return engine.Event{Kind: engine.KindCall, Event: engine.EvCompleted, Op: op, Path: "root", Data: d}
+	}
+	op := func(name string) engine.Event { return row(name, nil) }
+	check := row("crw.unitCheck", map[string]any{"role": "unit-check", "state": "ok", "verdict": "verified"})
+	released := row("crw.release", map[string]any{"kind": "land", "released": true})
+	built := engine.Event{Kind: engine.KindCall, Event: engine.EvPrepared, Op: "agent", Path: "root", Label: "build", Data: map[string]any{"family": "executor", "role": "executor", "node": "n"}}
+	fixed := engine.Event{Kind: engine.KindCall, Event: engine.EvPrepared, Op: "agent", Path: "root", Label: "fix", Data: map[string]any{"family": "executor", "role": "executor", "node": "n", "resume_of": "c_1"}}
+	for name, c := range map[string]struct {
+		body   string
+		events []engine.Event
+		want   []string
+	}{
+		"build, unit check, commit, verify, land": {
+			build + "await crw.unitCheck('n', ex, { round: 1 })\n" + commitVerifyLand,
+			[]engine.Event{built, check, op("crw.commit"), op("crw.verify"), op("crw.land")}, nil},
+		"build, unit check, fix, unit check, commit, verify, land": {
+			build + "await crw.unitCheck('n', ex, { round: 1 })\n" + fix + "await crw.unitCheck('n', ex, { round: 2, final: true })\n" + commitVerifyLand,
+			[]engine.Event{built, check, fixed, check, op("crw.commit"), op("crw.verify"), op("crw.land")}, nil},
+		"land release, verify, unit check, land": {
+			landRelease + "const ci = await crw.verify('n', rel.land)\nawait crw.unitCheck('n', rel.land, { mode: 'committed' })\nreturn crw.land('n', { head: rel.land, ci })",
+			[]engine.Event{released, op("crw.verify"), check, op("crw.land")}, nil},
+		"land release, verify, review, land (today's land-head)": {
+			landRelease + "const ci = await crw.verify('n', rel.land)\nconst rv = await crw.review('n', {}, rel.land, ci)\nreturn crw.land('n', { head: rel.land, ci, review: rv })",
+			[]engine.Event{released, op("crw.verify"), op("crw.review"), op("crw.land")}, nil},
+		"build, commit, verify, land": {
+			build + commitVerifyLand,
+			[]engine.Event{built, op("crw.commit"), op("crw.verify"), op("crw.land")}, []string{RuleLandWithoutReview}},
+		"build, unit check, fix, commit, verify, land": {
+			build + "await crw.unitCheck('n', ex, { round: 1 })\n" + fix + commitVerifyLand,
+			[]engine.Event{built, check, fixed, op("crw.commit"), op("crw.verify"), op("crw.land")}, []string{RuleLandWithoutReview}},
+		"a held unit check read after the fix": {
+			build + "const uc = crw.unitCheck('n', ex, { round: 1 })\n" + fix + "await uc\n" + commitVerifyLand,
+			[]engine.Event{built, check, fixed, op("crw.commit"), op("crw.verify"), op("crw.land")}, []string{RuleLandWithoutReview}},
+		"a held unit check read before the commit": {
+			build + "const uc = crw.unitCheck('n', ex, { round: 1 })\nawait uc\n" + commitVerifyLand,
+			[]engine.Event{built, check, op("crw.commit"), op("crw.verify"), op("crw.land")}, nil},
+		"land release, verify, land": {
+			landRelease + "const ci = await crw.verify('n', rel.land)\nreturn crw.land('n', { head: rel.land, ci })",
+			[]engine.Event{released, op("crw.verify"), op("crw.land")}, []string{RuleLandWithoutReview}},
+		"a unit check after the commit, before the verify": {
+			build + "const head = await crw.commit('n', ex)\nawait crw.unitCheck('n', head, { round: 1 })\nreturn 1",
+			[]engine.Event{built, op("crw.commit"), check}, []string{RuleLifecycleOrder}},
+		"a verify after a release without land": {
+			"const rel = await crw.release(args.plan, 'n', 'm', { pinned: true })\nreturn crw.verify('n', rel.land)",
+			[]engine.Event{row("crw.release", map[string]any{"released": true}), op("crw.verify")}, []string{RuleLifecycleOrder}},
+		"a verify after a release that is no land event": {
+			// statically: the fourth argument is an identifier (a stated limitation, even when it holds a land key); in the
+			// trace: a land release row the relay did not release.
+			"const OPTS = { pinned: true, land: { head: 'h' } }\nconst rel = await crw.release(args.plan, 'n', 'm', OPTS)\nreturn crw.verify('n', rel.land)",
+			[]engine.Event{row("crw.release", map[string]any{"kind": "land", "released": false}), op("crw.verify")}, []string{RuleLifecycleOrder}},
+	} {
+		t.Run(name+"/static", func(t *testing.T) {
+			if got := rules(lintStatic(t, c.body)); !slices.Equal(got, c.want) {
+				t.Errorf("static rules %v, want %v\n%s", got, c.want, c.body)
+			}
+		})
+		t.Run(name+"/trace", func(t *testing.T) {
+			if got := rules(Report{Diagnostics: traceDiagnostics(&engine.Result{Status: engine.RunCompleted}, c.events, nil)}); !slices.Equal(got, c.want) {
+				t.Errorf("trace rules %v, want %v", got, c.want)
+			}
+		})
+	}
+	// A fix of one node, its result kept in the same name (ex = agent.call(..., { resume: ex })), clears that node's check
+	// only: another node checked before it still lands.
+	twoNodes := `
+let a = await agent.call('build a', { agentType: 'executor', node: 'a', label: 'build:a' })
+const b = await agent.call('build b', { agentType: 'executor', node: 'b', label: 'build:b' })
+await crw.unitCheck('a', a, { round: 1 })
+await crw.unitCheck('b', b, { round: 1 })
+a = await agent.call('fix a', { resume: a, label: 'fix:a' })
+const hb = await crw.commit('b', b)
+const cb = await crw.verify('b', hb)
+return crw.land('b', { head: hb, ci: cb })`
+	if r := lintStatic(t, twoNodes); !r.OK() {
+		t.Errorf("a fix of a clears only a's check (static): %v", r.Diagnostics)
+	}
+	nodeRow := func(op, node string, data map[string]any) engine.Event {
+		e := row(op, data)
+		e.Data["node"] = node
+		return e
+	}
+	buildOf := func(node string, resume bool) engine.Event {
+		d := map[string]any{"family": "executor", "role": "executor", "node": node}
+		if resume {
+			d["resume_of"] = "c_" + node
+		}
+		return engine.Event{Kind: engine.KindCall, Event: engine.EvPrepared, Op: "agent", Path: "root", Label: "build:" + node, Data: d}
+	}
+	judged := map[string]any{"role": "unit-check", "state": "ok", "verdict": "verified"}
+	twoRows := []engine.Event{buildOf("a", false), buildOf("b", false), nodeRow("crw.unitCheck", "a", judged),
+		nodeRow("crw.unitCheck", "b", judged), buildOf("a", true), nodeRow("crw.commit", "b", nil), nodeRow("crw.verify", "b", nil), nodeRow("crw.land", "b", nil)}
+	if d := traceDiagnostics(&engine.Result{Status: engine.RunCompleted}, twoRows, nil); len(d) != 0 {
+		t.Errorf("a fix of a clears only a's check (trace): %v", d)
+	}
+	for name, c := range map[string]struct {
+		src  string
+		want bool
+	}{
+		"an identifier key":        {"{ pinned: true, land: {} }", true},
+		"a string key":             {"{ 'land': {} }", true},
+		"a shorthand property":     {"{ land }", true},
+		"another key":              {"{ pinned: true }", false},
+		"a computed key":           {"{ ['land']: {} }", false},
+		"an identifier, no object": {"opts", false},
+	} {
+		prog, err := parser.ParseFile(nil, "x.js", "const land = 1, opts = 2\nconst x = "+c.src, 0)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		e := prog.Body[1].(*ast.LexicalDeclaration).List[0].Initializer
+		if got := objectHasKey(e, "land"); got != c.want {
+			t.Errorf("%s: objectHasKey(%s) = %v, want %v", name, c.src, got, c.want)
+		}
+	}
+}
+
+// The built-in land-head.js passes the static rules of `crw flow lint` as project-lane.js does: its crw.release with land
+// leaves the node committed, so the verify, review and land after it are in order.
+func TestLandHeadIsLintClean(t *testing.T) {
+	text, err := workflows.Source("land-head")
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := Check(context.Background(), script.Source{Name: "land-head.js", Text: text, Dir: workflows.FS}, Options{})
+	for _, d := range report.Diagnostics {
+		t.Errorf("%s: %s: %s (line %d)", report.Script, d.Rule, d.Message, d.Line)
 	}
 }

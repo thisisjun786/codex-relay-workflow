@@ -2,12 +2,21 @@ package ops
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
+	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/reviewadapter"
 )
 
 // HeadRef is a head as a script hands it to an operation: the commit id, or the object crw.commit answered.
@@ -32,11 +41,466 @@ func (h *HeadRef) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// OpUnitCheck is the label of the op that records a unit check (a reviewadapter.Check of a node's work): the name only, its op
-// registers elsewhere. Its completed row carries in Data the role (unit-check), node, execution_id, criteria_digest, tree (the
-// fingerprint the check saw), commit when the check ran on a commit (none before it), and the reviewadapter.Result as result. The
-// relay reads the same row (dagsched agentReview) and crw.accept assembles a premerge record from it.
-const OpUnitCheck = "crw.unitCheck"
+// OpUnitCheck is the label of crw.unitCheck (unitCheckOp), the op that records a unit check (a reviewadapter.Check of a node's work).
+// Its completed row carries in Data the role (unit-check), node, execution_id, criteria_digest, tree (the fingerprint the check saw),
+// commit when the check ran on a commit (none before it), and the reviewadapter.Result as result. The relay reads the same row
+// (dagsched agentReview) and crw.accept assembles a premerge record from it.
+const OpUnitCheck = "crw." + NameUnitCheck
+
+// ---- crw.unitCheck ----
+
+// UnitChecker runs one unit check; the shipped lane's is reviewadapter.Adapter.
+type UnitChecker interface {
+	Check(context.Context, reviewadapter.Request) (reviewadapter.Result, error)
+}
+
+// UnitCheck is what crw.unitCheck reaches outside the journal: the checker, the profile of the tool for a mode ("uncommitted" or
+// "committed") and the time limit of one call.
+type UnitCheck struct {
+	Checker UnitChecker
+	Profile func(mode string) (reviewadapter.Profile, error)
+	Limit   time.Duration
+}
+
+// The modes of a unit check: the uncommitted changes an executor call left in the node's worktree (the pending tree crw.commit will
+// commit), or the committed range base..head of a checked-out head (land-head).
+const (
+	UnitCheckUncommitted = "uncommitted"
+	UnitCheckCommitted   = "committed"
+)
+
+// UnitCheckGuideRev is the revision of the review guide unitCheckPrompt builds the prompt from.
+const UnitCheckGuideRev = "crw-unit-check/1"
+
+// StateTreeMoved is the state of a unit check that was not run because the node's worktree is no longer the pending tree of the call
+// it was to judge: crw.commit commits that pending tree, so a check of another tree would be on no head.
+const StateTreeMoved = "tree_moved"
+
+// StateHeadMoved is the state of a unit check that was not run because the executor call it was to judge committed its work (its
+// completed row records executor_head_moved and HEAD is not the start it was given): the uncommitted changes are not the change
+// crw.commit commits on that start.
+const StateHeadMoved = "head_moved"
+
+// StateReceiptHeld is the state of an uncommitted unit check that was not run because the executor call it was to judge has no
+// accepted evidence receipt to hand it (CRW-1463, C12): the row and the answer name the hold (receipt_missing, receipt_unverified,
+// receipt_not_copied) the lane writes through crw.hold with source unit_check.
+const StateReceiptHeld = "receipt_held"
+
+// The receipt states a unit-check row records besides the backend's own (accepted): the judged call had no assignment (no backend
+// recorded one), or the check judged a committed range, which no executor wrote.
+const (
+	ReceiptNotAssigned = "not_assigned"
+	ReceiptNoExecutor  = "no_executor"
+)
+
+// unitCheckOp is crw.unitCheck(node, call, opts): one unit check of a node's work by the review tool, run in Go through Deps.UnitCheck
+// (no agent call), recorded as one completed row of role unit-check that crw.accept and the relay take as the judgment of the head
+// (CRW-1463). With no opts.commit it judges the uncommitted changes the executor call `call` left in the node's worktree: the
+// worktree's snapshot must be that call's pending tree and its HEAD the start the call was given, else the tool is not run and the row
+// says tree_moved or head_moved (no role: no reader takes it). With opts.commit and opts.base it judges the committed range base..commit checked out in the node's worktree.
+//
+// An uncommitted check reads the evidence receipt the judged call's completed row records (evidence_receipt, CRW-1463 C12): an accepted
+// receipt's step-bus copy whose bytes hash to its digest goes into the prompt and the row records it (state, sha256, copy, ignored);
+// a call with no evidence_receipt had no assignment and records not_assigned; any other receipt (missing, unverified, accepted but
+// not copied, a copy that cannot be read or does not hash to the digest) is not handed over: the tool is not run, and the row carries
+// the node, the call, the receipt as read and hold receipt_*, with no role, tree or commit, so no reader takes it and a resume reads
+// the receipt again. A committed check judges a range no executor wrote and records no_executor.
+//
+// The op holds nothing itself and never calls the relay. A check whose tool gave no judgment for its quota or no answer is recorded
+// with role unit-check and hold unit_check_<state> on the row and in the answer, and is not proven: the lane holds the node through
+// crw.hold with source unit_check, and a resume asks the tool again. An invalid answer is asked once more with the same request; the
+// second record is kept (retried, first_state invalid). worktree_changed and tool_failed are recorded and proven, for the lane to
+// escalate. A Go error of the checker (a bad request, a fingerprint, the end of the context) is the op's error and writes no row.
+type unitCheckOp struct{ l *Lane }
+
+// UnitCheckOpts are the options of crw.unitCheck.
+type UnitCheckOpts struct {
+	Round  int      `json:"round"`
+	Final  bool     `json:"final"`
+	Commit *HeadRef `json:"commit"`
+	Base   string   `json:"base"`
+}
+
+// UnitCheckOutcome is the answer of crw.unitCheck: the adapter's record (the row's result, which crw.accept and the relay decode as a
+// reviewadapter.Result), the hold the lane is to write (unit_check_quota, unit_check_no_answer; "" for none), whether the record is
+// that of the retry of an invalid answer, the executor call it judged ("" for a committed check) and the call id of the check itself
+// (the reviewer call an acceptance on it names). State is tree_moved for a check that was not run.
+type UnitCheckOutcome struct {
+	reviewadapter.Result
+	Hold    string `json:"hold"`
+	Retried bool   `json:"retried"`
+	Call    string `json:"call"`
+	CheckID string `json:"check_id"`
+}
+
+func (o *unitCheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResult, error) {
+	var node string
+	var ex CallRef
+	var opts UnitCheckOpts
+	if err := args(req.Args, &node, &ex, &opts); err != nil {
+		return engine.OpResult{}, fmt.Errorf("crw.unitCheck(node, call, opts): %w", err)
+	}
+	uc := o.l.d.UnitCheck
+	if uc == nil || uc.Checker == nil || uc.Profile == nil {
+		return engine.OpResult{}, fmt.Errorf("crw.unitCheck: node %s: no unit checker is wired", node)
+	}
+	if node == "" {
+		return engine.OpResult{}, fmt.Errorf("crw.unitCheck: a node is required")
+	}
+	mode, head := UnitCheckUncommitted, ""
+	if opts.Commit != nil && opts.Commit.Commit != "" {
+		mode, head = UnitCheckCommitted, opts.Commit.Commit
+		if opts.Base == "" {
+			return engine.OpResult{}, fmt.Errorf("crw.unitCheck: node %s: a committed check of %s needs the base of its range", node, head)
+		}
+		ex = CallRef{}
+	} else if ex.CallID == "" {
+		return engine.OpResult{}, fmt.Errorf("crw.unitCheck: node %s: an uncommitted check needs the executor call it judges", node)
+	}
+	profile, err := uc.Profile(mode)
+	if err != nil {
+		return engine.OpResult{}, fmt.Errorf("crw.unitCheck: node %s: the %s profile: %w", node, mode, err)
+	}
+	r := rows(req.Journal.Events())
+	wt := r.worktreeOf(node)
+	if wt == "" {
+		return engine.OpResult{}, fmt.Errorf("crw.unitCheck: node %s: no worktree is recorded", node)
+	}
+	g := o.l.d.Git
+	data := map[string]any{"node": node, "mode": mode, "round": opts.Round, "final": opts.Final}
+	snap := ""
+	var receipt checkReceipt
+	if mode == UnitCheckUncommitted {
+		data["call"] = ex.CallID
+		term, ok := r.terminal(ex.CallID)
+		pending := ""
+		if ok {
+			pending = dataStr(term, "pending_tree")
+		}
+		if pending == "" {
+			return engine.OpResult{}, fmt.Errorf("crw.unitCheck: node %s: no pending tree is recorded for call %s", node, ex.CallID)
+		}
+		if snap, err = Snapshot(ctx, g, wt); err != nil {
+			return engine.OpResult{}, err
+		}
+		if snap != pending {
+			data["state"], data["tree_moved"], data["pending_tree"], data["tree"] = StateTreeMoved, true, pending, snap
+			out := UnitCheckOutcome{Result: reviewadapter.Result{State: StateTreeMoved, Detail: "the worktree is not the pending tree of call " + ex.CallID + "; the tool was not run",
+				Findings: []reviewadapter.Finding{}}, Call: ex.CallID, CheckID: req.CallID}
+			return engine.OpResult{Result: result(out), Data: data}, nil
+		}
+		// an executor that committed its work moved HEAD off the commit the node's attempt is at: the uncommitted changes are then not
+		// the change crw.commit commits on that commit, so the tool would judge an empty or partial diff. The commit is the start the
+		// session backend records for the call when it saw HEAD move (executor_head_moved), else the attempt's own (attemptHead), so a
+		// backend that records no move (the App Server's) is read the same way.
+		start := r.attemptHead(node)
+		if moved, ok := term.Data["executor_head_moved"].(map[string]any); ok && str(moved, "start") != "" {
+			start = str(moved, "start")
+		}
+		if start != "" {
+			at, err := Head(ctx, g, wt)
+			if err != nil {
+				return engine.OpResult{}, err
+			}
+			if at != start {
+				data["state"], data["pending_tree"], data["head_moved"] = StateHeadMoved, pending, map[string]any{"start": start, "head": at}
+				out := UnitCheckOutcome{Result: reviewadapter.Result{State: StateHeadMoved, Detail: "the worktree's HEAD " + at + " is not the commit " + start +
+					" the attempt of call " + ex.CallID + " is at (the executor committed); the uncommitted changes are not the change to commit, and the tool was not run", Findings: []reviewadapter.Finding{}},
+					Call: ex.CallID, CheckID: req.CallID}
+				return engine.OpResult{Result: result(out), Data: data}, nil
+			}
+		}
+		var hold, detail string
+		if receipt, hold, detail = executorReceipt(term); hold != "" {
+			data["state"], data["hold"], data["receipt"], data["detail"] = StateReceiptHeld, hold, term.Data["evidence_receipt"], detail
+			out := UnitCheckOutcome{Result: reviewadapter.Result{State: StateReceiptHeld, Detail: detail + "; the tool was not run", Findings: []reviewadapter.Finding{}},
+				Hold: hold, Call: ex.CallID, CheckID: req.CallID}
+			return engine.OpResult{Result: result(out), Data: data}, nil
+		}
+		data["receipt"] = receipt.row
+	} else {
+		data["receipt"] = map[string]any{"state": ReceiptNoExecutor}
+		// the range is judged in the checkout of its head: a worktree at another commit would be a check of another tree
+		at, err := Head(ctx, g, wt)
+		if err != nil {
+			return engine.OpResult{}, err
+		}
+		if at != head {
+			return engine.OpResult{}, fmt.Errorf("crw.unitCheck: node %s: the worktree %s is at %s, not at the head %s to check", node, wt, at, head)
+		}
+		data["commit"], data["base"] = head, opts.Base
+		// and in a clean checkout of it: a check of edited files would be recorded as the judgment of the commit
+		commitTree, err := TreeOf(ctx, g, wt, head)
+		if err != nil {
+			return engine.OpResult{}, err
+		}
+		if snap, err = Snapshot(ctx, g, wt); err != nil {
+			return engine.OpResult{}, err
+		}
+		if snap != commitTree {
+			data["state"], data["tree_moved"], data["commit_tree"], data["tree"] = StateTreeMoved, true, commitTree, snap
+			out := UnitCheckOutcome{Result: reviewadapter.Result{State: StateTreeMoved, Detail: "the worktree is not the tree of " + head + "; the tool was not run",
+				Findings: []reviewadapter.Finding{}}, CheckID: req.CallID}
+			return engine.OpResult{Result: result(out), Data: data}, nil
+		}
+	}
+	if rel, ok := releaseRowOf(r, node); ok {
+		data["execution_id"], data["criteria_digest"] = dataStr(rel, "execution_id"), dataStr(rel, "criteria_digest")
+	}
+	creq := reviewadapter.Request{Profile: profile, Worktree: wt, Prompt: unitCheckPrompt(r, node, mode, opts.Base, head, receipt), Schema: reviewadapter.AnswerSchema, Limit: uc.Limit,
+		GuideRev: UnitCheckGuideRev}
+	if mode == UnitCheckCommitted {
+		// the range the reader of a committed profile takes an answer about (reviewadapter.Profile.Ranged)
+		creq.Base, creq.Head = opts.Base, head
+	}
+	// every attempt is the judgment of snap, the tree the op snapped for this check (the commit's tree, or the pending tree), or of
+	// nothing: a worktree that changed after the snap and before the call was judged in its new state, which the adapter's own
+	// fingerprints (both of the new tree) do not reveal, and a committed row names its commit, whose tree no reader compares
+	moved := func(res reviewadapter.Result) (string, error) {
+		if res.State == reviewadapter.StateWorktreeChanged {
+			return "", nil
+		}
+		if res.FingerprintBefore != "" && res.FingerprintBefore != snap {
+			return res.FingerprintBefore, nil
+		}
+		now, err := Snapshot(ctx, g, wt)
+		if err != nil || now == snap {
+			return "", err
+		}
+		return now, nil
+	}
+	treeMoved := func(seen string, retried bool) (engine.OpResult, error) {
+		delete(data, "role")
+		data["state"], data["tree_moved"], data["tree"] = StateTreeMoved, true, seen
+		if mode == UnitCheckCommitted {
+			data["commit_tree"] = snap
+		} else {
+			data["pending_tree"] = snap
+		}
+		out := UnitCheckOutcome{Result: reviewadapter.Result{State: StateTreeMoved, Detail: "the worktree changed from " + snap + " to " + seen +
+			" after the op snapped it and before the tool judged it; the answer is no judgment of the snapped tree", Findings: []reviewadapter.Finding{}},
+			Retried: retried, Call: ex.CallID, CheckID: req.CallID}
+		return engine.OpResult{Result: result(out), Data: data}, nil
+	}
+	res, err := uc.Checker.Check(ctx, creq)
+	if err != nil {
+		return engine.OpResult{}, fmt.Errorf("crw.unitCheck: node %s: %w", node, err)
+	}
+	if seen, err := moved(res); err != nil {
+		return engine.OpResult{}, err
+	} else if seen != "" {
+		return treeMoved(seen, false)
+	}
+	out := UnitCheckOutcome{Call: ex.CallID, CheckID: req.CallID}
+	if res.State == reviewadapter.StateInvalid {
+		data["first_state"] = string(res.State)
+		if res, err = uc.Checker.Check(ctx, creq); err != nil {
+			return engine.OpResult{}, fmt.Errorf("crw.unitCheck: node %s: the retry of an invalid answer: %w", node, err)
+		}
+		out.Retried = true
+		if seen, err := moved(res); err != nil {
+			return engine.OpResult{}, err
+		} else if seen != "" {
+			data["retried"] = true
+			return treeMoved(seen, true)
+		}
+	}
+	if res.Findings == nil {
+		res.Findings = []reviewadapter.Finding{}
+	}
+	out.Result = res
+	switch res.State {
+	case reviewadapter.StateQuota, reviewadapter.StateNoAnswer:
+		out.Hold = "unit_check_" + string(res.State)
+		data["hold"] = out.Hold
+	}
+	data["role"], data["state"], data["verdict"], data["retried"], data["findings"] = execution.AgentUnitCheck, string(res.State), res.Verdict, out.Retried, len(res.Findings)
+	// the tree the check saw: the fingerprint the checker took before the call, else the snapshot the op compared with the pending tree
+	data["tree"] = res.FingerprintBefore
+	if res.FingerprintBefore == "" {
+		data["tree"] = snap
+	}
+	return engine.OpResult{Result: result(out), Data: data}, nil
+}
+
+// Proven: a recorded check stands, whatever it found; one that holds the node (no judgment for the tool's quota or a blank answer) is
+// no result to replay, so a resume asks the tool again.
+func (o *unitCheckOp) Proven(_ context.Context, _ []engine.Event, row engine.Event) (bool, string, error) {
+	if h := dataStr(row, "hold"); h != "" {
+		return false, "the unit check held the node (" + h + ")", nil
+	}
+	return true, "", nil
+}
+
+// unitCheckPrompt is the prompt of a unit check (guide UnitCheckGuideRev): the scope sentence first, in the words the tool's reader
+// expects of its scope (the uncommitted changes of the working tree, or the range base..head), then the node and the criteria of its
+// plan the change is judged against, and in uncommitted mode the executor's accepted evidence receipt (EXECUTOR RECEIPT) when it has one.
+func unitCheckPrompt(r rows, node, mode, base, head string, receipt checkReceipt) string {
+	var b strings.Builder
+	if mode == UnitCheckCommitted {
+		fmt.Fprintf(&b, "Review the changes between %s and %s (git diff %s..%s).\n", base, head, base, head)
+	} else {
+		b.WriteString("Review the uncommitted changes in this working tree.\n")
+	}
+	issue := node
+	var criteria []string
+	rel, ok := designRowOf(r, node)
+	if !ok {
+		rel, ok = releaseRowOf(r, node)
+	}
+	if ok {
+		if n, found := planNodeOf(r, dataStr(rel, "plan"), dataStr(rel, "milestone"), node); found {
+			criteria = n.Criteria
+			if n.Issue != "" {
+				issue = n.Issue
+			}
+		}
+	}
+	fmt.Fprintf(&b, "\nThis is the unit check of node %s (issue %s) of a crw run. Report every bug, regression or unmet criterion you find in the change.\n", node, issue)
+	if len(criteria) > 0 {
+		b.WriteString("\nCRITERIA (what the change must do)\n")
+		for i, id := range CriterionIDs(len(criteria)) {
+			fmt.Fprintf(&b, "%s: %s\n", id, criteria[i])
+		}
+	}
+	if receipt.body != nil {
+		fmt.Fprintf(&b, "\nEXECUTOR RECEIPT (the evidence receipt the executor wrote, sha256 %s: what it says it ran, such as its red-first and mutation-red lines; "+
+			"it is the executor's report, not a judgment of the change)\n", receipt.digest)
+		body := receipt.body
+		if len(body) > UnitCheckReceiptPromptLimit {
+			body = body[:UnitCheckReceiptPromptLimit]
+			if i := strings.LastIndexByte(string(body), '\n'); i >= 0 {
+				body = body[:i+1]
+			}
+		}
+		b.Write(body)
+		if len(body) == 0 || body[len(body)-1] != '\n' {
+			b.WriteByte('\n')
+		}
+		if len(body) < len(receipt.body) {
+			fmt.Fprintf(&b, "(the receipt is %d bytes; the first %d are above; the whole receipt is the file %s)\n", len(receipt.body), len(body), receipt.file)
+		}
+	}
+	return b.String()
+}
+
+// UnitCheckReceiptPromptLimit is the most bytes of an executor receipt a unit-check prompt carries: the tool takes the prompt as one
+// command-line argument (reviewadapter.ExecRun), which Linux bounds at 128 KiB, while a receipt may be up to 16 MiB. A longer receipt is
+// cut at a line end within the limit and the prompt names the file of its whole copy.
+const UnitCheckReceiptPromptLimit = 32 << 10
+
+// checkReceipt is the executor receipt an uncommitted unit check hands the tool: the row it records and, for an accepted receipt,
+// the bytes of its step-bus copy and their digest (body nil for none).
+type checkReceipt struct {
+	row    map[string]any
+	body   []byte
+	digest string
+	// file is the file the bytes were read from: the step-bus copy, or the receipt where the hook accepted it
+	file string
+}
+
+// executorReceipt reads the evidence receipt the completed row of an executor call records (engine evidenceReceipt): the receipt to
+// hand the check, or the hold of a receipt that cannot be handed over and why. The copy is the absolute step-bus path the backend
+// wrote; the op reads that path only and never builds one. When the backend could not copy the receipt (copy_error) or its copy cannot
+// be read, the receipt is read where the hook accepted it (the absolute path the row records, in the executor's worktree) and handed
+// over when it still hashes to the receipt's digest; the row then records that path and the copy's error. So receipt_not_copied, a
+// failure of the copy, clears when the check runs again (a resume) and the receipt can be read; missing and unverified receipts stand on
+// the call's own record, which no resume changes.
+func executorReceipt(term engine.Event) (checkReceipt, string, string) {
+	raw, present := term.Data["evidence_receipt"]
+	if !present || raw == nil {
+		return checkReceipt{row: map[string]any{"state": ReceiptNotAssigned}}, "", ""
+	}
+	er, ok := raw.(map[string]any)
+	if !ok {
+		return checkReceipt{}, "receipt_unverified", fmt.Sprintf("the evidence receipt of the call is not an object (%T)", raw)
+	}
+	switch state := str(er, "state"); state {
+	case "accepted":
+	case "missing", "":
+		return checkReceipt{}, "receipt_missing", "the executor's evidence receipt is missing: " + str(er, "detail")
+	default:
+		return checkReceipt{}, "receipt_unverified", "the executor's evidence receipt is " + state + ": " + str(er, "detail")
+	}
+	cp, digest := str(er, "copy"), str(er, "sha256")
+	var body []byte
+	why := ""
+	switch {
+	case cp == "":
+		why = "the accepted evidence receipt was not copied to the step bus: " + str(er, "copy_error")
+	case !filepath.IsAbs(cp):
+		why = "the copy " + cp + " of the accepted evidence receipt is not an absolute step-bus path"
+	case digest == "":
+		return checkReceipt{}, "receipt_unverified", "the accepted evidence receipt names no sha256"
+	default:
+		b, err := os.ReadFile(cp)
+		if err != nil {
+			why = "the copy of the accepted evidence receipt cannot be read: " + err.Error()
+		} else {
+			body = b
+		}
+	}
+	row := map[string]any{"state": "accepted", "sha256": digest}
+	file := cp
+	if body == nil {
+		// no copy to read: the receipt where the hook accepted it, when the row names it by an absolute path
+		orig := str(er, "path")
+		if digest == "" {
+			return checkReceipt{}, "receipt_not_copied", why
+		}
+		if orig == "" || !filepath.IsAbs(orig) {
+			return checkReceipt{}, "receipt_not_copied", why + "; the row names no absolute path of the receipt the hook accepted"
+		}
+		b, err := readReceiptFile(orig)
+		if err != nil {
+			return checkReceipt{}, "receipt_not_copied", why + "; the receipt the hook accepted cannot be read either: " + err.Error()
+		}
+		body, file = b, orig
+		row["path"] = orig
+		if ce := str(er, "copy_error"); ce != "" {
+			row["copy_error"] = ce
+		} else {
+			row["copy_error"] = why
+		}
+	} else {
+		row["copy"] = cp
+	}
+	if sum := sha256.Sum256(body); hex.EncodeToString(sum[:]) != digest {
+		return checkReceipt{}, "receipt_unverified", "the receipt " + file + " of the accepted evidence receipt does not hash to its sha256 " + digest
+	}
+	if ig, ok := er["ignored"].(bool); ok {
+		row["ignored"] = ig
+	}
+	return checkReceipt{row: row, body: body, digest: digest, file: file}, "", ""
+}
+
+// receiptFileLimit is the most bytes of an evidence receipt read in place of its copy, the stop hook's own limit (16 MiB).
+const receiptFileLimit = 16 << 20
+
+// readReceiptFile reads an evidence receipt where the hook accepted it: a regular file, not through a symbolic link, of at most
+// receiptFileLimit bytes (the step-bus copy, which the backend wrote, is read as it is).
+func readReceiptFile(path string) ([]byte, error) {
+	f, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("%s is not a regular file", path)
+	}
+	body, err := io.ReadAll(io.LimitReader(f, receiptFileLimit+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > receiptFileLimit {
+		return nil, fmt.Errorf("%s is larger than %d bytes", path, receiptFileLimit)
+	}
+	return body, nil
+}
 
 // ---- crw.commit ----
 
@@ -177,6 +641,9 @@ type VerifyResult struct {
 	Base string `json:"base"`
 	// Warnings are what the verification warns of without failing (no_tests_run, CRW-1328); additive.
 	Warnings []string `json:"warnings,omitempty"`
+	// FailedTests are the failed steps of the record with the tests and the packages they name and the last lines of their output
+	// (CRW-1469); additive, absent for a verification that names none.
+	FailedTests []FailedStep `json:"failed_tests,omitempty"`
 }
 
 func (o *verifyOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResult, error) {
@@ -227,6 +694,10 @@ func (o *verifyOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 				res.Failures = out.Failures
 			}
 			record = out.Record
+			if len(out.FailedTests) > 0 {
+				res.FailedTests = out.FailedTests
+				data["failed_tests"] = out.FailedTests
+			}
 			if out.Note != "" {
 				data["verifier_note"] = out.Note
 			}

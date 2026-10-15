@@ -11,13 +11,16 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/journal"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/reviewadapter"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -73,6 +76,8 @@ type LaneOptions struct {
 	Relay func(*SchedRelay) ops.Relay
 	// Reporter replaces the request's reporter; nil keeps it.
 	Reporter ops.Reporter
+	// UnitCheck is what crw.unitCheck runs a node's unit check with (CRW-1463); nil is shippedUnitCheck.
+	UnitCheck *ops.UnitCheck
 }
 
 // SchedulerLane is the OpsFor of the shipped binary.
@@ -154,13 +159,41 @@ func BuildLane(ctx context.Context, req LaneRequest, opt LaneOptions) (LaneWorld
 	if opt.Reporter != nil {
 		reporter = opt.Reporter
 	}
+	unitCheck := opt.UnitCheck
+	if unitCheck == nil {
+		unitCheck = shippedUnitCheck()
+	}
 	lane := ops.NewLane(ops.Deps{RunID: spec.RunID, Repo: req.Repo, Journal: journal, Relay: seam, Verifier: verifier, Decisions: ops.StoreDecisions{DB: req.Store.DB},
-		Threads: req.Threads, Reporter: reporter, Actor: spec.Thread, LandRoot: RunDir(req.State, spec.RunID)})
+		Threads: req.Threads, Reporter: reporter, Actor: spec.Thread, LandRoot: RunDir(req.State, spec.RunID), UnitCheck: unitCheck})
 	out := LaneWorld{Ops: lane.Ops(), Prover: ops.NewProver(), InputSnapshot: lane.InputSnapshot, Journal: journal}
 	if plan := planOf(spec.Args); plan != "" && ref.Path != "" {
 		out.Base = func(string) (string, error) { return relay.IntegrationTip(ctx, plan) }
 	}
 	return out, nil
+}
+
+// shippedUnitCheckLimit is the time limit of one call of the shipped unit check's tool.
+const shippedUnitCheckLimit = 10 * time.Minute
+
+// shippedUnitCheck is the unit check of the shipped lane (CRW-1463): the review adapter over the tool runner (reviewadapter.ExecRun) with
+// ops.Snapshot as its fingerprint, the value of an executor call's pending tree and of crw.commit's tree, so the tree an uncommitted check
+// saw is the tree of the head its node commits. The uncommitted mode runs Bugbot (reviewadapter.BugbotProfile); the committed mode
+// (land-head's range, CRW-1468) runs Bugbot with the range's scope reader (reviewadapter.BugbotCommittedProfile).
+func shippedUnitCheck() *ops.UnitCheck {
+	git := ops.ExecGit("git")
+	return &ops.UnitCheck{
+		Checker: reviewadapter.Adapter{Run: reviewadapter.ExecRun, Fingerprint: func(ctx context.Context, dir string) (string, error) { return ops.Snapshot(ctx, git, dir) }},
+		Profile: func(mode string) (reviewadapter.Profile, error) {
+			switch mode {
+			case ops.UnitCheckUncommitted:
+				return reviewadapter.BugbotProfile(), nil
+			case ops.UnitCheckCommitted:
+				return reviewadapter.BugbotCommittedProfile(), nil
+			}
+			return reviewadapter.Profile{}, fmt.Errorf("the shipped unit check has no mode %q", mode)
+		},
+		Limit: shippedUnitCheckLimit,
+	}
 }
 
 // ShippedRunnableCommand says why the shipped lane's verifier cannot run a required command of a milestone ("" when it can): the
@@ -190,7 +223,9 @@ func laneVerifierTools(getenv func(string) (string, bool)) (crwconfig.VerifierTo
 // dag-integrate --verify (docs/relay/dag-scheduler.md), run through the same command verifier with the batch's head, base and record.
 // The command is the one the verifier's tools name (crwconfig.VerifierTools.Command): with a Go root configured it is the merged tree's
 // own crw-dev, so the merged tree verifies itself. A command that comes from PATH because nothing configured it writes its note to notes,
-// and one that cannot start is a host error that names the setting.
+// and one that cannot start is a host error that names the setting. The command does not get the caller's environment (CRW-1463): it
+// runs under integrationEnv with a HOME and TMPDIR of its own, made for the verification and removed after it, then the tools' env,
+// then the batch's CRW_VERIFY_*.
 func CILocalIntegration(tools crwconfig.VerifierTools, notes io.Writer) dagsched.IntegrationBatchVerifier {
 	return func(ctx context.Context, dir string, env []string) error {
 		vars := map[string]string{}
@@ -206,14 +241,190 @@ func CILocalIntegration(tools crwconfig.VerifierTools, notes io.Writer) dagsched
 		if command.Note != "" && notes != nil {
 			fmt.Fprintf(notes, "[crw note] integration verification: %s\n", command.Note)
 		}
+		// the fresh TMPDIR is integrationTmpPrefix plus at most 10 digits below the caller's: ci local makes each step's TMPDIR below it
+		// and refuses one that leaves no room for a test's Unix socket under the host's path limit (temp_dir_unusable), so the name is
+		// kept short, and HOME is below it
+		tmp, err := os.MkdirTemp("", integrationTmpPrefix)
+		if err != nil {
+			return &dagsched.IntegrationVerifierHostError{Detail: fmt.Sprintf("the verification's own HOME and TMPDIR could not be made: %v", err)}
+		}
+		defer func() {
+			if err := removeTree(tmp); err != nil && notes != nil {
+				fmt.Fprintf(notes, "[crw note] integration verification: its directory %s was not removed: %v\n", tmp, err)
+			}
+		}()
+		home := filepath.Join(tmp, "h")
+		if err := os.Mkdir(home, 0o700); err != nil {
+			return &dagsched.IntegrationVerifierHostError{Detail: fmt.Sprintf("the verification's own HOME and TMPDIR could not be made: %v", err)}
+		}
+		base := integrationEnv(os.LookupEnv, home, tmp)
 		argv := append(append([]string{}, command.Argv...), "ci", "local", "--commit", vars["CRW_VERIFY_HEAD"], "--base", vars["CRW_VERIFY_BASE"], "--record", vars["CRW_VERIFY_RECORD"], "--runner", "local")
-		err = dagsched.CommandVerifier(argv)(ctx, dir, append(append([]string{}, command.Env...), env...))
+		err = dagsched.CommandVerifierEnv(argv, func() []string { return base })(ctx, dir, append(append([]string{}, command.Env...), env...))
 		var host *dagsched.IntegrationVerifierHostError
 		if errors.As(err, &host) {
 			return &dagsched.IntegrationVerifierHostError{Detail: host.Detail + "; " + command.Hint}
 		}
 		return err
 	}
+}
+
+// integrationTmpPrefix is the name prefix of an integration verification's own TMPDIR below the caller's.
+const integrationTmpPrefix = "crw-"
+
+// integrationKeptEnv is what the integration verification keeps of the caller's environment: the variables ci local lets a step
+// inherit except TMPDIR (dev/ci/local.go localInheritedEnv), and ci local's own heavy-check gate (CRW_CI_HEAVY_GATE), so the host's
+// limit on heavy checks holds for an integration verification too; integrationGoSourceEnv are the module-source settings the caller's
+// go would use, kept from the caller's environment or its go env file.
+var (
+	integrationKeptEnv = []string{"PATH", "LANG", "GOCACHE", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "NPM_CONFIG_CACHE",
+		"CRW_CI_HEAVY_GATE"}
+	integrationGoSourceEnv = []string{"GOPROXY", "GOSUMDB", "GONOSUMDB", "GOPRIVATE", "GONOPROXY", "GOINSECURE"}
+)
+
+// integrationEnv is the environment the integration verification's command starts from (CRW-1463, CRW-1489 C-2), for a caller whose
+// variables getenv reads: integrationKeptEnv as the caller has them, integrationGoSourceEnv as the caller's go has them, GOMODCACHE at
+// the caller's effective module cache (callerModuleCache: the go of a tree-mode `go run ./cmd/crw-dev` finds the modules the caller
+// already has instead of fetching them into the fresh HOME, whose go env file is not the caller's), HOME and TMPDIR at home and tmp,
+// and GOTOOLCHAIN=local. Two settings of the caller's homes are named explicitly, as the caller's ci local would find them: XDG_STATE_HOME
+// at the caller's state directory (ci local's default work root is below it, and one below the fresh TMPDIR is refused as
+// work_root_in_tmp) and CRW_CONFIG at the caller's crw configuration file (callerCrwConfig: its tool roots, which ci local applies to
+// every step). Everything else of the caller, GOPATH, GOFLAGS and XDG_CONFIG_HOME included, stays out.
+func integrationEnv(getenv func(string) (string, bool), home, tmp string) []string {
+	var env []string
+	for _, key := range integrationKeptEnv {
+		if v, ok := getenv(key); ok {
+			env = append(env, key+"="+v)
+		}
+	}
+	goVar := callerGoEnv(getenv)
+	for _, key := range integrationGoSourceEnv {
+		if v := goVar(key); v != "" {
+			env = append(env, key+"="+v)
+		}
+	}
+	if cache := callerModuleCache(goVar, getenv); cache != "" {
+		env = append(env, "GOMODCACHE="+cache)
+	}
+	if state := callerHomeDir(getenv, "XDG_STATE_HOME", ".local", "state"); state != "" {
+		env = append(env, "XDG_STATE_HOME="+state)
+	}
+	if config := callerCrwConfig(getenv); config != "" {
+		env = append(env, "CRW_CONFIG="+config)
+	}
+	return append(env, "HOME="+home, "TMPDIR="+tmp, "GOTOOLCHAIN=local")
+}
+
+// callerHomeDir is the caller's XDG directory named by key: its absolute value, else <HOME>/<below...> ("" without either).
+func callerHomeDir(getenv func(string) (string, bool), key string, below ...string) string {
+	if v, _ := getenv(key); filepath.IsAbs(v) {
+		return v
+	}
+	if home, _ := getenv("HOME"); home != "" {
+		return filepath.Join(append([]string{home}, below...)...)
+	}
+	return ""
+}
+
+// callerCrwConfig is the crw configuration file the caller's processes read (crwconfig's location chain): the caller's CRW_CONFIG, else
+// <XDG_CONFIG_HOME or HOME/.config>/crw/config.json when that file is there ("" otherwise: nothing configured the caller). The
+// default location is joined as raw text (crwconfig.JoinRoot), as crwconfig joins it, so a base that mixes a symbolic link and ".."
+// names the file the caller's crw reads.
+func callerCrwConfig(getenv func(string) (string, bool)) string {
+	if v, _ := getenv("CRW_CONFIG"); v != "" {
+		return v
+	}
+	base, _ := getenv("XDG_CONFIG_HOME")
+	if base == "" {
+		if home, _ := getenv("HOME"); home != "" {
+			base = crwconfig.JoinRoot(home, ".config")
+		}
+	}
+	if !filepath.IsAbs(base) {
+		return ""
+	}
+	path := crwconfig.JoinRoot(base, "crw", "config.json")
+	if info, err := os.Stat(path); err != nil || !info.Mode().IsRegular() {
+		return ""
+	}
+	return path
+}
+
+// callerGoEnv is a go setting as the caller's go reads it, without running go: the caller's variable when it is not empty, else the
+// value the caller's go env file has (GOENV, else <user config dir>/go/env; GOENV=off is none).
+func callerGoEnv(getenv func(string) (string, bool)) func(string) string {
+	file := map[string]string{}
+	path, _ := getenv("GOENV")
+	if path == "" {
+		path = callerGoEnvFile(getenv)
+	}
+	if path != "" && path != "off" {
+		if raw, err := os.ReadFile(path); err == nil {
+			for _, line := range strings.Split(string(raw), "\n") {
+				line = strings.TrimSpace(line)
+				if k, v, ok := strings.Cut(line, "="); ok && !strings.HasPrefix(line, "#") {
+					file[strings.TrimSpace(k)] = strings.TrimSpace(v)
+				}
+			}
+		}
+	}
+	return func(key string) string {
+		if v, _ := getenv(key); v != "" {
+			return v
+		}
+		return file[key]
+	}
+}
+
+// callerGoEnvFile is the caller's default go env file (go's os.UserConfigDir()/go/env), "" when the caller has no user config dir.
+func callerGoEnvFile(getenv func(string) (string, bool)) string {
+	if runtime.GOOS != "darwin" {
+		if v, _ := getenv("XDG_CONFIG_HOME"); v != "" {
+			if !filepath.IsAbs(v) {
+				return ""
+			}
+			return filepath.Join(v, "go", "env")
+		}
+	}
+	home, _ := getenv("HOME")
+	if home == "" {
+		return ""
+	}
+	if runtime.GOOS == "darwin" {
+		return filepath.Join(home, "Library", "Application Support", "go", "env")
+	}
+	return filepath.Join(home, ".config", "go", "env")
+}
+
+// callerModuleCache is the module cache the caller's go uses ("" when it has none): GOMODCACHE, else <first GOPATH entry>/pkg/mod,
+// else <HOME>/go/pkg/mod (go's default GOPATH), each setting as goVar reads it.
+func callerModuleCache(goVar func(string) string, getenv func(string) (string, bool)) string {
+	if v := goVar("GOMODCACHE"); v != "" {
+		return v
+	}
+	for _, entry := range filepath.SplitList(goVar("GOPATH")) {
+		if entry != "" {
+			return filepath.Join(entry, "pkg", "mod")
+		}
+	}
+	if v, _ := getenv("HOME"); v != "" {
+		return filepath.Join(v, "go", "pkg", "mod")
+	}
+	return ""
+}
+
+// removeTree removes dir and what is under it, making read-only directories (a module cache go wrote there) writable first when a
+// plain removal fails.
+func removeTree(dir string) error {
+	if err := os.RemoveAll(dir); err == nil {
+		return nil
+	}
+	_ = filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err == nil && info.IsDir() {
+			_ = os.Chmod(path, 0o700)
+		}
+		return nil
+	})
+	return os.RemoveAll(dir)
 }
 
 // runJournal is the run's journal with what the relay's agent acceptance reads of a call (dagsched/accept_agent.go) that the engine's rows
