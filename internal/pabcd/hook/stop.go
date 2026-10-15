@@ -90,23 +90,25 @@ type StopAnswer struct{ Stdout, Context string }
 // attest-file commands); empty selects this host's platform. env resolves the goals database and the
 // crw invocation of the commands in the block.
 func StopHandle(p StopPayload, platform string, env host.LookupEnv) StopAnswer {
-	return stopHandleWith(p, platform, env, state.WithSessionLock, nil)
+	return stopHandleWith(p, platform, env, state.WithSessionLock, nil, defaultStopSource())
 }
 
 // StopHandleWithRole is StopHandle with the role reader of CRW-386: role is called at most once, only for a Stop that would
 // answer the goal-idle block, with the payload's cwd and session id. nil is no reader (every session keeps the oracle's behavior).
 func StopHandleWithRole(p StopPayload, platform string, env host.LookupEnv, role func(cwd, sessionID string) PromptRole) StopAnswer {
-	return stopHandleWith(p, platform, env, state.WithSessionLock, role)
+	return stopHandleWith(p, platform, env, state.WithSessionLock, role, defaultStopSource())
 }
 
 // stopHandle takes the session lock as an argument so that a test can land a participating writer's
 // update, or a lock that cannot be taken, where the oracle's unlocked write would have been.
 func stopHandle(p StopPayload, platform string, env host.LookupEnv, lock func(cwd, sessionID string, fn func() error) error) StopAnswer {
-	return stopHandleWith(p, platform, env, lock, nil)
+	return stopHandleWith(p, platform, env, lock, nil, defaultStopSource())
 }
 
-// stopHandleWith is stopHandle with the role reader (nil: none, every session keeps the oracle's behavior).
-func stopHandleWith(p StopPayload, platform string, env host.LookupEnv, lock func(cwd, sessionID string, fn func() error) error, role func(cwd, sessionID string) PromptRole) StopAnswer {
+// stopHandleWith is stopHandle with the role reader (nil: none, every session keeps the oracle's behavior) and the source check
+// the Stop investigates with (src: defaultStopSource in production; a test passes its own, so no package variable is shared with
+// the goroutine that runs the check).
+func stopHandleWith(p StopPayload, platform string, env host.LookupEnv, lock func(cwd, sessionID string, fn func() error) error, role func(cwd, sessionID string) PromptRole, src stopSource) StopAnswer {
 	if env == nil {
 		env = os.LookupEnv
 	}
@@ -154,7 +156,7 @@ func stopHandleWith(p StopPayload, platform string, env host.LookupEnv, lock fun
 		// answer and offers the oracle's arming command, as a timed-out investigation does.
 		arming := stopArming{ok: true}
 		if stopBlockAhead(p, st, plan) {
-			arming = stopCanArm(p.Cwd, p.SessionID)
+			arming = stopCanArm(src, p.Cwd, p.SessionID)
 		}
 		return stopCounted(p, st, platform, env, lock, stopIdleDue, func(fresh state.State, _ *state.State, snap stopSnapshot) string {
 			return stopGoalIdleBlock(fresh, snap.plan, arming, p.SessionID, env)
@@ -750,17 +752,20 @@ func stopBuildBlockReason(phase state.Phase, work *stopWorkContext, binding stop
 	return ResolveCRWInDirective(strings.Join(lines, "\n"), env)
 }
 
-// stopCheckBound is the source-identity predicate of `orchestrate P` for a goalplan-bound session, owned by the context it is
-// given (the git it runs ends with it); a variable so a test can see where it runs.
-var stopCheckBound = sourcesession.CheckBoundContext
+// stopSource is the source-identity investigation of one Stop. check is the predicate of `orchestrate P` for a goalplan-bound
+// session, owned by the context it is given (the git it runs ends with it). budget bounds the investigation (git status and the
+// hashing of the dirty files): the Stop wiring has 15 seconds in all. grace is how long the Stop then waits for an investigation
+// it has cancelled to finish ending (its git is killed whole and reaped, see stopCanArm) before it answers anyway. A Stop carries
+// its stopSource by value, so a test sets its own and the check goroutine reads no shared variable.
+type stopSource struct {
+	check         func(ctx context.Context, cwd, sessionID string) sourcesession.GateResult
+	budget, grace time.Duration
+}
 
-// stopSourceBudget bounds the source-identity investigation of one Stop (git status and the hashing of the dirty files): the
-// Stop wiring has 15 seconds in all. stopSourceGrace is how long the Stop then waits for an investigation it has cancelled to
-// finish ending (its git is killed whole and reaped, see stopCanArm) before it answers anyway.
-var (
-	stopSourceBudget = 5 * time.Second
-	stopSourceGrace  = 2 * time.Second
-)
+// defaultStopSource is the investigation every production Stop makes.
+func defaultStopSource() stopSource {
+	return stopSource{check: sourcesession.CheckBoundContext, budget: 5 * time.Second, grace: 2 * time.Second}
+}
 
 // stopArming is the answer of stopCanArm: whether `orchestrate P` can run for the session and, when it cannot, why (the
 // CheckBound verdict).
@@ -771,23 +776,23 @@ type stopArming struct {
 	probe  error // the failure of the git behind sourcesession.CauseProbeFailed
 }
 
-// stopCanArm is whether `orchestrate P` can run for the session, judged by stopCheckBound within stopSourceBudget. An
+// stopCanArm is whether `orchestrate P` can run for the session, judged by src.check within src.budget. An
 // investigation that does not finish in the budget is no evidence that arming is impossible, so the answer is then the oracle's
 // (the command is offered). The budget is the investigation's own deadline and not only the time the Stop waits for it: at the
 // deadline the investigation is cancelled, its git (and any clean filter git started) is killed and reaped, and the Stop waits
-// up to stopSourceGrace for that, so no git started for a Stop is left running behind the hook process. An answer that arrives
+// up to src.grace for that, so no git started for a Stop is left running behind the hook process. An answer that arrives
 // as the deadline passes is not a verdict (a cancelled probe reports its cancellation as a failure).
-func stopCanArm(cwd, sessionID string) stopArming {
-	ctx, cancel := context.WithTimeout(context.Background(), stopSourceBudget)
+func stopCanArm(src stopSource, cwd, sessionID string) stopArming {
+	ctx, cancel := context.WithTimeout(context.Background(), src.budget)
 	defer cancel()
 	done := make(chan sourcesession.GateResult, 1)
-	go func() { done <- stopCheckBound(ctx, cwd, sessionID) }()
+	go func() { done <- src.check(ctx, cwd, sessionID) }()
 	var got sourcesession.GateResult
 	select {
 	case got = <-done:
 	case <-ctx.Done():
 		cancel()
-		grace := time.NewTimer(stopSourceGrace)
+		grace := time.NewTimer(src.grace)
 		defer grace.Stop()
 		select {
 		case <-done:
