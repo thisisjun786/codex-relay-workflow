@@ -1,6 +1,7 @@
 package supervisor
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -26,33 +27,49 @@ func (w *storeRecipientWorld) takeOverStoreSeat(bindingID, task string) {
 }
 
 // TestStoreRecipient_FollowsTheManagementSeatThatTookTheSeatOver: a project no initiative
-// supervises still reports to the manager after it registered its management seat.
+// supervises still reports a decision the user owes to the manager after it registered its
+// management seat (CRW-1333), and nothing else (CRW-1486/S4): a notification reads unregistered_scope,
+// as it does with no store seat at all.
 func TestStoreRecipient_FollowsTheManagementSeatThatTookTheSeatOver(t *testing.T) {
 	t.Parallel()
 	w := newStoreRecipientWorld(t)
 	w.seat("bnd-store", storeRecipientSeatTask)
 	w.takeOverStoreSeat("bnd-store", storeRecipientSeatTask)
 	got, err := w.resolve()
+	if reason, detail := w.refusal(err); reason != "unregistered_scope" || !strings.Contains(detail, "only a decision the user owes") {
+		t.Fatalf("a notification resolved %+v, refused %q (%s), want unregistered_scope naming the laid-down seat", got, reason, detail)
+	}
+	c := w.channel()
+	got, err = c.ResolveFor(w.ctx, w.relationship, GradeUser)
 	if err != nil {
-		t.Fatalf("resolve: %v", err)
+		t.Fatalf("resolve a user decision: %v", err)
 	}
 	if got.Recipient != storeRecipientSeatTask || got.RecipientScopeKind != "store" || got.InitiativeKey != "" {
 		t.Fatalf("resolution %+v, want the store seat held through the management seat", got)
 	}
-	if levels := scopeLevels(w.reading()); len(levels) == 0 || levels[len(levels)-1] != "store" {
+	reading, err := c.hierarchyReading(w.ctx, w.relationship, GradeUser)
+	if err != nil {
+		t.Fatalf("reading: %v", err)
+	}
+	if levels := scopeLevels(reading); len(levels) == 0 || levels[len(levels)-1] != "store" {
 		t.Fatalf("the fallback is recorded as the store level: %v", levels)
 	}
 }
 
 // TestDirectResolveInitiativeFallsBackToTheManagerAfterItRegisters: an initiative a lead registered
-// before any management edge existed is heard by the manager that took the store seat over, instead
-// of standing unsent.
+// before any management edge existed is heard by the manager that took the store seat over for a
+// decision the user owes (jun_decision_request); a lead's report reads unregistered_scope.
 func TestDirectResolveInitiativeFallsBackToTheManagerAfterItRegisters(t *testing.T) {
 	w := newStoreRecipientWorld(t)
 	w.superviseInitiative()
 	w.seat("bnd-store", storeRecipientSeatTask)
 	w.takeOverStoreSeat("bnd-store", storeRecipientSeatTask)
-	got, err := w.channel().Resolve(w.ctx, "initiative:"+storeRecipientInitiative)
+	c := w.channel()
+	got, err := c.Resolve(w.ctx, "initiative:"+storeRecipientInitiative)
+	if reason, _ := w.refusal(err); reason != "unregistered_scope" {
+		t.Fatalf("a lead's notification resolved %+v, refused %q, want unregistered_scope", got, reason)
+	}
+	got, err = c.ResolveFor(w.ctx, "initiative:"+storeRecipientInitiative, directGrade(directKinds[KindJunDecisionRequest]))
 	if err != nil {
 		t.Fatal(err)
 	}

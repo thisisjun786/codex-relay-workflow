@@ -23,7 +23,8 @@ const scopeKindRun = "run"
 // initiative. An initiative with no management edge falls back to the single store seat, as a
 // project with no initiative supervisor does; a management edge whose seat has no live owner is
 // refused unregistered_scope rather than falling back, because the seat that should hear it exists.
-func (c *Channel) resolveInitiative(ctx context.Context, key string) (Resolution, error) {
+// A store seat laid down for a management seat answers only for a GradeUser message (CRW-1486/S4).
+func (c *Channel) resolveInitiative(ctx context.Context, key string, grade Grade) (Resolution, error) {
 	where := "initiative " + pyvalue.StrRepr(key)
 	owners, err := c.Store.ScopeOwners(ctx, scopeKindInitiative, key)
 	if err != nil {
@@ -61,6 +62,9 @@ func (c *Channel) resolveInitiative(ctx context.Context, key string) (Resolution
 	held, err := (&registry.Registry{Store: c.Store}).StoreScopeSupervisor(ctx)
 	if err != nil {
 		return Resolution{}, Refusal{"relation_unreadable", "the store seat could not be read for " + where + ", so who the level above is is unknown; nothing is staged"}
+	}
+	if grade != GradeUser && heldThroughManagementSeat(held) {
+		return Resolution{}, successorRefusal(held, where)
 	}
 	if len(held) > 1 {
 		candidates := make([]any, len(held))

@@ -16,7 +16,7 @@ type parkRecorder struct {
 	reasons []string
 }
 
-func (c *parkRecorder) Resolve(context.Context, string) (map[string]any, error) {
+func (c *parkRecorder) Resolve(context.Context, string, bool) (map[string]any, error) {
 	return map[string]any{"sender": "parent", "recipient": "supervisor", "projectKey": "P"}, nil
 }
 

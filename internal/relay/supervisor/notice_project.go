@@ -10,7 +10,9 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/registry"
 )
 
-func (c *Channel) resolveNoticeProject(ctx context.Context, key string) (Resolution, error) {
+// resolveNoticeProject is 'project:KEY': the sender is the project's live owner and the recipient is
+// read from the walk above it, with the store seat folded in for grade (withStoreSeat).
+func (c *Channel) resolveNoticeProject(ctx context.Context, key string, grade Grade) (Resolution, error) {
 	where := "project " + pyvalue.StrRepr(key)
 	owners, err := c.Store.ScopeOwners(ctx, "project", key)
 	if err != nil {
@@ -36,7 +38,7 @@ func (c *Channel) resolveNoticeProject(ctx context.Context, key string) (Resolut
 	// addressed to a relationship: the fold happens before the resolution is read, so a project
 	// nobody's initiative supervises reaches the store supervisor with the kind recorded, not
 	// refused as having nowhere to go.
-	folded, err := c.withStoreSeat(ctx, reading, where)
+	folded, err := c.withStoreSeat(ctx, reading, where, grade)
 	if err != nil {
 		return Resolution{}, err
 	}

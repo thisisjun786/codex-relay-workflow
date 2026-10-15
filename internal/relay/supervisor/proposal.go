@@ -318,7 +318,7 @@ func (c *Channel) reopenAddressed(ctx context.Context, row store.SupervisorMessa
 		if err != nil || live.HoldReason.String != store.SupervisorHoldUnaddressed {
 			return err
 		}
-		r, err := c.Resolve(tx, live.RelationshipID)
+		r, err := c.ResolveFor(tx, live.RelationshipID, rowGrade(live))
 		if err != nil || r.Sender != live.SenderTaskID || r.Recipient != live.RecipientTaskID || r.ProjectKey != live.ProjectKey.String {
 			return err
 		}
@@ -342,7 +342,7 @@ func (c *Channel) reopenProposal(ctx context.Context, row store.SupervisorMessag
 		if err != nil || live.HoldReason.String != store.SupervisorHoldSuperseded {
 			return err
 		}
-		r, err := c.Resolve(tx, live.RelationshipID)
+		r, err := c.ResolveFor(tx, live.RelationshipID, rowGrade(live))
 		if err != nil {
 			return err
 		}
