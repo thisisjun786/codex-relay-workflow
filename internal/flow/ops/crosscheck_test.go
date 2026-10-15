@@ -792,6 +792,74 @@ func TestCrosscheckFailsOnAPassStateItDoesNotKnow(t *testing.T) {
 	}
 }
 
+// TestCrosscheckRerunsOnlyAVoidPassBesideAnOKOne (CRW-1504): both passes run and are read before the round is judged. A void pass
+// (not_read) beside an ok one runs once more on a checkout of its own (attempt 2), which is removed like the others, and its first
+// attempt is kept in V.passes as voided; a void pass beside one that failed or gave no judgment is not rerun (the round fails or holds as
+// that pass says), and a rerun that fails or gives no judgment fails or holds the round.
+func TestCrosscheckRerunsOnlyAVoidPassBesideAnOKOne(t *testing.T) {
+	void := ccAnswer{State: reviewadapter.StateNotRead}
+	t.Run("the rerun reads the repository", func(t *testing.T) {
+		w := newCCWorld(t)
+		w.checker.script("B", void, ccAnswer{State: reviewadapter.StateOK, Verdict: reviewadapter.VerdictVerified})
+		out, row := w.crosscheck(ccHead, nil)
+		if out.State != CrosscheckStateVerdict || out.Verdict == nil || out.Verdict.Verdict != reviewadapter.VerdictVerified {
+			t.Fatalf("outcome %+v", out)
+		}
+		var got []string
+		for _, p := range out.Verdict.Passes {
+			got = append(got, fmt.Sprintf("%s%d:%s:%v", p.Pass, p.Attempt, p.State, p.Voided))
+		}
+		if want := []string{"A1:ok:false", "B1:not_read:true", "B2:ok:false"}; !slices.Equal(got, want) {
+			t.Errorf("V.passes %v, want %v", got, want)
+		}
+		if !jsonEqual(t, row.Data["passes"], out.Verdict.Passes) {
+			t.Errorf("the row's passes %v", row.Data["passes"])
+		}
+		w.checkout.mu.Lock()
+		made, freed := slices.Clone(w.checkout.made), slices.Clone(w.checkout.freed)
+		w.checkout.mu.Unlock()
+		if len(made) != 3 || filepath.Base(made[2]) != "M1-r1-e0-B2" || len(freed) != 3 {
+			t.Errorf("checkouts made %v, removed %v: the rerun has a fresh checkout of its own and every checkout is removed", made, freed)
+		}
+	})
+	for _, c := range []struct {
+		name          string
+		a, b          []ccAnswer
+		checks        int
+		state, reason string
+	}{
+		{"beside a pass with no answer", []ccAnswer{void}, []ccAnswer{{State: reviewadapter.StateNoAnswer}}, 2, CrosscheckStateHeld, "crosscheck_no_answer"},
+		{"beside a failed pass", []ccAnswer{void}, []ccAnswer{{State: reviewadapter.StateToolFailed}}, 2, CrosscheckStateFailed, "crosscheck_tool_failed"},
+		{"a rerun out of quota", []ccAnswer{void, {State: reviewadapter.StateQuota}}, nil, 3, CrosscheckStateHeld, "crosscheck_quota"},
+		{"a rerun that failed", []ccAnswer{void, {State: reviewadapter.StateWorktreeChanged}}, nil, 3, CrosscheckStateFailed, "crosscheck_worktree_changed"},
+		{"a rerun void again", []ccAnswer{void, void}, nil, 3, CrosscheckStateNoVerdict, ReasonCrosscheckNoVerdict},
+		{"both void", []ccAnswer{void}, []ccAnswer{void}, 2, CrosscheckStateNoVerdict, ReasonCrosscheckNoVerdict},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := newCCWorld(t)
+			w.checker.script("A", c.a...)
+			w.checker.script("B", c.b...)
+			out, row := w.crosscheck(ccHead, nil)
+			reason := out.Reason
+			if out.State == CrosscheckStateHeld {
+				reason = out.Hold
+			}
+			if out.State != c.state || reason != c.reason || out.Verdict != nil {
+				t.Errorf("outcome %+v, want %s %s", out, c.state, c.reason)
+			}
+			if dataStr(row, "state") != c.state || row.Data["verdict"] != nil {
+				t.Errorf("row %+v", row.Data)
+			}
+			if n := len(w.checker.requests()); n != c.checks {
+				t.Errorf("%d checks, want %d", n, c.checks)
+			}
+			if n := w.checkout.count(); n != c.checks {
+				t.Errorf("%d checkouts, want %d", n, c.checks)
+			}
+		})
+	}
+}
+
 // TestCrosscheckServesRoundOneOnly: this op serves round 1; a round other than 1 or any prior is refused before anything runs.
 func TestCrosscheckServesRoundOneOnly(t *testing.T) {
 	prior := func(ms, verdict string) map[string]any {

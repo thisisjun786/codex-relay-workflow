@@ -233,7 +233,8 @@ func laneCrosscheck(opt *ops.Crosscheck, policy *engine.Policy) *ops.Crosscheck 
 // ops.Snapshot as its fingerprint, the engines astra (gpt-6-astra, family gpt) then grok (grok-4.7, family grok), and the shipped
 // checkout (nil: Lane.crosscheckWorktree under the run's directory). Astra answers under the strict form of the answer schema, which
 // Profiles writes to <run dir>/crosscheck/answer.strict.json when the op first asks for the profiles; nothing is written when the lane
-// is built.
+// is built. Each profile carries the floors of a pass that read the repository (CRW-1504: astra 3 commands and 45 s, grok 100000 cached
+// tokens and 60 s), so a shallow pass is not_read, which crw.crosscheck reruns once or turns into no verdict.
 func shippedCrosscheck() *ops.Crosscheck {
 	git := ops.ExecGit("git")
 	return &ops.Crosscheck{

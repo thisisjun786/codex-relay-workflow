@@ -157,7 +157,8 @@ export async function closeMilestone(ms, opts) {
     if (g.state === 'stop') return g
     if (g.state !== 'pass') return gateStop(g)
     const x = await crosscheckRound(ms, g, opts)
-    // a crosscheck that does not verify the range keeps the milestone open
+    // a crosscheck that does not verify the range keeps the milestone open; one whose passes read no repository (CRW-1504: both void, or
+    // the one void pass void again on its rerun) is no_verdict, which stops the close with ask crosscheck_no_verdict for the 부모
     if (!accepts(x)) return crosscheckStop(ms, x)
     const close = await crw.milestoneClose(ms.id, { gate: g, crosscheck: x.verdict })
     if (!close.moved) return { state: 'closed', tip: close.tip, close, gate: g, crosscheck: x.verdict }

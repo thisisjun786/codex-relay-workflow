@@ -148,6 +148,14 @@ func TestBuildLaneWiresTheCrosscheck(t *testing.T) {
 	if err != nil || len(profiles) != 2 || profiles[0].Name != "astra" || profiles[1].Name != "grok" {
 		t.Fatalf("the shipped profiles %+v %v", profiles, err)
 	}
+	// the floors of a pass that read the repository (CRW-1504) reach the shipped profiles: astra 3 commands and 45 s, grok 100000 cached
+	// tokens and 60 s, each with its usage reader, so a shallow pass of either is not_read and crw.crosscheck reruns or voids it
+	if a := profiles[0]; a.MinCommands != 3 || a.MinElapsed != 45*time.Second || a.MinCacheRead != 0 || a.Usage == nil {
+		t.Errorf("the shipped astra floors: %d commands, %v, %d tokens, usage reader %v", a.MinCommands, a.MinElapsed, a.MinCacheRead, a.Usage != nil)
+	}
+	if g := profiles[1]; g.MinCacheRead != 100000 || g.MinElapsed != 60*time.Second || g.MinCommands != 0 || g.Usage == nil {
+		t.Errorf("the shipped grok floors: %d tokens, %v, %d commands, usage reader %v", g.MinCacheRead, g.MinElapsed, g.MinCommands, g.Usage != nil)
+	}
 	schemaFile := filepath.Join(dir, "crosscheck", "answer.strict.json")
 	strict, err := reviewadapter.StrictSchema(reviewadapter.AnswerSchema)
 	if err != nil {

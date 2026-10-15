@@ -61,6 +61,8 @@ const (
 	ReasonCrosscheckPromptTooLarge      = "crosscheck_prompt_too_large"
 	ReasonCrosscheckWorktreeDirty       = "crosscheck_worktree_dirty"
 	ReasonCrosscheckWorktreeMoved       = "crosscheck_worktree_moved"
+	// ReasonCrosscheckNoVerdict is a round whose passes read no repository (CRW-1504): both void, or the one void pass void again.
+	ReasonCrosscheckNoVerdict = "crosscheck_no_verdict"
 )
 
 // The two passes of a round.
@@ -216,7 +218,10 @@ func followUp(f reviewadapter.Finding) string {
 // order: the round (round 1 only; a prior is refused), the authors (an undecided pair refuses), the run's directory (it must be
 // absolute), the engine (the first profile whose family is no author's), the executor receipts of the milestone's nodes (one that
 // cannot be handed over holds), the prompts (over the limit fails), both checkouts (one that is not the head's tree fails), then the two
-// passes, together. The row carries milestone, head, round, evidence_round, state, reason, hold and V as verdict.
+// passes, together, and both their results are read before the round is judged: a pass that failed fails it; both void (not_read) give
+// no_verdict at once; one that gave no judgment holds it; one void beside an ok pass runs once more (attempt 2) on a fresh checkout, and a
+// second void attempt gives no_verdict. The row carries milestone, head, round, evidence_round, state, reason, hold, the passes and V as
+// verdict.
 type crosscheckOp struct{ l *Lane }
 
 // crosscheckGate is the part of the gate (GateOutcome) the crosscheck reads.
@@ -347,85 +352,159 @@ func (o *crosscheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.Op
 		checkout = o.l.crosscheckWorktree
 	}
 	type slot struct {
-		pass string
-		dir  string
-		done func() error
-		res  reviewadapter.Result
-		rec  CrosscheckPass
-		err  error
+		pass    string
+		attempt int
+		dir     string
+		done    func() error
+		res     reviewadapter.Result
+		rec     CrosscheckPass
+		err     error
 	}
-	slots := []*slot{{pass: CrosscheckPassA}, {pass: CrosscheckPassB}}
-	for _, s := range slots {
-		dir, done, err := checkout(ctx, ms, round, opts.EvidenceRound, s.pass, 1, gate.Head)
+	// open makes the checkout of an attempt of a pass; a checkout the op does not run a pass in fails the round
+	open := func(s *slot) (*CrosscheckOutcome, error) {
+		dir, done, err := checkout(ctx, ms, round, opts.EvidenceRound, s.pass, s.attempt, gate.Head)
 		if err != nil {
 			var ce *CrosscheckCheckoutError
 			if errors.As(err, &ce) {
-				return finish(CrosscheckOutcome{State: CrosscheckStateFailed, Reason: ce.Reason, Detail: fmt.Sprintf("pass %s: the checkout %s: %s; it is kept as it is and no pass ran", s.pass, ce.Dir, ce.Detail)})
+				return &CrosscheckOutcome{State: CrosscheckStateFailed, Reason: ce.Reason,
+					Detail: fmt.Sprintf("pass %s (attempt %d): the checkout %s: %s; it is kept as it is and no pass ran", s.pass, s.attempt, ce.Dir, ce.Detail)}, nil
 			}
-			return engine.OpResult{}, fmt.Errorf("crw.crosscheck: milestone %s: the checkout of pass %s: %w", ms, s.pass, err)
+			return nil, fmt.Errorf("crw.crosscheck: milestone %s: the checkout of pass %s (attempt %d): %w", ms, s.pass, s.attempt, err)
 		}
 		s.dir, s.done = dir, done
+		return nil, nil
 	}
-
-	// the passes, together
-	var wg sync.WaitGroup
-	for _, s := range slots {
-		wg.Add(1)
-		go func(s *slot) {
-			defer wg.Done()
-			creq := reviewadapter.Request{Profile: profile, Worktree: s.dir, Prompt: prompts[s.pass], Schema: reviewadapter.AnswerSchema, Limit: cc.Limit, GuideRev: CrosscheckGuideRev}
-			res, err := cc.Checker.Check(ctx, creq)
-			retried := false
-			if err == nil && res.State == reviewadapter.StateInvalid {
-				res, err = cc.Checker.Check(ctx, creq)
-				retried = true
-			}
-			if err != nil {
-				s.err = fmt.Errorf("pass %s: %w", s.pass, err)
-				return
-			}
-			s.res = res
-			s.rec = CrosscheckPass{Pass: s.pass, Attempt: 1, State: string(res.State), ElapsedMS: res.ElapsedMS, Model: res.Model, PromptDigest: res.PromptDigest, Retried: retried, Detail: res.Detail}
-		}(s)
-	}
-	wg.Wait()
+	// run runs the passes of a wave together, each once more when it answered invalid, removes their checkouts and records each attempt
+	// in V.passes (voided when it read no repository)
 	var cleanup []string
-	for _, s := range slots {
-		if s.err != nil || s.done == nil {
-			continue
+	run := func(wave []*slot) error {
+		var wg sync.WaitGroup
+		for _, s := range wave {
+			wg.Add(1)
+			go func(s *slot) {
+				defer wg.Done()
+				creq := reviewadapter.Request{Profile: profile, Worktree: s.dir, Prompt: prompts[s.pass], Schema: reviewadapter.AnswerSchema, Limit: cc.Limit, GuideRev: CrosscheckGuideRev}
+				res, err := cc.Checker.Check(ctx, creq)
+				retried := false
+				if err == nil && res.State == reviewadapter.StateInvalid {
+					res, err = cc.Checker.Check(ctx, creq)
+					retried = true
+				}
+				if err != nil {
+					s.err = fmt.Errorf("pass %s (attempt %d): %w", s.pass, s.attempt, err)
+					return
+				}
+				s.res = res
+				s.rec = CrosscheckPass{Pass: s.pass, Attempt: s.attempt, State: string(res.State), ElapsedMS: res.ElapsedMS, Model: res.Model, PromptDigest: res.PromptDigest,
+					Voided: res.State == reviewadapter.StateNotRead, Retried: retried, Detail: res.Detail}
+			}(s)
 		}
-		if err := s.done(); err != nil {
-			cleanup = append(cleanup, fmt.Sprintf("pass %s: the checkout %s was not removed: %v", s.pass, s.dir, err))
+		wg.Wait()
+		for _, s := range wave {
+			if s.err != nil || s.done == nil {
+				continue
+			}
+			if err := s.done(); err != nil {
+				cleanup = append(cleanup, fmt.Sprintf("pass %s (attempt %d): the checkout %s was not removed: %v", s.pass, s.attempt, s.dir, err))
+			}
 		}
-	}
-	if len(cleanup) > 0 {
-		data["cleanup"] = cleanup
-	}
-	for _, s := range slots {
-		if s.err != nil {
-			return engine.OpResult{}, fmt.Errorf("crw.crosscheck: milestone %s: %w", ms, s.err)
+		if len(cleanup) > 0 {
+			data["cleanup"] = cleanup
 		}
+		for _, s := range wave {
+			if s.err != nil {
+				return fmt.Errorf("crw.crosscheck: milestone %s: %w", ms, s.err)
+			}
+		}
+		for _, s := range wave {
+			v.Passes = append(v.Passes, s.rec)
+		}
+		data["passes"] = v.Passes
+		return nil
 	}
-	for _, s := range slots {
-		v.Passes = append(v.Passes, s.rec)
-	}
-	data["passes"] = v.Passes
-
-	// a pass that failed fails the round, one that gave no judgment holds it; both answered: the verdict
-	for _, s := range slots {
+	// failed is the failed round of an attempt that failed (worktree_changed, tool_failed, invalid after its retry) or answered a state the
+	// op has no rule for; nil for one that answered (ok, not_read) or gave no judgment (quota, no_answer)
+	failed := func(s *slot) *CrosscheckOutcome {
 		switch s.res.State {
-		case reviewadapter.StateOK, reviewadapter.StateQuota, reviewadapter.StateNoAnswer:
+		case reviewadapter.StateOK, reviewadapter.StateNotRead, reviewadapter.StateQuota, reviewadapter.StateNoAnswer:
+			return nil
 		case reviewadapter.StateWorktreeChanged, reviewadapter.StateToolFailed, reviewadapter.StateInvalid:
-			return finish(CrosscheckOutcome{State: CrosscheckStateFailed, Reason: "crosscheck_" + string(s.res.State), Detail: fmt.Sprintf("pass %s: %s", s.pass, s.res.Detail)})
-		default:
-			// a state this op has no rule for is never a verdict
-			return finish(CrosscheckOutcome{State: CrosscheckStateFailed, Reason: "crosscheck_pass_" + string(s.res.State),
-				Detail: fmt.Sprintf("pass %s answered the state %q, which the crosscheck has no rule for: %s", s.pass, s.res.State, s.res.Detail)})
+			return &CrosscheckOutcome{State: CrosscheckStateFailed, Reason: "crosscheck_" + string(s.res.State), Detail: fmt.Sprintf("pass %s (attempt %d): %s", s.pass, s.attempt, s.res.Detail)}
+		}
+		// a state this op has no rule for is never a verdict
+		return &CrosscheckOutcome{State: CrosscheckStateFailed, Reason: "crosscheck_pass_" + string(s.res.State),
+			Detail: fmt.Sprintf("pass %s answered the state %q, which the crosscheck has no rule for: %s", s.pass, s.res.State, s.res.Detail)}
+	}
+	held := func(s *slot) CrosscheckOutcome {
+		return CrosscheckOutcome{State: CrosscheckStateHeld, Hold: "crosscheck_" + string(s.res.State), Detail: fmt.Sprintf("pass %s gave no judgment (%s): %s", s.pass, s.res.State, s.res.Detail)}
+	}
+	noVerdict := func(void ...*slot) CrosscheckOutcome {
+		parts := make([]string, 0, len(void))
+		for _, s := range void {
+			parts = append(parts, fmt.Sprintf("pass %s (attempt %d) read no repository: %s", s.pass, s.attempt, s.res.Detail))
+		}
+		return CrosscheckOutcome{State: CrosscheckStateNoVerdict, Reason: ReasonCrosscheckNoVerdict, Detail: strings.Join(parts, "; ")}
+	}
+
+	slots := []*slot{{pass: CrosscheckPassA, attempt: 1}, {pass: CrosscheckPassB, attempt: 1}}
+	for _, s := range slots {
+		if out, err := open(s); out != nil || err != nil {
+			if err != nil {
+				return engine.OpResult{}, err
+			}
+			return finish(*out)
 		}
 	}
+	if err := run(slots); err != nil {
+		return engine.OpResult{}, err
+	}
+
+	// a pass that failed fails the round; both void: no verdict, at once; one void beside an ok pass: that pass runs once more on a fresh
+	// checkout (attempt 2), and a rerun that is void again gives no verdict; one that gave no judgment holds the round
 	for _, s := range slots {
-		if s.res.State != reviewadapter.StateOK {
-			return finish(CrosscheckOutcome{State: CrosscheckStateHeld, Hold: "crosscheck_" + string(s.res.State), Detail: fmt.Sprintf("pass %s gave no judgment (%s): %s", s.pass, s.res.State, s.res.Detail)})
+		if out := failed(s); out != nil {
+			return finish(*out)
+		}
+	}
+	var void []*slot
+	for _, s := range slots {
+		if s.res.State == reviewadapter.StateNotRead {
+			void = append(void, s)
+		}
+	}
+	if len(void) == len(slots) {
+		return finish(noVerdict(void...))
+	}
+	for _, s := range slots {
+		if s.res.State != reviewadapter.StateOK && s.res.State != reviewadapter.StateNotRead {
+			return finish(held(s))
+		}
+	}
+	if len(void) == 1 {
+		again := &slot{pass: void[0].pass, attempt: 2}
+		if out, err := open(again); out != nil || err != nil {
+			if err != nil {
+				return engine.OpResult{}, err
+			}
+			return finish(*out)
+		}
+		if err := run([]*slot{again}); err != nil {
+			return engine.OpResult{}, err
+		}
+		if out := failed(again); out != nil {
+			return finish(*out)
+		}
+		switch again.res.State {
+		case reviewadapter.StateNotRead:
+			return finish(noVerdict(void[0], again))
+		case reviewadapter.StateOK:
+		default:
+			return finish(held(again))
+		}
+		for i, s := range slots {
+			if s == void[0] {
+				slots[i] = again
+			}
 		}
 	}
 	v.Findings = reviewadapter.MergeFindings(slots[0].res.Findings, slots[1].res.Findings)
