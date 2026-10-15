@@ -1,0 +1,3 @@
+# CRW-1433 unit 1433-f: bare "supervisor" that names no layer. path<TAB>phrase<TAB>reason.
+docs/relay/supervisor-channel.md	supervisor pass	the daemon pass over the channel (RelayDaemon._report_upward), a process step that other documents name the same way; no layer
+docs/relay/supervisor-channel.md	supervisor omission latency	the quoted title of a recorded follow-up item, kept as it was named
