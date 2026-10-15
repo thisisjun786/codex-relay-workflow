@@ -111,3 +111,61 @@ func TestSchedulerDocRestartRowNamesRunCommands(t *testing.T) {
 		}
 	}
 }
+
+// docSection is the text of the markdown section that starts at the heading line `heading`, up to the next heading of the same or a
+// higher level.
+func docSection(t *testing.T, text, heading string) string {
+	t.Helper()
+	i := strings.Index(text, "\n"+heading+"\n")
+	if i < 0 {
+		t.Fatalf("no heading %q in the document", heading)
+	}
+	level := strings.Index(heading, " ")
+	rest := text[i+len(heading)+2:]
+	off := 0
+	for _, line := range strings.SplitAfter(rest, "\n") {
+		if n := strings.Index(line, " "); n > 0 && n <= level && strings.Trim(line[:n], "#") == "" {
+			return rest[:off]
+		}
+		off += len(line)
+	}
+	return rest
+}
+
+// TestFlowRefDescribesThePausedEnd: the docs follow the paused end of CRW-1487. The pause section of flow.md names the run's paused
+// end and no completion notice instead of a run that finishes held; the answer section still refuses a run a process holds;
+// reporting.md names the milestone state (state=, reason=) in the completion notice; journal.md names the run paused row.
+func TestFlowRefDescribesThePausedEnd(t *testing.T) {
+	read := func(path string) string {
+		t.Helper()
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(raw)
+	}
+	ref := read(flowRef)
+	pause := docSection(t, ref, "### crw flow pause")
+	if strings.Contains(pause, "finishes `held`") {
+		t.Errorf("the pause section of flow.md still says the run finishes held:\n%s", pause)
+	}
+	for _, want := range []string{"`paused`", "`run/paused`", "no completion notice", "crw flow resume"} {
+		if !strings.Contains(pause, want) {
+			t.Errorf("the pause section of flow.md does not say %q:\n%s", want, pause)
+		}
+	}
+	answer := docSection(t, ref, "### crw flow answer")
+	if !strings.Contains(answer, "a run a process holds is refused (`crw flow pause` first)") {
+		t.Errorf("the answer section of flow.md no longer refuses a run a process holds:\n%s", answer)
+	}
+	reporting := read("../../../docs/flow/reporting.md")
+	for _, want := range []string{"state=", "reason=", "lanes="} {
+		if !strings.Contains(reporting, want) {
+			t.Errorf("reporting.md does not name %q in the completion notice", want)
+		}
+	}
+	journal := read("../../../docs/flow/journal.md")
+	if !strings.Contains(journal, "`run/paused`") {
+		t.Error("journal.md does not name the run/paused row")
+	}
+}
