@@ -105,11 +105,21 @@ A step runs under `bash --noprofile --norc -eo pipefail`, as the runner does, so
 failed command fails it. A failed step's `reason` gives the exit status, the failing test lines
 of its output (a `--- FAIL`, `FAIL` or `panic:` line, at most 20) and the last 40 lines of the
 output, at most 4 KB; a Go test that outlived its `-timeout` is named with a `timeout:` prefix,
-so a load timeout reads as a timeout, not as a verdict on the code. The steps inherit `TMPDIR`
-and `PATH`, so a test that makes a socket or a temporary file uses the caller's temporary root. A
-Unix socket path must stay under 108 bytes on Linux and 104 on macOS, and a test adds its own
-directory and file names to the root, so keep `TMPDIR` short; `crw config check` warns when
-`temp_root` leaves no room.
+so a load timeout reads as a timeout, not as a verdict on the code. The steps inherit `PATH`.
+They do not inherit `TMPDIR`: a run gives its steps a fresh, empty `TMPDIR` of its own (CRW-1489),
+`ci<8 hex>` directly below the caller's `TMPDIR` or, when that does not fit, `t<8 hex>` directly
+below the work root, and removes it after the run (`--keep` keeps and prints it). A candidate does
+not fit when a `.git` (of any type) is at or above its parent, read as written and with links
+resolved, because the repository's own tests find a checkout by walking up from `TMPDIR` for a
+`.git` (a sandbox's stray `/tmp/.git` made them judge the wrong tree); or when its length plus the
+67 bytes the tests' sockets add below `TMPDIR` (the longest, `internal/manage`) is not under the
+Unix socket limit, 108 bytes on Linux and 104 on macOS. The name has a fixed width, so the fit is
+decided before anything is made. When neither fits, the run is refused before any checkout or step
+with `temp_dir_unusable`, naming each candidate's `.git` or byte count, and writes no record: set a
+short `TMPDIR` with no `.git` above it, or pass a short `--work-root`. The default work root
+(`~/.local/state/crw-ci-local`, 35 bytes for a 9-byte home) leaves 45 + 67 = 112 bytes, so a caller
+`TMPDIR=/tmp` below a stray `/tmp/.git` with the default work root is always refused. Keep `TMPDIR`
+short; `crw config check` warns when `temp_root` leaves no room.
 
 A step's result is `passed`, `failed`, `missing_tool`,
 `skipped` or `not_applicable`. The whole result is `pass` only when no step
@@ -121,7 +131,8 @@ or lacks its tool fails the run, and the record names it with its reason.
 A step runs in a sealed environment built from an allowlist, not from the caller's environment
 minus a denylist: HOME and the XDG directories point into the run's own home, TZ is UTC,
 GOTOOLCHAIN is local, and GOFLAGS is set by the engine alone (its parallelism, from
---parallel). The caller's other variables do not reach a step, and the record names the Go,
+--parallel), and TMPDIR is the run's own step directory, set by the engine (above); the tool-version
+probes keep the caller's TMPDIR. The caller's other variables do not reach a step, and the record names the Go,
 cgo, Node and npm variables it left out in ignoredEnv (names only). A caller's GOFLAGS with
 -exec, -toolexec, -overlay, -modfile, -run or -count therefore cannot change what a step runs.
 
@@ -156,7 +167,8 @@ and the record passed with no pin mismatch. The head commit is not a key on its 
 A heavy step (a Go build, vet, test, the dist builds, the integration test, `npm ci`) runs
 through the command named by `CRW_CI_HEAVY_GATE` when it is set — `<gate> <command>`
 — and directly when it is unset. The gate is the host's; no host path is written into the
-repository. Temporary files go under `TMPDIR`, which the caller sets.
+repository. Temporary files go under the step's own `TMPDIR`, whose root the caller still sets: it is
+made directly below the caller's `TMPDIR`, or below the work root when that does not fit (above).
 Only the gate's executable is resolved, once, against the directory the run starts in. Its other
 arguments are not resolved: a relative argument is read in each step's own directory, so give absolute paths.
 
@@ -377,7 +389,8 @@ five `nice -n 19` spinners of eight busy threads, killed afterwards, through the
 After `13ad71d83` the code changes only in the failure-path cleanup of `TestFeaturesEnableIsNotHeldByAStalledEvidenceProbe` (it ends the recording and waits for the enable before the test home is removed); the timed assertions and the product code are the ones proven above, and the branch also merged dev. The spinners at `nice 19` do not slow a `nice 12`
 test as much as the host's other runs did, so this is a load proof, and the failure itself was seen
 only in the unspun runs above (44 s for the evidence test, 51 s for the fork test). The temporary root
-is the disk (`TMPDIR` under `/scratch`), never `/dev/shm`.
+is the disk (`TMPDIR` under `/scratch`), never `/dev/shm`; under `crw-dev ci local` the caller's `/scratch` `TMPDIR` is
+still the root of the step's own `TMPDIR`.
 
 ### The `internal/manage` test time
 
@@ -428,7 +441,7 @@ so pass a larger `-timeout` to it.
 The `TestMain` of `internal/manage` (`core_tmpfs_test.go`) runs the package in `crw-manage-tmp-<pid>` under `/dev/shm` when that is fit,
 so the roughly 16,000 fsyncs of a run (a stalled disk made one test take 229 s and the package 591 s) do not wait for the disk. The
 production store and its fsync are not touched; the tests assert no durability a sync gives. The root is chosen only if the base has at
-least 2 GiB and 20,000 inodes free (`statfs`) **and** a script written in it runs; otherwise the tests stay on the `TMPDIR` the caller set. A
+least 2 GiB and 20,000 inodes free (`statfs`) **and** a script written in it runs; otherwise the tests stay on the `TMPDIR` the caller set (under `crw-dev ci local`, the step's own `TMPDIR`, made below the caller's `/scratch` one). A
 test binary a test starts again (the supervisor child, any helper that goes through `TestMain`) reads the root its starter named in
 `CRW_MANAGE_TEST_TMPFS_ROOT` (`<pid>:<root>`; honoured only for a live pid and a directory of ours named `crw-manage-tmp-<that pid>`),
 uses it, and makes and removes none; a process that chose no tmpfs names that as `<pid>:-`, and a helper of a live such process chooses none either (it would make a root and leave it through `os.Exit`); the process that made the root removes it after `m.Run`. A run that a timeout or a signal killed
