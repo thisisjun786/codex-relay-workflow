@@ -587,6 +587,43 @@ func TestCrosscheckReusesACheckoutOnlyWhenItsTreeIsTheHeadTree(t *testing.T) {
 	}
 }
 
+// TestCrosscheckRemovesTheCheckoutItMadeWhenTheOtherFails (CRW-1473): when pass A's checkout is made and pass B's fails (B's checkout
+// from an interrupted round is dirty), the round fails and no pass runs, and A's fresh checkout is removed - the directory and the git
+// worktree - while B's dirty one is kept as it is.
+func TestCrosscheckRemovesTheCheckoutItMadeWhenTheOtherFails(t *testing.T) {
+	w := newCCWorld(t)
+	_, head := w.ccRepo()
+	dirA, dirB := w.passDir("A", head), w.passDir("B", head)
+	if err := os.MkdirAll(filepath.Dir(dirB), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, w.repo, "worktree", "add", "--detach", "-q", dirB, head)
+	write(t, dirB, "left.txt", "untracked\n", 0o644)
+
+	out, row := w.crosscheck(head, nil)
+	if out.State != CrosscheckStateFailed || out.Reason != ReasonCrosscheckWorktreeDirty || !strings.Contains(out.Detail, dirB) {
+		t.Fatalf("a dirty checkout of pass B: %+v", out)
+	}
+	if n := len(w.checker.requests()); n != 0 {
+		t.Errorf("%d checks ran", n)
+	}
+	if !slices.Contains(w.worktreeAdds(), dirA) {
+		t.Fatalf("pass A's checkout was not made first: adds %v", w.worktreeAdds())
+	}
+	if _, err := os.Stat(dirA); !os.IsNotExist(err) {
+		t.Errorf("pass A's checkout %s is still there: %v", dirA, err)
+	}
+	if strings.Contains(gitIn(t, w.repo, "worktree", "list", "--porcelain"), dirA) {
+		t.Errorf("the repository still lists pass A's worktree %s", dirA)
+	}
+	if _, err := os.Stat(filepath.Join(dirB, "left.txt")); err != nil {
+		t.Errorf("pass B's dirty checkout was not kept: %v", err)
+	}
+	if c, ok := row.Data["cleanup"]; ok {
+		t.Errorf("the removal of A's checkout reported %v", c)
+	}
+}
+
 // receiptRow writes a completed unit-check row of a node with the receipt it recorded.
 func (w *ccWorld) receiptRow(node string, receipt map[string]any) {
 	w.calls++

@@ -219,10 +219,10 @@ func followUp(f reviewadapter.Finding) string {
 // crosscheckOp is crw.crosscheck(milestone, gate, opts): one round of the crosscheck of a milestone over the gate the close passed. In
 // order: the round (round 1 only; a prior is refused), the authors (an undecided pair refuses), the run's directory (it must be
 // absolute), the engine (the first profile whose family is no author's), the executor receipts of the milestone's nodes (one that
-// cannot be handed over holds), the prompts (over the limit fails), both checkouts (one that is not the head's tree fails), then the two
-// passes, together, and both their results are read before the round is judged: a pass that failed fails it; both void (not_read) give
-// no_verdict at once; one that gave no judgment holds it; one void beside an ok pass runs once more (attempt 2) on a fresh checkout, and a
-// second void attempt gives no_verdict. The row carries milestone, head, round, evidence_round, state, reason, hold, the passes and V as
+// cannot be handed over holds), the prompts (over the limit fails), both checkouts (one that is not the head's tree fails, and the
+// checkout already made for the other pass is removed), then the two passes, together, and both their results are read before the round
+// is judged: a pass that failed fails it; both void (not_read) give no_verdict at once; one that gave no judgment holds it; one void
+// beside an ok pass runs once more (attempt 2) on a fresh checkout, and a second void attempt gives no_verdict. The row carries milestone, head, round, evidence_round, state, reason, hold, the passes and V as
 // verdict.
 type crosscheckOp struct{ l *Lane }
 
@@ -448,9 +448,27 @@ func (o *crosscheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.Op
 		return CrosscheckOutcome{State: CrosscheckStateNoVerdict, Reason: ReasonCrosscheckNoVerdict, Detail: strings.Join(parts, "; ")}
 	}
 
+	// release removes the checkouts of the slots that were made before the checkout of another slot failed: no pass runs in them, and a
+	// failed round is proven, so a resume would never remove them
+	release := func(opened []*slot) {
+		for _, s := range opened {
+			if s.done == nil {
+				continue
+			}
+			if err := s.done(); err != nil {
+				cleanup = append(cleanup, fmt.Sprintf("pass %s (attempt %d): the checkout %s was not removed: %v", s.pass, s.attempt, s.dir, err))
+			}
+			s.done = nil
+		}
+		if len(cleanup) > 0 {
+			data["cleanup"] = cleanup
+		}
+	}
+
 	slots := []*slot{{pass: CrosscheckPassA, attempt: 1}, {pass: CrosscheckPassB, attempt: 1}}
-	for _, s := range slots {
+	for i, s := range slots {
 		if out, err := open(s); out != nil || err != nil {
+			release(slots[:i])
 			if err != nil {
 				return engine.OpResult{}, err
 			}
