@@ -24,8 +24,6 @@ install(crw)
 const AUDIT_ROUNDS = 3
 const DESIGN_TOKEN_CAP = 5000000
 const DESIGN_TOKEN_WARN = 0.8
-// the research continuations a node gets on one tier (SP-EXPL-2); after them the node escalates as a scope question
-const RESEARCH_PER_TIER = 2
 
 const ms = await crw.milestone(args.plan, args.milestone)
 // the commands of the issues' done conditions (CRW-1382): the design-stage explorer runs each once and records the exit code and the tests
@@ -243,7 +241,6 @@ async function nodeLane(n, rel, sig) {
   const ev = crw.evidence(node)
   let tier = 'executor'
   let step = null
-  let researched = 0
   // the unit-check fix round trips of the tier
   let fixes = 0
   // the finding ids carried past the last round trip, kept to the land: a later check of a verification fix judges only that fix
@@ -272,14 +269,16 @@ async function nodeLane(n, rel, sig) {
     ev.executor(tier, ex.callId, s)
     if (s === 'superseded') return { node, state: 'superseded', call: ex.callId }
     if (s === 'research') {
-      // SP-EXPL-2: the question is answered and the SAME executor thread goes on; a research request is never a tier step
+      // SP-EXPL-2: the question is answered and the SAME executor thread goes on; a research request is never a tier step. The
+      // research continuations of the tier are counted by crw.exploreRoute alone (spawned and reused alike, CRW-1470): past them
+      // the route is escalate, and its reason (research_cap) is the detail
       const asked = await crw.explore('research', [{ id: ex.callId, question: ex.output.research_question, scope: '', files_needed: null }], { node, tier, regions: plan.regions })
       if (asked.failed) {
         await crw.hold(node, { reason: asked.failed.reason || asked.failed.status, call: asked.failed.callId, source: 'explorer' })
         return { node, state: 'held', reason: asked.failed.reason, call: asked.failed.callId }
       }
-      if (asked.escalate.length > 0 || ++researched > RESEARCH_PER_TIER) {
-        const esc = await crw.escalate(node, { reason: 'blocked_scope', call: ex.callId, detail: 'research_cap' })
+      if (asked.escalate.length > 0) {
+        const esc = await crw.escalate(node, { reason: 'blocked_scope', call: ex.callId, detail: asked.escalate[0].reason })
         return { node, state: 'escalated', reason: 'blocked_scope', call: ex.callId, escalation: esc.id }
       }
       ex = await agent.call(answerPacket(asked.answers), { resume: ex, schema: RECEIPT, label: 'research:' + node + ':' + tier + ':r' + round })
@@ -378,7 +377,6 @@ async function nodeLane(n, rel, sig) {
     }
     step = await crw.tierStep(node, ev.evidence(tier))
     tier = 'executor-t1'
-    researched = 0
     fixes = 0
     ex = await start('build:' + node + ':' + tier, step.checkpoint)
   }

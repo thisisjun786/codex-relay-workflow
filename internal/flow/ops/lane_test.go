@@ -570,11 +570,12 @@ func TestExploreRouting(t *testing.T) {
 	if plan.Routes[0].Route != RouteReuse || plan.Routes[0].Answer != "zero" {
 		t.Errorf("a question answered in the run: %+v", plan.Routes[0])
 	}
-	// a node gets two research continuations on a tier; the third question is a scope question
+	// a node gets two research continuations on a tier, the reuse above being the first (CRW-1470); the third question and every
+	// one after it is a scope question
 	for i := 1; i <= 3; i++ {
 		_ = json.Unmarshal(w.must("exploreRoute", ExploreResearch, ExploreContext{Node: "A", Tier: "executor"}, []Question{{Question: fmt.Sprintf("research %d", i)}}), &plan)
 		want := RouteSpawn
-		if i == 3 {
+		if i >= 2 {
 			want = RouteEscalate
 		}
 		if plan.Routes[0].Route != want {
@@ -610,6 +611,57 @@ func TestExploreRouting(t *testing.T) {
 		if rt.Route != RouteInline || rt.Rule != RuleInl1 || rt.Reason != "asker_answers" {
 			t.Errorf("research question %d: %+v, want SP-INL-1 inline", i, rt)
 		}
+	}
+}
+
+// The research cap of a tier (SP-EXPL-2, CRW-1470) counts every research continuation of the node on the tier, the spawned and the
+// reused alike, and only crw.exploreRoute counts it: after a spawn and a reuse the next question escalates as research_cap, and so
+// does a third request whose question was answered in the run. A reuse of another node's answer counts for this node's tier, and
+// the other tier keeps its own two.
+func TestResearchCapCountsReuseAndEscalatesOnce(t *testing.T) {
+	w := newWorld(t)
+	route := func(node, tier, question string) Route {
+		t.Helper()
+		var plan RoutePlan
+		_ = json.Unmarshal(w.must("exploreRoute", ExploreResearch, ExploreContext{Node: node, Tier: tier}, []Question{{Question: question}}), &plan)
+		if len(plan.Routes) != 1 {
+			t.Fatalf("routes %+v", plan.Routes)
+		}
+		return plan.Routes[0]
+	}
+	answer := func(node, tier string, rt Route, text string) {
+		t.Helper()
+		w.must("exploreRecord", ExploreResearch, ExploreContext{Node: node, Tier: tier}, []Answer{{Digest: rt.Digest, Question: rt.Question, Answer: text, Route: rt.Route, Origin: rt.Origin}})
+	}
+	// spawn, then reuse of that answer, then a new question: the third continuation escalates
+	first := route("A", "executor", "which module owns the case?")
+	if first.Route != RouteSpawn {
+		t.Fatalf("first research question: %+v", first)
+	}
+	answer("A", "executor", first, "the store")
+	if rt := route("A", "executor", "which module owns the case?"); rt.Route != RouteReuse || rt.Answer != "the store" {
+		t.Fatalf("the answered question again: %+v", rt)
+	}
+	if rt := route("A", "executor", "a new question"); rt.Route != RouteEscalate || rt.Reason != "research_cap" {
+		t.Errorf("a third continuation after a spawn and a reuse: %+v, want escalate research_cap", rt)
+	}
+	// a third request that is itself a reuse escalates too
+	if rt := route("A", "executor", "which module owns the case?"); rt.Route != RouteEscalate || rt.Reason != "research_cap" {
+		t.Errorf("a third continuation whose question was answered: %+v, want escalate research_cap", rt)
+	}
+	// node B reuses A's answer: that is its first continuation on the tier; one spawn more, then the cap
+	if rt := route("B", "executor", "which module owns the case?"); rt.Route != RouteReuse {
+		t.Fatalf("node B reuses the answer of A: %+v", rt)
+	}
+	if rt := route("B", "executor", "B's own question"); rt.Route != RouteSpawn {
+		t.Errorf("node B's second continuation: %+v, want spawn", rt)
+	}
+	if rt := route("B", "executor", "B's third question"); rt.Route != RouteEscalate || rt.Reason != "research_cap" {
+		t.Errorf("node B's third continuation: %+v, want escalate research_cap", rt)
+	}
+	// the next tier of A counts on its own
+	if rt := route("A", "executor-t1", "which module owns the case?"); rt.Route != RouteReuse {
+		t.Errorf("executor-t1 of A: %+v, want the reuse", rt)
 	}
 }
 

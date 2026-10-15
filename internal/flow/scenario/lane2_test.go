@@ -492,6 +492,35 @@ func TestResearchCapEscalatesAsScopeQuestion(t *testing.T) {
 	noTierStep(t, l)
 }
 
+// The research cap of a tier counts the reused answers too (CRW-1470), and only crw.exploreRoute counts it: an executor that asks
+// the same question three times gets one explorer, the reuse of its answer as the second continuation, and the third request -
+// itself a reuse - escalates once as a scope question with the detail the route names.
+func TestResearchCapCountsReuseAndEscalatesOnce(t *testing.T) {
+	l := NewLab(t, oneNode()...)
+	l.On("^(build|research):A:executor", func(c *Call) *fakehostPlan {
+		p := Say(ReceiptWith("needs_research", map[string]any{"research_question": "which module owns the case?"}))
+		return &p
+	})
+	got := mustRunIncomplete(t, l)
+	if state, reason := laneOf(t, got, "A"); state != "escalated" || reason != "blocked_scope" {
+		t.Fatalf("lane A: %s %s", state, reason)
+	}
+	if n := len(l.CallsOf("explorer")); n != 1 {
+		t.Errorf("%d explorer calls, want one: the answer is reused", n)
+	}
+	if n := len(l.CallsOf("executor")); n != 3 {
+		t.Errorf("%d executor calls, want the build and two research continuations", n)
+	}
+	esc := l.FlowRows(engine.EvEscalation)
+	if len(esc) != 1 || str(esc[0].Data, "detail") != "research_cap" || str(esc[0].Data, "class") != "scope" {
+		t.Errorf("escalations %+v", esc)
+	}
+	if got := l.Relay.CloseReasons(); !slices.Equal(got, []string{"A:blocked_scope"}) {
+		t.Errorf("closes %v", got)
+	}
+	noTierStep(t, l)
+}
+
 // The verification of a head names the range the acceptance judges: its base is the tip of the integration target the node started
 // from, so the verification record and the premerge record of the node talk about the same commits.
 func TestVerifyNamesTheIntegrationTipAsBase(t *testing.T) {
