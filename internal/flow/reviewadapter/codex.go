@@ -190,8 +190,9 @@ const codexDash = " — "
 // header and its first item, a head with no " — " location, a blank title, a location that is not file:line, or a line that starts
 // like an item head with a severity other than P0-P3, a verified review whose summary is or holds one of Codex's own texts for a
 // review that gave no answer or was interrupted (codexFallbackTexts), or says the change was not reviewed, or only in part, or that
-// the review was aborted (codexNotReviewed): such a text would otherwise pass as a clean review. A short clean summary ("Clean.") is
-// a clean review: no length is asked of a summary, whatever its language. A review with a blocking finding is read whatever its
+// the review was aborted (codexNotReviewed), and a review with no list whose summary holds no letter (unicode.IsLetter, any script:
+// punctuation or digits only): such a text would otherwise pass as a clean review. A short clean summary ("Clean.") is a clean
+// review: no length is asked of a summary, whatever its language. A review with a blocking finding is read whatever its
 // summary says (it needs changes either way).
 func readCodexReview(stdout []byte, req Request) ([]byte, error) {
 	text := strings.TrimSpace(strings.ReplaceAll(string(stdout), "\r\n", "\n"))
@@ -281,6 +282,9 @@ func readCodexReview(stdout []byte, req Request) ([]byte, error) {
 		}
 		if w := codexNotReviewed.FindString(strings.ToLower(joined)); w != "" {
 			return nil, fmt.Errorf("the review says it did not review the change (%q): %s", w, firstLine([]byte(strings.Join(summary, "\n"))))
+		}
+		if header < 0 && !strings.ContainsFunc(joined, unicode.IsLetter) {
+			return nil, fmt.Errorf("the review has no findings list and its summary holds no letter: %q", strings.TrimSpace(joined))
 		}
 	}
 	return json.Marshal(doc)

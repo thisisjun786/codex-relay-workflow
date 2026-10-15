@@ -147,7 +147,10 @@ func TestCodexReviewCleanAnswerIsClean(t *testing.T) {
 	if res.Verdict != VerdictVerified || len(res.Findings) != 0 {
 		t.Fatalf("a summary alone = %s %+v; want verified, no findings", res.Verdict, res.Findings)
 	}
-	wantState(t, codexCheck(t, CodexReviewProfile(CodexReviewConfig{}), "/wt", fakeRun{stdout: " \n\n"}), StateNoAnswer)
+	// an output empty after the trim is a blank answer (no_answer), never a clean one; it does not reach the reader's letter test
+	for _, blank := range []string{"", " \n\n", "\t\r\n  \n"} {
+		wantState(t, codexCheck(t, CodexReviewProfile(CodexReviewConfig{}), "/wt", fakeRun{stdout: blank}), StateNoAnswer)
+	}
 	for _, clean := range []string{
 		"검토 결과 문제가 없습니다.",
 		"변경 사항에서 문제를 확인하지 못했습니다. 읽기 전용 환경이라 테스트는 실행되지 않았습니다.",
@@ -200,11 +203,14 @@ func TestCodexReviewCleanAnswerIsClean(t *testing.T) {
 
 // TestCodexReviewFallbackIsNoCleanReview (CRW-1517): Codex 0.154.0 exits 0 and prints a text of its own when the review gave no
 // answer (review_format.rs, REVIEW_FALLBACK_MESSAGE: no overall explanation and no finding) or was interrupted (tasks/review.rs,
-// exit_review_mode with no output); neither is a clean review, nor a text with no list whose summary says the review was aborted:
-// each is invalid. The real one-finding and many-findings samples still read whole.
+// exit_review_mode with no output); neither is a clean review, nor a text with no list whose summary says the review was aborted or
+// holds no letter (punctuation or digits only): each is invalid. The real one-finding and many-findings samples still read whole.
 func TestCodexReviewFallbackIsNoCleanReview(t *testing.T) {
 	for name, out := range map[string]string{
 		"Codex's text for a review with no answer":        "Reviewer failed to output a response.\n",
+		"a summary of punctuation only":                   "- - -\n",
+		"a summary of digits only":                        "123\n",
+		"a summary of no letter over blank lines":         "\n.\n\n--\n",
 		"Codex's text for an interrupted review":          "Review was interrupted. Please re-run /review and wait for it to complete.\n",
 		"the no-answer text padded":                       "\n  Reviewer failed to output a response.  \n\n",
 		"a review aborted before it inspected a file":     "Review aborted before inspecting any files.\n",
