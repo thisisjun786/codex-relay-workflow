@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -2706,6 +2707,8 @@ func TestUnitCheckCarriesTheExecutorReceiptToTheCheckAndTheAcceptance(t *testing
 	ex := u.buildWithReceipt("c_ex1", "built\n", map[string]any{"assignment": "as1", "state": "accepted", "path": "/p/receipt.md", "sha256": digest,
 		"agent_id": "agent-1", "turn_id": "turn-1", "turn_match": true, "copy": copyPath, "ignored": true})
 	u.checkOnTree(u.snapshot())
+	// the tool took the prompt (Bugbot's way), so the receipt in it was handed to the tool (CRW-1517)
+	u.checker.replies[0].res.PromptSent = true
 	out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
 	if out.State != reviewadapter.StateOK || out.Hold != "" {
 		t.Fatalf("answer %+v", out)
@@ -2722,7 +2725,7 @@ func TestUnitCheckCarriesTheExecutorReceiptToTheCheckAndTheAcceptance(t *testing
 	}
 	row := u.lastCheck()
 	rc := checkReceiptOf(row)
-	if str(rc, "state") != "accepted" || str(rc, "sha256") != digest || str(rc, "copy") != copyPath || rc["ignored"] != true {
+	if str(rc, "state") != "accepted" || str(rc, "sha256") != digest || str(rc, "copy") != copyPath || rc["ignored"] != true || rc["handed"] != true {
 		t.Errorf("the row's receipt %v", rc)
 	}
 	if dataStr(row, "role") != "unit-check" || !u.proven(row) {
@@ -2747,8 +2750,8 @@ func TestUnitCheckCarriesTheExecutorReceiptToTheCheckAndTheAcceptance(t *testing
 		t.Fatalf("criteria %+v", rec.Criteria)
 	}
 	for id, c := range rec.Criteria {
-		if !strings.Contains(c.Evidence, "executor receipt "+digest) {
-			t.Errorf("criterion %s evidence %q does not name the executor receipt", id, c.Evidence)
+		if !strings.Contains(c.Evidence, "executor receipt "+digest) || strings.Contains(c.Evidence, "not handed") {
+			t.Errorf("criterion %s evidence %q does not name the executor receipt as handed", id, c.Evidence)
 		}
 	}
 
@@ -2769,6 +2772,159 @@ func TestUnitCheckCarriesTheExecutorReceiptToTheCheckAndTheAcceptance(t *testing
 	if rc := checkReceiptOf(u.lastCheck()); str(rc, "state") != "accepted" || str(rc, "sha256") != longDigest {
 		t.Errorf("the long receipt's row %v", rc)
 	}
+}
+
+// acceptOnHead commits the pending change of call ex, verifies the head and accepts it, and answers the premerge record crw.accept
+// handed the relay and the reviewer call it named; before runs between the verification and the acceptance (nil for none).
+func (u *ucWorld) acceptOnHead(ex CallRef, before func()) (premerge.Record, string) {
+	u.t.Helper()
+	var commit CommitOutcome
+	_ = json.Unmarshal(u.must("commit", "A", ex, []string{"a.txt"}), &commit)
+	u.must("verify", "A", commit.Commit)
+	if before != nil {
+		before()
+	}
+	capture := &acceptCapture{stubRelay: u.relay}
+	u.lane.d.Relay = capture
+	if _, err := u.op("accept", "A", commit.Commit); err != nil {
+		u.t.Fatalf("crw.accept on the unit check: %v", err)
+	}
+	if len(capture.got) != 1 {
+		u.t.Fatalf("accept requests %+v", capture.got)
+	}
+	rec, err := premerge.Decode(capture.got[0].Premerge)
+	if err != nil {
+		u.t.Fatalf("premerge: %v", err)
+	}
+	if len(rec.Criteria) != 2 {
+		u.t.Fatalf("criteria %+v", rec.Criteria)
+	}
+	return rec, capture.got[0].ReviewerCall
+}
+
+// TestUnitCheckReceiptIsHandedOnlyWhenTheToolTakesThePrompt (CRW-1517, D-7): an accepted executor receipt is read, verified and kept
+// whatever the profile, and goes into the request's prompt; the row's receipt records handed, whether the call that judged was given
+// that prompt (its result's prompt_sent). A Codex review takes no prompt: handed false, and crw.accept's evidence names the receipt as
+// read and kept but not handed to the tool. A Bugbot fallback after a Codex quota takes the prompt: handed true, and the evidence is
+// R2's. A row written before handed was recorded (every unit check then took the prompt) reads as handed; a handed that is not a bool
+// is no evidence, and crw.accept refuses it reviewer_not_verified.
+func TestUnitCheckReceiptIsHandedOnlyWhenTheToolTakesThePrompt(t *testing.T) {
+	body := "RED-FIRST: go test -run TestA ./a: FAIL TestA\nMUTATION-RED: a.go:3 flipped: FAIL TestA\n"
+	// world is a ucWorld whose executor call c_ex1 records an accepted evidence receipt with its step-bus copy, checked by the real
+	// review adapter over run; the prompts the tool's runner was given are kept in prompts.
+	world := func(t *testing.T, run func(p reviewadapter.Profile) ([]byte, []byte, int)) (u *ucWorld, ex CallRef, copyPath, digest string, prompts *[]string) {
+		u = newUCWorld(t)
+		var fallbacks []string
+		codexWithBugbotFallback(u, &fallbacks)
+		prompts = &[]string{}
+		u.lane.d.UnitCheck.Checker = reviewadapter.Adapter{
+			Run: func(_ context.Context, p reviewadapter.Profile, req reviewadapter.Request) ([]byte, []byte, int, error) {
+				*prompts = append(*prompts, req.Prompt)
+				stdout, stderr, exit := run(p)
+				return stdout, stderr, exit, nil
+			},
+			Fingerprint: func(ctx context.Context, dir string) (string, error) { return Snapshot(ctx, ExecGit("git"), dir) },
+		}
+		copyPath, digest = receiptCopy(t, body)
+		ex = u.buildWithReceipt("c_ex1", "built\n", map[string]any{"assignment": "as1", "state": "accepted", "path": "/p/receipt.md", "sha256": digest,
+			"agent_id": "agent-1", "turn_id": "turn-1", "turn_match": true, "copy": copyPath})
+		return u, ex, copyPath, digest, prompts
+	}
+	cleanCodex := func(reviewadapter.Profile) ([]byte, []byte, int) {
+		return []byte("The change writes a.txt as the plan asks; I found no issue in it.\n"), nil, 0
+	}
+	evidenceOf := func(rec premerge.Record) []string {
+		out := []string{rec.Summary}
+		for _, c := range rec.Criteria {
+			out = append(out, c.Evidence)
+		}
+		return out
+	}
+
+	t.Run("codex direct", func(t *testing.T) {
+		u, ex, copyPath, digest, prompts := world(t, cleanCodex)
+		out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+		if out.State != reviewadapter.StateOK || out.Verdict != reviewadapter.VerdictVerified || out.Model != "gpt-6-astra" || out.PromptSent || out.Fallback != nil {
+			t.Fatalf("answer %+v", out)
+		}
+		if len(*prompts) != 1 || !strings.Contains((*prompts)[0], "EXECUTOR RECEIPT") || !strings.Contains((*prompts)[0], body) {
+			t.Fatalf("the request's prompt does not carry the executor receipt: %q", *prompts)
+		}
+		row := u.lastCheck()
+		if want := map[string]any{"state": "accepted", "sha256": digest, "copy": copyPath, "handed": false}; !reflect.DeepEqual(checkReceiptOf(row), want) {
+			t.Errorf("the row's receipt %v, want %v", checkReceiptOf(row), want)
+		}
+		rec, _ := u.acceptOnHead(ex, nil)
+		for _, ev := range evidenceOf(rec) {
+			if !strings.Contains(ev, "executor receipt "+digest) || !strings.Contains(ev, "not handed to the tool") {
+				t.Errorf("evidence %q does not name the receipt as not handed", ev)
+			}
+		}
+	})
+
+	t.Run("bugbot fallback", func(t *testing.T) {
+		u, ex, copyPath, digest, prompts := world(t, func(p reviewadapter.Profile) ([]byte, []byte, int) {
+			if p.Name == "codex-review" {
+				return nil, []byte("ERROR: You've hit your usage limit. Upgrade to Pro or try again later.\n"), 1
+			}
+			return []byte(`{"type":"result","subtype":"success","is_error":false,"result":"I'll review only the uncommitted changes.Bugbot found no bugs."}` + "\n"), nil, 0
+		})
+		out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+		if out.State != reviewadapter.StateOK || out.Model != "grok-4.7-medium" || !out.PromptSent || out.Fallback == nil || out.Fallback.State != reviewadapter.StateQuota || out.Fallback.PromptSent {
+			t.Fatalf("answer %+v (fallback %+v)", out, out.Fallback)
+		}
+		if len(*prompts) != 2 || !strings.Contains((*prompts)[1], "EXECUTOR RECEIPT") || (*prompts)[0] != (*prompts)[1] {
+			t.Fatalf("the fallback's prompt does not carry the executor receipt: %q", *prompts)
+		}
+		row := u.lastCheck()
+		if want := map[string]any{"state": "accepted", "sha256": digest, "copy": copyPath, "handed": true}; !reflect.DeepEqual(checkReceiptOf(row), want) {
+			t.Errorf("the row's receipt %v, want %v", checkReceiptOf(row), want)
+		}
+		rec, _ := u.acceptOnHead(ex, nil)
+		for _, ev := range evidenceOf(rec) {
+			if !strings.Contains(ev, "executor receipt "+digest) || strings.Contains(ev, "not handed") {
+				t.Errorf("evidence %q is not R2's handed receipt", ev)
+			}
+		}
+	})
+
+	// rowWithReceipt appends, after the verification, a completed crw.unitCheck row c_uc_old with the data of the newest check and
+	// the given receipt, as a lane of an earlier build wrote it; crw.accept takes the newest check on the head.
+	rowWithReceipt := func(u *ucWorld, receipt map[string]any) func() {
+		return func() {
+			last := u.lastCheck()
+			data := maps.Clone(last.Data)
+			data["receipt"] = receipt
+			u.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "c_uc_old", Op: last.Op, Event: engine.EvCompleted, Data: data})
+		}
+	}
+
+	t.Run("a row from before handed", func(t *testing.T) {
+		u, ex, copyPath, digest, _ := world(t, cleanCodex)
+		u.must("unitCheck", "A", ex, map[string]any{"round": 1})
+		rec, reviewer := u.acceptOnHead(ex, rowWithReceipt(u, map[string]any{"state": "accepted", "sha256": digest, "copy": copyPath}))
+		if reviewer != "c_uc_old" {
+			t.Fatalf("crw.accept took the check %s, not the hand-written row", reviewer)
+		}
+		for _, ev := range evidenceOf(rec) {
+			if !strings.Contains(ev, "executor receipt "+digest) || strings.Contains(ev, "not handed") {
+				t.Errorf("evidence %q of a row from before handed is not R2's", ev)
+			}
+		}
+	})
+
+	t.Run("a handed that is not a bool", func(t *testing.T) {
+		u, ex, copyPath, digest, _ := world(t, cleanCodex)
+		u.must("unitCheck", "A", ex, map[string]any{"round": 1})
+		var commit CommitOutcome
+		_ = json.Unmarshal(u.must("commit", "A", ex, []string{"a.txt"}), &commit)
+		u.must("verify", "A", commit.Commit)
+		rowWithReceipt(u, map[string]any{"state": "accepted", "sha256": digest, "copy": copyPath, "handed": "false"})()
+		u.lane.d.Relay = &acceptCapture{stubRelay: u.relay}
+		if _, err := u.op("accept", "A", commit.Commit); err == nil || ReasonOf(err.Error()) != "reviewer_not_verified" {
+			t.Errorf("crw.accept on a receipt whose handed is a string: %v, want reviewer_not_verified", err)
+		}
+	})
 }
 
 // TestUnitCheckHoldsWithoutAnAcceptedReceipt (CRW-1463, C12): a receipt the backend recorded as missing or unverified, an accepted one

@@ -204,7 +204,9 @@ result's `fallback`); `hold` (`unit_check_quota`, `unit_check_no_answer`, or `re
 evidence receipt could not be read) when the lane is to hold the node; `receipt` (the executor's evidence receipt as the check read it:
 `state` `accepted` with its `sha256`, `copy` and `ignored`, or, when the backend could not copy it to the step bus or the copy cannot be
 read, with the `path` it was read from in place of the copy (where the hook accepted it, the bytes still hashing to the `sha256`) and the
-`copy_error`; `not_assigned` when the call was given none, or `no_executor` for a committed check); and `result`, the `reviewadapter.Result` of the call that answered last (state, verdict, findings with their line-free ids, engine family, model, effort, guide
+`copy_error`; an accepted receipt also names `handed`, true when the tool that judged (the row's `result`) was given the prompt that
+holds the receipt and false for the Codex review profiles, which take no prompt (`crw.accept` then names the receipt as read and kept,
+not handed to the tool; a row with no `handed` was written when every unit check took the prompt and reads as handed); `not_assigned` when the call was given none, or `no_executor` for a committed check); and `result`, the `reviewadapter.Result` of the call that answered last (state, verdict, findings with their line-free ids, engine family, model, effort, guide
 revision, prompt digest, both fingerprints), with `fallback`, the first profile's quota record, when the check fell back. `crw.accept` and the relay take a row of role `unit-check` whose result state is `ok` and that is
 on the head (its `commit`, or its `tree` equal to the head's tree) as the judgment of the head. A check that was not run names no role: when
 the worktree is no longer the judged call's pending tree the row has `state` `tree_moved`, `tree_moved` true, `pending_tree` and `tree`
