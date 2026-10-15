@@ -343,7 +343,9 @@ func (c *command) settle(st *store.Store, runID string, events []engine.Event) (
 	return settle(c.ctx, st, runID, ops.OpenReleases(events))
 }
 
-// cancelDead ends a run no process holds: one finished row, error kind cancelled, appended under the run lock.
+// cancelDead ends a run no process holds: one finished row, error kind cancelled, appended under the run lock. The row says the run
+// was dead (`dead: true`) only when the rows read under the lock show a dead run (a start with no end): a paused end or a held run
+// had no process because it ended, not because its process died (CRW-1495). What the caller read before the lock is not used.
 func (c *command) cancelDead(state string, cm *common, rec RunRecord) int {
 	write := c.Writer
 	if write == nil {
@@ -369,11 +371,17 @@ func (c *command) cancelDead(state string, cm *common, rec RunRecord) int {
 	// the run's executions are given up before the run is marked cancelled: a run that is cancelled in the journal and still holds
 	// slots is hidden from monitoring and blocks the nodes that overlap it. A failure leaves the run as it was, so the cancel can be
 	// repeated.
-	settled, err := c.settle(st, rec.RunID, j.Events())
+	events := j.Events()
+	dead := Summarize(rec, events, false, 0).State == StateDead
+	settled, err := c.settle(st, rec.RunID, events)
 	if err != nil {
 		return c.fail("%v", err)
 	}
-	j.Append(engine.Event{RunID: rec.RunID, Kind: engine.KindRun, Event: "finished", Data: map[string]any{"status": engine.RunScriptError, "error_kind": engine.ErrKindCancelled, "by": "operator", "dead": true, "executions_closed": settled.Closed, "slots_returned": settled.SlotsReturned}})
+	row := map[string]any{"status": engine.RunScriptError, "error_kind": engine.ErrKindCancelled, "by": "operator", "executions_closed": settled.Closed, "slots_returned": settled.SlotsReturned}
+	if dead {
+		row["dead"] = true
+	}
+	j.Append(engine.Event{RunID: rec.RunID, Kind: engine.KindRun, Event: "finished", Data: row})
 	if err := j.Close(); err != nil || j.Err() != nil {
 		return c.fail("the row could not be stored: %v", errors.Join(err, j.Err()))
 	}
