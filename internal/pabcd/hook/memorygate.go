@@ -50,6 +50,8 @@ func memoryGateHandle(raw string, env host.LookupEnv, write func(string, state.S
 	if attempt.Surface == "" {
 		return ""
 	}
+	// A leaf is any subagent: the payload carries agent_id or agent_type. Who spawned it is not read here, and a standalone session
+	// or a flow engine thread spawns subagents too, so a leaf's recovery names the session that spawned it and no layer (CRW-1478).
 	leaf := p["agent_id"] != nil || p["agent_type"] != nil
 	reason := memoryGateReasonFor(attempt, sid, cwd, leaf)
 	// With no cwd or no session id there is no state to consult, and a write nobody can prove was asked for is what the gate
@@ -74,7 +76,7 @@ func memoryGateReasonFor(a MemoryWriteAttempt, sid, cwd string, leaf bool) strin
 	prefix := "[crw MEMORY-WRITE-GATE] "
 	recovery := "Use a direct command with a literal program and absolute write paths. A readable script file must meet the same checks."
 	if leaf {
-		recovery = "Report the blocked command and cause code to the 자식 that spawned you."
+		recovery = "Report the blocked command and cause code to the session that spawned you."
 	}
 	reachable := memoryGateStateReachable(cwd, sid)
 	switch a.Cause {
@@ -97,7 +99,7 @@ func memoryGateReasonFor(a MemoryWriteAttempt, sid, cwd string, leaf bool) strin
 	}
 	reason := prefix + "Blocked a write of " + what + ": MEMORY-WRITE-GATE-01 requires an explicit user request. "
 	if leaf {
-		return reason + "Report the protected write to the 자식 that spawned you; the 자식 must resolve authorization."
+		return reason + "Report the protected write to the session that spawned you; that session must resolve authorization."
 	}
 	if !reachable {
 		return reason + memoryGateNoStateHint
