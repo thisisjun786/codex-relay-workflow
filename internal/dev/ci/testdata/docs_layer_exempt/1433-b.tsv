@@ -1,0 +1,12 @@
+# CRW-1433 unit 1433-b: bare 'supervisor' that names a process, no session layer. path<TAB>phrase<TAB>reason.
+docs/relay/README.md	the daemon's supervisor pass	the daemon's pass over the supervisor channel, named after internal/relay/supervisor: a step of the daemon process, no session layer
+docs/relay/README.md	supervisor that has already decided	a process that supervises the relay daemon's workers (the service launcher, the unit's manager), no session layer
+docs/relay/README.md	the supervisor it launches	a process that supervises the relay daemon's workers (the service launcher, the unit's manager), no session layer
+docs/relay/README.md	that supervisor's own startup	a process that supervises the relay daemon's workers (the service launcher, the unit's manager), no session layer
+docs/relay/README.md	a supervisor reading it as a clean	a process that supervises the relay daemon's workers (the service launcher, the unit's manager), no session layer
+docs/relay/README.md	supervisor that sees it stops	a process that supervises the relay daemon's workers (the service launcher, the unit's manager), no session layer
+docs/relay/README.md	bound the supervisor keeps	a process that supervises the relay daemon's workers (the service launcher, the unit's manager), no session layer
+docs/relay/README.md	a supervisor reads that as an ordinary	a process that supervises the relay daemon's workers (the service launcher, the unit's manager), no session layer
+docs/relay/README.md	supervisor whose bound was already	a process that supervises the relay daemon's workers (the service launcher, the unit's manager), no session layer
+docs/relay/README.md	the supervisor is what makes it continuous	a process that supervises the relay daemon's workers (the service launcher, the unit's manager), no session layer
+docs/relay/README.md	that supervisor spawns	a process that supervises the relay daemon's workers (the service launcher, the unit's manager), no session layer
