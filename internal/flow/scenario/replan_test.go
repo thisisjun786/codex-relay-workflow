@@ -1079,8 +1079,8 @@ func editBuildOf(node string) func(string) string {
 // editBuildOfWith is editBuildOf with the text the prompt ends with.
 func editBuildOfWith(node, mark string) func(string) string {
 	return func(text string) string {
-		return strings.Replace(text, "return agent.call(packet(node, plan, checkpoint), opts)",
-			"return agent.call(packet(node, plan, checkpoint) + (node === '"+node+"' ? '\\n\\n"+mark+"' : ''), opts)", 1)
+		return strings.Replace(text, "return agent.call(packet(node, plan, checkpoint, last), opts)",
+			"return agent.call(packet(node, plan, checkpoint, last) + (node === '"+node+"' ? '\\n\\n"+mark+"' : ''), opts)", 1)
 	}
 }
 

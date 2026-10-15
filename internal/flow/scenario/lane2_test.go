@@ -623,3 +623,114 @@ func TestUnitCheckCarriedFindingSurvivesAVerificationFix(t *testing.T) {
 	}
 	noTierStep(t, l)
 }
+
+// packetBody is a turn's text without its first line (the crw-flow-op line, which names the call).
+func packetBody(text string) string {
+	_, body, _ := strings.Cut(text, "\n")
+	return body
+}
+
+// TestRebuildPacketCarriesTheLastFindingsAndCI (CRW-1469): a fresh executor thread of a node has none of the turns of the thread
+// before it, so its packet carries the node's last state: the findings of the last unit check, the last verification (its command
+// and its failures) and the summary of the last receipt. The rebuild after a null_model, the rebuild after a refusal the orchestrator
+// let go on and the executor-t1 build each carry them; a null_model of the first build carries none, and that rebuild's packet is the
+// first build's.
+func TestRebuildPacketCarriesTheLastFindingsAndCI(t *testing.T) {
+	finding := Finding("P2", "the guard is missing")
+	findingLine := "- [P2] " + reviewadapter.FindingID(finding.File, finding.Text) + " node.txt:1 the guard is missing"
+	const ciLine = "LAST VERIFICATION FAILED (" + ops.CILocalCommand + "):\n- validate/tests: failed"
+	const summary = "fixed the failing test"
+	carries := func(t *testing.T, l *Lab, label string) {
+		t.Helper()
+		text := textOfCall(l, callNamed(t, l, label).ID)
+		for _, want := range []string{"LAST FINDINGS (", findingLine, ciLine, "LAST RECEIPT (", "): " + summary} {
+			if !strings.Contains(text, want) {
+				t.Errorf("the packet of %s lacks %q:\n%s", label, want, text)
+			}
+		}
+	}
+	// the build is checked clean, its head fails verification, the fix of it (summary) is checked with a finding
+	failThenFind := func(l *Lab) {
+		l.UnitChecks("A", UnitCheck{}, NeedsChanges(finding))
+		l.Verify.Fail = map[string][]int{"A": {1}}
+		l.Sequence("^fix:A:executor:r1$", func(c *Call) fakehostPlan {
+			c.Edit()
+			return Say(ReceiptWith("ready_for_review", map[string]any{"summary": summary}))
+		})
+	}
+
+	t.Run("null_model on the first build", func(t *testing.T) {
+		l := NewLab(t, oneNode()...)
+		l.Sequence("^build:A:executor$", func(*Call) fakehostPlan { return Garbage() })
+		if got := mustRun(t, l); got.State != "closed" {
+			t.Fatalf("state %q; calls %v", got.State, l.Labels())
+		}
+		build := textOfCall(l, callNamed(t, l, "build:A:executor").ID)
+		rebuild := textOfCall(l, callNamed(t, l, "rebuild:A:executor:r1").ID)
+		if strings.Contains(rebuild, "LAST ") {
+			t.Errorf("the rebuild after a first-build null_model carries a last state:\n%s", rebuild)
+		}
+		if packetBody(rebuild) != packetBody(build) || packetBody(build) == "" {
+			t.Errorf("the rebuild's packet is not the first build's:\n%s\n----\n%s", build, rebuild)
+		}
+	})
+
+	t.Run("null_model rebuild", func(t *testing.T) {
+		l := NewLab(t, oneNode()...)
+		failThenFind(l)
+		l.Sequence("^fix:A:executor:r2$", func(*Call) fakehostPlan { return Garbage() })
+		if got := mustRun(t, l); got.State != "closed" {
+			t.Fatalf("state %q; calls %v", got.State, l.Labels())
+		}
+		want := []string{"architect", "design-audit:r1", "build:A:executor", "fix:A:executor:r1", "fix:A:executor:r2", "rebuild:A:executor:r3", "reviewer-final:M1", "reflection:M1"}
+		if labels := l.Labels(); !slices.Equal(labels, want) {
+			t.Fatalf("calls %v, want %v", labels, want)
+		}
+		carries(t, l, "rebuild:A:executor:r3")
+		noTierStep(t, l)
+	})
+
+	t.Run("refused rebuild", func(t *testing.T) {
+		l := NewLab(t, oneNode()...)
+		failThenFind(l)
+		l.Sequence("^fix:A:executor:r2$", func(*Call) fakehostPlan {
+			return fakehostPlan{StartError: map[string]any{"code": -32600, "message": "bad request", "data": map[string]any{"codexErrorInfo": "badRequest"}}}
+		})
+		got := mustRunIncomplete(t, l)
+		if state, _ := laneOf(t, got, "A"); state != "waiting" {
+			t.Fatalf("lane A %s; calls %v", state, l.Labels())
+		}
+		esc := l.FlowRows(engine.EvEscalation)
+		if len(esc) != 1 {
+			t.Fatalf("escalations %+v", esc)
+		}
+		l.apply(ops.EvDecisionApplied, map[string]any{"ask": str(esc[0].Data, "escalation_id"), "node": "A", "decision": map[string]any{"action": "retry"}})
+		l.NewProcess("proc-applied")
+		res := l.Resume()
+		if v := Value[laneResult](t, res); v.State != "closed" {
+			t.Fatalf("after the applied row: %+v; calls %v", v, l.Labels())
+		}
+		carries(t, l, "rebuild:A:executor:r3")
+	})
+
+	t.Run("executor-t1 build", func(t *testing.T) {
+		l := NewLab(t, oneNode()...)
+		// the fix of the failed head is checked with a finding, the fix of that with the same finding: SP-TIER-1 (a)
+		failThenFind(l)
+		l.UnitChecks("A", NeedsChanges(finding))
+		if got := mustRun(t, l); got.State != "closed" {
+			t.Fatalf("state %q; calls %v", got.State, l.Labels())
+		}
+		want := []string{"architect", "design-audit:r1", "build:A:executor", "fix:A:executor:r1", "fix:A:executor:r2", "build:A:executor-t1", "reviewer-final:M1", "reflection:M1"}
+		if labels := l.Labels(); !slices.Equal(labels, want) {
+			t.Fatalf("calls %v, want %v", labels, want)
+		}
+		// the last receipt is the fix r2's: the default receipt of the lab
+		text := textOfCall(l, callNamed(t, l, "build:A:executor-t1").ID)
+		for _, want := range []string{"LAST FINDINGS (", findingLine, ciLine, "): done: ready_for_review", "CHECKPOINT ("} {
+			if !strings.Contains(text, want) {
+				t.Errorf("the executor-t1 packet lacks %q:\n%s", want, text)
+			}
+		}
+	})
+}
