@@ -351,7 +351,7 @@ func TestPolicyLoadedFromEnvironmentIsRecordedInTheRun(t *testing.T) {
 }
 
 func TestFlowRolesShowsPolicyAndDigest(t *testing.T) {
-	// CRW-1330: the source and the digest are the helper role store's path and the canonical digest of its six pairs.
+	// CRW-1330: the source and the digest are the helper role store's path and the canonical digest of its seven pairs.
 	store := withRoleStore(t, roleStore("anthropic/claude-haiku-5", "gpt-6.1-sol"))
 	dir := t.TempDir()
 	path := dir + "/policy.json"
@@ -370,7 +370,7 @@ func TestFlowRolesShowsPolicyAndDigest(t *testing.T) {
 	if report.Source == nil || *report.Source != store || *report.Digest != digest || report.Placeholder || report.Mode != "presence_only" {
 		t.Fatalf("%+v", report)
 	}
-	if len(report.Roles) != 6 || report.Roles[0].Role != "architect" || report.Roles[1].Sandbox != SandboxWorkspaceWrite || len(report.Aliases) != 6 {
+	if len(report.Roles) != len(execution.AgentRoleNames) || report.Roles[len(report.Roles)-1].Role != "critic" || report.Roles[0].Role != "architect" || report.Roles[1].Sandbox != SandboxWorkspaceWrite || len(report.Aliases) != 6 {
 		t.Fatalf("%+v", report)
 	}
 	code, out, _ = runFlow(t, "roles")
