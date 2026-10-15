@@ -87,6 +87,8 @@ func (r *Runner) Pass(ctx context.Context) Report {
 		// a head of the pull request that already landed (done/ or its landing record) is done again, with no second record
 		if why := r.landedBefore(e); why != "" {
 			r.logf("%s %s: %s", e.Key, e.Head, why)
+			// a record whose comment an earlier pass did not get to is posted now, once
+			r.repostLandingComment(ctx, e)
 			rep.moved(r, e, dirDone, why)
 			continue
 		}

@@ -114,8 +114,9 @@ the verification-record of the merged tree; the review is a step of the queue th
   one that is closed or merged, one toward another branch than `branch`, one whose head branch is in another repository (a fork), or
   one that names no head commit is refused and nothing is written. A queue without `pull_request_repo` takes no `pr-<N>` file: it is reported as ignored, as before.
 - A pull request entry is keyed by its number and its head. A head that already landed (`done/pr-<N>-<head>`, or a landing record of that
-  number and head that moved the branch) is refused by `--enqueue-pr`, and a pass moves such a pending file to `done/` with no run, no
-  record and no comment (`--dry-run` reports it as `landed` and plans no run for it). After new commits on its branch the project session
+  number and head that moved the branch) is refused by `--enqueue-pr`, and a pass moves such a pending file to `done/` with no run and no
+  new record; the only comment it posts is the one its record still lacks (`comment` is `not written yet`, see the record below).
+  `--dry-run` reports such a file as `landed` and plans no run for it, and neither it nor `--enqueue-pr` posts anything. After new commits on its branch the project session
   enqueues the same pull request again and the queue lands the new head.
 - A pass lands one pull request alone, the lowest number first, before the issue heads, and runs no `gate_command` for it. It reads the
   pull request again and fetches the branch. A head that is already in the branch with no landing record (a pass that ended after its
@@ -156,7 +157,11 @@ the verification-record of the merged tree; the review is a step of the queue th
   verification (record path, its sha256, the command's status, a note when it is not recorded) and the review (configured, verdict,
   verdict file, status, note), `head_moved` when the head moved during the run, and its warnings. One (number, head) has one record that
   moved the branch: written by the run that pushed it, or, when that run ended before its record, by the pass that finds the head in the
-  branch (`landed_before_record`). The same record is written on the pull request as a comment headed `[dev queue · <tag>]`; `comment` says whether it was.
+  branch (`landed_before_record`). The same record is written on the pull request as a comment headed `[dev queue · <tag>]`; `comment` says whether it was:
+  `not written yet` (the record is written first, so a pass that ended before the comment call leaves it), `written`, or `not written: <reason>`
+  (GitHub refused; final). The next pass that finds the head landed posts the comment of a `not written yet` record once and writes the file again; a `written`
+  or refused comment is never posted again. One window stays: a pass that ends between the comment call and that second write leaves `not written yet` for a comment
+  that exists, and the next pass posts it a second time.
 - A failed verification is retried as for a head alone: once with the same head, then the file is blocked.
 
 ## Command
