@@ -57,12 +57,18 @@ func largeBlobTestWrite(t *testing.T, r *fixtureRepo, name string, data []byte) 
 	}
 }
 
+// largeBlobTestTitle is the title largeBlobTestCommit gives a commit with this message. It follows
+// the commit-title rule (CRW-1511), so a passing run prints no title warning. A refusal quotes the
+// commit title, so every assertion on a quoted title builds it here and cannot go stale on a prefix.
+func largeBlobTestTitle(message string) string {
+	return "CRW-1: " + message
+}
+
 // largeBlobTestCommit commits everything with a message of its own, so a refusal can be told
-// which commit it names. The title follows the commit-title rule (CRW-1511), so a passing run
-// prints no title warning.
+// which commit it names.
 func largeBlobTestCommit(r *fixtureRepo, message string) string {
 	r.git("add", "-A")
-	r.git("commit", "-qm", "CRW-1: "+message)
+	r.git("commit", "-qm", largeBlobTestTitle(message))
 	return largeBlobTestRev(r, "HEAD")
 }
 
@@ -155,13 +161,16 @@ func TestLargeBlob_a_blob_only_in_an_intermediate_commit_is_refused(t *testing.T
 	largeBlobTestWrite(t, r, "testdata/big.bin", largeBlobTestPayload(largeBlobTestLimit+1, 'b'))
 	added := largeBlobTestCommit(r, "add big")
 	r.git("rm", "-q", "testdata/big.bin")
-	largeBlobTestCommit(r, "drop big")
+	dropped := largeBlobTestCommit(r, "drop big")
 	got := largeBlobTestValidate(t, r.root, "pull_request", base)
 	expectEqual(t, "intermediate: exit", got.code, 1)
 	largeBlobTestContains(t, "intermediate", got.stderr, "testdata/big.bin: 2097153 bytes",
 		"brought in by commit "+largeBlobTestShort(r, added)+` "CRW-1: add big"`)
-	if strings.Contains(got.stderr, `"drop big"`) {
-		t.Errorf("the deleting commit is named:\n%s", got.stderr)
+	// The refusal quotes a title as `"<title>"` after the short id; the deleting commit is named by neither.
+	for _, named := range []string{`"` + largeBlobTestTitle("drop big") + `"`, "commit " + largeBlobTestShort(r, dropped)} {
+		if strings.Contains(got.stderr, named) {
+			t.Errorf("the deleting commit is named (%s):\n%s", named, got.stderr)
+		}
 	}
 
 	// Only the merge commit holds the blob: its conflict resolution is where it came in.
