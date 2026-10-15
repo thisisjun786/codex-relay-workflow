@@ -131,9 +131,11 @@ type CrosscheckReceipt struct {
 
 // CrosscheckPass is the record of one attempt of one pass.
 type CrosscheckPass struct {
-	Pass         string `json:"pass"`
-	Attempt      int    `json:"attempt"`
-	State        string `json:"state"`
+	Pass    string `json:"pass"`
+	Attempt int    `json:"attempt"`
+	State   string `json:"state"`
+	// Verdict is the pass's own verdict (verified | needs_changes) of an ok answer, empty for a pass that gave none (CRW-1473).
+	Verdict      string `json:"verdict,omitempty"`
 	ElapsedMS    int64  `json:"elapsed_ms"`
 	Model        string `json:"model"`
 	PromptDigest string `json:"prompt_digest"`
@@ -192,7 +194,7 @@ type CrosscheckOutcome struct {
 }
 
 // CrosscheckVerdictOf is the close rule (CrosscheckRule) over merged findings: needs_changes when a finding premerge.Blocks, else verified;
-// carried are the ids of the findings that do not block.
+// carried are the ids of the findings that do not block. crw.crosscheck also makes V needs_changes when a pass answered needs_changes.
 func CrosscheckVerdictOf(findings []reviewadapter.Finding) (verdict string, carried []string) {
 	verdict, carried = reviewadapter.VerdictVerified, []string{}
 	for _, f := range findings {
@@ -395,7 +397,7 @@ func (o *crosscheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.Op
 					return
 				}
 				s.res = res
-				s.rec = CrosscheckPass{Pass: s.pass, Attempt: s.attempt, State: string(res.State), ElapsedMS: res.ElapsedMS, Model: res.Model, PromptDigest: res.PromptDigest,
+				s.rec = CrosscheckPass{Pass: s.pass, Attempt: s.attempt, State: string(res.State), Verdict: res.Verdict, ElapsedMS: res.ElapsedMS, Model: res.Model, PromptDigest: res.PromptDigest,
 					Voided: res.State == reviewadapter.StateNotRead, Retried: retried, Detail: res.Detail}
 			}(s)
 		}
@@ -509,6 +511,13 @@ func (o *crosscheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.Op
 	}
 	v.Findings = reviewadapter.MergeFindings(slots[0].res.Findings, slots[1].res.Findings)
 	v.Verdict, v.Carried = CrosscheckVerdictOf(v.Findings)
+	// V is verified only when every pass answered verified as well: a pass that needs changes is no verification of the range, even
+	// with no finding that blocks (CRW-1473)
+	for _, s := range slots {
+		if s.res.Verdict != reviewadapter.VerdictVerified {
+			v.Verdict = reviewadapter.VerdictNeedsChanges
+		}
+	}
 	byID := map[string]reviewadapter.Finding{}
 	for _, f := range v.Findings {
 		byID[f.ID] = f

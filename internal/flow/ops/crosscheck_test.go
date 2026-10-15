@@ -352,6 +352,48 @@ func TestCrosscheckMergesThePassesKeepingTheHigherSeverity(t *testing.T) {
 	})
 }
 
+// TestCrosscheckVerdictFollowsEveryPassVerdict (CRW-1473): V is verified only when both passes answered verified and no merged finding
+// blocks. A pass that answered needs_changes with no finding, or with only a finding that does not block, makes V needs_changes
+// whatever the other pass said; each pass's own verdict is on its record (passes[].verdict).
+func TestCrosscheckVerdictFollowsEveryPassVerdict(t *testing.T) {
+	minor := reviewadapter.Finding{ID: "f1", Severity: "P3", Impact: "minor_separable", File: "a.go", Line: 3, Text: "the name is long"}
+	for _, c := range []struct {
+		name     string
+		pass     string
+		findings []reviewadapter.Finding
+		carried  []string
+	}{
+		{"pass A needs changes with no finding", "A", nil, []string{}},
+		{"pass B needs changes with no finding", "B", nil, []string{}},
+		{"pass A needs changes over a finding that does not block", "A", []reviewadapter.Finding{minor}, []string{"f1"}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			w := newCCWorld(t)
+			w.checker.script(c.pass, ccAnswer{Verdict: reviewadapter.VerdictNeedsChanges, Findings: c.findings})
+			out, row := w.crosscheck(ccHead, nil)
+			if out.State != CrosscheckStateVerdict || out.Verdict == nil {
+				t.Fatalf("outcome %+v", out)
+			}
+			v := out.Verdict
+			if v.Verdict != reviewadapter.VerdictNeedsChanges || !slices.Equal(v.Carried, c.carried) {
+				t.Errorf("verdict %q carried %v, want needs_changes and %v: a pass that needs changes is not a verified V", v.Verdict, v.Carried, c.carried)
+			}
+			got := map[string]string{}
+			for _, p := range v.Passes {
+				got[p.Pass] = p.Verdict
+			}
+			want := map[string]string{"A": reviewadapter.VerdictVerified, "B": reviewadapter.VerdictVerified}
+			want[c.pass] = reviewadapter.VerdictNeedsChanges
+			if len(got) != 2 || got["A"] != want["A"] || got["B"] != want["B"] {
+				t.Errorf("the passes' verdicts %v, want %v", got, want)
+			}
+			if rv, _ := row.Data["verdict"].(map[string]any); rv == nil || rv["verdict"] != reviewadapter.VerdictNeedsChanges {
+				t.Errorf("the row's V %v", row.Data["verdict"])
+			}
+		})
+	}
+}
+
 func verdictFor(f reviewadapter.Finding) string {
 	if blocks(f) {
 		return reviewadapter.VerdictNeedsChanges

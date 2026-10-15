@@ -779,7 +779,8 @@ both passes say it word for word:
 
 A finding that blocks (`premerge.Blocks`) makes V `needs_changes`; the others are carried, by id (`carried`) and as one line each
 (`follow_ups`: `id [severity/impact] file:line text`), and no issue is registered for them. The engine's word follows the same rule: an
-answer of verified over a finding that blocks is invalid, not overridden. V (row `crw.crosscheck`, [journal.md](journal.md#the-proofs))
+answer of verified over a finding that blocks is invalid, not overridden. V is `verified` only when both passes answered verified too: a
+pass whose own answer is needs_changes makes V `needs_changes` even when no finding blocks (each attempt's word is its pass's `verdict`). V (row `crw.crosscheck`, [journal.md](journal.md#the-proofs))
 names the word, the findings, the engine family and model, the round, the milestone and its plan, the gate's head and base, the run, the
 author families and each author with its source, name, model and family, the receipts and every attempt of each pass.
 

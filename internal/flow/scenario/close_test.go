@@ -317,6 +317,41 @@ func TestNeedsChangesFinalDoesNotCloseTheMilestone(t *testing.T) {
 	}
 }
 
+// A crosscheck pass that answers needs_changes with no finding does not verify the range (CRW-1473): V is needs_changes though no
+// merged finding blocks, so the run escalates the milestone crosscheck_pending and does not close it (no crw.milestoneClose, no report
+// up, no reflection).
+func TestANeedsChangesPassWithNoFindingDoesNotCloseTheMilestone(t *testing.T) {
+	l := NewLab(t, oneNode()...)
+	l.Crosschecks("M1", 1, 0, "B", 1, Crosscheck{Verdict: "needs_changes"})
+	res := l.Run()
+	if res.Status != engine.RunCompleted {
+		t.Fatalf("run %s: %s: %s\ncalls: %v", res.Status, res.ErrorKind, res.Error, l.Labels())
+	}
+	got := Value[closeResult](t, res)
+	if got.State != "escalated" || got.Source != "crosscheck" || got.Reason != "crosscheck_pending" || got.Ask != "crosscheck_pending" {
+		t.Fatalf("%+v; calls %v; escalations %v", got, l.Labels(), escalationReasons(l))
+	}
+	cc := l.Rows("crw.crosscheck")
+	if len(cc) != 1 || str(cc[0].Data, "state") != "verdict" {
+		t.Fatalf("crosscheck rows %+v, want one verdict", cc)
+	}
+	v, _ := cc[0].Data["verdict"].(map[string]any)
+	if findings, _ := v["findings"].([]any); str(v, "verdict") != "needs_changes" || len(findings) != 0 {
+		t.Errorf("the crosscheck's V %v, want needs_changes with no finding", cc[0].Data["verdict"])
+	}
+	if n := len(l.Rows("crw.milestoneClose")); n != 0 {
+		t.Errorf("%d crw.milestoneClose rows: the milestone closed over a pass that needs changes", n)
+	}
+	if n := len(l.Rows("crw.reportUp")); n != 0 {
+		t.Errorf("%d crw.reportUp rows: a milestone that did not close was reported up", n)
+	}
+	for _, label := range l.Labels() {
+		if label == "reflection:M1" {
+			t.Errorf("the reflection ran over a range the crosscheck did not verify: %v", l.Labels())
+		}
+	}
+}
+
 // A resume of a run that closed does nothing: the gate, the crosscheck, the close, the audit and the archive are all replayed
 // from the journal, and the host is asked for nothing - no call, no read of a thread, no archive.
 func TestResumeAfterAClosedMilestoneRunsNothing(t *testing.T) {
