@@ -169,6 +169,9 @@ func (o *unitCheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpR
 	g := o.l.d.Git
 	data := map[string]any{"node": node, "mode": mode, "round": opts.Round, "final": opts.Final}
 	snap := ""
+	// baseHead is the HEAD the check is of: the commit the node's attempt is at (the start the guard below compares), the head of a
+	// committed range, else the HEAD read before the first Check
+	baseHead := ""
 	var receipt checkReceipt
 	if mode == UnitCheckUncommitted {
 		data["call"] = ex.CallID
@@ -209,6 +212,7 @@ func (o *unitCheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpR
 					Call: ex.CallID, CheckID: req.CallID}
 				return engine.OpResult{Result: result(out), Data: data}, nil
 			}
+			baseHead = at
 		}
 		var hold, detail string
 		if receipt, hold, detail = executorReceipt(term); hold != "" {
@@ -228,6 +232,7 @@ func (o *unitCheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpR
 		if at != head {
 			return engine.OpResult{}, fmt.Errorf("crw.unitCheck: node %s: the worktree %s is at %s, not at the head %s to check", node, wt, at, head)
 		}
+		baseHead = at
 		data["commit"], data["base"] = head, opts.Base
 		// and in a clean checkout of it: a check of edited files would be recorded as the judgment of the commit
 		commitTree, err := TreeOf(ctx, g, wt, head)
@@ -282,28 +287,77 @@ func (o *unitCheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpR
 			Retried: retried, Call: ex.CallID, CheckID: req.CallID}
 		return engine.OpResult{Result: result(out), Data: data}, nil
 	}
-	res, err := uc.Checker.Check(ctx, creq)
-	if err != nil {
-		return engine.OpResult{}, fmt.Errorf("crw.unitCheck: node %s: %w", node, err)
+	// and of the HEAD the worktree is at (CRW-1557): HEAD is read before and after every attempt, and a HEAD that moved, even to a commit
+	// of the same tree, leaves every snapshot as it was while the uncommitted diff the tool reads is not the change crw.commit commits
+	// (a commit of the pending change during the call empties it), so the answer is no judgment either: the row says head_moved, as the
+	// guard before the check does
+	headAt := func() (string, error) {
+		at, err := Head(ctx, g, wt)
+		if err != nil {
+			return "", err
+		}
+		if baseHead == "" {
+			baseHead = at
+		}
+		if at != baseHead {
+			return at, nil
+		}
+		return "", nil
 	}
-	if seen, err := moved(res); err != nil {
+	headMoved := func(at string, retried bool) (engine.OpResult, error) {
+		delete(data, "role")
+		data["state"], data["head_moved"] = StateHeadMoved, map[string]any{"start": baseHead, "head": at}
+		if mode == UnitCheckCommitted {
+			data["commit_tree"] = snap
+		} else {
+			data["pending_tree"] = snap
+		}
+		out := UnitCheckOutcome{Result: reviewadapter.Result{State: StateHeadMoved, Detail: "the worktree's HEAD moved from " + baseHead + " to " + at +
+			" while the tool judged it; the uncommitted changes it read are not the change to commit, and the answer is no judgment", Findings: []reviewadapter.Finding{}},
+			Retried: retried, Call: ex.CallID, CheckID: req.CallID}
+		return engine.OpResult{Result: result(out), Data: data}, nil
+	}
+	// attempt is one Check with HEAD read around it; a held answer is the op's result (done)
+	attempt := func(retried bool, what string) (res reviewadapter.Result, done *engine.OpResult, err error) {
+		if at, err := headAt(); err != nil {
+			return res, nil, err
+		} else if at != "" {
+			r, err := headMoved(at, retried)
+			return res, &r, err
+		}
+		if res, err = uc.Checker.Check(ctx, creq); err != nil {
+			return res, nil, fmt.Errorf("crw.unitCheck: node %s: %s%w", node, what, err)
+		}
+		if at, err := headAt(); err != nil {
+			return res, nil, err
+		} else if at != "" {
+			r, err := headMoved(at, retried)
+			return res, &r, err
+		}
+		if seen, err := moved(res); err != nil {
+			return res, nil, err
+		} else if seen != "" {
+			r, err := treeMoved(seen, retried)
+			return res, &r, err
+		}
+		return res, nil, nil
+	}
+	res, done, err := attempt(false, "")
+	if err != nil {
 		return engine.OpResult{}, err
-	} else if seen != "" {
-		return treeMoved(seen, false)
+	} else if done != nil {
+		return *done, nil
 	}
 	out := UnitCheckOutcome{Call: ex.CallID, CheckID: req.CallID}
 	if res.State == reviewadapter.StateInvalid {
 		data["first_state"] = string(res.State)
-		if res, err = uc.Checker.Check(ctx, creq); err != nil {
-			return engine.OpResult{}, fmt.Errorf("crw.unitCheck: node %s: the retry of an invalid answer: %w", node, err)
+		data["retried"] = true
+		if res, done, err = attempt(true, "the retry of an invalid answer: "); err != nil {
+			return engine.OpResult{}, err
+		} else if done != nil {
+			return *done, nil
 		}
 		out.Retried = true
-		if seen, err := moved(res); err != nil {
-			return engine.OpResult{}, err
-		} else if seen != "" {
-			data["retried"] = true
-			return treeMoved(seen, true)
-		}
 	}
 	if res.Findings == nil {
 		res.Findings = []reviewadapter.Finding{}
