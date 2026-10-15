@@ -98,6 +98,83 @@ func TestAGitThatFailsTheAncestorCheckOfAMarkerHoldsTheEntry(t *testing.T) {
 	}
 }
 
+// failCommitProbe makes the git call that asks whether the checkout has the commit head (any argv element "<head>^{commit}", the
+// cat-file and the rev-parse form alike) fail with status rc or with err. It answers the number of calls it failed.
+func failCommitProbe(w *prWorld, head string, rc int, err error) *int {
+	failed := new(int)
+	delegate := w.r.Exec
+	w.r.Exec = func(ctx context.Context, c Cmd) (int, error) {
+		for _, a := range c.Argv {
+			if a == head+"^{commit}" {
+				*failed++
+				return rc, err
+			}
+		}
+		return delegate(ctx, c)
+	}
+	return failed
+}
+
+// TestAGitThatFailsTheCommitProbeOfAMarkerHoldsTheEntry: the ancestor check of the marker's head fails with status 128, and the
+// probe that tells an absent commit from a repository error fails too (status 128, or an error). A git that cannot say whether the
+// checkout has the commit is not "the commit was never pushed": the entry is held, no landing is written, the marker stays, and the
+// next pass with a working git records the landing.
+func TestAGitThatFailsTheCommitProbeOfAMarkerHoldsTheEntry(t *testing.T) {
+	for name, fail := range map[string]struct {
+		rc  int
+		err error
+	}{"status 128": {128, nil}, "error": {-1, errors.New("git: boom")}} {
+		t.Run(name, func(t *testing.T) {
+			w := newPRWorld(t, true)
+			pr := w.milestone("10")
+			w.enqueue("o/r#1")
+			first := w.pass()
+			requireExit(t, first, ExitPushed, "pushed")
+			dev := w.remoteDev()
+			w.crashAfterPush(first, pr.HeadSHA)
+			marker := readSummary(t, w, first.Summary.Tag)
+			marker.Result = "pushing"
+			data, err := json.Marshal(marker)
+			if err != nil {
+				t.Fatal(err)
+			}
+			summaryPath := filepath.Join(w.cfg.RunsDir, marker.Tag+".summary.json")
+			if err := os.WriteFile(summaryPath, append(data, '\n'), 0o664); err != nil {
+				t.Fatal(err)
+			}
+			delegate := w.r.Exec
+			failedCheck := failAncestorCheck(w, dev, 128, nil)
+			failedProbe := failCommitProbe(w, dev, fail.rc, fail.err)
+
+			rep := w.pass()
+			if *failedCheck == 0 || *failedProbe == 0 {
+				t.Fatalf("the pass did not ask git about the marker (ancestor check %d, commit probe %d)", *failedCheck, *failedProbe)
+			}
+			if ls := w.landings(); len(ls) != 0 {
+				t.Errorf("a landing was recorded on a git failure: %+v", ls)
+			}
+			if w.pendingHead("pr-1") != pr.HeadSHA || w.doneFor("pr-1", pr.HeadSHA) {
+				t.Errorf("the entry left pending (pending %q, done %v)", w.pendingHead("pr-1"), w.doneFor("pr-1", pr.HeadSHA))
+			}
+			if len(rep.Held) != 1 || !strings.HasPrefix(rep.Held[0], "pr-1: ") || !strings.Contains(rep.Held[0], "pushing marker of run "+marker.Tag) || rep.Landing != nil {
+				t.Errorf("held %q, landing %+v", rep.Held, rep.Landing)
+			}
+			if got, err := os.ReadFile(summaryPath); err != nil || !strings.Contains(string(got), `"pushing"`) {
+				t.Errorf("the marker did not stay (%v): %s", err, got)
+			}
+
+			w.r.Exec = delegate
+			w.pass()
+			if ls := w.landings(); len(ls) != 1 || ls[0].Result != "landed_before_record" {
+				t.Fatalf("landing records after the retry %+v", ls)
+			}
+			if !w.doneFor("pr-1", pr.HeadSHA) {
+				t.Error("the entry is not done after the retry")
+			}
+		})
+	}
+}
+
 // TestAQueueWithoutATrackingAdapterHoldsALandingWhoseCommentIsNotWrittenYet: a record left "not written yet" and a queue whose
 // adapter is nil (an empty pull_request_repo) cannot post the comment. The pass does not panic; the entry stays pending with the
 // reason and the record is untouched; with the adapter back, the next pass posts the comment once and moves the entry to done.
