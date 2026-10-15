@@ -453,9 +453,7 @@ func (c *command) control(args []string, verb string) int {
 			if code != 0 {
 				return code
 			}
-			if info.State != StateCancelled && (settled.Closed > 0 || settled.SlotsReturned > 0) {
-				return 0
-			}
+			return c.endedCancel(run, info.State, settled)
 		}
 		fmt.Fprintf(c.stderr, "crw flow %s: run %s is %s: nothing to %s\n", verb, run, info.State, verb)
 		return 1
@@ -533,10 +531,25 @@ func (c *command) settleEndedRun(state string, cm *common, rec RunRecord) (Settl
 	if err != nil {
 		return Settlement{}, c.fail("%v", err)
 	}
-	if settled.Closed > 0 || settled.SlotsReturned > 0 {
-		fmt.Fprintf(c.stdout, "%d execution(s) of run %s given up, %d slot(s) returned\n", settled.Closed, rec.RunID, settled.SlotsReturned)
-	}
+	c.saySettled(rec.RunID, settled)
 	return settled, 0
+}
+
+// saySettled says what giving up the executions of an ended run did, when it did something.
+func (c *command) saySettled(run string, settled Settlement) {
+	if settled.Closed > 0 || settled.SlotsReturned > 0 {
+		fmt.Fprintf(c.stdout, "%d execution(s) of run %s given up, %d slot(s) returned\n", settled.Closed, run, settled.SlotsReturned)
+	}
+}
+
+// endedCancel is the exit of a cancel of a run that is over (state): one that ended otherwise and still held executions is cancelled by
+// giving them up (0); a cancelled run, or one with nothing left to give up, had nothing to cancel (1).
+func (c *command) endedCancel(run, state string, settled Settlement) int {
+	if state != StateCancelled && (settled.Closed > 0 || settled.SlotsReturned > 0) {
+		return 0
+	}
+	fmt.Fprintf(c.stderr, "crw flow cancel: run %s is %s: nothing to cancel\n", run, state)
+	return 1
 }
 
 // settle gives up the executions the run's rows show it released and did not end.
@@ -574,11 +587,17 @@ func (c *command) cancelDead(state string, cm *common, rec RunRecord) int {
 		return c.fail("%v", err)
 	}
 	// a cancel that read the run before another cancel (or the run's own end) stored its end row finds the run over under the lock:
-	// it appends nothing, so two cancels of one run write one end row (CRW-1495 item 6)
+	// it appends nothing, so two cancels of one run write one end row (CRW-1495 item 6), and it gives up what the ended run still
+	// holds from the rows read under the lock, as a cancel that read the ended run from the start does (settleEndedRun)
 	if now := Summarize(rec, j.Events(), false, 0).State; Over(now) {
+		events := j.Events()
 		_ = j.Close()
-		fmt.Fprintf(c.stderr, "crw flow cancel: run %s is %s: nothing to cancel\n", rec.RunID, now)
-		return 1
+		settled, err := c.settle(st, rec.RunID, events)
+		if err != nil {
+			return c.fail("%v", err)
+		}
+		c.saySettled(rec.RunID, settled)
+		return c.endedCancel(rec.RunID, now, settled)
 	}
 	// the run's executions are given up before the run is marked cancelled: a run that is cancelled in the journal and still holds
 	// slots is hidden from monitoring and blocks the nodes that overlap it. A failure leaves the run as it was, so the cancel can be

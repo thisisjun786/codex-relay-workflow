@@ -38,7 +38,8 @@ saw. A row is never updated.
   the rows it reads under the lock show a `started` row with no end row after it (a run whose last end is `run/paused`, or a held
   run, had no process because it ended, not because its process died). The member records what the cancel saw; readers derive
   the state of a run from its rows and do not read the `dead` member. A cancel that finds the run over under the lock appends
-  nothing, so two cancels of one run write one end row.
+  nothing, so two cancels of one run write one end row, and still gives up the executions the ended run released and did not end
+  (their slots go back), as a cancel of a run it read over from the start does.
 - A binary before CRW-1487 knows no `run/paused` end: it reads a run that ended paused as `dead` (it resumes nothing; its pump
   raises `run_dead` after `run_dead_seconds`, [reporting.md](reporting.md)). A rollback past CRW-1487 leaves such runs to be
   resumed (`crw flow resume`) or cancelled by hand; a binary cannot be fixed after the fact.

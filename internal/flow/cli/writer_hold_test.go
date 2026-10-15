@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/journal"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -446,5 +447,78 @@ func TestTwoCancelsWriteOneEnd(t *testing.T) {
 	code, errOut := cancel()
 	if ends := runRows(t, w, "run-dead", "finished"); len(ends) != 1 || code != 1 || !strings.Contains(errOut, "nothing to cancel") {
 		t.Fatalf("the second cancel: exit %d %q, %d end rows", code, errOut, len(ends))
+	}
+}
+
+// TestACancelThatFindsTheRunOverUnderTheLockSettlesIt (CRW-1495): a cancel that read a dead run before the lock, while a resume of
+// the run ended it (a finished row) and let the lock go, finds the run over under the lock: it writes no second end row and still
+// gives up the executions the run released and did not end (their slots go back), as a cancel that read the ended run from the start
+// does (settleEndedRun). A run that ended otherwise and had something to give up is cancelled by it (exit 0); a run another cancel
+// ended has nothing to cancel (exit 1) and is settled again (idempotent).
+func TestACancelThatFindsTheRunOverUnderTheLockSettlesIt(t *testing.T) {
+	for _, tc := range []struct {
+		name, status, kind string
+		code               int
+	}{
+		{"ended by its resume", engine.RunScriptError, engine.ErrKindJS, 0},
+		{"ended by another cancel", engine.RunScriptError, engine.ErrKindCancelled, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newWorld(t)
+			r := w.newRun("run-raced", "thread-owner")
+			r.op("c-rel-a", ops.OpRelease, map[string]any{"plan": "plan-1", "node": "A", "released": true, "execution_id": "ex-a"})
+			r.close()
+			td := w.deps()
+			var settled [][]ops.ReleaseRef
+			td.Settle = func(_ context.Context, _ *store.Store, runID string, nodes []ops.ReleaseRef) (Settlement, error) {
+				settled = append(settled, nodes)
+				return Settlement{Closed: len(nodes), SlotsReturned: len(nodes)}, nil
+			}
+			// the lock-free first look of the cancel: the run is dead (a start with no end)
+			rd, err := OpenReader(ctx, w.state, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			rec, err := rd.Record(ctx, "run-raced")
+			if err == nil {
+				var info RunInfo
+				if info, err = rd.Info(ctx, rec); err == nil && info.State != StateDead {
+					err = errors.New("the first look reads the run " + info.State)
+				}
+			}
+			_ = rd.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			// between the first look and the lock, the run ends: its resume writes the finished row and lets the lock go
+			j, err := journal.Open(ctx, w.st, "run-raced", journal.Identity{}, journal.Options{Immediate: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			j.Append(engine.Event{RunID: "run-raced", Kind: engine.KindRun, Event: "finished", Data: map[string]any{"status": tc.status, "error_kind": tc.kind}})
+			if err := j.Close(); err != nil {
+				t.Fatal(err)
+			}
+			var out, errOut bytes.Buffer
+			c := &command{Deps: td.Deps, ctx: ctx, stdout: &out, stderr: &errOut, name: "cancel"}
+			w.close()
+			code := c.cancelDead(w.state, &common{state: w.state}, rec)
+			w.open()
+			if code != tc.code {
+				t.Errorf("exit %d, want %d: %q %q", code, tc.code, out.String(), errOut.String())
+			}
+			if len(settled) != 1 || len(settled[0]) != 1 || settled[0][0] != (ops.ReleaseRef{Plan: "plan-1", Node: "A", Execution: "ex-a"}) {
+				t.Errorf("the executions settled: %+v (want execution ex-a of node A closed, its slot returned)", settled)
+			}
+			if !strings.Contains(out.String(), "1 execution(s) of run run-raced given up, 1 slot(s) returned") {
+				t.Errorf("stdout %q does not say what was given up", out.String())
+			}
+			if tc.code == 1 && !strings.Contains(errOut.String(), "nothing to cancel") {
+				t.Errorf("stderr %q", errOut.String())
+			}
+			if ends := runRows(t, w, "run-raced", "finished"); len(ends) != 1 || ends[0].Data["error_kind"] != tc.kind {
+				t.Errorf("end rows %+v, want the one the run ended with", ends)
+			}
+		})
 	}
 }
