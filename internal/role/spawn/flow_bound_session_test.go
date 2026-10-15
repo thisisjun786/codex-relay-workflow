@@ -234,3 +234,37 @@ func TestSessionOrchestratorUndecidedEffortAppliesTheModelOnly(t *testing.T) {
 		t.Fatalf("ledger %+v", d)
 	}
 }
+
+// CRW-1482 (C9): the spawn message of an executor step of a session run carries the engine's evidence block after its text
+// ([CRW-EVIDENCE-ASSIGNMENT:<id>] and the receipt file). The orchestrator's spawn is allowed with the role's pair and its message
+// is left exactly as the engine wrote it: the block is neither stripped nor refused, no guard or block of the spawn hook is added,
+// and the spawn hook records no assignment of its own for it.
+func TestFlowBoundSpawnKeepsEvidenceBlock(t *testing.T) {
+	r := newFBRig(t)
+	r.bindOrchestrator(fbThreadA)
+	warnings := captureFlowBoundWarnings(t)
+	const id = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	receipt := filepath.Join(r.hook.ws, "wt", ".crw", "evidence", id+".md")
+	message := stepMessage("c_1/t1-a1", "executor") + "\n\n" + EvidenceAssignmentMarker + ":" + id + "] Before your final message, write your evidence receipt to " +
+		receipt + "; no EVIDENCE_RECORDED line is needed after the JSON."
+	updated := r.expectAllowed(r.spawn(fbThreadA, "tool-ev", spawnInput("executor", message, "")))
+	if got := fbPairOf(updated); got != fbExecutor {
+		t.Fatalf("pair %+v, want %+v", got, fbExecutor)
+	}
+	if got, _ := updated.Get("message").(string); got != message {
+		t.Fatalf("the message was changed:\n got %q\nwant %q", got, message)
+	}
+	d := r.decisions(fbThreadA)
+	if len(d) != 1 || d[0].Decision != bound.DecisionAllowed || d[0].Role != "executor" || d[0].Op != "c_1/t1-a1" || d[0].Warning != "" {
+		t.Fatalf("ledger %+v", d)
+	}
+	if _, err := os.Stat(filepath.Join(r.hook.ws, ".crw", "evidence-assignments")); !os.IsNotExist(err) {
+		t.Fatalf("the spawn hook recorded an assignment for a flow step: %v", err)
+	}
+	if r.claimCount(fbThreadA) != 0 || r.grantFiles() != 0 {
+		t.Fatal("the orchestrator's spawn was claimed or granted")
+	}
+	if w := warnings(); len(w) != 0 {
+		t.Fatalf("stderr warnings %v", w)
+	}
+}
