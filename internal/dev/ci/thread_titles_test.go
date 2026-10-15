@@ -33,9 +33,9 @@ func TestThreadTitlesAreOneTable(t *testing.T) {
 	}
 	for layer, want := range map[string][]string{
 		"총괄":     {"CRW does not create it"},
-		"부모":     {"`[CRW] 부모 · <owner>/<repo>`", "`create_thread`", "`supervisor`"},
-		"자식":     {"set-the-app-presentation-and-record", "`create_thread`", "`parent`"},
-		"Issue":  {"child-task-titles", "`ISSUE-ID · <title>`", "`child`"},
+		"부모":     {"`[CRW] 부모 · <owner>/<repo>`", "`create_thread`"},
+		"자식":     {"set-the-app-presentation-and-record", "`create_thread`"},
+		"Issue":  {"child-task-titles", "`ISSUE-ID · <title>`"},
 		"서브에이전트": {"no title"},
 	} {
 		row, ok := rows[layer]

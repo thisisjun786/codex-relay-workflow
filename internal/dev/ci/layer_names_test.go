@@ -130,13 +130,14 @@ func TestOldLayerNamesLeaveTheOnePointZeroPath(t *testing.T) {
 const hierarchyFile = "plugins/crw/skills/crw-canon/references/hierarchy.md"
 
 // TestHierarchyHoldsTheNameTable: the levels section of hierarchy.md is the one table of the names, with the
-// columns the issue names, the four rows of design section 18.1 and the warning about the relay's `parent`.
+// columns the issue names and the four rows of design section 18.1. The role ids the code keeps are in the
+// section "Names used only in code" (CRW-1428), not in the level table.
 func TestHierarchyHoldsTheNameTable(t *testing.T) {
 	text := readRepoText(t, hierarchyFile)
 	section := headingSection(text, "## The levels")
 	var table [][]string
 	for _, candidate := range markdownTables(section) {
-		if len(candidate) > 0 && len(candidate[0]) == 5 && strings.EqualFold(candidate[0][0], "Korean") {
+		if len(candidate) > 0 && len(candidate[0]) == 4 && strings.EqualFold(candidate[0][0], "Korean") {
 			table = candidate
 		}
 	}
@@ -144,18 +145,18 @@ func TestHierarchyHoldsTheNameTable(t *testing.T) {
 		t.Fatal("hierarchy.md's levels section has no table whose first column is Korean")
 	}
 	header := strings.ToLower(strings.Join(table[0], "|"))
-	if header != "korean|english|relay role id|duty|calls" {
-		t.Errorf("the table's columns are %q, want Korean, English, Relay role id, Duty, Calls", header)
+	if header != "korean|english|duty|calls" {
+		t.Errorf("the table's columns are %q, want Korean, English, Duty, Calls", header)
 	}
 	rows := map[string][]string{}
 	for _, row := range table[1:] {
 		rows[row[0]] = row
 	}
-	for _, want := range []struct{ korean, english, role string }{
-		{"총괄", "top session", "none"},
-		{"부모", "parent (repository session)", "`supervisor`"},
-		{"자식", "child (project session)", "`parent`"},
-		{"서브에이전트", "subagents", "none"},
+	for _, want := range []struct{ korean, english string }{
+		{"총괄", "top session"},
+		{"부모", "parent (repository session)"},
+		{"자식", "child (project session)"},
+		{"서브에이전트", "subagents"},
 	} {
 		row, ok := rows[want.korean]
 		if !ok {
@@ -165,24 +166,33 @@ func TestHierarchyHoldsTheNameTable(t *testing.T) {
 		if !strings.HasPrefix(strings.ToLower(row[1]), want.english) {
 			t.Errorf("row %s: English %q, want it to start with %q", want.korean, row[1], want.english)
 		}
-		if !strings.HasPrefix(row[2], want.role) {
-			t.Errorf("row %s: relay role id %q, want it to start with %s", want.korean, row[2], want.role)
-		}
 	}
 	if len(rows) != 4 {
 		t.Errorf("the table has %d rows, want the four layers", len(rows))
 	}
 	if !strings.Contains(rows["부모"][2], "management seat") || !strings.Contains(rows["부모"][2], "CRW-1314") {
-		t.Errorf("the parent's role id does not name the management seat of CRW-1314: %q", rows["부모"][2])
+		t.Errorf("the parent's duty does not name the management seat of CRW-1314: %q", rows["부모"][2])
 	}
-	flatSection := normalized(section)
+	if !strings.Contains(normalized(section), "(#names-used-only-in-code)") {
+		t.Errorf("hierarchy.md's levels section does not link its section of names used only in code")
+	}
+	// The role ids are the second table, in the section the prose check leaves alone.
+	code := headingSection(text, codeOnlySection)
+	if strings.TrimSpace(code) == "" {
+		t.Fatalf("hierarchy.md has no section %q", codeOnlySection)
+	}
+	flatCode := normalized(code)
 	for _, want := range []string{
 		"The relay role id `parent` names the child, not the parent",
 		"The relay role ids `supervisor`, `parent` and `child` are not renamed",
-		"architect, executor, reviewer, explorer",
+		"management seat",
+		"CRW-1314",
+		"| `supervisor` | the parent (repository session) |",
+		"| `parent` | the child (project session) |",
+		"| `child` | an issue child |",
 	} {
-		if !strings.Contains(flatSection, want) {
-			t.Errorf("hierarchy.md's levels section lacks %q", want)
+		if !strings.Contains(flatCode, want) {
+			t.Errorf("hierarchy.md's section %q lacks %q", codeOnlySection, want)
 		}
 	}
 }
