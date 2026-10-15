@@ -177,14 +177,15 @@ func TestAGitThatFailsTheCommitProbeOfAMarkerHoldsTheEntry(t *testing.T) {
 
 // TestAQueueWithoutATrackingAdapterHoldsALandingWhoseCommentIsNotWrittenYet: a record left "not written yet" and a queue whose
 // adapter is nil (an empty pull_request_repo) cannot post the comment. The pass does not panic; the entry stays pending with the
-// reason and the record is untouched; with the adapter back, the next pass posts the comment once and moves the entry to done.
+// reason and the record is untouched, and the pull request has 0 comments while held (the pass died before the comment call); with
+// the adapter back, the next pass posts the comment once and moves the entry to done.
 func TestAQueueWithoutATrackingAdapterHoldsALandingWhoseCommentIsNotWrittenYet(t *testing.T) {
 	w := newPRWorld(t, true)
 	pr := w.milestone("10")
 	w.enqueue("o/r#1")
 	first := w.pass()
 	requireExit(t, first, ExitPushed, "pushed")
-	path := w.interruptComment(first, pr.HeadSHA, "not written yet")
+	path := w.interruptBeforeComment(first, pr.HeadSHA, "not written yet")
 	w.r.PullRequests = nil
 
 	rep := w.pass()
@@ -197,13 +198,13 @@ func TestAQueueWithoutATrackingAdapterHoldsALandingWhoseCommentIsNotWrittenYet(t
 	if l := readLanding(t, path); l.Comment != "not written yet" {
 		t.Errorf("the record changed: %+v", l)
 	}
-	if n := len(w.fake.Comments(1)); n != 1 {
-		t.Errorf("%d comments, want the one of the run", n)
+	if n := len(w.fake.Comments(1)); n != 0 {
+		t.Errorf("%d comments while held, want 0", n)
 	}
 
 	w.r.PullRequests = w.gh
 	w.pass()
-	if c := w.fake.Comments(1); len(c) != 2 || !strings.HasPrefix(c[1], "[dev queue · "+first.Summary.Tag+"]") {
+	if c := w.fake.Comments(1); len(c) != 1 || !strings.HasPrefix(c[0], "[dev queue · "+first.Summary.Tag+"]") {
 		t.Errorf("comments %q", c)
 	}
 	if l := readLanding(t, path); l.Comment != "written" {
