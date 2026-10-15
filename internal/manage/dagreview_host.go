@@ -253,7 +253,7 @@ func dagHostParentsRead(ctx context.Context, in *dagReviewInput, scope dagHostSc
 		if read.Thread.Status.Type == "systemError" {
 			in.review.Anomalies = append(in.review.Anomalies, DagReviewAnomaly{
 				Kind: dagHostKindParentSystemError, Issue: parent.label,
-				Detail: "the parent thread is in systemError and takes no turn",
+				Detail: "the 자식 thread is in systemError and takes no turn",
 			})
 		}
 		if read.Thread.Path == "" {

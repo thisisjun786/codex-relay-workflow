@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
+	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/layername"
 )
 
@@ -144,4 +146,47 @@ func TestSupervisorQueueTextNamesTheParent(t *testing.T) {
 	} else {
 		layerWordsCheck(t, "the duplicate logical id refusal", err.Error(), "부모")
 	}
+}
+
+// The texts crw manage writes about a relay parent's thread name the 자식: the rollout lookup refusing a
+// glob character and an over-long thread, the 자식 queue refusing a symlinked directory, and the
+// systemError anomaly of the dag review host.
+func TestManageRelayParentTextNamesTheChild(t *testing.T) {
+	now := pumpTestNow
+	e := pumpTestEnv(t, &now)
+	for _, c := range []struct{ name, thread string }{
+		{"a glob character", "a*b"},
+		{"an over-long thread", strings.Repeat("t", deliverThreadLimit+1)},
+	} {
+		if _, err := pumpRolloutPath(e, c.thread); err == nil {
+			t.Errorf("%s: the rollout lookup accepted the thread", c.name)
+		} else {
+			layerWordsCheck(t, c.name+" refusal", err.Error(), "자식 thread")
+		}
+	}
+
+	cfg := pumpTestConfig(t, "bridge")
+	target := t.TempDir()
+	if err := os.Symlink(target, crwconfig.JoinRoot(cfg.StateDir, pumpQueueDir)); err != nil {
+		t.Skipf("symlinks are unavailable: %v", err)
+	}
+	if err := pumpQueueFlush(context.Background(), e, cfg, pumpTestReadStatePtr(t, cfg), pumpSettingsFrom(cfg), false); err == nil {
+		t.Error("the flush went through a symlinked queue directory")
+	} else {
+		layerWordsCheck(t, "the symlinked queue refusal", err.Error(), "자식 queue directory")
+	}
+
+	f := dagReviewNewFixture(t)
+	rollout := dagHostWriteRollout(t, f.dir, "parent.jsonl", dagHostResponseItem(t, map[string]any{"type": "message", "role": "user"}))
+	f.close()
+	host := fakehost.Start(t)
+	host.Respond("thread/read", fakehost.Reply{Result: map[string]any{"thread": map[string]any{
+		"status": map[string]any{"type": "systemError"}, "path": rollout,
+	}}})
+	dagCfg := dagHostConfig(t, f, host.SocketPath, map[string]string{"parent-1": "P-ONE"}, "", 0)
+	found := dagReviewFind(dagHostRun(t, context.Background(), f, dagCfg), dagHostKindParentSystemError)
+	if len(found) != 1 {
+		t.Fatalf("parent_system_error = %+v, want one", found)
+	}
+	layerWordsCheck(t, "the systemError anomaly", found[0].Detail, "자식 thread")
 }
