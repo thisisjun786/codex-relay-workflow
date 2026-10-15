@@ -132,13 +132,13 @@ Had the combination been verified, the rest of the step would apply: both
 lock and the adapter's ledger stay together, and the daemon taking the lock for that state
 directory, where a second start is refused under OPS-4.2 and that refusal is also the answer. The
 service is shared: one relay and one store serve the whole operating scope, so such a start is the
-scope's start and not one parent's, and a later parent finding the lock held is finding the service
+scope's start and not one child's, and a later child finding the lock held is finding the service
 it should be using.
 
 ## After a verified start, the configuration's supervisor section
 
 This host never reaches a start, so nothing below runs here; it shows where the next step reads
-from once a start succeeds. The repository's parent (repository session, relay role `supervisor`,
+from once a start succeeds. The repository's parent (repository session,
 [the level table](../../../crw-canon/references/hierarchy.md#the-levels)) registers its management seat with
 `crw manage supervisor register` from a turn of its own thread. Its working directory and settings
 file come from the configuration only (`--cwd` and `--settings-file` are refused on its command line);

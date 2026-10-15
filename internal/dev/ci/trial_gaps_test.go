@@ -30,11 +30,14 @@ func TestParentWorkInOneSkill(t *testing.T) {
 		t.Fatal("crw-run has no section \"The parent: the repository session\"")
 	}
 	section := normalized(headingSection(text, "## The parent: the repository session"))
-	// CRW-1431: the label is linked to the level table; it gives the relay role id (the old form) or stands without
-	// it (the new form). The unit that rewrites crw-run (1431-b) tightens this to the new form.
-	const parentLabel = "[the parent](../crw-canon/references/hierarchy.md#the-levels) (repository session"
-	if !strings.Contains(section, parentLabel+", relay role `supervisor`)") && !strings.Contains(section, parentLabel+")") {
+	// CRW-1431: the label is linked to the level table and stands without a relay role id; the role ids live in
+	// hierarchy.md's section of names used only in code.
+	const parentLabel = "[the parent](../crw-canon/references/hierarchy.md#the-levels) (repository session)"
+	if !strings.Contains(section, parentLabel) {
 		t.Errorf("the parent's section does not link the level table at the parent (repository session): %q", parentLabel)
+	}
+	if strings.Contains(section, "relay role") {
+		t.Error("the parent's section gives a relay role id in prose")
 	}
 	for _, want := range []string{
 		"project order", "which children run together", "answers a decision", "reports",
