@@ -39,11 +39,15 @@ const roleWordsHeader = `# Bare relay role words (parent, supervisor) in the hum
 #   CRW_ROLE_WORDS=update CRW_ROLE_WORDS_PATHS=<prefixes> go test -tags dev ./internal/dev/ci/ -run TestRoleWordsBaselineOnlyShrinks
 `
 
-// roleWordsSQLKeyword and roleWordsRolePredicate mark an SQL literal, whose role values are data: the
-// scan skips it, and SQL bytes are never edited to satisfy the scan.
+// roleWordsSQLStatement and roleWordsSQLFragment mark an SQL literal, whose role values are data: the
+// scan skips it, and SQL bytes are never edited to satisfy the scan. A literal is SQL by how it starts:
+// a statement keyword in upper case with the clause it needs (SELECT ... FROM, INSERT INTO, UPDATE t SET,
+// DELETE FROM, WITH t AS (, CREATE TABLE ...), or, for a piece of a statement built up in code, an upper-case
+// clause keyword (WHERE, AND, JOIN ...) or a column predicate (role = 'parent' AND ...). A keyword or a
+// predicate inside a sentence does not make it SQL: "UPDATE failed; ask the parent to retry" is counted.
 var (
-	roleWordsSQLKeyword    = regexp.MustCompile(`\b(SELECT|INSERT|UPDATE|DELETE|WHERE|FROM|JOIN)\b`)
-	roleWordsRolePredicate = regexp.MustCompile(`(?i)\b(\w+\.)?role\s*(=|!=|<>|IN\s*\()\s*'`)
+	roleWordsSQLStatement = regexp.MustCompile(`^\s*(?s:SELECT\s.*\sFROM\s|INSERT\s+(OR\s+[A-Z]+\s+)?INTO\s|REPLACE\s+INTO\s|UPDATE\s+[a-z_][a-z0-9_]*\s+SET\s|DELETE\s+FROM\s|WITH\s+(RECURSIVE\s+)?[a-z_][a-z0-9_]*\s*(\([^)]*\)\s*)?AS\s*\(|(CREATE|DROP)\s+(TABLE|(UNIQUE\s+)?INDEX|VIEW|TRIGGER|TEMP)\b|ALTER\s+TABLE\s)`)
+	roleWordsSQLFragment  = regexp.MustCompile(`^\s*((AND|OR|WHERE|FROM|JOIN|LEFT\s+JOIN|INNER\s+JOIN|ON|SET|ORDER\s+BY|GROUP\s+BY|HAVING|UNION|VALUES)\s|\(?\s*([a-z_]\w*\.)?[a-z_]\w*\s*(=|!=|<>|IN\s*\()\s*['?(].*\s(AND|OR|IS|IN)\s)`)
 )
 
 // nonRoleLiterals are literals whose role word is no relay role (a git commit's parent, a request field
@@ -93,7 +97,7 @@ func roleWordsSkipped(literal string) bool {
 	if strings.IndexFunc(literal, unicode.IsSpace) < 0 {
 		return true
 	}
-	return roleWordsSQLKeyword.MatchString(literal) || roleWordsRolePredicate.MatchString(literal)
+	return roleWordsSQLStatement.MatchString(literal) || roleWordsSQLFragment.MatchString(literal)
 }
 
 // roleWordHits is the bare role words in the string literals of one Go source file (path is
@@ -193,8 +197,9 @@ func (s roleWordsScan) counts() map[string]int {
 }
 
 // scanRoleWords parses every non-test Go file under root/internal (outside testdata directories) whose
-// path is in scope.
-func scanRoleWords(t *testing.T, root string, scope []string) roleWordsScan {
+// path is in scope. A scope with no such file fails the run, except in update mode (update), where it is
+// the scope of a deleted or moved file and its baseline lines are dropped.
+func scanRoleWords(t *testing.T, root string, scope []string, update bool) roleWordsScan {
 	t.Helper()
 	scan := roleWordsScan{hits: map[string][]roleWordHit{}, used: map[string]bool{}}
 	err := filepath.WalkDir(filepath.Join(root, "internal"), func(path string, d fs.DirEntry, err error) error {
@@ -235,8 +240,8 @@ func scanRoleWords(t *testing.T, root string, scope []string) roleWordsScan {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(scan.hits) == 0 {
-		t.Fatalf("no Go file under internal/ is in scope %v", scope)
+	if len(scan.hits) == 0 && !update {
+		t.Fatalf("no Go file under internal/ is in scope %v (a deleted file's line is dropped with CRW_ROLE_WORDS=update)", scope)
 	}
 	return scan
 }
@@ -394,6 +399,35 @@ func readRoleWordsBaseline(t *testing.T, root string) (string, bool) {
 	return string(data), true
 }
 
+// roleWordsBaselineEntries is the entries of the baseline text, and the problems that make its counts
+// unreliable: the file is missing (exists false) or a line breaks its form.
+func roleWordsBaselineEntries(text string, exists bool) (map[string]int, []string) {
+	if !exists {
+		return map[string]int{}, []string{fmt.Sprintf("%s is missing; create it with CRW_ROLE_WORDS=update go test -tags dev ./internal/dev/ci/ -run TestRoleWordsBaselineOnlyShrinks", roleWordsBaselineFile)}
+	}
+	_, entries, problems := parseRoleWordsBaseline(text)
+	for i, p := range problems {
+		problems[i] = roleWordsBaselineFile + " " + p
+	}
+	return entries, problems
+}
+
+// missingRoleWordEntries are the entries in scope whose file does not exist. An entry outside the scope
+// is another run's to check, so a scoped update is not failed by a file deleted elsewhere.
+func missingRoleWordEntries(root string, entries map[string]int, scope []string) []string {
+	var problems []string
+	for path := range entries {
+		if !inRoleWordsScope(scope, path) {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(path))); err != nil {
+			problems = append(problems, fmt.Sprintf("lists %s, which does not exist; remove its line", path))
+		}
+	}
+	sort.Strings(problems)
+	return problems
+}
+
 // fixtureRoleWords is the number of bare role words the scan counts in a Go source fragment.
 func fixtureRoleWords(t *testing.T, src string) int {
 	t.Helper()
@@ -419,6 +453,10 @@ func TestRoleWordsInHumanTextNameLayers(t *testing.T) {
 			"the parent's turn",
 			"two supervisors above",
 			"the parent (부모) is wrong",
+			"UPDATE failed; ask the parent to retry",
+			"ask the parent to UPDATE the record",
+			"the record FROM the parent is stale",
+			"no binding has role = 'parent' here, so ask the 부모",
 		} {
 			if n := fixtureRoleWords(t, "var _ = "+strconv.Quote(lit)); n == 0 {
 				t.Errorf("%q: no hit, want the bare role word counted", lit)
@@ -451,6 +489,13 @@ func TestRoleWordsInHumanTextNameLayers(t *testing.T) {
 			`var _ = "SELECT task_id FROM scope_bindings WHERE role = 'parent'"`,
 			`const liveParent = "role = 'parent' AND scope_kind = 'project' AND scope_key = ? AND task_id = ? AND status IN ('active','paused') AND superseded_by IS NULL"`,
 			`var _ = " AND orb.role = 'parent' AND orb.scope_kind = 'project' AND orb.status IN ('active','paused') AND orb.superseded_by IS NULL)"`,
+			`var _ = "  WHERE task_id = ? AND role = 'parent'"`,
+			`var _ = " JOIN scope_bindings own ON own.task_id = d.decided_by AND own.role = 'parent'"`,
+			`var _ = "SELECT r.relationship_id AS rid, r.parent_task_id AS parent FROM relationships r"`,
+			`var _ = "UPDATE scope_bindings SET status = 'ended' WHERE role = 'parent'"`,
+			`var _ = "DELETE FROM scope_bindings WHERE role = 'supervisor'"`,
+			`var _ = "INSERT INTO scope_bindings (role, task_id) VALUES ('parent', ?)"`,
+			"var _ = `\n\tWITH live AS (SELECT task_id FROM scope_bindings WHERE role = 'parent')\n\tSELECT task_id FROM live`",
 			"// ask the parent\nvar _ = 1",
 			`import _ "fmt"`,
 		} {
@@ -473,9 +518,12 @@ func TestRoleWordsInHumanTextNameLayers(t *testing.T) {
 
 	root := repoRoot()
 	scope := roleWordsScope()
-	scan := scanRoleWords(t, root, scope)
-	text, _ := readRoleWordsBaseline(t, root)
-	_, entries, _ := parseRoleWordsBaseline(text)
+	scan := scanRoleWords(t, root, scope, os.Getenv("CRW_ROLE_WORDS") == "update")
+	text, exists := readRoleWordsBaseline(t, root)
+	entries, problems := roleWordsBaselineEntries(text, exists)
+	if len(problems) > 0 {
+		t.Fatalf("the baseline cannot be read, so no count is checked against it:\n%s", strings.Join(problems, "\n"))
+	}
 	paths := make([]string, 0, len(scan.hits))
 	for path := range scan.hits {
 		paths = append(paths, path)
@@ -567,13 +615,70 @@ func TestRoleWordsBaselineOnlyShrinks(t *testing.T) {
 			t.Errorf("rises against the merge base = %v, want two", risen)
 		}
 	})
+	t.Run("fixture: a scoped update of a deleted file drops its line", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(root, "internal", "a"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "internal", "a", "a.go"), []byte("package a\n\nvar _ = \"ask the parent\"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		old := "# header\ninternal/a/a.go\t1\ninternal/gone/gone.go\t2\ninternal/old/old.go\t3\n"
+		gone := []string{"internal/gone/gone.go"}
+		scan := scanRoleWords(t, root, gone, true)
+		if len(scan.hits) != 0 {
+			t.Fatalf("a scope of a deleted file scanned %v", scan.hits)
+		}
+		updated, problems := updateRoleWordsBaseline(old, true, scan.counts(), gone)
+		if len(problems) > 0 {
+			t.Fatalf("update of a deleted file's scope: %v", problems)
+		}
+		if want := "# header\ninternal/a/a.go\t1\ninternal/old/old.go\t3\n"; updated != want {
+			t.Errorf("update of a deleted file's scope =\n%s\nwant its line dropped and the rest byte-equal\n%s", updated, want)
+		}
+	})
+	t.Run("fixture: a scoped run checks only the listed files in its scope exist", func(t *testing.T) {
+		root := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(root, "internal", "a"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, "internal", "a", "a.go"), []byte("package a\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		entries := map[string]int{"internal/a/a.go": 1, "internal/old/old.go": 3}
+		if missing := missingRoleWordEntries(root, entries, []string{"internal/a/"}); len(missing) != 0 {
+			t.Errorf("a scoped run failed on a deleted file outside its scope: %v", missing)
+		}
+		if missing := missingRoleWordEntries(root, entries, nil); len(missing) != 1 || !strings.Contains(missing[0], "internal/old/old.go") {
+			t.Errorf("an unscoped run reports missing files %v, want internal/old/old.go", missing)
+		}
+		if missing := missingRoleWordEntries(root, entries, []string{"internal/old/"}); len(missing) != 1 {
+			t.Errorf("a scoped run reports missing files in its scope %v, want internal/old/old.go", missing)
+		}
+	})
+	t.Run("fixture: a missing or malformed baseline is reported as such", func(t *testing.T) {
+		if _, problems := roleWordsBaselineEntries("", false); len(problems) != 1 || !strings.Contains(problems[0], "missing") {
+			t.Errorf("a missing baseline reads as %v, want one problem naming it missing", problems)
+		}
+		entries, problems := roleWordsBaselineEntries("# header\ninternal/a/a.go 3\ninternal/b/b.go\t2\n", true)
+		if len(problems) != 1 || !strings.Contains(problems[0], "line 2") {
+			t.Errorf("a malformed baseline reads as %v, want its line 2", problems)
+		}
+		if entries["internal/b/b.go"] != 2 {
+			t.Errorf("the well-formed entries of a malformed baseline = %v", entries)
+		}
+		if _, problems := roleWordsBaselineEntries("# header\ninternal/a/a.go\t3\n", true); len(problems) != 0 {
+			t.Errorf("a well-formed baseline reads as %v", problems)
+		}
+	})
 
 	root := repoRoot()
 	scope := roleWordsScope()
-	scan := scanRoleWords(t, root, scope)
+	update := os.Getenv("CRW_ROLE_WORDS") == "update"
+	scan := scanRoleWords(t, root, scope, update)
 	counts := scan.counts()
 	text, exists := readRoleWordsBaseline(t, root)
-	if os.Getenv("CRW_ROLE_WORDS") == "update" {
+	if update {
 		updated, problems := updateRoleWordsBaseline(text, exists, counts, scope)
 		if len(problems) > 0 {
 			t.Fatalf("update refused:\n%s", strings.Join(problems, "\n"))
@@ -593,10 +698,8 @@ func TestRoleWordsBaselineOnlyShrinks(t *testing.T) {
 	for _, p := range problems {
 		t.Errorf("%s %s", roleWordsBaselineFile, p)
 	}
-	for path := range entries {
-		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(path))); err != nil {
-			t.Errorf("%s lists %s, which does not exist; remove its line", roleWordsBaselineFile, path)
-		}
+	for _, p := range missingRoleWordEntries(root, entries, scope) {
+		t.Errorf("%s %s", roleWordsBaselineFile, p)
 	}
 	for _, p := range staleRoleWordEntries(entries, counts, scope) {
 		t.Errorf("%s: %s", roleWordsBaselineFile, p)

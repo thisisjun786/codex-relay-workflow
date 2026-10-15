@@ -4,8 +4,10 @@ import (
 	"database/sql"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/layername"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
 )
@@ -67,4 +69,77 @@ func TestMergeTurnRefusalNamesLayers(t *testing.T) {
 		}
 		check(t, got, "assignment 'rel-a' is addressed to 자식 'task-alpha', not to 'task-beta'")
 	})
+}
+
+// CRW-1449 (PR #890 crosscheck, CRW-1483): the refusals of taking a held turn away (lifecycle.go authority) and of passing a
+// stalled one (pass.go) are composed at run time, the 부모 clause chosen by whether the project has a readable 부모 above it,
+// so the per-literal ci scan never reads the sentence whole. Every form names the layers.
+func TestTurnAuthorityRefusalsNameLayers(t *testing.T) {
+	refused := func(t *testing.T, err error) string {
+		t.Helper()
+		var r *store.RefusedError
+		if !errors.As(err, &r) || r.Reason != "scope_role_mismatch" {
+			t.Fatalf("got %v, want a scope_role_mismatch refusal", err)
+		}
+		return r.Detail
+	}
+	check := func(t *testing.T, got, want string) {
+		t.Helper()
+		if got != want {
+			t.Errorf("refusal = %q, want %q", got, want)
+		}
+		if hits := layername.Find(got); len(hits) != 0 {
+			t.Errorf("%q names a bare role id: %v", got, hits)
+		}
+	}
+	// orphan binds a project with a 자식 and no 부모 above it.
+	const orphanProject = "PRJ-ORPHAN"
+	orphan := ep("task-orphan", "host-o", "/orphan")
+	bindOrphan := func(w *fx) {
+		if _, err := w.r.BindScope(w.ctx, "parent", orphanProject, orphan); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	t.Run("take the turn away, project with a 부모", func(t *testing.T) {
+		w := newFx(t)
+		turn := w.held()
+		_, err := w.m.Release(w.ctx, turn, "task-stranger", "cancelled", "stalled", "no progress")
+		check(t, refused(t, err), "task 'task-stranger' is neither the holder of turn "+pyvalue.StrRepr(turn)+" nor the 부모 above project 'PRJ-A', which is 'task-supervisor', so it cannot take the turn away")
+	})
+
+	t.Run("take the turn away, project with no readable 부모", func(t *testing.T) {
+		w := newFx(t)
+		bindOrphan(w)
+		turn := w.heldOn(orphan, orphanProject, "head-o", fxBase)
+		_, err := w.m.Release(w.ctx, turn, "task-stranger", "cancelled", "stalled", "no progress")
+		check(t, refused(t, err), "task 'task-stranger' is neither the holder of turn "+pyvalue.StrRepr(turn)+" nor the 부모 above project 'PRJ-ORPHAN', and that project has no readable 부모, so it cannot take the turn away")
+	})
+
+	t.Run("pass, project with a 부모", func(t *testing.T) {
+		w, clock := clockedFx(t)
+		turn := w.held()
+		clock.advance(30 * time.Minute)
+		_, err := w.m.Pass(w.ctx, turn, "task-stranger", "nobody")
+		check(t, refused(t, err), "task 'task-stranger' is neither the 부모 above project 'PRJ-A', which is 'task-supervisor' nor the 자식 of a waiting claim on target "+pyvalue.StrRepr(fxTarget(t, w, turn))+" that still owns its project, so it cannot pass turn "+pyvalue.StrRepr(turn)+" on")
+	})
+
+	t.Run("pass, project with no readable 부모", func(t *testing.T) {
+		w, clock := clockedFx(t)
+		bindOrphan(w)
+		turn := w.heldOn(orphan, orphanProject, "head-o", fxBase)
+		clock.advance(30 * time.Minute)
+		_, err := w.m.Pass(w.ctx, turn, "task-stranger", "nobody")
+		check(t, refused(t, err), "task 'task-stranger' is neither the 부모 above project 'PRJ-ORPHAN', and that project has no readable 부모 nor the 자식 of a waiting claim on target "+pyvalue.StrRepr(fxTarget(t, w, turn))+" that still owns its project, so it cannot pass turn "+pyvalue.StrRepr(turn)+" on")
+	})
+}
+
+// fxTarget is the target key of a turn, as its row records it.
+func fxTarget(t *testing.T, w *fx, turn string) string {
+	t.Helper()
+	r, err := w.m.row(w.ctx, turn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return r.TargetKey
 }

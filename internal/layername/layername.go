@@ -76,7 +76,9 @@ var roleWords = []string{"supervisors", "supervisor", "parents", "parent"}
 // layer name ('parent' (자식), "parent" (자식)); a quoted role list followed by its ListGloss
 // (['child', 'parent'] (issue child, 자식), ["child","parent"] (issue child, 자식)); a flag value
 // (--role supervisor); and the git senses first parent, second parent, parent revision(s), parent
-// commit(s), parent %d and has %d parent(s). A wrong layer name after a role id is a hit.
+// commit(s), parent %d and has %d parent(s). A wrong layer name after a role id is a hit. A possessive
+// names a layer's own thing, so it is a hit after a flag and before revision, commit or %d (the
+// parent's revision, --role supervisor's); only first and second parent's stay git senses.
 func Find(text string) []Hit {
 	glossed := glossedLists(text)
 	var hits []Hit
@@ -163,19 +165,26 @@ func boundaryAfter(text string, end int) bool {
 }
 
 // exempt is whether the word text[i:end] (word without a trailing 's) is a form Find does not count.
+// Only first and second parent hold with a trailing 's: the other forms are a bare id, a flag value or
+// a git noun phrase, and a possessive is none of them.
 func exempt(text string, i int, word string, end int) bool {
 	lower := strings.ToLower(word)
 	rest := text[end:]
-	if end == i+len(word) {
-		// A typed role id: the exact id followed by its own layer name.
-		if g := Gloss(word); g != "" && strings.HasPrefix(rest, g) {
+	possessive := end != i+len(word)
+	if (lower == "parent" || lower == "parents") && (precededByWord(text[:i], "first") || precededByWord(text[:i], "second")) {
+		return true
+	}
+	if possessive {
+		return false
+	}
+	// A typed role id: the exact id followed by its own layer name.
+	if g := Gloss(word); g != "" && strings.HasPrefix(rest, g) {
+		return true
+	}
+	// A quoted role id followed by its own layer name.
+	if g := Gloss(word); g != "" && i > 0 {
+		if q := text[i-1]; (q == '\'' || q == '"') && strings.HasPrefix(rest, string(q)+g) {
 			return true
-		}
-		// A quoted role id followed by its own layer name.
-		if g := Gloss(word); g != "" && i > 0 {
-			if q := text[i-1]; (q == '\'' || q == '"') && strings.HasPrefix(rest, string(q)+g) {
-				return true
-			}
 		}
 	}
 	if flagValue(text[:i]) {
@@ -186,9 +195,6 @@ func exempt(text string, i int, word string, end int) bool {
 	}
 	if lower != "parent" && lower != "parents" {
 		return false
-	}
-	if precededByWord(text[:i], "first") || precededByWord(text[:i], "second") {
-		return true
 	}
 	for _, next := range []string{" revisions", " revision", " commits", " commit"} {
 		if hasWordPrefix(rest, next) {

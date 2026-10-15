@@ -87,6 +87,11 @@ func TestLayernameFindsBareRoleWords(t *testing.T) {
 		{"two in one text", "the parent asks the supervisor", []Hit{{"parent", 4}, {"supervisor", 20}}},
 		{"git sense needs its word", "the third parent", []Hit{{"parent", 10}}},
 		{"has without count", "has parent(s)", []Hit{{"parent", 4}}},
+		// A possessive is a layer's: the git senses and the flag value hold only for the bare word.
+		{"possessive before revision", "the parent's revision", []Hit{{"parent's", 4}}},
+		{"possessive before commit", "the parent's commit", []Hit{{"parent's", 4}}},
+		{"possessive before a count", "the parent's %d", []Hit{{"parent's", 4}}},
+		{"possessive flag value", "--role supervisor's", []Hit{{"supervisor's", 7}}},
 
 		// Not hits.
 		{"child is never a hit", "the child and its children", nil},
@@ -123,6 +128,7 @@ func TestLayernameFindsBareRoleWords(t *testing.T) {
 		{"parent format", "parent %d of %s", nil},
 		{"has count parents", "commit %s has %d parent(s)", nil},
 		{"has count parents plural", "commit %s has %d parents", nil},
+		{"first parent possessive", "the first parent's tree", nil},
 		{"empty", "", nil},
 	}
 	for _, c := range cases {
