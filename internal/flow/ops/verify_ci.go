@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -50,8 +51,9 @@ type CILocalVerifier struct {
 	// ExtraArgs follow `ci local` (a heavy gate, a work root).
 	ExtraArgs []string
 	// RecordDir is where the records are written; empty is a directory inside the checkout being verified (CRW-1489, ciRecordDir):
-	// crw-verify below <worktree>/.git when that is a directory, or .crw/verify in a linked worktree, never the caller's TMPDIR, so
-	// two lanes never share a record file. A worktree with no git directory is an error before the command runs.
+	// crw-verify below <worktree>/.git when that is a real directory entry (not a link), or .crw/verify when .git is a file (a linked
+	// worktree) or a symbolic link, never the caller's TMPDIR, so two lanes never share a record file. A worktree with no git
+	// directory, and a .crw/verify that is a symbolic link, are errors before the command runs.
 	RecordDir string
 	Run       RunCommand
 }
@@ -143,47 +145,49 @@ func (v CILocalVerifier) Verify(ctx context.Context, req VerifyRequest) (VerifyO
 	return out, nil
 }
 
+// ciRecordDirMade is called with .crw/verify right after ciRecordDir has made and checked it, before its ignore file is
+// written; a test replaces it to change the directory in that window.
+var ciRecordDirMade = func(string) {}
+
 // ciRecordDir is the default record directory of a worktree, inside its checkout: crw-dev refuses a record that leaves the checkout
-// for the account's protected directories (homeguard), and a linked worktree's git directory lies in the repository's common git
-// directory, which may be such a place (a repository below the account's .codex). So it is crw-verify below <worktree>/.git when
-// .git is a directory, and .crw/verify for a linked worktree. .crw/verify holds its own ignore file ("*", which hides itself too),
-// so git and the working snapshot do not see the records even where .crw already existed without crwdir's ignore file and the
-// repository has no .crw rule. The .git file of a linked worktree must still name a git directory: without one it is an error.
+// for the account's protected directories (homeguard), and a git directory reached through a .git file or a .git link may lie in
+// such a place (a linked worktree's directory in the common git directory of a repository below the account's .codex). So it is
+// crw-verify below <worktree>/.git only when .git is a real directory entry of the worktree (Lstat, a link is not followed), and
+// .crw/verify for a .git file or a .git symbolic link, where nothing is written below the git directory. .crw/verify holds its own
+// ignore file ("*", which hides itself too), so git and the working snapshot do not see the records even where .crw already
+// existed without crwdir's ignore file and the repository has no .crw rule. The ignore file is created through a descriptor of
+// .crw/verify opened without following a link (crwdir.WriteExclusive): a .crw/verify that is a symbolic link, there before the
+// call or put there while it runs, is an error and nothing is written through it. The .git file or link must still lead to a git
+// directory (ciGitDir): without one it is an error.
 func ciRecordDir(worktree string) (string, error) {
-	gitDir, err := ciGitDir(worktree)
-	if err != nil {
-		return "", err
+	dotGit := filepath.Join(worktree, ".git")
+	if info, err := os.Lstat(dotGit); err == nil && info.IsDir() {
+		return filepath.Join(dotGit, "crw-verify"), nil
 	}
-	if gitDir == filepath.Join(worktree, ".git") {
-		return filepath.Join(gitDir, "crw-verify"), nil
+	if _, err := ciGitDir(worktree); err != nil {
+		return "", err
 	}
 	dir, err := crwdir.EnsureSubdir(worktree, "verify")
 	if err != nil {
 		return "", err
 	}
-	f, err := os.OpenFile(filepath.Join(dir, ".gitignore"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-	if errors.Is(err, os.ErrExist) {
-		return dir, nil
-	}
-	if err != nil {
+	ciRecordDirMade(dir)
+	if err := crwdir.WriteExclusive(filepath.Join(dir, ".gitignore"), "*\n"); err != nil && !errors.Is(err, fs.ErrExist) {
 		return "", err
-	}
-	_, werr := f.WriteString("*\n")
-	if cerr := f.Close(); werr == nil {
-		werr = cerr
-	}
-	if werr != nil {
-		return "", werr
 	}
 	return dir, nil
 }
 
-// ciGitDir answers the worktree's own git directory, read in Go with no subprocess: <worktree>/.git when it is a directory, or
-// the target of the `gitdir:` line of a .git file (a linked worktree's per-worktree directory, not the common one); a relative
-// target resolves against the worktree.
+// ciGitDir answers the worktree's own git directory, read in Go with no subprocess: <worktree>/.git when it is a real directory
+// entry (Lstat); the physical path of the directory a .git symbolic link leads to; or the target of the `gitdir:` line of a .git
+// file (a linked worktree's per-worktree directory, not the common one). A target is resolved with the kernel's semantics, not
+// cleaned lexically first: a relative one is spelled <worktree>/<target> as written, so a ".." after a link in it leaves the
+// link's target as the kernel does; that spelling must be a directory (Stat) and the answer is its physical path
+// (filepath.EvalSymlinks). A .git that is missing, a link that leads to no directory, and a file that names none are the
+// "has no git directory" error.
 func ciGitDir(worktree string) (string, error) {
 	dotGit := filepath.Join(worktree, ".git")
-	info, err := os.Stat(dotGit)
+	info, err := os.Lstat(dotGit)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return "", fmt.Errorf("%s has no git directory", worktree)
@@ -192,6 +196,9 @@ func ciGitDir(worktree string) (string, error) {
 	}
 	if info.IsDir() {
 		return dotGit, nil
+	}
+	if info.Mode()&fs.ModeSymlink != 0 {
+		return ciPhysicalDir(worktree, dotGit, "the link "+dotGit)
 	}
 	raw, err := os.ReadFile(dotGit)
 	if err != nil {
@@ -204,12 +211,23 @@ func ciGitDir(worktree string) (string, error) {
 		return "", fmt.Errorf("%s has no git directory: %s names no gitdir", worktree, dotGit)
 	}
 	if !filepath.IsAbs(target) {
-		target = filepath.Join(worktree, target)
+		// No filepath.Join: it would clean a ".." lexically, before the links in front of it are resolved.
+		target = worktree + string(filepath.Separator) + target
 	}
-	if info, err := os.Stat(target); err != nil || !info.IsDir() {
-		return "", fmt.Errorf("%s has no git directory: the gitdir %s of %s is not a directory", worktree, target, dotGit)
+	return ciPhysicalDir(worktree, target, "the gitdir "+target+" of "+dotGit)
+}
+
+// ciPhysicalDir answers the physical path of spelled, which must be a directory as the kernel resolves it; what names spelled
+// in the error of one that is not.
+func ciPhysicalDir(worktree, spelled, what string) (string, error) {
+	if info, err := os.Stat(spelled); err != nil || !info.IsDir() {
+		return "", fmt.Errorf("%s has no git directory: %s is not a directory", worktree, what)
 	}
-	return filepath.Clean(target), nil
+	resolved, err := filepath.EvalSymlinks(spelled)
+	if err != nil {
+		return "", fmt.Errorf("%s has no git directory: %s does not resolve: %w", worktree, what, err)
+	}
+	return resolved, nil
 }
 
 func tail(b []byte) string {

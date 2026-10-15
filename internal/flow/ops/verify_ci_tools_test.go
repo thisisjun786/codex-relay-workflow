@@ -3,6 +3,7 @@ package ops
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -230,6 +231,133 @@ func TestCILocalVerifier_no_git_directory_is_an_error_before_the_command(t *test
 	_, err := v.Verify(context.Background(), VerifyRequest{Node: "A", Head: strings.Repeat("e", 40), Worktree: wt})
 	if err == nil || !strings.Contains(err.Error(), "ci_record_dir") || !strings.Contains(err.Error(), wt) {
 		t.Errorf("no git directory: %v", err)
+	}
+	if calls != 0 {
+		t.Errorf("the command ran %d times", calls)
+	}
+}
+
+// CRW-1489 (PR ping-pong 2): a .git that is a symbolic link to a directory is not the checkout's own directory entry, and its
+// target may lie in a protected place (a repository below the account's .codex), where crw-dev refuses a record. So only a .git
+// that is a real directory (Lstat) holds crw-verify; a linked .git, like a .git file, gets .crw/verify, and nothing is written
+// through the link. A linked .git that leads to no directory is the "no git directory" error before the command runs.
+func TestCILocalVerifier_a_symlinked_git_records_inside_its_checkout(t *testing.T) {
+	base := t.TempDir()
+	wt := filepath.Join(base, "wt")
+	target := filepath.Join(base, "protected", "gitdir")
+	for _, d := range []string{wt, target} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(target, filepath.Join(wt, ".git")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", t.TempDir())
+	var record string
+	var calls int
+	v := CILocalVerifier{Tools: crwconfig.VerifierTools{CrwDev: "/x/crw-dev"}, Run: recordingRun(&record, &calls)}
+	head := strings.Repeat("a", 40)
+	if out, err := v.Verify(context.Background(), VerifyRequest{Node: "A", Head: head, Worktree: wt}); err != nil || !out.Pass {
+		t.Fatalf("verify: %+v %v", out, err)
+	}
+	if want := filepath.Join(wt, crwdir.DirName, "verify", "verification-record-"+head+".json"); record != want {
+		t.Errorf("the record is %s, want %s", record, want)
+	}
+	if _, err := os.Lstat(filepath.Join(target, "crw-verify")); !os.IsNotExist(err) {
+		t.Errorf("something was written through the linked .git into %s: %v", target, err)
+	}
+
+	file := filepath.Join(base, "afile")
+	if err := os.WriteFile(file, []byte("not a git file\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for name, to := range map[string]string{"to a file": file, "to nothing": filepath.Join(base, "missing")} {
+		t.Run(name, func(t *testing.T) {
+			wt := t.TempDir()
+			if err := os.Symlink(to, filepath.Join(wt, ".git")); err != nil {
+				t.Fatal(err)
+			}
+			calls = 0
+			_, err := v.Verify(context.Background(), VerifyRequest{Node: "A", Head: head, Worktree: wt})
+			if err == nil || !strings.Contains(err.Error(), "ci_record_dir") || !strings.Contains(err.Error(), "no git directory") {
+				t.Errorf("a .git linked %s: %v", name, err)
+			}
+			if calls != 0 {
+				t.Errorf("the command ran %d times", calls)
+			}
+		})
+	}
+}
+
+// CRW-1489 (PR ping-pong 2): a relative gitdir target is resolved as the kernel resolves it, with the links in it followed before
+// a "..", not cleaned lexically first: "link/../g" with link leading to base/a/b names base/a/g, which git accepts, while the
+// lexical <worktree>/g does not exist. ciGitDir answers the physical path.
+func TestCILocalVerifier_a_relative_gitdir_resolves_as_the_kernel_does(t *testing.T) {
+	base := t.TempDir()
+	wt := filepath.Join(base, "wt")
+	g := filepath.Join(base, "a", "g")
+	for _, d := range []string{wt, filepath.Join(base, "a", "b"), g} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(base, "a", "b"), filepath.Join(wt, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wt, ".git"), []byte("gitdir: link/../g\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	want, err := filepath.EvalSymlinks(g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := ciGitDir(wt); err != nil || got != want {
+		t.Errorf("ciGitDir is %q (%v), want the physical %s", got, err, want)
+	}
+	t.Setenv("TMPDIR", t.TempDir())
+	var record string
+	var calls int
+	v := CILocalVerifier{Tools: crwconfig.VerifierTools{CrwDev: "/x/crw-dev"}, Run: recordingRun(&record, &calls)}
+	head := strings.Repeat("b", 40)
+	if out, err := v.Verify(context.Background(), VerifyRequest{Node: "A", Head: head, Worktree: wt}); err != nil || !out.Pass {
+		t.Fatalf("verify: %+v %v", out, err)
+	}
+	if !within(filepath.Join(wt, crwdir.DirName, "verify"), record) {
+		t.Errorf("the record %s is not in the checkout's .crw/verify", record)
+	}
+	if _, err := os.Lstat(filepath.Join(g, "crw-verify")); !os.IsNotExist(err) {
+		t.Errorf("something was written below the gitdir %s: %v", g, err)
+	}
+}
+
+// CRW-1489 (PR ping-pong 2): the ignore file of .crw/verify is created through a descriptor of that directory opened without
+// following a link, so a .crw/verify replaced by a symbolic link after it was checked is an error, and nothing is written
+// through the link outside the checkout.
+func TestCILocalVerifier_a_verify_dir_swapped_for_a_link_is_not_written_through(t *testing.T) {
+	repo, first := newRepo(t)
+	wt := addWorktree(t, repo, "wt", first)
+	outside := t.TempDir()
+	made := ciRecordDirMade
+	t.Cleanup(func() { ciRecordDirMade = made })
+	ciRecordDirMade = func(dir string) {
+		if err := os.Remove(dir); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(outside, dir); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("TMPDIR", t.TempDir())
+	var record string
+	var calls int
+	v := CILocalVerifier{Tools: crwconfig.VerifierTools{CrwDev: "/x/crw-dev"}, Run: recordingRun(&record, &calls)}
+	_, err := v.Verify(context.Background(), VerifyRequest{Node: "A", Head: strings.Repeat("9", 40), Worktree: wt})
+	if !errors.Is(err, crwdir.ErrLink) {
+		t.Errorf("a .crw/verify swapped for a link: %v, want a refusal of the link", err)
+	}
+	if _, err := os.Lstat(filepath.Join(outside, ".gitignore")); !os.IsNotExist(err) {
+		t.Errorf("the ignore file was written through the link into %s: %v", outside, err)
 	}
 	if calls != 0 {
 		t.Errorf("the command ran %d times", calls)
