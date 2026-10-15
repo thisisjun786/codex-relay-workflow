@@ -74,7 +74,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "CRW-1431: the skill text names the project session and the repository session by layer and carries no relay role id",
+      "reason": "CRW-1553: the relay role `child` is named by its id (\"a `child` session\"), not as an issue child",
       "hunks": [
         {
           "line": 3,
@@ -115,7 +115,7 @@
           ],
           "new": [
             "**architectural issues**, not simple bugs. Raise it with the level that assigned\n",
-            "the work before attempting more fixes: an issue child returns it to its project\n",
+            "the work before attempting more fixes: a `child` session (a code id, not a layer) returns it to its project\n",
             "orchestrator, and a task with no parent asks the user.\n"
           ]
         },
@@ -125,7 +125,7 @@
             "- **Repeated fix attempts failed** — likely architectural; needs human judgment\n"
           ],
           "new": [
-            "- **Repeated fix attempts failed** — likely architectural; return it to the level that assigned the work (an issue child to [the child](../crw-canon/references/hierarchy.md#the-levels) (project session) that released it, a task with no parent to the user)\n"
+            "- **Repeated fix attempts failed** — likely architectural; return it to the level that assigned the work (a `child` session to [the child](../crw-canon/references/hierarchy.md#the-levels) (project session) that released it, a task with no parent to the user)\n"
           ]
         },
         {

@@ -189,7 +189,7 @@ func TestHierarchyHoldsTheNameTable(t *testing.T) {
 		"CRW-1314",
 		"| `supervisor` | the parent (repository session) |",
 		"| `parent` | the child (project session) |",
-		"| `child` | an issue child |",
+		"| `child` | no layer | the relay role id of a per-issue work session; an old record kind that is read only |",
 	} {
 		if !strings.Contains(flatCode, want) {
 			t.Errorf("hierarchy.md's section %q lacks %q", codeOnlySection, want)

@@ -1,6 +1,6 @@
 # The CXC report contract, as this relay reads it
 
-The sessions in this document are named by [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the project session (the child) rules on the work, and an issue child, which is no layer, does it.
+The sessions in this document are named by [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the project session (the child) rules on the work, and a `child` session (a code id, not a layer), which is no layer, does it.
 
 Jun's managed workflow runs CXC and this relay together, so both have a vocabulary for how
 an execution ended. Where the two touch, one of them has to say what the other one means.
@@ -31,14 +31,14 @@ The full digests live in `cxc.SOURCES`; the table abbreviates only for width.
 
 ## Report status against relay outcome
 
-A CXC report status does not choose a relay outcome. The outcome is asserted by the issue child's
+A CXC report status does not choose a relay outcome. The outcome is asserted by the `child` session's
 completion receipt, which is the only thing the frozen contract lets assert one, and the
 status is recorded beside it and checked for compatibility. A status that picked the outcome
 could overrule the evidence; a status checked against it cannot.
 
 | CXC status | Means | Compatible relay outcome |
 | --- | --- | --- |
-| `DONE` | the issue child proved every recorded criterion | `ready_for_review` |
+| `DONE` | the `child` session proved every recorded criterion | `ready_for_review` |
 | `NOOP` | nothing needed doing | `ready_for_review` |
 | `BLOCKED` | an external dependency is in the way | `blocked_needs_input` |
 | `UNSAFE` | a human risk decision is required | `blocked_needs_input` |
@@ -47,7 +47,7 @@ could overrule the evidence; a status checked against it cannot.
 
 Three statuses land on one outcome because the frozen enum has a single slot for a human
 having to decide something, and adding a second is not available to this layer. Nothing is
-lost: the original word and the reason the issue child gave are stored and rendered, so a reader
+lost: the original word and the reason the `child` session gave are stored and rendered, so a reader
 can still tell a blocked dependency from a refused risk. A status this build does not know
 is refused by name, with the accepted set and the contract version it was read against,
 rather than being mapped to whichever neighbour comes first in a dictionary.
@@ -59,14 +59,14 @@ behind it is the same shape of claim.
 
 ## The word both systems use for different things
 
-CXC glosses `DONE` as verified success, meaning the issue child proved its own recorded criteria.
+CXC glosses `DONE` as verified success, meaning the `child` session proved its own recorded criteria.
 The relay's `verified` is the **project session's** disposition, written through `record_verdict`
 against registered criteria on an acknowledged event. Same English word, two authorities.
 
 `cxc.NOT_VERIFICATION` lists the facts that resemble verification and are not, each with the
 reason it does not carry:
 
-- a `DONE` report, the issue child proving its own criteria rather than the project session's verdict
+- a `DONE` report, the `child` session proving its own criteria rather than the project session's verdict
 - an opened pull request, a place to review rather than a review
 - a review `PASS`, one reviewer's judgment rather than the project session's disposition
 - a green required check, evidence for a verdict rather than a verdict
@@ -99,10 +99,10 @@ affirmative evidence.
 A revision request is an instruction, so it carries the DISPATCH-TASK-01 fields, `TASK`,
 `SCOPE`, `MUST DO`, `MUST NOT`, `PROOF` and `RETURN FORMAT`, plus a decision boundary. It
 leads with the criterion that was violated and the anchor that reproduces it, because a
-correction whose first line is an identifier is a correction the issue child has to research
+correction whose first line is an identifier is a correction the `child` session has to research
 before it can start. The acknowledgement asymmetry is unchanged: contract v1 defines no
-acknowledgement for the direction from the project session to the issue child, so the message says so and tells the
-issue child what does work instead.
+acknowledgement for the direction from the project session to the `child` session, so the message says so and tells the
+`child` session what does work instead.
 
 It also carries the correction form, `VIOLATED CRITERION`, `WHAT CHANGED`, `FIX SCOPE`,
 `PRESERVE` and `REVERIFY AND RETURN` (`cxc.CORRECTION_SECTIONS`), the sections a packet

@@ -289,8 +289,10 @@ func headDigest(q, head string) string { return textDigest(normalizeQuestion(q) 
 //     rest go to the orchestrator thread as design questions (reason explorer_cap); for an evidence question at most
 //     EvidenceExplorersPerNode a node;
 //   - a research question of a node gets at most ResearchPerTier continuations a tier, the spawned and the reused (an answer of
-//     the run, this node's or another's) alike; the next one - answered in the run or not - escalates the node as a scope question
-//     (reason research_cap). This op is the only counter of the cap (CRW-1470);
+//     the run, this node's or another's) alike; the next one - answered in the run or not, whatever files it names - escalates the
+//     node as a scope question (reason research_cap): a question the asker could answer itself (SP-INL-1) that was answered is
+//     still a reuse, and only an unanswered one of those (inline) is no continuation. This op is the only counter of the cap
+//     (CRW-1470);
 //   - a background question of a milestone node (ExploreBackground, SP-EXPL-1) that no answer in the run reaches spawns an explorer
 //     (reason spawned_background): it is never answered inline whatever its files_needed, never goes to the orchestrator, and neither
 //     uses nor counts against the open questions' cap of the milestone.
@@ -421,9 +423,13 @@ func (o *exploreRouteOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 			rt.Files = []string{}
 		}
 		inlineOK := kind == ExploreResearch && q.FilesNeeded != nil && (len(q.FilesNeeded) <= InlineFiles || inRegions(q.FilesNeeded, ec.Regions))
+		// a question the asker could answer (inlineOK) is still reused when it was answered or is a repeat of the round: the reuse is
+		// a continuation, which the cap counts as it counts a spawn
+		reused := answered[rt.Digest] != nil || first[key] != 0
 		switch {
-		case kind == ExploreResearch && !inlineOK && researchedTier >= ResearchPerTier:
-			// before the reuse: a continuation past the cap escalates whether its question was answered in the run or not
+		case kind == ExploreResearch && (!inlineOK || reused) && researchedTier >= ResearchPerTier:
+			// before the reuse: a continuation past the cap escalates whether its question was answered in the run or not, whatever
+			// files it names; only an unanswered question the asker answers itself (inline) is no continuation of the cap
 			rt.Route, rt.Reason = RouteEscalate, "research_cap"
 		case answered[rt.Digest] != nil:
 			a := answered[rt.Digest]

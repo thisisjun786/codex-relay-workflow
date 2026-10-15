@@ -214,7 +214,13 @@ the worktree is no longer the judged call's pending tree the row has `state` `tr
 at (the `start` the judged call's row records under `executor_head_moved`, else the start of the attempt's worktree or the node's last
 `crw.commit` since), as when the executor committed its work itself on any backend, the row has `state` `head_moved` and `head_moved`
 (`start`, `head`), since the uncommitted changes are not the change `crw.commit` commits on that start; a committed check whose checkout is not the commit's tree has
-`state` `tree_moved`, `commit_tree` and `tree`; and a receipt that could not be read leaves `receipt` and `hold` with no
+`state` `tree_moved`, `commit_tree` and `tree`; a check whose tool judged another tree than the one the op snapped for it (the worktree
+changed after the snap, before the call or before the retry of an invalid answer: the tool's fingerprint, or the worktree after the call,
+is not the snapped tree) is no judgment either and has `state` `tree_moved`, `tree_moved` true, the snapped tree (`commit_tree`, or
+`pending_tree`) and the `tree` it saw; a check during which the worktree's `HEAD` moved (it is read before and after each call, also one
+that failed, the first and the retry of an invalid answer; a commit of the same tree moves it too, and empties the uncommitted diff the tool reads) is
+no judgment either and has `state` `head_moved`, `head_moved` (`start`, the `HEAD` the check is of, and `head`) and the snapped tree
+(`commit_tree`, or `pending_tree`); and a receipt that could not be read leaves `receipt` and `hold` with no
 `tree` and no `commit`; neither reader takes such a row. A check is proven unless its row names a `hold`: a resume runs the check that held the
 node again (it asks the tool, or reads the receipt, again), and the hold itself is the `crw.hold` row the lane writes after it (`source` `unit_check`), as for a
 verification that could not run. An error of the tool's runner (a bad request, a fingerprint that could not be taken) writes no row.
@@ -241,8 +247,8 @@ criteria digest of the node's release) and the executor pair, reads nothing from
 neither archives nor keeps anything for it. A land-head acceptance has no executor call, so its executor pair and its result are
 `unobserved`.
 
-**Recording calls.** `escalate`, `reportUp`, `hold`, `tierStep`, `spawnDecision`, `stepRecord`, `exploreRoute`, `exploreRecord`, `designAudit`, `designLedger`, `qaReceipt`, `qaCapture`, `reviewerFinal`, `audit`, `archive`, `replanSignals`, `currentDesign`, `reflection`, `signalBind`, `signalDone`, `signalClose`, `designHead` and `releasedPlans` only record a fact. `releaseChild` was the old project lane's start of a node's issue child; no
-script calls it and no lane installs it now (CRW-1415). A run whose journal holds a `crw.releaseChild` row is a legacy issue-child run, and
+**Recording calls.** `escalate`, `reportUp`, `hold`, `tierStep`, `spawnDecision`, `stepRecord`, `exploreRoute`, `exploreRecord`, `designAudit`, `designLedger`, `qaReceipt`, `qaCapture`, `reviewerFinal`, `audit`, `archive`, `replanSignals`, `currentDesign`, `reflection`, `signalBind`, `signalDone`, `signalClose`, `designHead` and `releasedPlans` only record a fact. `releaseChild` was the old project lane's start of a node's `child` session (a code id, not a layer); no
+script calls it and no lane installs it now (CRW-1415). A run whose journal holds a `crw.releaseChild` row is a legacy `child`-session run, and
 it is not resumed: the current lane sends a node sized for a child up as a `size_split` escalation at the position where the old lane
 decided and started the child, so a resume would not replay that start - it would escalate the node live, leave the child running and run
 every later position of the parent's path live. `engine.Run` refuses the resume of such a run before it writes a row (and the resume of a
@@ -252,7 +258,7 @@ write to the run's journal, or make its process write, refuses it with `legacy_i
 process holds the run or not: `crw flow cancel` (no finished row, no execution given up), `crw flow pause`, `crw flow recover`, `crw flow
 dispatched` (no report in the run's inbox), `crw flow answer` and `crw flow report-up`; `crw flow audit` prints its results and records no
 row. The delivery bookkeeping of a report already on record (`crw flow report-ack`, `crw flow report-delivered`) records the delivery and
-not the run's progress, and is kept. The refusal names the legacy issue-child path and the `crw.releaseChild` row. The run's records stay
+not the run's progress, and is kept. The refusal names the legacy `child`-session path and the `crw.releaseChild` row. The run's records stay
 read only: `crw flow show`, the summary and the run readers read them. A call with a completed row
 of its own operation at its call id is not sent again (a completed call of another operation at the same position, such as an
 agent call of the earlier script, is not its record), whatever else is true; a call without one is executed live under the same call id and the same idempotent

@@ -475,7 +475,7 @@ var (
 
 // TestHierarchyTableRoleIds: the one level table of hierarchy.md (CRW-1352, design-1316 section 18.1) names the four layers
 // in order, in four columns, and carries no role id. The relay role ids the store records (`supervisor` for the parent, `parent`
-// for the child, `child` for an issue child, none for the top session and the subagents) are in the table of the section
+// for the child, `child` for no layer, none for the top session and the subagents) are in the table of the section
 // "Names used only in code" (CRW-1428). The ids are not renamed, and that section says that the relay's `parent` is the child.
 func TestHierarchyTableRoleIds(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join(repoRoot(), canonRefDir, "hierarchy.md"))
@@ -510,7 +510,7 @@ func TestHierarchyTableRoleIds(t *testing.T) {
 	wantIDs := []struct{ id, names string }{
 		{"`supervisor`", "the parent (repository session)"},
 		{"`parent`", "the child (project session)"},
-		{"`child`", "an issue child"},
+		{"`child`", "no layer"},
 		{"none", "the top session and the subagents"},
 	}
 	if len(ids) != len(wantIDs) {

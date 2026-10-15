@@ -28,10 +28,14 @@ func (s *Store) SupervisorMessage(ctx context.Context, messageID string) (Superv
 }
 
 // SettleSupervisorMessage is supervisorchannel.py:2571: the message moves only while the claim
-// that sent it still holds it. It reports whether it moved.
+// that sent it still holds it. It reports whether it moved. A hold already on the row (one set
+// while it was sending, such as an acknowledged park) is kept: hold is written only when the row
+// has none, so a settle never clears or replaces a hold. The caller reads the row back for the
+// effective hold.
 func (s *Store) SettleSupervisorMessage(ctx context.Context, messageID, state string, nextEligible sql.NullFloat64, hold sql.NullString, at, sending string, attemptNo int64, owner sql.NullString) (bool, error) {
 	return s.changedOne(ctx, "UPDATE supervisor_messages SET state = ?, next_eligible_at = ?,"+
-		" hold_reason = ?, lease_owner = NULL, lease_until = NULL, updated_at = ?"+
+		" hold_reason = CASE WHEN hold_reason IS NULL THEN ? ELSE hold_reason END,"+
+		" lease_owner = NULL, lease_until = NULL, updated_at = ?"+
 		" WHERE message_id = ? AND state = ? AND attempt_count = ?"+
 		"   AND lease_owner IS ?", state, nextEligible, hold, at, messageID, sending, attemptNo, owner)
 }

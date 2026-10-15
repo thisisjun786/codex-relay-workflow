@@ -1,6 +1,6 @@
 # Journal tail and receive
 
-The sessions in this document are named by [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and an issue child is no layer.
+The sessions in this document are named by [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and a `child` session (a code id, not a layer) is no layer.
 
 Two relay commands let a process that works inside a delivery turn follow the relay and finish a
 review in one call: `journal-tail`, an awaitable read of the journal, and `receive`, which composes

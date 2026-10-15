@@ -1,6 +1,6 @@
 # Coordination between children
 
-The sessions in this document are named by [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and an issue child is no layer.
+The sessions in this document are named by [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and a `child` session (a code id, not a layer) is no layer.
 
 Relay-owned records, like the linkage tables and for the same reason: the five schemas under
 `contract/schema/` (`src/codex_session_relay/schema/` until todo 44) are byte copies of a frozen contract, none of them
@@ -402,7 +402,7 @@ different answer from `capacity_exhausted` on purpose: one says the bound is unk
 other says it is reached.
 
 A ceiling lowered below current use is accepted, revokes nothing, reports `overBy` and refuses
-the next reservation. This package cannot stop a running issue child, so reclaiming capacity would be
+the next reservation. This package cannot stop a running `child` session, so reclaiming capacity would be
 a claim the record cannot support.
 
 ## Regions, not file names
@@ -463,13 +463,13 @@ without a word (CRW-124 G3).
 An acceptance takes no condition. One given to `region-settle` used to vanish; it is now refused,
 as `bad_invocation` at the command line.
 
-## A review thread that arrives after the issue child's record
+## A review thread that arrives after the `child` session's record
 
-An issue child's handoff record lists the review threads it saw in `reviewCoverage.threadsSeen` and judges
+A `child` session's handoff record lists the review threads it saw in `reviewCoverage.threadsSeen` and judges
 each one. A review that lands afterwards on the same head is not in that list.
 `merge-evidence --restate <record>` reads the pull request again and reports every such thread as
 a `late_finding`, resolved or not, because the record did not see it and no longer describes the
-candidate. The record then went back to the issue child, which could only answer with a receipt that
+candidate. The record then went back to the `child` session, which could only answer with a receipt that
 named the thread.
 
 When the coordinator can judge a late thread itself it records that judgement in a file and passes
@@ -495,7 +495,7 @@ records it as written and never reads it. Values are kept and matched exactly as
 duplicate key keeps its last value.
 
 These words are the coordinator's. They cover threads outside `threadsSeen` and never stand in for
-the issue child's own `threadDispositions`, whose vocabulary differs (`backlog` is roughly the issue child's
+the `child` session's own `threadDispositions`, whose vocabulary differs (`backlog` is roughly the `child` session's
 `accepted`, `refuted` its `disputed`). Only review threads can be disposed of; a review summary or
 a pull request comment is never exempted.
 
@@ -528,7 +528,7 @@ a pull request comment is never exempted.
 
 ## An independent review beside a restatement
 
-An issue child that ran the independent code review (`crw review`) states what it did with the result in an
+A `child` session that ran the independent code review (`crw review`) states what it did with the result in an
 `independentReview` item. The item is a reference opinion for the child and never a merge gate, so
 everything below is a warning: it is read beside the restatement, not in it, and changes neither
 `restatement.current`, its problems, the verdict nor the exit code.
@@ -539,7 +539,7 @@ completion-receipt contract): `artifact` (`path`, absolute, and `sha256` of the 
 `headPatchId`, and `dispositions`, one `{finding, disposition, evidence}` per answered finding, where
 `finding` is the zero-based position in the artifact's `findings` and `disposition` is `fixed`,
 `refuted` or `recorded`. Without an artifact (`unavailable`, nothing was written) there is nothing to
-compare. The issue child states it in two places: `emit --independent-review <file>` puts it on a
+compare. The `child` session states it in two places: `emit --independent-review <file>` puts it on a
 `ready_for_review` receipt, which the relay stores as stated and never reads the artifact it names (an
 execution-only receipt carrying it is refused `malformed_receipt`), and the same object is the
 `independentReview` member of the handoff record. The relay's `work_report_handoffs` rows have fixed
@@ -567,7 +567,7 @@ usage error without `--restate`). Otherwise the payload is exactly what it was.
   `unreadable`, `sha256_mismatch`, `artifact_invalid`, `status_differs`, `head_differs`,
   `disposition_missing` and `disposition_unknown`. A file that cannot be read or does not hash to the
   stated sha256 ends the comparison with that one warning, since nothing read from other bytes
-  describes the file the issue child meant.
+  describes the file the `child` session meant.
 - **Reading a path the record names.** The path must be absolute; the file is opened without waiting
   for a writer, must be a regular file and is read to at most 8 MiB. No warning repeats what the file
   holds, a validator's message or an operating-system error: only fixed text, the item's own scalars and

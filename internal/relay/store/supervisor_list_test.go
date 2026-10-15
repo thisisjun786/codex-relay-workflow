@@ -79,3 +79,36 @@ func TestListSupervisorMessagesReadsOneRecipientsQueue(t *testing.T) {
 		t.Error("a state the list does not know was accepted")
 	}
 }
+
+// TestListSupervisorMessagesProjectNoneReadsNull (CRW-1500): --project none lists the set the
+// supervisor-list count calls none, the messages with no project and the messages of a project
+// literally named none, and no other project's.
+func TestListSupervisorMessagesProjectNoneReadsNull(t *testing.T) {
+	s := recordStore(t)
+	seedListRows(t, s, "R",
+		listSeed{"n1", "completion", "notification", "", "queued", "", "2026-10-13T12:50:01.000000+00:00"},
+		listSeed{"p1", "completion", "notification", "P1", "queued", "", "2026-10-13T12:50:02.000000+00:00"},
+		listSeed{"n2", "completion", "notification", SupervisorListProjectNone, "queued", "", "2026-10-13T12:50:03.000000+00:00"},
+	)
+	seedListRows(t, s, "OTHER", listSeed{"x1", "completion", "notification", "", "queued", "", "2026-10-13T12:50:00.000000+00:00"})
+	ctx := context.Background()
+	for _, tc := range []struct {
+		name   string
+		filter SupervisorListFilter
+		want   []string
+	}{
+		{"none", SupervisorListFilter{Recipient: "R", Project: SupervisorListProjectNone}, []string{"n1", "n2"}},
+		{"none, all states", SupervisorListFilter{Recipient: "R", Project: SupervisorListProjectNone, State: SupervisorListAll}, []string{"n1", "n2"}},
+		{"none, no hold", SupervisorListFilter{Recipient: "R", Project: SupervisorListProjectNone, Hold: SupervisorListHoldNone}, []string{"n1", "n2"}},
+		{"P1", SupervisorListFilter{Recipient: "R", Project: "P1"}, []string{"p1"}},
+		{"every project", SupervisorListFilter{Recipient: "R"}, []string{"n1", "p1", "n2"}},
+	} {
+		rows, err := s.ListSupervisorMessages(ctx, tc.filter)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if got := listedIDs(rows); !slices.Equal(got, tc.want) {
+			t.Errorf("%s listed %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}

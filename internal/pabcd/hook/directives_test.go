@@ -237,7 +237,7 @@ func TestProjectSessionDirectiveNamesTheChild(t *testing.T) {
 	}
 	for _, platform := range []string{"linux", "darwin", "win32"} {
 		d := LoopArmDirective(platform)
-		if !strings.Contains(d, "goal mode where a native goal for the 자식 was asked for. The 자식 (project session) creates no implementation goalplan or FSM") {
+		if !strings.Contains(d, "in goal mode when a native goal for the 자식 was asked for. The 자식 (project session) creates no implementation goalplan or FSM") {
 			t.Errorf("%s: the recipe's project branch does not name the 자식 (project session)", platform)
 		}
 		const identity = "never a parent/history id"

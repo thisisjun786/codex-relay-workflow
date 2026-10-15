@@ -1,6 +1,6 @@
 # Operating the relay
 
-The sessions in this document are named by [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and an issue child is no layer.
+The sessions in this document are named by [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and a `child` session (a code id, not a layer) is no layer.
 
 Who owns the state, who owns the daemon, and what an operator can ask it. The delivery
 contract itself is in [protocol-v1.md](protocol-v1.md) and the refusals that enforce it are
@@ -56,45 +56,45 @@ the resolved database and the measured access.
 ### Child reports use the daemon
 
 `crw relay emit`, `intent-claim` and `intent-disposition` submit their commands through
-the selected state's `control.sock`. The issue child process does not open a writable store or
+the selected state's `control.sock`. The `child` session process does not open a writable store or
 publish its claim or disposition marker. The daemon executes the command against its
 already-owned store, preserving receipt admission, replay identity and delivery to the child.
-The command crosses the socket byte for byte: its arguments arrive as the issue child was given
-them, and the issue child prints the command's stdout and stderr and exits with its exit code.
+The command crosses the socket byte for byte: its arguments arrive as the `child` session was given
+them, and the `child` session prints the command's stdout and stderr and exits with its exit code.
 The socket client checks the daemon's peer UID and the ownership of the socket and its
-directory. The daemon accepts only these issue child commands, its own store and its own marker
+directory. The daemon accepts only these `child` session commands, its own store and its own marker
 root; a marker naming another store is refused before publication. The daemon alone
-decides where an issue child report is recorded: the issue child's `--state` or
+decides where a `child` session report is recorded: the `child` session's `--state` or
 `CODEX_SESSION_RELAY_STATE` only finds the socket, and the daemon records the command in
-its own store whatever the request names. A path relative to the issue child (`--socket`,
+its own store whatever the request names. A path relative to the `child` session (`--socket`,
 `--workspace`, `--marker-root`, `--independent-review`) is refused with an explicit error;
-the issue child names it absolute. The command runs in the daemon's environment: the default marker root
+the `child` session names it absolute. The command runs in the daemon's environment: the default marker root
 is the daemon's (`CODEX_SESSION_RELAY_MARKER_ROOT`, else under `XDG_STATE_HOME` or the
-home), an issue child naming another `--marker-root` is refused, and an issue child naming a
+home), a `child` session naming another `--marker-root` is refused, and a `child` session naming a
 `--kind-module` that installs something (`codex_session_relay.projects`) is refused, since it
-would install into the daemon for every later command. An issue child `emit` naming `--artifact`
+would install into the daemon for every later command. A `child` session `emit` naming `--artifact`
 with `--manifest-ref` is refused `manifest_forbidden`: the daemon freezes no artifact into a
-destination the issue child chose, so omit `--manifest-ref`. An intent may name the daemon's store
+destination the `child` session chose, so omit `--manifest-ref`. An intent may name the daemon's store
 by any spelling of the same file.
 
 An unavailable daemon is an explicit host error (exit 3), not success and not a fallback
 to a local writer. A lost answer after submission is reported as an
 unknown report outcome: retry the same receipt identity, not a new receipt. The daemon
-serves one issue child command for up to 50 s after its request line (the store's 30 s busy wait
-and one 20 s App Server read, `hook.ChildCommandBudget`), and the issue child waits that long;
+serves one `child` session command for up to 50 s after its request line (the store's 30 s busy wait
+and one 20 s App Server read, `hook.ChildCommandBudget`), and the `child` session waits that long;
 the 5 s bound of `control.sock` is the request line's. A writable
-issue child needs the daemon too.
+`child` session needs the daemon too.
 
 Reaching `control.sock` is a network permission, not a filesystem one. Codex (measured on
-codex-cli 0.154.0) refuses the issue child's `connect` with `EPERM` in every sandbox without
+codex-cli 0.154.0) refuses the `child` session's `connect` with `EPERM` in every sandbox without
 network access: `read-only`, and `workspace-write` unless its policy grants
-`networkAccess`. An issue child there cannot report with its own command: each issue child command ends with exit 3
+`networkAccess`. A `child` session there cannot report with its own command: each `child` session command ends with exit 3
 and says that its sandbox refuses the connection, and the report goes through the bridge's `report_child` tool (below). The connect succeeds under
 `danger-full-access`, under `workspace-write` with network access, and under a read-only
-filesystem with network access, so an issue child whose filesystem cannot write the store still
-reports through the daemon when its network is enabled. The bridge still refuses to create an
-issue child with a `read-only` sandbox or an explicit `readOnly` policy, network or not: an
-issue child writes its work, so the refusal names the two sandboxes that both write and
+filesystem with network access, so a `child` session whose filesystem cannot write the store still
+reports through the daemon when its network is enabled. The bridge still refuses to create a
+`child` session with a `read-only` sandbox or an explicit `readOnly` policy, network or not: a
+`child` session writes its work, so the refusal names the two sandboxes that both write and
 reach the daemon (CRW-1296).
 
 Bridge `create_thread` (the relay's managed start included) and `create_worktree_thread`
@@ -102,29 +102,29 @@ refuse a `child` role whose sandbox cannot reach the daemon, before starting a t
 creating a checkout: a `read-only` sandbox or an explicit `readOnly` policy, and a
 `workspace-write` sandbox whose `expected_sandbox_policy` does not grant `networkAccess`
 (without that policy the network is the host configuration's, which the bridge cannot
-see). Recreate that issue child with an explicitly authorized writable sandbox that reaches the
+see). Recreate that `child` session with an explicitly authorized writable sandbox that reaches the
 daemon: `danger-full-access`, or `workspace-write` with an `expected_sandbox_policy`
 granting `networkAccess` (it travels in the start config and the created thread is checked
 against it). The bridge never silently changes its sandbox. Read-only threads without the
 `child` role remain supported.
 
-`crw relay register --child-settings` judges the issue child's recorded sandbox by the same rule
+`crw relay register --child-settings` judges the `child` session's recorded sandbox by the same rule
 (`internal/bridge/settings` `RelayChildReaches`): a `readOnly` policy, or a `workspaceWrite` one whose
 `networkAccess` is not true, is refused as `unsupported_sandbox_type` (exit 2) before anything is
 written, naming `danger-full-access` and `workspace-write` with network access. `--parent-settings`
-is not judged. `doctor` lists the three issue child commands in `actorReachability.daemonRequiredCommands`,
+is not judged. `doctor` lists the three `child` session commands in `actorReachability.daemonRequiredCommands`,
 and in neither `offlineCommands` nor `hostRequiredCommands`.
 
-The bridge's `report_child` tool is the route for an issue child created outside those refusals (a thread
-without the `child` role, or one created outside the bridge). The bridge runs outside the issue child's
-sandbox, so it connects to `control.sock` where the issue child cannot: the tool takes `command` (`emit`,
-`intent-claim` or `intent-disposition`) and the command's `arguments`, forwards them with the client an
-issue child's own command uses (`hook.ForwardChild`) and answers the daemon's output (a nonzero exit is an
+The bridge's `report_child` tool is the route for a `child` session created outside those refusals (a thread
+without the `child` role, or one created outside the bridge). The bridge runs outside the `child` session's
+sandbox, so it connects to `control.sock` where the `child` session cannot: the tool takes `command` (`emit`,
+`intent-claim` or `intent-disposition`) and the command's `arguments`, forwards them with the client a
+`child` session's own command uses (`hook.ForwardChild`) and answers the daemon's output (a nonzero exit is an
 error result carrying the daemon's answer). The daemon alone decides where the record goes: the bridge
 finds it from its own configuration, the App Server socket it was started with and the relay state of
-its own environment, and nothing the call, the issue child's argv or its environment says takes part. With
+its own environment, and nothing the call, the `child` session's argv or its environment says takes part. With
 no daemon the tool answers `relay daemon unavailable; child report was not submitted`, opens no store
-and records nothing; it is not a fallback of the issue child's own command.
+and records nothing; it is not a fallback of the `child` session's own command.
 
 A bridge that did not inherit the state the daemon serves finds no daemon, and says so before the
 first report instead of at it. The relay service's scope claim for the App Server socket records the
@@ -234,7 +234,7 @@ question cannot be settled before the Stop is read, because whether the coordina
 path is a fact in a marker the guard has not read yet — the workspace it belongs to arrives inside
 the Stop payload, on stdin. So the refusal is not skipped for the Stop, it is deferred: it is
 asked again where that third source would be used, and only if execution gets there. A turn
-released on the issue child's own declaration never opens a store and is never refused, and neither is
+released on the `child` session's own declaration never opens a store and is never refused, and neither is
 a readiness with no registered relationship, because there is nothing to look a receipt up by. A
 Stop that would otherwise be judged against a store nobody selected is refused, with the
 candidates and the recovery commands, and the payload says in `stopNotJudged` that the Stop was
@@ -242,7 +242,7 @@ neither classified nor recorded.
 
 The two halves of that refusal are not worth the same. The different-socket half removes a wrong
 answer: that store exists and opens, its rows belong to another installation, and a relationship
-missing from it reads as `receipt_missing`, which holds an issue child that has finished.
+missing from it reads as `receipt_missing`, which holds a `child` session that has finished.
 
 It speaks only when the caller names a socket, because a store's provenance IS a socket and the
 comparison needs one to compare against. So the Stop hook's settings carry `socketPath`, and both
@@ -265,7 +265,7 @@ A state directory chosen for one run is different, and there the refusal does re
 answer. `--state`, or a `CODEX_SESSION_RELAY_STATE` the hook inherits from the host, returns
 from `resolve_state_dir` before discovery runs, so the selection carries no candidates of its
 own, and the store it names exists and opens: judged, a relationship missing from it reads as
-`receipt_missing` and holds an issue child that has finished. So when the guard reaches its third
+`receipt_missing` and holds a `child` session that has finished. So when the guard reaches its third
 source through such an override and a socket is configured, it asks what discovery alone would
 have said (`discover_state_dir`). If that is ambiguous or unidentified, it refuses with the same
 reason, adding `overriddenBy` (the flag or the variable, as given) and `selectedDirectory`. If
@@ -489,7 +489,7 @@ separate probe - are recorded under "Recorded limits" in [invariants.md](invaria
 A single supervisor and a single store serve every assignment on that host, user and App
 Server, across projects and repositories. Each delivery is checked against its own
 assignment before any transport call: the recipient must be that assignment's own child for
-a completion, or its own issue child for a revision. Membership in the authorized recipient list
+a completion, or its own `child` session for a revision. Membership in the authorized recipient list
 alone is not sufficient, because two assignments may legitimately list the same recipient.
 `service status` groups by project so one service carrying several projects is visible.
 
@@ -506,7 +506,7 @@ transport call.
 
 | Phase | Meaning |
 |---|---|
-| `awaiting_receipt` | the issue child has not produced a completion receipt yet |
+| `awaiting_receipt` | the `child` session has not produced a completion receipt yet |
 | `awaiting_send` | the receipt is collected and accepted; this relay has not reached the recipient yet |
 | `awaiting_send:hourly_cap` | as above, and the delivery's relationship has sent its class's hourly cap of distinct events to this recipient; `pacing` says until when (see "When the send budget holds a delivery") |
 | `in_flight` | a send was claimed and its outcome is not yet settled |
@@ -521,7 +521,7 @@ transport call.
 | `held:unknown_send_lost` | the last attempt's send got no answer and the recipient keeps no trace of it; held for the child, never sent again, and still settled by a message found later (see "When an uncertain send leaves no trace"); once a newer generation or the answer to a correction supersedes it, it reads `superseded:<reason>` instead |
 | `held:unknown_send_undecided` | an uncertain send whose reading cannot decide however long the relay waits; held for the child in the same way, and read as `superseded:<reason>` in the same way |
 | `held:held_settings_mismatch` | the host refused the send on the recipient's settings with a refusal no retry fixes (`settings_not_preserved`, `setting_unobservable`); held at the first one, never sent again, with `settingsHold` naming the field and the values `expected` and `observed`, and `recovery` naming who restores them |
-| `awaiting_child_receipt` | a revision request was delivered; contract v1 defines no acknowledgement for that direction, so the issue child answers with its next completion receipt |
+| `awaiting_child_receipt` | a revision request was delivered; contract v1 defines no acknowledgement for that direction, so the `child` session answers with its next completion receipt |
 | `awaiting_grant_acknowledgement` | a merge-turn grant was delivered and its turn has not recorded the acknowledgement; it is answered with `merge-turn-acknowledge`, never with an `ack` |
 | `grant_acknowledged` | the grant was acknowledged on its merge turn, in any delivery state (a child can answer before the notice is sent) and including after that turn later landed or was returned |
 | `return_request_delivered` | a merge-turn return request (`merge-turn-request-return`) was delivered to the holder, reported as `dispatched_return_request`; it travels the grant channel and has nothing to acknowledge, so it waits for nothing and reads as current while its turn occupies the target |
@@ -551,11 +551,11 @@ a user-attributed source); and a refusal of the record itself (missing, incomple
 unsupported sandbox type), whose step is recording it again; a capped or closed-channel hold is the child's
 (`show --event` for the stored report), with the operator's or the thread owner's step for later
 deliveries. assignment-show names the same actor as `operator_restores_recipient_settings` or
-`parent_recovers_settings_hold`, for a completion and for a revision request to the issue child alike
+`parent_recovers_settings_hold`, for a completion and for a revision request to the `child` session alike
 (`settings-show --task <child>` for the latter); a revision request held at the cap or stored by
 a closed channel keeps `parent_recovers_held_correction`, its recovery named for the settings code
 (a stored revision request takes no acknowledgement: the child reads it and opens a fresh
-generation if the issue child still has to be given it). A hold the daemon may clear itself keeps the
+generation if the `child` session still has to be given it). A hold the daemon may clear itself keeps the
 daemon's action, with the same recovery beside it. A send budget that never reopens is named first
 (`operator_changes_send_policy`): until the policy changes nothing is sent, not even the retry that
 would re-read a recorded refusal, which `settingsHold` still names. The fault sweep
@@ -600,7 +600,7 @@ than the budget reopens; then the backoff is what holds it and no `pacing` is sh
 and never a hold or a failure (I-225). `sends` is the number of distinct events the delivery's own
 relationship has sent to this recipient this hour (an event tried again counts once; CRW-259 made it
 the relationship's, it was every relationship's sends to the recipient, which a child with many
-issue children exhausted, and CRW-1210 made it events, it was attempts) and `cap` is the hour cap of the
+`child` sessions exhausted, and CRW-1210 made it events, it was attempts) and `cap` is the hour cap of the
 relationship's class; the gap behind `min_send_interval` is still the recipient's. The cap holds new
 events, not the retry of an event the hour already counts (the send budget section below): `status`,
 `assignment-show` and the delivery snapshot show no `hourly_cap` for such a retry, and it is held only by
@@ -625,7 +625,7 @@ settled and excluded from freshness: the scheduler deliberately stops reading it
 last poll cannot advance, and ageing it out would report every quiet assignment as stalled.
 New staged work on that turn makes it eligible again.
 
-Settlement is recorded per assignment. Two assignments can legitimately watch the same issue child
+Settlement is recorded per assignment. Two assignments can legitimately watch the same `child` session
 turn, and the `observations` table is keyed by the turn alone, so it can only ever name whichever
 assignment settled it first. `assignment_settlements` carries the per-assignment fact, which is
 what the observation scheduler and this health block ask. Without it every other assignment
@@ -643,7 +643,7 @@ so a read-only command neither waits for the write lock nor holds it. The daemon
 settlement in the transaction of the observation it belongs to, so no observation the backfill
 would cover arrives after the key.
 
-So is the work itself. Staged claims are selected and settled per assignment, because an issue child
+So is the work itself. Staged claims are selected and settled per assignment, because a `child` session
 thread can serve several and a claim on one of its turns belongs to exactly one of them.
 Selecting by thread alone put a paused assignment's claim into an active assignment's ring,
 and settling by turn alone let whichever assignment polled first suppress the owner's claim
@@ -748,18 +748,46 @@ rather than fresh. Process liveness is reported separately and is never counted 
 
 A recipient's messages on the supervisor channel (the upward channel, see [the supervisor
 channel](supervisor-channel.md)) go out one head at a time in the order they were staged, so a queue
-that grew while the recipient could not take a turn is read as a whole, through the store API and
-never with a hand-written query (CRW-1486).
+that grew while the recipient could not take a turn is read and cleared as a whole, through the store
+API and never with a hand-written query or update (CRW-1486).
 
 `supervisor-list --recipient <task> [--project <key>] [--state unsent|all] [--hold <word>|none]` is
 read-only: the recipient's messages in sending order (`messageId`, `relationshipId`, `projectKey`,
 `kind`, `obligationKind`, `subject`, `state`, `holdReason`, `stagedAt`, `nextEligibleAt`, and
 `claimable`, the channel's own test of unsent, unheld and due), with counts by state, hold, project and
 obligation kind (`supervisor-list/1`). `unsent`, the default, is what still waits: queued, deferred
-busy or withheld before a send. `--hold none` lists the messages that carry no hold.
+busy or withheld before a send. `--hold none` lists the messages that carry no hold. `--project none`
+lists the messages with no project (and a project named none), the same set the `none` project count
+counts; each row's `projectKey` (null or `none`) tells the two apart.
+
+`supervisor-acknowledge --recipient <task> --actor <task>` parks old notifications without a turn
+each. `--all-informational [--project <key>] [--staged-before <ISO time with offset>]` parks the
+recipient's unsent messages that report something finished (`completion`, `flow_completion`,
+`flow_milestone_report`, `lead_report`); `--message <id>`, repeatable, parks the named messages of any
+notification kind, a `blocked` one included. A parked message is held `superseded_by_report` with one
+`supervisor_message_superseded` journal row naming `supervisor-acknowledge` and the actor, all in one
+store transaction, and the update is guarded so a message an attempt may have sent is never parked.
+What is left is reported per message with its reason: `answer_owed` (a decision), `fault_notice` (its
+own channel parks it), `claimed` (a send is under way or may have gone), `not_unsent`, `held`,
+`not_informational` (a block, an escalation, a design question or a land review under the bulk form),
+`not_found` and `other_recipient`. An empty `--project` or `--staged-before` is refused, not read as
+omitted.
+
+When a park is kept or released is the channel's [hold rule](supervisor-channel.md#the-hold-rule).
+The same statement staged again keeps it, whoever stages it: the daemon's pass on every cycle, the
+sender repeating its report, a rotated sender session. A new statement that is still owed (a work
+report corrected in place or resubmitted, a report sent again with other text) or a re-address to
+another recipient releases it. `supervisor-send --message <id>` sends a parked message only when what
+it is for is still owed; when the tracking record already discharges it, the send sends nothing and the
+park stays. When the hierarchy moved the message's sender or recipient, the send answers
+`relation_owner_drift` and writes nothing: stage it again where it came from, which re-addresses it
+(`supervisor-stage --event <id>` or `--project <key>` for an event's or an omission's report; for a
+direct message such as a `lead_report` or a `flow_completion`, its sender's own report again, since
+`supervisor-stage` does not stage direct messages), then send it again. The command's `release` field says the same.
 
 A message that waits on a busy recipient is not a backlog: it is deferred with the busy backoff and
-woken by the recipient's idle edge ([the supervisor channel](supervisor-channel.md#the-surface)).
+woken by the recipient's idle edge ([the supervisor channel](supervisor-channel.md#the-surface)), and
+acknowledging older messages does not move it sooner.
 
 ## When the host loses an accepted turn
 
@@ -968,7 +996,7 @@ completion to the child and before it read the answer. The attempt settled `held
 the message. Reconciliation found no evidence on every pass, kept the attempt
 `held_uncertain_awaiting_evidence` for good, `assignment-show` named `daemon_reconciles_delivery`,
 which could never settle it, and the only signal was a `delivery_stalled` fault left below its
-publish threshold. The issue child's report never reached the child, and nothing said who should
+publish threshold. The `child` session's report never reached the child, and nothing said who should
 recover it or how.
 
 The relay still never sends such a message again. A `turn/start` whose answer never came back can
@@ -1039,7 +1067,7 @@ names the actor, reason and `recovery` of the hold the attempt now carries.
 
 Recovering the report is the child's. `assignment-show` answers `parent_recovers_unknown_send_lost`
 or `parent_recovers_unknown_send_undecided` with `recovery`, whose command is `show --event <id>` on
-this store. The issue child's report is in the store whatever happened to the message, so the child
+this store. The `child` session's report is in the store whatever happened to the message, so the child
 reads it there and opens a fresh execution generation if the work still needs verifying.
 `reconcile --request-id` reports the reading as `recipientTrace` (`{finding, detail, undecided,
 pending, turnId}`, where the finding is `present`, `unknown_send_lost` or `unknown`) and, beside
@@ -1097,7 +1125,7 @@ K5ctl leg.
 ## When the send budget holds a delivery
 
 The send budget has two owners (CRW-259). The recipient owns the gap: a task is woken at most once
-in `min_send_interval_seconds`, whoever sends, the queue between a child and its issue child or the supervisor channel. A
+in `min_send_interval_seconds`, whoever sends, the queue between a child and its `child` session or the supervisor channel. A
 relationship owns the hour: it may wake one recipient for `max_sends_per_relationship_per_hour`
 distinct events (12), counted over both queues from the attempts the relay already records, with no
 count stored for it (I-225, I-475). A send is an event, not an attempt (CRW-1210): an event tried
@@ -1117,9 +1145,9 @@ read from the binding, so a handover or a release changes it at once. The upward
 `run:<id>` and `initiative:<key>` relationship ids (a run waking its owner thread, a lead reporting to the
 management seat above its initiative) have no relationships row to read a binding from and are of class
 `orchestrator` by their id: each carries everything below it through one id, so their cap is the 60 as
-well. The recipient's minimum gap of five seconds is the same for every class. The hour used to be one count per recipient, so a child with ten issue children
+well. The recipient's minimum gap of five seconds is the same for every class. The hour used to be one count per recipient, so a child with ten `child` sessions
 stopped receiving at twelve deliveries an hour in all; now it can receive 12 an hour from each
-issue child, a runaway relationship still stops at its class's cap, and the gap holds the recipient to 720
+`child` session, a runaway relationship still stops at its class's cap, and the gap holds the recipient to 720
 an hour whatever the number of relationships.
 
 CRW-124's H7 leg met the cap: an interrupted notice to the child read `queued` with no hold, no failure
@@ -1325,8 +1353,8 @@ supervisor channel pass visits to at least one for each, and the supervisor chan
 one for each. With none live the constants stand.
 
 **The Stop hook wakes the tick (CRW-1210).** The control socket and the daemon are one process, so
-when a Stop ends the turn of a managed issue child (the guard selected the issue child's assignment and did not
-hold the turn) the control handler posts the issue child's thread id on an in-process channel, which is not
+when a Stop ends the turn of a managed `child` session (the guard selected the `child` session's assignment and did not
+hold the turn) the control handler posts the `child` session's thread id on an in-process channel, which is not
 a socket method, and the daemon runs a tick at once instead of waiting out the 20 s poll interval.
 A tick that wakes begins at least one second after the last one began, whatever the number of Stops,
 so the per-tick budgets hold and a storm of Stops is one tick a second with each woken thread listed
@@ -1335,10 +1363,10 @@ longest-waiting turns of the others, except that the first read of each class th
 or other work) is reserved, so a run of woken turns of one class cannot take the budget from the other,
 and the woken turns take at most the reads past those reserved ones: the rest of the read budget goes to
 the order an unwoken tick reads, so the turns nobody woke keep rotating longest-waiting first and each is
-read within a bounded number of ticks, however often the same issue children wake the daemon. When the
+read within a bounded number of ticks, however often the same `child` sessions wake the daemon. When the
 observation time bound stops a woken tick before it has made those reserved reads (a woken read that
 takes the whole bound), the tick still makes the reads an unwoken tick would make first, whatever the
-clock says, so a slow issue child woken again and again does not keep the others from rotating. The 20 s tick is
+clock says, so a slow `child` session woken again and again does not keep the others from rotating. The 20 s tick is
 the backstop: a wake that is dropped (the
 channel holds 256), or a Stop that ends before the host marks its turn finished, is made up by the
 next tick, and a daemon nobody wakes ticks exactly as before.

@@ -118,7 +118,9 @@ const (
 // review), with its own retry of an invalid answer; no other state falls back, and there is at most one fallback. The row's result is
 // the record of the profile that answered last, which every reader takes; the first profile's quota record is the answer's fallback,
 // and the row names it (fallback_from, the first profile's name; fallback_state quota; fallback_model; fallback_retried when that quota
-// came on the retry of an invalid answer); retried and first_state are about the last profile's calls. A check whose last tool gave no
+// came on the retry of an invalid answer); retried and first_state are about the last profile's calls. Every attempt, a retry and
+// the fallback's too, is judged against the tree the op snapped and the HEAD read before and after it: a moved one ends the op with
+// the row tree_moved or head_moved and no verdict (a fallback's keeps its fallback_from). A check whose last tool gave no
 // judgment for its quota or no answer is recorded with role unit-check and hold unit_check_<state> on the row and in the answer, and is
 // not proven: the lane holds the node through crw.hold with source unit_check, and a resume asks the tools again. worktree_changed and
 // tool_failed are recorded and proven, for the lane to escalate. A Go error of the checker (a bad request, a fingerprint, the end of the
@@ -183,6 +185,9 @@ func (o *unitCheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpR
 	g := o.l.d.Git
 	data := map[string]any{"node": node, "mode": mode, "round": opts.Round, "final": opts.Final}
 	snap := ""
+	// baseHead is the HEAD the check is of: the commit the node's attempt is at (the start the guard below compares), the head of a
+	// committed range, else the HEAD read before the first Check
+	baseHead := ""
 	var receipt checkReceipt
 	if mode == UnitCheckUncommitted {
 		data["call"] = ex.CallID
@@ -223,6 +228,7 @@ func (o *unitCheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpR
 					Call: ex.CallID, CheckID: req.CallID}
 				return engine.OpResult{Result: result(out), Data: data}, nil
 			}
+			baseHead = at
 		}
 		var hold, detail string
 		if receipt, hold, detail = executorReceipt(term); hold != "" {
@@ -242,6 +248,7 @@ func (o *unitCheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpR
 		if at != head {
 			return engine.OpResult{}, fmt.Errorf("crw.unitCheck: node %s: the worktree %s is at %s, not at the head %s to check", node, wt, at, head)
 		}
+		baseHead = at
 		data["commit"], data["base"] = head, opts.Base
 		// and in a clean checkout of it: a check of edited files would be recorded as the judgment of the commit
 		commitTree, err := TreeOf(ctx, g, wt, head)
@@ -268,25 +275,115 @@ func (o *unitCheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpR
 		// give the tool (the Codex committed profile's --base); the fallback's request carries the same range
 		creq.Base, creq.Head = opts.Base, head
 	}
-	// check asks the tool of profile p, and once more with the same request on an invalid answer
-	check := func(p reviewadapter.Profile) (reviewadapter.Result, bool, error) {
-		r := creq
-		r.Profile = p
-		res, err := uc.Checker.Check(ctx, r)
-		if err != nil {
-			return res, false, fmt.Errorf("crw.unitCheck: node %s: %w", node, err)
+	// fellBack is the first profile's quota record once the check fell back (UnitCheckOutcome.Fallback), also in a held answer
+	var fellBack *reviewadapter.Result
+	// every attempt is the judgment of snap, the tree the op snapped for this check (the commit's tree, or the pending tree), or of
+	// nothing: a worktree that changed after the snap and before the call was judged in its new state, which the adapter's own
+	// fingerprints (both of the new tree) do not reveal, and a committed row names its commit, whose tree no reader compares
+	moved := func(res reviewadapter.Result) (string, error) {
+		if res.State == reviewadapter.StateWorktreeChanged {
+			return "", nil
 		}
-		if res.State != reviewadapter.StateInvalid {
-			return res, false, nil
+		if res.FingerprintBefore != "" && res.FingerprintBefore != snap {
+			return res.FingerprintBefore, nil
 		}
-		if res, err = uc.Checker.Check(ctx, r); err != nil {
-			return res, true, fmt.Errorf("crw.unitCheck: node %s: the retry of an invalid answer: %w", node, err)
+		now, err := Snapshot(ctx, g, wt)
+		if err != nil || now == snap {
+			return "", err
 		}
-		return res, true, nil
+		return now, nil
 	}
-	res, retried, err := check(profile)
+	treeMoved := func(seen string, retried bool) (engine.OpResult, error) {
+		delete(data, "role")
+		data["state"], data["tree_moved"], data["tree"] = StateTreeMoved, true, seen
+		if mode == UnitCheckCommitted {
+			data["commit_tree"] = snap
+		} else {
+			data["pending_tree"] = snap
+		}
+		out := UnitCheckOutcome{Result: reviewadapter.Result{State: StateTreeMoved, Detail: "the worktree changed from " + snap + " to " + seen +
+			" after the op snapped it and before the tool judged it; the answer is no judgment of the snapped tree", Findings: []reviewadapter.Finding{}},
+			Retried: retried, Call: ex.CallID, CheckID: req.CallID, Fallback: fellBack}
+		return engine.OpResult{Result: result(out), Data: data}, nil
+	}
+	// and of the HEAD the worktree is at (CRW-1557): HEAD is read before and after every attempt, and a HEAD that moved, even to a commit
+	// of the same tree, leaves every snapshot as it was while the uncommitted diff the tool reads is not the change crw.commit commits
+	// (a commit of the pending change during the call empties it), so the answer is no judgment either: the row says head_moved, as the
+	// guard before the check does
+	headAt := func() (string, error) {
+		at, err := Head(ctx, g, wt)
+		if err != nil {
+			return "", err
+		}
+		if baseHead == "" {
+			baseHead = at
+		}
+		if at != baseHead {
+			return at, nil
+		}
+		return "", nil
+	}
+	headMoved := func(at string, retried bool) (engine.OpResult, error) {
+		delete(data, "role")
+		data["state"], data["head_moved"] = StateHeadMoved, map[string]any{"start": baseHead, "head": at}
+		if mode == UnitCheckCommitted {
+			data["commit_tree"] = snap
+		} else {
+			data["pending_tree"] = snap
+		}
+		out := UnitCheckOutcome{Result: reviewadapter.Result{State: StateHeadMoved, Detail: "the worktree's HEAD moved from " + baseHead + " to " + at +
+			" while the tool judged it; the uncommitted changes it read are not the change to commit, and the answer is no judgment", Findings: []reviewadapter.Finding{}},
+			Retried: retried, Call: ex.CallID, CheckID: req.CallID, Fallback: fellBack}
+		return engine.OpResult{Result: result(out), Data: data}, nil
+	}
+	// attempt is one Check of profile p with HEAD read around it; a held answer is the op's result (done)
+	attempt := func(p reviewadapter.Profile, retried bool, what string) (res reviewadapter.Result, done *engine.OpResult, err error) {
+		if at, err := headAt(); err != nil {
+			return res, nil, err
+		} else if at != "" {
+			r, err := headMoved(at, retried)
+			return res, &r, err
+		}
+		pr := creq
+		pr.Profile = p
+		// HEAD is read after every call, also one that failed: a checker whose fingerprint after the call failed (a full temporary
+		// store after a commit) still ran on a HEAD that moved, which is the answer, not the checker's error
+		res, checkErr := uc.Checker.Check(ctx, pr)
+		if at, err := headAt(); err != nil {
+			if checkErr != nil {
+				return res, nil, fmt.Errorf("crw.unitCheck: node %s: %s%w", node, what, checkErr)
+			}
+			return res, nil, err
+		} else if at != "" {
+			r, err := headMoved(at, retried)
+			return res, &r, err
+		}
+		if checkErr != nil {
+			return res, nil, fmt.Errorf("crw.unitCheck: node %s: %s%w", node, what, checkErr)
+		}
+		if seen, err := moved(res); err != nil {
+			return res, nil, err
+		} else if seen != "" {
+			r, err := treeMoved(seen, retried)
+			return res, &r, err
+		}
+		return res, nil, nil
+	}
+	// check asks the tool of profile p, and once more with the same request on an invalid answer: every attempt, the retry too, is
+	// judged against the snapped tree and the HEAD read around it; retried and first_state on the row are about p's calls
+	check := func(p reviewadapter.Profile, what string) (res reviewadapter.Result, retried bool, done *engine.OpResult, err error) {
+		if res, done, err = attempt(p, false, what); err != nil || done != nil || res.State != reviewadapter.StateInvalid {
+			return res, false, done, err
+		}
+		data["first_state"], data["retried"] = string(reviewadapter.StateInvalid), true
+		res, done, err = attempt(p, true, what+"the retry of an invalid answer: ")
+		return res, true, done, err
+	}
+	res, retried, done, err := check(profile, "")
 	if err != nil {
 		return engine.OpResult{}, err
+	} else if done != nil {
+		return *done, nil
 	}
 	out := UnitCheckOutcome{Call: ex.CallID, CheckID: req.CallID}
 	if res.State == reviewadapter.StateQuota && uc.Fallback != nil {
@@ -298,19 +395,21 @@ func (o *unitCheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpR
 		if first.Findings == nil {
 			first.Findings = []reviewadapter.Finding{}
 		}
-		out.Fallback = &first
+		out.Fallback, fellBack = &first, &first
 		data["fallback_from"], data["fallback_state"], data["fallback_model"] = profile.Name, string(first.State), first.Model
+		// the first profile's retry is fallback_retried; retried and first_state are the fallback's
+		delete(data, "first_state")
+		delete(data, "retried")
 		if retried {
 			data["fallback_retried"] = true
 		}
-		if res, retried, err = check(fallback); err != nil {
-			return engine.OpResult{}, fmt.Errorf("%w (the fallback after a %s quota)", err, profile.Name)
+		if res, retried, done, err = check(fallback, "the fallback after a "+profile.Name+" quota: "); err != nil {
+			return engine.OpResult{}, err
+		} else if done != nil {
+			return *done, nil
 		}
 	}
-	if retried {
-		data["first_state"] = string(reviewadapter.StateInvalid)
-		out.Retried = true
-	}
+	out.Retried = retried
 	if res.Findings == nil {
 		res.Findings = []reviewadapter.Finding{}
 	}
