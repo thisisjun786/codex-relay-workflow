@@ -112,9 +112,12 @@ output, at most 4 KB; a Go test that outlived its `-timeout` is named with a `ti
 so a load timeout reads as a timeout, not as a verdict on the code. The steps inherit `PATH`.
 They do not inherit `TMPDIR`: a run gives its steps a fresh, empty `TMPDIR` of its own (CRW-1489),
 `ci<8 hex>` directly below the caller's `TMPDIR` or, when that does not fit, `t<8 hex>` directly
-below the work root, and removes it after the run (`--keep` keeps and prints it). A candidate does
-not fit when a `.git` (of any type) is at or above its parent, read as written and with links
-resolved, because the repository's own tests find a checkout by walking up from `TMPDIR` for a
+below the work root, and removes it after the run (`--keep` keeps and prints it). A candidate's
+parent is taken at its physical place, resolved from the value as written the way the kernel
+resolves it (links followed before a `..`, not a lexical clean first, so `/a/link/../tmp` is the
+`tmp` beside link's target, not `/a/tmp`); a value that does not resolve is skipped with its
+reason, and the record's `callerTmpDir` keeps the raw value while `tmpDir` names the directory
+made. A candidate does not fit when a `.git` (of any type) is at or above its parent, because the repository's own tests find a checkout by walking up from `TMPDIR` for a
 `.git` (a sandbox's stray `/tmp/.git` made them judge the wrong tree); or when its length plus the
 67 bytes the tests' sockets add below `TMPDIR` (the longest, `internal/manage`) is not under the
 Unix socket limit, 108 bytes on Linux and 104 on macOS. The name has a fixed width, so the fit is

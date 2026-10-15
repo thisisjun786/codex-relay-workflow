@@ -301,6 +301,62 @@ func TestLocal_the_1209_shape_is_refused_not_run(t *testing.T) {
 	localNoEntry(t, w, "t")
 }
 
+// CRW-1489 (PR ping-pong 2): the caller's TMPDIR is taken where the kernel resolves it, not cleaned lexically first: with link
+// leading to base/x/y, "base/link/../tmp" is base/x/tmp, so the step TMPDIR is made there and nothing in the lexical base/tmp.
+// The record keeps the raw value as callerTmpDir and the directory actually used as tmpDir. A TMPDIR that cannot be resolved
+// ("base/missing/../tmp", whose lexical form exists) is skipped with its reason, and the step runs below the work root.
+func TestLocal_a_callers_TMPDIR_is_taken_where_the_kernel_resolves_it(t *testing.T) {
+	base := t.TempDir()
+	physical := filepath.Join(base, "x", "tmp")
+	lexical := filepath.Join(base, "tmp")
+	for _, d := range []string{filepath.Join(base, "x", "y"), physical, lexical} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(base, "x", "y"), filepath.Join(base, "link")); err != nil {
+		t.Fatal(err)
+	}
+	wantPhysical, err := filepath.EvalSymlinks(physical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ name, raw string }{
+		{"through a link", base + "/link/../tmp"},
+		{"unresolvable", base + "/missing/../tmp"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			marker := filepath.Join(t.TempDir(), "where")
+			t.Setenv("TMPDIR", c.raw)
+			repo := newLocalFixture(t)
+			opts := localRunOptions(repo, localFixturePlan(localWhereStep(marker)), filepath.Join(t.TempDir(), "record.json"))
+			opts.gitCeilings = []string{base, repo.work}
+			made, _, err := localVerify(opts, "", io.Discard)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if made.Result != localPass {
+				t.Fatalf("the run is %q: %#v", made.Result, made.Jobs)
+			}
+			stepTmp, _ := localReadWhere(t, marker)
+			wantParent, prefix := wantPhysical, "ci"
+			if c.name == "unresolvable" {
+				if wantParent, err = filepath.EvalSymlinks(repo.work); err != nil {
+					t.Fatal(err)
+				}
+				prefix = "t"
+			}
+			if filepath.Dir(stepTmp) != wantParent || !localStepTmpName(prefix).MatchString(filepath.Base(stepTmp)) {
+				t.Errorf("the step's TMPDIR is %s, want %s<8 hex> directly below %s", stepTmp, prefix, wantParent)
+			}
+			localNoEntry(t, lexical, "ci")
+			if made.RunEnv == nil || made.RunEnv.CallerTmpDir != c.raw || made.RunEnv.TmpDir != stepTmp {
+				t.Errorf("the record's runEnv is %+v, want callerTmpDir %q and tmpDir %q", made.RunEnv, c.raw, stepTmp)
+			}
+		})
+	}
+}
+
 // CRW-1489: the step's TMPDIR is removed with the run, and kept and printed with --keep.
 func TestLocal_the_steps_TMPDIR_is_removed_after_the_run(t *testing.T) {
 	for _, keep := range []bool{false, true} {

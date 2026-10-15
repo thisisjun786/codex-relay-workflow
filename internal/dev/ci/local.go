@@ -831,8 +831,12 @@ func localGitAbove(dir string, ceilings []string) string {
 // repository by walking up from TMPDIR for a .git, so a TMPDIR below a stray .git (a sandbox's /tmp/.git)
 // made them judge the wrong tree; and the tests bind sockets up to 67 bytes below TMPDIR. The first
 // candidate that fits both is made: a, ci<8 hex> directly below the caller's TMPDIR, which keeps the
-// caller's disk; then b, t<8 hex> directly below the work root. A candidate that does not fit is never
-// made. When neither fits, the run is refused (temp_dir_unusable), naming each candidate's reason.
+// caller's disk; then b, t<8 hex> directly below the work root. A candidate's parent is its physical
+// path, resolved from the value as written (filepath.EvalSymlinks, no lexical Clean first), and the
+// .git check, the length and the step directory are of that path; a parent that does not resolve is
+// skipped with its reason. A candidate that does not fit is never made. When neither fits, the run is
+// refused (temp_dir_unusable), naming each candidate's reason. The record's callerTmpDir stays the raw
+// TMPDIR value and its tmpDir is the directory made.
 func localStepTempDir(opts localOptions, workRoot string) (string, error) {
 	limit := opts.socketLimit
 	if limit == 0 {
@@ -843,9 +847,16 @@ func localStepTempDir(opts localOptions, workRoot string) (string, error) {
 		{"the caller's TMPDIR", localTempDir(), "ci"},
 		{"the work root", workRoot, "t"},
 	} {
-		parent := filepath.Clean(candidate.parent)
-		if !filepath.IsAbs(parent) {
+		if !filepath.IsAbs(candidate.parent) {
 			reasons = append(reasons, fmt.Sprintf("%s %q is not absolute", candidate.name, candidate.parent))
+			continue
+		}
+		// The parent is taken at its physical place, resolved from the value as written with the kernel's semantics: a lexical
+		// Clean first would read "/a/link/../tmp" as /a/tmp, while the kernel follows link before the "..". The .git check, the
+		// length and the step directory are all of this one path.
+		parent, err := filepath.EvalSymlinks(candidate.parent)
+		if err != nil {
+			reasons = append(reasons, fmt.Sprintf("%s %q does not resolve: %v", candidate.name, candidate.parent, err))
 			continue
 		}
 		// Both checks are made before anything is created, and a refused candidate names every reason.
