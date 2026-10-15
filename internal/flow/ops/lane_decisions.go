@@ -213,8 +213,9 @@ type ExploreContext struct {
 	Tier      string `json:"tier"`
 	// Regions are the edit regions the asker declared.
 	Regions []string `json:"regions"`
-	// Head is the committed head an evidence question is about (SP-EXPL-3): the explorer reads its worktree at that commit, and an
-	// answer about one head is not an answer about another.
+	// Head is the committed head the question is about: the head the reviewer judged for an evidence question (SP-EXPL-3), and the
+	// head a re-plan pins for the open questions of its DESIGN (CRW-1458; the first DESIGN has none). The explorer reads its worktree
+	// at that commit, and an explorer's answer about one head is not an answer about another.
 	Head string `json:"head"`
 }
 
@@ -265,11 +266,18 @@ func normalizeQuestion(q string) string { return strings.ToLower(strings.Join(st
 // QuestionDigest is the digest that says two questions are the same question.
 func QuestionDigest(q string) string { return textDigest(normalizeQuestion(q)) }
 
+// headDigest is the digest of a question about a head: an explorer's answer to it reads that head and holds at no other.
+func headDigest(q, head string) string { return textDigest(normalizeQuestion(q) + "\x00" + head) }
+
 // exploreRouteOp is crw.exploreRoute(kind, context, questions): it decides what happens to each question of an asker, applies the
 // thresholds of the signals and records every decision:
 //
 //   - a question whose digest was answered in the run reuses the answer (SP-INL-2), and a reuse names the route its answer came
-//     from (Origin);
+//     from (Origin). The digest of a question is made of its text (QuestionDigest), and of its text and the head when the context
+//     names one, for an evidence question and for an open question that goes to an explorer (headDigest): an explorer's answer
+//     reads one head, so a re-plan at another head asks it again. An open question that goes to the orchestrator (asked_in_run,
+//     answered_by_orchestrator, out_of_authority, explorer_cap) keeps the digest of its text, since the owner's answer reads no
+//     head: a question the run asked is not asked again at another head, and its answer holds at every head;
 //   - a research question inside the asker's declared edit regions, or that needs at most InlineFiles files, is answered by the
 //     asker (SP-INL-1). An open question of a DESIGN never is: the architect's turn that asked it has ended;
 //   - an open question the run asked of the orchestrator already (its digest in the evidence of a design_question escalation row)
@@ -392,13 +400,18 @@ func (o *exploreRouteOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 	plan := RoutePlan{Kind: kind, Routes: []Route{}}
 	first := map[string]int{} // the first question of this call by digest: a repeat of it is the same question
 	for i, q := range qs {
-		rt := Route{Index: i, ID: q.ID, Question: q.Question, Digest: QuestionDigest(q.Question), Rule: rule, Files: q.FilesNeeded, SameAs: -1, Scope: q.Scope}
+		// text is the digest of the question's text, the one an ask of the orchestrator names; rt.Digest is the one an explorer's
+		// answer is kept under, which names the head when there is one
+		text := QuestionDigest(q.Question)
+		rt := Route{Index: i, ID: q.ID, Question: q.Question, Digest: text, Rule: rule, Files: q.FilesNeeded, SameAs: -1, Scope: q.Scope}
 		if kind == ExploreOpen {
 			rt.Authority = AuthorityScope(q.Scope)
 		}
-		if kind == ExploreEvidence && ec.Head != "" {
-			rt.Digest = textDigest(normalizeQuestion(q.Question) + "\x00" + ec.Head)
+		if (kind == ExploreEvidence || kind == ExploreOpen) && ec.Head != "" {
+			rt.Digest = headDigest(q.Question, ec.Head)
 		}
+		// key finds a repeat in the round: the questions of a call share one head, so the same key is the same question
+		key := rt.Digest
 		if rt.Files == nil {
 			rt.Files = []string{}
 		}
@@ -407,9 +420,12 @@ func (o *exploreRouteOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 		case answered[rt.Digest] != nil:
 			a := answered[rt.Digest]
 			rt.Route, rt.Rule, rt.Answer, rt.Reason, rt.Origin = RouteReuse, RuleInl2, a.answer, "answered_in_run", a.origin
-		case first[rt.Digest] != 0:
-			rt.Route, rt.Rule, rt.Reason, rt.SameAs = RouteReuse, RuleInl2, "same_question_in_round", first[rt.Digest]-1
-			if prev := plan.Routes[rt.SameAs]; prev.Route == RouteReuse {
+		case first[key] != 0:
+			rt.Route, rt.Rule, rt.Reason, rt.SameAs = RouteReuse, RuleInl2, "same_question_in_round", first[key]-1
+			// the repeat is the question it repeats, under that question's digest
+			prev := plan.Routes[rt.SameAs]
+			rt.Digest = prev.Digest
+			if prev.Route == RouteReuse {
 				rt.Origin = prev.Origin
 			} else {
 				rt.Origin = prev.Route
@@ -420,15 +436,18 @@ func (o *exploreRouteOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 			// a background question is not an open question: it is not inline, has no authority notation, is never asked of the
 			// orchestrator and neither reads nor moves the open questions' cap (spawnedMilestone)
 			rt.Route, rt.Reason = RouteSpawn, "spawned_background"
-		case kind == ExploreOpen && len(asked[rt.Digest]) > 0:
-			if a, ok := orchestratorAnswer(r, asked[rt.Digest], rt.Digest); ok {
+		case kind == ExploreOpen && len(asked[text]) > 0:
+			rt.Digest = text
+			if a, ok := orchestratorAnswer(r, asked[text], text); ok {
 				rt.Route, rt.Rule, rt.Answer, rt.Reason, rt.Origin = RouteReuse, RuleInl2, a, "answered_by_orchestrator", RouteOrchestrator
 			} else {
 				rt.Route, rt.Reason = RouteOrchestrator, "asked_in_run"
 			}
 		case rt.Authority != "":
+			rt.Digest = text
 			rt.Route, rt.Reason = RouteOrchestrator, "out_of_authority"
 		case kind == ExploreOpen && spawnedMilestone >= ExplorersPerMilestone:
+			rt.Digest = text
 			rt.Route, rt.Reason = RouteOrchestrator, "explorer_cap"
 		case kind == ExploreResearch && spawnedTier >= ResearchPerTier:
 			rt.Route, rt.Reason = RouteEscalate, "research_cap"
@@ -445,8 +464,8 @@ func (o *exploreRouteOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 				spawnedNode++
 			}
 		}
-		if first[rt.Digest] == 0 {
-			first[rt.Digest] = i + 1
+		if first[key] == 0 {
+			first[key] = i + 1
 		}
 		plan.Routes = append(plan.Routes, rt)
 		decision := rt.Route
@@ -473,6 +492,8 @@ func (o *exploreRouteOp) Run(ctx context.Context, req engine.OpRequest) (engine.
 	raised := map[string]bool{}
 	for _, rt := range plan.Routes {
 		raised[rt.Digest] = true
+		// an open question asked at a head is raised under the digest of its text as well, the one an ask names
+		raised[QuestionDigest(rt.Question)] = true
 		// the optional origin is written only with a value (CRW-1381)
 		entry := map[string]any{"digest": rt.Digest, "route": rt.Route, "reason": rt.Reason, "scope_notation": rt.Authority}
 		if rt.Origin != "" {

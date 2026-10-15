@@ -316,7 +316,10 @@ one it was before CRW-1466 when none is given); the open questions of the DESIGN
 explorers (SP-EXPL-1), and the ones whose scope carries an out-of-authority notation, or beyond the explorer cap, to the owner thread
 thread in a non-blocking `design_question` escalation: an authority question in the audit round that routed it, approved or not, a
 question beyond the cap once the DESIGN is approved; the escalation's evidence names the question digests it asked, so a later round
-or a re-plan does not ask one again on its own (`asked_in_run`); because only the latest design ask of a run is current for `crw flow answer`,
+or a re-plan does not ask one again on its own (`asked_in_run`); an explorer's answer is reused for the same question at the same head only: the explorers
+of a re-plan read the head it pins, and the digest of an open question asked there is made of its text and that head, so a question of the first DESIGN,
+or of a re-plan at another head, goes to an explorer again and counts against the cap, while a question that goes to the owner thread keeps the digest
+of its text, so it is asked once in the run and its answer holds at every head; because only the latest design ask of a run is current for `crw flow answer`,
 an ask carries the questions of the DESIGN the run asked already that no answer has reached, and the questions the run asked that no answer has reached and the
 DESIGN no longer raises (`carried` of `crw.exploreRoute`, CRW-1381), and an answer of the owner thread applied to it is the answer of the question from the
 next round on (`answered_by_orchestrator`): the part `crw flow answer --answer-for DIGEST=TEXT` gave the question when the ask joins several,
@@ -337,7 +340,9 @@ the critic (`agentType: 'critic'`, a role of its own, of another model family th
 the `AUDIT` spawn decision names it) audits the DESIGN (`DESIGN_AUDIT`, recorded by `crw.designAudit`, which judges the independence by the model
 families of the two calls' pairs, never by the role), and `needs_changes` returns the DESIGN to the architect on its own thread: the design-fix packet
 names each finding by its id `r<round>.<index>` (the index 1-based in the audit's findings) and the architect answers the DESIGN with `dispositions`,
-one for each id, `folded` or `rebutted` with its reason (null in the first DESIGN, in a design-answers answer and in a re-plan answer); from the second round on the critic's packet
+one for each id, `folded` or `rebutted` with its reason (null in the first DESIGN, in a design-answers answer and in a re-plan answer; the schema
+requires the member of every answer, and a DESIGN a run recorded before the member existed is read with it null wherever the run reads a recorded
+DESIGN: the audit's candidate, the ledger, the release of a node, `crw.issuePlan` and the final gate's decisions); from the second round on the critic's packet
 carries `PRIOR FINDINGS`, every finding of the earlier rounds with what the fix answer reported of it (`folded` or `rebutted` and the reason, `not reported`,
 or `null (no dispositions reported)`), and the critic raises a rebuttal it does not accept again under the same ref (CRW-1452); only an approved DESIGN becomes revision
 `r0` of the design ledger (`crw.designLedger`); `crw.dag` runs one lane for each node and the signal path of the milestone

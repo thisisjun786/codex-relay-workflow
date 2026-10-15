@@ -790,6 +790,91 @@ func TestExploreRoutingRemembersOrchestratorAsks(t *testing.T) {
 	}
 }
 
+// A re-plan pins a head (CRW-1458), and an explorer's answer reads that head: an open question asked again at a re-plan's head reuses
+// only an answer an explorer gave at that head, so a repeat of a question of the first DESIGN (no head) or of a re-plan at another
+// head spawns an explorer again; two asks of it in one round are one question. What goes to the orchestrator keeps the digest of the
+// text alone, since the owner's answer reads no head: a question the run asked is asked_in_run and, once answered, reuses the answer
+// at any head, and a question beyond the cap is asked under that digest. The explorers a re-plan spawns count against the cap of the
+// milestone. A question with no head keeps the digest and the routes it had.
+func TestExploreRoutingReplanHeadIsPartOfTheAnswer(t *testing.T) {
+	w := newWorld(t)
+	docs := Question{ID: "docs", Question: "where does the flag live?", Scope: "repo", FilesNeeded: []string{"a.go"}}
+	again := docs
+	again.ID = "again"
+	policy := Question{ID: "policy", Question: "does the project ship it in 1.0?", Scope: "authority:policy", FilesNeeded: []string{}}
+	base := QuestionDigest(docs.Question)
+	at := func(head string) ExploreContext { return ExploreContext{Milestone: "M", Head: head} }
+	route := func(ec ExploreContext, qs ...Question) RoutePlan {
+		t.Helper()
+		var plan RoutePlan
+		_ = json.Unmarshal(w.must("exploreRoute", ExploreOpen, ec, qs), &plan)
+		return plan
+	}
+	record := func(ec ExploreContext, rt Route, answer string) {
+		t.Helper()
+		w.must("exploreRecord", ExploreOpen, ec, []Answer{{Digest: rt.Digest, Question: rt.Question, Answer: answer, Route: RouteSpawn}})
+	}
+
+	// the first DESIGN: no head, the digest of the text
+	plan := route(ExploreContext{Milestone: "M"}, docs, policy)
+	if rt := plan.Routes[0]; rt.Route != RouteSpawn || rt.Digest != base {
+		t.Fatalf("the first DESIGN's question: %+v", rt)
+	}
+	record(ExploreContext{Milestone: "M"}, plan.Routes[0], "a.go at the base")
+	esc := w.must("escalate", nil, EscalateInfo{Reason: "design_question", Detail: policy.Question, Ask: "design", Evidence: map[string]any{"questions": []string{QuestionDigest(policy.Question)}}})
+	var asked EscalateOutcome
+	_ = json.Unmarshal(esc, &asked)
+
+	// the re-plan at h1: the question is asked again of an explorer, under a digest of the text and the head; its repeat in the round
+	// is the same question; the asked question keeps its digest and is not asked again, and nothing is carried
+	plan = route(at("h1"), docs, again, policy)
+	h1 := plan.Routes[0].Digest
+	if rt := plan.Routes[0]; rt.Route != RouteSpawn || h1 == base {
+		t.Errorf("the re-plan at h1 reused the answer of the first DESIGN: %+v", rt)
+	}
+	if rt := plan.Routes[1]; rt.Route != RouteReuse || rt.Reason != "same_question_in_round" || rt.SameAs != 0 || rt.Digest != h1 {
+		t.Errorf("the repeat in the round: %+v", rt)
+	}
+	if rt := plan.Routes[2]; rt.Route != RouteOrchestrator || rt.Reason != "asked_in_run" || rt.Digest != QuestionDigest(policy.Question) {
+		t.Errorf("the asked question at h1: %+v", rt)
+	}
+	if len(plan.Carried) != 0 {
+		t.Errorf("carried %+v: the asked question is raised again under its own digest", plan.Carried)
+	}
+	record(at("h1"), plan.Routes[0], "a.go and b.go at h1")
+
+	// the next round at h1 reuses the answer made at h1; a re-plan at h2 asks again; the first DESIGN's head keeps its answer
+	if rt := route(at("h1"), docs).Routes[0]; rt.Route != RouteReuse || rt.Answer != "a.go and b.go at h1" || rt.Digest != h1 {
+		t.Errorf("the next round at h1: %+v", rt)
+	}
+	if rt := route(at("h2"), docs).Routes[0]; rt.Route != RouteSpawn || rt.Digest == h1 || rt.Digest == base {
+		t.Errorf("the re-plan at h2: %+v", rt)
+	}
+	if rt := route(ExploreContext{Milestone: "M"}, docs).Routes[0]; rt.Route != RouteReuse || rt.Answer != "a.go at the base" || rt.Digest != base {
+		t.Errorf("a question with no head: %+v", rt)
+	}
+
+	// the orchestrator's answer reads no head: once applied it is the answer at any head
+	w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindFlow, Event: EvDecisionApplied, Data: map[string]any{"ask": asked.ID, "node": "", "decision": map[string]any{"text": "1.0 ships without it"}}})
+	if rt := route(at("h3"), policy).Routes[0]; rt.Route != RouteReuse || rt.Reason != "answered_by_orchestrator" || rt.Answer != "1.0 ships without it" || rt.Digest != QuestionDigest(policy.Question) {
+		t.Errorf("the answered question at h3: %+v", rt)
+	}
+
+	// three explorers so far (the base, h1, h2): three more fill the cap of six, and the next question goes to the orchestrator
+	// under the digest of its text
+	plan = route(at("h3"), Question{Question: "q4", Scope: "repo"}, Question{Question: "q5", Scope: "repo"}, Question{Question: "q6", Scope: "repo"}, Question{Question: "q7", Scope: "repo"})
+	var got []string
+	for _, rt := range plan.Routes {
+		got = append(got, rt.Route+"/"+rt.Reason)
+	}
+	if !slices.Equal(got, []string{"spawn/", "spawn/", "spawn/", "orchestrator/explorer_cap"}) {
+		t.Errorf("routes at the cap: %v", got)
+	}
+	if rt := plan.Routes[3]; rt.Digest != QuestionDigest("q7") {
+		t.Errorf("a question beyond the cap at a head is asked under %s, want the digest of its text %s", rt.Digest, QuestionDigest("q7"))
+	}
+}
+
 // AuthorityScope reads the notation of an out-of-authority kind at the start of a scope, case-insensitively and only as a whole
 // token; anything else is no notation.
 func TestAuthorityScope(t *testing.T) {

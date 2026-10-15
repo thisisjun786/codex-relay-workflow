@@ -367,7 +367,9 @@ func TestExplorerSignalAndInlineThresholds(t *testing.T) {
 // whose turn has ended; a question whose scope carries the notation of an out-of-authority kind goes to no explorer and is asked
 // of the orchestrator in the design_question escalation, with its scope, while the milestone goes on to its close; a question
 // with an unknown notation goes to an explorer. The design audit packet shows each question's route and what it got, and the
-// audit of a re-plan routes its open questions the same way, reusing the answer an explorer gave in the run.
+// audit of a re-plan routes its open questions the same way: an explorer's answer reads the head it was given, so the re-plan, which
+// pins the integrated head, asks its explorer questions again at that head, while the authority question it raises again is not
+// asked again.
 func TestOpenQuestionRoutesThroughDesignAudit(t *testing.T) {
 	l := NewLab(t, twoNodes()...)
 	d := l.designFor()
@@ -393,11 +395,21 @@ func TestOpenQuestionRoutesThroughDesignAudit(t *testing.T) {
 	if got.State != "replanned" {
 		t.Fatalf("%+v; calls %v", got, l.Labels())
 	}
-	// two explorers, both before the first audit: the small question and the one with an unknown notation; none for the authority
-	// question, and none in the re-plan, whose questions were answered in the run or go to the orchestrator again
+	// four explorers: before the first audit the small question and the one with an unknown notation, and the same two again in
+	// the re-plan, at the head it pins (an answer about the first DESIGN's checkout is no answer about it); none for the authority
+	// question, which goes to the orchestrator again
 	explorers := l.CallsOf("explorer")
-	if len(explorers) != 2 {
-		t.Errorf("%d explorer calls, want 2: %v", len(explorers), l.Labels())
+	if len(explorers) != 4 {
+		t.Errorf("%d explorer calls, want 4: %v", len(explorers), l.Labels())
+	}
+	atHead := 0
+	for _, ev := range l.Events() {
+		if ev.Kind == engine.KindCall && ev.Op == "agent" && ev.Event == engine.EvPrepared && str(ev.Data, "role") == "explorer" && str(ev.Data, "head") != "" {
+			atHead++
+		}
+	}
+	if atHead != 2 {
+		t.Errorf("%d explorers at a pinned head, want the re-plan's two", atHead)
 	}
 	for _, c := range explorers {
 		if text := textOfCall(l, c.ID); strings.Contains(text, "ship the flag") {
@@ -420,7 +432,7 @@ func TestOpenQuestionRoutesThroughDesignAudit(t *testing.T) {
 	for _, r := range spawnRowsOf(l, ops.RuleInl2, "reuse") {
 		counts[key{r.Decision, r.Reason}]++
 	}
-	if want := map[key]int{{"spawn", ""}: 2, {"orchestrator", "out_of_authority"}: 1, {"orchestrator", "asked_in_run"}: 1, {"reuse", "answered_in_run"}: 2}; !reflect.DeepEqual(counts, want) {
+	if want := map[key]int{{"spawn", ""}: 4, {"orchestrator", "out_of_authority"}: 1, {"orchestrator", "asked_in_run"}: 1}; !reflect.DeepEqual(counts, want) {
 		t.Errorf("the routes of the open questions %v, want %v (the first audit and the re-plan, which asks nothing again, CRW-1366)", counts, want)
 	}
 	// each audit packet shows every question with its route and what it got
@@ -441,9 +453,6 @@ func TestOpenQuestionRoutesThroughDesignAudit(t *testing.T) {
 			}
 		}
 		explorerRoute := "route: an explorer answered it (call "
-		if label != "design-audit:r1" {
-			explorerRoute = "route: reused: the answer an earlier question of the run got"
-		}
 		for _, want := range []string{
 			"small: is the flag documented?\n  " + explorerRoute, "answer: yes, README.md says so",
 			"odd: who pays for the runner?\n  " + explorerRoute, "answer: the repository does not say",

@@ -139,8 +139,8 @@ func TestDesignAuditCarriesPriorFindingsAndDispositionsFromRoundTwo(t *testing.T
 // signal, as the re-plan's architect turn is. Three issues in one milestone, C-1 then A-1 then B-1: C-1 lands first, so the integration
 // tip the signal reads is not the head the DESIGN ran at. A-1's build and fix RECEIPTs each report a plan mismatch (its first review
 // asks for a fix with one P2 defect), and the second makes the milestone re-plan while B-1 has not started. The re-plan's DESIGN raises
-// one open question the first did not, so an explorer runs in its audit round. The re-plan's audit and explorer calls pin the signal's
-// tip, and the critic's packet names the head, the range from the DESIGN's base and the heads landed (C-1); the first DESIGN's audit
+// the first DESIGN's open question again and one the first did not; an explorer's answer reads one head, so both go to explorers in its
+// audit round. The re-plan's audit and explorer calls pin the signal's tip, and the critic's packet names the head, the range from the DESIGN's base and the heads landed (C-1); the first DESIGN's audit
 // and explorer calls pin no head and the critic's packet has no HEAD line; B-1 is released after the re-plan.
 func TestReplanCriticAndExplorerCallsCarryTheSignalHead(t *testing.T) {
 	l := newLaneLab(t, labIssue{Key: "C-1", Milestone: "M1"}, labIssue{Key: "A-1", Milestone: "M1", After: []string{"C-1"}}, labIssue{Key: "B-1", Milestone: "M1", After: []string{"A-1"}})
@@ -206,8 +206,8 @@ func TestReplanCriticAndExplorerCallsCarryTheSignalHead(t *testing.T) {
 			t.Errorf("the re-plan's audit call %s pins head %q, want %s", label, head, tip)
 		}
 	}
-	if len(replanExplore) != 1 || heads[replanExplore[0]] != tip {
-		t.Errorf("the re-plan's explorer calls %v (want one, at head %s); heads %v", replanExplore, tip, heads)
+	if len(replanExplore) != 2 || heads[replanExplore[0]] != tip || heads[replanExplore[1]] != tip {
+		t.Errorf("the re-plan's explorer calls %v (want two, at head %s); heads %v", replanExplore, tip, heads)
 	}
 	if len(firstExplore) != 1 || heads[firstExplore[0]] != "" || heads["design-audit:r1"] != "" {
 		t.Errorf("the first DESIGN's explorer calls %v and audit pin heads %v, want one explorer and no head", firstExplore, heads)
