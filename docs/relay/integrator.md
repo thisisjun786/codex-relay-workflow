@@ -86,7 +86,7 @@ Run files, in `runs_dir`: `<tag>.log`, `<tag>.out` and `<tag>.summary.json` (`ta
 
 | Status | Result | Meaning |
 |---|---|---|
-| 0 | `pushed`, `idle`, `stopped` | the merged heads were pushed, or there was nothing to do |
+| 0 | `pushed`, `landed-before-record`, `idle`, `stopped` | the merged heads were pushed, a pull request whose head was already in the branch got its landing record after the fact, or there was nothing to do |
 | 2 | `locked`, `error`, `cancelled` | usage, configuration, fetch or lock failure, a gate that could not run, the worktree already exists, a re-derived version line that could not be committed, a worktree not clean before the verification, or a termination signal; no head was judged by it |
 | 3 | `verification-failed(rc=N)` | the merged tree failed verification; nothing was pushed |
 | 4 | `dev-moved:<sha>`, `push-failed`, `head-moved:<sha>`, `pull-request-changed` | the branch moved during the run or the push was refused; for a pull request, its head moved, or it was closed, retargeted or could not be read again, between the merge and the move of the branch; nothing was pushed and the entry stays pending |
@@ -122,11 +122,14 @@ the verification-record of the merged tree; the review is a step of the queue th
   push, or a pull request GitHub shows merged after the branch reached its head) gets one record after the fact, result
   `landed_before_record`: `dev_after` is the branch's first-parent commit that brought the head in, the verification and the review are
   taken from the files of the run that pushed it (`<tag>.summary.json`, the verification-record, `<tag>.review.json`) and stated as not
-  recorded when they are gone; its comment is posted once and the file moves to `done/`. Otherwise: merged moves the file to `done/`;
+  recorded when they are gone; its comment is posted once and the file moves to `done/`. That recovery is the pass: its result is
+  `landed-before-record` (status 0, the head is in the branch and nothing is wrong), the report's `pull_request_landing` is the recovered record, there
+  is no summary (no run ran), and the pass ends there, so the pull requests and issue heads behind it wait for the next pass. Otherwise: merged moves the file to `done/`;
   closed, or a head that is no longer the one enqueued (the project session landed more and pushed before the pass), to `conflict/`
   (enqueue it again); toward another branch, from a fork, or from a repository GitHub no longer names, to `blocked/`. A pull request GitHub
   does not answer, or a fetch that fails, is no verdict: it stays in `pending/`, the report lists it under `held`, and the pass goes on with
-  the issue heads (status 2 when there are none).
+  the pull requests and issue heads behind it. Status 2 (`error`) is for a pass that did nothing else; a pass that landed work (a run, or a
+  recovered landing) keeps that result and its status, with `held` still in the report.
 - The run merges the head with `merge --no-ff -m "Merge pull request OWNER/NAME#N (<branch>) at <head8> into <branch>"` and verifies the
   merged tree as step 4 and 5 above. Only after a verification that passed does `review_command` run, in the worktree, on that tree:
   `{pr}`, `{pr_number}`, `{head}` (the pull request's head), `{merged}` (the verified commit), `{base}` (the branch before), `{verdict}`
