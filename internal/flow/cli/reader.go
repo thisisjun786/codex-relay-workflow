@@ -88,7 +88,16 @@ func (r *Reader) Records(ctx context.Context) ([]RunRecord, error) {
 	return out, rows.Err()
 }
 
+// live says whether a run process holds the run, and its pid (0 when its record cannot be read). A writer's hold (audit, answer,
+// cancel, recover: runHolder) is no process of the run, so it reads (false, 0), as a free lock does (CRW-1495 item 6).
 func (r *Reader) live(run string) (bool, int) {
+	live, pid, _ := runHolder(r.State, run)
+	return live, pid
+}
+
+// anyHolder says whether any holder, a writer too, holds the run lock, and its pid: the commit barrier of Tail, where a follower
+// must not stop before a writer's row is stored.
+func (r *Reader) anyHolder(run string) (bool, int) {
 	if !LockHeld(r.State, run) {
 		return false, 0
 	}
@@ -194,8 +203,9 @@ func (r *Reader) Tail(ctx context.Context, run string, after, limit int, wait ti
 			}
 		}
 		// the lock is read before the snapshot: a holder commits its last row before it lets go, so a run seen without a holder has
-		// every row of it in the snapshot that follows
-		live, pid := r.live(run)
+		// every row of it in the snapshot that follows. Any holder counts here, a writer too (anyHolder): a follower that stopped on a
+		// writer's hold would miss the row the writer is about to store
+		live, pid := r.anyHolder(run)
 		read, err := journal.ReadPage(ctx, r.St, run, after, limit, true)
 		if err != nil {
 			return Page{}, err

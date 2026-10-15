@@ -28,10 +28,22 @@ saw. A row is never updated.
   still buffered, so the error is read again after it: a run whose last write failed ends with the journal's error, not as completed
   or paused.
 - A process ends the run with one KindRun end row. It is `finished` (`status`, `error_kind`, and `outcome` when a completed script
-  returned a milestone state, [script.md](script.md)) unless the operator paused the run (`crw flow pause`) and it would have ended
-  completed: then it is a `run/paused` row (`status` `paused`, `by`, `reason`) and no `finished` row, and no completion is told.
+  returned a milestone state, [script.md](script.md)) unless the operator paused the run (`crw flow pause`, `by` `operator`) or
+  an answer drained it (`crw flow answer` to a run a process holds, `by` `answer`) and it would have ended completed: then it is a
+  `run/paused` row (`status` `paused`, and the `by` and `reason` of the last such ask) and no `finished` row, and no completion is
+  told.
   A run no process holds whose last end row after its last `started` row is `run/paused` reads `paused`, not `dead`; its resume
   writes a new `started` row. A deadline, a token budget or a quota pause ends with `finished`.
+- A run no process holds is ended by `crw flow cancel` itself: under the run lock it appends one `finished` row (`status`
+  `script_error`, `error_kind` `cancelled`, `by` `operator`, `executions_closed`, `slots_returned`), and `dead: true` only when
+  the rows it reads under the lock show a `started` row with no end row after it (a run whose last end is `run/paused`, or a held
+  run, had no process because it ended, not because its process died). The member records what the cancel saw; readers derive
+  the state of a run from its rows and do not read the `dead` member. A cancel that finds the run over under the lock appends
+  nothing, so two cancels of one run write one end row, and still gives up the executions the ended run released and did not end
+  (their slots go back), as a cancel of a run it read over from the start does.
+- A binary before CRW-1487 knows no `run/paused` end: it reads a run that ended paused as `dead` (it resumes nothing; its pump
+  raises `run_dead` after `run_dead_seconds`, [reporting.md](reporting.md)). A rollback past CRW-1487 leaves such runs to be
+  resumed (`crw flow resume`) or cancelled by hand; a binary cannot be fixed after the fact.
 - `flow_runs` holds the identity of the run: the workflow, the digests of the script, its helpers and its arguments, and what the
   caller gives the journal (`Identity`: the plan and its revision, the actor task, the epoch nonce, the run it resumes). It is
   written with the first `started` row; a resumed run reuses it: a journal that is opened again (`journal.Open` with no `Identity`,

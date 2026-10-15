@@ -21,7 +21,8 @@ import (
 // arguments are given), under the run lock and held to the budget and the deadline of the run's spec (specLimits); without one
 // the workflow and the arguments are those the run started with (its spec), and --detach lets the process go on in the background.
 // The budget is the run's: a resume allows what the spec's budget leaves after the tokens the run's journal shows it spent, and
-// one with nothing left is refused (runBudget). A foreground resume pauses on SIGUSR1 (`crw flow pause`) as the run process does.
+// one with nothing left is refused (runBudget). A foreground resume pauses on SIGUSR1 (`crw flow pause`) and drains on SIGUSR2
+// (`crw flow answer`) as the run process does.
 func (c *command) resume(args []string) int {
 	fs, cm := c.flags()
 	repo := fs.String("repo", "", "the git repository the run's worktrees are made from")
@@ -51,27 +52,36 @@ func (c *command) resume(args []string) int {
 		if err != nil {
 			return c.fail("%v", err)
 		}
+		if ctl == nil {
+			ctl = &deadlineControl{Control: &engine.Control{}}
+		}
+		defer ctl.stop()
+		// `crw flow pause` (SIGUSR1) and `crw flow answer` (SIGUSR2) signal the lock holder: this process pauses or drains the run as
+		// the run process does (process.go). The signals are taken from before this process's holder record exists, so one sent the
+		// moment it holds the run is not lost (CRW-1492).
+		sigs := make(chan os.Signal, 4)
+		signal.Notify(sigs, syscall.SIGUSR1, syscall.SIGUSR2)
+		defer signal.Stop(sigs)
+		defer pauseOnSignal(sigs, ctl.Control)()
 		// a session run's process holds its process lock from before the run lock until after it, as the run process does
 		var process *processLock
 		if spec, err := ReadSpec(sel.Path, run); err == nil {
 			process = c.processLock(sel.Path, spec)
 			defer process.Release()
 		}
-		lock, err := TakeLock(sel.Path, run, "resume", c.now())
+		lock, err := takeLockPastWriters(sel.Path, run, "resume", c.now(), writerWait)
 		if err != nil {
 			return c.fail("%v", err)
 		}
 		defer lock.Release()
-		sweepProcessLocks(sel.Path, run, process.Token())
-		if ctl == nil {
-			ctl = &deadlineControl{Control: &engine.Control{}}
+		if afterResumeLock != nil {
+			afterResumeLock()
 		}
-		defer ctl.stop()
-		// `crw flow pause` signals the lock holder: this process pauses the run as the run process does (process.go)
-		sigs := make(chan os.Signal, 4)
-		signal.Notify(sigs, syscall.SIGUSR1)
-		defer signal.Stop(sigs)
-		defer pauseOnSignal(sigs, ctl.Control)()
+		sweepProcessLocks(sel.Path, run, process.Token())
+		// a cancelled run is over: it is refused under the run lock, before the engine appends anything (CRW-1495)
+		if code, refused := c.refuseCancelled(cm, run); refused {
+			return code
+		}
 		ctx := engine.WithControl(c.ctx, ctl.Control)
 		hold := c.resumeHold(sel.Path, run)
 		hold.Process = process.Token()
@@ -86,8 +96,16 @@ func (c *command) resume(args []string) int {
 		return c.fail("%v", err)
 	}
 	if *detach {
-		if LockHeld(sel.Path, run) {
-			return c.fail("%v %s", ErrRunLive, run)
+		// a run process that holds the run refuses the resume; a writer's hold (an audit, an answer, a cancel) is waited out, briefly
+		// (CRW-1495 item 6)
+		for deadline := time.Now().Add(writerWait); ; time.Sleep(20 * time.Millisecond) {
+			live, _, holder := runHolder(sel.Path, run)
+			if !live && holder == "" {
+				break
+			}
+			if live || !time.Now().Before(deadline) {
+				return c.fail("%v %s", ErrRunLive, run)
+			}
 		}
 		// a legacy issue-child run and a run with nothing left are refused here, before a process is started for it (resumeRefused)
 		r, err := c.reader(cm)
@@ -114,13 +132,19 @@ func (c *command) resume(args []string) int {
 		return 0
 	}
 	sigs := make(chan os.Signal, 4)
-	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP, syscall.SIGUSR1)
+	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP, syscall.SIGUSR1, syscall.SIGUSR2)
 	defer signal.Stop(sigs)
 	return c.execute(spec, sel.Path, true, sigs)
 }
 
-// pauseOnSignal pauses the run of ctl with the operator's reason for every SIGUSR1 sigs delivers, as the run process does, until
-// the returned stop is called.
+// afterResumeLock, when set (tests only), runs the moment a SCRIPT foreground resume holds the run lock.
+var afterResumeLock func()
+
+// drainReason is the reason of the drain a SIGUSR2 asks (`crw flow answer` on a run a process holds, CRW-1492).
+const drainReason = "crw flow answer: the run stops at its next boundary for an answer"
+
+// pauseOnSignal pauses the run of ctl with the operator's reason for every SIGUSR1 sigs delivers and drains it by answer for a
+// SIGUSR2, as the run process does, until the returned stop is called.
 func pauseOnSignal(sigs <-chan os.Signal, ctl *engine.Control) (stop func()) {
 	done := make(chan struct{})
 	go func() {
@@ -129,8 +153,11 @@ func pauseOnSignal(sigs <-chan os.Signal, ctl *engine.Control) (stop func()) {
 			case <-done:
 				return
 			case sig := <-sigs:
-				if sig == syscall.SIGUSR1 {
+				switch sig {
+				case syscall.SIGUSR1:
 					ctl.Pause("operator", "crw flow pause")
+				case syscall.SIGUSR2:
+					ctl.Drain("answer", drainReason)
 				}
 			}
 		}
@@ -242,9 +269,10 @@ func (c *command) legacyRefused(cm *common, state, run string) (int, bool) {
 }
 
 // resumeRefused is why the run of spec is not resumed, asked before a process is started for it (`crw flow resume RUN --detach`, the
-// resume of `crw flow answer` and of `crw flow next`): a legacy issue-child run (legacyRun, a *legacyRunError), and a run whose spec's
-// budget is spent (budgetLeft), both over one read of the run's journal. The run process judges both again under the run lock
-// (engine.Run, execute), so the refusal is the command's own answer and not a process that takes the run lock and ends at once.
+// resume of `crw flow answer` and of `crw flow next`): a legacy issue-child run (legacyRun, a *legacyRunError), a cancelled run
+// (cancelledEnd), and a run whose spec's budget is spent (budgetLeft), all over one read of the run's journal. The run process judges
+// them again under the run lock (engine.Run, execute), so the refusal is the command's own answer and not a process that takes the
+// run lock and ends at once.
 func resumeRefused(ctx context.Context, st *store.Store, spec Spec) error {
 	events, _, err := loadLeanJournal(ctx, st, spec.RunID)
 	if err != nil {
@@ -253,7 +281,40 @@ func resumeRefused(ctx context.Context, st *store.Store, spec Spec) error {
 	if why := legacyRun(events, spec.RunID, spec.Workflow); why != "" {
 		return &legacyRunError{why}
 	}
+	if err := cancelledEnd(events, spec.RunID); err != nil {
+		return err
+	}
 	return budgetLeft(spec, events)
+}
+
+// cancelledEnd refuses the resume of a cancelled run (CRW-1495): its end after its last start is a finished row with error_kind
+// cancelled (a `crw flow cancel` of a run no process held, or a run process that SIGTERM ended), so the run is over and is not taken
+// up again. A run/paused end and a held finish stay resumable. Every resume asks it before anything is appended: resumeRefused before
+// a process is started, the run process (execute) and the foreground `crw flow resume RUN SCRIPT` (refuseCancelled) under the run lock,
+// since a cancel may end the run between that first look and the lock.
+func cancelledEnd(events []engine.Event, run string) error {
+	if Summarize(RunRecord{RunID: run}, events, false, 0).State == StateCancelled {
+		return fmt.Errorf("run %s is cancelled: it is over and is not resumed (crw flow start runs the workflow again)", run)
+	}
+	return nil
+}
+
+// refuseCancelled reads the rows of run without their large payloads (the caller holds the run lock) and refuses a cancelled run
+// (cancelledEnd). A store that cannot be read is refused as well: nothing is resumed past a journal that was not read.
+func (c *command) refuseCancelled(cm *common, run string) (int, bool) {
+	r, err := c.reader(cm)
+	if err != nil {
+		return c.fail("%v", err), true
+	}
+	events, _, err := loadLeanJournal(c.ctx, r.St, run)
+	_ = r.Close()
+	if err != nil {
+		return c.fail("the journal of run %s cannot be read: %v", run, err), true
+	}
+	if err := cancelledEnd(events, run); err != nil {
+		return c.fail("%v", err), true
+	}
+	return 0, false
 }
 
 // resumeHold holds a `crw flow resume RUN SCRIPT` the way the run process holds its run (CRW-1348): a spec that names another

@@ -784,9 +784,12 @@ A backend that places calls adds to a call's rows: the `allocation` member of `p
 `restore_snapshot_mismatch`, `dispatch_unknown`) with the call and node they stopped.
 
 The run surface (`crw flow`, [flow.md](../../plugins/crw/skills/crw-canon/references/flow.md#the-crw-flow-command-table)) adds the rows it writes
-and reads. A pause asked for from outside the engine (`crw flow pause`, a run deadline) is one `run_paused` flow row (`by`, `reason`)
-and then the calls that would send end held `engine_paused`. A process the operator paused (`by` `operator`) that would end completed
-ends with a `run/paused` row (`status` `paused`, and the `by` and `reason` of the operator's last ask) instead of the `finished` row:
+and reads. A pause asked for from outside the engine (`crw flow pause`, a run deadline, the drain of `crw flow answer`) is one `run_paused` flow row (`by`, `reason`)
+and then the calls that would send end held `engine_paused`. The operator's pause (SIGUSR1) and a deadline interrupt the turns in flight;
+the drain of an answer to a run a process holds (SIGUSR2, `by` `answer`) lets them end and holds each call's next request, and is
+asked once (a second drain, or a drain after a pause, writes no row). A process the operator or an answer paused (`by` `operator` or
+`answer`) that would end completed ends with a `run/paused` row (`status` `paused`, and the `by` and `reason` of the last such ask)
+instead of the `finished` row:
 the engine's status is `paused`, the run process exits 0 and the hook tells no completion; a deadline, a token budget or a quota
 pause ends with the `finished` row as before. A pause asked once the process has decided its end (while it writes its end row or tells
 its completion) is refused and writes no row, so the `run_paused` rows and the end row agree. `crw flow show`, the digest and `crw flow
@@ -803,7 +806,9 @@ lane's result>, lanes}`) carries the outcome of that object, and its own state a
 a script), not a result, and is not read as one. The outcome state is read in this order: the `milestone` object without an `id`
 and with a non-empty string `state` is the wrapped result, and its state wins; a `milestone` member that carries an `id`, or that
 has no non-empty string `state`, is not read as one, and otherwise the top-level string `state` is the outcome state. A value whose
-own `state` is not a non-empty string has no outcome. It is told in place of
+own `state` is not a non-empty string has no outcome. The top-level string `state` of a completed script is its outcome
+whatever that state means to the script: the engine does not restrict its values (the repository's workflows return the
+milestone's state). It is told in place of
 `status=completed` (a script that wants `status=completed` returns no `state`). The completion notice and `crw flow ps` read the outcome from there ([reporting.md](reporting.md)). The state of a run (`running`, `paused`, `dead`, `held`, `completed`,
 `blocked`, `cancelled`, `failed`) is not a row: it is read from the run lock, the last `started`, `finished` and `run/paused` rows (a
 run no process holds whose last process ended with `run/paused` is `paused`, not `dead`), the calls' rows
@@ -1129,7 +1134,8 @@ run's directory `<state>/flow/<run>/` and none writes the journal, which only th
   started row when the process lock it names is held, or a newest row that names no process (one of a process of a crw before the
   process lock, which bound before it recorded its row) when no process lock of the run is held. A run whose holder has not recorded
   its started row yet (the newest row names a process lock that was let go, or names none while a process lock of the run is held:
-  the holder is coming up, or a command such as `crw flow answer` holds the run between two processes), or whose start holds its
+  the holder is coming up, or a command that writes a row holds the run lock for a moment: an answer holds it from the end of the
+  process it drained until its row is stored, and the resume it starts takes the lock after it), or whose start holds its
   start lock, is `starting`: next reads it again, up to 15 seconds whatever `--wait` says, never takes an earlier process's pins for
   the holder's and resumes nothing; still starting then, it answers `starting` with no spawn formats and a hint to ask again (at once
   without `--wait`, else when the state changes or `--wait` runs out). A holder that took its process lock less than 15 seconds ago,
