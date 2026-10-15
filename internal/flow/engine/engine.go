@@ -202,6 +202,8 @@ type Engine struct {
 	// knows of its waiting steps, to wake the owner thread (sessionwake.go).
 	sessR *sessionRouter
 	sessW *sessionWaker
+	// evOwner is the owner thread's cwd as the host reports it, read once for the flow evidence records (session_evidence.go)
+	evOwner evidenceOwner
 	// recovery is what reconcile decided for the calls of a resumed run; startSeq is the first row this run's calls write,
 	// and every row before it belongs to a process that no longer exists (or to the reconcile pass that read them).
 	recovery map[string]*Recovery

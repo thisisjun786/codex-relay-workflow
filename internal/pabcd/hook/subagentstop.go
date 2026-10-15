@@ -58,18 +58,23 @@ func subagentStopDecide(p SubagentStopPayload, item evidence.Payload, reserve bo
 	// CRW-1115 (port: fixed): a child dispatched with an evidence assignment (found from its own transcript, see evidence.JudgeAssignedReceipt)
 	// is judged by that contract alone, and a native-cwd receipt is no substitute for it. Only a child with no contract keeps the
 	// native root, as in the oracle.
-	if receipt, ok := evidence.ExtractReceiptPath(p.LastAssistantMessage); ok {
-		verdict := evidence.JudgeAssignedReceipt(p.Cwd, p.SessionID, p.AgentID, p.AgentTranscriptPath, p.LastAssistantMessage, receipt)
-		if verdict == evidence.AssignedAccepted || verdict == evidence.NoContract && evidence.HasValidReceipt(p.Cwd, receipt) {
-			// CRW-1106: the counter and the verdict of the tuple are changed only under its lock. Without it the child is released
-			// all the same, because its receipt is valid, and what a holder of the lock writes afterwards stays for the receipt
-			// carrying resolve (crw pabcd evidence resolve), which runs under the lock.
-			if reserve {
-				evidence.ClearAttempts(p.Cwd, p.SessionID, p.AgentID, p.TurnID)
-				evidence.ResolveTombstone(p.Cwd, p.SessionID, item)
-			}
-			return ""
+	//
+	// CRW-1482 (port: fixed, C9 of the 1209 field trial): a flow contract (the engine's record for an executor step of a session
+	// run) names one fixed receipt file, and the child's final message is the RECEIPT JSON alone. A stop without a marker line is
+	// therefore judged against the child's contract with no receipt of its own, and only an accepted flow receipt releases it: a
+	// native contract needs an explicit receipt and a child with no contract keeps the oracle's rule, so both fall through as before.
+	// The claim records the stop's turn and the receipt's digest for the acceptance path (evidence.AcceptedReceipt).
+	receipt, marked := evidence.ExtractReceiptPath(p.LastAssistantMessage)
+	verdict := evidence.JudgeAssignedReceiptTurn(p.Cwd, p.SessionID, p.AgentID, p.TurnID, p.AgentTranscriptPath, p.LastAssistantMessage, receipt)
+	if verdict == evidence.AssignedAccepted || marked && verdict == evidence.NoContract && evidence.HasValidReceipt(p.Cwd, receipt) {
+		// CRW-1106: the counter and the verdict of the tuple are changed only under its lock. Without it the child is released
+		// all the same, because its receipt is valid, and what a holder of the lock writes afterwards stays for the receipt
+		// carrying resolve (crw pabcd evidence resolve), which runs under the lock.
+		if reserve {
+			evidence.ClearAttempts(p.Cwd, p.SessionID, p.AgentID, p.TurnID)
+			evidence.ResolveTombstone(p.Cwd, p.SessionID, item)
 		}
+		return ""
 	}
 	counter := evidence.ReadCounter(p.Cwd, p.SessionID, p.AgentID, p.TurnID)
 	terminal := func(attempts int) string {
@@ -94,7 +99,13 @@ func subagentStopDecide(p SubagentStopPayload, item evidence.Payload, reserve bo
 	if !reserve || !evidence.WriteAttempts(p.Cwd, p.SessionID, p.AgentID, next, p.TurnID) {
 		return terminal(counter.Attempts)
 	}
-	return `{"decision":"block","reason":` + pyjson.Dumps(evidence.VerifierDirective(next), pyjson.Options{Unicode: true}) + `}`
+	// CRW-1482: a child with a flow contract is told the one absolute file its receipt goes to, which its spawn message and packet
+	// already named, and that no marker line is needed; every other child gets the oracle's directive.
+	directive := evidence.VerifierDirective(next)
+	if a, ok := evidence.FlowContractOf(p.Cwd, p.SessionID, p.AgentID, p.AgentTranscriptPath, p.LastAssistantMessage); ok {
+		directive = evidence.VerifierDirectiveFor(next, evidence.FlowReceiptPath(a))
+	}
+	return `{"decision":"block","reason":` + pyjson.Dumps(directive, pyjson.Options{Unicode: true}) + `}`
 }
 
 func subagentStopRecordInternalError(p SubagentStopPayload, item evidence.Payload) {

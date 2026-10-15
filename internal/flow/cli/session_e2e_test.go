@@ -94,6 +94,9 @@ func newSessionE2E(t *testing.T) *sessionE2E {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
 	}
+	// the run is started in the repository (ProductionWorld's OwnerCwd is the process cwd): the evidence records of its executor steps
+	// go under the test's repository, never under the source tree (CRW-1482)
+	t.Chdir(k.repo)
 	k.host = fakehost.Start(t)
 	k.host.Threads().ThreadIDs(func(n int) string { return fmt.Sprintf("01a20000-0000-7000-8000-%012x", n) })
 	k.host.Threads().OnTurn(func(fakehost.TurnRequest) fakehost.TurnPlan { return fakehost.TurnPlan{Message: "owner"} })
