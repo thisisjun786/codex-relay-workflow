@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/evidence"
 )
 
@@ -81,13 +83,43 @@ func (j *beforeRowJournal) Append(e Event) Event {
 
 func (j *beforeRowJournal) Err() error { return nil }
 
-// dieBefore is die for a process that dies before it stores the row before matches (its record directories frozen then).
-func (k *evidenceKit) dieBefore(t *testing.T, before func(Event) bool, body string) {
+// dieBefore is die for a process that dies before it stores the row before matches (the record directories of EvidenceCwd and of
+// every cwd in frozen made read-only then, so the dying process removes nothing anywhere).
+func (k *evidenceKit) dieBefore(t *testing.T, before func(Event) bool, body string, frozen ...string) {
 	t.Helper()
+	cwds := append([]string{k.evCwd}, frozen...)
 	sw := &deadSwitch{}
 	mem := NewMemoryJournal()
-	k.h.cfg.Journal = &beforeRowJournal{Journal: mem, sw: sw, before: before, onDie: func() { freezeRecords(t, k.evCwd, true) }}
+	k.h.cfg.Journal = &beforeRowJournal{Journal: mem, sw: sw, before: before, onDie: func() {
+		for _, cwd := range cwds {
+			freezeRecords(t, cwd, true)
+		}
+	}}
 	k.jr = mem
+	k.dieRun(t, sw, body, cwds)
+	k.h.cfg.Resume = &ResumeOptions{}
+}
+
+// resumeDyingAt resumes the run with body in a process that dies right after it stored the row stop matches (EvidenceCwd's record
+// directories frozen then).
+func (k *evidenceKit) resumeDyingAt(t *testing.T, stop func(Event) bool, body string) {
+	t.Helper()
+	sw := &deadSwitch{}
+	prior := k.jr
+	k.h.cfg.Journal = &dyingJournal{Journal: prior, sw: sw, stop: func(e Event) bool {
+		if stop(e) {
+			freezeRecords(t, k.evCwd, true)
+			return true
+		}
+		return false
+	}}
+	k.dieRun(t, sw, body, []string{k.evCwd})
+}
+
+// dieRun runs body in a process whose journal, bus and host die with sw, and readies the kit for the process that resumes the run
+// over the same journal.
+func (k *evidenceKit) dieRun(t *testing.T, sw *deadSwitch, body string, frozen []string) {
+	t.Helper()
 	k.cfg.Bus = &dyingBus{FileStepBus: k.bus, sw: sw}
 	k.cfg.Host = &dyingHost{fakeSessionHost: k.host, sw: sw}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -102,11 +134,23 @@ func (k *evidenceKit) dieBefore(t *testing.T, before func(Event) bool, body stri
 	if !sw.isDead() {
 		t.Fatalf("the process never died")
 	}
-	freezeRecords(t, k.evCwd, false)
-	k.h.cfg.Journal = mem
+	for _, cwd := range frozen {
+		freezeRecords(t, cwd, false)
+	}
+	k.h.cfg.Journal = k.jr
 	k.cfg.Bus, k.cfg.Host = k.bus, k.host
-	k.h.cfg.Resume = &ResumeOptions{}
-	k.h.cfg.SpentBefore = RunSpent(mem.Events(), k.h.cfg.RunID).Total
+	k.h.cfg.SpentBefore = RunSpent(k.jr.Events(), k.h.cfg.RunID).Total
+}
+
+// setOwnerCwd makes the fake host know the owner thread with cwd, or no owner thread when cwd is "".
+func (k *evidenceKit) setOwnerCwd(cwd string) {
+	k.host.mu.Lock()
+	defer k.host.mu.Unlock()
+	if cwd == "" {
+		delete(k.host.agents, sessionOwner)
+		return
+	}
+	k.host.agents[sessionOwner] = &fakeAgent{SessionAgent: SessionAgent{ThreadID: sessionOwner, Cwd: cwd, Status: "active"}}
 }
 
 func TestSessionEvidenceAttemptLifetime(t *testing.T) {
@@ -275,6 +319,51 @@ return [r.status, r.reason]`},
 		noOpenRecord(t, "after the open call was superseded", k.evCwd)
 	})
 
+	// DoubleFault: process 1 writes a step's record and dies before its step_published row (an orphan of generation 1); process 2
+	// resumes with another input and dies right after generation 2's prepared row, before it superseded generation 1; process 3
+	// resumes with a third input. The orphan of generation 1 is released all the same: every generation's next step is derived.
+	t.Run("DoubleFault", func(t *testing.T) {
+		k := newEvidenceKit(t, true, ".crw/\n")
+		isStep := func(e Event) bool { return e.Kind == KindCall && e.Event == EvStepPublished }
+		k.dieBefore(t, isStep, evidenceExe)
+		if got := evidenceRecords(t, k.evCwd); len(got) != 1 {
+			t.Fatalf("the orphan of generation 1: %v", got)
+		}
+		k.resumeDyingAt(t, func(e Event) bool { return e.Kind == KindCall && e.Event == EvPrepared }, `const r = await agent.call('build node n1 once more', { agentType: 'executor', label: 'exe', node: 'n1', schema: RECEIPT })
+return [r.status, r.reason]`)
+		if got := eventsOf(k.rowsOf("exe")); got != "prepared,prepared" {
+			t.Fatalf("rows after the two deaths %s", got)
+		}
+		k.setOrch(nil, nil)
+		res := k.h.run(`const r = await agent.call('build node n1 a third time', { agentType: 'executor', label: 'exe', node: 'n1', schema: RECEIPT })
+return [r.status, r.reason]`)
+		if got := value[[]any](t, res); got[0] != "completed" {
+			t.Fatalf("resumed %v: rows %s", got, eventsOf(k.rowsOf("exe")))
+		}
+		noOpenRecord(t, "after the third generation", k.evCwd)
+	})
+
+	// OwnerCopyOwnerGone: the owner thread runs in another cwd than EvidenceCwd, so a step's record is written under both before its
+	// step_published row, and the process dies before that row. The resumed process's host no longer knows the owner thread (its read
+	// fails), and the resume supersedes the call: both copies are released, the owner's cwd being named by the prepared row.
+	t.Run("OwnerCopyOwnerGone", func(t *testing.T) {
+		k := newEvidenceKit(t, true, ".crw/\n")
+		owner := t.TempDir()
+		k.setHostCwd(owner)
+		k.setOwnerCwd(owner)
+		k.dieBefore(t, func(e Event) bool { return e.Kind == KindCall && e.Event == EvStepPublished }, evidenceExe, owner)
+		if got := len(evidenceRecords(t, owner)) + len(evidenceRecords(t, k.evCwd)); got != 2 {
+			t.Fatalf("want the step's record under EvidenceCwd and the owner's cwd, got %d", got)
+		}
+		k.setOwnerCwd("")
+		k.setOrch(nil, nil)
+		if got := value[[]any](t, k.h.run(evidenceExploreOnly)); got[0] != "completed" {
+			t.Fatalf("resumed %v", got)
+		}
+		noOpenRecord(t, "EvidenceCwd", k.evCwd)
+		noOpenRecord(t, "the owner's cwd", owner)
+	})
+
 	// ResumedFromAnotherCwd: the run is resumed from another directory (a new EvidenceCwd) after its executor step was published and
 	// never taken. The record stays where it was written: a resumed run that supersedes the call or prepares it again releases it
 	// there, and one that goes on with the same step reuses it there and writes none under the new directory.
@@ -424,10 +513,9 @@ return [r.status, r.reason]`)
 	})
 }
 
-// The ids the release derives for a step no row names are bounded by the step a process could have been about to publish: the
-// newest generation's turns up to one past its largest k, at its largest attempt and the next one. A call with three generations
-// and five attempts in its newest one derives at most 2*(k+1) ids, the next step's among them, whatever its earlier generations and
-// attempts were.
+// The ids the release derives for a step no row names are bounded by the steps a process could have been about to publish: in each
+// generation, the turns up to one past its largest k, at its largest attempt and the next one. A call with three generations of
+// five attempts each derives at most 3*2*(k+1) ids, every generation's next step among them, whatever the attempts were.
 func TestSessionEvidenceDerivedIDsBounded(t *testing.T) {
 	e := &Engine{cfg: Config{Session: &SessionConfig{Owner: sessionOwner, EvidenceCwd: t.TempDir()}}, runID: "run-bounded"}
 	const call = "c_bounded"
@@ -437,8 +525,14 @@ func TestSessionEvidenceDerivedIDsBounded(t *testing.T) {
 		seq++
 		rows = append(rows, Event{Seq: seq, CallID: call, Event: ev, Data: data})
 	}
+	var keys []string
 	for gen := 0; gen < 3; gen++ {
 		row(EvPrepared, map[string]any{})
+		if gen == 0 {
+			keys = append(keys, call)
+		} else {
+			keys = append(keys, fmt.Sprintf("%s@%d", call, seq))
+		}
 		for a := 1; a <= 5; a++ {
 			for k := 1; k <= 2; k++ {
 				row(EvStepPublished, map[string]any{"k": k, "attempt": a, "action": StepSpawn})
@@ -447,11 +541,50 @@ func TestSessionEvidenceDerivedIDsBounded(t *testing.T) {
 		}
 	}
 	ids := e.evidenceDerivedIDs(rows)
-	if len(ids) > 2*(2+1) {
-		t.Fatalf("%d derived ids for a newest generation with k up to 2: want at most %d", len(ids), 2*(2+1))
+	if len(ids) > 3*2*(2+1) {
+		t.Fatalf("%d derived ids for three generations with k up to 2: want at most %d", len(ids), 3*2*(2+1))
 	}
-	next := evidence.FlowAssignmentID(sessionOwner, "run-bounded", fmt.Sprintf("%s@%d", call, rows[2*16].Seq), sessionOp(call+"/t1", 6))
-	if rows[2*16].Event != EvPrepared || !slices.Contains(ids, next) {
-		t.Fatalf("the next step's id %s is not among the derived %v", next, ids)
+	for _, key := range keys {
+		next := evidence.FlowAssignmentID(sessionOwner, "run-bounded", key, sessionOp(call+"/t1", 6))
+		if !slices.Contains(ids, next) {
+			t.Fatalf("the next step's id %s of generation %s is not among the derived %v", next, key, ids)
+		}
 	}
+}
+
+// realEvidenceDir writes nothing through a link: with .crw or .crw/evidence a symbolic link it fails with crwdir.ErrLink and the
+// link's target stays empty, and a .gitignore that is a link is left as it is (its target is not written).
+func TestRealEvidenceDirRefusesLinks(t *testing.T) {
+	for _, at := range []string{".crw", filepath.Join(".crw", "evidence")} {
+		t.Run(at, func(t *testing.T) {
+			p, target := t.TempDir(), t.TempDir()
+			if err := os.MkdirAll(filepath.Dir(filepath.Join(p, at)), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, filepath.Join(p, at)); err != nil {
+				t.Fatal(err)
+			}
+			if err := realEvidenceDir(p); !errors.Is(err, crwdir.ErrLink) {
+				t.Fatalf("realEvidenceDir with %s a link: %v, want ErrLink", at, err)
+			}
+			if entries, _ := os.ReadDir(target); len(entries) != 0 {
+				t.Fatalf("written through the link: %v", entries)
+			}
+		})
+	}
+	t.Run(".gitignore", func(t *testing.T) {
+		p, target := t.TempDir(), filepath.Join(t.TempDir(), "elsewhere")
+		if err := os.MkdirAll(filepath.Join(p, ".crw", "evidence"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, filepath.Join(p, ".crw", "evidence", ".gitignore")); err != nil {
+			t.Fatal(err)
+		}
+		if err := realEvidenceDir(p); err != nil {
+			t.Fatalf("realEvidenceDir with a .gitignore link: %v", err)
+		}
+		if _, err := os.Lstat(target); !os.IsNotExist(err) {
+			t.Fatalf("the link's target was written: %v", err)
+		}
+	})
 }

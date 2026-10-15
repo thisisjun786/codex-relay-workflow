@@ -12,6 +12,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/evidence"
+	"golang.org/x/sys/unix"
 )
 
 // The flow evidence assignment of a session call (CRW-1482, 1209 field trial defect C9). An executor subagent of a session run works
@@ -161,26 +162,54 @@ func (e *Engine) evidenceOwnerCwd(ctx context.Context) string {
 	return o.cwd
 }
 
-// realEvidenceDir makes <dir>/.crw/evidence, each step a real directory (a link is refused, crwdir.RequireDir), and its .gitignore
-// of "*" when there is none (crwdir.WriteExclusive: created without following a link, an existing file left as it is). That ignore
-// file ignores itself and every receipt, so neither reaches the pending tree (Snapshot) or a commit of P in a repository that does
-// not ignore .crw/. .crw itself gets no .gitignore here: the one the .crw tree's writers publish (crwdir.GitignoreText) is
-// tracked by its own rule.
+// realEvidenceDir makes <dir>/.crw/evidence, each step a real directory, and its .gitignore of "*" when there is none (an existing
+// entry, a link included, is left as it is). It walks from dir by descriptors: dir, .crw and .crw/evidence are each opened with
+// O_DIRECTORY|O_NOFOLLOW relative to the one before, and the .gitignore is created relative to the last with O_EXCL|O_NOFOLLOW, so a
+// link at any step, there before the call or swapped in while it runs, is refused (an error that wraps crwdir.ErrLink) and nothing
+// is created or written through it. The .gitignore ignores itself and every receipt, so neither reaches the pending tree
+// (Snapshot) or a commit of P in a repository that does not ignore .crw/. .crw itself gets no .gitignore here: the one the .crw
+// tree's writers publish (crwdir.GitignoreText) is tracked by its own rule.
 func realEvidenceDir(dir string) error {
+	const dirFlags = unix.O_RDONLY | unix.O_DIRECTORY | unix.O_NOFOLLOW | unix.O_CLOEXEC
+	fd, err := unix.Open(dir, dirFlags, 0)
+	if err != nil {
+		return openError(dir, err)
+	}
 	path := dir
 	for _, part := range []string{crwdir.DirName, evidence.Subdir} {
 		path = filepath.Join(path, part)
-		if err := os.Mkdir(path, 0o777); err != nil && !errors.Is(err, fs.ErrExist) {
-			return err
+		if err := unix.Mkdirat(fd, part, 0o777); err != nil && !errors.Is(err, unix.EEXIST) {
+			_ = unix.Close(fd)
+			return &fs.PathError{Op: "mkdir", Path: path, Err: err}
 		}
-		if err := crwdir.RequireDir(path); err != nil {
-			return err
+		next, err := unix.Openat(fd, part, dirFlags, 0)
+		_ = unix.Close(fd)
+		if err != nil {
+			return openError(path, err)
 		}
+		fd = next
 	}
-	if err := crwdir.WriteExclusive(filepath.Join(path, ".gitignore"), evidenceGitignore); err != nil && !errors.Is(err, fs.ErrExist) {
-		return err
+	defer unix.Close(fd)
+	ignore := filepath.Join(path, ".gitignore")
+	gfd, err := unix.Openat(fd, ".gitignore", unix.O_WRONLY|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o666)
+	switch {
+	case errors.Is(err, unix.EEXIST):
+		return nil
+	case err != nil:
+		return &fs.PathError{Op: "open", Path: ignore, Err: err}
 	}
-	return nil
+	f := os.NewFile(uintptr(gfd), ignore)
+	_, err = f.WriteString(evidenceGitignore)
+	return errors.Join(err, f.Close())
+}
+
+// openError is the error of a directory of the walk that could not be opened: the link or non-directory refusal of
+// crwdir.RequireDir when that is what stands there, else the open error.
+func openError(path string, err error) error {
+	if derr := crwdir.RequireDir(path); derr != nil {
+		return derr
+	}
+	return &fs.PathError{Op: "open", Path: path, Err: err}
 }
 
 // evidenceGitignore is the .gitignore the engine writes in P's .crw/evidence.
@@ -325,8 +354,8 @@ func (c *callRun) evidenceDrop() {
 }
 
 // evidenceRelease releases the records the rows of a call name (each spawn step's evidence_assignment) where they are still open and
-// unclaimed, under every directory the rows say a record was written to (the prepared row's evidence_cwd, each step's
-// evidence_cwds, a bind's evidence_cwd), EvidenceCwd and the owner's cwd: the attempts those rows hold have ended without going on,
+// unclaimed, under every directory the rows say a record was written to (the prepared row's evidence_cwd and evidence_cwds, each
+// step's evidence_cwds, a bind's evidence_cwd), EvidenceCwd and the owner's cwd: the attempts those rows hold have ended without going on,
 // because the call was superseded or is prepared again. A claimed record stays: it is the receipt the hook accepted. The record of a
 // step whose process died after writing it and before the step_published row that would name it is released too: its id is derived
 // (evidenceDerivedIDs), since no row names it.
@@ -347,6 +376,9 @@ func (e *Engine) evidenceRelease(rows []Event) {
 		switch row.Event {
 		case EvPrepared:
 			add(rowStr(row.Data, "evidence_cwd"))
+			for _, cwd := range rowStrs(row.Data, "evidence_cwds") {
+				add(cwd)
+			}
 		case EvStepPublished:
 			if id := rowStr(row.Data, "evidence_assignment"); id != "" && !slices.Contains(ids, id) {
 				ids = append(ids, id)
@@ -368,37 +400,40 @@ func (e *Engine) evidenceRelease(rows []Event) {
 	}
 }
 
-// evidenceDerivedIDs are the ids of the step a process could have been about to publish when it died, after writing its record and
-// before its step_published row: a spawn step of the call's newest generation (its key as evidenceCallKey names it), of a turn k up
-// to one past the largest its rows record and of its largest attempt or the next one (attempts only grow, and a new attempt is
-// one more than the largest). That is at most 2*(k+1) ids, whatever the earlier generations and attempts were: an earlier
-// generation's step was released when the generation after it was prepared. An id that names no record releases nothing.
+// evidenceDerivedIDs are the ids of the steps a process could have been about to publish when it died, after writing their records
+// and before their step_published rows: for every generation of the call (its key as evidenceCallKey names it), a spawn step of a
+// turn k up to one past the largest that generation's rows record, at its largest attempt or the next one (attempts only grow, and
+// a new attempt is one more than the largest). That is at most 2*(k+1) ids a generation, linear in the generations; every
+// generation is derived, because a process may die between a new generation's prepared row and the supersession that releases the
+// generation before it. An id that names no record releases nothing.
 func (e *Engine) evidenceDerivedIDs(rows []Event) []string {
-	key, gen := "", -1
+	var ids []string
+	derive := func(gen []Event, key string) {
+		maxK, maxAttempt := 0, 1
+		for _, row := range gen {
+			maxK, maxAttempt = max(maxK, rowInt(row.Data, "k")), max(maxAttempt, rowInt(row.Data, "attempt"))
+		}
+		for k := 1; k <= maxK+1; k++ {
+			for _, a := range []int{maxAttempt, maxAttempt + 1} {
+				ids = append(ids, evidence.FlowAssignmentID(e.cfg.Session.Owner, e.runID, key, sessionOp(fmt.Sprintf("%s/t%d", gen[0].CallID, k), a)))
+			}
+		}
+	}
+	start, key := -1, ""
 	for i, row := range rows {
 		if row.Event != EvPrepared {
 			continue
 		}
-		if gen < 0 {
-			key = row.CallID
-		} else {
+		if start >= 0 {
+			derive(rows[start:i], key)
 			key = fmt.Sprintf("%s@%d", row.CallID, row.Seq)
+		} else {
+			key = row.CallID
 		}
-		gen = i
+		start = i
 	}
-	if gen < 0 {
-		return nil
-	}
-	maxK, maxAttempt := 0, 1
-	for _, row := range rows[gen:] {
-		maxK, maxAttempt = max(maxK, rowInt(row.Data, "k")), max(maxAttempt, rowInt(row.Data, "attempt"))
-	}
-	callID := rows[gen].CallID
-	var ids []string
-	for k := 1; k <= maxK+1; k++ {
-		for _, a := range []int{maxAttempt, maxAttempt + 1} {
-			ids = append(ids, evidence.FlowAssignmentID(e.cfg.Session.Owner, e.runID, key, sessionOp(fmt.Sprintf("%s/t%d", callID, k), a)))
-		}
+	if start >= 0 {
+		derive(rows[start:], key)
 	}
 	return ids
 }

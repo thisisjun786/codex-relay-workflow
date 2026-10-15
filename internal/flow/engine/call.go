@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -456,8 +457,15 @@ func (c *callRun) prepare() {
 	if c.sess != nil {
 		d["backend"] = BackendSession
 		if c.evidenceGated() {
-			// the directory the call's flow evidence records are written under, for a resumed run started elsewhere (CRW-1482)
-			d["evidence_cwd"] = c.e.cfg.Session.EvidenceCwd
+			// the directories the call's flow evidence records are written under, for a resumed run started elsewhere or one whose
+			// owner read fails: EvidenceCwd, and the owner thread's cwd when the host reports one that differs (CRW-1482)
+			ev := c.e.cfg.Session.EvidenceCwd
+			d["evidence_cwd"] = ev
+			cwds := []string{ev}
+			if owner := c.e.evidenceOwnerCwd(c.e.ctx); owner != "" && filepath.Clean(owner) != filepath.Clean(ev) {
+				cwds = append(cwds, owner)
+			}
+			d["evidence_cwds"] = cwds
 		}
 	}
 	if c.snapshot != "" {
