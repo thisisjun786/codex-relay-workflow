@@ -595,6 +595,42 @@ func TestRunProcessDrainsOnSIGUSR2(t *testing.T) {
 	}
 }
 
+// TestRunProcessCommandTakesSIGUSR2 (CRW-1492, x1501 item 3): `crw flow _run`, the process of a detached run and the holder an answer
+// drains, takes SIGUSR2 from its own signal.Notify: a SIGUSR2 sent to this process while the first turn is in flight drains the run (it
+// ends paused by `answer`, the turn in flight ends, the next call is held, nothing is interrupted, exit 0). Without SIGUSR2 among the
+// signals process() asks for, the Go runtime drops it and the run completes: no answer could drain a detached run.
+func TestRunProcessCommandTakesSIGUSR2(t *testing.T) {
+	pw := newProcessWorld(t, twoCalls)
+	pw.spec("run-drain-cmd", nil)
+	pw.handle = func(r engine.FakeRequest) engine.FakeReply {
+		if r.Kind == "turn" && strings.Contains(r.Prompt, "first") {
+			// what `crw flow answer` does to the run process that holds the run: this process
+			if err := syscall.Kill(os.Getpid(), syscall.SIGUSR2); err != nil {
+				t.Error(err)
+			}
+			time.Sleep(200 * time.Millisecond) // the signal is read while the turn is in flight
+		}
+		return engine.FakeReply{Tokens: &engine.Tokens{Input: 10, Output: 5, Total: 15}}
+	}
+	if code, out, errOut := pw.td.do(ProcessCommand, "--state", pw.state, "run-drain-cmd"); code != 0 {
+		t.Fatalf("crw flow _run: exit %d %s %s", code, out, errOut)
+	}
+	info := pw.info("run-drain-cmd")
+	if info.State != StatePaused || info.Live || info.Status != engine.RunPaused || !strings.HasPrefix(info.Paused, "answer: ") {
+		t.Errorf("crw flow _run did not drain on SIGUSR2: %+v", info)
+	}
+	if res, _ := ReadResult(pw.state, "run-drain-cmd"); res.Status != engine.RunPaused || string(compactJSON(res.Value)) != `["completed","held","engine_paused"]` {
+		t.Errorf("the result: %+v %s", res, res.Value)
+	}
+	events, _, err := loadRun(pw.world, "run-drain-cmd")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if interrupts, drains := drainedRows(events); interrupts != 0 || drains != 1 {
+		t.Errorf("%d interrupt_requested rows and %d run_paused rows by answer, want 0 and 1", interrupts, drains)
+	}
+}
+
 // TestForegroundResumeDrainsOnSIGUSR2 (CRW-1492): a foreground `crw flow resume RUN SCRIPT` and `crw flow resume RUN` hold the run as
 // its process does and answer SIGUSR2 as it does: the run ends paused by `answer`, nothing is interrupted, and the command exits 0.
 // The SCRIPT form takes SIGUSR2 from before its holder record exists: a signal sent the moment it holds the run is not lost.

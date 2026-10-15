@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
 // writerCommands are the commands that take a free run lock to append rows and run no script (CRW-1495 item 6).
@@ -211,9 +213,10 @@ func runRows(t *testing.T, w *world, run, event string) []engine.Event {
 	return out
 }
 
-// TestCommandsWaitAWriterOut (CRW-1495 item 6): the commands that need a free run lock (cancel of a run no process holds, answer,
-// resume --detach and the run process) wait a writer's hold out, for writerWait at most: a hold of 150 ms is waited out and the
-// command does its work; a hold past the wait is refused as a held run, and nothing is written.
+// TestCommandsWaitAWriterOut (CRW-1495 item 6): the commands that need a free run lock (cancel of a run no process holds, cancel of
+// an ended run that gives up its executions, answer, resume --detach, the foreground resume with a SCRIPT and the run process) wait a
+// writer's hold out, for writerWait at most: a hold of 150 ms is waited out and the command does its work; a hold past the wait is
+// refused as a held run, and nothing is written.
 func TestCommandsWaitAWriterOut(t *testing.T) {
 	type outcome struct {
 		code   int
@@ -227,6 +230,8 @@ func TestCommandsWaitAWriterOut(t *testing.T) {
 		done, refused func(t *testing.T, pw *processWorld, run string, o outcome)
 	}
 	var signalled []int
+	// settles counts the settlements the cancel of an ended run asked for
+	settles := 0
 	subjects := []subject{
 		{
 			name: "cancel",
@@ -246,6 +251,33 @@ func TestCommandsWaitAWriterOut(t *testing.T) {
 			refused: func(t *testing.T, pw *processWorld, run string, o outcome) {
 				if ends := runRows(t, pw.world, run, "finished"); o.code == 0 || !strings.Contains(o.errOut, ErrRunLive.Error()) || len(ends) != 0 {
 					t.Fatalf("cancel during a writer's hold past the wait: exit %d %q, end rows %+v", o.code, o.errOut, ends)
+				}
+			},
+		},
+		{
+			name: "cancel of an ended run",
+			setup: func(t *testing.T, pw *processWorld) (string, func() outcome) {
+				r := pw.newRun("run-ended", "thread-owner")
+				r.finish(engine.RunCompleted, "")
+				r.close()
+				// the run ended with an execution it still holds: its cancel gives it up under the lock (settleEndedRun)
+				pw.td.Settle = func(context.Context, *store.Store, string, []ops.ReleaseRef) (Settlement, error) {
+					settles++
+					return Settlement{Closed: 1, SlotsReturned: 1}, nil
+				}
+				return "run-ended", func() outcome {
+					code, _, errOut := pw.td.do("cancel", "run-ended", "--state", pw.state)
+					return outcome{code, errOut}
+				}
+			},
+			done: func(t *testing.T, pw *processWorld, run string, o outcome) {
+				if ends := runRows(t, pw.world, run, "finished"); o.code != 0 || settles != 1 || len(ends) != 1 {
+					t.Fatalf("cancel of an ended run after a writer's hold: exit %d %q, %d settlements, end rows %+v", o.code, o.errOut, settles, ends)
+				}
+			},
+			refused: func(t *testing.T, pw *processWorld, run string, o outcome) {
+				if o.code == 0 || !strings.Contains(o.errOut, ErrRunLive.Error()) || settles != 0 {
+					t.Fatalf("cancel of an ended run during a writer's hold past the wait: exit %d %q, %d settlements", o.code, o.errOut, settles)
 				}
 			},
 		},
@@ -295,6 +327,41 @@ func TestCommandsWaitAWriterOut(t *testing.T) {
 			},
 		},
 		{
+			name: "resume SCRIPT",
+			setup: func(t *testing.T, pw *processWorld) (string, func() outcome) {
+				scriptResumeEnv(t, pw)
+				spec := pw.spec("run-s", nil)
+				// the first process is paused by the operator in its first call; the foreground resume then goes on to the end
+				sigs := make(chan os.Signal, 2)
+				pause := true
+				pw.handle = func(r engine.FakeRequest) engine.FakeReply {
+					if pause && r.Kind == "turn" && strings.Contains(r.Prompt, "first") {
+						sigs <- syscall.SIGUSR1
+						time.Sleep(200 * time.Millisecond)
+					}
+					return engine.FakeReply{Tokens: &engine.Tokens{Input: 10, Output: 5, Total: 15}}
+				}
+				if code, errOut := pw.execute(spec, false, sigs); code != 0 {
+					t.Fatalf("the first process: exit %d %s", code, errOut)
+				}
+				pause = false
+				return "run-s", func() outcome {
+					code, _, errOut := pw.td.do("resume", "run-s", pw.script, "--state", pw.state)
+					return outcome{code, errOut}
+				}
+			},
+			done: func(t *testing.T, pw *processWorld, run string, o outcome) {
+				if info := pw.info(run); o.code != 0 || info.State != StateCompleted || info.Processes != 2 {
+					t.Fatalf("resume SCRIPT after a writer's hold: exit %d %q, %+v", o.code, o.errOut, info)
+				}
+			},
+			refused: func(t *testing.T, pw *processWorld, run string, o outcome) {
+				if rows := runRows(t, pw.world, run, "started"); o.code == 0 || !strings.Contains(o.errOut, ErrRunLive.Error()) || len(rows) != 1 {
+					t.Fatalf("resume SCRIPT during a writer's hold past the wait: exit %d %q, %d started rows", o.code, o.errOut, len(rows))
+				}
+			},
+		},
+		{
 			name: "run process",
 			setup: func(t *testing.T, pw *processWorld) (string, func() outcome) {
 				spec := pw.spec("run-x", nil)
@@ -321,7 +388,7 @@ func TestCommandsWaitAWriterOut(t *testing.T) {
 	for _, s := range subjects {
 		t.Run(s.name, func(t *testing.T) {
 			pw := newProcessWorld(t, twoCalls)
-			signalled = nil
+			signalled, settles = nil, 0
 			pw.td.Signal = func(pid int, sig syscall.Signal) error { signalled = append(signalled, pid); return nil }
 			run, do := s.setup(t, pw)
 			done := releaseAfter(t, pw.world, run, "audit", 150*time.Millisecond)
@@ -337,7 +404,7 @@ func TestCommandsWaitAWriterOut(t *testing.T) {
 			writerWait = 50 * time.Millisecond
 			defer func() { writerWait = saved }()
 			pw := newProcessWorld(t, twoCalls)
-			signalled = nil
+			signalled, settles = nil, 0
 			pw.td.Signal = func(pid int, sig syscall.Signal) error { signalled = append(signalled, pid); return nil }
 			run, do := s.setup(t, pw)
 			done := releaseAfter(t, pw.world, run, "audit", 500*time.Millisecond)

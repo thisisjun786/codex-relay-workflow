@@ -384,9 +384,11 @@ type heldProcess struct {
 
 // heldProcess reads the process that holds the run: the newest started row is that process's when the process lock its token names is
 // held. A newest row whose process lock was let go is an earlier process's, and so is a row that names no process while a process lock
-// of the run is held: the holder has not recorded its row yet (or a command such as crw flow answer holds the run between two
-// processes), and next reads again. A row that names no process while no process lock is held is that of a process of a crw before
-// the process lock, which bound the owner's line before it recorded its row.
+// of the run is held, and next reads again (starting): the holder has not recorded its row yet, or the run lock is held for a moment by
+// a command that writes a row and runs no process (an audit, a cancel, or an answer from the end of the process it drained until its
+// row is stored; the answer lets the lock go before it starts the resume, which takes the lock after it). A row that names no process
+// while no process lock is held is that of a process of a crw before the process lock, which bound the owner's line before it
+// recorded its row.
 func (c *command) heldProcess(cm *common, state string, spec Spec, store *engine.Policy) heldProcess {
 	run := spec.RunID
 	events := c.runEvents(cm, run)
