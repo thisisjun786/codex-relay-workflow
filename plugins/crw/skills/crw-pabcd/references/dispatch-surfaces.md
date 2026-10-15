@@ -74,12 +74,14 @@ only a disjoint checkout and returns a patch or evidence to the coordinator:
 create a managed worktree, then give its absolute path to a subagent. The
 subagent's native cwd still inherits the coordinator's; the packet must require
 that path as the shell workdir on every command. Workers do not acquire their
-own goal or PABCD state. Different workers must use different worktrees. The
-SubagentStop gate reads `.crw/evidence` under the coordinator's native cwd, so a receipt
-the worker writes under its assigned tree is not accepted there: have the worker write its
-receipt under the native cwd's `.crw/evidence` and report that absolute path. Only where the
-runtime in use reads the tree the dispatch assigned (the evidence-location change of the 10-10
-review) is a receipt in the assigned tree accepted.
+own goal or PABCD state. Different workers must use different worktrees. When the
+dispatch assigns a tree, the SubagentStop gate reads the receipt under that tree: the
+packet carries the line `CRW-WORKTREE: <path>`, the spawn hook records it as an evidence
+assignment (CRW-1115), and the worker writes its receipt under `<that tree>/.crw/evidence/`
+and reports the absolute path. A dispatch with no assignment still writes its receipt under
+the native cwd's `.crw/evidence`. For a flow executor the engine makes the assignment and
+the parent does nothing: the spawn message, the packet and the block reason name the one
+file `<P>/.crw/evidence/<id>.md` in the call worktree P (CRW-1482).
 
 Say which one you are creating, in those words, before you create it.
 
