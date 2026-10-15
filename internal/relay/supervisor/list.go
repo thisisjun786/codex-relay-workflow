@@ -3,7 +3,6 @@ package supervisor
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"time"
 
@@ -15,10 +14,9 @@ import (
 // A recipient's queue read whole, and a backlog of its notifications parked without a turn each
 // (CRW-1486/S4, findings 6 and 9). List only reads. Acknowledge parks under the hold the channel
 // already parks a superseded message under, with the journal kind it already writes, whose detail
-// names AcknowledgeCommand. Staging the same statement again does not release such a park (the
-// daemon's staging visit stages every owed event completion again on each pass); what releases it is
-// the message's content moving (a new statement of the obligation, re-addressing to another
-// recipient) or a send of that message by id. See acknowledgedPark.
+// names AcknowledgeCommand. When such a park is kept or released is the hold rule, holdDecision
+// (holdrule.go): the same statement staged again keeps it; a new statement, another recipient or a
+// send of the message by id releases it.
 
 // AcknowledgeCommand is the name an acknowledgement's journal rows give as the one who parked them.
 const AcknowledgeCommand = "supervisor-acknowledge"
@@ -170,7 +168,11 @@ func (c *Channel) Acknowledge(ctx context.Context, req AcknowledgeRequest) (map[
 		}
 		var ids []string
 		for _, row := range candidates {
-			if reason := acknowledgeSkip(row, req.AllInformational); reason != "" {
+			held, err := c.rowHoldKind(tx, row)
+			if err != nil {
+				return err
+			}
+			if reason := acknowledgeSkip(row, held, req.AllInformational); reason != "" {
 				skip(row.MessageID, reason)
 				continue
 			}
@@ -218,42 +220,13 @@ func (c *Channel) Acknowledge(ctx context.Context, req AcknowledgeRequest) (map[
 }
 
 // acknowledgeRelease is what the acknowledgement's answer says releases a park.
-const acknowledgeRelease = "staging the same statement again leaves a parked message parked: neither the daemon's staging visit, which stages an event's completion again on every pass while its tracking record is not confirmed, nor its sender repeating a direct report releases it. " +
-	"It is released when its content moves while it is still owed (a new statement of the obligation: a corrected or resubmitted work report, a direct report sent again with other text), when the hierarchy re-addresses it to another recipient, or when the relay's send command sends it by its message id (--message)"
+const acknowledgeRelease = "staging the same statement again leaves a parked message parked: neither the daemon's staging visit, which stages an event's completion again on every pass while its tracking record is not confirmed, nor its sender repeating a direct report, nor a rotated sender session staging what its predecessor staged releases it. " +
+	"It is released when its content moves while it is still owed (a new statement of the obligation: a work report corrected in place or resubmitted, a direct report sent again with other text), when the hierarchy re-addresses it to another recipient, or when the relay's send command sends it by its message id (--message)"
 
-// acknowledgedPark reports whether the superseded_by_report hold row carries was set by an
-// acknowledgement. Every writer of that hold on a message an acknowledgement may park journals one
-// supervisor_message_superseded row with it (holdSuperseded, holdObsoleteClaim,
-// AcknowledgeSupervisorMessages; the fault-notice park journals its own kind, and a fault notice is
-// never acknowledged), so the newest such row of the message is the one that set the hold it carries,
-// and an acknowledgement's names AcknowledgeCommand. It reads the journal only.
-func (c *Channel) acknowledgedPark(ctx context.Context, row store.SupervisorMessagesRow) (bool, error) {
-	if row.HoldReason.String != store.SupervisorHoldSuperseded {
-		return false, nil
-	}
-	var detail string
-	err := c.Store.Q(ctx).QueryRowContext(ctx, "SELECT detail FROM journal WHERE kind='supervisor_message_superseded' AND subject=? ORDER BY rowid DESC LIMIT 1", row.MessageID).Scan(&detail)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	var parked struct {
-		By string `json:"by"`
-	}
-	if json.Unmarshal([]byte(detail), &parked) != nil {
-		return false, nil
-	}
-	return parked.By == AcknowledgeCommand, nil
-}
-
-// acknowledgedKeptReason is a staging answer for a message an acknowledgement parked and that the
-// staging restates unchanged.
-const acknowledgedKeptReason = "this fact is already staged and its recipient's acknowledgement parked it; staging the same statement again leaves it parked"
-
-// acknowledgeSkip is why row is not parked, or "" when it may be.
-func acknowledgeSkip(row store.SupervisorMessagesRow, allInformational bool) string {
+// acknowledgeSkip is why row is not parked, or "" when it may be. Whether a hold may be set on it is
+// the hold rule's (holdDecision, entryAcknowledge), given the kind of hold it carries.
+func acknowledgeSkip(row store.SupervisorMessagesRow, held holdKind, allInformational bool) string {
+	verdict, _, _ := holdDecision(held, holdChange{Entry: entryAcknowledge}, nil)
 	switch {
 	case row.ObligationKind == store.SupervisorNoticeObligationKind:
 		return AcknowledgeFaultNotice
@@ -263,7 +236,7 @@ func acknowledgeSkip(row store.SupervisorMessagesRow, allInformational bool) str
 		return AcknowledgeClaimed
 	case !row.Unsent():
 		return AcknowledgeNotUnsent
-	case row.HoldReason.Valid:
+	case verdict != holdSet:
 		return AcknowledgeHeld
 	case allInformational && !acknowledgeInformational[row.ObligationKind]:
 		return AcknowledgeNotInformational

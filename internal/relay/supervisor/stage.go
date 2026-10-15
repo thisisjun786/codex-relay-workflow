@@ -60,6 +60,38 @@ func pythonJSONSorted(value any) string {
 	return pyjson.Dumps(value, pyjson.Options{SortKeys: true, Unicode: true})
 }
 
+// sameStatement is whether staging o now states what row carries (holdChange.SameStatement): the same
+// event and submission and, for an event's obligation, the packet o composes now with row's sender and
+// observation time is row's packet. Another sender session above the work states the same thing; a
+// work report corrected in place keeps its submission number and changes the packet.
+func (c *Channel) sameStatement(ctx context.Context, row store.SupervisorMessagesRow, o Obligation, r Resolution, eventID string, report workReportFact, at string) (bool, error) {
+	if row.EventID != nullString(eventID) || row.SubmissionNo != submissionOf(report) {
+		return false, nil
+	}
+	if eventID == "" {
+		return true, nil
+	}
+	stored := r
+	stored.Sender = row.SenderTaskID
+	comparison, err := c.comparablePacket(ctx, row, o, stored, at)
+	if err != nil {
+		return false, err
+	}
+	return comparison == row.Packet, nil
+}
+
+// owedThrough is the hold rule's owed question for row under resolution r: whether what row is for is
+// owed through it again (refreshProposal answers, restating it when its packet moved).
+func (c *Channel) owedThrough(ctx context.Context, row store.SupervisorMessagesRow, r Resolution, at string) func() (bool, error) {
+	return func() (bool, error) {
+		_, err := c.refreshProposal(ctx, row, r, at, 0)
+		if refusal := new(Refusal); errors.As(err, refusal) && refusal.Reason == "superseded_revision" {
+			return false, nil
+		}
+		return err == nil, err
+	}
+}
+
 // submissionOf is the submission_no a message staged from report records: none for no report.
 func submissionOf(report workReportFact) sql.NullInt64 {
 	if report.submission == 0 {
@@ -169,23 +201,20 @@ func (c *Channel) StageWithReading(ctx context.Context, o Obligation, reading ma
 					return Refusal{"contradictory_observation", "this omission is already staged as " + strconv.Quote(id) + " from another reading of it, which disagrees with this one about what it is or where it can be read. The staged message keeps the reading it froze; nothing was written"}
 				}
 			}
-			// A park the recipient's acknowledgement set is not released by staging the same statement
-			// to the same endpoints again (CRW-1486: the daemon's staging visit restages every owed
-			// completion on each pass). A new statement (another event or submission) or other
-			// endpoints still go through the release and restating below.
-			if existing.SenderTaskID == r.Sender && existing.RecipientTaskID == r.Recipient && existing.EventID == nullString(eventID) && existing.SubmissionNo == submissionOf(report) {
-				acknowledged, err := c.acknowledgedPark(tx, existing)
+			// A superseded_by_report hold is kept or released by the hold rule (holdDecision) alone,
+			// asked through reopenProposal with whether this staging states what the message carries.
+			if existing.HoldReason.String == store.SupervisorHoldSuperseded {
+				same, err := c.sameStatement(tx, existing, o, r, eventID, report, at)
 				if err != nil {
 					return err
 				}
-				if acknowledged {
+				kind, verdict, err := c.reopenProposal(tx, existing, at, holdChange{Entry: entryRestage, SameStatement: same})
+				if err != nil {
+					return err
+				}
+				if kind == holdAcknowledged && verdict == holdKeep {
 					result = StageResult{"schema": channelVersion, "staged": false, "messageId": id, "reason": acknowledgedKeptReason, "message": messageMap(existing)}
 					return nil
-				}
-			}
-			if existing.HoldReason.String == store.SupervisorHoldSuperseded {
-				if err = c.reopenProposal(tx, existing, at); err != nil {
-					return err
 				}
 				existing, err = c.Store.SupervisorMessage(tx, id)
 				if err != nil {
@@ -211,6 +240,26 @@ func (c *Channel) StageWithReading(ctx context.Context, o Obligation, reading ma
 				if !existing.Unsent() {
 					return Refusal{"relation_owner_drift", "message " + strconv.Quote(id) + " was staged from " + strconv.Quote(existing.SenderTaskID) + " to " + strconv.Quote(existing.RecipientTaskID) + " and has " + fmt.Sprint(existing.AttemptCount) + " attempt(s), state " + strconv.Quote(existing.State) + "; the linkage now says " + strconv.Quote(r.Sender) + " reports to " + strconv.Quote(r.Recipient) + ". A message an attempt may have sent is never re-addressed, because its attempts would then describe a recipient they were never sent to - it went to the supervisor who was live when its transport started - so " + strconv.Quote(r.Recipient) + " has not been told by this channel, and the obligation stands until the tracking record confirms it"}
 				}
+				// A superseded_by_report hold goes with the re-address only where the hold rule releases it;
+				// another hold word is released by the re-address as it always was.
+				holdClause := "hold_reason=NULL"
+				if existing.HoldReason.String == store.SupervisorHoldSuperseded {
+					kind, err := c.rowHoldKind(tx, existing)
+					if err != nil {
+						return err
+					}
+					same, err := c.sameStatement(tx, existing, o, r, eventID, report, at)
+					if err != nil {
+						return err
+					}
+					verdict, _, err := holdDecision(kind, holdChange{Entry: entryRestage, SameStatement: same, SameRecipient: existing.RecipientTaskID == r.Recipient}, c.owedThrough(tx, existing, r, at))
+					if err != nil {
+						return err
+					}
+					if verdict != holdRelease {
+						holdClause = "hold_reason=hold_reason"
+					}
+				}
 				var unsafe int
 				if err = c.Store.Q(tx).QueryRowContext(tx, "SELECT COUNT(*) FROM supervisor_attempts WHERE message_id=? AND "+store.SupervisorAttemptMayHaveGoneSQL(""), id).Scan(&unsafe); err != nil {
 					return err
@@ -218,7 +267,7 @@ func (c *Channel) StageWithReading(ctx context.Context, o Obligation, reading ma
 				if unsafe != 0 {
 					return Refusal{"relation_owner_drift", "message " + strconv.Quote(id) + " was already attempted and is never re-addressed"}
 				}
-				update, err := c.Store.Q(tx).ExecContext(tx, "UPDATE supervisor_messages SET sender_task_id=?,recipient_task_id=?,project_key=?,packet=?,event_id=?,submission_no=?,state='queued',next_eligible_at=NULL,hold_reason=NULL,updated_at=? WHERE message_id=? AND sender_task_id=? AND recipient_task_id=? AND "+store.SupervisorNeverSentSQL(), r.Sender, r.Recipient, r.ProjectKey, encoded, nullString(eventID), submission, at, id, existing.SenderTaskID, existing.RecipientTaskID)
+				update, err := c.Store.Q(tx).ExecContext(tx, "UPDATE supervisor_messages SET sender_task_id=?,recipient_task_id=?,project_key=?,packet=?,event_id=?,submission_no=?,state='queued',next_eligible_at=NULL,"+holdClause+",updated_at=? WHERE message_id=? AND sender_task_id=? AND recipient_task_id=? AND "+store.SupervisorNeverSentSQL(), r.Sender, r.Recipient, r.ProjectKey, encoded, nullString(eventID), submission, at, id, existing.SenderTaskID, existing.RecipientTaskID)
 				if err != nil {
 					return err
 				}

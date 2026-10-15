@@ -92,7 +92,23 @@ func (n NoticeChannel) StageNotice(ctx context.Context, notice map[string]any) (
 		if same && !moved && r.Get("hold_reason") == nil {
 			return finish(false, "this notification is already staged; one notification is one message", false)
 		}
-		released := (r.Text("hold_reason") == store.SupervisorHoldSuperseded || r.Text("hold_reason") == store.SupervisorHoldUnaddressed) && !moving
+		// A superseded_by_report hold is kept or released by the hold rule (holdDecision): a notice's
+		// park is released when its notification is reserved and staged again, and by a re-address.
+		released := r.Text("hold_reason") == store.SupervisorHoldUnaddressed && !moving
+		if r.Text("hold_reason") == store.SupervisorHoldSuperseded {
+			kind, err := holdKindOf(ctx, l.Store, id, r.Text("hold_reason"), r.Text("obligation_kind"))
+			if err != nil {
+				return err
+			}
+			verdict, why, err := holdDecision(kind, holdChange{Entry: entryRestage, SameStatement: same, SameRecipient: !moving}, nil)
+			if err != nil {
+				return err
+			}
+			if verdict != holdRelease {
+				return finish(false, why, false)
+			}
+			released = !moving
+		}
 		bounds := " hold_reason=CASE WHEN hold_reason IN (?,?) THEN NULL ELSE hold_reason END,"
 		args := []any{noticeDumps(packet), relation, live["sender"], live["recipient"], live["projectKey"]}
 		if moving {
@@ -139,6 +155,19 @@ func (n NoticeChannel) StageNotice(ctx context.Context, notice map[string]any) (
 func (n NoticeChannel) Park(ctx context.Context, id, reason string) error {
 	l := n.Ledger
 	return l.Store.Compose(ctx, func(ctx context.Context, _ *sql.Conn) error {
+		// The park is set only where the hold rule allows it (holdDecision, entryNoticePark): on a
+		// message that carries no hold.
+		current, err := l.Store.One(ctx, "SELECT hold_reason, obligation_kind FROM supervisor_messages WHERE message_id=?", id)
+		if err != nil || current == nil {
+			return err
+		}
+		kind, err := holdKindOf(ctx, l.Store, id, current.Text("hold_reason"), current.Text("obligation_kind"))
+		if err != nil {
+			return err
+		}
+		if verdict, _, err := holdDecision(kind, holdChange{Entry: entryNoticePark}, nil); err != nil || verdict != holdSet {
+			return err
+		}
 		result, err := noticeExec(ctx, l.Store, "UPDATE supervisor_messages SET hold_reason=?,updated_at=? WHERE message_id=? AND obligation_kind='"+store.SupervisorNoticeObligationKind+"' AND hold_reason IS NULL AND "+store.SupervisorNeverSentSQL(), store.SupervisorHoldSuperseded, l.Clock.ISO(), id)
 		if err != nil {
 			return err

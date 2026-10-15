@@ -949,6 +949,28 @@ an assignment and a session too, so a line built from the obligation alone looke
 command and could not be run. With the reading, the reading is frozen on the row and the
 recheck line in `supervisor-show` is rendered whole.
 
+### The hold rule
+
+One rule sets, keeps and releases the hold `superseded_by_report`, and one function applies it
+(`holdDecision`, internal/relay/supervisor/holdrule.go); every path that sets or clears that hold asks it
+and writes only what it answers. Three paths set it, each only on a message that carries no hold: the
+channel on a message it claimed whose obligation moved (the derived hold, journalled
+`supervisor_message_superseded`), `supervisor-acknowledge` (the park, journalled
+`supervisor_message_superseded` naming `supervisor-acknowledge`), and the fault deliverer on its notice
+(journalled `supervisor_notice_parked`). The kind of a hold is read from those rows: a fault notice's
+is the notice's, otherwise the newest `supervisor_message_superseded` row of the message tells the
+park from a derived hold. A message staged again (by hand, by the daemon's pass, after a restart, by
+its direct sender, or a fault notice reserved again) or sent by id (`supervisor-send --message`, or the
+fault deliverer's send) is decided by statement identity, recipient and the send: any kind is released
+when the hierarchy names another recipient; a derived hold is released when what the message is for is
+owed through it again; the park is kept while the statement is the same, whoever stages it (the
+daemon's pass, a repeat, another sender session, a restart), and is released by a new statement that is
+still owed (another event or submission, a work report corrected in place so the packet differs, a
+direct report with other text) or by a send of it by id; a fault notice's park is released when its
+notification is reserved and staged again, or by its deliverer's send. Another hold word
+(`hierarchy_unresolved`, the cap holds) keeps its own release path. No hold word, column or journal
+kind is added for it, and one table test (`TestHoldRuleTable`) holds every path against every kind.
+
 ### A recipient's whole queue
 
 Two commands read and clear one recipient's queue through the store API (CRW-1486), and neither
@@ -962,13 +984,8 @@ obligation kind. `supervisor-acknowledge --recipient <task> --actor <task>` with
 `supervisor-acknowledge` and the actor, in one transaction. The bulk form parks only the kinds that
 report something finished (`completion`, `flow_completion`, `flow_milestone_report`, `lead_report`); a
 message named by id may be any notification. A decision, a fault notice, a held message and one an
-attempt may have sent are never parked, and each message left is answered with its reason. Staging
-the same statement again (the daemon's staging visit of an owed event completion, or a sender sending
-the same direct report again) leaves a parked message parked. Its content moving while it is still
-owed (another event or submission, other text), re-addressing to another recipient, or a send of it by
-id (`supervisor-send --message`) releases it. The park is told from a superseded hold the channel
-derived by the newest `supervisor_message_superseded` row of the message, which names
-`supervisor-acknowledge`; a derived hold is released by staging what is owed, as before. Neither command
+attempt may have sent are never parked, and each message left is answered with its reason. When a
+park is kept or released is [the hold rule](#the-hold-rule). Neither command
 is in `doctor`'s command lists. The procedure
 is in [operations](operations.md#reading-a-supervisor-recipients-queue).
 

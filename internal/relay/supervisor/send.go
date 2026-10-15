@@ -372,6 +372,14 @@ func (c *Channel) holdObsoleteClaim(ctx context.Context, row store.SupervisorMes
 		if current.State != row.State || current.HoldReason != row.HoldReason || current.NextEligibleAt != row.NextEligibleAt || current.AttemptCount != row.AttemptCount {
 			return nil
 		}
+		// The channel's derived hold is set only where the hold rule allows it (holdDecision, entryDerive).
+		held, err := c.rowHoldKind(tx, current)
+		if err != nil {
+			return err
+		}
+		if verdict, _, err := holdDecision(held, holdChange{Entry: entryDerive}, nil); err != nil || verdict != holdSet {
+			return err
+		}
 		next := float64(0)
 		if row.NextEligibleAt.Valid {
 			next = row.NextEligibleAt.Float64
@@ -479,7 +487,8 @@ func (a *attemptRun) read(ctx context.Context) error {
 		return err
 	}
 	if row.HoldReason.String == store.SupervisorHoldSuperseded {
-		if err := c.reopenProposal(ctx, row, delivery.ISOOf(a.now)); err != nil {
+		// A send of this message by id: the hold rule (holdDecision, entrySendByID) decides its release.
+		if _, _, err := c.reopenProposal(ctx, row, delivery.ISOOf(a.now), holdChange{Entry: entrySendByID}); err != nil {
 			return err
 		}
 		row, err = c.Get(ctx, a.id)

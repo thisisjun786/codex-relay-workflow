@@ -763,14 +763,7 @@ store transaction, and the update is guarded so a message an attempt may have se
 What is left is reported per message with its reason: `answer_owed` (a decision), `fault_notice` (its
 own channel parks it), `claimed` (a send is under way or may have gone), `not_unsent`, `held`,
 `not_informational` (a block, an escalation, a design question or a land review under the bulk form),
-`not_found` and `other_recipient`. Staging the same statement again leaves a parked message parked:
-the daemon's staging visit stages an owed event completion again on every pass, and a sender may send
-the same direct report again, and neither releases it. A park is released only when the message's
-content moves while it is still owed (a corrected or resubmitted work report, a direct report sent
-again with other text), when the hierarchy re-addresses the message to another recipient, or when it
-is sent by id (`supervisor-send --message <id>`). The channel tells an acknowledgement's park from a
-superseded hold it derived itself by the newest `supervisor_message_superseded` row of the message; a
-derived hold is still released by staging what is owed. The command's `release` field says the same.
+`not_found` and `other_recipient`. When a park is kept or released is the channel's [hold rule](supervisor-channel.md#the-hold-rule): the same statement staged again keeps it, whoever stages it; a new statement, another recipient or a send by id (`supervisor-send --message <id>`) releases it. The command's `release` field says the same.
 
 A message that waits on a busy recipient is not a backlog: it is deferred with the busy backoff and
 woken by the recipient's idle edge ([the supervisor channel](supervisor-channel.md#the-surface)), and
