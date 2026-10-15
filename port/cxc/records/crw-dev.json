@@ -62,7 +62,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "CRW-1344: Linear wording became tracking wording (a tracking issue, the tracking repository, a milestone), and the skill catalog no longer lists a Linear skill CRW-1424: the pre-build design audit of the C4 lane is the critic's, of another model family than the architect, not a reviewer's, and the lane opens with the background explorers before the architect DESIGN.",
+      "reason": "CRW-1431: the skill text names the project session and the repository session by layer and carries no relay role id",
       "hunks": [
         {
           "line": 3,
@@ -85,7 +85,7 @@
           ],
           "new": [
             "| C4 | High-Risk | Auth, payments, data deletion, migration, release, permission model, security boundary | Full PABCD (mandatory) + full relevant gates + durable risk/evidence record; in a flow-managed run the run's high-risk lane is this process (one background explorer for each node of the milestone, then the architect DESIGN over their findings, independent pre-build design audit by the critic, of a different model family than the architect, before any executor starts, per-issue candidate review, final gate and reviewer-final with full verification and risk record) and the executor starts no FSM |\n",
-            "| C5 | Research/Ambiguous | Unclear requirements, ambiguous user value, unknown territory after one §0 clarification round | No interview: back to its registration ([crw-define](../crw-define/SKILL.md)) or, in a run, a decision request to the session above the project session (relay role `parent`, [the level table](../crw-canon/references/hierarchy.md#the-levels)); then reclassify |\n",
+            "| C5 | Research/Ambiguous | Unclear requirements, ambiguous user value, unknown territory after one §0 clarification round | No interview: back to its registration ([crw-define](../crw-define/SKILL.md)) or, in a run, a decision request to the session above the project session ([the level table](../crw-canon/references/hierarchy.md#the-levels)); then reclassify |\n",
             "\n",
             "**C5 is temporary** — it cannot enter implementation until the registration step or the\n",
             "answer to the decision request resolves the ambiguity and the task is reclassified as one\n",
@@ -324,7 +324,7 @@
             "budget and reserve headroom for the workers; the coordinator owns that aggregate.\n"
           ],
           "new": [
-            "budget and reserve headroom for the workers; [the child](../crw-canon/references/hierarchy.md#the-levels) (project session, relay role `parent`) owns that\n",
+            "budget and reserve headroom for the workers; [the child](../crw-canon/references/hierarchy.md#the-levels) (project session) owns that\n",
             "aggregate ([account for the resources](../crw-run/SKILL.md#account-for-the-resources-this-run-leaves-behind)).\n"
           ]
         }
@@ -344,7 +344,7 @@
     },
     {
       "file": "references/async-questions.md",
-      "reason": "Keep relative Markdown links resolving to the renamed staged skill directories, preserving owner files and fragments. CRW-1340: the synchronous Interview is retired with crw-interview; an unclear milestone or issue goes back to its registration (crw-define) and ambiguity during a run goes up as a decision request, so the routes to the Interview are dropped. CRW-1352: the session layers carry the names of the level table (crw-canon/references/hierarchy.md); crw-run-initiative is retired into crw-run",
+      "reason": "CRW-1431: the skill text names the project session and the repository session by layer and carries no relay role id",
       "hunks": [
         {
           "line": 9,
@@ -364,7 +364,7 @@
             "\n",
             "In a run nobody asks the user and no session opens an interview. An open question\n",
             "that changes scope or design is a decision request to the session above the project\n",
-            "session (relay role `parent`, [the level table](../../crw-canon/references/hierarchy.md#the-levels)): lift it with `crw flow report-up` and the evidence file, continue the work it\n",
+            "session ([the level table](../../crw-canon/references/hierarchy.md#the-levels)): lift it with `crw flow report-up` and the evidence file, continue the work it\n",
             "does not block on recorded assumptions, and take the answer when it arrives. A\n",
             "milestone or issue that is unclear before it runs goes back to its registration\n",
             "([crw-define](../../crw-define/SKILL.md)). The async questions below are for a main\n",

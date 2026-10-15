@@ -29,7 +29,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "CRW-1221: the CXC-era rules, duplicated assets, dated stamps and change-history text of the skill are removed. CRW-1352: the session layers carry the names of the level table (crw-canon/references/hierarchy.md); crw-run-initiative is retired into crw-run CRW-1396: the first use of the parent or the child gives its relay role id and links the level table (crw-canon/references/hierarchy.md); a native spawn's parent is the spawning session.",
+      "reason": "CRW-1431: the skill text names the project session and the repository session by layer and carries no relay role id",
       "hunks": [
         {
           "line": 3,
@@ -86,7 +86,7 @@
             "\n",
             "## For a dispatcher\n",
             "\n",
-            "Read by [the parent](../crw-canon/references/hierarchy.md#the-levels) (repository session, relay role `supervisor`), a child or an issue child that sends helpers out to search. A\n",
+            "Read by [the parent](../crw-canon/references/hierarchy.md#the-levels) (repository session), a child or an issue child that sends helpers out to search. A\n",
             "helper that only searches reads the ladder above and nothing here.\n",
             "\n"
           ]
@@ -215,9 +215,9 @@
     },
     {
       "file": "references/lunasearch.md",
-      "reason": "CRW-1220 correction: an unusable explorer setting is reported and repaired, a re-issued spawn is refused again. CRW-1352: the session layers carry the names of the level table (crw-canon/references/hierarchy.md); crw-run-initiative is retired into crw-run CRW-1396: the first use of the parent or the child gives its relay role id and links the level table (crw-canon/references/hierarchy.md); a native spawn's parent is the spawning session.",
+      "reason": "CRW-1431: the skill text names the project session and the repository session by layer and carries no relay role id",
       "add": true,
-      "sha256": "215cc4fcd1ca23f0a952a6e4e8719b0454784fa3d9803f58a10b0494c28616b8"
+      "sha256": "3694313c91eae1888fb749bb96c3fc72b5454f4f75fa0adacfc1b68d83e5fcc5"
     },
     {
       "file": "references/query-rewrite.md",

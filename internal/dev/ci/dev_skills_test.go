@@ -244,11 +244,9 @@ func TestCodeReviewerNoParentSessionWording(t *testing.T) {
 			}
 		}
 		debugging := skillText(t, root, devSkillsRoot+"crw-dev-debugging/SKILL.md")
-		// CRW-1396: the child that released the issue child gives its role id at first use.
-		// CRW-1431: the label gives the relay role id (the old form) or stands without it (the new form); the unit that
-		// rewrites crw-dev-debugging (1431-c) tightens this to the new form.
+		// CRW-1396: the child that released the issue child is named by its layer, with no relay role id (CRW-1431).
 		const releasedBy = "the child](../crw-canon/references/hierarchy.md#the-levels) (project session"
-		if !strings.Contains(debugging, releasedBy+", relay role `parent`) that released it") && !strings.Contains(debugging, releasedBy+") that released it") {
+		if !strings.Contains(debugging, releasedBy+") that released it") {
 			errs = append(errs, "crw-dev-debugging: the escalation does not name the level "+releasedBy+")")
 		}
 		if !strings.Contains(debugging, "issue child") {

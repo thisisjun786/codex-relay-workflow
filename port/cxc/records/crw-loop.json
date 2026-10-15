@@ -32,7 +32,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "CRW-1426: the exception path of an issue child (a plan with no flow run) no longer carries the SP-CHILD-1 id in the skill text",
+      "reason": "CRW-1431: the skill text names the project session and the repository session by layer and carries no relay role id",
       "hunks": [
         {
           "line": 3,
@@ -133,7 +133,7 @@
           "new": [
             "- DISPATCH-MANAGED-01 (STRICT): before fanning work out, start from the binding. A\n",
             "  tracking issue or DAG node (also one the relay holds no assignment for yet) is a flow\n",
-            "  executor call of the run of the child (project session, relay role `parent`), recorded in the\n",
+            "  executor call of the run of the child (project session), recorded in the\n",
             "  relay, whose step the child spawns as a role subagent (the default path), or an issue child\n",
             "  started and resumed through `crw-run` (the exception), never a\n",
             "  `create_thread` lane; the relay refuses a second active or paused assignment of\n",
@@ -281,7 +281,7 @@
     },
     {
       "file": "references/lane-dispatch.md",
-      "reason": "CRW-1426: the exception path of an issue child (a plan with no flow run) no longer carries the SP-CHILD-1 id in the skill text",
+      "reason": "CRW-1431: the skill text names the project session and the repository session by layer and carries no relay role id",
       "hunks": [
         {
           "line": 3,
@@ -292,7 +292,7 @@
           "new": [
             "Read when a request fans unmanaged work out across parallel tasks, or when watching more lanes\n",
             "than one wait can hold. A tracking issue or DAG node is a flow executor call of the run of\n",
-            "[the child](../../crw-canon/references/hierarchy.md#the-levels) (project session, relay role `parent`),\n",
+            "[the child](../../crw-canon/references/hierarchy.md#the-levels) (project session),\n",
             "recorded in the relay, whose step the child spawns as a role subagent (the default path), or an\n",
             "issue child started through `crw-run` (the exception), and is not handed to a\n",
             "`create_thread` lane by this file; apply\n",

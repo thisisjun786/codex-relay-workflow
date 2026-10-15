@@ -1,6 +1,6 @@
 # Dispatch surfaces — thread or subagent
 
-Here the parent (relay role `parent`) is a relay role, read through [the level table](../../crw-canon/references/hierarchy.md#the-levels).
+The sessions in this document are named by [the level table](../../crw-canon/references/hierarchy.md#the-levels): the child is the project session, and an issue child is no layer.
 
 Read before choosing how to fan work out. This file owns the choice between
 surfaces for unmanaged work; a CRW-managed lane is chosen first by
@@ -16,13 +16,13 @@ the task packet, the assignment record the relay holds for it, or the DAG node
 
 - **Managed** — a tracking issue or a DAG node, whether the relay already holds an assignment for it
   or not. An issue with no assignment yet is not unmanaged: its first lane is a managed one. A
-  managed issue or node is one of two things, and the choice is the plan of [the child](../../crw-canon/references/hierarchy.md#the-levels) (project session, relay role `parent`), not this file's:
+  managed issue or node is one of two things, and the choice is the plan of [the child](../../crw-canon/references/hierarchy.md#the-levels) (project session), not this file's:
   - a flow executor call of the child's run, the default path: the run releases the node to the
     relay's DAG scheduler and publishes the executor's step, the child spawns that step's role
     subagent (a leaf) as `crw flow next` names it and reports it with `crw flow dispatched`, and the
     call, its commits, its review and its acceptance are rows of the run's journal and the DAG records
     ([the flow commands](../../crw-canon/references/flow.md), [the spawn policy](../../crw-canon/references/spawn-policy.md)).
-  - an issue child (relay role `child`), only for a plan with no flow run: started and resumed
+  - an issue child, only for a plan with no flow run: started and resumed
     through `crw-run` on the exception path of one oversized issue, with the managed
     start, the DAG release and their bridge recovery, pair/profile, capacity and receipt rules. A
     node a flow run's architect sizes for a child starts no issue child: the project lane escalates
