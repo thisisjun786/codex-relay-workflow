@@ -3,6 +3,7 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1000,6 +1001,142 @@ func TestReplannedCloseRunsEveryFinalStepFirst(t *testing.T) {
 	if len(bodies) != 1 || bodyLine(bodies[0], "Reflection: ") != "MISALIGNED" {
 		t.Errorf("the report bodies %q, want one that says Reflection: MISALIGNED", bodies)
 	}
+}
+
+// TestCrosscheckRerunsAVoidPassOnceAndGivesNoVerdictWhenBothAreVoid (CRW-1504): a pass that answered but read no repository (not_read)
+// is void. When exactly one pass of the round is void and the other is ok, only the void pass runs once more, on a fresh checkout
+// (attempt 2), and the first attempt stays in V.passes as voided; a rerun that reads the repository gives the verdict. When both passes
+// are void, the round gives no verdict at once (two checks, no rerun), and so does a rerun that is void again: the run ends escalated
+// crosscheck_no_verdict with ask crosscheck_no_verdict (the 자식 hands it to the 부모) and the milestone does not close.
+func TestCrosscheckRerunsAVoidPassOnceAndGivesNoVerdictWhenBothAreVoid(t *testing.T) {
+	void := reviewadapter.Result{State: reviewadapter.StateNotRead, Verdict: reviewadapter.VerdictVerified, Detail: "read 2304 tokens and 1 commands in 20 s (min 3 commands, 45 s)"}
+	ok := reviewadapter.Result{State: reviewadapter.StateOK, Verdict: reviewadapter.VerdictVerified}
+	keys := func(l *laneLab) []string {
+		var out []string
+		for _, c := range l.cc.requests() {
+			out = append(out, c.Key)
+		}
+		return out
+	}
+	crosscheckRow := func(t *testing.T, l *laneLab) engine.Event {
+		t.Helper()
+		rows, _ := labRows(l, ops.OpCrosscheck)
+		if len(rows) != 1 {
+			t.Fatalf("%d crosscheck rows", len(rows))
+		}
+		return rows[0]
+	}
+	passesOf := func(t *testing.T, row engine.Event) []ops.CrosscheckPass {
+		t.Helper()
+		raw, _ := json.Marshal(row.Data["passes"])
+		var out []ops.CrosscheckPass
+		if err := json.Unmarshal(raw, &out); err != nil {
+			t.Fatalf("the row's passes %s: %v", raw, err)
+		}
+		return out
+	}
+	noVerdict := func(t *testing.T, l *laneLab, v map[string]any) {
+		t.Helper()
+		if v["state"] != "escalated" || v["source"] != "crosscheck" || v["reason"] != "crosscheck_no_verdict" || v["ask"] != "crosscheck_no_verdict" {
+			t.Fatalf("the run's value %v, want escalated crosscheck_no_verdict with ask crosscheck_no_verdict", v)
+		}
+		row := crosscheckRow(t, l)
+		if str(row.Data, "state") != ops.CrosscheckStateNoVerdict || str(row.Data, "reason") != "crosscheck_no_verdict" || row.Data["verdict"] != nil {
+			t.Errorf("the crosscheck row %v, want no_verdict crosscheck_no_verdict with no V", row.Data)
+		}
+		var esc map[string]any
+		for _, e := range l.events() {
+			if e.Kind == engine.KindFlow && e.Event == engine.EvEscalation && str(e.Data, "reason") == "crosscheck_no_verdict" {
+				esc = e.Data
+			}
+		}
+		if esc == nil || str(esc, "ask") != "crosscheck_no_verdict" {
+			t.Errorf("no escalation crosscheck_no_verdict asking crosscheck_no_verdict: %v", esc)
+		}
+		for _, op := range []string{ops.OpMilestoneClose, ops.OpReportUp} {
+			if got, _ := labRows(l, op); len(got) != 0 {
+				t.Errorf("%d %s rows: the milestone closed over a crosscheck that gave no verdict", len(got), op)
+			}
+		}
+	}
+
+	t.Run("one void pass reruns once and the rerun gives the verdict", func(t *testing.T) {
+		l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+		l.Crosschecks("M1", 1, 0, "A", 1, void)
+		l.Crosschecks("M1", 1, 0, "B", 1, ok)
+		l.Crosschecks("M1", 1, 0, "A", 2, ok)
+		res, v := unitCheckRun(t, l)
+		l.closed(res)
+		if v["crosscheck"] != reviewadapter.VerdictVerified {
+			t.Errorf("the run's value %v", v)
+		}
+		if got := keys(l); len(got) != 3 || !slices.Contains(got, "M1/r1/e0/A1") || !slices.Contains(got, "M1/r1/e0/B1") || got[2] != "M1/r1/e0/A2" {
+			t.Fatalf("the checks %v, want A1 and B1, then A2", got)
+		}
+		dirs := map[string]bool{}
+		for _, c := range l.cc.requests() {
+			if !c.Existed || dirs[c.Request.Worktree] {
+				t.Errorf("check %s ran in %q (existed %v): each attempt has a fresh checkout of its own", c.Key, c.Request.Worktree, c.Existed)
+			}
+			dirs[c.Request.Worktree] = true
+		}
+		row := crosscheckRow(t, l)
+		rv, _ := row.Data["verdict"].(map[string]any)
+		if str(row.Data, "state") != ops.CrosscheckStateVerdict || rv["verdict"] != reviewadapter.VerdictVerified {
+			t.Fatalf("the crosscheck row %v", row.Data)
+		}
+		raw, _ := json.Marshal(rv["passes"])
+		var vpasses []ops.CrosscheckPass
+		_ = json.Unmarshal(raw, &vpasses)
+		for name, passes := range map[string][]ops.CrosscheckPass{"the row": passesOf(t, row), "V": vpasses} {
+			if len(passes) != 3 {
+				t.Fatalf("%s's passes %+v", name, passes)
+			}
+			want := []struct {
+				pass    string
+				attempt int
+				state   string
+				voided  bool
+			}{{"A", 1, string(reviewadapter.StateNotRead), true}, {"B", 1, string(reviewadapter.StateOK), false}, {"A", 2, string(reviewadapter.StateOK), false}}
+			for i, w := range want {
+				p := passes[i]
+				if p.Pass != w.pass || p.Attempt != w.attempt || p.State != w.state || p.Voided != w.voided {
+					t.Errorf("%s's pass %d: %+v, want %+v", name, i, p, w)
+				}
+			}
+		}
+	})
+
+	t.Run("both void passes give no verdict at once", func(t *testing.T) {
+		l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+		l.Crosschecks("M1", 1, 0, "A", 1, void)
+		l.Crosschecks("M1", 1, 0, "B", 1, void)
+		_, v := unitCheckRun(t, l)
+		if got := keys(l); len(got) != 2 {
+			t.Errorf("the checks %v, want exactly A1 and B1", got)
+		}
+		noVerdict(t, l, v)
+		passes := passesOf(t, crosscheckRow(t, l))
+		if len(passes) != 2 || !passes[0].Voided || !passes[1].Voided {
+			t.Errorf("the row's passes %+v, want both attempts voided", passes)
+		}
+	})
+
+	t.Run("a rerun that is void again gives no verdict", func(t *testing.T) {
+		l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+		l.Crosschecks("M1", 1, 0, "A", 1, void)
+		l.Crosschecks("M1", 1, 0, "B", 1, ok)
+		l.Crosschecks("M1", 1, 0, "A", 2, void)
+		_, v := unitCheckRun(t, l)
+		if got := keys(l); len(got) != 3 || got[2] != "M1/r1/e0/A2" {
+			t.Errorf("the checks %v, want A1 and B1, then A2", got)
+		}
+		noVerdict(t, l, v)
+		passes := passesOf(t, crosscheckRow(t, l))
+		if len(passes) != 3 || !passes[0].Voided || passes[1].Voided || !passes[2].Voided || passes[2].Attempt != 2 {
+			t.Errorf("the row's passes %+v, want A1 and A2 voided beside B1", passes)
+		}
+	})
 }
 
 // jsonEqualCLI says whether two values are the same JSON.
