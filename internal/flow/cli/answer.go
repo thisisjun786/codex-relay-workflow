@@ -143,13 +143,14 @@ func rowWarnings(row map[string]any) []string {
 
 // applyAnswer judges the claim against the record and the journal and, when it holds, appends the row under the run lock. A legacy
 // issue-child run (legacyRun) is refused under the lock before the claim is judged: nothing is appended to it. A run a run process
-// holds is drained first (drainAndTake): the answer is applied only under the lock, once that process let it go, within wait. It
-// returns the exit status of the command.
+// holds is drained first (drainAndTake): the answer is applied only under the lock, once that process let it go, within wait. The
+// decision record is judged as the store holds it after the last wait: `crw relay decision-withdraw` changes a record without the run
+// lock, so a record read before a writer's hold or a drain ended is never the one applied (decisionNow). It returns the exit status
+// of the command.
 func (c *command) applyAnswer(st *store.Store, state string, claim Claim, wait time.Duration) (AnswerReply, int) {
 	reply := AnswerReply{Run: claim.Run}
-	rec, err := st.Get(c.ctx, claim.Decision)
-	if err != nil {
-		fmt.Fprintf(c.stderr, "crw flow answer: error: %v\n", err)
+	// an unknown decision fails before the run lock is asked for; the record itself is read again after every wait
+	if _, ok := c.decisionNow(st, claim); !ok {
 		return reply, 2
 	}
 	r := &Reader{St: st, State: state}
@@ -163,7 +164,7 @@ func (c *command) applyAnswer(st *store.Store, state string, claim Claim, wait t
 	if errors.Is(err, ErrRunLive) {
 		// a run process (or a holder this command cannot name) holds the run: drained, and the lock taken once it let go (CRW-1492)
 		var done bool
-		lock, reply, done = c.drainAndTake(st, state, rec, run, claim, wait)
+		lock, reply, done = c.drainAndTake(st, state, run, claim, wait)
 		if done {
 			return reply, replyCode(reply)
 		}
@@ -181,6 +182,12 @@ func (c *command) applyAnswer(st *store.Store, state string, claim Claim, wait t
 	if why := legacyRun(j.Events(), claim.Run, run.Workflow); why != "" {
 		reply.Refusal = &Refusal{Code: RefusedLegacyRun, Detail: why}
 		return reply, 1
+	}
+	// the record as it is now, under the lock, after the writer's hold or the drain this answer waited for: a decision withdrawn (or
+	// expired) meanwhile is refused here with its reason, and nothing is appended or resumed
+	rec, ok := c.decisionNow(st, claim)
+	if !ok {
+		return reply, 2
 	}
 	app, refusal := Judge(rec, j.Events(), run, claim)
 	if refusal != nil {
@@ -201,6 +208,18 @@ func (c *command) applyAnswer(st *store.Store, state string, claim Claim, wait t
 	return reply, 0
 }
 
+// decisionNow reads the answer's decision record as the store holds it at this moment (an error is said on stderr: exit 2). Every
+// judgment of an answer reads it here, right before it judges: the record can change while the answer waits (decision-withdraw takes
+// no run lock, and an answered record may be withdrawn or expire), so a record read before a wait is never judged after it.
+func (c *command) decisionNow(st *store.Store, claim Claim) (decisions.Record, bool) {
+	rec, err := st.Get(c.ctx, claim.Decision)
+	if err != nil {
+		fmt.Fprintf(c.stderr, "crw flow answer: error: %v\n", err)
+		return decisions.Record{}, false
+	}
+	return rec, true
+}
+
 // replyCode is the exit status of an answer that ends with its reply: 2 for a failure that is no refusal (said on stderr), 1 for a
 // refusal, 0 for a replay or an application.
 func replyCode(reply AnswerReply) int {
@@ -214,11 +233,12 @@ func replyCode(reply AnswerReply) int {
 }
 
 // prejudge judges the claim on a snapshot of the run's journal read without the run lock (the rows without their large payloads: the
-// questions and the applications are flow rows, read whole), as the locked path judges it: a legacy issue-child run, then Judge. It
-// appends nothing and opens no journal handle (a handle numbers its rows from the rows it loaded, so one opened before a drained
+// questions and the applications are flow rows, read whole), as the locked path judges it: a legacy issue-child run, then Judge, on
+// the decision record read right then (decisionNow: one withdrawn while the answer waited is refused before anything more is asked).
+// It appends nothing and opens no journal handle (a handle numbers its rows from the rows it loaded, so one opened before a drained
 // process's last rows would fail its append). It answers done with the reply when the answer ends here: a refusal, a replay (OK), or
-// a journal that cannot be read (neither: exit 2, said on stderr).
-func (c *command) prejudge(st *store.Store, rec decisions.Record, run RunRecord, claim Claim) (AnswerReply, bool) {
+// a journal or a record that cannot be read (neither: exit 2, said on stderr).
+func (c *command) prejudge(st *store.Store, run RunRecord, claim Claim) (AnswerReply, bool) {
 	reply := AnswerReply{Run: claim.Run}
 	events, _, err := loadLeanJournal(c.ctx, st, claim.Run)
 	if err != nil {
@@ -227,6 +247,10 @@ func (c *command) prejudge(st *store.Store, rec decisions.Record, run RunRecord,
 	}
 	if why := legacyRun(events, claim.Run, run.Workflow); why != "" {
 		reply.Refusal = &Refusal{Code: RefusedLegacyRun, Detail: why}
+		return reply, true
+	}
+	rec, ok := c.decisionNow(st, claim)
+	if !ok {
 		return reply, true
 	}
 	app, refusal := Judge(rec, events, run, claim)
@@ -250,9 +274,11 @@ type holderID struct {
 	since, command string
 }
 
-// drainAndTake is the answer to a run a process holds (CRW-1492). The claim is judged on the journal first (prejudge): a refusal or a
-// replay is the answer, and nothing is signalled. Then, in each round, a run process that holds the run (a `_run` or `resume` record
-// naming a pid) and was not signalled by this answer is judged again on a snapshot read after its record - a run process can hold the
+// drainAndTake is the answer to a run a process holds (CRW-1492). The claim is judged on the journal and on the decision record as
+// they are first (prejudge): a refusal or a replay is the answer, and nothing is signalled. Then, in each round, a run process that
+// holds the run (a `_run` or `resume` record naming a pid) and was not signalled by this answer is judged again, on the record read
+// again (a decision withdrawn while the answer waited is refused and drains nothing more) and on a snapshot read after its holder
+// record - a run process can hold the
 // run after the first judgment only because it started after it, and the resume of another answer starts only after that answer's
 // row is stored, so this judgment refuses (another decision) or replays (the same decision) instead of draining it -, its record is
 // read again (a holder that changed meanwhile waits for the next round), and it is sent SIGUSR2: it stops at its next boundary (the
@@ -261,8 +287,8 @@ type holderID struct {
 // signal). Taken, the locked path judges and appends as for a run no process holds; the journal is opened there, after the drained
 // process's rows. Not taken: run_draining when this answer signalled, run_live when it asked nothing. It answers done with the reply
 // when the answer ends here, or the lock it holds.
-func (c *command) drainAndTake(st *store.Store, state string, rec decisions.Record, run RunRecord, claim Claim, wait time.Duration) (*Lock, AnswerReply, bool) {
-	if reply, done := c.prejudge(st, rec, run, claim); done {
+func (c *command) drainAndTake(st *store.Store, state string, run RunRecord, claim Claim, wait time.Duration) (*Lock, AnswerReply, bool) {
+	if reply, done := c.prejudge(st, run, claim); done {
 		return nil, reply, true
 	}
 	signal := c.Signal
@@ -275,7 +301,7 @@ func (c *command) drainAndTake(st *store.Store, state string, rec decisions.Reco
 	var lastErr error
 	for {
 		if holder, held := lockHolderRecord(state, claim.Run); held && holder.PID > 1 && runProcessCommand(holder.Command) && !signalled[idOf(holder)] {
-			if reply, done := c.prejudge(st, rec, run, claim); done {
+			if reply, done := c.prejudge(st, run, claim); done {
 				reply.Drained = drained
 				return nil, reply, true
 			}

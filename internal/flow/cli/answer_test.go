@@ -643,6 +643,21 @@ func (f *drainFake) decisionRecord(id string) decisions.Record {
 	return rec
 }
 
+// withdraw withdraws a decision record through a store of the fake's own, as `crw relay decision-withdraw` does: without the run lock.
+func (f *drainFake) withdraw(id, reason string) {
+	f.t.Helper()
+	st, err := store.Open(ctx, filepath.Join(f.w.state, "relay.sqlite3"), "")
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	defer st.Close()
+	if _, err := st.Update(ctx, id, func(_ context.Context, r decisions.Record) (decisions.Record, error) {
+		return decisions.Withdraw(r, reason)
+	}); err != nil {
+		f.t.Fatal(err)
+	}
+}
+
 // appendDrainedEnd appends what a drained run process writes (engine.Control.Drain): the run_paused row of the answer's ask, then
 // the run/paused end by `answer`.
 func appendDrainedEnd(j *journal.Journal) {
@@ -1023,4 +1038,70 @@ func TestARefusedAnswerNeverResumes(t *testing.T) {
 			t.Fatalf("an applying answer with --no-resume: exit %d %+v %s, %d processes", code, reply, errOut, len(td.spawned))
 		}
 	})
+}
+
+// TestAnswerRefusesADecisionWithdrawnWhileItWaits (CRW-1492, x1501 P1): `crw relay decision-withdraw` changes a record without the run
+// lock (an answered record may be withdrawn), so a decision withdrawn while the answer waits for the run it drained - after the
+// signal, before the answer holds the lock - is judged as the store holds it then: the answer is refused not_answered, naming the
+// withdrawal and its reason; no decision_applied row is appended and nothing is resumed. (a) The drained process lets the run go: the
+// record read again under the lock refuses. (b) A run process takes the run after the drained one (a resume started by hand): the
+// re-judge before its signal reads the record again and refuses, and that process is never signalled.
+func TestAnswerRefusesADecisionWithdrawnWhileItWaits(t *testing.T) {
+	const reason = "the parent took the question back"
+	for _, tc := range []struct {
+		name      string
+		newHolder bool
+	}{
+		{"the drained process lets the run go", false},
+		{"a new run process takes the run", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newWorld(t)
+			a := newLiveAsking(t, w)
+			td := w.deps()
+			id := a.answered(t, "ud-withdrawn", nil)
+			held, err := TakeLock(w.state, "run-q", ProcessCommand, td.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			const n2 = 999994
+			var second *Lock
+			fake := newDrainFake(t, w)
+			fake.on = func(n, pid int) {
+				if n != 0 {
+					return
+				}
+				// the process ends paused for the answer; meanwhile the decision is withdrawn; the process lets the run go
+				fake.write(func(j *journal.Journal, _ []engine.Event) { appendDrainedEnd(j) })
+				fake.withdraw(id, reason)
+				held.Release()
+				if tc.newHolder {
+					second = holdByHand(t, w.state, "run-q", n2, "resume", "2026-10-12T09:00:05Z")
+					fake.write(func(j *journal.Journal, _ []engine.Event) {
+						j.Append(engine.Event{RunID: "run-q", Kind: engine.KindRun, Event: "started", Data: map[string]any{"workflow": "project-lane", "script_digest": "d", "args_digest": "a"}})
+					})
+				}
+			}
+			td.Signal = fake.signal
+			code, reply, errOut := a.answer(td, id, "--wait", "2")
+			if second != nil {
+				second.Release()
+			}
+			if code != 1 || reply.Refusal == nil || reply.Refusal.Code != RefusedNotAnswered || reply.Applied || reply.OK {
+				t.Fatalf("an answer whose decision was withdrawn while it waited: exit %d %+v %s", code, reply, errOut)
+			}
+			if !strings.Contains(reply.Refusal.Detail, "withdrawn") || !strings.Contains(reply.Refusal.Detail, reason) {
+				t.Errorf("the refusal does not name the withdrawal and its reason: %q", reply.Refusal.Detail)
+			}
+			if got := fake.calls(); len(got) != 1 || got[0].pid != os.Getpid() || got[0].sig != syscall.SIGUSR2 {
+				t.Fatalf("the signals (only the first process, never %d): %+v", n2, got)
+			}
+			if rows := a.appliedRows(t); len(rows) != 0 {
+				t.Fatalf("a withdrawn decision was applied: %+v", rows)
+			}
+			if len(td.spawned) != 0 {
+				t.Fatalf("an answer of a withdrawn decision resumed the run: %+v", td.spawned)
+			}
+		})
+	}
 }
