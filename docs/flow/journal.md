@@ -27,8 +27,10 @@ saw. A row is never updated.
   still buffered, so the error is read again after it: a run whose last write failed ends with the journal's error, not as completed
   or paused.
 - A process ends the run with one KindRun end row. It is `finished` (`status`, `error_kind`, and `outcome` when a completed script
-  returned a milestone state, [script.md](script.md)) unless the operator paused the run (`crw flow pause`) and it would have ended
-  completed: then it is a `run/paused` row (`status` `paused`, `by`, `reason`) and no `finished` row, and no completion is told.
+  returned a milestone state, [script.md](script.md)) unless the operator paused the run (`crw flow pause`, `by` `operator`) or
+  an answer drained it (`crw flow answer` to a run a process holds, `by` `answer`) and it would have ended completed: then it is a
+  `run/paused` row (`status` `paused`, and the `by` and `reason` of the last such ask) and no `finished` row, and no completion is
+  told.
   A run no process holds whose last end row after its last `started` row is `run/paused` reads `paused`, not `dead`; its resume
   writes a new `started` row. A deadline, a token budget or a quota pause ends with `finished`.
 - A run no process holds is ended by `crw flow cancel` itself: under the run lock it appends one `finished` row (`status`

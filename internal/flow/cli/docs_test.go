@@ -133,8 +133,7 @@ func docSection(t *testing.T, text, heading string) string {
 }
 
 // TestFlowRefDescribesThePausedEnd: the docs follow the paused end of CRW-1487. The pause section of flow.md names the run's paused
-// end and no completion notice instead of a run that finishes held; the answer section still refuses a run a process holds;
-// reporting.md names the milestone state (state=, reason=) in the completion notice; journal.md names the run paused row.
+// end and no completion notice instead of a run that finishes held; reporting.md names the milestone state (state=, reason=) in the completion notice; journal.md names the run paused row.
 func TestFlowRefDescribesThePausedEnd(t *testing.T) {
 	read := func(path string) string {
 		t.Helper()
@@ -153,10 +152,6 @@ func TestFlowRefDescribesThePausedEnd(t *testing.T) {
 		if !strings.Contains(pause, want) {
 			t.Errorf("the pause section of flow.md does not say %q:\n%s", want, pause)
 		}
-	}
-	answer := docSection(t, ref, "### crw flow answer")
-	if !strings.Contains(answer, "a run a process holds is refused (`crw flow pause` first)") {
-		t.Errorf("the answer section of flow.md no longer refuses a run a process holds:\n%s", answer)
 	}
 	reporting := read("../../../docs/flow/reporting.md")
 	for _, want := range []string{"state=", "reason=", "lanes="} {
@@ -251,5 +246,54 @@ func TestDocsDescribeTheWriterHoldAndTheCancelDeadMember(t *testing.T) {
 		if strings.HasPrefix(r, "| `crw flow resume RUN [SCRIPT] [--detach]` |") && !strings.Contains(r, "cancelled run") {
 			t.Errorf("the resume row of the command table does not refuse a cancelled run: %s", r)
 		}
+	}
+}
+
+// TestFlowRefDescribesTheAnswerDrain: the docs follow the answer drain of CRW-1492. The answer row of flow.md's command table takes
+// `--wait S`; the answer section says a run a process holds is asked to stop at its next boundary, that `--wait` bounds the wait for
+// its lock, that `run_draining` says to run the same answer again, and that only the answer that appends the row resumes the run; the
+// next section keeps the owner's loop while the run drains; the crw-run skill sends the owner back to that loop on `run_draining`;
+// script.md no longer says an answer holds the run "between two processes". The pins guard that the sentences exist; the behaviour is
+// pinned by the tests of the code (answer_test.go, next_drain_test.go, process_test.go).
+func TestFlowRefDescribesTheAnswerDrain(t *testing.T) {
+	read := func(path string) string {
+		t.Helper()
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(raw)
+	}
+	ref := read(flowRef)
+	answer := docSection(t, ref, "### crw flow answer")
+	for _, want := range []string{"next boundary", "--wait", "run_draining", "only the answer that appends"} {
+		if !strings.Contains(answer, want) {
+			t.Errorf("the answer section of flow.md does not say %q:\n%s", want, answer)
+		}
+	}
+	if strings.Contains(answer, "(`crw flow pause` first)") {
+		t.Errorf("the answer section of flow.md still sends the caller to pause first:\n%s", answer)
+	}
+	row := ""
+	for _, r := range tableRows(t, ref, "## The crw flow command table") {
+		if strings.HasPrefix(r, "| `crw flow answer ") {
+			row = r
+		}
+	}
+	if !strings.Contains(row, "[--wait S]") || !strings.Contains(row, "next boundary") {
+		t.Errorf("the answer row of the command table does not take --wait or drain a run a process holds: %s", row)
+	}
+	next := docSection(t, ref, "### crw flow next and crw flow dispatched")
+	if !strings.Contains(next, "a step nobody takes holds its call and the run") {
+		t.Errorf("the next section of flow.md does not keep the owner's loop while a run drains:\n%s", next)
+	}
+	skill := read("../../../plugins/crw/skills/crw-run/SKILL.md")
+	for _, want := range []string{"run_draining", "a step nobody takes holds its call and the run"} {
+		if !strings.Contains(skill, want) {
+			t.Errorf("the crw-run skill does not say %q", want)
+		}
+	}
+	if script := read("../../../docs/flow/script.md"); strings.Contains(script, "between two processes") {
+		t.Error("script.md still says an answer holds the run between two processes")
 	}
 }
