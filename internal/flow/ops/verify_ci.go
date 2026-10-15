@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 )
 
 // RunCommand runs a command in a directory, with env set over the inherited environment (nil: inherited as it is), and answers
@@ -48,11 +49,9 @@ type CILocalVerifier struct {
 	Tools crwconfig.VerifierTools
 	// ExtraArgs follow `ci local` (a heavy gate, a work root).
 	ExtraArgs []string
-	// RecordDir is where the records are written; empty is crw-verify below the worktree's own git directory (CRW-1489): <worktree>/.git
-	// when that is a directory, or the per-worktree directory a linked worktree's .git file names (gitdir:, a relative one against the
-	// worktree), never the caller's TMPDIR, so two lanes never share a record file. A worktree with no git directory is an error
-	// before the command runs. A linked worktree of a repository in the account's .codex has its git directory outside the checkout,
-	// and crw-dev refuses that as a record destination (homeguard); that shows as a verifier error, and RecordDir overrides it.
+	// RecordDir is where the records are written; empty is a directory inside the checkout being verified (CRW-1489, ciRecordDir):
+	// crw-verify below <worktree>/.git when that is a directory, or .crw/verify in a linked worktree, never the caller's TMPDIR, so
+	// two lanes never share a record file. A worktree with no git directory is an error before the command runs.
 	RecordDir string
 	Run       RunCommand
 }
@@ -98,11 +97,9 @@ func (v CILocalVerifier) Verify(ctx context.Context, req VerifyRequest) (VerifyO
 	}
 	dir := v.RecordDir
 	if dir == "" {
-		gitDir, err := ciGitDir(req.Worktree)
-		if err != nil {
+		if dir, err = ciRecordDir(req.Worktree); err != nil {
 			return VerifyOutcome{}, fmt.Errorf("ops: ci_record_dir: %w", err)
 		}
-		dir = filepath.Join(gitDir, "crw-verify")
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return VerifyOutcome{}, err
@@ -144,6 +141,22 @@ func (v CILocalVerifier) Verify(ctx context.Context, req VerifyRequest) (VerifyO
 		out.Summary = fmt.Sprintf("%s exited %d with result %q", CILocalCommand, code, rec.Result)
 	}
 	return out, nil
+}
+
+// ciRecordDir is the default record directory of a worktree, inside its checkout: crw-dev refuses a record that leaves the checkout
+// for the account's protected directories (homeguard), and a linked worktree's git directory lies in the repository's common git
+// directory, which may be such a place (a repository below the account's .codex). So it is crw-verify below <worktree>/.git when
+// .git is a directory, and .crw/verify for a linked worktree (crwdir makes .crw with its ignore file, so git does not see the
+// records). The .git file of a linked worktree must still name a git directory: without one it is an error.
+func ciRecordDir(worktree string) (string, error) {
+	gitDir, err := ciGitDir(worktree)
+	if err != nil {
+		return "", err
+	}
+	if gitDir == filepath.Join(worktree, ".git") {
+		return filepath.Join(gitDir, "crw-verify"), nil
+	}
+	return crwdir.EnsureSubdir(worktree, "verify")
 }
 
 // ciGitDir answers the worktree's own git directory, read in Go with no subprocess: <worktree>/.git when it is a directory, or

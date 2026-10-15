@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/crwdir"
 )
 
 const toolsPassRecord = `{"schema":"verification-record/1","result":"pass","digest":"sha256:ff","jobs":[]}`
@@ -141,9 +142,12 @@ func TestCILocalVerifier_the_default_record_dir_does_not_follow_TMPDIR(t *testin
 	}
 }
 
-// CRW-1489: in a linked worktree .git is a file naming the per-worktree git directory; the record goes below that directory (an
-// absolute gitdir as it is, a relative one against the worktree), so two lanes of one repository never share a record file.
-func TestCILocalVerifier_a_linked_worktree_records_under_its_gitdir(t *testing.T) {
+// CRW-1489: in a linked worktree .git is a file naming the per-worktree git directory (absolute, or relative to the worktree),
+// and that directory lies outside the checkout: in the repository's common git directory, which may be in the account's .codex,
+// where crw-dev refuses a record that leaves the checkout. The record goes inside the checkout instead, in .crw/verify (ignored by
+// git: crwdir writes .crw/.gitignore when it makes .crw), so two lanes of one repository still never share a record file, and
+// nothing is written below the gitdir.
+func TestCILocalVerifier_a_linked_worktree_records_inside_its_checkout(t *testing.T) {
 	for _, relative := range []bool{false, true} {
 		t.Run(map[bool]string{false: "absolute", true: "relative"}[relative], func(t *testing.T) {
 			base := t.TempDir()
@@ -172,8 +176,14 @@ func TestCILocalVerifier_a_linked_worktree_records_under_its_gitdir(t *testing.T
 			if out, err := v.Verify(context.Background(), VerifyRequest{Node: "A", Head: head, Worktree: wt}); err != nil || !out.Pass {
 				t.Fatalf("verify: %+v %v", out, err)
 			}
-			if want := filepath.Join(g, "crw-verify", "verification-record-"+head+".json"); record != want {
+			if want := filepath.Join(wt, crwdir.DirName, "verify", "verification-record-"+head+".json"); record != want {
 				t.Errorf("the record is %s, want %s", record, want)
+			}
+			if data, err := os.ReadFile(filepath.Join(wt, crwdir.DirName, ".gitignore")); err != nil || string(data) != crwdir.GitignoreText {
+				t.Errorf("the checkout's .crw/.gitignore is %q (%v), want the crwdir ignore text", data, err)
+			}
+			if _, err := os.Lstat(filepath.Join(g, "crw-verify")); !os.IsNotExist(err) {
+				t.Errorf("something was written below the gitdir %s: %v", g, err)
 			}
 		})
 	}
