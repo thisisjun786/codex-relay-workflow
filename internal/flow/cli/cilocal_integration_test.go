@@ -90,7 +90,7 @@ func TestCILocalIntegrationVerifiesTheMergedTree(t *testing.T) {
 	tools := crwconfig.VerifierTools{CrwDev: crwDev, Config: "/lab/config.json"}
 	OpsFor = func(ctx context.Context, req LaneRequest) (LaneWorld, error) {
 		return BuildLane(ctx, req, LaneOptions{Verifier: labVerifier{l}, IntegrationVerify: CILocalIntegration(tools, &notes), SkillsDigest: "sha256:lab-skills", Reporter: &labReporter{l: l},
-			Relay: func(r *SchedRelay) ops.Relay { return &labRelay{SchedRelay: r, l: l} }})
+			UnitCheck: l.uc.seam(), Relay: func(r *SchedRelay) ops.Relay { return &labRelay{SchedRelay: r, l: l} }})
 	}
 	spec := l.start("start", "project-lane", "--args", `{"plan":"plan-1","milestone":"M1"}`, "--handoff", l.file)
 	v := l.closed(l.runToEnd(spec.RunID))

@@ -371,10 +371,17 @@ export function answerPacket(answers) {
   ].join('\n\n')
 }
 
+// fixPacket is the next turn of the executor's thread when the run found something to fix: a failed verification (ci), or a verdict.
+// The verdict is a unit check's (crw.unitCheck, CRW-1465: {verdict, findings}, each finding by its id, severity, file, line and text),
+// which has no defects or criteria of a reviewer's VERDICT, or, on the old reviewer path an earlier run replays, a reviewer's VERDICT.
+// notes are the explorer findings of that old path (the node lane passes none).
 export function fixPacket(node, verdict, ci, notes, receipt) {
   const parts = ['ROLE: executor. Node ' + node + ': fix what the run found, in the same worktree, and answer with RECEIPT again.']
   if (ci && !ci.pass) parts.push(section('VERIFICATION FAILED (' + ci.command + ')', list(ci.failures.length ? ci.failures : [ci.summary])))
-  if (verdict) {
+  if (verdict && Array.isArray(verdict.findings) && !Array.isArray(verdict.defects)) {
+    parts.push(section('UNIT CHECK (' + verdict.verdict + '; fix every finding)', list(verdict.findings.map((f) => '[' + f.severity + '] ' + f.id + ' ' + f.file + ':' + f.line + ' ' + f.text))))
+    parts.push('A finding you cannot fix without an answer: answer needs_research with the question, and the run answers it on this thread.')
+  } else if (verdict) {
     parts.push(section('REVIEW (' + verdict.verdict + ')', verdict.defects.map((d) => '- [' + d.severity + '/' + d.kind + '] ' + d.ref + ' ' + d.file + ':' + d.line + ' ' + d.finding)))
     parts.push(section('CRITERIA NOT MET', list(verdict.criteria.filter((c) => !c.met).map((c) => c.id + ': ' + c.evidence), 'none')))
   }

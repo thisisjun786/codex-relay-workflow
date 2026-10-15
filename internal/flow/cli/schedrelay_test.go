@@ -567,14 +567,14 @@ func TestSchedRelayAcceptIntegrateCloseOnTempStore(t *testing.T) {
 	if l.verifications != 2 {
 		t.Errorf("%d merged trees were verified", l.verifications)
 	}
-	// what the relay holds of each acceptance: the head read from git, the reviewer of another family, the records
+	// what the relay holds of each acceptance: the head read from git, the unit checker of another family (CRW-1465), the records
 	for _, key := range []string{"A-1", "A-2"} {
 		var head, base, repo, reviewer, premerge, verification, by string
 		if err := l.w.st.DB.QueryRow("SELECT head, base, repository, reviewer_model, premerge_json, verification_json, accepted_by_task_id FROM dag_agent_acceptances WHERE node_id = ?", l.nodeOf[key]).
 			Scan(&head, &base, &repo, &reviewer, &premerge, &verification, &by); err != nil {
 			t.Fatal(err)
 		}
-		if repo != l.repo || reviewer != "gpt-fake-sol" || by != labOwner || !strings.Contains(premerge, head) || !strings.Contains(verification, head) {
+		if repo != l.repo || reviewer != labCheckModel || by != labOwner || !strings.Contains(premerge, head) || !strings.Contains(verification, head) {
 			t.Errorf("the acceptance of %s: head %s repo %s reviewer %s by %s", key, head, repo, reviewer, by)
 		}
 		if out, err := exec.Command("git", "-C", l.repo, "merge-base", "--is-ancestor", head, "integration").CombinedOutput(); err != nil {

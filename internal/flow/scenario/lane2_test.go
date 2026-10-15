@@ -2,16 +2,19 @@ package scenario
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/lint"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/reviewadapter"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/workflows"
 )
@@ -77,8 +80,9 @@ func TestGroupRunsFreshExecutorPerMemberInOrder(t *testing.T) {
 		{ID: "B", Issue: "CRW-B", Title: "second of the group", Regions: []string{"g/"}, Group: "G1", After: []string{"A"}},
 	}
 	l := NewLab(t, nodes...)
-	same := Defect("d1", "correctness", "P1", "the guard is missing")
-	reviews(l, "A", Verdict(false, same), Verdict(false, same), Verdict(true))
+	// two unit checks in a row find the same finding: SP-TIER-1 rule (a) steps A's tier
+	same := Finding("P1", "the guard is missing")
+	l.UnitChecks("A", NeedsChanges(same), NeedsChanges(same))
 	got := mustRun(t, l)
 	if got.State != "closed" {
 		t.Fatalf("state %q: %+v", got.State, got)
@@ -136,8 +140,8 @@ func TestSpawnDecisionsRecorded(t *testing.T) {
 		{ID: "B", Issue: "CRW-B", Title: "a big issue", Regions: []string{"b/"}, SizeFit: "child", SizeReason: "own_goal"},
 	}
 	l := NewLab(t, nodes...)
-	same := Defect("d1", "correctness", "P1", "the guard is missing")
-	reviews(l, "A", Verdict(false, same), Verdict(false, same), Verdict(true))
+	same := Finding("P1", "the guard is missing")
+	l.UnitChecks("A", NeedsChanges(same), NeedsChanges(same))
 	d := l.designFor()
 	d.OpenQuestions = []ops.OpenQuestion{{ID: "q1", Question: "which flag turns it on?", Scope: "repo", FilesNeeded: []string{"a", "b", "c", "d"}}, {ID: "q2", Question: "is it documented?", Scope: "docs", FilesNeeded: []string{"README.md"}},
 		{ID: "q3", Question: "may it skip the README rule?", Scope: "authority:repo-rule", FilesNeeded: []string{"README.md"}}}
@@ -157,10 +161,17 @@ func TestSpawnDecisionsRecorded(t *testing.T) {
 	}
 	for _, k := range []key{
 		{ops.RuleArch1, "spawn", ""}, {ops.RuleAudit, "spawn", ""}, {ops.RuleExpl1, "spawn", ""}, {ops.RuleExpl1, "orchestrator", ""},
-		{ops.RuleExec1, "spawn", "A"}, {ops.RuleRev1, "spawn", "A"}, {ops.RuleExpl3, "skip", "A"},
+		{ops.RuleExec1, "spawn", "A"},
 	} {
 		if seen[k] == 0 {
 			t.Errorf("no decision %+v among %v", k, seen)
+		}
+	}
+	// the unit check of a node is a run of the review tool, not a reviewer spawn (CRW-1465): no SP-REV-1 decision, and no evidence
+	// question of a reviewer to route (SP-EXPL-3)
+	for k := range seen {
+		if k.node == "A" && (k.rule == ops.RuleRev1 || k.rule == ops.RuleExpl3) {
+			t.Errorf("a decision %+v of the old reviewer path", k)
 		}
 	}
 	// B, sized for a child, goes up as a size split (CRW-1415): no decision under a retired child rule is written for it
@@ -185,115 +196,116 @@ func TestSpawnDecisionsRecorded(t *testing.T) {
 	}
 }
 
-// ---- the reviewer is not a verdict ----
+// ---- a unit check that is not a verdict ----
 
-func reviewerOnly(t *testing.T, l *Lab, wantLabels []string) {
+func checkOnly(t *testing.T, l *Lab, wantLabels []string) {
 	t.Helper()
 	if labels := l.Labels(); !slices.Equal(labels, wantLabels) {
 		t.Fatalf("calls %v, want %v", labels, wantLabels)
 	}
 	for _, c := range l.Calls() {
-		if strings.HasPrefix(c.Label, "fix:") {
-			t.Errorf("an executor fix %q after a review that was not a verdict", c.Label)
+		if strings.HasPrefix(c.Label, "fix:") || c.Role == "reviewer" {
+			t.Errorf("a call %q (%s) after a unit check that was not a verdict", c.Label, c.Role)
 		}
+	}
+	if n := len(l.Rows("crw.commit")); n != 0 {
+		t.Errorf("%d commits after a unit check that was not a verdict", n)
 	}
 	noTierStep(t, l)
 }
 
-// A reviewer turn the host failed is a held call: the node is held, there is no fix and no tier evidence.
-func TestReviewerHeldHoldsNoFix(t *testing.T) {
+// A unit check the tool gave no answer in (CRW-1465) holds the node: the hold's source is unit_check, there is no fix, no commit and no
+// tier evidence.
+func TestUnitCheckNoAnswerHoldsNoFix(t *testing.T) {
 	l := NewLab(t, oneNode()...)
-	l.Sequence("^review:A:r1$", func(*Call) fakehostPlan { return Fail("serverOverloaded") })
+	l.UnitChecks("A", UnitCheck{State: reviewadapter.StateNoAnswer})
 	got := mustRunIncomplete(t, l)
-	if state, reason := laneOf(t, got, "A"); state != "held" || reason != "host_infra_serverOverloaded" {
+	if state, reason := laneOf(t, got, "A"); state != "held" || reason != "unit_check_no_answer" {
 		t.Fatalf("lane A: %s %s", state, reason)
 	}
-	reviewerOnly(t, l, []string{"architect", "design-audit:r1", "build:A:executor", "review:A:r1"})
-	if rows := l.Rows("crw.hold"); len(rows) != 1 || str(rows[0].Data, "source") != "review" {
+	checkOnly(t, l, []string{"architect", "design-audit:r1", "build:A:executor"})
+	if rows := l.Rows("crw.hold"); len(rows) != 1 || str(rows[0].Data, "source") != "unit_check" {
 		t.Errorf("hold rows %+v", rows)
 	}
-	if rows := l.Rows("crw.review"); len(rows) != 1 || str(rows[0].Data, "state") != "held" {
-		t.Errorf("review rows %+v", rows)
+	if rows := l.Rows(ops.OpUnitCheck); len(rows) != 1 || str(rows[0].Data, "hold") != "unit_check_no_answer" || str(rows[0].Data, "role") != "unit-check" {
+		t.Errorf("unit-check rows %+v", rows)
 	}
 }
 
-// A reviewer call whose outcome is unknown holds the node: nothing is sent again, no fix, no tier evidence.
-func TestReviewerUnknownHoldsNoFix(t *testing.T) {
+// A worktree that moved after the executor's turn (CRW-1465) is not checked: the tool is not run on a tree the run will not commit,
+// and the node escalates as a configuration question (unit_check_tree_moved); nothing is fixed and nothing is committed.
+func TestUnitCheckOfAMovedTreeEscalatesNoFix(t *testing.T) {
 	l := NewLab(t, oneNode()...)
-	l.Threads.DropAck("turn/start", func(_ int, params map[string]any) bool { return strings.Contains(inputText(params), "Review the head") })
+	var moved sync.Once
+	l.OnRow(func(ev engine.Event) {
+		if ev.Kind == engine.KindCall && ev.Op == "agent" && ev.Event == engine.EvCompleted && ev.Label == "build:A:executor" {
+			moved.Do(func() {
+				alloc, _ := l.Prepared(ev.CallID).Data["allocation"].(map[string]any)
+				writeFile(t, filepath.Join(str(alloc, "path"), "a", "late.txt"), "written after the executor's turn\n")
+			})
+		}
+	})
 	got := mustRunIncomplete(t, l)
-	if state, reason := laneOf(t, got, "A"); state != "held" || reason != "dispatch_unknown" {
+	if state, reason := laneOf(t, got, "A"); state != "escalated" || reason != "unit_check_tree_moved" {
 		t.Fatalf("lane A: %s %s", state, reason)
 	}
-	reviewerOnly(t, l, []string{"architect", "design-audit:r1", "build:A:executor", "review:A:r1"})
-	if got := l.Relay.CloseReasons(); !slices.Equal(got, []string{"A:dispatch_unknown"}) {
-		t.Errorf("closes %v", got)
+	checkOnly(t, l, []string{"architect", "design-audit:r1", "build:A:executor"})
+	if n := len(l.Checker.Calls("A")); n != 0 {
+		t.Errorf("the tool was run %d times on a moved tree", n)
+	}
+	rows := l.FlowRows(engine.EvEscalation)
+	if len(rows) != 1 || str(rows[0].Data, "ask") != "configuration" || str(rows[0].Data, "reason") != "unit_check_tree_moved" {
+		t.Errorf("escalations %+v", rows)
 	}
 }
 
-// A reviewer that is refused - of the author's own model family (independence_refused), or by the host's configuration -
-// escalates as a configuration fault, and nothing is fixed.
-func TestReviewerRefusedEscalatesNoFix(t *testing.T) {
-	t.Run("independence_refused", func(t *testing.T) {
-		l := NewLab(t, oneNode()...)
-		// the executor runs on the reviewer's model family: its review is no independent second opinion
-		spec := l.Policy.Roles["executor"]
-		spec.Pair.Model = "gpt-fake-builder"
-		l.Policy.Roles["executor"] = spec
-		got := mustRunIncomplete(t, l)
-		if state, reason := laneOf(t, got, "A"); state != "escalated" || reason != "independence_refused" {
-			t.Fatalf("lane A: %s %s", state, reason)
-		}
-		reviewerOnly(t, l, []string{"architect", "design-audit:r1", "build:A:executor", "review:A:r1"})
-		rows := l.FlowRows(engine.EvEscalation)
-		if len(rows) != 1 || str(rows[0].Data, "class") != "configuration_fault" || str(rows[0].Data, "reason") != "independence_refused" {
-			t.Errorf("escalations %+v", rows)
-		}
-		if r := l.Rows("crw.review"); len(r) != 1 || str(r[0].Data, "state") != "refused" {
-			t.Errorf("review rows %+v", r)
-		}
-	})
-	t.Run("host configuration", func(t *testing.T) {
-		l := NewLab(t, oneNode()...)
-		l.Sequence("^review:A:r1$", func(*Call) fakehostPlan {
-			return fakehostPlan{StartError: map[string]any{"code": -32600, "message": "bad request", "data": map[string]any{"codexErrorInfo": "badRequest"}}}
+// A unit check whose tool failed, or whose worktree changed under it, escalates as a configuration question, and nothing is fixed.
+func TestUnitCheckToolFailureEscalatesNoFix(t *testing.T) {
+	for _, state := range []reviewadapter.State{reviewadapter.StateToolFailed, reviewadapter.StateWorktreeChanged} {
+		t.Run(string(state), func(t *testing.T) {
+			l := NewLab(t, oneNode()...)
+			l.UnitChecks("A", UnitCheck{State: state})
+			got := mustRunIncomplete(t, l)
+			if st, reason := laneOf(t, got, "A"); st != "escalated" || reason != "unit_check_"+string(state) {
+				t.Fatalf("lane A: %s %s", st, reason)
+			}
+			checkOnly(t, l, []string{"architect", "design-audit:r1", "build:A:executor"})
+			rows := l.FlowRows(engine.EvEscalation)
+			if len(rows) != 1 || str(rows[0].Data, "ask") != "configuration" {
+				t.Errorf("escalations %+v", rows)
+			}
 		})
-		got := mustRunIncomplete(t, l)
-		if state, reason := laneOf(t, got, "A"); state != "escalated" || reason != "host_config_badRequest" {
-			t.Fatalf("lane A: %s %s", state, reason)
-		}
-		reviewerOnly(t, l, []string{"architect", "design-audit:r1", "build:A:executor", "review:A:r1"})
-	})
+	}
 }
 
-// A reviewer that answers null_model is asked once more on a fresh reviewer thread; a second null_model escalates, and a verdict
-// of the second thread is the review.
-func TestReviewerNullModelRetriesFreshReviewerThenEscalates(t *testing.T) {
+// An invalid answer of the tool is asked once more with the same request (crw.unitCheck's retry); a second invalid answer escalates,
+// and a verdict of the second answer is the check.
+func TestUnitCheckInvalidRetriesOnceThenEscalates(t *testing.T) {
 	t.Run("escalates", func(t *testing.T) {
 		l := NewLab(t, oneNode()...)
-		l.Sequence("^review:A:r1", func(*Call) fakehostPlan { return Garbage() })
+		l.UnitChecks("A", UnitCheck{State: reviewadapter.StateInvalid}, UnitCheck{State: reviewadapter.StateInvalid})
 		got := mustRunIncomplete(t, l)
-		if state, reason := laneOf(t, got, "A"); state != "escalated" || reason != "reviewer_null_model" {
+		if state, reason := laneOf(t, got, "A"); state != "escalated" || reason != "unit_check_invalid" {
 			t.Fatalf("lane A: %s %s", state, reason)
 		}
-		reviewerOnly(t, l, []string{"architect", "design-audit:r1", "build:A:executor", "review:A:r1", "review:A:r1:retry"})
-		first, second := callNamed(t, l, "review:A:r1"), callNamed(t, l, "review:A:r1:retry")
-		if first.ID == second.ID || second.Resume != "" {
-			t.Errorf("the retry is not a fresh reviewer thread: %+v", second)
-		}
-		if l.Prepared(first.ID).Data["cwd"] == nil {
-			t.Log("reviewer calls carry their own directories")
+		checkOnly(t, l, []string{"architect", "design-audit:r1", "build:A:executor"})
+		calls := l.Checker.Calls("A")
+		if len(calls) != 2 || calls[0].Request.Prompt != calls[1].Request.Prompt {
+			t.Errorf("the checks %+v, want the same request twice", calls)
 		}
 	})
 	t.Run("the retry answers", func(t *testing.T) {
 		l := NewLab(t, oneNode()...)
-		l.Sequence("^review:A:r1$", func(*Call) fakehostPlan { return Garbage() })
+		l.UnitChecks("A", UnitCheck{State: reviewadapter.StateInvalid})
 		got := mustRun(t, l)
 		if got.State != "closed" {
 			t.Fatalf("state %q", got.State)
 		}
-		if labels := l.Labels(); !slices.Equal(labels, []string{"architect", "design-audit:r1", "build:A:executor", "review:A:r1", "review:A:r1:retry", "reviewer-final:M1", "reflection:M1"}) {
+		if labels := l.Labels(); !slices.Equal(labels, []string{"architect", "design-audit:r1", "build:A:executor", "reviewer-final:M1", "reflection:M1"}) {
 			t.Fatalf("calls %v", labels)
+		}
+		if rows := l.Rows(ops.OpUnitCheck); len(rows) != 1 || rows[0].Data["retried"] != true || str(rows[0].Data, "first_state") != "invalid" {
+			t.Errorf("unit-check rows %+v", rows)
 		}
 		noTierStep(t, l)
 	})
@@ -303,10 +315,10 @@ func TestReviewerNullModelRetriesFreshReviewerThenEscalates(t *testing.T) {
 
 // A fix turn that ends null_model leaves its edits in the attempt worktree that is retired; the rebuild starts in a new attempt
 // worktree at the node's last commit with that commit's files, and the old worktree's uncommitted edits are only on the retired
-// ref. There is no foreign verdict and no hold.
+// ref. There is no foreign verdict and no hold. The fix is the one of a failed verification of the first commit H1.
 func TestNullModelRebuildStartsFromLastCommitInNewWorktree(t *testing.T) {
 	l := NewLab(t, oneNode()...)
-	reviews(l, "A", Verdict(false, Defect("d1", "correctness", "P2", "fix this")), Verdict(true))
+	l.Verify.Fail = map[string][]int{"A": {1}}
 	l.Sequence("^fix:A:executor:r1$", func(c *Call) fakehostPlan {
 		c.EditPath("a/scratch.txt", "an edit the null_model attempt left behind\n")
 		return Garbage()
@@ -324,7 +336,7 @@ func TestNullModelRebuildStartsFromLastCommitInNewWorktree(t *testing.T) {
 		t.Fatalf("state %q: %+v", got.State, got)
 	}
 	labels := l.Labels()
-	if !slices.Equal(labels[:6], []string{"architect", "design-audit:r1", "build:A:executor", "review:A:r1", "fix:A:executor:r1", "rebuild:A:executor:r2"}) {
+	if !slices.Equal(labels[:5], []string{"architect", "design-audit:r1", "build:A:executor", "fix:A:executor:r1", "rebuild:A:executor:r2"}) {
 		t.Fatalf("calls %v", labels)
 	}
 	commits := l.Rows("crw.commit")
@@ -364,8 +376,8 @@ func TestNullModelRebuildStartsFromLastCommitInNewWorktree(t *testing.T) {
 	noTierStep(t, l)
 }
 
-// The built-in script passes the static rules of `crw flow lint`: the lifecycle of every executor node (build, commit, verify,
-// review, land), the tier step before every executor-t1, the reviewer's family, the labels, and the lanes' reads of outer
+// The built-in script passes the static rules of `crw flow lint`: the lifecycle of every executor node (build, unit check, commit,
+// verify, land), the tier step before every executor-t1, the reviewer's family, the labels, and the lanes' reads of outer
 // variables.
 func TestProjectLaneIsLintClean(t *testing.T) {
 	text, err := workflows.Source("project-lane")
@@ -494,4 +506,120 @@ func TestVerifyNamesTheIntegrationTipAsBase(t *testing.T) {
 			t.Errorf("verification of %s at %s has base %q, want the tip %s", c.Node, c.Head, c.Base, start)
 		}
 	}
+}
+
+// TestUnitCheckHoldOfTheLaneHasSourceUnitCheck (CRW-1465): a unit check that gave no judgment for the tool's quota holds the node: the
+// lane writes crw.hold with source unit_check and reason unit_check_quota, commits nothing, calls no reviewer and counts no tier
+// evidence. A resume asks the checker again (the held check is no result to replay), and the node lands without a new executor call,
+// as a verification that could not run is asked again on a resume (TestVerifierBackAfterResumeVerifiesAgain).
+func TestUnitCheckHoldOfTheLaneHasSourceUnitCheck(t *testing.T) {
+	l := NewLab(t, oneNode()...)
+	l.UnitChecks("A", UnitCheck{State: reviewadapter.StateQuota})
+	got := mustRunIncomplete(t, l)
+	if state, reason := laneOf(t, got, "A"); state != "held" || reason != "unit_check_quota" {
+		t.Fatalf("lane A: %s %s", state, reason)
+	}
+	if labels := l.Labels(); !slices.Equal(labels, []string{"architect", "design-audit:r1", "build:A:executor"}) {
+		t.Fatalf("calls %v", labels)
+	}
+	holds := l.Rows("crw.hold")
+	if len(holds) != 1 || str(holds[0].Data, "reason") != "unit_check_quota" || str(holds[0].Data, "source") != "unit_check" {
+		t.Fatalf("hold rows %+v", holds)
+	}
+	if n := len(l.Rows("crw.commit")); n != 0 {
+		t.Errorf("%d commits under a held unit check", n)
+	}
+	if n := len(l.Checker.Calls("A")); n != 1 {
+		t.Errorf("%d unit checks before the resume, want 1", n)
+	}
+	noTierStep(t, l)
+	before := l.LastSeq()
+	l.NewProcess("proc-2")
+	final := Value[laneResult](t, l.Resume())
+	if final.State != "closed" {
+		t.Fatalf("resume: %+v; labels %v", final, l.Labels())
+	}
+	if n := len(l.Checker.Calls("A")); n != 2 {
+		t.Errorf("%d unit checks, want the held one and the one the resume asked", n)
+	}
+	for _, c := range l.LiveCalls(before) {
+		if strings.HasPrefix(c.Label, "build:") || strings.HasPrefix(c.Label, "fix:") || strings.HasPrefix(c.Label, "review:") {
+			t.Errorf("the resume ran %q", c.Label)
+		}
+	}
+	if !slices.Equal(l.Relay.Landed, []string{"A"}) {
+		t.Errorf("landed %v", l.Relay.Landed)
+	}
+}
+
+// TestUnitCheckFixPacketRendersTheFindingsWithoutAVerdict (CRW-1465, parent F5): the fix packet of a unit check is built from the check's
+// verdict and findings, which carry no defects or criteria of a reviewer's VERDICT: it names every finding by its severity, id, file,
+// line and text, says the executor may answer needs_research on the same thread, and renders no REVIEW or CRITERIA NOT MET section. A
+// failed verification still builds its packet with the same signature.
+func TestUnitCheckFixPacketRendersTheFindingsWithoutAVerdict(t *testing.T) {
+	run := func(expr string) string {
+		t.Helper()
+		prog, err := loadScript("import { fixPacket } from 'crw:lib/packets'\nexport const meta = { name: 't' }\nreturn " + expr + "\n")
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, err := engine.Run(context.Background(), prog, engine.Config{Backend: engine.NewFake(), Policy: engine.FakePolicy()})
+		if err != nil || res.Status != engine.RunCompleted {
+			t.Fatalf("fixPacket: %v %+v", err, res)
+		}
+		var text string
+		if err := json.Unmarshal(res.Value, &text); err != nil {
+			t.Fatalf("the packet %s: %v", res.Value, err)
+		}
+		return text
+	}
+	text := run(`fixPacket('A', { verdict: 'needs_changes', findings: [{ id: 'f_1', severity: 'P2', impact: 'core_function', file: 'a/x.go', line: 7, text: 'the loop never ends' }, ` +
+		`{ id: 'f_2', severity: 'P3', impact: 'minor_separable', file: 'a/y.go', line: 2, text: 'a name' }] }, null, null, { summary: 'wrote the loop' })`)
+	for _, want := range []string{"ROLE: executor. Node A: fix what the run found", "UNIT CHECK (needs_changes", "- [P2] f_1 a/x.go:7 the loop never ends", "- [P3] f_2 a/y.go:2 a name",
+		"needs_research", "YOUR LAST RECEIPT: wrote the loop"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the unit-check fix packet lacks %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "REVIEW (") || strings.Contains(text, "CRITERIA NOT MET") || strings.Contains(text, "FINDINGS OF THE EXPLORER") {
+		t.Errorf("the unit-check fix packet renders a reviewer's verdict or notes:\n%s", text)
+	}
+	ci := run(`fixPacket('A', null, { pass: false, command: 'crw-dev ci local', failures: ['TestX failed'], summary: 'fail' }, null, { summary: 'wrote the loop' })`)
+	if !strings.Contains(ci, "VERIFICATION FAILED (crw-dev ci local)") || !strings.Contains(ci, "- TestX failed") || strings.Contains(ci, "UNIT CHECK") {
+		t.Errorf("the verification fix packet:\n%s", ci)
+	}
+}
+
+// TestUnitCheckCarriedFindingSurvivesAVerificationFix (CRW-1465): a non-blocking finding carried past the last unit-check round trip stays
+// carried to the land when the head then fails its verification: the fix of the verification is checked again (its own uncommitted
+// change, which need not show the carried finding), and the lane result of the landed node still names the carried id.
+func TestUnitCheckCarriedFindingSurvivesAVerificationFix(t *testing.T) {
+	l := NewLab(t, oneNode()...)
+	minor := Finding("P3", "a name could be clearer")
+	l.UnitChecks("A", NeedsChanges(Finding("P2", "the first thing is wrong")), NeedsChanges(Finding("P2", "a second thing is wrong")),
+		UnitCheck{Findings: []reviewadapter.Finding{minor}})
+	l.Verify.Fail = map[string][]int{"A": {1}}
+	res := l.Run()
+	got := Value[struct {
+		State string `json:"state"`
+		Lanes []struct {
+			Node    string   `json:"node"`
+			State   string   `json:"state"`
+			Carried []string `json:"carried"`
+		} `json:"lanes"`
+	}](t, res)
+	if got.State != "closed" || len(got.Lanes) != 1 || got.Lanes[0].State != "landed" {
+		t.Fatalf("%+v; calls %v", got, l.Labels())
+	}
+	if id := reviewadapter.FindingID(minor.File, minor.Text); !slices.Equal(got.Lanes[0].Carried, []string{id}) {
+		t.Errorf("the landed lane carries %v, want [%s]", got.Lanes[0].Carried, id)
+	}
+	want := []string{"architect", "design-audit:r1", "build:A:executor", "fix:A:executor:r1", "fix:A:executor:r2", "fix:A:executor:r3", "reviewer-final:M1", "reflection:M1"}
+	if labels := l.Labels(); !slices.Equal(labels, want) {
+		t.Errorf("calls %v, want %v", labels, want)
+	}
+	if n := len(l.Checker.Calls("A")); n != 4 {
+		t.Errorf("%d unit checks, want the three of the round trips and the one of the verification fix", n)
+	}
+	noTierStep(t, l)
 }

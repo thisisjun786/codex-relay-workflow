@@ -50,19 +50,19 @@ func mustRun(t *testing.T, l *Lab) laneResult {
 func index(list []string, want string) int { return slices.Index(list, want) }
 
 // The happy path: the architect plans the milestone, the critic (independent) audits the DESIGN, each node is released, built by
-// an executor, committed, verified, reviewed by a reviewer of another family and landed, the milestone closes over the integrated
-// range and the report goes up. No tier step is taken.
+// an executor, unit-checked by the review tool of another family (CRW-1465: no reviewer agent), committed, verified and landed, the
+// milestone closes over the integrated range and the report goes up. No tier step is taken.
 func TestLaneHappyPath(t *testing.T) {
 	l := NewLab(t, twoNodes()...)
 	got := mustRun(t, l)
 	if got.State != "closed" {
 		t.Fatalf("state %q: %+v", got.State, got)
 	}
-	want := []string{"architect", "design-audit:r1", "build:A:executor", "review:A:r1", "build:B:executor", "review:B:r1", "reviewer-final:M1", "reflection:M1"}
+	want := []string{"architect", "design-audit:r1", "build:A:executor", "build:B:executor", "reviewer-final:M1", "reflection:M1"}
 	if labels := l.Labels(); !slices.Equal(labels, want) {
 		t.Fatalf("calls %v, want %v", labels, want)
 	}
-	if roles := l.Roles(); !slices.Equal(roles, []string{"architect", "critic", "executor", "reviewer", "executor", "reviewer", "reviewer-final", "architect"}) {
+	if roles := l.Roles(); !slices.Equal(roles, []string{"architect", "critic", "executor", "executor", "reviewer-final", "architect"}) {
 		t.Fatalf("roles %v", roles)
 	}
 	if !slices.Equal(l.Relay.Landed, []string{"A", "B"}) {
@@ -77,10 +77,16 @@ func TestLaneHappyPath(t *testing.T) {
 	if got.Tip != tip {
 		t.Errorf("the close judged %s, the branch is at %s", got.Tip, tip)
 	}
-	for _, op := range []string{"crw.milestone", "crw.designAudit", "crw.designLedger", "crw.release", "crw.issuePlan", "crw.commit", "crw.verify", "crw.review", "crw.accept", "crw.integrate", "crw.milestoneClose", "crw.reportUp"} {
+	for _, op := range []string{"crw.milestone", "crw.designAudit", "crw.designLedger", "crw.release", "crw.issuePlan", "crw.unitCheck", "crw.commit", "crw.verify", "crw.accept", "crw.integrate", "crw.milestoneClose", "crw.reportUp"} {
 		if len(l.Rows(op)) == 0 {
 			t.Errorf("no completed %s row", op)
 		}
+	}
+	if rows := l.Rows("crw.review"); len(rows) != 0 {
+		t.Errorf("%d crw.review rows: no node is reviewed by an agent", len(rows))
+	}
+	if n := len(l.Checker.Calls("A")) + len(l.Checker.Calls("B")); n != 2 {
+		t.Errorf("%d unit checks, want one for each node", n)
 	}
 	if steps := l.StepRows(); len(steps) != 0 {
 		t.Errorf("a tier step in the happy path: %+v", steps)
@@ -96,16 +102,6 @@ func TestLaneHappyPath(t *testing.T) {
 // oneNode is a plan of one node.
 func oneNode() []NodeSpec {
 	return []NodeSpec{{ID: "A", Issue: "CRW-A", Title: "issue A", Regions: []string{"a/"}}}
-}
-
-// reviews scripts the verdicts of the reviewer calls of a node, one for each round.
-func reviews(l *Lab, node string, answers ...map[string]any) {
-	plans := make([]func(*Call) fakehostPlan, len(answers))
-	for i, a := range answers {
-		a := a
-		plans[i] = func(*Call) fakehostPlan { return Say(a) }
-	}
-	l.Sequence("^review:"+node+":r\\d+$", plans...)
 }
 
 // noTierStep asserts the run took no tier step: no executor-t1 call among the calls, no step row, no crw.tierStep row.
@@ -177,21 +173,19 @@ func textOfCall(l *Lab, callID string) string {
 	return ""
 }
 
-// ---- the review loop ----
+// ---- the unit-check loop ----
 
-// A reviewer that says needs_changes twice with different findings, then verified: the executor fixes on its own thread and
-// worktree each time, the reviewer is a fresh thread each round, and nothing steps the tier.
+// A unit check that finds something twice, each time something different, then nothing: the executor fixes on its own thread and
+// worktree each time, every check reads the fixed worktree again before anything is committed, and nothing steps the tier. The node is
+// committed once, after the check that found nothing.
 func TestTwoNeedsChangesThenVerified(t *testing.T) {
 	l := NewLab(t, oneNode()...)
-	reviews(l, "A",
-		Verdict(false, Defect("d1", "correctness", "P2", "the first thing is wrong")),
-		Verdict(false, Defect("d2", "test_gap", "P2", "a different thing is missing")),
-		Verdict(true))
+	l.UnitChecks("A", NeedsChanges(Finding("P2", "the first thing is wrong")), NeedsChanges(Finding("P2", "a different thing is missing")))
 	got := mustRun(t, l)
 	if got.State != "closed" {
 		t.Fatalf("state %q", got.State)
 	}
-	want := []string{"architect", "design-audit:r1", "build:A:executor", "review:A:r1", "fix:A:executor:r1", "review:A:r2", "fix:A:executor:r2", "review:A:r3", "reviewer-final:M1", "reflection:M1"}
+	want := []string{"architect", "design-audit:r1", "build:A:executor", "fix:A:executor:r1", "fix:A:executor:r2", "reviewer-final:M1", "reflection:M1"}
 	if labels := l.Labels(); !slices.Equal(labels, want) {
 		t.Fatalf("calls %v, want %v", labels, want)
 	}
@@ -202,17 +196,12 @@ func TestTwoNeedsChangesThenVerified(t *testing.T) {
 	if text := textOfCall(l, fix1.ID); !strings.Contains(text, "the first thing is wrong") {
 		t.Errorf("the first fix packet does not carry the finding:\n%s", text)
 	}
-	threads := map[string]bool{}
-	for _, c := range l.CallsOf("reviewer") {
-		if strings.HasPrefix(c.Label, "review:") {
-			threads[c.ID] = true
-		}
+	checks := l.Rows("crw.unitCheck")
+	if len(checks) != 3 || str(checks[0].Data, "call") != build.ID || str(checks[1].Data, "call") != fix1.ID || str(checks[2].Data, "call") != fix2.ID {
+		t.Errorf("unit-check rows %+v, want one for the build and one for each fix", checks)
 	}
-	if len(threads) != 3 {
-		t.Errorf("%d review calls, want 3 fresh ones", len(threads))
-	}
-	if n := len(l.Rows("crw.commit")); n != 3 {
-		t.Errorf("%d commits, want one for each round", n)
+	if n := len(l.Rows("crw.commit")); n != 1 {
+		t.Errorf("%d commits, want one after the check that found nothing", n)
 	}
 	noTierStep(t, l)
 }
