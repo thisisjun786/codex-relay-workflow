@@ -186,6 +186,82 @@ func TestOldWordingUnsentRowRestatesOnce(t *testing.T) {
 	}
 }
 
+// TestOldWordingSentRowStaysAsItIs (plan D8, the other half): a report that went under the old wording
+// keeps the packet it went with. The restatement guard (refreshProposal's UPDATE: the row is in a
+// restatable state and no other attempt of it may have gone) refuses the refresh, so no byte of the
+// packet changes and no restatement is journalled. Each clause must hold alone: a dispatched row
+// refreshed as the transport start of its own attempt (which the attempt clause leaves out) meets only
+// the state clause, and a row that reads unsent again while an attempt that may have gone stands (no
+// path writes that state today) meets only the attempt clause.
+func TestOldWordingSentRowStaysAsItIs(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		name string
+		// state is what the row reads when it is refreshed ("" the state the send left); attempt is the
+		// attempt the refresh is made for (0 none).
+		state   string
+		attempt int64
+	}{
+		{"dispatched", "", 0},
+		{"dispatched, refreshed for its own attempt", "", 1},
+		{"unsent again behind an attempt that may have gone", "queued", 0},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			f := fixture24(t)
+			f.c.Socket = "/tmp/host.sock"
+			f.c.Settings = &delivery.TaskSettings{}
+			_, staged := f.staged(t)
+			id := staged["messageId"].(string)
+			host := &sendHost{status: "idle"}
+			if _, err := f.c.Attempt(f.ctx, id, host, 1_700_000_000); err != nil {
+				t.Fatal(err)
+			}
+			sent, err := f.c.Get(f.ctx, id)
+			if err != nil || sent.State != "dispatched" || len(host.sends) != 1 {
+				t.Fatalf("the send: state %q, %d sends, %v", sent.State, len(host.sends), err)
+			}
+			// the row as an earlier build sent it: the old sentence in its packet
+			packet := strings.ReplaceAll(sent.Packet, pythonJSONSorted(noMechanism), pythonJSONSorted(oldUpwardNoMechanism))
+			if packet == sent.Packet {
+				t.Fatalf("the sent packet does not carry the reach sentence: %s", sent.Packet)
+			}
+			state := sent.State
+			if c.state != "" {
+				state = c.state
+			}
+			if _, err := f.s.DB.ExecContext(f.ctx, "UPDATE supervisor_messages SET packet=?, state=? WHERE message_id=?", packet, state, id); err != nil {
+				t.Fatal(err)
+			}
+			row, err := f.c.Get(f.ctx, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r, err := f.c.Resolve(f.ctx, row.RelationshipID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			changed, err := f.c.refreshProposal(f.ctx, row, r, f.at, c.attempt)
+			if changed {
+				t.Fatal("the packet of a report that went was restated")
+			}
+			if detail := refusalDetail(t, err); detail != "the report was sent; the staged packet cannot be changed" {
+				t.Fatalf("the refresh refused with %q", detail)
+			}
+			after, err := f.c.Get(f.ctx, id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if after.Packet != packet || after.MessageID != id || after.ObligationID != row.ObligationID {
+				t.Fatalf("the sent row moved: %s", after.Packet)
+			}
+			if n := restatedRows(t, f.s); n != 0 {
+				t.Fatalf("restatement rows: %d, want none", n)
+			}
+		})
+	}
+}
+
 // jsonField is one text field of a JSON object text.
 func jsonField(t *testing.T, text, key string) string {
 	t.Helper()
