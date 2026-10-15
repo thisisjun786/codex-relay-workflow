@@ -112,8 +112,8 @@ A flow-managed node is an issue node that the child's run released to an executo
 
 | Control | Owner | What it means |
 |---|---|---|
-| Phases and their order | the run: its script and its journal | Build, verify, review, land and close follow the workflow the run was started with. An executor builds and returns its receipt; it never decides the next phase. A resume goes on from the journal |
-| Audit | the run | The run calls the critic, of another model family than the architect, for the design audit, and a reviewer of another model family for each head, and `crw flow audit` reads the reviews behind its acceptances back from the reviewer threads on the host |
+| Phases and their order | the run: its script and its journal | Build, unit check, commit, verify, land and close follow the workflow the run was started with. An executor builds and returns its receipt; it never decides the next phase. A resume goes on from the journal |
+| Audit | the run | The run calls the critic, of another model family than the architect, for the design audit, and runs the unit check of each node's work itself (`crw.unitCheck`, a review tool of another model family than the node's authors, no reviewer agent), and `crw flow audit` checks each acceptance against the unit-check row it rests on, or, for an acceptance of an old run on a review, reads that review back from the reviewer thread on the host |
 | Evidence | the run | A verification record, a verdict, a pre-merge record or a QA receipt is made from calls the run owns and commands the run itself runs. What an executor writes about its own work, a skill-loading line or a quoted instruction is no evidence |
 | The step exchange of a session run | the run publishes each step; the child spawns its role subagent and reports it | `crw flow next` hands the child the steps and `crw flow dispatched` reports the subagent each was spawned as. The run binds the subagent after it reads it on the host, reads its answer from the host and records it; the child never copies a subagent's answer, edits no node's directory and spawns a step's subagent only for a step it was handed |
 | Escalations and decisions | the child; Jun for what only Jun takes | The run raises an escalation and waits; `crw flow answer` applies the answer. The thread does not release, accept or integrate a node the run owns |
@@ -126,7 +126,7 @@ An issue that [crw-dev](../../crw-dev/SKILL.md) classifies as C4 runs in the flo
 
 1. One background explorer for each node of the milestone, at the design head, then the architect DESIGN of the milestone over their findings.
 2. The pre-build design audit, by the critic, a role of its own of another model family than the architect, before any executor starts. `needs_changes` returns to the architect on its own thread, and a replan is audited again. Only an approved DESIGN reaches an executor.
-3. The candidate review of each issue: a fresh reviewer, of another model family than the issue's authors, over each executor head that passed its verification.
+3. The candidate review of each issue: the unit check of the executor's uncommitted work, by a review tool of another model family than the issue's authors, before the run commits it, with at most two fix round trips on the same executor thread; the committed head then needs its passing verification.
 4. After the issues are integrated, the final gate with full verification and the risk record, then reviewer-final over the integrated range.
 
 Reviewer-final does not replace the pre-build design audit: it rules on a range that is already built, and step 2 exists to stop a flawed design before any executor writes it. Neither does it replace step 3.
