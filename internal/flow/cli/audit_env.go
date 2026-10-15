@@ -57,15 +57,23 @@ func OpenAuditStore(ctx context.Context, req AuditRequest) (AuditSetup, error) {
 	}}, nil
 }
 
-// runEnded says whether a process of the run ended it: a finished row, or the run/paused row of a run the operator paused
-// (CRW-1487), which leaves the journal to nobody as a finished one does.
+// runEnded says whether the last process of the run ended it: a finished row, or the run/paused row of a run the operator paused
+// (CRW-1487), after the last started row. Such an end leaves the journal to nobody; an end of an earlier process that a later start
+// follows (a resume) does not, because the resumed process numbers its rows on from the stored ones (the pump's rule, too).
 func runEnded(events []engine.Event) bool {
+	ended := false
 	for _, ev := range events {
-		if ev.Kind == engine.KindRun && (ev.Event == "finished" || ev.Event == "paused") {
-			return true
+		if ev.Kind != engine.KindRun {
+			continue
+		}
+		switch ev.Event {
+		case "started":
+			ended = false
+		case "finished", "paused":
+			ended = true
 		}
 	}
-	return false
+	return ended
 }
 
 // RunOfAcceptance is the run that holds an acceptance, searched in the rows of the store. An acceptance that no run holds, or that

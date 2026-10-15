@@ -655,7 +655,8 @@ keeps the thread. `crw flow audit` is the same audit on demand.
 opens the relay store the journal of the run is in (an acceptance given alone is looked up in the store), connects to the App Server
 control socket, and prints the result of each acceptance. It exits 0 when every acceptance is `ok`, 1 when one is a `mismatch` or is
 `unobserved`, and 2 for a command line, a store or a run it cannot use. It appends its result to the journal as a `crw.audit` row with a
-call id of its own (`audit_...`), unless `--no-record` is given or the run has not finished (a run that is still writing owns its journal).
+call id of its own (`audit_...`), unless `--no-record` is given or the run has not ended: the journal has no `finished` or `run/paused` row
+after its last `started` row (a run that is still writing owns its journal, and so does a resumed process after an earlier process's end).
 
 **The scenario harness** (`internal/flow/scenario`) runs this script on the engine over the fake App Server host, a temporary relay
 store (the journal and the decision rows), a temporary git repository with an integration branch, a scripted model, a fake relay and
@@ -749,7 +750,9 @@ and reads. A pause asked for from outside the engine (`crw flow pause`, a run de
 and then the calls that would send end held `engine_paused`. A process the operator paused (`by` `operator`) that would end completed
 ends with a `run/paused` row (`status` `paused`, and the `by` and `reason` of the operator's last ask) instead of the `finished` row:
 the engine's status is `paused`, the run process exits 0 and the hook tells no completion; a deadline, a token budget or a quota
-pause ends with the `finished` row as before. An answer to a wait is the `decision_applied` flow row `crw flow answer`
+pause ends with the `finished` row as before. A pause asked once the process has decided its end (while it writes its end row or tells
+its completion) is refused and writes no row, so the `run_paused` rows and the end row agree. `crw flow show`, the digest and `crw flow
+next` say who paused a run that ended paused from the `by` and `reason` of its `run/paused` row, not from a later deadline ask. An answer to a wait is the `decision_applied` flow row `crw flow answer`
 appends under the run lock: `ask` (the question's id), `node`, `run`, `revision`, `attempt`, `plan_basis`, `scope`, `target`, `action`,
 `class` (`escalation` or `jun_decision`), `applied_by` and the `decision` (`id`, `option`, `text`, `by`, `via`, `answered_at`,
 `authority`, `authority_ref`); `crw.decide` reads `ask` and `node`. A run cancelled while no process held it ends with a `finished` row

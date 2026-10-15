@@ -1,9 +1,12 @@
 package engine
 
 import (
+	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 // TestControlPauseHoldsTheCalls: a pause asked through Config.Control before the run starts, and one asked while the run goes on, end
@@ -181,6 +184,98 @@ return [a.status, b.status, b.reason]`
 		res := h.run(twoCalls)
 		if res.Status != RunScriptError || res.ErrorKind != ErrKindEngine {
 			t.Fatalf("a paused end whose row could not be stored ends %s/%s, want %s/%s", res.Status, res.ErrorKind, RunScriptError, ErrKindEngine)
+		}
+	})
+}
+
+// pausingHook asks the run's Control for a pause from inside RunFinished: the end of the run is decided by then, as for a SIGUSR1 that
+// comes while the process writes its end row or tells the parent.
+type pausingHook struct {
+	*recordingHook
+	ctl *Control
+	by  string
+}
+
+func (h *pausingHook) RunFinished(ctx context.Context, run, status string) error {
+	h.ctl.Pause(h.by, "late ask")
+	return h.recordingHook.RunFinished(ctx, run, status)
+}
+
+// endAgrees says whether the rows after the run's last started row agree: a run_paused ask whose asker ends the run paused
+// (endsPaused) is there exactly when the end row is run/paused, and there is one end row.
+func endAgrees(rows []Event) error {
+	asked, ends := false, []string{}
+	for _, ev := range rows {
+		switch {
+		case ev.Kind == KindRun && ev.Event == "started":
+			asked, ends = false, nil
+		case ev.Kind == KindFlow && ev.Event == EvRunPaused && endsPaused[fmt.Sprint(ev.Data["by"])]:
+			asked = true
+		case ev.Kind == KindRun && (ev.Event == "finished" || ev.Event == "paused"):
+			ends = append(ends, ev.Event+":"+fmt.Sprint(ev.Data["status"]))
+		}
+	}
+	switch {
+	case len(ends) != 1:
+		return fmt.Errorf("end rows %v, want one", ends)
+	case asked && ends[0] != "paused:"+RunPaused:
+		return fmt.Errorf("an operator run_paused row is there and the end is %s", ends[0])
+	case !asked && ends[0] == "paused:"+RunPaused:
+		return fmt.Errorf("the run ended paused with no operator run_paused row")
+	}
+	return nil
+}
+
+// TestControlPauseAfterTheEndIsDecidedRecordsNothing (CRW-1487): once the run has decided how it ends (the end row it writes, the
+// completion it tells), a pause is refused: it writes no run_paused row, so the journal never says the operator paused a run that
+// finished completed and told its completion. A pause before that decision ends the run paused, and a deadline ask still finishes it
+// completed; asked at any moment, the run_paused rows and the end row agree.
+func TestControlPauseAfterTheEndIsDecidedRecordsNothing(t *testing.T) {
+	const oneCall = `const a = await agent.call('one', { agentType: 'explorer', label: 'a' })
+return a.status`
+	for _, by := range []string{"operator", "deadline"} {
+		t.Run(by+" asked while the run tells its finish", func(t *testing.T) {
+			h := newHarness(t)
+			ctl := &Control{}
+			hook := &pausingHook{recordingHook: &recordingHook{}, ctl: ctl, by: by}
+			h.cfg.Control, h.cfg.Upward = ctl, hook
+			res := h.run(oneCall)
+			if res.Status != RunCompleted {
+				t.Fatalf("the run ends %s/%s, want %s", res.Status, res.ErrorKind, RunCompleted)
+			}
+			if got := strings.Join(hook.calls, ","); got != "started,finished:completed" {
+				t.Fatalf("hook calls %s, want started,finished:completed", got)
+			}
+			for _, ev := range h.journal.Events() {
+				if ev.Kind == KindFlow && ev.Event == EvRunPaused {
+					t.Fatalf("a pause asked after the end was decided wrote %+v", ev)
+				}
+			}
+			if err := endAgrees(h.journal.Events()); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+	t.Run("operator asked at any moment", func(t *testing.T) {
+		for i := 0; i < 60; i++ {
+			h := newHarness(t)
+			ctl := &Control{}
+			h.cfg.Control = ctl
+			var wg sync.WaitGroup
+			wg.Add(1)
+			go func(delay time.Duration) {
+				defer wg.Done()
+				time.Sleep(delay)
+				ctl.Pause("operator", "crw flow pause")
+			}(time.Duration(i*50) * time.Microsecond)
+			res := h.run(oneCall)
+			wg.Wait()
+			if err := endAgrees(h.journal.Events()); err != nil {
+				t.Fatalf("ask %d (status %s): %v", i, res.Status, err)
+			}
+			if (res.Status == RunPaused) != (endRowsAfterStart(h.journal.Events())[0].Event == "paused") {
+				t.Fatalf("ask %d: status %s and end row disagree", i, res.Status)
+			}
 		}
 	})
 }

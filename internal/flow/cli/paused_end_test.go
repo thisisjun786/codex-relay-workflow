@@ -44,6 +44,8 @@ func pausedEvents(rows ...string) []engine.Event {
 			e.Event, e.Data = "paused", map[string]any{"status": engine.RunPaused, "by": "operator", "reason": "crw flow pause"}
 		case r == "run_paused":
 			e.Kind, e.Event, e.Data = engine.KindFlow, engine.EvRunPaused, map[string]any{"by": "operator", "reason": "crw flow pause"}
+		case r == "run_paused_deadline":
+			e.Kind, e.Event, e.Data = engine.KindFlow, engine.EvRunPaused, map[string]any{"by": "deadline", "reason": "the run's deadline T passed"}
 		case strings.HasPrefix(r, "finished:"):
 			parts := strings.Split(r, ":")
 			e.Event, e.Data = "finished", map[string]any{"status": parts[1], "error_kind": parts[2]}
@@ -75,6 +77,7 @@ func TestSummarizeReadsAPausedEnd(t *testing.T) {
 		{"a start after a paused end", []string{"started", "run_paused", "paused", "started"}, false, StateDead, engine.RunPaused, "", ""},
 		{"a cancel of a paused end", []string{"started", "run_paused", "paused", "finished:script_error:cancelled"}, false, StateCancelled, engine.RunScriptError, engine.ErrKindCancelled, "operator: crw flow pause"},
 		{"a pause ask with no end row", []string{"started", "run_paused"}, false, StateDead, "", "", "operator: crw flow pause"},
+		{"an operator pause then a deadline ask", []string{"started", "run_paused", "run_paused_deadline", "paused"}, false, StatePaused, engine.RunPaused, "", "operator: crw flow pause"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -138,7 +141,8 @@ func TestShowNotesAPausedEnd(t *testing.T) {
 }
 
 // TestAuditCountsAPausedEndAsEnded (CRW-1487): a run that ended paused owns its journal no more than one that finished, so an
-// audit records its result; a run with only a start has not ended.
+// audit records its result; a run with only a start has not ended. An end counts only after the last started row: an end of an
+// earlier process followed by a start (a resume) leaves the journal to the resumed process, which numbers its rows on.
 func TestAuditCountsAPausedEndAsEnded(t *testing.T) {
 	cases := []struct {
 		rows []string
@@ -148,10 +152,46 @@ func TestAuditCountsAPausedEndAsEnded(t *testing.T) {
 		{[]string{"started", "finished:completed:"}, true},
 		{[]string{"started"}, false},
 		{[]string{"started", "run_paused"}, false},
+		{[]string{"started", "run_paused", "paused", "started"}, false},
+		{[]string{"started", "finished:completed:", "started"}, false},
+		{[]string{"started", "run_paused", "paused", "started", "finished:completed:"}, true},
+		{[]string{"started", "finished:completed:", "started", "run_paused", "paused"}, true},
 	}
 	for _, c := range cases {
 		if got := runEnded(pausedEvents(c.rows...)); got != c.want {
 			t.Errorf("runEnded(%v) = %t, want %t", c.rows, got, c.want)
 		}
+	}
+}
+
+// TestPausedEndReadersNameTheEndRowsAsker (CRW-1487): a run the operator paused and whose deadline then passed ends paused by the
+// operator (the deadline ask does not end a run paused). `crw flow show`, the digest and `crw flow next` say who paused it from the
+// run/paused end row, not from the last run_paused ask.
+func TestPausedEndReadersNameTheEndRowsAsker(t *testing.T) {
+	rec := RunRecord{RunID: "run-p", Workflow: "two"}
+	events := pausedEvents("started", "run_paused", "run_paused_deadline", "paused")
+	info := Summarize(rec, events, false, 0)
+	if info.State != StatePaused || info.Paused != "operator: crw flow pause" {
+		t.Errorf("summary: state %q paused %q", info.State, info.Paused)
+	}
+	if got := BuildDigest(DigestInput{Run: rec, Events: events}).Stopped; got != "paused by operator: crw flow pause" {
+		t.Errorf("the digest says %q", got)
+	}
+	if got := nextHint(NextAnswer{Run: "run-p", State: NextPaused}, info, nil); !strings.Contains(got, "run run-p is paused (operator: crw flow pause)") {
+		t.Errorf("the next hint says %q", got)
+	}
+
+	w := newWorld(t)
+	r := w.newRun("run-shown", "thread-owner")
+	r.flow(engine.EvRunPaused, map[string]any{"by": "operator", "reason": "crw flow pause"})
+	r.flow(engine.EvRunPaused, map[string]any{"by": "deadline", "reason": "the run's deadline T passed"})
+	r.j.Append(engine.Event{RunID: r.id, Kind: engine.KindRun, Event: "paused", Data: map[string]any{"status": engine.RunPaused, "by": "operator", "reason": "crw flow pause"}})
+	r.close()
+	code, out, errOut := w.deps().do("show", "run-shown", "--state", w.state)
+	if code != 0 {
+		t.Fatalf("show: exit %d %s", code, errOut)
+	}
+	if !strings.Contains(out, "  paused by operator: crw flow pause; no process holds the run: crw flow resume run-shown goes on\n") || strings.Contains(out, "deadline") {
+		t.Errorf("show names the deadline, or not the operator:\n%s", out)
 	}
 }

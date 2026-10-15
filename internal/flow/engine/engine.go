@@ -184,8 +184,12 @@ type Engine struct {
 	hookSem chan struct{}
 	pauseM  sync.Mutex
 	paused  string
-	// endAsk is the last ask of this process whose asker ends the run paused (endsPaused); nil ends the run as it comes to.
-	endAsk *pauseAsk
+	// endM orders the asks of the Control (pauseOnAsk) with the run's decision of its end. endAsk is the last ask of this process whose
+	// asker ends the run paused (endsPaused); nil ends the run as it comes to. endDecided is set when Run reads endAsk for the last time:
+	// from then on an ask is refused and records nothing, so the run_paused rows and the end row always agree.
+	endM       sync.Mutex
+	endAsk     *pauseAsk
+	endDecided bool
 	// turns are the calls with a turn in flight; quotaEscalated is set once the run's quota escalation was written.
 	turnsM         sync.Mutex
 	turns          map[*callRun]struct{}
@@ -451,10 +455,12 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 		<-woken
 	}
 	// a run the operator paused that would end completed ends paused: it writes a run/paused row instead of the finished one, and
-	// nothing is told finished (endsPaused)
-	e.pauseM.Lock()
+	// nothing is told finished (endsPaused). The end is decided here: a later ask (a SIGUSR1 while the end row is written or the
+	// completion told) is refused and writes no run_paused row (pauseOnAsk)
+	e.endM.Lock()
+	e.endDecided = true
 	ask := e.endAsk
-	e.pauseM.Unlock()
+	e.endM.Unlock()
 	if ask != nil && res.Status == RunCompleted {
 		res.Status = RunPaused
 	}

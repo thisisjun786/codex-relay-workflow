@@ -64,7 +64,8 @@ type RunInfo struct {
 	// TokenSplit is Tokens in its parts (CRW-1327).
 	TokenSplit TokenSplit `json:"token_split"`
 	Phase      string     `json:"phase,omitempty"`
-	// Status and ErrorKind are those of the last finished row; Paused says who paused the run and why.
+	// Status and ErrorKind are those of the last finished row; Paused says who paused the run and why: the by and reason of the
+	// run/paused end row of a run that ended paused, else the last run_paused ask of the current process.
 	Status    string `json:"status,omitempty"`
 	ErrorKind string `json:"error_kind,omitempty"`
 	Paused    string `json:"paused,omitempty"`
@@ -322,6 +323,8 @@ func Summarize(rec RunRecord, events []engine.Event, live bool, pid int) RunInfo
 	info := RunInfo{RunRecord: rec, Live: live, PID: pid}
 	lastStart, lastFinish, lastPaused := -1, -1, -1
 	var outcome *engine.Outcome
+	// pausedBy is who paused the run and why, as the last run/paused end row says (its by and reason)
+	pausedBy := ""
 	for i, e := range events {
 		if int64(e.Seq) < engine.ForeignSeqBase {
 			// the cursor of the tree is the run's own last row: a command's row (CRW-1204) is numbered apart (journal.ReadPage)
@@ -336,6 +339,10 @@ func Summarize(rec RunRecord, events []engine.Event, live bool, pid int) RunInfo
 				// the end of a process the operator paused (engine.RunPaused): no finished row, no error kind
 				lastPaused = i
 				info.Status, info.ErrorKind = engine.RunPaused, ""
+				pausedBy = ""
+				if by := str(e.Data, "by"); by != "" {
+					pausedBy = by + ": " + str(e.Data, "reason")
+				}
 			case "finished":
 				lastFinish = i
 				info.Status, info.ErrorKind = str(e.Data, "status"), str(e.Data, "error_kind")
@@ -358,6 +365,11 @@ func Summarize(rec RunRecord, events []engine.Event, live bool, pid int) RunInfo
 			// a node the scheduler held back (no slot, no memory, a region in use, ...): unreleased, and asked again by a resume (CRW-1201)
 			heldBack = true
 		}
+	}
+	if lastPaused > lastStart && lastPaused > lastFinish && pausedBy != "" {
+		// a run that ended paused was paused by the asker its end row names: a later ask that does not end a run paused (a deadline)
+		// is a run_paused row too, and it is not who paused the run
+		info.Paused = pausedBy
 	}
 	order, rows := callRows(events)
 	held := map[string]bool{}
