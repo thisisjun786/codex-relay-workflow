@@ -173,10 +173,6 @@ var codexFallbackTexts = []string{
 	"Review was interrupted. Please re-run /review and wait for it to complete.",
 }
 
-// codexSummaryWords is the fewest words (runs of non-space with a letter) the summary of a review with no list holds: "Clean." or
-// "No issues." says nothing of what was reviewed, so it is no clean answer.
-const codexSummaryWords = 3
-
 // codexDash is the separator of an item's title and location: an em dash with a space on each side. A title may hold one, so the head
 // splits at the last.
 const codexDash = " — "
@@ -194,9 +190,9 @@ const codexDash = " — "
 // header and its first item, a head with no " — " location, a blank title, a location that is not file:line, or a line that starts
 // like an item head with a severity other than P0-P3, a verified review whose summary is or holds one of Codex's own texts for a
 // review that gave no answer or was interrupted (codexFallbackTexts), or says the change was not reviewed, or only in part, or that
-// the review was aborted (codexNotReviewed), and a review with no list whose summary has fewer than codexSummaryWords words: such a
-// text would otherwise pass as a clean review. A review with a blocking finding is read whatever its summary says (it needs changes
-// either way).
+// the review was aborted (codexNotReviewed): such a text would otherwise pass as a clean review. A short clean summary ("Clean.") is
+// a clean review: no length is asked of a summary, whatever its language. A review with a blocking finding is read whatever its
+// summary says (it needs changes either way).
 func readCodexReview(stdout []byte, req Request) ([]byte, error) {
 	text := strings.TrimSpace(strings.ReplaceAll(string(stdout), "\r\n", "\n"))
 	if text == "" {
@@ -286,22 +282,8 @@ func readCodexReview(stdout []byte, req Request) ([]byte, error) {
 		if w := codexNotReviewed.FindString(strings.ToLower(joined)); w != "" {
 			return nil, fmt.Errorf("the review says it did not review the change (%q): %s", w, firstLine([]byte(strings.Join(summary, "\n"))))
 		}
-		if n := codexWordCount(joined); header < 0 && n < codexSummaryWords {
-			return nil, fmt.Errorf("the review has no findings list and its summary (%d words, %q) does not say what was reviewed", n, strings.TrimSpace(joined))
-		}
 	}
 	return json.Marshal(doc)
-}
-
-// codexWordCount is the number of words in s: runs of non-space that hold a letter.
-func codexWordCount(s string) int {
-	n := 0
-	for _, w := range strings.Fields(s) {
-		if strings.ContainsFunc(w, unicode.IsLetter) {
-			n++
-		}
-	}
-	return n
 }
 
 // codexSeverityWord reports whether an item-like line's bracket holds a P grade (P followed by digits), the shape of an item head.

@@ -416,9 +416,9 @@ effort are the lane's settings `CRW_UNIT_CHECK_MODEL` and `CRW_UNIT_CHECK_EFFORT
 lane refuses stops the run when the lane is built), and Bugbot on a Codex quota: a check whose Codex call ends `quota` is asked once
 more, with the same request, of Bugbot, the row's `result` is Bugbot's and the row keeps the Codex call (`fallback`, `fallback_from`,
 `fallback_state`, `fallback_model`); a Bugbot call that ends `quota` too holds the node as below. Codex prints no mark of a finished
-review, so a Codex answer with no findings list is clean when its summary has three words or more and is neither Codex's own text for a
-review that gave no answer or was interrupted nor a wording the reader knows for a review that did not happen, finish or cover the whole
-change, and a summary that says so in other words still reads clean. The tree it judges is the call's pending tree, the one `crw.commit` then commits, so the
+review, so a Codex answer with no findings list is clean when its summary is neither Codex's own text for a review that gave no answer
+or was interrupted nor a wording the reader knows for a review that did not happen, finish or cover the whole change, a very short clean
+summary such as `Clean.` reads clean, and a summary that says the review did not happen in other words still reads clean. The tree it judges is the call's pending tree, the one `crw.commit` then commits, so the
 acceptance takes the check as the judgment of the head that commit makes; a worktree that is no longer that tree is not checked
 (`tree_moved`), nor one whose `HEAD` is not the commit the node's attempt is at, the start of its worktree or the node's last commit
 since (`head_moved`: the executor committed its work itself, whatever the backend). The request's prompt carries the node's criteria and, when the backend

@@ -138,7 +138,7 @@ func TestCodexReviewProfileReadsTheFindingsList(t *testing.T) {
 	})
 }
 
-// TestCodexReviewCleanAnswerIsClean (CRW-1517): a review with no list is a clean answer; a blank stdout is no answer; a list the
+// TestCodexReviewCleanAnswerIsClean (CRW-1517): a review with no list is a clean answer, however short its summary; a blank stdout is no answer; a list the
 // reader cannot read whole is not an answer (invalid), never a clean one.
 func TestCodexReviewCleanAnswerIsClean(t *testing.T) {
 	summary := "The change only renames a local variable and keeps every caller's behaviour; I found no issue that needs a change.\n"
@@ -152,6 +152,10 @@ func TestCodexReviewCleanAnswerIsClean(t *testing.T) {
 		"검토 결과 문제가 없습니다.",
 		"변경 사항에서 문제를 확인하지 못했습니다. 읽기 전용 환경이라 테스트는 실행되지 않았습니다.",
 		"The change removes a dead branch, so the loader that did not read the variable now reads it; I did not run the tests, and found no issue.",
+		// a short summary, or one in a language written without spaces, is a clean answer: the reader counts no words
+		"変更はローカル変数の名前を変えるだけで、呼び出し元の動作は変わらず、修正が必要な問題は見つかりませんでした。",
+		"Clean.",
+		"No issues.",
 	} {
 		res := codexCheck(t, CodexReviewProfile(CodexReviewConfig{}), "/wt", fakeRun{stdout: clean + "\n"})
 		if res.State != StateOK || res.Verdict != VerdictVerified {
@@ -196,8 +200,8 @@ func TestCodexReviewCleanAnswerIsClean(t *testing.T) {
 
 // TestCodexReviewFallbackIsNoCleanReview (CRW-1517): Codex 0.154.0 exits 0 and prints a text of its own when the review gave no
 // answer (review_format.rs, REVIEW_FALLBACK_MESSAGE: no overall explanation and no finding) or was interrupted (tasks/review.rs,
-// exit_review_mode with no output); neither is a clean review, nor a text with no list whose summary says the review was aborted or
-// is too short to say what was reviewed: each is invalid. The real one-finding and many-findings samples still read whole.
+// exit_review_mode with no output); neither is a clean review, nor a text with no list whose summary says the review was aborted:
+// each is invalid. The real one-finding and many-findings samples still read whole.
 func TestCodexReviewFallbackIsNoCleanReview(t *testing.T) {
 	for name, out := range map[string]string{
 		"Codex's text for a review with no answer":        "Reviewer failed to output a response.\n",
@@ -206,9 +210,6 @@ func TestCodexReviewFallbackIsNoCleanReview(t *testing.T) {
 		"a review aborted before it inspected a file":     "Review aborted before inspecting any files.\n",
 		"a review that was interrupted":                   "The review was interrupted before it finished.\n",
 		"a Korean review that was stopped":                "리뷰가 중단되었습니다.\n",
-		"a one-word summary":                              "Clean.\n",
-		"a two-word summary":                              "No issues.\n",
-		"a summary of no letters":                         "- - -\n",
 		"the no-answer text over a minor finding's list":  "Reviewer failed to output a response.\n\nReview comment:\n\n- [P3] Name it — /wt/a.go:3\n  A nit.\n",
 		"an aborted review over a minor finding's list":   "Review aborted after a.go.\n\nReview comment:\n\n- [P3] Name it — /wt/a.go:3\n  A nit.\n",
 		"the interrupted text with a line after it":       "Review was interrupted. Please re-run /review and wait for it to complete.\nnothing more\n",
