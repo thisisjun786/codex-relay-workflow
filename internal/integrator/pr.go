@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -223,34 +224,42 @@ func (r *Runner) firstContaining(ctx context.Context, head string) string {
 }
 
 // pushedRun is the summary of this queue's run that pushed the entry's head (its tag and summary), nil when no run file says so.
-// A run whose summary is still the pushing marker (the signal ended it during the push) counts when its head is in the branch. A
-// git that cannot answer whether a marker's head is in the branch is an error, never "no pushed run": the caller holds the entry
-// and the marker stays for the next pass.
+// The runs are read newest first (by tag; equal tags keep the order of their file names) and the first that names a push wins: a
+// pushed summary, or a pushing marker (the signal ended the run during the push) whose head is in the branch. A marker whose head is
+// not in the branch is passed over for older evidence. A git that cannot answer whether a marker's head is in the branch is an
+// error, never "no pushed run": the caller holds the entry and the marker stays for the next pass. Because the scan stops at the
+// first win, only a marker newer than every valid evidence can hold the entry; an unreadable marker behind a newer pushed summary
+// or a newer marker in the branch is never asked.
 func (r *Runner) pushedRun(ctx context.Context, e Entry) (*Summary, error) {
 	paths, _ := filepath.Glob(filepath.Join(r.Cfg.RunsDir, "*.summary.json"))
-	var found *Summary
+	var runs []Summary
 	for _, p := range paths {
 		data, err := os.ReadFile(p)
 		if err != nil {
 			continue
 		}
 		var s Summary
-		if json.Unmarshal(data, &s) == nil && s.Merged == e.Spec() && headRE.MatchString(s.Head) && (found == nil || s.Tag > found.Tag) {
-			switch s.Result {
-			case "pushed":
-				found = &s
-			case resultPushing:
-				in, err := r.markerInBranch(ctx, s.Head)
-				if err != nil {
-					return nil, fmt.Errorf("whether the pushing marker of run %s (head %s) is in %s could not be read: %w", s.Tag, s.Head, r.Cfg.Branch, err)
-				}
-				if in {
-					found = &s
-				}
+		if json.Unmarshal(data, &s) == nil && s.Merged == e.Spec() && headRE.MatchString(s.Head) {
+			runs = append(runs, s)
+		}
+	}
+	sort.SliceStable(runs, func(i, j int) bool { return runs[i].Tag > runs[j].Tag })
+	for i := range runs {
+		s := runs[i]
+		switch s.Result {
+		case "pushed":
+			return &s, nil
+		case resultPushing:
+			in, err := r.markerInBranch(ctx, s.Head)
+			if err != nil {
+				return nil, fmt.Errorf("whether the pushing marker of run %s (head %s) is in %s could not be read: %w", s.Tag, s.Head, r.Cfg.Branch, err)
+			}
+			if in {
+				return &s, nil
 			}
 		}
 	}
-	return found, nil
+	return nil, nil
 }
 
 // markerInBranch says whether head, the head a pushing marker names, is in the remote branch. When the ancestor check cannot answer
