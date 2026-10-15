@@ -4,7 +4,10 @@ package ci
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"testing"
 )
@@ -14,8 +17,13 @@ import (
 // their English nouns, not the role ids, so the phrase "relay role" (the way the old prose introduced an id) stays
 // out of the prose. hierarchy.md keeps the ids in one place, its level-2 section "Names used only in code".
 //
-// This unit scopes the check to hierarchy.md: the whole file minus that section. The other skill documents are
-// widened to by their own units.
+// CRW-1431 (bundle CRW-1419, N3-3) widens the check to every .md under plugins/crw/skills, one subtest per skill
+// directory. A directory that still holds the phrase is listed in a pending marker, one file per unit that rewrites
+// it (testdata/role_ids_pending/<unit>.txt, one directory name per line, `#` starts a comment). The test is shrink
+// only: a listed directory must still hold the phrase (a stale marker fails, so a marker cannot hide a clean
+// directory) and an unlisted one must hold none. The unit that rewrites a directory first deletes its marker (red:
+// the test names the file and the line), then edits the text (green). The directory is a name, so the subtest name
+// is the same whether the directory is pending or enforced.
 
 // relayRolePhrase is the phrase arm: "relay role" or "relay roles", with any whitespace (a line wrap) between the
 // two words. It is matched on the text as written, so a wrapped "relay\nrole" is caught and the line is exact.
@@ -46,11 +54,158 @@ func roleIdProseProblems(rel, text string, allow []string) []string {
 	return problems
 }
 
+// roleIdAllowedFiles are the files under the skills root that may hold the phrase as a whole, with why. hierarchy.md
+// is not here: it is allowed only inside its code-only section (codeOnlySection).
+var roleIdAllowedFiles = map[string]string{
+	"crw-canon/references/execution-roles.md":      "the host's role policy keys are named relay roles there; they are stored names, not prose about layers",
+	"crw-run/references/initiative-supervision.md": "the old initiative supervisor: out of scope of CRW-1431 (bundle exclusion), the file is not rewritten",
+}
+
+const (
+	roleIdSkillsRoot   = "plugins/crw/skills"
+	roleIdPendingDir   = "testdata/role_ids_pending"
+	roleIdHierarchyRel = "crw-canon/references/hierarchy.md"
+)
+
+// roleIdDirProblems is the verdict on one skill directory: hits are the phrase uses found in it (already outside the
+// allowed sections and files) and pending says a marker lists it. An enforced directory fails on any hit; a pending
+// one fails when it has none, since a marker for a clean directory hides nothing but is stale.
+func roleIdDirProblems(dir string, hits []string, pending bool) []string {
+	switch {
+	case pending && len(hits) == 0:
+		return []string{fmt.Sprintf("%s: listed in %s but holds no %q: delete the entry", dir, roleIdPendingDir, "relay role")}
+	case !pending && len(hits) > 0:
+		return append([]string{fmt.Sprintf("%s: %d use(s) of %q in prose and no pending marker lists the directory", dir, len(hits), "relay role")}, hits...)
+	}
+	return nil
+}
+
+// roleIdPendingEntries reads every marker file in dir: entry -> the marker file that lists it. A name listed twice,
+// or a line that is not a directory name, is a problem.
+func roleIdPendingEntries(dir string) (map[string]string, []string) {
+	entries := map[string]string{}
+	var problems []string
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return entries, nil
+		}
+		return entries, []string{err.Error()}
+	}
+	for _, f := range files {
+		if f.IsDir() || !strings.HasSuffix(f.Name(), ".txt") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, f.Name()))
+		if err != nil {
+			problems = append(problems, err.Error())
+			continue
+		}
+		for number, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			if strings.ContainsAny(line, "/ \t") {
+				problems = append(problems, fmt.Sprintf("%s:%d: %q is not a skill directory name", f.Name(), number+1, line))
+				continue
+			}
+			if prior, dup := entries[line]; dup {
+				problems = append(problems, fmt.Sprintf("%s:%d: %q is already listed in %s", f.Name(), number+1, line, prior))
+				continue
+			}
+			entries[line] = f.Name()
+		}
+	}
+	return entries, problems
+}
+
+// roleIdSkillDirProblems reads every .md under one skill directory and returns the phrase uses outside the allowed
+// files and sections, as "path:line: ..." (path relative to the skills root).
+func roleIdSkillDirProblems(t *testing.T, skillsRoot, dir string) []string {
+	t.Helper()
+	var hits []string
+	walkRoot := filepath.Join(skillsRoot, dir)
+	err := filepath.WalkDir(walkRoot, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || !strings.HasSuffix(path, ".md") {
+			return nil
+		}
+		rel, err := filepath.Rel(skillsRoot, path)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		if _, allowed := roleIdAllowedFiles[rel]; allowed {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		var allow []string
+		if rel == roleIdHierarchyRel {
+			allow = []string{codeOnlySection}
+		}
+		hits = append(hits, roleIdProseProblems(roleIdSkillsRoot+"/"+rel, string(data), allow)...)
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return hits
+}
+
 func TestRoleIdsStayOutOfProse(t *testing.T) {
 	t.Run("hierarchy", func(t *testing.T) {
 		text := readRepoText(t, hierarchyFile)
 		if problems := roleIdProseProblems(hierarchyFile, text, []string{codeOnlySection}); len(problems) > 0 {
 			t.Errorf("hierarchy.md names relay roles outside its code-only section:\n%s", strings.Join(problems, "\n"))
+		}
+	})
+
+	t.Run("execution-roles", func(t *testing.T) {
+		for rel, why := range roleIdAllowedFiles {
+			if _, err := os.Stat(filepath.Join(repoRoot(), roleIdSkillsRoot, rel)); err != nil {
+				t.Errorf("%s is allowed (%s) but cannot be read: %v", rel, why, err)
+			}
+		}
+	})
+
+	skillsRoot := filepath.Join(repoRoot(), roleIdSkillsRoot)
+	pending, markerProblems := roleIdPendingEntries(filepath.Join(repoRoot(), "internal/dev/ci", roleIdPendingDir))
+	for _, p := range markerProblems {
+		t.Error(p)
+	}
+	dirs, err := os.ReadDir(skillsRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, d := range dirs {
+		if d.IsDir() {
+			names = append(names, d.Name())
+		}
+	}
+	sort.Strings(names)
+	known := map[string]bool{}
+	for _, name := range names {
+		known[name] = true
+		t.Run(name, func(t *testing.T) {
+			_, isPending := pending[name]
+			hits := roleIdSkillDirProblems(t, skillsRoot, name)
+			if problems := roleIdDirProblems(name, hits, isPending); len(problems) > 0 {
+				t.Errorf("%s", strings.Join(problems, "\n"))
+			}
+		})
+	}
+	t.Run("markers", func(t *testing.T) {
+		for entry, file := range pending {
+			if !known[entry] {
+				t.Errorf("%s lists %q, which is no directory under %s", file, entry, roleIdSkillsRoot)
+			}
 		}
 	})
 
@@ -96,6 +251,47 @@ func TestRoleIdsStayOutOfProse(t *testing.T) {
 			problems := roleIdProseProblems("x.md", doc("No ids here.", phrase), []string{"Names used only in code"})
 			if len(problems) == 0 || !strings.Contains(problems[0], "is missing or empty") {
 				t.Fatalf("want the missing-section problem first, got %v", problems)
+			}
+		})
+
+		t.Run("a marker for a clean directory fails", func(t *testing.T) {
+			if p := roleIdDirProblems("crw-x", nil, true); len(p) != 1 || !strings.Contains(p[0], "holds no") {
+				t.Errorf("a stale marker: %v", p)
+			}
+		})
+		t.Run("a directory with hits and no marker fails", func(t *testing.T) {
+			if p := roleIdDirProblems("crw-x", []string{"a.md:3: hit"}, false); len(p) != 2 || !strings.Contains(p[0], "no pending marker") {
+				t.Errorf("an unlisted directory: %v", p)
+			}
+		})
+		t.Run("a pending directory with hits and a clean enforced one pass", func(t *testing.T) {
+			if p := roleIdDirProblems("crw-x", []string{"a.md:3: hit"}, true); len(p) != 0 {
+				t.Errorf("a listed directory with hits: %v", p)
+			}
+			if p := roleIdDirProblems("crw-x", nil, false); len(p) != 0 {
+				t.Errorf("a clean directory: %v", p)
+			}
+		})
+		t.Run("marker files: comments, blanks, duplicates and paths", func(t *testing.T) {
+			dir := t.TempDir()
+			write := func(name, body string) {
+				if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			write("a.txt", "# why\ncrw-x\n\ncrw-y\n")
+			write("b.txt", "crw-y\ncrw-z/refs\n")
+			write("c.md", "ignored\n")
+			entries, problems := roleIdPendingEntries(dir)
+			if len(entries) != 2 || entries["crw-x"] != "a.txt" || entries["crw-y"] != "a.txt" {
+				t.Errorf("entries: %v", entries)
+			}
+			joined := strings.Join(problems, "\n")
+			if len(problems) != 2 || !strings.Contains(joined, "b.txt:1:") || !strings.Contains(joined, "b.txt:2:") {
+				t.Errorf("problems: %v", problems)
+			}
+			if entries, problems := roleIdPendingEntries(filepath.Join(dir, "absent")); len(entries) != 0 || len(problems) != 0 {
+				t.Errorf("an absent directory is no marker: %v %v", entries, problems)
 			}
 		})
 	})
