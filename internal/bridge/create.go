@@ -2,6 +2,7 @@ package bridge
 
 import (
 	"context"
+	"errors"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
@@ -112,35 +113,7 @@ func (b *Bridge) CreateThread(ctx context.Context, in CreateThread) (receipt led
 			return nil, err
 		}
 	}
-	params := map[string]any{"cwd": in.CWD, "sandbox": in.Sandbox, "approvalPolicy": "never", "ephemeral": false, "prompt": nullable(in.Prompt), "title": nullable(in.Title)}
-	if in.Model != "" {
-		params["model"] = in.Model
-	}
-	if in.ProjectID != "" {
-		params["projectId"] = in.ProjectID
-	}
-	if in.Effort != "" {
-		params["reasoning_effort"] = in.Effort
-	}
-	if in.Policy != nil {
-		params["expected_sandbox_policy"] = in.Policy
-	}
-	if in.Roots != nil {
-		roots := make([]any, len(in.Roots))
-		for i, root := range in.Roots {
-			roots[i] = root
-		}
-		params["runtime_workspace_roots"] = roots
-	}
-	if in.Exception != "" {
-		params["policy_exception"] = in.Exception
-	}
-	if in.Role != "" {
-		params["role"] = in.Role
-	}
-	if in.MCPProfile != "" {
-		params["mcp_profile"] = in.MCPProfile
-	}
+	params := createThreadParams(in)
 	var authorized execution.Authorized
 	var contract settings.Contract
 	var selection execution.MCPSelection
@@ -253,12 +226,116 @@ func (b *Bridge) CreateThread(ctx context.Context, in CreateThread) (receipt led
 		}
 		receipt["desktopProjectAssociation"] = "unverified; check Desktop listing"
 		return nil
-	}, legacy: func() map[string]any {
+	}, legacy: createThreadLegacy(params, in.CWD)})
+	return result, err
+}
+
+// createThreadParams is the params a create_thread request is fingerprinted by in the ledger, built from the request
+// alone: the prompt is stored as null when there is none.
+func createThreadParams(in CreateThread) map[string]any {
+	params := map[string]any{"cwd": in.CWD, "sandbox": in.Sandbox, "approvalPolicy": "never", "ephemeral": false, "prompt": nullable(in.Prompt), "title": nullable(in.Title)}
+	if in.Model != "" {
+		params["model"] = in.Model
+	}
+	if in.ProjectID != "" {
+		params["projectId"] = in.ProjectID
+	}
+	if in.Effort != "" {
+		params["reasoning_effort"] = in.Effort
+	}
+	if in.Policy != nil {
+		params["expected_sandbox_policy"] = in.Policy
+	}
+	if in.Roots != nil {
+		roots := make([]any, len(in.Roots))
+		for i, root := range in.Roots {
+			roots[i] = root
+		}
+		params["runtime_workspace_roots"] = roots
+	}
+	if in.Exception != "" {
+		params["policy_exception"] = in.Exception
+	}
+	if in.Role != "" {
+		params["role"] = in.Role
+	}
+	if in.MCPProfile != "" {
+		params["mcp_profile"] = in.MCPProfile
+	}
+	return params
+}
+
+// createThreadLegacy is the params of a version-1 (pre-upgrade) create_thread fingerprint: the same params with the cwd
+// resolved through its symlinks, when it resolves.
+func createThreadLegacy(params map[string]any, cwd string) func() map[string]any {
+	return func() map[string]any {
 		old := copyMap(params)
-		if resolved, err := filepath.EvalSymlinks(in.CWD); err == nil {
+		if resolved, err := filepath.EvalSymlinks(cwd); err == nil {
 			old["cwd"] = resolved
 		}
 		return old
-	}})
-	return result, err
+	}
+}
+
+// Reservation is what the ledger holds on a create_thread request_id, as CreateThreadReservation tells it.
+type Reservation int
+
+const (
+	// ReservationNone: no row on the request_id.
+	ReservationNone Reservation = iota
+	// ReservationEffect: a row whose status is not not_attempted (the attempt began, or it is another operation's).
+	ReservationEffect
+	// ReservationPromptless: a not_attempted row stored with exactly this request's arguments and no prompt.
+	ReservationPromptless
+	// ReservationOther: a not_attempted row stored with other arguments than this request's without a prompt.
+	ReservationOther
+)
+
+func (r Reservation) String() string {
+	switch r {
+	case ReservationNone:
+		return "none"
+	case ReservationEffect:
+		return "effect"
+	case ReservationPromptless:
+		return "promptless"
+	case ReservationOther:
+		return "other"
+	}
+	return "unknown"
+}
+
+// CreateThreadReservation tells what the ledger holds on in.RequestID, compared with in's arguments without a prompt
+// through the stored fingerprint (the same comparison, legacy fingerprint included, CreateThread's replay makes). in's
+// own prompt is ignored. It only reads, without the mutation lock, so its answer is advisory: CreateThread stays the
+// authority on what a call does. A ledger read error is returned, never dropped.
+func (b *Bridge) CreateThreadReservation(ctx context.Context, in CreateThread) (Reservation, error) {
+	if b.Ledger == nil {
+		return ReservationNone, nil
+	}
+	stored, err := b.Ledger.Get(ctx, in.RequestID)
+	if errors.Is(err, ledger.ErrUnknown) {
+		return ReservationNone, nil
+	}
+	if err != nil {
+		return ReservationNone, err
+	}
+	if stored["status"] != "not_attempted" {
+		return ReservationEffect, nil
+	}
+	in.Prompt = ""
+	promptless := createThreadParams(in)
+	receipt, err := b.Ledger.Lookup(ctx, in.RequestID, "create_thread", promptless, createThreadLegacy(promptless, in.CWD))
+	switch {
+	case errors.Is(err, ledger.ErrConflict):
+		return ReservationOther, nil
+	case err != nil:
+		return ReservationNone, err
+	case receipt == nil:
+		return ReservationNone, nil
+	case receipt["status"] != "not_attempted":
+		// The row moved on between the two reads.
+		return ReservationEffect, nil
+	}
+	return ReservationPromptless, nil
 }
