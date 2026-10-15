@@ -708,7 +708,7 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 			// the attempt's thread_started names its subagent: it is adopted, never spawned again, and goes on with the evidence record
 			// its step was published with (open, or claimed by the subagent before the restart)
 			if c.evidenceGated() {
-				if err := c.ensureEvidence(marker); err != nil {
+				if err := c.ensureEvidence(turnCtx, marker); err != nil {
 					return nil, c.evidenceHold(err, ""), true, nil
 				}
 			}
@@ -717,7 +717,7 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 	}
 	if action == StepSpawn && c.evidenceGated() {
 		// the step's evidence record is written before its step_published row, and a step published again reuses it (CRW-1482)
-		if err := c.ensureEvidence(marker); err != nil {
+		if err := c.ensureEvidence(turnCtx, marker); err != nil {
 			return nil, c.evidenceHold(err, ""), true, nil
 		}
 	}

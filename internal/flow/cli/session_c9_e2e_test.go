@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -56,7 +57,8 @@ type c9Step struct {
 
 // startC9 starts a session run of one executor call in the kit's repository, takes its spawn step, spawns its subagent with a
 // real rollout and a gated turn whose final message is the RECEIPT JSON, and reports it. ignore commits a .gitignore of .crw/ to
-// the repository first (CRW's own repository ignores it; a target repository may not).
+// the repository first (CRW's own repository ignores it; a target repository may not, and the engine's .gitignore in P's
+// .crw/evidence ignores the receipt then).
 func startC9(t *testing.T, ignore bool) *c9Step {
 	t.Helper()
 	k := newSessionE2E(t)
@@ -116,7 +118,8 @@ return [r.status, r.output]
 		t.Fatalf("the packet names no receipt file %s:\n%s", s.receipt, s.packet())
 	}
 	published := s.row("step_published")
-	if published["evidence_assignment"] != s.id || published["evidence_ignored"] != ignore {
+	// the receipt is ignored in P whether or not the repository ignores .crw/: the engine's .gitignore in P's .crw/evidence ignores it
+	if published["evidence_assignment"] != s.id || published["evidence_ignored"] != true {
 		t.Fatalf("step_published: %v", published)
 	}
 
@@ -335,6 +338,53 @@ func TestC9(t *testing.T) {
 		}
 	})
 
+	// ReceiptOutOfTheTree: in a repository that does not ignore .crw/, the executor's accepted receipt in P never reaches the pending
+	// tree the run snapshots (Snapshot, add -A in a private index) nor a commit of P (add --all), while the source file it wrote does.
+	t.Run("ReceiptOutOfTheTree", func(t *testing.T) {
+		s := startC9(t, false)
+		src := filepath.Join(s.st.Workspace, "parser.go")
+		if err := os.WriteFile(src, []byte("package x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(s.receipt, []byte("$ go test ./x\nFAIL\n$ go test ./x\nok\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if out := s.stop(c9Receipt); out != "" {
+			t.Fatalf("the receipt was not accepted: %q", out)
+		}
+		s.finish()
+		rel := filepath.ToSlash(filepath.Join(".crw", "evidence", s.id+".md"))
+		files := func(dir, tree string) []string {
+			out, err := exec.Command("git", "-C", dir, "ls-tree", "-r", "--name-only", tree).CombinedOutput()
+			if err != nil {
+				t.Fatalf("git ls-tree %s: %v\n%s", tree, err, out)
+			}
+			return strings.Fields(string(out))
+		}
+		pending, _ := s.row("completed")["pending_tree"].(string)
+		if pending == "" {
+			t.Fatalf("the completed row has no pending tree: %v", s.row("completed"))
+		}
+		got := files(s.k.repo, pending)
+		if !slices.Contains(got, "parser.go") || slices.ContainsFunc(got, func(f string) bool { return strings.HasPrefix(f, ".crw/") }) {
+			t.Fatalf("the pending tree %s holds %v: want parser.go and nothing under .crw/ (the receipt is %s)", pending, got, rel)
+		}
+		// a commit of P stages everything git does not ignore, as the run's commit does
+		commit := exec.Command("git", "-C", s.st.Workspace, "add", "--all")
+		if out, err := commit.CombinedOutput(); err != nil {
+			t.Fatalf("git add: %v\n%s", err, out)
+		}
+		commit = exec.Command("git", "-C", s.st.Workspace, "-c", "commit.gpgsign=false", "commit", "--no-verify", "-q", "-m", "executor change")
+		commit.Env = append(os.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@localhost", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@localhost")
+		if out, err := commit.CombinedOutput(); err != nil {
+			t.Fatalf("git commit: %v\n%s", err, out)
+		}
+		got = files(s.st.Workspace, "HEAD")
+		if !slices.Contains(got, "parser.go") || slices.ContainsFunc(got, func(f string) bool { return strings.HasPrefix(f, ".crw/") }) {
+			t.Fatalf("the commit of P holds %v: want parser.go and nothing under .crw/", got)
+		}
+	})
+
 	t.Run("Refused", func(t *testing.T) {
 		s := startC9(t, false)
 		// stop 1: no receipt anywhere
@@ -377,7 +427,7 @@ func TestC9(t *testing.T) {
 		s.finish()
 
 		receipt, _ := s.row("completed")["evidence_receipt"].(map[string]any)
-		if detail, _ := receipt["detail"].(string); receipt["state"] != "missing" || receipt["assignment"] != s.id || receipt["ignored"] != false || receipt["copy"] != nil || detail == "" {
+		if detail, _ := receipt["detail"].(string); receipt["state"] != "missing" || receipt["assignment"] != s.id || receipt["ignored"] != true || receipt["copy"] != nil || detail == "" {
 			t.Fatalf("the completed row's evidence_receipt after the tombstone release: %v", receipt)
 		}
 		if _, err := os.Stat(engine.NewFileStepBus(RunDir(s.k.w.state, s.run)).FilePath(s.st.Call, "evidence-"+s.id+".md")); !os.IsNotExist(err) {

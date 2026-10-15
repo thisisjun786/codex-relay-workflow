@@ -455,6 +455,10 @@ func (c *callRun) prepare() {
 	}
 	if c.sess != nil {
 		d["backend"] = BackendSession
+		if c.evidenceGated() {
+			// the directory the call's flow evidence records are written under, for a resumed run started elsewhere (CRW-1482)
+			d["evidence_cwd"] = c.e.cfg.Session.EvidenceCwd
+		}
 	}
 	if c.snapshot != "" {
 		d["input_snapshot"] = c.snapshot

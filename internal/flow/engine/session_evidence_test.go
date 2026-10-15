@@ -457,6 +457,41 @@ return [qa.status]`)
 		}
 	})
 
+	// OwnerCwdBeforeDispatch: the owner thread runs in another cwd than the one the run was started in, and its subagent stops before
+	// the engine bound it (before any dispatch report). The record is under the owner's cwd already, written before the step was
+	// published, so the stop hook accepts the receipt there, and the completed row records it.
+	t.Run("OwnerCwdBeforeDispatch", func(t *testing.T) {
+		k := newEvidenceKit(t, true, ".crw/\n")
+		host := t.TempDir()
+		k.setHostCwd(host)
+		k.host.mu.Lock()
+		k.host.agents[sessionOwner] = &fakeAgent{SessionAgent: SessionAgent{ThreadID: sessionOwner, Cwd: host, Status: "active"}}
+		k.host.mu.Unlock()
+		var mu sync.Mutex
+		verdict := evidence.AssignedVerdict(-1)
+		k.setOrch(func(Step, string, int) orchAnswer { return orchAnswer{hang: true} }, func(st Step, agent string) {
+			// the child stops at once, before its spawn is reported and bound
+			v, _ := claim(t, st, host, agent, agent+"-turn1", []byte("red then green\n"))
+			mu.Lock()
+			verdict = v
+			mu.Unlock()
+			go k.complete(agent, st)
+		})
+		res := k.h.run(evidenceExe)
+		if got := value[[]any](t, res); got[0] != "completed" {
+			t.Fatalf("result %v", got)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if verdict != evidence.AssignedAccepted {
+			t.Fatalf("the stop before the bind under the owner's cwd was judged %v, want AssignedAccepted", verdict)
+		}
+		rows := k.rowsOf("exe")
+		if r := receiptOf(t, rows[len(rows)-1]); r["state"] != "accepted" {
+			t.Errorf("evidence_receipt %v", r)
+		}
+	})
+
 	// ReceiptRecorded: the receipt the hook accepted (claimed through JudgeAssignedReceiptTurn on a real rollout) is copied to the
 	// step bus and recorded on the completed row with its digest, the claiming subagent and turn.
 	t.Run("ReceiptRecorded", func(t *testing.T) {
@@ -541,9 +576,9 @@ return [qa.status]`)
 		}
 	})
 
-	// NotIgnored: a P whose repository does not ignore .crw/ is recorded as such, and the step is published all the same, with the
-	// rows of before.
-	t.Run("NotIgnored", func(t *testing.T) {
+	// NotIgnoredByTheRepository: a P whose repository does not ignore .crw/ gets the engine's .gitignore of "*" in .crw/evidence, so
+	// the receipt is ignored there all the same (evidence_ignored true), and the step is published with the rows of before.
+	t.Run("NotIgnoredByTheRepository", func(t *testing.T) {
 		k := newEvidenceKit(t, true, "")
 		res := k.h.run(evidenceExe)
 		if got := value[[]any](t, res); got[0] != "completed" {
@@ -553,24 +588,31 @@ return [qa.status]`)
 		if got := eventsOf(rows); got != oneAttempt {
 			t.Fatalf("rows %s", got)
 		}
-		if v, ok := rows[1].Data["evidence_ignored"]; !ok || v != false || rowStr(rows[1].Data, "evidence_assignment") == "" {
-			t.Errorf("step_published %v, want evidence_ignored false", rows[1].Data)
+		if v, ok := rows[1].Data["evidence_ignored"]; !ok || v != true || rowStr(rows[1].Data, "evidence_assignment") == "" {
+			t.Errorf("step_published %v, want evidence_ignored true", rows[1].Data)
 		}
-		if r := receiptOf(t, rows[4]); r["ignored"] != false {
-			t.Errorf("evidence_receipt %v, want ignored false", r)
+		if r := receiptOf(t, rows[4]); r["ignored"] != true {
+			t.Errorf("evidence_receipt %v, want ignored true", r)
+		}
+		raw, err := os.ReadFile(filepath.Join(rowStr(rows[1].Data, "workspace"), ".crw", "evidence", ".gitignore"))
+		if err != nil || string(raw) != evidenceGitignore {
+			t.Errorf("P's .crw/evidence/.gitignore: %q %v", raw, err)
 		}
 	})
 
-	// IgnoredByTheReceiptName: whether git ignores the receipt is asked of the step's own receipt file <id>.md, so a rule that
-	// matches another name in .crw/evidence (here receipt.md) does not make the step's receipt ignored, and one that matches only the
-	// receipt's own name does.
+	// IgnoredByTheReceiptName: a .gitignore P's .crw/evidence already holds is left as it is, and whether git ignores the receipt is
+	// asked of the step's own receipt file <id>.md: a rule that matches another name (receipt.md) does not make it ignored, and one
+	// that matches only the receipt's own name does.
 	t.Run("IgnoredByTheReceiptName", func(t *testing.T) {
 		for _, tc := range []struct {
 			name, ignore string
 			want         bool
-		}{{"another name", ".crw/evidence/receipt.md\n", false}, {"its own name", ".crw/evidence/*.md\n!.crw/evidence/receipt.md\n", true}} {
+		}{{"another name", "receipt.md\n", false}, {"its own name", "*.md\n!receipt.md\n", true}} {
 			t.Run(tc.name, func(t *testing.T) {
-				k := newEvidenceKit(t, true, tc.ignore)
+				k := newEvidenceKit(t, true, "")
+				k.placer.mu.Lock()
+				k.placer.realEvidenceIgnore = tc.ignore
+				k.placer.mu.Unlock()
 				res := k.h.run(evidenceExe)
 				if got := value[[]any](t, res); got[0] != "completed" {
 					t.Fatalf("result %v", got)
@@ -578,6 +620,9 @@ return [qa.status]`)
 				rows := k.rowsOf("exe")
 				if v, ok := rows[1].Data["evidence_ignored"]; !ok || v != tc.want {
 					t.Errorf("step_published %v, want evidence_ignored %v", rows[1].Data, tc.want)
+				}
+				if raw, err := os.ReadFile(filepath.Join(rowStr(rows[1].Data, "workspace"), ".crw", "evidence", ".gitignore")); err != nil || string(raw) != tc.ignore {
+					t.Errorf("the existing .gitignore was changed: %q %v", raw, err)
 				}
 			})
 		}

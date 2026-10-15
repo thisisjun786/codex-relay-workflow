@@ -417,9 +417,10 @@ type sessPlacer struct {
 	// real, when set, places every directory under that root and makes it a real directory there (CRW-1482): realGit makes each a
 	// git checkout, whose .gitignore holds realIgnore when that is set. hostCwd, when set, is the cwd the host reports for every
 	// subagent the fake owner spawns (orchCwd otherwise). The default kit sets none of them, so its /w/<node>/a1 paths stay.
-	real, realIgnore string
-	realGit          bool
-	hostCwd          string
+	// realEvidenceIgnore, when set, is a .gitignore the checkout already holds in .crw/evidence.
+	real, realIgnore, realEvidenceIgnore string
+	realGit                              bool
+	hostCwd                              string
 }
 
 // realPath is the directory path a placement gets: under real when it is set.
@@ -491,7 +492,15 @@ func (p *sessPlacer) makeReal(path string) error {
 		return fmt.Errorf("git init %s: %v: %s", path, err, out)
 	}
 	if p.realIgnore != "" {
-		return os.WriteFile(filepath.Join(path, ".gitignore"), []byte(p.realIgnore), 0o644)
+		if err := os.WriteFile(filepath.Join(path, ".gitignore"), []byte(p.realIgnore), 0o644); err != nil {
+			return err
+		}
+	}
+	if p.realEvidenceIgnore != "" {
+		if err := os.MkdirAll(filepath.Join(path, ".crw", "evidence"), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(path, ".crw", "evidence", ".gitignore"), []byte(p.realEvidenceIgnore), 0o644)
 	}
 	return nil
 }

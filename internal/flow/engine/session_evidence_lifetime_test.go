@@ -2,8 +2,10 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -273,6 +275,38 @@ return [r.status, r.reason]`},
 		noOpenRecord(t, "after the open call was superseded", k.evCwd)
 	})
 
+	// ResumedFromAnotherCwd: the run is resumed from another directory (a new EvidenceCwd) after its executor step was published and
+	// never taken. The record stays where it was written: a resumed run that supersedes the call or prepares it again releases it
+	// there, and one that goes on with the same step reuses it there and writes none under the new directory.
+	t.Run("ResumedFromAnotherCwd", func(t *testing.T) {
+		for _, tc := range []struct{ name, body, want string }{
+			{"superseded", evidenceExploreOnly, "completed"},
+			{"prepared again", `const r = await agent.call('build node n1 once more', { agentType: 'executor', label: 'exe', node: 'n1', schema: RECEIPT })
+return [r.status, r.reason]`, "completed"},
+			{"same step", evidenceExe, "completed"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				k := newEvidenceKit(t, true, ".crw/\n")
+				first := k.evCwd
+				k.setOrch(func(Step, string, int) orchAnswer { return orchAnswer{skip: true} }, nil)
+				k.die(t, deathAt(EvStepPublished), evidenceExe)
+				if got := evidenceRecords(t, first); len(got) != 1 {
+					t.Fatalf("records of the published step %v", got)
+				}
+				second := t.TempDir()
+				k.cfg.EvidenceCwd, k.evCwd = second, second
+				k.setHostCwd(second)
+				k.setOrch(nil, nil)
+				res := k.h.run(tc.body)
+				if got := value[[]any](t, res); got[0] != tc.want {
+					t.Fatalf("resumed %v: rows %s", got, eventsOf(k.rowsOf("exe")))
+				}
+				noOpenRecord(t, "the first directory after the resume", first)
+				noOpenRecord(t, "the second directory after the resume", second)
+			})
+		}
+	})
+
 	// HeldSupersededInSuffix: a held call whose step was published and never taken, in the suffix of a resumed run that does not run
 	// it again, is superseded: its record goes with it.
 	t.Run("HeldSupersededInSuffix", func(t *testing.T) {
@@ -388,4 +422,36 @@ return [r.status, r.reason]`)
 			t.Errorf("evidence_receipt %v, want accepted for agent-2", r)
 		}
 	})
+}
+
+// The ids the release derives for a step no row names are bounded by the step a process could have been about to publish: the
+// newest generation's turns up to one past its largest k, at its largest attempt and the next one. A call with three generations
+// and five attempts in its newest one derives at most 2*(k+1) ids, the next step's among them, whatever its earlier generations and
+// attempts were.
+func TestSessionEvidenceDerivedIDsBounded(t *testing.T) {
+	e := &Engine{cfg: Config{Session: &SessionConfig{Owner: sessionOwner, EvidenceCwd: t.TempDir()}}, runID: "run-bounded"}
+	const call = "c_bounded"
+	var rows []Event
+	seq := 0
+	row := func(ev string, data map[string]any) {
+		seq++
+		rows = append(rows, Event{Seq: seq, CallID: call, Event: ev, Data: data})
+	}
+	for gen := 0; gen < 3; gen++ {
+		row(EvPrepared, map[string]any{})
+		for a := 1; a <= 5; a++ {
+			for k := 1; k <= 2; k++ {
+				row(EvStepPublished, map[string]any{"k": k, "attempt": a, "action": StepSpawn})
+			}
+			row(EvSessionAttemptLost, map[string]any{"k": 2, "attempt": a})
+		}
+	}
+	ids := e.evidenceDerivedIDs(rows)
+	if len(ids) > 2*(2+1) {
+		t.Fatalf("%d derived ids for a newest generation with k up to 2: want at most %d", len(ids), 2*(2+1))
+	}
+	next := evidence.FlowAssignmentID(sessionOwner, "run-bounded", fmt.Sprintf("%s@%d", call, rows[2*16].Seq), sessionOp(call+"/t1", 6))
+	if rows[2*16].Event != EvPrepared || !slices.Contains(ids, next) {
+		t.Fatalf("the next step's id %s is not among the derived %v", next, ids)
+	}
 }
