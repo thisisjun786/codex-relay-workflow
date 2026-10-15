@@ -34,9 +34,9 @@ func (c *Channel) Selection(ctx context.Context, o Obligation, recipient string,
 		return nil, err
 	}
 	standing := "standing"
-	discharge := "no coordination_document target is configured for this relationship, so there is no record the supervisor reads"
+	discharge := "no coordination_document target is configured for this relationship, so there is no record the 부모 reads"
 	if err == nil {
-		discharge = "no tracking record was enqueued for this, so nothing the supervisor reads carries it"
+		discharge = "no tracking record was enqueued for this, so nothing the 부모 reads carries it"
 		if len(records) > 0 {
 			latest := records[len(records)-1].(map[string]any)
 			if latest["target_ref"] != target {
