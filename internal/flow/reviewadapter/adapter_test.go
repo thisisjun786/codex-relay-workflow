@@ -1051,3 +1051,51 @@ func TestBugbotCommittedReaderTakesOnlyTheRequestedRange(t *testing.T) {
 		}
 	})
 }
+
+// TestMergeFindingsKeepsTheHigherSeverityAndTheBlockingImpact: MergeFindings merges the findings of several lists (the two passes of
+// a crosscheck round) into one finding per id: the first copy's file, line and text, the higher severity, and a blocking impact over
+// a non-blocking or empty one, whichever list holds which copy. Findings of other ids keep their order, and the inputs are not changed.
+func TestMergeFindingsKeepsTheHigherSeverityAndTheBlockingImpact(t *testing.T) {
+	id := FindingID("a.go", "The loop never ends")
+	minor := Finding{ID: id, Severity: "P3", Impact: "minor_separable", File: "a.go", Line: 3, Text: "The loop never ends"}
+	core := Finding{ID: id, Severity: "P1", Impact: "core_function", File: "a.go", Line: 40, Text: "the loop  never ends"}
+	other := Finding{ID: FindingID("b.go", "naming"), Severity: "P3", File: "b.go", Line: 1, Text: "naming"}
+	for _, c := range []struct {
+		name  string
+		a, b  []Finding
+		first Finding
+	}{
+		{"the minor copy first", []Finding{minor}, []Finding{core, other}, minor},
+		{"the blocking copy first", []Finding{core, other}, []Finding{minor}, core},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			a, b := slices.Clone(c.a), slices.Clone(c.b)
+			got := MergeFindings(a, b)
+			merged := c.first
+			merged.Severity, merged.Impact = "P1", "core_function"
+			want := []Finding{merged, other}
+			if !slices.Equal(got, want) {
+				t.Fatalf("merged = %+v\nwant %+v", got, want)
+			}
+			if !slices.Equal(a, c.a) || !slices.Equal(b, c.b) {
+				t.Fatalf("MergeFindings changed its inputs: %+v %+v", a, b)
+			}
+		})
+	}
+	t.Run("an empty impact takes the other copy's", func(t *testing.T) {
+		bare := Finding{ID: id, Severity: "P2", File: "a.go", Line: 3, Text: "The loop never ends"}
+		got := MergeFindings([]Finding{bare}, []Finding{minor})
+		if len(got) != 1 || got[0].Severity != "P2" || got[0].Impact != "minor_separable" || got[0].Line != 3 {
+			t.Fatalf("merged = %+v", got)
+		}
+		got = MergeFindings([]Finding{minor}, []Finding{bare})
+		if len(got) != 1 || got[0].Severity != "P2" || got[0].Impact != "minor_separable" {
+			t.Fatalf("merged = %+v", got)
+		}
+	})
+	t.Run("no findings is an empty list", func(t *testing.T) {
+		if got := MergeFindings(nil, []Finding{}); got == nil || len(got) != 0 {
+			t.Fatalf("merged = %#v, want an empty list", got)
+		}
+	})
+}
