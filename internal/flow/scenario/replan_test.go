@@ -2480,3 +2480,65 @@ func TestASplitNodeHasStartedForTheSignal(t *testing.T) {
 		}
 	}
 }
+
+// A re-plan whose milestone has a node sized for a split and a node that has not started: the split node has started (its lane
+// escalated it), so the critic packet lists C, the one node the revision releases, under UNSTARTED NODES, and B only under RELEASED
+// PLANS, as sized for a split. B has no wait, so its lane records its design row before A's second plan mismatch makes the signal due;
+// C waits for A, so it has not started then.
+func TestAReplanKeepsASplitNodeUnderReleasedPlans(t *testing.T) {
+	l := NewLab(t,
+		NodeSpec{ID: "A", Issue: "CRW-A", Title: "issue A", Regions: []string{"a/"}},
+		NodeSpec{ID: "B", Issue: "CRW-B", Title: "issue B", Regions: []string{"b/"}},
+		NodeSpec{ID: "C", Issue: "CRW-C", Title: "issue C", Regions: []string{"c/"}, After: []string{"A"}})
+	d := l.designFor()
+	for i := range d.Issues {
+		if d.Issues[i].Node == "B" {
+			d.Issues[i].SizeFit, d.Issues[i].SizeReason, d.Issues[i].IssueSizeDecision = "split", "two packages", "over_line"
+		}
+	}
+	l.Design = &d
+	mismatching(l, "A")
+	fixedOnce(l, "A")
+	// B's size_split leaves the milestone incomplete
+	if got := mustRunIncomplete(t, l); got.State != "incomplete" {
+		t.Fatalf("state %q", got.State)
+	}
+	if labels := labelsWithPrefix(l, "replan:s"); len(labels) != 1 {
+		t.Fatalf("re-plan calls %v in %v, want one: C had not started", labels, l.Labels())
+	}
+	// the signal that re-planned is the one whose label the re-plan call carries; the later ones find C released
+	replanned := strings.TrimPrefix(labelsWithPrefix(l, "replan:s")[0], "replan:s")
+	for _, row := range l.Rows("crw.signalBind") {
+		if fmt.Sprint(row.Data["k"]) != replanned {
+			continue
+		}
+		started, _ := row.Data["started"].([]any)
+		unstarted, _ := row.Data["unstarted"].([]any)
+		if !slices.Contains(started, any("B")) || !slices.Contains(unstarted, any("C")) || slices.Contains(unstarted, any("B")) {
+			t.Errorf("signal %v: started %v, unstarted %v, want B started and C unstarted", row.Data["k"], started, unstarted)
+		}
+	}
+	labels := labelsWithPrefix(l, "design-audit:replan-")
+	if len(labels) == 0 {
+		t.Fatalf("no critic packet of the re-plan in %v", l.Labels())
+	}
+	for _, label := range labels {
+		text := textOfCall(l, callNamed(t, l, label).ID)
+		_, unstarted, found := strings.Cut(text, "UNSTARTED NODES")
+		if !found {
+			t.Fatalf("%s has no UNSTARTED NODES section:\n%s", label, text)
+		}
+		unstarted, _, _ = strings.Cut(unstarted, "\n\n")
+		_, released, found := strings.Cut(text, "RELEASED PLANS")
+		if !found {
+			t.Fatalf("%s has no RELEASED PLANS section:\n%s", label, text)
+		}
+		released, _, _ = strings.Cut(released, "\n\n")
+		if !strings.Contains(unstarted, "- C (") || strings.Contains(unstarted, "- B (") {
+			t.Errorf("%s: UNSTARTED NODES should list C and not B:\n%s", label, unstarted)
+		}
+		if !strings.Contains(released, "- B (") || !strings.Contains(released, "sized for a split") || strings.Contains(released, "- C (") {
+			t.Errorf("%s: RELEASED PLANS should list B, sized for a split, and not C:\n%s", label, released)
+		}
+	}
+}

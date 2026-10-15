@@ -469,6 +469,39 @@ func TestReleasedPlansListTheNodesSizedForASplitOrAChild(t *testing.T) {
 	}
 }
 
+// A node whose audited issue is sized for a child has started: its lane recorded a release row (released false, kind child,
+// size_fit_child) before it escalated the node. Both readers of the one started predicate count it so: the signal path (lanes, which
+// crw.signalBind records as started) does not leave it unstarted for a due signal to re-plan, and crw.releasedPlans lists it with
+// the plan it was sized under.
+func TestAChildSizedNodeHasStarted(t *testing.T) {
+	w := newWorld(t)
+	w.relay.plan = planOfNodes(map[string]string{"A": "sa", "B": "sb", "C": "sc"}, "A", "B", "C")
+	d := designOf("A", "B", "C")
+	d.Issues[1].SizeFit, d.Issues[1].SizeReason, d.Issues[1].IssueSizeDecision = "child", "a child of its own", "over_line"
+	w.ledgered(true, d)
+	var rel ReleaseOutcome
+	_ = json.Unmarshal(w.must("release", "plan-1", "B", "M"), &rel)
+	if rel.Released || rel.Kind != "child" || rel.Reason != "size_fit_child" {
+		t.Fatalf("release of the child-sized node: %+v, want released false, kind child, size_fit_child", rel)
+	}
+	r := rows(w.j.Events())
+	started, unstarted := lanes(r, []string{"A", "B", "C"})
+	if !reflect.DeepEqual(started, []string{"B"}) || !reflect.DeepEqual(unstarted, []string{"A", "C"}) {
+		t.Errorf("signal path: started %v, unstarted %v, want B started and A, C unstarted", started, unstarted)
+	}
+	if _, kind, ok := startRowOf(r, "B"); !ok || kind != "child" {
+		t.Errorf("startRowOf(B) = %q, %v, want child, true", kind, ok)
+	}
+	raw := w.must("releasedPlans", "M")
+	var got []ReleasedPlan
+	_ = json.Unmarshal(raw, &got)
+	var kinds []map[string]any
+	_ = json.Unmarshal(raw, &kinds)
+	if len(got) != 1 || got[0].Node != "B" || got[0].Revision != "r0" || !reflect.DeepEqual(got[0].Plan, d.Issues[1]) || kinds[0]["kind"] != "child" {
+		t.Errorf("released plans %+v (kinds %v), want B only, sized for a child under r0 with its whole plan", got, kinds)
+	}
+}
+
 // A wait for a decision is open until the journal has the applied row of its own question and node.
 func TestDecideReadsOnlyTheAppliedRow(t *testing.T) {
 	w := newWorld(t)

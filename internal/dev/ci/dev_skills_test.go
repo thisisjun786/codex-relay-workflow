@@ -182,7 +182,7 @@ func c4RowErrors(text string) []string {
 	}
 	var errs []string
 	for _, want := range []string{
-		"flow-managed run", "high-risk lane", "architect DESIGN", "independent pre-build design audit",
+		"flow-managed run", "high-risk lane", "one background explorer for each node of the milestone", "architect DESIGN", "independent pre-build design audit",
 		"different model family", "before any executor starts", "per-issue candidate review", "reviewer-final", "starts no FSM",
 	} {
 		if !strings.Contains(process, want) {
