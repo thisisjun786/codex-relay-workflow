@@ -366,9 +366,10 @@ func Summarize(rec RunRecord, events []engine.Event, live bool, pid int) RunInfo
 			heldBack = true
 		}
 	}
-	if lastPaused > lastStart && lastPaused > lastFinish && pausedBy != "" {
+	if lastPaused > lastStart && pausedBy != "" {
 		// a run that ended paused was paused by the asker its end row names: a later ask that does not end a run paused (a deadline)
-		// is a run_paused row too, and it is not who paused the run
+		// is a run_paused row too, and it is not who paused the run. A cancel of that paused end (a finished row after it, with no
+		// start between) keeps the asker: the run was paused by it before it was cancelled
 		info.Paused = pausedBy
 	}
 	order, rows := callRows(events)

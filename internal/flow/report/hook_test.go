@@ -179,6 +179,41 @@ func TestRunFinishedTellsTheMilestoneState(t *testing.T) {
 	}
 }
 
+// The completion notice of a process tells only the outcome of its own finished row (CRW-1487): a finished row of an older process,
+// before the last started row, is not this process's end, so a finish told with no finished row after the last start carries no
+// outcome and keeps the old text.
+func TestRunFinishedTellsNoOutcomeOfAnOlderProcess(t *testing.T) {
+	older := []engine.Event{
+		{RunID: testRun, Kind: engine.KindRun, Event: "started", Data: map[string]any{}},
+		{RunID: testRun, Kind: engine.KindRun, Event: "finished", Data: map[string]any{"status": "completed", "outcome": map[string]any{"state": "escalated", "reason": "design_audit_rounds"}}},
+		{RunID: testRun, Kind: engine.KindRun, Event: "started", Data: map[string]any{}},
+	}
+	if o := finishedOutcome(older); o != nil {
+		t.Fatalf("the outcome of an older process is read for this one: %+v", o)
+	}
+	if o := finishedOutcome(older[:2]); o == nil || o.State != "escalated" {
+		t.Fatalf("the outcome of this process's finished row: %+v", o)
+	}
+
+	w := newWorld(t)
+	h := w.hook()
+	w.finish("completed", map[string]any{"state": "escalated", "source": "design_audit", "reason": "design_audit_rounds"})
+	w.journal.Append(engine.Event{RunID: testRun, Kind: engine.KindRun, Event: "started", Data: map[string]any{}})
+	if err := w.journal.Flush(); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.RunFinished(ctx, testRun, "completed"); err != nil {
+		t.Fatal(err)
+	}
+	sent := w.sender.parentSent()
+	if len(sent) != 1 || strings.Contains(sent[0].Text, "state=") || !strings.Contains(sent[0].Text, "status=completed") {
+		t.Fatalf("the notice tells an older process's outcome: %+v", sent)
+	}
+	if rows := w.rows(KindCompletionNotice); len(rows) != 1 || rows[0].Str("state") != "" {
+		t.Fatalf("rows %+v", rows)
+	}
+}
+
 // The engine hands the run to the hook: at its start, after the batches its journal committed, and at its end; the summary document the
 // command line named is recorded in the journal first, so the hook reads it from there. A resumed run finds the stream as it left it.
 func TestEngineHandsTheRunToTheHook(t *testing.T) {
