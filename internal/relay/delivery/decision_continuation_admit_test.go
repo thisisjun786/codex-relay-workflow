@@ -208,7 +208,7 @@ func TestDCA07_ARecoveredDecisionAdmitsItsContinuationTurn(t *testing.T) {
 	}
 
 	// the message did reach the child, in a turn that carries the request id
-	turn := d.host.startTurn(child, "turn-recovered", "inProgress", "[codex-session-relay] parent decision\nrequestId: "+request+"\n")
+	turn := d.host.startTurn(child, "turn-recovered", "inProgress", "[codex-session-relay] 자식 decision\nrequestId: "+request+"\n")
 	now := d.clock.Now()
 	if _, err := NewReconciler(d.delivery).ReconcileAttempt(d.ctx, request, d.host, &now); err != nil {
 		t.Fatalf("the recovery: %v", err)
@@ -240,7 +240,7 @@ func TestDCA08_ARecoveredTurnIsAcceptedWithoutAClaim(t *testing.T) {
 	d.host.script = []string{"in_progress"}
 	record := d.mustAttempt(event, nil)
 	request := pyjson.Text(record.Get("requestId"))
-	turn := d.host.startTurn(child, "turn-recovered-2", "inProgress", "[codex-session-relay] parent decision\nrequestId: "+request+"\n")
+	turn := d.host.startTurn(child, "turn-recovered-2", "inProgress", "[codex-session-relay] 자식 decision\nrequestId: "+request+"\n")
 	now := d.clock.Now()
 	if _, err := NewReconciler(d.delivery).ReconcileAttempt(d.ctx, request, d.host, &now); err != nil {
 		t.Fatalf("the recovery: %v", err)

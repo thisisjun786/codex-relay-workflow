@@ -78,6 +78,8 @@ type laneLab struct {
 	owner, target string
 	// releaseAnswer, when a test sets it, is given every answer of the relay's release and answers the one the lane reads (CRW-1404).
 	releaseAnswer func(req ops.ReleaseRequest, out ops.ReleaseResult) ops.ReleaseResult
+	// designEdit, when a test sets it, edits the DESIGN the lab's architect answers.
+	designEdit func(d *ops.Design)
 }
 
 const labOwner = "thread-owner"
@@ -641,6 +643,9 @@ func (l *laneLab) design() ops.Design {
 		}
 		d.Issues = append(d.Issues, ops.DesignIssue{Issue: n.Issue, Node: n.ID, SizeFit: "executor", IssueSizeDecision: "ok", EditRegions: []string{"node-" + n.Issue + ".txt"},
 			Approach: "write the file of " + n.ID, TestsFirst: []string{"the file of " + n.ID + " exists"}, DoneCondition: "the file of " + n.ID + " is committed", DecisionRefs: []string{"D1"}, OrderAfter: after})
+	}
+	if l.designEdit != nil {
+		l.designEdit(&d)
 	}
 	return d
 }

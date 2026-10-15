@@ -130,8 +130,9 @@ func rowWarnings(row map[string]any) []string {
 	return out
 }
 
-// applyAnswer judges the claim against the record and the journal and, when it holds, appends the row under the run lock. It
-// returns the exit status of the command.
+// applyAnswer judges the claim against the record and the journal and, when it holds, appends the row under the run lock. A legacy
+// issue-child run (legacyRun) is refused under the lock before the claim is judged: nothing is appended to it. It returns the exit
+// status of the command.
 func (c *command) applyAnswer(st *store.Store, state string, claim Claim) (AnswerReply, int) {
 	reply := AnswerReply{Run: claim.Run}
 	rec, err := st.Get(c.ctx, claim.Decision)
@@ -156,6 +157,11 @@ func (c *command) applyAnswer(st *store.Store, state string, claim Claim) (Answe
 		fmt.Fprintf(c.stderr, "crw flow answer: error: %v\n", err)
 		return reply, 2
 	}
+	// a legacy issue-child run is read only (CRW-1415): no answer is appended to it, whether the run is to be resumed after or not
+	if why := legacyRun(j.Events(), claim.Run, run.Workflow); why != "" {
+		reply.Refusal = &Refusal{Code: RefusedLegacyRun, Detail: why}
+		return reply, 1
+	}
 	app, refusal := Judge(rec, j.Events(), run, claim)
 	if refusal != nil {
 		reply.Refusal = refusal
@@ -175,14 +181,14 @@ func (c *command) applyAnswer(st *store.Store, state string, claim Claim) (Answe
 	return reply, 0
 }
 
-// resumeDetached starts the process of a run again from its journal; a run with nothing left of its spec's budget is refused
-// before (budgetLeft, over the journal in st).
+// resumeDetached starts the process of a run again from its journal; a run with nothing left of its spec's budget, and a legacy
+// issue-child run, is refused before (resumeRefused, over the journal in st).
 func (c *command) resumeDetached(st *store.Store, state, run string) (int, error) {
 	spec, err := ReadSpec(state, run)
 	if err != nil {
 		return 0, err
 	}
-	if err := budgetLeft(c.ctx, st, spec); err != nil {
+	if err := resumeRefused(c.ctx, st, spec); err != nil {
 		return 0, err
 	}
 	dir, _ := os.Getwd()
@@ -202,7 +208,7 @@ func (c *command) resumeDetached(st *store.Store, state, run string) (int, error
 // control is `crw flow pause RUN` and `crw flow cancel RUN`. The process that holds the run lock is signalled: SIGUSR1 pauses it
 // (the calls in flight end held, and `crw flow resume` goes on with them), SIGTERM ends it (the calls in flight are cancelled and
 // the run finishes cancelled). A run no process holds is cancelled by a finished row written under the lock; a pause of it is
-// refused, since nothing runs.
+// refused, since nothing runs. A legacy issue-child run is refused before anything (legacyRefused).
 func (c *command) control(args []string, verb string) int {
 	fs, cm := c.flags()
 	wait := fs.Int("wait", 20, "seconds to wait for the process to end after a cancel (0: do not wait)")
@@ -228,6 +234,10 @@ func (c *command) control(args []string, verb string) int {
 	_ = r.Close()
 	if err != nil {
 		return c.fail("%v", err)
+	}
+	// a legacy issue-child run is read only (CRW-1415): no finished row, no execution given up, and no signal that makes its process write
+	if code, refused := c.legacyRefused(cm, state, run); refused {
+		return code
 	}
 	if Over(info.State) {
 		if verb == "cancel" {

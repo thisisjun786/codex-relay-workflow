@@ -263,7 +263,7 @@ export function reviewPacket(node, plan, head, ci, opts) {
   ]
   const n = notesSection(opts.notes)
   if (n) parts.push(n)
-  parts.push('Answer with VERDICT. verified means every criterion is met and no defect of P0 to P2 stands. Answer one entry of criteria for each criterion c1, c2, ... above, each once, under its id. A defect you cannot judge from the head is of kind evidence_missing and carries an evidence_question.')
+  parts.push('Answer with VERDICT. verified means every criterion is met and no defect blocks. Answer one entry of criteria for each criterion c1, c2, ... above, each once, under its id. A defect you cannot judge from the head is of kind evidence_missing and carries an evidence_question. The impact of each defect is one of core_function, safety_or_data, permission_boundary, criterion_unmet, regression_introduced, minor_separable: a defect of P0 to P2 blocks whatever its impact, and of the impacts only minor_separable does not block. A verdict of verified over a defect that blocks is refused as no verdict.')
   return parts.join('\n\n')
 }
 

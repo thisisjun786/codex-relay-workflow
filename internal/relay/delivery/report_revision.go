@@ -25,11 +25,11 @@ func composeWorkRevision(row Row, receipt Obj, request string, report map[string
 	unresolved := unresolvedSection(report)
 	messageID := reportMessageID("parent_to_child", rid, "revision_request", event)
 	sections := []reportSection{
-		reportHeaderSection("[codex-session-relay] revision request", "TASK: the parent's summary (FIX SCOPE bounds it): "+reportValue(report, "summary"), report),
+		reportHeaderSection("[codex-session-relay] revision request", "TASK: the 자식's summary (FIX SCOPE bounds it): "+reportValue(report, "summary"), report),
 		{"VIOLATED CRITERION", violated, 0, 2, true, false}, {"WHAT CHANGED", what, 0, len(what), true, false}, {"SCOPE", scope, 1, 2, true, false}, {"FIX SCOPE", fix, 0, len(fix), true, false},
 		{"PRESERVE", []string{"PRESERVE: everything FIX SCOPE does not name, verified findings included,", "  work this request does not mention and any other task in-flight beside it"}, 0, 2, true, false},
 		unresolved,
-		{"MUST DO", []string{"MUST DO:", "  the parent's next action, as written: " + reportValue(report, "next_action"), "  where it goes beyond FIX SCOPE, FIX SCOPE and DECISION BOUNDARY decide", "  answer every finding FIX SCOPE names with a fix, a reasoned rebuttal, or an explicit out-of-scope split, and reply on its thread; supply the evidence REVERIFY AND RETURN asks for"}, 0, 3, true, false},
+		{"MUST DO", []string{"MUST DO:", "  the 자식's next action, as written: " + reportValue(report, "next_action"), "  where it goes beyond FIX SCOPE, FIX SCOPE and DECISION BOUNDARY decide", "  answer every finding FIX SCOPE names with a fix, a reasoned rebuttal, or an explicit out-of-scope split, and reply on its thread; supply the evidence REVERIFY AND RETURN asks for"}, 0, 3, true, false},
 		{"MUST NOT", []string{"MUST NOT:", "  discard work FIX SCOPE does not name, rewrite another task history, or force-push a shared branch", "  treat this request as an acknowledgeable message; see the note below"}, 1, 2, true, false},
 		{"PROOF", proof, 2, 2, true, false}, {"RETURN FORMAT", []string{"RETURN FORMAT:", "  result summary, repository and pull request, base and head SHA, verification evidence, unresolved items, next action, and the CXC report status"}, 2, 2, true, false},
 		{"DECISION BOUNDARY", []string{"DECISION BOUNDARY:", "  fix what FIX SCOPE names. Anything wider, anything that would discard preserved work, and anything needing authority you were not given comes back here instead of being decided locally"}, 1, 2, true, false},
@@ -99,7 +99,7 @@ func (x reviewIndex) violatedHeading() string {
 	findings, orderedExtras, source := x.findings, x.orderedExtras, x.source
 	heading := violatedHeading(source)
 	if len(findings) == 0 && len(orderedExtras) > 0 {
-		heading = strings.Replace(heading, "of the "+findingsWord(len(orderedExtras), "recorded finding")+",", fmt.Sprintf("none recorded by the verdict; the parent's review names %d:", len(orderedExtras)), 1)
+		heading = strings.Replace(heading, "of the "+findingsWord(len(orderedExtras), "recorded finding")+",", fmt.Sprintf("none recorded by the verdict; the 자식's review names %d:", len(orderedExtras)), 1)
 	}
 	return heading
 }

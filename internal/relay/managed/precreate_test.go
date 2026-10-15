@@ -121,7 +121,7 @@ func TestPrecreate_RefusalsComeBeforeTheHostIsAsked(t *testing.T) {
 		{name: "unbound project beats separator and differing settings", state: "reserved",
 			change: func(r map[string]any) { r["issueKey"] = "REL|X" },
 			record: func(x *scopeRun) { x.recordParentSettings(differentModel) },
-			reason: "unregistered_scope", detail: "project 'P-SCOPE' has no registered parent, so an issue cannot be attached to it yet"},
+			reason: "unregistered_scope", detail: "project 'P-SCOPE' has no registered 자식, so an issue cannot be attached to it yet"},
 		{name: "host separator beats differing settings", bound: true, state: "create_armed",
 			change: hostSeparator,
 			record: func(x *scopeRun) { x.recordParentSettings(differentModel) },

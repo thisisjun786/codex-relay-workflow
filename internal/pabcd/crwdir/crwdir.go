@@ -79,6 +79,13 @@ func ensureDir(cwd string, writeIgnore func(path, data string) error) (string, e
 	return checked()
 }
 
+// WriteExclusive creates the file path with data (mode 0666 under the umask), or fails with an error that wraps fs.ErrExist when
+// any entry is there, a link included. The directory that holds it is opened with O_DIRECTORY|O_NOFOLLOW and the file is created
+// relative to that descriptor with O_EXCL|O_NOFOLLOW, so a symbolic link in the directory's place is refused (an error that wraps
+// ErrLink) and nothing is created or written through it. It is how EnsureDir writes .crw/.gitignore, for a writer of another
+// ignore file in the tree.
+func WriteExclusive(path, data string) error { return writeExclusive(path, data) }
+
 // writeExclusive is writeFileSync with flag "wx": it creates path or fails if it exists. The directory that holds it is opened
 // without following a link and path is created relative to that descriptor, so a link put in the directory's place is refused.
 func writeExclusive(path, data string) error {

@@ -371,7 +371,7 @@ func (k *sessionLab) runningSubagents() []string {
 // verdictNeedsChanges is the first review of A-1: one defect the fix round answers.
 func verdictNeedsChanges() fakehost.TurnPlan {
 	return labSay(map[string]any{"verdict": "needs_changes", "criteria": []any{map[string]any{"id": "c1", "met": false, "evidence": "node-A-1.txt has one line"}},
-		"defects": []any{map[string]any{"ref": "c1", "kind": "correctness", "severity": "P2", "introduced": true, "impact": "the node is not finished", "inPromise": true,
+		"defects": []any{map[string]any{"ref": "c1", "kind": "correctness", "severity": "P2", "introduced": true, "impact": "core_function", "inPromise": true,
 			"file": "node-A-1.txt", "line": 1, "finding": "the file needs the line of the fix round", "evidence_question": nil}},
 		"summary": "one more line"})
 }

@@ -140,7 +140,7 @@ func CheckCoordinatorEpoch(ctx context.Context, q Queryer, plan, newProject, act
 		return err
 	}
 	if !live {
-		return StaleEpoch("task %s claimed epoch %d of plan %s under binding %s, which is not a live parent binding of project %s any more", actor, latest.Epoch, plan, latest.BindingID, project)
+		return StaleEpoch("task %s claimed epoch %d of plan %s under binding %s, which is not a live 자식 binding of project %s any more", actor, latest.Epoch, plan, latest.BindingID, project)
 	}
 	return nil
 }

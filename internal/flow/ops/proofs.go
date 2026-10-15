@@ -193,7 +193,7 @@ type Replay struct {
 	Row       *engine.Event
 }
 
-// DecideRecord decides a recording call (releaseChild, escalate, reportUp, hold, tierStep) from the journal alone: a call
+// DecideRecord decides a recording call (escalate, reportUp, hold, tierStep, and an old run's releaseChild) from the journal alone: a call
 // with a completed row is not sent again, whatever the state of the worktree or the host is; a call without one is executed
 // live with the same call id and the same idempotent request id.
 func DecideRecord(events []engine.Event, runID, callID string) Replay {

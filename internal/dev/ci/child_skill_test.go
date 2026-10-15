@@ -10,7 +10,7 @@ import (
 
 // CRW-1353 (CRW-1316 S4, design-1316 sections 13 and 18): the child's skill and the documents it reads describe the session
 // call path and the way a child works. crw-run's default path is a flow run whose steps the child spawns as role subagents
-// (`crw flow next`, spawn_agent, `crw flow dispatched`), and an issue child (SP-CHILD-1) is the exception; the child splits work
+// (`crw flow next`, spawn_agent, `crw flow dispatched`), and an issue child of a plan with no run is the exception; the child splits work
 // and spawns subagents broadly, follows the CXC sequence (architect, design audit, executors in parallel, a reviewer of another
 // family, a fix round, verification, landing, an explorer when needed), chooses the DAG or another way while CRW enforces the
 // order, the gates and the records, and is capped by agents.max_threads; ambiguity goes up as a decision request, never as an
@@ -35,7 +35,6 @@ func childSessionLoopProblems(section string) []string {
 		`(?i)resumes? (the run|it) (itself )?when no process holds it`,
 		`(?i)preview`,
 		`(?i)epoch`,
-		"`crw flow apply ",
 		"`crw flow report-up`",
 	}) {
 		problems = append(problems, "the flow run section lacks "+p)
@@ -96,17 +95,25 @@ func TestChildSkillSaysHowTheChildWorks(t *testing.T) {
 	})
 }
 
-// TestChildSkillDefaultPathIsTheFlowRun: the opening of crw-run makes the flow run with role subagents the default path and the
-// issue child (SP-CHILD-1) the exception, and the rule against a subagent standing in for an issue child stays on that path only.
+// TestChildSkillDefaultPathIsTheFlowRun: the opening of crw-run makes the flow run with role subagents the default path, says that a
+// node sized for an issue child starts no issue child (the project lane escalates it as size_split with detail child_retired and the
+// parent asks for a bundle split, CRW-1415), keeps the issue child of a plan with no run the exception, and the rule against a subagent
+// standing in for an issue child stays on that path only.
 func TestChildSkillDefaultPathIsTheFlowRun(t *testing.T) {
 	text := readRepoText(t, runSkillFile)
 	opening := normalized(text[:strings.Index(text, "\n## ")])
 	for _, p := range wordingMissing(opening, []string{
 		`(?i)default path[^.]*flow run[^.]*(role )?subagents?`,
-		`(?i)SP-CHILD-1`,
+		`(?i)starts? no issue child`,
+		"`size_split`",
+		"`child_retired`",
+		`(?i)bundle split`,
 		`(?i)exception`,
 	}) {
 		t.Errorf("the opening of crw-run lacks %s", p)
+	}
+	if m := regexp.MustCompile(`(?i)SP-CHILD-1|releases? (that|the) issue child`).FindString(opening); m != "" {
+		t.Errorf("the opening of crw-run says the run starts an issue child (%s), a path the project lane retired", m)
 	}
 	issue := normalized(sectionOf(text, "Independent implementation tasks"))
 	for _, p := range wordingMissing(issue, []string{

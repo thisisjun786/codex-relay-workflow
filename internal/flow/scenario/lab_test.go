@@ -69,8 +69,6 @@ type Lab struct {
 	rules     []*rule
 	// Decisions are the rows of flow_spawn_decisions and flow_step_decisions, read through the store.
 	decisions ops.Decisions
-	// children are the issue-lane runs of the children the lab started (child_test.go).
-	children []*ChildRun
 	// Upward is the hook the lab's run hands what goes up from it to, and Reporter the reporter of its milestone close (upward_test.go);
 	// nil hands nothing.
 	Upward   engine.UpwardHook
@@ -626,7 +624,7 @@ func (l *Lab) onTurn(r fakehost.TurnRequest) fakehost.TurnPlan {
 	c := &Call{ThreadID: r.ThreadID, Text: r.Text, N: r.N, lab: l}
 	if m := opLine.FindStringSubmatch(strings.SplitN(r.Text, "\n", 2)[0]); m != nil {
 		c.ID = m[1]
-		all := l.allEvents()
+		all := l.Events()
 		for i := len(all) - 1; i >= 0; i-- {
 			ev := all[i]
 			if ev.Kind == engine.KindCall && ev.Event == engine.EvPrepared && ev.CallID == c.ID {
@@ -749,9 +747,14 @@ func QAReceiptOf(verdict string) map[string]any {
 	return map[string]any{"verdict": verdict, "findings": []any{}, "summary": "receipt " + verdict}
 }
 
-// Defect is a defect of a verdict.
+// Defect is a defect of a verdict. Its impact follows the severity, one word of the closed set (CRW-1438): a P0-P2
+// defect is core_function, a P3 defect minor_separable, so the fixture blocks exactly as its severity says.
 func Defect(ref, kind, severity, finding string) map[string]any {
-	return map[string]any{"ref": ref, "kind": kind, "severity": severity, "introduced": false, "impact": "", "inPromise": false, "file": "node.txt", "line": 1, "finding": finding, "evidence_question": nil}
+	impact := "core_function"
+	if severity == "P3" {
+		impact = "minor_separable"
+	}
+	return map[string]any{"ref": ref, "kind": kind, "severity": severity, "introduced": false, "impact": impact, "inPromise": false, "file": "node.txt", "line": 1, "finding": finding, "evidence_question": nil}
 }
 
 // EvidenceDefect is a defect of kind evidence_missing with its question.

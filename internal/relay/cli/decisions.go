@@ -236,7 +236,7 @@ func decisionRuleText(record decisions.Record) string {
 	case record.Authority.Kind == decisions.AuthorityUser || record.Authority.Kind == decisions.AuthorityDelegatedManagement:
 		return "names no management seat (no edge stands above its project), and the store seat's rule answers it"
 	}
-	return "is a " + record.Authority.Kind + "-class question, which the raiser's own authority answers (the parent rule)"
+	return "is a " + record.Authority.Kind + "-class question, which the raiser's own authority answers (the parent-class rule)"
 }
 
 // decisionSeat is the management seat a record's answer belongs to: the ref of a user-grade or
@@ -406,7 +406,7 @@ func decisionAnswerProvenance(ctx context.Context, opened *store.Store, record d
 		return answer, decisionBadInvocation(fmt.Sprintf("a %s-class decision takes an answer that names its own class: give --authority %s", grade, grade))
 	}
 	if !containsString(decisionUserAnswerVias(), answer.Via) {
-		return answer, decisionBadInvocation(fmt.Sprintf("a %s-class decision is answered through %s; --via %q reads the parent's report, not the user's answer", grade, strings.Join(decisionUserAnswerVias(), ", "), answer.Via))
+		return answer, decisionBadInvocation(fmt.Sprintf("a %s-class decision is answered through %s; --via %q reads the 부모's report, not the user's answer", grade, strings.Join(decisionUserAnswerVias(), ", "), answer.Via))
 	}
 	if seat := strings.TrimSpace(record.Authority.Ref); seat != "" {
 		held, known, err := (&registry.Registry{Store: opened}).ManagementSeat(ctx, seat)
@@ -448,12 +448,12 @@ func decisionAnswerProvenance(ctx context.Context, opened *store.Store, record d
 	// held by another task all refuse. The answer comes from the seat this grade is answered from
 	// or it is not accepted.
 	if len(bound) != 1 {
-		return answer, decisionConflict("authority_unverified", fmt.Sprintf("a %s-class decision is answered by the task the relay's store-scope supervisor binding holds, and %d such binding(s) are live", grade, len(bound)))
+		return answer, decisionConflict("authority_unverified", fmt.Sprintf("a %s-class decision is answered by the task the relay's store-scope 부모 binding holds, and %d such binding(s) are live", grade, len(bound)))
 	}
 	if taskID, _ := get(bound[0], "taskId").(string); strings.TrimSpace(taskID) == answer.By {
 		return answer, nil
 	}
-	return answer, decisionConflict("authority_unverified", fmt.Sprintf("a %s-class decision is answered by the task the relay's store-scope supervisor binding holds, and %q is not it", grade, answer.By))
+	return answer, decisionConflict("authority_unverified", fmt.Sprintf("a %s-class decision is answered by the task the relay's store-scope 부모 binding holds, and %q is not it", grade, answer.By))
 }
 
 // decisionUserAnswerVias is the via vocabulary a user-grade or delegated-management-grade answer
@@ -878,7 +878,7 @@ func decisionAuthority(value string) (decisions.Authority, error) {
 	// checkable parent-class answer. Refusing it here keeps the requirement on the question rather
 	// than only on the answer.
 	if kind == decisions.AuthorityParent && ref == "" {
-		return decisions.Authority{}, decisionBadInvocation("--authority parent=ref names the parent authority this question takes; the parent class carries its ref")
+		return decisions.Authority{}, decisionBadInvocation("--authority parent=ref names the parent (자식) authority this question takes; a parent-class authority carries its ref")
 	}
 	return decisions.Authority{Kind: kind, Ref: ref}, nil
 }

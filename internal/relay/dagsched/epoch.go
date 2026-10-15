@@ -100,11 +100,11 @@ func (s *Scheduler) ClaimEpoch(ctx context.Context, plan string, in ClaimInput) 
 			if err != nil {
 				return err
 			}
-			holds := "it holds no live parent binding"
+			holds := "it holds no live 자식 binding"
 			if len(scopes) > 0 {
-				holds = "the live parent bindings it holds are of project " + strings.Join(scopes, ", ")
+				holds = "the live 자식 bindings it holds are of project " + strings.Join(scopes, ", ")
 			}
-			return refuse(contract.RefusalScopeRoleMismatch, "task %s is not the live parent of project %s (the plan's project key), so it cannot claim the coordinator epoch of plan %s; %s", in.Actor, project, plan, holds)
+			return refuse(contract.RefusalScopeRoleMismatch, "task %s is not the live 자식 of project %s (the plan's project key), so it cannot claim the coordinator epoch of plan %s; %s", in.Actor, project, plan, holds)
 		}
 		latest, claimed, err := dag.LatestClaim(txCtx, tx, plan)
 		if err != nil {
@@ -246,7 +246,7 @@ func (s *Scheduler) AdoptWith(ctx context.Context, plan, node, actor string, opt
 		if _, has, err := loadActiveAcceptance(txCtx, tx, plan, node); err != nil {
 			return err
 		} else if has {
-			return refuse(contract.RefusalDispositionConflict, "node %s has an accepted result: its acceptance stands, and the merge turn and the merged mark of the previous parent are not handed over by an adoption", node)
+			return refuse(contract.RefusalDispositionConflict, "node %s has an accepted result: its acceptance stands, and the merge turn and the merged mark of the previous 자식 are not handed over by an adoption", node)
 		}
 		rel, found, err := currentRelationshipOf(txCtx, tx, plan, node)
 		if err != nil {
@@ -263,7 +263,7 @@ func (s *Scheduler) AdoptWith(ctx context.Context, plan, node, actor string, opt
 		if !rel.Superseded {
 			// nothing was replaced: the actor holds the node's relationship (adopted already, or never replaced), or it is another parent's and has to be replaced first
 			if rel.ParentTaskID != actor {
-				return refuse(contract.RefusalRelationshipConflict, "relationship %s of node %s is held by task %s and was not replaced: register the adopting parent's relationship with it superseded first", rel.ID, node, rel.ParentTaskID)
+				return refuse(contract.RefusalRelationshipConflict, "relationship %s of node %s is held by task %s and was not replaced: register the adopting 자식's relationship with it superseded first", rel.ID, node, rel.ParentTaskID)
 			}
 			if rel.Status != "active" && rel.Status != "paused" {
 				return refuse(contract.RefusalRelationshipNotActive, "relationship %s is %s: only a live relationship is adopted", rel.ID, rel.Status)
@@ -284,7 +284,7 @@ func (s *Scheduler) AdoptWith(ctx context.Context, plan, node, actor string, opt
 		case (to.Status != "active" && to.Status != "paused") || to.Next.Valid:
 			return refuse(contract.RefusalRelationshipNotActive, "relationship %s is %s: only a live relationship is adopted", to.ID, to.Status)
 		case to.Parent != actor:
-			return refuse(contract.RefusalScopeRoleMismatch, "relationship %s is held by task %s, not by %s: register it for the adopting parent first", to.ID, to.Parent, actor)
+			return refuse(contract.RefusalScopeRoleMismatch, "relationship %s is held by task %s, not by %s: register it for the adopting 자식 first", to.ID, to.Parent, actor)
 		}
 		out.RelationshipID, out.ChildTaskID, out.Generation = to.ID, to.Child, to.Generation
 		var bound string
@@ -321,7 +321,7 @@ func (s *Scheduler) AdoptWith(ctx context.Context, plan, node, actor string, opt
 func (s *Scheduler) fenceCapBasis(ctx context.Context, q store.Querier, scopeKind, scopeKey string, in CapBasis) error {
 	if scopeKind != "project" {
 		if in.Plan != "" {
-			return refuse(contract.RefusalMalformedReceipt, "limit %s is a limit of the %s scope, declared by a supervisor who coordinates no plan: a plan is named only for a project limit", in.LimitID, scopeKind)
+			return refuse(contract.RefusalMalformedReceipt, "limit %s is a limit of the %s scope, declared by a 부모 who coordinates no plan: a plan is named only for a project limit", in.LimitID, scopeKind)
 		}
 		return nil
 	}
@@ -469,7 +469,7 @@ func (s *Scheduler) resumeOf(ctx context.Context, q store.Querier, plan, actor s
 		case n.Reason == BlockedReleaseAbandoned:
 			out.Resume, out.ResumeDetail = ResumeNeedsOperator, "the managed start was released before it created a child: dag-release-close ends that intent (it takes the manifest digest and the request id, --request-id, which dag-ready names in the node's detail) and the node can then be released again"
 		case parent != "" && parent != actor:
-			out.Resume, out.ResumeDetail = ResumeNeedsOperator, "the request frozen with the release names "+parent+" as the parent, so it cannot continue under "+actor
+			out.Resume, out.ResumeDetail = ResumeNeedsOperator, "the request frozen with the release names "+parent+" as the 자식, so it cannot continue under "+actor
 		default:
 			out.Resume, out.ResumeDetail = ResumeReconcile, "repeat dag-release: the same request id reads the host's record of the creation before it creates anything"
 		}
@@ -494,7 +494,7 @@ func (s *Scheduler) resumeOf(ctx context.Context, q store.Querier, plan, actor s
 		case hasAcc && (n.State == StateIntegrated || acc.HeadSHA == ""):
 			// a landed result, or a result with no head to land: nothing of the previous parent's is outstanding
 		case hasAcc:
-			out.Resume, out.ResumeDetail = ResumeNeedsOperator, "the result is accepted and not landed, and its merge turn and merged mark belong to the previous parent: nothing in this build hands them over"
+			out.Resume, out.ResumeDetail = ResumeNeedsOperator, "the result is accepted and not landed, and its merge turn and merged mark belong to the previous 자식: nothing in this build hands them over"
 		default:
 			next, ok, err := finalSuccessor(ctx, q, rel.ID)
 			if err != nil {
@@ -511,13 +511,13 @@ func (s *Scheduler) resumeOf(ctx context.Context, q store.Querier, plan, actor s
 	switch {
 	case n.Reason == BlockedEffectUnknown && rel.ParentTaskID != actor:
 		// only the parent of the accepted result's relationship can observe where the head is (observableRelationship): another parent is not sent to a command that refuses it
-		out.Resume, out.ResumeDetail = ResumeNeedsOperator, "a merge turn for the accepted head ended with an unknown effect, and only the parent of relationship "+rel.ID+" ("+rel.ParentTaskID+") can observe where the head is: nothing in this build hands that over"
+		out.Resume, out.ResumeDetail = ResumeNeedsOperator, "a merge turn for the accepted head ended with an unknown effect, and only the 자식 that holds relationship "+rel.ID+" ("+rel.ParentTaskID+") can observe where the head is: nothing in this build hands that over"
 	case n.Reason == BlockedEffectUnknown:
 		out.Resume, out.ResumeDetail = ResumeReconcile, "a merge turn for the accepted head ended with an unknown effect: observe where the head is (dag-integration-observe) and do not request another turn"
 	case liveNodeState(n.State) && rel.ParentTaskID == actor:
 		out.Resume, out.ResumeDetail = ResumeAdopt, "the child is working and this actor holds its relationship: release nothing, carry on"
 	case liveNodeState(n.State):
-		out.Resume, out.ResumeDetail = ResumeNeedsOperator, "the child's relationship is held by "+rel.ParentTaskID+": a replacement parent registers its own with the old one superseded first"
+		out.Resume, out.ResumeDetail = ResumeNeedsOperator, "the issue child's relationship is held by "+rel.ParentTaskID+": a replacement 자식 registers its own with the old one superseded first"
 	case n.State == StateAmbiguousNode:
 		out.Resume, out.ResumeDetail = ResumeNeedsOperator, n.Detail
 	case hasAcc && n.State == StateAccepted && acc.HeadSHA != "" && rel.ParentTaskID != actor:

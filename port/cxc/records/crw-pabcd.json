@@ -420,7 +420,7 @@
     },
     {
       "file": "references/dispatch-surfaces.md",
-      "reason": "CRW-1344: Linear wording became tracking wording (a tracking issue, the tracking repository, a milestone), and the skill catalog no longer lists a Linear skill",
+      "reason": "CRW-1344: Linear wording became tracking wording (a tracking issue, the tracking repository, a milestone), and the skill catalog no longer lists a Linear skill CRW-1418: the managed issue child is only for a plan with no flow run, and a node a flow run's architect sizes for a child starts no issue child (the project lane escalates it as size_split with detail child_retired).",
       "hunks": [
         {
           "line": 3,
@@ -457,9 +457,11 @@
             "    subagent (a leaf) as `crw flow next` names it and reports it with `crw flow dispatched`, and the\n",
             "    call, its commits, its review and its acceptance are rows of the run's journal and the DAG records\n",
             "    ([the flow commands](../../crw-canon/references/flow.md), [the spawn policy](../../crw-canon/references/spawn-policy.md)).\n",
-            "  - an issue child (relay role `child`), started and resumed through `crw-run`: the exception path of\n",
-            "    one oversized issue (SP-CHILD-1) with the managed start, the DAG release and their bridge\n",
-            "    recovery, pair/profile, capacity and receipt rules. It is never a desktop `create_thread` lane.\n",
+            "  - an issue child (relay role `child`), only for a plan with no flow run: started and resumed\n",
+            "    through `crw-run` on the exception path of one oversized issue (SP-CHILD-1), with the managed\n",
+            "    start, the DAG release and their bridge recovery, pair/profile, capacity and receipt rules. A\n",
+            "    node a flow run's architect sizes for a child starts no issue child: the project lane escalates\n",
+            "    it as `size_split` with detail `child_retired`. It is never a desktop `create_thread` lane.\n",
             "\n",
             "  Either way the relay refuses a second active or paused assignment of the same issue and a release\n",
             "  past capacity; those answers are followed, not routed around by creating a thread by hand. The\n",

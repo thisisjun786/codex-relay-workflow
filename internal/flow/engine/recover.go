@@ -35,13 +35,18 @@ type RecoverResult struct {
 }
 
 // Recover releases the hold of a call whose outcome is unknown. It appends recovery_cleared with the evidence it relied on
-// and then the rows the outcome establishes; the next resume goes on from them. It appends nothing when it refuses.
+// and then the rows the outcome establishes; the next resume goes on from them. It appends nothing when it refuses, and it refuses a legacy
+// issue-child run (LegacyIssueChild).
 func Recover(ctx context.Context, j Journal, cfg ReconcileConfig, req RecoverRequest) (*RecoverResult, error) {
 	if cfg.Host == nil {
 		return nil, errors.New("engine: recover needs a host")
 	}
 	if req.Absent == (req.Adopt != "") {
 		return nil, errors.New("recover: exactly one of --adopt THREAD|TURN and --absent is required")
+	}
+	// a legacy issue-child run is read only (CRW-1415): no recovery row is appended to it
+	if why := LegacyIssueChild(j.Events(), cfg.RunID); why != "" {
+		return nil, fmt.Errorf("recover: %s", why)
 	}
 	cfg.Wait = nil // a recovery proves with what the host shows now; it does not sleep through a grace
 	cfg = cfg.withDefaults()

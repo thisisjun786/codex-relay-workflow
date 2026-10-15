@@ -154,6 +154,9 @@ func (r *Runner) EnqueuePR(ctx context.Context, ref string) (Entry, error) {
 // record of its landing (a pass that ended after its push, or a pull request GitHub shows merged).
 const resultLandedBeforeRecord = "landed_before_record"
 
+// noteReviewNotConfigured is the note of a landing whose queue has no review command, in a pass's record and in a recovered one.
+const noteReviewNotConfigured = "review not configured"
+
 // landedBefore says why a pull request entry already landed, "" when it did not: done/ holds the entry for its number and head,
 // or runs_dir holds a landing record of that number and head that moved the branch. A landing is recorded once per (number,
 // head).
@@ -220,7 +223,10 @@ func (r *Runner) firstContaining(ctx context.Context, head string) string {
 }
 
 // pushedRun is the summary of this queue's run that pushed the entry's head (its tag and summary), nil when no run file says so.
-func (r *Runner) pushedRun(e Entry) *Summary {
+// A run whose summary is still the pushing marker (the signal ended it during the push) counts when its head is in the branch. A
+// git that cannot answer whether a marker's head is in the branch is an error, never "no pushed run": the caller holds the entry
+// and the marker stays for the next pass.
+func (r *Runner) pushedRun(ctx context.Context, e Entry) (*Summary, error) {
 	paths, _ := filepath.Glob(filepath.Join(r.Cfg.RunsDir, "*.summary.json"))
 	var found *Summary
 	for _, p := range paths {
@@ -229,11 +235,47 @@ func (r *Runner) pushedRun(e Entry) *Summary {
 			continue
 		}
 		var s Summary
-		if json.Unmarshal(data, &s) == nil && s.Merged == e.Spec() && s.Result == "pushed" && headRE.MatchString(s.Head) && (found == nil || s.Tag > found.Tag) {
-			found = &s
+		if json.Unmarshal(data, &s) == nil && s.Merged == e.Spec() && headRE.MatchString(s.Head) && (found == nil || s.Tag > found.Tag) {
+			switch s.Result {
+			case "pushed":
+				found = &s
+			case resultPushing:
+				in, err := r.markerInBranch(ctx, s.Head)
+				if err != nil {
+					return nil, fmt.Errorf("whether the pushing marker of run %s (head %s) is in %s could not be read: %w", s.Tag, s.Head, r.Cfg.Branch, err)
+				}
+				if in {
+					found = &s
+				}
+			}
 		}
 	}
-	return found
+	return found, nil
+}
+
+// markerInBranch says whether head, the head a pushing marker names, is in the remote branch. A commit the checkout does not have
+// was never pushed (false); a git that fails otherwise (it cannot start, the context ended, or it exits with a status other than 0
+// and 1 for a commit it has) is an error.
+func (r *Runner) markerInBranch(ctx context.Context, head string) (bool, error) {
+	c := r.Cfg
+	rc, err := r.git(ctx, c.Checkout, nil, "merge-base", "--is-ancestor", head, c.remoteRef())
+	if err != nil {
+		return false, err
+	}
+	switch rc {
+	case 0:
+		return true, nil
+	case 1:
+		return false, nil
+	}
+	have, err := r.git(ctx, c.Checkout, nil, "cat-file", "-e", head+"^{commit}")
+	if err != nil {
+		return false, err
+	}
+	if have != 0 {
+		return false, nil
+	}
+	return false, fmt.Errorf("git merge-base --is-ancestor exited %d", rc)
 }
 
 // recoverLanding writes the one landing record of a pull request entry whose head is in the branch with no record (result
@@ -241,8 +283,11 @@ func (r *Runner) pushedRun(e Entry) *Summary {
 // the files of the run that pushed it, or are stated as not recorded. tag is the run's tag ("" reserves one). The record is
 // written before its comment, so a pass that ends between the two posts no second comment.
 func (r *Runner) recoverLanding(ctx context.Context, tag string, e Entry, pr tracking.PullRequest) (*Landing, error) {
+	run, err := r.pushedRun(ctx, e)
+	if err != nil {
+		return nil, err
+	}
 	if tag == "" {
-		var err error
 		if tag, err = r.reserveTag(); err != nil {
 			return nil, err
 		}
@@ -253,7 +298,7 @@ func (r *Runner) recoverLanding(ctx context.Context, tag string, e Entry, pr tra
 		l.Issues = append(l.Issues, is.String())
 	}
 	configured := len(r.Cfg.ReviewCommand) > 0
-	if run := r.pushedRun(e); run != nil {
+	if run != nil {
 		l.DevBefore, l.DevAfter, l.Merged = run.Base, run.Head, run.Head
 		l.Verification = LandingVerification{Record: run.Record, Status: 0}
 		if data, err := os.ReadFile(run.Record); err == nil {
@@ -266,8 +311,10 @@ func (r *Runner) recoverLanding(ctx context.Context, tag string, e Entry, pr tra
 		if v, err := readVerdict(verdictFile); err == nil {
 			l.Review = LandingReview{Configured: true, Verdict: v, VerdictFile: verdictFile, Status: -1, Log: filepath.Join(r.Cfg.RunsDir, run.Tag+".review.log"),
 				Note: "the review command's status is not recorded"}
+		} else if !configured {
+			l.Review = LandingReview{Status: -1, Note: noteReviewNotConfigured}
 		} else {
-			l.Review = LandingReview{Configured: configured, Status: -1, Note: "not recorded: run " + run.Tag + " left no readable verdict"}
+			l.Review = LandingReview{Configured: true, Status: -1, Note: "not recorded: run " + run.Tag + " left no readable verdict"}
 		}
 	} else {
 		after := r.firstContaining(ctx, e.Head)
@@ -278,10 +325,15 @@ func (r *Runner) recoverLanding(ctx context.Context, tag string, e Entry, pr tra
 		const none = "not recorded: no run file of this queue names the head"
 		l.Verification = LandingVerification{Status: -1, Note: none}
 		l.Review = LandingReview{Configured: configured, Status: -1, Note: none}
+		if !configured {
+			l.Review = LandingReview{Status: -1, Note: noteReviewNotConfigured}
+		}
 	}
 	l.Warnings = append(l.Warnings, "the head was in "+r.Cfg.Branch+" before its landing was recorded; this record is written after the fact")
 	r.logf("%s %s: in %s with no landing record: recovered record %s", pr.Ref, e.Head, r.Cfg.Branch, tag)
-	r.publishLanding(ctx, l)
+	if err := r.publishLanding(ctx, l); err != nil {
+		return nil, err
+	}
 	return l, nil
 }
 
@@ -353,7 +405,7 @@ func (r *Runner) checkPR(ctx context.Context, e Entry, rep *Report) (*tracking.P
 	if in {
 		l, err := r.recoverLanding(ctx, "", e, pr)
 		if err != nil {
-			return nil, "the landing record could not be written, it stays pending: " + err.Error()
+			return nil, "the landing could not be recorded, it stays pending: " + err.Error()
 		}
 		rep.Landing = l
 		rep.moved(r, e, dirDone, "landed before its record: "+filepath.Join(r.Cfg.RunsDir, l.Tag+".pr.json"))
@@ -387,7 +439,7 @@ func (r *Runner) review(ctx context.Context, tag, wt, merged, base, record strin
 	c := r.Cfg
 	if len(c.ReviewCommand) == 0 {
 		fmt.Fprintf(log, "%s: review not configured; dev moves on the verification-record alone\n", pr.Ref)
-		return LandingReview{Status: -1, Note: "review not configured"}
+		return LandingReview{Status: -1, Note: noteReviewNotConfigured}
 	}
 	res := LandingReview{Configured: true, Status: -1, VerdictFile: filepath.Join(c.RunsDir, tag+".review.json"), Log: filepath.Join(c.RunsDir, tag+".review.log")}
 	rlog, err := os.OpenFile(res.Log, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o664)
@@ -483,34 +535,101 @@ func (r *Runner) recordLanding(ctx context.Context, pr tracking.PullRequest, out
 		l.Warnings = append(l.Warnings, l.Review.Note+": dev moves on the verification-record alone (CRW-1306)")
 		r.logf("%s %s: %s", pr.Ref, pr.HeadSHA, l.Review.Note)
 	}
-	r.publishLanding(ctx, l)
+	if err := r.publishLanding(ctx, l); err != nil {
+		// dev already moved: the entry goes to done/ (its landing stands) and the comment still goes up when no record holds its state
+		r.logf("%s %s: %v", pr.Ref, pr.HeadSHA, err)
+		if l.Comment == commentNotWrittenYet {
+			r.postLandingComment(ctx, l)
+		}
+	}
 	return l
 }
 
+// The states of a landing record's comment field: the record is written first, so a pass that ends before the comment call leaves
+// commentNotWrittenYet, which the next pass that finds the head landed posts (repostLandingComment). A refusal is commentRefused
+// plus the reason and is final: the landing stands and the file says why the comment is missing.
+const (
+	commentNotWrittenYet = "not written yet"
+	commentWritten       = "written"
+	commentRefused       = "not written: "
+)
+
 // publishLanding writes <tag>.pr.json, then puts the same record on the pull request as a comment and writes the file again
-// with what the comment became.
-func (r *Runner) publishLanding(ctx context.Context, l *Landing) {
-	l.Comment = "not written yet"
-	r.writeLanding(l)
-	ref := tracking.Ref{Repo: r.Cfg.PullRequestRepo, Number: l.Number}
-	if err := r.PullRequests.Comment(context.WithoutCancel(ctx), ref, "[dev queue · "+l.Tag+"]", landingText(l)); err != nil {
-		l.Comment = "not written: " + err.Error()
-		r.logf("%s: the landing record could not be written on the pull request: %v", ref, err)
-	} else {
-		l.Comment = "written"
+// with what the comment became. A record that cannot be written is an error: when the first write fails no comment is posted
+// (nothing would remember it), and l.Comment stays commentNotWrittenYet; when the second fails the comment is posted and the file
+// still says "not written yet".
+func (r *Runner) publishLanding(ctx context.Context, l *Landing) error {
+	l.Comment = commentNotWrittenYet
+	if err := r.writeLanding(l); err != nil {
+		return err
 	}
-	r.writeLanding(l)
+	r.postLandingComment(ctx, l)
+	return r.writeLanding(l)
 }
 
-func (r *Runner) writeLanding(l *Landing) {
+// postLandingComment puts the landing record on the pull request as a comment headed [dev queue · <tag>] and sets l.Comment to what
+// it became. A signal that ends the pass does not cancel the call (the push already happened).
+func (r *Runner) postLandingComment(ctx context.Context, l *Landing) {
+	ref := tracking.Ref{Repo: r.Cfg.PullRequestRepo, Number: l.Number}
+	if err := r.PullRequests.Comment(context.WithoutCancel(ctx), ref, "[dev queue · "+l.Tag+"]", landingText(l)); err != nil {
+		l.Comment = commentRefused + err.Error()
+		r.logf("%s: the landing record could not be written on the pull request: %v", ref, err)
+	} else {
+		l.Comment = commentWritten
+	}
+}
+
+// repostLandingComment posts the comment of the landing record of e that an earlier pass left "not written yet" (it ended between
+// the record and the comment call) and writes the record again. A record whose comment is written or was refused, and an entry with
+// no record (its done/ file alone), are left as they are. It answers why the entry is held, "" when it is not: a queue with no
+// tracking adapter cannot post the comment, so the entry waits in pending with the record as it is; a record that cannot be written
+// after the comment went up holds the entry too, since done/ must not stand over a record that still says "not written yet". posted is
+// true when the comment went up and the record says so: that is work the pass did. A comment the host refused is recorded and its
+// entry is done, but posted stays false. It is
+// called only by a pass, never by --enqueue-pr or --dry-run. One window stays: a pass that ends between the comment call and the
+// second write, or whose second write fails, leaves "not written yet" for a comment that exists, and the next pass posts it a second
+// time.
+func (r *Runner) repostLandingComment(ctx context.Context, e Entry) (held string, posted bool) {
+	path := r.findLanding(e.PR, e.Head)
+	if path == "" {
+		return "", false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", false
+	}
+	var l Landing
+	if json.Unmarshal(data, &l) != nil || l.Comment != commentNotWrittenYet {
+		return "", false
+	}
+	if r.PullRequests == nil {
+		return "the landing comment of " + l.Tag + " cannot be posted, it stays pending: the queue has no tracking adapter", false
+	}
+	r.postLandingComment(ctx, &l)
+	if err := r.writeLanding(&l); err != nil {
+		held = "the landing comment of " + l.Tag + " was posted (" + l.Comment + ") but its record could not be written, it stays pending: " + err.Error()
+		r.logf("%s %s: %s", e.Key, e.Head, held)
+		return held, false
+	}
+	r.logf("%s %s: the landing comment of %s was posted (%s)", e.Key, e.Head, l.Tag, l.Comment)
+	return "", l.Comment == commentWritten
+}
+
+// writeLanding writes <tag>.pr.json through <tag>.pr.json.new and answers why it could not.
+func (r *Runner) writeLanding(l *Landing) error {
 	data, err := json.MarshalIndent(l, "", "  ")
 	if err != nil {
-		return
+		return fmt.Errorf("landing record %s: %w", l.Tag, err)
 	}
 	path := filepath.Join(r.Cfg.RunsDir, l.Tag+".pr.json")
-	if err := os.WriteFile(path+".new", append(data, '\n'), 0o664); err == nil {
-		_ = os.Rename(path+".new", path)
+	if err := os.WriteFile(path+".new", append(data, '\n'), 0o664); err != nil {
+		return fmt.Errorf("landing record %s could not be written: %w", path, err)
 	}
+	if err := os.Rename(path+".new", path); err != nil {
+		_ = os.Remove(path + ".new")
+		return fmt.Errorf("landing record %s could not be written: %w", path, err)
+	}
+	return nil
 }
 
 // landingText is the comment body of a landing record.
@@ -537,7 +656,7 @@ func landingText(l *Landing) string {
 	switch {
 	case l.Review.Verdict != "":
 		fmt.Fprintf(&b, "review: %s (%s)\n", l.Review.Verdict, l.Review.VerdictFile)
-	case !l.Review.Configured && l.Review.Note == "review not configured":
+	case !l.Review.Configured && l.Review.Note == noteReviewNotConfigured:
 		fmt.Fprintf(&b, "review: not configured\n")
 	default:
 		fmt.Fprintf(&b, "review: %s\n", l.Review.Note)

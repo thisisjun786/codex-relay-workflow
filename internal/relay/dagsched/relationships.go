@@ -30,7 +30,7 @@ func relationshipState(rel relRow) string {
 // notParentHeldBy is the refusal of a task that is not the parent of a relationship, naming the task that holds it (accept, merge judgement, integration observation). The correction and the
 // withdrawal say it shorter, with notParentOf in correction.go; the reason is the same.
 func notParentHeldBy(actor string, rel relRow) error {
-	return refuse(contract.RefusalScopeRoleMismatch, "task %s is not the parent of relationship %s, which is held by %s", actor, rel.ID, rel.ParentTaskID)
+	return refuse(contract.RefusalScopeRoleMismatch, "task %s is not the 자식 that holds relationship %s, which is held by %s", actor, rel.ID, rel.ParentTaskID)
 }
 
 // requireProjectParent refuses a task that is not the one registered parent of the project: a measurement, a decision and a plan's summary are the parent's, and a replaced parent is refused at once.
@@ -42,7 +42,7 @@ func requireProjectParent(ctx context.Context, q store.Querier, project, actor s
 		return err
 	}
 	if len(parents) != 1 || parents[0] != actor {
-		return refuse(contract.RefusalScopeRoleMismatch, "task %s is not the registered parent of project %s", actor, project)
+		return refuse(contract.RefusalScopeRoleMismatch, "task %s is not the registered 자식 of project %s", actor, project)
 	}
 	return nil
 }

@@ -58,7 +58,7 @@ saw. A row is never updated.
   `step_published` row has (the task turn 1, the repair 2), a later turn at that place replacing the earlier one, so an older journal
   is read from recorded members too and never from its held rows or k ([script.md](script.md#attempts-restarts-and-continuations)).
 
-- A command that writes into a run which may be alive (`crw flow apply`, `report-up`, `report-ack`, `report-delivered`;
+- A command that writes into a run which may be alive (`report-up`, `report-ack`, `report-delivered`;
   [reporting.md](reporting.md)) is not the run's process and numbers its `flow_events` rows from `engine.ForeignSeqBase` (`1 << 40`).
   A run's own `Seq` stays below it: a journal that is opened again counts after the largest number below the base, so the two writers
   never meet a number, and the run reads the commands' rows back as flow rows of kinds it does not act on. The journal tells a commit
@@ -172,7 +172,19 @@ audit results of acceptances: `results`, each with the acceptance id, the node, 
 the checks and the state (`ok`, `mismatch`, `unobserved`). The newest row that audits an acceptance decides whether it passed
 (`audit.Passed`); a reviewer thread is archived only for an acceptance that passed (`crw.archive`).
 
-**Recording calls.** `releaseChild`, `escalate`, `reportUp`, `hold`, `tierStep`, `spawnDecision`, `stepRecord`, `exploreRoute`, `exploreRecord`, `designAudit`, `designLedger`, `qaReceipt`, `qaCapture`, `reviewerFinal`, `audit`, `archive`, `replanSignals`, `currentDesign`, `reflection`, `signalBind`, `signalDone` and `signalClose` only record a fact. A call with a completed row
+**Recording calls.** `escalate`, `reportUp`, `hold`, `tierStep`, `spawnDecision`, `stepRecord`, `exploreRoute`, `exploreRecord`, `designAudit`, `designLedger`, `qaReceipt`, `qaCapture`, `reviewerFinal`, `audit`, `archive`, `replanSignals`, `currentDesign`, `reflection`, `signalBind`, `signalDone` and `signalClose` only record a fact. `releaseChild` was the old project lane's start of a node's issue child; no
+script calls it and no lane installs it now (CRW-1415). A run whose journal holds a `crw.releaseChild` row is a legacy issue-child run, and
+it is not resumed: the current lane sends a node sized for a child up as a `size_split` escalation at the position where the old lane
+decided and started the child, so a resume would not replay that start - it would escalate the node live, leave the child running and run
+every later position of the parent's path live. `engine.Run` refuses the resume of such a run before it writes a row (and the resume of a
+run whose spec or script names the retired lane's workflow, even before its first row), `engine.Recover` appends no recovery row to it, and
+`crw flow resume RUN --detach`, `crw flow answer` and `crw flow next` ask the same before they start a run process. Every command that would
+write to the run's journal, or make its process write, refuses it with `legacy_issue_child_run` before it writes or signals, whether a
+process holds the run or not: `crw flow cancel` (no finished row, no execution given up), `crw flow pause`, `crw flow recover`, `crw flow
+dispatched` (no report in the run's inbox), `crw flow answer` and `crw flow report-up`; `crw flow audit` prints its results and records no
+row. The delivery bookkeeping of a report already on record (`crw flow report-ack`, `crw flow report-delivered`) records the delivery and
+not the run's progress, and is kept. The refusal names the legacy issue-child path and the `crw.releaseChild` row. The run's records stay
+read only: `crw flow show`, the summary and the run readers read them. A call with a completed row
 of its own operation at its call id is not sent again (a completed call of another operation at the same position, such as an
 agent call of the earlier script, is not its record), whatever else is true; a call without one is executed live under the same call id and the same idempotent
 request id (`ops.RequestID`).

@@ -25,7 +25,8 @@ const defect = obj({
   kind: { type: 'string', enum: ['correctness', 'criteria_unmet', 'test_gap', 'evidence_missing', 'scope', 'maintainability', 'other'] },
   severity: { type: 'string', enum: ['P0', 'P1', 'P2', 'P3'] },
   introduced: flag,
-  impact: text,
+  // the closed impact set (premerge.Impacts); only minor_separable does not block
+  impact: { type: 'string', enum: ['core_function', 'safety_or_data', 'permission_boundary', 'criterion_unmet', 'regression_introduced', 'minor_separable'] },
   inPromise: flag,
   file: text,
   line: integer,

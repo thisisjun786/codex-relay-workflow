@@ -333,5 +333,10 @@ func ReadUnknownSend(ctx context.Context, adapter Adapter, clock Clock, attempt,
 		}
 		foldedText = " nor in " + strings.Join(ids, ", ") + ", the turns begun by it"
 	}
-	return r.Set("finding", UnknownSendLost).Set("detail", fmt.Sprintf("the recipient keeps no trace of this send: its turn list (%s after %d turns) shows %d turns begun since it, none running, and this attempt's token is not among the %d items since it%s; held for the parent, never sent again", presence.Stop, presence.Scanned, len(presence.Seen), scan.Scanned, foldedText))
+	// "held for the 자식" names the session that owns the decision to recover the held send, not its
+	// addressee: for every kind (a completion to the 자식, a revision request to the issue child) the
+	// reconciler names the relay parent, the 자식, as the recovery actor (Reconciler.awaiting,
+	// parent_recovers_unknown_send_lost / parent_recovers_held_correction). Pinned by
+	// TestLostSendDetailNamesTheLayerThatRecovers.
+	return r.Set("finding", UnknownSendLost).Set("detail", fmt.Sprintf("the recipient keeps no trace of this send: its turn list (%s after %d turns) shows %d turns begun since it, none running, and this attempt's token is not among the %d items since it%s; held for the 자식, never sent again", presence.Stop, presence.Scanned, len(presence.Seen), scan.Scanned, foldedText))
 }

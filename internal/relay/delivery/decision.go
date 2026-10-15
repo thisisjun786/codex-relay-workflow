@@ -126,7 +126,7 @@ func (a *Ack) RecordDecision(ctx context.Context, req DecisionRequest) (Obj, err
 			return refuse(DispositionConflict, "%s is a %s receipt of the %s, and a decision answers a blocked_needs_input receipt of the child: a receipt that carries an artifact is ruled with a verdict", strconv.Quote(req.EventID), outcome, answered)
 		}
 		if event.S("stage") != "final" || truthy(event.Opt("suppressed_reason")) {
-			return refuse(DispositionConflict, "%s is not final: its turn has not been seen to end, so the parent has not been told and there is nothing to answer yet", strconv.Quote(req.EventID))
+			return refuse(DispositionConflict, "%s is not final: its turn has not been seen to end, so the 자식 has not been told and there is nothing to answer yet", strconv.Quote(req.EventID))
 		}
 		if ruled, err := one(ctx, a.Store, "SELECT verdict FROM verdicts WHERE event_id = ?", req.EventID); err != nil {
 			return err
@@ -258,7 +258,7 @@ func renderDecision(row Row, record Obj, request string) string {
 	generation := known(g("executionGeneration"))
 	moves := advances(decision)
 	lines := []string{
-		"[codex-session-relay] parent decision",
+		"[codex-session-relay] 자식 decision",
 		"requestId: " + request,
 		"eventId: " + event,
 		"relationshipId: " + rid,
@@ -295,7 +295,7 @@ func renderDecision(row Row, record Obj, request string) string {
 		lines = append(lines, "Your next receipt comes from a later turn of generation "+generation+", so it states the claim that admits that turn:",
 			fmt.Sprintf("  emit --relationship %s --generation %s --attempt <n>", rid, generation),
 			"       --outcome "+outcome+" --turn-thread "+pyjson.Text(g("childTaskId"))+" --turn-id <your turn>",
-			"       --continues-anchor "+pyjson.Text(g("anchorTurnId"))+" --continuation-actor "+pyjson.Text(g("childTaskId"))+" --continuation-reason 'after the parent decision "+event+"'")
+			"       --continues-anchor "+pyjson.Text(g("anchorTurnId"))+" --continuation-actor "+pyjson.Text(g("childTaskId"))+" --continuation-reason 'after the 자식 decision "+event+"'")
 	}
 	return strings.Join(append(lines, "", "Full record: codex-session-relay show --event "+event), "\n")
 }

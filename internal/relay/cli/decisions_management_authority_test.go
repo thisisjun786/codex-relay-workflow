@@ -211,7 +211,7 @@ func TestDecisionAnswerAManagementSeatWithoutAnOwnerIsRefused(t *testing.T) {
 func TestDecisionAnswerWithoutAManagementRefKeepsTheStoreSeatRule(t *testing.T) {
 	state := authWorld(t)
 	unmanaged, _ := authRaise(t, state, "P-C", "Which window does P-C take?", "delegated-management")
-	review818RefusedFor(t, authAnswer(t, state, unmanaged, authSeatA, "delegated-management"), "authority_unverified", "store-scope supervisor")
+	review818RefusedFor(t, authAnswer(t, state, unmanaged, authSeatA, "delegated-management"), "authority_unverified", "store-scope 부모")
 	authAccepted(t, state, unmanaged, "task-sup", authAnswer(t, state, unmanaged, "task-sup", "delegated-management"))
 
 	// An old row: raised from P-D before a management session bound its owner, so it holds no ref.
@@ -220,7 +220,7 @@ func TestDecisionAnswerWithoutAManagementRefKeepsTheStoreSeatRule(t *testing.T) 
 	if got := authRef(t, state, old); got != nil {
 		t.Fatalf("the old record's ref is %v, want none", got)
 	}
-	review818RefusedFor(t, authAnswer(t, state, old, authSeatA, "user"), "authority_unverified", "store-scope supervisor")
+	review818RefusedFor(t, authAnswer(t, state, old, authSeatA, "user"), "authority_unverified", "store-scope 부모")
 	authAccepted(t, state, old, "task-sup", authAnswer(t, state, old, "task-sup", "user"))
 }
 
@@ -279,7 +279,7 @@ func TestDecisionRaiseWarnsAndKeepsGoing(t *testing.T) {
 	if warning["reason"] != "seat_contested" || !strings.Contains(warning["detail"].(string), authSeatA) || !strings.Contains(warning["detail"].(string), authSeatB) {
 		t.Fatalf("the warning %v", raised["authorityWarning"])
 	}
-	review818RefusedFor(t, authAnswer(t, state, contested, authSeatA, "delegated-management"), "authority_unverified", "store-scope supervisor")
+	review818RefusedFor(t, authAnswer(t, state, contested, authSeatA, "delegated-management"), "authority_unverified", "store-scope 부모")
 	authAccepted(t, state, contested, "task-sup", authAnswer(t, state, contested, "task-sup", "delegated-management"))
 
 	rows := authJournal(t, state)

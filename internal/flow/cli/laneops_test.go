@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 )
 
 // TestStartRefusesWorkflowsThatNeedLaneOperationsTheBuildLacks: a build that installs no `crw.*` operations (OpsFor is nil) starts no
@@ -32,19 +34,6 @@ func TestStartRefusesWorkflowsThatNeedLaneOperationsTheBuildLacks(t *testing.T) 
 		before := len(td.spawned)
 		code, out, errOut := td.do(argv...)
 		if code == 0 || len(td.spawned) != before || !strings.Contains(out+errOut, "crw.milestone") || !strings.Contains(out+errOut, "installs no") {
-			t.Errorf("%s: exit %d, %d processes\n%s%s", name, code, len(td.spawned)-before, out, errOut)
-		}
-	}
-	// the issue lane of a child (CRW-1204, internal/flow/workflows/issue-lane.js) calls lane operations too (crw.commit, crw.hold,
-	// crw.escalate): refused the same way, --force and --preview included
-	for name, argv := range map[string][]string{
-		"issue lane":         {"start", "issue-lane", "--thread", "thread-child", "--state", w.state, "--args", `{"node":"n1","issue":{"key":"CRW-1"}}`},
-		"issue lane force":   {"start", "issue-lane", "--thread", "thread-child", "--state", w.state, "--args", `{"node":"n1","issue":{"key":"CRW-1"}}`, "--force"},
-		"issue lane preview": {"start", "issue-lane", "--preview", "--thread", "thread-child", "--state", w.state, "--args", `{"node":"n1","issue":{"key":"CRW-1"}}`},
-	} {
-		before := len(td.spawned)
-		code, out, errOut := td.do(argv...)
-		if code == 0 || len(td.spawned) != before || !strings.Contains(out+errOut, "crw.commit") || !strings.Contains(out+errOut, "installs no") {
 			t.Errorf("%s: exit %d, %d processes\n%s%s", name, code, len(td.spawned)-before, out, errOut)
 		}
 	}
@@ -85,5 +74,17 @@ func TestEngineCrwFunctionsAreTheEnginesOwn(t *testing.T) {
 	sort.Strings(own)
 	if strings.Join(found, ",") != strings.Join(own, ",") {
 		t.Errorf("the engine sets %v on crw, LaneOperations leaves out %v", found, own)
+	}
+}
+
+// TestBuildLaneIgnoresChildHostArg (CRW-1417): an old run whose arguments still name child host settings ("child_host") builds its
+// lane, even when the named file is gone, and the lane starts no managed child: the relay holds no host settings, the scheduler no
+// managed starter and no selectors.
+func TestBuildLaneIgnoresChildHostArg(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+	ref := HandoffRef{Path: filepath.Join(t.TempDir(), "gone", "child-host.json"), SHA256: strings.Repeat("ab", 32)}
+	built := l.buildLaneWith("run-child00031", l.handoffBytes(nil), map[string]any{"child_host": ref}, LaneOptions{})
+	if built.Child != nil || built.Sched.Start != nil || built.Sched.Selectors != (dagsched.Selectors{}) {
+		t.Errorf("a run naming child_host built a lane with host settings: child %+v, start set %t, selectors %+v", built.Child, built.Sched.Start != nil, built.Sched.Selectors)
 	}
 }

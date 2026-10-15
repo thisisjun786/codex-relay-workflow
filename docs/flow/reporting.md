@@ -2,7 +2,7 @@
 
 Here the parent (repository session, relay role `supervisor`) is a layer of [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
 
-A flow run (a project run, the issue-lane of an issue child) works for the thread that started it: the child
+A flow run (a project run) works for the thread that started it: the child
 (project session, relay role `parent`, [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels)), which works for its parent (repository session, relay role `supervisor`). This page says what travels upward, to whom, by which command, and which row of the relay
 store's `flow_events` records it. The rows are described in [journal.md](journal.md); the relay commands the paths end in are in the
 [relay README](../relay/README.md). The reports, the escalations and the completion digest go through the relay's supervisor channel as direct
@@ -13,8 +13,7 @@ messages ([supervisor-channel.md](../relay/supervisor-channel.md#direct-messages
 | an escalation of the run (`dispatch_unknown`, `tiers_exhausted`, `blocked_scope`, `size_split`, `restore_snapshot_mismatch`, a configuration fault, the run-level hold `plan_superseded` with the pinned and head revisions and the node, CRW-1291) | the run | the level above the run's project (the parent's management seat, else a supervisor registered at the initiative's scope, the legacy configuration, else the store seat); a run whose plan names no project: the child's thread | the supervisor channel (`flow_escalation`); else `crw manage send-parent` | `escalation`, `escalation_notice`, `message_delivery` | `run_escalation` |
 | the completion digest | the run | as an escalation | the supervisor channel (`flow_completion`); else `crw manage send-parent` | `completion_notice`, `message_delivery` | |
 | a run that stopped writing | nobody | the pump's management thread | the pump | | `run_dead` |
-| the plan summary that is owed | the run, `crw flow apply` | the child's thread | `crw manage send-parent` | `summary_document`, `summary_notice`, `summary_notice_settled` | |
-| the receipt of an oversized issue | the issue child | the child | relay delivery, then `crw flow apply` | `apply_applied`, `apply_refused`, `apply_override` | |
+| the plan summary that is owed | the run | the child's thread | `crw manage send-parent` | `summary_document`, `summary_notice`, `summary_notice_settled` | |
 | a milestone report | the run | the parent above the project (else a supervisor registered at the initiative's scope, the legacy configuration, else the store seat) | the writer of `crw flow report-up` through the supervisor channel (`flow_milestone_report`) | `report`, `report_delivery`, `report_read` | `report_undelivered`, `report_unread` |
 | a run that started no node (`project_blocked`, CRW-1320) | the run | as a milestone report | the writer of `crw flow report-up` through the supervisor channel (`flow_project_blocked`) | `report`, `report_delivery`, `report_read` | `report_undelivered`, `report_unread` |
 | a project-level blocker or decision request | the child | as a milestone report | `crw flow report-up` through the supervisor channel (`flow_project_blocked`, `flow_project_decision_request`) | `report`, `report_delivery`, `report_read` | `report_undelivered`, `report_unread` |
@@ -95,19 +94,14 @@ urgent kind `run_dead`; it is told again only when it was resumed and stopped ag
 flight, so a run with an open agent call (a call that began and has no terminal row) is judged by the longer of `run_dead_seconds` and six
 hours.
 
-An issue child's issue-lane run tells the level above the project too: it runs with the plan the project run released it with, so its
-escalations go through `project:<project>` on the supervisor channel, as the project run's do. Only a run whose plan names no project
-tells its actor's thread, with `crw manage send-parent`: the child's thread for a project run, the issue child's thread for an issue-lane
-run (which is resumed with the issue child's task as its actor). The child learns of its issue child's trouble from the receipt and from
-`crw flow apply` (a refusal of integrity is also an `escalation` row of the issue child's run), and the pump's management thread hears it
-whichever thread the run told.
+Only a run whose plan names no project tells its actor's thread, the child's thread, with `crw manage send-parent`, and the pump's
+management thread hears it whichever thread the run told.
 
 ## The plan summary
 
 A run that was started with `crw flow run --summary-document D` records the document in its journal (a `summary_document` row). It keeps
 the plan summary of its plan in that document, in the order of work below, which it repeats when it starts (a resume too) and after every
-committed batch, and which `crw flow apply` repeats every time it runs on an event the relay holds, whatever it came to (a verdict recorded, a
-refusal, or a wait that ended first):
+committed batch:
 
 1. If the newest entry of the plan's stream for the document is not up to date (`SummaryStatus`, judged by the subject digest of the
    relay: the stage, the newest verdict and its revision, the findings, the acceptance and the integration of every issue), the run asks
@@ -123,8 +117,8 @@ refusal, or a wait that ended first):
    `crw manage send-parent --thread <child thread> --logical-id summary-<summary id>` carries the `summary_owed` notice (the summary
    id, the plan, the document) and the settlement is `accepted` or `queued`. A refusal settles `refused` and the run escalates
    (`summary_notice_refused`). An outcome nobody knows, or no answer, writes no settlement, and the next reconcile sends the notice again
-   under the same logical id. A run that died between any two of these steps finds its place in the rows when it is resumed, and the
-   next `crw flow apply` does the same, so an owed entry is not left without a notice.
+   under the same logical id. A run that died between any two of these steps finds its place in the rows when it is resumed, so an owed
+   entry is not left without a notice.
 
 The logical id makes the notice idempotent in `crw manage`. A direct send replays the settled record of the delivery ledger. The
 `--queue` path of an id that starts with `summary-` writes the notice only when the parent queue holds none of it: not pending, not in a
@@ -136,49 +130,6 @@ every other notice is unchanged.
 The child's thread that receives the notice claims the entry with `dag-summary-claim`, writes the document with its own Linear
 connector, reads it back and completes it (an entry that was superseded meanwhile: the newest entry of `dag-summary-status` is drained).
 See [dag-outbox.md](../relay/dag-outbox.md).
-
-## Applying the receipt of an oversized issue
-
-An issue the architect sized for a child is released as a relay child that only coordinates: it runs the built-in `issue-lane` workflow,
-whose executor calls (Claude) make every commit, and whose reviewer (another model family) rules on the head.
-Its receipt reaches the child's thread as a relay delivery, a model turn. In that turn:
-
-```
-crw flow apply --event E --turn T [--run RUN] [--base COMMIT] [--wait 10m] [--override REASON] [--manifest-request FILE]
-```
-
-`--turn` is the child's own turn id. Apply reads the relay event (the head, the relationship, the child task, the criteria set it
-is judged under), finds the child's newest `issue-lane` run (`--run` names it; a run named that way must be an `issue-lane` run of the event's child task,
-and of the relationship's plan when both name one, or the answer is `run_mismatch`: another child's journal that holds the same head and
-criteria digest is no proof of this receipt), and waits, reading the journal of that run every two seconds, for a completed `crw.review`
-row that ruled `verdict` on the head of the event. A run that returned for good without such a row (its newest run row is a finish with
-status `completed`, it holds no `crw.hold` since its last start, it was not resumed after, and a completed `crw.commit` row names the head of the event as its own commit: the rounds of the lane ended in
-`verification_failed`, or it escalated) will never write one, so the wait ends at once with the refusal `run_ended_unverified`; it is
-written as an `apply_refused` row and an `escalation` row (class `integrity`) of the run, which the parent hears as a `run_escalation`,
-and nothing is claimed. A held run waits for `crw flow resume`, and a head the run did not make (a commit on top of its own, the head of a later run of the child) is waited for as before. It then checks, in this order:
-
-1. the criteria digest the reviewer saw is the digest of the relationship's criteria set (`criteria_digest_mismatch`);
-2. every commit of `base..head` was made by an executor call this run recorded: a completed `crw.commit` row names the commit and the
-   call, and the call is a completed call of the executor family (`author_unattributed`). The base is `--base`, else the event's, else
-   the commit the run's first executor worktree started from. The refusal is escalated: an `escalation` row (class `integrity`) is
-   written into the run, and the parent hears it as a `run_escalation`;
-3. the reviewer's model family differs from the family of every author pair the run observed (`independence_refused`; a pair that was
-   never read back proves nothing, `independence_unproven`). The coordinator's own pair is no author pair: a child on a SOL pair that
-   coordinates Claude executors keeps a GPT reviewer independent. `--override` with a reason lets the application go on over this
-   check only, and the reason is recorded in an `apply_override` row and in the verdict's reason; a criteria digest that differs and an
-   unattributed commit never pass.
-
-With the checks done apply writes the verdict file and runs `crw relay receive` (claim, acknowledgement proved from the child's own
-turn, verdict) once. A `needs_changes` verdict carries the `dag-correct --prepare` instruction line (with the dispatch request id) as the
-restoration block of one finding; `--manifest-request` is the document that command takes. After the relay recorded the verdict an
-`apply_applied` row is written into the child's run. A wait that ends before the verdict is journaled writes no row of the application
-and answers `next_turn`: apply it again in a later turn. Every time apply runs on an event the relay holds, whichever of these it comes to,
-it then brings the plan summary up to date (the section above); a failure of that is told in `summary_error` and changes neither the state
-nor the exit status. The exit status is 0 for an applied verdict,
-1 for a refusal, 3 for `next_turn` and 2 for a command line or a failure of the store or the relay.
-
-A commit the child thread makes itself is refused by the second check. An issue that is not oversized takes the executor path of the
-project lane, and a child of a relationship outside a flow run is verified by the relay's own ack, verdict and premerge chain.
 
 ## Milestone reports and project-level reports
 
@@ -193,8 +144,8 @@ crw flow report-up --kind project_blocked|project_decision_request|jun_decision_
 What an agent node cannot do or decide is not reported by the node: its RECEIPT is classified by the run, the run escalates, the
 escalation reaches the child's thread, and the child reports up.
 
-A run meant to start the nodes of a plan (a run of `project-lane`, `issue-lane` or `night-batch`, or a run whose arguments name a `plan`)
-that finished `completed` and started no node is `blocked` in `crw flow show` and `ps` (no `crw.release` released a node, no child was
+A run meant to start the nodes of a plan (a run of `project-lane` or `night-batch`, an old run of an issue child's lane, or a run whose
+arguments name a `plan`) that finished `completed` and started no node is `blocked` in `crw flow show` and `ps` (no `crw.release` released a node, no child was
 released, nothing landed, and items of its joins threw: [script.md](script.md)). When it finishes so, the run itself reports
 `project_blocked` to the parent, through the same writer, recipient and delivery as `crw flow report-up`: the subject is `no node
 started` and the body names each item that failed with its error. The report id comes from the run alone, so the run reports it once: a
@@ -295,10 +246,10 @@ All of these are rows of `flow_events` (`kind` is the first column of the table,
 | `summary_notice_settled` | `summary_id`, `plan`, `document`, `result` (`accepted`, `queued`, `obsolete`, `refused`), `request_id`, `logical_id`, `run` |
 | `escalation_notice` | `escalation_id`, `result`, `request_id`, `thread` (the thread the notice was addressed to) |
 | `completion_notice` | `notice_key`, `status`, `result`, `request_id` |
-| `apply_applied`, `apply_refused`, `apply_override` | `event`, `head`, `verdict` or `reason`, and what the check found |
+| `apply_applied`, `apply_refused`, `apply_override` | an older build's rows of a receipt application, read by nothing and written by no command now: `event`, `head`, `verdict` or `reason`, and what the check found |
 
-A run process appends its rows to its own journal, so they carry the journal's sequence numbers. A command (`crw flow apply`, `report-up`,
-`report-ack`, `report-delivered`) is another process, possibly beside a run that is alive: its rows are numbered from `1 << 40`
+A run process appends its rows to its own journal, so they carry the journal's sequence numbers. A command (`report-up`, `report-ack`,
+`report-delivered`) is another process, possibly beside a run that is alive: its rows are numbered from `1 << 40`
 (`engine.ForeignSeqBase`), a range the run's journal never reaches, and a journal that is opened again counts after the largest number it
 wrote itself. A row of a kind that is written once for a key (a summary id, an escalation id, a report id) is checked in the transaction
 that writes it, across runs.
@@ -306,7 +257,6 @@ that writes it, across runs.
 ## Commands
 
 ```
-crw flow apply --event E --turn T [--run RUN] [--base COMMIT] [--wait 10m] [--override REASON] [--manifest-request FILE] [--repo DIR] [--state DIR] [--socket PATH]
 crw flow report-up --kind K --run RUN --evidence FILE [--subject TEXT] [--milestone M] [--state DIR] [--socket PATH]
 crw flow reports [--initiative I] [--unread] [--json] [--project P] [--state DIR] [--socket PATH]
 crw flow report-ack REPORT --turn T [--state DIR] [--socket PATH]

@@ -22,7 +22,7 @@ func composeNotice(notice, live map[string]any, observedAt, evidence string) (ma
 		return nil, &faults.NoticeError{Kind: "malformed_receipt", Detail: "the fault's " + unfit + " is not a value the ledger writes, so no notice carries it; nothing was composed"}
 	}
 	if issue := noticeString(notice, "issueKey"); issue != "" && !faults.IsNoticeIssue(issue) {
-		return nil, &faults.NoticeError{Kind: "malformed_receipt", Detail: "the issue fault '" + noticeString(notice, "faultId") + "'s notice names is not an issue identifier (TEAM-123 or a UUID); nothing was composed"}
+		return nil, &faults.NoticeError{Kind: "malformed_receipt", Detail: "the issue fault '" + noticeString(notice, "faultId") + "'s notice names is not an issue identifier (TEAM-123, a UUID or owner/name#N); nothing was composed"}
 	}
 	absent := func(reason, detail string) any { return map[string]any{"absent": reason, "detail": detail} }
 	reach := map[string]any{}

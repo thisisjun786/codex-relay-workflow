@@ -65,7 +65,7 @@ func (a *Ack) Evaluate(ctx context.Context, eventID string) (string, error) {
 		return "", err
 	}
 	if row != nil && row.S("kind") != Completion {
-		return "", refuse(WrongDeliveryKind, "%s is a %s, which is not acknowledged by a parent", strconv.Quote(eventID), row.S("kind"))
+		return "", refuse(WrongDeliveryKind, "%s is a %s, which is not acknowledged by a 자식", strconv.Quote(eventID), row.S("kind"))
 	}
 	event, err := a.Delivery.eventRow(ctx, eventID)
 	if err != nil {
@@ -215,7 +215,7 @@ func (a *Ack) Acknowledge(ctx context.Context, eventID, ackTurn, proof string, a
 		return nil, refuse(NotClaimable, "no delivery for %s", strconv.Quote(eventID))
 	}
 	if row.S("kind") != Completion {
-		return nil, refuse(WrongDeliveryKind, "%s is a %s; contract v1 acknowledgements are parent-authored for a completion event", strconv.Quote(eventID), row.S("kind"))
+		return nil, refuse(WrongDeliveryKind, "%s is a %s; contract v1 acknowledgements are written by the 자식 for a completion event", strconv.Quote(eventID), row.S("kind"))
 	}
 	existing, err := one(ctx, a.Store, "SELECT * FROM acks WHERE event_id = ?", eventID)
 	if err != nil {
