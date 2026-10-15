@@ -76,7 +76,9 @@ func (b *SessionBackend) SourceOf(ctx context.Context, cwd, _ string) (source.Id
 // Trace takes the digests of a session call's record-time checks (CRW-1316 §6.4) for its directory P: the workspace is P's
 // `git status --porcelain` and HEAD; outside is the owner thread's cwd, its status and HEAD, when it is a git checkout other than
 // P, with the owner cwd's .crw left out (the evidence hook writes its assignment records, claims and attempt counters there
-// while a subagent works, CRW-1482; the rest of the owner's repository is still read); shared is the refs under refs/crw/ of the run's repository other than this run's own (the run moves those itself) and the
+// while a subagent works, CRW-1482; the rest of the owner's repository is still read). The exclusion is a pathspec relative to
+// the owner cwd, which git resolves against its own prefix of `git -C <owner>`, so no prefix read back from git is trimmed into
+// another path (CRW-1493); shared is the refs under refs/crw/ of the run's repository other than this run's own (the run moves those itself) and the
 // binding files of the flow-bound directory (the hook's ledger and claims are left out: the owner's spawns write them while a
 // subagent works). A part that cannot be read digests its error, so a part that becomes readable reads as a change.
 func (b *SessionBackend) Trace(ctx context.Context, workspace string) (engine.TraceDigests, error) {
@@ -93,12 +95,7 @@ func (b *SessionBackend) Trace(ctx context.Context, workspace string) (engine.Tr
 	out := engine.TraceDigests{Workspace: state(workspace)}
 	if owner := b.OwnerCwd; owner != "" && filepath.Clean(owner) != filepath.Clean(workspace) {
 		if top, err := git(ctx, owner, nil, "rev-parse", "--show-toplevel"); err == nil && strings.TrimSpace(top) != "" {
-			prefix, err := git(ctx, owner, nil, "rev-parse", "--show-prefix")
-			if err != nil {
-				out.Outside = digestParts("owner prefix", errString(err), state(owner))
-			} else {
-				out.Outside = state(owner, ":(top)", ":(top,literal,exclude)"+prefix+".crw")
-			}
+			out.Outside = state(owner, ":(top)", ":(literal,exclude).crw")
 		}
 	}
 	refs, err := git(ctx, b.Allocator.cfg.Repo, nil, "for-each-ref", "--format=%(refname) %(objectname)", "refs/crw/")
