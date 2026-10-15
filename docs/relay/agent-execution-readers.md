@@ -35,6 +35,7 @@ The set is the non-test Go files of `internal/relay` and `internal/manage` that 
 | `internal/relay/childcleanup/gate.go` | `relationship-scoped` | `R06` | n/a | asks ExecutionIntegrated of a relationship's merged mark, not of a node |
 | `internal/relay/cli/daemon.go` | `caller` | `R06` | n/a | calls Daemon.Tick (daemon/daemon.go) |
 | `internal/relay/cli/registry.go` | `caller` | `R06` | n/a | registers the daemon and supervisor-channel commands (daemonCommand, supervisorSelectCommand, supervisorStageCommand, supervisorStandingCommand) |
+| `internal/relay/cli/reportup.go` | `caller` | `R06` | n/a | report-up calls Channel.StageDirect (`supervisor/direct.go`) |
 | `internal/relay/cli/supervisor.go` | `caller` | `R06` | n/a | the supervisor-channel commands call Channel.SelectEvent, Stage, StageStandingWithObservations, StageWithReading and StatusAnswer |
 | `internal/relay/daemon/daemon.go` | `caller` | `R06` | n/a | the tick calls Channel.AutoSend (`supervisor/autosend.go`) |
 | `internal/relay/dagsched/accept.go` | `agent-writer` | `R05` | n/a | dag-accept: the agent path reads the current agent execution and writes the agent acceptance row |
@@ -118,6 +119,7 @@ The set is the non-test Go files of `internal/relay` and `internal/manage` that 
 | `internal/relay/store/dag_zone.go` | `store` | `R04,R05` | n/a | the zone ledger: DDL, appended by R04 and R05 |
 | `internal/relay/store/domain_rows.go` | `store` | `R06` | n/a | frozen row types for port parity; unchanged |
 | `internal/relay/supervisor/autosend.go` | `caller` | `R06` | n/a | calls Channel.StageWithReading, attempt and standing |
+| `internal/relay/supervisor/direct.go` | `caller` | `R06` | n/a | calls Channel.refreshProposal (proposal.go) |
 | `internal/relay/supervisor/notice.go` | `caller` | `R06` | n/a | calls Channel.attempt (send.go) |
 | `internal/relay/supervisor/obligation.go` | `relationship-scoped` | `R06` | n/a | Reportable asks delivery.PlanSummaryCarriesVerdict whether the confirmed summary entry of a plan relationship carries the verdict of an event; it names a relationship, not a node |
 | `internal/relay/supervisor/proposal.go` | `relationship-scoped` | `R06` | n/a | ReportableCurrent asks delivery.PlanSummaryCarriesVerdict, as Reportable does |
