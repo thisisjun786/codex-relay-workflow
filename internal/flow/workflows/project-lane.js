@@ -110,17 +110,19 @@ async function askOrchestrator(answers, reason, carried) {
     evidence: { questions: asked.map((a) => a.digest) } })
 }
 
-// A re-plan (SP-ARCH-2): the architect's DESIGN delta is the next turn of its thread (the handle the ledger holds), asked at the head
-// H in a read-only checkout of its own; the delta is audited again like a DESIGN (audit rounds, and a return to the architect on the
-// same thread for needs_changes), and only an approved delta becomes the next revision of the ledger - the nodes that have not
-// started are released under a revision only after that. signal is the number of the signal that made the re-plan (0 at the close).
-async function replan(tag, signal, due, head, misaligned) {
+// A re-plan (SP-ARCH-2): the architect's whole DESIGN of the milestone (CRW-1462: every decision and every issue of every node, the
+// started ones as they were released, not a delta) is the next turn of its thread (the handle the ledger holds), asked at the head
+// H in a read-only checkout of its own; it is audited again like the first DESIGN (audit rounds, and a return to the architect on the
+// same thread for needs_changes), and only an approved DESIGN becomes the next revision of the ledger - the nodes that have not
+// started are released under a revision only after that. signal is the number of the signal that made the re-plan (0 at the close);
+// unstarted is the ids of the nodes that have not started (none at the close), which the architect and the critic both read.
+async function replan(tag, signal, due, head, misaligned, unstarted) {
   const cur = await crw.currentDesign(ms.id)
   await crw.spawnDecision('ARCH_2', 'spawn', { role: 'architect', reason: due.reasons.join(','), inputs: {
     milestone: ms.id, revision: cur.revision, signal, head, reasons: due.reasons, plan_mismatch: due.plan_mismatch, slice_change: due.slice_change.changed } })
-  const call = await agent.call(replanPacket(ms, cur, due, head, misaligned), { resume: cur.handle, schema: DESIGN, head, label: 'replan:' + tag })
+  const call = await agent.call(replanPacket(ms, cur, due, head, misaligned, unstarted), { resume: cur.handle, schema: DESIGN, head, label: 'replan:' + tag })
   if (call.status !== 'completed') return { state: 'halted', result: await crw.milestoneHalt(ms, 'replan', call.status, call.reason, call.callId) }
-  const audited = await auditedDesign(call, 'replan-' + tag + ':', { head, base_tip: cur.base_tip, landed: cur.landed })
+  const audited = await auditedDesign(call, 'replan-' + tag + ':', { head, base_tip: cur.base_tip, landed: cur.landed, unstarted })
   if (!audited.ok) return { state: 'halted', result: audited.result }
   const led = await crw.designLedger(ms.id, { design: audited.arch.output, answers: audited.answers, architect: audited.arch, signal, head, plan: due.plan })
   await askOrchestrator(audited.answers, 'explorer_cap', audited.carried)
@@ -142,7 +144,8 @@ async function onSignal(sig) {
     await crw.spawnDecision('ARCH_2', 'skip', { reason: 'no_unstarted_node', inputs: Object.assign({ reasons: due.reasons }, inputs) })
     return 'continue'
   }
-  const out = await replan('s' + sig.k, sig.k, due, sig.tip, null)
+  // the re-plan names the nodes the signal found unstarted: the ones its revision releases
+  const out = await replan('s' + sig.k, sig.k, due, sig.tip, null, sig.unstarted)
   if (out.state !== 'revised') return { result: 'halt', reasons: due.reasons }
   // the nodes that have not started are admitted by the regions of the revision just made, not of the first one
   const cur = await crw.currentDesign(ms.id)
@@ -343,7 +346,8 @@ async function closeAndReport() {
   // A reason to re-plan stands whatever the alignment says: the numbers of the signals, and the alignments the close found.
   const due = await crw.replanSignals(ms.id, { phase: 'close', final: closed.final.alignment, reflection: reflection.alignment })
   if (due.due) {
-    const out = await replan('close', 0, due, closed.gate.head, reflection.misaligned)
+    // at the close every node has run: the whole DESIGN names none unstarted
+    const out = await replan('close', 0, due, closed.gate.head, reflection.misaligned, [])
     if (out.state !== 'revised') return out.result
     // the correction issues are the orchestrator's: crw-add-issue and a plan revision, planned in the revision the architect just made
     const esc = await crw.escalate(null, { reason: 'replan_correction', detail: 'revision ' + out.revision + ' of milestone ' + ms.id + ' after ' + due.reasons.join(', '), ask: 'correction_issues' })

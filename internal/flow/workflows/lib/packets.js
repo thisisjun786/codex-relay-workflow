@@ -157,10 +157,14 @@ function priorLines(prior) {
 
 // The critic's packet (CRW-1452): the DESIGN, the answers to its open questions, and from the second round on the findings of the
 // earlier rounds with the architect's disposition of each. prior is the per-round history (priorLines); it is left out in round 1.
-// context is a re-plan's {head, base_tip, landed} (CRW-1458): the critic's directory is then a read-only checkout of the head the
-// re-plan judges, and the packet names it as the re-plan's architect turn has it (headBlock); the first DESIGN has none.
+// context is a re-plan's {head, base_tip, landed, unstarted} (CRW-1458): the critic's directory is then a read-only checkout of the
+// head the re-plan judges, and the packet names it as the re-plan's architect turn has it (headBlock); the first DESIGN has none.
+// unstarted is the ids of the nodes the re-plan releases (CRW-1462; none at the close): the re-plan answers with the whole DESIGN in
+// every round, its design-fix answers included, since an approved one becomes the next revision on its own, so a node with no issue
+// in it is a P1 finding.
 export function designAuditPacket(ms, cand, round, prior, context) {
   const at = context ? headBlock(context) : null
+  const replanned = context && Array.isArray(context.unstarted)
   return [
     'ROLE: critic. Audit the DESIGN of milestone ' + ms.id + ' (round ' + round + ') before any executor starts. You did not write it and are of another model family than the architect.',
     'Answer with DESIGN_AUDIT: approved only when every issue node has a plan an executor can carry out inside its edit regions, every done condition can be met under the executor contract below, the decisions are consistent with the plan, no decision of the DESIGN is outside the architect\'s authority below, and no P0 or P1 finding stands; otherwise needs_changes with the findings the architect must act on. Check every done condition against the executor contract and every decision against the authority boundary: a done condition the contract cannot meet and a decision outside the authority are each a P1 finding that names its node or decision.',
@@ -170,6 +174,8 @@ export function designAuditPacket(ms, cand, round, prior, context) {
       '\nJudge each prior finding: a folded one is resolved only if this DESIGN does fold it; a rebuttal you do not accept is raised again in your findings under the same ref, with the reason you reject it; a finding not reported, or of a round whose dispositions are null, is still open.' : '',
     at ? 'Your directory is a read-only checkout of the pinned head: the DESIGN re-plans the milestone at it.\n' + at.head : '',
     at ? at.landed : '',
+    replanned ? unstartedSection(ms, context.unstarted) : '',
+    replanned ? 'The DESIGN is the whole DESIGN of the milestone, not a delta, in every round of this audit, the architect\'s design-fix answers included: every node of the milestone has its issue in it, the started ones as they were released; an unstarted node with no issue in the DESIGN is a P1 finding that names the node, and so is a started node whose issue is missing.' : '',
     section('DESIGN', [canon(cand.design)]),
     section('ANSWERS TO THE OPEN QUESTIONS (each with its route and what it got)', answerLines(cand.answers)),
   ].filter(Boolean).join('\n\n')
@@ -222,9 +228,19 @@ export function reflectionPacket(ms, cur, closed) {
   ].join('\n\n')
 }
 
-// The re-plan turn (SP-ARCH-2): the next turn of the architect's thread, as a DESIGN delta for the nodes that have not started. The
-// packet names the reasons and the numbers behind them, the head the turn judges and the range from the head the DESIGN ran at.
-export function replanPacket(ms, cur, due, head, misaligned) {
+// unstartedSection names the nodes a re-plan releases under its revision (CRW-1462): each by id, issue and title; none at the close.
+function unstartedSection(ms, ids) {
+  return section('UNSTARTED NODES (released under the revision this re-plan makes)', list((ids || []).map((id) => {
+    const n = ms.nodes.find((x) => x.id === id)
+    return n ? id + ' (' + n.issue + '): ' + n.title : id
+  })))
+}
+
+// The re-plan turn (SP-ARCH-2): the next turn of the architect's thread, answered with the whole DESIGN of the milestone (CRW-1462):
+// every decision and every issue of every node, the started ones as they were released, with the ids kept, so the revision it makes
+// stands on its own. The packet names the reasons and the numbers behind them, the head the turn judges, the range from the head the
+// DESIGN ran at, and the nodes that have not started (unstarted, their ids; none at the close).
+export function replanPacket(ms, cur, due, head, misaligned, unstarted) {
   const at = headBlock({ head, base_tip: cur.base_tip, landed: cur.landed })
   const lines = due.reasons.map((r) => r)
   const parts = [
@@ -235,11 +251,12 @@ export function replanPacket(ms, cur, due, head, misaligned) {
     'SLICES OF THE PLAN CHANGED SINCE THIS REVISION: ' + due.slice_change.changed.length + ' of ' + due.slice_change.total + (due.slice_change.changed.length ? ' (' + due.slice_change.changed.join(', ') + ')' : ''),
     section('DECISIONS OF THE DESIGN', drivenDecisions(cur)),
     at.landed,
+    unstartedSection(ms, unstarted),
   ]
   if (misaligned && misaligned.length) {
     parts.push(section('DECISIONS THE REFLECTION FOUND THE RANGE TO DEPART FROM', misaligned.map((m) => '- ' + m.decision_id + ': ' + m.observed + ' (nodes ' + (m.affected_nodes || []).join(', ') + ')')))
   }
-  parts.push('Answer with DESIGN: the delta of the plan. Keep the ids of the decisions you do not change. Lanes that have started keep the revision they were released under; the issues of nodes that have not started take this one, and the correction issues the orchestrator adds are planned in it.')
+  parts.push('Answer with DESIGN: the whole DESIGN of the milestone, as the next revision of it: every decision and every issue of every node, the nodes that have started with their issues as they were released and the unstarted nodes above with their issues for this revision. Keep the ids of the decisions and of the issues. Lanes that have started keep the revision they were released under; the issues of the unstarted nodes take this one, and the correction issues the orchestrator adds are planned in it.')
   return parts.join('\n\n')
 }
 
