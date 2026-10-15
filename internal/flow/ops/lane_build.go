@@ -325,14 +325,20 @@ func (o *unitCheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpR
 			r, err := headMoved(at, retried)
 			return res, &r, err
 		}
-		if res, err = uc.Checker.Check(ctx, creq); err != nil {
-			return res, nil, fmt.Errorf("crw.unitCheck: node %s: %s%w", node, what, err)
-		}
+		// HEAD is read after every call, also one that failed: a checker whose fingerprint after the call failed (a full temporary
+		// store after a commit) still ran on a HEAD that moved, which is the answer, not the checker's error
+		res, checkErr := uc.Checker.Check(ctx, creq)
 		if at, err := headAt(); err != nil {
+			if checkErr != nil {
+				return res, nil, fmt.Errorf("crw.unitCheck: node %s: %s%w", node, what, checkErr)
+			}
 			return res, nil, err
 		} else if at != "" {
 			r, err := headMoved(at, retried)
 			return res, &r, err
+		}
+		if checkErr != nil {
+			return res, nil, fmt.Errorf("crw.unitCheck: node %s: %s%w", node, what, checkErr)
 		}
 		if seen, err := moved(res); err != nil {
 			return res, nil, err

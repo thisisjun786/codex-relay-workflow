@@ -2514,6 +2514,8 @@ func TestUnitCheckJudgesOnlyTheTreeItSnapped(t *testing.T) {
 func TestUnitCheckHoldsAHeadThatMovedDuringTheCheck(t *testing.T) {
 	// committing answers verified (the fingerprints of the unchanged tree) after it committed the worktree on the given calls (1-based);
 	// the first answer is first when that is set
+	// erring makes a call that committed fail as a checker whose fingerprint after the call failed does (adapter.go)
+	var erring bool
 	committing := func(on map[int]bool, first reviewadapter.State, allowEmpty bool) (*int, UnitChecker) {
 		n := 0
 		return &n, checkFunc(func(ctx context.Context, req reviewadapter.Request) (reviewadapter.Result, error) {
@@ -2526,6 +2528,9 @@ func TestUnitCheckHoldsAHeadThatMovedDuringTheCheck(t *testing.T) {
 					gitIn(t, req.Worktree, "add", "-A")
 				}
 				gitIn(t, req.Worktree, commit...)
+				if erring {
+					return reviewadapter.Result{}, errors.New("the fingerprint after the call: no space left on device")
+				}
 			}
 			res := checkRecord(reviewadapter.StateOK, reviewadapter.VerdictVerified)
 			if n == 1 && first != "" {
@@ -2593,6 +2598,39 @@ func TestUnitCheckHoldsAHeadThatMovedDuringTheCheck(t *testing.T) {
 		held(t, u, out, *calls, 1, commit.Commit)
 		if _, err := u.op("accept", "A", commit.Commit); err == nil || ReasonOf(err.Error()) != "reviewer_missing" {
 			t.Errorf("crw.accept of %s on a check during which HEAD moved: %v, want reviewer_missing", commit.Commit, err)
+		}
+	})
+	// a call that committed and then failed (its fingerprint after the call) is held head_moved too, not the checker's error
+	for _, c := range []struct {
+		name  string
+		on    int
+		first reviewadapter.State
+	}{{"uncommitted: a check that committed and then failed", 1, ""}, {"uncommitted: a retry that committed and then failed", 2, reviewadapter.StateInvalid}} {
+		t.Run(c.name, func(t *testing.T) {
+			erring = true
+			defer func() { erring = false }()
+			u := newUCWorld(t)
+			ex := u.build("c_ex1", "built\n")
+			calls, checker := committing(map[int]bool{c.on: true}, c.first, false)
+			u.lane.d.UnitCheck.Checker = checker
+			raw, err := u.op("unitCheck", "A", ex, map[string]any{"round": 1})
+			if err != nil {
+				t.Fatalf("a check that failed after HEAD moved is the checker's error: %v", err)
+			}
+			held(t, u, decodeCheck(t, raw), *calls, c.on, u.start)
+		})
+	}
+	t.Run("uncommitted: a check that failed on a HEAD that stays is the checker's error", func(t *testing.T) {
+		u := newUCWorld(t)
+		ex := u.build("c_ex1", "built\n")
+		u.lane.d.UnitCheck.Checker = checkFunc(func(context.Context, reviewadapter.Request) (reviewadapter.Result, error) {
+			return reviewadapter.Result{}, errors.New("the fingerprint after the call failed")
+		})
+		if _, err := u.op("unitCheck", "A", ex, map[string]any{"round": 1}); err == nil || !strings.Contains(err.Error(), "the fingerprint after the call failed") {
+			t.Fatalf("a failed check on an unmoved HEAD: %v", err)
+		}
+		if n := len(u.checkRows()); n != 0 {
+			t.Errorf("%d crw.unitCheck rows for a checker error", n)
 		}
 	})
 	t.Run("uncommitted: a HEAD that stays is judged", func(t *testing.T) {

@@ -341,7 +341,7 @@ func TestIntegrationVerifyTmpDirLeavesRoomForCiLocal(t *testing.T) {
 			if err := os.Mkdir(p, 0o700); err == nil {
 				parent = p
 			} else if !errors.Is(err, os.ErrExist) || try > 64 {
-				t.Skipf("no directory can be made below /tmp: %v", err)
+				t.Fatalf("no directory can be made below /tmp: %v", err)
 			}
 		}
 		t.Cleanup(func() { _ = os.RemoveAll(parent) })
