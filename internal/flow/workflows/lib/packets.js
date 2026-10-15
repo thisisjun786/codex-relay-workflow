@@ -592,3 +592,24 @@ export function crosscheckFixPacket(ms, v) {
     ]),
   ].join('\n\n')
 }
+
+// The fix packet of a land-head run whose unit check needs changes (CRW-1490): what the 자식 gives a new executor subagent to fix the
+// head it landed, and the land of the fix. The gate-only lane fixes nothing and the land gave the node's release back, so the fix is a
+// new head made outside a run, landed by a new land-head run of the same node with the next fix round. n is the node, findings the
+// check's findings (each by id, file, line and text), head the land's head ({commit, base}) and next the land of the fix ({plan,
+// milestone, fix_round, authors}). The fix branches from this head, so the range of its land holds this head's work too: the authors of
+// the fix's land are this land's authors and the fixer's thread, so the check stays independent of every author of the range.
+export function landFixPacket(n, findings, head, next) {
+  const authors = (next.authors || []).concat(['<the fixer subagent thread>'])
+  const fixArgs = { plan: next.plan, milestone: next.milestone, issue: n.issue || n.id, head: '<the fixed head>', authors, fix_round: next.fix_round }
+  return [
+    'LAND FIX of node ' + n.id + ' (' + (n.issue || n.id) + (n.title ? ': ' + n.title : '') + '): the unit check of the committed range at ' + head.commit + ' needs changes, and the node did not land.',
+    section('FINDINGS', findingLines(findings || [])),
+    'RANGE: git diff ' + head.base + '..' + head.commit,
+    section('CRITERIA OF THE NODE', criteriaList(n.criteria)),
+    section('ROUTE (the gate-only lane fixes nothing; the land gave the node\'s release back)', [
+      '- a new executor subagent fixes this head on a branch from it, outside any run',
+      '- land it with `crw flow start land-head --args \'' + JSON.stringify(fixArgs) + '\' --handoff <the plan\'s handoff file>`, the fixed head, the fixer\'s thread and the handoff of the plan\'s current revision in place of the placeholders; keep the authors of this head',
+    ]),
+  ].join('\n\n')
+}
