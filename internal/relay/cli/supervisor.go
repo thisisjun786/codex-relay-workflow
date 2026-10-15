@@ -404,7 +404,7 @@ var supervisorShowCommand = dispatch.Command{Name: "supervisor-show", ReadOnly: 
 var supervisorListCommand = dispatch.Command{Name: "supervisor-list", ReadOnly: true, Run: func(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
 	recipient, ok := args.TruthyString("recipient")
 	if !ok {
-		return nil, &dispatch.UsageError{Detail: "supervisor-list reads one recipient's messages: --recipient names the task they are addressed to", Code: contract.ExitUsage}
+		return nil, &dispatch.UsageError{Detail: "the message list reads one recipient's messages: --recipient names the task they are addressed to", Code: contract.ExitUsage}
 	}
 	project, _ := args.String("project")
 	state, _ := args.TruthyString("state")
@@ -430,10 +430,10 @@ func acknowledgeLine(args dispatch.Args) (supervisor.AcknowledgeRequest, error) 
 	req := supervisor.AcknowledgeRequest{AllInformational: args.Bool("all-informational")}
 	var ok bool
 	if req.Recipient, ok = args.TruthyString("recipient"); !ok {
-		return usage("supervisor-acknowledge parks one recipient's messages: --recipient names the task they are addressed to")
+		return usage("an acknowledgement parks one recipient's messages: --recipient names the task they are addressed to")
 	}
 	if req.Actor, ok = args.TruthyString("actor"); !ok {
-		return usage("supervisor-acknowledge writes who parked each message: --actor names the task that acknowledges them")
+		return usage("an acknowledgement records who parked each message: --actor names the task that acknowledges them")
 	}
 	for _, id := range args.Strings("message") {
 		if id == "" {
@@ -442,7 +442,7 @@ func acknowledgeLine(args dispatch.Args) (supervisor.AcknowledgeRequest, error) 
 		req.Messages = append(req.Messages, id)
 	}
 	if req.AllInformational == (len(req.Messages) > 0) {
-		return usage("supervisor-acknowledge takes --all-informational or one or more --message, one of the two")
+		return usage("an acknowledgement takes --all-informational or one or more --message, one of the two")
 	}
 	project, hasProject := args.TruthyString("project")
 	before, hasBefore := args.TruthyString("staged-before")

@@ -35,7 +35,7 @@ internal/manage/pump_signals.go	1
 internal/manage/pump_sources.go	2
 internal/manage/pump_supervisor.go	18
 internal/manage/sendparent.go	10
-internal/manage/supervisor.go	21
+internal/manage/supervisor.go	20
 internal/manage/supervisor_settings.go	1
 internal/pabcd/cli/orchestrate_status.go	1
 internal/pabcd/cli/plan.go	1

@@ -46,7 +46,7 @@ func (s *Store) ListSupervisorMessages(ctx context.Context, f SupervisorListFilt
 		query += " AND " + SupervisorRestatableSQL("")
 	case SupervisorListAll:
 	default:
-		return nil, fmt.Errorf("a supervisor message list reads the %s, %s or %s messages, not %q", SupervisorListUnsent, SupervisorListPending, SupervisorListAll, f.State)
+		return nil, fmt.Errorf("a message list of the 부모 queue reads the %s, %s or %s messages, not %q", SupervisorListUnsent, SupervisorListPending, SupervisorListAll, f.State)
 	}
 	if f.Project != "" {
 		query += " AND project_key = ?"
