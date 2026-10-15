@@ -3,8 +3,10 @@ package manage
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
@@ -101,6 +103,33 @@ func TestResumeResolvesTheLimitFromTheGatePolicyEnvironment(t *testing.T) {
 		t.Fatalf("the resume config does not carry the pair's limit: %v", config)
 	}
 }
+
+// CRW-1486/S2: the gate reads the policy the relay service declares (launch-policy.json) even when the
+// variable is unset, so a task it confirmed bound to a role may reach this command with neither the
+// variable nor manage.bridge.execution_policy set. The limit cannot be resolved then, and resuming a
+// capped child without it is what this command refuses: nothing is sent.
+func TestResumeRefusesABoundTaskWhoseGatePolicyItCannotName(t *testing.T) {
+	host := resumeHost(t, "notLoaded")
+	exe, _ := resumeRelayScript(t, resumeTestAssignment, autoCompactBoundSettings, 0)
+	e, _, _ := resumeEnv(t, exe)
+	t.Setenv(execution.EnvPolicy, "")
+	cfg := resumeConfig(host, "alpha")
+	cfg.Bridge.ExecutionPolicy = ""
+	_, err := resumeRun(context.Background(), e, cfg, resumeOptions{relationship: "rel-1", message: "m"})
+	var failure *resumeFailure
+	if !errors.As(err, &failure) || failure.Reason != resumeSettingsUnavailable || !strings.Contains(failure.Detail, "manage.bridge.execution_policy") {
+		t.Fatalf("a bound task with no policy file to read the limit from: %v", err)
+	}
+	for _, request := range resumeHostRequests(host) {
+		if request.Method == "thread/resume" || request.Method == "turn/start" {
+			t.Fatalf("the refused resume sent %s", request.Method)
+		}
+	}
+}
+
+// autoCompactBoundSettings is autoCompactResumeSettings as the gate answers a task bound to the child
+// role whose record it found deliverable.
+const autoCompactBoundSettings = `{"task":"01child","usable":true,"deliverable":true,"boundRole":"child","rolePolicy":"declared","settings":{"sandbox":{"type":"readOnly","networkAccess":false},"approvalPolicy":"never","cwd":"/w","runtimeWorkspaceRoots":["/w"],"model":"m","reasoningEffort":"xhigh"}}`
 
 // The host never reports the value back, so the report has to say what went out and that the host
 // cannot confirm it: an operator reading a bare ok cannot tell a capped reload from an uncapped one.
