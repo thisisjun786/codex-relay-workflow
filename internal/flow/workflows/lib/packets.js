@@ -539,6 +539,6 @@ export function finalPacket(ms, g) {
     // the approved DESIGN lives in the journal's ledger, not in the checkout this reviewer reads: its decisions are the comparison
     // source of the alignment judgement
     section('DESIGN DECISIONS (the approved DESIGN of this milestone; name a decision by its id in the drift)', decisionLines(g.decisions)),
-    'Answer with VERDICT_FINAL: the verdict, one entry of criteria for each criterion c1, c2, ... above, the defects, and the alignment of the integrated range with the DESIGN DECISIONS above (ALIGNED, MISALIGNED with the drift you saw, or NOT_ASSESSED). verified means every criterion is met and no defect of P0 to P2 stands.',
+    'Answer with VERDICT_FINAL: the verdict, one entry of criteria for each criterion c1, c2, ... above, the defects, and the alignment of the integrated range with the DESIGN DECISIONS above (ALIGNED, MISALIGNED with the drift you saw, or NOT_ASSESSED). verified means every criterion is met and no defect blocks. The impact of each defect is one of core_function, safety_or_data, permission_boundary, criterion_unmet, regression_introduced, minor_separable: a defect of P0 to P2 blocks whatever its impact, and of the impacts only minor_separable does not block. A final verdict of verified over a defect that blocks is refused as no verdict.',
   ].join('\n\n')
 }

@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/roles"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/acceptance/premerge"
 )
 
 // The tests of the final gate of a milestone close (CRW-1206, F13). They run the real close - crw:lib/close over the operations of
@@ -224,7 +226,13 @@ await agent.call('ROLE: executor. build the node', { agentType: 'executor', node
 // run runs the script after the header (the milestone M1 read and the composites installed) and decodes what it returned.
 func (w *closeWorld) run(body string) map[string]any {
 	w.t.Helper()
-	prog, err := script.Load(script.Source{Name: "close.js", Text: []byte(closeHeader + body)})
+	return w.runSource(closeHeader + body)
+}
+
+// runSource runs a whole script on the world and decodes what it returned.
+func (w *closeWorld) runSource(src string) map[string]any {
+	w.t.Helper()
+	prog, err := script.Load(script.Source{Name: "close.js", Text: []byte(src)})
 	if err != nil {
 		w.t.Fatal(err)
 	}
@@ -245,6 +253,27 @@ func (w *closeWorld) run(body string) map[string]any {
 }
 
 func (w *closeWorld) close() map[string]any { return w.run("return await crw.closeMilestone(ms)\n") }
+
+// final is the direct harness of reviewer-final (CRW-1505): the gate of the close (closeGate) and then the reviewer-final call over
+// its range (finalReview), both of crw:lib/close, with no milestone close after them. It answers the stop of a gate that did not
+// pass, or the result of crw.reviewerFinal. The reviewer-final op and its packet are tested here, whatever the close calls.
+func (w *closeWorld) final() map[string]any {
+	return w.runSource("import { closeGate, finalReview } from 'crw:lib/close'\n" + closeHeader + `const g = await closeGate(ms)
+if (g.state !== 'pass') return g
+return await finalReview(ms, g)
+`)
+}
+
+// finalPackets are the packets of the reviewer-final calls the world was asked, in order.
+func (w *closeWorld) finalPackets() []string {
+	var out []string
+	for _, req := range w.fake.Requests() {
+		if kindOf(req.Prompt) == "final" {
+			out = append(out, req.Prompt)
+		}
+	}
+	return out
+}
 
 // opRows are the completed rows of an op, in order.
 func (w *closeWorld) opRows(op string) []engine.Event { return rows(w.j.Events()).opRows(op) }
@@ -632,15 +661,16 @@ func crit(id string, met bool) map[string]any {
 	return map[string]any{"id": id, "met": met, "evidence": "read the range"}
 }
 
-// A verified final review evaluated every criterion of the milestone once and found each met, and names no defect of P0 to P2: a
+// A verified final review evaluated every criterion of the milestone once and found each met, and names no defect that blocks: a
 // schema-valid answer that says verified over criteria it never evaluated, over a criterion it did not meet, or over a defect of
-// P1 does not close the milestone. It is asked once more, as an answer that is no verdict is, and the close stops when the second
-// answer is as bad.
+// P1 is no verdict. It is asked once more, as an answer that is no verdict is, and reviewer-final answers verdict_invalid when the
+// second answer is as bad. The test runs on the direct harness final() (CRW-1505), so it judges the reviewer-final op whatever the
+// close calls.
 func TestReviewerFinalVerifiedMustBeComplete(t *testing.T) {
 	p1 := map[string]any{"ref": "d1", "kind": "correctness", "severity": "P1", "introduced": true, "impact": "core_function", "inPromise": true, "file": "a.go", "line": 1, "finding": "broken", "evidence_question": nil}
 	for name, c := range map[string]struct {
-		answer engine.FakeReply
-		closed bool
+		answer   engine.FakeReply
+		verified bool
 	}{
 		"no criterion evaluated":    {finalAnswer("verified", nil), false},
 		"one criterion left out":    {finalAnswer("verified", []map[string]any{crit("c1", true)}), false},
@@ -654,21 +684,22 @@ func TestReviewerFinalVerifiedMustBeComplete(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			w := newCloseWorld(t, twoCriteria())
 			w.answers["final"] = c.answer
-			got := w.close()
-			if closed := got["state"] == "closed"; closed != c.closed {
-				t.Fatalf("closed = %v, want %v: %v", closed, c.closed, got)
+			got := w.final()
+			if verdict := got["state"] == StateVerdict; verdict != c.verified {
+				t.Fatalf("a verdict = %v, want %v: %v", verdict, c.verified, got)
 			}
-			if c.closed {
+			rf := w.opRows(OpReviewerFinal)
+			if len(rf) == 0 || (dataStr(rf[len(rf)-1], "state") == StateVerdict) != c.verified {
+				t.Errorf("the last reviewer-final row is a verdict: want %v, rows %+v", c.verified, rf)
+			}
+			if c.verified {
 				return
 			}
-			if got["state"] != "stop" || got["source"] != "reviewer_final" || got["status"] != StateNullModel {
-				t.Errorf("stop %v", got)
+			if got["state"] != StateNullModel || got["reason"] != "verdict_invalid" || got["retried"] != true {
+				t.Errorf("reviewer-final %v", got)
 			}
 			if n := w.count("final"); n != 2 {
 				t.Errorf("reviewer-final asked %d times, want the call and one retry", n)
-			}
-			if len(w.opRows(OpMilestoneClose)) != 0 {
-				t.Errorf("the milestone close was recorded over an incomplete final review")
 			}
 		})
 	}
@@ -676,7 +707,7 @@ func TestReviewerFinalVerifiedMustBeComplete(t *testing.T) {
 
 // reviewer-final judges the integrated range against the decisions of the approved DESIGN, so its packet carries them: each
 // decision with its id (the drift names it), what it changes and the nodes that follow it. The DESIGN is the journal's ledger
-// row, not a file of the checkout the reviewer reads.
+// row, not a file of the checkout the reviewer reads. The test runs on the direct harness final() (CRW-1505).
 func TestReviewerFinalPacketCarriesTheDesignDecisions(t *testing.T) {
 	w := newCloseWorld(t, Milestone{})
 	design := designOf("A", "B")
@@ -694,15 +725,14 @@ func TestReviewerFinalPacketCarriesTheDesignDecisions(t *testing.T) {
 	_ = json.Unmarshal(raw, &asAny)
 	w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "c_ledger", Op: OpDesignLedger, Event: engine.EvCompleted,
 		Data: map[string]any{"milestone": "M1", "revision": FirstRevision, "digest": "sha256:design", "base_tip": headOne, "design": asAny}})
-	if got := w.close(); got["state"] != "closed" {
+	if got := w.final(); got["state"] != StateVerdict {
 		t.Fatalf("%v", got)
 	}
-	var packet string
-	for _, req := range w.fake.Requests() {
-		if kindOf(req.Prompt) == "final" {
-			packet = req.Prompt
-		}
+	packets := w.finalPackets()
+	if len(packets) != 1 {
+		t.Fatalf("reviewer-final asked %d times", len(packets))
 	}
+	packet := packets[0]
 	for _, want := range []string{"DESIGN DECISIONS", "D1", "the ledger row is the only source of the approved decisions", "D7", "every close judges the head it pinned", "nodes A, B", "nodes B"} {
 		if !strings.Contains(packet, want) {
 			t.Errorf("the reviewer-final packet lacks %q:\n%s", want, packet)
@@ -710,5 +740,66 @@ func TestReviewerFinalPacketCarriesTheDesignDecisions(t *testing.T) {
 	}
 	if g := w.gates(); len(g) == 0 || len(g[len(g)-1].Decisions) != 2 {
 		t.Errorf("the gate row names its decisions: %+v", g)
+	}
+}
+
+// CRW-1505 item 1: reviewer-final is told the rule its check applies. checkFinalVerified refuses verified over a defect that
+// premerge.Blocks, so the packet names the closed impact set and says that a defect of P0 to P2 blocks whatever its impact and that
+// of the impacts only minor_separable does not block, and the reviewer-final overlay says the same. The check is pinned with the
+// text: verified over a P3 core_function defect is no verdict (asked once more, then verdict_invalid), and verified over a P3
+// minor_separable defect is a verdict.
+func TestReviewerFinalPacketSaysTheRuleTheCheckApplies(t *testing.T) {
+	const rule = "a defect of P0 to P2 blocks whatever its impact, and of the impacts only minor_separable does not block"
+	p3 := func(impact string) map[string]any {
+		return map[string]any{"ref": "d1", "kind": "correctness", "severity": "P3", "introduced": true, "impact": impact, "inPromise": true, "file": "a.go", "line": 1, "finding": "a nit", "evidence_question": nil}
+	}
+	met := []map[string]any{crit("c1", true), crit("c2", true)}
+	for name, c := range map[string]struct {
+		answer engine.FakeReply
+		state  string
+		reason string
+		asked  int
+	}{
+		"verified over a P3 core_function defect":   {finalAnswer("verified", met, p3("core_function")), StateNullModel, "verdict_invalid", 2},
+		"verified over a P3 minor_separable defect": {finalAnswer("verified", met, p3(premerge.MinorSeparable)), StateVerdict, "", 1},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newCloseWorld(t, twoCriteria())
+			w.answers["final"] = c.answer
+			got := w.final()
+			if got["state"] != c.state || got["reason"] != c.reason {
+				t.Fatalf("reviewer-final %v, want state %s reason %q", got, c.state, c.reason)
+			}
+			packets := w.finalPackets()
+			if len(packets) != c.asked {
+				t.Fatalf("reviewer-final asked %d times, want %d", len(packets), c.asked)
+			}
+			for _, packet := range packets {
+				for _, impact := range premerge.Impacts {
+					if !strings.Contains(packet, impact) {
+						t.Errorf("the reviewer-final packet does not name the impact %s:\n%s", impact, packet)
+					}
+				}
+				for _, want := range []string{rule, "verified over a defect that blocks is refused"} {
+					if !strings.Contains(packet, want) {
+						t.Errorf("the reviewer-final packet does not say %q:\n%s", want, packet)
+					}
+				}
+			}
+		})
+	}
+	overlay, err := roles.Overlay("reviewer-final", roles.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, impact := range premerge.Impacts {
+		if !strings.Contains(overlay, impact) {
+			t.Errorf("the reviewer-final overlay does not name the impact %s:\n%s", impact, overlay)
+		}
+	}
+	for _, want := range []string{"A defect of P0 to P2 blocks whatever its impact, and of the impacts only minor_separable does not block", "verified over a defect that blocks is refused"} {
+		if !strings.Contains(overlay, want) {
+			t.Errorf("the reviewer-final overlay does not say %q:\n%s", want, overlay)
+		}
 	}
 }
