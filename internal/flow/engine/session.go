@@ -504,8 +504,11 @@ func (s *sessionCall) dropCurrentPair() {
 }
 
 // sessionResumeHeld goes on with a held session call: a call whose turn was delivered takes the task again on a new subagent (the
-// held one is confirmed not running), with the reason it stopped; a call whose step was published and not bound looks for the
-// subagent that took it first; any other starts its first turn.
+// held one is confirmed not running), with the reason it stopped; a call whose step a subagent took that could not be bound with its
+// evidence record (evidence_unbound) goes on with the same turn on a new attempt, so a new subagent takes it and the rejected one is
+// never bound; a call whose step was published and not bound looks for the subagent that took it first; any other starts its first
+// turn. Every new attempt releases the record of the attempt it follows (the process that held the call may have died before its
+// end released it).
 func (c *callRun) sessionResumeHeld(ctx context.Context) (res CallResult, stop bool, k int, input string, pre *recoveredTurn) {
 	s, p, h := c.sess, c.plan, c.held
 	rows := c.e.prior.rowsOf(c.id, "agent")
@@ -542,6 +545,7 @@ func (c *callRun) sessionResumeHeld(ctx context.Context) (res CallResult, stop b
 	case h.inputState == "delivered":
 		k = lastK + 1
 		c.firstK = k
+		c.evidenceDrop()
 		s.attempt = maxAttempt + 1
 		s.note = c.heldNote(h.reason)
 		if st.agent != "" {
@@ -560,6 +564,18 @@ func (c *callRun) sessionResumeHeld(ctx context.Context) (res CallResult, stop b
 			return CallResult{}, false, k, rowStr(repairStep.Data, "input"), nil
 		}
 		return CallResult{}, false, k, task, nil
+	case h.unbound != "" && st.kind == stagePublished:
+		// the held attempt ended with its held row (evidenceUnbound): its subagent is closed again, in case the process that held the
+		// call died before it closed it, its record released, and the step goes to a new attempt
+		c.sessionClose(h.unbound, st.attempt)
+		c.evidenceDrop()
+		s.attempt = maxAttempt + 1
+		s.note, s.lastText = c.heldNote(h.reason), st.prev
+		c.firstK = max(st.k, 1)
+		if st.repair {
+			c.firstK = max(st.k-1, 1)
+		}
+		return CallResult{}, false, max(st.k, 1), st.input, nil
 	case st.kind == stagePublished:
 		s.resume = st
 		s.attempt = st.attempt
@@ -571,6 +587,7 @@ func (c *callRun) sessionResumeHeld(ctx context.Context) (res CallResult, stop b
 		return CallResult{}, false, max(st.k, 1), st.input, nil
 	}
 	c.firstK = 1
+	c.evidenceDrop()
 	s.attempt = maxAttempt + 1
 	return CallResult{}, false, 1, c.checkpointPreface() + p.prompt, nil
 }
@@ -652,7 +669,8 @@ func (c *callRun) sessionClose(agent string, attempt int) {
 // sessionEnd closes the subagent of a call that has its terminal row, and removes the attempt's unclaimed evidence record: a call
 // held with its step published and no subagent bound keeps it, because the owner may still spawn for that step and the held call
 // that goes on publishes it again with that record (sessionResumeHeld); a held call whose subagent is closed here goes on with a
-// new attempt, which records its own.
+// new attempt, which records its own. A call held because the subagent that took its step could not be bound released its record
+// already (evidenceUnbound).
 func (c *callRun) sessionEnd(res CallResult) {
 	if c.sess == nil || res.Status == StatusUnknown {
 		return
@@ -691,7 +709,7 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 			// its step was published with (open, or claimed by the subagent before the restart)
 			if c.evidenceGated() {
 				if err := c.ensureEvidence(marker); err != nil {
-					return nil, c.evidenceHold(err), true, nil
+					return nil, c.evidenceHold(err, ""), true, nil
 				}
 			}
 			return c.sessionAdopt(turnCtx, ctx, k, op, input, repair, st)
@@ -700,7 +718,7 @@ func (c *callRun) sessionBind(turnCtx, ctx context.Context, k int, op, input str
 	if action == StepSpawn && c.evidenceGated() {
 		// the step's evidence record is written before its step_published row, and a step published again reuses it (CRW-1482)
 		if err := c.ensureEvidence(marker); err != nil {
-			return nil, c.evidenceHold(err), true, nil
+			return nil, c.evidenceHold(err, ""), true, nil
 		}
 	}
 	packet := c.sessionPacket(k, marker, input, repair, action)

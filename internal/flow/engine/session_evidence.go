@@ -18,8 +18,15 @@ import (
 // that contract. When the run has an EvidenceCwd, every spawn step of a gated agent type (executor, executor-t1, the QA capture call
 // included) gets a flow record (evidence.NewFlowAssignment) under EvidenceCwd before its step_published row, rooted at P with the
 // step's marker as its op; the spawn message and the packet name its one receipt file; the bind writes the same record under the
-// host cwd the hook reads when that differs; the completed row records what the hook accepted (evidence_receipt); and an unclaimed
-// record is removed where its attempt ends without its subagent. No row kind is added: the facts go into the rows of before.
+// host cwd the hook reads when that differs; and the completed row records what the hook accepted (evidence_receipt). No row kind is
+// added: the facts go into the rows of before.
+//
+// A record lives and ends with its call attempt: its id names the call's generation (evidenceCallKey) and the attempt's marker, so
+// no later attempt or generation takes it over, and it is released (removed while still open and unclaimed) whenever its attempt ends
+// without its subagent: a lost attempt, an ended call, a held call that goes on with a new attempt, a call superseded by a resume or
+// prepared again by one (evidenceRelease). Only a call held with its step published and no subagent bound keeps it, because the held
+// call goes on in place with that step. An attempt held because the subagent that took its step could not be bound with its record
+// (evidenceUnbound) has ended: it is never bound again, and the held call goes on with a new attempt and a new subagent.
 
 // ReasonEvidenceAssignmentFailed holds a session call whose flow evidence assignment could not be recorded (CRW-1482).
 const ReasonEvidenceAssignmentFailed = "evidence_assignment_failed"
@@ -62,7 +69,7 @@ func (c *callRun) ensureEvidence(marker string) error {
 	if err := realEvidenceDir(c.cwd); err != nil {
 		return fmt.Errorf("the receipt directory in %s: %w", c.cwd, err)
 	}
-	id := evidence.FlowAssignmentID(sc.Owner, c.e.runID, c.id, marker)
+	id := evidence.FlowAssignmentID(sc.Owner, c.e.runID, c.evidenceCallKey(), marker)
 	a, err := evidence.NewFlowAssignment(sc.Owner, id, c.cwd, marker, c.e.cfg.Now())
 	if err != nil {
 		return err
@@ -103,10 +110,30 @@ func realEvidenceDir(dir string) error {
 	return nil
 }
 
-// evidenceHold is the held result of a call whose assignment could not be recorded: nothing was dispatched.
-func (c *callRun) evidenceHold(err error) CallResult {
-	return c.terminal(EvHeld, StatusHeld, ReasonEvidenceAssignmentFailed, map[string]any{"input_state": "not_delivered",
-		"detail": "the flow evidence assignment of the step could not be recorded, so no subagent was dispatched: " + err.Error()})
+// evidenceCallKey is the call as its assignment ids name it: the call id for its first prepared row, and the call id with the
+// sequence of its prepared row for a call a resumed run prepared again (its position ran live), so the attempts of a later generation
+// never take over a record of an earlier one (one a subagent of that generation claimed). Only a resumed run has earlier rows of the
+// call (the previous processes'), and a process that resumes the generation in place reads the same prepared row (startSeq) and
+// derives the same ids.
+func (c *callRun) evidenceCallKey() string {
+	for _, ev := range c.e.prior.rowsOf(c.id, "agent") {
+		if ev.Event == EvPrepared && ev.Seq < c.startSeq {
+			return fmt.Sprintf("%s@%d", c.id, c.startSeq)
+		}
+	}
+	return c.id
+}
+
+// evidenceHold is the held result of a call whose assignment could not be recorded: nothing was dispatched. unbound is the subagent
+// that took the step and was closed unbound (evidenceUnbound), "" when there is none; the held row names it (evidence_unbound), and a
+// held call that goes on reads it there and starts a new attempt (sessionResumeHeld).
+func (c *callRun) evidenceHold(err error, unbound string) CallResult {
+	data := map[string]any{"input_state": "not_delivered",
+		"detail": "the flow evidence assignment of the step could not be recorded, so no subagent was dispatched: " + err.Error()}
+	if unbound != "" {
+		data["evidence_unbound"] = unbound
+	}
+	return c.terminal(EvHeld, StatusHeld, ReasonEvidenceAssignmentFailed, data)
 }
 
 // evidenceStepData adds the step's assignment to its step_published data.
@@ -146,7 +173,9 @@ func (c *callRun) evidenceBind(agent, marker, hostCwd string, data map[string]an
 }
 
 // evidenceUnbound is the held result of a call whose step a subagent took that could not be bound with its record (evidenceBind),
-// and whether there is one: that subagent is closed, and the step stays published for the held call that goes on.
+// and whether there is one. The attempt ends with it: the held row naming the rejected subagent is written first (a process that dies
+// after it never binds that subagent, which the marker search still finds for the step), then the subagent is closed and the
+// attempt's record released. The held call that goes on starts a new attempt, which a new subagent takes (sessionResumeHeld).
 func (c *callRun) evidenceUnbound() (CallResult, bool) {
 	ev := c.sess.evidence
 	if ev == nil || ev.bindErr == nil {
@@ -154,8 +183,10 @@ func (c *callRun) evidenceUnbound() (CallResult, bool) {
 	}
 	err, agent := ev.bindErr, ev.unbound
 	ev.bindErr, ev.unbound = nil, ""
+	res := c.evidenceHold(err, agent)
 	c.sessionClose(agent, c.sess.attempt)
-	return c.evidenceHold(err), true
+	c.evidenceDrop()
+	return res, true
 }
 
 // evidenceRestore reads back what a call's rows of its newest attempt say of its assignment: the last spawn step that recorded one,
@@ -207,13 +238,45 @@ func (c *callRun) evidenceDrop() {
 	if s == nil || s.evidence == nil {
 		return
 	}
-	owner := c.e.cfg.Session.Owner
-	for _, cwd := range s.evidence.cwds {
-		if rec, ok := evidence.RecordedAssignment(cwd, owner, s.evidence.id); ok {
+	releaseRecord(c.e.cfg.Session.Owner, s.evidence.id, s.evidence.cwds)
+	s.evidence = nil
+}
+
+// evidenceRelease releases the records the rows of a call name (each spawn step's evidence_assignment) where they are still open and
+// unclaimed, under EvidenceCwd and every cwd a bind of the rows recorded (evidence_cwd): the attempts those rows hold have ended
+// without going on, because the call was superseded or is prepared again. A claimed record stays: it is the receipt the hook
+// accepted.
+func (e *Engine) evidenceRelease(rows []Event) {
+	sc := e.cfg.Session
+	if sc == nil || sc.EvidenceCwd == "" {
+		return
+	}
+	cwds := []string{sc.EvidenceCwd}
+	var ids []string
+	for _, row := range rows {
+		switch row.Event {
+		case EvStepPublished:
+			if id := rowStr(row.Data, "evidence_assignment"); id != "" && !slices.Contains(ids, id) {
+				ids = append(ids, id)
+			}
+		case EvThreadStarted:
+			if cwd := rowStr(row.Data, "evidence_cwd"); cwd != "" && !slices.Contains(cwds, cwd) {
+				cwds = append(cwds, cwd)
+			}
+		}
+	}
+	for _, id := range ids {
+		releaseRecord(sc.Owner, id, cwds)
+	}
+}
+
+// releaseRecord removes the owner's record id under each of cwds where it is open and unclaimed (Assignment.Remove).
+func releaseRecord(owner, id string, cwds []string) {
+	for _, cwd := range cwds {
+		if rec, ok := evidence.RecordedAssignment(cwd, owner, id); ok {
 			rec.Remove(cwd)
 		}
 	}
-	s.evidence = nil
 }
 
 // evidenceReceipt records on a completed turn's data what the hook accepted for the call's assignment (evidence_receipt): an
