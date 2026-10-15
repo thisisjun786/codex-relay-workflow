@@ -52,15 +52,20 @@ func OpenAuditStore(ctx context.Context, req AuditRequest) (AuditSetup, error) {
 		return AuditSetup{}, err
 	}
 	client := appserver.New(socket, appserver.DefaultBounds)
-	finished := false
-	for _, ev := range j.Events() {
-		if ev.Kind == engine.KindRun && ev.Event == "finished" {
-			finished = true
-		}
-	}
-	return AuditSetup{RunID: run, Journal: j, Reader: audit.BusReader{Bus: client.Bus()}, Finished: finished, Close: func() error {
+	return AuditSetup{RunID: run, Journal: j, Reader: audit.BusReader{Bus: client.Bus()}, Finished: runEnded(j.Events()), Close: func() error {
 		return errors.Join(j.Close(), client.Close(), st.Close())
 	}}, nil
+}
+
+// runEnded says whether a process of the run ended it: a finished row, or the run/paused row of a run the operator paused
+// (CRW-1487), which leaves the journal to nobody as a finished one does.
+func runEnded(events []engine.Event) bool {
+	for _, ev := range events {
+		if ev.Kind == engine.KindRun && (ev.Event == "finished" || ev.Event == "paused") {
+			return true
+		}
+	}
+	return false
 }
 
 // RunOfAcceptance is the run that holds an acceptance, searched in the rows of the store. An acceptance that no run holds, or that

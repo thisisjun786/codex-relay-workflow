@@ -110,7 +110,11 @@ func (c *command) printDetail(d RunDetail) {
 	if d.Live {
 		notes = append(notes, fmt.Sprintf("process %d holds the run lock", d.PID))
 	}
-	if d.Paused != "" {
+	switch {
+	case d.State == StatePaused && !d.Live:
+		// the operator paused the run and its process ended paused (CRW-1487)
+		notes = append(notes, "paused by "+d.Paused+"; no process holds the run: crw flow resume "+d.RunID+" goes on")
+	case d.Paused != "":
 		notes = append(notes, "paused by "+d.Paused)
 	}
 	if len(d.HeldReasons) > 0 {
@@ -281,7 +285,8 @@ func (c *command) watch(args []string) int {
 		if !*follow {
 			return 0
 		}
-		if len(page.Rows) == 0 && !page.More && (Over(page.State) || page.State == StateDead || page.State == StateHeld) {
+		// a run no process holds gets no row until it is resumed: dead, held, and paused with no process (CRW-1487)
+		if len(page.Rows) == 0 && !page.More && (Over(page.State) || page.State == StateDead || page.State == StateHeld || (page.State == StatePaused && !page.Live)) {
 			if !*asJSON {
 				if d, err := r.Detail(c.ctx, run); err == nil {
 					c.printDetail(d)

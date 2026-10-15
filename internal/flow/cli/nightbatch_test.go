@@ -180,7 +180,7 @@ func TestNightBatchResumeKeepsTheDecisionBudget(t *testing.T) {
 		if err != nil {
 			return engine.ResumeSetup{}, err
 		}
-		return engine.ResumeSetup{Journal: w.Journal, Backend: w.Backend, Close: w.Close}, nil
+		return engine.ResumeSetup{Journal: w.Journal, Backend: w.Backend, Upward: w.Upward, Close: w.Close}, nil
 	}
 	// the script returns the status and the reason of its second call, which the resume prints in the run's result
 	resume := func(run string, extra ...string) (int, string, string) {
@@ -213,7 +213,7 @@ func TestNightBatchResumeKeepsTheDecisionBudget(t *testing.T) {
 		if code, errOut := pw.execute(spec, false, sigs); code != 0 {
 			t.Fatalf("the first process of %s: exit %d %s", id, code, errOut)
 		}
-		if info := pw.info(id); info.State != StateHeld || info.Processes != 1 {
+		if info := pw.info(id); info.State != StatePaused || info.Processes != 1 {
 			t.Fatalf("the paused run %s: %+v", id, info)
 		}
 	}
@@ -276,7 +276,7 @@ func scriptResumeEnv(t *testing.T, pw *processWorld) {
 		if err != nil {
 			return engine.ResumeSetup{}, err
 		}
-		return engine.ResumeSetup{Journal: w.Journal, Backend: w.Backend, Close: w.Close}, nil
+		return engine.ResumeSetup{Journal: w.Journal, Backend: w.Backend, Upward: w.Upward, Close: w.Close}, nil
 	}
 }
 
@@ -319,7 +319,7 @@ func TestNightBatchResumeDoesNotRefillTheBudget(t *testing.T) {
 				t.Fatalf("the first process: exit %d %s", code, errOut)
 			}
 			first = false
-			if info := pw.info(run); info.State != StateHeld || info.Tokens != 70 || info.Processes != 1 {
+			if info := pw.info(run); info.State != StatePaused || info.Tokens != 70 || info.Processes != 1 {
 				t.Fatalf("the paused run: %+v", info)
 			}
 			// the resume goes on with the second call, which brings the run to 110 of its 100 tokens: the third call is held
@@ -457,7 +457,7 @@ func pausedRun(t *testing.T, pw *processWorld, run string, first int64, mutate f
 	if code, errOut := pw.execute(spec, false, sigs); code != 0 {
 		t.Fatalf("the first process: exit %d %s", code, errOut)
 	}
-	if info := pw.info(run); info.State != StateHeld || info.Tokens != first || info.Processes != 1 {
+	if info := pw.info(run); info.State != StatePaused || info.Tokens != first || info.Processes != 1 {
 		t.Fatalf("the paused run: %+v", info)
 	}
 	return spec

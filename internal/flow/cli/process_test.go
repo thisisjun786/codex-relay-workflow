@@ -161,15 +161,24 @@ func TestRunProcessHoldsTheLockAndLeavesTheResult(t *testing.T) {
 }
 
 // TestPauseAndCancelSignalTheRunProcess: SIGUSR1 pauses the process (the call in flight is interrupted and the calls that would send end held engine_paused, with one
-// run_paused row, and the run is held, not over), SIGTERM ends it (the run is cancelled), a deadline that passed pauses the run
-// by itself, and `crw flow pause` and `crw flow cancel` send those signals to the process the lock names.
+// run_paused row; the process exits 0 and the run ends paused: a run/paused row and no finished row, nothing told finished, and a
+// resume goes on), SIGTERM ends it (the run is cancelled), a deadline that passed pauses the run by itself (it finishes held), and
+// `crw flow pause` and `crw flow cancel` send those signals to the process the lock names.
 func TestPauseAndCancelSignalTheRunProcess(t *testing.T) {
 	t.Run("pause", func(t *testing.T) {
 		pw := newProcessWorld(t, twoCalls)
+		hook := &upwardRecorder{}
+		inner := pw.td.World
+		pw.td.World = func(ctx context.Context, req WorldRequest) (World, error) {
+			w, err := inner(ctx, req)
+			w.Upward = hook
+			return w, err
+		}
 		spec := pw.spec("run-pause", nil)
 		sigs := make(chan os.Signal, 2)
+		pause := true
 		pw.handle = func(r engine.FakeRequest) engine.FakeReply {
-			if r.Kind == "turn" && strings.Contains(r.Prompt, "first") {
+			if pause && r.Kind == "turn" && strings.Contains(r.Prompt, "first") {
 				sigs <- syscall.SIGUSR1
 				time.Sleep(200 * time.Millisecond) // the signal is read before the second call is sent
 			}
@@ -179,12 +188,33 @@ func TestPauseAndCancelSignalTheRunProcess(t *testing.T) {
 			t.Fatalf("exit %d %s", code, errOut)
 		}
 		info := pw.info("run-pause")
-		if info.State != StateHeld || info.Paused != "operator: crw flow pause" || len(info.HeldReasons) != 1 || info.HeldReasons[0] != engine.ReasonEnginePaused || info.Unsettled != 2 {
+		if info.State != StatePaused || info.Live || info.Status != engine.RunPaused || info.Paused != "operator: crw flow pause" || len(info.HeldReasons) != 1 || info.HeldReasons[0] != engine.ReasonEnginePaused || info.Unsettled != 2 {
 			t.Errorf("the paused run: %+v", info)
 		}
+		events, _, err := loadRun(pw.world, "run-pause")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ends := endRowsAfterLastStart(events); strings.Join(ends, ",") != "paused" {
+			t.Errorf("the run rows after the last start: %v, want one paused row", ends)
+		}
+		if got := strings.Join(hook.calls, "|"); got != "started run-pause" {
+			t.Errorf("the hook was called %q: a paused run is not told finished", got)
+		}
 		res, _ := ReadResult(pw.state, "run-pause")
-		if string(compactJSON(res.Value)) != `["held","held","engine_paused"]` {
-			t.Errorf("the value: %s", res.Value)
+		if res.Status != engine.RunPaused || string(compactJSON(res.Value)) != `["held","held","engine_paused"]` {
+			t.Errorf("the result: %+v %s", res, res.Value)
+		}
+		// a resume goes on to the end, and that end is told
+		pause = false
+		if code, errOut := pw.execute(spec, true, nil); code != 0 {
+			t.Fatalf("the resume: exit %d %s", code, errOut)
+		}
+		if info := pw.info("run-pause"); info.State != StateCompleted || info.Processes != 2 {
+			t.Errorf("the resumed run: %+v", info)
+		}
+		if got := strings.Join(hook.calls, "|"); got != "started run-pause|started run-pause|finished run-pause completed" {
+			t.Errorf("the hook was called %q", got)
 		}
 	})
 	t.Run("cancel", func(t *testing.T) {
@@ -279,7 +309,7 @@ func TestResumeTakesTheRunFromItsSpec(t *testing.T) {
 	if code, errOut := pw.execute(spec, false, sigs); code != 0 {
 		t.Fatalf("exit %d %s", code, errOut)
 	}
-	if info := pw.info("run-again"); info.State != StateHeld {
+	if info := pw.info("run-again"); info.State != StatePaused {
 		t.Fatalf("the paused run: %+v", info)
 	}
 	paused = false
@@ -421,6 +451,13 @@ func TestForegroundResumePausesCleanlyOnSIGUSR1(t *testing.T) {
 	for _, path := range []string{"script", "spec"} {
 		t.Run(path, func(t *testing.T) {
 			pw := newProcessWorld(t, twoCalls)
+			hook := &upwardRecorder{}
+			inner := pw.td.World
+			pw.td.World = func(ctx context.Context, req WorldRequest) (World, error) {
+				w, err := inner(ctx, req)
+				w.Upward = hook
+				return w, err
+			}
 			scriptResumeEnv(t, pw)
 			run := "run-usr1-" + path
 			resume := func() (int, string, string) {
@@ -455,16 +492,31 @@ func TestForegroundResumePausesCleanlyOnSIGUSR1(t *testing.T) {
 			}
 			// the foreground resume is paused by a SIGUSR1 sent to its process
 			mode = "signal"
-			if code, out, errOut := resume(); code != 0 {
+			code, out, errOut := resume()
+			if code != 0 {
 				t.Fatalf("the paused resume: exit %d %s %s", code, out, errOut)
 			}
 			info := pw.info(run)
-			if info.Processes != 2 || info.Live || info.State != StateHeld || info.Paused != "operator: crw flow pause" || len(info.HeldReasons) != 1 || info.HeldReasons[0] != engine.ReasonEnginePaused {
+			if info.Processes != 2 || info.Live || info.State != StatePaused || info.Status != engine.RunPaused || info.Paused != "operator: crw flow pause" || len(info.HeldReasons) != 1 || info.HeldReasons[0] != engine.ReasonEnginePaused {
 				t.Errorf("the resume did not pause cleanly: %+v", info)
 			}
 			events, _, err := loadRun(pw.world, run)
 			if err != nil {
 				t.Fatal(err)
+			}
+			if ends := endRowsAfterLastStart(events); strings.Join(ends, ",") != "paused" {
+				t.Errorf("the run rows after the last start: %v, want one paused row", ends)
+			}
+			if got := strings.Join(hook.calls, "|"); got != "started "+run+"|started "+run {
+				t.Errorf("the hook was called %q: a paused run is not told finished", got)
+			}
+			// the end the resume came to: the engine's result on stdout (SCRIPT) or result.json (the spec's process)
+			if path == "script" {
+				if !strings.Contains(out, `"status": "paused"`) {
+					t.Errorf("the result of the paused resume: %s", out)
+				}
+			} else if res, _ := ReadResult(pw.state, run); res.Status != engine.RunPaused {
+				t.Errorf("the result of the paused resume: %+v", res)
 			}
 			pauses := 0
 			for _, e := range events {
