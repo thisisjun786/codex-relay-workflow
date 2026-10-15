@@ -487,19 +487,57 @@ func (r *Runner) recordLanding(ctx context.Context, pr tracking.PullRequest, out
 	return l
 }
 
+// The states of a landing record's comment field: the record is written first, so a pass that ends before the comment call leaves
+// commentNotWrittenYet, which the next pass that finds the head landed posts (repostLandingComment). A refusal is commentRefused
+// plus the reason and is final: the landing stands and the file says why the comment is missing.
+const (
+	commentNotWrittenYet = "not written yet"
+	commentWritten       = "written"
+	commentRefused       = "not written: "
+)
+
 // publishLanding writes <tag>.pr.json, then puts the same record on the pull request as a comment and writes the file again
 // with what the comment became.
 func (r *Runner) publishLanding(ctx context.Context, l *Landing) {
-	l.Comment = "not written yet"
+	l.Comment = commentNotWrittenYet
 	r.writeLanding(l)
+	r.postLandingComment(ctx, l)
+	r.writeLanding(l)
+}
+
+// postLandingComment puts the landing record on the pull request as a comment headed [dev queue · <tag>] and sets l.Comment to what
+// it became. A signal that ends the pass does not cancel the call (the push already happened).
+func (r *Runner) postLandingComment(ctx context.Context, l *Landing) {
 	ref := tracking.Ref{Repo: r.Cfg.PullRequestRepo, Number: l.Number}
 	if err := r.PullRequests.Comment(context.WithoutCancel(ctx), ref, "[dev queue · "+l.Tag+"]", landingText(l)); err != nil {
-		l.Comment = "not written: " + err.Error()
+		l.Comment = commentRefused + err.Error()
 		r.logf("%s: the landing record could not be written on the pull request: %v", ref, err)
 	} else {
-		l.Comment = "written"
+		l.Comment = commentWritten
 	}
-	r.writeLanding(l)
+}
+
+// repostLandingComment posts the comment of the landing record of e that an earlier pass left "not written yet" (it ended between
+// the record and the comment call) and writes the record again. A record whose comment is written or was refused, and an entry with
+// no record (its done/ file alone), are left as they are. It is called only by a pass, never by --enqueue-pr or --dry-run. One
+// window stays: a pass that ends between the comment call and the second write leaves "not written yet" for a comment that exists,
+// and the next pass posts it a second time.
+func (r *Runner) repostLandingComment(ctx context.Context, e Entry) {
+	path := r.findLanding(e.PR, e.Head)
+	if path == "" {
+		return
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return
+	}
+	var l Landing
+	if json.Unmarshal(data, &l) != nil || l.Comment != commentNotWrittenYet {
+		return
+	}
+	r.postLandingComment(ctx, &l)
+	r.writeLanding(&l)
+	r.logf("%s %s: the landing comment of %s was posted (%s)", e.Key, e.Head, l.Tag, l.Comment)
 }
 
 func (r *Runner) writeLanding(l *Landing) {
