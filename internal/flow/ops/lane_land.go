@@ -119,7 +119,11 @@ func (o *acceptOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 	switch {
 	case ucAt >= 0:
 		row := r[ucAt]
-		v, err := UnitCheckVerdict(uc, row.CallID, dataStr(ver, "digest"), expectedCriteria(r, node))
+		receipt := ""
+		if rc, ok := row.Data["receipt"].(map[string]any); ok && str(rc, "state") == "accepted" {
+			receipt = str(rc, "sha256")
+		}
+		v, err := UnitCheckVerdict(uc, row.CallID, dataStr(ver, "digest"), expectedCriteria(r, node), receipt)
 		if err != nil {
 			return engine.OpResult{}, &Refusal{"reviewer_not_verified", err.Error()}
 		}

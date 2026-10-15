@@ -3,6 +3,8 @@ package ops
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -2100,4 +2102,247 @@ func TestUnitCheckRefusesAMovedHead(t *testing.T) {
 	if _, err := u.op("accept", "A", commit.Commit); err == nil || ReasonOf(err.Error()) != "reviewer_missing" {
 		t.Errorf("crw.accept after a head_moved check: %v, want reviewer_missing", err)
 	}
+}
+
+// ---- the executor receipt of a unit check (CRW-1463, C12) ----
+
+// receiptCopy writes bytes as the step-bus copy of an executor's evidence receipt under a temporary directory and answers its absolute
+// path and the hex sha256 the receipt row names.
+func receiptCopy(t *testing.T, body string) (path, digest string) {
+	t.Helper()
+	path = filepath.Join(t.TempDir(), "evidence-as1.md")
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256([]byte(body))
+	return path, hex.EncodeToString(sum[:])
+}
+
+// buildWithReceipt is build with the evidence_receipt the session backend records on the executor call's completed row.
+func (u *ucWorld) buildWithReceipt(callID, body string, receipt map[string]any) CallRef {
+	u.t.Helper()
+	ex := u.build(callID, body)
+	evs := u.j.Events()
+	last := evs[len(evs)-1]
+	if last.CallID != callID || last.Event != engine.EvCompleted {
+		u.t.Fatalf("build did not end with the completed row of %s", callID)
+	}
+	u.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: callID, Op: "agent", Event: engine.EvCompleted,
+		Data: map[string]any{"pending_tree": dataStr(last, "pending_tree"), "evidence_receipt": receipt}})
+	return ex
+}
+
+// checkOnTree has the scripted checker answer a clean record that saw tree (the pending tree crw.commit commits), so crw.accept finds
+// the check on the commit's tree.
+func (u *ucWorld) checkOnTree(tree string) {
+	rec := checkRecord(reviewadapter.StateOK, reviewadapter.VerdictVerified)
+	rec.FingerprintBefore, rec.FingerprintAfter = tree, tree
+	u.checker.replies = []checkReply{{res: rec}}
+}
+
+// checkReceiptOf is the receipt a unit-check row records.
+func checkReceiptOf(row engine.Event) map[string]any {
+	m, _ := row.Data["receipt"].(map[string]any)
+	return m
+}
+
+// TestUnitCheckCarriesTheExecutorReceiptToTheCheckAndTheAcceptance (CRW-1463, C12): an uncommitted check of a call whose completed row
+// records an accepted evidence receipt with its step-bus copy reads the copy, puts its bytes in the prompt (EXECUTOR RECEIPT), and records
+// the receipt (state, sha256, copy, ignored) on its row; crw.accept on that row names the executor receipt in the premerge evidence.
+func TestUnitCheckCarriesTheExecutorReceiptToTheCheckAndTheAcceptance(t *testing.T) {
+	u := newUCWorld(t)
+	body := "RED-FIRST: go test -run TestA ./a: FAIL TestA\nMUTATION-RED: a.go:3 flipped: FAIL TestA\n"
+	copyPath, digest := receiptCopy(t, body)
+	ex := u.buildWithReceipt("c_ex1", "built\n", map[string]any{"assignment": "as1", "state": "accepted", "path": "/p/receipt.md", "sha256": digest,
+		"agent_id": "agent-1", "turn_id": "turn-1", "turn_match": true, "copy": copyPath, "ignored": true})
+	u.checkOnTree(u.snapshot())
+	out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+	if out.State != reviewadapter.StateOK || out.Hold != "" {
+		t.Fatalf("answer %+v", out)
+	}
+	if len(u.checker.got) != 1 {
+		t.Fatalf("%d checker calls, want 1", len(u.checker.got))
+	}
+	prompt := u.checker.got[0].Prompt
+	if !strings.Contains(prompt, "EXECUTOR RECEIPT") || !strings.Contains(prompt, body) || !strings.Contains(prompt, digest) {
+		t.Errorf("the prompt does not carry the executor receipt:\n%s", prompt)
+	}
+	if i, j := strings.Index(prompt, "Review the uncommitted changes"), strings.Index(prompt, "EXECUTOR RECEIPT"); i != 0 || j < i {
+		t.Errorf("the scope sentence is not first, before the receipt:\n%s", prompt)
+	}
+	row := u.lastCheck()
+	rc := checkReceiptOf(row)
+	if str(rc, "state") != "accepted" || str(rc, "sha256") != digest || str(rc, "copy") != copyPath || rc["ignored"] != true {
+		t.Errorf("the row's receipt %v", rc)
+	}
+	if dataStr(row, "role") != "unit-check" || !u.proven(row) {
+		t.Errorf("row %v", row.Data)
+	}
+	var commit CommitOutcome
+	_ = json.Unmarshal(u.must("commit", "A", ex, []string{"a.txt"}), &commit)
+	u.must("verify", "A", commit.Commit)
+	capture := &acceptCapture{stubRelay: u.relay}
+	u.lane.d.Relay = capture
+	if _, err := u.op("accept", "A", commit.Commit); err != nil {
+		t.Fatalf("crw.accept on the unit check: %v", err)
+	}
+	if len(capture.got) != 1 || capture.got[0].ReviewerCall != row.CallID {
+		t.Fatalf("accept requests %+v", capture.got)
+	}
+	rec, err := premerge.Decode(capture.got[0].Premerge)
+	if err != nil {
+		t.Fatalf("premerge: %v", err)
+	}
+	if len(rec.Criteria) != 2 {
+		t.Fatalf("criteria %+v", rec.Criteria)
+	}
+	for id, c := range rec.Criteria {
+		if !strings.Contains(c.Evidence, "executor receipt "+digest) {
+			t.Errorf("criterion %s evidence %q does not name the executor receipt", id, c.Evidence)
+		}
+	}
+
+	// a receipt longer than the prompt can carry (the tool takes the prompt as one argument) is cut at a line end and names its copy
+	long := strings.Repeat("RED-FIRST: go test -run TestA ./a: FAIL TestA, a line of the receipt\n", 4000)
+	longPath, longDigest := receiptCopy(t, long)
+	snapBefore := u.snapshot()
+	u.buildWithReceipt("c_ex_long", "built\n", map[string]any{"assignment": "as2", "state": "accepted", "sha256": longDigest, "copy": longPath})
+	if u.snapshot() != snapBefore {
+		t.Fatal("the long-receipt call moved the tree")
+	}
+	u.checkOnTree(snapBefore)
+	decodeCheck(t, u.must("unitCheck", "A", call("c_ex_long", "completed", "claude-x", nil), map[string]any{"round": 1}))
+	lp := u.checker.got[len(u.checker.got)-1].Prompt
+	if len(lp) > UnitCheckReceiptPromptLimit+4096 || !strings.Contains(lp, longPath) || !strings.Contains(lp, fmt.Sprintf("the receipt is %d bytes", len(long))) {
+		t.Errorf("a long receipt's prompt is %d bytes, names its copy %v", len(lp), strings.Contains(lp, longPath))
+	}
+	if rc := checkReceiptOf(u.lastCheck()); str(rc, "state") != "accepted" || str(rc, "sha256") != longDigest {
+		t.Errorf("the long receipt's row %v", rc)
+	}
+}
+
+// TestUnitCheckHoldsWithoutAnAcceptedReceipt (CRW-1463, C12): a receipt the backend recorded as missing or unverified, an accepted one
+// that was not copied to the step bus, whose copy cannot be read or whose bytes do not hash to its digest, is no receipt to hand the
+// check: the tool is not run, the row carries the node, the call, the receipt as read and hold receipt_*, and no role, adapter record,
+// tree or commit; it is not proven, the lane's crw.hold with that reason writes source unit_check, and crw.accept is refused
+// reviewer_missing. A call with no evidence_receipt had no assignment: the check runs and records receipt not_assigned. A committed
+// check has no executor: it reads no receipt and records receipt no_executor.
+func TestUnitCheckHoldsWithoutAnAcceptedReceipt(t *testing.T) {
+	cases := []struct {
+		name, hold string
+		receipt    func(t *testing.T) map[string]any
+	}{
+		{"missing", "receipt_missing", func(*testing.T) map[string]any {
+			return map[string]any{"assignment": "as1", "state": "missing", "detail": "the stop hook never accepted a receipt for the assignment"}
+		}},
+		{"unverified", "receipt_unverified", func(*testing.T) map[string]any {
+			return map[string]any{"assignment": "as1", "state": "unverified", "detail": "the assignment was claimed by agent-2, not by the bound subagent agent-1"}
+		}},
+		{"copy_error", "receipt_not_copied", func(*testing.T) map[string]any {
+			return map[string]any{"assignment": "as1", "state": "accepted", "path": "/p/receipt.md", "sha256": strings.Repeat("e", 64), "agent_id": "agent-1",
+				"copy_error": "the step bus is full"}
+		}},
+		{"unreadable_copy", "receipt_not_copied", func(t *testing.T) map[string]any {
+			return map[string]any{"assignment": "as1", "state": "accepted", "sha256": strings.Repeat("e", 64), "copy": filepath.Join(t.TempDir(), "gone.md")}
+		}},
+		{"digest_mismatch", "receipt_unverified", func(t *testing.T) map[string]any {
+			p, _ := receiptCopy(t, "the bytes on the bus\n")
+			_, other := receiptCopy(t, "the bytes the hook accepted\n")
+			return map[string]any{"assignment": "as1", "state": "accepted", "sha256": other, "copy": p}
+		}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			u := newUCWorld(t)
+			receipt := c.receipt(t)
+			ex := u.buildWithReceipt("c_ex1", "built\n", receipt)
+			out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+			if len(u.checker.got) != 0 {
+				t.Fatalf("the checker was asked %d times without an accepted receipt", len(u.checker.got))
+			}
+			if out.Hold != c.hold || out.Call != "c_ex1" {
+				t.Errorf("answer %+v, want hold %s", out, c.hold)
+			}
+			row := u.lastCheck()
+			if dataStr(row, "node") != "A" || dataStr(row, "call") != "c_ex1" || dataStr(row, "hold") != c.hold {
+				t.Errorf("row %v", row.Data)
+			}
+			if !reflect.DeepEqual(checkReceiptOf(row), receipt) {
+				t.Errorf("the row's receipt %v is not the receipt as read %v", checkReceiptOf(row), receipt)
+			}
+			for _, k := range []string{"role", "tree", "commit"} {
+				if _, has := row.Data[k]; has {
+					t.Errorf("a receipt hold row has %s: %v", k, row.Data[k])
+				}
+			}
+			var rec reviewadapter.Result
+			if err := json.Unmarshal(resultOf(row), &rec); err != nil || rec.Model != "" || rec.PromptDigest != "" || rec.FingerprintBefore != "" || rec.State == reviewadapter.StateOK {
+				t.Errorf("a receipt hold row carries an adapter record: %+v %v", rec, err)
+			}
+			if u.proven(row) {
+				t.Error("a receipt hold is proven: a resume would not look at the receipt again")
+			}
+			var held HoldOutcome
+			_ = json.Unmarshal(u.must("hold", "A", map[string]any{"reason": out.Hold, "call": ex.CallID, "source": "unit_check"}), &held)
+			hr, ok := rows(u.j.Events()).opRows(OpHold).last(func(engine.Event) bool { return true })
+			if !held.Held || !ok || dataStr(hr, "source") != "unit_check" || dataStr(hr, "reason") != c.hold {
+				t.Errorf("hold %+v row %v", held, hr.Data)
+			}
+			var commit CommitOutcome
+			_ = json.Unmarshal(u.must("commit", "A", ex, []string{"a.txt"}), &commit)
+			u.must("verify", "A", commit.Commit)
+			if _, err := u.op("accept", "A", commit.Commit); err == nil || ReasonOf(err.Error()) != "reviewer_missing" {
+				t.Errorf("crw.accept after a receipt hold: %v, want reviewer_missing", err)
+			}
+		})
+	}
+
+	t.Run("not_assigned", func(t *testing.T) {
+		u := newUCWorld(t)
+		ex := u.build("c_ex1", "built\n")
+		u.checkOnTree(u.snapshot())
+		out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+		row := u.lastCheck()
+		if len(u.checker.got) != 1 || out.Hold != "" || dataStr(row, "role") != "unit-check" || !reflect.DeepEqual(checkReceiptOf(row), map[string]any{"state": "not_assigned"}) {
+			t.Errorf("%d checker calls, answer %+v, row %v", len(u.checker.got), out, row.Data)
+		}
+		if strings.Contains(u.checker.got[0].Prompt, "EXECUTOR RECEIPT") {
+			t.Errorf("a check with no assignment has a receipt section:\n%s", u.checker.got[0].Prompt)
+		}
+		// and the acceptance on it names no executor receipt
+		var commit CommitOutcome
+		_ = json.Unmarshal(u.must("commit", "A", ex, []string{"a.txt"}), &commit)
+		u.must("verify", "A", commit.Commit)
+		capture := &acceptCapture{stubRelay: u.relay}
+		u.lane.d.Relay = capture
+		if _, err := u.op("accept", "A", commit.Commit); err != nil || len(capture.got) != 1 {
+			t.Fatalf("crw.accept on a check with no assignment: %v %+v", err, capture.got)
+		}
+		rec, err := premerge.Decode(capture.got[0].Premerge)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for id, c := range rec.Criteria {
+			if strings.Contains(c.Evidence, "executor receipt") {
+				t.Errorf("criterion %s evidence %q names a receipt the check had none of", id, c.Evidence)
+			}
+		}
+	})
+
+	t.Run("committed", func(t *testing.T) {
+		u := newUCWorld(t)
+		// the call's receipt would hold an uncommitted check; a committed check judges a range with no executor and reads none
+		ex := u.buildWithReceipt("c_ex1", "built\n", map[string]any{"assignment": "as1", "state": "missing"})
+		var commit CommitOutcome
+		_ = json.Unmarshal(u.must("commit", "A", ex, []string{"a.txt"}), &commit)
+		out := decodeCheck(t, u.must("unitCheck", "A", nil, map[string]any{"commit": commit, "base": u.start, "final": true}))
+		row := u.lastCheck()
+		if len(u.checker.got) != 1 || out.Hold != "" || out.State != reviewadapter.StateOK || dataStr(row, "role") != "unit-check" ||
+			!reflect.DeepEqual(checkReceiptOf(row), map[string]any{"state": "no_executor"}) {
+			t.Errorf("%d checker calls, answer %+v, row %v", len(u.checker.got), out, row.Data)
+		}
+		if strings.Contains(u.checker.got[0].Prompt, "EXECUTOR RECEIPT") {
+			t.Errorf("a committed check has a receipt section:\n%s", u.checker.got[0].Prompt)
+		}
+	})
 }
