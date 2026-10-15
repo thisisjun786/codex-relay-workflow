@@ -209,6 +209,9 @@ func (c *command) start(args []string) int {
 		if why := CheckHandoff(in, planOf(spec.Args), milestoneArg(spec.Args)); why != "" {
 			return c.fail("%s", why)
 		}
+		if why := BundleBranchProblem(c.ctx, nil, in, planOf(spec.Args)); why != "" {
+			return c.fail("%s", why)
+		}
 		handoffIn = &in
 		if _, named := HandoffOf(spec.Args); named {
 			return c.usage("the args name a handoff of their own: the run's handoff is given with --handoff")
