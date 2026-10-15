@@ -3,11 +3,17 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/journal"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/decisions"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -267,25 +273,93 @@ func TestAnswerRefusesOutOfScopeAuthority(t *testing.T) {
 
 // TestAnswerAppliesOnce: an answer that holds appends one decision_applied row (the question, the node, the attempt, the plan
 // basis, the decision and who gave it) and resumes the run once; the same answer again appends nothing and resumes nothing, another
-// decision for the same question is refused, and a run a process holds takes no answer. crw.decide reads the row.
+// decision for the same question is refused. An answer to a run a process holds asks that process to stop at its next boundary
+// (one SIGUSR2), waits for it to let the run go and applies once, after the process's own last rows. crw.decide reads the row.
 func TestAnswerAppliesOnce(t *testing.T) {
+	w := newWorld(t)
+	a := newLiveAsking(t, w)
+	td := w.deps()
+	id := a.answered(t, "ud-apply", nil)
+
+	// the run process holds the run: the answer drains it (the fake plays the process: its paused end, then it lets the lock go)
+	held, err := TakeLock(w.state, "run-q", ProcessCommand, td.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := newDrainFake(t, w)
+	fake.on = func(n, pid int) {
+		fake.write(func(j *journal.Journal, _ []engine.Event) { appendDrainedEnd(j) })
+		held.Release()
+	}
+	td.Signal = fake.signal
+
+	code, reply, errOut := a.answer(td, id, "--wait", "5")
+	if code != 0 || !reply.Applied || reply.Replayed || reply.Seq == 0 || reply.Resumed != 4242 || !reply.Drained {
+		t.Fatalf("the answer: exit %d %+v %s", code, reply, errOut)
+	}
+	if got := fake.calls(); len(got) != 1 || got[0].pid != os.Getpid() || got[0].sig != syscall.SIGUSR2 {
+		t.Fatalf("the signals: %+v", got)
+	}
+	if ends := drainedEnds(mustLoad(t, w)); ends.pausedRows != 1 || ends.pausedEnd < 0 || reply.Seq <= ends.pausedEnd {
+		t.Fatalf("the row %d after the drained end %+v", reply.Seq, ends)
+	}
+	rows := a.appliedRows(t)
+	if len(rows) != 1 || rows[0].Seq != reply.Seq {
+		t.Fatalf("rows %+v", rows)
+	}
+	d := rows[0].Data
+	dec, _ := d["decision"].(map[string]any)
+	if d["ask"] != "esc_one" || d["node"] != "n1" || d["run"] != "run-q" || d["attempt"] != float64(2) || d["revision"] != float64(1) || d["plan_basis"] != PlanBasis("plan-1", 3) ||
+		d["applied_by"] != "thread-owner" || d["action"] != "retry" || dec["id"] != id || dec["by"] != "manager-task" || dec["via"] != decisions.ViaManagementMessage {
+		t.Errorf("the row: %+v", d)
+	}
+	if len(td.spawned) != 1 || !td.spawned[0].Resume || td.spawned[0].Spec.RunID != "run-q" {
+		t.Errorf("the resume: %+v", td.spawned)
+	}
+	// the lane's crw.decide reads exactly this row: the question's id and the node
+	if q := Questions(mustLoad(t, w)); len(q) != 1 || q[0].Applied != id {
+		t.Errorf("the question after the answer: %+v", q)
+	}
+
+	// the same answer again: the row that answers it is the answer, nothing is appended, nothing is signalled, nothing is resumed
+	code, again, _ := a.answer(td, id)
+	if code != 0 || !again.Replayed || again.Applied || again.Drained || again.Seq != reply.Seq || len(a.appliedRows(t)) != 1 || len(td.spawned) != 1 || len(fake.calls()) != 1 {
+		t.Fatalf("the same answer again: exit %d %+v; %d rows, %d processes, %d signals", code, again, len(a.appliedRows(t)), len(td.spawned), len(fake.calls()))
+	}
+	// another decision for a question that is answered
+	other := a.answered(t, "ud-other", func(_ *Binding, r *decisions.Record, ans *decisions.Answer) { ans.Option = "stop" })
+	if code, r2, _ := a.answer(td, other); code != 1 || r2.Refusal == nil || r2.Refusal.Code != RefusedApplied || len(a.appliedRows(t)) != 1 || len(fake.calls()) != 1 {
+		t.Errorf("another decision for an answered question: %d %+v", code, r2)
+	}
+	// the run is held by nobody again after the command: the lock was released
+	if LockHeld(w.state, "run-q") {
+		t.Error("the run lock is still held after the answer")
+	}
+}
+
+// TestAnswerAppliesOnceOnAFreeLock is the ordinary answer (the base's TestAnswerAppliesOnce): a holder that is not a run process
+// (its record names another command) is never signalled and the answer is refused with run_live; a run no process holds takes the
+// answer under the lock at once, with no signal, and once.
+func TestAnswerAppliesOnceOnAFreeLock(t *testing.T) {
 	w := newWorld(t)
 	a := newAsking(t, w)
 	td := w.deps()
+	signals := 0
+	td.Signal = func(int, syscall.Signal) error { signals++; return nil }
 	if err := WriteSpec(w.state, Spec{Schema: SpecSchema, RunID: "run-q", Workflow: "project-lane", Thread: "thread-owner", CreatedAt: "2026-10-12T08:00:00Z"}); err != nil {
 		t.Fatal(err)
 	}
 	id := a.answered(t, "ud-apply", nil)
 
-	// a process that holds the run takes no answer
+	// a holder whose record names no run process takes no answer and no signal
 	lock, err := TakeLock(w.state, "run-q", "test", td.Now())
 	if err != nil {
 		t.Fatal(err)
 	}
 	code, reply, _ := a.answer(td, id)
 	lock.Release()
-	if code != 1 || reply.Refusal == nil || reply.Refusal.Code != "run_live" || len(a.appliedRows(t)) != 0 {
-		t.Fatalf("an answer to a live run: exit %d %+v", code, reply)
+	if code != 1 || reply.Refusal == nil || reply.Refusal.Code != "run_live" || len(a.appliedRows(t)) != 0 || signals != 0 {
+		t.Fatalf("an answer to a run held by a command that is not a run process: exit %d %+v, %d signals", code, reply, signals)
 	}
 
 	code, reply, errOut := a.answer(td, id)
@@ -321,8 +395,8 @@ func TestAnswerAppliesOnce(t *testing.T) {
 		t.Errorf("another decision for an answered question: %d %+v", code, r2)
 	}
 	// the run is held by nobody again after the command: the lock was released
-	if LockHeld(w.state, "run-q") {
-		t.Error("the run lock is still held after the answer")
+	if LockHeld(w.state, "run-q") || signals != 0 {
+		t.Errorf("after the answers: lock held %v, %d signals", LockHeld(w.state, "run-q"), signals)
 	}
 }
 
@@ -479,4 +553,474 @@ func rowWarningsOf(data map[string]any) []string {
 		}
 	}
 	return out
+}
+
+// newLiveAsking is the run of newAsking with no end: its process still runs it (the test holds its run lock as `_run`).
+func newLiveAsking(t *testing.T, w *world) *asking {
+	t.Helper()
+	r := w.newRun("run-q", "thread-owner")
+	r.phase("build")
+	r.call("c_ex", "executor", "n1", 2, []string{engine.EvPrepared, engine.EvRefused}, map[string]map[string]any{engine.EvRefused: {"reason": "pair_refused"}})
+	r.flow(engine.EvEscalation, map[string]any{"reason": "pair_refused", "class": "configuration_fault", "node": "n1", "call_id": "c_ex", "escalation_id": "esc_one", "ask": "configuration"})
+	r.close()
+	if err := WriteSpec(w.state, Spec{Schema: SpecSchema, RunID: "run-q", Workflow: "project-lane", Thread: "thread-owner", CreatedAt: "2026-10-12T08:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	return &asking{run: r, q: "esc_one", rec: RunRecord{RunID: "run-q", Owner: "thread-owner", PlanID: "plan-1", PlanRevision: 3}}
+}
+
+// drainFake is td.Signal for the drain tests (CRW-1492): it plays, synchronously inside the answer's c.Signal call (on the command's
+// goroutine), the run process the answer drains and, where a test needs it, another answer and its resume. No test runs two commands
+// at once: every interleaving is built inside one command. The fake opens a store of its own for each write (the world's is closed
+// while td.do runs) and closes it before it returns, so its rows land before the answer opens the journal that appends its row. Its
+// log is guarded: a goroutine that releases a hold later touches only that *Lock.
+type drainFake struct {
+	t  *testing.T
+	w  *world
+	mu sync.Mutex
+	// log is each signal the answer sent, with the holder record read at that moment
+	log []signalSent
+	// on is what the fake does at the n-th signal (0-based); nil does nothing
+	on func(n, pid int)
+}
+
+type signalSent struct {
+	pid    int
+	sig    syscall.Signal
+	holder lockRecord
+}
+
+func newDrainFake(t *testing.T, w *world) *drainFake { return &drainFake{t: t, w: w} }
+
+func (f *drainFake) signal(pid int, sig syscall.Signal) error {
+	rec, _ := lockHolderRecord(f.w.state, "run-q")
+	f.mu.Lock()
+	n := len(f.log)
+	f.log = append(f.log, signalSent{pid: pid, sig: sig, holder: rec})
+	f.mu.Unlock()
+	if f.on != nil {
+		f.on(n, pid)
+	}
+	return nil
+}
+
+func (f *drainFake) calls() []signalSent {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]signalSent(nil), f.log...)
+}
+
+// write appends rows to the run's journal through a store and a journal of the fake's own, both closed before it returns.
+func (f *drainFake) write(fn func(j *journal.Journal, events []engine.Event)) {
+	f.t.Helper()
+	st, err := store.Open(ctx, filepath.Join(f.w.state, "relay.sqlite3"), "")
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	defer st.Close()
+	j, err := journal.Open(ctx, st, "run-q", journal.Identity{}, journal.Options{Immediate: true})
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	fn(j, j.Events())
+	if err := j.Close(); err != nil || j.Err() != nil {
+		f.t.Fatalf("the fake's rows: %v %v", err, j.Err())
+	}
+}
+
+// decisionRecord reads a decision record through a store of the fake's own.
+func (f *drainFake) decisionRecord(id string) decisions.Record {
+	f.t.Helper()
+	st, err := store.Open(ctx, filepath.Join(f.w.state, "relay.sqlite3"), "")
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	defer st.Close()
+	rec, err := st.Get(ctx, id)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return rec
+}
+
+// appendDrainedEnd appends what a drained run process writes (engine.Control.Drain): the run_paused row of the answer's ask, then
+// the run/paused end by `answer`.
+func appendDrainedEnd(j *journal.Journal) {
+	j.Append(engine.Event{RunID: "run-q", Kind: engine.KindFlow, Event: engine.EvRunPaused, Data: map[string]any{"by": "answer", "reason": drainReason}})
+	j.Append(engine.Event{RunID: "run-q", Kind: engine.KindRun, Event: "paused", Data: map[string]any{"status": engine.RunPaused, "by": "answer", "reason": drainReason}})
+}
+
+// holdByHand holds the run lock of run with a holder record written by hand (lockRecord, as control_safety_test.go writes one): a holder
+// of another pid than the test's, which the fake never kills.
+func holdByHand(t *testing.T, state, run string, pid int, command, since string) *Lock {
+	t.Helper()
+	if err := os.MkdirAll(RunDir(state, run), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(lockPath(state, run), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = f.Close()
+		t.Fatalf("the hold of %s as %q: %v", run, command, err)
+	}
+	raw, _ := json.Marshal(lockRecord{PID: pid, Since: since, Command: command})
+	if err := f.Truncate(0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.WriteAt(append(raw, '\n'), 0); err != nil {
+		t.Fatal(err)
+	}
+	return &Lock{f: f}
+}
+
+// drainEnds counts the rows of a drain in a run's rows: the run_paused rows by `answer` and the seq of the last run/paused end.
+type drainEnds struct {
+	pausedRows int
+	pausedEnd  int
+	lastSeq    int
+}
+
+func drainedEnds(events []engine.Event) drainEnds {
+	out := drainEnds{pausedEnd: -1}
+	for _, e := range events {
+		out.lastSeq = max(out.lastSeq, e.Seq)
+		switch {
+		case e.Kind == engine.KindFlow && e.Event == engine.EvRunPaused && e.Data["by"] == "answer":
+			out.pausedRows++
+		case e.Kind == engine.KindRun && e.Event == "paused":
+			out.pausedEnd = e.Seq
+		}
+	}
+	return out
+}
+
+// TestAnswerDrainsALiveRunAndAppliesOnce (CRW-1492): an answer to a run its process holds is judged on the journal first, then asks
+// that process (one SIGUSR2) to stop at its next boundary, waits (--wait) for it to let the run go - here a while after its paused
+// end is stored -, and appends one decision_applied row under the lock, after the drained process's rows, and resumes the run once.
+// The --json reply says the answer drained the run.
+func TestAnswerDrainsALiveRunAndAppliesOnce(t *testing.T) {
+	w := newWorld(t)
+	a := newLiveAsking(t, w)
+	td := w.deps()
+	id := a.answered(t, "ud-drain", nil)
+	held, err := TakeLock(w.state, "run-q", ProcessCommand, td.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var released sync.WaitGroup
+	fake := newDrainFake(t, w)
+	fake.on = func(n, pid int) {
+		fake.write(func(j *journal.Journal, _ []engine.Event) { appendDrainedEnd(j) })
+		// the process lets the run go a moment after its last row: the answer polls for the lock
+		released.Add(1)
+		go func() {
+			defer released.Done()
+			time.Sleep(450 * time.Millisecond)
+			held.Release()
+		}()
+	}
+	td.Signal = fake.signal
+	code, out, errOut := td.do("answer", "--state", w.state, "--decision", id, "--run", "run-q", "--node", "n1", "--question", "esc_one", "--revision", "1", "--thread", "thread-owner", "--wait", "5", "--json")
+	released.Wait()
+	var reply AnswerReply
+	// the fake spawner marks its spawn on stdout before the reply
+	if err := json.Unmarshal([]byte(strings.TrimPrefix(out, "<<spawned>>\n")), &reply); err != nil {
+		t.Fatalf("the reply: %v: %q", err, out)
+	}
+	if code != 0 || !reply.OK || !reply.Applied || !reply.Drained || reply.Refusal != nil || reply.Resumed != 4242 {
+		t.Fatalf("the answer to a live run: exit %d %+v %s", code, reply, errOut)
+	}
+	if got := fake.calls(); len(got) != 1 || got[0].sig != syscall.SIGUSR2 || got[0].pid != os.Getpid() || got[0].holder.Command != ProcessCommand {
+		t.Fatalf("the signals: %+v", got)
+	}
+	ends := drainedEnds(mustLoad(t, w))
+	rows := a.appliedRows(t)
+	if ends.pausedRows != 1 || ends.pausedEnd < 0 || len(rows) != 1 || rows[0].Seq != reply.Seq || rows[0].Seq <= ends.pausedEnd || rows[0].Seq != ends.lastSeq {
+		t.Fatalf("the rows: %+v, applied %+v", ends, rows)
+	}
+	if len(td.spawned) != 1 || !td.spawned[0].Resume {
+		t.Errorf("the resume: %+v", td.spawned)
+	}
+	if LockHeld(w.state, "run-q") {
+		t.Error("the run lock is still held after the answer")
+	}
+}
+
+// TestAnswerRefusesBeforeAnySignal (CRW-1492): an answer the journal refuses (a question asked again since) is refused on a run its
+// process holds before anything is asked of the process: no signal, no row.
+func TestAnswerRefusesBeforeAnySignal(t *testing.T) {
+	w := newWorld(t)
+	a := newLiveAsking(t, w)
+	td := w.deps()
+	id := a.answered(t, "ud-stale", nil)
+	r2, err := w.reopen("run-q")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r2.call("c_ex2", "executor", "n1", 3, []string{engine.EvPrepared, engine.EvRefused}, map[string]map[string]any{engine.EvRefused: {"reason": "pair_refused"}})
+	r2.flow(engine.EvEscalation, map[string]any{"reason": "pair_refused", "node": "n1", "call_id": "c_ex2", "escalation_id": "esc_two", "ask": "configuration"})
+	r2.close()
+	held, err := TakeLock(w.state, "run-q", ProcessCommand, td.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Release()
+	fake := newDrainFake(t, w)
+	td.Signal = fake.signal
+	code, reply, _ := a.answer(td, id, "--wait", "5")
+	if code != 1 || reply.Refusal == nil || reply.Refusal.Code != RefusedStaleRevison || reply.Drained || len(fake.calls()) != 0 || len(a.appliedRows(t)) != 0 || len(td.spawned) != 0 {
+		t.Fatalf("a stale answer to a live run: exit %d %+v, %d signals", code, reply, len(fake.calls()))
+	}
+}
+
+// TestAnswerDoesNotSignalAnUnknownHolder (CRW-1492): a holder whose record names no command (an older binary, a record not written
+// yet) and a writer's hold (audit) are not run processes the answer may drain: run_live, nothing signalled, nothing appended.
+func TestAnswerDoesNotSignalAnUnknownHolder(t *testing.T) {
+	saved := writerWait
+	writerWait = 100 * time.Millisecond
+	t.Cleanup(func() { writerWait = saved })
+	for _, command := range []string{"", "audit"} {
+		t.Run("holder "+strconv.Quote(command), func(t *testing.T) {
+			w := newWorld(t)
+			a := newLiveAsking(t, w)
+			td := w.deps()
+			id := a.answered(t, "ud-unknown", nil)
+			held := holdByHand(t, w.state, "run-q", 999991, command, "2026-10-12T09:00:00Z")
+			defer held.Release()
+			fake := newDrainFake(t, w)
+			td.Signal = fake.signal
+			code, reply, _ := a.answer(td, id, "--wait", "0")
+			if code != 1 || reply.Refusal == nil || reply.Refusal.Code != "run_live" || reply.Drained || len(fake.calls()) != 0 || len(a.appliedRows(t)) != 0 {
+				t.Fatalf("an answer to a run held by %q: exit %d %+v, %d signals", command, code, reply, len(fake.calls()))
+			}
+		})
+	}
+}
+
+// TestAnswerWaitZeroAsksTheDrainAndReturns (CRW-1492): with no --wait the answer asks the drain and returns at once: one SIGUSR2,
+// run_draining (exit 1), no row; the same answer once the run is paused applies it.
+func TestAnswerWaitZeroAsksTheDrainAndReturns(t *testing.T) {
+	w := newWorld(t)
+	a := newLiveAsking(t, w)
+	td := w.deps()
+	id := a.answered(t, "ud-zero", nil)
+	held, err := TakeLock(w.state, "run-q", ProcessCommand, td.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake := newDrainFake(t, w)
+	td.Signal = fake.signal
+	began := time.Now()
+	code, reply, _ := a.answer(td, id)
+	took := time.Since(began)
+	if code != 1 || reply.Refusal == nil || reply.Refusal.Code != "run_draining" || !reply.Drained || reply.Applied || took > time.Second {
+		t.Fatalf("an answer with no wait to a live run: exit %d %+v in %s", code, reply, took)
+	}
+	if !strings.Contains(reply.Refusal.Detail, "next boundary") || !strings.Contains(reply.Refusal.Detail, "the same crw flow answer again") {
+		t.Errorf("the refusal's words: %q", reply.Refusal.Detail)
+	}
+	if got := fake.calls(); len(got) != 1 || got[0].sig != syscall.SIGUSR2 || len(a.appliedRows(t)) != 0 || len(td.spawned) != 0 {
+		t.Fatalf("the signals %+v, %d rows, %d processes", got, len(a.appliedRows(t)), len(td.spawned))
+	}
+	// the process ends paused by the answer and lets the run go; the same answer again applies once and resumes
+	fake.write(func(j *journal.Journal, _ []engine.Event) { appendDrainedEnd(j) })
+	held.Release()
+	code, reply, errOut := a.answer(td, id)
+	if code != 0 || !reply.Applied || reply.Drained || reply.Resumed != 4242 || len(fake.calls()) != 1 || len(a.appliedRows(t)) != 1 {
+		t.Fatalf("the same answer once the run is paused: exit %d %+v %s", code, reply, errOut)
+	}
+}
+
+// TestAnswerSignalsANewHolderOnce (CRW-1492): a run process that takes the run after the first drained one let it go (a resume
+// started by hand: the question is still open) is drained too, once, after its own re-judge; each holder is signalled exactly once
+// and the answer applies once.
+func TestAnswerSignalsANewHolderOnce(t *testing.T) {
+	w := newWorld(t)
+	a := newLiveAsking(t, w)
+	td := w.deps()
+	id := a.answered(t, "ud-new-holder", nil)
+	first, err := TakeLock(w.state, "run-q", ProcessCommand, td.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const n2 = 999992
+	var second *Lock
+	fake := newDrainFake(t, w)
+	fake.on = func(n, pid int) {
+		switch n {
+		case 0:
+			// the first process ends paused, and a resume someone started by hand takes the run: its own started row
+			fake.write(func(j *journal.Journal, _ []engine.Event) {
+				appendDrainedEnd(j)
+			})
+			first.Release()
+			second = holdByHand(t, w.state, "run-q", n2, "resume", "2026-10-12T09:00:05Z")
+			fake.write(func(j *journal.Journal, _ []engine.Event) {
+				j.Append(engine.Event{RunID: "run-q", Kind: engine.KindRun, Event: "started", Data: map[string]any{"workflow": "project-lane", "script_digest": "d", "args_digest": "a"}})
+			})
+		case 1:
+			fake.write(func(j *journal.Journal, _ []engine.Event) { appendDrainedEnd(j) })
+			second.Release()
+		}
+	}
+	td.Signal = fake.signal
+	code, reply, errOut := a.answer(td, id, "--wait", "5")
+	if code != 0 || !reply.Applied || !reply.Drained || reply.Resumed != 4242 {
+		t.Fatalf("the answer: exit %d %+v %s", code, reply, errOut)
+	}
+	got := fake.calls()
+	if len(got) != 2 || got[0].pid != os.Getpid() || got[1].pid != n2 || got[0].sig != syscall.SIGUSR2 || got[1].sig != syscall.SIGUSR2 {
+		t.Fatalf("the signals: %+v", got)
+	}
+	if ends := drainedEnds(mustLoad(t, w)); ends.pausedRows != 2 || len(a.appliedRows(t)) != 1 || a.appliedRows(t)[0].Seq != ends.lastSeq || len(td.spawned) != 1 {
+		t.Fatalf("the rows %+v, applied %+v, %d processes", ends, a.appliedRows(t), len(td.spawned))
+	}
+}
+
+// TestAnAnswerDoesNotDrainTheResumeOfAnotherAnswer (CRW-1492, critic R1-1): answer B drains the run process P1; while it waits, answer A
+// takes the free lock, applies its decision to the same question and starts its resume N2. B re-judges on the journal before it
+// signals a new holder: the question is answered, so B is refused (another decision) or replayed (the same decision) and N2 - A's
+// resume - is never signalled; B resumes nothing.
+func TestAnAnswerDoesNotDrainTheResumeOfAnotherAnswer(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// aDecision is the decision answer A applies (B applies ud-b)
+		aDecision string
+	}{
+		{"another decision", "ud-a"},
+		{"the same decision", "ud-b"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newWorld(t)
+			a := newLiveAsking(t, w)
+			td := w.deps()
+			a.answered(t, "ud-a", func(_ *Binding, _ *decisions.Record, ans *decisions.Answer) { ans.Option = "stop" })
+			b := a.answered(t, "ud-b", nil)
+			p1, err := TakeLock(w.state, "run-q", ProcessCommand, td.Now())
+			if err != nil {
+				t.Fatal(err)
+			}
+			const n2 = 999993
+			var resumed *Lock
+			seqAtResume := 0
+			fake := newDrainFake(t, w)
+			fake.on = func(n, pid int) {
+				if n != 0 {
+					return
+				}
+				// P1 is drained: its paused end, and it lets the run go
+				fake.write(func(j *journal.Journal, _ []engine.Event) { appendDrainedEnd(j) })
+				p1.Release()
+				// answer A: it takes the free lock, appends the row it would append, and lets the lock go
+				hold, err := TakeLock(w.state, "run-q", "answer", td.Now())
+				if err != nil {
+					t.Fatal(err)
+				}
+				recA := fake.decisionRecord(tc.aDecision)
+				fake.write(func(j *journal.Journal, events []engine.Event) {
+					app, refusal := Judge(recA, events, a.rec, Claim{Decision: tc.aDecision, Run: "run-q", Node: "n1", Question: "esc_one", Revision: 1, By: "thread-owner"})
+					if refusal != nil || app.Replayed {
+						t.Fatalf("answer A: %+v %+v", app, refusal)
+					}
+					ev := j.Append(engine.Event{RunID: "run-q", Kind: engine.KindFlow, Event: ops.EvDecisionApplied, Data: app.Data})
+					seqAtResume = ev.Seq
+				})
+				hold.Release()
+				// A's resume takes the run
+				resumed = holdByHand(t, w.state, "run-q", n2, ProcessCommand, "2026-10-12T09:00:07Z")
+			}
+			td.Signal = fake.signal
+			code, reply, errOut := a.answer(td, b, "--wait", "5")
+			if resumed == nil {
+				t.Fatalf("B never drained P1: exit %d %+v %s", code, reply, errOut)
+			}
+			stillHeld := LockHeld(w.state, "run-q")
+			resumed.Release()
+			switch tc.aDecision {
+			case "ud-a":
+				if code != 1 || reply.Refusal == nil || reply.Refusal.Code != RefusedApplied || reply.Applied {
+					t.Fatalf("B after A applied another decision: exit %d %+v %s", code, reply, errOut)
+				}
+			default:
+				if code != 0 || !reply.Replayed || reply.Applied || reply.Refusal != nil {
+					t.Fatalf("B after A applied the same decision: exit %d %+v %s", code, reply, errOut)
+				}
+			}
+			if got := fake.calls(); len(got) != 1 || got[0].pid != os.Getpid() || got[0].sig != syscall.SIGUSR2 {
+				t.Fatalf("the signals (only P1, never A's resume %d): %+v", n2, got)
+			}
+			if len(td.spawned) != 0 {
+				t.Errorf("B started %d processes: %+v", len(td.spawned), td.spawned)
+			}
+			ends := drainedEnds(mustLoad(t, w))
+			rows := a.appliedRows(t)
+			if ends.pausedRows != 1 || len(rows) != 1 || rows[0].Data["decision"].(map[string]any)["id"] != tc.aDecision || ends.lastSeq != seqAtResume {
+				t.Fatalf("the rows: %+v, applied %+v, last row %d, A's row %d", ends, rows, ends.lastSeq, seqAtResume)
+			}
+			if !stillHeld {
+				t.Error("A's resume did not hold the run when B returned")
+			}
+		})
+	}
+}
+
+// TestARefusedAnswerNeverResumes (CRW-1492, the earlier lane's A2 and A3): only the answer that appends the row resumes the run. (a)
+// is TestAnAnswerDoesNotDrainTheResumeOfAnotherAnswer. (b) A run drained by an answer with no wait that asks its question again before
+// its paused end: the same answer on the free lock is stale_revision, nothing is resumed, and the run stays paused by `answer`. (c) An
+// applying answer with --no-resume after a drain: no process is started by anyone.
+func TestARefusedAnswerNeverResumes(t *testing.T) {
+	t.Run("a new revision before the paused end", func(t *testing.T) {
+		w := newWorld(t)
+		a := newLiveAsking(t, w)
+		td := w.deps()
+		id := a.answered(t, "ud-old", nil)
+		held, err := TakeLock(w.state, "run-q", ProcessCommand, td.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		fake := newDrainFake(t, w)
+		fake.on = func(n, pid int) {
+			fake.write(func(j *journal.Journal, _ []engine.Event) {
+				r := &run{w: w, id: "run-q", j: j}
+				r.call("c_ex2", "executor", "n1", 3, []string{engine.EvPrepared, engine.EvRefused}, map[string]map[string]any{engine.EvRefused: {"reason": "pair_refused"}})
+				r.flow(engine.EvEscalation, map[string]any{"reason": "pair_refused", "node": "n1", "call_id": "c_ex2", "escalation_id": "esc_two", "ask": "configuration"})
+				appendDrainedEnd(j)
+			})
+		}
+		td.Signal = fake.signal
+		code, reply, _ := a.answer(td, id, "--wait", "0")
+		if code != 1 || reply.Refusal == nil || reply.Refusal.Code != "run_draining" || !reply.Drained {
+			t.Fatalf("the drain: exit %d %+v", code, reply)
+		}
+		held.Release()
+		code, reply, _ = a.answer(td, id)
+		if code != 1 || reply.Refusal == nil || reply.Refusal.Code != RefusedStaleRevison || reply.Applied || len(td.spawned) != 0 || len(fake.calls()) != 1 || len(a.appliedRows(t)) != 0 {
+			t.Fatalf("the same answer after a new revision: exit %d %+v, %d processes, %d signals", code, reply, len(td.spawned), len(fake.calls()))
+		}
+		if info := Summarize(a.rec, mustLoad(t, w), false, 0); info.State != StatePaused || !strings.HasPrefix(info.Paused, "answer: ") {
+			t.Errorf("the run after the refusal: %s paused %q", info.State, info.Paused)
+		}
+	})
+	t.Run("no resume", func(t *testing.T) {
+		w := newWorld(t)
+		a := newLiveAsking(t, w)
+		td := w.deps()
+		id := a.answered(t, "ud-no-resume", nil)
+		held, err := TakeLock(w.state, "run-q", ProcessCommand, td.Now())
+		if err != nil {
+			t.Fatal(err)
+		}
+		fake := newDrainFake(t, w)
+		fake.on = func(n, pid int) {
+			fake.write(func(j *journal.Journal, _ []engine.Event) { appendDrainedEnd(j) })
+			held.Release()
+		}
+		td.Signal = fake.signal
+		code, reply, errOut := a.answer(td, id, "--wait", "5", "--no-resume")
+		if code != 0 || !reply.Applied || !reply.Drained || reply.Resumed != 0 || len(td.spawned) != 0 || len(a.appliedRows(t)) != 1 {
+			t.Fatalf("an applying answer with --no-resume: exit %d %+v %s, %d processes", code, reply, errOut, len(td.spawned))
+		}
+	})
 }
