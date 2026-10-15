@@ -125,6 +125,24 @@ func EnvironmentRolePolicy() RolePolicy {
 	return *snapshot.taken
 }
 
+// LaunchRolePolicy is the role policy a daemon launched on the service of state directory state
+// reads (CRW-1486/S2): the file that service's launch declaration names when there is one, this
+// process's EnvironmentRolePolicy when there is none, and an unresolved policy naming why when the
+// declaration cannot be read or the environment names another file. internal/relay/service sets it
+// in an init, since that package imports this one and owns the launch declaration; nil (a binary
+// without the service package) is EnvironmentRolePolicy. The registry CLI asks it, so settings-show,
+// settings-record and linkage-bind answer against the policy deliveries are checked against, not
+// against whatever the asking process inherited.
+var LaunchRolePolicy func(state string) RolePolicy
+
+// launchRolePolicy is LaunchRolePolicy for state, or EnvironmentRolePolicy when no hook is set.
+func launchRolePolicy(state string) RolePolicy {
+	if LaunchRolePolicy == nil {
+		return EnvironmentRolePolicy()
+	}
+	return LaunchRolePolicy(state)
+}
+
 // ResetRolePolicySnapshot is rolepolicy.reset(): drop this process's snapshot (tests only).
 func ResetRolePolicySnapshot() {
 	snapshot.Lock()
