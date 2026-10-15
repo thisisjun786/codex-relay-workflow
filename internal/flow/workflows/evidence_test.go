@@ -49,11 +49,13 @@ func strs(t *testing.T, v any) []string {
 }
 
 // TestEvidenceTrackerCountsUnitCheckFindingsWithoutLineNumbers (CRW-1465, D-10): in the node lane the unit check takes the place
-// of the reviewer. Rule (a) of SP-TIER-1 is two consecutive unit checks of the tier whose findings share a finding id, and the id
-// is the adapter's (reviewadapter.FindingID: file and text, no line), so a finding that moved down the file between the two checks
-// is the same finding. The tracker reads the id and never the line. Different texts in the same file are different findings; a
-// check without findings ends the run. evidence() lists the checks as unit_check_calls (reviewer_calls is empty for them) and
-// ids() names them; (d) counts the checks as reviewed rounds.
+// of the reviewer. Rule (a) of SP-TIER-1 is two consecutive unit checks of the tier that rule needs_changes and whose findings share a
+// finding id, and the id is the adapter's (reviewadapter.FindingID: file and text, no line), so a finding that moved down the file
+// between the two checks is the same finding. The tracker reads the id and never the line. Different texts in the same file are
+// different findings; a check without findings ends the run. A verified check's findings block nothing and are no evidence however
+// often they repeat (the parent's decision of fix round x1436: the lane carries them past the round trips and the node lands).
+// evidence() lists the checks as unit_check_calls (reviewer_calls is empty for them) and ids() names them; (d) counts the checks as
+// reviewed rounds.
 func TestEvidenceTrackerCountsUnitCheckFindingsWithoutLineNumbers(t *testing.T) {
 	nilDeref := reviewadapter.FindingID("internal/a.go", "the handle is nil after Close")
 	nilDerefAgain := reviewadapter.FindingID("internal/a.go", "The handle is  nil after Close")
@@ -96,7 +98,7 @@ func TestEvidenceTrackerCountsUnitCheckFindingsWithoutLineNumbers(t *testing.T) 
 return out`, finding(nilDeref, 10), finding(nilDerefAgain, 42), finding(leak, 42), finding(nilDeref, 3), nilDeref, nilDerefAgain)
 	got := evidenceOut(t, "evidence-unit-check", body)
 	want := map[string]any{"oneCheck": nil, "movedLine": "a", "sameIdAsText": "a", "differentText": nil, "notConsecutive": nil,
-		"minorRepeated": "a", "otherTier": nil, "fourChecks": "d"}
+		"minorRepeated": nil, "otherTier": nil, "fourChecks": "d"}
 	for k, w := range want {
 		if got[k] != w {
 			t.Errorf("%s = %v, want %v", k, got[k], w)

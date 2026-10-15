@@ -524,7 +524,8 @@ func TestResearchCapEscalatesAsScopeQuestion(t *testing.T) {
 
 // The research cap of a tier counts the reused answers too (CRW-1470), and only crw.exploreRoute counts it: an executor that asks
 // the same question three times gets one explorer, the reuse of its answer as the second continuation, and the third request -
-// itself a reuse - escalates once as a scope question with the detail the route names.
+// itself a reuse - escalates once as a scope question with the detail the route names. The routes crw.exploreRoute recorded are
+// spawn, reuse and escalate research_cap: the third route is the Go cap's own, not a reuse a counter of the script turned away.
 func TestResearchCapCountsReuseAndEscalatesOnce(t *testing.T) {
 	l := NewLab(t, oneNode()...)
 	l.On("^(build|research):A:executor", func(c *Call) *fakehostPlan {
@@ -541,6 +542,9 @@ func TestResearchCapCountsReuseAndEscalatesOnce(t *testing.T) {
 	if n := len(l.CallsOf("executor")); n != 3 {
 		t.Errorf("%d executor calls, want the build and two research continuations", n)
 	}
+	if got, want := researchRoutes(t, l, "A"), []string{"spawn", "reuse answered_in_run", "escalate research_cap"}; !slices.Equal(got, want) {
+		t.Errorf("the research routes of A %v, want %v", got, want)
+	}
 	esc := l.FlowRows(engine.EvEscalation)
 	if len(esc) != 1 || str(esc[0].Data, "detail") != "research_cap" || str(esc[0].Data, "class") != "scope" {
 		t.Errorf("escalations %+v", esc)
@@ -549,6 +553,30 @@ func TestResearchCapCountsReuseAndEscalatesOnce(t *testing.T) {
 		t.Errorf("closes %v", got)
 	}
 	noTierStep(t, l)
+}
+
+// researchRoutes are the routes the completed crw.exploreRoute rows of the node's research questions recorded, in order, each as its
+// route and, when it has one, its reason.
+func researchRoutes(t *testing.T, l *Lab, node string) []string {
+	t.Helper()
+	var out []string
+	for _, r := range l.Rows("crw.exploreRoute") {
+		if str(r.Data, "kind") != "research" || str(r.Data, "node") != node {
+			continue
+		}
+		raw, err := json.Marshal(r.Data["routes"])
+		if err != nil {
+			t.Fatal(err)
+		}
+		var routes []struct{ Route, Reason string }
+		if err := json.Unmarshal(raw, &routes); err != nil {
+			t.Fatalf("the routes of %v: %v", r.Data, err)
+		}
+		for _, rt := range routes {
+			out = append(out, strings.TrimSpace(rt.Route+" "+rt.Reason))
+		}
+	}
+	return out
 }
 
 // The verification of a head names the range the acceptance judges: its base is the tip of the integration target the node started

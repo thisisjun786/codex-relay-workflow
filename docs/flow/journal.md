@@ -140,6 +140,13 @@ as such:
   recorded commit, the pending tree P of a build or fix journaled after that commit, or the P_held of an executor call held after
   it. A call is proven when the snapshot is its own P (or an earlier call's, which leaves the later calls unproven). A snapshot
   that is none of them breaks the proof from the latest build or fix after the last valid commit.
+- A call of a retired attempt (the node went on in a fresh worktree: a tier step, a rebuild) is judged without its worktree, which is
+  never read. A call that a recorded commit of the node made in that attempt covers, by the rule above over that attempt's calls, is
+  proven while the current `HEAD` descends from that commit (its work is in the history the node goes on from) and not otherwise. A
+  call no recorded commit covers left only uncommitted work, which a fresh attempt of the node prepared after it abandoned (a fresh
+  attempt starts at the node's last commit and takes none of an earlier attempt's working files: the node lane's tier step before
+  any commit, a rebuild after a checked fix): nothing reads its effect again, and it is proven as the recorded fact it is. A call of
+  an attempt no fresh one followed is the current attempt's.
 - A worktree a resume restored (below) holds the pending tree P of the last build or fix of the replayed prefix. It is the node's
   current worktree from the call that adopts it on, and it proves the calls of the prefix - the call P belongs to and the calls
   before it, which ran in the worktree of an earlier attempt - while its files are P.

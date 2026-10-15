@@ -174,13 +174,14 @@ const (
 )
 
 // failedSteps reads the reason of a failed step: the tests and the packages its lines name, and its tail. A reason of crw-dev ci local
-// starts with how the command exited ("exit status 1: "), which is not part of its first line of output.
+// starts with how the command exited ("exit status 1: ", or "timeout: exit status 1: " for a step stopped at its time limit), which
+// is not part of its first line of output.
 func failedSteps(job, step, reason string) FailedStep {
 	out := FailedStep{Job: job, Step: step, Tests: []string{}, Packages: []string{}}
 	lines := strings.Split(strings.TrimRight(reason, "\n"), "\n")
 	for i, line := range lines {
-		if i == 0 && strings.HasPrefix(line, "exit status ") {
-			if _, rest, ok := strings.Cut(line, ": "); ok {
+		if exited := strings.TrimPrefix(line, "timeout: "); i == 0 && strings.HasPrefix(exited, "exit status ") {
+			if _, rest, ok := strings.Cut(exited, ": "); ok {
 				line = rest
 			}
 		}

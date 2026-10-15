@@ -2261,6 +2261,57 @@ func TestUnitCheckReadsTheAcceptedReceiptWhenItsCopyIsMissing(t *testing.T) {
 	})
 }
 
+// TestAcceptCarriesTheCarriedFindingsIntoThePremergeRecord (CRW-1465, x1436 item 4): the node lane carries a non-blocking finding past
+// its last round trip, and the head then gets a fix (of a failed verification) whose check judges only the fix and finds nothing. The
+// acceptance rests on that last check, and the carried ids the lane passes (crw.accept's opts.carried) are read from the node's recorded
+// checks into the premerge record's defects: without them the record would say nothing of the finding. An id no check of the node
+// recorded is an error, never a defect made up.
+func TestAcceptCarriesTheCarriedFindingsIntoThePremergeRecord(t *testing.T) {
+	u := newUCWorld(t)
+	minor := reviewadapter.Finding{Severity: "P3", Impact: premerge.MinorSeparable, File: "a.txt", Line: 3, Text: "a name could be clearer"}
+	minor.ID = reviewadapter.FindingID(minor.File, minor.Text)
+	ex := u.build("c_ex1", "built\n")
+	first := checkRecord(reviewadapter.StateOK, reviewadapter.VerdictVerified, minor)
+	first.FingerprintBefore, first.FingerprintAfter = u.snapshot(), u.snapshot()
+	u.checker.replies = []checkReply{{res: first}}
+	u.must("unitCheck", "A", ex, map[string]any{"round": 3, "final": true})
+	var c1 CommitOutcome
+	_ = json.Unmarshal(u.must("commit", "A", ex, []string{"a.txt"}), &c1)
+	fix := u.build("c_fix", "built and fixed\n")
+	u.checkOnTree(u.snapshot())
+	u.must("unitCheck", "A", fix, map[string]any{"round": 4, "final": true})
+	var c2 CommitOutcome
+	_ = json.Unmarshal(u.must("commit", "A", fix, []string{"a.txt"}), &c2)
+	u.must("verify", "A", c2.Commit)
+	capture := &acceptCapture{stubRelay: u.relay}
+	u.lane.d.Relay = capture
+	if _, err := u.op("accept", "A", c2.Commit, map[string]any{"carried": []string{minor.ID}}); err != nil {
+		t.Fatalf("crw.accept with the carried finding: %v", err)
+	}
+	if len(capture.got) != 1 {
+		t.Fatalf("accept requests %+v", capture.got)
+	}
+	rec, err := premerge.Decode(capture.got[0].Premerge)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var carried *premerge.Defect
+	for i := range rec.Defects {
+		if rec.Defects[i].ID == minor.ID {
+			carried = &rec.Defects[i]
+		}
+	}
+	if carried == nil || carried.Severity != "P3" || carried.Impact != premerge.MinorSeparable || !strings.Contains(carried.What, minor.Text) {
+		t.Fatalf("the premerge defects %+v do not hold the carried finding %s", rec.Defects, minor.ID)
+	}
+	if len(rec.Dispositions.Items) != 0 {
+		t.Errorf("a carried finding that blocks nothing asks a disposition: %+v", rec.Dispositions.Items)
+	}
+	if _, err := u.op("accept", "A", c2.Commit, map[string]any{"carried": []string{"f_no_such_finding"}}); err == nil || !strings.Contains(err.Error(), "f_no_such_finding") {
+		t.Errorf("crw.accept with a carried id no check recorded: %v", err)
+	}
+}
+
 // ---- the executor receipt of a unit check (CRW-1463, C12) ----
 
 // receiptCopy writes bytes as the step-bus copy of an executor's evidence receipt under a temporary directory and answers its absolute

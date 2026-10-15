@@ -84,6 +84,9 @@ type Lab struct {
 	// packet or overlay text would run (CRW-1321).
 	Lib    fs.FS
 	Prompt func(role string, qa bool) (string, error)
+	// Source, when set, is the text of the project lane the lab runs in place of the embedded one (reviewerLane: the project lane
+	// with the old reviewer path's node lane).
+	Source []byte
 	// Checker is the lab's unit checker, the tool behind crw.unitCheck (CRW-1465): a scenario scripts it with UnitChecks.
 	Checker *LabChecker
 }
@@ -328,10 +331,13 @@ func (l *Lab) Resume() *engine.Result { l.t.Helper(); return l.exec(true, l.Args
 func (l *Lab) exec(resume bool, args json.RawMessage) *engine.Result {
 	l.t.Helper()
 	prog, err := workflows.Load("project-lane")
-	if l.Lib != nil {
-		text, serr := workflows.Source("project-lane")
-		if serr != nil {
-			l.t.Fatal(serr)
+	if l.Lib != nil || l.Source != nil {
+		text := l.Source
+		if text == nil {
+			var serr error
+			if text, serr = workflows.Source("project-lane"); serr != nil {
+				l.t.Fatal(serr)
+			}
 		}
 		prog, err = script.Load(script.Source{Name: "project-lane.js", Text: text, Dir: workflows.FS, Lib: l.Lib})
 	}

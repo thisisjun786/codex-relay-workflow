@@ -455,3 +455,18 @@ func TestVerifyRecordsTheFailedTestsOfTheRecord(t *testing.T) {
 		t.Errorf("a passed verification names failed tests: %v %s", row.Data, result)
 	}
 }
+
+// TestFailedStepsReadsATimedOutStep (DI item 11(a), the probe TestDIFVFailedStepsReasons): crw-dev ci local writes the reason of a step
+// it stopped at its time limit as "timeout: exit status N: ..." (dev/ci/local.go); the prefix is how the command ended, not output, so a
+// "--- FAIL:" line right after it names its test as it does after "exit status N: " alone.
+func TestFailedStepsReadsATimedOutStep(t *testing.T) {
+	for _, reason := range []string{
+		"exit status 1: --- FAIL: TestA (0.01s)\n...\nFAIL\tpkg/y\t0.3s",
+		"timeout: exit status 1: --- FAIL: TestA (0.01s)\n...\nFAIL\tpkg/y\t0.3s",
+	} {
+		got := failedSteps("go", "tests", reason)
+		if !slices.Equal(got.Tests, []string{"TestA"}) || !slices.Equal(got.Packages, []string{"pkg/y"}) {
+			t.Errorf("reason %q: tests %v packages %v, want [TestA] [pkg/y]", reason, got.Tests, got.Packages)
+		}
+	}
+}

@@ -219,12 +219,17 @@ async function lane(n, rel, sig) {
 //
 // The node's work is judged by its unit check before the run commits it (CRW-1465): crw.unitCheck runs the review tool in Go over the
 // executor's uncommitted changes (no reviewer agent is called). A check with any finding goes back to the same executor thread to be
-// fixed, at most UNIT_CHECK_ROUNDS round trips on a tier; the findings of the check after them are carried: only non-blocking ones and
-// the node lands with them (premerge defects that need no disposition, `carried` in the lane result), a blocking one and the node
-// escalates (ask land, unit_check_carried) with the carried ids. A check the tool gave no judgment in (quota, no answer) or that had no
-// executor receipt to hand over holds the node (crw.hold, source unit_check), and a resume asks the tool again; any other check that
-// judged nothing (the worktree moved, the tool failed, an invalid answer twice) escalates as a configuration question. The checked
-// tree is then committed, verified and landed; a failed verification goes back to the same thread and its fix is checked again.
+// fixed, at most UNIT_CHECK_ROUNDS round trips on a tier; the findings of a check after them are carried, before any tier step: only
+// non-blocking ones and the node lands with them (premerge defects that need no disposition: crw.land hands their ids to crw.accept,
+// and `carried` is in the lane result), a blocking one and the node escalates (ask land, unit_check_carried) with the carried ids.
+// While round trips are left, the tier evidence (SP-TIER-1, where only a check that rules needs_changes is a reviewed round with a
+// finding) steps the tier before a fix. A check the tool gave no judgment in (quota, no answer) or that had no executor receipt to hand
+// over holds the node (crw.hold, source unit_check), and a resume runs the check again; any other check that judged nothing (the
+// worktree or its HEAD moved, the tool failed, an invalid answer twice) escalates as a configuration question. The checked tree is then
+// committed, verified and landed; a failed verification goes back to the same thread and its fix is checked again. So a commit holds
+// only checked work: a fresh thread (a tier step, a rebuild) starts at the node's last commit, and the uncommitted trees of the attempt
+// it leaves are abandoned there (the packet carries their last findings and receipt); a resume replays the calls that made them, whose
+// effect nothing reads again (ops.Prover).
 const UNIT_CHECK_ROUNDS = 2
 async function nodeLane(n, rel, sig) {
   const node = n.id
@@ -243,7 +248,8 @@ async function nodeLane(n, rel, sig) {
   let step = null
   // the unit-check fix round trips of the tier
   let fixes = 0
-  // the finding ids carried past the last round trip, kept to the land: a later check of a verification fix judges only that fix
+  // the finding ids carried past the last round trip, kept to the land: a later check of a verification fix judges only that fix, so
+  // crw.land hands them to the acceptance, which reads each from the node's checks into the premerge record
   let carried = []
   let ex = null
   let head = null
@@ -329,21 +335,23 @@ async function nodeLane(n, rel, sig) {
       ev.unitCheck(tier, uc.check_id, uc.verdict, found.map((f) => f.id))
       let stepDue = false
       if (found.length > 0) {
-        if (ev.tierStepDue(tier)) {
-          stepDue = true
-        } else if (fixes < UNIT_CHECK_ROUNDS) {
-          // every finding goes back to the executor's own thread
-          fixes++
-          ex = await agent.call(fixPacket(node, { verdict: uc.verdict, findings: found }, null, null, ex.output), { resume: ex, schema: RECEIPT, label: 'fix:' + node + ':' + tier + ':r' + round })
-          continue
-        } else {
-          // the findings after the last round trip are carried: a blocking one does not land
+        if (fixes >= UNIT_CHECK_ROUNDS) {
+          // the findings after the last round trip are carried, before any tier step: a blocking one does not land
           for (const f of found) if (!carried.includes(f.id)) carried.push(f.id)
           if (uc.verdict !== 'verified') {
             const esc = await crw.escalate(node, { reason: 'unit_check_carried', call: ex.callId, ask: 'land', evidence: { carried, check: uc.check_id },
               detail: found.map((f) => f.id + ' ' + f.file + ' ' + f.text).join(' | ') })
             return { node, state: 'escalated', reason: 'unit_check_carried', call: ex.callId, carried, escalation: esc.id }
           }
+        } else if (ev.tierStepDue(tier)) {
+          // the tier evidence stands while round trips are left: the executor-t1 starts at the node's last commit, which holds only
+          // checked work, and this tree, whose findings are not answered, stays in the attempt the step leaves
+          stepDue = true
+        } else {
+          // every finding goes back to the executor's own thread
+          fixes++
+          ex = await agent.call(fixPacket(node, { verdict: uc.verdict, findings: found }, null, null, ex.output), { resume: ex, schema: RECEIPT, label: 'fix:' + node + ':' + tier + ':r' + round })
+          continue
         }
       }
       if (!stepDue) {
@@ -356,7 +364,7 @@ async function nodeLane(n, rel, sig) {
         ev.verification(tier, head.commit, ci.pass, ci.digest)
         last.ci = ci
         if (ci.pass) {
-          const landed = await crw.land(node, { head, ci })
+          const landed = await crw.land(node, carried.length ? { head, ci, carried } : { head, ci })
           if (landed.state === 'landed') return carried.length ? Object.assign(landed, { carried }) : landed
           if (landed.reason === EPOCH_LOST) return { node, state: 'stopped', reason: EPOCH_LOST, detail: landed.detail }
           const esc = await crw.escalate(node, { reason: landed.reason || 'land_refused', detail: landed.detail || '', ask: 'land' })

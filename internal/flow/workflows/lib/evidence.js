@@ -7,8 +7,9 @@
 //
 // What counts, on one tier:
 //   a  the reviewer says needs_changes in two consecutive reviewed rounds, and at least one finding digest is in both; in the
-//      node lane the unit check is the reviewed round: two consecutive unit checks that both have findings and share a finding
-//      id (reviewadapter.FindingID: the file and the text, never the line, so a finding that moved in the file is the same);
+//      node lane the unit check is the reviewed round: two consecutive unit checks that both rule needs_changes and share a finding
+//      id (reviewadapter.FindingID: the file and the text, never the line, so a finding that moved in the file is the same); the
+//      findings of a verified check block nothing and are no evidence: the lane carries what is left of them after its round trips;
 //   b  the required verification fails on two consecutive committed heads;
 //   c  two consecutive executor calls of the tier end null_model;
 //   d  four reviewed rounds (reviews or unit checks) without a verified verdict.
@@ -61,12 +62,13 @@ export function evidence(node) {
       t.reviews.push({ kind: 'review', callId, verdict, digests: findingDigests || [], counts: verdict === 'needs_changes' })
     },
     // a unit check of the node lane: its call, its verdict and its findings, each a finding id or a finding with its id; only the
-    // id is read, never the line. A check with any finding counts toward (a), whatever its verdict: the lane fixes every finding.
+    // id is read, never the line. Only a check that rules needs_changes counts toward (a): the lane fixes every finding, but the
+    // findings of a verified check block nothing, and what is left of them after the round trips is carried, not a tier step.
     unitCheck(tier, callId, verdict, findingIds) {
       const t = tierOf(state, tier)
       const ids = (findingIds || []).map((f) => (f !== null && typeof f === 'object' ? f.id : f)).filter((id) => typeof id === 'string' && id !== '')
       t.rounds += 1
-      t.reviews.push({ kind: 'unit_check', callId, verdict, digests: ids, counts: ids.length > 0 })
+      t.reviews.push({ kind: 'unit_check', callId, verdict, digests: ids, counts: verdict === 'needs_changes' && ids.length > 0 })
     },
     // the letter of the rule that is due on the tier, or null
     due(tier) {

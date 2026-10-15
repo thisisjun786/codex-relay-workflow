@@ -418,8 +418,10 @@ since (`head_moved`: the executor committed its work itself, whatever the backen
 assigned the executor an evidence receipt, the receipt's accepted copy; a receipt that cannot be handed over holds the node (below). A
 check with any finding, blocking or not, goes back to the same executor thread (`fix:<node>:<tier>:r<round>`, the findings in the fix
 packet), and the fixed tree is checked again, at most two round trips on a tier (`UNIT_CHECK_ROUNDS`); the check after them is
-`final` and its findings are carried: when none blocks (verdict `verified`) the node is committed, verified and landed with them as
-pre-merge defects that need no disposition, and the lane result names them (`carried`); a blocking one escalates
+`final` and its findings are carried, before any tier step: when none blocks (verdict `verified`) the node is committed, verified and
+landed with them as pre-merge defects that need no disposition (`crw.land` hands their ids to `crw.accept`, which reads each from the
+node's checks into the premerge record, also when the check the acceptance rests on judged only a later fix), and the lane result names
+them (`carried`); a blocking one escalates
 `unit_check_carried` (ask `land`, the carried ids and each finding's file and text) and nothing lands. A finding is named by its file
 and its text, never its line (`reviewadapter.FindingID`). A check the tool gave no judgment in (`quota`, `no_answer`) or that had no
 executor receipt to hand over (`receipt_missing`, `receipt_unverified`, `receipt_not_copied`) holds the node through `crw.hold` with
@@ -430,7 +432,10 @@ still hashes to its digest, so the hold clears once the receipt can be read; `re
 the child acts on the hold. Any other check that judged nothing (`tree_moved`, `head_moved`, `worktree_changed`, `tool_failed`, an invalid answer asked twice) escalates
 `unit_check_<state>` as a configuration question. A fix turn that answers `needs_research` goes through the research route on the
 same thread. A failed verification of the committed head goes back to the same thread as well, and its fix is checked again before
-the next commit; when the tier evidence stands, the tier step comes before any fix round.
+the next commit; while round trips are left, standing tier evidence steps the tier before a fix round. A commit holds only checked
+work, so a fresh thread (a tier step, a rebuild) starts at the node's last commit and the uncommitted trees of the attempt it leaves
+are abandoned there (its packet carries their last findings and receipt); a resume replays the calls that made them as recorded facts,
+since nothing reads their effect again, and runs none of them live (journal.md, the proofs).
 
 **Review.** `crw.review(node, plan, head, ci, opts)` is the old reviewer path, kept for the journals of old runs: neither the project
 lane nor `land-head` calls it, nor `crw.reviewHalt` or `crw.exploreEvidence`. It is a fresh reviewer thread over the committed head (SP-REV-1), with the record
@@ -449,7 +454,8 @@ a defect records the skip.
 
 **Tier evidence (SP-TIER-1).** `crw:lib/evidence` keeps the evidence of one node and tier from the results the lane feeds it: (a)
 `needs_changes` in two consecutive reviewed rounds with a finding digest in both (`FindingDigest`: kind, file, line and the words of
-the finding), and in the node lane two consecutive unit checks with findings that share a finding id (file and text, no line), (b) the required verification failing on two consecutive committed heads, (c) `null_model` on two consecutive executor
+the finding), and in the node lane two consecutive unit checks that rule `needs_changes` and share a finding id (file and text, no
+line; a verified check's findings block nothing and are no evidence: what is left of them after the round trips is carried), (b) the required verification failing on two consecutive committed heads, (c) `null_model` on two consecutive executor
 calls of the tier, (d) four reviewed rounds (reviews or unit checks) without a verified verdict. `crw.tierStep` then mints the step decision and
 `crw.stepRecord` appends the `flow_step_decisions` row (the rule, the letter of the evidence, the evidence ids, the head and tree of
 the node's last commit as the checkpoint; the step id is the engine's, or that id with a digest of the decision when the stored row of
@@ -486,7 +492,7 @@ inline (SP-INL-1), reuse an answer (SP-INL-2), skip, refuse or hand a question t
 | `verify(node, head, opts)` | the verification (`ok`, `command`, `digest`, the record); a verification that could not run is `ran: false`, not a failure. With no node, `opts` names the milestone, the command and the base: the verification of the integrated head for the final gate, in a worktree of the repository | always while it ran |
 | `unitCheck(node, call, opts)` | the unit check of the node's work by the review tool, run in Go (no agent call): uncommitted mode over the changes executor call `call` left, or, with `opts.commit` and `opts.base`, committed mode over `base..commit`; the `reviewadapter.Result`, the `hold` the lane is to write (`unit_check_quota`, `unit_check_no_answer`, `receipt_*`), `retried`, the judged call and the check's id | always, but a check that names a `hold` (asked again) |
 | `review(node, head, criteriaDigest, call, opts)` | the `ReviewResult` (the old reviewer path) | always |
-| `accept(node, head)` / `integrate(node, head, acceptanceId)` | the acceptance id / the batch commit and the target tip | the acceptance is active and not stale / the batch commit is on the target |
+| `accept(node, head, opts)` / `integrate(node, head, acceptanceId)` | the acceptance id (`opts.carried`: the ids of findings the node lane carried, each read from the node's unit checks into the premerge record's defects) / the batch commit and the target tip | the acceptance is active and not stale / the batch commit is on the target |
 | `escalate(node, info)` / `hold(node, info)` | the escalation flow row and, for `tiers_exhausted`, `blocked_scope` and `size_split`, the relay's close of the execution; the hold (the relay is told, nothing is closed) | always |
 | `decide(node, ask)` | whether a `decision_applied` row answers the ask | no applied row has appeared since |
 | `spawnDecision`, `stepRecord`, `exploreRoute`, `exploreRecord` | the decision rows and the answers the reuse reads | always |

@@ -583,11 +583,13 @@ function refusal(e) {
 // land is the land of a verified head: crw.accept assembles the premerge record from the verdict and asks the relay's agent
 // acceptance (dag-accept), then crw.integrate lands the accepted head (dag-integrate). A refusal of either - a finding that needs a
 // disposition and is blocking by default, a reviewer the relay does not accept - is the result `land_refused` with its closed
-// reason, not an exception; any other failure is thrown.
+// reason, not an exception; any other failure is thrown. o.carried are the ids of the findings the node lane carried past its last
+// unit-check round trip (CRW-1465): crw.accept reads each from the node's checks into the premerge record's defects, which the check
+// the acceptance rests on may not name (it judged only a later fix); with none the call is the one it always was.
 async function land(node, o) {
   let acc
   try {
-    acc = await crw.accept(node, o.head)
+    acc = await (o.carried && o.carried.length ? crw.accept(node, o.head, { carried: o.carried }) : crw.accept(node, o.head))
   } catch (e) {
     const reason = refusal(e)
     if (!reason) throw e

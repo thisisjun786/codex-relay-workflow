@@ -422,3 +422,126 @@ func TestResumeAfterGivenUpNodeRunsNothing(t *testing.T) {
 		})
 	}
 }
+
+// TestResumeAfterATierStepBeforeTheCommitRunsNoFinishedExecutorAgain (x1436 item 5): two checks with the same blocking finding step the
+// tier after one fix, before any commit. A commit holds only checked work, so nothing is committed: the executor-t1 starts fresh at the
+// node's base, and the build and the fix of the attempt it leaves made only uncommitted trees, which that fresh attempt abandoned. A
+// resume replays both as recorded facts and runs neither again. Held: the executor-t1's first turn is held by the host's usage limit,
+// and the resume goes on with that call in place only. Closed: a resume of the closed run runs no executor at all. Rebuild: a fix that
+// ends null_model leaves the build's checked tree uncommitted, the rebuild starts fresh at the node's base, and a resume of the closed
+// run runs neither the build nor the rebuild again.
+func TestResumeAfterATierStepBeforeTheCommitRunsNoFinishedExecutorAgain(t *testing.T) {
+	same := Finding("P1", "the guard is missing")
+	stepped := func(t *testing.T, l *Lab) {
+		t.Helper()
+		steps := l.StepRows()
+		if len(steps) != 1 || steps[0].Head != "" {
+			t.Fatalf("steps %+v: one step with no checkpoint commit", steps)
+		}
+		fix := callNamed(t, l, "fix:A:executor:r1")
+		for _, c := range l.Rows("crw.commit") {
+			if str(c.Data, "call") == fix.ID || str(c.Data, "call") == callNamed(t, l, "build:A:executor").ID {
+				t.Errorf("a tree of the executor tier was committed: %v", c.Data)
+			}
+		}
+		t1 := callNamed(t, l, "build:A:executor-t1")
+		if alloc, _ := l.Prepared(t1.ID).Data["allocation"].(map[string]any); str(alloc, "kind") != "fresh" || str(alloc, "start_commit") != l.Base {
+			t.Errorf("the executor-t1's allocation %v, want a fresh worktree at the node's base %s", alloc, l.Base)
+		}
+	}
+	noFinishedExecutor := func(t *testing.T, l *Lab, before int) {
+		t.Helper()
+		for _, ev := range rowsAfter(l, before) {
+			if ev.Kind == engine.KindCall && ev.Op == "agent" && ev.Event == engine.EvPrepared && (ev.Label == "build:A:executor" || ev.Label == "fix:A:executor:r1") {
+				t.Errorf("the resume prepared %s again: a finished executor call ran live", ev.Label)
+			}
+		}
+	}
+	t.Run("held executor-t1", func(t *testing.T) {
+		l := NewLab(t, oneNode()...)
+		l.UnitChecks("A", NeedsChanges(same), NeedsChanges(same))
+		l.On("^build:A:executor-t1$", func(c *Call) *fakehostPlan {
+			if c.N > 1 {
+				return nil
+			}
+			c.Edit()
+			p := Fail("usageLimitExceeded")
+			return &p
+		})
+		got := mustRunIncomplete(t, l)
+		if state, reason := laneOf(t, got, "A"); state != "held" || reason != "host_infra_usageLimitExceeded" {
+			t.Fatalf("lane A: %s %s; calls %v", state, reason, l.Labels())
+		}
+		stepped(t, l)
+		before := l.LastSeq()
+		l.NewProcess("proc-2")
+		final := Value[laneResult](t, l.Resume())
+		if final.State != "closed" || !slices.Equal(l.Relay.Landed, []string{"A"}) {
+			t.Fatalf("resume: %+v, landed %v", final, l.Relay.Landed)
+		}
+		var live []string
+		for _, ts := range turnsSince(l, before) {
+			live = append(live, labelOf(l, ts.call))
+		}
+		if !slices.Equal(live, []string{"build:A:executor-t1", "reviewer-final:M1", "reflection:M1"}) {
+			t.Errorf("live turns %v, want the held executor-t1 and the close", live)
+		}
+		noFinishedExecutor(t, l, before)
+		if n := len(l.Checker.Calls("A")); n != 3 {
+			t.Errorf("%d unit checks, want the two before the step and the executor-t1's", n)
+		}
+	})
+	t.Run("closed run", func(t *testing.T) {
+		l := NewLab(t, oneNode()...)
+		l.UnitChecks("A", NeedsChanges(same), NeedsChanges(same))
+		if got := mustRun(t, l); got.State != "closed" {
+			t.Fatalf("state %q", got.State)
+		}
+		stepped(t, l)
+		before := l.LastSeq()
+		l.NewProcess("proc-2")
+		final := Value[laneResult](t, l.Resume())
+		if final.State != "closed" || !slices.Equal(l.Relay.Landed, []string{"A"}) {
+			t.Fatalf("resume: %+v, landed %v", final, l.Relay.Landed)
+		}
+		if live := turnsSince(l, before); len(live) != 0 {
+			var labels []string
+			for _, ts := range live {
+				labels = append(labels, labelOf(l, ts.call))
+			}
+			t.Errorf("live turns %v on the resume of a closed run", labels)
+		}
+		noFinishedExecutor(t, l, before)
+	})
+	t.Run("rebuild after a fix that ends null_model", func(t *testing.T) {
+		l := NewLab(t, oneNode()...)
+		l.UnitChecks("A", NeedsChanges(same))
+		l.Sequence("^fix:A:executor:r1$", func(c *Call) fakehostPlan {
+			c.EditPath("a/scratch.txt", "an edit the null_model attempt left behind\n")
+			return Garbage()
+		})
+		if got := mustRun(t, l); got.State != "closed" {
+			t.Fatalf("state %q; calls %v", got.State, l.Labels())
+		}
+		rebuild := callNamed(t, l, "rebuild:A:executor:r2")
+		if alloc, _ := l.Prepared(rebuild.ID).Data["allocation"].(map[string]any); str(alloc, "kind") != "fresh" || str(alloc, "start_commit") != l.Base {
+			t.Errorf("the rebuild's allocation %v, want a fresh worktree at the node's base %s", alloc, l.Base)
+		}
+		if commits := l.Rows("crw.commit"); len(commits) != 1 || str(commits[0].Data, "call") != rebuild.ID {
+			t.Errorf("commits %+v, want the rebuild's only", commits)
+		}
+		before := l.LastSeq()
+		l.NewProcess("proc-2")
+		if final := Value[laneResult](t, l.Resume()); final.State != "closed" || !slices.Equal(l.Relay.Landed, []string{"A"}) {
+			t.Fatalf("resume: %+v, landed %v", final, l.Relay.Landed)
+		}
+		if live := turnsSince(l, before); len(live) != 0 {
+			var labels []string
+			for _, ts := range live {
+				labels = append(labels, labelOf(l, ts.call))
+			}
+			t.Errorf("live turns %v on the resume of a closed run", labels)
+		}
+		noFinishedExecutor(t, l, before)
+	})
+}
