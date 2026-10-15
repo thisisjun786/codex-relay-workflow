@@ -697,3 +697,30 @@ func TestLocalReuse_runEnv_is_not_a_reuse_key(t *testing.T) {
 		t.Errorf("the reused record's runEnv is %+v, want the verifying run's %+v", again.RunEnv, made.RunEnv)
 	}
 }
+
+// CRW-1494: localGitAbove walks the path as written and its resolved form. A link that points into a
+// repository is the case only the resolved form meets: the written path (through the link) never
+// reaches the repository's .git, the resolved one does. The ceiling keeps a stray .git above the
+// temp root out of the walk.
+func TestLocal_git_above_follows_a_link_to_a_parent_with_a_git(t *testing.T) {
+	base, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoGit := filepath.Join(base, "repo", ".git")
+	for _, d := range []string{repoGit, filepath.Join(base, "repo", "sub", "tmp"), filepath.Join(base, "plain", "tmp")} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(filepath.Join(base, "repo", "sub"), filepath.Join(base, "link")); err != nil {
+		t.Fatal(err)
+	}
+	ceilings := []string{filepath.Dir(base)}
+	if got := localGitAbove(filepath.Join(base, "link", "tmp"), ceilings); got != repoGit {
+		t.Errorf("a directory below a link to a repository: want %q, got %q", repoGit, got)
+	}
+	if got := localGitAbove(filepath.Join(base, "plain", "tmp"), ceilings); got != "" {
+		t.Errorf("a directory with no .git above it and no link: want none, got %q", got)
+	}
+}

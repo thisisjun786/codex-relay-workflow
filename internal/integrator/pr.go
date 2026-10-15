@@ -254,8 +254,9 @@ func (r *Runner) pushedRun(ctx context.Context, e Entry) (*Summary, error) {
 }
 
 // markerInBranch says whether head, the head a pushing marker names, is in the remote branch. A commit the checkout does not have
-// was never pushed (false); a git that fails otherwise (it cannot start, the context ended, or it exits with a status other than 0
-// and 1 for a commit it has) is an error.
+// was never pushed (false): "git rev-parse -q --verify head^{commit}" exits 1 for an absent object. A git that fails otherwise (it
+// cannot start, the context ended, or the ancestor check or the probe exits with a status other than the ones above, 128 among
+// them) is an error: a repository that cannot answer is not a commit that was never pushed.
 func (r *Runner) markerInBranch(ctx context.Context, head string) (bool, error) {
 	c := r.Cfg
 	rc, err := r.git(ctx, c.Checkout, nil, "merge-base", "--is-ancestor", head, c.remoteRef())
@@ -268,14 +269,17 @@ func (r *Runner) markerInBranch(ctx context.Context, head string) (bool, error) 
 	case 1:
 		return false, nil
 	}
-	have, err := r.git(ctx, c.Checkout, nil, "cat-file", "-e", head+"^{commit}")
+	have, err := r.git(ctx, c.Checkout, nil, "rev-parse", "-q", "--verify", head+"^{commit}")
 	if err != nil {
 		return false, err
 	}
-	if have != 0 {
+	switch have {
+	case 0:
+		return false, fmt.Errorf("git merge-base --is-ancestor exited %d", rc)
+	case 1:
 		return false, nil
 	}
-	return false, fmt.Errorf("git merge-base --is-ancestor exited %d", rc)
+	return false, fmt.Errorf("git merge-base --is-ancestor exited %d and git rev-parse --verify exited %d", rc, have)
 }
 
 // recoverLanding writes the one landing record of a pull request entry whose head is in the branch with no record (result

@@ -115,3 +115,43 @@ func TestLocal_a_step_never_selects_a_go_workspace(t *testing.T) {
 		t.Errorf("the tool probe does not disable go.work: %v", probe)
 	}
 }
+
+// CRW-1494: a step env carries exactly one TMPDIR entry. The inherited-variable loop skips the caller's
+// TMPDIR and the step's own is appended once, so a later entry never shadows an earlier one by accident.
+func TestLocal_a_step_env_has_exactly_one_TMPDIR(t *testing.T) {
+	count := func(env []string) (int, string) {
+		n, last := 0, ""
+		for _, entry := range env {
+			if strings.HasPrefix(entry, "TMPDIR=") {
+				n++
+				last = entry
+			}
+		}
+		return n, last
+	}
+	t.Setenv("TMPDIR", t.TempDir()) // a caller TMPDIR that exists, so t.TempDir keeps working
+	for _, tc := range []struct {
+		name    string
+		stepTmp func(temp string) string
+		want    func(temp string) string
+	}{
+		{"a configured step TMPDIR", func(temp string) string { return filepath.Join(temp, "step") }, func(temp string) string { return "TMPDIR=" + filepath.Join(temp, "step") }},
+		{"no step TMPDIR", func(string) string { return "" }, func(temp string) string { return "TMPDIR=" + filepath.Join(temp, "tmp") }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			temp := t.TempDir()
+			opts := localOptions{output: filepath.Join(t.TempDir(), "output"), stepTmp: tc.stepTmp(temp)}
+			env, err := localStepEnv(filepath.Join(temp, "home"), temp, opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			n, last := count(env)
+			if n != 1 {
+				t.Errorf("the step environment has %d TMPDIR entries, want exactly one: %v", n, env)
+			}
+			if want := tc.want(temp); last != want {
+				t.Errorf("the step TMPDIR entry is %q, want %q", last, want)
+			}
+		})
+	}
+}

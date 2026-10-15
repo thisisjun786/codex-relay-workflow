@@ -134,6 +134,91 @@ func TestAFailedRunPathRecoveryIsHeldNotNothingMerged(t *testing.T) {
 	}
 }
 
+// TestAStatus128RunPathRecoveryIsHeldAndTheNextPassRecordsIt: the same race as above, but git answers the recovery's ancestor
+// question with status 128 (no start error). That is a repository error, not "no run pushed it": the pass is held with the
+// reason, no landing record and no comment is written, the entry stays pending and the marker stays. With git working again, the
+// next pass records the landing and moves the entry to done/.
+func TestAStatus128RunPathRecoveryIsHeldAndTheNextPassRecordsIt(t *testing.T) {
+	w := newPRWorld(t, true)
+	pr := w.milestone("10")
+	w.enqueue("o/r#1")
+	base := w.remoteDev()
+	first := w.pass()
+	requireExit(t, first, ExitPushed, "pushed")
+	dev := w.remoteDev()
+	w.crashAfterPush(first, pr.HeadSHA)
+	marker := readSummary(t, w, first.Summary.Tag)
+	marker.Result = "pushing"
+	summaryPath := filepath.Join(w.cfg.RunsDir, marker.Tag+".summary.json")
+	data, err := json.Marshal(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(summaryPath, append(data, '\n'), 0o664); err != nil {
+		t.Fatal(err)
+	}
+	// dev is back where it was before the push, so the pass's check does not find the head; it arrives after the check
+	w.git(w.remote, "update-ref", "refs/heads/dev", base)
+	armed := new(bool)
+	failed := 0
+	delegate := w.r.Exec
+	w.r.Exec = func(ctx context.Context, c Cmd) (int, error) {
+		// markerInBranch asks about the marker's head against the remote branch; the run's own check asks against HEAD. Only the
+		// ancestor question fails: the commit probe goes to the real git and finds the commit, so the status is an error.
+		for i, a := range c.Argv {
+			if *armed && a == "merge-base" && i+3 < len(c.Argv) && c.Argv[i+1] == "--is-ancestor" && c.Argv[i+2] == marker.Head && c.Argv[len(c.Argv)-1] != "HEAD" {
+				failed++
+				return 128, nil
+			}
+		}
+		return delegate(ctx, c)
+	}
+	fired := w.headArrivesAfterCheck(pr.HeadSHA, func() {
+		w.git(w.remote, "update-ref", "refs/heads/dev", dev)
+		*armed = true
+	})
+	before := len(w.fake.Comments(1))
+
+	rep := w.pass()
+	if !*fired || !*armed {
+		t.Fatal("the head never arrived between the check and the run")
+	}
+	if failed == 0 {
+		t.Fatal("the recovery never asked git about the marker")
+	}
+	if rep.Exit != ExitUsage || rep.Result != "error" || !strings.Contains(rep.Error, "pushing marker of run "+marker.Tag) {
+		t.Errorf("pass = exit %d result %q error %q", rep.Exit, rep.Result, rep.Error)
+	}
+	if len(rep.Held) != 1 || !strings.HasPrefix(rep.Held[0], "pr-1: ") || !strings.Contains(rep.Held[0], "landing could not be recorded") || !strings.Contains(rep.Held[0], "pushing marker of run "+marker.Tag) {
+		t.Errorf("held %q", rep.Held)
+	}
+	if ls := w.landings(); len(ls) != 0 {
+		t.Errorf("a landing was recorded on a git failure: %+v", ls)
+	}
+	if w.pendingHead("pr-1") != pr.HeadSHA || w.doneFor("pr-1", pr.HeadSHA) {
+		t.Errorf("the entry left pending (pending %q, done %v)", w.pendingHead("pr-1"), w.doneFor("pr-1", pr.HeadSHA))
+	}
+	if got, err := os.ReadFile(summaryPath); err != nil || !strings.Contains(string(got), `"pushing"`) {
+		t.Errorf("the marker did not stay (%v): %s", err, got)
+	}
+	if n := len(w.fake.Comments(1)); n != before {
+		t.Errorf("%d comments, want %d: a comment was posted for a landing that was not recorded", n, before)
+	}
+
+	*armed = false
+	w.pass()
+	ls := w.landings()
+	if len(ls) != 1 {
+		t.Fatalf("landing records %+v", ls)
+	}
+	if ls[0].Result != resultLandedBeforeRecord || ls[0].Head != pr.HeadSHA || ls[0].Verification.Record != marker.Record {
+		t.Errorf("the retried record %+v", ls[0])
+	}
+	if !w.doneFor("pr-1", pr.HeadSHA) || w.pendingHead("pr-1") != "" {
+		t.Errorf("the entry is not done after the retry (pending %q)", w.pendingHead("pr-1"))
+	}
+}
+
 // refuseRecordWrite makes writing the landing record of tag fail: a directory sits where its temporary file goes.
 func (w *prWorld) refuseRecordWrite(tag string) {
 	w.t.Helper()
