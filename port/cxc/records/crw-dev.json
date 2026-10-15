@@ -62,7 +62,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "CRW-1431: the skill text names the project session and the repository session by layer and carries no relay role id",
+      "reason": "CRW-1431: the skill text names the project session and the repository session by layer and carries no relay role id CRW-1442: the C4 lane ends with the crosscheck of the milestone close in place of reviewer-final",
       "hunks": [
         {
           "line": 3,
@@ -84,7 +84,7 @@
             "| C5 | Research/Ambiguous | Unclear requirements, ambiguous user value, unknown territory after one §0 clarification round | Interview-first via the `pabcd` skill, then reclassify |\n"
           ],
           "new": [
-            "| C4 | High-Risk | Auth, payments, data deletion, migration, release, permission model, security boundary | Full PABCD (mandatory) + full relevant gates + durable risk/evidence record; in a flow-managed run the run's high-risk lane is this process (one background explorer for each node of the milestone, then the architect DESIGN over their findings, independent pre-build design audit by the critic, of a different model family than the architect, before any executor starts, per-issue candidate review, final gate and reviewer-final with full verification and risk record) and the executor starts no FSM |\n",
+            "| C4 | High-Risk | Auth, payments, data deletion, migration, release, permission model, security boundary | Full PABCD (mandatory) + full relevant gates + durable risk/evidence record; in a flow-managed run the run's high-risk lane is this process (one background explorer for each node of the milestone, then the architect DESIGN over their findings, independent pre-build design audit by the critic, of a different model family than the architect, before any executor starts, per-issue candidate review, final gate with full verification and risk record, then the crosscheck of the integrated range by a review engine of another model family than every author) and the executor starts no FSM |\n",
             "| C5 | Research/Ambiguous | Unclear requirements, ambiguous user value, unknown territory after one §0 clarification round | No interview: back to its registration ([crw-define](../crw-define/SKILL.md)) or, in a run, a decision request to the session above the project session ([the level table](../crw-canon/references/hierarchy.md#the-levels)); then reclassify |\n",
             "\n",
             "**C5 is temporary** — it cannot enter implementation until the registration step or the\n",
@@ -99,7 +99,7 @@
             "and the task is reclassified C0-C4.\n"
           ],
           "new": [
-            "In a flow-managed run, reviewer-final does not replace the pre-build design audit. The executor and an\n",
+            "In a flow-managed run, the crosscheck does not replace the pre-build design audit. The executor and an\n",
             "oversized child start no PABCD state machine; the standalone PABCD rules above are unchanged.\n"
           ]
         },
