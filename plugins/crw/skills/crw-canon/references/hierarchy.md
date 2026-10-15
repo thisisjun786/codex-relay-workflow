@@ -6,24 +6,39 @@ The layers of the workflow, who owns what at each, the names used for them, and 
 
 The work runs in two Codex session layers under a top session, and the lower one calls subagents. This table is the one place the names are fixed.
 
-| Korean | English | Relay role id | Duty | Calls |
-|---|---|---|---|---|
-| 총괄 | top session | none | The topmost session; any agent can hold it (today Sion). It talks with Jun, keeps what only Jun decides, and settles a milestone and its issues before they are registered | one parent per repository, through App Server thread send and read |
-| 부모 | parent (repository session) | `supervisor` (management seat, CRW-1314) | The Codex session that represents one repository: it decides the order of the repository's projects, which children run together, the answers to the decisions its children raise, and it reads their reports | the top session above it; its children below it |
-| 자식 | child (project session) | `parent` | The Codex session of one project: it takes one milestone at a time, runs it (a flow run of [crw-run](../../crw-run/SKILL.md)), verifies and integrates it, and reports to its parent | its parent above it, a peer child beside it, its subagents below it |
-| 서브에이전트 | subagents (architect, executor, reviewer, explorer) | none | A LEAF the child spawns for one step of a run; the run records it | nobody: it answers the step it was given |
+| Korean | English | Duty | Calls |
+|---|---|---|---|
+| 총괄 | top session | The topmost session; any agent can hold it (today Sion). It talks with Jun, keeps what only Jun decides, and settles a milestone and its issues before they are registered | one parent per repository, through App Server thread send and read |
+| 부모 | parent (repository session) | The Codex session that represents one repository, through its management seat (CRW-1314): it decides the order of the repository's projects, which children run together, the answers to the decisions its children raise, and it reads their reports | the top session above it; its children below it |
+| 자식 | child (project session) | The Codex session of one project: it takes one milestone at a time, runs it (a flow run of [crw-run](../../crw-run/SKILL.md)), verifies and integrates it, and reports to its parent | its parent above it, a peer child beside it, its subagents below it |
+| 서브에이전트 | subagents (architect, executor, reviewer, explorer) | A LEAF the child spawns for one step of a run; the run records it | nobody: it answers the step it was given |
 
-The relay role ids `supervisor`, `parent` and `child` are not renamed: a relationship store, a host's role policy, a flag and a CLI word keep them as they are, and changing one would change a stored format. Read them through this table. The relay role id `parent` names the child, not the parent, and `supervisor` names the parent. The relay role id `child` names an issue child, an old record kind that is read only: a Codex session bound to one issue ID that a child released for one oversized issue before that path was retired. No run releases one now: a node sized `child` (`size_fit`, the [spawn policy](spawn-policy.md)) goes up as a `size_split` escalation. An issue child is no layer of this table. Instruction text uses the English names; the Korean names are Jun's own words, shown to a reader, and key nothing.
+Instruction text uses the English names; the Korean names are Jun's own words, shown to a reader, and key nothing. The code keeps some names of its own, the role ids of a stored relationship among them. They are listed in [Names used only in code](#names-used-only-in-code) and no instruction text uses them.
 
-The parent holds a management seat (`crw manage supervisor register`, scope kind `management`, one per parent). A store seat is the `supervisor` role with the scope `store`: a parent that registers lays its store seat down, and the relay reads the store seat through the management seat. Read that way the store seat carries the parent only a decision the user owes (a `decision_request`, a `jun_decision_request` or `flow_jun_decision_request`, a fault notice of kind `decision`) and the answer to a decision record that names no management seat; every other message of a project no management seat stands above (a child that bound itself) does not reach the parent: it finds nobody above and stays standing, and one staged before the parent registered is held unaddressed, until a management edge above that project or a live store seat names someone (CRW-1486). A parent hears its own projects' reports through the edges it writes when it binds their children.
-
-A subagent is no layer either. In a flow run the run hands the child a step and the child spawns the subagent for it; the subagent is not a Codex task of its own, holds no binding and no relay role id, and the run alone speaks to it through the step it records. What it returns is the answer the run judges, not a message to a layer. An oversized issue is not a subagent's work either: the run escalates it as a `size_split` (detail `child_retired`) and starts no thread for it.
+A subagent is no layer. In a flow run the run hands the child a step and the child spawns the subagent for it; the subagent is not a Codex task of its own, holds no binding and no role id, and the run alone speaks to it through the step it records. What it returns is the answer the run judges, not a message to a layer. An oversized issue is not a subagent's work either: the run escalates it as a `size_split` (detail `child_retired`) and starts no thread for it.
 
 Records written under earlier names (the known-defects, the port records, the recorded dispatch cases and old handoffs) are read through this table and are not rewritten.
 
+## Names used only in code
+
+코드 안에서만 쓰는 이름. The names below are read by the code (a stored row, a host's role policy, a flag, a CLI word) and name no layer in instruction text. This table maps each to the layers of [the level table](#the-levels).
+
+| Relay role id | Names | Note |
+|---|---|---|
+| `supervisor` | the parent (repository session) | its management seat is registered with `crw manage supervisor register` (CRW-1314) |
+| `parent` | the child (project session) | the id of the child, not of the parent |
+| `child` | an issue child | no layer; an old record kind that is read only |
+| none | the top session and the subagents | neither holds a role id |
+
+The relay role ids `supervisor`, `parent` and `child` are not renamed: a relationship store, a host's role policy, a flag and a CLI word keep them as they are, and changing one would change a stored format. Read them through the table above. The relay role id `parent` names the child, not the parent, and `supervisor` names the parent. The relay role id `child` names an issue child, an old record kind that is read only: a Codex session bound to one issue ID that a child released for one oversized issue before that path was retired. No run releases one now: a node sized `child` (`size_fit`, the [spawn policy](spawn-policy.md)) goes up as a `size_split` escalation. An issue child is no layer of this table.
+
+The parent holds a management seat (`crw manage supervisor register`, scope kind `management`, one per parent). A store seat is the `supervisor` role with the scope `store`: a parent that registers lays its store seat down, and the relay reads the store seat through the management seat. Read that way the store seat carries the parent only a decision the user owes (a `decision_request`, a `jun_decision_request` or `flow_jun_decision_request`, a fault notice of kind `decision`) and the answer to a decision record that names no management seat; every other message of a project no management seat stands above (a child that bound itself) does not reach the parent: it finds nobody above and stays standing, and one staged before the parent registered is held unaddressed, until a management edge above that project or a live store seat names someone (CRW-1486). A parent hears its own projects' reports through the edges it writes when it binds their children.
+
+A service-management daemon of the operating system is a different thing that merely shares a name with the relay role `supervisor`.
+
 ## Scope of each level
 
-Each layer is one Codex session bound by stable ID: the parent to its repository through its management seat, a child to one project ID, an issue child to one issue ID. That binding is what makes a layer. A title, a folder, a branch or a chat link is not, so identity stays on the stable IDs under [OPS-7.1](../../crw-run/references/operations.md#ops-71-what-an-assignment-binds) and [OPS-7.4](../../crw-run/references/operations.md#ops-74-three-levels-and-their-routing-identity). Each scope has one active execution owner. A subagent acquires no ownership by receiving a step, an internal helper agent (the helper role policy's) is no layer, and a service-management daemon of the operating system is a different thing that merely shares a name with the relay role `supervisor`.
+Each layer is one Codex session bound by stable ID: the parent to its repository through its management seat, a child to one project ID, an issue child to one issue ID. That binding is what makes a layer. A title, a folder, a branch or a chat link is not, so identity stays on the stable IDs under [OPS-7.1](../../crw-run/references/operations.md#ops-71-what-an-assignment-binds) and [OPS-7.4](../../crw-run/references/operations.md#ops-74-three-levels-and-their-routing-identity). Each scope has one active execution owner. A subagent acquires no ownership by receiving a step and an internal helper agent (the helper role policy's) is no layer.
 
 Writing the names down settles what they are called and nothing else. A display name in either language keys nothing, so no relationship id, assignment, goal, worktree or task title is regenerated because this section spells them out, and each layer's title is the one [Thread titles](#thread-titles) gives it. A name is not a designation either: a request, a prompt, a title or a folder saying 부모, 자식, parent or child designates nobody, so what a session is stays something read from its binding rather than from what anyone called it.
 
@@ -62,9 +77,9 @@ first turn, so the Codex app shows the title and never the first prompt sentence
 | Layer | Title | Rule | Who names it, and when |
 |---|---|---|---|
 | 총괄 (top session) | none | CRW does not create it, and keeps no rule for it | nobody in CRW |
-| 부모 (parent, the repository session) | `[CRW] 부모 · <owner>/<repo>` | the owner and name of the repository it represents, from its checkout's origin | its creator, `create_thread` with role `supervisor`, which takes the title from the checkout's origin when the caller gives none |
-| 자식 (child, the project session) | `[<product family>] <project summary>`, as `[CRW] 실사용 첫 시험 (P-CRW-140)` | [Set the app presentation and record](../../crw-plan/references/integrations.md#set-the-app-presentation-and-record) | its creator, `create_thread` with role `parent`, with the title the parent writes by that rule |
-| Issue child (old records, read only) | `ISSUE-ID · <title>` | [Child task titles](../../crw-run/references/task-packet.md#child-task-titles) | the managed start, whose `create_thread` with role `child` puts the issue key in front of the title |
+| 부모 (parent, the repository session) | `[CRW] 부모 · <owner>/<repo>` | the owner and name of the repository it represents, from its checkout's origin | its creator, `create_thread`, which takes the title from the checkout's origin when the caller gives none |
+| 자식 (child, the project session) | `[<product family>] <project summary>`, as `[CRW] 실사용 첫 시험 (P-CRW-140)` | [Set the app presentation and record](../../crw-plan/references/integrations.md#set-the-app-presentation-and-record) | its creator, `create_thread`, with the title the parent writes by that rule |
+| Issue child (old records, read only) | `ISSUE-ID · <title>` | [Child task titles](../../crw-run/references/task-packet.md#child-task-titles) | the managed start, whose `create_thread` puts the issue key in front of the title |
 | 서브에이전트 (subagents) | no title | the host lists no subagent thread in the app, and a step's marker identifies it | nobody |
 
 A creation that cannot name its thread by this table warns and records and goes on: the creation's receipt
