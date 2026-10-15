@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/gitprobe"
@@ -35,7 +36,7 @@ merge is done by the dev queue (crw manage integrate --enqueue-pr REF, then its 
 
   open   opens the pull request in OWNER/NAME from --head onto --base (default dev). Its body is --body (or the file) followed by one
          line "Carries: REF, REF" naming the issues it carries (--issue, repeated or comma-separated, OWNER/NAME#N, at least one).
-         With --push DIR the head branch of the checkout DIR is pushed to --remote (default origin) first, never forced: a push the
+         With --push DIR the head branch of the checkout DIR is pushed to --remote (default origin; a remote name such as origin, not a URL or a path) first, never forced: a push the
          remote refuses opens nothing.
   show   reads the pull request: state, merged, head commit, head and base branch, the issues it carries; --checks adds the check
          runs and commit statuses of its head and their judgment (none, pending, success, failure).
@@ -222,6 +223,9 @@ func RunWith(ctx context.Context, d *Deps, args []string, stdout, stderr io.Writ
 		if err := in.Check(); err != nil {
 			return usage("%v", err)
 		}
+		if *push != "" && !remoteNameRE.MatchString(*remote) {
+			return usage("--remote %q is not a remote name", *remote)
+		}
 		var ans Answer
 		if *push != "" {
 			pushed, err := pushBranch(ctx, d.Env, *push, *remote, *head)
@@ -277,6 +281,10 @@ func RunWith(ctx context.Context, d *Deps, args []string, stdout, stderr io.Writ
 	return usage("unknown command %q: open or show", sub)
 }
 
+// remoteNameRE is what --remote may be with --push: a configured remote's name (origin, upstream, my-fork.2), never an option
+// (leading dash), a path or a URL (a slash, a colon).
+var remoteNameRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
 // pushEnv is the environment of the push's git calls: env (nil is the process environment) without the routing variables
 // (GIT_DIR, GIT_WORK_TREE, GIT_OBJECT_DIRECTORY, GIT_NAMESPACE, ...), so -C names the repository, and GIT_TERMINAL_PROMPT=0 in
 // place of any value env had, as the dev queue (internal/integrator) builds its git environment.
@@ -302,7 +310,7 @@ func pushBranch(ctx context.Context, env []string, checkout, remote, branch stri
 		return "", fmt.Errorf("push: the checkout %s has no branch %s: %w", checkout, branch, err)
 	}
 	// no plus and no --force: a remote branch that is not an ancestor of the tip refuses the push
-	if _, err := gitOut("push", "--porcelain", remote, tip+":refs/heads/"+branch); err != nil {
+	if _, err := gitOut("push", "--porcelain", "--", remote, tip+":refs/heads/"+branch); err != nil {
 		return "", fmt.Errorf("push of %s to %s refused: %w", branch, remote, err)
 	}
 	return tip, nil
