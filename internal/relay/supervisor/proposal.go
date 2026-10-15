@@ -496,7 +496,7 @@ func (c *Channel) staysTheSameStatement(ctx context.Context, row store.Superviso
 	if err != nil {
 		return false, err
 	}
-	now, err := freshStatementKey(columns, fresh)
+	now, err := freshStatementKey(columns, fresh, statementReading{})
 	if err != nil {
 		return false, err
 	}
