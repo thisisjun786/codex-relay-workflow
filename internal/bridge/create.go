@@ -10,6 +10,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/sandboxroot"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -45,7 +46,28 @@ type CreateThread struct {
 	RequestID, CWD, Prompt, Title, Sandbox, Model, ProjectID, Effort, Exception, Role, MCPProfile string
 	Roots                                                                                         []string
 	Policy                                                                                        map[string]any
+	// PromptRequired marks a call that must not create a thread with no first turn (the MCP create_thread; a relay
+	// creation always carries its bootstrap prompt). With no Prompt it never begins an attempt (createWithoutPrompt).
+	// With a Prompt, a conflict with a reservation made with its arguments without a prompt, before prompts were
+	// required, retires that reservation (conflictBeforePrompt). It is not part of the fingerprint.
+	PromptRequired bool
 }
+
+// ErrPromptRequired refuses a create_thread that must bring a prompt (PromptRequired), brings none, and finds no receipt
+// on its request_id: nothing was reserved, so the call that brings a prompt may reuse the id.
+var ErrPromptRequired = &Invalid{`prompt is required: a thread created with no first turn has no rollout, so thread/resume and thread/turns/list on it fail with "missing source rollout"`}
+
+// RetiredBeforePrompt is the error a create_thread reservation made without a prompt, before prompts were required, is
+// retired with (retireBeforePrompt), and so the start of the error of every receipt retired that way.
+const RetiredBeforePrompt = "this create_thread reservation was made without a prompt, before a prompt was required, and nothing of it reached the host; it was retired instead of resumed, because resumed it would create a thread with no first turn, so no call on its request_id creates a thread. Create the thread with a prompt under a new request_id"
+
+// ErrRetiredBeforePrompt answers a create_thread that must bring a prompt (PromptRequired) on a request_id whose
+// reservation was made with the call's arguments without a prompt, before prompts were required: that reservation is
+// retired (RetiredBeforePrompt), by this call or an earlier one, and never creates a thread.
+var ErrRetiredBeforePrompt = &Invalid{RetiredBeforePrompt}
+
+// errBeginsWithoutPrompt is createWithoutPrompt's refusal of the attempt it never begins; its callers never see it.
+var errBeginsWithoutPrompt = errors.New("a create_thread that must bring a prompt and brings none begins no attempt")
 
 // CreationWatch is the turn watch a creation opened on its thread, handed to the caller instead of being let go
 // as the creation returns (CreateThreadWatched). The watch holds the thread's mutation gate and its
@@ -92,6 +114,9 @@ func (b *Bridge) CreateThread(ctx context.Context, in CreateThread) (receipt led
 	}()
 	// One bound on this path's context covers every call it makes, before and inside the mutation.
 	ctx = appserver.WithAckBound(ctx, createAckBound)
+	if in.PromptRequired && in.Prompt == "" {
+		return b.createWithoutPrompt(ctx, in)
+	}
 	if err := nonempty(in.CWD, "cwd", 100000); err != nil {
 		return nil, err
 	}
@@ -227,7 +252,91 @@ func (b *Bridge) CreateThread(ctx context.Context, in CreateThread) (receipt led
 		receipt["desktopProjectAssociation"] = "unverified; check Desktop listing"
 		return nil
 	}, legacy: createThreadLegacy(params, in.CWD)})
+	if in.PromptRequired && errors.Is(err, ledger.ErrConflict) {
+		return nil, b.conflictBeforePrompt(ctx, in, err)
+	}
 	return result, err
+}
+
+// createWithoutPrompt is a create_thread that must bring a prompt (PromptRequired) and brings none. It never begins an
+// attempt; it may only replay a receipt that is not not_attempted. Under the mutation lock, right after the lookup,
+// validate refuses the attempt, and Begin's own transaction refuses it again (refuseBegin), so a row another process
+// changes in between begins nothing either. None of the request's checks run, because no attempt follows. The refusal
+// is then answered by what the request_id holds (retireBeforePrompt): no receipt is ErrPromptRequired, with nothing
+// reserved, and a not_attempted reservation, which is one made with exactly these arguments, so without a prompt, before
+// prompts were required, is retired and answered ErrRetiredBeforePrompt. A replay of a receipt retired that way is
+// answered ErrRetiredBeforePrompt too.
+func (b *Bridge) createWithoutPrompt(ctx context.Context, in CreateThread) (ledger.Receipt, error) {
+	params := createThreadParams(in)
+	refuse := func() error { return errBeginsWithoutPrompt }
+	result, err := b.mutate(ctx, mutation{requestID: in.RequestID, method: "create_thread", params: params, legacy: createThreadLegacy(params, in.CWD),
+		validate: refuse, refuseBegin: func(ledger.Receipt) error { return refuse() }})
+	switch {
+	case errors.Is(err, errBeginsWithoutPrompt):
+	case err == nil && retiredBeforePrompt(result):
+		return nil, ErrRetiredBeforePrompt
+	default:
+		return result, err
+	}
+	retired, held, err := b.retireBeforePrompt(ctx, in)
+	switch {
+	case err != nil:
+		return nil, err
+	case retired:
+		return nil, ErrRetiredBeforePrompt
+	case held == nil:
+		return nil, ErrPromptRequired
+	}
+	// Another attempt began on the reservation after the refusal: the call answers that receipt, as a replay.
+	replay := copyMap(held)
+	replay["replayed"] = true
+	return replay, nil
+}
+
+// conflictBeforePrompt answers the conflict of a create_thread that must bring a prompt (PromptRequired) and brings one.
+// When its request_id holds a reservation made with its arguments without a prompt, before prompts were required, the
+// way on is a new request_id, and before that way is given the reservation is retired (retireBeforePrompt), so that no
+// call on it, in this build or one that still takes a prompt-less create, creates a thread: ErrRetiredBeforePrompt. A
+// failure to read the request_id is returned in place of the conflict, and every other row keeps the conflict.
+func (b *Bridge) conflictBeforePrompt(ctx context.Context, in CreateThread, conflict error) error {
+	retired, _, err := b.retireBeforePrompt(ctx, in)
+	switch {
+	case errors.Is(err, ledger.ErrConflict):
+		return conflict
+	case err != nil:
+		return err
+	case retired:
+		return ErrRetiredBeforePrompt
+	}
+	return conflict
+}
+
+// retireBeforePrompt retires the not_attempted create_thread reservation on in.RequestID made with in's arguments
+// without a prompt (in's own prompt is ignored), under the mutation lock and in one ledger transaction that writes only
+// while the reservation is still exactly that (ledger.Retire): failed, an existing terminal status every build replays
+// and never re-runs, with RetiredBeforePrompt as its error. A receipt with a host effect, a not_attempted reservation
+// made with a prompt or other arguments, and a request_id no row holds are never written. It answers whether the
+// reservation is retired, by this call or an earlier one, and the receipt the request_id holds (nil for none).
+func (b *Bridge) retireBeforePrompt(ctx context.Context, in CreateThread) (bool, ledger.Receipt, error) {
+	in.Prompt = ""
+	params := createThreadParams(in)
+	if b.waiting != nil {
+		b.waiting(in.RequestID)
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	retired, held, err := b.Ledger.Retire(ctx, in.RequestID, "create_thread", params, createThreadLegacy(params, in.CWD), RetiredBeforePrompt)
+	if err != nil {
+		return false, nil, err
+	}
+	return retired || retiredBeforePrompt(held), held, nil
+}
+
+// retiredBeforePrompt reports whether receipt is a create_thread reservation retired by retireBeforePrompt: failed, with
+// an error that starts with RetiredBeforePrompt. A replay of it carries the same two members.
+func retiredBeforePrompt(receipt ledger.Receipt) bool {
+	text, _ := receipt["error"].(string)
+	return receipt["status"] == "failed" && strings.HasPrefix(text, RetiredBeforePrompt)
 }
 
 // createThreadParams is the params a create_thread request is fingerprinted by in the ledger, built from the request
@@ -283,7 +392,8 @@ type Reservation int
 const (
 	// ReservationNone: no row on the request_id.
 	ReservationNone Reservation = iota
-	// ReservationEffect: a row whose status is not not_attempted (the attempt began, or it is another operation's).
+	// ReservationEffect: a row whose status is not not_attempted (the attempt began, it is a reservation made before
+	// prompts were required and retired (RetiredBeforePrompt), or it is another operation's).
 	ReservationEffect
 	// ReservationPromptless: a not_attempted row stored with exactly this request's arguments and no prompt.
 	ReservationPromptless
@@ -307,8 +417,9 @@ func (r Reservation) String() string {
 
 // CreateThreadReservation tells what the ledger holds on in.RequestID, compared with in's arguments without a prompt
 // through the stored fingerprint (the same comparison, legacy fingerprint included, CreateThread's replay makes). in's
-// own prompt is ignored. It only reads, without the mutation lock, so its answer is advisory: CreateThread stays the
-// authority on what a call does. A ledger read error is returned, never dropped.
+// own prompt is ignored. It only reads, without the mutation lock, so its answer may be out of date by the time a call
+// acts on it: it can word a refusal, never allow anything, and CreateThread (PromptRequired) decides what a call does
+// under the lock. A ledger read error is returned, never dropped.
 func (b *Bridge) CreateThreadReservation(ctx context.Context, in CreateThread) (Reservation, error) {
 	if b.Ledger == nil {
 		return ReservationNone, nil

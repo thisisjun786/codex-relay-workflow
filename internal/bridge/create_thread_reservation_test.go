@@ -2,10 +2,13 @@ package bridge
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
 )
 
@@ -101,4 +104,190 @@ func TestCreateThreadReservationTellsAPromptedReservationFromAPromptlessOne(t *t
 			t.Fatalf("reservation=%v err=%v", got, err)
 		}
 	})
+}
+
+// promptRequired is a create_thread as the MCP tool makes it, in cwd, with prompt.
+func promptRequired(id, cwd, prompt, title string) CreateThread {
+	return CreateThread{RequestID: id, CWD: cwd, Prompt: prompt, Title: title, Sandbox: "read-only", Model: "explicit-model", Effort: "high", PromptRequired: true}
+}
+
+func answerCreation(host *fakehost.Server, cwd string) {
+	host.Respond("thread/start", fakehost.Reply{Result: map[string]any{"thread": map[string]any{"id": "thread-1"}, "cwd": cwd, "model": "explicit-model", "reasoningEffort": "high", "approvalPolicy": "never", "sandbox": map[string]any{"type": "readOnly"}}})
+	host.Respond("turn/start", fakehost.Reply{Result: map[string]any{"turn": map[string]any{"id": "turn-1"}}})
+}
+
+func stored(t *testing.T, store *ledger.Ledger, id string) string {
+	t.Helper()
+	raw, err := store.RawReceipt(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}
+
+// CRW-1506 (x1506 #1): a create_thread that must bring a prompt and brings none never begins an attempt, whatever the
+// MCP layer's own lookup saw: the bridge decides under its mutation lock, after its own lookup. A row that was in flight
+// when the caller looked and turned not_attempted before the bridge looked is retired, never re-run, and nothing reaches
+// the host; with no row nothing is reserved; a receipt that is not not_attempted is replayed as it is.
+func TestCreateThreadThatMustBringAPromptNeverBeginsAnAttemptWithoutOne(t *testing.T) {
+	ctx := context.Background()
+	t.Run("a reservation that turns not_attempted after the caller's lookup is retired, not re-run", func(t *testing.T) {
+		b, host := testBridge(t)
+		cwd := t.TempDir()
+		answerCreation(host, cwd)
+		in := promptRequired("in-flight", cwd, "", "")
+		seedCreateReservation(t, b.Ledger, "in-flight", createThreadParams(in), "in_progress_or_unknown", false)
+		if held, err := b.CreateThreadReservation(ctx, in); err != nil || held != ReservationEffect {
+			t.Fatalf("the caller's lookup: %v %v", held, err)
+		}
+		flips := 0
+		b.waiting = func(id string) {
+			if flips++; flips > 1 {
+				return
+			}
+			// The attempt in flight ends with nothing reaching the host, after the caller's lookup and before the bridge's.
+			r, err := b.Ledger.Get(ctx, id)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			r["status"] = "not_attempted"
+			if _, err = b.Ledger.Save(ctx, r); err != nil {
+				t.Error(err)
+			}
+		}
+		got, err := b.CreateThread(ctx, in)
+		if !errors.Is(err, ErrRetiredBeforePrompt) || got != nil {
+			t.Fatalf("answered %v %v", got, err)
+		}
+		if host.Count("thread/start") != 0 || host.Count("turn/start") != 0 {
+			t.Fatalf("the reservation was re-run: %v", host.Requests())
+		}
+		if r, err := b.Ledger.Get(ctx, "in-flight"); err != nil || !retiredBeforePrompt(r) || r["retrySafe"] != false {
+			t.Fatalf("not retired: %v %v", r, err)
+		}
+		// A later call, with or without a prompt, gets the same answer and reaches nothing.
+		b.waiting = nil
+		for _, prompt := range []string{"", "hello"} {
+			if got, err := b.CreateThread(ctx, promptRequired("in-flight", cwd, prompt, "")); !errors.Is(err, ErrRetiredBeforePrompt) || got != nil {
+				t.Fatalf("a later call with prompt %q answered %v %v", prompt, got, err)
+			}
+		}
+		if host.Count("thread/start") != 0 {
+			t.Fatalf("a later call reached the host: %v", host.Requests())
+		}
+	})
+	t.Run("no row: nothing is reserved", func(t *testing.T) {
+		b, host := testBridge(t)
+		got, err := b.CreateThread(ctx, promptRequired("absent", t.TempDir(), "", ""))
+		if !errors.Is(err, ErrPromptRequired) || got != nil {
+			t.Fatalf("answered %v %v", got, err)
+		}
+		if _, err := b.Ledger.Get(ctx, "absent"); !errors.Is(err, ledger.ErrUnknown) || host.Count("thread/start")+host.Count("turn/start") != 0 {
+			t.Fatalf("a refused call reserved (%v) or reached the host: %v", err, host.Requests())
+		}
+	})
+	t.Run("a receipt that is not not_attempted is replayed untouched", func(t *testing.T) {
+		b, host := testBridge(t)
+		cwd := t.TempDir()
+		for _, status := range []string{"accepted", "in_progress_or_unknown", "outcome_unknown", "failed"} {
+			in := promptRequired(status, cwd, "", "")
+			seedCreateReservation(t, b.Ledger, status, createThreadParams(in), status, false)
+			before := stored(t, b.Ledger, status)
+			got, err := b.CreateThread(ctx, in)
+			if err != nil || got["status"] != status || got["replayed"] != true || stored(t, b.Ledger, status) != before {
+				t.Fatalf("%s: answered %v %v", status, got, err)
+			}
+		}
+		if host.Count("thread/start")+host.Count("turn/start") != 0 {
+			t.Fatalf("a replay reached the host: %v", host.Requests())
+		}
+	})
+	t.Run("a reservation of other arguments is a conflict and untouched", func(t *testing.T) {
+		b, _ := testBridge(t)
+		cwd := t.TempDir()
+		seedCreateReservation(t, b.Ledger, "prompted", createThreadParams(promptRequired("prompted", cwd, "hello", "")), "not_attempted", false)
+		before := stored(t, b.Ledger, "prompted")
+		if got, err := b.CreateThread(ctx, promptRequired("prompted", cwd, "", "")); !errors.Is(err, ledger.ErrConflict) || got != nil || stored(t, b.Ledger, "prompted") != before {
+			t.Fatalf("answered %v %v", got, err)
+		}
+	})
+}
+
+// CRW-1506 (x1506 #2): a call with a prompt that conflicts with a reservation made with its arguments without a prompt,
+// before prompts were required, retires that reservation before it is answered with the way to a new request_id, so no
+// bridge that still takes a prompt-less create can resume it. Every other conflict is left as it is, and a caller that
+// does not require a prompt (a relay creation) retires nothing.
+func TestCreateThreadWithAPromptRetiresItsPromptlessReservationOnTheConflict(t *testing.T) {
+	ctx := context.Background()
+	b, host := testBridge(t)
+	cwd := t.TempDir()
+	answerCreation(host, cwd)
+	seed := func(id, prompt, title, status string) string {
+		seedCreateReservation(t, b.Ledger, id, createThreadParams(promptRequired(id, cwd, prompt, title)), status, false)
+		return stored(t, b.Ledger, id)
+	}
+
+	relay := seed("relay", "", "", "not_attempted")
+	in := promptRequired("relay", cwd, "hello", "")
+	in.PromptRequired = false
+	if _, err := b.CreateThread(ctx, in); !errors.Is(err, ledger.ErrConflict) || stored(t, b.Ledger, "relay") != relay {
+		t.Fatalf("a caller that does not require a prompt: %v", err)
+	}
+
+	seed("promptless", "", "", "not_attempted")
+	if got, err := b.CreateThread(ctx, promptRequired("promptless", cwd, "hello", "")); !errors.Is(err, ErrRetiredBeforePrompt) || got != nil {
+		t.Fatalf("answered %v %v", got, err)
+	}
+	if r, err := b.Ledger.Get(ctx, "promptless"); err != nil || !retiredBeforePrompt(r) {
+		t.Fatalf("not retired: %v %v", r, err)
+	}
+	// A bridge that still takes a prompt-less create replays the retired receipt.
+	old := promptRequired("promptless", cwd, "", "")
+	old.PromptRequired = false
+	if replay, err := b.CreateThread(ctx, old); err != nil || replay["status"] != "failed" || replay["replayed"] != true {
+		t.Fatalf("an old build's retry: %v %v", replay, err)
+	}
+
+	for _, c := range []struct{ id, title, status string }{
+		{"other-title", "T2", "not_attempted"},
+		{"accepted", "", "accepted"},
+		{"unknown", "", "outcome_unknown"},
+	} {
+		before := seed(c.id, "", c.title, c.status)
+		if got, err := b.CreateThread(ctx, promptRequired(c.id, cwd, "hello", "")); !errors.Is(err, ledger.ErrConflict) || got != nil || stored(t, b.Ledger, c.id) != before {
+			t.Fatalf("%s: answered %v %v", c.id, got, err)
+		}
+	}
+	if host.Count("thread/start") != 0 {
+		t.Fatalf("a conflict reached the host: %v", host.Requests())
+	}
+}
+
+// CRW-1506 (x1506 #3): when a call with a prompt conflicts and the request_id then cannot be read, the read failure is
+// returned, not the conflict: a ledger that cannot be read does not show that the row is other arguments.
+func TestCreateThreadWithAPromptReturnsTheReadFailureAfterTheConflict(t *testing.T) {
+	ctx := context.Background()
+	b, host := testBridge(t)
+	cwd := t.TempDir()
+	seedCreateReservation(t, b.Ledger, "unreadable", createThreadParams(promptRequired("unreadable", cwd, "", "T1")), "not_attempted", false)
+	waits := 0
+	b.waiting = func(string) {
+		// The first wait is the mutation's, which meets the conflict; the second is the retirement's read after it.
+		if waits++; waits == 2 {
+			if err := b.Ledger.Close(); err != nil {
+				t.Error(err)
+			}
+		}
+	}
+	got, err := b.CreateThread(ctx, promptRequired("unreadable", cwd, "hello", "T2"))
+	if waits != 2 || err == nil || errors.Is(err, ledger.ErrConflict) || errors.Is(err, ErrRetiredBeforePrompt) || got != nil {
+		t.Fatalf("after %d waits answered %v %v", waits, got, err)
+	}
+	if !strings.Contains(err.Error(), "closed") {
+		t.Fatalf("the error is not the read failure: %v", err)
+	}
+	if host.Count("thread/start")+host.Count("turn/start") != 0 {
+		t.Fatalf("reached the host: %v", host.Requests())
+	}
 }

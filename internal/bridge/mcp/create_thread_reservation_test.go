@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -19,71 +21,75 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/ledger"
 )
 
-// CRW-1486/S3 (B2): a create_thread reservation the ledger recorded before a prompt was required, with
-// no prompt in its arguments and nothing of it reaching the host (not_attempted), is not resumed on its
-// request_id: resumed without a prompt it would create a thread with no first turn, and a call that
-// brings one is other arguments for that id. Both calls on that id are refused naming the way on, the
-// reservation is left as it is, and the creation goes under a new request_id with a prompt.
+// CRW-1486/S3 (B2), CRW-1506: a create_thread reservation the ledger recorded before a prompt was required, with no
+// prompt in its arguments and nothing of it reaching the host (not_attempted), is not resumed on its request_id: resumed
+// without a prompt it would create a thread with no first turn, and a call that brings one is other arguments for that
+// id. The first call on it, with or without a prompt, retires it (failed, its error naming this refusal, every other
+// member kept) before answering with the way to a new request_id; the next call gets the same way and changes nothing,
+// and the creation goes under a new request_id with a prompt.
 func TestCreateThreadOnAPreUpgradeReservationGoesUnderANewRequestID(t *testing.T) {
-	home, env := isolated(t)
-	cwd, err := filepath.EvalSymlinks(t.TempDir())
-	if err != nil {
-		t.Fatal(err)
-	}
-	state := filepath.Join(home, "ledger")
-	socket := fakehost.SocketPath(t, "absent.sock")
-	// Before the upgrade: the bridge took create_thread without a prompt, and the host could not be
-	// reached, so the reservation was left not_attempted.
-	policy, err := execution.FromEnvironment(env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	canonical, store, err := ledger.Endpoint(socket, state)
-	if err != nil {
-		t.Fatal(err)
-	}
-	client := appserver.New(canonical, appserver.DefaultBounds)
-	reserved, err := bridge.New(client, store, policy).CreateThread(context.Background(), bridge.CreateThread{RequestID: "pre-upgrade", CWD: cwd, Sandbox: "read-only", Model: "anthropic/claude-opus-5", Effort: "xhigh"})
-	client.Close()
-	if closeErr := store.Close(); closeErr != nil {
-		t.Fatal(closeErr)
-	}
-	if err != nil || reserved["status"] != "not_attempted" {
-		t.Fatalf("the pre-upgrade reservation: %v %v", reserved, err)
-	}
+	for _, order := range [][]any{{nil, "READY"}, {"READY", nil}} {
+		t.Run(fmt.Sprintf("first prompt %v", order[0]), func(t *testing.T) {
+			home, env := isolated(t)
+			cwd, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			state := filepath.Join(home, "ledger")
+			socket := fakehost.SocketPath(t, "absent.sock")
+			// Before the upgrade: the bridge took create_thread without a prompt, and the host could not be
+			// reached, so the reservation was left not_attempted.
+			reserveWithoutHost(t, env, socket, state, bridge.CreateThread{RequestID: "pre-upgrade", CWD: cwd, Sandbox: "read-only", Model: "anthropic/claude-opus-5", Effort: "xhigh"})
 
-	s := serve(t, []string{"--socket", socket, "--state-dir", state}, env)
-	operation := func() string {
-		t.Helper()
-		result := call(t, s, "get_operation", map[string]any{"request_id": "pre-upgrade"})
-		return result.Content[0].(*sdk.TextContent).Text
+			s := serve(t, []string{"--socket", socket, "--state-dir", state}, env)
+			operation := func() map[string]any {
+				t.Helper()
+				return structured(t, call(t, s, "get_operation", map[string]any{"request_id": "pre-upgrade"}))
+			}
+			before := operation()
+			var retired map[string]any
+			for _, prompt := range order {
+				arguments := map[string]any{"request_id": "pre-upgrade", "cwd": cwd, "sandbox": "read-only", "model": "anthropic/claude-opus-5", "reasoning_effort": "xhigh"}
+				if prompt != nil {
+					arguments["prompt"] = prompt
+				}
+				result := call(t, s, "create_thread", arguments)
+				text := result.Content[0].(*sdk.TextContent).Text
+				if !result.IsError || !strings.Contains(text, "not_attempted") || !strings.Contains(text, "retired") || !strings.Contains(text, "new request_id") {
+					t.Fatalf("create_thread on the pre-upgrade reservation with prompt %v answered %q", prompt, text)
+				}
+				after := operation()
+				if retired != nil {
+					if !reflect.DeepEqual(after, retired) {
+						t.Fatalf("a call on the retired reservation changed it:\n%v\n%v", retired, after)
+					}
+					continue
+				}
+				retired = after
+				if after["status"] != "failed" || after["retrySafe"] != false || !strings.HasPrefix(fmt.Sprint(after["error"]), bridge.RetiredBeforePrompt) || !strings.Contains(fmt.Sprint(after["error"]), fmt.Sprint(before["error"])) {
+					t.Fatalf("the reservation was not retired: %v", after)
+				}
+				for key, value := range before {
+					if key != "status" && key != "retrySafe" && key != "error" && key != "updatedAt" && !reflect.DeepEqual(after[key], value) {
+						t.Fatalf("the retirement changed %s: %v -> %v", key, value, after[key])
+					}
+				}
+				if len(after) != len(before) {
+					t.Fatalf("the retirement added members:\n%v\n%v", before, after)
+				}
+			}
+			// The way on: a new request_id with a prompt passes the guard and goes to the host (absent here, so
+			// it is recorded not_attempted under its own id).
+			result := call(t, s, "create_thread", map[string]any{"request_id": "post-upgrade", "cwd": cwd, "sandbox": "read-only", "model": "anthropic/claude-opus-5", "reasoning_effort": "xhigh", "prompt": "READY"})
+			if result.IsError {
+				t.Fatalf("a new request_id with a prompt was refused: %s", result.Content[0].(*sdk.TextContent).Text)
+			}
+			if got := structured(t, result); got["requestId"] != "post-upgrade" {
+				t.Fatalf("the new creation answered %v", got)
+			}
+			s.finish(t)
+		})
 	}
-	before := operation()
-	arguments := map[string]any{"request_id": "pre-upgrade", "cwd": cwd, "sandbox": "read-only", "model": "anthropic/claude-opus-5", "reasoning_effort": "xhigh"}
-	for _, prompt := range []any{nil, "READY"} {
-		if prompt != nil {
-			arguments["prompt"] = prompt
-		}
-		result := call(t, s, "create_thread", arguments)
-		text := result.Content[0].(*sdk.TextContent).Text
-		if !result.IsError || !strings.Contains(text, "not_attempted") || !strings.Contains(text, "new request_id") {
-			t.Fatalf("create_thread on the pre-upgrade reservation with prompt %v answered %q", prompt, text)
-		}
-		if after := operation(); after != before {
-			t.Fatalf("the reservation changed:\n%s\n%s", before, after)
-		}
-	}
-	// The way on: a new request_id with a prompt passes the guard and goes to the host (absent here, so
-	// it is recorded not_attempted under its own id).
-	arguments["request_id"] = "post-upgrade"
-	result := call(t, s, "create_thread", arguments)
-	if result.IsError {
-		t.Fatalf("a new request_id with a prompt was refused: %s", result.Content[0].(*sdk.TextContent).Text)
-	}
-	if got := structured(t, result); got["requestId"] != "post-upgrade" {
-		t.Fatalf("the new creation answered %v", got)
-	}
-	s.finish(t)
 }
 
 // CRW-1486/S3 (A2): a ledger that cannot be read is not a ledger with no receipt. A prompt-less
@@ -220,4 +226,141 @@ func TestCreateThreadPromptedCallOnAPromptlessReservationWithOtherArgumentsIsAPl
 		t.Fatalf("a prompted call with another title on a prompt-null reservation answered %q", text)
 	}
 	s.finish(t)
+}
+
+// answerCreations makes host answer a creation in cwd as the read-only defaults the tests in this file ask for, so a
+// thread/start that goes out succeeds and is counted.
+func answerCreations(host *fakehost.Server, cwd string) {
+	host.Respond("thread/start", fakehost.Reply{Result: map[string]any{"thread": map[string]any{"id": "thread-1", "cwd": cwd}, "cwd": cwd, "runtimeWorkspaceRoots": []any{cwd}, "model": "anthropic/claude-opus-5", "reasoningEffort": "xhigh", "approvalPolicy": "never", "sandbox": map[string]any{"type": "readOnly", "networkAccess": false}}})
+	host.Respond("turn/start", fakehost.Reply{Result: map[string]any{"turn": map[string]any{"id": "turn-1"}}})
+	host.Handle("thread/read", func(json.RawMessage) fakehost.Reply {
+		return fakehost.Reply{Result: map[string]any{"thread": map[string]any{"id": "thread-1", "cwd": cwd, "model": "anthropic/claude-opus-5", "reasoningEffort": "xhigh"}}}
+	})
+}
+
+// CRW-1506 (x1506 #1): the MCP layer's own reservation lookup is not the guard. A prompt-less create_thread that finds an
+// attempt on its request_id in flight (in_progress_or_unknown) goes on to the bridge; when that attempt ends with nothing
+// reaching the host (not_attempted) between the MCP lookup and the bridge's own lookup, the bridge still refuses the call
+// and never re-runs the reservation without a prompt: no thread/start goes out.
+func TestCreateThreadPromptlessCallStaysRefusedWhenTheReservationTurnsNotAttemptedAfterTheMCPLookup(t *testing.T) {
+	host := fakehost.Start(t)
+	home, env := isolated(t)
+	cwd, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := filepath.Join(home, "ledger")
+	reserveWithoutHost(t, env, host.SocketPath, state, bridge.CreateThread{RequestID: "in-flight", CWD: cwd, Sandbox: "read-only", Model: "anthropic/claude-opus-5", Effort: "xhigh"})
+	answerCreations(host, cwd)
+	policy, err := execution.FromEnvironment(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical, store, err := ledger.Endpoint(host.SocketPath, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	client := appserver.New(canonical, appserver.DefaultBounds)
+	defer client.Close()
+	ctx := context.Background()
+	status := func(to string) {
+		t.Helper()
+		stored, err := store.Get(ctx, "in-flight")
+		if err != nil {
+			t.Fatal(err)
+		}
+		stored["status"] = to
+		if _, err = store.Save(ctx, stored); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// Another attempt on the reservation is in flight (another process, or a bridge that still takes a prompt-less create).
+	status("in_progress_or_unknown")
+	h := handlers{b: bridge.New(client, store, policy), log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	looked := 0
+	h.lookedUp = func() {
+		looked++
+		// That attempt ends with nothing reaching the host after the MCP lookup saw it in flight.
+		status("not_attempted")
+	}
+	_, err = h.createThread(ctx, createThreadIn{RequestID: "in-flight", CWD: cwd, Sandbox: "read-only", Model: "anthropic/claude-opus-5", ReasoningEffort: "xhigh"})
+	if looked != 1 {
+		t.Fatalf("the MCP lookup ran %d times", looked)
+	}
+	if host.Count("thread/start") != 0 || host.Count("turn/start") != 0 {
+		t.Fatalf("a prompt-less create_thread reached the host (error %v): %v", err, host.Requests())
+	}
+	if err == nil {
+		t.Fatal("a prompt-less create_thread on a not_attempted reservation was not refused")
+	}
+}
+
+// CRW-1506 (x1506 #2): the way to a new request_id leaves nothing behind that can still create a thread. A reservation
+// made without a prompt, before prompts were required, is retired when that way is given, so a bridge that still takes a
+// prompt-less create (a build from before the refusal, serving another session on the same ledger) retrying it replays
+// the retired receipt instead of creating a thread with no first turn; every later call on its request_id, with or without
+// a prompt, gets the same way, and only the creation under the new request_id reaches the host.
+func TestCreateThreadWayToANewRequestIDRetiresThePromptlessReservation(t *testing.T) {
+	host := fakehost.Start(t)
+	home, env := isolated(t)
+	cwd, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := filepath.Join(home, "ledger")
+	reservation := bridge.CreateThread{RequestID: "pre-upgrade", CWD: cwd, Sandbox: "read-only", Model: "anthropic/claude-opus-5", Effort: "xhigh"}
+	reserveWithoutHost(t, env, host.SocketPath, state, reservation)
+	answerCreations(host, cwd)
+
+	s := serve(t, []string{"--socket", host.SocketPath, "--state-dir", state}, env)
+	arguments := map[string]any{"request_id": "pre-upgrade", "cwd": cwd, "sandbox": "read-only", "model": "anthropic/claude-opus-5", "reasoning_effort": "xhigh"}
+	guided := call(t, s, "create_thread", arguments)
+	if text := guided.Content[0].(*sdk.TextContent).Text; !guided.IsError || !strings.Contains(text, "new request_id") {
+		t.Fatalf("a prompt-less call on the pre-upgrade reservation answered %q", text)
+	}
+
+	// A bridge that still takes a prompt-less create retries the reservation on the same ledger.
+	policy, err := execution.FromEnvironment(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonical, store, err := ledger.Endpoint(host.SocketPath, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := appserver.New(canonical, appserver.DefaultBounds)
+	retried, err := bridge.New(client, store, policy).CreateThread(context.Background(), reservation)
+	client.Close()
+	if closeErr := store.Close(); closeErr != nil {
+		t.Fatal(closeErr)
+	}
+	if host.Count("thread/start") != 0 {
+		t.Fatalf("the retry created a thread from the reservation (%v %v): %v", retried, err, host.Requests())
+	}
+	if err != nil || retried["status"] != "failed" || retried["replayed"] != true {
+		t.Fatalf("the retry is not a replay of the retired receipt: %v %v", retried, err)
+	}
+
+	for _, prompt := range []any{nil, "READY"} {
+		if prompt != nil {
+			arguments["prompt"] = prompt
+		}
+		result := call(t, s, "create_thread", arguments)
+		if text := result.Content[0].(*sdk.TextContent).Text; !result.IsError || !strings.Contains(text, "new request_id") {
+			t.Fatalf("a later call with prompt %v on the retired reservation answered %q", prompt, text)
+		}
+	}
+	arguments["request_id"] = "post-upgrade"
+	created := call(t, s, "create_thread", arguments)
+	if created.IsError {
+		t.Fatalf("the creation under a new request_id was refused: %s", created.Content[0].(*sdk.TextContent).Text)
+	}
+	if got := structured(t, created); got["status"] != "accepted" || got["requestId"] != "post-upgrade" {
+		t.Fatalf("the creation under a new request_id answered %v", got)
+	}
+	s.finish(t)
+	if host.Count("thread/start") != 1 || host.Count("turn/start") != 1 {
+		t.Fatalf("the host saw %d thread/start and %d turn/start, want one creation with its first turn: %v", host.Count("thread/start"), host.Count("turn/start"), host.Requests())
+	}
 }

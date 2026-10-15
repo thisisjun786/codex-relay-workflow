@@ -226,8 +226,10 @@ refused before anything is reserved or started
 `request_id` decides the next call:
 
 - No receipt on the id: the call that brings the prompt may reuse it.
-- A `not_attempted` reservation made without a prompt, before prompts were required: use a
-  new `request_id` with a prompt; the old reservation is left and never resumed.
+- A `not_attempted` reservation made without a prompt, before prompts were required: the
+  first call with its arguments, with a prompt or without, retires it (its receipt becomes
+  `failed`, with an error naming this refusal, which every bridge build replays and none
+  re-runs), so no call on that id creates a thread; use a new `request_id` with a prompt.
 - A `not_attempted` reservation made with other arguments: only a call that repeats its own
   arguments under the same `request_id` resumes it.
 
@@ -367,8 +369,10 @@ creation and dispatch, not successful `crw-loop` execution or universal follow-u
 On that version, prefer creation with the full work prompt.
 Do not recommend “empty creation, then resume” as a verified workflow.
 The bridge now enforces this (CRW-1506): `create_thread` refuses a missing `prompt` as an
-invalid argument, saying that a thread with no first turn has no rollout, before anything
-is reserved or stored. `create_worktree_thread` keeps its readiness-only creation.
+invalid argument, saying that a thread with no first turn has no rollout, and never begins
+an attempt without one. On an id with no receipt nothing is reserved or stored; a
+`not_attempted` reservation made without a prompt before this refusal existed is retired
+instead of resumed. `create_worktree_thread` keeps its readiness-only creation.
 
 ## Receipts and safe recovery
 
