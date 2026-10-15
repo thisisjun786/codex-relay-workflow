@@ -356,7 +356,9 @@ reason to re-plan asks it for the whole DESIGN of the milestone again; `crw.sett
 acceptances against the reviewer threads on the host and archives the threads whose audit passed, and `crw.reportUp` records the report
 (its delivery is the seam of the issue that owns it). A milestone that cannot go on says why (`crw.milestoneHalt`): a call of the design phase, of the close or of
 a re-plan that did not complete is never read as an approval, a design, a gate, a review or an alignment (`held` and `unknown` hold the milestone, `refused` and
-`null_model` escalate, a gate that failed or cannot be settled and a QA that is INCONCLUSIVE escalate, `superseded` stops).
+`null_model` escalate, a gate that failed or cannot be settled and a QA that is INCONCLUSIVE escalate, `superseded` stops). A crosscheck
+that does not verify the range escalates with its cause: `crosscheck_pending` (a `needs_changes` verdict), `crosscheck_refused` (ask
+`configuration`), `crosscheck_failed` and `crosscheck_no_verdict`; one that held holds the milestone ([The milestone close](#the-milestone-close)).
 
 **The caps of the design loop.** The design loop is one `auditedDesign` of `project-lane.js` (the DESIGN or the re-plan's whole DESIGN it starts from, its audit rounds,
 the architect's design-answers turns and its fixes), and it has two caps, both written in `project-lane.js` beside the loop. The round cap is `AUDIT_ROUNDS` (3): a DESIGN not approved in
@@ -441,7 +443,8 @@ since nothing reads their effect again, and runs none of them live (journal.md, 
 lane nor `land-head` calls it, nor `crw.reviewHalt` or `crw.exploreEvidence`. It is a fresh reviewer thread over the committed head (SP-REV-1), with the record
 of its answer (`crw.review` row: node, head, criteria digest, state). The state is `verdict` only for a completed, valid `VERDICT` of a
 reviewer whose model family differs from every author of the node (the node's executors and the architect); a `verified` verdict
-names no unmet criterion and no defect of P0 to P2, and a defect of kind `evidence_missing` carries its `evidence_question`. The
+names no unmet criterion and no defect that blocks (`premerge.Blocks`: a defect of P0 to P2 whatever its impact, or one whose impact
+is other than `minor_separable`), and a defect of kind `evidence_missing` carries its `evidence_question`. The
 criteria of a plan are `c1` to `cn` in the plan's order (the packets label them so); a `verified` verdict has one entry for each, once
 (`ops.CheckCoverage`), because the premerge record is made of the entries it names and the digest of the whole set is attached to it.
 An answer that breaks those rules is `null_model` (`verdict_invalid`). The other states - `held`, `unknown`, `refused`
@@ -499,9 +502,10 @@ inline (SP-INL-1), reuse an answer (SP-INL-2), skip, refuse or hand a question t
 | `finalGate(milestone)` | the gate over the pinned head: the state of the gate and of each piece of evidence (row `crw.finalGate`: `head`, `command`, `range`, `ok`) | the integration target is still the head the gate judged |
 | `qaReceipt(milestone, gate, capture, passes, receipt)` | the QA receipt: its state (`PASS`, `REVISE`, `FAIL`, `INCONCLUSIVE`), the head, the calls with their roles and read-back pairs | always |
 | `qaCapture(milestone, gate, capture)` | the capture of the QA call as the later calls read it: each capture with the path it can be opened at (the relative path resolved against the worktree the capture ran in), the identity of the tree the call ended in, and `ok` or the reason the capture cannot be handed on | always |
-| `reviewerFinal(milestone, gate, call, opts)` | the review of reviewer-final over the range (`range`, `criteria_digest`, the alignment); a `verified` answer is a verdict only when it evaluated every criterion of the milestone once, all met, with no defect of P0 to P2 | always |
-| `milestoneClose(milestone, evidence)` / `reportUp(milestone, close)` | the range and the tip the close judged, and whether the target moved on after the gate / the report row | the integration target is still the tip the close judged / always |
-| `replanSignals(milestone, opts)` | the two numbers of SP-ARCH-2 and the reasons that stand (`plan_mismatch`, `slice_change`, and at the close `reviewer_final_misaligned`, `reflection_misaligned`) | always |
+| `crosscheck(milestone, gate, opts)` | one round of the crosscheck over the gate's range, run in Go with no agent call (row `crw.crosscheck`): X = `{state, reason, hold, detail, verdict, questions}`, the state `verdict` (V: `verified` or `needs_changes` by `ops.CrosscheckRule`), `held` (`hold`), `refused`, `failed` or `no_verdict` (`reason`); round 1 only | the row is of the same milestone, head, round and evidence round and did not hold |
+| `reviewerFinal(milestone, gate, call, opts)` | the review of reviewer-final over the range (`range`, `criteria_digest`, the alignment); a `verified` answer is a verdict only when it evaluated every criterion of the milestone once, all met, with no defect that blocks. The shipped close does not call it | always |
+| `milestoneClose(milestone, evidence)` / `reportUp(milestone, close)` | the range and the tip the close judged over `{gate, crosscheck}`, and whether the target moved on after the gate; evidence with no verified crosscheck V of the gate's milestone and head is refused `close_unverified` / the report row | the integration target is still the tip the close judged / always |
+| `replanSignals(milestone, opts)` | the two numbers of SP-ARCH-2 and the reasons that stand (`plan_mismatch`, `slice_change`, and at the close `reflection_misaligned`, and `reviewer_final_misaligned` for a reviewer-final alignment, which the shipped close does not hand it) | always |
 | `currentDesign(milestone)` | the revision that stands, its DESIGN, the handle of the architect thread and the heads the nodes landed with | always |
 | `reflection(milestone, gate, call)` | the architect's REFLECTION over the integrated range: a verdict only for a completed, valid answer; the row moves the architect's handle on | always |
 | `planRead(milestone, node)` | the plan revision a lane reads before its release: the digest of the milestone as the relay has it, its replay-stable observed occurrence, the plan the audited DESIGN stands on (`base`: the plan the current revision was made for, or the one a later signal judged and kept it for), whether it changed, the signal in flight that read this very plan (`judging`), and the position it ran at | stands once the node was released after it, or once a signal row that stands took that occurrence of the changed revision as a trigger; else it reads again |
@@ -552,7 +556,14 @@ call and fixes nothing. Its steps:
   that block nothing land as premerge defects. An author whose pair is not read back, no
   author named and a path outside the node's regions are warnings of the release row (`land_author_unobserved`, `land_authors_unnamed`,
   `land_out_of_scope`). A lost epoch ends the run `stopped` with `epoch_lost`.
-- The gate-only lane fixes nothing: the child changes the head and lands it again, in a new run. A land that ends escalated gives its
+- The gate-only lane fixes nothing: the child changes the head and lands it again, in a new run. The fix rounds (CRW-1490):
+  `args.fix_round` (0 when not given) is the round of the child's fix this land is. A check that needs changes at a round under
+  `LAND_FIX_ROUNDS` (2) ends `land_review_needs_changes` with no ask (the child acts), the round and the carried ids on the escalation
+  and in the run's value, and the value hands the child a fix packet (`fix`, `landFixPacket`): the findings by id with file, line and
+  text, the range as a `git diff` command, the node's criteria, and the land of the fix, a new `crw flow start land-head` run of the
+  same node with `fix_round` one more and the authors of this head together with the fixer's thread, since the fix branches from this
+  head and its range holds this head's work too. A check that needs changes at `LAND_FIX_ROUNDS` ends `land_fix_rounds` with ask
+  `land_fix_rounds`, a question for the parent, and no fix packet. A land that ends escalated gives its
   release back - the escalation carries `end_land`, and `crw.escalate` asks the relay to close the node's execution with `land_ended`
   (`cancelled`, the slot returned in the same transaction) - so the next land is a new release: a new execution of its run, with its
   worktree and the pair of the authors it names. Only the relay's refusal to close an execution that has to stay (its accepted head
@@ -597,7 +608,8 @@ cannot be read, or that has dropped the node, releases nothing).
 **The numbers (SP-ARCH-2).** `crw.replanSignals` writes two numbers to the journal: the RECEIPTs that report a `plan_mismatch`, of lanes released under the revision that stands (each call
 once; a RECEIPT of a lane released under an older revision does not count in the new revision's number), and the share of the milestone's nodes whose slice
 digest of the plan now is not the one the revision that stands was made against. The reasons are two plan mismatches, more than a quarter of the slices changed
-(exactly a quarter is not a reason), and, once the milestone closed, a MISALIGNED reviewer-final and a MISALIGNED REFLECTION. One reason is enough, whatever the
+(exactly a quarter is not a reason), and, once the milestone closed, a MISALIGNED REFLECTION. The op also counts a MISALIGNED reviewer-final alignment
+(`reviewer_final_misaligned`) when a close hands it one; the shipped close runs the crosscheck and hands it none. One reason is enough, whatever the
 alignment says. Every decision - to re-plan, and to skip it with its reason - is a row of `flow_spawn_decisions` (`ARCH_2`).
 
 **The signal path.** `crw.dag(plan, lane, {nodes, milestone, cap, onSignal})` runs the signal path next to the lanes when it is given `onSignal`. The
@@ -659,7 +671,8 @@ merged tree, the merged tree's own crw-dev when the configuration names a Go roo
 ## The milestone close
 
 `crw.closeMilestone(ms)` (`crw:lib/close`) closes a milestone over evidence the run makes itself, in this order; the order is what the
-close guarantees. The Go side is `internal/flow/ops/{finalgate,qa,lane_close,audit}.go` and `internal/flow/audit`.
+close guarantees: the final gate, the crosscheck, then the close. The Go side is `internal/flow/ops/{finalgate,qa,crosscheck,lane_close,audit}.go`,
+`internal/flow/reviewadapter` and `internal/flow/audit`.
 
 **The final gate.** `crw.finalGate(milestone)` pins the integrated head H (the tip of the integration target now) and judges the
 evidence that stands on it: the test evidence, a verification of H for each command of the plan's required set (`crw.verify` with no node;
@@ -675,7 +688,7 @@ passes, `failed` when a fresh piece does not pass (a verification that ran and f
 before. The gate makes no evidence. The close makes it, at H: `crw.verify(null node)` for each
 command named in `need_tests`, and the QA calls below when `need_qa`; then the gate is judged again. A verification that cannot run holds
 the milestone (`verify_unavailable`). A head that moves while evidence is made is judged again from the new head, at most three rounds.
-A gate that failed ends the close with an escalation (`final_gate_test_failed`, `qa_failed`, `qa_inconclusive`) and reviewer-final does not
+A gate that failed ends the close with an escalation (`final_gate_test_failed`, `qa_failed`, `qa_inconclusive`) and the crosscheck does not
 run; neither does it when the gate cannot be settled (`final_gate_unsettled`). The native final-gate hook (`[CRW-FINAL-GATE]`, goalplan
 `finalGate`) and the standalone `crw-qa` skill are unchanged and read none of this.
 
@@ -705,12 +718,93 @@ worktree, named relative to it (`.crw/evidence/<session>/qa/...`) while the pass
 packets of the passes and of the self-review name that path. The QA mark is part of the input digest of a call: the same call with another
 mark is another call on a resume.
 
-**reviewer-final.** After a passed gate, one `reviewer-final` call (SP-REVF-1) reads the integrated range with the gate as its input
-(its packet names the head, the range, the evidence the gate stood on and the decisions of the approved DESIGN, which live in the journal's
-ledger row and not in the checkout the reviewer reads) and answers `VERDICT_FINAL`; `crw.reviewerFinal` records it
-(the range and the criteria digest are what `ReviewerFinalProof` reads), refuses a reviewer of the model family of an author of the
-milestone, and asks a `null_model` reviewer once more. `crw.milestoneClose` then records the tip it judged; when the target is no longer
-the head the gate judged, the close is judged again from the new head, at most three times. What the alignment of the range does is in
+**The crosscheck.** After a passed gate, `crw.crosscheck(milestone, gate, opts)` (CRW-1473) reviews the integrated range of the gate
+(`base..head`) in one round of two passes: pass A judges coverage (every criterion of the milestone and every decision of the approved
+DESIGN, met or not, with its evidence), pass B hunts bugs. The script builds the text of each pass (`crosscheckPacket`: the range, the
+criteria, the decisions, which live in the journal's ledger row and not in the checkout, the lens of the pass and the close rule word for
+word), and the op runs both passes itself, in Go, through the review adapter (`reviewadapter.Adapter` over the engine's command line,
+answering `reviewadapter.AnswerSchema`): no agent call, no reviewer thread and no spawn decision (the close does not call SP-REVF-1).
+The op appends the EXECUTOR RECEIPTS section to each prompt: for every node of the milestone it reads the newest completed `crw.unitCheck`
+row of role `unit-check` in the run's journal and its executor receipt (an `accepted` copy is read and its sha256 checked; `not_assigned`,
+and `no_executor` for a node with no unit check in the run, are listed and block nothing), writes the receipt bytes to
+`<run dir>/crosscheck/<milestone>-r<round>-receipts.md`, outside both checkouts, and names that file, its sha256 and each node's state and
+digest, so the engine checks each criterion's red-first and mutation-red lines against the receipts. A receipt that cannot be handed over
+holds the round before any pass (`crosscheck_receipt_missing`, `crosscheck_receipt_unverified`, `crosscheck_receipt_not_copied`,
+`crosscheck_receipt_mismatch`, the row naming the node). The prompt carries refs, never diff bytes: one over `CrosscheckPromptLimit`
+(120 KiB, since the engine takes it as one command-line word) is not sent (`crosscheck_prompt_too_large`). The op serves round 1 only: a
+prior verdict, or another round, is refused `crosscheck_prior_invalid`.
+
+**The run directory and the checkouts.** Every file the crosscheck writes lies under the run's directory (`Deps.LandRoot`,
+`<state>/flow/<run>` in the run process), which must be an absolute path: an empty or relative one fails the round before anything is
+written or checked out (`crosscheck_no_run_dir`). Each pass runs in a checkout of its own of the gate head,
+`<run dir>/crosscheck-wt/<milestone>-r<round>-e<evidence round>-<pass><attempt>-<head12>`, made with `git worktree add --detach` in the
+run's repository, and both checkouts of a round are made and checked before either pass starts. A checkout is used only while its `HEAD`
+is the head and its working files are the head's tree (`ops.Snapshot` equal to `ops.TreeOf` of the head), a fresh one as much as one a
+resume finds again: one at another commit fails the round `crosscheck_worktree_moved`, one with a modified, deleted or untracked file
+`crosscheck_worktree_dirty`; no pass runs, and the directory is kept as it is for the child to read. A checkout a pass ran in is removed
+after the pass (`git worktree remove --force`, then `git worktree prune`; a path outside `<run dir>/crosscheck-wt/` is never removed). An
+ignored file is outside both trees and is not judged: the engines read the tracked tree.
+
+**The engine.** The lane ships two engine profiles, tried in this order: astra (`codex exec -m gpt-6-astra`, family gpt, answering under a
+strict form of the answer schema the op writes to `<run dir>/crosscheck/answer.strict.json`) and grok (`grok -m grok-4.7`, family grok),
+each pass with a limit of 40 minutes. A round runs on the first profile whose family is no author family of the milestone: the crosscheck
+is made by a review engine of another model family than every author, the independence every review of the flow keeps. The authors are
+read from the run's own pairs, never from a compiled default and never guessed: the pairs of `architect`, `executor` and `executor-t1` in
+the run's role table (a resumed run has the pairs it pinned) and the models of the milestone's author calls in the run's journal. When one
+of them is undecided (a role whose pair is empty, an author call whose row names no model) the round is refused
+`crosscheck_author_undecided` before any checkout or pass, the detail naming each; when no profile is left the round is refused
+`crosscheck_no_independent_engine`. CRW builds with Claude models and reviews on the two shipped profiles, so the supported configuration is
+a milestone whose authors are all of family claude; that narrowing is the parent's decision, and a third engine profile, which would widen
+it, is an engine change. Round 1 by the authors' families:
+
+| Authors of the milestone | Round 1 |
+| --- | --- |
+| claude only (the supported configuration) | astra (gpt) |
+| a gpt author, with or without claude authors | grok (grok) |
+| a grok author, with or without claude authors | astra (gpt) |
+| gpt and grok authors | refused `crosscheck_no_independent_engine` |
+| an undecided author pair | refused `crosscheck_author_undecided` |
+
+**The verdict.** The two passes run together, each one check of the review adapter; an `invalid` answer is asked once more. A pass that
+read no repository is void (`not_read`: under the floors of its engine profile on the commands it ran, the tokens it read and the time it
+took, CRW-1504): when both passes are void the round gives no verdict at once (`no_verdict`, `crosscheck_no_verdict`); when one is, that
+pass alone runs once more on a fresh checkout (attempt 2; the first attempt stays in V's passes as `voided`), and a second void attempt
+gives no verdict too. A pass that failed (`worktree_changed`, `tool_failed`, `invalid` after its retry, or a state the op has no rule for,
+`crosscheck_pass_<state>`) fails the round, and one that gave no judgment (`quota`, `no_answer`) holds it. The findings of the two passes
+are merged into one list (`reviewadapter.MergeFindings`: one finding for each id, the first copy's file, line and text, the higher
+severity, a blocking impact over a non-blocking or empty one), and one rule, `ops.CrosscheckRule`, makes the verdict V; the packets of
+both passes say it word for word:
+
+> The impact of each finding is one of core_function, safety_or_data, permission_boundary, criterion_unmet, regression_introduced, minor_separable: a finding of P0 to P2 blocks whatever its impact, and of the impacts only minor_separable does not block. The milestone closes only on a verified crosscheck: verified means no finding blocks; a finding that does not block is carried as a follow-up.
+
+A finding that blocks (`premerge.Blocks`) makes V `needs_changes`; the others are carried, by id (`carried`) and as one line each
+(`follow_ups`: `id [severity/impact] file:line text`), and no issue is registered for them. The engine's word follows the same rule: an
+answer of verified over a finding that blocks is invalid, not overridden. V (row `crw.crosscheck`, [journal.md](journal.md#the-proofs))
+names the word, the findings, the engine family and model, the round, the milestone and its plan, the gate's head and base, the run, the
+author families and each author with its source, name, model and family, the receipts and every attempt of each pass.
+
+**The close.** Only a V of `verified` lets the milestone close: `crw.milestoneClose(milestone, {gate, crosscheck: V})` records the tip it
+judged, and refuses, recording no close, evidence whose crosscheck is not a verified V of the gate's milestone and head (and, for a journal
+of a close made before the crosscheck, evidence with no crosscheck whose reviewer-final review is not verified, or evidence with neither):
+`close_unverified`. When the target is no longer the head the gate judged, the close is judged again from the new head, at most three
+times. A crosscheck that does not verify the range keeps the milestone open, and the close stops:
+
+- `needs_changes`: the run ends escalated `crosscheck_pending`, ask `crosscheck_pending`, with V in the escalation's evidence and in the
+  run's value (`crosscheck`, V as the op recorded it) and the fix packet (`fix`, `crosscheckFixPacket`: the blocking findings by id, the
+  range as `git diff <base>..<head> -- <files>`, the milestone's criteria and the route of the correction). Every node of the milestone has
+  landed, so the route is a correction node of a new plan revision: a correction issue of the milestone naming the finding ids
+  (`crw-add-issue`, a plan revision), fixed by a new executor subagent on a branch from the integration tip, landed with
+  `crw flow start land-head`, and the verdict and the landed head reported up. The child hands V and the fix packet up to the parent
+  (repository session) with `crw flow report-up`; the run makes no executor call for it.
+- `refused` (`crosscheck_author_undecided`, `crosscheck_no_independent_engine`, `crosscheck_prior_invalid`): `crosscheck_refused`, ask
+  `configuration`, a question for the parent.
+- `failed` (`crosscheck_no_run_dir`, `crosscheck_worktree_dirty`, `crosscheck_worktree_moved`, `crosscheck_prompt_too_large`, a pass that
+  failed): `crosscheck_failed`, ask `crosscheck_failed`; `no_verdict`: `crosscheck_no_verdict`, ask `crosscheck_no_verdict`. Both go up to
+  the parent.
+- `held`: the milestone is held (`crw.hold` with the round's `hold`), and a resume runs the round again once the cause is gone.
+
+A closed milestone's result carries V as `crosscheck`, and its report names the gate, the crosscheck and the reflection's alignment
+([reporting.md](reporting.md)). What the alignment of the range does is in
 [The architect's continuity and the re-plan](#the-architects-continuity-and-the-re-plan).
 
 **The audit and the archive.** `crw.settleReviews(ms)` runs `crw.audit`, then `crw.archive`. For each acceptance of the milestone on the

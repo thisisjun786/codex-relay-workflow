@@ -148,7 +148,7 @@ See [dag-outbox.md](../relay/dag-outbox.md).
 ## Milestone reports and project-level reports
 
 `crw.reportUp` closes a milestone: the report goes to the parent. Its body names the integrated range and the evidence of the
-close (the final gate, the review of reviewer-final and the audit of the reviews, CRW-1206; a piece the close did not make is `none`).
+close (the final gate, the crosscheck's verdict and the reflection's alignment, CRW-1473, then the review of reviewer-final, which a close that runs the crosscheck does not make, and the audit of the reviews, CRW-1206; a piece the close did not make is `none`).
 The project's orchestrator lifts a project-level blocker or a decision request the initiative decides:
 
 ```

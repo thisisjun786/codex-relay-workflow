@@ -187,7 +187,7 @@ Integrate: the recorded batch commit is an ancestor of the integration ref; the 
 passing record of the current integration head, the same command set (the plan's required commands joined with `;`) and the same
 range (`crw.finalGate`; its row holds the judgement of each piece of evidence, fresh, missing or stale, and the gate row of a head the
 target has left is not replayed: the gate judges the new head). Reviewer-final: a record of the same integration range and criteria
-digest (`crw.reviewerFinal`). The test evidence of the gate is a `crw.verify` row with no node (the verification of the integrated head,
+digest (`crw.reviewerFinal`; the shipped close makes none, its review is the crosscheck below). The test evidence of the gate is a `crw.verify` row with no node (the verification of the integrated head,
 which names the milestone), and the QA evidence a `crw.qaReceipt` row (it holds the identity of the tree the capture call ended in, which the completed row of a QA call records as `qa_source`); each is judged fresh by the identity of the head it stands on
 (`source.Compare`).
 
@@ -213,6 +213,32 @@ at (the `start` the judged call's row records under `executor_head_moved`, else 
 `tree` and no `commit`; neither reader takes such a row. A check is proven unless its row names a `hold`: a resume runs the check that held the
 node again (it asks the tool, or reads the receipt, again), and the hold itself is the `crw.hold` row the lane writes after it (`source` `unit_check`), as for a
 verification that could not run. An error of the tool's runner (a bad request, a fingerprint that could not be taken) writes no row.
+
+**Crosscheck.** A row `crw.crosscheck` is one round of the crosscheck of a milestone at its close (CRW-1473), run by the run itself: the
+op runs the review engine through the review adapter, as the unit check does, with no agent call and no reviewer thread. Its data:
+`milestone`, `plan`, `head` (the head of the gate the close passed), `round` (1: the op serves round 1 only, and a prior verdict or another
+round is refused `crosscheck_prior_invalid`), `evidence_round` (0), `state` (`verdict`, `held`, `refused`, `failed`, `no_verdict`),
+`reason` (of a refused, failed or no_verdict round), `detail`, `hold` (of a held round: `crosscheck_quota` and `crosscheck_no_answer` when a
+pass gave no judgment, `crosscheck_receipt_missing`, `crosscheck_receipt_unverified`, `crosscheck_receipt_not_copied` and
+`crosscheck_receipt_mismatch` with the `node` when an executor receipt could not be handed over), `engine_family` and `model` once an engine
+was chosen, `passes` (each attempt of each pass: `pass` `A` or `B`, `attempt`, `state`, `elapsed_ms`, `model`, `prompt_digest`, `voided`
+for an attempt that read no repository, `retried` for the one retry of an invalid answer, `detail`), `cleanup` when a checkout could not be
+removed, and `verdict`, the verdict V of a round that judged (null otherwise): the word (`verified` or `needs_changes`), the merged
+`findings`, `carried` and `follow_ups` (the findings that do not block, by id and as one line each), `guide_rev`, `engine_family`,
+`engine_families`, `model`, `round`, `evidence_round`, `milestone`, `plan`, `head`, `base`, `run`, `author_families` and `authors` (each
+author with its `source` `role` or `call`, its `name`, `model` and `family`), `receipts` (each node's receipt `state` and `sha256`),
+`receipts_file` and `receipts_sha256`, and `passes`. A crosscheck is proven (`ops.CrosscheckProof`) by a completed row of the same
+milestone, head, round and evidence round with a state other than held; a row of another head is no proof, and a held row proves
+nothing, so a resume runs the round again.
+
+**Close.** A row `crw.milestoneClose` is the close of a milestone over its evidence `{gate, crosscheck}`: the gate that passed and the
+crosscheck's V. The op refuses, writing no completed row (reason `close_unverified`), evidence whose `crosscheck` is not a verified V of
+the gate's milestone and head, evidence with no `crosscheck` whose `final` (the reviewer-final review of a journal of a close made before
+the crosscheck) is not a verified verdict, and evidence with neither. The row names the range, the tip the close judged and whether the
+target moved on after the gate (`moved`); the answer carries the gate, the crosscheck V (`crosscheck`, null when absent) and `final` as
+they were given. The report of the close (`crw.reportUp`) stores a body that names the integrated range and, one line each, `Final gate:`,
+`Crosscheck:` (V on one line), `Reflection:` (the reflection's alignment: `ALIGNED`, `MISALIGNED` or `NOT_ASSESSED`), `Final review:` and
+`Audit:`, with `none` for a piece the close did not make ([reporting.md](reporting.md)).
 
 **The design ledger and the signals.** A row `crw.designLedger` is a revision of the milestone's ledger (`revision`, `digest`, `design`, `answers`,
 `architect_call` and `architect_handle`, the `signal` that made it, `base_tip` - the head the DESIGN ran at: for `r0` the start commit of the architect's call-private checkout as the architect's `prepared` row records it (reached through `resume_of` from a design fix that went on in that directory), never the integration tip read after the audit, and `""` when no placement recorded one; for a later revision the head its re-plan pinned - and `slices`, the slice digest of every node of the plan it was made
