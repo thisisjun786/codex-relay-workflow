@@ -325,3 +325,108 @@ func TestUnitCheckDocsNameTheLandHeadCommittedCheck(t *testing.T) {
 		}
 	})
 }
+
+// CRW-1517: the unit check is a Codex review by default (`codex review --uncommitted` over the executor's uncommitted work,
+// `codex review --base <base>` in the committed mode of land-head), with Bugbot as the fallback when the Codex quota is spent; the
+// model and effort are the lane's settings CRW_UNIT_CHECK_MODEL and CRW_UNIT_CHECK_EFFORT. Codex is given no prompt, so the executor
+// receipt is read and kept but not handed to it (the row's receipt `handed`). The pages that describe the unit check say so, and none
+// says the unit check is Bugbot's.
+
+var (
+	codexByDefault = `(?i)codex review[^.;]*by default|by default[^.;]*codex review`
+	bugbotOnQuota  = `(?i)bugbot[^.;]*codex quota|codex quota[^.;]*bugbot`
+	// bugbotIsTheCheck is a wording that makes Bugbot the unit check itself.
+	bugbotIsTheCheck = regexp.MustCompile(`(?i)bugbot unit check|unit check (is|by|of|through) bugbot|runs bugbot|bugbot 단위 점검|the bugbot (check|review) of (each|the) node`)
+)
+
+// codexDefaultProblems is what text (one region of a page, named where) lacks of the Codex default and the Bugbot fallback, and
+// any wording in it that makes Bugbot the unit check.
+func codexDefaultProblems(where, text string, extra ...string) []string {
+	if strings.TrimSpace(text) == "" {
+		return []string{where + " is missing"}
+	}
+	flat := normalized(text)
+	var problems []string
+	for _, p := range wordingMissing(flat, append([]string{codexByDefault, bugbotOnQuota}, extra...)) {
+		problems = append(problems, where+" lacks "+p)
+	}
+	if m := bugbotIsTheCheck.FindString(flat); m != "" {
+		problems = append(problems, where+" makes Bugbot the unit check: "+m)
+	}
+	return problems
+}
+
+// scriptCodexDefaultProblems judges script.md: the project lane's unit-check paragraph and the land-head section.
+func scriptCodexDefaultProblems(script string) []string {
+	problems := codexDefaultProblems("the project lane's unit check paragraph", boldParagraph(sectionOf(script, "The project lane"), "Unit check."),
+		"`codex review --uncommitted`", "`CRW_UNIT_CHECK_MODEL`", "`CRW_UNIT_CHECK_EFFORT`", `(?i)given no prompt`, "`handed`")
+	land := sectionOf(script, "Landing a head made outside a run")
+	problems = append(problems, codexDefaultProblems("the land-head section", land, "`codex review --base( <base>)?`")...)
+	if strings.Contains(normalized(land), "until that profile is replaced") {
+		problems = append(problems, "the land-head section still says the committed profile is to be replaced")
+	}
+	return problems
+}
+
+// runSkillCodexDefaultProblems judges crw-run: its account of how the child works and its land-head line.
+func runSkillCodexDefaultProblems(skill string) []string {
+	problems := codexDefaultProblems("How the child works", sectionOf(skill, "How the child works"))
+	return append(problems, codexDefaultProblems("the land-head line", lineContaining(skill, "A change made another way lands", "land-head"))...)
+}
+
+// flowPageCodexDefaultProblems judges the canon's flow page: the Audit row, step 3 of the C4 procedure and the land-head entry of
+// the flow command table.
+func flowPageCodexDefaultProblems(page string) []string {
+	own := ownershipSection(page)
+	problems := codexDefaultProblems("the Audit row", lineWithPrefix(own, "| Audit |"))
+	problems = append(problems, codexDefaultProblems("step 3 of the C4 procedure", lineWithPrefix(own, "3. "))...)
+	return append(problems, codexDefaultProblems("the land-head entry", lineContaining(page, "| `crw flow start WORKFLOW", "`land-head` lands"))...)
+}
+
+func TestUnitCheckDocsNameCodexReviewAsTheDefault(t *testing.T) {
+	script := readRepoText(t, scriptDocPath)
+	skill := readRepoText(t, runSkillFile)
+	flow := readRepoText(t, flowRef)
+	if p := scriptCodexDefaultProblems(script); len(p) > 0 {
+		t.Errorf("%s:\n  %s", scriptDocPath, strings.Join(p, "\n  "))
+	}
+	if p := runSkillCodexDefaultProblems(skill); len(p) > 0 {
+		t.Errorf("%s:\n  %s", runSkillFile, strings.Join(p, "\n  "))
+	}
+	if p := flowPageCodexDefaultProblems(flow); len(p) > 0 {
+		t.Errorf("%s:\n  %s", flowRef, strings.Join(p, "\n  "))
+	}
+	for path, text := range map[string]string{scriptDocPath: script, runSkillFile: skill, flowRef: flow} {
+		if m := bugbotIsTheCheck.FindString(normalized(text)); m != "" {
+			t.Errorf("%s makes Bugbot the unit check: %q", path, m)
+		}
+	}
+
+	t.Run("fixture: the review-tool wording of CRW-1436 is reported", func(t *testing.T) {
+		old := "| Audit | the run | runs the unit check of each node's work itself (`crw.unitCheck`, a review tool of another model family than the node's authors, no reviewer agent) |"
+		if p := codexDefaultProblems("the Audit row", old); len(p) != 2 {
+			t.Errorf("the CRW-1436 Audit row gives %d problems, want 2: %v", len(p), p)
+		}
+		land := "## Landing a head made outside a run\n\n- one unit check in the committed mode, the review tool run in Go over `base..head`; until that profile is replaced a clean answer fails closed.\n"
+		if p := scriptCodexDefaultProblems("## The project lane\n\n**Unit check.** the run runs the review tool itself.\n\n" + land); len(p) != 11 {
+			t.Errorf("the CRW-1436 script.md gives %d problems, want 11: %v", len(p), p)
+		}
+	})
+	t.Run("fixture: Bugbot as the unit check is reported", func(t *testing.T) {
+		for _, text := range []string{
+			"the run runs Bugbot over the worktree, a Codex review by default and Bugbot on a Codex quota",
+			"the Bugbot unit check, a Codex review by default and Bugbot on a Codex quota",
+			"단위 점검(기본 Codex 리뷰): Bugbot 단위 점검, a Codex review by default and Bugbot on a Codex quota",
+		} {
+			if p := codexDefaultProblems("x", text); len(p) != 1 || !strings.Contains(p[0], "makes Bugbot the unit check") {
+				t.Errorf("%q gives %v, want one Bugbot problem", text, p)
+			}
+		}
+	})
+	t.Run("fixture: the Codex wording passes", func(t *testing.T) {
+		row := "| Audit | the run | runs the unit check of each node's work itself (`crw.unitCheck`: a Codex review by default, Bugbot on a Codex quota, of another model family than the node's authors) |"
+		if p := codexDefaultProblems("the Audit row", row); len(p) != 0 {
+			t.Errorf("the Codex Audit row gives problems: %v", p)
+		}
+	})
+}
