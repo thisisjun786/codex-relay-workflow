@@ -241,3 +241,31 @@ func TestDocsNameTheBundlePullRequestSurface(t *testing.T) {
 		t.Error("crw-run/SKILL.md does not name crw flow pr branch")
 	}
 }
+
+// TestReportingDocNamesTheMergeRequestReport (CRW-1457): reporting.md names the merge request report the `crw.mergeRequest` op hands to
+// the reporter: its kind (`merge_request`), the kind it goes through the supervisor channel under (`flow_merge_request`), the op, the
+// rule that it asks once per head, and that the built-in `project-lane` does not send one. The milestone reports section says it, and the
+// section of the supervisor channel lists the kind among the kinds of a report.
+func TestReportingDocNamesTheMergeRequestReport(t *testing.T) {
+	raw, err := os.ReadFile("../../../docs/flow/reporting.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	reports := docSection(t, text, "## Milestone reports and project-level reports")
+	for _, want := range []string{
+		"`merge_request`",
+		"`flow_merge_request`",
+		"`crw.mergeRequest`",
+		"once per head",
+		"built-in `project-lane`",
+	} {
+		if !strings.Contains(reports, want) {
+			t.Errorf("the milestone reports section of reporting.md does not name the merge request report: no %q", want)
+		}
+	}
+	channel := docSection(t, text, "## Through the supervisor channel")
+	if !strings.Contains(channel, "`flow_merge_request`") {
+		t.Error("the supervisor channel section of reporting.md does not list `flow_merge_request` among the kinds of a report")
+	}
+}
