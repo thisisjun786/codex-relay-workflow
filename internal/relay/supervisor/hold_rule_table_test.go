@@ -11,6 +11,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
+	"github.com/thisisjun786/codex-relay-workflow/internal/testsupport/storeseed"
 )
 
 // The hold rule of the supervisor channel (CRW-1500) in two tables.
@@ -451,6 +452,29 @@ var holdRuleRows = []holdRuleRow{
 	{"acknowledge/sending", "event", "none", "sending", "acknowledge", false, false, AcknowledgeClaimed},
 	{"acknowledge/decision", "event", "none", "decision", "acknowledge", false, true, AcknowledgeAnswerOwed},
 	{"acknowledge/notice", "notice", "none", "same", "acknowledge", false, false, AcknowledgeFaultNotice},
+	// restage and the daemon pass (U5): an acknowledged park of the same statement stays parked
+	// whoever stages it again, whatever seat or sender session the hierarchy now names (P1-1, P1-3,
+	// P1-4); a new statement that is owed is released and sent, one that is not owed stays.
+	{"restage/acknowledged/same", "event", "acknowledged", "same", "stage", true, false, ""},
+	{"restart_pass/acknowledged/same", "event", "acknowledged", "same", "restart_pass", true, false, ""},
+	{"restage/acknowledged/sender_rotated", "event", "acknowledged", "other_sender", "stage", true, false, ""},
+	{"daemon_pass/acknowledged/seat_moved", "event", "acknowledged", "seat_moved", "daemon_pass", true, false, ""},
+	{"restage/acknowledged/seat_moved", "event", "acknowledged", "seat_moved", "stage", true, false, ""},
+	{"daemon_pass/acknowledged/resubmitted", "event", "acknowledged", "resubmitted", "daemon_pass", false, true, ""},
+	{"daemon_pass/acknowledged/corrected_in_place", "event", "acknowledged", "corrected_in_place", "daemon_pass", false, true, ""},
+	{"restage/acknowledged/corrected_in_place", "event", "acknowledged", "corrected_in_place", "stage", false, true, ""},
+	{"restage/acknowledged/resubmitted_not_owed", "event", "acknowledged", "resubmitted_discharged", "stage", true, false, ""},
+	{"restage/acknowledged/recipient_moved", "event", "acknowledged", "other_recipient", "stage", false, true, ""},
+	{"daemon_pass/acknowledged/recipient_moved", "event", "acknowledged", "other_recipient", "daemon_pass", false, true, ""},
+	// send by id (U5): the recipient's own send releases an acknowledged park when what it is for is
+	// owed through it, and keeps it when the tracking record already confirms it.
+	{"send_by_id/acknowledged/owed", "event", "acknowledged", "same", "send_by_id", false, true, ""},
+	{"send_by_id/acknowledged/not_owed", "event", "acknowledged", "discharged", "send_by_id", true, false, ""},
+	// a hold the channel derived (U5): released by a restage when owed, as on dev, kept when not.
+	{"restage/derived/owed", "event", "derived", "same", "stage", false, true, ""},
+	{"restage/derived/not_owed", "event", "derived", "discharged", "stage", true, false, ""},
+	{"daemon_pass/derived/owed", "event", "derived", "same", "daemon_pass", false, true, ""},
+	{"send_by_id/derived/owed", "event", "derived", "same", "send_by_id", false, true, ""},
 }
 
 func TestSupervisorHoldRuleTable(t *testing.T) {
@@ -470,7 +494,7 @@ func TestSupervisorHoldRuleTable(t *testing.T) {
 			}
 		})
 	}
-	for _, scene := range holdRuleScenes {
+	for _, scene := range append(append([]holdRuleScene{}, holdRuleScenes...), holdRuleScenesU5...) {
 		t.Run(scene.name, scene.run)
 	}
 }
@@ -627,6 +651,227 @@ var holdRuleScenes = []holdRuleScene{
 			t.Fatalf("a deferral of a parked message wrote it: %+v -> %+v (%v)", row, after, err)
 		}
 	}},
+}
+
+// holdRuleScenesU5 are the U5 scenes: event and omission staging and the send by id under the rule
+// (plan-r3 section 4).
+var holdRuleScenesU5 = []holdRuleScene{
+	// P1-1: three daemon passes over an acknowledged park with nothing changed keep it, open no
+	// turn, and write nothing: no reopened row, no journal row at all, the message untouched.
+	{"daemon_pass/acknowledged/nothing", func(t *testing.T) {
+		w := newHoldWorld(t, "event")
+		w.setHold(t, "acknowledged")
+		before, err := w.c.Get(w.ctx, w.id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		journal := w.count(t, "SELECT count(*) FROM journal WHERE subject=?")
+		for range 3 {
+			w.autoSend(t, w.c)
+		}
+		w.expectParked(t, holdAcknowledged, before.State, before.AttemptCount)
+		if held, turn := w.read(t); !held || turn {
+			t.Fatalf("three passes over an acknowledged park: held %v turn %v, want held and no turn", held, turn)
+		}
+		if n := w.journalRows(t, "supervisor_message_reopened"); n != 0 {
+			t.Fatalf("the passes journaled %d reopened rows, want none", n)
+		}
+		if n := w.count(t, "SELECT count(*) FROM journal WHERE subject=?"); n != journal {
+			t.Fatalf("the passes journaled %d rows about the message, want none", n-journal)
+		}
+		after, err := w.c.Get(w.ctx, w.id)
+		if err != nil || after.UpdatedAt != before.UpdatedAt || after.Packet != before.Packet {
+			t.Fatalf("the passes wrote the parked message: updated %s -> %s (%v)", before.UpdatedAt, after.UpdatedAt, err)
+		}
+	}},
+	// P1-3: a new sender session (same recipient) re-addresses the message to it and keeps the park;
+	// the re-address journal row says which hold it kept.
+	{"daemon_pass/acknowledged/sender_rotated", func(t *testing.T) {
+		w := newHoldWorld(t, "event")
+		w.setHold(t, "acknowledged")
+		w.apply(t, "other_sender")
+		w.autoSend(t, w.c)
+		w.pass(t)
+		if held, turn := w.read(t); !held || turn {
+			t.Fatalf("an acknowledged park after a sender rotation: held %v turn %v, want held and no turn", held, turn)
+		}
+		row, err := w.c.Get(w.ctx, w.id)
+		if err != nil || row.SenderTaskID != "parent2" || row.RecipientTaskID != w.recipient() {
+			t.Fatalf("the message is %s -> %s (%v), want it re-addressed from parent2 to %s", row.SenderTaskID, row.RecipientTaskID, err, w.recipient())
+		}
+		w.expectParked(t, holdAcknowledged, "queued", 0)
+		var detail string
+		if err := w.s.DB.QueryRowContext(w.ctx, "SELECT detail FROM journal WHERE kind='supervisor_message_readdressed' AND subject=? ORDER BY seq DESC LIMIT 1", w.id).Scan(&detail); err != nil {
+			t.Fatal(err)
+		}
+		var readdressed map[string]any
+		if err := json.Unmarshal([]byte(detail), &readdressed); err != nil {
+			t.Fatal(err)
+		}
+		if readdressed["keptHold"] != store.SupervisorHoldSuperseded || readdressed["releasedHold"] != nil {
+			t.Fatalf("the re-address journaled %s, want keptHold %q and no released hold", detail, store.SupervisorHoldSuperseded)
+		}
+	}},
+	// P1-2: an acknowledged park released by a new statement, then a hold derived at the claim, reads
+	// as derived (the newest superseded row is the channel's), and the next owed restage releases it.
+	{"park_order/ack_then_derived", func(t *testing.T) {
+		w := newHoldWorld(t, "event")
+		w.setHold(t, "acknowledged")
+		w.resubmit(t)
+		w.enter(t, "stage")
+		if row, err := w.c.Get(w.ctx, w.id); err != nil || row.HoldReason.Valid {
+			t.Fatalf("a new submission left the acknowledged park: hold %v (%v)", row.HoldReason, err)
+		}
+		if n := w.journalRows(t, "supervisor_message_reopened"); n != 1 {
+			t.Fatalf("the release journaled %d reopened rows, want one", n)
+		}
+		dischargeInTrackingRecord(t, w.f)
+		w.now += 60
+		var refusal Refusal
+		if _, err := w.c.Attempt(w.ctx, w.id, w.host, w.now); !errors.As(err, &refusal) || refusal.Reason != "superseded_revision" {
+			t.Fatalf("the claim of a discharged message answered %v, want superseded_revision", err)
+		}
+		w.expectParked(t, holdDerived, "queued", 0)
+		w.exec(t, "DELETE FROM sync_outbox WHERE relationship_id='rel-1'")
+		w.enter(t, "stage")
+		if row, err := w.c.Get(w.ctx, w.id); err != nil || row.HoldReason.Valid {
+			t.Fatalf("an owed restage left the derived hold: hold %v (%v)", row.HoldReason, err)
+		}
+		w.pass(t)
+		if held, turn := w.read(t); held || !turn {
+			t.Fatalf("after the derived hold was released: held %v turn %v, want sent", held, turn)
+		}
+	}},
+	// A send by id never re-addresses: on a moved recipient or sender it answers relation_owner_drift
+	// naming supervisor-stage and keeps the park.
+	{"send_by_id/acknowledged/recipient_moved", func(t *testing.T) {
+		w := newHoldWorld(t, "event")
+		w.setHold(t, "acknowledged")
+		w.apply(t, "other_recipient")
+		w.expectSendByIDDrift(t)
+	}},
+	{"send_by_id/acknowledged/sender_rotated", func(t *testing.T) {
+		w := newHoldWorld(t, "event")
+		w.setHold(t, "acknowledged")
+		w.apply(t, "other_sender")
+		w.expectSendByIDDrift(t)
+	}},
+	// The daemon's attempt is not a send by id: it applies the restage rule, so an acknowledged park
+	// of the same statement is kept even when the attempt reaches it.
+	{"daemon_attempt/acknowledged", func(t *testing.T) {
+		w := newHoldWorld(t, "event")
+		w.setHold(t, "acknowledged")
+		w.now += 60
+		if record, err := w.c.attempt(w.ctx, w.id, w.host, w.now, 0, "relay-daemon", daemonAttempt); record != nil || err != nil {
+			t.Fatalf("the daemon's attempt of a parked message answered %v %v, want a quiet stop", record, err)
+		}
+		w.expectParked(t, holdAcknowledged, "queued", 0)
+		if n := w.journalRows(t, "supervisor_message_reopened"); n != 0 || w.host.sends != 0 {
+			t.Fatalf("the daemon's attempt reopened %d times and sent %d times, want neither", n, w.host.sends)
+		}
+	}},
+	// A sending message whose lease expired before its transport started, parked meanwhile (only a
+	// store an older build wrote holds one): the pass recovers it unsent with its hold, and nothing
+	// claims or sends it.
+	{"lease_expired/acknowledged", func(t *testing.T) {
+		w := newHoldWorld(t, "event")
+		w.exec(t, "UPDATE supervisor_messages SET state='sending',lease_owner='relay-daemon',lease_until=?,attempt_count=1 WHERE message_id=?", w.now, w.id)
+		w.exec(t, "INSERT INTO supervisor_attempts(request_id,message_id,attempt_no,message,state,send_attempted,retry_safe,record,sent_at,observed_at) VALUES('req-stranded',?,1,'m','held_uncertain','unknown',0,'{}','t','t')", w.id)
+		w.setHoldSQL(t, store.SupervisorHoldSuperseded, AcknowledgeCommand)
+		w.autoSend(t, w.c)
+		w.expectParked(t, holdAcknowledged, "queued", 1)
+		if n := w.count(t, "SELECT count(*) FROM supervisor_attempts WHERE message_id=?"); n != 1 {
+			t.Fatalf("the recovered parked message has %d attempt rows, want only the stranded one", n)
+		}
+		if held, turn := w.read(t); !held || turn || w.host.sends != 0 {
+			t.Fatalf("a recovered parked message: held %v turn %v sends %d, want held, no turn", held, turn, w.host.sends)
+		}
+	}},
+	// An acknowledged park kept through a newer statement that is not owed keeps the statement its
+	// recipient acknowledged (submission 1), so when the newer one becomes owed the pass reads it as a
+	// new statement and sends it (bugbot U5 r1). With a sender rotation the endpoints move and the
+	// acknowledged statement still stands.
+	{"restage/acknowledged/newer_statement_not_owed_then_owed", func(t *testing.T) {
+		w := newHoldWorld(t, "event")
+		w.setHold(t, "acknowledged")
+		w.apply(t, "resubmitted_discharged")
+		w.enter(t, "stage")
+		w.expectAcknowledgedStatementStands(t, "parent")
+	}},
+	{"restage/acknowledged/sender_rotated_newer_statement_not_owed_then_owed", func(t *testing.T) {
+		w := newHoldWorld(t, "event")
+		w.setHold(t, "acknowledged")
+		w.apply(t, "other_sender")
+		w.apply(t, "resubmitted_discharged")
+		w.enter(t, "stage")
+		w.expectAcknowledgedStatementStands(t, "parent2")
+	}},
+	// Characterization (green before and after U5): the hierarchy_unresolved release of
+	// StageWithReading releases a message whose endpoints the hierarchy names again, once, with one
+	// reopened row; its WHERE now names the word, which only U10's recorded mutation tells apart.
+	{"restage/unaddressed/same_endpoints", func(t *testing.T) {
+		w := newHoldWorld(t, "event")
+		w.setHoldSQL(t, store.SupervisorHoldUnaddressed, "")
+		w.enter(t, "stage")
+		row, err := w.c.Get(w.ctx, w.id)
+		if err != nil || row.HoldReason.Valid || !row.Unsent() {
+			t.Fatalf("a restage with the endpoints named again left hold %v state %s (%v), want released", row.HoldReason, row.State, err)
+		}
+		var detail string
+		if err := w.s.DB.QueryRowContext(w.ctx, "SELECT detail FROM journal WHERE kind='supervisor_message_reopened' AND subject=?", w.id).Scan(&detail); err != nil {
+			t.Fatalf("want exactly one reopened row: %v", err)
+		}
+		if n := w.journalRows(t, "supervisor_message_reopened"); n != 1 || !strings.Contains(detail, unaddressedReleasedReason) {
+			t.Fatalf("the release journaled %d reopened rows (%s), want one with %q", n, detail, unaddressedReleasedReason)
+		}
+	}},
+	// Characterization: an acknowledged park that the superseded branch keeps reaches the
+	// hierarchy_unresolved test with the superseded word, and is neither released nor journaled.
+	{"restage/acknowledged_then_unaddressed_check", func(t *testing.T) {
+		w := newHoldWorld(t, "event")
+		w.setHold(t, "acknowledged")
+		w.enter(t, "stage")
+		w.expectParked(t, holdAcknowledged, "queued", 0)
+		if n := w.journalRows(t, "supervisor_message_reopened"); n != 0 {
+			t.Fatalf("the restage journaled %d reopened rows, want none", n)
+		}
+	}},
+}
+
+// expectAcknowledgedStatementStands checks a park kept through a newer statement that is not owed:
+// it is still parked from sender, still carries submission 1, and once the tracking record no longer
+// confirms the completion the next daemon pass releases and sends the newer statement.
+func (w *holdWorld) expectAcknowledgedStatementStands(t *testing.T, sender string) {
+	t.Helper()
+	w.expectParked(t, holdAcknowledged, "queued", 0)
+	row, err := w.c.Get(w.ctx, w.id)
+	if err != nil || row.SenderTaskID != sender || !row.SubmissionNo.Valid || row.SubmissionNo.Int64 != 1 {
+		t.Fatalf("the kept park is from %s with submission %v (%v), want from %s still carrying submission 1", row.SenderTaskID, row.SubmissionNo, err, sender)
+	}
+	w.exec(t, "DELETE FROM sync_outbox WHERE relationship_id='rel-1'")
+	w.autoSend(t, w.c)
+	if held, turn := w.read(t); held || !turn {
+		t.Fatalf("the newer statement, owed now: held %v turn %v, want released and sent", held, turn)
+	}
+	row, err = w.c.Get(w.ctx, w.id)
+	if err != nil || !row.SubmissionNo.Valid || row.SubmissionNo.Int64 != 2 {
+		t.Fatalf("the sent message carries submission %v (%v), want 2", row.SubmissionNo, err)
+	}
+}
+
+// expectSendByIDDrift sends the world's parked message by id after its hierarchy moved: the send
+// answers relation_owner_drift naming supervisor-stage, opens no turn and keeps the park.
+func (w *holdWorld) expectSendByIDDrift(t *testing.T) {
+	t.Helper()
+	w.now += 60
+	var refusal Refusal
+	if record, err := w.c.Attempt(w.ctx, w.id, w.host, w.now); record != nil || !errors.As(err, &refusal) || refusal.Reason != "relation_owner_drift" || !strings.Contains(refusal.Detail, "supervisor-stage") {
+		t.Fatalf("a send by id after the hierarchy moved answered %v %v, want relation_owner_drift naming supervisor-stage", record, err)
+	}
+	w.expectParked(t, holdAcknowledged, "queued", 0)
+	if w.host.sends != 0 {
+		t.Fatalf("a parked message sent by id after the hierarchy moved was sent %d times", w.host.sends)
+	}
 }
 
 // raceHost is the world's host with two hooks: onRead runs once, on the first read of the
@@ -954,6 +1199,30 @@ func (w *holdWorld) apply(t *testing.T, change string) {
 	case "sending":
 		// A send claimed the message and its lease still runs past the row's daemon pass.
 		w.exec(t, "UPDATE supervisor_messages SET state='sending',lease_owner='relay-daemon',lease_until=?,attempt_count=attempt_count+1 WHERE message_id=?", w.now+3600, w.id)
+	case "discharged":
+		// The tracking record now confirms the completion, so nothing is owed through the message.
+		dischargeInTrackingRecord(t, w.f)
+	case "resubmitted_discharged":
+		// A new submission, and the record already confirms the completion.
+		w.resubmit(t)
+		dischargeInTrackingRecord(t, w.f)
+	case "seat_moved":
+		// The recipient task stays and the seat it answers from moves (initiative to store): the
+		// sender, the recipient and the project are what they were, only the recipient's scope kind
+		// moves (the TestDifv4SeatMoveKeepsAcknowledgedPark scene).
+		if err := storeseed.InsertScopeBinding(w.ctx, w.s, store.ScopeBindingsRow{BindingID: "bnd-hold-store", Role: "supervisor", ScopeKind: "store", ScopeKey: "store",
+			TaskID: "supervisor", HostID: "host", Status: "active", Revision: 1, CreatedAt: "t", UpdatedAt: "t"}); err != nil {
+			t.Fatal(err)
+		}
+		w.exec(t, "UPDATE scope_bindings SET status='released' WHERE scope_kind='initiative'")
+		row, err := w.c.Get(w.ctx, w.id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r, err := w.c.Resolve(w.ctx, row.RelationshipID)
+		if err != nil || r.Recipient != row.RecipientTaskID || r.Sender != row.SenderTaskID || r.ProjectKey != row.ProjectKey.String || r.RecipientScopeKind != "store" {
+			t.Fatalf("the seat move moved more than the seat: %+v %v (row %s -> %s)", r, err, row.SenderTaskID, row.RecipientTaskID)
+		}
 	case "decision":
 		// The message is a decision: an answer is owed to it.
 		w.exec(t, "UPDATE supervisor_messages SET kind='decision' WHERE message_id=?", w.id)
