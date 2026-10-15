@@ -37,12 +37,12 @@ error. An ad-hoc script has no workflows directory: it imports `crw:lib/<name>` 
 
 `crw flow run` (like every `crw flow` command that resolves calls) reads its role table once, when it starts, from
 the helper role store `CRW_HOME/subagents.json`: the pairs of `architect`, `executor`, `executor-t1`, `reviewer`,
-`reviewer-final` and `explorer`, with the code's alias table (see
+`reviewer-final`, `explorer` and `critic`, with the code's alias table (see
 [role-execution-policy.md](../role-execution-policy.md#the-agent-roles-of-a-flow-run)). The execution policy's
 `agent-roles` and `agent-aliases` sections are not read; a file that still declares them is a warning, and one whose
 sections do not parse still loads, with the sections ignored and the loader's reason as another warning. The run record
-keeps the store's path and the canonical digest of the six pairs, and the warnings of the table (a flow-only key at
-its compiled default, an undecided role, a reviewer on an author's model family). A test with no store runs on the
+keeps the store's path and the canonical digest of the seven pairs, and the warnings of the table (a flow-only key at
+its compiled default, an undecided role, a reviewer on an author's model family, a critic on the architect's). A test with no store runs on the
 fake backend's placeholder table. `crw flow roles` prints the table, the source, the digest and the warnings.
 
 ## File format
@@ -133,7 +133,7 @@ target drops to ES2016 (esbuild then lowers async/await to generators) and this 
 | `crw.recordedSignal(milestone, k)` | The signal `k` of the milestone as an earlier process recorded it and the journal still stands on it (its triggers, the digest of the signal before it and the `attempt` it was bound with, `"live:<n>"` or empty), or `null`. A read, like the next one. |
 | `crw.priorRelease(node)` | The release of the node that an earlier process recorded and the journal still stands on, with the revision it was made under, the number of the signal that made that revision and `refused`, the releases of the lane's path before it that compared another plan (`plan_changed`), or `null`. |
 
-`opts` of a call: `agentType` (`architect`, `executor`, `executor-t1`, `reviewer`, `reviewer-final`, `explorer`), `schema`,
+`opts` of a call: `agentType` (`architect`, `executor`, `executor-t1`, `reviewer`, `reviewer-final`, `explorer`, `critic`), `schema`,
 `label`, `phase`, `node`, `worktree` or `cwd`, `head`, `resume`, `stepDecision`, `qa` (below), and the Claude-style `model`, `effort` and
 `isolation`. The other `crw.*` members are the operations and composites of [the project lane](#the-project-lane); each operation is an
 `engine.Op` registered in `Config.Ops`, takes a position of its path like a call, and a resume replays it only while its effect still
@@ -163,18 +163,19 @@ do not write), no pending tree (what the call edits there is discarded; it is ne
 ## Roles, pairs and aliases
 
 A fresh call names a role with `agentType`. A role has a fixed model and effort (its pair), a role family (`executor` and
-`executor-t1` form one, `reviewer` and `reviewer-final` form one, `architect` and `explorer` are alone) and a sandbox:
+`executor-t1` form one, `reviewer` and `reviewer-final` form one, `architect`, `explorer` and `critic` are alone) and a sandbox:
 `workspace-write` for `executor` and `executor-t1`, the only roles that write (to their call's own cwd), `read-only` for
-the others. The role table is the helper role store's six pairs, read once per run (see the policy paragraph of the
+the others. The role table is the helper role store's seven pairs, read once per run (see the policy paragraph of the
 run options above); a test with no store runs on the fake backend's placeholder pairs and the same alias table.
 
 - With a role key as `agentType`, a `model` option must be absent, the role's model or an alias of its model family
-  (`haiku`: `executor` and `explorer`; `sonnet`: `executor-t1`; `opus`: `architect`; `ocx-gpt-6-1-sol`: `reviewer` and
-  `reviewer-final`); otherwise the call is `refused` with reason `pair_refused`.
+  (`haiku`: `executor` and `explorer`; `sonnet`: `executor-t1`; `opus`: `architect`; `ocx-gpt-6-1-sol`: `reviewer`,
+  `reviewer-final` and `critic`); otherwise the call is `refused` with reason `pair_refused`.
 - A call without a role key is looked up in the alias table by (a non-role `agentType` string, else the `model` alias;
   `effort`; `isolation`), the most specific matching row deciding: `opus` is `architect`; `haiku` with
   `isolation: 'worktree'` is `executor`; `sonnet` is `executor-t1`; `ocx-gpt-6-1-sol` (as `model` or as `agentType`)
-  with `effort: 'xhigh'` is `reviewer-final`, otherwise `reviewer`.
+  with `effort: 'xhigh'` is `reviewer-final`, otherwise `reviewer`. No alias row names `critic`: a critic call names it by
+  `agentType`.
 - `haiku` without isolation is ambiguous. Claude runs it in a shared checkout; a CRW call has a write cwd of its own that
   no other call shares, so the call is `refused` with reason `policy_refused`, cause `alias_ambiguous` (the intent row
   and the refusal row carry `cause`), and the detail names both fixes: `isolation: 'worktree'` for a build (role
@@ -729,7 +730,7 @@ A held row records whether the
 call's packet reached the host (`input_state`: `delivered` or `not_delivered`) and the `codexErrorInfo` verbatim; on a backend
 that places calls an executor's held row also carries `p_held`, the working snapshot of its worktree when the failure was
 classified, and its completed row `pending_tree`, the working snapshot when the turn ended. The run record holds the workflow name, the script digest, the helper digests, the digest of `args`, the meta, and
-the path of the helper role store with the canonical digest of the six role pairs (`policy_source`, `policy_digest`),
+the path of the helper role store with the canonical digest of the seven role pairs (`policy_source`, `policy_digest`),
 the role table's warnings (`policy_warnings`) when it has any, and the `backend` the run's calls run on (`session` or
 `app-server`).
 
@@ -1049,7 +1050,7 @@ run's directory `<state>/flow/<run>/` and none writes the journal, which only th
 - `crw flow start WORKFLOW [--backend session|app-server]` starts a session run by default; `--backend app-server` opens a thread
   per call, for the tests and shadow runs. The spec records the `backend`. A session run's pool is `min(pool, agents.max_threads - 1)`
   (the owner keeps a slot for a helper of its own; `agents.max_threads` is read from `<CODEX_HOME>/config.toml`, default 6), the
-  preview lists the spawn format of each of the six roles (`spawn_agent(agent_type, message, model, reasoning_effort,
+  preview lists the spawn format of each of the seven roles (`spawn_agent(agent_type, message, model, reasoning_effort,
   fork_context=false)`) and the six session facts below, and the answer names the command the steps are taken with
   (`next`). Before the process starts the owner thread is bound (below).
 - `crw flow next RUN [--wait S] [--json]` answers the run's `state` (`running`, `waiting_session`, `waiting_decision`, `paused`,
@@ -1092,8 +1093,10 @@ run's directory `<state>/flow/<run>/` and none writes the journal, which only th
   (the foreground command through `engine.ResumeHold`): at most `agents.max_threads - 1` calls in flight whatever `--pool` says,
   and the owner thread bound to the run while the resume runs and its line closed when the run ends.
 - The owner thread is bound to a session run by the `orchestrator` line of its flow-bound file (`internal/flow/bound`
-  `BindOrchestrator`: `kind: orchestrator`, `run_id`, the `policyDigest` of the role table and the `helperPairs` of the six roles
-  architect, executor, executor-t1, reviewer, reviewer-final, explorer; `Line.Validate` takes no orchestrator line without the six).
+  `BindOrchestrator`: `kind: orchestrator`, `run_id`, the `policyDigest` of the role table and the `helperPairs` of the seven roles
+  architect, executor, executor-t1, reviewer, reviewer-final, explorer, critic; `Line.Validate` takes no orchestrator line without
+  the first six; the critic is optional, so the open line of a run an earlier crw bound stays readable and its critic spawns are
+  undecided).
   A pair carries the decided parts of its role only: an undecided role has the empty pair, a role that names a model and leaves its
   effort undecided has the empty effort, and an effort without a model is no role's pair.
   The start writes it before any process of the run exists. While a process holds the run, that process is the one party that writes
@@ -1114,10 +1117,10 @@ run's directory `<state>/flow/<run>/` and none writes the journal, which only th
   fork (`full_history_fork_refused`: the fork keeps the parent's pair). Every other spawn is allowed with `model` and
   `reasoning_effort` overwritten from the decided parts of the pair of its role (an undecided effort keeps the `reasoning_effort` the
   spawn was sent, and an undecided role keeps the whole spawn, with the warning `role_undecided`): the role the first `CRW-ROLE:` line of the message header names when it
-  is exactly one of the six (a parser of the flow-bound path; the ordinary path's oracle parser is unchanged), else the role of
+  is exactly one of the seven (a parser of the flow-bound path; the ordinary path's oracle parser is unchanged), else the role of
   the `agent_type` (worker is executor), else explorer. The ledger line (`decisions/<owner>.jsonl`) records the `role`, the `op` of
   the `crw-flow-op:` first line, and a `warning` where the table has one: `role_agent_type_mismatch` (the header role does not pair
-  with the agent_type: executor-t1 with executor, reviewer-final with reviewer, the others with their own name), `unrecorded_spawn`
+  with the agent_type: executor-t1 with executor, reviewer-final and critic with reviewer, the others with their own name), `unrecorded_spawn`
   (no step marker) or `unrecorded_author` (no marker, an executor's or architect's type). A ledger that cannot be written allows the
   spawn and says so on stderr, and a flow-bound directory or file that cannot be trusted is read as no binding, with a stderr
   warning: no spawn is refused for it. The run joins the ledger's `op` with the owner turn's `collabAgentToolCall` items to find the
@@ -1138,7 +1141,7 @@ run's directory `<state>/flow/<run>/` and none writes the journal, which only th
   run's repository other than the run's own `refs/crw/flow/<run>/` (the run moves those itself) and the binding files of the
   flow-bound directory (the hook's ledger and claims are left out: the owner's spawns write them while a subagent works).
 - The session facts of the preview are warnings, never a refusal (CRW-1318): `owner_bound` (the owner can be bound: a thread id, a
-  readable binding, no other live run, live as the binding reads it: its process holds the run lock or its start holds the start lock), `role_models` (the six pairs, a role without one or without an effort, a reviewer of an author's model family),
+  readable binding, no other live run, live as the binding reads it: its process holds the run lock or its start holds the start lock), `role_models` (the seven pairs, a role without one or without an effort, a reviewer of an author's model family, a critic of the architect's),
   `owner_state_writable` (the run directory, the flow-bound directory, the control socket and the repository), `subagent_slots`
   (`agents.max_threads` leaves a slot for a call) and `multi_agent_v1` (`features.multi_agent_v2` is off: under V2 the protocol
   stops); `verifier_prerequisites`, the sixth, is judged for every run (CRW-1319).

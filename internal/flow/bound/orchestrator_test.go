@@ -7,12 +7,13 @@ import (
 	"testing"
 )
 
-// CRW-1348 (CRW-1316 design §9): the orchestrator line of a session run carries the pairs of the six roles, and its life is the
+// CRW-1348 (CRW-1316 design §9): the orchestrator line of a session run carries the pairs of the role subagents, and its life is the
 // run's: BindOrchestrator writes it when the run starts or resumes, CloseOrchestrator closes it when the run ends, a thread holds
 // the line of one live run (a run whose process holds its run lock), and the open line of a run without the lock is closed first.
 
 const threadB = "0190a000-0000-7000-8000-00000000000b"
 
+// sixPairs are the pairs of every orchestrator role (seven since CRW-1434; the name is older).
 func sixPairs(model string) map[string]Pair {
 	out := map[string]Pair{}
 	for _, role := range OrchestratorRoles {
@@ -22,18 +23,19 @@ func sixPairs(model string) map[string]Pair {
 }
 
 func TestOrchestratorLineCarriesTheSixRolePairs(t *testing.T) {
-	if strings.Join(OrchestratorRoles, ",") != "architect,executor,executor-t1,reviewer,reviewer-final,explorer" {
-		t.Fatalf("the six roles: %v", OrchestratorRoles)
+	if strings.Join(OrchestratorRoles, ",") != "architect,executor,executor-t1,reviewer,reviewer-final,explorer,critic" {
+		t.Fatalf("the seven roles: %v", OrchestratorRoles)
 	}
 	good := Line{RunID: "run-1", ThreadID: threadA, Kind: KindOrchestrator, HelperPairs: sixPairs("m"), PolicyDigest: "sha256:x"}
 	if err := good.Validate(threadA); err != nil {
-		t.Fatalf("a line with the six pairs: %v", err)
+		t.Fatalf("a line with the seven pairs: %v", err)
 	}
 	for _, role := range OrchestratorRoles {
 		l := good
 		l.HelperPairs = sixPairs("m")
 		delete(l.HelperPairs, role)
-		if err := l.Validate(threadA); err == nil || !strings.Contains(err.Error(), role) {
+		// the critic is optional (CRW-1434, TestOrchestratorLineWithoutACriticPairStillValidates); every other role is required
+		if err := l.Validate(threadA); role != "critic" && (err == nil || !strings.Contains(err.Error(), role)) {
 			t.Errorf("a line without the %s pair: %v", role, err)
 		}
 		// a role that names a model and leaves its effort undecided (CRW-1330, CRW-1331) has the empty effort, and only the
@@ -180,5 +182,54 @@ func TestMarkerOpIsTheFirstLine(t *testing.T) {
 		if got := MarkerOp(msg); got != want {
 			t.Errorf("MarkerOp(%q) = %q, want %q", msg, got, want)
 		}
+	}
+}
+
+// CRW-1434 (D-7): the critic is the seventh role of an orchestrator line, and an optional one. A line the earlier binary wrote
+// carries the six old pairs and no critic; it stays readable, so the spawn hook keeps the run's pairs and ledger rows until the
+// run rebinds. A critic pair that is present follows the same rule as every other role's.
+func TestOrchestratorLineWithoutACriticPairStillValidates(t *testing.T) {
+	if n := len(OrchestratorRoles); n == 0 || OrchestratorRoles[n-1] != "critic" {
+		t.Fatalf("the critic is not the last orchestrator role: %v", OrchestratorRoles)
+	}
+	if got := AgentTypeOf("critic"); got != "reviewer" {
+		t.Fatalf("the critic spawns as agent_type %q, not reviewer", got)
+	}
+	if !IsOrchestratorRole("critic") {
+		t.Fatal("the critic is no orchestrator role")
+	}
+	old := map[string]Pair{}
+	for _, role := range []string{"architect", "executor", "executor-t1", "reviewer", "reviewer-final", "explorer"} {
+		old[role] = Pair{Model: "m-" + role, Effort: "high"}
+	}
+	six := Line{RunID: "run-1", ThreadID: threadA, Kind: KindOrchestrator, HelperPairs: old, PolicyDigest: "sha256:x"}
+	if err := six.Validate(threadA); err != nil {
+		t.Fatalf("a line with the six old pairs and no critic: %v", err)
+	}
+	seven := six
+	seven.HelperPairs = sixPairs("m")
+	if _, ok := seven.HelperPairs["critic"]; !ok || len(seven.HelperPairs) != 7 {
+		t.Fatalf("the pairs of the orchestrator roles: %v", seven.HelperPairs)
+	}
+	if err := seven.Validate(threadA); err != nil {
+		t.Fatalf("a line with the seven pairs: %v", err)
+	}
+	effortOnly := six
+	effortOnly.HelperPairs = sixPairs("m")
+	effortOnly.HelperPairs["critic"] = Pair{Effort: "xhigh"}
+	if err := effortOnly.Validate(threadA); err == nil || !strings.Contains(err.Error(), "critic") {
+		t.Fatalf("a line whose critic pair names an effort and no model: %v", err)
+	}
+	undecided := six
+	undecided.HelperPairs = sixPairs("m")
+	undecided.HelperPairs["critic"] = Pair{}
+	if err := undecided.Validate(threadA); err != nil {
+		t.Fatalf("a line with an undecided critic: %v", err)
+	}
+	noExecutor := six
+	noExecutor.HelperPairs = sixPairs("m")
+	delete(noExecutor.HelperPairs, "executor")
+	if err := noExecutor.Validate(threadA); err == nil || !strings.Contains(err.Error(), "executor") {
+		t.Fatalf("a line without the executor pair: %v", err)
 	}
 }

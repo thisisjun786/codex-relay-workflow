@@ -102,7 +102,7 @@ func sessionPool(pool, maxThreads int) int {
 	return max(1, min(pool, maxThreads-1))
 }
 
-// ownerPairs are the six role pairs of the run's table, as the orchestrator line carries them.
+// ownerPairs are the seven role pairs of the run's table, as the orchestrator line carries them.
 func ownerPairs(table *engine.Policy) map[string]bound.Pair {
 	out := map[string]bound.Pair{}
 	for _, role := range bound.OrchestratorRoles {
@@ -214,8 +214,8 @@ func sessionFacts(req sessionFactRequest) []Fact {
 		add(FactOwnerBound, LevelPass, "", fmt.Sprintf("thread %s is bound to no live run: the start binds it", req.Thread))
 	}
 
-	// role_models: the six pairs, a role without one or without an effort (only the decided parts are compared, CRW-1331), and a
-	// reviewer of an author's family
+	// role_models: the seven pairs, a role without one or without an effort (only the decided parts are compared, CRW-1331), a
+	// reviewer of an author's family, and a critic of the architect's (the design audit refuses that one, CRW-1434)
 	var missing, effortless, pairs, overlap []string
 	for _, role := range bound.OrchestratorRoles {
 		spec, ok := req.Table.Roles[role]
@@ -230,11 +230,18 @@ func sessionFacts(req sessionFactRequest) []Fact {
 		}
 		pairs = append(pairs, role+" "+spec.Pair.Model+"/"+spec.Pair.Effort)
 	}
-	for _, reviewer := range []string{"reviewer", "reviewer-final"} {
-		for _, author := range []string{"architect", "executor", "executor-t1"} {
-			r, a := req.Table.Roles[reviewer].Pair.Model, req.Table.Roles[author].Pair.Model
+	for _, check := range []struct {
+		reviewer string
+		authors  []string
+	}{
+		{"reviewer", []string{"architect", "executor", "executor-t1"}},
+		{"reviewer-final", []string{"architect", "executor", "executor-t1"}},
+		{"critic", []string{"architect"}},
+	} {
+		for _, author := range check.authors {
+			r, a := req.Table.Roles[check.reviewer].Pair.Model, req.Table.Roles[author].Pair.Model
 			if r != "" && a != "" && execution.ModelFamily(r) == execution.ModelFamily(a) {
-				overlap = append(overlap, reviewer+" and "+author+" are both "+execution.ModelFamily(r))
+				overlap = append(overlap, check.reviewer+" and "+author+" are both "+execution.ModelFamily(r))
 			}
 		}
 	}
@@ -250,7 +257,7 @@ func sessionFacts(req sessionFactRequest) []Fact {
 		add(FactRoleModels, LevelWarn, "an undecided role (no pair) is spawned with the host's default and its dispatched report is not checked against a pair (pair_unchecked); a role whose effort is undecided is spawned at the host's effort and its report is checked against its model only (effort_unchecked)",
 			strings.Join(undecided, "; ")+"; "+reading)
 	case len(overlap) > 0:
-		add(FactRoleModels, LevelWarn, "a review is independent only from another family than the author's: relay acceptance refuses it (independence_refused)", strings.Join(overlap, "; ")+"; "+reading)
+		add(FactRoleModels, LevelWarn, "a review is independent only from another family than the author's: relay acceptance refuses it, and the design audit a critic of the architect's family (independence_refused)", strings.Join(overlap, "; ")+"; "+reading)
 	default:
 		add(FactRoleModels, LevelPass, "", reading)
 	}

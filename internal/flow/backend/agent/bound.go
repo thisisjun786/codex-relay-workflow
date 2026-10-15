@@ -97,7 +97,7 @@ func (b *Backend) bindTurn(spec engine.TurnSpec) error {
 
 var errNoBinding = errors.New("agent: the backend has no flow binding configured")
 
-// BindOrchestrator binds the thread that orchestrates the run: it appends the opening line (the pairs of the six roles of the
+// BindOrchestrator binds the thread that orchestrates the run: it appends the opening line (the pairs of the seven roles of the
 // policy, no allowance) to the thread's file, through bound.BindOrchestrator. The run calls it when it starts; until
 // CloseOrchestrator, the hook gives the spawns of that thread the pair of their role.
 func (b *Backend) BindOrchestrator(ctx context.Context, thread string) error {

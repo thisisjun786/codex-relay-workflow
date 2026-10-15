@@ -72,7 +72,7 @@ func TestCRW1330_StartPlanCarriesTheSnapshotAndItsWarnings(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &ans); err != nil {
 		t.Fatalf("%v: %s%s", err, out, errOut)
 	}
-	if !strings.HasSuffix(ans.Plan.Policy, role.StoreFile) || len(ans.Plan.Roles) != 6 {
+	if !strings.HasSuffix(ans.Plan.Policy, role.StoreFile) || len(ans.Plan.Roles) != len(role.FlowRoles()) {
 		t.Fatalf("plan %+v", ans.Plan)
 	}
 	if joined := strings.Join(ans.Plan.PolicyWarnings, "\n"); !strings.Contains(joined, "executor-t1") || !strings.Contains(joined, "reviewer-final") {
