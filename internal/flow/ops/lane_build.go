@@ -253,9 +253,43 @@ func (o *unitCheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpR
 		// the range the reader of a committed profile takes an answer about (reviewadapter.Profile.Ranged)
 		creq.Base, creq.Head = opts.Base, head
 	}
+	// every attempt is the judgment of snap, the tree the op snapped for this check (the commit's tree, or the pending tree), or of
+	// nothing: a worktree that changed after the snap and before the call was judged in its new state, which the adapter's own
+	// fingerprints (both of the new tree) do not reveal, and a committed row names its commit, whose tree no reader compares
+	moved := func(res reviewadapter.Result) (string, error) {
+		if res.State == reviewadapter.StateWorktreeChanged {
+			return "", nil
+		}
+		if res.FingerprintBefore != "" && res.FingerprintBefore != snap {
+			return res.FingerprintBefore, nil
+		}
+		now, err := Snapshot(ctx, g, wt)
+		if err != nil || now == snap {
+			return "", err
+		}
+		return now, nil
+	}
+	treeMoved := func(seen string, retried bool) (engine.OpResult, error) {
+		delete(data, "role")
+		data["state"], data["tree_moved"], data["tree"] = StateTreeMoved, true, seen
+		if mode == UnitCheckCommitted {
+			data["commit_tree"] = snap
+		} else {
+			data["pending_tree"] = snap
+		}
+		out := UnitCheckOutcome{Result: reviewadapter.Result{State: StateTreeMoved, Detail: "the worktree changed from " + snap + " to " + seen +
+			" after the op snapped it and before the tool judged it; the answer is no judgment of the snapped tree", Findings: []reviewadapter.Finding{}},
+			Retried: retried, Call: ex.CallID, CheckID: req.CallID}
+		return engine.OpResult{Result: result(out), Data: data}, nil
+	}
 	res, err := uc.Checker.Check(ctx, creq)
 	if err != nil {
 		return engine.OpResult{}, fmt.Errorf("crw.unitCheck: node %s: %w", node, err)
+	}
+	if seen, err := moved(res); err != nil {
+		return engine.OpResult{}, err
+	} else if seen != "" {
+		return treeMoved(seen, false)
 	}
 	out := UnitCheckOutcome{Call: ex.CallID, CheckID: req.CallID}
 	if res.State == reviewadapter.StateInvalid {
@@ -264,6 +298,12 @@ func (o *unitCheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpR
 			return engine.OpResult{}, fmt.Errorf("crw.unitCheck: node %s: the retry of an invalid answer: %w", node, err)
 		}
 		out.Retried = true
+		if seen, err := moved(res); err != nil {
+			return engine.OpResult{}, err
+		} else if seen != "" {
+			data["retried"] = true
+			return treeMoved(seen, true)
+		}
 	}
 	if res.Findings == nil {
 		res.Findings = []reviewadapter.Finding{}

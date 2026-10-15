@@ -1809,11 +1809,17 @@ type scriptedChecker struct {
 	got     []reviewadapter.Request
 }
 
-func (c *scriptedChecker) Check(_ context.Context, req reviewadapter.Request) (reviewadapter.Result, error) {
+func (c *scriptedChecker) Check(ctx context.Context, req reviewadapter.Request) (reviewadapter.Result, error) {
 	c.got = append(c.got, req)
 	r := checkReply{res: checkRecord(reviewadapter.StateOK, reviewadapter.VerdictVerified)}
 	if n := len(c.replies); n > 0 {
 		r = c.replies[min(len(c.got), n)-1]
+	}
+	// a record that names no tree of its own (checkRecord's "fp") saw the worktree as the adapter fingerprints it
+	if r.err == nil && r.res.FingerprintBefore == "fp" && req.Worktree != "" {
+		if fp, err := Snapshot(ctx, ExecGit("git"), req.Worktree); err == nil {
+			r.res.FingerprintBefore, r.res.FingerprintAfter = fp, fp
+		}
 	}
 	return r.res, r.err
 }
@@ -2403,6 +2409,100 @@ func TestAcceptReadsACarriedFindingFromTheCheckThatCarriedIt(t *testing.T) {
 	if len(rec.Dispositions.Items) != 0 {
 		t.Errorf("dispositions %+v", rec.Dispositions.Items)
 	}
+}
+
+// checkFunc is a UnitChecker of one function.
+type checkFunc func(context.Context, reviewadapter.Request) (reviewadapter.Result, error)
+
+func (f checkFunc) Check(ctx context.Context, req reviewadapter.Request) (reviewadapter.Result, error) {
+	return f(ctx, req)
+}
+
+// TestUnitCheckJudgesOnlyTheTreeItSnapped (CRW-1468, x1436 round 2 item 2): a check is the judgment of the tree the op snapped for it
+// (the commit's tree in committed mode, the pending tree in uncommitted mode), and of no other. When the worktree changes after that snap
+// and before a Check, or before the retry of an invalid answer, the tool judged another tree, which the adapter's fingerprints (before and
+// after the call, both of the changed tree) do not reveal on their own: the op holds that tree moved (state tree_moved, no role), never
+// records the answer as the judgment, and crw.accept of the commit is refused. A committed row names its commit, so no reader would
+// compare its tree.
+func TestUnitCheckJudgesOnlyTheTreeItSnapped(t *testing.T) {
+	// moving answers ok after it changed the worktree on the given calls (1-based); the fingerprints are those of the changed tree
+	moving := func(u *ucWorld, on map[int]bool, first reviewadapter.State) (*int, UnitChecker) {
+		n := 0
+		return &n, checkFunc(func(ctx context.Context, req reviewadapter.Request) (reviewadapter.Result, error) {
+			n++
+			if on[n] {
+				write(t, req.Worktree, "a.txt", fmt.Sprintf("changed before check %d\n", n), 0o644)
+			}
+			res := checkRecord(reviewadapter.StateOK, reviewadapter.VerdictVerified)
+			if n == 1 && first != "" {
+				res = checkRecord(first, "")
+			}
+			fp, err := Snapshot(ctx, ExecGit("git"), req.Worktree)
+			if err != nil {
+				return reviewadapter.Result{}, err
+			}
+			res.FingerprintBefore, res.FingerprintAfter = fp, fp
+			return res, nil
+		})
+	}
+	// a head made with no check of its own (as land-head's head, made outside a run): the committed check is its only judgment
+	committedHead := func(u *ucWorld) CommitOutcome {
+		ex := u.build("c_ex1", "built\n")
+		var commit CommitOutcome
+		_ = json.Unmarshal(u.must("commit", "A", ex, []string{"a.txt"}), &commit)
+		u.must("verify", "A", commit.Commit)
+		return commit
+	}
+	refused := func(t *testing.T, u *ucWorld, commit CommitOutcome, out UnitCheckOutcome, calls, want int) {
+		t.Helper()
+		row := u.lastCheck()
+		if out.State != StateTreeMoved || calls != want || dataStr(row, "state") != StateTreeMoved || row.Data["tree_moved"] != true || dataStr(row, "role") != "" {
+			t.Fatalf("%d checker calls, answer %+v, row %v: a check of a tree that moved after its snap", calls, out, row.Data)
+		}
+		if _, err := u.op("accept", "A", commit.Commit); err == nil || ReasonOf(err.Error()) != "reviewer_missing" {
+			t.Errorf("crw.accept of %s on a check of another tree: %v, want reviewer_missing", commit.Commit, err)
+		}
+	}
+	t.Run("committed: the tree moved before the check", func(t *testing.T) {
+		u := newUCWorld(t)
+		commit := committedHead(u)
+		calls, checker := moving(u, map[int]bool{1: true}, "")
+		u.lane.d.UnitCheck.Checker = checker
+		out := decodeCheck(t, u.must("unitCheck", "A", nil, map[string]any{"commit": commit, "base": u.start, "final": true}))
+		refused(t, u, commit, out, *calls, 1)
+	})
+	t.Run("committed: the tree moved before the retry", func(t *testing.T) {
+		u := newUCWorld(t)
+		commit := committedHead(u)
+		calls, checker := moving(u, map[int]bool{2: true}, reviewadapter.StateInvalid)
+		u.lane.d.UnitCheck.Checker = checker
+		out := decodeCheck(t, u.must("unitCheck", "A", nil, map[string]any{"commit": commit, "base": u.start, "final": true}))
+		refused(t, u, commit, out, *calls, 2)
+	})
+	t.Run("committed: a tree that stays is judged", func(t *testing.T) {
+		u := newUCWorld(t)
+		commit := committedHead(u)
+		calls, checker := moving(u, nil, reviewadapter.StateInvalid)
+		u.lane.d.UnitCheck.Checker = checker
+		out := decodeCheck(t, u.must("unitCheck", "A", nil, map[string]any{"commit": commit, "base": u.start, "final": true}))
+		if out.State != reviewadapter.StateOK || !out.Retried || *calls != 2 || dataStr(u.lastCheck(), "role") != "unit-check" {
+			t.Fatalf("%d checker calls, answer %+v", *calls, out)
+		}
+		if _, err := u.op("accept", "A", commit.Commit); err != nil {
+			t.Errorf("crw.accept on the committed check: %v", err)
+		}
+	})
+	t.Run("uncommitted: the tree moved before the check", func(t *testing.T) {
+		u := newUCWorld(t)
+		ex := u.build("c_ex1", "built\n")
+		calls, checker := moving(u, map[int]bool{1: true}, "")
+		u.lane.d.UnitCheck.Checker = checker
+		out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+		row := u.lastCheck()
+		if out.State != StateTreeMoved || *calls != 1 || dataStr(row, "role") != "" || row.Data["tree_moved"] != true {
+			t.Fatalf("%d checker calls, answer %+v, row %v", *calls, out, row.Data)
+		}
+	})
 }
 
 // ---- the executor receipt of a unit check (CRW-1463, C12) ----
