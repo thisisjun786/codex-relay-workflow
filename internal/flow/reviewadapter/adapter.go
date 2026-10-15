@@ -19,7 +19,9 @@
 //
 // An answer that merely quotes a quota text on a successful call is not quota. Only an ok record carries a verdict and findings;
 // every record names the engine family (in canonical form: trimmed, lower case, as execution.ModelFamily gives an author's), model,
-// effort, guide revision, prompt digest and both fingerprints. Findings are graded
+// effort, guide revision, prompt digest and both fingerprints. The prompt digest names the bytes the tool was given: the prompt
+// when the profile's arguments hold it (PromptSent), else none, the empty string's digest (a tool whose Args leave the prompt out,
+// such as one that takes no prompt). Findings are graded
 // P0-P3 (review.NormalizeGrade) and carry an id that ignores the line (FindingID); findings of one id collapse into one.
 //
 // The adapter reaches the outside only through its seams (Run, Fingerprint), so it imports no store and no flow op.
@@ -101,13 +103,14 @@ var AnswerSchema = []byte(`{
 type Request struct {
 	Profile  Profile
 	Worktree string        // the directory the tool runs in and the fingerprint covers
-	Prompt   string        // the review prompt; the exec runner appends it to the argv
+	Prompt   string        // the review prompt; the exec runner gives it as the last argument unless the profile's Args say otherwise
 	Schema   []byte        // the JSON Schema the answer must satisfy (AnswerSchema)
 	Limit    time.Duration // the time limit of the call
 	GuideRev string        // the revision of the review guide the prompt was built from
 	// Base and Head are the committed range base..head a committed check asks about (land-head's check, CRW-1468), both empty for a
 	// check of the uncommitted changes. A profile whose reader reads a range (Profile.Ranged) needs both, and its reader is given
-	// them with the request: an answer about any other range, or one that names none, is no answer.
+	// them with the request: an answer about any other range, or one that names none, is no answer. A profile's Args may read them
+	// too (a tool that is given the range's base as an argument).
 	Base, Head string
 }
 
@@ -133,6 +136,7 @@ type Result struct {
 	Effort            string    `json:"effort"`
 	GuideRev          string    `json:"guide_rev"`
 	PromptDigest      string    `json:"prompt_digest"`
+	PromptSent        bool      `json:"prompt_sent"` // the tool's arguments held the prompt; false: PromptDigest is the empty string's
 	FingerprintBefore string    `json:"fingerprint_before"`
 	FingerprintAfter  string    `json:"fingerprint_after"`
 	ElapsedMS         int64     `json:"elapsed_ms"`
@@ -183,7 +187,7 @@ type call struct {
 // Check validates the request, runs the tool between two fingerprints of the worktree, and returns the record. A Go error means
 // the request or the adapter is wrong, a fingerprint could not be taken, or the caller's ctx ended; it is never a state.
 func (a Adapter) Check(ctx context.Context, req Request) (Result, error) {
-	schema, family, err := a.validate(req)
+	schema, family, sent, err := a.validate(req)
 	if err != nil {
 		return Result{}, err
 	}
@@ -191,8 +195,12 @@ func (a Adapter) Check(ctx context.Context, req Request) (Result, error) {
 	if now == nil {
 		now = time.Now
 	}
-	sum := sha256.Sum256([]byte(req.Prompt))
-	res := Result{Model: req.Profile.Model, Effort: req.Profile.Effort, EngineFamily: family, GuideRev: req.GuideRev, PromptDigest: hex.EncodeToString(sum[:])}
+	var given string // the prompt bytes the tool is given
+	if sent {
+		given = req.Prompt
+	}
+	sum := sha256.Sum256([]byte(given))
+	res := Result{Model: req.Profile.Model, Effort: req.Profile.Effort, EngineFamily: family, GuideRev: req.GuideRev, PromptDigest: hex.EncodeToString(sum[:]), PromptSent: sent}
 	if res.FingerprintBefore, err = a.Fingerprint(ctx, req.Worktree); err != nil {
 		return Result{}, fmt.Errorf("reviewadapter: fingerprint before the call: %w", err)
 	}
@@ -216,45 +224,62 @@ func (a Adapter) Check(ctx context.Context, req Request) (Result, error) {
 
 // validate refuses a request the adapter cannot run (D4), resolves its schema and gives the engine family the record names: the
 // profile's Family in canonical form (execution.CanonicalFamily), else the family of its model. A family that is blank after the
-// trim or is no family name is unknown, and the request is refused, as one that names no model is.
-func (a Adapter) validate(req Request) (*jsonschema.Resolved, string, error) {
+// trim or is no family name is unknown, and the request is refused, as one that names no model is. It also builds the tool's
+// arguments once (toolArgs): an Args that errs refuses the request, and sent says whether the arguments hold the prompt.
+func (a Adapter) validate(req Request) (*jsonschema.Resolved, string, bool, error) {
 	p := req.Profile
 	switch {
 	case a.Run == nil:
-		return nil, "", errors.New("reviewadapter: the adapter has no Run")
+		return nil, "", false, errors.New("reviewadapter: the adapter has no Run")
 	case a.Fingerprint == nil:
-		return nil, "", errors.New("reviewadapter: the adapter has no Fingerprint")
+		return nil, "", false, errors.New("reviewadapter: the adapter has no Fingerprint")
 	case strings.TrimSpace(req.Worktree) == "":
-		return nil, "", errors.New("reviewadapter: the request names no worktree")
+		return nil, "", false, errors.New("reviewadapter: the request names no worktree")
 	case len(bytes.TrimSpace(req.Schema)) == 0:
-		return nil, "", errors.New("reviewadapter: the request has no schema")
+		return nil, "", false, errors.New("reviewadapter: the request has no schema")
 	case strings.TrimSpace(req.GuideRev) == "":
-		return nil, "", errors.New("reviewadapter: the request names no guide revision")
+		return nil, "", false, errors.New("reviewadapter: the request names no guide revision")
 	case req.Limit <= 0:
-		return nil, "", errors.New("reviewadapter: the request has no time limit")
+		return nil, "", false, errors.New("reviewadapter: the request has no time limit")
 	case strings.TrimSpace(p.Model) == "" || strings.TrimSpace(p.Effort) == "":
-		return nil, "", fmt.Errorf("reviewadapter: profile %q names no model or no effort", p.Name)
+		return nil, "", false, fmt.Errorf("reviewadapter: profile %q names no model or no effort", p.Name)
 	case p.Answer == nil:
-		return nil, "", fmt.Errorf("reviewadapter: profile %q has no answer reader", p.Name)
+		return nil, "", false, fmt.Errorf("reviewadapter: profile %q has no answer reader", p.Name)
 	case p.Ranged && (strings.TrimSpace(req.Base) == "" || strings.TrimSpace(req.Head) == ""):
-		return nil, "", fmt.Errorf("reviewadapter: profile %q judges a committed range and the request names none (base %q, head %q)", p.Name, req.Base, req.Head)
+		return nil, "", false, fmt.Errorf("reviewadapter: profile %q judges a committed range and the request names none (base %q, head %q)", p.Name, req.Base, req.Head)
+	}
+	_, sent, err := toolArgs(p, req)
+	if err != nil {
+		return nil, "", false, fmt.Errorf("reviewadapter: %w", err)
 	}
 	var sch jsonschema.Schema
 	if err := json.Unmarshal(req.Schema, &sch); err != nil {
-		return nil, "", fmt.Errorf("reviewadapter: the request's schema: %w", err)
+		return nil, "", false, fmt.Errorf("reviewadapter: the request's schema: %w", err)
 	}
 	r, err := sch.Resolve(nil)
 	if err != nil {
-		return nil, "", fmt.Errorf("reviewadapter: the request's schema: %w", err)
+		return nil, "", false, fmt.Errorf("reviewadapter: the request's schema: %w", err)
 	}
 	family, ok := execution.CanonicalFamily(p.Family)
 	if p.Family == "" {
 		family, ok = execution.CanonicalFamily(execution.ModelFamily(p.Model))
 	}
 	if !ok {
-		return nil, "", fmt.Errorf("reviewadapter: profile %q names no known engine family (family %q, model %q)", p.Name, p.Family, p.Model)
+		return nil, "", false, fmt.Errorf("reviewadapter: profile %q names no known engine family (family %q, model %q)", p.Name, p.Family, p.Model)
 	}
-	return r, family, nil
+	return r, family, sent, nil
+}
+
+// toolArgs gives the arguments the runner puts after the profile's argv for req: Args(req), or the prompt alone when the profile
+// has no Args. sent reports whether they hold the prompt as one argument (with no Args always: an empty prompt is still given).
+func toolArgs(p Profile, req Request) (args []string, sent bool, err error) {
+	if p.Args == nil {
+		return []string{req.Prompt}, true, nil
+	}
+	if args, err = p.Args(req); err != nil {
+		return nil, false, fmt.Errorf("profile %q could not build its arguments: %w", p.Name, err)
+	}
+	return args, slices.Contains(args, req.Prompt), nil
 }
 
 // classify decides the state of one call in the order of the package doc, and for ok the verdict and findings.
@@ -483,7 +508,8 @@ const maxOutput = 8 << 20
 // killGrace is how long the exec runner waits for the streams after it killed the process group.
 const killGrace = 2 * time.Second
 
-// ExecRun is the real RunFunc: it runs the profile's argv with the prompt as the last argument, in the worktree, in a process
+// ExecRun is the real RunFunc: it runs the profile's argv followed by the profile's arguments for the request (toolArgs: the prompt
+// as the last argument when the profile has no Args; an Args that errs is a tool that did not start), in the worktree, in a process
 // group of its own that is killed when ctx ends (the time limit). A tool that did not start, ran past ctx, or wrote more than
 // the cap is an error. The first byte over the cap on either stream kills the process group at once, so a runaway tool ends the
 // call with the output-cap failure (ErrOutputCap) instead of running on to the time limit.
@@ -496,7 +522,11 @@ func ExecRun(ctx context.Context, p Profile, req Request) ([]byte, []byte, int, 
 	if len(p.Argv) == 0 {
 		return nil, nil, -1, fmt.Errorf("%w: profile %q has no argv", ErrNotStarted, p.Name)
 	}
-	args := append(append([]string{}, p.Argv[1:]...), req.Prompt)
+	extra, _, err := toolArgs(p, req)
+	if err != nil {
+		return nil, nil, -1, fmt.Errorf("%w: %w", ErrNotStarted, err)
+	}
+	args := append(append([]string{}, p.Argv[1:]...), extra...)
 	cmd := exec.CommandContext(ctx, p.Argv[0], args...)
 	cmd.Dir = req.Worktree
 	outR, outW, err := os.Pipe()
