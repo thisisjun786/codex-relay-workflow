@@ -1,0 +1,10 @@
+# CRW-1431 (bundle CRW-1419): skill directories that still hold the phrase "relay role" in prose.
+# Unit 1431-e deletes this file first (red: the test names the hits), then rewrites the text (green).
+# Shrink only: a listed directory must still hold the phrase (TestRoleIdsStayOutOfProse).
+crw-plan
+crw-status
+crw-check
+crw-define
+crw-add-issue
+crw-tidy
+crw-refactor

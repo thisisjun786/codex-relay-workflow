@@ -197,8 +197,11 @@ func TestHierarchyHoldsTheNameTable(t *testing.T) {
 	}
 }
 
-// layerLinkProblems: a file that introduces a layer by its English label links the table, and its first use of
-// each label carries the relay role id.
+// layerLinkProblems: a file that introduces a layer by its English label links the table. CRW-1431: text a person
+// reads no longer gives the relay role id at the first use, so the label may stand without its parenthetical
+// ("the repository session") and the old form ("the repository session, relay role `supervisor`") still passes;
+// a label that does give a relay role id must give the right one (repository session `supervisor`, project
+// session `parent`). The bans on the phrase "relay role" come from TestRoleIdsStayOutOfProse, not from this rule.
 func layerLinkProblems(rel, text string) []string {
 	if rel == hierarchyFile {
 		return nil // the table itself gives each role id in its own column
@@ -216,9 +219,9 @@ func layerLinkProblems(rel, text string) []string {
 			continue
 		}
 		uses = true
-		window := flatText[i+len(l.label) : min(len(flatText), i+len(l.label)+40)]
-		if !strings.HasPrefix(strings.TrimLeft(window, ", ("), l.role) {
-			problems = append(problems, rel+": the first "+l.label+" does not give "+l.role+": ..."+flatText[i:min(len(flatText), i+80)])
+		window := strings.TrimLeft(flatText[i+len(l.label):min(len(flatText), i+len(l.label)+40)], ", (")
+		if strings.HasPrefix(window, "relay role") && !strings.HasPrefix(window, l.role) {
+			problems = append(problems, rel+": the first "+l.label+" gives a relay role id other than "+l.role+": ..."+flatText[i:min(len(flatText), i+80)])
 		}
 	}
 	body := normalized(withoutFrontmatter(text))
@@ -232,11 +235,12 @@ func layerLinkProblems(rel, text string) []string {
 
 // CRW-1396: a document that names a layer only as "the parent" or "the child" escaped both checks above,
 // which look for the labels "repository session" and "project session". The words are also the relay role
-// ids, so the table's rule tells the two senses apart at the first use: the layer sense gives its label and
-// role id (the parent (repository session, relay role `supervisor`), the child (project session, relay role
-// `parent`)), and relay-role prose keeps its meaning and says so (the parent (relay role `parent`), the child
-// (relay role `child`)). Either way the first use of each word gives a relay role id and the file links the
-// table. A case file under docs/crw-run/dispatch-cases is a fragment of crw-run's dispatch verification
+// ids, so the table's rule told the two senses apart at the first use by a parenthetical: the layer sense gave
+// its label and role id (the parent (repository session, relay role `supervisor`), the child (project session,
+// relay role `parent`)), and relay-role prose kept its meaning and said so (the parent (relay role `parent`), the
+// child (relay role `child`)). CRW-1431 makes the rule two-sided: the first use of each word passes with no
+// parenthetical (the parent (repository session), the parent) or with one of the old senses, and a parenthetical
+// that gives a relay role id gives one of the senses below; the file links the table either way. A case file under docs/crw-run/dispatch-cases is a fragment of crw-run's dispatch verification
 // reference, which is checked as a whole, and a JSON or YAML file holds metadata that links nothing.
 
 // bareLayerWord is "the parent" or "the child" as a noun of its own, not a compound such as the child role or
@@ -275,7 +279,7 @@ var nonSessionFiles = map[string]string{
 	"plugins/crw/skills/crw-loop/references/waiting.md":     "a native subagent and the session that waits on it",
 }
 
-// layerWordSenses are the openings a first use's parenthetical may take, per word.
+// layerWordSenses are the openings a first use's parenthetical may take, per word, when it gives a relay role id.
 var layerWordSenses = map[string][]string{
 	"parent": {"repository session, relay role `supervisor`", "relay role `parent`"},
 	"child":  {"project session, relay role `parent`", "relay role `child`"},
@@ -368,14 +372,18 @@ func bareLayerWordProblems(rel, flatText, masked string) []string {
 			continue
 		}
 		after := linkTarget.ReplaceAllString(flatText[end:], "")
-		given := false
+		wrong := false
 		if strings.HasPrefix(after, " (") {
+			parenthetical, _, _ := strings.Cut(after[2:], ")")
+			wrong = strings.Contains(parenthetical, "relay role")
 			for _, sense := range layerWordSenses[word] {
-				given = given || strings.HasPrefix(after[2:], sense)
+				if strings.HasPrefix(after[2:], sense) {
+					wrong = false
+				}
 			}
 		}
-		if !given {
-			problems = append(problems, rel+": the first \"the "+word+"\" gives no relay role id ("+strings.Join(layerWordSenses[word], " or ")+"): ..."+flatText[max(0, end-len("the "+word)-30):min(len(flatText), end+60)])
+		if wrong {
+			problems = append(problems, rel+": the first \"the "+word+"\" gives a relay role id that is none of ("+strings.Join(layerWordSenses[word], " or ")+"): ..."+flatText[max(0, end-len("the "+word)-30):min(len(flatText), end+60)])
 		}
 	}
 	return problems
@@ -400,8 +408,26 @@ func TestLayerNamesLinkTheTable(t *testing.T) {
 		if p := layerLinkProblems("a.md", good); len(p) != 0 {
 			t.Errorf("good: %v", p)
 		}
-		if p := layerLinkProblems("a.md", "the project session, which has a role id elsewhere"); len(p) != 2 {
-			t.Errorf("bad: %v", p)
+		if p := layerLinkProblems("a.md", "the project session, which has a role id elsewhere"); len(p) != 1 || !strings.Contains(p[0], "does not link") {
+			t.Errorf("a label with no link is the one problem: %v", p)
+		}
+		// CRW-1431: the label stands without its relay role id; a wrong role id is still caught.
+		link := "[the table](x/hierarchy.md#the-levels)"
+		for _, good := range []string{
+			link + " (project session) and the repository session",
+			link + " (project session, relay role `parent`) and the repository session, relay role `supervisor`",
+		} {
+			if p := layerLinkProblems("a.md", good); len(p) != 0 {
+				t.Errorf("good %q: %v", good, p)
+			}
+		}
+		for _, bad := range []string{
+			link + " (project session, relay role `supervisor`)",
+			link + " and the repository session, relay role `parent`",
+		} {
+			if p := layerLinkProblems("a.md", bad); len(p) != 1 || !strings.Contains(p[0], "other than") {
+				t.Errorf("bad %q: %v", bad, p)
+			}
 		}
 	})
 	t.Run("fixture: the parent and the child used without the first-use role id (CRW-1396)", func(t *testing.T) {
@@ -410,6 +436,9 @@ func TestLayerNamesLinkTheTable(t *testing.T) {
 			"The parent (repository session, relay role `supervisor`) decides. The child (project session, relay role `parent`) runs it." + link,
 			"[The parent](x/hierarchy.md#the-levels) (repository session, relay role `supervisor`) decides, and the parent's record holds it.",
 			"The parent (relay role `parent`) accepts what the child (relay role `child`) reports." + link,
+			// CRW-1431: the first use needs no parenthetical.
+			"The parent (repository session) decides. The child (project session) runs it." + link,
+			"The parent decides. The child runs it, and an issue child reports to it." + link,
 			"The child role and the child pair line, the parent-title replay, a HEAD that is no longer the parent refuses the commit.",
 			// Argon V5 K3: a phrase that is not a session reads the same at the start of a sentence or in another case.
 			"The parent render chain draws it. First, state the child's question. The Parent Direction holds.",
@@ -418,7 +447,17 @@ func TestLayerNamesLinkTheTable(t *testing.T) {
 				t.Errorf("good %q: %v", good, p)
 			}
 		}
-		// The old forms of the documents CRW-1396 names: each is caught, with the missing link.
+		// The old forms of the documents CRW-1396 names: each is caught, with the missing link (the first-use
+		// parenthetical is no longer demanded, CRW-1431). A wrong relay role id at the first use is still caught.
+		for _, bad := range []string{
+			"The parent (repository session, relay role `parent`) decides." + link,
+			"The child (project session, relay role `supervisor`) runs it." + link,
+			"The parent (relay role `supervisor`) accepts it." + link,
+		} {
+			if p := layerLinkProblems("docs/a.md", bad); len(p) == 0 || !strings.Contains(strings.Join(p, "\n"), "gives a relay role id") {
+				t.Errorf("a wrong role id passes %q: %v", bad, p)
+			}
+		}
 		for _, old := range []struct {
 			rel, text string
 		}{
@@ -427,8 +466,8 @@ func TestLayerNamesLinkTheTable(t *testing.T) {
 			{"docs/CI.md", "The parent changes the branch protection when the push-only procedure is switched on."},
 			{"POLICY.md", "approval scope (Jun, 2026-10-06: Node for the build and CI only), the parent chose this layout"},
 		} {
-			if p := layerLinkProblems(old.rel, normalized(old.text)); len(p) != 2 {
-				t.Errorf("old %s: %v, want the first use and the link", old.rel, p)
+			if p := layerLinkProblems(old.rel, normalized(old.text)); len(p) != 1 || !strings.Contains(p[0], "does not link") {
+				t.Errorf("old %s: %v, want the missing link", old.rel, p)
 			}
 		}
 		if p := layerLinkProblems("docs/crw-run/dispatch-cases/recorded/0110-S9c.md", "| S9c | The parent issues no creation |"); len(p) != 0 {
@@ -455,8 +494,8 @@ func TestLayerNamesLinkTheTable(t *testing.T) {
 			"a fenced block, then a bare prose use": "```\nthe parent\n```\nThe parent decides.",
 			"an inline span, then a bare prose use": "Run `the child`. The child decides.",
 		} {
-			if p := layerLinkProblems("docs/a.md", bad); len(p) != 2 {
-				t.Errorf("%s: %v, want the first use and the link", name, p)
+			if p := layerLinkProblems("docs/a.md", bad); len(p) != 1 || !strings.Contains(p[0], "does not link") {
+				t.Errorf("%s: %v, want the missing link", name, p)
 			}
 		}
 	})
@@ -495,6 +534,13 @@ func TestRunSkillUsesTheLayerNames(t *testing.T) {
 			"the parent's record holds it, and it is the repository's parent.\n"
 		if p := runSkillParentProblems(good); len(p) != 0 {
 			t.Errorf("good: %v", p)
+		}
+		// CRW-1431: the label stands without the relay role id (the check reads "(repository session" only).
+		newForm := "The child (project session) reports to [the parent](h.md#the-levels) (repository session). " +
+			"See [Project parent binding](i.md#project-parent-binding).\n\n## The parent: the repository session\n\n" +
+			"The parent orders the projects; the parent's record holds it, and it is the repository's parent.\n"
+		if p := runSkillParentProblems(newForm); len(p) != 0 {
+			t.Errorf("the form without a role id: %v", p)
 		}
 		if p := runSkillParentProblems("The parent dispatches a child for each issue, and a parent goal waits.\n"); len(p) != 2 {
 			t.Errorf("relay sense: %v", p)
