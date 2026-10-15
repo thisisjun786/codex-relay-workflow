@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -232,5 +233,92 @@ func TestReplanCriticAndExplorerCallsCarryTheSignalHead(t *testing.T) {
 	}
 	if at < 0 || release < at {
 		t.Errorf("B-1 was released at effect %d, the re-plan ran after %d effects: %v", release, at, effects)
+	}
+}
+
+// TestExplorersRunBeforeTheArchitectAndTheirFindingsReachItsPacket (CRW-1466): before the architect's first DESIGN, the milestone puts
+// one background question for each of its nodes to an explorer (crw.explore of kind background, SP-EXPL-1, outside the open questions'
+// cap), in a phase explore of its own. Each explorer call is labelled explore-bg:<milestone>:<digest12>, all of them run before the
+// architect call in journal order, and the architect's packet carries BACKGROUND FINDINGS with each explorer's answer. The explorer's
+// packet says it was asked in the background of the milestone's architect.
+func TestExplorersRunBeforeTheArchitectAndTheirFindingsReachItsPacket(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"}, labIssue{Key: "A-2", Milestone: "M1", After: []string{"A-1"}})
+	answerOf := func(issue string) string { return "the background of " + issue + ": README.md holds its base text" }
+	l.turn = func(c labCall, r fakehost.TurnRequest) (fakehost.TurnPlan, bool) {
+		if !strings.HasPrefix(c.Label, "explore-bg:") {
+			return fakehost.TurnPlan{}, false
+		}
+		for _, issue := range []string{"A-1", "A-2"} {
+			if strings.Contains(r.Text, "("+issue+")") {
+				return labSay(map[string]any{"answer": answerOf(issue), "evidence": []string{"README.md"}, "verified": []string{"README.md"}, "inferred": []string{}, "unknown": []string{}}), true
+			}
+		}
+		return labSay(map[string]any{"answer": "no node named", "evidence": []string{}, "verified": []string{}, "inferred": []string{}, "unknown": []string{}}), true
+	}
+	spec := l.start("start", "project-lane", "--args", fmt.Sprintf(`{"plan":%q,"milestone":"M1"}`, l.plan), "--handoff", l.file)
+	l.closed(l.runToEnd(spec.RunID))
+
+	msID := ""
+	phaseOf := map[string]string{}
+	var order []string
+	cur := ""
+	for _, e := range l.events() {
+		if e.Kind == engine.KindCall && e.Op == ops.OpMilestone && e.Event == engine.EvCompleted && msID == "" {
+			var ms ops.Milestone
+			if s, ok := e.Data["result"].(string); ok && json.Unmarshal([]byte(s), &ms) == nil {
+				msID = ms.ID
+			}
+		}
+		if e.Kind == engine.KindFlow && e.Event == "phase" {
+			cur = str(e.Data, "title")
+		}
+		if e.Kind == engine.KindCall && e.Event == engine.EvPrepared && e.Op == "agent" && e.Label != "" {
+			if _, seen := phaseOf[e.Label]; !seen {
+				order = append(order, e.Label)
+			}
+			phaseOf[e.Label] = cur
+		}
+	}
+	if msID == "" {
+		t.Fatalf("the run read no milestone")
+	}
+	var bg []string
+	architect := -1
+	for i, label := range order {
+		if strings.HasPrefix(label, "explore-bg:") {
+			bg = append(bg, label)
+			if !strings.HasPrefix(label, "explore-bg:"+msID+":") || phaseOf[label] != "explore" {
+				t.Errorf("the background explorer call %s ran in phase %q (want explore-bg:%s:*, in phase explore)", label, phaseOf[label], msID)
+			}
+			if architect >= 0 {
+				t.Errorf("the background explorer call %s came after the architect call: %v", label, order)
+			}
+		}
+		if label == "architect" {
+			architect = i
+		}
+	}
+	if len(bg) != 2 || architect < 0 || phaseOf["architect"] != "design" {
+		t.Fatalf("the background explorer calls %v (want one per node, 2) and the architect call at %d in phase %q: %v", bg, architect, phaseOf["architect"], order)
+	}
+	l.mu.Lock()
+	arch := l.texts["architect"]
+	exp := l.texts[bg[0]]
+	l.mu.Unlock()
+	if !strings.Contains(arch, "BACKGROUND FINDINGS") {
+		t.Fatalf("the architect packet has no BACKGROUND FINDINGS:\n%s", arch)
+	}
+	for _, issue := range []string{"A-1", "A-2"} {
+		if !strings.Contains(arch, answerOf(issue)) {
+			t.Errorf("the architect packet lacks the background answer of %s:\n%s", issue, arch)
+		}
+	}
+	for _, leak := range []string{"route:", "spawned_background", "scope_notation", "origin"} {
+		if strings.Contains(arch, leak) {
+			t.Errorf("the architect packet renders the routing metadata %q:\n%s", leak, arch)
+		}
+	}
+	if !strings.Contains(exp, "ASKED BY: the run, in the background of the architect of milestone "+msID+" (background)") {
+		t.Errorf("the background explorer's packet:\n%s", exp)
 	}
 }

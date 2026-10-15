@@ -229,7 +229,8 @@ func TestARunRecordedBeforeTheEndConditionResumesItsExplorers(t *testing.T) {
 		t.Helper()
 		seen := 0
 		for _, ev := range l.Events() {
-			if ev.Kind != engine.KindCall || ev.Op != "agent" || ev.Event != engine.EvPrepared || str(ev.Data, "role") != "explorer" {
+			// the background explorers (CRW-1466) came after the earlier binary: the open questions' explorers are the ones it made
+			if ev.Kind != engine.KindCall || ev.Op != "agent" || ev.Event != engine.EvPrepared || str(ev.Data, "role") != "explorer" || strings.HasPrefix(ev.Label, BackgroundLabel) {
 				continue
 			}
 			want, ok := earlierExplorers[ev.Label]
@@ -584,7 +585,13 @@ func TestOrchestratorAnswerIsUsedOnTheNextAuditRound(t *testing.T) {
 		t.Errorf("design-audit:r2 answers lack %q:\n%s", want, r2)
 	}
 	// the record: each reused answer carries the route it came from
-	records := l.Rows(ops.OpExploreRecord)
+	// the open questions' records (the background questions' record, CRW-1466, is left out)
+	var records []engine.Event
+	for _, row := range l.Rows(ops.OpExploreRecord) {
+		if str(row.Data, "kind") == ops.ExploreOpen {
+			records = append(records, row)
+		}
+	}
 	if len(records) != 2 {
 		t.Fatalf("%d crw.exploreRecord rows, want one for each round", len(records))
 	}
@@ -1017,7 +1024,10 @@ func TestResumeAfterOpenQuestionRoutingChange(t *testing.T) {
 		{ID: "policy", Question: "does the project ship the flag in 1.0?", Scope: "authority:policy", FilesNeeded: []string{}},
 	}
 	l.Design = &d
-	l.Lib = libWith(t, "lane.js", "route: r.route, reason: r.reason || '', scope: r.scope || '', authority: r.authority || '', answer,", "route: r.route, answer,")
+	// the binary before CRW-1347 had no background questions (CRW-1466 came after it): it strips the routes of the open questions'
+	// answers only, so the background record and the architect call before the design loop replay as they would for such a run
+	l.Lib = libWith(t, "lane.js", "route: r.route, reason: r.reason || '', scope: r.scope || '', authority: r.authority || '', answer,",
+		"route: r.route, ...(kind === 'background' ? { reason: r.reason || '', scope: r.scope || '', authority: r.authority || '' } : {}), answer,")
 	if got := mustRun(t, l); got.State != "closed" {
 		t.Fatalf("state %q", got.State)
 	}
@@ -1035,7 +1045,8 @@ func TestResumeAfterOpenQuestionRoutingChange(t *testing.T) {
 	ran := map[string]int{}
 	refused := false
 	for _, ev := range rowsAfter(l, before) {
-		if ev.Kind == engine.KindCall && ev.Event == engine.EvCompleted {
+		// the open questions' record is the one this test is about: a background questions' record (CRW-1466) is not counted
+		if ev.Kind == engine.KindCall && ev.Event == engine.EvCompleted && (ev.Op != ops.OpExploreRecord || str(ev.Data, "kind") == ops.ExploreOpen) {
 			ran[ev.Op]++
 		}
 		if ev.Kind == engine.KindCall && ev.Op == ops.OpDesignLedger && ev.Event == engine.EvRefused {

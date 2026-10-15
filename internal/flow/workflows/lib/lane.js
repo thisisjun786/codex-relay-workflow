@@ -443,15 +443,18 @@ export async function explore(kind, questions, ctx, opts) {
   const found = {}
   let failed = null
   let tokens = 0
+  // a background explorer (CRW-1466) is labelled explore-bg:<milestone>:<digest12>, so a reader of the explore: labels (an open
+  // question's, a research or evidence question's) never takes one for its own; every other kind keeps its label
+  const prefix = kind === 'background' ? 'explore-bg:' : 'explore:'
   for (const wave of chunks(spawn, EXPLORER_CONCURRENCY)) {
     // the explorer given the end conditions answers FINDINGS_END; every other one is the call it was before CRW-1382 (its packet and
     // its schema), so a run recorded then replays it
     const calls = await parallel(wave.map((r) => () => r.digest === endsFor
       ? agent.call(explorerPacket(kind, r, ctx, ends), {
-        agentType: 'explorer', node: ctx.node || undefined, head: ctx.head || undefined, schema: FINDINGS_END, label: 'explore:' + (ctx.node || ctx.milestone) + ':' + r.digest.slice(0, 12),
+        agentType: 'explorer', node: ctx.node || undefined, head: ctx.head || undefined, schema: FINDINGS_END, label: prefix + (ctx.node || ctx.milestone) + ':' + r.digest.slice(0, 12),
       })
       : agent.call(explorerPacket(kind, r, ctx), {
-        agentType: 'explorer', node: ctx.node || undefined, head: ctx.head || undefined, schema: FINDINGS, label: 'explore:' + (ctx.node || ctx.milestone) + ':' + r.digest.slice(0, 12),
+        agentType: 'explorer', node: ctx.node || undefined, head: ctx.head || undefined, schema: FINDINGS, label: prefix + (ctx.node || ctx.milestone) + ':' + r.digest.slice(0, 12),
       })), { keys: wave.map((r) => r.digest.slice(0, 12)), label: 'explore' })
     wave.forEach((r, i) => {
       const call = calls[i]
