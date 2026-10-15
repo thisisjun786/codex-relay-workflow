@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/audit"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/reviewadapter"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/acceptance/premerge"
@@ -115,7 +116,7 @@ func (o *acceptOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 	}
 	var verdict ReviewVerdict
 	var grader premerge.Grader
-	var criteriaDigest, reviewerCall string
+	var criteriaDigest, reviewerCall, basis string
 	switch {
 	case ucAt >= 0:
 		row := r[ucAt]
@@ -128,7 +129,7 @@ func (o *acceptOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 			return engine.OpResult{}, &Refusal{"reviewer_not_verified", err.Error()}
 		}
 		verdict, grader = v, premerge.Grader{Model: uc.Model, Effort: uc.Effort, PromptDigest: uc.PromptDigest}
-		criteriaDigest, reviewerCall = dataStr(row, "criteria_digest"), row.CallID
+		criteriaDigest, reviewerCall, basis = dataStr(row, "criteria_digest"), row.CallID, audit.BasisUnitCheck
 	case revAt >= 0:
 		var rr ReviewResult
 		if err := json.Unmarshal(resultOf(r[revAt]), &rr); err != nil {
@@ -143,7 +144,7 @@ func (o *acceptOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 			return engine.OpResult{}, &Refusal{"reviewer_missing", "the reviewer call " + rr.Call.CallID + " has no prepared row"}
 		}
 		verdict, grader = v, premerge.Grader{Model: str(prep.Data, "model"), Effort: str(prep.Data, "effort"), PromptDigest: str(prep.Data, "prompt_digest")}
-		criteriaDigest, reviewerCall = rr.CriteriaDigest, rr.Call.CallID
+		criteriaDigest, reviewerCall, basis = rr.CriteriaDigest, rr.Call.CallID, audit.BasisReview
 	default:
 		return engine.OpResult{}, &Refusal{"reviewer_missing", "no verified review or unit check of " + head.Commit + " is recorded for node " + node}
 	}
@@ -192,7 +193,10 @@ func (o *acceptOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 	}
 	pdigest, _ := premerge.Digest(doc)
 	out := AcceptOutcome{AcceptanceID: res.AcceptanceID, Head: head.Commit, PremergeDigest: pdigest, Replayed: res.Replayed}
-	return engine.OpResult{Result: result(out), Data: map[string]any{"node": node, "head": head.Commit, "acceptance_id": res.AcceptanceID, "premerge_digest": pdigest, "plan": plan}}, nil
+	// the row names what the acceptance rests on (basis, and reviewer_call: the reviewer's call or the crw.unitCheck row's), which
+	// the audit of the milestone close reads
+	return engine.OpResult{Result: result(out), Data: map[string]any{"node": node, "head": head.Commit, "acceptance_id": res.AcceptanceID, "premerge_digest": pdigest, "plan": plan,
+		"basis": basis, "reviewer_call": reviewerCall}}, nil
 }
 
 // issueOf is the DESIGN entry of a node, from the ledger revision the node was released under.

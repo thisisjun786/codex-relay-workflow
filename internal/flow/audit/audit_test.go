@@ -418,3 +418,72 @@ func str(m map[string]any, key string) string {
 	s, _ := m[key].(string)
 	return s
 }
+
+// The rows an acceptance names (CRW-1465): a committed unit check is on the head by its commit and on no other; a check that names
+// no commit is on the head by the tree the journal records for it, and a head with no recorded tree is no basis; an acceptance
+// row with basis review takes the review of the call it names, not the newest one of the head.
+func TestAuditReadsTheBasisTheAcceptanceNames(t *testing.T) {
+	const crit = "sha256:criteria-of-a"
+	row := func(seq int, call, op string, data map[string]any) engine.Event {
+		return engine.Event{Seq: seq, RunID: "run-x", Kind: engine.KindCall, CallID: call, Op: op, Event: engine.EvCompleted, Data: data}
+	}
+	check := func(data map[string]any) engine.Event {
+		d := map[string]any{"role": "unit-check", "node": "A", "state": "ok", "criteria_digest": crit, "result": `{"state":"ok","verdict":"verified","findings":[]}`}
+		for k, v := range data {
+			d[k] = v
+		}
+		return row(3, "c_uc", "crw.unitCheck", d)
+	}
+	journal := func(rows ...engine.Event) []engine.Event {
+		events := []engine.Event{row(1, "c_rel", "crw.release", map[string]any{"node": "A", "milestone": "M1", "released": true, "criteria_digest": crit})}
+		events = append(events, rows...)
+		return append(events, row(9, "c_acc", "crw.accept", map[string]any{"node": "A", "head": acceptedHead, "acceptance_id": "acc-1", "plan": "plan-1", "basis": "unit_check", "reviewer_call": "c_uc"}))
+	}
+	first := func(events []engine.Event) audit.Check {
+		t.Helper()
+		s := audit.Subjects(events)
+		if len(s) != 1 || s[0].Basis != audit.BasisUnitCheck || s[0].CriteriaDigest != crit {
+			t.Fatalf("subjects %+v", s)
+		}
+		r := audit.Audit(context.Background(), nil, events, s[0])
+		if r.Checks[0].Name != audit.CheckUnitCheck || r.Thread != "" {
+			t.Fatalf("%+v", r)
+		}
+		return r.Checks[0]
+	}
+	for name, c := range map[string]struct {
+		events []engine.Event
+		want   string
+	}{
+		"a committed check of the head":       {journal(check(map[string]any{"commit": acceptedHead, "tree": "t1"})), audit.OK},
+		"a committed check of another commit": {journal(check(map[string]any{"commit": strings.Repeat("f", 40), "tree": "t1"})), audit.Mismatch},
+		"a check of the head's committed tree": {journal(check(map[string]any{"tree": "t1"}),
+			row(4, "c_commit", "crw.commit", map[string]any{"node": "A", "commit": acceptedHead, "tree": "t1"})), audit.OK},
+		"a check of the tree of the land release": {append([]engine.Event{row(0, "c_land", "crw.release", map[string]any{"node": "A", "kind": "land", "head": acceptedHead, "tree": "t1"})},
+			journal(check(map[string]any{"tree": "t1"}))...), audit.OK},
+		"a head with no recorded tree":            {journal(check(map[string]any{"tree": "t1"})), audit.Mismatch},
+		"no such unit-check row":                  {journal(), audit.Mismatch},
+		"a check of the release's other criteria": {journal(check(map[string]any{"commit": acceptedHead, "criteria_digest": "sha256:other"})), audit.Mismatch},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := first(c.events); got.Result != c.want {
+				t.Errorf("unit_check_row %+v, want %s", got, c.want)
+			}
+		})
+	}
+
+	// basis review names its reviewer call: an older verified review of the head is not the one it rests on
+	l := newAuditLab(t, acceptedHead, criteriaDigest)
+	events := append(slices.Clone(l.events),
+		engine.Event{Seq: 80, RunID: "run-audit", Kind: engine.KindCall, CallID: "c_review_new", Op: "crw.review", Event: engine.EvCompleted,
+			Data: map[string]any{"node": "A", "head": acceptedHead, "criteria_digest": "sha256:newer", "state": "verdict", "verdict": "verified", "call": "c_other"}},
+		engine.Event{Seq: 81, RunID: "run-audit", Kind: engine.KindCall, CallID: "c_acc_basis", Op: "crw.accept", Event: engine.EvCompleted,
+			Data: map[string]any{"node": "A", "head": acceptedHead, "acceptance_id": "acc-2", "plan": "plan-1", "basis": "review", "reviewer_call": l.review}})
+	s := audit.Subjects(events)
+	if len(s) != 1 || s[0].Basis != audit.BasisReview || s[0].ReviewerCall != l.review || s[0].CriteriaDigest != criteriaDigest {
+		t.Fatalf("subjects %+v", s)
+	}
+	if r := audit.Audit(context.Background(), l.reader(), events, s[0]); r.State != audit.OK || r.Checks[0].Name != audit.CheckRecorded {
+		t.Errorf("an acceptance on the review it names: %+v", r)
+	}
+}

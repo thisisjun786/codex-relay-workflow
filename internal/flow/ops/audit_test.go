@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -230,4 +231,214 @@ func TestArchiveRefusedOrNoHostKeepsTheThread(t *testing.T) {
 	if len(arch.Archived) != 0 {
 		t.Errorf("archived with no host: %+v", arch)
 	}
+}
+
+// noHost is a host of reviewer threads that fails the test when it is asked anything: an acceptance on a unit check has no
+// reviewer thread, so its audit reads none and its close archives none.
+type noHost struct{ t *testing.T }
+
+func (h noHost) ReadTurns(context.Context, string, []string) ([]appserver.TurnReading, error) {
+	h.t.Errorf("the audit of a unit-check acceptance read a thread from the host")
+	return nil, errors.New("no host")
+}
+
+func (h noHost) ArchiveThread(context.Context, string) error {
+	h.t.Errorf("the close of a unit-check acceptance archived a thread")
+	return errors.New("no host")
+}
+
+// A node lane accepts a head on a unit check (CRW-1465): crw.accept names the basis it rested on and the call of the check, and the
+// audit vouches for the acceptance on that row - a completed unit check of role unit-check, result ok, on the head, under the
+// criteria digest of the node's release - in place of a reviewer thread it would read: the state is ok when the executor's pair was
+// observed, the first check is unit_check_row (no recorded reviewer call), no host is read, no thread is named, and the close
+// archives and keeps nothing. A check off the head or under another criteria digest is a mismatch; a land-head acceptance (no
+// executor call) is unobserved, not a mismatch, and archives nothing either; an old acceptance row without a basis still takes the
+// crw.review path, and an acceptance with neither a basis nor a review is a mismatch as before.
+func TestAuditVouchesForAUnitCheckAcceptance(t *testing.T) {
+	head, base := strings.Repeat("a", 40), strings.Repeat("b", 40)
+	appendRow := func(w *world, op, callID, event string, data map[string]any) {
+		b, _ := json.Marshal(data)
+		var round map[string]any
+		_ = json.Unmarshal(b, &round)
+		w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: callID, Op: op, Event: event, Data: round})
+	}
+	unitCheckRow := func(w *world, callID string, extra map[string]any) {
+		res, _ := json.Marshal(map[string]any{"state": "ok", "detail": "", "verdict": "verified", "findings": []any{}, "engine_family": "grok", "model": "grok-4.7-medium",
+			"effort": "medium", "guide_rev": "g1", "prompt_digest": "pd-unit", "fingerprint_before": "t-head", "fingerprint_after": "t-head", "elapsed_ms": 1})
+		data := map[string]any{"role": "unit-check", "node": "A", "mode": "uncommitted", "call": "c_ex_A", "state": "ok", "verdict": "verified", "findings": 0, "result": string(res)}
+		for k, v := range extra {
+			data[k] = v
+		}
+		appendRow(w, OpUnitCheck, callID, engine.EvCompleted, data)
+	}
+	// nodeLane is the journal of a node lane that built A, checked the uncommitted tree, committed it, verified the head and accepted it.
+	nodeLane := func(t *testing.T) (*world, string) {
+		w := newWorld(t)
+		w.relay.plan = planOfNodes(map[string]string{"A": "a1"}, "A")
+		w.relay.plan.Nodes[0].CriteriaDigest = strings.Repeat("c", 64)
+		w.ledgered(true, designOf("A"))
+		w.must("release", "plan-1", "A", "M")
+		rel, ok := releaseRowOf(rows(w.j.Events()), "A")
+		criteria := dataStr(rel, "criteria_digest")
+		if !ok || criteria == "" {
+			t.Fatalf("the release row names no criteria digest: %+v", rel.Data)
+		}
+		w.lane.d.Relay = &acceptCapture{stubRelay: w.relay}
+		w.lane.d.Threads = noHost{t}
+		w.lane.d.Git = func(context.Context, string, []string, ...string) (string, error) {
+			return "", errors.New("this test runs no git")
+		}
+		appendRow(w, "agent", "c_ex_A", engine.EvPrepared, map[string]any{"role": "executor", "family": "executor", "node": "A"})
+		appendRow(w, "agent", "c_ex_A", engine.EvThreadStarted, map[string]any{"thread_id": "thr-ex-A", "model": "claude-fake-haiku", "effort": "xhigh"})
+		appendRow(w, "agent", "c_ex_A", engine.EvCompleted, map[string]any{"result": "{}", "result_digest": "x", "pending_tree": "t-head"})
+		unitCheckRow(w, "c_uc", map[string]any{"tree": "t-head", "criteria_digest": criteria, "execution_id": dataStr(rel, "execution_id")})
+		appendRow(w, OpCommit, "c_commit", engine.EvCompleted, map[string]any{"node": "A", "commit": head, "parent": base, "tree": "t-head", "call": "c_ex_A", "result": "{}"})
+		appendRow(w, OpVerify, "c_verify", engine.EvCompleted, map[string]any{"node": "A", "head": head, "ok": true, "base": base, "digest": strings.Repeat("d", 64), "result": "{}"})
+		return w, criteria
+	}
+	acceptRow := func(t *testing.T, w *world) engine.Event {
+		t.Helper()
+		row, ok := rows(w.j.Events()).opRows(OpAccept).last(func(engine.Event) bool { return true })
+		if !ok {
+			t.Fatal("no crw.accept row")
+		}
+		return row
+	}
+	auditOf := func(t *testing.T, w *world) audit.Result {
+		t.Helper()
+		var aud AuditOutcome
+		if err := json.Unmarshal(w.must("audit", "M"), &aud); err != nil || len(aud.Results) != 1 {
+			t.Fatalf("audit %+v %v", aud, err)
+		}
+		return aud.Results[0]
+	}
+	checkOf := func(r audit.Result, name string) audit.Check {
+		for _, c := range r.Checks {
+			if c.Name == name {
+				return c
+			}
+		}
+		return audit.Check{}
+	}
+	archiveOf := func(t *testing.T, w *world) ArchiveOutcome {
+		t.Helper()
+		var arch ArchiveOutcome
+		if err := json.Unmarshal(w.must("archive", "M"), &arch); err != nil {
+			t.Fatal(err)
+		}
+		return arch
+	}
+
+	t.Run("a node-lane acceptance on its unit check", func(t *testing.T) {
+		w, criteria := nodeLane(t)
+		w.must("accept", "A", head)
+		acc := acceptRow(t, w)
+		if dataStr(acc, "basis") != "unit_check" || dataStr(acc, "reviewer_call") != "c_uc" {
+			t.Fatalf("the accept row names basis %q and reviewer call %q, want unit_check and c_uc: %+v", dataStr(acc, "basis"), dataStr(acc, "reviewer_call"), acc.Data)
+		}
+		subjects := audit.Subjects(w.j.Events())
+		if len(subjects) != 1 || subjects[0].Basis != audit.BasisUnitCheck || subjects[0].ReviewerCall != "c_uc" || subjects[0].CriteriaDigest != criteria || subjects[0].Milestone != "M" {
+			t.Fatalf("subjects %+v", subjects)
+		}
+		r := auditOf(t, w)
+		if r.State != audit.OK || r.Reason != "" || r.Thread != "" || r.Turn != "" {
+			t.Fatalf("the audit of a unit-check acceptance: %+v", r)
+		}
+		if len(r.Checks) == 0 || r.Checks[0].Name != audit.CheckUnitCheck || r.Checks[0].Result != audit.OK {
+			t.Errorf("checks %+v, want unit_check_row ok first", r.Checks)
+		}
+		if c := checkOf(r, audit.CheckRecorded); c.Name != "" {
+			t.Errorf("a recorded-reviewer check was made: %+v", c)
+		}
+		if c := checkOf(r, audit.CheckHost); c.Name != "" {
+			t.Errorf("a host check was made: %+v", c)
+		}
+		if c := checkOf(r, audit.CheckExecutor); c.Result != audit.OK {
+			t.Errorf("executor pair %+v", c)
+		}
+		if arch := archiveOf(t, w); len(arch.Archived) != 0 || len(arch.Kept) != 0 {
+			t.Errorf("the close archived or kept a thread for a unit-check acceptance: %+v", arch)
+		}
+	})
+
+	t.Run("a unit check off the head or under another criteria digest", func(t *testing.T) {
+		for name, edit := range map[string]func(d map[string]any){
+			"another tree":            func(d map[string]any) { d["tree"] = "t-other" },
+			"another criteria digest": func(d map[string]any) { d["criteria_digest"] = strings.Repeat("e", 64) },
+			"no judgment": func(d map[string]any) {
+				d["state"], d["result"] = "quota", strings.Replace(d["result"].(string), `"state":"ok"`, `"state":"quota"`, 1)
+			},
+			"no role": func(d map[string]any) { delete(d, "role") },
+			"a needs_changes verdict": func(d map[string]any) {
+				d["result"] = strings.Replace(d["result"].(string), `"verdict":"verified"`, `"verdict":"needs_changes"`, 1)
+			},
+			"a blocking finding": func(d map[string]any) {
+				d["result"] = strings.Replace(d["result"].(string), `"findings":[]`, `"findings":[{"id":"0123456789abcdef","severity":"P1","impact":"core_function","file":"x.go","line":1,"text":"breaks"}]`, 1)
+			},
+		} {
+			t.Run(name, func(t *testing.T) {
+				w, _ := nodeLane(t)
+				w.must("accept", "A", head)
+				events := w.j.Events()
+				w2 := newWorld(t)
+				w2.lane.d.Threads = noHost{t}
+				for _, ev := range events {
+					if ev.Op == OpUnitCheck {
+						d := map[string]any{}
+						for k, v := range ev.Data {
+							d[k] = v
+						}
+						edit(d)
+						ev.Data = d
+					}
+					w2.j.Append(ev)
+				}
+				r := auditOf(t, w2)
+				if r.State != audit.Mismatch || len(r.Checks) == 0 || r.Checks[0].Name != audit.CheckUnitCheck || r.Checks[0].Result != audit.Mismatch {
+					t.Fatalf("%+v", r)
+				}
+				if arch := archiveOf(t, w2); len(arch.Archived) != 0 {
+					t.Errorf("archived %+v", arch)
+				}
+			})
+		}
+	})
+
+	t.Run("a land-head acceptance has no executor call", func(t *testing.T) {
+		w := newWorld(t)
+		w.lane.d.Threads = noHost{t}
+		appendRow(w, OpRelease, "c_rel", engine.EvCompleted, map[string]any{"node": "A", "milestone": "M", "released": true, "kind": "land", "head": head, "tree": "t-head", "criteria_digest": "cd-A"})
+		unitCheckRow(w, "c_uc", map[string]any{"mode": "committed", "call": "", "commit": head, "base": base, "tree": "t-head", "criteria_digest": "cd-A", "receipt": map[string]any{"state": "no_executor"}})
+		appendRow(w, OpAccept, "c_acc", engine.EvCompleted, map[string]any{"node": "A", "head": head, "acceptance_id": "acc-A", "plan": "plan-1", "basis": "unit_check", "reviewer_call": "c_uc"})
+		r := auditOf(t, w)
+		if r.State != audit.Unobserved || r.Checks[0].Name != audit.CheckUnitCheck || r.Checks[0].Result != audit.OK || checkOf(r, audit.CheckExecutor).Result != audit.Unobserved || r.Thread != "" {
+			t.Fatalf("a land-head acceptance: %+v", r)
+		}
+		if arch := archiveOf(t, w); len(arch.Archived) != 0 || len(arch.Kept) != 0 {
+			t.Errorf("the close archived or kept a thread for a land-head acceptance: %+v", arch)
+		}
+	})
+
+	t.Run("an old acceptance row without a basis takes the review path", func(t *testing.T) {
+		w, _ := closedMilestone(t)
+		for _, s := range audit.Subjects(w.j.Events()) {
+			if s.Basis != "" || s.ReviewerCall != "c_rv_"+s.Node {
+				t.Errorf("subject %+v", s)
+			}
+		}
+		var aud AuditOutcome
+		_ = json.Unmarshal(w.must("audit", "M"), &aud)
+		for _, r := range aud.Results {
+			if r.Checks[0].Name != audit.CheckRecorded {
+				t.Errorf("node %s: checks %+v, want the recorded reviewer check first", r.Node, r.Checks)
+			}
+		}
+		// with neither a basis nor a review the acceptance rests on nothing the audit can vouch for
+		w2 := newWorld(t)
+		appendRow(w2, OpRelease, "c_rel", engine.EvCompleted, map[string]any{"node": "A", "milestone": "M", "released": true})
+		appendRow(w2, OpAccept, "c_acc", engine.EvCompleted, map[string]any{"node": "A", "head": head, "acceptance_id": "acc-A", "plan": "plan-1"})
+		if r := auditOf(t, w2); r.State != audit.Mismatch || r.Checks[0].Name != audit.CheckRecorded || r.Checks[0].Result != audit.Mismatch {
+			t.Errorf("an acceptance with no basis and no review: %+v", r)
+		}
+	})
 }

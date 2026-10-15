@@ -197,7 +197,14 @@ digest), `attempt` (`live:<n>` for a recorded signal that could not replay, `n` 
 **Audit.** A row `crw.audit` (the call row of the audit, written by `crw.audit` in a run and by `crw flow audit` beside it) holds the
 audit results of acceptances: `results`, each with the acceptance id, the node, the head, the reviewer call, the thread and turn it read,
 the checks and the state (`ok`, `mismatch`, `unobserved`). The newest row that audits an acceptance decides whether it passed
-(`audit.Passed`); a reviewer thread is archived only for an acceptance that passed (`crw.archive`).
+(`audit.Passed`); a reviewer thread is archived only for an acceptance that passed (`crw.archive`). The completed `crw.accept` row names what the acceptance rests
+on: `basis` (`review`, or `unit_check`) and `reviewer_call` (the reviewer's call, or the call of the `crw.unitCheck` row), besides
+`node`, `head`, `acceptance_id`, `premerge_digest` and `plan`; an older row names neither and is audited on the newest verified
+`crw.review` of its head. An acceptance on a unit check rests on no reviewer thread: its audit checks that row (`unit_check_row`: a
+completed check of the node with role `unit-check`, state `ok`, verdict `verified` over no blocking finding, on the head by its `commit` or by the head's recorded tree, under the
+criteria digest of the node's release) and the executor pair, reads nothing from the host and names no thread, and `crw.archive`
+neither archives nor keeps anything for it. A land-head acceptance has no executor call, so its executor pair and its result are
+`unobserved`.
 
 **Recording calls.** `escalate`, `reportUp`, `hold`, `tierStep`, `spawnDecision`, `stepRecord`, `exploreRoute`, `exploreRecord`, `designAudit`, `designLedger`, `qaReceipt`, `qaCapture`, `reviewerFinal`, `audit`, `archive`, `replanSignals`, `currentDesign`, `reflection`, `signalBind`, `signalDone`, `signalClose`, `designHead` and `releasedPlans` only record a fact. `releaseChild` was the old project lane's start of a node's issue child; no
 script calls it and no lane installs it now (CRW-1415). A run whose journal holds a `crw.releaseChild` row is a legacy issue-child run, and
