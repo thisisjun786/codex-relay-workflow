@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -2099,6 +2100,351 @@ func TestUnitCheckRetriesAnInvalidAnswerOnce(t *testing.T) {
 	}
 }
 
+// codexRecord is the record of a Codex review call in state, as reviewadapter.CodexReviewProfile names its pair.
+func codexRecord(state reviewadapter.State, verdict string) reviewadapter.Result {
+	r := checkRecord(state, verdict)
+	r.EngineFamily, r.Model, r.Effort, r.PromptDigest, r.Detail = "gpt", "gpt-6-astra", "high", "pd-codex", "codex: "+string(state)
+	return r
+}
+
+// codexWithBugbotFallback wires the unit check of u the way the shipped lane does (CRW-1517): the Codex review profiles, and the Bugbot
+// profiles as the fallback on a Codex quota. The modes the fallback was asked for are kept in fallbacks.
+func codexWithBugbotFallback(u *ucWorld, fallbacks *[]string) {
+	u.lane.d.UnitCheck.Profile = func(mode string) (reviewadapter.Profile, error) {
+		u.modes = append(u.modes, mode)
+		if mode == UnitCheckCommitted {
+			return reviewadapter.CodexReviewCommittedProfile(reviewadapter.CodexReviewConfig{}), nil
+		}
+		return reviewadapter.CodexReviewProfile(reviewadapter.CodexReviewConfig{}), nil
+	}
+	u.lane.d.UnitCheck.Fallback = func(mode string) (reviewadapter.Profile, error) {
+		*fallbacks = append(*fallbacks, mode)
+		if mode == UnitCheckCommitted {
+			return reviewadapter.BugbotCommittedProfile(), nil
+		}
+		return reviewadapter.BugbotProfile(), nil
+	}
+}
+
+// profileNames are the profile names of the requests the checker saw, in order.
+func profileNames(got []reviewadapter.Request) []string {
+	var names []string
+	for _, r := range got {
+		names = append(names, r.Profile.Name)
+	}
+	return names
+}
+
+// TestUnitCheckFallsBackToBugbotOnCodexQuota (CRW-1517): a Codex review that gave no judgment for its quota is asked once more of the
+// fallback profile (Bugbot) with the same request. The one completed row keeps the fallback call's record as its result, the Codex
+// record as the answer's fallback, and names the fallback in its data (fallback_from, fallback_state, fallback_model); a fallback that
+// judged holds nothing and is proven. With no fallback wired a quota holds the node as before; a fallback that ends quota again holds
+// unit_check_quota with both records kept; a fallback's invalid answer is asked once more of the fallback (retried, first_state
+// invalid), and its second record is the row's result; no state other than quota falls back.
+func TestUnitCheckFallsBackToBugbotOnCodexQuota(t *testing.T) {
+	t.Run("fallback judges", func(t *testing.T) {
+		u := newUCWorld(t)
+		var fallbacks []string
+		codexWithBugbotFallback(u, &fallbacks)
+		u.checker.replies = []checkReply{{res: codexRecord(reviewadapter.StateQuota, "")}, {res: checkRecord(reviewadapter.StateOK, reviewadapter.VerdictVerified)}}
+		ex := u.build("c_ex1", "built\n")
+		out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+		if names := profileNames(u.checker.got); !slices.Equal(names, []string{"codex-review", "bugbot"}) {
+			t.Fatalf("the checker saw profiles %v, want codex-review then bugbot", names)
+		}
+		if a, b := u.checker.got[0], u.checker.got[1]; a.Prompt != b.Prompt || a.Worktree != b.Worktree || a.GuideRev != b.GuideRev || a.Limit != b.Limit ||
+			a.Base != b.Base || a.Head != b.Head || !bytes.Equal(a.Schema, b.Schema) {
+			t.Errorf("the fallback's request %+v differs from the first %+v", b, a)
+		}
+		if !slices.Equal(fallbacks, []string{UnitCheckUncommitted}) {
+			t.Errorf("fallback modes %v", fallbacks)
+		}
+		if out.State != reviewadapter.StateOK || out.Verdict != reviewadapter.VerdictVerified || out.Hold != "" || out.Retried || out.Model != "grok-4.7-medium" ||
+			out.Fallback == nil || out.Fallback.State != reviewadapter.StateQuota || out.Fallback.Model != "gpt-6-astra" || out.Fallback.EngineFamily != "gpt" {
+			t.Errorf("answer %+v (fallback %+v)", out, out.Fallback)
+		}
+		row := u.lastCheck()
+		want := map[string]any{"role": "unit-check", "state": "ok", "verdict": "verified", "retried": false, "fallback_from": "codex-review", "fallback_state": "quota",
+			"fallback_model": "gpt-6-astra", "tree": u.snapshot()}
+		for k, v := range want {
+			if row.Data[k] != v {
+				t.Errorf("row %s = %#v, want %#v", k, row.Data[k], v)
+			}
+		}
+		for _, k := range []string{"hold", "first_state", "fallback_retried"} {
+			if _, has := row.Data[k]; has {
+				t.Errorf("the row has %s: %v", k, row.Data[k])
+			}
+		}
+		var rec reviewadapter.Result
+		if err := json.Unmarshal(resultOf(row), &rec); err != nil || rec.State != reviewadapter.StateOK || rec.EngineFamily != "grok" || rec.Model != "grok-4.7-medium" {
+			t.Errorf("the row's result %+v (%v) is not the Bugbot record", rec, err)
+		}
+		// the Codex record as the checker gave it: it saw the snapped tree (scriptedChecker names it for checkRecord's "fp")
+		quota := codexRecord(reviewadapter.StateQuota, "")
+		quota.FingerprintBefore, quota.FingerprintAfter = u.snapshot(), u.snapshot()
+		if got := decodeCheck(t, resultOf(row)); got.Fallback == nil || !reflect.DeepEqual(*got.Fallback, quota) {
+			t.Errorf("the row's fallback record %+v, want the Codex quota record", got.Fallback)
+		}
+		if len(u.checkRows()) != 1 || !u.proven(row) {
+			t.Errorf("%d rows; proven %v", len(u.checkRows()), u.proven(row))
+		}
+	})
+
+	t.Run("no fallback wired", func(t *testing.T) {
+		u := newUCWorld(t)
+		var fallbacks []string
+		codexWithBugbotFallback(u, &fallbacks)
+		u.lane.d.UnitCheck.Fallback = nil
+		u.checker.replies = []checkReply{{res: codexRecord(reviewadapter.StateQuota, "")}, {res: checkRecord(reviewadapter.StateOK, reviewadapter.VerdictVerified)}}
+		ex := u.build("c_ex1", "built\n")
+		out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+		row := u.lastCheck()
+		if len(u.checker.got) != 1 || out.State != reviewadapter.StateQuota || out.Hold != "unit_check_quota" || out.Fallback != nil || dataStr(row, "hold") != "unit_check_quota" ||
+			u.proven(row) {
+			t.Errorf("%d checker calls, answer %+v, row %v", len(u.checker.got), out, row.Data)
+		}
+		if _, has := row.Data["fallback_from"]; has {
+			t.Errorf("a check with no fallback names one: %v", row.Data)
+		}
+	})
+
+	t.Run("fallback quota too", func(t *testing.T) {
+		u := newUCWorld(t)
+		var fallbacks []string
+		codexWithBugbotFallback(u, &fallbacks)
+		u.checker.replies = []checkReply{{res: codexRecord(reviewadapter.StateQuota, "")}, {res: checkRecord(reviewadapter.StateQuota, "")}, {res: checkRecord(reviewadapter.StateOK, "verified")}}
+		ex := u.build("c_ex1", "built\n")
+		out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+		row := u.lastCheck()
+		if names := profileNames(u.checker.got); !slices.Equal(names, []string{"codex-review", "bugbot"}) {
+			t.Errorf("the checker saw profiles %v, want one fallback only", names)
+		}
+		if out.State != reviewadapter.StateQuota || out.Hold != "unit_check_quota" || out.Model != "grok-4.7-medium" || out.Fallback == nil || out.Fallback.Model != "gpt-6-astra" ||
+			dataStr(row, "hold") != "unit_check_quota" || dataStr(row, "fallback_from") != "codex-review" || dataStr(row, "fallback_state") != "quota" || u.proven(row) {
+			t.Errorf("answer %+v, row %v", out, row.Data)
+		}
+	})
+
+	t.Run("an invalid answer, then quota", func(t *testing.T) {
+		u := newUCWorld(t)
+		var fallbacks []string
+		codexWithBugbotFallback(u, &fallbacks)
+		u.checker.replies = []checkReply{{res: codexRecord(reviewadapter.StateInvalid, "")}, {res: codexRecord(reviewadapter.StateQuota, "")}, {res: checkRecord(reviewadapter.StateOK, "verified")}}
+		ex := u.build("c_ex1", "built\n")
+		out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+		row := u.lastCheck()
+		if names := profileNames(u.checker.got); !slices.Equal(names, []string{"codex-review", "codex-review", "bugbot"}) {
+			t.Errorf("the checker saw profiles %v", names)
+		}
+		// retried and first_state are about the calls of the profile that judged; the Codex retry is fallback_retried
+		if out.State != reviewadapter.StateOK || out.Retried || row.Data["retried"] != false || row.Data["fallback_retried"] != true || dataStr(row, "first_state") != "" ||
+			dataStr(row, "fallback_state") != "quota" || out.Fallback == nil || out.Fallback.State != reviewadapter.StateQuota {
+			t.Errorf("answer %+v, row %v", out, row.Data)
+		}
+	})
+
+	// the fallback's own invalid answer is asked once more of the fallback, and the row's retried and first_state are about it
+	for _, second := range []reviewadapter.State{reviewadapter.StateOK, reviewadapter.StateInvalid} {
+		t.Run("quota, then a fallback invalid answer and its retry "+string(second), func(t *testing.T) {
+			u := newUCWorld(t)
+			var fallbacks []string
+			codexWithBugbotFallback(u, &fallbacks)
+			verdict := ""
+			if second == reviewadapter.StateOK {
+				verdict = reviewadapter.VerdictVerified
+			}
+			u.checker.replies = []checkReply{{res: codexRecord(reviewadapter.StateQuota, "")}, {res: checkRecord(reviewadapter.StateInvalid, "")}, {res: checkRecord(second, verdict)},
+				{res: checkRecord(reviewadapter.StateOK, reviewadapter.VerdictVerified)}}
+			ex := u.build("c_ex1", "built\n")
+			out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+			row := u.lastCheck()
+			if names := profileNames(u.checker.got); !slices.Equal(names, []string{"codex-review", "bugbot", "bugbot"}) {
+				t.Fatalf("the checker saw profiles %v, want codex-review, then bugbot twice", names)
+			}
+			if a, b := u.checker.got[1], u.checker.got[2]; a.Prompt != b.Prompt || a.Worktree != b.Worktree || a.GuideRev != b.GuideRev || a.Limit != b.Limit ||
+				a.Base != b.Base || a.Head != b.Head || !bytes.Equal(a.Schema, b.Schema) {
+				t.Errorf("the fallback's retry %+v differs from its first request %+v", b, a)
+			}
+			if !slices.Equal(fallbacks, []string{UnitCheckUncommitted}) {
+				t.Errorf("fallback modes %v", fallbacks)
+			}
+			if out.State != second || out.Verdict != verdict || !out.Retried || out.Hold != "" || out.Model != "grok-4.7-medium" ||
+				out.Fallback == nil || out.Fallback.State != reviewadapter.StateQuota || out.Fallback.Model != "gpt-6-astra" {
+				t.Errorf("answer %+v (fallback %+v)", out, out.Fallback)
+			}
+			want := map[string]any{"state": string(second), "retried": true, "first_state": "invalid", "fallback_from": "codex-review", "fallback_state": "quota",
+				"fallback_model": "gpt-6-astra"}
+			for k, v := range want {
+				if row.Data[k] != v {
+					t.Errorf("row %s = %#v, want %#v", k, row.Data[k], v)
+				}
+			}
+			for _, k := range []string{"hold", "fallback_retried"} {
+				if _, has := row.Data[k]; has {
+					t.Errorf("the row has %s: %v", k, row.Data[k])
+				}
+			}
+			var rec reviewadapter.Result
+			if err := json.Unmarshal(resultOf(row), &rec); err != nil || rec.State != second || rec.Model != "grok-4.7-medium" {
+				t.Errorf("the row's result %+v (%v) is not the Bugbot retry's record", rec, err)
+			}
+			if len(u.checkRows()) != 1 || !u.proven(row) {
+				t.Errorf("%d rows; proven %v", len(u.checkRows()), u.proven(row))
+			}
+		})
+	}
+
+	for _, state := range []reviewadapter.State{reviewadapter.StateNoAnswer, reviewadapter.StateToolFailed} {
+		t.Run("no fallback on "+string(state), func(t *testing.T) {
+			u := newUCWorld(t)
+			var fallbacks []string
+			codexWithBugbotFallback(u, &fallbacks)
+			u.checker.replies = []checkReply{{res: codexRecord(state, "")}, {res: checkRecord(reviewadapter.StateOK, reviewadapter.VerdictVerified)}}
+			ex := u.build("c_ex1", "built\n")
+			out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+			row := u.lastCheck()
+			if len(u.checker.got) != 1 || len(fallbacks) != 0 || out.State != state || out.Fallback != nil {
+				t.Errorf("%d checker calls, fallback asked %v, answer %+v", len(u.checker.got), fallbacks, out)
+			}
+			if _, has := row.Data["fallback_from"]; has {
+				t.Errorf("the row names a fallback: %v", row.Data)
+			}
+		})
+	}
+
+	t.Run("a fallback that cannot be had", func(t *testing.T) {
+		u := newUCWorld(t)
+		var fallbacks []string
+		codexWithBugbotFallback(u, &fallbacks)
+		u.lane.d.UnitCheck.Fallback = func(string) (reviewadapter.Profile, error) {
+			return reviewadapter.Profile{}, errors.New("no fallback for this mode")
+		}
+		u.checker.replies = []checkReply{{res: codexRecord(reviewadapter.StateQuota, "")}}
+		ex := u.build("c_ex1", "built\n")
+		if _, err := u.op("unitCheck", "A", ex, nil); err == nil || !strings.Contains(err.Error(), "no fallback for this mode") {
+			t.Errorf("a fallback profile error: %v", err)
+		}
+		if n := len(u.checkRows()); n != 0 {
+			t.Errorf("%d crw.unitCheck rows after the error", n)
+		}
+	})
+}
+
+// TestUnitCheckRecordsCodexFindingsOnAPlantedBug (CRW-1517, the bundle's end condition): a unit check through the real review adapter
+// and the Codex review profile, on a worktree whose uncommitted change plants a bug, records the review's findings: Codex names the
+// file by its absolute path under the worktree, and the row's result names it relative to the worktree, with the review's grades, the
+// verdict needs_changes and the Codex model. The tool is given the bundle's argv and no prompt.
+func TestUnitCheckRecordsCodexFindingsOnAPlantedBug(t *testing.T) {
+	u := newUCWorld(t)
+	u.lane.d.UnitCheck.Profile = func(string) (reviewadapter.Profile, error) {
+		return reviewadapter.CodexReviewProfile(reviewadapter.CodexReviewConfig{}), nil
+	}
+	write(t, u.wt, "calc.go", "package calc\n\n// Sum adds a and b.\nfunc Sum(a, b int) int {\n\treturn a - b\n}\n", 0o644)
+	var argvs [][]string
+	u.lane.d.UnitCheck.Checker = reviewadapter.Adapter{
+		Run: func(_ context.Context, p reviewadapter.Profile, req reviewadapter.Request) ([]byte, []byte, int, error) {
+			args, err := p.Args(req)
+			if err != nil {
+				return nil, nil, 1, err
+			}
+			argvs = append(argvs, append(slices.Clone(p.Argv), args...))
+			file := filepath.Join(req.Worktree, "calc.go")
+			review := "The change breaks Sum.\n\nFull review comments:\n\n" +
+				"- [P1] Sum subtracts instead of adding — " + file + ":5-5\n  Sum returns a - b, so every caller gets the difference.\n\n" +
+				"- [P3] Name the operands — " + file + ":4\n  a and b say nothing.\n"
+			return []byte(review), nil, 0, nil
+		},
+		Fingerprint: func(ctx context.Context, dir string) (string, error) { return Snapshot(ctx, ExecGit("git"), dir) },
+	}
+	ex := u.build("c_ex1", "built\n")
+	pending := u.snapshot()
+	out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+	row := u.lastCheck()
+	var rec reviewadapter.Result
+	if err := json.Unmarshal(resultOf(row), &rec); err != nil {
+		t.Fatalf("the row's result: %v", err)
+	}
+	if rec.State != reviewadapter.StateOK || rec.Verdict != reviewadapter.VerdictNeedsChanges || len(rec.Findings) != 2 || rec.Model != "gpt-6-astra" || rec.EngineFamily != "gpt" ||
+		rec.Effort != "high" || rec.PromptSent || rec.FingerprintBefore != pending {
+		t.Fatalf("the row's result %+v", rec)
+	}
+	for i, want := range []struct {
+		sev  string
+		line int
+	}{{"P1", 5}, {"P3", 4}} {
+		f := rec.Findings[i]
+		if f.File != "calc.go" || f.Severity != want.sev || f.Line != want.line || f.ID != reviewadapter.FindingID("calc.go", f.Text) {
+			t.Errorf("finding %d %+v, want %s at calc.go:%d", i, f, want.sev, want.line)
+		}
+	}
+	if !strings.HasPrefix(rec.Findings[0].Text, "Sum subtracts instead of adding: ") {
+		t.Errorf("finding text %q", rec.Findings[0].Text)
+	}
+	if !reflect.DeepEqual(rec, out.Result) || dataStr(row, "verdict") != reviewadapter.VerdictNeedsChanges || row.Data["findings"] != float64(2) || dataStr(row, "tree") != pending {
+		t.Errorf("answer %+v row %v", out, row.Data)
+	}
+	wantArgv := []string{"codex", "review", "--uncommitted", "-c", `model="gpt-6-astra"`, "-c", `review_model="gpt-6-astra"`, "-c", `model_reasoning_effort="high"`, "-c", `sandbox_mode="read-only"`}
+	if len(argvs) != 1 || !slices.Equal(argvs[0], wantArgv) {
+		t.Errorf("the tool's argv %q, want %q", argvs, wantArgv)
+	}
+}
+
+// TestCommittedUnitCheckGivesTheBaseToTheProfile (CRW-1517): a committed check gives the profile the range's base (opts.base) with the
+// request, which the Codex committed profile passes as --base; a Codex quota there falls back to the committed Bugbot profile with the
+// same range.
+func TestCommittedUnitCheckGivesTheBaseToTheProfile(t *testing.T) {
+	u := newUCWorld(t)
+	ex := u.build("c_ex1", "built\n")
+	u.must("unitCheck", "A", ex, map[string]any{"round": 1})
+	var commit CommitOutcome
+	_ = json.Unmarshal(u.must("commit", "A", ex, []string{"a.txt"}), &commit)
+	if commit.Commit == "" {
+		t.Fatal("no commit")
+	}
+
+	var fallbacks []string
+	codexWithBugbotFallback(u, &fallbacks)
+	var argvs [][]string
+	u.lane.d.UnitCheck.Checker = reviewadapter.Adapter{
+		Run: func(_ context.Context, p reviewadapter.Profile, req reviewadapter.Request) ([]byte, []byte, int, error) {
+			args, err := p.Args(req)
+			if err != nil {
+				return nil, nil, 1, err
+			}
+			argvs = append(argvs, append(slices.Clone(p.Argv), args...))
+			return []byte("No issues were found in the change.\n"), nil, 0, nil
+		},
+		Fingerprint: func(ctx context.Context, dir string) (string, error) { return Snapshot(ctx, ExecGit("git"), dir) },
+	}
+	out := decodeCheck(t, u.must("unitCheck", "A", nil, map[string]any{"commit": commit, "base": u.start, "final": true}))
+	if out.State != reviewadapter.StateOK || out.Verdict != reviewadapter.VerdictVerified || out.Fallback != nil {
+		t.Errorf("committed Codex check: answer %+v", out)
+	}
+	if len(argvs) != 1 || !slices.Equal(argvs[0][len(argvs[0])-2:], []string{"--base", u.start}) || slices.Contains(argvs[0], "--uncommitted") {
+		t.Errorf("the committed Codex argv %q, want --base %s at its end", argvs, u.start)
+	}
+
+	// a Codex quota on the committed check falls back to the committed Bugbot profile, with the same range
+	u.checker.replies = []checkReply{{res: codexRecord(reviewadapter.StateQuota, "")}, {res: checkRecord(reviewadapter.StateOK, reviewadapter.VerdictVerified)}}
+	u.checker.got = nil
+	u.lane.d.UnitCheck.Checker = u.checker
+	out = decodeCheck(t, u.must("unitCheck", "A", nil, map[string]any{"commit": commit, "base": u.start}))
+	row := u.lastCheck()
+	if names := profileNames(u.checker.got); !slices.Equal(names, []string{"codex-review-committed", "bugbot-committed"}) {
+		t.Fatalf("the checker saw profiles %v", names)
+	}
+	for i, r := range u.checker.got {
+		if r.Base != u.start || r.Head != commit.Commit {
+			t.Errorf("request %d's range %s..%s, want %s..%s", i, r.Base, r.Head, u.start, commit.Commit)
+		}
+	}
+	if !slices.Equal(fallbacks, []string{UnitCheckCommitted}) || out.State != reviewadapter.StateOK || out.Fallback == nil ||
+		dataStr(row, "fallback_from") != "codex-review-committed" || dataStr(row, "base") != u.start || dataStr(row, "commit") != commit.Commit {
+		t.Errorf("fallback modes %v, answer %+v, row %v", fallbacks, out, row.Data)
+	}
+}
+
 // TestUnitCheckErrorWritesNoRow (CRW-1463): a Go error of the checker (a bad request, a fingerprint that could not be taken, the end of
 // the context) is the op's error and leaves no row; so is a lane with no unit checker wired, a profile that cannot be had for the mode,
 // and an uncommitted check with no judged call or no pending tree.
@@ -2586,6 +2932,20 @@ func TestUnitCheckHoldsAHeadThatMovedDuringTheCheck(t *testing.T) {
 			t.Errorf("answer %+v, row %v: the hold of the retry says it was the retry", out, u.lastCheck().Data)
 		}
 	})
+	t.Run("uncommitted: the change was committed during the Bugbot fallback after a Codex quota", func(t *testing.T) {
+		u := newUCWorld(t)
+		var fallbacks []string
+		codexWithBugbotFallback(u, &fallbacks)
+		ex := u.build("c_ex1", "built\n")
+		calls, checker := committing(map[int]bool{2: true}, reviewadapter.StateQuota, false)
+		u.lane.d.UnitCheck.Checker = checker
+		out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+		held(t, u, out, *calls, 2, u.start)
+		row := u.lastCheck()
+		if dataStr(row, "fallback_from") != "codex-review" || dataStr(row, "fallback_state") != "quota" || out.Fallback == nil || out.Fallback.State != reviewadapter.StateQuota {
+			t.Errorf("answer %+v, row %v: the hold of the fallback names the Codex quota it fell back from", out, row.Data)
+		}
+	})
 	t.Run("committed: HEAD moved on the same tree during the check", func(t *testing.T) {
 		u := newUCWorld(t)
 		ex := u.build("c_ex1", "built\n")
@@ -2713,6 +3073,8 @@ func TestUnitCheckCarriesTheExecutorReceiptToTheCheckAndTheAcceptance(t *testing
 	ex := u.buildWithReceipt("c_ex1", "built\n", map[string]any{"assignment": "as1", "state": "accepted", "path": "/p/receipt.md", "sha256": digest,
 		"agent_id": "agent-1", "turn_id": "turn-1", "turn_match": true, "copy": copyPath, "ignored": true})
 	u.checkOnTree(u.snapshot())
+	// the tool took the prompt (Bugbot's way), so the receipt in it was handed to the tool (CRW-1517)
+	u.checker.replies[0].res.PromptSent = true
 	out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
 	if out.State != reviewadapter.StateOK || out.Hold != "" {
 		t.Fatalf("answer %+v", out)
@@ -2729,7 +3091,7 @@ func TestUnitCheckCarriesTheExecutorReceiptToTheCheckAndTheAcceptance(t *testing
 	}
 	row := u.lastCheck()
 	rc := checkReceiptOf(row)
-	if str(rc, "state") != "accepted" || str(rc, "sha256") != digest || str(rc, "copy") != copyPath || rc["ignored"] != true {
+	if str(rc, "state") != "accepted" || str(rc, "sha256") != digest || str(rc, "copy") != copyPath || rc["ignored"] != true || rc["handed"] != true {
 		t.Errorf("the row's receipt %v", rc)
 	}
 	if dataStr(row, "role") != "unit-check" || !u.proven(row) {
@@ -2754,8 +3116,8 @@ func TestUnitCheckCarriesTheExecutorReceiptToTheCheckAndTheAcceptance(t *testing
 		t.Fatalf("criteria %+v", rec.Criteria)
 	}
 	for id, c := range rec.Criteria {
-		if !strings.Contains(c.Evidence, "executor receipt "+digest) {
-			t.Errorf("criterion %s evidence %q does not name the executor receipt", id, c.Evidence)
+		if !strings.Contains(c.Evidence, "executor receipt "+digest) || strings.Contains(c.Evidence, "not handed") {
+			t.Errorf("criterion %s evidence %q does not name the executor receipt as handed", id, c.Evidence)
 		}
 	}
 
@@ -2776,6 +3138,159 @@ func TestUnitCheckCarriesTheExecutorReceiptToTheCheckAndTheAcceptance(t *testing
 	if rc := checkReceiptOf(u.lastCheck()); str(rc, "state") != "accepted" || str(rc, "sha256") != longDigest {
 		t.Errorf("the long receipt's row %v", rc)
 	}
+}
+
+// acceptOnHead commits the pending change of call ex, verifies the head and accepts it, and answers the premerge record crw.accept
+// handed the relay and the reviewer call it named; before runs between the verification and the acceptance (nil for none).
+func (u *ucWorld) acceptOnHead(ex CallRef, before func()) (premerge.Record, string) {
+	u.t.Helper()
+	var commit CommitOutcome
+	_ = json.Unmarshal(u.must("commit", "A", ex, []string{"a.txt"}), &commit)
+	u.must("verify", "A", commit.Commit)
+	if before != nil {
+		before()
+	}
+	capture := &acceptCapture{stubRelay: u.relay}
+	u.lane.d.Relay = capture
+	if _, err := u.op("accept", "A", commit.Commit); err != nil {
+		u.t.Fatalf("crw.accept on the unit check: %v", err)
+	}
+	if len(capture.got) != 1 {
+		u.t.Fatalf("accept requests %+v", capture.got)
+	}
+	rec, err := premerge.Decode(capture.got[0].Premerge)
+	if err != nil {
+		u.t.Fatalf("premerge: %v", err)
+	}
+	if len(rec.Criteria) != 2 {
+		u.t.Fatalf("criteria %+v", rec.Criteria)
+	}
+	return rec, capture.got[0].ReviewerCall
+}
+
+// TestUnitCheckReceiptIsHandedOnlyWhenTheToolTakesThePrompt (CRW-1517, D-7): an accepted executor receipt is read, verified and kept
+// whatever the profile, and goes into the request's prompt; the row's receipt records handed, whether the call that judged was given
+// that prompt (its result's prompt_sent). A Codex review takes no prompt: handed false, and crw.accept's evidence names the receipt as
+// read and kept but not handed to the tool. A Bugbot fallback after a Codex quota takes the prompt: handed true, and the evidence is
+// R2's. A row written before handed was recorded (every unit check then took the prompt) reads as handed; a handed that is not a bool
+// is no evidence, and crw.accept refuses it reviewer_not_verified.
+func TestUnitCheckReceiptIsHandedOnlyWhenTheToolTakesThePrompt(t *testing.T) {
+	body := "RED-FIRST: go test -run TestA ./a: FAIL TestA\nMUTATION-RED: a.go:3 flipped: FAIL TestA\n"
+	// world is a ucWorld whose executor call c_ex1 records an accepted evidence receipt with its step-bus copy, checked by the real
+	// review adapter over run; the prompts the tool's runner was given are kept in prompts.
+	world := func(t *testing.T, run func(p reviewadapter.Profile) ([]byte, []byte, int)) (u *ucWorld, ex CallRef, copyPath, digest string, prompts *[]string) {
+		u = newUCWorld(t)
+		var fallbacks []string
+		codexWithBugbotFallback(u, &fallbacks)
+		prompts = &[]string{}
+		u.lane.d.UnitCheck.Checker = reviewadapter.Adapter{
+			Run: func(_ context.Context, p reviewadapter.Profile, req reviewadapter.Request) ([]byte, []byte, int, error) {
+				*prompts = append(*prompts, req.Prompt)
+				stdout, stderr, exit := run(p)
+				return stdout, stderr, exit, nil
+			},
+			Fingerprint: func(ctx context.Context, dir string) (string, error) { return Snapshot(ctx, ExecGit("git"), dir) },
+		}
+		copyPath, digest = receiptCopy(t, body)
+		ex = u.buildWithReceipt("c_ex1", "built\n", map[string]any{"assignment": "as1", "state": "accepted", "path": "/p/receipt.md", "sha256": digest,
+			"agent_id": "agent-1", "turn_id": "turn-1", "turn_match": true, "copy": copyPath})
+		return u, ex, copyPath, digest, prompts
+	}
+	cleanCodex := func(reviewadapter.Profile) ([]byte, []byte, int) {
+		return []byte("The change writes a.txt as the plan asks; I found no issue in it.\n"), nil, 0
+	}
+	evidenceOf := func(rec premerge.Record) []string {
+		out := []string{rec.Summary}
+		for _, c := range rec.Criteria {
+			out = append(out, c.Evidence)
+		}
+		return out
+	}
+
+	t.Run("codex direct", func(t *testing.T) {
+		u, ex, copyPath, digest, prompts := world(t, cleanCodex)
+		out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+		if out.State != reviewadapter.StateOK || out.Verdict != reviewadapter.VerdictVerified || out.Model != "gpt-6-astra" || out.PromptSent || out.Fallback != nil {
+			t.Fatalf("answer %+v", out)
+		}
+		if len(*prompts) != 1 || !strings.Contains((*prompts)[0], "EXECUTOR RECEIPT") || !strings.Contains((*prompts)[0], body) {
+			t.Fatalf("the request's prompt does not carry the executor receipt: %q", *prompts)
+		}
+		row := u.lastCheck()
+		if want := map[string]any{"state": "accepted", "sha256": digest, "copy": copyPath, "handed": false}; !reflect.DeepEqual(checkReceiptOf(row), want) {
+			t.Errorf("the row's receipt %v, want %v", checkReceiptOf(row), want)
+		}
+		rec, _ := u.acceptOnHead(ex, nil)
+		for _, ev := range evidenceOf(rec) {
+			if !strings.Contains(ev, "executor receipt "+digest) || !strings.Contains(ev, "not handed to the tool") {
+				t.Errorf("evidence %q does not name the receipt as not handed", ev)
+			}
+		}
+	})
+
+	t.Run("bugbot fallback", func(t *testing.T) {
+		u, ex, copyPath, digest, prompts := world(t, func(p reviewadapter.Profile) ([]byte, []byte, int) {
+			if p.Name == "codex-review" {
+				return nil, []byte("ERROR: You've hit your usage limit. Upgrade to Pro or try again later.\n"), 1
+			}
+			return []byte(`{"type":"result","subtype":"success","is_error":false,"result":"I'll review only the uncommitted changes.Bugbot found no bugs."}` + "\n"), nil, 0
+		})
+		out := decodeCheck(t, u.must("unitCheck", "A", ex, map[string]any{"round": 1}))
+		if out.State != reviewadapter.StateOK || out.Model != "grok-4.7-medium" || !out.PromptSent || out.Fallback == nil || out.Fallback.State != reviewadapter.StateQuota || out.Fallback.PromptSent {
+			t.Fatalf("answer %+v (fallback %+v)", out, out.Fallback)
+		}
+		if len(*prompts) != 2 || !strings.Contains((*prompts)[1], "EXECUTOR RECEIPT") || (*prompts)[0] != (*prompts)[1] {
+			t.Fatalf("the fallback's prompt does not carry the executor receipt: %q", *prompts)
+		}
+		row := u.lastCheck()
+		if want := map[string]any{"state": "accepted", "sha256": digest, "copy": copyPath, "handed": true}; !reflect.DeepEqual(checkReceiptOf(row), want) {
+			t.Errorf("the row's receipt %v, want %v", checkReceiptOf(row), want)
+		}
+		rec, _ := u.acceptOnHead(ex, nil)
+		for _, ev := range evidenceOf(rec) {
+			if !strings.Contains(ev, "executor receipt "+digest) || strings.Contains(ev, "not handed") {
+				t.Errorf("evidence %q is not R2's handed receipt", ev)
+			}
+		}
+	})
+
+	// rowWithReceipt appends, after the verification, a completed crw.unitCheck row c_uc_old with the data of the newest check and
+	// the given receipt, as a lane of an earlier build wrote it; crw.accept takes the newest check on the head.
+	rowWithReceipt := func(u *ucWorld, receipt map[string]any) func() {
+		return func() {
+			last := u.lastCheck()
+			data := maps.Clone(last.Data)
+			data["receipt"] = receipt
+			u.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "c_uc_old", Op: last.Op, Event: engine.EvCompleted, Data: data})
+		}
+	}
+
+	t.Run("a row from before handed", func(t *testing.T) {
+		u, ex, copyPath, digest, _ := world(t, cleanCodex)
+		u.must("unitCheck", "A", ex, map[string]any{"round": 1})
+		rec, reviewer := u.acceptOnHead(ex, rowWithReceipt(u, map[string]any{"state": "accepted", "sha256": digest, "copy": copyPath}))
+		if reviewer != "c_uc_old" {
+			t.Fatalf("crw.accept took the check %s, not the hand-written row", reviewer)
+		}
+		for _, ev := range evidenceOf(rec) {
+			if !strings.Contains(ev, "executor receipt "+digest) || strings.Contains(ev, "not handed") {
+				t.Errorf("evidence %q of a row from before handed is not R2's", ev)
+			}
+		}
+	})
+
+	t.Run("a handed that is not a bool", func(t *testing.T) {
+		u, ex, copyPath, digest, _ := world(t, cleanCodex)
+		u.must("unitCheck", "A", ex, map[string]any{"round": 1})
+		var commit CommitOutcome
+		_ = json.Unmarshal(u.must("commit", "A", ex, []string{"a.txt"}), &commit)
+		u.must("verify", "A", commit.Commit)
+		rowWithReceipt(u, map[string]any{"state": "accepted", "sha256": digest, "copy": copyPath, "handed": "false"})()
+		u.lane.d.Relay = &acceptCapture{stubRelay: u.relay}
+		if _, err := u.op("accept", "A", commit.Commit); err == nil || ReasonOf(err.Error()) != "reviewer_not_verified" {
+			t.Errorf("crw.accept on a receipt whose handed is a string: %v, want reviewer_not_verified", err)
+		}
+	})
 }
 
 // TestUnitCheckHoldsWithoutAnAcceptedReceipt (CRW-1463, C12): a receipt the backend recorded as missing or unverified, an accepted one

@@ -411,13 +411,22 @@ with the relay's reason, and the release goes on as for an undeclared node.
 **Unit check.** `crw.unitCheck(node, call, opts)` judges a node's work before `crw.commit` commits it (CRW-1465): the run runs the
 review tool itself, in Go through the review adapter, over the uncommitted changes the executor call `call` left in the node's
 worktree, so no reviewer agent is called and no reviewer thread is made for a node (row `crw.unitCheck`,
-[journal.md](journal.md#the-proofs)). The tree it judges is the call's pending tree, the one `crw.commit` then commits, so the
+[journal.md](journal.md#the-proofs)). The tool is a Codex review by default (`codex review --uncommitted`, CRW-1517; its model and
+effort are the lane's settings `CRW_UNIT_CHECK_MODEL` and `CRW_UNIT_CHECK_EFFORT`, blank or unset for the defaults, and a setting the
+lane refuses stops the run when the lane is built), and Bugbot on a Codex quota: a check whose Codex call ends `quota` is asked once
+more, with the same request, of Bugbot, the row's `result` is Bugbot's and the row keeps the Codex call (`fallback`, `fallback_from`,
+`fallback_state`, `fallback_model`); a Bugbot call that ends `quota` too holds the node as below. Codex prints no mark of a finished
+review, so a Codex answer with no findings list is clean when its summary is neither Codex's own text for a review that gave no answer
+or was interrupted nor a wording the reader knows for a review that did not happen, finish or cover the whole change, a very short clean
+summary such as `Clean.` reads clean, a summary with no letter (punctuation or digits only) reads invalid, and a summary that says the review did not happen in other words still reads clean. The tree it judges is the call's pending tree, the one `crw.commit` then commits, so the
 acceptance takes the check as the judgment of the head that commit makes; a worktree that is no longer that tree is not checked
 (`tree_moved`), nor one whose `HEAD` is not the commit the node's attempt is at, the start of its worktree or the node's last commit
 since (`head_moved`: the executor committed its work itself, whatever the backend), and a check during which `HEAD` moved, even to a
-commit of the same tree, is no judgment (`head_moved`: `HEAD` is read before and after each call of the tool, also one that failed).
-During the check, as at its start, a moved `HEAD` escalates (`unit_check_head_moved`, below), and a resume keeps it escalated. The prompt carries the node's criteria and, when the backend
-assigned the executor an evidence receipt, the receipt's accepted copy; a receipt that cannot be handed over holds the node (below). A
+commit of the same tree, is no judgment (`head_moved`: `HEAD` is read before and after each call of the tool, also one that failed, a
+retry and a Bugbot fallback too). During the check, as at its start, a moved `HEAD` escalates (`unit_check_head_moved`, below), and a resume keeps it escalated. The prompt carries the node's criteria and, when the backend
+assigned the executor an evidence receipt, the receipt's accepted copy; `codex review --uncommitted` takes no prompt, so a Codex check is
+given no prompt and the row's receipt records `handed` false (read and kept, not handed to the tool), while a Bugbot fallback is handed
+it (`handed` true); a receipt that cannot be read and kept holds the node (below). A
 check with any finding, blocking or not, goes back to the same executor thread (`fix:<node>:<tier>:r<round>`, the findings in the fix
 packet), and the fixed tree is checked again, at most two round trips on a tier (`UNIT_CHECK_ROUNDS`); the check after them is
 `final` and its findings are carried, before any tier step: when none blocks (verdict `verified`) the node is committed, verified and
@@ -426,7 +435,7 @@ landed with them as pre-merge defects that need no disposition (`crw.land` hands
 only a later fix), and the lane result names them (`carried`); a blocking one escalates
 `unit_check_carried` (ask `land`, the carried ids and each finding's file and text) and nothing lands. A finding is named by its file
 and its text, never its line (`reviewadapter.FindingID`). A check the tool gave no judgment in (`quota`, `no_answer`) or that had no
-executor receipt to hand over (`receipt_missing`, `receipt_unverified`, `receipt_not_copied`) holds the node through `crw.hold` with
+executor receipt to read and keep (`receipt_missing`, `receipt_unverified`, `receipt_not_copied`) holds the node through `crw.hold` with
 source `unit_check`, as a verification that could not run does. After `quota` or `no_answer` a resume asks the tool again; after
 `receipt_not_copied` it reads the receipt again, its step-bus copy or, in its place, the receipt where the hook accepted it when that
 still hashes to its digest, so the hold clears once the receipt can be read; `receipt_missing` and
@@ -536,8 +545,12 @@ call and fixes nothing. Its steps:
 - The gates are the lane's: `crw.verify` of that head (verification-record/1 of the exact tree), one unit check in the committed mode,
   `crw.unitCheck(node, null, {commit: head, base: head.base})` (CRW-1468): the review tool run in Go over `base..head` of the land
   checkout, with no reviewer call; a head made outside a run has no executor, so the check's row records the receipt `no_executor`. The
-  committed profile's reader takes an answer only when it names the requested range `base..head` by its commit ids and no other range,
-  so until that profile is replaced a clean answer that names no range or another one fails closed as `unit_check_invalid`. Then
+  tool is a Codex review by default, `codex review --base <base>` in the clean checkout of the head (Codex reviews the diff
+  from the merge-base of base and HEAD, which in that checkout is `base..head`; its answer does not name the range, and it is given no
+  prompt), and
+  Bugbot on a Codex quota, with the same settings and fallback record as the node lane's check (CRW-1517). Bugbot's committed reader
+  takes an answer only when it names the requested range `base..head` by its commit ids and no other range, so a clean Bugbot answer
+  that names no range or another one fails closed as `unit_check_invalid`. Then
   `crw.land` (`crw.accept` on that check, the relay's agent acceptance, which judges the check's model family against the pair the
   execution records: `independence_refused` for a check of the authors' family, `independence_unproven` when the pair of any author it
   names was not read back; then `crw.integrate`). They write the rows they write for a node of a project lane.
