@@ -183,8 +183,8 @@ func ciRecordDir(worktree string) (string, error) {
 // file (a linked worktree's per-worktree directory, not the common one). A target is resolved with the kernel's semantics, not
 // cleaned lexically first: a relative one is spelled <worktree>/<target> as written, so a ".." after a link in it leaves the
 // link's target as the kernel does; that spelling must be a directory (Stat) and the answer is its physical path
-// (filepath.EvalSymlinks). A .git that is missing, a link that leads to no directory, and a file that names none are the
-// "has no git directory" error.
+// (filepath.EvalSymlinks). A .git link that leads to a file is read as that git file. A .git that is missing, a link that leads
+// nowhere, and a file that names no gitdir are the "has no git directory" error.
 func ciGitDir(worktree string) (string, error) {
 	dotGit := filepath.Join(worktree, ".git")
 	info, err := os.Lstat(dotGit)
@@ -198,7 +198,10 @@ func ciGitDir(worktree string) (string, error) {
 		return dotGit, nil
 	}
 	if info.Mode()&fs.ModeSymlink != 0 {
-		return ciPhysicalDir(worktree, dotGit, "the link "+dotGit)
+		// A link to a directory is that git directory; a link to a file is read as the git file it leads to, as git reads it.
+		if to, err := os.Stat(dotGit); err != nil || to.IsDir() {
+			return ciPhysicalDir(worktree, dotGit, "the link "+dotGit)
+		}
 	}
 	raw, err := os.ReadFile(dotGit)
 	if err != nil {

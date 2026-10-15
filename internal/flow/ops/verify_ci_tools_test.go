@@ -268,6 +268,28 @@ func TestCILocalVerifier_a_symlinked_git_records_inside_its_checkout(t *testing.
 		t.Errorf("something was written through the linked .git into %s: %v", target, err)
 	}
 
+	// a .git linked to a git file (a gitdir: line, as git accepts it) is read as that file: the checkout verifies and records in .crw/verify
+	gitfileWt := filepath.Join(base, "wt-gitfile")
+	admin := filepath.Join(base, "main", ".git", "worktrees", "wt-gitfile")
+	for _, d := range []string{gitfileWt, admin} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gitfile := filepath.Join(base, "gitfile")
+	if err := os.WriteFile(gitfile, []byte("gitdir: "+admin+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(gitfile, filepath.Join(gitfileWt, ".git")); err != nil {
+		t.Fatal(err)
+	}
+	if out, err := v.Verify(context.Background(), VerifyRequest{Node: "A", Head: head, Worktree: gitfileWt}); err != nil || !out.Pass {
+		t.Fatalf("verify of a .git linked to a git file: %+v %v", out, err)
+	}
+	if want := filepath.Join(gitfileWt, crwdir.DirName, "verify", "verification-record-"+head+".json"); record != want {
+		t.Errorf("the record of a .git linked to a git file is %s, want %s", record, want)
+	}
+
 	file := filepath.Join(base, "afile")
 	if err := os.WriteFile(file, []byte("not a git file\n"), 0o644); err != nil {
 		t.Fatal(err)
