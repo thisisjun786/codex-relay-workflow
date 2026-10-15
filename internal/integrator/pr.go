@@ -154,6 +154,9 @@ func (r *Runner) EnqueuePR(ctx context.Context, ref string) (Entry, error) {
 // record of its landing (a pass that ended after its push, or a pull request GitHub shows merged).
 const resultLandedBeforeRecord = "landed_before_record"
 
+// noteReviewNotConfigured is the note of a landing whose queue has no review command, in a pass's record and in a recovered one.
+const noteReviewNotConfigured = "review not configured"
+
 // landedBefore says why a pull request entry already landed, "" when it did not: done/ holds the entry for its number and head,
 // or runs_dir holds a landing record of that number and head that moved the branch. A landing is recorded once per (number,
 // head).
@@ -274,8 +277,10 @@ func (r *Runner) recoverLanding(ctx context.Context, tag string, e Entry, pr tra
 		if v, err := readVerdict(verdictFile); err == nil {
 			l.Review = LandingReview{Configured: true, Verdict: v, VerdictFile: verdictFile, Status: -1, Log: filepath.Join(r.Cfg.RunsDir, run.Tag+".review.log"),
 				Note: "the review command's status is not recorded"}
+		} else if !configured {
+			l.Review = LandingReview{Status: -1, Note: noteReviewNotConfigured}
 		} else {
-			l.Review = LandingReview{Configured: configured, Status: -1, Note: "not recorded: run " + run.Tag + " left no readable verdict"}
+			l.Review = LandingReview{Configured: true, Status: -1, Note: "not recorded: run " + run.Tag + " left no readable verdict"}
 		}
 	} else {
 		after := r.firstContaining(ctx, e.Head)
@@ -286,6 +291,9 @@ func (r *Runner) recoverLanding(ctx context.Context, tag string, e Entry, pr tra
 		const none = "not recorded: no run file of this queue names the head"
 		l.Verification = LandingVerification{Status: -1, Note: none}
 		l.Review = LandingReview{Configured: configured, Status: -1, Note: none}
+		if !configured {
+			l.Review = LandingReview{Status: -1, Note: noteReviewNotConfigured}
+		}
 	}
 	l.Warnings = append(l.Warnings, "the head was in "+r.Cfg.Branch+" before its landing was recorded; this record is written after the fact")
 	r.logf("%s %s: in %s with no landing record: recovered record %s", pr.Ref, e.Head, r.Cfg.Branch, tag)
@@ -395,7 +403,7 @@ func (r *Runner) review(ctx context.Context, tag, wt, merged, base, record strin
 	c := r.Cfg
 	if len(c.ReviewCommand) == 0 {
 		fmt.Fprintf(log, "%s: review not configured; dev moves on the verification-record alone\n", pr.Ref)
-		return LandingReview{Status: -1, Note: "review not configured"}
+		return LandingReview{Status: -1, Note: noteReviewNotConfigured}
 	}
 	res := LandingReview{Configured: true, Status: -1, VerdictFile: filepath.Join(c.RunsDir, tag+".review.json"), Log: filepath.Join(c.RunsDir, tag+".review.log")}
 	rlog, err := os.OpenFile(res.Log, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o664)
@@ -583,7 +591,7 @@ func landingText(l *Landing) string {
 	switch {
 	case l.Review.Verdict != "":
 		fmt.Fprintf(&b, "review: %s (%s)\n", l.Review.Verdict, l.Review.VerdictFile)
-	case !l.Review.Configured && l.Review.Note == "review not configured":
+	case !l.Review.Configured && l.Review.Note == noteReviewNotConfigured:
 		fmt.Fprintf(&b, "review: not configured\n")
 	default:
 		fmt.Fprintf(&b, "review: %s\n", l.Review.Note)
