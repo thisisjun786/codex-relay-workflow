@@ -1,5 +1,0 @@
-# CRW-1433 (bundle CRW-1419): files that still hold the old wording (the phrase "relay role", a relay-sense phrase or a bare "supervisor" for a session).
-# Unit 1433-j deletes this file first (red: TestRelayDocsProseNamesLayers names the hits), then rewrites the text (green).
-# Shrink only: a listed file must still hold a hit.
-README.md
-AGENTS.md
