@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
@@ -322,6 +323,45 @@ func TestAnswerAppliesOnce(t *testing.T) {
 	// the run is held by nobody again after the command: the lock was released
 	if LockHeld(w.state, "run-q") {
 		t.Error("the run lock is still held after the answer")
+	}
+}
+
+// TestAnswerAppliesToAPausedEnd (CRW-1487): a run the operator paused ends with a run/paused row and lets its lock go; an answer to
+// its open question then applies as to any run no process holds: one decision_applied row after the paused row and one resume, and
+// no signal is sent (no process is there to take one).
+func TestAnswerAppliesToAPausedEnd(t *testing.T) {
+	w := newWorld(t)
+	r := w.newRun("run-q", "thread-owner")
+	r.phase("build")
+	r.call("c_ex", "executor", "n1", 2, []string{engine.EvPrepared, engine.EvRefused}, map[string]map[string]any{engine.EvRefused: {"reason": "pair_refused"}})
+	r.flow(engine.EvEscalation, map[string]any{"reason": "pair_refused", "class": "configuration_fault", "node": "n1", "call_id": "c_ex", "escalation_id": "esc_one", "ask": "configuration"})
+	r.endPaused()
+	r.close()
+	a := &asking{run: r, q: "esc_one", rec: RunRecord{RunID: "run-q", Owner: "thread-owner", PlanID: "plan-1", PlanRevision: 3}}
+	td := w.deps()
+	signalled := 0
+	td.Signal = func(int, syscall.Signal) error { signalled++; return nil }
+	if err := WriteSpec(w.state, Spec{Schema: SpecSchema, RunID: "run-q", Workflow: "project-lane", Thread: "thread-owner", CreatedAt: "2026-10-12T08:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	id := a.answered(t, "ud-paused", nil)
+	code, reply, errOut := a.answer(td, id)
+	if code != 0 || !reply.Applied || reply.Seq == 0 || reply.Resumed != 4242 {
+		t.Fatalf("the answer to a paused end: exit %d %+v %s", code, reply, errOut)
+	}
+	events := mustLoad(t, w)
+	pausedAt := -1
+	for i, e := range events {
+		if e.Kind == engine.KindRun && e.Event == "paused" {
+			pausedAt = i
+		}
+	}
+	rows := a.appliedRows(t)
+	if pausedAt < 0 || len(rows) != 1 || rows[0].Seq <= events[pausedAt].Seq {
+		t.Errorf("the applied rows %+v after the paused row at %d", rows, pausedAt)
+	}
+	if len(td.spawned) != 1 || !td.spawned[0].Resume || td.spawned[0].Spec.RunID != "run-q" || signalled != 0 {
+		t.Errorf("the resume: %+v, %d signals", td.spawned, signalled)
 	}
 }
 

@@ -12,9 +12,10 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 )
 
-// The states a run is shown in. A run that is not over has a process (running, paused) or none (dead: a run lock nobody holds
-// and no finished row after the last start); a run that is over is completed, held (it finished, but a call or a wait is left to
-// go on with), blocked (it finished completed and started no node: see Summarize), cancelled or failed.
+// The states a run is shown in. A run that is not over has a process (running, paused) or none: paused (the operator paused it,
+// and its last process ended with a run/paused row after its last start, CRW-1487: `crw flow resume` goes on with it) or dead (a
+// run lock nobody holds and no end row after the last start); a run that is over is completed, held (it finished, but a call or a
+// wait is left to go on with), blocked (it finished completed and started no node: see Summarize), cancelled or failed.
 const (
 	StateRunning   = "running"
 	StatePaused    = "paused"
@@ -316,7 +317,7 @@ func Questions(events []engine.Event) []Question {
 // keep the state completed.
 func Summarize(rec RunRecord, events []engine.Event, live bool, pid int) RunInfo {
 	info := RunInfo{RunRecord: rec, Live: live, PID: pid}
-	lastStart, lastFinish := -1, -1
+	lastStart, lastFinish, lastPaused := -1, -1, -1
 	for i, e := range events {
 		if int64(e.Seq) < engine.ForeignSeqBase {
 			// the cursor of the tree is the run's own last row: a command's row (CRW-1204) is numbered apart (journal.ReadPage)
@@ -327,6 +328,10 @@ func Summarize(rec RunRecord, events []engine.Event, live bool, pid int) RunInfo
 			case "started":
 				info.Processes++
 				lastStart = i
+			case "paused":
+				// the end of a process the operator paused (engine.RunPaused): no finished row, no error kind
+				lastPaused = i
+				info.Status, info.ErrorKind = engine.RunPaused, ""
 			case "finished":
 				lastFinish = i
 				info.Status, info.ErrorKind = str(e.Data, "status"), str(e.Data, "error_kind")
@@ -396,6 +401,9 @@ func Summarize(rec RunRecord, events []engine.Event, live bool, pid int) RunInfo
 		info.State = StateCancelled
 	case lastFinish > lastStart:
 		info.State = StateFailed
+	case lastPaused > lastStart:
+		// the operator paused the run and its process ended paused (a cancel since is a finished row after it, above)
+		info.State = StatePaused
 	default:
 		info.State = StateDead
 	}
