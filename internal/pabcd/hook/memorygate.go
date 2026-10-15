@@ -74,7 +74,7 @@ func memoryGateReasonFor(a MemoryWriteAttempt, sid, cwd string, leaf bool) strin
 	prefix := "[crw MEMORY-WRITE-GATE] "
 	recovery := "Use a direct command with a literal program and absolute write paths. A readable script file must meet the same checks."
 	if leaf {
-		recovery = "Report the blocked command and cause code to your parent."
+		recovery = "Report the blocked command and cause code to the 자식 that spawned you."
 	}
 	reachable := memoryGateStateReachable(cwd, sid)
 	switch a.Cause {
@@ -89,7 +89,7 @@ func memoryGateReasonFor(a MemoryWriteAttempt, sid, cwd string, leaf bool) strin
 		// No protected write was observed, so this is not the gate's policy refusal: it says what could not be read (CRW-1178).
 		return commandUnreadableReason("unreadable-program", a.Reason, leaf, "")
 	case "authorization-state":
-		return prefix + "Cannot spend the authorization (authorization-state): session state is locked, unwritable or cannot be preserved. " + "Report this state failure to the parent or session owner; retry after state repair."
+		return prefix + "Cannot spend the authorization (authorization-state): session state is locked, unwritable or cannot be preserved. " + "Report this state failure to the session above this one or to the session owner; retry after state repair."
 	}
 	what := "a file under the Codex memories directory (" + memoryGateLabelLimit(a.Target, 190) + ")"
 	if a.Surface == "tool" {
@@ -97,7 +97,7 @@ func memoryGateReasonFor(a MemoryWriteAttempt, sid, cwd string, leaf bool) strin
 	}
 	reason := prefix + "Blocked a write of " + what + ": MEMORY-WRITE-GATE-01 requires an explicit user request. "
 	if leaf {
-		return reason + "Report the protected write to your parent; the parent must resolve authorization."
+		return reason + "Report the protected write to the 자식 that spawned you; the 자식 must resolve authorization."
 	}
 	if !reachable {
 		return reason + memoryGateNoStateHint

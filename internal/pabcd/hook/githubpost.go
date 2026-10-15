@@ -106,7 +106,7 @@ func githubPostDenyPayload(site githubPostSite, p map[string]any) string {
 	leaf := p["agent_id"] != nil || p["agent_type"] != nil
 	recovery := "Use a direct command with a literal program and absolute file paths; GitHub text must come from a reviewed file. A readable script file must meet the same checks."
 	if leaf {
-		recovery = "Report the blocked command and cause code to your parent."
+		recovery = "Report the blocked command and cause code to the 자식 that spawned you."
 	}
 	reason := "Cannot read the command or its program (unreadable-github-post); GitHub posting has not been established. " + recovery
 	if site.reason != "" {

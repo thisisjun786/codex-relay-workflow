@@ -10,8 +10,6 @@ internal/dev/ci/contracts.go	1
 internal/dev/cxccorpus/command.go	1
 internal/dev/laneparity/command.go	2
 internal/dev/laneparity/realhost.go	1
-internal/flow/cli/childhost.go	1
-internal/flow/compile/cli.go	2
 internal/flow/engine/session.go	1
 internal/flow/ops/gitsnap.go	3
 internal/flow/planinput/cli.go	2
@@ -19,9 +17,6 @@ internal/pabcd/cli/orchestrate_status.go	1
 internal/pabcd/cli/plan.go	1
 internal/pabcd/evidence/assignment.go	1
 internal/pabcd/evidence/directives.go	2
-internal/pabcd/hook/githubpost.go	1
-internal/pabcd/hook/memorygate.go	4
-internal/pabcd/hook/memorygate_analysis.go	1
 internal/pabcd/source/git.go	2
 internal/relay/adapter/cli.go	1
 internal/relay/childcleanup/clean.go	1
