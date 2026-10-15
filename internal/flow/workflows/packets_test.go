@@ -193,6 +193,12 @@ func TestCriticReplanPacketListsReleasedPlans(t *testing.T) {
 			t.Errorf("the critic packet of a re-plan lacks %q:\n%s", want, replan)
 		}
 	}
+	// a node sized for a split started too: it is listed with how it started
+	split := packetText(t, "critic-released-split-packet", "designAuditPacket",
+		"designAuditPacket(ms, "+cand+", 1, [], { head: 'tip1', base_tip: 'base0', landed: [], unstarted: [], released: [{ node: 'n2', kind: 'split', revision: 'r0', design_digest: 'dg0', plan: { issue: 'CRW-2', size_fit: 'split' }, decisions: [] }] })")
+	if !strings.Contains(split, "- n2 (CRW-2), sized for a split under r0 (no executor started; its lane escalated it as size_split)\n  plan: {") {
+		t.Errorf("a node sized for a split:\n%s", split)
+	}
 	// an entry of the flat form an earlier lane binary recorded is rendered, not thrown on
 	flat := packetText(t, "critic-released-flat-packet", "designAuditPacket",
 		"designAuditPacket(ms, "+cand+", 1, [], { head: 'tip1', base_tip: 'base0', landed: [], unstarted: [], released: [{ node: 'n1', issue: 'CRW-1', revision: 'r0', approach: 'a', edit_regions: [], decision_refs: [], decisions: [] }] })")

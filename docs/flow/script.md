@@ -543,7 +543,8 @@ and the head each node landed with.
 **Revisions.** The ledger holds revisions `r0`, `r1`, ...: a revision is recorded only over an approved audit of its own, made after the revision before it
 (the re-plan's DESIGN goes through the same audit rounds as the first DESIGN, `needs_changes` returning it to the architect on the same thread; the critic's packet
 carries `RELEASED PLANS`, the plan each started node was released with as `crw.releasedPlans` reads it from the revision of its release - the whole issue, every field, and the whole
-decisions its `decision_refs` name - and a started node whose issue differs from it in any field, or a decision such a plan names that the DESIGN drops or changes
+decisions its `decision_refs` name; a node whose issue was sized for a split or a child started too (its lane recorded the design row and escalated it) and is
+listed with that plan - and a started node whose issue differs from it in any field, or a decision such a plan names that the DESIGN drops or changes
 in any field, is a P1 finding), and the nodes that have not started are
 released under a revision only after that, because the signal that re-plans keeps every new release back until it is decided. A lane that started keeps the
 revision it was released under; it ends under it and lands or is held as usual. Each revision records the slice digest of every node of the plan it was made

@@ -204,11 +204,14 @@ export function designAuditPacket(ms, cand, round, prior, context) {
 
 // releasedSection lists the plans the started nodes were released with (crw.releasedPlans): each node with the revision it was
 // released under, its whole issue plan (every field) and the whole decisions its decision_refs name, so the critic sees any drift.
-// An entry with no plan member (the flat form an earlier lane binary recorded) is rendered from its own fields.
+// An entry with no plan member (the flat form an earlier lane binary recorded) is rendered from its own fields. A node sized for a
+// split or a child (kind) is listed with that: it started, its lane escalated it, and no executor started.
 function releasedSection(released) {
   return section('RELEASED PLANS (the started nodes, each with the whole issue plan of the revision it was released under and the decisions it names)', released.length === 0 ? ['- none'] : released.map((p) => {
     const plan = p.plan || p
-    return '- ' + p.node + ' (' + plan.issue + '), released under ' + p.revision + '\n  plan: ' + canon(plan) + '\n  decisions: ' + canon(p.decisions || [])
+    // a node sized for a split or a child started too: its lane escalated it on this plan and no executor started
+    const how = p.kind === 'split' || p.kind === 'child' ? 'sized for a ' + p.kind + ' under ' + p.revision + ' (no executor started; its lane escalated it as size_split)' : 'released under ' + p.revision
+    return '- ' + p.node + ' (' + plan.issue + '), ' + how + '\n  plan: ' + canon(plan) + '\n  decisions: ' + canon(p.decisions || [])
   }))
 }
 

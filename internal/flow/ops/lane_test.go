@@ -439,6 +439,36 @@ func TestReleasedPlansAndDesignHead(t *testing.T) {
 	}
 }
 
+// A node whose audited issue is sized for a split or a child has started too: its lane recorded a release row under the revision it
+// was sized under (released false, kind split or child) and escalated it. crw.releasedPlans lists it with that plan, as it lists a
+// node released to an executor, so a later re-plan's critic compares the DESIGN with it.
+func TestReleasedPlansListTheNodesSizedForASplitOrAChild(t *testing.T) {
+	w := newWorld(t)
+	w.relay.plan = planOfNodes(map[string]string{"A": "sa", "B": "sb", "C": "sc"}, "A", "B", "C")
+	d := designOf("A", "B", "C")
+	d.Issues[1].SizeFit, d.Issues[1].SizeReason, d.Issues[1].IssueSizeDecision = "split", "two packages", "over_line"
+	w.ledgered(true, d)
+	for _, n := range []string{"A", "B"} {
+		w.must("release", "plan-1", n, "M")
+	}
+	raw := w.must("releasedPlans", "M")
+	var got []ReleasedPlan
+	_ = json.Unmarshal(raw, &got)
+	var kinds []map[string]any
+	_ = json.Unmarshal(raw, &kinds)
+	byNode, kind := map[string]ReleasedPlan{}, map[string]any{}
+	for i, p := range got {
+		byNode[p.Node] = p
+		kind[p.Node] = kinds[i]["kind"]
+	}
+	if len(got) != 2 || !reflect.DeepEqual(byNode["B"].Plan, d.Issues[1]) || byNode["B"].Revision != "r0" {
+		t.Errorf("released plans %+v, want A and B (sized for a split under r0, with its whole plan); C has not started", got)
+	}
+	if kind["A"] != "released" || kind["B"] != "split" {
+		t.Errorf("the kinds of the released plans %v, want A released and B split", kind)
+	}
+}
+
 // A wait for a decision is open until the journal has the applied row of its own question and node.
 func TestDecideReadsOnlyTheAppliedRow(t *testing.T) {
 	w := newWorld(t)

@@ -57,15 +57,19 @@ func (o *designHeadOp) Proven(ctx context.Context, ev []engine.Event, row engine
 
 // ---- crw.releasedPlans ----
 
-// releasedPlansOp is crw.releasedPlans(milestone): for each node of the milestone that has started (a release that stands, as the
-// signal path counts it), the issue plan of the ledger revision it was released under, as crw.issuePlan gives it to its lane. The
-// critic of a re-plan reads them (RELEASED PLANS): the whole DESIGN keeps each started node's issue as it was released, every field.
+// releasedPlansOp is crw.releasedPlans(milestone): for each node of the milestone that has started, the issue plan of the ledger
+// revision it started under, as crw.issuePlan gives it to its lane. A node has started when a release of it stands (released to an
+// executor, as the signal path counts it) or when a design row of it stands that found its issue sized for a split or a child: its
+// lane recorded the row (released false, kind split or child) and escalated the node on that plan. The critic of a re-plan reads them
+// (RELEASED PLANS): the whole DESIGN keeps each started node's issue as it started, every field.
 type releasedPlansOp struct{ l *Lane }
 
 // ReleasedPlan is the plan a started node was released with: the whole issue of the revision it was released under, every field of
 // it, and the whole decisions its decision_refs name, so the critic sees any drift of the DESIGN from them.
 type ReleasedPlan struct {
-	Node         string      `json:"node"`
+	Node string `json:"node"`
+	// Kind is released (to an executor), or split or child (sized for one: no executor started, the lane escalated the node).
+	Kind         string      `json:"kind"`
 	Revision     string      `json:"revision"`
 	DesignDigest string      `json:"design_digest"`
 	Plan         DesignIssue `json:"plan"`
@@ -78,13 +82,18 @@ func (o *releasedPlansOp) Run(_ context.Context, req engine.OpRequest) (engine.O
 		return engine.OpResult{}, fmt.Errorf("crw.releasedPlans(milestone): %w", err)
 	}
 	r := rows(req.Journal.Events())
-	started, _ := lanes(r, milestoneNodes(r, ms))
-	out := []ReleasedPlan{}
-	nodes := []string{}
-	for _, node := range started {
+	nodes, out := []string{}, []ReleasedPlan{}
+	for _, node := range milestoneNodes(r, ms) {
+		kind := "released"
 		rel, ok := releaseRowOf(r, node)
-		if !ok {
-			continue
+		if !ok || r.superseded(rel) {
+			// not released to an executor: started all the same when the design row that stands sized it for a split or a child
+			if rel, ok = designRowOf(r, node); !ok || r.superseded(rel) || dataBool(rel, "released") {
+				continue
+			}
+			if kind = dataStr(rel, "kind"); kind != "split" && kind != "child" {
+				continue
+			}
 		}
 		revision := dataStr(rel, "revision")
 		led, ok := ledgerOf(r, ms, revision)
@@ -99,7 +108,7 @@ func (o *releasedPlansOp) Run(_ context.Context, req engine.OpRequest) (engine.O
 			return engine.OpResult{}, fmt.Errorf("crw.releasedPlans: revision %s plans no issue for node %s, which was released under it", revision, node)
 		}
 		is.EditRegions, is.TestsFirst, is.DecisionRefs, is.OrderAfter = nonNil(is.EditRegions), nonNil(is.TestsFirst), nonNil(is.DecisionRefs), nonNil(is.OrderAfter)
-		p := ReleasedPlan{Node: node, Revision: revision, DesignDigest: dataStr(rel, "design_digest"), Plan: is, Decisions: []Decision{}}
+		p := ReleasedPlan{Node: node, Kind: kind, Revision: revision, DesignDigest: dataStr(rel, "design_digest"), Plan: is, Decisions: []Decision{}}
 		design, err := ledgerDesign(led)
 		if err != nil {
 			return engine.OpResult{}, fmt.Errorf("crw.releasedPlans: node %s: %w", node, err)
