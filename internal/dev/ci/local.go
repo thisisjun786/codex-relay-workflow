@@ -4,6 +4,7 @@ package ci
 
 import (
 	"bytes"
+	"crypto/rand"
 	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/hex"
@@ -15,6 +16,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
 	"sort"
 	"strconv"
@@ -73,6 +75,15 @@ type localOptions struct {
 	hostOS, hostArch string
 	// buildInfo reports the build record of the running binary; nil means runtime/debug.ReadBuildInfo. Only tests set it.
 	buildInfo func() (*debug.BuildInfo, bool)
+	// stepTmp is the fresh TMPDIR every step of this run gets (localStepTempDir), set once per run.
+	stepTmp string
+	// socketLimit replaces the host's socket path limit (localSocketLimit) when it is non-zero. Only tests set it;
+	// the command never does.
+	socketLimit int
+	// gitCeilings are directories the .git walk above a step TMPDIR stops below (the entry itself is not
+	// checked), so a stray .git on the test host does not decide the candidate. Only tests set it; the
+	// command never does.
+	gitCeilings []string
 }
 
 // platform is the operating system and architecture the run records and judges itself on.
@@ -409,14 +420,25 @@ func localExecute(opts localOptions, plan []localJob, current verificationRecord
 	cleanup := func() {
 		if opts.Keep {
 			fmt.Fprintf(stdout, "local: kept %s\n", temp)
+			if opts.stepTmp != "" {
+				fmt.Fprintf(stdout, "local: kept %s\n", opts.stepTmp)
+			}
 			return
 		}
 		// Remove this run's own worktree through git, then the whole root. No repository-wide prune runs:
 		// it would also drop the administrative state of other tasks' worktrees.
 		runGit(opts.Root, "worktree", "remove", "--force", worktree)
 		os.RemoveAll(temp)
+		if opts.stepTmp != "" {
+			os.RemoveAll(opts.stepTmp)
+		}
 	}
 	defer cleanup()
+	// CRW-1489: the steps' TMPDIR is chosen before the checkout, so every record this run makes knows it.
+	// A run with no usable candidate is refused here, before any checkout or step, and leaves no record.
+	if opts.stepTmp, err = localStepTempDir(opts, root); err != nil {
+		return verificationRecord{}, false, err
+	}
 	checkoutErr := ""
 	if out, err := runGit(opts.Root, "-c", "core.hooksPath=/dev/null", "worktree", "add", "--detach", worktree, current.HeadCommit); err != nil {
 		checkoutErr = fmt.Sprintf("%v%s", err, localReason(string(out)))
@@ -654,8 +676,9 @@ func localWriteScript(opts localOptions, command string) (string, error) {
 var localInheritedEnv = []string{"PATH", "LANG", "TMPDIR", "GOCACHE", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "NPM_CONFIG_CACHE"}
 
 // localStepEnv is the sealed environment every step runs in: HOME and the XDG directories point into
-// the run's own home, TZ is UTC, GOTOOLCHAIN is local, and GOFLAGS is set by the engine alone (its
-// parallelism). The caller's other variables are not inherited.
+// the run's own home, TZ is UTC, GOTOOLCHAIN is local, GOFLAGS is set by the engine alone (its
+// parallelism), and TMPDIR is the run's own step TMPDIR (opts.stepTmp, or <temp>/tmp when none was
+// chosen). The caller's other variables are not inherited.
 func localStepEnv(home, temp string, opts localOptions) ([]string, error) {
 	runner := filepath.Join(temp, "runner")
 	for _, dir := range []string{home, filepath.Join(home, "config"), filepath.Join(home, "cache"),
@@ -688,10 +711,19 @@ func localStepEnv(home, temp string, opts localOptions) ([]string, error) {
 		"GOWORK=off",
 	}
 	for _, name := range localInheritedEnv {
+		// The caller's TMPDIR is inherited by the probes, not by a step: a step gets its own (CRW-1489).
+		if name == "TMPDIR" {
+			continue
+		}
 		if value, ok := os.LookupEnv(name); ok {
 			env = append(env, name+"="+value)
 		}
 	}
+	stepTmp := opts.stepTmp
+	if stepTmp == "" {
+		stepTmp = filepath.Join(temp, "tmp")
+	}
+	env = append(env, "TMPDIR="+stepTmp)
 	// The configured build cache and build work directory decide how fast and where a step builds,
 	// not what it decides, as the inherited GOCACHE does. The module cache is left out: it would
 	// let a module tree stand without the go.sum check.
@@ -705,6 +737,129 @@ func localStepEnv(home, temp string, opts localOptions) ([]string, error) {
 	env = sealed.Apply(env)
 	env = append(env, opts.Env...)
 	return env, nil
+}
+
+// localStepSocketSuffix is the most a test adds below its TMPDIR for a Unix socket path: the longest of
+// them is TMPDIR plus 67 bytes (internal/manage/core_tmpfs_test.go:91). A step TMPDIR must leave room
+// for it under the host's socket limit.
+const localStepSocketSuffix = 67
+
+// localSocketLimit is the host's Unix socket path limit: 104 bytes on darwin and 108 elsewhere, the
+// same rule as crwconfig.Check.
+func localSocketLimit() int {
+	if runtime.GOOS == "darwin" {
+		return 104
+	}
+	return 108
+}
+
+// localStepDirLen is the exact length of a step TMPDIR made by localMkStepDir(parent, prefix): the
+// parent, a separator, the prefix and 8 hex characters.
+func localStepDirLen(parent, prefix string) int {
+	return len(filepath.Clean(parent)) + 1 + len(prefix) + 8
+}
+
+// localStepTmpFits reports whether a step TMPDIR made below parent leaves room for the longest socket a
+// test binds below it: its length plus localStepSocketSuffix is under limit.
+func localStepTmpFits(parent, prefix string, limit int) bool {
+	return localStepDirLen(parent, prefix)+localStepSocketSuffix < limit
+}
+
+// localMkStepDir makes <parent>/<prefix><8 lowercase hex> (mode 0700). The name has a fixed width, so
+// its length (localStepDirLen) is known before it exists; os.MkdirTemp's suffix is 1 to 10 digits.
+func localMkStepDir(parent, prefix string) (string, error) {
+	parent = filepath.Clean(parent)
+	for try := 0; try < 16; try++ {
+		var random [4]byte
+		if _, err := rand.Read(random[:]); err != nil {
+			return "", err
+		}
+		dir := filepath.Join(parent, prefix+hex.EncodeToString(random[:]))
+		err := os.Mkdir(dir, 0o700)
+		if err == nil {
+			return dir, nil
+		}
+		if !errors.Is(err, fs.ErrExist) {
+			return "", err
+		}
+	}
+	return "", fmt.Errorf("no free %s<8 hex> name below %s after 16 tries", prefix, parent)
+}
+
+// localGitAbove is the first .git entry (of any type) at or above dir, or "" when there is none. The
+// walk follows both the path as written and its resolved form, and it stops below a ceiling: a ceiling
+// directory and what lies above it are not checked.
+func localGitAbove(dir string, ceilings []string) string {
+	stop := map[string]bool{}
+	for _, ceiling := range ceilings {
+		if ceiling == "" {
+			continue
+		}
+		stop[filepath.Clean(ceiling)] = true
+		if resolved, err := filepath.EvalSymlinks(ceiling); err == nil {
+			stop[resolved] = true
+		}
+	}
+	forms := []string{filepath.Clean(dir)}
+	if resolved, err := filepath.EvalSymlinks(dir); err == nil && resolved != forms[0] {
+		forms = append(forms, resolved)
+	}
+	for _, form := range forms {
+		for d := form; !stop[d]; {
+			if _, err := os.Lstat(filepath.Join(d, ".git")); err == nil {
+				return filepath.Join(d, ".git")
+			}
+			parent := filepath.Dir(d)
+			if parent == d {
+				break
+			}
+			d = parent
+		}
+	}
+	return ""
+}
+
+// localStepTempDir makes the fresh TMPDIR every step of a run gets (CRW-1489). The failing tests find a
+// repository by walking up from TMPDIR for a .git, so a TMPDIR below a stray .git (a sandbox's /tmp/.git)
+// made them judge the wrong tree; and the tests bind sockets up to 67 bytes below TMPDIR. The first
+// candidate that fits both is made: a, ci<8 hex> directly below the caller's TMPDIR, which keeps the
+// caller's disk; then b, t<8 hex> directly below the work root. A candidate that does not fit is never
+// made. When neither fits, the run is refused (temp_dir_unusable), naming each candidate's reason.
+func localStepTempDir(opts localOptions, workRoot string) (string, error) {
+	limit := opts.socketLimit
+	if limit == 0 {
+		limit = localSocketLimit()
+	}
+	var reasons []string
+	for _, candidate := range []struct{ name, parent, prefix string }{
+		{"the caller's TMPDIR", localTempDir(), "ci"},
+		{"the work root", workRoot, "t"},
+	} {
+		parent := filepath.Clean(candidate.parent)
+		if !filepath.IsAbs(parent) {
+			reasons = append(reasons, fmt.Sprintf("%s %q is not absolute", candidate.name, candidate.parent))
+			continue
+		}
+		// Both checks are made before anything is created, and a refused candidate names every reason.
+		var why []string
+		if !localStepTmpFits(parent, candidate.prefix, limit) {
+			length := localStepDirLen(parent, candidate.prefix)
+			why = append(why, fmt.Sprintf("gives a step TMPDIR of %d bytes, %d with the %d a test's socket adds, not under the limit %d",
+				length, length+localStepSocketSuffix, localStepSocketSuffix, limit))
+		}
+		if git := localGitAbove(parent, opts.gitCeilings); git != "" {
+			why = append(why, "is below "+git)
+		}
+		if len(why) == 0 {
+			dir, err := localMkStepDir(parent, candidate.prefix)
+			if err == nil {
+				return dir, nil
+			}
+			why = append(why, err.Error())
+		}
+		reasons = append(reasons, fmt.Sprintf("%s %s %s", candidate.name, parent, strings.Join(why, " and ")))
+	}
+	return "", fmt.Errorf("temp_dir_unusable: %s; set TMPDIR to a short directory with no .git at or above it, or pass a short --work-root", strings.Join(reasons, "; "))
 }
 
 // localIgnoredEnv names the caller's variables a sealed step does not inherit and that could change
