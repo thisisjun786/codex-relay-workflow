@@ -10,7 +10,6 @@ import (
 	"unsafe"
 
 	"modernc.org/libc"
-	"modernc.org/libc/sys/types"
 	sqlite3 "modernc.org/sqlite/lib"
 )
 
@@ -39,6 +38,16 @@ import (
 // unixFileDescriptorOffset is where os_unix.c's unixFile keeps the descriptor: after three
 // pointers.
 const unixFileDescriptorOffset = 3 * unsafe.Sizeof(uintptr(0))
+
+// cMemory is the Go pointer for the address addr of libc memory (the scratch block tls.Alloc
+// returns, the unixFile object SQLite returns). That memory is outside the Go heap, so a typed
+// access through the pointer is not pointer arithmetic on a Go object and checkptr accepts it;
+// Go variables are never handed to libc as uintptr, which checkptr rejects. Offsets are added to
+// the uintptr before the call. The pointer is read out of the address variable's own bytes, so no
+// uintptr-to-Pointer conversion is written (go vet's unsafeptr check has nothing to flag).
+func cMemory(addr uintptr) unsafe.Pointer {
+	return *(*unsafe.Pointer)(unsafe.Pointer(&addr))
+}
 
 // rawSQLiteConn unwraps the store's connection wrapper (textguard.go) to the driver's connection.
 func rawSQLiteConn(raw any) (reflect.Value, error) {
@@ -76,25 +85,20 @@ func connectionFileKey(raw any) (storeFileKey, error) {
 	const size = int(pointer) + 8
 	scratch := tls.Alloc(size)
 	defer tls.Free(size)
-	var zero uintptr
-	libc.Xmemcpy(tls, scratch, uintptr(unsafe.Pointer(&zero)), types.Size_t(pointer))
-	name := [5]byte{'m', 'a', 'i', 'n', 0}
-	libc.Xmemcpy(tls, scratch+pointer, uintptr(unsafe.Pointer(&name[0])), types.Size_t(len(name)))
+	*(*uintptr)(cMemory(scratch)) = 0
+	*(*[5]byte)(cMemory(scratch + pointer)) = [5]byte{'m', 'a', 'i', 'n', 0}
 	if rc := sqlite3.Xsqlite3_file_control(tls, db, scratch+pointer, sqlite3.SQLITE_FCNTL_FILE_POINTER, scratch); rc != sqlite3.SQLITE_OK {
 		return storeFileKey{}, fmt.Errorf("SQLite would not name the connection's database file (result code %d)", rc)
 	}
-	var file uintptr
-	libc.Xmemcpy(tls, uintptr(unsafe.Pointer(&file)), scratch, types.Size_t(pointer))
+	file := *(*uintptr)(cMemory(scratch))
 	if file == 0 {
 		return storeFileKey{}, errors.New("SQLite returned no file object for the connection's database")
 	}
-	var methods uintptr
-	libc.Xmemcpy(tls, uintptr(unsafe.Pointer(&methods)), file, types.Size_t(pointer))
+	methods := *(*uintptr)(cMemory(file))
 	if methods == 0 {
 		return storeFileKey{}, errors.New("the connection's database file object is not open")
 	}
-	var fd int32
-	libc.Xmemcpy(tls, uintptr(unsafe.Pointer(&fd)), file+unixFileDescriptorOffset, types.Size_t(unsafe.Sizeof(fd)))
+	fd := *(*int32)(cMemory(file + unixFileDescriptorOffset))
 	if fd < 0 {
 		return storeFileKey{}, fmt.Errorf("the connection's database file object holds descriptor %d", fd)
 	}

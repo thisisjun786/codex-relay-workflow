@@ -19,14 +19,14 @@ func TestStopGoalIdleSourceCheckRunsOutsideTheSessionLock(t *testing.T) {
 	cwd, env := stopIdleRig(t, true)
 	var heldDuring error
 	called := 0
-	old := stopCheckBound
-	stopCheckBound = func(ctx context.Context, c, s string) sourcesession.GateResult {
+	src := defaultStopSource()
+	real := src.check
+	src.check = func(ctx context.Context, c, s string) sourcesession.GateResult {
 		called++
 		heldDuring = state.WithSessionLock(c, s, func() error { return nil })
-		return old(ctx, c, s)
+		return real(ctx, c, s)
 	}
-	defer func() { stopCheckBound = old }()
-	got := stopBlockReason(t, stopRun(cwd, env))
+	got := stopBlockReason(t, stopRunWith(cwd, env, src))
 	if called != 1 {
 		t.Fatalf("the source check ran %d times, want once", called)
 	}
@@ -44,18 +44,17 @@ func TestStopGoalIdleSourceCheckRunsOutsideTheSessionLock(t *testing.T) {
 func TestStopGoalIdleSourceCheckIsBoundedByTheHookBudget(t *testing.T) {
 	cwd, env := stopIdleRig(t, true)
 	var sawCancel, returned atomic.Bool
-	oldCheck, oldBudget := stopCheckBound, stopSourceBudget
-	stopCheckBound = func(ctx context.Context, _, _ string) sourcesession.GateResult {
+	src := defaultStopSource()
+	src.check = func(ctx context.Context, _, _ string) sourcesession.GateResult {
 		<-ctx.Done() // a probe that honours its context ends with it
 		sawCancel.Store(true)
 		time.Sleep(50 * time.Millisecond) // reaping its git takes a moment
 		returned.Store(true)
 		return sourcesession.GateResult{Cause: sourcesession.CauseProbeFailed, Probe: ctx.Err()}
 	}
-	stopSourceBudget = 100 * time.Millisecond
-	defer func() { stopCheckBound, stopSourceBudget = oldCheck, oldBudget }()
+	src.budget = 100 * time.Millisecond
 	start := time.Now()
-	got := stopBlockReason(t, stopRun(cwd, env))
+	got := stopBlockReason(t, stopRunWith(cwd, env, src))
 	if d := time.Since(start); d > 5*time.Second {
 		t.Errorf("the Stop took %v with a stuck source investigation", d)
 	}
@@ -70,19 +69,26 @@ func TestStopGoalIdleSourceCheckIsBoundedByTheHookBudget(t *testing.T) {
 // An investigation that ignores its cancellation cannot hold the Stop past the grace it is given.
 func TestStopGoalIdleSourceCheckGraceIsBounded(t *testing.T) {
 	cwd, env := stopIdleRig(t, true)
-	release := make(chan struct{})
-	oldCheck, oldBudget, oldGrace := stopCheckBound, stopSourceBudget, stopSourceGrace
-	stopCheckBound = func(context.Context, string, string) sourcesession.GateResult {
+	release, finished := make(chan struct{}), make(chan struct{})
+	src := defaultStopSource()
+	src.check = func(context.Context, string, string) sourcesession.GateResult {
+		defer close(finished)
 		<-release
 		return sourcesession.GateResult{}
 	}
-	stopSourceBudget, stopSourceGrace = 100*time.Millisecond, 100*time.Millisecond
-	defer func() {
+	src.budget, src.grace = 100*time.Millisecond, 100*time.Millisecond
+	// The stub ignores its context, so it outlives the Stop: the test ends it and waits for it, so no goroutine of this test
+	// runs on after it.
+	t.Cleanup(func() {
 		close(release)
-		stopCheckBound, stopSourceBudget, stopSourceGrace = oldCheck, oldBudget, oldGrace
-	}()
+		select {
+		case <-finished:
+		case <-time.After(5 * time.Second):
+			t.Error("the source check that ignores its cancellation did not end once released")
+		}
+	})
 	start := time.Now()
-	got := stopBlockReason(t, stopRun(cwd, env))
+	got := stopBlockReason(t, stopRunWith(cwd, env, src))
 	if d := time.Since(start); d > 5*time.Second {
 		t.Errorf("the Stop took %v with an investigation that ignores its cancellation", d)
 	}
@@ -94,14 +100,13 @@ func TestStopGoalIdleSourceCheckGraceIsBounded(t *testing.T) {
 // A verdict that arrives as the deadline passes is not a verdict: a cancelled probe reports its cancellation as a refusal.
 func TestStopGoalIdleSourceCheckVerdictAfterTheDeadlineIsIgnored(t *testing.T) {
 	cwd, env := stopIdleRig(t, true)
-	oldCheck, oldBudget := stopCheckBound, stopSourceBudget
-	stopCheckBound = func(ctx context.Context, _, _ string) sourcesession.GateResult {
+	src := defaultStopSource()
+	src.check = func(ctx context.Context, _, _ string) sourcesession.GateResult {
 		<-ctx.Done()
 		return sourcesession.GateResult{Cause: sourcesession.CauseBindingError, Reason: "Cannot resolve source Git worktree identity."}
 	}
-	stopSourceBudget = 50 * time.Millisecond
-	defer func() { stopCheckBound, stopSourceBudget = oldCheck, oldBudget }()
-	if got := stopBlockReason(t, stopRun(cwd, env)); strings.Contains(got, "cannot be armed") || !strings.Contains(got, "orchestrate P --session") {
+	src.budget = 50 * time.Millisecond
+	if got := stopBlockReason(t, stopRunWith(cwd, env, src)); strings.Contains(got, "cannot be armed") || !strings.Contains(got, "orchestrate P --session") {
 		t.Errorf("a refusal that is a cancellation must not be worded: %q", got)
 	}
 }

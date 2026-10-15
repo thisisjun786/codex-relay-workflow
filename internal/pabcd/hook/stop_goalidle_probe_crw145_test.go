@@ -50,9 +50,8 @@ func TestStopGoalIdleSourceCheckLeavesNoGitBehind(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(cwd, "tracked.txt"), []byte("y\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	oldBudget := stopSourceBudget
-	stopSourceBudget = 4 * time.Second
-	defer func() { stopSourceBudget = oldBudget }()
+	src := defaultStopSource()
+	src.budget = 4 * time.Second
 	t.Cleanup(func() { // never leave the filter behind, whatever the outcome
 		if b, err := os.ReadFile(pidFile); err == nil {
 			if pid, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil {
@@ -61,11 +60,11 @@ func TestStopGoalIdleSourceCheckLeavesNoGitBehind(t *testing.T) {
 		}
 	})
 	start := time.Now()
-	got := stopCanArm(cwd, stopSID)
+	got := stopCanArm(src, cwd, stopSID)
 	took := time.Since(start)
 	b, err := os.ReadFile(pidFile)
 	if err != nil {
-		t.Skipf("the clean filter did not start within the %v budget on this host: %v", stopSourceBudget, err)
+		t.Skipf("the clean filter did not start within the %v budget on this host: %v", src.budget, err)
 	}
 	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
 	if err != nil {
@@ -74,7 +73,7 @@ func TestStopGoalIdleSourceCheckLeavesNoGitBehind(t *testing.T) {
 	if !got.ok {
 		t.Errorf("an investigation that outlasted the budget offers the oracle's arming option: %+v", got)
 	}
-	if took > stopSourceBudget+3*time.Second {
+	if took > src.budget+3*time.Second {
 		t.Errorf("the Stop took %v with a stuck clean filter", took)
 	}
 	deadline := time.Now().Add(3 * time.Second)
