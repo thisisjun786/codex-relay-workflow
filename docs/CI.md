@@ -492,26 +492,34 @@ leaves them, and `--keep` keeps them on purpose (it prints each path). Three kin
 - `ci<8 hex>`, the steps' `TMPDIR`, directly in the caller's `TMPDIR` (`/tmp` when it is unset), when that fit. This is
   the usual one.
 
-Nothing removes them. The first two sit in a directory only this command uses, so a `crw-ci-local-*` or `t<8 hex>` name
-there is a run's own. The `ci<8 hex>` name is short and generic, and the caller's `TMPDIR` is often shared (`/tmp`), so
-the code never deletes by that name: another tool's directory could match. Read the list before you remove anything.
-Set `root` to the `--work-root` you passed, if any. To see the ones more than a day old (a younger one may belong to a run in progress), which removes nothing:
+Nothing removes them. In the default work root only this command works, so a `crw-ci-local-*` or `t<8 hex>` name there is
+a run's own. A `--work-root` can name a directory other tools share, and there a name that only looks like these is not
+safe to assume. The `ci<8 hex>` name is short and generic, and the caller's `TMPDIR` is often shared (`/tmp`), so the code
+never deletes by that name: another tool's directory could match. Read the list before you remove anything. The patterns
+match the step trees by their exact names, `t` followed by eight lowercase hex digits, never `t` and any eight characters,
+so a directory such as `toolcache` is not listed. The patterns spell out the eight hex digits as character classes, which
+`find` reads the same everywhere.
+
+Set `root` to the `--work-root` you passed, if any. To see the ones more than a day old (a younger one may belong to a run in
+progress), which removes nothing:
 
 ```sh
 root="${XDG_STATE_HOME:-$HOME/.local/state}/crw-ci-local"  # or the --work-root you passed
-find -H "$root" -mindepth 1 -maxdepth 1 -type d \( -name 'crw-ci-local-*' -o -name 't????????' \) -mtime +0
-find -H "${TMPDIR:-/tmp}" -mindepth 1 -maxdepth 1 -type d -name 'ci????????' -mtime +0
+find -H "$root" -mindepth 1 -maxdepth 1 -type d \( -name 'crw-ci-local-*' -o -name 't[0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef]' \) -mtime +0
+find -H "${TMPDIR:-/tmp}" -mindepth 1 -maxdepth 1 -type d -name 'ci[0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef]' -mtime +0
 ```
 
-A step's test may leave read-only directories. To remove the ones the lists show, repairing permissions first, once you have
-checked them and no run of yours is still going (use the second line for the `ci????????` list only if every name in it is
-yours):
+The removal recipe is for the default work root, the one dedicated to this command. With a `--work-root` that other tools
+share, remove only the paths the list shows that you have checked are this command's, one by one, and do not run the recipe
+over the root. A step's test may leave read-only directories. To remove the ones the lists show in the default root,
+repairing permissions first, once you have checked them and no run of yours is still going (use the second line for the
+`ci<8 hex>` list only if every name in it is yours):
 
 ```sh
-root="${XDG_STATE_HOME:-$HOME/.local/state}/crw-ci-local"  # or the --work-root you passed
-find -H "$root" -mindepth 1 -maxdepth 1 -type d \( -name 'crw-ci-local-*' -o -name 't????????' \) -mtime +0 \
+root="${XDG_STATE_HOME:-$HOME/.local/state}/crw-ci-local"
+find -H "$root" -mindepth 1 -maxdepth 1 -type d \( -name 'crw-ci-local-*' -o -name 't[0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef]' \) -mtime +0 \
   -exec sh -c 'chmod -R u+rwX -- "$@" && rm -rf -- "$@"' sh {} +
-find -H "${TMPDIR:-/tmp}" -mindepth 1 -maxdepth 1 -type d -name 'ci????????' -mtime +0 \
+find -H "${TMPDIR:-/tmp}" -mindepth 1 -maxdepth 1 -type d -name 'ci[0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef][0123456789abcdef]' -mtime +0 \
   -exec sh -c 'chmod -R u+rwX -- "$@" && rm -rf -- "$@"' sh {} +
 ```
 
