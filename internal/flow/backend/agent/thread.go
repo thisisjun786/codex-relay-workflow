@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/settings"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
@@ -14,9 +13,9 @@ import (
 // threadParams are the members thread/start and thread/fork share: the call's own cwd, the role's pair, the sandbox of
 // the role, no approvals, a persistent thread and the role's prompt - and nothing that names the call. The prompt is the
 // only thing written to developerInstructions: the 0.154 Thread has no such member, so an identity put there could never
-// be read back. The run's repository tools (CRW-1488) are the thread's config.shell_environment_policy.set entries, a nested
-// table the host merges over its own policy (its inherit, exclude, include_only and other set entries stay), and the prompt
-// ends with the section that names them; nil tools add neither.
+// be read back. The run's repository tools (CRW-1488) are config overrides of their own leaf keys, shell_environment_policy.set.<NAME>
+// (engine.RepositoryTools.ShellOverrides), which the host applies key by key over the server's own overrides: the policy the server
+// set stays. Nil tools add none.
 func (b *Backend) threadParams(role string, qa bool, cwd, sandbox string, pair engine.Pair, limit *int64, tools *engine.RepositoryTools) (map[string]any, error) {
 	if !filepath.IsAbs(cwd) {
 		return nil, &engine.RPCError{Message: "a thread starts in an absolute working directory, got " + cwd, CodexErrorInfo: "badRequest"}
@@ -33,16 +32,15 @@ func (b *Backend) threadParams(role string, qa bool, cwd, sandbox string, pair e
 	params["cwd"] = cwd
 	params["approvalPolicy"] = "never"
 	params["ephemeral"] = false
-	if set := tools.ShellSet(); set != nil {
+	if overrides := tools.ShellOverrides(); overrides != nil {
 		config, _ := params["config"].(map[string]any)
 		if config == nil {
 			config = map[string]any{}
 		}
-		config["shell_environment_policy"] = map[string]any{"set": set}
+		for k, v := range overrides {
+			config[k] = v
+		}
 		params["config"] = config
-	}
-	if section := tools.PromptSection(); section != "" {
-		prompt = strings.TrimRight(prompt, "\n") + "\n\n" + section
 	}
 	params["developerInstructions"] = prompt
 	return params, nil
@@ -94,3 +92,19 @@ func (b *Backend) readback(ctx context.Context, id string) (engine.ThreadInfo, e
 }
 
 var errNoTurn = errors.New("turn/start answered without a turn id")
+
+// SetRepositoryTools implements the engine's tools seam (engine.Run gives a backend the run's tools before any call): a thread this
+// backend loads again with thread/resume - a held call's next turn after an App Server restart, a turn reconcile follows - is resumed
+// with the same leaf overrides, because a cold resume rebuilds the thread's configuration from the host's and the resume's own
+// overrides only (Codex 0.154 thread_resume_inner); a thread the host still runs ignores them.
+func (b *Backend) SetRepositoryTools(t *engine.RepositoryTools) {
+	b.mu.Lock()
+	b.tools = t
+	b.mu.Unlock()
+}
+
+func (b *Backend) repositoryTools() *engine.RepositoryTools {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.tools
+}

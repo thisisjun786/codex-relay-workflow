@@ -89,3 +89,58 @@ return [a.status, e.status]`))
 		}
 	}
 }
+
+// An App Server call's turns name the tools too (CRW-1488 r1): a thread loaded again after a host restart reloads its configuration
+// and may not have them, so every turn's text ends with the same section, after the task. The journaled input is the script's.
+func TestAppServerTurnNamesRepositoryTools(t *testing.T) {
+	h := newHarness(t)
+	h.cfg.Tools = testRepositoryTools()
+	var mu sync.Mutex
+	var prompts []string
+	h.fake.Handler = func(r FakeRequest) FakeReply {
+		mu.Lock()
+		prompts = append(prompts, r.Prompt)
+		mu.Unlock()
+		return FakeReply{}
+	}
+	value[[]string](t, h.run(`const a = await agent.call('look around', { agentType: 'explorer', label: 'exp' })
+return [a.status]`))
+	if len(prompts) != 1 {
+		t.Fatalf("%d turns, want 1", len(prompts))
+	}
+	for _, want := range []string{"look around", "## Repository tools", testRepositoryTools().Facts[0], "`" + testRepositoryTools().Prefix + "`"} {
+		if !strings.Contains(prompts[0], want) {
+			t.Errorf("the turn does not name %q:\n%s", want, prompts[0])
+		}
+	}
+	if strings.Index(prompts[0], "## Repository tools") < strings.Index(prompts[0], "look around") {
+		t.Errorf("the tools section comes before the task:\n%s", prompts[0])
+	}
+	for _, row := range h.callRows("exp") {
+		if row.Event == EvTurnRequested && rowStr(row.Data, "input") != "look around" {
+			t.Errorf("the journaled input is %q, want the script's", rowStr(row.Data, "input"))
+		}
+	}
+}
+
+// toolsBackend is a fake backend that takes the run's tools for the threads it loads again (agent.Backend.SetRepositoryTools).
+type toolsBackend struct {
+	*Fake
+	got []*RepositoryTools
+}
+
+func (b *toolsBackend) SetRepositoryTools(t *RepositoryTools) { b.got = append(b.got, t) }
+
+// A run gives its backend the tools before any call, so a thread the backend resumes (a held call after a host restart, a reconcile)
+// is loaded with them.
+func TestRunGivesTheBackendItsTools(t *testing.T) {
+	h := newHarness(t)
+	b := &toolsBackend{Fake: h.fake}
+	h.cfg.Backend = b
+	h.cfg.Tools = testRepositoryTools()
+	value[[]string](t, h.run(`const a = await agent.call('look around', { agentType: 'explorer', label: 'exp' })
+return [a.status]`))
+	if len(b.got) != 1 || b.got[0] != h.cfg.Tools {
+		t.Errorf("the backend was given %v, want the run's tools once", b.got)
+	}
+}

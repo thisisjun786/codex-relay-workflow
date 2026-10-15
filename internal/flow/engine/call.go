@@ -1411,7 +1411,7 @@ func (c *callRun) turnLoop(ctx context.Context, resolved *jsonschema.Resolved, k
 				turnCtx, endTurn := c.beginTurn(ctx, op)
 				out, err = e.cfg.Backend.RunTurn(turnCtx, TurnSpec{
 					CallID: c.id, Op: op, K: k, ThreadID: c.threadID, Role: p.role, Node: p.node, Pair: p.spec.Pair,
-					Input: "crw-flow-op: " + op + "\n\n" + input, Schema: p.schema, Cwd: c.cwd, Repair: repair, QA: p.qa,
+					Input: "crw-flow-op: " + op + "\n\n" + input + toolsSuffix(e.cfg.Tools), Schema: p.schema, Cwd: c.cwd, Repair: repair, QA: p.qa,
 					Started: func(turnID string) {
 						c.turnIDs = append(c.turnIDs, turnID)
 						c.delivered = true

@@ -170,6 +170,8 @@ type env struct {
 	alive func(owner string) bool
 	// opts are the timings of a resumed run (resumeRun).
 	opts *engine.ResumeOptions
+	// tools are the repository tools the runs are given (CRW-1488); nil gives none.
+	tools *engine.RepositoryTools
 	// killable, when set, is the backend the runs use: a process that can be killed (killAfter, killBefore).
 	killable *killable
 
@@ -317,7 +319,7 @@ func (e *env) config() engine.Config {
 	if e.killable != nil {
 		backend = e.killable
 	}
-	return engine.Config{Backend: backend, Policy: e.policy, Journal: e.journal, RunID: e.runID, Pool: e.pool, TokenBudget: e.budget, Now: e.now, Resume: e.resume}
+	return engine.Config{Backend: backend, Policy: e.policy, Journal: e.journal, RunID: e.runID, Pool: e.pool, TokenBudget: e.budget, Now: e.now, Resume: e.resume, Tools: e.tools}
 }
 
 // run executes the script body and returns its result.

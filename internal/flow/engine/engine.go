@@ -260,6 +260,10 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 	if cfg.Backend == nil || cfg.Policy == nil {
 		return nil, errors.New("engine: a backend and a policy are required")
 	}
+	if t, ok := cfg.Backend.(ToolsTaker); ok && cfg.Tools != nil {
+		// a backend that loads a thread again by itself (a resume after a host restart) loads it with the run's tools (CRW-1488)
+		t.SetRepositoryTools(cfg.Tools)
+	}
 	if cfg.Journal == nil {
 		cfg.Journal = NewMemoryJournal()
 	}
