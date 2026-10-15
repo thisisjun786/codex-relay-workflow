@@ -1085,7 +1085,7 @@
   {"flag":"--verdict-file","required":true,"help":"a JSON object of the verdict command's options: verdict, criterion, finding, criteria, restoration, reason, expect-criteria-digest, verified-head"}]},
 {"name":"supervisor-list","summary":"one recipient's supervisor messages in the order the channel sends them, with counts by state, hold, project and obligation kind (CRW-1486). Reads only, through the read-only store","options":[
   {"flag":"--recipient","required":true,"help":"the task the messages are addressed to"},
-  {"flag":"--project","help":"only this project's messages"},
+  {"flag":"--project","help":"only this project's messages; none lists the messages with no project (and a project named none)"},
   {"flag":"--state","choices":["unsent","all"],"help":"unsent (the default): queued, deferred busy or withheld before a send; all: every state"},
   {"flag":"--hold","help":"only messages carrying this hold word, or none for messages with no hold"}]},
 {"name":"job","commands":true,"summary":"workspace-local background jobs"},

@@ -756,7 +756,9 @@ read-only: the recipient's messages in sending order (`messageId`, `relationship
 `kind`, `obligationKind`, `subject`, `state`, `holdReason`, `stagedAt`, `nextEligibleAt`, and
 `claimable`, the channel's own test of unsent, unheld and due), with counts by state, hold, project and
 obligation kind (`supervisor-list/1`). `unsent`, the default, is what still waits: queued, deferred
-busy or withheld before a send. `--hold none` lists the messages that carry no hold.
+busy or withheld before a send. `--hold none` lists the messages that carry no hold. `--project none`
+lists the messages with no project (and a project named none), the same set the `none` project count
+counts; each row's `projectKey` (null or `none`) tells the two apart.
 
 A message that waits on a busy recipient is not a backlog: it is deferred with the busy backoff and
 woken by the recipient's idle edge ([the supervisor channel](supervisor-channel.md#the-surface)).

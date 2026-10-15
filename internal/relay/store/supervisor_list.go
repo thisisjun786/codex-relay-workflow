@@ -23,8 +23,14 @@ const (
 // SupervisorListHoldNone is the hold filter for a message that carries no hold.
 const SupervisorListHoldNone = "none"
 
+// SupervisorListProjectNone is the project filter, and the project count key, for a message with
+// no project (CRW-1500). It also names a project registered as none, so the filter and the count
+// read the same set.
+const SupervisorListProjectNone = "none"
+
 // SupervisorListFilter is which of one recipient's messages a list reads: the recipient's (always),
-// one project's or every project's (Project empty), in which states (State, SupervisorListUnsent
+// one project's, every project's (Project empty) or, for SupervisorListProjectNone, the messages
+// with no project and those of a project named none, in which states (State, SupervisorListUnsent
 // when empty), and carrying which hold (Hold: empty for any, SupervisorListHoldNone for none, or the
 // hold word).
 type SupervisorListFilter struct {
@@ -45,7 +51,12 @@ func (s *Store) ListSupervisorMessages(ctx context.Context, f SupervisorListFilt
 	default:
 		return nil, fmt.Errorf("a message list of the 부모 queue reads the %s, %s or %s messages, not %q", SupervisorListUnsent, SupervisorListPending, SupervisorListAll, f.State)
 	}
-	if f.Project != "" {
+	switch f.Project {
+	case "":
+	case SupervisorListProjectNone:
+		query += " AND (project_key IS NULL OR project_key = ?)"
+		args = append(args, SupervisorListProjectNone)
+	default:
 		query += " AND project_key = ?"
 		args = append(args, f.Project)
 	}
