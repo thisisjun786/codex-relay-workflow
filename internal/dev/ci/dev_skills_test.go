@@ -249,8 +249,8 @@ func TestCodeReviewerNoParentSessionWording(t *testing.T) {
 		if !strings.Contains(debugging, releasedBy+") that released it") {
 			errs = append(errs, "crw-dev-debugging: the escalation does not name the level "+releasedBy+")")
 		}
-		if !strings.Contains(debugging, "issue child") {
-			errs = append(errs, "crw-dev-debugging: the escalation does not name the level issue child")
+		if !strings.Contains(debugging, "`child` session") {
+			errs = append(errs, "crw-dev-debugging: the escalation does not name the `child` session")
 		}
 		if strings.Contains(debugging, "Logic Analysis") {
 			errs = append(errs, "crw-dev-debugging: Logic Analysis is system behaviour analysis")

@@ -1,6 +1,6 @@
 # Protocol v1
 
-The sessions in this document are named by [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and an issue child is no layer.
+The sessions in this document are named by [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and a `child` session (a code id, not a layer) is no layer.
 
 Derived from the frozen cross-session communication contract, bundle revision
 `c37d332e2daba95c9ef47adf00a82bc9c6a539ab62538f0ad857561e470d2989`. This document is portable: it
@@ -9,8 +9,7 @@ carries no task identifiers, host paths or private history. The five JSON schema
 
 **Status: planned.** The protocol below is frozen and real. Its implementation is not yet written.
 
-The three-level execution linkage - a parent bound to an initiative scope over a child over an issue
-child, and peer links between children - is NOT part of this contract and has no schema here. It
+The three-level execution linkage - a parent bound to an initiative scope over a child over a `child` session, and peer links between children - is NOT part of this contract and has no schema here. It
 is a relay-owned record set, described in [linkage.md](linkage.md).
 
 ## 1. Identity
@@ -65,11 +64,11 @@ Five outcomes are distinguished, and only the first asserts a product:
 
 | Outcome | Who may assert it |
 |---|---|
-| `ready_for_review` | the issue child only |
-| `failed` | the issue child, or a daemon observing a failed turn |
-| `interrupted` | the issue child, or a daemon observing an interrupted turn |
-| `blocked_needs_input` | the issue child only; no terminal turn status identifies it |
-| ordinary turn end | neither; a completed turn with no issue child receipt is not a completion event |
+| `ready_for_review` | the `child` session only |
+| `failed` | the `child` session, or a daemon observing a failed turn |
+| `interrupted` | the `child` session, or a daemon observing an interrupted turn |
+| `blocked_needs_input` | the `child` session only; no terminal turn status identifies it |
+| ordinary turn end | neither; a completed turn with no `child` session receipt is not a completion event |
 
 `eventId` derivation is split, because one identity cannot serve both purposes:
 
@@ -82,12 +81,12 @@ and two interrupted turns in one generation are two facts. Canonical rendering: 
 pipe, integers unpadded, a null attempt as the literal `null`.
 
 A `ready_for_review` receipt may carry an optional `independentReview` item (`definitions.IndependentReview`
-in the schema): what the issue child states about its independent code review, a reference opinion that never
+in the schema): what the `child` session states about its independent code review, a reference opinion that never
 gates a merge. An execution-only receipt does not carry it, and a receipt without it is as valid as before.
 
 An execution-only receipt carries `manifest: null` and the `NO_DELIVERABLE` sentinel of 64 zeros,
 for any producer. The JSON schema only enforces that for daemon observations; the runtime enforces
-it for the issue child too, because the contract prose is the stronger rule.
+it for the `child` session too, because the contract prose is the stronger rule.
 
 ### Canonical manifest serialization
 
@@ -188,16 +187,16 @@ revision-mismatched, or whose relationship is no longer active cannot be accepte
 
 A verdict is `verified`, `needs_changes`, `unverified` or `aborted`, with per-criterion detail, and
 requires an acknowledged event. `needs_changes` opens a new generation and routes the revision
-request back to the SAME issue child. The issue child does not stay active waiting for review; the request
+request back to the SAME `child` session. The `child` session does not stay active waiting for review; the request
 reaches it when it can receive one.
 
 **Recorded boundary.** Contract v1 defines its delivery and acknowledgement record types for the
-issue-child-to-child direction only: the delivery record's recipient is specified as the registered
-child (the project session), and the acknowledgement is authored by that child. The child-to-issue-child revision request therefore
+`child`-session-to-child direction only: the delivery record's recipient is specified as the registered
+child (the project session), and the acknowledgement is authored by that child. The child-to-`child`-session revision request therefore
 reuses the same delivery mechanism but is stored as a relay-internal record, explicitly outside
-those schemas. No issue-child-authored acknowledgement is invented. Receipt is evidenced the way the
+those schemas. No `child`-session-authored acknowledgement is invented. Receipt is evidenced the way the
 contract already provides for: the dispatch receipt's turn id binds the new generation's anchor,
-and the issue child's real answer is its next completion receipt under that generation. A future contract
+and the `child` session's real answer is its next completion receipt under that generation. A future contract
 revision may define this type; this implementation does not silently become that decision.
 
 ## 7. Recorded deviations

@@ -13,8 +13,10 @@ import (
 // threadParams are the members thread/start and thread/fork share: the call's own cwd, the role's pair, the sandbox of
 // the role, no approvals, a persistent thread and the role's prompt - and nothing that names the call. The prompt is the
 // only thing written to developerInstructions: the 0.154 Thread has no such member, so an identity put there could never
-// be read back.
-func (b *Backend) threadParams(role string, qa bool, cwd, sandbox string, pair engine.Pair, limit *int64) (map[string]any, error) {
+// be read back. The run's repository tools (CRW-1488) are config overrides of their own leaf keys, shell_environment_policy.set.<NAME>
+// (engine.RepositoryTools.ShellOverrides), which the host applies key by key over the server's own overrides: the policy the server
+// set stays. Nil tools add none.
+func (b *Backend) threadParams(role string, qa bool, cwd, sandbox string, pair engine.Pair, limit *int64, tools *engine.RepositoryTools) (map[string]any, error) {
 	if !filepath.IsAbs(cwd) {
 		return nil, &engine.RPCError{Message: "a thread starts in an absolute working directory, got " + cwd, CodexErrorInfo: "badRequest"}
 	}
@@ -30,13 +32,23 @@ func (b *Backend) threadParams(role string, qa bool, cwd, sandbox string, pair e
 	params["cwd"] = cwd
 	params["approvalPolicy"] = "never"
 	params["ephemeral"] = false
+	if overrides := tools.ShellOverrides(); overrides != nil {
+		config, _ := params["config"].(map[string]any)
+		if config == nil {
+			config = map[string]any{}
+		}
+		for k, v := range overrides {
+			config[k] = v
+		}
+		params["config"] = config
+	}
 	params["developerInstructions"] = prompt
 	return params, nil
 }
 
 // StartThread implements engine.Backend: thread/start, then thread/read for the pair the thread is configured with.
 func (b *Backend) StartThread(ctx context.Context, spec engine.ThreadSpec) (engine.ThreadInfo, error) {
-	params, err := b.threadParams(spec.Role, spec.QA, spec.Cwd, spec.Sandbox, spec.Pair, spec.AutoCompactTokenLimit)
+	params, err := b.threadParams(spec.Role, spec.QA, spec.Cwd, spec.Sandbox, spec.Pair, spec.AutoCompactTokenLimit, spec.Tools)
 	if err != nil {
 		return engine.ThreadInfo{}, err
 	}

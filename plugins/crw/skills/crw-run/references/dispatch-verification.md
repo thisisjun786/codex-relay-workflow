@@ -1,6 +1,6 @@
 # Dispatch verification
 
-The sessions in this document are named by [the level table](../../crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and an issue child is no layer. The case rows and case blocks below are generated from `docs/crw-run/dispatch-cases` and keep the names they were recorded under: in them the parent is the project session (the child of this table) and the child is an issue child.
+The sessions in this document are named by [the level table](../../crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and a `child` session (a code id, not a layer) is no layer. The case rows and case blocks below are generated from `docs/crw-run/dispatch-cases` and keep the names they were recorded under: in them the parent is the project session (the child of this table) and the child is a `child` session.
 
 A dispatch can fail in four different places, and the four are routinely read as one.
 This reference holds the judgment cases that keep them apart: which fact establishes
@@ -8,17 +8,17 @@ which verdict, what the recorded regression cases already decided, and what a mi
 `crw-loop` looks like when it is real rather than assumed.
 [Prepare and dispatch](../SKILL.md#prepare-and-dispatch) owns the dispatch itself and
 [Observe and verify](../SKILL.md#observe-and-verify) owns the evidence table these cases
-apply. Loop mechanics belong to the issue child's own `crw-loop`/`crw-pabcd`; nothing here
+apply. Loop mechanics belong to the `child` session's own `crw-loop`/`crw-pabcd`; nothing here
 restates them, and nothing here adds a preparation turn before the work starts.
 
 ## Four verdicts, judged separately
 
 | Verdict | Established by | Not established by |
 |---|---|---|
-| Instruction existence | The text of THIS dispatch, read back from the issue child's own accepted turn and the assignment message matching it | A packet draft, a template, the coordinator's intent, the bootstrap and context messages a session opens with, or an earlier launch's prompt on a task being reused |
+| Instruction existence | The text of THIS dispatch, read back from the `child` session's own accepted turn and the assignment message matching it | A packet draft, a template, the coordinator's intent, the bootstrap and context messages a session opens with, or an earlier launch's prompt on a task being reused |
 | Settings request | The real arguments of the call that carried this dispatch | A sentence in the prompt naming a model or a workflow |
 | Settings observed on the task | The receipt's returned model, effort, working directory and permission profile, at the scope the receipt itself claims | A catalog entry, the request quoted back, or a conclusion about what the turn then ran on |
-| Loop execution | The issue child's own session binding, active goal, and current goalplan/FSM state | Opus as the served model, an active native goal, or the skill named in the prompt |
+| Loop execution | The `child` session's own session binding, active goal, and current goalplan/FSM state | Opus as the served model, an active native goal, or the skill named in the prompt |
 
 Which dispatch is being judged decides which evidence answers. For a creation it is the
 assignment message and the creation arguments and receipt. For a reused task it is the
@@ -29,7 +29,7 @@ the workflow.
 Find the assignment message by the dispatch's own marker or receipt rather than by
 position. A session does not open with its assignment: the bootstrap and context messages
 a host injects arrive first and several of them carry the user role, so "the first user
-message" names one of those and would read every normally dispatched issue child as carrying no
+message" names one of those and would read every normally dispatched `child` session as carrying no
 instruction at all.
 
 Third-column evidence is read at the scope its own transport claims, which for a settings
@@ -38,9 +38,9 @@ that follows. What a turn actually ran under is shown by that turn's own record 
 task, and where a claim needs that, the receipt does not supply it.
 
 Each verdict can hold while the next one fails, which is why a single pass/fail for
-"the issue child got its assignment" hides the defect rather than finding it. A packet that
+"the `child` session got its assignment" hides the defect rather than finding it. A packet that
 names the Loop, a creation call that requested it, a receipt that returned the right
-model, and an issue child that never initialized a goalplan are one consistent observation of
+model, and a `child` session that never initialized a goalplan are one consistent observation of
 a failed dispatch, and only the fourth column is wrong.
 
 ## What a missing Loop actually is
@@ -57,13 +57,13 @@ the contrast cases below.
 | L2 | It was invoked, but own-session binding or goalplan/FSM initialization failed | Binding or orchestration attempted and refused, or bound to the wrong session; the refusal itself is the evidence |
 | L3 | A native goal is active and no `crw-loop` exists | Host goal present; no bound goalplan and no persisted phase transitions |
 | L4 | Activation succeeded, then was lost on resume or compaction | Earlier goalplan/FSM evidence exists; the later turn runs without it, or against a second goal for the same assignment |
-| L5 | Running correctly | The issue child's own bound goalplan identifier, current phase, and persisted transitions for this assignment |
+| L5 | Running correctly | The `child` session's own bound goalplan identifier, current phase, and persisted transitions for this assignment |
 | L6 | Insufficient evidence | Nothing readable yet distinguishes the classes above |
 
 L3 is the one most often misread, in both directions. A native goal is what the host
 schedules on; a goalplan and its FSM are what the Loop persists. A child coordinating
 a project holds the first without the second by design, and that is its normal state,
-not an L1 issue child. An implementation issue child that holds only the first has an unarmed loop
+not an L1 `child` session. An implementation `child` session that holds only the first has an unarmed loop
 even though every status surface looks active.
 
 Recovery differs by class and none of these is repaired by sending the assignment again
@@ -77,14 +77,14 @@ correction and [Restoration block](task-packet.md#restoration-block) for a resum
 
 ## Evidence rules that prevent a false verdict
 
-A single reading of activation state is L6, not L1. An issue child still inside its first turn
-reads exactly like an issue child that never armed anything, and the two only separate later.
-This was measured rather than assumed. In one batch of four implementation issue children, a
+A single reading of activation state is L6, not L1. A `child` session still inside its first turn
+reads exactly like a `child` session that never armed anything, and the two only separate later.
+This was measured rather than assumed. In one batch of four implementation `child` sessions, a
 reading taken about two minutes after dispatch found three of them with no bound goalplan;
 all three had in fact armed by roughly two and a half minutes in, and all four went on to
 run with persisted phases. Had that reading been the verdict it would have recorded three
-false L1s. Pair an early reading with a later one, or read the issue child's own report, before
-assigning a class. The per-issue-child timings behind this are operational evidence and stay in
+false L1s. Pair an early reading with a later one, or read the `child` session's own report, before
+assigning a class. The per-`child`-session timings behind this are operational evidence and stay in
 the private task record.
 
 Evidence that cannot change afterwards does not need that patience. A readback of the
@@ -94,24 +94,24 @@ recorded refusal establishes L2 the same way. The caution above is about negativ
 readings, not about definitive prompt evidence or a refusal that was actually observed.
 
 Arming telemetry is not the execution verdict in either direction. In the same sample one
-issue child recorded the arming pointer as seen while holding no goalplan yet, and an earlier
-issue child recorded it as unseen while holding a bound goalplan and slug. What the host noticed
-about the prompt and what the issue child actually persisted are two facts.
+`child` session recorded the arming pointer as seen while holding no goalplan yet, and an earlier
+`child` session recorded it as unseen while holding a bound goalplan and slug. What the host noticed
+about the prompt and what the `child` session actually persisted are two facts.
 
-Model identity is not Loop evidence. An issue child may be on the defaulted model and effort and
-be running no loop at all; an issue child on an explicitly different model may be running one.
+Model identity is not Loop evidence. A `child` session may be on the defaulted model and effort and
+be running no loop at all; a `child` session on an explicitly different model may be running one.
 
 A phrase check is not any of these verdicts. Grep over a prompt finds instruction
 existence at best, and only in the copy that was actually dispatched; it finds nothing
 about application or execution. Judge L5 from the goal and goalplan identifiers, current
-phase and completion evidence the issue child returns, which
+phase and completion evidence the `child` session returns, which
 [Launch packet](task-packet.md#launch-packet) already requires it to report.
 
 ## The record form of that separation
 
 The four verdicts and the seven classes above are read by a person. The same separation has a
 record form in `relay-packet/1`, which carries activation as three fields rather than one:
-whether the invocation was in the assignment, whether the issue child's own binding and goalplan
+whether the invocation was in the assignment, whether the `child` session's own binding and goalplan
 answer, and whether a host goal is active. Each names the record that answered it, and an
 answer with no record behind it is `unverified` rather than absent - which is the same
 caution this file states above, that a single negative reading is L6 and not L1.
@@ -120,7 +120,7 @@ The mode decides which of the three can answer at all. A coordination child hold
 goal and persists no implementation FSM by design, and an authorized non-Loop assignment arms
 neither, so both answer `not_applicable` for the activation field and classify as L5. That
 is what stops the L3 misreading in the second direction: reading a child's normal state as
-an unarmed issue child.
+an unarmed `child` session.
 
 The classes are derived in the order this file gives them. What cannot change afterwards is
 read first - a prompt with no invocation is L0 whatever happens later, and a recorded refusal
@@ -210,7 +210,7 @@ a case whose owner has moved or been reworded before relying on it.
 S14 and S17 are the pair that is easiest to confuse. S14 removed the readiness turn; S17
 added a capability check the coordinator performs before creating the task. A check that
 happens on the coordinator's side, before anything exists to answer, is not a turn spent
-asking the issue child whether it is ready.
+asking the `child` session whether it is ready.
 
 S21 is unobserved in a run. The command it relies on has Go tests over its answers, and the 33 recorded issues of five projects were replayed
 through it (the 31 that finished small answer `ok`, CRW-183 and CRW-184 answer `over_line`). Whether a child runs it before
@@ -218,38 +218,38 @@ through it (the 31 that finished small answer `ok`, CRW-183 and CRW-184 answer `
 this text, not a measurement; the first project run after it lands is where to look.
 
 S19 and S20 were read against P-CRW-115, a relay-managed project run: its six issue
-issue children, whose pull requests are #271 to #276 (merges 14b01079, 6b5ba199, 9fb54f4b,
+`child` sessions, whose pull requests are #271 to #276 (merges 14b01079, 6b5ba199, 9fb54f4b,
 ca4316b4, 2ecad795 and 3a71c5d5), read on 2026-10-02 at dev 3a71c5d5. S19 was written before
 the run (PR #269, commit 15796f52); S20 was introduced during it, by PR #272 (commit
 bf4bc149). The receipts and relay records read for this are private and are not linked.
 
 S19 is partly measured. All six packets carried the `Language:` line, and what was inspected
-of what the issue children published is English: the titles and bodies of the six pull requests,
+of what the `child` sessions published is English: the titles and bodies of the six pull requests,
 their 34 commit messages and the 9 non-bot replies and comments on them contain no Korean,
-read through and searched for Hangul, and the seven receipt artifacts the issue children emitted
+read through and searched for Hangul, and the seven receipt artifacts the `child` sessions emitted
 read as English too. This is one run in which the line was always present, so it shows that
-the instruction held for those artifacts when it was given, not what an issue child without it
-would write. Two things were not measured. An issue child's own messages and final return, which
-the row also names, are not published and were not read. The CRW-255 issue child reported that its
+the instruction held for those artifacts when it was given, not what a `child` session without it
+would write. Two things were not measured. A `child` session's own messages and final return, which
+the row also names, are not published and were not read. The CRW-255 `child` session reported that its
 internal independent reviewers wrote their reports in Korean; those reports are in no pull
 request, commit or receipt and the report could not be checked, but the audit reviewer of
-the CRW-257 issue child, given an English prompt, also answered in Korean, so the line does not
-seem to reach a subagent's report. The line names the issue child's own messages and final return,
+the CRW-257 `child` session, given an English prompt, also answered in Korean, so the line does not
+seem to reach a subagent's report. The line names the `child` session's own messages and final return,
 its commit messages, its pull request text and its receipt text, not a subagent's report, so
 this does not change what was measured. Whether a reviewer's report should follow the same
 line is a change to the rule, not a finding about this run.
 
 S20 did not occur in the seven receipts read. All seven completion receipts of the six
-issue children (CRW-255's twice, because its first receipt drew a revision request) were emitted
+`child` sessions (CRW-255's twice, because its first receipt drew a revision request) were emitted
 from a turn the relay had already admitted: the business turn managed-start delivered, in
 generation 1, and, for CRW-255's generation 2, the generation's anchor, which is the turn
 its revision request arrived in. Each receipt's turn was compared with that admitted turn as
 the relay reports it, so none needed a continuation claim (a receipt from an admitted turn
-is accepted without one) and the case the row decides, an issue child finishing on a
+is accepted without one) and the case the row decides, a `child` session finishing on a
 goal-continuation or post-restart turn the relay did not admit, was not seen. The row rests
 on the tests and documentation of PR #272, not on a live run. The run does show one thing
 about the procedure: the generation-2 anchor is not the `standbyTurnId` of the routing
-record, which the managed-start routing text still tells an issue child to name for a continuation
+record, which the managed-start routing text still tells a `child` session to name for a continuation
 claim (an open entry in the refactor backlog's real-use run 3 list).
 
 S22 to S22e rest on a reading of the code and on tests, not on a live child run. The code
@@ -273,15 +273,15 @@ an installed runtime, and the rule under load.
 
 S23, S23b and S23c were read on 2026-10-03 against the pull requests #278 to #294 as GitHub
 showed them and this checkout at dev 53c7e4e8. They measure published artifacts and this host.
-None of them measures an issue child that read the new wording, which waits for the next run, and
-a title alone does not show why an issue child chose it.
+None of them measures a `child` session that read the new wording, which waits for the next run, and
+a title alone does not show why a `child` session chose it.
 
 S23: the seventeen titles were read with `gh pr view N --json title` and tested for Hangul. Six
 are the Korean task title in the task-title shape: #282, #285, #287, #292, #293 and #294. The
 other eleven are English, in several shapes (`CRW-263: ...`, `fix(relay): [CRW-271] ...`,
 `CRW-270 · per-parent due cap and parent-id rotation`). CONTRIBUTING.md and POLICY.md of this
 repository state no title format, so the rule defers to the rules of the target repository and
-has the packet name a shape where there is none. The packets of those issue children are not in the
+has the packet name a shape where there is none. The packets of those `child` sessions are not in the
 repository: the refactor backlog records that the packets of #282 and #285 carried a `Language:`
 line naming the pull request's title, and nobody checked it for the other four.
 
@@ -309,9 +309,9 @@ behind the `dev` tag listed without `-tags dev`, fail with exit 1.
 S24 to S24e were read on 2026-10-03 against this checkout at dev ced7de60, and the code they cite
 (the base-refresh helper, the merge-evidence reading and the emit command) was unchanged when dev
 moved to 6071bc8a. They rest on a reading of the text and of that code, and on one experiment; none has been seen working in a
-run, and no issue child or child has read the new wording yet, which waits for the next real-use run. The
+run, and no `child` session or child has read the new wording yet, which waits for the next real-use run. The
 observations that motivated the rules are the issue's own analysis of 27 issues: two of the three
-defects a child sent back had been rated High by the issue child's own review and rejected without a
+defects a child sent back had been rated High by the `child` session's own review and rejected without a
 trace in the receipt, 12 of 27 internal code reviews ran at or after the pull request was created
 and so overlapped the hosted review on one head, and the re-audits that followed a base refresh took
 12 rounds and 54 minutes and found no product defect. Those numbers come from the issue text. The
@@ -332,11 +332,11 @@ listed the one merge made here. The helper stops at the first refusal it meets f
 conflicting merge for example, which is why the verdict accounts for every first-parent commit after
 the reviewed head and does not rely on it alone. Not measured: mechanical and manual refreshes
 beyond those synthetic merges (no rule-resolved hunk was reproduced by a command), the forge, a
-relay holding a handoff that carries the member, and any issue child or child following the text.
+relay holding a handoff that carries the member, and any `child` session or child following the text.
 
 S25, S25b and S25c were read on 2026-10-03 against this checkout at dev ced7de60 and the original plugin
 0.2.40+codex.20260929183231. They decide what the packet and the integration text say. None was
-observed on an issue child that read the new wording: whether an issue child stops at the push step is to be
+observed on a `child` session that read the new wording: whether a `child` session stops at the push step is to be
 observed in the next real-use run, and a test that matches the wording would show only that the text
 is present.
 
@@ -344,11 +344,11 @@ S25: `DEV-GIT-PUSH-01` is skill prose in `crw-dev`, ported from the original plu
 bullet "Push requires explicit user approval", class ESCALATE). A search of the original plugin's
 non-Markdown files, hooks and compiled components included, for the rule identifier returned no match. That shows no hook cites it
 by name, not that nothing equivalent exists, so the one mechanism found is the rule text itself: a
-issue child stops if it reads the rule and follows it. The coordinator's reading of the October issue child
-rollouts on 2026-10-03, which was not repeated here, found no issue child that stopped pushing because of
-it, so the conflict is latent: a change of model or effort could make an issue child that follows the rule
+`child` session stops if it reads the rule and follows it. The coordinator's reading of the October `child` session
+rollouts on 2026-10-03, which was not repeated here, found no `child` session that stopped pushing because of
+it, so the conflict is latent: a change of model or effort could make a `child` session that follows the rule
 to the letter report BLOCKED at the push step. The sentence is wording, so it is an early warning
-and no enforcement. An issue child can still read the rule first and stop, and "never merge" rests on
+and no enforcement. A `child` session can still read the rule first and stop, and "never merge" rests on
 this text and on the coordinator's review of the pull request, with the merge gate that POLICY.md
 describes. Whether that gate is active on the server was not read back here.
 
@@ -356,15 +356,15 @@ S25b: the hook ported from the original plugin's `hooks/pre-tool-use-guarding-in
 user-input request while a goal is active (the original plugin denied it in
 components/pabcd-state/dist/goal-gate.js, read as source and not observed on a host); in CRW that judgment is a
 warning with a decision record, not a denial (a reversible action gets no hard gate), so the first half of the
-line holds by the issue child's packet, not by the hook. That a `blocked_needs_input` turn then reaches the
+line holds by the `child` session's packet, not by the hook. That a `blocked_needs_input` turn then reaches the
 child is not shown: [OPS-8.1](operations.md#ops-81-parent-continuation-and-waiting) says whether
 anything enqueues a delivery for that disposition is a property of the installed runtime and
-unmeasured, which is why the line has the issue child emit the outcome where a relay holds the assignment. The line
+unmeasured, which is why the line has the `child` session emit the outcome where a relay holds the assignment. The line
 read "over a file" when this was recorded; an execution-only receipt carries no file (the relay
 refuses one with `manifest_forbidden`), and CRW-500 changed the line to emit it without one. No
-issue child's use of the route was observed.
+`child` session's use of the route was observed.
 
-S25c: read-only over the working-tree goalplan files of this host's CRW issue child worktrees (private,
+S25c: read-only over the working-tree goalplan files of this host's CRW `child` session worktrees (private,
 not linked). Since 2026-10-01 they hold 33 plans with work-phases: 24 with one, 4 with two (three
 are a generation-2 correction, one is an implementation followed by a publication phase) and 5 with
 three or more, four of which record a docs-only roadmap phase first; an independent recount
@@ -392,16 +392,16 @@ of the Launch packet, in the workflow bullet of the Restoration block and in the
 execution paragraph, which the packet points to. It does not waive `LOOP-DOCS-FIRST-01` when a loop
 is entered, or the roadmap debt for new scope found later: it says only that these three later steps
 are not the first work-phase of new work. The rule text is not changed and still counts
-work-phases, so the line is how CRW reads that rule for its own issue children. Not observed: an issue child
+work-phases, so the line is how CRW reads that rule for its own `child` sessions. Not observed: a `child` session
 reading the line at a correction, a base refresh or a publication step; that waits for the next
 real-use run, and a test that matches the wording would show only that the text is present.
 
 S26 was read on 2026-10-03 against this checkout at dev 321f5bd0. The observation behind it is the
-issue's account of real use that day: an issue child stopped its own tests with `pkill -f 'make test'`
-while the issue children of several projects ran `make test` in their own worktrees on this host, and
-another issue child's local test part ended on a signal at about the same time (its hosted CI passed, so
+issue's account of real use that day: a `child` session stopped its own tests with `pkill -f 'make test'`
+while the `child` sessions of several projects ran `make test` in their own worktrees on this host, and
+another `child` session's local test part ended on a signal at about the same time (its hosted CI passed, so
 no merge was affected). The account is the issue's, taken from a child's report; that report and
-the other issue child's test output are private and were not re-read, and nothing here shows that the
+the other `child` session's test output are private and were not re-read, and nothing here shows that the
 pattern kill caused the signal. Before the change `rg -i 'pkill|killall' plugins/crw/skills` found
 nothing. The close-of-run paragraph of SKILL.md already said that a busy port, a matching command
 line or a familiar directory does not identify an owner and that a process the run cannot claim is
@@ -417,16 +417,16 @@ group id equal to that pid; a TERM to that pid alone left its two child processe
 the command and its two children in one process group and left nothing in that group at expiry
 (exit 124); and two processes with identical command lines were told apart only by pid. That is
 why the line names the recorded pid and the group, and says that the pid of a shell or of `make`
-alone is not enough for a tree. Not measured: an issue child or a child following the new wording, the
+alone is not enough for a tree. Not measured: a `child` session or a child following the new wording, the
 reuse of a recorded pid, `timeout --foreground`, and macOS, which was not tried (the line names
 `setsid` only as an example, and `timeout` because the issue does). The line is an instruction.
 Nothing in this repository enforces it and the host's hooks and sandbox profile were not checked
-for a refusal of `pkill`, so an issue child that never reads it can still use it, and a test that matches
+for a refusal of `pkill`, so a `child` session that never reads it can still use it, and a test that matches
 the wording would show only that the text is present.
 
 S27 to S27f decide what the merge gate and the first-run wait say. They rest on the coordinator's
 instructions of 2026-10-03 (Jun's decisions, relayed at about 16:50 to 17:05 KST) and on what the forge
-shows, not on a child or issue child that read the new wording. Read through `gh`, read-only, on 2026-10-03: the
+shows, not on a child or `child` session that read the new wording. Read through `gh`, read-only, on 2026-10-03: the
 `Devin Review` status descriptions on the current heads of 15 pull requests chosen by recency. The
 credits-exhausted text `Full review skipped: trial expired and no credits remaining`, state `success`, is on
 359, 366, 367 and 368, the earliest created 07:40:47Z with no pending status before it; `Completed analysis
@@ -449,9 +449,9 @@ the two bots on pull requests 318 to 377 (the 60 most recent when read at about 
 
 Not measured: the move from in progress to finished for Devin (it skipped), a Codex review that finished with
 no findings in this state of the system (the thumbs-up is read from 365, 367 and the Codex footer), and any
-child or issue child applying the text. One review per pull request and the 30-minute rule are the coordinator's statements, not read from
+child or `child` session applying the text. One review per pull request and the 30-minute rule are the coordinator's statements, not read from
 either reviewer's configuration. The registered criteria c1, c5 and c7 of this issue say that no Devin review
-is waited for; the later instruction has the issue child wait for the first run before its receipt, the rows follow
+is waited for; the later instruction has the `child` session wait for the first run before its receipt, the rows follow
 the later instruction, and the handoff asks the coordinator to record that amendment.
 
 S27g to S27i were read from the code and the skill text and have not been exercised on a relay.
@@ -463,7 +463,7 @@ refuses a needs-changes ruling on a result a plan accepted and on one marked mer
 internal/relay/evidence/mergeevidence.go refuses a record whose unresolved count is not zero). The installed relay at
 the time of writing is older than the source: `merge-evidence --help` there lists no `--late-dispositions`, which is why
 S27h, the temporary procedure, stays. That procedure rests on the coordinator's statement of 2026-10-03 (about
-17:05 KST) that a late minor thread is triaged by the coordinator and the issue child only emits its receipt again, and a late
+17:05 KST) that a late minor thread is triaged by the coordinator and the `child` session only emits its receipt again, and a late
 thread inside the issue's scope, or a P0 or security one, is sent back. The split by stage and the hold after the acceptance are this text's
 reading of step 6 of the base-conflict procedure, not a coordinator statement. Neither route has been run on a relay.
 
@@ -547,7 +547,7 @@ issue-owning implementation child.
 
 These are instructions, and no hook, gate or script enforces them. A coordinator that
 never loads this skill never applies them, and the evidence above is readable only where
-the transport exposes the issue child's own state and report. Where a class is not
+the transport exposes the `child` session's own state and report. Where a class is not
 distinguishable, the honest verdict is L6.
 
 Where the cause is not the assignment text — an installed runtime that refuses a
@@ -556,5 +556,5 @@ that conveys the workflow by naming the skills rather than by the invocation thi
 specifies — this reference records the observation and the owning issue takes the repair.
 An outcome that came out right through a path the contract did not specify is still worth
 routing, because the next dispatch on that path has no guarantee. Correcting an
-instruction here does not change an installed skill, a running issue child, or a registered
-hook, and none of these cases is a reason to reset an issue child that is still working.
+instruction here does not change an installed skill, a running `child` session, or a registered
+hook, and none of these cases is a reason to reset a `child` session that is still working.

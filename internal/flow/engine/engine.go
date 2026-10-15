@@ -100,6 +100,8 @@ type Config struct {
 	// the subagents it spawns, instead of starting threads through Backend. The run's started row records the backend
 	// (`backend`), and a resume on the other backend is refused.
 	Session *SessionConfig
+	// Tools are the repository tools the configuration names (CRW-1488), given to every agent call the run starts; nil gives none.
+	Tools *RepositoryTools
 }
 
 // SnapshotRequest is a call as the input snapshot sees it.

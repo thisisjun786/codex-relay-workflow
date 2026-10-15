@@ -104,7 +104,7 @@ func TestChildSkillDefaultPathIsTheFlowRun(t *testing.T) {
 	opening := normalized(text[:strings.Index(text, "\n## ")])
 	for _, p := range wordingMissing(opening, []string{
 		`(?i)default path[^.]*flow run[^.]*(role )?subagents?`,
-		`(?i)starts? no issue child`,
+		`(?i)starts? no \x60child\x60 session`,
 		"`size_split`",
 		"`child_retired`",
 		`(?i)bundle split`,
@@ -112,7 +112,7 @@ func TestChildSkillDefaultPathIsTheFlowRun(t *testing.T) {
 	}) {
 		t.Errorf("the opening of crw-run lacks %s", p)
 	}
-	if m := regexp.MustCompile(`(?i)SP-CHILD-1|releases? (that|the) issue child`).FindString(opening); m != "" {
+	if m := regexp.MustCompile(`(?i)SP-CHILD-1|releases? (that|the) \x60child\x60 session`).FindString(opening); m != "" {
 		t.Errorf("the opening of crw-run says the run starts an issue child (%s), a path the project lane retired", m)
 	}
 	issue := normalized(sectionOf(text, "Independent implementation tasks"))

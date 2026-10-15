@@ -1,6 +1,6 @@
 # Managed marker, completion state, and hook adjudication
 
-The sessions in this document are named by [the level table](../../crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and an issue child is no layer.
+The sessions in this document are named by [the level table](../../crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and a `child` session (a code id, not a layer) is no layer.
 
 Read when deciding whether a Codex hook may conclude that a managed assignment finished, or when
 implementing the marker, disposition, and blocking behaviour that later issues install. This
@@ -26,8 +26,8 @@ producers, none of which is prose and none of which is a turn boundary:
 
 | Producer | Record | What it establishes |
 | -- | -- | -- |
-| The issue child | A turn disposition of `ready_for_review` for the current `turn_id` | The issue child's own declared intent, not inferred from its text |
-| The issue child, verified by the consumer | A relay receipt naming this session, this turn and this assignment's relationship, under the generation that assignment registered, whose manifest digest is recomputed against the bytes on disk | That named artifacts exist with the claimed content, for this declaration rather than some other one |
+| The `child` session | A turn disposition of `ready_for_review` for the current `turn_id` | The `child` session's own declared intent, not inferred from its text |
+| The `child` session, verified by the consumer | A relay receipt naming this session, this turn and this assignment's relationship, under the generation that assignment registered, whose manifest digest is recomputed against the bytes on disk | That named artifacts exist with the claimed content, for this declaration rather than some other one |
 | The host | `turn_status` of `completed` for that turn, observed through the relay's existing turn observation | That the turn ended normally rather than failing or being interrupted |
 
 The identity on these records is load-bearing, not decoration. A receipt from an earlier turn, or from
@@ -45,7 +45,7 @@ because that is the form the rule gets violated in: `None == None` is not eviden
 | A turn disposition against the current turn | The disposition is not this turn's, so this turn declared nothing and reads `undeclared_turn_end` |
 | A readiness receipt against the current turn and the selected assignment | The receipt is unmatched, so readiness stands unreceipted |
 | A claim against the session being judged | The claim names no verified owner, so it selects no assignment. A claim whose `dispatchRequestId` names nothing correlates with no assignment either, so after a bind it reads `claim_uncorrelated` and the turn is released |
-| A bind record against the session being judged | Nothing can be shown to be the bound issue child, so the state is `bound_identity_unnamed` and the turn is released, never held |
+| A bind record against the session being judged | Nothing can be shown to be the bound `child` session, so the state is `bound_identity_unnamed` and the turn is released, never held |
 
 The disposition comparison is the load-bearing one because it is upstream. A disposition admitted on
 matching absences supplies the outcome every later rule reads, and an admitted releasing outcome ends
@@ -87,11 +87,11 @@ is always a valid earlier state rather than a corrupt one.
 **A workspace path outlives the assignment that used it**, which is why the assignment owns a level of
 its own instead of the workspace hash directly. A reused worktree would otherwise resolve to the
 previous assignment, and because every fact there is create-once the new coordinator's `intent.json`,
-`bound.json` and `relationship.json` all fail `EEXIST` while the new issue child reads the previous
+`bound.json` and `relationship.json` all fail `EEXIST` while the new `child` session reads the previous
 session's bind and releases. The undeclared turn that is held on a fresh workspace then goes unheld on
 a reused one: this contract's detection gap, reappearing through path reuse. Keying on the dispatch
 request id hash means two coordinators sharing one dispatch collide exactly as they do today, and two
-different dispatches never collide at all. The issue child does not search for its directory either: it
+different dispatches never collide at all. The `child` session does not search for its directory either: it
 holds the dispatch request id preimage, so it computes the same hash the coordinator used.
 
 Selecting among the assignments listed under one workspace hash:
@@ -100,11 +100,11 @@ Selecting among the assignments listed under one workspace hash:
    "this session" is read from the claim's path and the body is required to name it and agree. The
    path proves who could have written the record; only the body says the writer meant to claim the
    assignment, and an assertion nobody made must not be inferred from a directory that happens to
-   exist. An issue child stays
+   exist. A `child` session stays
    with the assignment it claimed, so declaring a later assignment for the same path can neither
-   release a still-running earlier issue child nor make it read as somebody else's. Selecting on the body
+   release a still-running earlier `child` session nor make it read as somebody else's. Selecting on the body
    instead would hand that protection to the attacker it protects against: a later assignment's
-   issue child may write inside its own claim directory, so it could name an earlier session there and
+   `child` session may write inside its own claim directory, so it could name an earlier session there and
    capture that session's Stop. Should a session somehow hold claims in more than one assignment,
    the newest intent among them wins, ties broken on assignment id.
 2. Otherwise the newest `intent.declaredAt` wins, ties broken on the assignment id so that every
@@ -127,9 +127,9 @@ intent for its workspace, and for no other reason.
 | `relationship.json` | Coordinator | `relationshipId`, `executionGeneration`, `at` |
 | `resolutions/<n>.json` | Coordinator | `chosenTaskId`, `chosenSessionId`, `reason`, `at`, and `adjudicated`, the list of `{factId, digest}` entries it covers |
 | `conflicts/<n>.json` | Coordinator | `attemptedSessionId`, `attemptedTaskId`, `loserProcess`, `at`, written by a binder that lost the publication race |
-| `claims/<session_id>/claim.json` | Issue child session | `dispatchRequestId` preimage, `sessionId`, `firstTurnId`, `at` |
-| `dispositions/<session_id>/<turn_id>.json` | Issue child session | `sessionId`, `turnId`, `outcome`, `at` |
-| `hook/<session_id>/<turn_id>/<seq>.json` | Issue child's hook | `observation`, `decisionState`, `held`, `sessionId`, `turnId`, `at` |
+| `claims/<session_id>/claim.json` | `child` session | `dispatchRequestId` preimage, `sessionId`, `firstTurnId`, `at` |
+| `dispositions/<session_id>/<turn_id>.json` | `child` session | `sessionId`, `turnId`, `outcome`, `at` |
+| `hook/<session_id>/<turn_id>/<seq>.json` | `child` session's hook | `observation`, `decisionState`, `held`, `sessionId`, `turnId`, `at` |
 
 Every fact carries `factId`, its own create-once relative path. Readers use that id and never a list
 position: prepending a fact would otherwise silently re-point an existing adjudication at evidence
@@ -145,21 +145,21 @@ hold produces a continuation and another Stop, and because a turn can be seen be
 again after it. A single create-once file per turn would let the first observation consume the only
 name available and silently lose every later one, so the sequence number is part of the identity.
 
-**Binding is coordinator-only. The issue child claims but never binds.** Only the party holding the
+**Binding is coordinator-only. The `child` session claims but never binds.** Only the party holding the
 creation receipt can tell "the task I created" from "a session that read an id", so only it writes
-`bound.json`. An issue child writes a claim, which correlates a session to an intent and confers nothing
+`bound.json`. A `child` session writes a claim, which correlates a session to an intent and confers nothing
 else. The consequence worth stating plainly: a hold is only ever possible downstream of a coordinator
-write, so an issue child cannot put itself into a holdable state through the decision logic. That is a
-property of the decision, not of the filesystem. Whether an issue child can instead reach the holdable state
+write, so a `child` session cannot put itself into a holdable state through the decision logic. That is a
+property of the decision, not of the filesystem. Whether a `child` session can instead reach the holdable state
 by writing where it should not be able to write depends entirely on the isolation described under
 permissions, which is not enforceable everywhere. Where that isolation cannot be enforced, holding
 must not be activated at all; see the activation prohibition there.
 
 **Both writes are required before a turn can be held**, and the unconditional release on an unclaimed
 marker means exactly this: the coordinator's bind alone does not make a session holdable, because the
-coordinator can publish the bind and the relationship before the issue child publishes its claim. Until the
+coordinator can publish the bind and the relationship before the `child` session publishes its claim. Until the
 session's own claim is there, its turns read `marker_unclaimed` and are released and recorded. The bind
-says who the coordinator believes the issue child is; the claim is the session saying so itself, and a turn
+says who the coordinator believes the `child` session is; the claim is the session saying so itself, and a turn
 is only ever held against a session that has said it.
 
 **The claim has to be this assignment's claim, on both sides of the bind.** Correlation is a chain
@@ -174,7 +174,7 @@ inside the marker chooses.
 Before the bind a broken chain reads `dispatch_uncorrelated`; after it, `claim_uncorrelated`.
 Both are released and recorded, and the second is answered apart from `marker_unclaimed` because
 the two clear differently: an unclaimed marker is the bind-before-claim race and ends the moment the
-issue child publishes, while every fact in this chain is create-once, so a claim already standing at
+`child` session publishes, while every fact in this chain is create-once, so a claim already standing at
 `claims/<session>/claim.json` with the wrong dispatch request id can never be replaced by the
 correct one. Recovery is therefore adjudication or superseding the relationship, not repair in
 place. The record carries which link broke - `claim_dispatch_unnamed`, `claim_dispatch_mismatch`,
@@ -187,7 +187,7 @@ ever turns a would-be hold into a release.
 
 **Selection asks which assignment, not whether it holds together.** A workspace outlives the
 assignment that used it, so several assignments can sit under one path and the reader consults this
-session's claim before recency to keep a running issue child with the assignment it claimed. That claim
+session's claim before recency to keep a running `child` session with the assignment it claimed. That claim
 has to name the assignment it sits in. Read on the claimant alone, one uncorrelated file written
 into a NEWER assignment selected that assignment, the decision path refused it, the turn released,
 and an older assignment the session was correlated, bound and registered under never had its
@@ -200,7 +200,7 @@ assignment the claim belongs to.
 The claim says WHICH assignments are this session's. Which of them is CURRENT is the declaration,
 and only the declaration: an assignment comes into existence by being declared, so a successor's
 declaration necessarily follows its predecessor's and cannot be made to precede it. Nothing else
-available here has that property. The claim's timestamp is written by the issue child, so a forward-dated
+available here has that property. The claim's timestamp is written by the `child` session, so a forward-dated
 stale claim would pin every later turn to an assignment where a releasing disposition is already
 published. An attempt is append-only and arrives on reconciliation, so a lost January response
 settled in March would revive January's assignment - which T3 already says is identity evidence and
@@ -280,7 +280,7 @@ vector: the fact `{"factId": "conflicts/0", "at": "2026-01-01T00:06:00+00:00"}` 
 
 Coverage never reads timestamps. Publication order is not timestamp order, so a fact published after
 a resolution can carry an earlier or equal `at` and would otherwise be covered with nobody having
-reviewed it. That would hand an issue child a way to clear its own contest, which it must never have.
+reviewed it. That would hand a `child` session a way to clear its own contest, which it must never have.
 
 A fact carrying no `factId` can never be covered. That denial is deliberate, and its recovery is
 escalation rather than softening: create-once records cannot be repaired in place, so the assignment
@@ -342,7 +342,7 @@ here. Treat the write protocol as specified-but-unexercised until an implementat
 | ID | Interleaving | Derived state, and what the hook does |
 | -- | -- | -- |
 | T0 | Normal: intent, accepted, bound, claim, relationship, then turns | `intent_declared`, `creation_accepted`, `identity_bound`, `relationship_registered`. A Stop landing at `identity_bound` reads `managed_unregistered` |
-| T1 | Pre-response issue child: intent, then the issue child claims and ends a turn, then acceptance and bind arrive | At that Stop the state is `intent_declared` and the hook reads `correlated_unbound`: release, and record the observation. After the bind the coordinator folds that record and sees the undeclared first turn |
+| T1 | Pre-response `child` session: intent, then the `child` session claims and ends a turn, then acceptance and bind arrive | At that Stop the state is `intent_declared` and the hook reads `correlated_unbound`: release, and record the observation. After the bind the coordinator folds that record and sees the undeclared first turn |
 | T2 | Duplicate acceptance: two accepted attempts naming different task ids, no bind | `ambiguous_identity`, withheld until the coordinator writes `resolution` and then `bound` |
 | T3 | Delayed acceptance after bind: an `unknown` attempt, reconciliation, bind, then a late `accepted` | `creation_unknown` then `identity_bound`. A late attempt naming the same task changes nothing; a different task sets `identity_contested` and the bind stands |
 | T4 | Concurrent bind by two coordinator processes | One `EEXIST`. Same value is a no-op. A different value means the loser writes a `conflicts/<n>.json` record naming what it tried to bind, because writing nothing would leave the contest invisible to every later reader, and the assignment stays `identity_contested` until a resolution naming the bound identity covers that exact record |
@@ -352,10 +352,10 @@ here. Treat the write protocol as specified-but-unexercised until an implementat
 | T8 | Expiry, then a late claim | `intent_expired` by the reader's clock. The claim leaves it unbound and `correlated_unbound`; only a coordinator bind changes that |
 | T9 | Immutable identity: after bind, a delayed write of any other fact and a second bind attempt | Other facts land as their own files; the second bind fails `EEXIST`; `bound.sessionId` never changes |
 | T10 | A writer dies mid-write | An orphan temp, no target, derived state unchanged. A retry either succeeds or gets `EEXIST` from whoever completed it |
-| T11 | A workspace path reused by a later assignment | The new issue child resolves to its own assignment and its undeclared turn is held exactly as on a fresh workspace. Named by the workspace alone it read the previous session's bind and released instead |
+| T11 | A workspace path reused by a later assignment | The new `child` session resolves to its own assignment and its undeclared turn is held exactly as on a fresh workspace. Named by the workspace alone it read the previous session's bind and released instead |
 | T12 | A published record that names no identity | A disposition naming no turn declared nothing, so the turn reads `undeclared_turn_end`; a bind naming no session reads `bound_identity_unnamed` and releases |
-| T13 | A later assignment declared for the path while the earlier issue child is still running | The earlier issue child stays with the assignment it claimed. A newer intent neither releases it nor makes it read as somebody else's, which is why selection consults the claim before recency |
-| T14 | A later assignment's issue child names an earlier session in its own claim body | The claimant comes from the path the write was authorised against, and a body contradicting its path voids the fact, so the earlier issue child keeps its assignment and its undeclared turn is still held. Selecting on the body released it instead |
+| T13 | A later assignment declared for the path while the earlier `child` session is still running | The earlier `child` session stays with the assignment it claimed. A newer intent neither releases it nor makes it read as somebody else's, which is why selection consults the claim before recency |
+| T14 | A later assignment's `child` session names an earlier session in its own claim body | The claimant comes from the path the write was authorised against, and a body contradicting its path voids the fact, so the earlier `child` session keeps its assignment and its undeclared turn is still held. Selecting on the body released it instead |
 | T15 | One session holding a current-head receipt earned under another assignment's relationship | The receipt names this session and this turn and is still not this assignment's, so readiness stands unreceipted |
 | T16 | A competing claim that leaves its session blank | It competes anyway, because the owner is read from the path. Read from the body it vanished and `identity_contested` went false, which is the one thing that lets a verdict settle over unadjudicated evidence |
 | T17 | A competing claim that writes the bound session's name into its own body | It competes anyway. This is the variant that defeats reading the path alone: a body contradicting its location voids the fact as an identity, and if voiding also deleted it the competitor would have found the cleanest exit of all |
@@ -363,14 +363,14 @@ here. Treat the write protocol as specified-but-unexercised until an implementat
 | T19 | A session that left a path-only claim in an older assignment, whose own assignment has not published its claim yet | It stays with its own. Reading the path as an assertion captured it in the older one and released its undeclared turn as somebody else's marker; a claim naming nobody owns nothing, so selection falls through to the newest published intent |
 | T20 | A store that could not be fully read, carrying a fact that is not a fact | Still `state_unreadable`, and still recorded. Deciding whether to summarise the marker by the state's name rather than by whether the marker is readable left this combination deriving from records that were not records, so the hook ended with nothing recorded at all |
 | T21 | A hold count that is not a count, at the one boundary that reads them | `marker_malformed`. The counts are read only when a hold is weighed, so this is reachable nowhere else, and a reader counts its own hook records: a non-integer says the store it counted is wrong. Reported rather than read as zero, which would quietly hand back a full hold budget |
-| T22 | The bind and the relationship published before the issue child's claim | `marker_unclaimed`: released and recorded. The coordinator holds the creation receipt, so it can bind first, and that race must not prompt a session which never asserted this assignment. A hold needs the issue child's own claim, not only the coordinator's bind |
+| T22 | The bind and the relationship published before the `child` session's claim | `marker_unclaimed`: released and recorded. The coordinator holds the creation receipt, so it can bind first, and that race must not prompt a session which never asserted this assignment. A hold needs the `child` session's own claim, not only the coordinator's bind |
 | T23 | A resolution whose adjudication list, or an entry in it, is not a record | `marker_malformed`. The list is read to decide coverage, so validating the resolution and not its nested list left the same silent failure one level down |
 | T24 | Present null counter record or count, or negative persisted counts | `marker_malformed`: release and record corruption. Only absent optional counters default to zero; corrupt counts cannot renew a hold budget |
 | T25 | Array/object identities in either resolution form or an accepted attempt | `marker_malformed` before identity set construction; no traceback can suppress the observation |
 | T26 | Present null chosen identity or adjudication list in either resolution form | `marker_malformed`, released and recorded; absent legacy fields still confer no identity or coverage |
 | T27 | A releasing disposition with corrupt persisted counters | Preserve the declared disposition; counters are validated only when an omission hold is weighed |
 | T28 | Bound and registered, with a claim naming a dispatch request id that hashes elsewhere; and the variant where a forged intent agrees with that claim | `claim_uncorrelated` both times: released and recorded, with the broken link in `claimEvidence` and the replaced classification in `pendingObservation`. The post-bind path asked only whether the claimant was this session, so an uncorrelated claim satisfied the hold precondition and the turn was held, indistinguishable from a correlated one. The variant is why the chain runs through the assignment: an intent and a claim agreeing about a foreign dispatch correlate with each other and with nothing dispatched. Kept apart from `marker_unclaimed` because a create-once claim carrying the wrong dispatch never clears itself, and apart from a declared outcome, which is still read first |
-| T29 | Two assignments under one workspace: the older correlated, bound, registered and owing a hold, the newer carrying a claim by the same session that names a foreign dispatch | The older one is selected and held. Selection consults this session's claim before recency, and consulting the claimant alone let one uncorrelated file select the newer assignment: the decision path refused it, released, and the older assignment's omission was never looked for, so one file switched holding off for a session correlated and bound elsewhere. Selection tests the claim against the directory it sits in, so the refusal stays scoped to the assignment that produced it, and currency stays with the declaration, which is the only fact here that cannot arrive after a successor is already current. Three controls: a correlating newer claim, where the declaration still moves the issue child on; a forward-dated claim in a stale assignment, which does not; and a late accepted attempt on one, which does not either |
+| T29 | Two assignments under one workspace: the older correlated, bound, registered and owing a hold, the newer carrying a claim by the same session that names a foreign dispatch | The older one is selected and held. Selection consults this session's claim before recency, and consulting the claimant alone let one uncorrelated file select the newer assignment: the decision path refused it, released, and the older assignment's omission was never looked for, so one file switched holding off for a session correlated and bound elsewhere. Selection tests the claim against the directory it sits in, so the refusal stays scoped to the assignment that produced it, and currency stays with the declaration, which is the only fact here that cannot arrive after a successor is already current. Three controls: a correlating newer claim, where the declaration still moves the `child` session on; a forward-dated claim in a stale assignment, which does not; and a late accepted attempt on one, which does not either |
 
 ### Marker root and permissions, as an integration obligation
 
@@ -380,8 +380,8 @@ them to a document that has no marker-root interface would leave them unowned.
 | Party | Read | Write |
 | -- | -- | -- |
 | Coordinator | The whole marker root | `intent.json`, `attempts/`, `bound.json`, `relationship.json`, `resolutions/`, `conflicts/` for its own assignments |
-| Issue child session | Its own assignment directory | `claims/<own session>/`, `dispositions/<own session>/` |
-| Issue child's hook process | Its own assignment directory | `hook/<own session>/` |
+| `child` session | Its own assignment directory | `claims/<own session>/`, `dispositions/<own session>/` |
+| `child` session's hook process | Its own assignment directory | `hook/<own session>/` |
 | Relay daemon | Nothing | Nothing |
 
 Assignment retention is owned there too. Assignments accumulate under a workspace hash and nothing
@@ -392,11 +392,11 @@ it is large. Retention belongs to whoever owns the marker root, and a reader mus
 published facts rather than on whatever pruning happens to have run.
 
 The root sits outside the source checkout and outside the relay database, on a writable parent both
-the coordinator and the issue child can reach. The daemon gets no access at all: nothing in the marker
+the coordinator and the `child` session can reach. The daemon gets no access at all: nothing in the marker
 feeds delivery, and the hook is already forbidden to read PABCD (`.crw/`) state.
 
 On a single-uid host, which is the configuration measured here, file permissions cannot separate
-coordinator from issue child, and the directory name is derivable from any workspace path, so neither read
+coordinator from `child` session, and the directory name is derivable from any workspace path, so neither read
 nor write isolation is achievable that way. Two consequences follow, and neither may be softened.
 
 First, `link()` gives atomic publication, not immutable storage. It guarantees that the first writer
@@ -405,22 +405,22 @@ to the directory from later truncating or unlinking what it published. Immutabil
 therefore a property of who can write, not of how it was written.
 
 Second, the enforceable lever is the sandbox rather than the filesystem. A workspace-write task
-cannot write outside its granted roots, so the coordinator grants the issue child exactly
+cannot write outside its granted roots, so the coordinator grants the `child` session exactly
 `<root>/<assignment>/claims/<own session>/` and `<root>/<assignment>/dispositions/<own session>/`,
 and the hook process `<root>/<assignment>/hook/<own session>/`. Each grant is a directory rather than
 a filename, because publication writes a temp sibling before it links the target, so a filename-only
 grant would forbid the very write it is meant to allow. Granting whole `claims` and `dispositions`
-directories instead would let an issue child write another session's records, which is the contradiction
+directories instead would let a `child` session write another session's records, which is the contradiction
 these narrower grants remove.
 
 **Activation prohibition.** Where those per-session grants cannot actually be applied, this hook runs
-in observe-only mode: it classifies and records, and it never holds. Holding depends on an issue child being
+in observe-only mode: it classifies and records, and it never holds. Holding depends on a `child` session being
 unable to forge the facts the decision reads, and that premise is supplied by the sandbox grant, not
 by the decision logic. An implementation that cannot establish the grant and holds anyway is outside
 this contract.
 
 Correlation is replayable evidence, not authentication. The intent stores only the hash, but the
-issue child's own claim necessarily stores the preimage, and on a single-uid host another session can read
+`child` session's own claim necessarily stores the preimage, and on a single-uid host another session can read
 that claim and copy the value into a claim of its own. Doing so confers nothing: binding is the
 coordinator's, so a copied preimage produces at most a second claim, which is exactly the
 `identity_contested` condition the coordinator must resolve. Read correlation as "this session
@@ -430,7 +430,7 @@ Four limits belong on the record rather than being assumed away. A resolution mu
 after its writer has read the facts it adjudicates and computed their digests from what it read;
 nothing in the record enforces that order, so it is an obligation on the coordinator rather than a
 property of the files. Whether a coordinator can set a
-issue child's writable roots at creation is shown to exist as a mechanism but not shown to be settable by a
+`child` session's writable roots at creation is shown to exist as a mechanism but not shown to be settable by a
 coordinator. Whether the hook process runs inside the task's sandbox is unobserved; if it does not,
 its `hook/` write is unconstrained by that lever. And no filesystem race, crash, or recovery
 behaviour described here has been executed, only reasoned about.
@@ -453,9 +453,9 @@ observation, which is the gap this contract exists to close.
 
 ## The detection guarantee, and its boundary
 
-The relay classifies a completed turn carrying no issue child receipt as an ordinary turn end. That
+The relay classifies a completed turn carrying no `child` session receipt as an ordinary turn end. That
 classification is correct and conservative, and it is also where two different situations collapse
-into one reading: an issue child mid-progress and an issue child that finished and recorded nothing both leave a
+into one reading: a `child` session mid-progress and a `child` session that finished and recorded nothing both leave a
 completed turn, no receipt, and an ordinary Stop.
 
 A positive disposition splits that single reading in two:
@@ -467,13 +467,13 @@ A positive disposition splits that single reading in two:
 | Disposition `ready_for_review`, but the live generation is not the one this assignment registered | `receipt_missing`, carrying `receiptEvidence` of `registration_generation_mismatch` when the recorded ordinal differs, `generation_dispatch_mismatch` when the ordinal agrees but another dispatch request opened that generation, or `generation_absent` when the store has no record of opening it | Yes. The hold is the same; the reason is not. `relationship.json` is create-once, so no receipt this session emits can satisfy the assignment: the first two name the recovery, a new assignment for a fresh dispatch request id, and the third names the relay's store as what needs repair. The claimed dispatch is weighed only where the claim correlates |
 | No disposition naming this session and this `turn_id`, including one that names no identity at all | `undeclared_turn_end` | Yes |
 
-The hook never decides whether the issue child is finished. It decides whether the issue child said anything at
-all, which is a fact about a record rather than about an intention, and then asks. The issue child answers
-on the next continuation, and the ambiguity is resolved by the issue child rather than guessed by a detector.
+The hook never decides whether the `child` session is finished. It decides whether the `child` session said anything at
+all, which is a fact about a record rather than about an intention, and then asks. The `child` session answers
+on the next continuation, and the ambiguity is resolved by the `child` session rather than guessed by a detector.
 
 **Bounded guarantee.** Detection covers a missing declaration and a declaration of readiness whose
-receipt is absent. It does NOT cover an issue child that records `in_progress` while its work is actually
-complete: a false declaration is indistinguishable from a true one, because nothing outside the issue child
+receipt is absent. It does NOT cover a `child` session that records `in_progress` while its work is actually
+complete: a false declaration is indistinguishable from a true one, because nothing outside the `child` session
 knows the difference. That residual is accepted and stated rather than engineered away, and no hook
 may report it as covered.
 
@@ -759,16 +759,16 @@ once it runs; it installed none, so it moved none of those issues. The measured 
 later issue too, and it reuses the criteria above rather than restating them.
 
 A coordinator may prepare Git metadata, such as a branch in an assigned worktree, without widening
-the issue child's permissions. Where the issue child's run is restricted enough that it cannot commit, the
+the `child` session's permissions. Where the `child` session's run is restricted enough that it cannot commit, the
 coordinator owning commits and worktree retention is the **current fallback for that restricted
-run**, not the general division of labour: the issue child owns source edits in its checkout, and a run
+run**, not the general division of labour: the `child` session owns source edits in its checkout, and a run
 that can commit keeps its commits. Ownership of pull requests, review intake and the fixes that
-follow belongs to the operations contract, which is where a capable issue child's delivery path is
+follow belongs to the operations contract, which is where a capable `child` session's delivery path is
 decided; it is deliberately not restated here.
 
-No issue child is ever given tighter settings merely so that this hook becomes able to hold it. Holding
+No `child` session is ever given tighter settings merely so that this hook becomes able to hold it. Holding
 depends on isolation the coordinator can actually grant, and where that isolation is absent the
-answer is observe-only, never a narrower issue child. A permission change made to enable enforcement is
+answer is observe-only, never a narrower `child` session. A permission change made to enable enforcement is
 outside this contract.
 
 Where a host supports event-driven return, a child is woken by the delivery path rather than by

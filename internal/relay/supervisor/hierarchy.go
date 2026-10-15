@@ -30,6 +30,10 @@ type Channel struct {
 	skipPreflightRate bool
 	beforeStageLock   func()
 	clockISO          func() string
+	// onReadEntry, a test hook, is told the hold-rule entry of every attempt read (attemptRun.read),
+	// once per read, at its start and whatever the message's hold: send_by_id for an attempt that
+	// named the message, restage for the daemon's.
+	onReadEntry func(holdEntry)
 }
 
 type Resolution struct {

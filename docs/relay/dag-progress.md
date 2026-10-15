@@ -1,6 +1,6 @@
 # DAG progress
 
-The sessions in this document are named by [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the child is the project session that accepts and integrates the work of a plan, and an issue child, which is no layer, is the session that runs one node of it.
+The sessions in this document are named by [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the child is the project session that accepts and integrates the work of a plan, and a `child` session (a code id, not a layer), which is no layer, is the session that runs one node of it.
 
 `dag-progress --plan P` answers how far a DAG plan has come: how many of its nodes stand in which stage, how much has been accepted and integrated, what the denominator was at every plan
 revision and whether it changed, why every node that is not moving is not moving, and where each node's relationship, thread and pull request are. It reads the relay store and nothing else, and
@@ -30,9 +30,9 @@ No refusal reason is added.
   node, is not printed (`dag-ready` still prints it). The only filesystem work left is what SQLite needs to open and read the store.
 * So the document is a function of the store: deleting every artifact file, emptying PATH or moving the executable changes no byte, and two queries of one store state print the same document and
   the same `digest`. A node whose artifact bytes changed on disk reads as the store says (ready, say); the byte checks of contract 4.4 (B-03 to B-05, B-17's file half) belong to
-  `dag-ready` and the release, which re-hash the files before a node is given to an issue child.
-* Activity is never progress: a poll of an issue child's turn, an observation of its lifecycle, a turn admitted, a token count for a dimension nobody limited are not read, and no clock is, so no stage
-  moves because time passed or an issue child was merely alive. An overdue state would have to come from a durable event, and none is derived here.
+  `dag-ready` and the release, which re-hash the files before a node is given to a `child` session.
+* Activity is never progress: a poll of a `child` session's turn, an observation of its lifecycle, a turn admitted, a token count for a dimension nobody limited are not read, and no clock is, so no stage
+  moves because time passed or a `child` session was merely alive. An overdue state would have to come from a durable event, and none is derived here.
 * A resource fact is not activity. A limit someone declared and a usage someone recorded against it (`limit-declare`, `usage-observe`) decide whether a node that has not started reads
   `ready` or `waiting_resource`, as in `dag-ready`. They never move a node that started.
 
@@ -65,10 +65,10 @@ The stages partition the live nodes: the counts of `stages` add up to `denominat
 | `waiting_decision` | unowned, and a decision edge has no decision with the plan's digest from a required authority (`defer:authority_pending`, `blocked:decision_mismatch`) |
 | `waiting_resource` | unowned, every edge satisfied, and held back by capacity, an unmeasured ceiling, edit regions, a merge window, an unverified owner, or another owner of the issue (`defer:*`, `skip:already_owned`) |
 | `ready` | released next (the `ready` disposition of `dag-ready`, without the artifact byte checks) |
-| `releasing` | a release is decided and its issue child is not yet bound to the node |
-| `creation_unknown` | an issue child's creation was armed and its outcome is not known; a repeat of the release observes the App Server and continues, creates again or says why ([dag-scheduler.md](dag-scheduler.md#a-creation-whose-outcome-is-unknown)) |
+| `releasing` | a release is decided and its `child` session is not yet bound to the node |
+| `creation_unknown` | a `child` session's creation was armed and its outcome is not known; a repeat of the release observes the App Server and continues, creates again or says why ([dag-scheduler.md](dag-scheduler.md#a-creation-whose-outcome-is-unknown)) |
 | `running` | the relationship is open and nothing has been reported |
-| `reported` | the issue child reported and nobody has judged (or the issue child's newest report is `blocked_needs_input`) |
+| `reported` | the `child` session reported and nobody has judged (or the `child` session's newest report is `blocked_needs_input`) |
 | `verifying` | a report is under review, or was ruled verified and not yet accepted or merged |
 | `correcting` | a correction generation is open |
 | `accepted` | the child accepted the result, and it has not landed and is not stale |
@@ -80,14 +80,14 @@ The stages partition the live nodes: the counts of `stages` add up to `denominat
 | `closed` | the relationship is closed or archived |
 | `ambiguous` | the relationship has more than one head revision, or an execution has no relationship |
 
-The plan's own lifecycle (pause, cancel and archive of a node, pause of the plan) is read from the plan as the reading reads it. A node the plan cancelled or archived is in that stage unless its pull request landed: the plan cannot take a landing back, so an integrated node stays `integrated`. A node the plan paused that already has a relationship keeps the stage of its execution, because the plan stops the scheduler and not the issue child; its `lifecycle` and its reason (`defer:node_paused`, or `defer:plan_paused` in a paused plan) say that the plan holds it.
+The plan's own lifecycle (pause, cancel and archive of a node, pause of the plan) is read from the plan as the reading reads it. A node the plan cancelled or archived is in that stage unless its pull request landed: the plan cannot take a landing back, so an integrated node stays `integrated`. A node the plan paused that already has a relationship keeps the stage of its execution, because the plan stops the scheduler and not the `child` session; its `lifecycle` and its reason (`defer:node_paused`, or `defer:plan_paused` in a paused plan) say that the plan holds it.
 
 A node whose derived state or disposition the rule does not cover is not dropped: the projection refuses it (see [What it refuses](#what-it-refuses)).
 
 ### Blocked is an overlay, not a stage
 
 `blocked` has `entries`, one for each node whose disposition is blocked, each with its `node_id`, its `stage` (the stage it stays in), its `reason` (a closed `blocked:` reason) and its `detail`. An accepted node whose merge
-turn ended with an unknown effect is `accepted` and listed as blocked (`blocked:effect_unknown`); a node whose issue child reported `blocked_needs_input` is `reported` and listed
+turn ended with an unknown effect is `accepted` and listed as blocked (`blocked:effect_unknown`); a node whose `child` session reported `blocked_needs_input` is `reported` and listed
 (`blocked:input_unverified_at_consumption`). `blocked.nodes` is the number of `entries`. The overlay overlaps the stages and is never added to them.
 
 ### Every node that is not moving has a reason
@@ -138,7 +138,7 @@ null; none is guessed.
 | Key | Meaning |
 | --- | --- |
 | `relationship` | the relationship the node stands on now: `id`, `execution_generation`, `status` (`assignment-show --relationship ID` opens it) |
-| `thread` | `child_task_id` and `parent_task_id` of that relationship; for a release that has no relationship yet, the issue child its managed start already created |
+| `thread` | `child_task_id` and `parent_task_id` of that relationship; for a release that has no relationship yet, the `child` session its managed start already created |
 | `executions` | every execution of the node, in release order. A relationship's: `relationship_id`, `execution_generation`, `kind`. An agent's (the node was released on the agent surface): `relationship_id` null, `execution_generation` the attempt, `kind`, `execution_id` and `surface` (`agent`); the keys `execution_id` and `surface` are absent from the entry of a relationship |
 | `managed_start` | for a node with no relationship, the managed start of its open intent (the release, or the successor release after a close, whose request nobody closed; a closed release owns nothing): `request_id`, `state`, `receipt_status` |
 | `pull_request` | an implementation node's pull request: `repository`, `number`, `head_sha`, `url`, `source`, `event_id` |
@@ -242,7 +242,7 @@ projection that cannot be printed). No command, table, zone statement or refusal
 A node entry has the node's `node_id`, `issue_key`, `kind`, `title`, and `stage`, `state`, `disposition`, `reason` and `detail` exactly as `dag-progress` prints them, and then:
 
 * `evidence`: the last durable verification change recorded for the node, labelled `evidence`; null when there is none.
-* `activity`: the last recorded issue child activity of the node, labelled `activity`; null when there is none.
+* `activity`: the last recorded `child` session activity of the node, labelled `activity`; null when there is none.
 * `stagnation`: the node's stagnation reading, or null (below).
 * `links`: `relationship`, `thread` and `pull_request` spelled as in `dag-progress`, and `artifact` and `commit` (below).
 
@@ -250,7 +250,7 @@ A node entry has the node's `node_id`, `issue_key`, `kind`, `title`, and `stage`
 
 Both entries read the rows of every execution the plan ever bound to the node (`dag_node_executions`), and each is the newest of its sources. An entry carries `label`, `relationship_id`,
 `execution_generation` (null for a row the store cannot tie to one generation: a row keyed by the task alone, an observation of a turn that neither its stored event nor a single admission ties to one generation, a revalidation whose event the store does not hold, or a check of a head no acceptance or refresh names; a past observation is never given the generation the relationship stands on now), `event_id` (null for a row that is not about an event), `ref` (the stored identity of the row itself: a turn, a check, an
-acceptance, a record digest, the issue child's thread), `change` (what the row says: an outcome, a verdict, a status), `recorded_at` (the time the store recorded) and `source`.
+acceptance, a record digest, the `child` session's thread), `change` (what the row says: an outcome, a verdict, a status), `recorded_at` (the time the store recorded) and `source`.
 
 | Label | `source` | Table | `recorded_at` |
 | --- | --- | --- | --- |
@@ -263,11 +263,11 @@ acceptance, a record digest, the issue child's thread), `change` (what the row s
 | `evidence` | `commit_verification` | `dag_acceptance_verifications` | `recorded_at` |
 | `evidence` | `premerge_record` | `dag_acceptance_premerge` | `recorded_at` |
 | `evidence` | `revalidation_premerge` | `dag_revalidation_premerge` (the record a re-validation was judged on, the one integration reads once the criteria were re-registered) | `recorded_at` |
-| `activity` | `child_event` | `events` produced by the issue child | `last_seen_at` |
+| `activity` | `child_event` | `events` produced by the `child` session | `last_seen_at` |
 | `activity` | `turn_admitted` | `generation_turns` | `admitted_at` |
 | `activity` | `poll` | `poll_observations` (only a poll that read the turn) | `last_polled_at` |
 | `activity` | `turn_observation` | `observations` | `observed_at` |
-| `activity` | `child_lifecycle` | `recipient_lifecycle` of the issue child's thread | `observed_at` |
+| `activity` | `child_lifecycle` | `recipient_lifecycle` of the `child` session's thread | `observed_at` |
 
 A `base_refresh` entry carries the refresh's own relationship, generation, event and `ref` (the refresh id), and `change` is the head the acceptance then stood on. A `revalidation` entry carries the relationship and generation of the event it was ruled on (after a base refresh, the refreshed generation), not those of the acceptance. A `merge_check` entry carries the identity of
 the head the check judged (`dag_merge_checks.head_sha`): the acceptance's generation and event when that is the accepted head, the refresh's when it is the head of a valid base refresh, and no generation
@@ -278,9 +278,9 @@ A `poll` entry is the time of the newest poll that read the turn (`last_polled_a
 A store that lacks one of these tables (a store that predates it) is answered without it.
 
 "Newest" compares the recorded times with one another and never with the present; a tie is broken by source, relationship, generation and the stored identities, so two readings of one store state
-choose the same row. An issue child report is activity and is not evidence; a ruling is evidence and is not activity; the two entries never merge into one "last seen".
+choose the same row. A `child` session report is activity and is not evidence; a ruling is evidence and is not activity; the two entries never merge into one "last seen".
 
-Activity is display only. The stage of a node is `dag-progress`'s, and activity is never read by it, so an issue child that only sends heartbeats (polls, turns admitted, lifecycle observations) changes no
+Activity is display only. The stage of a node is `dag-progress`'s, and activity is never read by it, so a `child` session that only sends heartbeats (polls, turns admitted, lifecycle observations) changes no
 stage, no count, no evidence and no `dag-progress` digest, however late the store says the heartbeat was recorded. An overdue state would have to come from a durable event, and none is derived. Tokens,
 turns and node counts are not used to describe how complete the work is.
 
@@ -314,7 +314,7 @@ goes into the reader classification table with them; the table above is the list
 
 ## What is not here
 
-* [Activity](#activity) (`dag-activity`) is a separate document and is not a part of `dag-progress/1`: nothing here shows what a node's issue child last did, or a node's stagnation.
+* [Activity](#activity) (`dag-activity`) is a separate document and is not a part of `dag-progress/1`: nothing here shows what a node's `child` session last did, or a node's stagnation.
 * The Linear summary is [the summary outbox](dag-outbox.md): it states the live view, so it reads `Scheduler.Progress` in the transaction that appends its entry and compares digests, and writes its own table. It does not use the rebuild (a summary is a whole document, not a delta). No command wraps the rebuild: a command that prints a delta would be a new document to specify and would add a command to the relay.
 * The metrics contract 8.6 records for the evaluation (makespan, idle slot minutes, wake latencies) are not derived here, and no figure here is a target.
 * The byte checks of the artifacts are `dag-ready`'s ([the scheduler](dag-scheduler.md#input-checks)).

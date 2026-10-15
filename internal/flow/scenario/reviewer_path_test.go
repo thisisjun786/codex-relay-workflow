@@ -282,3 +282,46 @@ func TestRoundCapStepsTier(t *testing.T) {
 	}
 	onlyStep(t, l, "A", ops.TierEvidenceRounds)
 }
+
+// TestReviewerPathFreshThreadCarriesTheExplorerFindings (x1436 round 2 item 3): on the old reviewer path the explorer's answers to an
+// evidence question are notes the lane keeps, and a fresh executor thread of the node - the rebuild after a fix that ends null_model,
+// the executor-t1 after a tier step - gets them in its packet (FINDINGS OF THE EXPLORER), as before CRW-1469: packet() still takes
+// the old path's notes where the node lane passes its last state.
+func TestReviewerPathFreshThreadCarriesTheExplorerFindings(t *testing.T) {
+	const answer = "the loop stops at the deadline in retry.go:44"
+	explorer := func(l *Lab) {
+		l.On("^explore:A:", func(*Call) *fakehostPlan {
+			p := Say(map[string]any{"answer": answer, "evidence": []string{"retry.go:44"}, "verified": []string{"retry.go"}, "inferred": []string{}, "unknown": []string{}})
+			return &p
+		})
+	}
+	carries := func(t *testing.T, l *Lab, label string) {
+		t.Helper()
+		text := textOfCall(l, callNamed(t, l, label).ID)
+		if !strings.Contains(text, "FINDINGS OF THE EXPLORER") || !strings.Contains(text, answer) {
+			t.Errorf("the packet of %s does not carry the explorer's answer:\n%s", label, text)
+		}
+	}
+	t.Run("rebuild after a null_model fix", func(t *testing.T) {
+		l := NewLab(t, oneNode()...)
+		reviewerLane(t, l)
+		reviews(l, "A", Verdict(false, EvidenceDefect("e1", "does the retry loop stop at the deadline?", "retry.go")), Verdict(true))
+		explorer(l)
+		l.Sequence("^fix:A:executor:r1$", func(*Call) fakehostPlan { return Garbage() })
+		if got := mustRun(t, l); got.State != "closed" {
+			t.Fatalf("state %q; calls %v", got.State, l.Labels())
+		}
+		carries(t, l, "rebuild:A:executor:r2")
+	})
+	t.Run("executor-t1 after a tier step", func(t *testing.T) {
+		l := NewLab(t, oneNode()...)
+		reviewerLane(t, l)
+		same := EvidenceDefect("e1", "does the retry loop stop at the deadline?", "retry.go")
+		reviews(l, "A", Verdict(false, same), Verdict(false, same), Verdict(true))
+		explorer(l)
+		if got := mustRun(t, l); got.State != "closed" {
+			t.Fatalf("state %q; calls %v", got.State, l.Labels())
+		}
+		carries(t, l, "build:A:executor-t1")
+	})
+}

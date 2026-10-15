@@ -389,7 +389,8 @@ function receiptSection(title, receipt) {
 // executor-t1 build. last is the node's last state, which the node lane keeps (CRW-1469): {findings, ci, receipt}, the findings of the
 // last unit check (none after a check that found nothing), the last verification and the last receipt of the node. A fresh thread
 // has none of the turns of the thread before it, so the packet carries each that is there; with none (the first build) the packet is
-// the one it was before CRW-1469.
+// the one it was before CRW-1469. The old reviewer path, which an earlier run replays, passes its explorer notes (an array) in that
+// place: the packet carries them as FINDINGS OF THE EXPLORER, the text it was before CRW-1469.
 export function packet(node, plan, checkpoint, last) {
   const parts = [
     'ROLE: executor. Node ' + node + ' (' + plan.issue + ': ' + plan.title + ').',
@@ -402,12 +403,17 @@ export function packet(node, plan, checkpoint, last) {
     section('DECISIONS', plan.decisions.map((d) => '- ' + d.id + ': ' + d.change)),
   ]
   if (plan.answers && plan.answers.length) parts.push(section('ANSWERS TO THE OPEN QUESTIONS OF THE DESIGN', plan.answers.map((a) => '- ' + a.question + (a.answer ? '\n  ' + a.answer : ''))))
-  const was = last || {}
-  for (const s of [
-    findingsSection('LAST FINDINGS (the last unit check of this node found these in the work of a thread before yours; the work you hand over must answer each)', was.findings),
-    ciSection('LAST VERIFICATION', was.ci),
-    receiptSection('LAST RECEIPT (the summary of the last receipt of this node, from a thread you do not continue)', was.receipt),
-  ]) if (s) parts.push(s)
+  if (Array.isArray(last)) {
+    const n = notesSection(last)
+    if (n) parts.push(n)
+  } else {
+    const was = last || {}
+    for (const s of [
+      findingsSection('LAST FINDINGS (the last unit check of this node found these in the work of a thread before yours; the work you hand over must answer each)', was.findings),
+      ciSection('LAST VERIFICATION', was.ci),
+      receiptSection('LAST RECEIPT (the summary of the last receipt of this node, from a thread you do not continue)', was.receipt),
+    ]) if (s) parts.push(s)
+  }
   if (checkpoint) {
     parts.push(section('CHECKPOINT (a fresh tier takes over; the worktree starts at this head)', [
       '- head: ' + checkpoint.head, '- tree: ' + checkpoint.tree,

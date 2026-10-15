@@ -137,7 +137,7 @@ func TestFaultNoticeTextNamesTheLayers(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, err = executeD(ctx, l, "fault-notification-reconcile", map[string]string{"--notification": "n1", "--delivered": "no", "--ref": "not sent"})
-		requireNames(t, "the not-delivered refusal", refusalText(err), "fault_state_conflict: 부모 channel attempt sup-m1-a1 may have sent")
+		requireNames(t, "the not-delivered refusal", refusalText(err), "fault_state_conflict: cannot mark this notification as not delivered because 부모 channel attempt sup-m1-a1 may have sent")
 		requireNoRoleWords(t, "the not-delivered refusal", refusalText(err))
 	})
 

@@ -108,7 +108,14 @@ func nullable(value any) sql.NullString {
 	s, ok := value.(string)
 	return sql.NullString{String: s, Valid: ok && s != ""}
 }
+
+// deferMessage defers a message its caller read with no hold: a compare-and-set from that row. It
+// asks the hold rule as defer first, and a message that carries a hold is refused and left as it is
+// (CRW-1500): a deferral never writes over a hold, whichever path set it.
 func (c *Channel) deferMessage(ctx context.Context, row store.SupervisorMessagesRow, state, hold, at string, next float64) error {
+	if refused, err := c.refusesDeferral(ctx, row, hold); err != nil || refused {
+		return err
+	}
 	var eligible any
 	if next != 0 {
 		eligible = next
@@ -128,6 +135,20 @@ func (c *Channel) deferMessage(ctx context.Context, row store.SupervisorMessages
 	return err
 }
 
+// refusesDeferral asks the hold rule whether row, read by a deferral, may be deferred with hold: a
+// row that carries any hold is refused (entry defer).
+func (c *Channel) refusesDeferral(ctx context.Context, row store.SupervisorMessagesRow, hold string) (bool, error) {
+	kind, err := holdKindOf(ctx, c.Store, row)
+	if err != nil {
+		return true, err
+	}
+	verdict, _, err := holdDecision(kind, holdChange{Entry: entryDefer, SetWord: hold}, nil)
+	if err != nil {
+		return true, err
+	}
+	return verdict == holdRefuse, nil
+}
+
 // withheldRecord is the record of an attempt that sent nothing and may be retried: the fields every
 // such record carries, plus extra.
 func withheldRecord(requestID, id string, attemptNo int64, extra map[string]any) string {
@@ -140,6 +161,8 @@ func withheldRecord(requestID, id string, attemptNo int64, extra map[string]any)
 
 // settleWithheld ends the claimed attempt before its transport started: the attempt row is settled as
 // withheld before the send with record, and the message goes back to queued, due at next when it is set.
+// It asks for no hold, and the store's settle keeps any hold the message came to carry while it was
+// sending (the hold rule's settle entry); nothing here reads a hold afterwards.
 func (c *Channel) settleWithheld(ctx context.Context, requestID, id string, attemptNo int64, at, owner, record string, next sql.NullFloat64) error {
 	if err := c.Store.SettleSupervisorAttempt(ctx, requestID, "withheld_pre_send", "no", 1, sql.NullString{}, record, at); err != nil {
 		return err
@@ -188,8 +211,16 @@ func (c *Channel) preflightRate(ctx context.Context, service *delivery.Service, 
 }
 
 func (c *Channel) Attempt(ctx context.Context, id string, adapter SendAdapter, now float64) (map[string]any, error) {
-	return c.attempt(ctx, id, adapter, now, 0, "relay")
+	// The caller names the message (supervisor-send --message): the hold rule reads this attempt as
+	// a send by id.
+	return c.attempt(ctx, id, adapter, now, 0, "relay", byIDAttempt)
 }
+
+// The by-id flag of Channel.attempt, named so that every call reads as the decision it is.
+const (
+	byIDAttempt   = true  // the caller named the message: supervisor-send --message, the fault deliverer
+	daemonAttempt = false // the daemon's pass picked the message as a head
+)
 
 var errQuietNotClaimable = errors.New("부모 message is not claimable")
 
@@ -295,6 +326,17 @@ func (c *Channel) claim(ctx context.Context, id string, r Resolution, now float6
 		if !current.Unsent() {
 			return errQuietNotClaimable
 		}
+		// A held message is not claimable (the hold rule's claim entry): a hold can land after the
+		// attempt read the message (an acknowledgement commits between its read and this claim), so
+		// the claim reads it again under its write lock, before anything can restate the message, and
+		// its update matches no hold.
+		if kind, err := holdKindOf(tx, c.Store, current); err != nil {
+			return err
+		} else if verdict, _, err := holdDecision(kind, holdChange{Entry: entryClaim}, nil); err != nil {
+			return err
+		} else if verdict == holdRefuse {
+			return errQuietNotClaimable
+		}
 		if changed, err := c.refreshProposal(tx, current, r, at, 0); err != nil {
 			return err
 		} else if changed {
@@ -332,7 +374,7 @@ func (c *Channel) claim(ctx context.Context, id string, r Resolution, now float6
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		result, err := c.Store.Q(tx).ExecContext(tx, "UPDATE supervisor_messages SET state='sending',lease_owner=?,lease_until=?,attempt_count=attempt_count+1,updated_at=? WHERE message_id=? AND state=? AND attempt_count=?", owner, now+300, at, id, current.State, current.AttemptCount)
+		result, err := c.Store.Q(tx).ExecContext(tx, "UPDATE supervisor_messages SET state='sending',lease_owner=?,lease_until=?,attempt_count=attempt_count+1,updated_at=? WHERE message_id=? AND state=? AND attempt_count=? AND hold_reason IS NULL", owner, now+300, at, id, current.State, current.AttemptCount)
 		if err != nil {
 			return err
 		}
@@ -372,6 +414,16 @@ func (c *Channel) holdObsoleteClaim(ctx context.Context, row store.SupervisorMes
 		if current.State != row.State || current.HoldReason != row.HoldReason || current.NextEligibleAt != row.NextEligibleAt || current.AttemptCount != row.AttemptCount {
 			return nil
 		}
+		// The hold rule's derive entry: the derived hold is set, and its supervisor_message_superseded
+		// row journaled, only on a message that carries no hold, so the newest such row stays the one of
+		// the write that set the hold the message carries (holdKindOf). A held row is left as it is.
+		kind, err := holdKindOf(tx, c.Store, current)
+		if err != nil {
+			return err
+		}
+		if verdict, _, err := holdDecision(kind, holdChange{Entry: entryDerive}, nil); err != nil || verdict != holdSet {
+			return err
+		}
 		next := float64(0)
 		if row.NextEligibleAt.Valid {
 			next = row.NextEligibleAt.Float64
@@ -392,6 +444,7 @@ type attemptRun struct {
 	adapter  SendAdapter
 	now      float64
 	owner    string
+	byID     bool                        // the caller named the message (byIDAttempt): read asks the hold rule as send_by_id, else as restage
 	row      store.SupervisorMessagesRow // as read before the claim
 	r        Resolution                  // the hierarchy now, which the message must still match
 	at       string                      // the time of the lifecycle gate's journal entry, the claim and the fence: the injected clock when set, else the call's
@@ -418,9 +471,10 @@ type sentReceipt struct {
 // attempt sends one staged message: the steps below in order. A step that can end the attempt returns
 // stop, and the attempt then returns no record and that step's error, which may be nil (a quiet
 // stop); a step that can only fail returns the error. restatements counts the retries this call has
-// made after the proposal was restated at the transport start.
-func (c *Channel) attempt(ctx context.Context, id string, adapter SendAdapter, now float64, restatements int, owner string) (map[string]any, error) {
-	a := &attemptRun{c: c, id: id, adapter: adapter, now: now, owner: owner}
+// made after the proposal was restated at the transport start. byID says the caller named the
+// message (byIDAttempt) rather than the daemon picking it (daemonAttempt); the retry carries it.
+func (c *Channel) attempt(ctx context.Context, id string, adapter SendAdapter, now float64, restatements int, owner string, byID bool) (map[string]any, error) {
+	a := &attemptRun{c: c, id: id, adapter: adapter, now: now, owner: owner, byID: byID}
 	if err := a.read(ctx); err != nil {
 		return nil, err
 	}
@@ -458,7 +512,7 @@ func (c *Channel) attempt(ctx context.Context, id string, adapter SendAdapter, n
 		if restatements >= 2 {
 			return nil, Refusal{"superseded_revision", "the proposal was restated at its transport start three times in one call and nothing was sent; send it again once what it reports has settled"}
 		}
-		return c.attempt(ctx, id, adapter, now, restatements+1, owner)
+		return c.attempt(ctx, id, adapter, now, restatements+1, owner, a.byID)
 	}
 	if !outcome.started {
 		return nil, nil
@@ -467,9 +521,19 @@ func (c *Channel) attempt(ctx context.Context, id string, adapter SendAdapter, n
 }
 
 // read loads the message, recovers a stranded send and releases a hold the live state no longer
-// justifies, so the rest of the attempt sees the row as it stands.
+// justifies, so the rest of the attempt sees the row as it stands. A superseded_by_report hold is
+// asked of the hold rule as send_by_id when the caller named the message and as restage when the
+// daemon picked it: a send by id releases an acknowledged park that is owed, and answers
+// relation_owner_drift when the hierarchy moved; the daemon keeps a park of the same statement.
 func (a *attemptRun) read(ctx context.Context) error {
 	c := a.c
+	entry := entryRestage
+	if a.byID {
+		entry = entrySendByID
+	}
+	if c.onReadEntry != nil {
+		c.onReadEntry(entry)
+	}
 	row, err := c.Get(ctx, a.id)
 	if err != nil {
 		return err
@@ -479,7 +543,7 @@ func (a *attemptRun) read(ctx context.Context) error {
 		return err
 	}
 	if row.HoldReason.String == store.SupervisorHoldSuperseded {
-		if err := c.reopenProposal(ctx, row, delivery.ISOOf(a.now)); err != nil {
+		if _, _, err := c.reopenProposal(ctx, row, delivery.ISOOf(a.now), entry); err != nil {
 			return err
 		}
 		row, err = c.Get(ctx, a.id)
@@ -619,7 +683,7 @@ func (a *attemptRun) settingsGate(ctx context.Context) (stop bool, err error) {
 		}
 		detailText := err.Error()
 		if reason == "role_policy_unconfigured" {
-			detailText = pyvalue.StrRepr(a.r.Recipient) + " is bound as 'supervisor' (부모) and this process cannot read a role policy to check its authorization against: CODEX_THREAD_BRIDGE_EXECUTION_POLICY is not set in this process, so no role policy can be read. Nothing was sent and no turn was started. Set the policy for this process and the held deliveries resume on the next pass."
+			detailText = pyvalue.StrRepr(a.r.Recipient) + " is bound as 'supervisor' (부모), and this process cannot read a role policy to check its authorization because CODEX_THREAD_BRIDGE_EXECUTION_POLICY is not set. Nothing was sent and no turn was started. Set the policy for this process and the held deliveries resume on the next pass."
 		}
 		detail := pyjson.Dumps(contract.OrderedObject{{Key: "reason", Value: reason}, {Key: "detail", Value: detailText}}, pyjson.Options{})
 		_, e := c.Store.Q(ctx).ExecContext(ctx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_withheld',?,?)", a.at, a.id, detail)
@@ -894,22 +958,26 @@ func (a *attemptRun) settle(ctx context.Context, sent sentReceipt) (map[string]a
 		if err != nil {
 			return err
 		}
-		if moved {
-			// a flow run's message: its delivery row commits with this settle (CRW-1380)
-			if err := c.recordFlowDelivery(tx, a.row, flowDelivery{result: flowDeliveryResult(state, hold), requestID: requestID, state: state,
-				hold: hold.String, at: settledAt, turnID: facts.TurnID}); err != nil {
-				return err
-			}
-		}
+		// The settle keeps a hold the message already carries (the hold rule's settle entry), so what
+		// it records is the hold the message carries now, read back, not the one it asked for: a cap,
+		// or none, on a message that came to carry another hold while it was sending.
 		standing, err := c.Get(tx, id)
 		if err != nil {
 			return err
+		}
+		effective := standing.HoldReason
+		if moved {
+			// a flow run's message: its delivery row commits with this settle (CRW-1380)
+			if err := c.recordFlowDelivery(tx, a.row, flowDelivery{result: flowDeliveryResult(state, effective), requestID: requestID, state: state,
+				hold: effective.String, at: settledAt, turnID: facts.TurnID}); err != nil {
+				return err
+			}
 		}
 		var reason any
 		if !moved {
 			reason = "this claim no longer held the message when its receipt arrived, so the receipt is recorded on its attempt and the message is left where it is"
 		}
-		detail := pyjson.Dumps(contract.OrderedObject{{Key: "requestId", Value: requestID}, {Key: "attemptNo", Value: attemptNo}, {Key: "deliveryState", Value: state}, {Key: "sendAttempted", Value: facts.SendAttempted}, {Key: "turnId", Value: facts.TurnID}, {Key: "holdReason", Value: optionalText(hold)}, {Key: "messageMoved", Value: moved}, {Key: "messageState", Value: standing.State}, {Key: "reason", Value: reason}}, pyjson.Options{})
+		detail := pyjson.Dumps(contract.OrderedObject{{Key: "requestId", Value: requestID}, {Key: "attemptNo", Value: attemptNo}, {Key: "deliveryState", Value: state}, {Key: "sendAttempted", Value: facts.SendAttempted}, {Key: "turnId", Value: facts.TurnID}, {Key: "holdReason", Value: optionalText(effective)}, {Key: "messageMoved", Value: moved}, {Key: "messageState", Value: standing.State}, {Key: "reason", Value: reason}}, pyjson.Options{})
 		_, err = c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_attempted',?,?)", settledAt, id, string(detail))
 		return err
 	})

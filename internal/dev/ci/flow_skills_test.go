@@ -195,7 +195,7 @@ func runSectionProblems(section string, relay map[string]bool) []string {
 		`(?i)` + "`crw flow resume`",
 		// A node sized for an issue child starts no issue child (CRW-1415): the project lane escalates it as size_split with detail
 		// child_retired, the parent asks for a bundle split, and the thread sends no task packet for it.
-		`(?i)starts? no issue child`,
+		`(?i)starts? no \x60child\x60 session`,
 		"`size_split`",
 		"`child_retired`",
 		`(?i)bundle split`,
@@ -248,7 +248,7 @@ func TestRunProjectNeverClaimsRunEpoch(t *testing.T) {
 			"The thread handles only escalations. " +
 			"It never claims the coordinator epoch of a plan a run holds with `dag-coordinator-claim`: the run's next write is `stale_coordinator_epoch` and the milestone ends `incomplete`. " +
 			"An out-of-band transition is raised as an escalation. A dead run is taken again with `crw flow resume`. " +
-			"A node sized for an issue child starts no issue child: the project lane escalates it as `size_split` with detail `child_retired`, the parent asks for a bundle split, and the thread sends no task packet for it.\n"
+			"A node sized for a `child` session starts no `child` session: the project lane escalates it as `size_split` with detail `child_retired`, the parent asks for a bundle split, and the thread sends no task packet for it.\n"
 		fixture := map[string]bool{"dag-coordinator-claim": true}
 		if p := runSectionProblems(sectionOf(good, "Run a milestone with a flow run"), fixture); len(p) > 0 {
 			t.Fatalf("the good text is reported: %v", p)
@@ -381,7 +381,7 @@ func TestPlanSizeFieldsAndOrchestrationWording(t *testing.T) {
 		"`over_line_accepted`", `(?i)bundle reason`,
 		"`size_split`", "`region_order_missing`",
 		// a run starts no issue child (CRW-1415): a node that reaches it as `child` is escalated, and the planner splits instead
-		"`child_retired`", `(?i)bundle split`, `(?i)starts? no issue child`,
+		"`child_retired`", `(?i)bundle split`, `(?i)starts? no \x60child\x60 session`,
 		`(?i)no model name and no effort`,
 		fmt.Sprintf(`(?i)a name, at most %d issues`, compileMaxGroup(t)),
 	}); len(missing) > 0 {
@@ -528,8 +528,8 @@ func taskPacketScopeProblems(intro string) []string {
 	flat := normalized(intro)
 	var problems []string
 	for _, p := range wordingMissing(flat, []string{
-		`(?i)packets? (below )?(is|are) for an issue child of a plan with no run`,
-		`(?i)starts? no issue child`,
+		`(?i)packets? (below )?(is|are) for an? \x60child\x60 session of a plan with no run`,
+		`(?i)starts? no \x60child\x60 session`,
 		"`size_split`",
 		"`child_retired`",
 		`(?i)bundle split`,
@@ -554,7 +554,7 @@ func TestTaskPacketIsForAPlanWithNoRun(t *testing.T) {
 	if problems := taskPacketScopeProblems(intro); len(problems) > 0 {
 		t.Errorf("task-packet.md introduction:\n  %s\n%s", strings.Join(problems, "\n  "), normalized(intro))
 	}
-	good := "The packets are for an issue child of a plan with no run. A flow run starts no issue child: a node sized for one goes up as a `size_split` escalation with detail `child_retired` and the repository session asks for a bundle split. A node a run releases gets no packet from the thread and starts no PABCD state machine ([control](../../crw-canon/references/flow.md#who-owns-control-in-a-flow-managed-run))."
+	good := "The packets are for a `child` session of a plan with no run. A flow run starts no `child` session: a node sized for one goes up as a `size_split` escalation with detail `child_retired` and the repository session asks for a bundle split. A node a run releases gets no packet from the thread and starts no PABCD state machine ([control](../../crw-canon/references/flow.md#who-owns-control-in-a-flow-managed-run))."
 	if p := taskPacketScopeProblems(good); len(p) > 0 {
 		t.Fatalf("the good text is reported: %v", p)
 	}

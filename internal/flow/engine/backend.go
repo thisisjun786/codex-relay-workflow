@@ -72,6 +72,9 @@ type ThreadSpec struct {
 	Send int
 	// QA is set on the thread of a QA capture call: the backend gives it the QA overlay and no native helper.
 	QA bool
+	// Tools are the run's repository tools (Config.Tools): the backend sets them in the thread's shell and names them in its
+	// prompt. Nil sets and names nothing.
+	Tools *RepositoryTools
 }
 
 // ThreadInfo is what the backend reads back about a created thread: its id and the pair it is configured with.
@@ -335,6 +338,8 @@ type ForkSpec struct {
 	AutoCompactTokenLimit *int64
 	// Send is the send ordinal of the creation request (see ThreadSpec).
 	Send int
+	// Tools are the run's repository tools, as ThreadSpec.Tools.
+	Tools *RepositoryTools
 }
 
 // Forker is implemented by a backend that can fork a thread at a turn into another directory.

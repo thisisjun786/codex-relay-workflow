@@ -13,7 +13,7 @@ Jun asks for it. He asks for this as '현재 어디까지 됐어?', as '전체 �
 an audit, or a recommendation he did not ask for.
 
 This skill is read-only. It writes no tracking record, creates or resumes no task, sends no message,
-wakes no child or issue child, installs nothing and changes no schedule, whatever
+wakes no child or `child` session (a code id, not a layer), installs nothing and changes no schedule, whatever
 the state of the work it reports on. Reporting that a project is behind does not authorize starting
 it. A one-word 중간점검 inside the parent (repository session) is not a read: its owner is
 [the parent's section of crw-run](../crw-run/SKILL.md#the-parent-the-repository-session), and when this task is no parent the
@@ -84,7 +84,7 @@ parent, then each initiative it orders, then each child, then each issue.
    finish condition and whether it holds.
 3. **Child.** Per project, its state, its blocker, its schedule verdict and its
    evidence pointer.
-4. **Issue.** Per issue, its step, subagent or issue child, its delivery and the evidence at the delivery level
+4. **Issue.** Per issue, its step, subagent or `child` session, its delivery and the evidence at the delivery level
    its criteria require.
 
 A gap found at a level is reported there and sent one level down, to the owner of that level, never

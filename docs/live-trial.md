@@ -1,13 +1,13 @@
 # Preparing and starting a live trial
 
-The sessions in this document are named by [the level table](../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the child is the project session, and an issue child is no layer. The start record keeps the relay's role ids for its two participants, `parent` for the child and `child` for the issue child, as [Names used only in code](../plugins/crw/skills/crw-canon/references/hierarchy.md#names-used-only-in-code) lists them.
+The sessions in this document are named by [the level table](../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the child is the project session, and a `child` session (a code id, not a layer) is no layer. The start record keeps the relay's role ids for its two participants, `parent` for the child and `child` for the `child` session, as [Names used only in code](../plugins/crw/skills/crw-canon/references/hierarchy.md#names-used-only-in-code) lists them.
 
 A live trial drives the installed runtime through a real completion, a real delivery to a child,
 a real verdict and a real correction round trip, on the shared store that ordinary work uses. The
 automatic legs of one have closed with no operator inside the window. What went wrong on the way
 there was the preparation, three times, and each failure produced a result that looked like a
 runtime problem until it was read: a supervisor that stopped polling, a child the relay refused to
-deliver to, and an issue child that emitted against a relationship that had already been archived.
+deliver to, and a `child` session that emitted against a relationship that had already been archived.
 
 This document fixes what is confirmed before a trial starts, in what order the parts are built, and
 how the interventions during preparation are kept apart from the ones inside the window that
@@ -30,7 +30,7 @@ todo 44. That name is not reused here.
 | -- | -- | -- |
 | A supervisor launched with `nohup` did not survive the tool shell that started it, so emissions sat staged with nothing polling | a delivery that never arrived | the `processPersistence` reading, which requires the supervisor to be outside the caller's session and to have advanced its own witness between two observations |
 | Participants created without a turn could not be looked up at all, and the relay withheld delivery with `lifecycle_unknown` rather than sending to a recipient whose lifecycle it could not read | a recipient that never woke | the `parentLifecycle` reading, and the standby turn that the order now puts before registration |
-| An issue child read its assignment file before the new relationship id had been written into it, emitted against the archived relationship, and was refused with `relationship_not_active` | an issue child that failed for a reason it had not caused | the order gate, which compares the file, the store and the message about to be sent, before the message is sent |
+| A `child` session read its assignment file before the new relationship id had been written into it, emitted against the archived relationship, and was refused with `relationship_not_active` | a `child` session that failed for a reason it had not caused | the order gate, which compares the file, the store and the message about to be sent, before the message is sent |
 
 None of the three was a defect in the runtime. All three were preparation, and the relay refused
 each of them correctly. That is the reason this document is about preparation and says nothing
@@ -41,7 +41,7 @@ about the runtime's own guarantees.
 Six things are confirmed before the first dispatch. Four of them the checker reads itself. The
 other two it cannot: no read-only relay command performs a lifecycle read, and none returns what a
 creation receipt echoed, so those two arrive as captures the operator recorded elsewhere. The
-lifecycle capture is per participant rather than per child: an issue child created without a standby turn
+lifecycle capture is per participant rather than per child: a `child` session created without a standby turn
 cannot be looked up either, and a correction is delivered to it. A capture
 is the caller's claim about a read this process did not make, it carries the time it was taken, and
 it is stale past the record's own bound, which may not exceed fifteen minutes. Every capture is
@@ -62,7 +62,7 @@ command runs. Two absent values compare equal to each other, so a record that st
 have agreed with a payload that carried nothing, and the run would have reported a precondition
 nobody established.
 
-Every boundary declares exactly one child and exactly one issue child, the one being dispatched and the others alike. The assignment being dispatched belongs to one of the declared boundaries, and its child and issue child are that boundary's own; otherwise the readings would cover one set of tasks while the dispatch went to another. A captured registration is compared as a whole registration, because one agreeing on a scope and two task names while carrying another issue, relationship, generation or an archived status is a stale registration whose authorised roots belong to something else.
+Every boundary declares exactly one child and exactly one `child` session, the one being dispatched and the others alike. The assignment being dispatched belongs to one of the declared boundaries, and its child and `child` session are that boundary's own; otherwise the readings would cover one set of tasks while the dispatch went to another. A captured registration is compared as a whole registration, because one agreeing on a scope and two task names while carrying another issue, relationship, generation or an archived status is a stale registration whose authorised roots belong to something else.
 
 A reading that could not be taken answers `unknown` and refuses the start. It never answers false,
 and it never takes the value of the reading beside it. The distinction is the whole point: a
@@ -92,14 +92,14 @@ what makes the `parentLifecycle` reading answerable at all.
 is the first mutating step, it mints the relationship id, and it either replays an existing
 relationship or refuses the whole registration without writing anything else. Everything after it
 reads what it returned. An issue that already holds an active or paused assignment cannot acquire a
-second registered issue child, so two children on one store need two distinct issues; a trial that binds
+second registered `child` session, so two children on one store need two distinct issues; a trial that binds
 its assignment onto a real backlog issue puts a trial row in the path of real coordination, and the
 genuine project identity travels in the scope reference instead.
 
 **Write the start record from what `register` returned, not from what the previous window left.**
-The assignment file in the issue child's workspace is the file the third failure read too early. It is
+The assignment file in the `child` session's workspace is the file the third failure read too early. It is
 written after registration, from the returned relationship id, and the dispatch message carries the
-same identity in its own text, so the issue child's first turn does not depend on reading that file at
+same identity in its own text, so the `child` session's first turn does not depend on reading that file at
 all.
 
 **Preflight last, immediately before the dispatch.** The record declares the window this dispatch opens, and
@@ -153,7 +153,7 @@ observed failures were checks made too early, or not made.
                                                               contains each artifact path
 
 A file written for a previous relationship carries that relationship's id, and that is the
-comparison that catches it. The artifacts compared are the file's own: the file is what the issue child
+comparison that catches it. The artifacts compared are the file's own: the file is what the `child` session
 reads, so a missing or empty list there is a mismatch rather than an occasion to fall back on what
 the record intended. Every artifact path is absolute and normalised, and its containment in an authorised root is
 decided on the path rather than on the place it resolves to, because that is the contract the
@@ -177,7 +177,7 @@ no read-only command returns them; what actually enforces them is the manifest `
 is where it belongs.
 
 A read-only checker makes this race **refusable, not impossible**. It reads at one moment and the
-issue child reads at a later one. What makes it impossible is the order: register first, write the file
+`child` session reads at a later one. What makes it impossible is the order: register first, write the file
 from what register returned, carry the same identity in the message, and leave the relay's own
 `relationship_not_active` refusal as the guard it already is. The gate's job is to stop a dispatch
 that would fail, and to say which field disagreed.
@@ -225,8 +225,8 @@ What this accounting cannot see is an intervention nobody wrote down.
 Everything the trial writes for itself lives under one trial root outside every git worktree: the
 start record, the captures, the ledger and the result. The shared state directory the relay probes
 reach is held to the same rule, because operational state never lives inside a repository and the
-first command to open one there would construct it. The assignment file is the one in the owning issue child's own workspace, because the file under test is
-the file that issue child reads, and a matching copy anywhere else is a different file. It and the dispatch
+first command to open one there would construct it. The assignment file is the one in the owning `child` session's own workspace, because the file under test is
+the file that `child` session reads, and a matching copy anywhere else is a different file. It and the dispatch
 message sit where that workspace is, outside this repository. Paths are compared after symbolic links are followed, so a
 link out of the trial root is the escape it looks like rather than a spelling that passes, and no
 private record may sit in a repository nested under the root either: the rule is that operational

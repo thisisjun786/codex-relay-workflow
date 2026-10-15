@@ -5,11 +5,11 @@ Relay-owned records, not contract records. The five schemas under
 contract and none of them describes anything on this page. Nothing here is validated against
 them, and nothing here changed them.
 
-The sessions in this document are named by [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and an issue child is no layer. The role ids that the commands, flags and stored rows keep (`supervisor`, `parent` and `child`) are read through [Names used only in code](../../plugins/crw/skills/crw-canon/references/hierarchy.md#names-used-only-in-code).
+The sessions in this document are named by [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and a `child` session (a code id, not a layer) is no layer. The role ids that the commands, flags and stored rows keep (`supervisor`, `parent` and `child`) are read through [Names used only in code](../../plugins/crw/skills/crw-canon/references/hierarchy.md#names-used-only-in-code).
 
 ## Why these are separate tables
 
-`relationships` binds the task of one child to the task of one issue child for one issue. That is the whole of the
+`relationships` binds the task of one child to the task of one `child` session for one issue. That is the whole of the
 registered hierarchy it can express, and three separate contracts break if a supervision is
 pushed into it:
 
@@ -292,7 +292,7 @@ unique index.
 ## Attachment is one operation
 
 `attach_in` is the only path that writes the lower level, and its idempotence is computed over
-all THREE of its facts: the `relationship_scope` row, the issue child's binding, and the project to
+all THREE of its facts: the `relationship_scope` row, the `child` session's binding, and the project to
 issue edge. A relationship attached by an older writer, or by a run that stopped between two of
 them, is completed rather than reported as already done.
 
@@ -349,7 +349,7 @@ project whose assignments are all merged still reads `complete_candidate` until 
 
 Handing a project BACK is the case where "a correct new identity" is not available. The id is
 `sha256(parentTaskId|childTaskId|issueKey)`, so returning to an earlier child with the same
-issue child derives the id that child already used. That is not a collision: the same triple is the
+`child` session derives the id that child already used. That is not a collision: the same triple is the
 same relationship, and the return is a second TENURE of it, recorded as a new generation with
 `supersedes` and `supersededBy` carrying the lineage in both directions. Registering a dead
 identity without naming a live predecessor is refused rather than answered with the retired

@@ -1,9 +1,9 @@
 # The supervisor channel, and what a readback is worth
 
-The sessions in this document are named by [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and an issue child is no layer.
+The sessions in this document are named by [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and a `child` session (a code id, not a layer) is no layer.
 
 Two relations carry messages here and they have never had the same machinery. A child and its
-issue child exchange a completion and a correction, with a queue, a receipt, an acknowledgement and a
+`child` session exchange a completion and a correction, with a queue, a receipt, an acknowledgement and a
 verdict. A parent and a child exchange instructions and reports, and until now the upward
 half had nothing at all. [The shared envelope](envelope.md) decided what was owed upward and
 said in data that nothing could carry it, so a child that had decided it owed a report had
@@ -59,14 +59,14 @@ run sends up and the rows it reads back.
 | blocked | notification | issue, evidence |
 | decision_request | decision | issue, decision, evidence |
 
-The restraint is the restraint the table of a child and its issue child already shows. A completion upward is not
+The restraint is the restraint the table of a child and its `child` session already shows. A completion upward is not
 required to carry an artifact, because a noop completion has none and a research assignment may
 have only a locator; it carries the pull request when the work report names one whole, and a
 partial one is left out rather than reported in pieces. A block and a decision carry evidence
-for the reason an issue child's do: a level above told there is a problem and not where to look at it
+for the reason a `child` session's do: a level above told there is a problem and not where to look at it
 has been told half of it.
 
-A report is a pointer with a kind rather than a copy of the record. What the issue child actually said
+A report is a pointer with a kind rather than a copy of the record. What the `child` session actually said
 is read through the evidence line, which is `show --event` for anything with an event and
 `supervisor-show --message` for an omission, which has none. Each points at a version that
 cannot change under the bytes that went up: an event's work report stops changing once a message
@@ -124,10 +124,10 @@ rather than prose. An occasion with no field it cannot do without would be a row
 anything, which is what that table exists not to be. So a child answering a midpoint check is
 carried by the envelope alone until somebody decides what an answer cannot do without.
 
-### Ordering against issue-child traffic
+### Ordering against `child`-session traffic
 
 1. The rows are disjoint and so are the claims. A message of this channel lives in its own table
-   keyed by message id; the claim between a child and its issue child names `deliveries` by event id. Neither engine
+   keyed by message id; the claim between a child and its `child` session names `deliveries` by event id. Neither engine
    can claim the other's row. A message of this channel has a transport receipt like any send, and
    it has no completion receipt, no acknowledgement and no verdict, which is the difference
    that matters: nothing here is answered by the recipient's own record.
@@ -135,19 +135,19 @@ carried by the envelope alone until somebody decides what an answer cannot do wi
    derivation requires `stage = 'final'` and no suppression - so it cannot precede the record
    it reports. An omission is the other path and has no event in this store at all: it comes
    from a reporting observation - one a caller passes in, or one this store derives from the
-   declarations the issue child's relay recorded here (see an omission this store derives) - and what
+   declarations the `child` session's relay recorded here (see an omission this store derives) - and what
    vouches for it is that reading, which cannot precede the settlement it reads.
 3. The send budget is SHARED between the two queues on purpose, at two grains. The minimum gap
    between two sends is the recipient's, shared outright: it bounds how often one task may be
    woken, and two queues feeding one task must not each get their own. The hourly count is the
    relationship's (CRW-259): a report is charged to the relationship it reports, toward the
-   recipient it goes to, together with that relationship's deliveries between a child and its issue child to the same
+   recipient it goes to, together with that relationship's deliveries between a child and its `child` session to the same
    task, so one relationship's loop cannot wake a task more than the cap an hour through either
-   queue, and a child with many issue children is not held to one count for all of them. The upward
+   queue, and a child with many `child` sessions is not held to one count for all of them. The upward
    channel's `run:` and `initiative:` relationship ids are of the `orchestrator` class (60 an hour), as
    the relationship of a project's live child is; the minimum gap stays five seconds for every class.
    The consequence, said rather than implied: where one task is both a child and a parent, a
-   report can wait behind issue-child traffic to that same task through the gap, and through the
+   report can wait behind `child`-session traffic to that same task through the gap, and through the
    hour only when it is the same relationship's traffic. A transport counts toward the hour when
    its attempt may have gone (it sent something, or its retry was not shown safe), the same test
    that stops a message with such an attempt from being re-addressed, so counted usage cannot move
@@ -156,7 +156,7 @@ carried by the envelope alone until somebody decides what an answer cannot do wi
    not a process-wide or durable lock.
    Both halves of the bound - the hourly count and the minimum gap between two sends - are
    decided by ONE predicate inside the write that spends the send: `delivery.reserve_send`,
-   which the issue-child claim calls in its claim and this channel calls in the write that
+   which the `child`-session claim calls in its claim and this channel calls in the write that
    stamps its transport start. This channel's claim asks the same predicate
    (`delivery.send_refusal`) first and spends nothing. A bound that only one of its writers
    re-checks inside its write is a bound the other does not obey: a delivery claimed straight
@@ -172,7 +172,7 @@ carried by the envelope alone until somebody decides what an answer cannot do wi
    inside the transport-start write. The caller reads its instant before the host checks, and a
    charge dated that early let the gap and the hourly window lapse before the transport had
    even started. A send the budget refuses in that write is deferred the same way (see who
-   moves a message out of sending). The issue-child claim charges its own instant and sends
+   moves a message out of sending). The `child`-session claim charges its own instant and sends
    straight after the claim commits.
 4. Within one recipient the oldest claimable message is claimed first, and an older message
    that is IN FLIGHT blocks the one behind it too - that is the moment ordering matters most.
@@ -219,7 +219,8 @@ message as `superseded_by_report`, and the new obligation is staged as its own m
 hold is derived, so it is not terminal. What it was derived from can move back - a report
 corrected away from a block and then back to it, a confirmed Linear record whose target is
 repointed - so the hold is re-derived whenever the message is staged or attempted, and released
-on the same message once the obligation is owed through it again.
+on the same message once the obligation is owed through it again. A park `supervisor-acknowledge`
+set is not derived; when it is kept or released is [the hold rule](#the-hold-rule).
 
 An omission's reading is checked against its obligation before anything is composed: the
 schema is `reporting-observation/1`, the state is `unreported`, the relationship and the turn in
@@ -262,13 +263,13 @@ to see both. Running the command again retries only the store record.
 own settlement, the admission, the recorded declaration, the receipt where readiness was
 declared, and whether a later turn was admitted. It hands those facts to `omitted.classify`,
 the same predicate `reporting-show`'s reader (`omitted.observe`) hands its facts to; neither
-reader classifies anything itself, and neither classifies a turn the other would refuse to place: the registration's identity - issue child, binding, issue, working directory and dispatch - is one predicate (`_identity_problem`) both apply first, the store reader against the workspace and issue its claim record carries. `tests/test_supervisor_omission_store.py` feeds one
+reader classifies anything itself, and neither classifies a turn the other would refuse to place: the registration's identity - `child` session, binding, issue, working directory and dispatch - is one predicate (`_identity_problem`) both apply first, the store reader against the workspace and issue its claim record carries. `tests/test_supervisor_omission_store.py` feeds one
 fact set through both and compares the facts and the answer. The diagnosis is CRW-180's,
 unchanged. Beside it the predicate answers whether a report is still OWED: not when the turn's
 own final receipt exists (it goes upward as its own fact), not when a later turn was admitted
 (the work went on; admissions are ordered by when the bound admission was made, to the
 microsecond), and not inside `omission_grace_seconds` after the settlement (300 by
-default), which gives the child, or the issue child it steers, the chance to answer first. A
+default), which gives the child, or the `child` session it steers, the chance to answer first. A
 reading that owes nothing raises no obligation and is not a gap.
 
 How soon an omission is owed depends on when the relay settles the turn, and that is not the
@@ -303,11 +304,11 @@ A marker that stops reading AFTER the claim - a fact rewritten out of shape, a f
 no longer be read - is one the store reader cannot see: the daemon reads no marker file. The
 store reader then answers from the registration and the declarations recorded here, which the
 marker's health does not change, while `reporting-show` answers `unmeasured`. The Stop hook
-releases a turn it cannot read the marker for rather than prompting the issue child to declare, so an
+releases a turn it cannot read the marker for rather than prompting the `child` session to declare, so an
 omission derived then is a turn that really ended without a declaration.
 
 The cut-over is the claim record. A turn whose session has no `reporting_sessions` row -
-every issue child that claimed before its relay wrote here, or through a relay that does not - is a
+every `child` session that claimed before its relay wrote here, or through a relay that does not - is a
 legacy admission: its declarations may exist only in the marker, so the store's silence proves
 nothing, `derive` answers `unmeasured` / `declarations_not_recorded`, and nothing is staged
 or sent for it automatically. It stays owed and visible exactly as before, through a reading
@@ -340,7 +341,7 @@ words.
 Where the turn's session records its declarations here, the store decides for EVERY omission,
 whatever reading it arrives with: staging asks it under the write lock and the transport start
 asks it again (`_omission_withdrawn`, from `_proposal_now`). A child's `reporting-show`
-reading taken before the issue child declared the turn in progress is a proposal like any other; the
+reading taken before the `child` session declared the turn in progress is a proposal like any other; the
 staging refuses as `not_claimable`, or the message is held `superseded_by_report` at its
 transport start, and nobody is woken. Where the session records nothing here - a legacy
 admission - the store cannot see the declaration, and a caller's frozen reading stands as it
@@ -489,10 +490,10 @@ because nothing observed what that send did.
 
 No exit between a claim and its transport has anything to give back, because nothing before
 the transport start spends the recipient's budget. The claim only asks the budget it shares
-with issue-child deliveries; the transport-start write spends one send, in the same write as
+with `child`-session deliveries; the transport-start write spends one send, in the same write as
 the stamp and after the lock and the hierarchy check. A hierarchy that moved, or a lease
 recovered before the transport started, therefore leaves the budget as it was. If the budget
-refuses in that write - an issue-child delivery spent it after this claim - the attempt is
+refuses in that write - a `child`-session delivery spent it after this claim - the attempt is
 recorded as sending nothing, the message is queued again past the gap under this claim's own
 state, attempt and lease owner, and `supervisor_message_paced` is journalled: deferred, never
 failed and never held. Reserving at the claim and giving the send back on each exit could not
@@ -931,13 +932,13 @@ absent answer. What this verifies is the record's host settings, the fields the 
 defines: the sandbox, the approval policy, the cwd, the roots, the model, the effort, the
 environments and the permission profile. The relay's own keys in a record (`citedRole`,
 `citedException`) are checked by the role policy, and any other top-level key is neither
-transmitted nor compared. A child's or an issue child's pair, which policy derived, is
+transmitted nor compared. A child's or a `child` session's pair, which policy derived, is
 resumed exactly as before, carrying its settings. The bridge's own tool path still refuses the unloaded case, because it reads no binding and does not
 load a thread without transmitting, so an operator message to an unloaded recipient through it
 still waits for the host to load that thread.
 The pair guard still cannot resolve an omitted role. Separately, a bridge send naming no MCP profile
-refuses an unnamed `notLoaded` recipient when the host declares issue child profiles, since that recipient
-could be a profiled issue child. State the recipient's actual declared role and, where applicable, the
+refuses an unnamed `notLoaded` recipient when the host declares `child` session profiles, since that recipient
+could be a profiled `child` session. State the recipient's actual declared role and, where applicable, the
 released `expected_settings.mcp_profile`; this does not bypass the existing pair guard.
 
 `supervisor-stage` refuses `--event` with `--observation` and `--project` with `--recipient`
@@ -949,13 +950,93 @@ an assignment and a session too, so a line built from the obligation alone looke
 command and could not be run. With the reading, the reading is frozen on the row and the
 recheck line in `supervisor-show` is rendered whole.
 
+### The hold rule
+
+One rule sets, keeps and releases the hold `superseded_by_report`, and one function applies it
+(`holdDecision`, `internal/relay/supervisor/holdrule.go`). Every path that writes `hold_reason` asks it
+and writes only what it answers, and `TestEveryHoldWriteAsksTheRule` holds the list of those paths.
+Three paths set the hold, each only on a message that carries none: the channel on a message it
+claimed whose obligation moved (the derived hold, journalled `supervisor_message_superseded`),
+`supervisor-acknowledge` (the park, journalled `supervisor_message_superseded` with `by` naming
+`supervisor-acknowledge` and the actor), and the fault deliverer on its notice (journalled
+`supervisor_notice_parked`).
+
+The kind of a hold is read, never stored apart. Another hold word (`hierarchy_unresolved`, a cap
+word) is `other` and keeps its own release path. `superseded_by_report` on a fault notice is
+`notice`. Otherwise the newest `supervisor_message_superseded` row of the message names the
+acknowledgement (`acknowledged`) or does not (`derived`, which is also how every row written before
+the key existed reads). Because the hold is set only from no hold, and each such set journals one
+such row in its own transaction, the newest row is the one that set the hold the message carries now;
+a release journals `supervisor_message_reopened`, never that kind. A re-address that keeps a hold (an
+acknowledged park whose recipient stays) writes its `supervisor_message_readdressed` row with
+`releasedHold` null and the added key `keptHold` naming the word it kept. A row without `keptHold`
+names under `releasedHold` the hold the message carried, as before; that hold was released, except
+for a direct message's cap word, which its re-address keeps (below) while its row still names it under
+`releasedHold`.
+
+A statement is what the message says, not its bytes (`statementKey`): its obligation, event and
+submission and the content fields of its packet. Seat, scope, sender and observation time are routing
+and never make a new statement, so the daemon's pass, a restart, the direct sender repeating its
+report and a rotated sender session all stage the same statement again.
+
+| entry | none | other | derived | acknowledged | notice |
+| --- | --- | --- | --- | --- | --- |
+| acknowledge, notice_park, derive | set | refuse | refuse | refuse | refuse |
+| defer | set (the word asked, or nothing) | refuse (writes nothing) | refuse (writes nothing) | refuse (writes nothing) | refuse (writes nothing) |
+| claim | keep (claimable) | refuse | refuse | refuse | refuse |
+| settle, a hold word asked | set | keep | keep | keep | keep |
+| settle, no hold word asked | keep | keep | keep | keep | keep |
+| readdress, recipient moved | keep | release (a direct message keeps a cap word) | release | release | release |
+| readdress, sender moved only | keep | release (a direct message keeps a cap word) | release | keep | release |
+| restage, recipient moved | keep | keep (re-addressing releases it) | release | release | release |
+| restage, same recipient | keep | keep (its own path) | if owed | same statement: keep, else if owed | release (reserved again) |
+| send_by_id, recipient or sender moved | keep (answers `relation_owner_drift`: stage it again) | keep | keep | keep | keep |
+| send_by_id, same endpoints | keep | keep (its own path) | if owed | if owed | if owed |
+
+Re-addressing an `other` hold differs by path, as it did before the rule: an event's or an
+omission's message re-addressed by `supervisor-stage` is released whatever its word, while a direct
+message re-addressed by its sender's staging is released from `hierarchy_unresolved` only and keeps a
+cap word (`busy_cap`, `attempt_cap`), which moves with it to the new recipient and keeps its own
+release path. `holdDecision` answers release for the cell; `StageDirect`'s update clears only
+`superseded_by_report` and `hierarchy_unresolved`.
+
+*if owed* releases the hold when what the message is for is still owed through it, and keeps it when
+it is not; the channel answers that (it may restate the message, as the release it allows would), and
+an error reading it keeps the hold. `restage` is any staging of the message's obligation again: by
+hand, by the daemon's pass or its attempt, by the direct sender, or a fault notice's reservation.
+A claim refuses a held message under its write lock, whatever the hold, and its update requires
+`hold_reason IS NULL`, so a park committed after the claim's read wins. A settle keeps a hold that
+appeared while the message was being sent, and records the hold the message carries after it (in the
+flow delivery row and the attempt's journal row), not the one it asked for.
+
+A send by id is `supervisor-send --message <id>` or the fault deliverer's send of its notice; the
+daemon's own attempts are not, and take the `restage` rows. A send by id releases a park or a derived
+hold only when what the message is for is still owed, and sends it; otherwise it sends nothing and
+the hold stays. It never re-addresses a message: when the hierarchy names another sender or recipient
+it answers `relation_owner_drift` and writes nothing. Staging the message again where it came from
+re-addresses it (the `readdress` rows) - `supervisor-stage --event <id>` or `--project <key>` for an
+event's or an omission's report, its sender's own report again (`report-up`, the flow's report) for a
+direct message, which `supervisor-stage` does not stage - and the next send goes. No hold word, column, journal kind or index is
+added for the rule. `TestHoldDecisionTable` holds every cell of this table against `holdDecision`,
+`TestSupervisorHoldRuleTable` holds the paths against a real store, and
+`TestHoldRuleDocsTableMatchesDecision` holds this table to the function.
+
 ### A recipient's whole queue
 
-One command reads one recipient's queue through the store API (CRW-1486) and reaches no host.
+Two commands read and clear one recipient's queue through the store API (CRW-1486), and neither
+reaches a host.
 `supervisor-list --recipient <task> [--project <key>] [--state unsent|all] [--hold <word>|none]` only
 reads: the messages in sending order with their state, hold, staging time, next eligible time and
-whether the channel would claim them now, and counts by state, hold, project and obligation kind. It is
-not in `doctor`'s command lists. The procedure is in
+whether the channel would claim them now, and counts by state, hold, project and obligation kind.
+`supervisor-acknowledge --recipient <task> --actor <task>` with `--all-informational` (narrowed by
+`--project` and `--staged-before`) or with `--message <id>` (repeatable) parks unsent notifications
+without a turn each, under the hold `superseded_by_report` with one `supervisor_message_superseded`
+journal row each naming `supervisor-acknowledge` and the actor, in one transaction. The bulk form parks
+only the kinds that report something finished (`completion`, `flow_completion`,
+`flow_milestone_report`, `lead_report`); a message named by id may be any notification. A decision, a
+fault notice, a held message and one an attempt may have sent are never parked, and each message left
+is answered with its reason. When a park is kept or released is [the hold rule](#the-hold-rule).
+Neither command is in `doctor`'s command lists. The procedure is in
 [operations](operations.md#reading-a-supervisor-recipients-queue).
 
 ## What a readback is not
@@ -1021,7 +1102,7 @@ report existed. Under the lock, an obligation already reported or discharged ref
 `not_claimable` and nothing is written.
 
 A block or a decision goes up as its newest statement. Both are keyed on their generation and
-their cause, so the issue child stating the same one again - with its evidence corrected, say - raises
+their cause, so the `child` session stating the same one again - with its evidence corrected, say - raises
 the same obligation from a newer event. Staging composes from the newest event that raises it -
 newest by the order this store accepted them, because two accepted at one instant tie on time -
 whichever statement the caller held, and a message staged from an earlier statement and never
@@ -1055,14 +1136,14 @@ report goes up as before. A child staging by hand (`supervisor-stage --project`)
 A push the recipient's policy refuses is not a send here. The transport answers `inbox_only`
 when the recipient's thread reports an approval policy it cannot serve (anything but `never` and
 `on-request`, I-460; an on-request recipient is pushed to like any other), after the resume and
-before any turn, so nothing reached the recipient's thread. For issue-child traffic that
-answer names the durable inbox item the issue child reads; this channel has no inbox anybody is told
+before any turn, so nothing reached the recipient's thread. For `child`-session traffic that
+answer names the durable inbox item the `child` session reads; this channel has no inbox anybody is told
 to read, so the attempt is recorded as a refusal before sending, retry-safe, with the
 transport's own answer beside it, `supervisor-send` says `sent: false`, and the message waits
 out its backoff so a policy restored on the recipient lets the next attempt send it.
 
 A report goes through the socket its caller names, whatever host the recipient is registered
-on - the rule issue-child delivery follows too. The relay records each endpoint's `hostId` for
+on - the rule `child`-session delivery follows too. The relay records each endpoint's `hostId` for
 routing and audit and has no map from a host id to a socket, so the recipient has to be
 reachable through the socket the sender uses, which today is the one App Server the relay runs
 against. A socket whose App Server does not know the recipient's thread reads its lifecycle as
@@ -1070,14 +1151,14 @@ unknown, and the send is withheld with no hold, so the next attempt through a so
 see the recipient sends it; nothing is recorded as sent, and a readback through such a socket
 cannot verify, because it needs the host to read the named turn on the recipient's thread.
 
-An omission derived from the store rests on the issue child's relay having recorded its declarations
-there. A store record that failed is reported and exits 2, and an issue child that carries on
-regardless leaves the store without the declaration its marker holds; so does an issue child that
+An omission derived from the store rests on the `child` session's relay having recorded its declarations
+there. A store record that failed is reported and exits 2, and a `child` session that carries on
+regardless leaves the store without the declaration its marker holds; so does a `child` session that
 claimed through a relay carrying this change and later declared through one without it. Either
 way the store can derive an omission the marker would not, and the grace is all that stands
 between that and a wake. The store also has nothing like the marker's Stop record: its witness
-that the turn ended is the relay's own settlement read beside the recorded declaration, so an
-issue child whose Stop hook never fired is derived where `reporting-show` answers `stop_unobserved`.
+that the turn ended is the relay's own settlement read beside the recorded declaration, so a
+`child` session whose Stop hook never fired is derived where `reporting-show` answers `stop_unobserved`.
 
 ## Who calls it today
 
@@ -1093,7 +1174,7 @@ message (I-216), and only an attempt that reached the claim and the transport sp
 budget, so a recipient that is never sendable cannot take every tick's budget however far apart
 ticks are. So every rule above holds
 for it unchanged: one obligation is one message and one wake, what goes out is re-derived where
-the transport starts (I-247), the recipient's budget is shared with issue-child traffic and
+the transport starts (I-247), the recipient's budget is shared with `child`-session traffic and
 spent only at the transport start, a paused, archived or unreachable recipient is withheld
 rather than woken and keeps the obligation, an unloaded one is loaded with nothing transmitted
 and compared with its record before any turn, and a message another caller has claimed is left
@@ -1112,9 +1193,9 @@ claims a message first sends it; the other finds nothing to send. The recipient 
 with `supervisor-read` from a turn of its own - nothing reads back on its behalf.
 
 An omission is staged by the pass too, from this store (see an omission this store derives):
-once its grace has passed, for a turn whose issue child's relay recorded its claim here. The daemon
-still reads no marker file; what it reads is what the issue child's own relay wrote into the store
-beside the marker. A legacy admission - an issue child that claimed without that record - is never
+once its grace has passed, for a turn whose `child` session's relay recorded its claim here. The daemon
+still reads no marker file; what it reads is what the `child` session's own relay wrote into the store
+beside the marker. A legacy admission - a `child` session that claimed without that record - is never
 staged automatically, and stays owed and visible in `supervisor-standing` whenever a
 `reporting-show` reading of it is passed in, as before.
 
@@ -1129,7 +1210,7 @@ channel recorded (see [faults](faults.md), who tells the level above).
 
 Source-implemented and covered by `tests/test_supervisor_channel.py`, which stages, sends and
 reads back against this package's own fake host, and by `tests/test_supervisor_autosend.py` and
-`tests/test_supervisor_omission_store.py`, which run the daemon tick and the issue child's commands
+`tests/test_supervisor_omission_store.py`, which run the daemon tick and the `child` session's commands
 against it. That is evidence about this source and about
 that host. It is not an installed runtime, an activated service, or any report reaching any
 recipient on any machine. Whether a real child stages and sends a report, a real recipient

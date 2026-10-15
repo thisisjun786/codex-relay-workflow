@@ -139,9 +139,18 @@ func (o *acceptOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResu
 	switch {
 	case ucAt >= 0:
 		row := r[ucAt]
-		receipt := ""
+		// the receipt the check read, and whether the tool that judged was given it (CRW-1517); a row with no handed is from before
+		// it was recorded, when every unit check took the prompt
+		var receipt UnitCheckReceipt
 		if rc, ok := row.Data["receipt"].(map[string]any); ok && str(rc, "state") == "accepted" {
-			receipt = str(rc, "sha256")
+			receipt = UnitCheckReceipt{SHA256: str(rc, "sha256"), Handed: true}
+			if h, has := rc["handed"]; has {
+				b, ok := h.(bool)
+				if !ok {
+					return engine.OpResult{}, &Refusal{"reviewer_not_verified", fmt.Sprintf("unit check %s records a receipt handed %v (%T), not a bool", row.CallID, h, h)}
+				}
+				receipt.Handed = b
+			}
 		}
 		v, err := UnitCheckVerdict(uc, row.CallID, dataStr(ver, "digest"), expectedCriteria(r, node), receipt)
 		if err != nil {
