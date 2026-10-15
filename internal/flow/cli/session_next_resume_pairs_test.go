@@ -3,10 +3,12 @@ package cli
 import (
 	"context"
 	"errors"
+	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -43,6 +45,10 @@ func roleStoreChangedRows(t *testing.T, w *world, run string) int {
 // standInProcess is a process of the run in the order the run process keeps (CRW-1372): it holds its process lock and the run lock at
 // once, and after delay records its started row (naming its process lock, pinning table), then the extra rows (a policy_repinned row),
 // then binds the owner's line with table unless unbound. Its locks are held until the test ends; done closes once it bound.
+//
+// The stand-in is over when its test is over (CRW-1509): a cleanup registered after the lock release (so it runs before it, and before
+// t.Setenv puts HOME back) ends the delay, waits for done and reports what the goroutine found, so the goroutine never writes to a
+// state directory or a HOME that is gone and never logs through a finished test. A test that wants the bind waits for done itself.
 func standInProcess(t *testing.T, w *world, run string, table *engine.Policy, delay time.Duration, unbound bool, extra ...engine.Event) <-chan struct{} {
 	t.Helper()
 	process, err := takeProcessLock(w.state, run)
@@ -60,18 +66,41 @@ func standInProcess(t *testing.T, w *world, run string, table *engine.Policy, de
 		rows[role] = map[string]any{"model": spec.Pair.Model, "effort": spec.Pair.Effort}
 	}
 	done := make(chan struct{})
+	stop := make(chan struct{})
+	var mu sync.Mutex
+	var found []string
+	fail := func(format string, args ...any) {
+		mu.Lock()
+		defer mu.Unlock()
+		found = append(found, fmt.Sprintf(format, args...))
+	}
+	t.Cleanup(func() {
+		close(stop)
+		<-done
+		mu.Lock()
+		defer mu.Unlock()
+		for _, msg := range found {
+			t.Error(msg)
+		}
+	})
 	go func() {
 		defer close(done)
-		time.Sleep(delay)
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-stop:
+			return
+		}
 		st, err := store.Open(ctx, filepath.Join(w.state, "relay.sqlite3"), "")
 		if err != nil {
-			t.Error(err)
+			fail("the process's store: %v", err)
 			return
 		}
 		defer st.Close()
 		j, err := journal.Open(ctx, st, run, journal.Identity{}, journal.Options{Immediate: true})
 		if err != nil {
-			t.Error(err)
+			fail("the process's journal: %v", err)
 			return
 		}
 		j.Append(engine.Event{RunID: run, Kind: engine.KindRun, Event: "started", Data: map[string]any{"workflow": "hello", "backend": engine.BackendSession,
@@ -80,14 +109,14 @@ func standInProcess(t *testing.T, w *world, run string, table *engine.Policy, de
 			j.Append(ev)
 		}
 		if err := j.Close(); err != nil {
-			t.Error(err)
+			fail("the process's journal close: %v", err)
 			return
 		}
 		if unbound {
 			return
 		}
 		if res, err := bindOwner(w.state, run, sessOwner, table); err != nil || !(res.Bound || res.Already) {
-			t.Errorf("the process's bind: %+v %v", res, err)
+			fail("the process's bind: %+v %v", res, err)
 		}
 	}()
 	return done
@@ -185,9 +214,13 @@ func TestNextThatResumesARunTakesTheRoleStoreTheResumeReads(t *testing.T) {
 		t.Fatal(err)
 	}
 	spawn := td.Spawn
+	var processBound <-chan struct{}
+	var once sync.Once // next may spawn more than once; one resumed process holds the run
 	td.Spawn = func(ctx context.Context, req SpawnRequest) (int, error) {
-		standInProcess(t, w, run, storeTable, 150*time.Millisecond, false, engine.Event{RunID: run, Kind: engine.KindRun, Event: engine.EvPolicyRepinned,
-			Data: map[string]any{"old": "sha256:pinned", "new": storeTable.Digest}})
+		once.Do(func() {
+			processBound = standInProcess(t, w, run, storeTable, 150*time.Millisecond, false, engine.Event{RunID: run, Kind: engine.KindRun, Event: engine.EvPolicyRepinned,
+				Data: map[string]any{"old": "sha256:pinned", "new": storeTable.Digest}})
+		})
 		return spawn(ctx, req)
 	}
 	code, out, errOut := td.do("next", run, "--json", "--state", w.state)
@@ -195,6 +228,7 @@ func TestNextThatResumesARunTakesTheRoleStoreTheResumeReads(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("next: %d %s %s", code, out, errOut)
 	}
+	<-processBound
 	ans := decodeNext(t, out)
 	if ans.Resumed == 0 {
 		t.Fatalf("next did not resume the run: %+v", ans)
@@ -310,5 +344,27 @@ func TestNextTakesThePairsOfAProcessThatTookTheRunWhileItWaited(t *testing.T) {
 	noPinnedSpawns(t, ans, func(role string) string { return "resumed-" + role })
 	if n := roleStoreChangedRows(t, w, run); n != 0 {
 		t.Fatalf("%d role_store_changed rows: next recorded the ended process's pins as the live run's", n)
+	}
+}
+
+// CRW-1509: a stand-in process is over when its test is over. The goroutine of standInProcess used to outlive a test that did not wait for
+// it, and then wrote to a state directory and a HOME that were gone and logged through a finished test. The stand-in here sleeps for an
+// hour and nobody waits for it: ending the test ends it.
+func TestAStandInProcessIsOverWhenItsTestIsOver(t *testing.T) {
+	var done <-chan struct{}
+	t.Run("a test that does not wait for its stand-in", func(t *testing.T) {
+		t.Setenv("HOME", t.TempDir())
+		w := newWorld(t)
+		done = standInProcess(t, w, "run-0123456789b8", engine.FakePolicy(), time.Hour, false)
+		select {
+		case <-done:
+			t.Fatal("the stand-in was over before its test was")
+		default:
+		}
+	})
+	select {
+	case <-done:
+	default:
+		t.Fatal("the stand-in is still running after its test ended")
 	}
 }
