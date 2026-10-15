@@ -444,3 +444,31 @@ func TestStoredReaderIgnoresATerminalRowOfAnEarlierAttempt(t *testing.T) {
 		t.Errorf("%v %v %s", ok, err, asJSON(t, got))
 	}
 }
+
+// EvidencePlacedIsAnIntent (CRW-1496): the evidence_placed row of a session call names a directory before the engine writes a flow
+// evidence record there, so it is an intent: it is committed in a transaction of its own before Append returns, with the rows that
+// waited before it, and a second reader of the store sees it at once.
+func TestEvidencePlacedIsAnIntent(t *testing.T) {
+	if !IsIntent(engine.KindCall, engine.EvEvidencePlaced) {
+		t.Fatalf("%s is not an intent", engine.EvEvidencePlaced)
+	}
+	st, _ := newStore(t)
+	j := newJournal(t, st)
+	call := func(ev string, data map[string]any) engine.Event {
+		return engine.Event{RunID: runID, Kind: engine.KindCall, CallID: "c-placed", Path: "root", Position: 1, Op: "agent", Label: "exe", Event: ev, Data: data}
+	}
+	j.Append(engine.Event{RunID: runID, Kind: engine.KindRun, Event: "started", Data: map[string]any{"workflow": "t", "script_digest": "d", "args_digest": "a"}})
+	j.Append(call(engine.EvPrepared, map[string]any{"backend": engine.BackendSession}))
+	j.Append(call(engine.EvStepPublished, map[string]any{"k": 1, "attempt": 1, "marker": "c-placed/t1-a1", "evidence_assignment": "A"}))
+	j.Append(call(engine.EvThreadStarted, map[string]any{"thread_id": "agent-1", "attempt": 1, "via": "session"}))
+	if got := dbEvents(t, st.DB, "c-placed"); !slices.Equal(got, []string{"prepared", "step_published"}) {
+		t.Fatalf("before the evidence_placed row the store holds %v", got)
+	}
+	j.Append(call(engine.EvEvidencePlaced, map[string]any{"evidence_assignment": "A", "evidence_cwd": "/host", "attempt": 1, "marker": "c-placed/t1-a1"}))
+	if got, want := dbEvents(t, st.DB, "c-placed"), []string{"prepared", "step_published", "thread_started", "evidence_placed"}; !slices.Equal(got, want) {
+		t.Errorf("when Append returned the store holds %v, want %v", got, want)
+	}
+	if err := j.Err(); err != nil {
+		t.Error(err)
+	}
+}

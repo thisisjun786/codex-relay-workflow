@@ -170,6 +170,52 @@ func TestFlowRefDescribesThePausedEnd(t *testing.T) {
 	}
 }
 
+// TestFlowDocsNameEvidencePlaced (CRW-1496): the docs name the evidence_placed call row. script.md lists it among the rows a session
+// call journals and in the session row table, and its bind paragraph says the bind writes it before a copy under the host cwd;
+// journal.md lists it among the intents committed before Append returns.
+func TestFlowDocsNameEvidencePlaced(t *testing.T) {
+	read := func(path string) string {
+		t.Helper()
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(raw)
+	}
+	script := read("../../../docs/flow/script.md")
+	if journal := docSection(t, script, "## Journal"); !strings.Contains(journal, "`evidence_placed`") {
+		t.Error("the Journal section of script.md does not name the evidence_placed row of a session call")
+	}
+	table := ""
+	if i := strings.Index(script, "| Row | In a session call |"); i >= 0 {
+		table = script[i:]
+		if end := strings.Index(table, "\n\n"); end >= 0 {
+			table = table[:end]
+		}
+	}
+	if !strings.Contains(table, "\n| `evidence_placed` |") {
+		t.Error("the session row table of script.md has no evidence_placed row")
+	}
+	bind := ""
+	for _, line := range strings.Split(script, "\n- ") {
+		if strings.HasPrefix(line, "A bind writes `thread_started`") {
+			bind = line
+		}
+	}
+	if !strings.Contains(bind, "`evidence_placed`") {
+		t.Errorf("the bind paragraph of script.md does not name evidence_placed:\n%s", bind)
+	}
+	intents := ""
+	for _, line := range strings.Split(read("../../../docs/flow/journal.md"), "\n- ") {
+		if strings.HasPrefix(line, "A dispatch intent (") {
+			intents = line
+		}
+	}
+	if !strings.Contains(intents, "`evidence_placed`") {
+		t.Errorf("the intent list of journal.md does not name evidence_placed:\n%s", intents)
+	}
+}
+
 // TestOutcomeDocsStateThePrecedence: the three docs that tell which state a finished run reports (reporting.md, script.md and flow.md)
 // state the rule outcomeOf applies: the milestone member that is an object without an id and with a non-empty string state is the
 // wrapped result; a milestone member that carries an id is not read as one; otherwise the top-level string state is the outcome.
