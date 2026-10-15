@@ -98,14 +98,14 @@ func TestAGitThatFailsTheAncestorCheckOfAMarkerHoldsTheEntry(t *testing.T) {
 	}
 }
 
-// failCommitProbe makes the git call that asks whether the checkout has the commit head (any argv element "<head>^{commit}", the
-// cat-file and the rev-parse form alike) fail with status rc or with err. It answers the number of calls it failed.
+// failCommitProbe makes the git call that asks whether the checkout has the commit head ("cat-file -e <head>", the bare sha) fail
+// with status rc or with err. It answers the number of calls it failed.
 func failCommitProbe(w *prWorld, head string, rc int, err error) *int {
 	failed := new(int)
 	delegate := w.r.Exec
 	w.r.Exec = func(ctx context.Context, c Cmd) (int, error) {
-		for _, a := range c.Argv {
-			if a == head+"^{commit}" {
+		for i, a := range c.Argv {
+			if a == "cat-file" && i+3 == len(c.Argv) && c.Argv[i+1] == "-e" && c.Argv[i+2] == head {
 				*failed++
 				return rc, err
 			}
