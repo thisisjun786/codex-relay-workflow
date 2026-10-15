@@ -414,6 +414,16 @@ func (c *Channel) holdObsoleteClaim(ctx context.Context, row store.SupervisorMes
 		if current.State != row.State || current.HoldReason != row.HoldReason || current.NextEligibleAt != row.NextEligibleAt || current.AttemptCount != row.AttemptCount {
 			return nil
 		}
+		// The hold rule's derive entry: the derived hold is set, and its supervisor_message_superseded
+		// row journaled, only on a message that carries no hold, so the newest such row stays the one of
+		// the write that set the hold the message carries (holdKindOf). A held row is left as it is.
+		kind, err := holdKindOf(tx, c.Store, current)
+		if err != nil {
+			return err
+		}
+		if verdict, _, err := holdDecision(kind, holdChange{Entry: entryDerive}, nil); err != nil || verdict != holdSet {
+			return err
+		}
 		next := float64(0)
 		if row.NextEligibleAt.Valid {
 			next = row.NextEligibleAt.Float64
