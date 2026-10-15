@@ -160,3 +160,53 @@ func TestAcknowledgeWithNoTimeWritesTheChannelsClock(t *testing.T) {
 		t.Fatalf("an acknowledgement with no time wrote updated_at %q and journal at %q (hold %q)", row.UpdatedAt, at, row.HoldReason.String)
 	}
 }
+
+// The hold a message carries was set by the newest supervisor_message_superseded row of it, not the
+// first: a message parked by an acknowledgement, released by a resubmission, held again by the
+// channel (its own journal row) and released by a pass, then acknowledged again, is kept through the
+// next pass only as that second acknowledgement; the derived hold in between was released.
+func TestAcknowledgedParkIsReadFromTheNewestSupersededRow(t *testing.T) {
+	f := fixture24(t)
+	id := acknowledgedCompletion(t, f)
+	hold := func() string {
+		t.Helper()
+		row, err := f.c.Get(f.ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return row.HoldReason.String
+	}
+	pass := func(at string) {
+		t.Helper()
+		if _, err := f.c.StageUnsent(f.ctx, "PRJ-1", at, 300); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// A resubmitted report is a new statement: the pass releases the acknowledgement's park.
+	if _, err := f.s.DB.ExecContext(f.ctx, `INSERT INTO work_reports (event_id,submission_no,relationship_id,execution_generation,revision_hash,repository,cxc_status,cxc_reason,contract_version,summary,next_action,recorded_at) VALUES ('event-1',2,'rel-1',1,'abc123456789abcdef','thisisjun786/codex-relay-workflow','DONE','proved','v1','the work is done, corrected','merge','2023-11-14T22:14:00.000000+00:00')`); err != nil {
+		t.Fatal(err)
+	}
+	pass("2023-11-14T22:14:20.000000+00:00")
+	if got := hold(); got != "" {
+		t.Fatalf("the resubmission left the park: held %q", got)
+	}
+	// The channel derives a superseded hold of its own, journaled as it journals one.
+	if _, err := f.s.DB.ExecContext(f.ctx, "UPDATE supervisor_messages SET hold_reason=? WHERE message_id=?", store.SupervisorHoldSuperseded, id); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.s.DB.ExecContext(f.ctx, `INSERT INTO journal(at,kind,subject,detail) VALUES('2023-11-14T22:15:00.000000+00:00','supervisor_message_superseded',?,'{"requestId": "r-1", "detail": "what is owed moved"}')`, id); err != nil {
+		t.Fatal(err)
+	}
+	pass("2023-11-14T22:15:20.000000+00:00")
+	if got := hold(); got != "" {
+		t.Fatalf("a derived hold after an earlier acknowledgement was read as that acknowledgement and kept: held %q", got)
+	}
+	// A second acknowledgement is kept through the next pass.
+	if _, err := f.c.Acknowledge(f.ctx, AcknowledgeRequest{Recipient: "supervisor", Actor: "supervisor", Messages: []string{id}, At: "2023-11-14T22:16:00.000000+00:00"}); err != nil {
+		t.Fatal(err)
+	}
+	pass("2023-11-14T22:16:20.000000+00:00")
+	if got := hold(); got != store.SupervisorHoldSuperseded {
+		t.Fatalf("the second acknowledgement was released by a pass: held %q", got)
+	}
+}
