@@ -16,6 +16,7 @@ import (
 	"os/exec"
 	"strings"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/gitprobe"
 	"github.com/thisisjun786/codex-relay-workflow/internal/tracking"
 )
@@ -25,6 +26,7 @@ const Command = "pr"
 
 // Usage is the usage of the command.
 const Usage = `usage: crw flow pr open --repo OWNER/NAME --head BRANCH [--base BRANCH] --title T [--body TEXT | --body-file PATH] --issue REF... [--draft] [--push DIR [--remote NAME]]
+       crw flow pr open --repo OWNER/NAME --head BRANCH [--base BRANCH] --title T --run RUN --push DIR [--remote NAME] [--issue REF...] [--draft] [--state DIR] [--socket PATH]
        crw flow pr show --pr OWNER/NAME#N [--checks]
        crw flow pr branch --checkout DIR --milestone M [--base BRANCH] [--name BRANCH]`
 
@@ -38,6 +40,15 @@ merge is done by the dev queue (crw manage integrate --enqueue-pr REF, then its 
          line "Carries: REF, REF" naming the issues it carries (--issue, repeated or comma-separated, OWNER/NAME#N, at least one).
          With --push DIR the head branch of the checkout DIR is pushed to --remote (default origin; a remote configured in DIR, such as origin or team/review, not a URL or a path) first, never forced: a push the
          remote refuses opens nothing.
+         With --run RUN the pull request is opened from the run's journal instead of a text: the run must have closed its milestone
+         (finished completed, outcome closed, the target not moved after the gate) and the milestone's crosscheck must be verified at
+         the close tip (a verdict row; an evidence row, a needs_changes or a verified row of another head is not accepted). The body is
+         made from the run: the result, the issues it closes, the gate's verification, the crosscheck and its follow-ups. The issues are
+         the milestone nodes' OWNER:NAME:N keys (--issue, when given, must name the same; a milestone whose keys are not of that form
+         takes --issue as given). --run needs --push DIR and pushes exactly the crosschecked tip, never forced: the checkout's --head
+         branch must be at that tip. --body and --body-file are not taken. --state DIR and --socket PATH select the relay store the run
+         is read from (read-only). The title and the body are refused (exit 2) when they hold a path under /home, /state or /scratch,
+         the host's name, a thread, call or run id or a secret; this check also runs on --body.
   show   reads the pull request: state, merged, head commit, head and base branch, the issues it carries; --checks adds the check
          runs and commit statuses of its head and their judgment (none, pending, success, failure).
   branch makes the bundle's integration branch in the checkout DIR: the local branch --name (default bundle/M) at the tip of the local
@@ -55,13 +66,33 @@ type Deps struct {
 	NewPullRequests func(repo string) (tracking.PullRequests, error)
 	// Env is the environment git runs with (nil: the process's), without its routing variables (pushEnv).
 	Env []string
+	// Journal reads the rows of a run from the relay store src selects (nil: `open --run` cannot be served).
+	Journal func(ctx context.Context, src Source, run string) ([]engine.Event, error)
+	// Hostname and Home are the host's name and the user's home directory the leak check looks for (nil: os.Hostname, os.UserHomeDir).
+	Hostname, Home func() string
 }
 
 // Default is the production dependencies.
 func Default() *Deps {
 	return &Deps{NewPullRequests: func(repo string) (tracking.PullRequests, error) {
 		return tracking.NewGitHub(repo, tracking.DefaultTokenSource())
-	}}
+	}, Journal: readJournal}
+}
+
+// leakContext is what is local to this host, for the leak check.
+func (d *Deps) leakContext() LeakContext {
+	var c LeakContext
+	if d.Hostname != nil {
+		c.Hostname = d.Hostname()
+	} else if h, err := os.Hostname(); err == nil {
+		c.Hostname = h
+	}
+	if d.Home != nil {
+		c.Home = d.Home()
+	} else if h, err := os.UserHomeDir(); err == nil {
+		c.Home = h
+	}
+	return c
 }
 
 // Handles reports whether `crw flow args...` is this command.
@@ -192,6 +223,9 @@ func RunWith(ctx context.Context, d *Deps, args []string, stdout, stderr io.Writ
 		draft := fs.Bool("draft", false, "open it as a draft")
 		push := fs.String("push", "", "the checkout whose head branch is pushed first")
 		remote := fs.String("remote", "origin", "the remote --push pushes to")
+		runID := fs.String("run", "", "the run whose closed milestone the pull request is opened for")
+		state := fs.String("state", "", "the relay state directory --run reads the run from")
+		socket := fs.String("socket", "", "the relay control socket --run reads the run through")
 		var issues issueList
 		fs.Var(&issues, "issue", "an issue the pull request carries, OWNER/NAME#N")
 		if ok, code := parse(); !ok {
@@ -202,6 +236,17 @@ func RunWith(ctx context.Context, d *Deps, args []string, stdout, stderr io.Writ
 		}
 		if *body != "" && *bodyFile != "" {
 			return usage("--body and --body-file are one choice")
+		}
+		if *runID == "" && (*state != "" || *socket != "") {
+			return usage("--state and --socket select the store --run reads: give --run")
+		}
+		if *runID != "" {
+			if *body != "" || *bodyFile != "" {
+				return usage("--run makes the body from the run: --body and --body-file are not taken")
+			}
+			if *push == "" {
+				return usage("--run pushes the crosschecked tip itself: give --push DIR")
+			}
 		}
 		text := *body
 		if *bodyFile != "" {
@@ -223,9 +268,45 @@ func RunWith(ctx context.Context, d *Deps, args []string, stdout, stderr io.Writ
 		if err != nil {
 			return usage("%v", err)
 		}
+		// a refusal of --run: one line, exit 2, before anything is pushed or sent
+		refuse := func(reason, format string, a ...any) int {
+			fmt.Fprintf(stderr, "crw flow pr: error: %s: %s\n", reason, fmt.Sprintf(format, a...))
+			return 2
+		}
+		tip := ""
+		if *runID != "" {
+			if d.Journal == nil {
+				return failed("no run reader is wired")
+			}
+			events, err := d.Journal(ctx, Source{State: *state, Socket: *socket}, *runID)
+			if errors.Is(err, ErrNoRun) {
+				return refuse(reasonRunUnknown, "%v", err)
+			}
+			if err != nil {
+				return failed("the run %s cannot be read: %v", *runID, err)
+			}
+			facts, err := FactsOf(events)
+			if err != nil {
+				return failed("the run %s cannot be read: %v", *runID, err)
+			}
+			if !facts.Closed {
+				return refuse(reasonRunNotClosed, "%s", facts.Why)
+			}
+			if _, reason := crosscheckOf(events, facts.Body.Milestone, facts.Body.Tip); reason != "" {
+				return refuse(reason, "%s", crosscheckWhy(reason, facts.Body.Milestone, facts.Body.Tip))
+			}
+			refs, reason, message := carriedRefs(facts.Nodes, in.Issues, *repo)
+			if reason != "" {
+				return refuse(reason, "%s", message)
+			}
+			in.Issues, in.Body, tip = refs, Body(facts.Body, refs), facts.Body.Tip
+		}
 		// the input is checked before anything is pushed: what the adapter would refuse pushes nothing
 		if err := in.Check(); err != nil {
 			return usage("%v", err)
+		}
+		if leaks := Leaks(publishedText(in), d.leakContext()); len(leaks) > 0 {
+			return refuse(reasonBodyLeak, "%s", leakMessage(leaks))
 		}
 		if *push != "" {
 			// a configured remote of the checkout and nothing else, refused before anything is pushed
@@ -237,8 +318,24 @@ func RunWith(ctx context.Context, d *Deps, args []string, stdout, stderr io.Writ
 				return usage("--remote %q is not a remote configured in %s", *remote, *push)
 			}
 		}
+		if tip != "" {
+			// the head that is opened is the commit the crosscheck judged: the local branch must be at it
+			local, err := localTip(ctx, d.Env, *push, *head)
+			if err != nil {
+				return failed("%v; nothing is pushed and no pull request is opened", err)
+			}
+			if local != tip {
+				return refuse(reasonCrosscheckMoved, "the branch %s of %s is at %s, the crosschecked tip is %s", *head, *push, orNone(short(local, 12)), short(tip, 12))
+			}
+		}
 		var ans Answer
-		if *push != "" {
+		switch {
+		case tip != "":
+			if err := pushCommit(ctx, d.Env, *push, *remote, *head, tip); err != nil {
+				return failed("%v; no pull request is opened", err)
+			}
+			ans.Pushed = tip
+		case *push != "":
 			pushed, err := pushBranch(ctx, d.Env, *push, *remote, *head)
 			if err != nil {
 				return failed("%v; no pull request is opened", err)
@@ -253,7 +350,17 @@ func RunWith(ctx context.Context, d *Deps, args []string, stdout, stderr io.Writ
 			return failed("%v", err)
 		}
 		ans.PullRequest = viewOf(pr)
-		if ans.Pushed != "" && pr.HeadSHA != ans.Pushed {
+		if tip != "" {
+			// the remote branch moved between the push and the POST, a window the REST API cannot close: detected, not prevented. The
+			// pull request exists, and the merge request refuses it until a verified crosscheck stands at its head.
+			if pr.HeadSHA != tip {
+				ans.Warnings = append(ans.Warnings, fmt.Sprintf("pr_head_moved: the pull request's head is %s, the crosschecked tip is %s", short(pr.HeadSHA, 12), short(tip, 12)))
+				if code := emit(ans); code != 0 {
+					return code
+				}
+				return 1
+			}
+		} else if ans.Pushed != "" && pr.HeadSHA != ans.Pushed {
 			ans.Warnings = append(ans.Warnings, fmt.Sprintf("the pull request's head is %s, the pushed branch is at %s", pr.HeadSHA, ans.Pushed))
 		}
 		return emit(ans)
@@ -366,14 +473,55 @@ func pushEnv(env []string) []string {
 // pushBranch pushes refs/heads/<branch> of the checkout to the remote's branch of the same name, never forced, and returns the commit
 // it pushed.
 func pushBranch(ctx context.Context, env []string, checkout, remote, branch string) (string, error) {
-	gitOut := func(args ...string) (string, error) { return gitIn(ctx, env, checkout, args...) }
-	tip, err := gitOut("rev-parse", "--verify", "refs/heads/"+branch+"^{commit}")
+	tip, err := gitIn(ctx, env, checkout, "rev-parse", "--verify", "refs/heads/"+branch+"^{commit}")
 	if err != nil {
 		return "", fmt.Errorf("push: the checkout %s has no branch %s: %w", checkout, branch, err)
 	}
-	// no plus and no --force: a remote branch that is not an ancestor of the tip refuses the push
-	if _, err := gitOut("push", "--porcelain", "--", remote, tip+":refs/heads/"+branch); err != nil {
-		return "", fmt.Errorf("push of %s to %s refused: %w", branch, remote, err)
+	if err := pushCommit(ctx, env, checkout, remote, branch, tip); err != nil {
+		return "", err
 	}
 	return tip, nil
+}
+
+// pushCommit pushes the commit sha to the remote's branch, never forced: no plus and no --force, so a remote branch that is not an
+// ancestor of sha refuses the push. The commit is named by its sha, so a move of the local branch after the caller judged it cannot
+// change what is pushed.
+func pushCommit(ctx context.Context, env []string, checkout, remote, branch, sha string) error {
+	if _, err := gitIn(ctx, env, checkout, "push", "--porcelain", "--", remote, sha+":refs/heads/"+branch); err != nil {
+		return fmt.Errorf("push of %s to %s refused: %w", branch, remote, err)
+	}
+	return nil
+}
+
+// localTip is the commit of refs/heads/<branch> in the checkout, "" when the checkout has no such branch (rev-parse --verify --quiet
+// answers 1 for a missing ref; any other git failure is returned).
+func localTip(ctx context.Context, env []string, checkout, branch string) (string, error) {
+	tip, err := gitIn(ctx, env, checkout, "rev-parse", "--verify", "--quiet", "refs/heads/"+branch+"^{commit}")
+	if code, ok := gitExitCode(err); ok && code == 1 {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("the branch %s of %s could not be read: %w", branch, checkout, err)
+	}
+	return tip, nil
+}
+
+// publishedText is everything a pull request publishes: the title, and the body with the Carries line tracking appends.
+func publishedText(in tracking.NewPullRequest) string {
+	var refs []string
+	for _, r := range in.Issues {
+		refs = append(refs, r.String())
+	}
+	return in.Title + "\n" + in.Body + "\nCarries: " + strings.Join(refs, ", ")
+}
+
+// crosscheckWhy is the sentence of a refused crosscheck.
+func crosscheckWhy(reason, milestone, tip string) string {
+	switch reason {
+	case reasonCrosscheckMissing:
+		return "the run holds no crosscheck of milestone " + milestone
+	case reasonCrosscheckMoved:
+		return "the crosschecks of milestone " + milestone + " are of other heads, none of the close tip " + short(tip, 12)
+	}
+	return "the crosscheck of milestone " + milestone + " at the close tip " + short(tip, 12) + " is not a verified verdict"
 }
