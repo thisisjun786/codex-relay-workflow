@@ -13,9 +13,15 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
 )
 
-// supervisorUnconfigured is the refusal of a run whose configuration names no management thread or
-// no host. The relay is never called: there is nothing to bind and nothing to look up.
+// supervisorUnconfigured is the refusal of a run whose configuration leaves a value it needs empty:
+// no management thread, or for register no host or no settings file. The relay is never called:
+// there is nothing to bind and nothing to look up. The refusal names each missing key under
+// supervisorSectionKey and the configuration file the run read, or says that none was read.
 const supervisorUnconfigured = "supervisor_unconfigured"
+
+// supervisorSectionKey is where the supervisor section lives in the configuration document: the
+// supervisor key of the manage object.
+const supervisorSectionKey = "manage.supervisor"
 
 // supervisorSource is the --source the pair record carries. It names the command that wrote it, so
 // a later reader can tell a record this command made from one another surface made.
@@ -45,11 +51,12 @@ type supervisorSection struct {
 	SettingsFile string `json:"settings_file"`
 }
 
-// supervisorConfig is the configuration a run reads. It is a variable so a test can supply the
-// supervisor section before the configuration-file loader lands; the command otherwise reads the
-// package's own configuration, whose document carries no section at this baseline. A host with no
-// section therefore reads every value as empty, which is the specified refusal rather than a
-// failure.
+// supervisorConfig is the configuration a run reads: the package's own configuration, the manage
+// object of the crw configuration file (CRW_CONFIG, else crw/config.json below the configuration
+// home), whose supervisor key is the section. It is a variable so a test can supply a section
+// without writing a file; the file path is pinned through the real loader as well
+// (supervisor_config_file_test.go). A host with no file or no section reads every value as empty,
+// which is the specified refusal rather than a failure.
 var supervisorConfig = func(e *Env) *Config { return coreDefaults(e) }
 
 // supervisorReport is crw manage supervisor show: the recorded settings and the recorded store
@@ -86,7 +93,7 @@ type supervisorRefusal struct {
 const (
 	supervisorUsage         = "usage: crw manage supervisor {register,show} ..."
 	supervisorRegisterUsage = "usage: crw manage supervisor register [--task THREAD] [--host HOST]"
-	supervisorShowUsage     = "usage: crw manage supervisor show"
+	supervisorShowUsage     = "usage: crw manage supervisor show [--task THREAD]"
 )
 
 var supervisorCommand = Command{
@@ -124,7 +131,7 @@ func supervisorRun(ctx context.Context, e *Env, args []string) int {
 func supervisorSectionOf(e *Env, cfg *Config) (supervisorSection, int) {
 	var section supervisorSection
 	if err := cfg.Section("supervisor", &section); err != nil {
-		supervisorNote(e, fmt.Sprintf("crw manage supervisor: error: the supervisor section is not readable: %v\n", err))
+		supervisorNote(e, fmt.Sprintf("crw manage supervisor: error: the supervisor section (%s) is not readable: %v\n", supervisorSectionKey, err))
 		return section, usageExit
 	}
 	return section, 0
@@ -147,14 +154,50 @@ func supervisorSeat(e *Env, section supervisorSection, task, host string) superv
 	return seat
 }
 
-// supervisorConfigured refuses a run whose configuration names no thread or no host, before any
-// relay call: the pair record and the binding both need both values.
-func supervisorConfigured(e *Env, section supervisorSection) bool {
-	if section.TaskID != "" && section.HostID != "" {
+// supervisorConfigured refuses a run whose seat leaves a value it needs empty, before any relay
+// call. Every run needs the thread; register also needs the host (the binding) and the settings file
+// (the pair record cites it), while show reads by thread alone. Every missing key is named in one
+// refusal, with where the thread may come from when it is the one missing and the configuration file
+// the run read, or that it read none and where one is looked for, so the operator learns in one run
+// what to write where.
+func supervisorConfigured(e *Env, cfg *Config, seat supervisorSection, register bool) bool {
+	var missing []string
+	if seat.TaskID == "" {
+		missing = append(missing, "task_id")
+	}
+	if register && seat.HostID == "" {
+		missing = append(missing, "host_id")
+	}
+	if register && seat.SettingsFile == "" {
+		missing = append(missing, "settings_file")
+	}
+	if len(missing) == 0 {
 		return true
 	}
-	supervisorNote(e, fmt.Sprintf("crw manage supervisor: error: %s\n", supervisorUnconfigured))
+	keys := make([]string, len(missing))
+	for i, key := range missing {
+		keys[i] = supervisorSectionKey + "." + key
+	}
+	supervisorNote(e, fmt.Sprintf("crw manage supervisor: error: %s: the configuration sets no %s\n", supervisorUnconfigured, strings.Join(keys, ", ")))
+	if seat.TaskID == "" {
+		supervisorNote(e, fmt.Sprintf("crw manage supervisor: the management thread is --task, else CODEX_THREAD_ID, else %s.task_id\n", supervisorSectionKey))
+	}
+	supervisorNote(e, "crw manage supervisor: "+supervisorConfigWhere(cfg)+"\n")
 	return false
+}
+
+// supervisorConfigWhere says which configuration file a run read, or that it read none and where one
+// is looked for. A path with no file there is named, since that is the place a file would be read.
+func supervisorConfigWhere(cfg *Config) string {
+	if cfg != nil && cfg.loaded {
+		return fmt.Sprintf("the configuration file this run read is %s; the values go in its %s object", cfg.path, supervisorSectionKey)
+	}
+	where := "no configuration file was read"
+	if cfg != nil && cfg.path != "" {
+		where += fmt.Sprintf(" (there is none at %s)", cfg.path)
+	}
+	return where + "; a file is looked for at CRW_CONFIG, else crw/config.json below ${XDG_CONFIG_HOME:-$HOME/.config}, " +
+		"and crw manage config [--config FILE] reports the file a run reads"
 }
 
 // supervisorHostValueOption is one command-line option a run may no longer pass: every host value
@@ -198,7 +241,14 @@ func supervisorRegisterArgs(e *Env, args []string) (task, host string, help bool
 			return "", "", true, supervisorUsageWrite(e, supervisorRegisterUsage)
 		}
 	}
-	values := map[string]*string{"--task": &task, "--host": &host}
+	code = supervisorValueArgs(e, supervisorRegisterUsage, args, map[string]*string{"--task": &task, "--host": &host})
+	return task, host, false, code
+}
+
+// supervisorValueArgs reads options that each carry one value, in the separate ("--task T") or the
+// assigned ("--task=T") form, into values. An option it does not know, an option with no value or a
+// value that is blank is an unexpected argument, refused with the usage before any relay call.
+func supervisorValueArgs(e *Env, usage string, args []string, values map[string]*string) int {
 	for i := 0; i < len(args); i++ {
 		name, value, assigned := strings.Cut(args[i], "=")
 		target, known := values[name]
@@ -207,13 +257,25 @@ func supervisorRegisterArgs(e *Env, args []string) (task, host string, help bool
 			value, assigned = args[i], true
 		}
 		if !known || !assigned || strings.TrimSpace(value) == "" {
-			supervisorNote(e, supervisorRegisterUsage+"\n")
+			supervisorNote(e, usage+"\n")
 			supervisorNote(e, fmt.Sprintf("crw manage supervisor: error: unexpected argument %q\n", args[i]))
-			return "", "", false, usageExit
+			return usageExit
 		}
 		*target = strings.TrimSpace(value)
 	}
-	return task, host, false, 0
+	return 0
+}
+
+// supervisorShowArgs reads show's own arguments: a help request prints the usage and stops the run,
+// then --task names the thread to read. show reads by thread alone, so it takes no host.
+func supervisorShowArgs(e *Env, args []string) (task string, help bool, code int) {
+	for _, arg := range args {
+		if arg == "-h" || arg == "--help" {
+			return "", true, supervisorUsageWrite(e, supervisorShowUsage)
+		}
+	}
+	code = supervisorValueArgs(e, supervisorShowUsage, args, map[string]*string{"--task": &task})
+	return task, false, code
 }
 
 // supervisorRegister is crw manage supervisor register: the calling thread's management seat first
@@ -232,12 +294,7 @@ func supervisorRegister(ctx context.Context, e *Env, args []string) int {
 		return code
 	}
 	section = supervisorSeat(e, section, task, host)
-	if !supervisorConfigured(e, section) {
-		return usageExit
-	}
-	if section.SettingsFile == "" {
-		supervisorNote(e, supervisorRegisterUsage+"\n")
-		supervisorNote(e, "crw manage supervisor: error: the supervisor section names no settings_file, so the pair record has nothing to cite\n")
+	if !supervisorConfigured(e, cfg, section, true) {
 		return usageExit
 	}
 	bind := []string{"linkage-bind", "--role", "supervisor", "--scope-kind", "management", "--scope", section.TaskID,
@@ -303,22 +360,22 @@ func supervisorWarnStaleCwd(e *Env, binding json.RawMessage, wanted string) {
 }
 
 // supervisorShow is crw manage supervisor show: the recorded settings and the recorded store
-// binding as one JSON object. A relay read that fails is passed through with the relay's own
-// stdout and its own exit status, so a refusal (exit 2) stays distinguishable from a host failure
-// (exit 3).
+// binding as one JSON object, for the thread --task names, else the calling thread
+// (CODEX_THREAD_ID), else the section's task_id. Both reads take the thread alone, so show needs no
+// host and no settings file. A relay read that fails is passed through with the relay's own stdout
+// and its own exit status, so a refusal (exit 2) stays distinguishable from a host failure (exit 3).
 func supervisorShow(ctx context.Context, e *Env, args []string) int {
-	if len(args) > 0 {
-		supervisorNote(e, supervisorShowUsage+"\n")
-		supervisorNote(e, fmt.Sprintf("crw manage supervisor: error: unexpected argument %q\n", args[0]))
-		return usageExit
+	task, help, code := supervisorShowArgs(e, args)
+	if help || code != 0 {
+		return code
 	}
 	cfg := supervisorConfig(e)
 	section, code := supervisorSectionOf(e, cfg)
 	if code != 0 {
 		return code
 	}
-	section = supervisorSeat(e, section, "", "")
-	if !supervisorConfigured(e, section) {
+	section = supervisorSeat(e, section, task, "")
+	if !supervisorConfigured(e, cfg, section, false) {
 		return usageExit
 	}
 	settings, code, err := e.Relay(ctx, cfg, "settings-show", "--task", section.TaskID)
