@@ -190,3 +190,91 @@ func TestResumeDryRunDoesNotReportALimitAsSent(t *testing.T) {
 		t.Fatalf("the dry run's JSON does not carry plannedAutoCompactTokenLimit: %s", raw)
 	}
 }
+
+// launchDeclaredResumeStore is a relay state directory whose launch declaration (launch-policy.json)
+// names a policy file of its own, and the settings-show answer the relay gives for a task bound to
+// the child role there: the gate read the declared file, so the answer carries that file's digest.
+// The configuration file's manage.bridge.execution_policy names another file (configured), whose
+// pair declares a different limit.
+func launchDeclaredResumeStore(t *testing.T) (state, declared, configured, answer string) {
+	t.Helper()
+	dir := t.TempDir()
+	declared = filepath.Join(dir, "declared-policy.json")
+	configured = filepath.Join(dir, "configured-policy.json")
+	for path, limit := range map[string]string{declared: "300000", configured: "550000"} {
+		body := "{\"roles\": {\"child\": {\"model\": \"m\", \"reasoningEffort\": \"xhigh\", \"autoCompactTokenLimit\": " + limit + "}}}"
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	state = filepath.Join(dir, "relay-store")
+	if err := os.Mkdir(state, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	record, err := json.Marshal(map[string]any{"schemaVersion": 1, "path": declared, "declaredAt": "2026-10-15T00:00:00Z", "declaredBy": "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(state, "launch-policy.json"), record, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := execution.ReadFile(declared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy, err := execution.FromBytes(raw, declared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	answer = strings.Replace(autoCompactBoundSettings, `"rolePolicy":"declared"`, `"rolePolicyDigest":"`+policy.Digest()+`","rolePolicy":"declared"`, 1)
+	return state, declared, configured, answer
+}
+
+// CRW-1486 A1: with the variable unset the gate checked the bound role against the file the relay's
+// launch declaration names, and its answer carries that file's digest. manage.bridge.execution_policy
+// naming a different file is not the policy the gate read, so the limit read from it could be another
+// pair's: the resume is refused (settings_unavailable, naming both digests) and nothing is sent.
+func TestResumeRefusesALimitFromAnotherPolicyThanTheGateRead(t *testing.T) {
+	host := resumeHost(t, "notLoaded")
+	state, declared, configured, answer := launchDeclaredResumeStore(t)
+	exe, _ := resumeRelayScript(t, resumeTestAssignment, answer, 0)
+	e, _, _ := resumeEnv(t, exe)
+	t.Setenv(execution.EnvPolicy, "")
+	cfg := resumeConfig(host, "alpha")
+	cfg.Relay.State = state
+	cfg.Bridge.ExecutionPolicy = configured
+	_, err := resumeRun(context.Background(), e, cfg, resumeOptions{relationship: "rel-1", message: "m"})
+	var failure *resumeFailure
+	if !errors.As(err, &failure) || failure.Reason != resumeSettingsUnavailable || !strings.Contains(failure.Detail, configured) || !strings.Contains(failure.Detail, "digest") {
+		t.Fatalf("a limit read from %s while the gate read %s: %v", configured, declared, err)
+	}
+	for _, request := range resumeHostRequests(host) {
+		if request.Method == "thread/resume" || request.Method == "turn/start" {
+			t.Fatalf("the refused resume sent %s", request.Method)
+		}
+	}
+}
+
+// The recovery the refusal names: manage.bridge.execution_policy naming the file the launch
+// declaration names is the policy the gate read, and the resume carries that file's limit.
+func TestResumeReadsTheLimitFromTheDeclaredFileTheGateRead(t *testing.T) {
+	host := resumeHost(t, "notLoaded")
+	state, declared, _, answer := launchDeclaredResumeStore(t)
+	exe, _ := resumeRelayScript(t, resumeTestAssignment, answer, 0)
+	e, _, _ := resumeEnv(t, exe)
+	t.Setenv(execution.EnvPolicy, "")
+	cfg := resumeConfig(host, "alpha")
+	cfg.Relay.State = state
+	cfg.Bridge.ExecutionPolicy = declared
+	if _, err := resumeRun(context.Background(), e, cfg, resumeOptions{relationship: "rel-1", message: "m"}); err != nil {
+		t.Fatal(err)
+	}
+	var resume map[string]any
+	if err := json.Unmarshal(resumeHostRequests(host)[1].Params, &resume); err != nil {
+		t.Fatal(err)
+	}
+	config, _ := resume["config"].(map[string]any)
+	if config["model_auto_compact_token_limit"] != float64(300000) {
+		t.Fatalf("the resume config does not carry the declared pair's limit: %v", config)
+	}
+}

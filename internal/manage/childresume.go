@@ -77,6 +77,9 @@ type resumeSettings struct {
 	CitedRole      string
 	CitedException *string
 	BoundRole      string
+	// RolePolicyDigest is the digest of the policy the gate read (settings-show's rolePolicyDigest), ""
+	// when it read none. The limit is read only from a file with this digest (CRW-1486 A1).
+	RolePolicyDigest string `json:"-"`
 	// RuntimeWorkspaceRoots is a pointer so an empty list is a value: the relay preserves the
 	// recorded [] and the resume must send it as an empty array, while a key that is absent or
 	// null supplied nothing and stays missing.
@@ -208,6 +211,7 @@ func resumeRecorded(ctx context.Context, e *Env, cfg *Config, child string) (*re
 		CitedRole      *string        `json:"citedRole"`
 		BoundRole      *string        `json:"boundRole"`
 		CitedException *string        `json:"citedException"`
+		PolicyDigest   *string        `json:"rolePolicyDigest"`
 		RecordFinding  *struct {
 			Code, Detail string
 		} `json:"recordFinding"`
@@ -258,6 +262,9 @@ func resumeRecorded(ctx context.Context, e *Env, cfg *Config, child string) (*re
 	if answer.CitedException != nil {
 		settings.CitedException = answer.CitedException
 	}
+	if answer.PolicyDigest != nil {
+		settings.RolePolicyDigest = *answer.PolicyDigest
+	}
 	return &settings, nil
 }
 
@@ -283,7 +290,10 @@ func resumeRecorded(ctx context.Context, e *Env, cfg *Config, child string) (*re
 // not read the launch declaration. A task the gate confirmed bound to a role was checked against a
 // policy it could read, so when neither names a file here the gate passed on the declaration alone and
 // the limit cannot be established: that is a refusal too, and manage.bridge.execution_policy naming
-// the declared file is the recovery.
+// the declared file is the recovery. The gate's answer carries the digest of the policy it read
+// (rolePolicyDigest); a file read here with another digest is not that policy (the declaration names
+// another file, or the file changed since), so its limit could be another pair's, and that is a
+// refusal as well, with the same recovery (CRW-1486 A1).
 func resumeAutoCompactLimit(e *Env, cfg *Config, settings resumeSettings) (*int64, error) {
 	if settings.CitedException != nil {
 		return nil, nil
@@ -299,8 +309,8 @@ func resumeAutoCompactLimit(e *Env, cfg *Config, settings resumeSettings) (*int6
 	if path == "" {
 		path = strings.TrimSpace(cfg.Bridge.ExecutionPolicy)
 	}
-	if path == "" && settings.BoundRole != "" {
-		return nil, &resumeFailure{Reason: resumeSettingsUnavailable, Detail: "the relay checked this task's settings as " + quote.Value(settings.BoundRole) +
+	if path == "" && (settings.BoundRole != "" || settings.RolePolicyDigest != "") {
+		return nil, &resumeFailure{Reason: resumeSettingsUnavailable, Detail: "the relay checked this task's settings as " + quote.Value(role) +
 			" against the execution policy its service declares, and neither " + execution.EnvPolicy + " nor manage.bridge.execution_policy names a file here to resolve the pair's auto-compaction limit from; " +
 			"set manage.bridge.execution_policy to the declared file; nothing was sent"}
 	}
@@ -314,6 +324,12 @@ func resumeAutoCompactLimit(e *Env, cfg *Config, settings resumeSettings) (*int6
 	policy, err := execution.FromBytes(raw, path)
 	if err != nil {
 		return nil, &resumeFailure{Reason: resumeSettingsUnavailable, Detail: "the execution policy " + quote.Value(path) + " could not be read to resolve the pair's auto-compaction limit: " + err.Error() + "; nothing was sent"}
+	}
+	if settings.RolePolicyDigest != "" && policy.Digest() != settings.RolePolicyDigest {
+		return nil, &resumeFailure{Reason: resumeSettingsUnavailable, Detail: "the relay checked this task's settings as " + quote.Value(role) +
+			" against the execution policy of digest " + quote.Value(settings.RolePolicyDigest) + ", and the execution policy " + quote.Value(path) +
+			" this command would resolve the pair's auto-compaction limit from has digest " + quote.Value(policy.Digest()) + ", so it is not the policy the relay read; " +
+			"set manage.bridge.execution_policy to the file the relay service declares (service status names it); nothing was sent"}
 	}
 	declared, ok := policy.Role(role)
 	if !ok {
