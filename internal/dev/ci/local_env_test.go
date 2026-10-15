@@ -10,21 +10,24 @@ import (
 	"testing"
 )
 
-// A step follows the caller's TMPDIR, as the heavy-check rule requires: the isolated environment
-// does not drop it, so a test that makes a socket or a temporary file never falls back to /tmp.
-func TestLocal_a_step_follows_the_callers_TMPDIR(t *testing.T) {
+// CRW-1489: a step gets a fresh TMPDIR of its own, made directly below the caller's TMPDIR, and never
+// the caller's TMPDIR itself: a test that walks up from TMPDIR looking for a repository then finds only
+// what the run made, and a directory the caller shares with other runs is not where the step writes.
+func TestLocal_a_step_gets_a_fresh_TMPDIR_not_the_callers(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("TMPDIR", dir)
 	repo := newLocalFixture(t)
 	record := filepath.Join(t.TempDir(), "record.json")
-	command := fmt.Sprintf(`test "$TMPDIR" = %q`, dir)
+	command := fmt.Sprintf(`test "$TMPDIR" != %[1]q && test "$(dirname "$TMPDIR")" = %[1]q && `+
+		`case "$(basename "$TMPDIR")" in ci[0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f][0-9a-f]) ;; *) exit 1 ;; esac && `+
+		`test -z "$(ls -A "$TMPDIR")"`, dir)
 	opts := localRunOptions(repo, localFixturePlan(command), record)
 	made, _, err := localVerify(opts, "", io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if step := made.Jobs[0].Steps[1]; step.Result != localPassed {
-		t.Errorf("the step is %q (%s), want it to see the caller's TMPDIR", step.Result, step.Reason)
+		t.Errorf("the step is %q (%s), want a fresh, empty TMPDIR named ci<8 hex> directly below the caller's", step.Result, step.Reason)
 	}
 }
 
