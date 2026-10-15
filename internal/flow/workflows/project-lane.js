@@ -250,13 +250,17 @@ async function nodeLane(n, rel, sig) {
   let carried = []
   let ex = null
   let head = null
+  // the node's last state (CRW-1469): the findings of its last unit check (none after a check that found nothing), its last
+  // verification and the summary of its last receipt, all from the node's own calls and checks. A fresh thread has none of the turns
+  // before it, so its packet carries them; the first build has none.
+  const last = { findings: [], ci: null, receipt: null }
 
-  // a fresh executor thread of the tier: the first build, the rebuild after a null_model, the executor-t1 build
+  // a fresh executor thread of the tier: the first build, the rebuild after a refusal or a null_model, the executor-t1 build
   async function start(label, checkpoint) {
     await crw.spawnDecision('EXEC_1', 'spawn', { node, role: tier, tier, inputs: { label } })
     const opts = { agentType: tier, node, schema: RECEIPT, label }
     if (step && tier === 'executor-t1') opts.stepDecision = step.id
-    return agent.call(packet(node, plan, checkpoint), opts)
+    return agent.call(packet(node, plan, checkpoint, last), opts)
   }
   ex = await start('build:' + node + ':' + tier, null)
 
@@ -264,6 +268,7 @@ async function nodeLane(n, rel, sig) {
     const s = crw.classify(ex)
     // the RECEIPT of the call is a trigger of the signal path
     sig.receipt(ex)
+    if (ex.output && ex.output.summary) last.receipt = { summary: ex.output.summary }
     ev.executor(tier, ex.callId, s)
     if (s === 'superseded') return { node, state: 'superseded', call: ex.callId }
     if (s === 'research') {
@@ -321,6 +326,7 @@ async function nodeLane(n, rel, sig) {
         return { node, state: 'escalated', reason: 'unit_check_' + uc.state, call: ex.callId, escalation: esc.id }
       }
       const found = uc.findings || []
+      last.findings = found
       ev.unitCheck(tier, uc.check_id, uc.verdict, found.map((f) => f.id))
       let stepDue = false
       if (found.length > 0) {
@@ -349,6 +355,7 @@ async function nodeLane(n, rel, sig) {
           return { node, state: 'held', reason: 'verify_unavailable', detail: ci.error }
         }
         ev.verification(tier, head.commit, ci.pass, ci.digest)
+        last.ci = ci
         if (ci.pass) {
           const landed = await crw.land(node, { head, ci })
           if (landed.state === 'landed') return carried.length ? Object.assign(landed, { carried }) : landed

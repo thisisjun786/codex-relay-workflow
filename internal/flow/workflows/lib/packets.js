@@ -17,7 +17,11 @@
 // comes to the same refusal of crw.designLedger. CRW-1366 changed the answers again (each carries the origin of its route) and their
 // route lines, and asks an authority question in its audit round: a run that recorded its open questions under the earlier binary
 // runs crw.exploreRecord live again on a resume and, where the packet or the asks differ, the ask and design-audit:r1, and a run
-// past its design audit comes to the same refusal of crw.designLedger. The
+// past its design audit comes to the same refusal of crw.designLedger. CRW-1469 gives the packet of a fresh executor thread the
+// node's last state (packet's last: LAST FINDINGS, LAST VERIFICATION, LAST RECEIPT): the first build of a node has none and its packet
+// is the one it was, but a rebuild (after a refusal or a null_model) or the executor-t1 build of a node that had a unit-check finding,
+// a verification or a receipt before it has another packet than an earlier binary built, so a resume over a journal recorded under
+// the earlier text runs that call live again, and the rest of the node's path after it; the fix packet's text is kept. The
 // role overlays (internal/flow/roles/*.md) are no packet: they are the developer instructions a thread starts with, part of no input
 // digest, so a change of them re-runs nothing; a turn on a thread started earlier runs under the instructions that thread was
 // started with, and a new thread or a fork takes the new text. TestResumeAfterPromptTextChange pins both.
@@ -341,7 +345,38 @@ export function explorerPacket(kind, route, ctx, ends) {
   return parts.join('\n\n')
 }
 
-export function packet(node, plan, checkpoint, notes) {
+// findingLines are the findings of a unit check, each by its severity, id, file, line and text: the executor's packet and the fix
+// packet name them alike.
+function findingLines(findings) {
+  return list(findings.map((f) => '[' + f.severity + '] ' + f.id + ' ' + f.file + ':' + f.line + ' ' + f.text))
+}
+
+// findingsSection renders the findings of a unit check under title; no findings, no section.
+function findingsSection(title, findings) {
+  if (!findings || findings.length === 0) return ''
+  return section(title, findingLines(findings))
+}
+
+// ciSection renders a verification under the prefix: passed with its command, or failed with its command and its failures (its
+// summary when it names none); no verification, no section.
+function ciSection(prefix, ci) {
+  if (!ci) return ''
+  if (ci.pass) return prefix + ' PASSED (' + ci.command + ')'
+  return section(prefix + ' FAILED (' + ci.command + ')', list(ci.failures && ci.failures.length ? ci.failures : [ci.summary]))
+}
+
+// receiptSection renders the summary of a receipt under title; a receipt with no summary, no section.
+function receiptSection(title, receipt) {
+  if (!receipt || !receipt.summary) return ''
+  return title + ': ' + receipt.summary
+}
+
+// packet is the first turn of a fresh executor thread of a node: the first build, a rebuild after a refusal or a null_model, the
+// executor-t1 build. last is the node's last state, which the node lane keeps (CRW-1469): {findings, ci, receipt}, the findings of the
+// last unit check (none after a check that found nothing), the last verification and the last receipt of the node. A fresh thread
+// has none of the turns of the thread before it, so the packet carries each that is there; with none (the first build) the packet is
+// the one it was before CRW-1469.
+export function packet(node, plan, checkpoint, last) {
   const parts = [
     'ROLE: executor. Node ' + node + ' (' + plan.issue + ': ' + plan.title + ').',
     'DESIGN REVISION: ' + plan.revision + ' ' + plan.design_digest,
@@ -353,8 +388,12 @@ export function packet(node, plan, checkpoint, notes) {
     section('DECISIONS', plan.decisions.map((d) => '- ' + d.id + ': ' + d.change)),
   ]
   if (plan.answers && plan.answers.length) parts.push(section('ANSWERS TO THE OPEN QUESTIONS OF THE DESIGN', plan.answers.map((a) => '- ' + a.question + (a.answer ? '\n  ' + a.answer : ''))))
-  const n = notesSection(notes)
-  if (n) parts.push(n)
+  const was = last || {}
+  for (const s of [
+    findingsSection('LAST FINDINGS (the last unit check of this node found these in the work of a thread before yours; the work you hand over must answer each)', was.findings),
+    ciSection('LAST VERIFICATION', was.ci),
+    receiptSection('LAST RECEIPT (the summary of the last receipt of this node, from a thread you do not continue)', was.receipt),
+  ]) if (s) parts.push(s)
   if (checkpoint) {
     parts.push(section('CHECKPOINT (a fresh tier takes over; the worktree starts at this head)', [
       '- head: ' + checkpoint.head, '- tree: ' + checkpoint.tree,
@@ -374,12 +413,13 @@ export function answerPacket(answers) {
 // fixPacket is the next turn of the executor's thread when the run found something to fix: a failed verification (ci), or a verdict.
 // The verdict is a unit check's (crw.unitCheck, CRW-1465: {verdict, findings}, each finding by its id, severity, file, line and text),
 // which has no defects or criteria of a reviewer's VERDICT, or, on the old reviewer path an earlier run replays, a reviewer's VERDICT.
-// notes are the explorer findings of that old path (the node lane passes none).
+// notes are the explorer findings of that old path (the node lane passes none). The unit-check, verification and receipt sections are
+// the helpers the executor's packet shares (findingsSection, ciSection, receiptSection), and the text is the one it was before them.
 export function fixPacket(node, verdict, ci, notes, receipt) {
   const parts = ['ROLE: executor. Node ' + node + ': fix what the run found, in the same worktree, and answer with RECEIPT again.']
-  if (ci && !ci.pass) parts.push(section('VERIFICATION FAILED (' + ci.command + ')', list(ci.failures.length ? ci.failures : [ci.summary])))
+  if (ci && !ci.pass) parts.push(ciSection('VERIFICATION', ci))
   if (verdict && Array.isArray(verdict.findings) && !Array.isArray(verdict.defects)) {
-    parts.push(section('UNIT CHECK (' + verdict.verdict + '; fix every finding)', list(verdict.findings.map((f) => '[' + f.severity + '] ' + f.id + ' ' + f.file + ':' + f.line + ' ' + f.text))))
+    parts.push(section('UNIT CHECK (' + verdict.verdict + '; fix every finding)', findingLines(verdict.findings)))
     parts.push('A finding you cannot fix without an answer: answer needs_research with the question, and the run answers it on this thread.')
   } else if (verdict) {
     parts.push(section('REVIEW (' + verdict.verdict + ')', verdict.defects.map((d) => '- [' + d.severity + '/' + d.kind + '] ' + d.ref + ' ' + d.file + ':' + d.line + ' ' + d.finding)))
@@ -387,7 +427,8 @@ export function fixPacket(node, verdict, ci, notes, receipt) {
   }
   const n = notesSection(notes)
   if (n) parts.push(n)
-  if (receipt && receipt.summary) parts.push('YOUR LAST RECEIPT: ' + receipt.summary)
+  const r = receiptSection('YOUR LAST RECEIPT', receipt)
+  if (r) parts.push(r)
   return parts.join('\n\n')
 }
 
