@@ -62,7 +62,8 @@ async function auditedDesign(first, tag, context) {
   for (let round = 1; round <= AUDIT_ROUNDS; round++) {
     // the end condition commands of the issues are run once, by the first explorer of the first DESIGN's first round (CRW-1382)
     const ends = round === 1 && tag === '' ? END_CONDITIONS : []
-    const asked = await crw.explore('open_questions', arch.output.open_questions, { milestone: ms.id }, { endConditions: ends })
+    // a re-plan's explorers read the head it judges (CRW-1458); the first DESIGN's context has no head key, so its bytes are as before
+    const asked = await crw.explore('open_questions', arch.output.open_questions, context && context.head ? { milestone: ms.id, head: context.head } : { milestone: ms.id }, { endConditions: ends })
     await tokenCap(asked.tokens, round)
     // the authority questions of the round are asked now, approved or not (CRW-1366): an answer is the next round's
     await askOrchestrator(asked.answers, 'out_of_authority', asked.carried)
@@ -70,11 +71,12 @@ async function auditedDesign(first, tag, context) {
     const answers = asked.answers
     const cand = { design: arch.output, answers }
     await crw.spawnDecision('AUDIT', 'spawn', { role: 'critic', inputs: { milestone: ms.id, round, tag } })
-    let call = await agent.call(designAuditPacket(ms, cand, round, prior), { agentType: 'critic', schema: DESIGN_AUDIT, label: 'design-audit:' + tag + 'r' + round })
+    // the critic of a re-plan audits at the head the re-plan judges, in a read-only checkout of it, as the architect's turns are (CRW-1458)
+    let call = await agent.call(designAuditPacket(ms, cand, round, prior, context), { agentType: 'critic', schema: DESIGN_AUDIT, head: context && context.head, label: 'design-audit:' + tag + 'r' + round })
     let audit = await crw.designAudit(ms.id, round, cand, arch, call)
     if (audit.state === 'null_model') {
       await tokenCap(tokensOf(call), round)
-      call = await agent.call(designAuditPacket(ms, cand, round, prior), { agentType: 'critic', schema: DESIGN_AUDIT, label: 'design-audit:' + tag + 'r' + round + ':retry' })
+      call = await agent.call(designAuditPacket(ms, cand, round, prior, context), { agentType: 'critic', schema: DESIGN_AUDIT, head: context && context.head, label: 'design-audit:' + tag + 'r' + round + ':retry' })
       audit = await crw.designAudit(ms.id, round, cand, arch, call)
     }
     await tokenCap(tokensOf(call), round)

@@ -586,10 +586,10 @@ func (l *laneLab) verifyMerged(ctx context.Context, dir string, env []string) er
 
 var labOpLine = regexp.MustCompile(`^crw-flow-op: (c_[0-9a-f]+)/t(\d+)`)
 
-// labCall is the call a turn belongs to.
+// labCall is the call a turn belongs to. Head is the head its prepared row pins (empty for a call that pins none).
 type labCall struct {
-	ID, Label, Role, Node, Cwd string
-	N                          int
+	ID, Label, Role, Node, Cwd, Head string
+	N                                int
 }
 
 func (l *laneLab) callOf(r fakehost.TurnRequest) labCall {
@@ -603,7 +603,7 @@ func (l *laneLab) callOf(r fakehost.TurnRequest) labCall {
 	for i := len(ev) - 1; i >= 0; i-- {
 		e := ev[i]
 		if e.Kind == engine.KindCall && e.Event == engine.EvPrepared && e.CallID == c.ID {
-			c.Label, c.Role, c.Node = e.Label, str(e.Data, "role"), str(e.Data, "node")
+			c.Label, c.Role, c.Node, c.Head = e.Label, str(e.Data, "role"), str(e.Data, "node"), str(e.Data, "head")
 			if a, ok := e.Data["allocation"].(map[string]any); ok && str(a, "path") != "" {
 				c.Cwd = str(a, "path")
 			} else {
@@ -684,20 +684,48 @@ func (l *laneLab) onTurn(r fakehost.TurnRequest) fakehost.TurnPlan {
 	case c.Role == "critic" && strings.HasPrefix(c.Label, "design-audit"):
 		return labSay(map[string]any{"verdict": "approved", "findings": []any{}, "summary": "the DESIGN holds"})
 	case c.Role == "reviewer":
-		return labSay(map[string]any{"verdict": "verified", "criteria": []any{map[string]any{"id": "c1", "met": true, "evidence": "read the head"}}, "defects": []any{}, "summary": "reviewed"})
+		return labSay(labVerdict(true))
 	case c.Role == "explorer":
 		return labSay(map[string]any{"answer": "answer", "evidence": []string{"README.md"}, "verified": []string{"README.md"}, "inferred": []string{}, "unknown": []string{}})
 	case c.Role == "executor" || c.Role == "executor-t1":
-		if c.Cwd != "" && c.Node != "" {
-			path := filepath.Join(c.Cwd, "node-"+l.issue[c.Node]+".txt")
-			prior, _ := os.ReadFile(path)
-			if err := os.WriteFile(path, append(prior, []byte(c.Label+"\n")...), 0o644); err != nil {
-				l.t.Errorf("the executor cannot write %s: %v", path, err)
-			}
-		}
-		return labSay(map[string]any{"outcome": "ready_for_review", "files": []string{}, "verification": []any{}, "summary": "done", "gap": nil, "research_question": nil, "plan_mismatch": nil})
+		return l.executorTurn(c, nil)
 	}
 	return fakehost.TurnPlan{Message: "ok"}
+}
+
+// executorTurn is the executor's turn of the happy path: it writes its issue's file in its worktree and answers ready_for_review; the
+// fields of receipt replace the RECEIPT's (a test's turn hook scripts a call by its label with it, e.g. a plan_mismatch).
+func (l *laneLab) executorTurn(c labCall, receipt map[string]any) fakehost.TurnPlan {
+	if c.Cwd != "" && c.Node != "" {
+		path := filepath.Join(c.Cwd, "node-"+l.issue[c.Node]+".txt")
+		prior, _ := os.ReadFile(path)
+		if err := os.WriteFile(path, append(prior, []byte(c.Label+"\n")...), 0o644); err != nil {
+			l.t.Errorf("the executor cannot write %s: %v", path, err)
+		}
+	}
+	out := map[string]any{"outcome": "ready_for_review", "files": []string{}, "verification": []any{}, "summary": "done", "gap": nil, "research_question": nil, "plan_mismatch": nil}
+	for k, v := range receipt {
+		out[k] = v
+	}
+	return labSay(out)
+}
+
+// labVerdict is a reviewer's VERDICT: verified with its one criterion met, or needs_changes with the defects given (labDefect).
+func labVerdict(verified bool, defects ...map[string]any) map[string]any {
+	v := "verified"
+	if !verified {
+		v = "needs_changes"
+	}
+	if defects == nil {
+		defects = []map[string]any{}
+	}
+	return map[string]any{"verdict": v, "criteria": []any{map[string]any{"id": "c1", "met": verified, "evidence": "read the head"}}, "defects": defects, "summary": "reviewed"}
+}
+
+// labDefect is one defect of a reviewer's VERDICT, of the kind correctness.
+func labDefect(ref, severity, finding string) map[string]any {
+	return map[string]any{"ref": ref, "kind": "correctness", "severity": severity, "introduced": false, "impact": "core_function", "inPromise": false, "file": "README.md", "line": 1,
+		"finding": finding, "evidence_question": nil}
 }
 
 // ---- what the relay holds ----
