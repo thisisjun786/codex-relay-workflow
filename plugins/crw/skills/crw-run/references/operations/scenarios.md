@@ -1,6 +1,6 @@
 # Scenarios
 
-Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../../crw-canon/references/hierarchy.md#the-levels).
+The sessions in this document are named by [the level table](../../../crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and an issue child is no layer.
 
 The situations the issue requires, each resolved against [the operations contract](../operations.md).
 Every scenario names what was observed, the clause that decides it, the required action, and what
@@ -109,7 +109,7 @@ its digest still matches the record and that the combination it restores carries
 Those are two readings: the digest says the bytes came back, and only the point says the combination
 was ever run. The store is not touched in either direction.
 
-Preserved: the store and every in-flight assignment belonging to every parent, the previous runtime
+Preserved: the store and every in-flight assignment belonging to every child, the previous runtime
 until the replacement passes its checks, and the user's local forks. A failed update is a runtime
 problem, and it must never be resolved by recreating a database.
 
@@ -151,80 +151,80 @@ task instead of creating a second one. Record the ownership columns separately f
 created it, which task edits source in it, who owns its git metadata, who owns retention, and which
 cleanup is authorized.
 
-Then settle the write split before dispatch rather than discovering it mid-task. If the child's
+Then settle the write split before dispatch rather than discovering it mid-task. If the issue child's
 writable roots cover the checkout but not the repository's git metadata, the coordinator creates
-the branch and makes the commits, and the child returns a frozen diff with per-file hashes. The
-child does not build an alternative commit store to get around the boundary.
+the branch and makes the commits, and the issue child returns a frozen diff with per-file hashes. The
+issue child does not build an alternative commit store to get around the boundary.
 
 Preserved: dirty work and local forks in a reused checkout, every other worktree's checked-out
 branch, and the retained checkout itself, since nothing deletes or archives it automatically and
-retention belongs to the parent that asked for it.
+retention belongs to the child that asked for it.
 
 ## S8 Two parents, two projects, one service
 
-Observed: a parent coordinating one milestone finishes its last assignment while another
-parent, working in a different repository and a different project, still has work in flight on the
-same host. The finishing parent would like to shut things down, and a third process tries to start
+Observed: a child coordinating one milestone finishes its last assignment while another
+child, working in a different repository and a different project, still has work in flight on the
+same host. The finishing child would like to shut things down, and a third process tries to start
 a service because it sees none of its own.
 
 Clauses: OPS-3.1, OPS-4.1, OPS-4.2, OPS-4.3, OPS-7.1, OPS-7.2, OPS-7.3, OPS-8.3.
 
-Action: the finishing parent marks its own assignment complete and stops there. It does not stop
-the service, because the service belongs to the operating scope and another parent is still using
+Action: the finishing child marks its own assignment complete and stops there. It does not stop
+the service, because the service belongs to the operating scope and another child is still using
 it, and only the scope operator may stop it. The third process does not get a second service: the
 lock refuses the start, and that refusal is the correct outcome rather than a reason to pick a
 different state directory, which would split the scope into two stores that cannot see each other.
 
-Routing between the two parents uses the bound identifiers, never a display name, a branch name or
-a working directory, and both parents may legitimately be working in the same repository. Each
-completion goes only to its own assignment's registered parent and each correction only to its
-registered child, and neither parent's permissions are consulted for the other's delivery.
+Routing between the two children uses the bound identifiers, never a display name, a branch name or
+a working directory, and both children may legitimately be working in the same repository. Each
+completion goes only to its own assignment's registered child and each correction only to its
+registered issue child, and neither child's permissions are consulted for the other's delivery.
 
 What this scenario does not get is a fairness guarantee. OPS-8.3 proposes that delivery be fair per
-parent so the parent with several assignments does not starve the parent with one, and that is
+child so the child with several assignments does not starve the child with one, and that is
 the intended behaviour. OPS-12.10 requires current implementation and measurement evidence before
-claiming a bound. Routing separates the parents; do not infer a scheduling guarantee from this
+claiming a bound. Routing separates the children; do not infer a scheduling guarantee from this
 scenario or from the historical state of a maintainer's host.
 
-Preserved: the shared service and store, the other parent's in-flight assignments, and both
-parents' separate authorized settings. The one thing that must never happen here is one parent's
-completion silently ending another parent's work.
+Preserved: the shared service and store, the other child's in-flight assignments, and both
+children' separate authorized settings. The one thing that must never happen here is one child's
+completion silently ending another child's work.
 
 ## S9 The parent selects a verified waiting mode
 
 Observed: a CRW coordinator has selected event-driven idle handoff for an independent task.
-Its registered assignment, running delivery service and parent-resume path are verified.
-Later the delivery arrives while the parent is mid-turn, and a second assignment's parent
-has meanwhile been paused by the user. Separately, a CRW parent in active observation has a running child
+Its registered assignment, running delivery service and session-resume path are verified.
+Later the delivery arrives while the child is mid-turn, and a second assignment's child
+has meanwhile been paused by the user. Separately, a CRW child in active observation has a running issue child
 using recorded non-relay dispatch, and its first bounded transport wait times out. Another
-issue is already relay-registered to an active parent on a relay that defers busy recipients.
+issue is already relay-registered to an active child on a relay that defers busy recipients.
 
 Clauses: OPS-8.1, OPS-8.2, OPS-8.3, OPS-8.4.
 
-Action: the event-driven coordinator finishes its response and returns to idle. When the child's
+Action: the event-driven coordinator finishes its response and returns to idle. When the issue child's
 turn ends normally, a host-capable observer promotes its staged receipt to a delivery and the
-service delivers it to that assignment's registered parent, which is what wakes the parent. If the
-parent is mid-turn the delivery waits and is retried rather than interrupting it. The paused
-parent's delivery also waits, and nothing resumes that task automatically, because resuming work a
+service delivers it to that assignment's registered child, which is what wakes the child. If the
+child is mid-turn the delivery waits and is retried rather than interrupting it. The paused
+child's delivery also waits, and nothing resumes that task automatically, because resuming work a
 user deliberately stopped is the one thing a retry cannot undo.
 
-A native subagent completes inside its parent's own turn and is not this independent-task case.
-The active CRW parent keeps its coordination record and continues bounded transport waits
-using actual child identifiers. The timeout does not finish the project or justify a resend.
-After verifying and integrating the child's delivery, Run or goal mode dispatches the next
+A native subagent completes inside its child's own turn and is not this independent-task case.
+The active CRW child keeps its coordination record and continues bounded transport waits
+using actual issue child identifiers. The timeout does not finish the project or justify a resend.
+After verifying and integrating the issue child's delivery, Run or goal mode dispatches the next
 ready issue within its agreed project scope. An explicit batch-only limit excludes
 successors outside that batch in either mode. A blocked issue holds its dependents, not independent ready work. Without a
 usable observation path it records the blocker and resume step instead of promising automatic
 progress. A service installation or staged receipt alone does not qualify for idle handoff.
 
-The already registered issue has a delivery-mode blocker: reading its child's result does not
+The already registered issue has a delivery-mode blocker: reading its issue child's result does not
 deliver or acknowledge its pending event. Preserve its relationship, owner and artifact, record
 the required supported handoff for recovery, and do not bypass its relay verdict or keep waiting
 as if time alone could resolve it. For new unassigned issues, inspect ownership before choosing
 non-relay dispatch so they never acquire that incompatible registration.
 
-Preserved: the user's decision to pause, the running child when a wait times out, and the honest
-distinction between a staged receipt and a delivered one. Any claim about how many parents and
+Preserved: the user's decision to pause, the running issue child when a wait times out, and the honest
+distinction between a staged receipt and a delivered one. Any claim about how many children and
 concurrent deliveries this handles states what was actually exercised, and anything else stays
 `unmeasured`.
 
@@ -278,15 +278,15 @@ journalled with both digests, so a later reader can still see which wording was 
 
 ## S12 The review lands after the push
 
-Observed: the child has pushed its branch, opened its pull request and marked it ready for review.
-Checks are running, and a reviewer leaves findings while the child is still in its own turn.
+Observed: the issue child has pushed its branch, opened its pull request and marked it ready for review.
+Checks are running, and a reviewer leaves findings while the issue child is still in its own turn.
 
 Clauses: OPS-9.1, OPS-9.2, OPS-5.3.
 
-Action: the child handles the review itself, on the pull request that produced it. It collects the
+Action: the issue child handles the review itself, on the pull request that produced it. It collects the
 findings, triages them, fixes what needs fixing with commits on the same branch, replies to a
 finding that does not apply and says why, and rechecks. It does not hand a list of unaddressed
-findings to the parent and call that delivery, and it does not open a second pull request to escape
+findings to the child and call that delivery, and it does not open a second pull request to escape
 the thread, which would leave the reasoning behind and restart the review.
 
 Each finding carries its own trail: the finding, the commit that addressed it, and the recheck that
@@ -299,7 +299,7 @@ is for and returning to draft would withdraw the request being answered.
 
 ## S13 A new head outruns the review
 
-Observed: review passed, and then another commit lands on the branch, whether the child's own fix or
+Observed: review passed, and then another commit lands on the branch, whether the issue child's own fix or
 a base update.
 
 Clauses: OPS-9.4, OPS-9.2, OPS-6.4.
@@ -307,7 +307,7 @@ Clauses: OPS-9.4, OPS-9.2, OPS-6.4.
 Action: the review evidence that the new head supersedes is invalid, and only that evidence. Re-run
 what the change actually touched rather than repeating the whole review from the start, and never
 present the earlier green result as covering a head it never saw. Completion is judged against the
-current head, so a child that reported completion before this commit reports again.
+current head, so an issue child that reported completion before this commit reports again.
 
 The same rule reaches the relay: a verdict is bound to the revision it reviewed, so a newer revision
 means the older verdict certifies something that is no longer current.
@@ -327,8 +327,8 @@ independent review is obtained under the repository's policy, and the work conti
 indefinitely for an optional reviewer is not diligence and produces nothing; the one run each of Devin
 and Codex makes on a pull request is the exception, awaited within the [waiting budget](../merge-readiness.md#the-one-run-of-each-reviewer-awaited-before-the-receipt) before the receipt
 ([Devin and Codex reviews are references, not merge gates](../merge-readiness.md#devin-and-codex-reviews-are-references-not-merge-gates)). The missing mandatory
-check is blocked, and the child reports blocked rather than reporting completion with a caveat
-attached, because the caveat is the part that gets skimmed. The parent does not merge on a head
+check is blocked, and the issue child reports blocked rather than reporting completion with a caveat
+attached, because the caveat is the part that gets skimmed. The child does not merge on a head
 whose required checks have not passed.
 
 Preserved: the distinction between what the repository requires and what it merely offers, which is
@@ -337,30 +337,30 @@ present.
 
 ## S15 The parent merges, and stops before the release
 
-Observed: the child has reported completion, the pull request is green on its current head, and
+Observed: the issue child has reported completion, the pull request is green on its current head, and
 merging this branch is known to trigger a deployment.
 
 Clauses: OPS-9.3, OPS-10, OPS-12.14.
 
-Action: the parent checks the issue's criteria and the pull request's latest diff, base, head, checks
+Action: the child checks the issue's criteria and the pull request's latest diff, base, head, checks
 and review resolution. Then, because merging this branch is known to trigger a deployment, it
 obtains the user's approval for that deployment before merging. The order is the substance of this
 scenario: the merge is what fires the trigger, so approval asked afterwards is approval for
 something that already happened. Merge authority was granted for this workflow and deployment
 authority was not, and one does not imply the other.
 
-With that approval in hand the parent merges without asking again about the merge itself, and then
+With that approval in hand the child merges without asking again about the merge itself, and then
 verifies the landing rather than trusting an accepted merge request. Where a merge triggers nothing,
-the question never arises and the parent merges on its own authority under OPS-12.14, so the trigger
+the question never arises and the child merges on its own authority under OPS-12.14, so the trigger
 is read from the repository rather than assumed in either direction. A green pull request is not a
 relay verdict either; verification happens in the relay against the registered criteria.
 
 Preserved: the user's control over release and deployment, and the separation between a merge that
-the parent may decide and a deployment that it may not.
+the child may decide and a deployment that it may not.
 
 ## S16 Creating the next child
 
-Observed: the coordinator is about to create an independent implementation child for an issue whose
+Observed: the coordinator is about to create an independent implementation issue child for an issue whose
 delivery is a pull request.
 
 Clauses: OPS-5.5, OPS-5.2, OPS-5.1.
@@ -388,7 +388,7 @@ them, so it cannot create a branch or commit.
 Clauses: OPS-5.3, OPS-5.5, OPS-9.1.
 
 Action: use the fallback rather than changing anything about the running task. The coordinator
-prepares the git metadata and makes the commits, and the child returns a frozen diff against the
+prepares the git metadata and makes the commits, and the issue child returns a frozen diff against the
 recorded baseline with the SHA-256 of that diff and of each changed file, which is then the reviewed
 artifact. Where the task also cannot reach a network, the pull request cannot be created from it, so
 the title, body and diff references are prepared as private files and reported truthfully as
@@ -426,21 +426,21 @@ recovery path. Nothing here authorizes an install, a permission change, or a mid
 ## S19 Each side keeps its own conclusion
 
 Observed: an independent task's own workflow reaches a done state, its pull request is green, and its
-parent has not yet claimed or judged the receipt. This CRW coordinator has selected
+child has not yet claimed or judged the receipt. This CRW coordinator has selected
 event-driven idle handoff and verified its delivery and resume path as in S9.
 
 Clauses: OPS-10.1, OPS-8.1, OPS-6.4.
 
 Action: read each fact from its owner. The task's workflow state is that task's conclusion about its
 own work and its goal, and the pull request is evidence about the code. Neither is a relay verdict,
-which happens against the registered criteria and belongs to the parent. A report that presents an
+which happens against the registered criteria and belongs to the child. A report that presents an
 internal done state as verification is claiming something nobody has decided yet.
 
-This coordinator can stay idle until a meaningful handoff. Parents in active observation mode instead use the
+This coordinator can stay idle until a meaningful handoff. Children in active observation mode instead use the
 compatible waiting mode in OPS-8.1 and S9; a native subagent wait is not a substitute for either
 independent-task path.
 
-Preserved: the separation between a task's own state and the relay's, and the parent's idle time,
+Preserved: the separation between a task's own state and the relay's, and the child's idle time,
 which is the point of delegating in the first place.
 
 ## S20 Three components, one destination
@@ -522,7 +522,7 @@ and the store. The state is left honest rather than converted into a verdict.
 
 ## S23 Ready for review comes before the review
 
-Observed: a child has pushed a complete change and wants a hosted review. The pull request is still
+Observed: an issue child has pushed a complete change and wants a hosted review. The pull request is still
 a draft, and the plan is to request the review now and mark it ready once the findings are resolved.
 
 Clauses: OPS-9.1, OPS-9.2, OPS-6.1.
@@ -531,7 +531,7 @@ Action: mark it ready first, then request the review. The order carries the whol
 reviewer that reads a draft as not yet asking will not run, and the absent review is then taken for a
 pass nobody gave, which is exactly what OPS-9.2 refuses when it calls a missing mandatory review
 blocked rather than complete. Ready for review claims only that the change can be read: it is not the
-merge readiness the parent judges later against the criteria and the current head, and it is not the
+merge readiness the child judges later against the criteria and the current head, and it is not the
 relay outcome. So the pull request stays ready while reviews are pending and while ordinary fixes
 land on it, and it returns to draft only if the change genuinely stops being reviewable, never as a
 routine step between rounds.
@@ -541,32 +541,32 @@ and the separation between entering review, being merge ready, and reporting an 
 
 ## S24 Parent coordination finishes without a local implementation diff
 
-Observed: a goal-mode parent has a verified active coordination goal on a host with
-compatible goal/continuation hooks, and no implementation FSM. Every child in its agreed
+Observed: a goal-mode child has a verified active coordination goal on a host with
+compatible goal/continuation hooks, and no implementation FSM. Every issue child in its agreed
 scope has delivered verified results, required PRs have landed, and no owned work or
 receipt remains pending. Its own checkout is unchanged. Separately, another session bound to the
-project was explicitly asked to implement one task itself, paused its parent role for that task
+project was explicitly asked to implement one task itself, paused its child role for that task
 and runs a `crw-loop` as that task's implementer; its FSM is blocked, and it has no supported
 transition to goal mode.
 
 Clauses: OPS-8.1, OPS-8.4, OPS-10.1; lifecycle decisions belong to
 [Goal mode](../goal-mode.md).
 
-Action: the goal-mode parent completes its coordination record and matching host goal
+Action: the goal-mode child completes its coordination record and matching host goal
 on the verified scoped deliveries, then reads back completion, without manufacturing
-a parent-local code change. Child completion alone is
+a session-local code change. Issue child completion alone is
 insufficient if any required result, correction, receipt or integration remains unresolved.
 The other session retains its `crw-loop` lifecycle and cannot start goal mode
 while its transition is unsupported. Record the transition blocker and exact supported
 resume requirement; do not reset the FSM, edit phases or report a new loop as armed.
 
-Preserved: child identities and delivery evidence, the distinct parent completion boundary,
+Preserved: issue child identities and delivery evidence, the distinct child completion boundary,
 and the other session's binding, goalplan, pending obligations and recovery evidence.
 
 ## S25 Run and goal mode share project scope; the parent holds no goal by default
 
 Observed: the user submits Run with a project link. A and B are ready; C depends on A. In another
-run the user asks Run explicitly for a parent goal on the agreed A/B/C scope, or submits `$crw-loop`
+run the user asks Run explicitly for a child goal on the agreed A/B/C scope, or submits `$crw-loop`
 with that project and coordination intent, which starts no loop and hands over to goal mode; its
 goal/hook preflight passes. In a third the request carries an explicit no-goal limit.
 
@@ -578,7 +578,7 @@ Clauses: OPS-8.1, OPS-8.5, OPS-9.2; operation selection belongs to
 Action: all three record A/B/C as the agreed project scope and A/B as the initial ready batch. When
 A's prerequisite delivery is verified and available, each can start C without waiting for B if
 capacity permits. The first and third are the same mode and reach it differently: the default opens
-no parent goal, and the explicit no-goal limit asks for what the default already does, so it
+no child goal, and the explicit no-goal limit asks for what the default already does, so it
 subtracts nothing and is recorded as a limit the run happened to satisfy. The second holds a goal
 because the user asked for one, and what the explicit goal request adds is that goal rather than
 the entry. None of the three is blocked for lack of a goal, because none of the three needs one to
@@ -587,17 +587,17 @@ run recovers the project scope and continues C rather than asking for a new batc
 restoring the recorded start policy instead of adjudicating it again. The first and third promise
 an unattended wake only where their readiness facts hold and otherwise keep bounded observation;
 the second reaches idle only after its bounded Stop budget releases, at a turn per block.
-Dispatch-only Run may hand off pending children; status-only Run reads without waking them.
+Dispatch-only Run may hand off pending issue children; status-only Run reads without waking them.
 
-Preserved: one project parent, existing issue children and PRs, requested batch/merge limits, child
+Preserved: one project session, existing issue children and PRs, requested batch/merge limits, issue child
 `crw-loop` defaults, an explicit no-goal limit recorded even where it changed nothing, and the difference
-between parent and child goal authority.
+between child and issue child goal authority.
 
 ## S26 Goal conflicts and unsupported continuation do not become new goals
 
 Observed: goal mode is requested. Variants are: a matching active goal; a matching blocked
 goal without an exposed resume control; a different unfinished goal; unreadable goal
-state; explicit no-goal; and a fresh parent whose Stop hook routes all active native
+state; explicit no-goal; and a fresh child whose Stop hook routes all active native
 goals into PABCD implementation phases. An active compatible goal-mode run later encounters its
 first blocker, with another independent issue still ready.
 
@@ -607,52 +607,52 @@ Clauses: OPS-8.1, OPS-8.2, OPS-8.4; goal decisions belong to
 Action: reuse only the matching active goal. Preserve the blocked/different/unreadable
 goal and resolve its specific resume/conflict/read requirement; do not create over it.
 No-goal prevents goal mode's activation and nothing else: the run continues as the ordinary
-goal-free default, which needs no separate authorization, and no child is withheld for it.
+goal-free default, which needs no separate authorization, and no issue child is withheld for it.
 The incompatible Stop hook blocks activation before goal creation or new worker dispatch;
 record the supported host fix, without disabling hooks or faking PABCD. In the compatible
 active run, continue independent ready work; do not mark the whole goal blocked on a
 first failure. Use the real host threshold and observations for any eventual blocked
 transition. A paused goal resumes only through authorized supported controls.
 
-Preserved: existing goal identity/status, all child ownership, explicit user limits,
+Preserved: existing goal identity/status, all issue child ownership, explicit user limits,
 `.crw/` state and guards, and the difference between a created goal and observed auto-resume.
 
 ## S27 Binding-only requests preserve ownership
 
 Observed: a user asks Run to connect this task to a project without executing it.
-The project already has a coordination document. Variants include the same parent
-binding, another active parent, and a temporary question about a different project.
+The project already has a coordination document. Variants include the same child
+binding, another active child, and a temporary question about a different project.
 
 Clauses: OPS-7.1, OPS-7.2, OPS-8.1; binding decisions belong to
 [Project parent binding](../../../crw-plan/references/integrations.md#project-parent-binding).
 
-Action: reuse and verify the same parent binding and suitable coordination document.
+Action: reuse and verify the same child binding and suitable coordination document.
 Apply supported title/pin changes only within the designation request. Do not create
-children or a goal. Inspect another parent's ownership without waking it; settle a
+issue children or a goal. Inspect another child's ownership without waking it; settle a
 material conflict before replacement. A temporary question does not switch the binding.
 Run or goal-mode execution requests do the same setup and then continue their requested
 operation.
 
 Preserved: stable project/task IDs, existing specifications and coordination history,
-active child ownership, explicit execution limits and runtime state.
+active issue child ownership, explicit execution limits and runtime state.
 
 ## S28 Three levels run, and each one reads the level below by result
 
-Observed: an initiative has a supervisor bound to its stable ID, two of its projects each have one
-parent, and each parent has one child per ready issue. A child reports its pull request ready: the
+Observed: an initiative has a parent bound to its stable ID, two of its projects each have one
+child, and each child has one issue child per ready issue. An issue child reports its pull request ready: the
 current head's required checks have PASSED, its required reviews have finished and no blocking
-finding remains, which is the only reading of OPS-9.2 that is not also true of a failed check. Its parent
+finding remains, which is the only reading of OPS-9.2 that is not also true of a failed check. Its child
 verifies that head, merges it, verifies the landing, records the issue, and reports the project's
-progress upward. The supervisor holds no checkout of its own and sees no implementation diff.
+progress upward. The parent holds no checkout of its own and sees no implementation diff.
 
 Clauses: OPS-7.4, OPS-9.3, OPS-10.1; role semantics belong to
 [the shared role contract](../../../crw-canon/references/hierarchy.md#scope-of-each-level).
 
-Action: the supervisor verifies the reported project outcome against the initiative's finish
-condition and stops there. It does not re-open the issue investigation its parent already did, does
-not re-review the child's diff, and does not instruct that child. The parent performs and verifies
-its own merges, and the child's work ends at that reviewed handoff rather than waiting to be woken
-for a landing it does not own. Child delivery, parent acceptance, the merge, installation, live behaviour, project
+Action: the parent verifies the reported project outcome against the initiative's finish
+condition and stops there. It does not re-open the issue investigation its child already did, does
+not re-review the issue child's diff, and does not instruct that issue child. The child performs and verifies
+its own merges, and the issue child's work ends at that reviewed handoff rather than waiting to be woken
+for a landing it does not own. Issue child delivery, child acceptance, the merge, installation, live behaviour, project
 completion and initiative completion stay seven separate claims, so no level reports the level
 above as finished on the strength of one landing.
 
@@ -662,95 +662,95 @@ of each scope, and the distinction between a verified result and a completed lev
 ## S29 One project, several initiatives, still one execution owner
 
 Observed: a project contributes to two initiatives. The first initiative has an execution
-supervisor and the project already has its parent and its running children. The second initiative
-now wants the same project's outcome, and its own supervisor asks that a further issue be added.
+parent and the project already has its child and its running issue children. The second initiative
+now wants the same project's outcome, and its own parent asks that a further issue be added.
 
 Clauses: OPS-7.1, OPS-7.4; ownership selection belongs to
 [the shared role contract](../../../crw-canon/references/hierarchy.md#scope-of-each-level).
 
-Action: the project keeps one execution supervisor and one parent. The second initiative references
-the project's outcome rather than issuing it work: its supervisor does not instruct that parent,
-does not clone its children, and does not register a second relationship for the same issues. A
-genuinely new requirement is raised with the owning supervisor, which decides whether it becomes
+Action: the project keeps one execution parent and one child. The second initiative references
+the project's outcome rather than issuing it work: its parent does not instruct that child,
+does not clone its issue children, and does not register a second relationship for the same issues. A
+genuinely new requirement is raised with the owning parent, which decides whether it becomes
 scope for that project, and the decision is recorded once rather than tracked in both initiatives
 as separate output.
 
-Preserved: the project's stable ID, its parent and children, both initiative relations, and the
+Preserved: the project's stable ID, its child and issue children, both initiative relations, and the
 existing rule that shared progress is never summed twice.
 
 ## S30 No supervisor, no project, and an owner who already exists
 
-Observed: three variants. A project with no initiative runs with its parent and children as it does
+Observed: three variants. A project with no initiative runs with its child and issue children as it does
 today. A standalone issue with no project runs in an issue-scoped task. A user supplies an
-initiative link for work whose project already has an active parent, and in a fourth variant
-another task is already the supervisor of that initiative.
+initiative link for work whose project already has an active child, and in a fourth variant
+another task is already the parent of that initiative.
 
 Clauses: OPS-7.1, OPS-7.4, OPS-8.2; binding decisions belong to
 [Project parent binding](../../../crw-plan/references/integrations.md#project-parent-binding), and
 existing-owner handling is already worked in S8 and S27.
 
 Action: run the first two exactly as today. Create no initiative, no project and no upper task to
-complete the shape, and create no supervisor for a project that does not need one. For the third,
-the initiative link alone rebinds nothing: the existing parent keeps the project, and the link is
-recorded as context. For the fourth, read the existing supervisor's ownership and current status
+complete the shape, and create no parent for a project that does not need one. For the third,
+the initiative link alone rebinds nothing: the existing child keeps the project, and the link is
+recorded as context. For the fourth, read the existing parent's ownership and current status
 without waking it, and settle a material conflict with the user rather than replacing it. No
 variant produces a second writer for an issue that already has one.
 
 Preserved: existing bindings and ownership, the projectless and supervisorless paths, active
-children and their pull requests, and the user's own decision about any replacement.
+issue children and their pull requests, and the user's own decision about any replacement.
 
 ## S31 Report only, no goal, no create, and work that needs its own authority
 
-Observed: a supervisor-level request asks only for a status report across an initiative's projects.
+Observed: a parent-level request asks only for a status report across an initiative's projects.
 Variants: the same request under an explicit no-goal limit; under an explicit no-create limit; and a
 report whose finding is that a project needs an installation, a release or a deployment to finish.
 
 Clauses: OPS-7.3, OPS-7.4, OPS-8.1, OPS-9.3; no-goal handling is already worked in S26 and the
 release boundary in S15.
 
-Action: read the existing parents, their records and their evidence, and answer. Wake nothing,
+Action: read the existing children, their records and their evidence, and answer. Wake nothing,
 dispatch nothing, create no task at any level, and create no goal where the limit forbids it. Write
 no record that the request did not authorize. The limits in force for this request are not widened
-by the fact that a level above now exists, and connecting a supervisor is not itself authority to
+by the fact that a level above now exists, and connecting a parent is not itself authority to
 act. Where the finding is installation, release or deployment, name it as work requiring the user's
-own approval and leave it unperformed; a supervisor decision about order supplies none of it.
+own approval and leave it unperformed; a parent decision about order supplies none of it.
 
 Preserved: every existing limit and its scope, all task and issue ownership, the absence of any new
 goal, and the separation between reporting a needed action and having authority to take it.
 
 ## S32 Two parents agree directly, and a conditional yes is not a change
 
-Observed: two parents' projects both edit one shared surface. A proposes an edit split and a base
+Observed: two children' projects both edit one shared surface. A proposes an edit split and a base
 revision; B replies with a conditional acceptance whose condition is that A lands first. Later B's
-child reports work that assumed the condition already held, and separately A asks that a third
+issue child reports work that assumed the condition already held, and separately A asks that a third
 project adopt the same split.
 
 Clauses: OPS-7.3, OPS-7.4, OPS-9.3; the path and its form are
 [Direct coordination between children](../../../crw-canon/references/hierarchy.md#direct-coordination-between-children) and the
 [Coordination message](../../../crw-run/references/task-packet.md#coordination-message).
 
-Action: the two parents settle the split between themselves without the supervisor relaying it, and
+Action: the two children settle the split between themselves without the parent relaying it, and
 record the request and reply ids, the agreed area and the base revision. B's conditional acceptance
 is recorded as conditional with its condition, and is never cited as evidence that anything was
-applied: B's parent instructing its own child, that child's change and its verification are three
-further facts, each needing its own evidence. A never instructs B's child. The third project is not
+applied: B's child instructing its own issue child, that issue child's change and its verification are three
+further facts, each needing its own evidence. A never instructs B's issue child. The third project is not
 bound by an agreement its owner never accepted, so the proposal is recorded as unassigned until
 that owner accepts explicitly, and where it is a required dependency it is escalated as a blocker
-by actual ownership: to that third project's own supervisor where it has one, to a supervisor the
-projects share where there is one, and to the user where a genuinely shared decision has neither. The supervisor decides an unresolved disagreement, a scope change, new
+by actual ownership: to that third project's own parent where it has one, to a parent the
+projects share where there is one, and to the user where a genuinely shared decision has neither. The parent decides an unresolved disagreement, a scope change, new
 ownership and shared resources including merge order, and nothing about the edit agreement grants
-either parent a merge turn.
+either child a merge turn.
 
-Preserved: each parent's own children and records, the conditional state of an unapplied agreement,
+Preserved: each child's own issue children and records, the conditional state of an unapplied agreement,
 the third owner's freedom to decline, and the separation of edit agreement from merge order.
 
 ## S33 Five registers behind one vocabulary, and a restart that cannot tell them apart
 
-Observed: a supervision task restarts and reads its approved set. One parent is `idle` with an
+Observed: a supervision task restarts and reads its approved set. One child is `idle` with an
 active goal; one is `idle` with no goal at all where the start-policy record says
 `goal-free-run`; one is `idle` with no goal where that record says `goal`; one is recorded
 "blocked" with nothing saying whether that was its goal, its recorded start mode or a dependency;
-one reads `notLoaded` on both reads; and one project is completed with its parent resting.
+one reads `notLoaded` on both reads; and one project is completed with its child resting.
 
 Clauses: OPS-7.1, OPS-8.1, OPS-8.2; the registers are
 [Which register each state word came from](../initiative-supervision.md), the recorded mode is
@@ -759,17 +759,17 @@ and the idle action matrix and the goal/activation/continuation split belong to
 [the midpoint check](../midpoint-check.md).
 
 Action: name the register of every reading before deciding anything, and restore the recorded start
-policy, re-adjudicating only the fields whose conditions changed. The first three parents are three
+policy, re-adjudicating only the fields whose conditions changed. The first three children are three
 findings and not one: an active goal is not evidence that continuation actually happens,
 `goal-free-run` accounts for an absent goal, and the same absence under a recorded `goal` is a
 finding to resolve. The unlabelled "blocked" is resolved to its register first, because a blocked
 goal, a `blocked` start mode and a recorded dependency have different owners, and until it resolves
-it is unknown. A parent still `notLoaded` after the second read keeps that exact value rather than
-being translated into idle or stopped, and it is that parent's last turn that is reported
+it is unknown. A child still `notLoaded` after the second read keeps that exact value rather than
+being translated into idle or stopped, and it is that child's last turn that is reported
 unverified. The completed project is C9's. The restart is evidence about this task's own context
 and about nothing in the set.
 
-Preserved: every parent and child, each register read from its own source, the recorded start
+Preserved: every child and issue child, each register read from its own source, the recorded start
 policy restored rather than decided again, unknown as a usable answer, and a finished project that
 stays finished.
 
@@ -823,34 +823,34 @@ authorized work continuing without title control.
 
 ## S36 A goal-free parent waits idle, and four things go wrong with its queue
 
-Observed: a project parent holds no goal and has yielded idle with every readiness fact recorded.
-Four things then happen to its assignments. One child's completion receipt is delivered twice, the
-second time after the parent has already recorded a verdict on it. A second child's correction
+Observed: a project session holds no goal and has yielded idle with every readiness fact recorded.
+Four things then happen to its assignments. One issue child's completion receipt is delivered twice, the
+second time after the child has already recorded a verdict on it. A second issue child's correction
 arrives as a later generation while an earlier event on the same relationship was never applied. A
-third child's receipt is delivered while the parent is mid-turn on an earlier wake. And a fourth
-delivery is claimed each time the parent briefly reads idle, only for the transport to return busy,
+third issue child's receipt is delivered while the child is mid-turn on an earlier wake. And a fourth
+delivery is claimed each time the child briefly reads idle, only for the transport to return busy,
 until that delivery exhausts its attempt budget and is held. Separately the service restarts
-mid-flight, and a fifth parent on the same store has its goal paused by the user.
+mid-flight, and a fifth child on the same store has its goal paused by the user.
 
 Clauses: OPS-8.5 for the wake path, OPS-8.1 for the readiness that permitted idle, OPS-8.2 for the
-paused recipient and the busy one, OPS-7.3 for attribution across parents.
+paused recipient and the busy one, OPS-7.3 for attribution across children.
 
 Action: the duplicate is reconciled against the recorded verdict and never judged again, because
 its relationship, generation, revision and event id are the ones already settled. The later
 generation is applied in generation order, and the earlier unapplied event is recorded as
 superseded with that fact stated rather than dropped silently; the per-relationship marker advances
 only behind what was durably applied. The receipt arriving mid-turn is not lost: it waits and is
-picked up by the drain the parent runs on its next entry, which reads outstanding work rather than
+picked up by the drain the child runs on its next entry, which reads outstanding work rather than
 the payload that woke it. The held delivery is the terminal case, and it is reported as one: the
-parent's drain reads held rows as well as pending ones, names the hold, and recovers it through a
-fresh execution generation from the child rather than by reviving the row. Where nothing wakes the
-parent at all, that detection does not happen automatically on the installed runtime, and the
+child's drain reads held rows as well as pending ones, names the hold, and recovers it through a
+fresh execution generation from the issue child rather than by reviving the row. Where nothing wakes the
+child at all, that detection does not happen automatically on the installed runtime, and the
 report says so instead of implying a watcher nobody installed. The restart re-reads unsettled rows
 and in-flight leases before attempting anything new, and re-judges nothing already settled. The
-paused parent receives nothing and is not resumed, its deliveries waiting without consuming any
-budget. Each event settles against its own registered parent throughout.
+paused child receives nothing and is not resumed, its deliveries waiting without consuming any
+budget. Each event settles against its own registered child throughout.
 
 Preserved: every recorded verdict, the earlier event's visibility as superseded rather than as
 never-existing, the distinction between a send accepted and a turn that ran and an acknowledgement
-and an applied change, the paused recipient's protection, the other parent's assignments, and the
+and an applied change, the paused recipient's protection, the other child's assignments, and the
 honesty of reporting a terminal hold as terminal rather than as pending.
