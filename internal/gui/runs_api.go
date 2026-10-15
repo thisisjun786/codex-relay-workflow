@@ -235,6 +235,16 @@ func runsPostHandler(_ *Env, r *http.Request) (Response, error) {
 		if json.Valid([]byte(stdout)) && strings.TrimSpace(stdout) != "" {
 			reply = json.RawMessage(stdout)
 		}
+		if code != 0 && strings.TrimSpace(stderr) == "" && reply != nil {
+			// `answer --json` writes a refusal in its reply and nothing on stderr: its words are the error, as the command line
+			// prints them (CRW-1492)
+			var refused struct {
+				Refusal *flowcli.Refusal `json:"refusal"`
+			}
+			if json.Unmarshal(reply, &refused) == nil && refused.Refusal != nil {
+				stderr = fmt.Sprintf("refused (%s): %s", refused.Refusal.Code, refused.Refusal.Detail)
+			}
+		}
 		resp := controlResponse(code, stdout, stderr)
 		if reply != nil {
 			body := map[string]any{"ok": code == 0, "reply": reply}
