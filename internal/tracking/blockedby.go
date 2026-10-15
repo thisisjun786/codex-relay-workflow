@@ -8,6 +8,7 @@ import (
 
 var (
 	blockedByLine = regexp.MustCompile(`(?i)^\s*(?:[-*+]\s+)?(?:\*\*)?blocked by:(?:\*\*)?(.*)$`)
+	carriesLine   = regexp.MustCompile(`(?i)^\s*(?:[-*+]\s+)?(?:\*\*)?carries:(?:\*\*)?(.*)$`)
 	blockedByRef  = regexp.MustCompile(`(?:^|[\s,;(\[])([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)?#([0-9]+)\b`)
 )
 
@@ -15,13 +16,20 @@ var (
 // once each. A line is "Blocked by:" at its start, after an optional list marker or bold, followed by
 // references "#N" or "<owner>/<name>#N"; a bare "#N" means issue N of repo, the repository of the
 // issue the body belongs to. Lines inside a code fence are not read.
-func ParseBlockedBy(repo, body string) []Ref {
+func ParseBlockedBy(repo, body string) []Ref { return parseRefLines(blockedByLine, repo, body) }
+
+// ParseCarries returns the issues named on the "Carries:" lines of a pull request body (the line OpenPullRequest writes), read as
+// ParseBlockedBy reads its lines.
+func ParseCarries(repo, body string) []Ref { return parseRefLines(carriesLine, repo, body) }
+
+// parseRefLines returns the references on the lines of body that line matches, outside code fences, in order and once each.
+func parseRefLines(line *regexp.Regexp, repo, body string) []Ref {
 	var out []Ref
 	seen := map[Ref]bool{}
 	fence := ""
-	for _, line := range strings.Split(body, "\n") {
-		line = strings.TrimRight(line, "\r")
-		if marker := fenceMarker(line); marker != "" {
+	for _, text := range strings.Split(body, "\n") {
+		text = strings.TrimRight(text, "\r")
+		if marker := fenceMarker(text); marker != "" {
 			switch {
 			case fence == "":
 				fence = marker
@@ -33,7 +41,7 @@ func ParseBlockedBy(repo, body string) []Ref {
 		if fence != "" {
 			continue
 		}
-		m := blockedByLine.FindStringSubmatch(line)
+		m := line.FindStringSubmatch(text)
 		if m == nil {
 			continue
 		}

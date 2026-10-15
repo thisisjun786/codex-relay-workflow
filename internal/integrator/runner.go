@@ -26,6 +26,9 @@ type Runner struct {
 	// command sets it to make the configured build_work). It runs right before the gate,
 	// record-version or verification command starts, never in DryRun, which makes no directory.
 	Prepare func() error
+	// PullRequests reads the queue's pull requests and takes the record of their landing (the tracking adapter for the
+	// configured pull_request_repo; nil: the queue lands no pull request).
+	PullRequests PullRequestSource
 
 	// hookMove is a test seam: it runs while a pending file is being moved, after the head the
 	// file holds was read and before the file leaves pending/.

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode"
 )
 
 // Agent role names: the six roles a flow engine runs a call as. They are not the relay's roles (supervisor,
@@ -16,6 +17,11 @@ const (
 	AgentReviewerFinal = "reviewer-final"
 	AgentExplorer      = "explorer"
 )
+
+// AgentUnitCheck is the role the row of a unit check (the op crw.unitCheck) names in the flow journal. It is a name
+// only: a unit check is a tool run, not an agent call, so it is not one of AgentRoleNames and the policy file
+// declares no section for it.
+const AgentUnitCheck = "unit-check"
 
 // AgentRoleNames is the six agent roles in the order the design lists them; every section that iterates roles
 // follows it.
@@ -138,6 +144,17 @@ func ModelFamily(model string) string {
 	name := strings.ToLower(model[strings.LastIndexByte(model, '/')+1:])
 	family, _, _ := strings.Cut(name, "-")
 	return family
+}
+
+// CanonicalFamily is a family a record declares, in the form ModelFamily gives a family: trimmed and lower case (" Claude " is
+// claude). ok is false when that form is empty or is no name ModelFamily could give a family (it holds a provider prefix, a dash
+// or a space): such a family is unknown, as the family of a model that is not named is.
+func CanonicalFamily(family string) (string, bool) {
+	f := strings.ToLower(strings.TrimSpace(family))
+	if f == "" || ModelFamily(f) != f || strings.ContainsFunc(f, unicode.IsSpace) {
+		return "", false
+	}
+	return f, true
 }
 
 // parseAgentSections reads agent-roles and agent-aliases from the policy document; nil when the file declares neither.

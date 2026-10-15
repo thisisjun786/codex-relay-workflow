@@ -9,6 +9,8 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/tracking"
 )
 
 // Summary is what one integration run reports, in the shell script's own shape: the heads
@@ -39,6 +41,14 @@ type Outcome struct {
 	Err     error // set when Exit is ExitUsage: nothing ran
 	merged  []Entry
 	left    []leftOut
+	// verifyRC is the verification command's status, -1 when it did not run; review is the review of a pull request's merged
+	// tree, nil when none ran.
+	verifyRC int
+	review   *LandingReview
+	// headMoved is the pull request's head GitHub named right before the branch was to move, when it was no longer the merged
+	// head; prNote says why the branch did not move for a pull request that changed during the run.
+	headMoved string
+	prNote    string
 }
 
 type leftOut struct {
@@ -47,8 +57,10 @@ type leftOut struct {
 }
 
 // integrate merges the entries onto the remote branch in a private worktree, verifies the
-// merged tree and pushes it fast-forward only. The caller holds the integration lock.
-func (r *Runner) integrate(ctx context.Context, tag string, entries []Entry) Outcome {
+// merged tree and pushes it fast-forward only. The caller holds the integration lock. With pr
+// (one entry, the pull request's head) the review command judges the verified tree before the
+// push, and a review that asks for changes pushes nothing.
+func (r *Runner) integrate(ctx context.Context, tag string, entries []Entry, pr *tracking.PullRequest) Outcome {
 	c := r.Cfg
 	fail := func(format string, args ...any) Outcome {
 		return Outcome{Exit: ExitUsage, Err: fmt.Errorf(format, args...)}
@@ -105,13 +117,17 @@ func (r *Runner) integrate(ctx context.Context, tag string, entries []Entry) Out
 	}
 	added = true
 
-	out := Outcome{}
+	out := Outcome{verifyRC: -1}
 	rerecord := false
 	for _, e := range entries {
 		if ctx.Err() != nil {
 			return fail("%v", ctx.Err())
 		}
-		reason, resolvedVersion := r.mergeOne(ctx, wt, base, e, logf)
+		msg := fmt.Sprintf("Merge %s at %s into %s", e.Node, shortHead(e.Head), c.Branch)
+		if pr != nil {
+			msg = fmt.Sprintf("Merge pull request %s (%s) at %s into %s", pr.Ref, pr.HeadRef, shortHead(e.Head), c.Branch)
+		}
+		reason, resolvedVersion := r.mergeOne(ctx, wt, base, e, msg, logf)
 		if ctx.Err() != nil {
 			// A git call that ended with the context says nothing about the head.
 			return fail("%v", ctx.Err())
@@ -171,7 +187,9 @@ func (r *Runner) integrate(ctx context.Context, tag string, entries []Entry) Out
 		return fail("%v", err)
 	}
 
-	if vrc := r.verify(ctx, tag, wt, head, base, record); vrc != 0 {
+	vrc := r.verify(ctx, tag, wt, head, base, record)
+	out.verifyRC = vrc
+	if vrc != 0 {
 		if ctx.Err() != nil {
 			// A verification the signal ended is not a failed verification: no retry is
 			// spent and no head is blocked because of it.
@@ -183,6 +201,32 @@ func (r *Runner) integrate(ctx context.Context, tag string, entries []Entry) Out
 	// that is pushed. A HEAD it moved, or a change it left beside the commit, is not a pass.
 	if err := r.treeIsTheCommit(ctx, wt, head); err != nil {
 		return fail("%v", err)
+	}
+	if pr != nil {
+		// the review comes after the verification passed and before dev moves (CRW-1355)
+		rv := r.review(ctx, tag, wt, head, base, record, *pr, entries[0].Head, logf)
+		if ctx.Err() != nil {
+			return fail("%v", ctx.Err())
+		}
+		out.review = &rv
+		if rv.Verdict == verdictNeedsChanges {
+			return finish("review-needs-changes", ExitReviewRefused)
+		}
+		// like the verification, the review judged the commit that is pushed and changed nothing beside it
+		if err := r.treeIsTheCommit(ctx, wt, head); err != nil {
+			return fail("the review: %v", err)
+		}
+		// the pull request is read again right before the branch moves: a head pushed during the verification or the review
+		// is not what was verified, so the branch does not move for the old head and the entry stays pending
+		result, moved, why := r.recheckPR(ctx, *pr, entries[0].Head)
+		if ctx.Err() != nil {
+			return fail("%v", ctx.Err())
+		}
+		if result != "" {
+			fmt.Fprintf(logf, "%s: %s; %s does not move\n", pr.Ref, why, c.Branch)
+			out.headMoved, out.prNote = moved, why
+			return finish(result, ExitMoved)
+		}
 	}
 	// From here on a git call the signal ended is not a moved branch or a refused push: the
 	// pass is cancelled and the heads stay pending (a push that did land makes them
@@ -213,6 +257,14 @@ func (r *Runner) integrate(ctx context.Context, tag string, entries []Entry) Out
 	return finish("pushed", ExitPushed)
 }
 
+// shortHead is the first eight characters of a head (the whole of a shorter one).
+func shortHead(h string) string {
+	if len(h) > 8 {
+		return h[:8]
+	}
+	return h
+}
+
 func joinSpace(list, item string) string {
 	if list == "" {
 		return item
@@ -222,8 +274,7 @@ func joinSpace(list, item string) string {
 
 // mergeOne merges one head into the worktree and returns why it was left out ("" when merged)
 // and whether a version-line conflict was resolved on the way.
-func (r *Runner) mergeOne(ctx context.Context, wt, base string, e Entry, log io.Writer) (string, bool) {
-	c := r.Cfg
+func (r *Runner) mergeOne(ctx context.Context, wt, base string, e Entry, msg string, log io.Writer) (string, bool) {
 	if !headRE.MatchString(e.Head) {
 		return reasonBadHead, false
 	}
@@ -233,7 +284,6 @@ func (r *Runner) mergeOne(ctx context.Context, wt, base string, e Entry, log io.
 	if rc, err := r.git(ctx, wt, nil, "merge-base", "--is-ancestor", e.Head, "HEAD"); err == nil && rc == 0 {
 		return reasonAlreadyInDev, false
 	}
-	msg := fmt.Sprintf("Merge %s at %s into %s", e.Node, e.Head[:8], c.Branch)
 	rc, err := r.git(ctx, wt, log, "merge", "--no-ff", "-m", msg, e.Head)
 	if err == nil && rc == 0 {
 		return "", false

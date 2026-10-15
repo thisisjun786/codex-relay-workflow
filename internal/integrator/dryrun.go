@@ -13,6 +13,9 @@ type DryEntry struct {
 	AlreadyInDev bool   `json:"already_in_dev"`
 	Gate         string `json:"gate,omitempty"`
 	Retried      bool   `json:"retried"`
+	// Landed says why a pull request entry already landed at its head (done/ or its landing record): the pass moves it to done/
+	// with no run, so it is not planned.
+	Landed string `json:"landed,omitempty"`
 }
 
 // DryReport is what a dry run reports.
@@ -61,12 +64,16 @@ func (r *Runner) DryRun(ctx context.Context, withGate bool) (DryReport, error) {
 		rep.Base = base
 	}
 	var planned []Entry
+	var firstPR *Entry
 	for _, e := range entries {
 		d := DryEntry{Entry: e}
 		if prev, err := readHead(r.qpath(dirRetried, e.Name)); err == nil && prev == e.Head {
 			d.Retried = true
 		}
 		pass := true
+		if d.Landed = r.landedBefore(e); d.Landed != "" {
+			pass = false
+		}
 		if e.HeadOK {
 			if _, rc, err := r.gitRO(ctx, r.Cfg.Checkout, "cat-file", "-e", e.Head+"^{commit}"); err == nil && rc == 0 {
 				d.InCheckout = true
@@ -79,15 +86,24 @@ func (r *Runner) DryRun(ctx context.Context, withGate bool) (DryReport, error) {
 		} else {
 			pass = false
 		}
-		if withGate && e.HeadOK {
+		// a pull request has no pre-merge gate: the pass reads the pull request instead, which a dry run does not
+		if withGate && e.HeadOK && e.PR == 0 {
 			note, verdict := r.gate(ctx, e)
 			d.Gate = note
 			pass = verdict == gatePass
 		}
 		rep.Entries = append(rep.Entries, d)
-		if pass && (len(rep.SoloHeads) == 0 || len(planned) == 0) {
+		if pass && e.PR > 0 && (firstPR == nil || e.PR < firstPR.PR) {
+			pe := e
+			firstPR = &pe
+		}
+		if pass && e.PR == 0 && (len(rep.SoloHeads) == 0 || len(planned) == 0) {
 			planned = append(planned, e)
 		}
+	}
+	// a pending pull request is landed alone, before the issue heads
+	if firstPR != nil {
+		planned = []Entry{*firstPR}
 	}
 	for _, e := range planned {
 		rep.Plan = append(rep.Plan, e.Spec())

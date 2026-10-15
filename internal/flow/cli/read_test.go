@@ -268,7 +268,7 @@ func TestStatusLineScopedToOwnerThread(t *testing.T) {
 	}
 }
 
-// A command that writes into a run (CRW-1204: crw flow report-up, apply, report-ack, report-delivered) numbers its rows from
+// A command that writes into a run (CRW-1204: crw flow report-up, report-ack, report-delivered) numbers its rows from
 // engine.ForeignSeqBase, while the run, alive, goes on numbering its own from where it was. The cursor of watch and of the GUI's
 // event stream is the seq of the run's own rows: it never jumps to a command's number, so the rows the run writes after a
 // command wrote into it are still read, and the tree's cursor (LastSeq) is the run's own last row.

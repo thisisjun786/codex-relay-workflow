@@ -56,9 +56,6 @@ type FakeRelay struct {
 	// the scheduler's stale coordinator epoch is); HoldBack holds every release back unreleased with this reason (CRW-1320).
 	ReleaseErr func(node string) error
 	HoldBack   string
-	// BeforeChild, when a test sets it, runs when a child start of the node is asked for, before the relay compares the slice: the window
-	// between crw.release's pinned comparison and the child start (CRW-1382).
-	BeforeChild func(node string)
 	// Surfaces, Grade and Commands are what the plan says of the milestone: the surfaces of its criteria, the work grade and the
 	// required verification commands (CRW-1206).
 	Surfaces []string
@@ -76,7 +73,6 @@ type FakeRelay struct {
 	Accepts    []ops.AcceptRequest
 	Integrates []ops.IntegrateRequest
 	Closes     []ops.CloseRequest
-	Children   []ops.ChildRequest
 	// Landed are the nodes in the order they landed.
 	Landed []string
 }
@@ -170,24 +166,6 @@ func (r *FakeRelay) ReleaseStands(_ context.Context, _, node, execution string) 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.released[node].ExecutionID == execution && execution != "", nil
-}
-
-// ReleaseChild implements ops.Relay.
-// Like the relay's managed start, it compares the slice the flow compared with the node's slice of the plan it holds (CRW-1288, CRW-1382):
-// a slice that is another starts no child and answers plan_changed.
-func (r *FakeRelay) ReleaseChild(_ context.Context, req ops.ChildRequest) (ops.ChildResult, error) {
-	if r.BeforeChild != nil {
-		r.BeforeChild(req.Node)
-	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.Children = append(r.Children, req)
-	for _, n := range r.nodes {
-		if n.ID == req.Node && req.SliceDigest != "" && req.SliceDigest != sliceOf(n) {
-			return ops.ChildResult{Reason: ops.ReasonPlanChanged}, nil
-		}
-	}
-	return ops.ChildResult{Started: true, Child: "child-" + req.Node}, nil
 }
 
 // Accept implements ops.Relay: the relay judges the premerge record as the real acceptance does.

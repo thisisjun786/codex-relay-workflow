@@ -26,7 +26,7 @@
             "backend": "app-server",
             "helpers": [
               {
-                "digest": "583138d62bfde94b05f4721528a46b18d6a290441a9d46fd1d4d20e02a3a4d76",
+                "digest": "3ebc3a5ec7c2789362814aa2088ca26640ad3416dd1239bc7fbaa4d4f431f674",
                 "spec": "crw:lib/schemas"
               }
             ],
@@ -192,7 +192,7 @@
             "explicit_label": true,
             "family": "reviewer",
             "head": "",
-            "input_digest": "2e842b848fb1b6ba1af3140282ce9aa7b9b2d30f3a007ecdb3fb40abdb0046f8",
+            "input_digest": "7b0ceeb9bec5c9c5905d2b00dddd0747b51d1a62bb2d509a45baf8a92342bfd2",
             "model": "gpt-fake-sol",
             "node": "n1",
             "phase": "n1",
@@ -203,7 +203,7 @@
             "requested_model": "gpt-fake-sol",
             "role": "reviewer",
             "sandbox": "read-only",
-            "schema_digest": "6aa1f4ff88a814ddcf6787c4c70b505a20384e59e2473266258f5645a5546ec6",
+            "schema_digest": "2c29a21a55fc354ff9a50f36e0caadf4b1ed56344a2bce438541231cedefa69b",
             "step_decision": ""
           }
         },
@@ -845,7 +845,7 @@
           "node": "n1",
           "model": "gpt-fake-sol",
           "effort": "high",
-          "schemaDigest": "6aa1f4ff88a814ddcf6787c4c70b505a20384e59e2473266258f5645a5546ec6",
+          "schemaDigest": "2c29a21a55fc354ff9a50f36e0caadf4b1ed56344a2bce438541231cedefa69b",
           "threadId": "thr_c_13eff316c0d1",
           "status": "completed",
           "tokens": {

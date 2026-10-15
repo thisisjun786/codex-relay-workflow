@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/roles"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/acceptance/premerge"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
@@ -69,9 +70,6 @@ func (s *stubRelay) Release(_ context.Context, r ReleaseRequest) (ReleaseResult,
 }
 func (s *stubRelay) ReleaseStands(context.Context, string, string, string) (bool, error) {
 	return true, nil
-}
-func (s *stubRelay) ReleaseChild(context.Context, ChildRequest) (ChildResult, error) {
-	return ChildResult{Started: true}, nil
 }
 func (s *stubRelay) Accept(context.Context, AcceptRequest) (AcceptResult, error) {
 	return AcceptResult{Accepted: true}, nil
@@ -637,7 +635,7 @@ func TestAssemblePremergeDefaultsToBlocking(t *testing.T) {
 // The decoders hold the rules the JSON Schema cannot say.
 func TestDecodersHoldTheRulesOfTheSchemas(t *testing.T) {
 	good := func(kind, severity string, met bool, verdict string) []byte {
-		d := map[string]any{"ref": "d", "kind": kind, "severity": severity, "introduced": false, "impact": "", "inPromise": false, "file": "f", "line": 1, "finding": "x", "evidence_question": nil}
+		d := map[string]any{"ref": "d", "kind": kind, "severity": severity, "introduced": false, "impact": "minor_separable", "inPromise": false, "file": "f", "line": 1, "finding": "x", "evidence_question": nil}
 		if kind == "evidence_missing" {
 			d["evidence_question"] = map[string]any{"question": "q?", "files_needed": []string{}}
 		}
@@ -998,5 +996,312 @@ func TestSpawnDecisionIDFollowsItsContent(t *testing.T) {
 	run(map[string]any{"label": "rebuild:A:executor:r1"})
 	if len(m.Spawn) != 2 {
 		t.Errorf("a decision with other inputs at the same position was dropped: %d rows", len(m.Spawn))
+	}
+}
+
+// impactVerdicts are one answer of each verdict schema a reviewer writes, with one defect of the given impact.
+func impactVerdicts(verdict, severity, impact string) map[string][]byte {
+	d := map[string]any{"ref": "d1", "kind": "correctness", "severity": severity, "introduced": true, "impact": impact, "inPromise": false, "file": "f.go", "line": 3, "finding": "x", "evidence_question": nil}
+	fields := map[string]any{"verdict": verdict, "criteria": []any{map[string]any{"id": "c1", "met": true, "evidence": "e"}}, "defects": []any{d}, "summary": "s"}
+	block := map[string]any{"node": "A", "head": strings.Repeat("a", 40), "criteria_digest": strings.Repeat("c", 64)}
+	for k, v := range fields {
+		block[k] = v
+	}
+	final := map[string]any{"alignment": map[string]any{"verdict": "ALIGNED", "drift": []any{}}}
+	for k, v := range fields {
+		final[k] = v
+	}
+	one, _ := json.Marshal(fields)
+	batch, _ := json.Marshal(map[string]any{"nodes": []any{block}})
+	fin, _ := json.Marshal(final)
+	return map[string][]byte{SchemaVerdict: one, SchemaVerdictBatch: batch, SchemaVerdictFinal: fin}
+}
+
+// CRW-1438: the impact of a defect is one closed set, held once in premerge.Impacts. Every verdict schema a reviewer answers with
+// names exactly that set, so a word outside it (or an empty word) is not a verdict.
+func TestImpactIsAClosedSet(t *testing.T) {
+	var literal []string
+	if err := json.Unmarshal([]byte(impacts), &literal); err != nil {
+		t.Fatalf("the Go impact enum is not JSON: %v", err)
+	}
+	if !slices.Equal(literal, premerge.Impacts) {
+		t.Errorf("the Go impact enum %v differs from premerge.Impacts %v", literal, premerge.Impacts)
+	}
+	if !slices.Contains(premerge.Impacts, premerge.MinorSeparable) {
+		t.Errorf("premerge.Impacts %v leaves out %s", premerge.Impacts, premerge.MinorSeparable)
+	}
+	for _, bad := range []string{"cosmetic", ""} {
+		for name, raw := range impactVerdicts("needs_changes", "P3", bad) {
+			if err := Validate(name, raw); err == nil {
+				t.Errorf("%s accepted the impact %q", name, bad)
+			}
+		}
+	}
+	for _, good := range premerge.Impacts {
+		for name, raw := range impactVerdicts("needs_changes", "P3", good) {
+			if err := Validate(name, raw); err != nil {
+				t.Errorf("%s refused the impact %q: %v", name, good, err)
+			}
+		}
+	}
+}
+
+// CRW-1438: a verified verdict over a defect that blocks (premerge.Blocks: P0 to P2, or an impact other than minor_separable) says
+// what its own premerge record refuses, so it is no verdict (crw.review reads the error as verdict_invalid).
+func TestVerifiedWithABlockingImpactIsVerdictInvalid(t *testing.T) {
+	if _, err := DecodeVerdict(impactVerdicts("verified", "P3", "core_function")[SchemaVerdict]); err == nil {
+		t.Errorf("verified over a P3 core_function defect decoded")
+	}
+	if _, err := DecodeVerdict(impactVerdicts("verified", "P3", premerge.MinorSeparable)[SchemaVerdict]); err != nil {
+		t.Errorf("verified over a P3 minor_separable defect: %v", err)
+	}
+	if _, err := DecodeVerdict(impactVerdicts("needs_changes", "P3", "core_function")[SchemaVerdict]); err != nil {
+		t.Errorf("needs_changes over a P3 core_function defect: %v", err)
+	}
+	if _, err := DecodeVerdictBatch(impactVerdicts("verified", "P3", "core_function")[SchemaVerdictBatch]); err == nil {
+		t.Errorf("a batch block verified over a P3 core_function defect decoded")
+	}
+	if _, err := DecodeVerdictBatch(impactVerdicts("verified", "P3", premerge.MinorSeparable)[SchemaVerdictBatch]); err != nil {
+		t.Errorf("a batch block verified over a P3 minor_separable defect: %v", err)
+	}
+	for _, c := range []struct {
+		severity, impact string
+		blocks           bool
+	}{{"P0", "", true}, {"P2", premerge.MinorSeparable, true}, {"P3", "", false}, {"P3", premerge.MinorSeparable, false}, {"P3", "core_function", true}, {"P3", "cosmetic", true}} {
+		if got := premerge.Blocks(c.severity, c.impact); got != c.blocks {
+			t.Errorf("Blocks(%q, %q) = %v, want %v", c.severity, c.impact, got, c.blocks)
+		}
+	}
+}
+
+// CRW-1438: the reviewer is told the closed impact set its verdict answers with: the packet of crw:lib/packets names every value of
+// premerge.Impacts, that only minor_separable does not block, and that verified over a blocking defect is refused; the reviewer
+// overlay says the same under Output.
+func TestReviewPacketNamesTheImpactVocabulary(t *testing.T) {
+	src := "import { reviewPacket } from 'crw:lib/packets'\nexport const meta = { name: 'review-packet' }\n" +
+		"return reviewPacket('A', { issue: 'CRW-1', criteria_digest: 'd', criteria: ['first'], done_condition: 'done', regions: ['a.go'] }, " +
+		"{ commit: 'h1', changed: ['a.go'], out_of_scope: [] }, { pass: true, command: 'go test ./...', digest: 'v1' }, { round: 1 })\n"
+	prog, err := script.Load(script.Source{Name: "review-packet.js", Text: []byte(src)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := engine.Run(context.Background(), prog, engine.Config{Backend: engine.NewFake(), Policy: engine.FakePolicy()})
+	if err != nil || res.Status != engine.RunCompleted {
+		t.Fatalf("%v %+v", err, res)
+	}
+	var packet string
+	if err := json.Unmarshal(res.Value, &packet); err != nil {
+		t.Fatalf("the review packet is not a string: %v (%s)", err, res.Value)
+	}
+	overlay, err := roles.Overlay("reviewer", roles.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, text := range map[string]string{"the review packet": packet, "the reviewer overlay": overlay} {
+		for _, impact := range premerge.Impacts {
+			if !strings.Contains(text, impact) {
+				t.Errorf("%s does not name the impact %s:\n%s", name, impact, text)
+			}
+		}
+		for _, rule := range []string{"only " + premerge.MinorSeparable + " does not block", "verified over a defect that blocks is refused"} {
+			if !strings.Contains(text, rule) {
+				t.Errorf("%s does not say %q:\n%s", name, rule, text)
+			}
+		}
+	}
+}
+
+// acceptCapture is the relay of a test that reads what crw.accept asked of it: it keeps every AcceptRequest and accepts it.
+type acceptCapture struct {
+	*stubRelay
+	got []AcceptRequest
+}
+
+func (c *acceptCapture) Accept(_ context.Context, r AcceptRequest) (AcceptResult, error) {
+	c.got = append(c.got, r)
+	return AcceptResult{Accepted: true, AcceptanceID: "acc-A"}, nil
+}
+
+// CRW-1456: crw.accept assembles the premerge record of a head from a unit-check record when no newer verified review stands on
+// it. The record's grader is the unit check's pair and prompt, every criterion of the node's plan passes on the evidence of the
+// passing verification and the clean check, and each finding is a defect named by its finding id. A check that is not verified,
+// that gave no judgment, or that saw another tree than the head's is no basis; a node whose plan names no criterion has none.
+func TestAcceptAssemblesPremergeFromAUnitCheckRecord(t *testing.T) {
+	head, base := strings.Repeat("a", 40), strings.Repeat("b", 40)
+	criteria, vdigest := strings.Repeat("c", 64), strings.Repeat("d", 64)
+	const findingID = "0123456789abcdef"
+	type world2 struct {
+		*world
+		relay *acceptCapture
+		git   *int
+	}
+	setup := func(criteriaOfA []string) world2 {
+		w := newWorld(t)
+		w.relay.plan = planOfNodes(map[string]string{"A": "a1"}, "A")
+		w.relay.plan.Nodes[0].Criteria = criteriaOfA
+		w.ledgered(true, designOf("A"))
+		w.must("release", "plan-1", "A", "M")
+		capture := &acceptCapture{stubRelay: w.relay}
+		w.lane.d.Relay = capture
+		calls := 0
+		w.lane.d.Git = func(context.Context, string, []string, ...string) (string, error) {
+			calls++
+			return "", errors.New("this test runs no git")
+		}
+		return world2{world: w, relay: capture, git: &calls}
+	}
+	appendRow := func(w world2, op, callID string, data map[string]any) {
+		b, _ := json.Marshal(data)
+		var round map[string]any
+		_ = json.Unmarshal(b, &round)
+		w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: callID, Op: op, Event: engine.EvCompleted, Data: round})
+	}
+	commitRow := func(w world2, tree string) {
+		appendRow(w, OpCommit, "c_commit", map[string]any{"node": "A", "commit": head, "parent": base, "tree": tree, "result": "{}"})
+	}
+	verifyRow := func(w world2) {
+		appendRow(w, OpVerify, "c_verify", map[string]any{"node": "A", "head": head, "ok": true, "base": base, "digest": vdigest, "result": "{}"})
+	}
+	finding := func(severity, impact string) map[string]any {
+		return map[string]any{"id": findingID, "severity": severity, "impact": impact, "file": "x.go", "line": 7, "text": "a nit"}
+	}
+	unitCheck := func(w world2, state, verdict string, findings []any, extra map[string]any) {
+		res, _ := json.Marshal(map[string]any{"state": state, "detail": "", "verdict": verdict, "findings": findings, "engine_family": "grok", "model": "grok-4.7-medium",
+			"effort": "medium", "guide_rev": "g1", "prompt_digest": "pd-unit", "fingerprint_before": "t-head", "fingerprint_after": "t-head", "elapsed_ms": 1})
+		data := map[string]any{"role": "unit-check", "node": "A", "execution_id": "exec-A", "tree": "t-head", "criteria_digest": criteria, "result": string(res)}
+		for k, v := range extra {
+			data[k] = v
+		}
+		appendRow(w, OpUnitCheck, "c_uc", data)
+	}
+	clean := func() []any { return []any{finding("P3", premerge.MinorSeparable)} }
+	refused := func(w world2, reason string) {
+		t.Helper()
+		_, err := w.op("accept", "A", head)
+		if err == nil || ReasonOf(err.Error()) != reason {
+			t.Errorf("crw.accept: %v, want refused %s", err, reason)
+		}
+		if len(w.relay.got) != 0 {
+			t.Errorf("the relay was asked to accept: %+v", w.relay.got)
+		}
+	}
+
+	// a pre-commit unit check of the head's tree, no review: the premerge record is the unit check's
+	w := setup([]string{"first", "second"})
+	commitRow(w, "t-head")
+	verifyRow(w)
+	unitCheck(w, "ok", "verified", clean(), nil)
+	if _, err := w.op("accept", "A", head); err != nil {
+		t.Fatalf("crw.accept on a unit check: %v", err)
+	}
+	if len(w.relay.got) != 1 {
+		t.Fatalf("the relay was asked %d times", len(w.relay.got))
+	}
+	got := w.relay.got[0]
+	if got.ReviewerCall != "c_uc" || got.CriteriaDigest != criteria || got.Head != head || got.Base != base {
+		t.Errorf("accept request %+v", got)
+	}
+	rec, err := premerge.Decode(got.Premerge)
+	if err != nil {
+		t.Fatalf("premerge: %v", err)
+	}
+	if rec.Grader != (premerge.Grader{Model: "grok-4.7-medium", Effort: "medium", PromptDigest: "pd-unit"}) || rec.CriteriaDigest != criteria || rec.Issue != "CRW-A" {
+		t.Errorf("premerge record %+v", rec)
+	}
+	if len(rec.Criteria) != 2 {
+		t.Errorf("criteria %+v, want c1 and c2", rec.Criteria)
+	}
+	for _, id := range []string{"c1", "c2"} {
+		c := rec.Criteria[id]
+		if c.Verdict != "PASS" || !strings.Contains(c.Evidence, vdigest) || !strings.Contains(c.Evidence, "c_uc") {
+			t.Errorf("criterion %s: %+v", id, c)
+		}
+	}
+	if len(rec.Defects) != 1 || rec.Defects[0].ID != findingID || rec.Defects[0].Severity != "P3" || rec.Defects[0].Impact != premerge.MinorSeparable || len(rec.Dispositions.Items) != 0 {
+		t.Errorf("defects %+v, dispositions %+v", rec.Defects, rec.Dispositions.Items)
+	}
+
+	// a verified record over a blocking finding is no verified check
+	w = setup([]string{"first", "second"})
+	commitRow(w, "t-head")
+	verifyRow(w)
+	unitCheck(w, "ok", "verified", []any{finding("P3", "core_function")}, nil)
+	refused(w, "reviewer_not_verified")
+
+	// a check that gave no judgment is no basis
+	w = setup([]string{"first", "second"})
+	commitRow(w, "t-head")
+	verifyRow(w)
+	unitCheck(w, "quota", "", []any{}, nil)
+	refused(w, "reviewer_missing")
+
+	// a unit check needs a passing verification as a review does
+	w = setup([]string{"first", "second"})
+	commitRow(w, "t-head")
+	unitCheck(w, "ok", "verified", clean(), nil)
+	refused(w, "verification_missing")
+
+	// the head's commit row names another tree than the one the check saw
+	w = setup([]string{"first", "second"})
+	commitRow(w, "t-other")
+	verifyRow(w)
+	unitCheck(w, "ok", "verified", clean(), nil)
+	refused(w, "reviewer_missing")
+
+	// no commit row and no worktree: the tree of the head is unknown, so a pre-commit check does not match, and git is not asked
+	w = setup([]string{"first", "second"})
+	verifyRow(w)
+	unitCheck(w, "ok", "verified", clean(), nil)
+	refused(w, "reviewer_missing")
+	if *w.git != 0 {
+		t.Errorf("git was asked %d times with no worktree", *w.git)
+	}
+
+	// a check that names the head as its commit needs no tree
+	w = setup([]string{"first", "second"})
+	verifyRow(w)
+	unitCheck(w, "ok", "verified", clean(), map[string]any{"commit": head})
+	if _, err := w.op("accept", "A", head); err != nil || len(w.relay.got) != 1 || w.relay.got[0].ReviewerCall != "c_uc" {
+		t.Errorf("a unit check on the head's commit: %v %+v", err, w.relay.got)
+	}
+
+	// a node whose plan names no criterion is never accepted on a unit check
+	w = setup(nil)
+	commitRow(w, "t-head")
+	verifyRow(w)
+	unitCheck(w, "ok", "verified", clean(), nil)
+	refused(w, "premerge_missing")
+
+	// a verified review newer than the unit check is the basis; an older one is not
+	reviewRow := func(w world2) {
+		verdict, _ := json.Marshal(map[string]any{"verdict": "verified", "criteria": []any{map[string]any{"id": "c1", "met": true, "evidence": "e1"}, map[string]any{"id": "c2", "met": true, "evidence": "e2"}},
+			"defects": []any{}, "summary": "s"})
+		w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "c_rev", Op: "agent", Event: engine.EvPrepared,
+			Data: map[string]any{"role": "reviewer", "node": "A", "model": "gpt-x", "effort": "high", "prompt_digest": "pd-rev"}})
+		rr, _ := json.Marshal(ReviewResult{State: StateVerdict, Verdict: verdict, Findings: []FindingRef{}, Head: head, CriteriaDigest: strings.Repeat("e", 64), Call: Brief{CallID: "c_rev"}})
+		appendRow(w, OpReview, "c_review", map[string]any{"node": "A", "head": head, "criteria_digest": strings.Repeat("e", 64), "state": StateVerdict, "verdict": "verified", "call": "c_rev", "result": string(rr)})
+	}
+	for _, reviewLast := range []bool{true, false} {
+		w = setup([]string{"first", "second"})
+		commitRow(w, "t-head")
+		verifyRow(w)
+		if reviewLast {
+			unitCheck(w, "ok", "verified", clean(), nil)
+			reviewRow(w)
+		} else {
+			reviewRow(w)
+			unitCheck(w, "ok", "verified", clean(), nil)
+		}
+		if _, err := w.op("accept", "A", head); err != nil || len(w.relay.got) != 1 {
+			t.Fatalf("review last %v: %v %+v", reviewLast, err, w.relay.got)
+		}
+		want, grader := "c_uc", "pd-unit"
+		if reviewLast {
+			want, grader = "c_rev", "pd-rev"
+		}
+		rec, err := premerge.Decode(w.relay.got[0].Premerge)
+		if err != nil || w.relay.got[0].ReviewerCall != want || rec.Grader.PromptDigest != grader {
+			t.Errorf("review last %v: basis %s grader %+v (%v), want %s", reviewLast, w.relay.got[0].ReviewerCall, rec.Grader, err, want)
+		}
 	}
 }

@@ -269,10 +269,7 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 	}
 	workflow := cfg.Workflow
 	if workflow == "" {
-		workflow, _ = prog.Meta["name"].(string)
-	}
-	if workflow == "" {
-		workflow = prog.Name
+		workflow = ProgramWorkflow(prog)
 	}
 	backend := BackendAppServer
 	if s := cfg.Session; s != nil {
@@ -286,6 +283,11 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 	if cfg.Resume != nil {
 		if recorded := RecordedBackend(cfg.Journal.Events(), cfg.RunID); recorded != backend && hasStarted(cfg.Journal.Events(), cfg.RunID) {
 			return nil, fmt.Errorf("engine: run %s was started on the %s backend and cannot be resumed on the %s backend: resume it with the backend its started row records", cfg.RunID, recorded, backend)
+		}
+		// a legacy issue-child run is refused before anything is written as well (CRW-1415): its old child records stay read only; a run
+		// resumed as the retired issue lane is one even before its first row (LegacyRun)
+		if why := LegacyRun(cfg.Journal.Events(), cfg.RunID, workflow); why != "" {
+			return nil, fmt.Errorf("engine: %s", why)
 		}
 	}
 	rctx, cancel := context.WithCancel(ctx)

@@ -9,6 +9,8 @@ import (
 	"sync"
 
 	"github.com/google/jsonschema-go/jsonschema"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/acceptance/premerge"
 )
 
 // This file is the Go side of crw:lib/schemas (internal/flow/workflows/lib/schemas.js): a validation copy of every schema a flow
@@ -38,10 +40,12 @@ const (
 const (
 	defectKinds = `["correctness", "criteria_unmet", "test_gap", "evidence_missing", "scope", "maintainability", "other"]`
 	severities  = `["P0", "P1", "P2", "P3"]`
+	// impacts is premerge.Impacts as a JSON enum (TestImpactIsAClosedSet pins the two equal).
+	impacts = `["core_function", "safety_or_data", "permission_boundary", "criterion_unmet", "regression_introduced", "minor_separable"]`
 
 	criterionJSON = `{"type":"object","properties":{"id":{"type":"string"},"met":{"type":"boolean"},"evidence":{"type":"string"}},"required":["id","met","evidence"],"additionalProperties":false}`
 	defectJSON    = `{"type":"object","properties":{"ref":{"type":"string"},"kind":{"type":"string","enum":` + defectKinds + `},"severity":{"type":"string","enum":` + severities + `},` +
-		`"introduced":{"type":"boolean"},"impact":{"type":"string"},"inPromise":{"type":"boolean"},"file":{"type":"string"},"line":{"type":"integer"},"finding":{"type":"string"},` +
+		`"introduced":{"type":"boolean"},"impact":{"type":"string","enum":` + impacts + `},"inPromise":{"type":"boolean"},"file":{"type":"string"},"line":{"type":"integer"},"finding":{"type":"string"},` +
 		`"evidence_question":{"anyOf":[{"type":"object","properties":{"question":{"type":"string"},"files_needed":{"type":"array","items":{"type":"string"}}},"required":["question","files_needed"],"additionalProperties":false},{"type":"null"}]}},` +
 		`"required":["ref","kind","severity","introduced","impact","inPromise","file","line","finding","evidence_question"],"additionalProperties":false}`
 	verdictFieldsJSON = `"verdict":{"type":"string","enum":["verified","needs_changes"]},"criteria":{"type":"array","items":` + criterionJSON + `},"defects":{"type":"array","items":` + defectJSON + `},"summary":{"type":"string"}`
@@ -206,9 +210,10 @@ func checkDefects(what string, defects []Defect) error {
 	return nil
 }
 
-// DecodeVerdict reads a VERDICT. A verified verdict names no defect of P0 to P2 and no criterion that is not met: those are the
-// findings a premerge record needs a disposition for, and the default disposition is blocking (only the orchestrator separates or
-// carries one), so a reviewer that says verified over one does not say what its own record says.
+// DecodeVerdict reads a VERDICT. A verified verdict names no defect that blocks (premerge.Blocks: P0 to P2, or an impact other than
+// minor_separable) and no criterion that is not met: those are the findings a premerge record needs a disposition for, and the
+// default disposition is blocking (only the orchestrator separates or carries one), so a reviewer that says verified over one does
+// not say what its own record says.
 func DecodeVerdict(raw []byte) (ReviewVerdict, error) {
 	v, err := decode[ReviewVerdict](SchemaVerdict, raw)
 	if err != nil {
@@ -235,8 +240,8 @@ func (v ReviewVerdict) check(what string) error {
 			}
 		}
 		for _, d := range v.Defects {
-			if d.Severity == "P0" || d.Severity == "P1" || d.Severity == "P2" {
-				return fmt.Errorf("%s: verified, and defect %q is %s", what, d.Ref, d.Severity)
+			if premerge.Blocks(d.Severity, d.Impact) {
+				return fmt.Errorf("%s: verified, and defect %q is %s with impact %q, which blocks", what, d.Ref, d.Severity, d.Impact)
 			}
 		}
 	}

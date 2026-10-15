@@ -3,10 +3,13 @@ package cli
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/compile"
 )
 
 // TestStartPreviewThenDetached: `crw flow start` prints the preview (the nodes, the role pairs, the budget and the five facts)
@@ -295,4 +298,47 @@ func passes(facts []Fact) string {
 		out = append(out, map[bool]string{true: "pass", false: "fail"}[f.Pass])
 	}
 	return strings.Join(out, ",")
+}
+
+// TestStartRefusesChildHostFlag (CRW-1417): `crw flow start` has no --child-host. A start that names it, even with a well-formed
+// crw-flow-child-host/1 document, is a usage error and starts no run process; the same start without it starts.
+func TestStartRefusesChildHostFlag(t *testing.T) {
+	w := newWorld(t)
+	td := w.deps()
+	doc, _ := childHostDoc(t)
+	raw, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hostFile := filepath.Join(t.TempDir(), "child-host.json")
+	if err := os.WriteFile(hostFile, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	argv := []string{"start", "project-lane", "--backend", "app-server", "--thread", "thread-owner", "--state", w.state, "--args", `{"plan":"plan-1","milestone":"M1"}`, "--handoff", defaultHandoff(t)}
+	code, out, errOut := td.do(append(append([]string{}, argv...), "--child-host", hostFile)...)
+	if code != ExitUsage || len(td.spawned) != 0 {
+		t.Fatalf("a start naming --child-host: exit %d, %d processes, want exit %d and none\n%s%s", code, len(td.spawned), ExitUsage, out, errOut)
+	}
+	if code, out, errOut := td.do(argv...); code != 0 || len(td.spawned) != 1 {
+		t.Fatalf("the same start without --child-host: exit %d, %d processes\n%s%s", code, len(td.spawned), out, errOut)
+	}
+}
+
+// TestSizeChildPlanInputGivesNoChildHostFact (CRW-1417): a handoff that sizes an issue of the run's milestone for a child (size_fit
+// child) starts the run with no preflight fact named child_host_unset: the start has no host settings to warn about.
+func TestSizeChildPlanInputGivesNoChildHostFact(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"}, labIssue{Key: "A-2", Milestone: "M1"})
+	file := filepath.Join(t.TempDir(), "handoff.json")
+	child := func(in *compile.Input) {
+		in.Projects[0].Issues[1].SizeFit, in.Projects[0].Issues[1].SizeReason = "child", "regions_gt3"
+	}
+	if err := os.WriteFile(file, l.handoffBytes(child), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	spec := l.start("start", "project-lane", "--args", `{"plan":"plan-1","milestone":"M1"}`, "--handoff", file)
+	for _, f := range spec.Preflight {
+		if f.Name == "child_host_unset" {
+			t.Errorf("a child-sized issue gives the fact %+v", f)
+		}
+	}
 }

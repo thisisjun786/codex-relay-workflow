@@ -108,7 +108,8 @@ func (r *SchedRelay) project(plan string) (compile.Project, error) {
 }
 
 // target is where the plan's nodes integrate: the local checkout and the branch the handoff's target names. The agent path integrates
-// locally (the pull request landing of an agent node is CRW-1226's), so a target that is not a local checkout is refused.
+// locally (a milestone's pull request is opened from that branch by the project session, crw flow pr, and merged by the dev queue), so a
+// target that is not a local checkout is refused.
 func (r *SchedRelay) target(plan string) (checkout, ref string, err error) {
 	p, err := r.project(plan)
 	if err != nil {
@@ -118,7 +119,7 @@ func (r *SchedRelay) target(plan string) (checkout, ref string, err error) {
 		return "", "", fmt.Errorf("the project %s of the run's handoff names no target {repository, base_ref}: the run integrates its nodes there", p.Key)
 	}
 	if !filepath.IsAbs(p.Target.Repository) {
-		return "", "", fmt.Errorf("the target repository %q of project %s is not a local checkout: an agent node integrates on a local branch (its pull request landing is CRW-1226's)", p.Target.Repository, p.Key)
+		return "", "", fmt.Errorf("the target repository %q of project %s is not a local checkout: an agent node integrates on a local branch (a milestone's pull request is opened from that branch with crw flow pr)", p.Target.Repository, p.Key)
 	}
 	if r.Repo != "" && !sameDirectory(r.Repo, p.Target.Repository) {
 		return "", "", fmt.Errorf("the target repository %s of project %s is not the repository %s the run's worktrees are made from: the relay reads a node's commits in the target (start the run with --repo %s)", p.Target.Repository, p.Key, r.Repo, p.Target.Repository)
@@ -914,16 +915,18 @@ func (r *SchedRelay) IntegrationTip(ctx context.Context, plan string) (string, e
 }
 
 // Close is AgentClose (CRW-1277 f): the node's current execution is closed (a node given up or cancelled returns its slot in the same
-// transaction) or held. A node the relay never gave an execution has nothing to close.
+// transaction) or held. A node the relay never gave an agent execution has nothing to close: a node never released, and a node only the
+// retired relationship (issue-child) path executed, whose execution is no agent's and stays as the relay holds it (CRW-1415, PR #889
+// round 2: AgentClose refused such a node disposition_conflict, and the escalation that asked the close ended with an error).
 func (r *SchedRelay) Close(ctx context.Context, req ops.CloseRequest) (ops.CloseResult, error) {
 	if req.Plan == "" {
 		return ops.CloseResult{}, nil
 	}
-	executed, err := dagsched.ExecutedNodes(ctx, r.q(ctx), req.Plan)
+	agent, err := dagsched.AgentExecuted(ctx, r.q(ctx), req.Plan, req.Node)
 	if err != nil {
 		return ops.CloseResult{}, err
 	}
-	if !executed[req.Node] {
+	if !agent {
 		return ops.CloseResult{}, nil
 	}
 	if err := r.claim(ctx, req.Plan); err != nil {

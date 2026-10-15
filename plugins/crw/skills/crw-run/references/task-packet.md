@@ -7,7 +7,7 @@ remove inapplicable items instead of sending placeholders. Embed the acceptance
 criteria unless the worker's access to the linked issue has been established;
 another task may not have the same connectors.
 
-The packets below are for an issue child of a plan with no run. The child of an oversized issue that a flow run releases runs the `issue-lane` workflow and starts no PABCD state machine, so the thread sends it no packet ([who owns control](../../crw-canon/references/flow.md#who-owns-control-in-a-flow-managed-run)).
+The packets below are for an issue child of a plan with no run. A flow run starts no issue child: a node sized for one goes up as a `size_split` escalation with detail `child_retired`, and the repository session (relay role `supervisor`) asks for a bundle split. A node a run releases is built by the run's own calls: the thread sends it no packet, and it starts no PABCD state machine ([who owns control](../../crw-canon/references/flow.md#who-owns-control-in-a-flow-managed-run)).
 
 ## Child task titles
 

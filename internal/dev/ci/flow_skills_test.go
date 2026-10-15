@@ -169,19 +169,23 @@ func runSectionProblems(section string, relay map[string]bool) []string {
 		"`--preview`",
 		"--handoff",
 		`(?i)handles only (two things|escalations)`,
-		"`crw flow apply ",
-		`(?i)the receipt of an oversized issue`,
 		`(?i)never claims the coordinator epoch of a plan (that )?a run holds`,
 		"`stale_coordinator_epoch`",
 		`(?i)milestone ends .?incomplete`,
 		`(?i)out-of-band [^.]*transition[^.]*(is )?(raised|goes) (to the manager )?as an escalation`,
 		`(?i)` + "`crw flow resume`",
-		// The run releases the child of an oversized issue; the thread sends it no task packet and no PABCD is armed.
-		`(?i)releases? the (issue )?child of an oversized issue itself`,
-		"`issue-lane`",
-		`(?i)sends? it no task packet`,
+		// A node sized for an issue child starts no issue child (CRW-1415): the project lane escalates it as size_split with detail
+		// child_retired, the parent asks for a bundle split, and the thread sends no task packet for it.
+		`(?i)starts? no issue child`,
+		"`size_split`",
+		"`child_retired`",
+		`(?i)bundle split`,
+		`(?i)sends? (it )?no task packet`,
 	}) {
 		problems = append(problems, "the section lacks "+p)
+	}
+	if m := regexp.MustCompile("(?i)releases? the (issue )?child of an oversized issue|crw\\.releaseChild|`issue-lane`").FindString(flat); m != "" {
+		problems = append(problems, "the section says the run starts an issue child ("+m+"), a path the project lane retired")
 	}
 	if regexp.MustCompile(`(?i)is the path of an oversized issue`).MatchString(flat) {
 		problems = append(problems, "the section sends an oversized issue to the dispatch of an issue child, which a run does not use")
@@ -222,10 +226,10 @@ func TestRunProjectNeverClaimsRunEpoch(t *testing.T) {
 
 	t.Run("fixture: a thread that claims the plan of a run is reported", func(t *testing.T) {
 		good := "## Run a milestone with a flow run\n\nThe orchestrator starts one run for each milestone with `crw flow start project-lane --handoff F` after `--preview`. " +
-			"The thread handles only two things: an escalation, and the receipt of an oversized issue with `crw flow apply --event E`. " +
+			"The thread handles only escalations. " +
 			"It never claims the coordinator epoch of a plan a run holds with `dag-coordinator-claim`: the run's next write is `stale_coordinator_epoch` and the milestone ends `incomplete`. " +
 			"An out-of-band transition is raised as an escalation. A dead run is taken again with `crw flow resume`. " +
-			"The run releases the child of an oversized issue itself: it runs the `issue-lane` workflow and the thread sends it no task packet.\n"
+			"A node sized for an issue child starts no issue child: the project lane escalates it as `size_split` with detail `child_retired`, the parent asks for a bundle split, and the thread sends no task packet for it.\n"
 		fixture := map[string]bool{"dag-coordinator-claim": true}
 		if p := runSectionProblems(sectionOf(good, "Run a milestone with a flow run"), fixture); len(p) > 0 {
 			t.Fatalf("the good text is reported: %v", p)
@@ -237,11 +241,15 @@ func TestRunProjectNeverClaimsRunEpoch(t *testing.T) {
 				return strings.Replace(s, "An out-of-band transition is raised as an escalation.", "", 1)
 			},
 			"no section":    func(s string) string { return strings.Replace(s, "## Run a milestone with a flow run", "## Other", 1) },
-			"no apply":      func(s string) string { return strings.Replace(s, "`crw flow apply --event E`", "a command", 1) },
 			"unconditional": func(s string) string { return s + "Run `dag-coordinator-claim` at the start of every turn.\n" },
 			"child path":    func(s string) string { return s + "The rest of this skill is the path of an oversized issue.\n" },
 			"no packet note": func(s string) string {
-				return strings.Replace(s, "and the thread sends it no task packet", "and the thread sends it a packet", 1)
+				return strings.Replace(s, "and the thread sends no task packet for it", "and the thread sends it a packet", 1)
+			},
+			"no child_retired": func(s string) string { return strings.Replace(s, " with detail `child_retired`", "", 1) },
+			"no bundle split":  func(s string) string { return strings.Replace(s, "the parent asks for a bundle split, ", "", 1) },
+			"retired child path": func(s string) string {
+				return s + "The run releases the child of an oversized issue itself: it runs the `issue-lane` workflow.\n"
 			},
 			"unknown command": func(s string) string { return s + "Hand it up with `crw manage decisions`.\n" },
 		} {
@@ -349,14 +357,22 @@ func TestPlanSizeFieldsAndOrchestrationWording(t *testing.T) {
 	fields := normalized(sectionOf(plan, "Set the size fields"))
 	if missing := wordingMissing(fields, []string{
 		"`crw skill issue-size check`", "`crw skill size-fit`",
-		`(?i)never divide an issue, or send it to a child, because a number crossed its line`,
+		`(?i)never divide an issue because a number crossed its line`,
 		`(?i)the concept boundary decides`,
 		"`over_line_accepted`", `(?i)bundle reason`,
 		"`size_split`", "`region_order_missing`",
+		// a run starts no issue child (CRW-1415): a node that reaches it as `child` is escalated, and the planner splits instead
+		"`child_retired`", `(?i)bundle split`, `(?i)starts? no issue child`,
 		`(?i)no model name and no effort`,
 		fmt.Sprintf(`(?i)a name, at most %d issues`, compileMaxGroup(t)),
 	}); len(missing) > 0 {
 		t.Errorf("Set the size fields lacks: %s\n%s", strings.Join(missing, "\n  "), fields)
+	}
+	// the size fields send no node to an issue child: no planner or architect is told to set `child`
+	for _, retired := range []string{"(?i)gets `size_fit` `child`", "(?i)may set `child`", `(?i)coordinates an issue-lane run`, `(?i)a child is for an issue that needs a coordinator`, `(?i)or send it to a child`} {
+		if m := regexp.MustCompile(retired).FindString(fields); m != "" {
+			t.Errorf("Set the size fields still sends a node to the retired issue child: %q", m)
+		}
 	}
 	orchestration := normalized(sectionOf(plan, "Write the Orchestration section of the project"))
 	if missing := wordingMissing(orchestration, []string{
@@ -486,18 +502,26 @@ func TestPlanKeyDocsNameTheMilestoneKey(t *testing.T) {
 	}
 }
 
-// A task packet belongs to an issue child of a plan with no run; the child a run releases runs a workflow and starts no PABCD state machine.
+// A task packet belongs to an issue child of a plan with no run. A flow run starts no issue child (CRW-1415): a node sized for one goes up
+// as a `size_split` escalation with detail `child_retired` and the repository session asks for a bundle split; the nodes a run releases get no packet from
+// the thread and start no PABCD state machine.
 func taskPacketScopeProblems(intro string) []string {
 	flat := normalized(intro)
 	var problems []string
 	for _, p := range wordingMissing(flat, []string{
 		`(?i)packets? (below )?(is|are) for an issue child of a plan with no run`,
-		"`issue-lane`",
+		`(?i)starts? no issue child`,
+		"`size_split`",
+		"`child_retired`",
+		`(?i)bundle split`,
 		`(?i)(sends|gets)( it)? no (task )?packet`,
 		`(?i)no PABCD state machine`,
 		`flow\.md#who-owns-control-in-a-flow-managed-run`,
 	}) {
 		problems = append(problems, "the introduction lacks "+p)
+	}
+	if m := regexp.MustCompile("(?i)`issue-lane`|issue-lane workflow|runs the issue lane").FindString(flat); m != "" {
+		problems = append(problems, "the introduction sends a node a run releases to the retired issue lane ("+m+")")
 	}
 	return problems
 }
@@ -511,12 +535,19 @@ func TestTaskPacketIsForAPlanWithNoRun(t *testing.T) {
 	if problems := taskPacketScopeProblems(intro); len(problems) > 0 {
 		t.Errorf("task-packet.md introduction:\n  %s\n%s", strings.Join(problems, "\n  "), normalized(intro))
 	}
-	good := "The packets are for an issue child of a plan with no run. A node a run releases runs `issue-lane`, gets no packet from the thread and starts no PABCD state machine ([control](../../crw-canon/references/flow.md#who-owns-control-in-a-flow-managed-run))."
+	good := "The packets are for an issue child of a plan with no run. A flow run starts no issue child: a node sized for one goes up as a `size_split` escalation with detail `child_retired` and the repository session asks for a bundle split. A node a run releases gets no packet from the thread and starts no PABCD state machine ([control](../../crw-canon/references/flow.md#who-owns-control-in-a-flow-managed-run))."
 	if p := taskPacketScopeProblems(good); len(p) > 0 {
 		t.Fatalf("the good text is reported: %v", p)
 	}
-	if p := taskPacketScopeProblems(strings.Replace(good, "gets no packet from the thread and ", "", 1)); len(p) == 0 {
-		t.Error("a text that does not say the run's child gets no packet is accepted")
+	for label, bad := range map[string]string{
+		"no packet note":   strings.Replace(good, "gets no packet from the thread and ", "", 1),
+		"no child_retired": strings.Replace(good, " with detail `child_retired`", "", 1),
+		"no bundle split":  strings.Replace(good, " and the repository session asks for a bundle split", "", 1),
+		"issue lane":       good + " The child of an oversized issue that a flow run releases runs the `issue-lane` workflow.",
+	} {
+		if p := taskPacketScopeProblems(bad); len(p) == 0 {
+			t.Errorf("%s: the changed text is accepted", label)
+		}
 	}
 }
 
@@ -827,7 +858,7 @@ func TestSkillCommandsExist(t *testing.T) {
 	}
 	// The commands the skills of this series rely on are among the ones written, so the comparison above has them as its subject.
 	found := skillFlowSubcommands(texts)
-	for _, sub := range []string{"start", "show", "watch", "apply", "reports", "report-ack", "report-up", "compile", "resume", "answer"} {
+	for _, sub := range []string{"start", "show", "watch", "reports", "report-ack", "report-up", "compile", "resume", "answer"} {
 		if len(found[sub]) == 0 {
 			t.Errorf("no skill text writes `crw flow %s`: the comparison no longer covers it", sub)
 		}

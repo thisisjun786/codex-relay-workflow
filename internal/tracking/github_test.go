@@ -80,18 +80,18 @@ func TestMilestoneReadsTheMilestoneAndAllItsIssuesAcrossPages(t *testing.T) {
 			issueJSON(11, "second", "closed", map[string]any{"state_reason": "not_planned", "milestone": map[string]any{"number": 3}}),
 		})
 	})
-	ms, issues, err := newClient(t, f).Milestone(bg, Ref{"o/r", 3})
+	ms, issues, err := newClient(t, f).Milestone(bg, Ref{Repo: "o/r", Number: 3})
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantMs := Milestone{Ref: Ref{"o/r", 3}, Title: "1.0 · GitHub 전환", Description: "d", State: StateOpen, OpenIssues: 2, ClosedIssues: 1}
+	wantMs := Milestone{Ref: Ref{Repo: "o/r", Number: 3}, Title: "1.0 · GitHub 전환", Description: "d", State: StateOpen, OpenIssues: 2, ClosedIssues: 1}
 	if ms != wantMs {
 		t.Errorf("milestone = %+v; want %+v", ms, wantMs)
 	}
 	want := []Issue{
-		{Ref: Ref{"o/r", 10}, URL: "https://github.com/o/r/issues/10", Title: "first", Body: "Blocked by: #9, other/repo#2",
-			State: StateOpen, Labels: []string{"P1", "feature"}, Milestone: 3, BlockedBy: []Ref{{"o/r", 9}, {"other/repo", 2}}},
-		{Ref: Ref{"o/r", 11}, URL: "https://github.com/o/r/issues/11", Title: "second", State: StateClosed, CloseReason: NotPlanned, Labels: []string{}, Milestone: 3},
+		{Ref: Ref{Repo: "o/r", Number: 10}, URL: "https://github.com/o/r/issues/10", Title: "first", Body: "Blocked by: #9, other/repo#2",
+			State: StateOpen, Labels: []string{"P1", "feature"}, Milestone: 3, BlockedBy: []Ref{{Repo: "o/r", Number: 9}, {Repo: "other/repo", Number: 2}}},
+		{Ref: Ref{Repo: "o/r", Number: 11}, URL: "https://github.com/o/r/issues/11", Title: "second", State: StateClosed, CloseReason: NotPlanned, Labels: []string{}, Milestone: 3},
 	}
 	if !reflect.DeepEqual(issues, want) {
 		t.Errorf("issues = %+v\nwant %+v", issues, want)
@@ -121,16 +121,16 @@ func TestIssueReadsBodyLabelsStateSubIssuesAndBlockedBy(t *testing.T) {
 		}
 		writeJSON(w, 200, []any{issueJSON(5, "sub two", "closed", map[string]any{"repository_url": "https://api.github.com/repos/other/repo"})})
 	})
-	got, err := newClient(t, f).Issue(bg, Ref{"o/r", 10})
+	got, err := newClient(t, f).Issue(bg, Ref{Repo: "o/r", Number: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := Issue{
-		Ref: Ref{"o/r", 10}, URL: "https://github.com/o/r/issues/10", Title: "the issue",
+		Ref: Ref{Repo: "o/r", Number: 10}, URL: "https://github.com/o/r/issues/10", Title: "the issue",
 		Body: "[층 · 세션] 작성.\n\nBlocked by: #35\n\n## 기준", State: StateClosed, CloseReason: Completed,
 		Labels: []string{"P1", "area:relay"}, Milestone: 2,
-		SubIssues: []SubIssue{{Ref{"o/r", 20}, "sub one", StateOpen}, {Ref{"other/repo", 5}, "sub two", StateClosed}},
-		BlockedBy: []Ref{{"o/r", 35}},
+		SubIssues: []SubIssue{{Ref{Repo: "o/r", Number: 20}, "sub one", StateOpen}, {Ref{Repo: "other/repo", Number: 5}, "sub two", StateClosed}},
+		BlockedBy: []Ref{{Repo: "o/r", Number: 35}},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("issue = %+v\nwant %+v", got, want)
@@ -141,7 +141,7 @@ func TestIssueWithoutSubIssuesHasNone(t *testing.T) {
 	f := newFake(t)
 	f.reply("GET /repos/o/r/issues/7", 200, issueJSON(7, "plain", "open", nil))
 	f.reply("GET /repos/o/r/issues/7/sub_issues", 200, []any{})
-	got, err := newClient(t, f).Issue(bg, Ref{"o/r", 7})
+	got, err := newClient(t, f).Issue(bg, Ref{Repo: "o/r", Number: 7})
 	if err != nil || got.State != StateOpen || got.CloseReason != "" || len(got.SubIssues) != 0 || got.Milestone != 0 {
 		t.Errorf("Issue = %+v, %v", got, err)
 	}
@@ -150,7 +150,7 @@ func TestIssueWithoutSubIssuesHasNone(t *testing.T) {
 func TestIssueRefusesAPullRequest(t *testing.T) {
 	f := newFake(t)
 	f.reply("GET /repos/o/r/issues/8", 200, issueJSON(8, "pr", "open", map[string]any{"pull_request": map[string]any{}}))
-	if _, err := newClient(t, f).Issue(bg, Ref{"o/r", 8}); !errors.Is(err, ErrNotIssue) {
+	if _, err := newClient(t, f).Issue(bg, Ref{Repo: "o/r", Number: 8}); !errors.Is(err, ErrNotIssue) {
 		t.Errorf("Issue(pull request) error = %v; want ErrNotIssue", err)
 	}
 }
@@ -159,10 +159,10 @@ func TestCommentWritesTheHeaderAsTheFirstLine(t *testing.T) {
 	f := newFake(t)
 	f.reply("POST /repos/o/r/issues/10/comments", 201, map[string]any{"id": 1})
 	g := newClient(t, f)
-	if err := g.Comment(bg, Ref{"o/r", 10}, "[프로젝트 담당 · Claude Code abc12345]", "첫 줄\n둘째 줄"); err != nil {
+	if err := g.Comment(bg, Ref{Repo: "o/r", Number: 10}, "[프로젝트 담당 · Claude Code abc12345]", "첫 줄\n둘째 줄"); err != nil {
 		t.Fatal(err)
 	}
-	if err := g.Comment(bg, Ref{"o/r", 10}, "[관리 · s1]", ""); err != nil {
+	if err := g.Comment(bg, Ref{Repo: "o/r", Number: 10}, "[관리 · s1]", ""); err != nil {
 		t.Fatal(err)
 	}
 	reqs := f.requests()
@@ -184,7 +184,7 @@ func TestCommentRefusesAHeaderThatIsNotOneBracketedLine(t *testing.T) {
 	f := newFake(t)
 	g := newClient(t, f)
 	for _, h := range []string{"", "no brackets", "[a · b]\nmore", "[a]", "[a · b] trailing", " [a · b]", "[ · ]", "[a · b]\r"} {
-		if err := g.Comment(bg, Ref{"o/r", 1}, h, "text"); !errors.Is(err, ErrInvalidHeader) {
+		if err := g.Comment(bg, Ref{Repo: "o/r", Number: 1}, h, "text"); !errors.Is(err, ErrInvalidHeader) {
 			t.Errorf("Comment(header %q) error = %v; want ErrInvalidHeader", h, err)
 		}
 	}
@@ -204,7 +204,7 @@ func TestCloseSendsStateAndReason(t *testing.T) {
 		{Completed, map[string]any{"state": "closed", "state_reason": "completed"}},
 		{NotPlanned, map[string]any{"state": "closed", "state_reason": "not_planned"}},
 	} {
-		if err := g.Close(bg, Ref{"o/r", 10}, c.reason); err != nil {
+		if err := g.Close(bg, Ref{Repo: "o/r", Number: 10}, c.reason); err != nil {
 			t.Fatal(err)
 		}
 		reqs := f.requests()
@@ -223,7 +223,7 @@ func TestCloseRefusesAnUnknownReason(t *testing.T) {
 	f := newFake(t)
 	g := newClient(t, f)
 	for _, r := range []CloseReason{"", "duplicate", "Completed"} {
-		if err := g.Close(bg, Ref{"o/r", 10}, r); !errors.Is(err, ErrInvalidReason) {
+		if err := g.Close(bg, Ref{Repo: "o/r", Number: 10}, r); !errors.Is(err, ErrInvalidReason) {
 			t.Errorf("Close(%q) error = %v; want ErrInvalidReason", r, err)
 		}
 	}
@@ -236,7 +236,7 @@ func TestAddLabelPostsOneLabelAndKeepsTheOthers(t *testing.T) {
 	f := newFake(t)
 	f.reply("POST /repos/o/r/issues/10/labels", 200, labels("P1", "blocks-real-use"))
 	g := newClient(t, f)
-	if err := g.AddLabel(bg, Ref{"o/r", 10}, "blocks-real-use"); err != nil {
+	if err := g.AddLabel(bg, Ref{Repo: "o/r", Number: 10}, "blocks-real-use"); err != nil {
 		t.Fatal(err)
 	}
 	reqs := f.requests()
@@ -244,7 +244,7 @@ func TestAddLabelPostsOneLabelAndKeepsTheOthers(t *testing.T) {
 		t.Errorf("requests = %+v", reqs)
 	}
 	for _, l := range []string{"", "  ", "a\nb"} {
-		if err := g.AddLabel(bg, Ref{"o/r", 10}, l); !errors.Is(err, ErrInvalidLabel) {
+		if err := g.AddLabel(bg, Ref{Repo: "o/r", Number: 10}, l); !errors.Is(err, ErrInvalidLabel) {
 			t.Errorf("AddLabel(%q) error = %v; want ErrInvalidLabel", l, err)
 		}
 	}
@@ -256,7 +256,7 @@ func TestAddLabelPostsOneLabelAndKeepsTheOthers(t *testing.T) {
 func TestEveryOperationNamesTheRepositoryItWasMadeFor(t *testing.T) {
 	f := newFake(t)
 	g := newClient(t, f)
-	other := Ref{"x/y", 1}
+	other := Ref{Repo: "x/y", Number: 1}
 	calls := map[string]func() error{
 		"Milestone": func() error { _, _, err := g.Milestone(bg, other); return err },
 		"Issue":     func() error { _, err := g.Issue(bg, other); return err },
@@ -270,8 +270,8 @@ func TestEveryOperationNamesTheRepositoryItWasMadeFor(t *testing.T) {
 		}
 	}
 	for name, call := range map[string]func() error{
-		"Issue 0":  func() error { _, err := g.Issue(bg, Ref{"o/r", 0}); return err },
-		"Close -1": func() error { return g.Close(bg, Ref{"o/r", -1}, Completed) },
+		"Issue 0":  func() error { _, err := g.Issue(bg, Ref{Repo: "o/r", Number: 0}); return err },
+		"Close -1": func() error { return g.Close(bg, Ref{Repo: "o/r", Number: -1}, Completed) },
 	} {
 		if err := call(); !errors.Is(err, ErrInvalidRef) {
 			t.Errorf("%s error = %v; want ErrInvalidRef", name, err)
@@ -286,8 +286,8 @@ func TestRepositoryNameMatchesWithoutRegardToCase(t *testing.T) {
 	f := newFake(t)
 	f.reply("GET /repos/o/r/issues/7", 200, issueJSON(7, "plain", "open", nil))
 	f.reply("GET /repos/o/r/issues/7/sub_issues", 200, []any{})
-	got, err := newClient(t, f).Issue(bg, Ref{"O/R", 7})
-	if err != nil || got.Ref != (Ref{"o/r", 7}) {
+	got, err := newClient(t, f).Issue(bg, Ref{Repo: "O/R", Number: 7})
+	if err != nil || got.Ref != (Ref{Repo: "o/r", Number: 7}) {
 		t.Errorf("Issue(O/R#7) = %+v, %v", got, err)
 	}
 }
@@ -301,7 +301,7 @@ func TestRequestsCarryTheTokenAndTheGitHubHeaders(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 2; i++ {
-		if err := g.AddLabel(bg, Ref{"o/r", 1}, "x"); err != nil {
+		if err := g.AddLabel(bg, Ref{Repo: "o/r", Number: 1}, "x"); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -330,7 +330,7 @@ func TestATokenSourceFailureStopsTheRequest(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := g.AddLabel(bg, Ref{"o/r", 1}, "x"); err == nil {
+		if err := g.AddLabel(bg, Ref{Repo: "o/r", Number: 1}, "x"); err == nil {
 			t.Errorf("%s: AddLabel succeeded", name)
 		} else if name == "error" && !errors.Is(err, boom) {
 			t.Errorf("%s: error = %v; want it to wrap the source's", name, err)
@@ -345,7 +345,7 @@ func TestACancelledContextSendsNothing(t *testing.T) {
 	f := newFake(t)
 	ctx, cancel := context.WithCancel(bg)
 	cancel()
-	if _, err := newClient(t, f).Issue(ctx, Ref{"o/r", 1}); !errors.Is(err, context.Canceled) {
+	if _, err := newClient(t, f).Issue(ctx, Ref{Repo: "o/r", Number: 1}); !errors.Is(err, context.Canceled) {
 		t.Errorf("Issue error = %v; want context.Canceled", err)
 	}
 	if n := len(f.requests()); n != 0 {
@@ -355,9 +355,9 @@ func TestACancelledContextSendsNothing(t *testing.T) {
 
 // operations is every operation of the Tracker against issue 10, for the error tables.
 func operations(g *GitHub) map[string]func() error {
-	ref := Ref{"o/r", 10}
+	ref := Ref{Repo: "o/r", Number: 10}
 	return map[string]func() error{
-		"Milestone": func() error { _, _, err := g.Milestone(bg, Ref{"o/r", 3}); return err },
+		"Milestone": func() error { _, _, err := g.Milestone(bg, Ref{Repo: "o/r", Number: 3}); return err },
 		"Issue":     func() error { _, err := g.Issue(bg, ref); return err },
 		"Comment":   func() error { return g.Comment(bg, ref, "[a · b]", "t") },
 		"Close":     func() error { return g.Close(bg, ref, Completed) },
@@ -443,7 +443,7 @@ func TestOtherStatusesAreAPIErrorsOfNoKind(t *testing.T) {
 	for _, status := range []int{422, 500, 502} {
 		f := newFake(t)
 		failEverything(f, status, nil, map[string]any{"message": "Validation Failed"})
-		err := newClient(t, f).AddLabel(bg, Ref{"o/r", 10}, "l")
+		err := newClient(t, f).AddLabel(bg, Ref{Repo: "o/r", Number: 10}, "l")
 		var ae *APIError
 		if !errors.As(err, &ae) || ae.Status != status || errors.Is(err, ErrNotFound) || errors.Is(err, ErrForbidden) || errors.Is(err, ErrRateLimited) || errors.Is(err, ErrUnauthorized) {
 			t.Errorf("status %d: error = %#v", status, err)
@@ -456,7 +456,7 @@ func TestAnErrorBodyThatIsNotJSONStillGivesAStatusError(t *testing.T) {
 	f.handle("PATCH /repos/o/r/issues/10", func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "<html>bad gateway</html>", http.StatusBadGateway)
 	})
-	err := newClient(t, f).Close(bg, Ref{"o/r", 10}, Completed)
+	err := newClient(t, f).Close(bg, Ref{Repo: "o/r", Number: 10}, Completed)
 	var ae *APIError
 	if !errors.As(err, &ae) || ae.Status != 502 {
 		t.Errorf("error = %#v; want an *APIError of status 502", err)
@@ -475,7 +475,7 @@ func TestASecondPageThatFailsFailsTheRead(t *testing.T) {
 		w.Header().Set("X-RateLimit-Remaining", "0")
 		writeJSON(w, 403, map[string]any{"message": "API rate limit exceeded"})
 	})
-	_, issues, err := newClient(t, f).Milestone(bg, Ref{"o/r", 3})
+	_, issues, err := newClient(t, f).Milestone(bg, Ref{Repo: "o/r", Number: 3})
 	if !errors.Is(err, ErrRateLimited) || len(issues) != 0 {
 		t.Errorf("Milestone = %v, %v; want no issues and ErrRateLimited", issues, err)
 	}
@@ -499,7 +499,7 @@ func TestAWriteIsNeverFollowedThroughARedirect(t *testing.T) {
 		w.Header().Set("Location", f.srv.URL+"/repos/o/moved/issues/10")
 		w.WriteHeader(http.StatusMovedPermanently)
 	})
-	err := newClient(t, f).Close(bg, Ref{"o/r", 10}, Completed)
+	err := newClient(t, f).Close(bg, Ref{Repo: "o/r", Number: 10}, Completed)
 	var ae *APIError
 	if !errors.As(err, &ae) || ae.Status != 301 {
 		t.Errorf("error = %#v; want an *APIError of status 301", err)
@@ -522,7 +522,7 @@ func TestANextLinkToAnotherHostIsNotFollowed(t *testing.T) {
 		w.Header().Set("Link", `<`+other.URL+`/steal>; rel="next"`)
 		writeJSON(w, 200, []any{issueJSON(10, "first", "open", nil)})
 	})
-	if _, _, err := newClient(t, f).Milestone(bg, Ref{"o/r", 3}); err == nil {
+	if _, _, err := newClient(t, f).Milestone(bg, Ref{Repo: "o/r", Number: 3}); err == nil {
 		t.Error("Milestone followed a next link to another host")
 	}
 	if len(foreign) != 0 {
@@ -538,7 +538,7 @@ func TestAPageLoopThatNeverEndsIsStopped(t *testing.T) {
 		w.Header().Set("Link", `<`+next.String()+`>; rel="next"`)
 		writeJSON(w, 200, []any{})
 	})
-	if _, _, err := newClient(t, f).Milestone(bg, Ref{"o/r", 3}); err == nil {
+	if _, _, err := newClient(t, f).Milestone(bg, Ref{Repo: "o/r", Number: 3}); err == nil {
 		t.Error("Milestone read pages forever")
 	}
 	if n := len(f.requests()); n > 300 {
