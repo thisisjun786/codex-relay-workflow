@@ -48,7 +48,7 @@ const (
 // confirm the thread idle leaves the notices queued.
 func pumpQueueFlush(ctx context.Context, e *Env, cfg *Config, st *pumpState, s pumpSettings, dry bool) error {
 	root := crwconfig.JoinRoot(cfg.StateDir, pumpQueueDir)
-	if err := pumpQueueSafe(root, "parent queue directory"); err != nil {
+	if err := pumpQueueSafe(root, "자식 queue directory"); err != nil {
 		return err
 	}
 	threads, err := os.ReadDir(root)

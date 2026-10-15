@@ -305,7 +305,8 @@ func TestCapacityDocumentTextThresholdsAndExitStatuses(t *testing.T) {
 			t.Errorf("the line does not carry %q: %q", want, lines[0])
 		}
 	}
-	for _, r := range lines[0] {
+	// The layer names 부모 and 자식 are the canon's own words for the layers (CRW-1477); the rest is English.
+	for _, r := range strings.NewReplacer("부모", "", "자식", "").Replace(lines[0]) {
 		if r > 127 {
 			t.Fatalf("the text form is not English: %q", lines[0])
 		}

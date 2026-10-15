@@ -21,7 +21,7 @@ func TestCRW1307ChildForceDeleteMirrorOntoSharedBranchIsTheBlockRule(t *testing.
 		"git push -d origin main", "git push origin +r2-f01:DEV", "nice git push -f origin HEAD:dev", "git push origin HEAD:r2-f01 && git push -f origin HEAD:dev",
 		"bash -c 'git push --force origin HEAD:main'", "git push --force origin HEAD:heads/dev"} {
 		answer, rule := decide(c, child)
-		if rule != ChildPushRuleSharedHistory || !strings.Contains(gateDeny(t, answer), "통합은 부모·통합기 몫") {
+		if rule != ChildPushRuleSharedHistory || !strings.Contains(gateDeny(t, answer), "통합은 자식·통합기 몫") {
 			t.Errorf("%s: rule %q answer %q", c, rule, answer)
 		}
 	}

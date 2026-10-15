@@ -31,7 +31,7 @@ func TestCRW1157DenialCauses(t *testing.T) {
 	}
 	raw := gatePayload(t, cwd, map[string]any{"agent_id": "leaf", "agent_type": "executor", "tool_name": "Write", "tool_input": map[string]any{"file_path": root + "/x"}})
 	reason := gateDeny(t, HandleMemoryWriteGate(raw, env))
-	if !strings.Contains(reason, "parent") || strings.Contains(reason, "ask the user") || strings.Contains(reason, "allow-write") {
+	if !strings.Contains(reason, "the session that spawned you") || strings.Contains(reason, "ask the user") || strings.Contains(reason, "allow-write") {
 		t.Errorf("leaf recovery: %s", reason)
 	}
 	gateSeed(t, cwd, func(s *state.State) { s.MemoryWriteGrant = true })
@@ -64,7 +64,7 @@ func TestCRW1157UnknownDestinationEditKeepsGrantRoute(t *testing.T) {
 	}
 	leaf := gatePayload(t, "", map[string]any{"agent_id": "leaf", "agent_type": "executor", "tool_name": "Write", "tool_input": map[string]any{"file_path": "relative-note.md"}})
 	reason = gateDeny(t, HandleMemoryWriteGate(leaf, env))
-	if !strings.Contains(reason, "unknown-destination") || !strings.Contains(reason, "parent") || strings.Contains(reason, "allow-write") || strings.Contains(reason, "ask the user") {
+	if !strings.Contains(reason, "unknown-destination") || !strings.Contains(reason, "the session that spawned you") || strings.Contains(reason, "allow-write") || strings.Contains(reason, "ask the user") {
 		t.Errorf("leaf unknown edit destination: %s", reason)
 	}
 	cwd, _, _ := gateScene(t)

@@ -1,11 +1,11 @@
 # MCP profiles
 
-Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../crw-canon/references/hierarchy.md#the-levels).
+The sessions in this document are named by [the level table](../../crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and an issue child is no layer.
 
 Every Codex thread starts the MCP servers `config.toml` defines and the installed plugins provide, whether
 it calls them or not, and each sub-thread it spawns does the same. Hundreds of megabytes of helper
-processes per child came from servers an issue never used. The parent therefore chooses at release which
-of them the child gets, as a profile the host's execution policy declares for the child role
+processes per issue child came from servers an issue never used. The child therefore chooses at release which
+of them the issue child gets, as a profile the host's execution policy declares for the issue child role
 (`docs/role-execution-policy.md`, "A role may carry MCP profiles").
 
 ## The rule
@@ -17,7 +17,7 @@ of them the child gets, as a profile the host's execution policy declares for th
 | neither | `minimal` |
 
 Choose from the issue and its packet, and choose the least that covers what they name. The model and the
-effort of the child decide nothing here. An issue that needs both capabilities needs a profile that keeps
+effort of the issue child decide nothing here. An issue that needs both capabilities needs a profile that keeps
 both servers: use the host's own, and raise a decision request when its policy declares none. These three
 names are the starting set; the host's policy file is what declares them, and a name it does not declare
 is refused.
@@ -26,24 +26,24 @@ is refused.
 
 State the profile twice, and the same name in both:
 
-- the packet carries a line `MCP profile: <name>`, so the child and a reader know what it was given;
+- the packet carries a line `MCP profile: <name>`, so the issue child and a reader know what it was given;
 - the release request carries it as `child.settings.mcpProfile`, in the settings of the `child` object that a
   managed start or a DAG release passes to the host unchanged:
 
       "child": {"hostId": "...", "title": "...", "settings": {"model": "...", "reasoningEffort": "...", "mcpProfile": "ui-qa", ...}}
 
-A host whose policy declares profiles for the child role admits a child only when its request states one it
+A host whose policy declares profiles for the issue child role admits an issue child only when its request states one it
 declares. A request that states none, or another name, is refused at the preflight before any thread
 exists (`mcp_profile_required`, `mcp_profile_unknown`): correct the request and send it again. A host whose
-policy declares none for the child role refuses any profile a request states (`mcp_profile_unknown`), so the
+policy declares none for the issue child role refuses any profile a request states (`mcp_profile_unknown`), so the
 policy file declares the profiles before a release states one.
 
 ## A child that needs more
 
-A profile is fixed for the life of the child. The host keeps no override with a thread, so each resume
+A profile is fixed for the life of the issue child. The host keeps no override with a thread, so each resume
 sends the profile again, and a resume of a thread the host already has loaded ignores what it sends; no
-call turns one more server on for a running child. A child that finds it needs a server its profile lacks
-raises a decision request and does not work around it. The parent answers by releasing the work again under
+call turns one more server on for a running issue child. An issue child that finds it needs a server its profile lacks
+raises a decision request and does not work around it. The child answers by releasing the work again under
 the profile it needs.
 
 ## What the host does with it (Codex 0.154.0, measured on an isolated App Server)

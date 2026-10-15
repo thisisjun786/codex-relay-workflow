@@ -5,7 +5,7 @@ description: "Read-only report of where work stands, by layer from the parent to
 
 # CRW Status
 
-Here the parent (repository session, relay role `supervisor`) and the child (project session, relay role `parent`) are layers of [the level table](../crw-canon/references/hierarchy.md#the-levels).
+Here the parent (repository session) and the child (project session) are layers of [the level table](../crw-canon/references/hierarchy.md#the-levels).
 
 Report what is true right now and how it is known, and choose the one action that follows when
 Jun asks for it. He asks for this as '현재 어디까지 됐어?', as '전체 프로젝트 어떻게 돼가?' or as
@@ -15,7 +15,7 @@ an audit, or a recommendation he did not ask for.
 This skill is read-only. It writes no tracking record, creates or resumes no task, sends no message,
 wakes no child or issue child, installs nothing and changes no schedule, whatever
 the state of the work it reports on. Reporting that a project is behind does not authorize starting
-it. A one-word 중간점검 inside the parent (repository session, relay role `supervisor`) is not a read: its owner is
+it. A one-word 중간점검 inside the parent (repository session) is not a read: its owner is
 [the parent's section of crw-run](../crw-run/SKILL.md#the-parent-the-repository-session), and when this task is no parent the
 request is a status read and is answered here. The layers and their names are
 [the level table](../crw-canon/references/hierarchy.md#the-levels).
@@ -63,7 +63,7 @@ ref, a Codex task ID, a Desktop project ID and a repository are four different i
 title, a folder or a branch is none of them.
 
 Reading another project because somebody asked about it changes no binding. That holds at every
-layer: a temporary question does not repoint a child (project session, relay role `parent`), and a task that answers
+layer: a temporary question does not repoint a child (project session), and a task that answers
 one question about a neighbouring initiative still leads the initiative it was designated for.
 A binding changes only by an explicit designation or switch.
 

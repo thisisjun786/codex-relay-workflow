@@ -151,11 +151,11 @@ func (d *NoticeDeliverer) waitingFor(ctx context.Context, one map[string]any, no
 	if r != nil && NoticeAddressed(r, live) {
 		hold := r.Text("hold_reason")
 		if hold != "" && hold != store.SupervisorHoldSuperseded && hold != store.SupervisorHoldUnaddressed {
-			return "its message " + r.Text("message_id") + " is held by the supervisor channel: " + hold, nil
+			return "its message " + r.Text("message_id") + " is held by the 부모 channel: " + hold, nil
 		}
 		if next, ok := r.Get("next_eligible_at").(float64); ok && next > now {
 			because, err := d.because(ctx, r.Text("message_id"))
-			return "the supervisor channel rechecks the level above at " + noticeAt(next) + because, err
+			return "the 부모 channel rechecks the level above at " + noticeAt(next) + because, err
 		}
 	}
 	query := "SELECT message_id FROM supervisor_messages WHERE recipient_task_id=? AND " + store.SupervisorAheadSQL("")
@@ -238,7 +238,7 @@ func (d *NoticeDeliverer) ready(ctx context.Context, answer *NoticeAnswer, now f
 					if e, ok := err.(*NoticeError); ok {
 						kind = e.Kind
 					}
-					unobserved[parent] = "its parent " + parent + " could not be observed (" + kind + "), so whether it can be contacted is unknown"
+					unobserved[parent] = "its 자식 " + parent + " could not be observed (" + kind + "), so whether it can be contacted is unknown"
 				} else {
 					measured[parent] = true
 					answer.Measured++
@@ -399,7 +399,7 @@ func (d *NoticeDeliverer) reconcile(ctx context.Context, answer *NoticeAnswer, n
 func (d *NoticeDeliverer) ref(ctx context.Context, r row) (string, error) {
 	id := r.Text("message_id")
 	attempt, err := d.Ledger.one(ctx, "SELECT request_id FROM supervisor_attempts WHERE message_id=? ORDER BY attempt_no DESC LIMIT 1", id)
-	ref := "supervisor message " + id + " " + r.Text("state")
+	ref := "부모 message " + id + " " + r.Text("state")
 	if attempt != nil {
 		ref += ", attempt " + attempt.Text("request_id")
 	}

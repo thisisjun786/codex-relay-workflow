@@ -450,13 +450,13 @@ func projectKeyFact(ctx context.Context, r *Reader, plan, thread string) (Fact, 
 	case !found || slices.Contains(scopes, key):
 		return Fact{}, false
 	}
-	holds := "thread " + thread + " holds no live parent binding"
+	holds := "thread " + thread + " holds no live 자식 binding"
 	if len(scopes) > 0 {
-		holds = "thread " + thread + " is the live parent of project " + strings.Join(scopes, ", ")
+		holds = "thread " + thread + " is the live 자식 of project " + strings.Join(scopes, ", ")
 	}
 	return Fact{Name: FactProjectKey, Level: LevelWarn,
 		Reading: fmt.Sprintf("plan %s is put under project key %s; %s", plan, key, holds),
-		Reason:  "a plan's project key is the scope_key of the orchestrator's parent binding (the project UUID), and the run's first claim is refused (scope_role_mismatch) under another key: put the plan again under the binding's key"}.leveled(), true
+		Reason:  "a plan's project key is the scope_key of the orchestrator's 자식 binding (the project UUID), and the run's first claim is refused (scope_role_mismatch) under another key: put the plan again under the binding's key"}.leveled(), true
 }
 
 // FactPlanLiveRun is the warning of a land-head start while another run of the same plan has not ended (CRW-1397): the land's release

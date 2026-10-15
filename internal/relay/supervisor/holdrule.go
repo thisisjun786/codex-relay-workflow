@@ -72,7 +72,7 @@ const (
 	acknowledgedKeptReason = "this fact is already staged and its recipient's acknowledgement parked it; staging the same statement again leaves it parked"
 	// sendByIDDriftReason is the answer for a send by id whose endpoints the live hierarchy moved: a
 	// send by id never re-addresses a message.
-	sendByIDDriftReason = "relation_owner_drift: the hierarchy no longer names this message's sender and recipient, and a send by id does not re-address it; stage it again (supervisor-stage), then send it"
+	sendByIDDriftReason = "relation_owner_drift: the hierarchy no longer names this message's sender and recipient, and a send by id does not re-address it; stage it again (crw relay supervisor-stage), then send it"
 )
 
 // holdDecision is the hold rule of the supervisor channel (CRW-1500): the one place that answers

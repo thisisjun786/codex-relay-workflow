@@ -471,7 +471,7 @@ func readyReportFor(in readyInput) (readyReport, error) {
 	report.OpenQuestions = append(report.OpenQuestions, open...)
 	report.DesignFirst = labelled != "" || len(open) > 0
 	if labelled != "" {
-		report.Reasons = append(report.Reasons, fmt.Sprintf("design first: the issue carries the label %q; put the design result (the architect's proposal and the parent's decision) in the decided answer section and remove the label before release", labelled))
+		report.Reasons = append(report.Reasons, fmt.Sprintf("design first: the issue carries the label %q; put the design result (the architect's proposal and the 자식's decision) in the decided answer section and remove the label before release", labelled))
 	}
 	if len(open) > 0 {
 		report.Reasons = append(report.Reasons, fmt.Sprintf("design first: the open decisions section still lists %d question(s); settle them in a design, record the result in the decided answer section and leave the open decisions empty before release", len(open)))

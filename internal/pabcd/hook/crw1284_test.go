@@ -61,7 +61,7 @@ func TestChildPushToIntegrationBranchRefused(t *testing.T) {
 	dir, asked := cpScene(t), 0
 	child := ChildPushBinding{Child: true, Own: cpOwn}
 	for _, c := range cpRefused {
-		if reason := gateDeny(t, cpAnswer(t, dir, c, child, &asked)); !strings.Contains(reason, "통합은 부모·통합기 몫") {
+		if reason := gateDeny(t, cpAnswer(t, dir, c, child, &asked)); !strings.Contains(reason, "통합은 자식·통합기 몫") {
 			t.Errorf("%s: %s", c, reason)
 		}
 	}
@@ -129,7 +129,7 @@ func TestParentAndIntegratorPushUnaffected(t *testing.T) {
 }
 
 // TestChildPushOwnBranch: the own branch is the branch the child's checkout has, unless it is an integration branch (dev, main, the
-// branch origin's HEAD names) or the parent's checkout has it, in any letter case, or its name begins with refs/, heads/, tags/ or
+// branch origin's HEAD names) or the 자식's checkout has it, in any letter case, or its name begins with refs/, heads/, tags/ or
 // remotes/ (git resolves such a destination on the remote, heads/dev as refs/heads/dev); a detached or non-repository checkout has none.
 func TestChildPushOwnBranch(t *testing.T) {
 	dir := cleanTempDir(t)

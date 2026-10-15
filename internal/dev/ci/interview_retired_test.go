@@ -71,7 +71,7 @@ func TestDefineRegistersMilestonesAndIssues(t *testing.T) {
 	body := flat(skillBody(t, defineSkillFile))
 	for _, want := range []string{
 		"registers a milestone and its issues",
-		"the top session (today Sion)", "(repository session, relay role `supervisor`)",
+		"the top session (today Sion)",
 		"purpose", "desired change", "success evidence", "scope", "open decisions",
 		"one question at a time", "no ritual interview",
 		"](../crw-canon/references/tracking-model.md)",
@@ -79,6 +79,10 @@ func TestDefineRegistersMilestonesAndIssues(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("crw-define lacks %q", want)
 		}
+	}
+	// CRW-1431: the parent's label is the repository session and carries no relay role id.
+	if !strings.Contains(body, "(repository session)") || strings.Contains(strings.ToLower(body), "relay role") {
+		t.Error("crw-define does not label the parent as the repository session, or still gives a relay role id")
 	}
 	if !regexp.MustCompile(`the top session[^.]*(holds|has) (that|the) conversation with Jun`).MatchString(body) {
 		t.Error("crw-define does not say that the top session holds a needed question's conversation with Jun")

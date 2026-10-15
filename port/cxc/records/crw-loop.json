@@ -32,7 +32,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "CRW-1344: Linear wording became tracking wording (a tracking issue, the tracking repository, a milestone), and the skill catalog no longer lists a Linear skill",
+      "reason": "CRW-1431: the skill text names the project session and the repository session by layer and carries no relay role id",
       "hunks": [
         {
           "line": 3,
@@ -133,9 +133,9 @@
           "new": [
             "- DISPATCH-MANAGED-01 (STRICT): before fanning work out, start from the binding. A\n",
             "  tracking issue or DAG node (also one the relay holds no assignment for yet) is a flow\n",
-            "  executor call of the run of the child (project session, relay role `parent`), recorded in the\n",
+            "  executor call of the run of the child (project session), recorded in the\n",
             "  relay, whose step the child spawns as a role subagent (the default path), or an issue child\n",
-            "  started and resumed through `crw-run` (the exception, SP-CHILD-1), never a\n",
+            "  started and resumed through `crw-run` (the exception), never a\n",
             "  `create_thread` lane; the relay refuses a second active or paused assignment of\n",
             "  the same issue and a release past capacity, and those answers are followed, not\n",
             "  routed around by creating a thread by hand. An unresolved binding is not\n",
@@ -281,7 +281,7 @@
     },
     {
       "file": "references/lane-dispatch.md",
-      "reason": "CRW-1344: Linear wording became tracking wording (a tracking issue, the tracking repository, a milestone), and the skill catalog no longer lists a Linear skill",
+      "reason": "CRW-1431: the skill text names the project session and the repository session by layer and carries no relay role id",
       "hunks": [
         {
           "line": 3,
@@ -292,9 +292,9 @@
           "new": [
             "Read when a request fans unmanaged work out across parallel tasks, or when watching more lanes\n",
             "than one wait can hold. A tracking issue or DAG node is a flow executor call of the run of\n",
-            "[the child](../../crw-canon/references/hierarchy.md#the-levels) (project session, relay role `parent`),\n",
+            "[the child](../../crw-canon/references/hierarchy.md#the-levels) (project session),\n",
             "recorded in the relay, whose step the child spawns as a role subagent (the default path), or an\n",
-            "issue child started through `crw-run` (the exception, SP-CHILD-1), and is not handed to a\n",
+            "issue child started through `crw-run` (the exception), and is not handed to a\n",
             "`create_thread` lane by this file; apply\n",
             "[DISPATCH-MANAGED-01](../../crw-pabcd/references/dispatch-surfaces.md#dispatch-managed-01-strict--start-from-the-binding-not-from-the-mechanism)\n",
             "first. [Dispatch surfaces](../../crw-pabcd/references/dispatch-surfaces.md) owns\n"
