@@ -138,7 +138,7 @@ evidence or report the path as unverified.
 
 **Existing task-owned worktree:** `create_thread` accepts an existing absolute
 cwd, title, model, reasoning_effort, sandbox, expected_sandbox_policy,
-runtime_workspace_roots, optional prompt, and stable request_id. It creates no
+runtime_workspace_roots, the required prompt (its first turn), and stable request_id. It creates no
 worktree. Reuse the coordinator-prepared checkout. Model and reasoning effort are
 required; omitting either refuses the request before any call rather than inheriting
 the App Server configuration. Omitting any other setting uses that configuration and
@@ -220,7 +220,16 @@ values. If none does, report the concrete unsupported capability and settle it b
 creating the task; never launch a task already known to carry the wrong setting, and
 never silently downgrade it. This is not a readiness handshake: once the settings can be
 applied, create with the full work prompt, and reconcile a mismatch observed after
-creation on that same task.
+creation on that same task. `create_thread` requires `prompt`: a call without one is
+refused before anything is reserved or started
+([Observed empty-task failure](#observed-empty-task-failure)). What the ledger holds on the
+`request_id` decides the next call:
+
+- No receipt on the id: the call that brings the prompt may reuse it.
+- A `not_attempted` reservation made without a prompt, before prompts were required: use a
+  new `request_id` with a prompt; the old reservation is left and never resumed.
+- A `not_attempted` reservation made with other arguments: only a call that repeats its own
+  arguments under the same `request_id` resumes it.
 
 Where the host has configured an execution policy, the stated pair must also be one the
 operator approved, and an unapproved one is refused before anything is created. Read
@@ -357,6 +366,9 @@ creation and dispatch, not successful `crw-loop` execution or universal follow-u
 
 On that version, prefer creation with the full work prompt.
 Do not recommend “empty creation, then resume” as a verified workflow.
+The bridge now enforces this (CRW-1506): `create_thread` refuses a missing `prompt` as an
+invalid argument, saying that a thread with no first turn has no rollout, before anything
+is reserved or stored. `create_worktree_thread` keeps its readiness-only creation.
 
 ## Receipts and safe recovery
 

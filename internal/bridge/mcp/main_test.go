@@ -193,7 +193,7 @@ func Test_with_no_socket_the_server_still_lists_its_tools_and_explains_the_failu
 	if err != nil {
 		t.Fatal(err)
 	}
-	created := call(t, s, "create_thread", map[string]any{"request_id": "nobody-home", "cwd": home, "model": "anthropic/claude-opus-5", "reasoning_effort": "xhigh"})
+	created := call(t, s, "create_thread", map[string]any{"request_id": "nobody-home", "cwd": home, "prompt": "READY", "model": "anthropic/claude-opus-5", "reasoning_effort": "xhigh"})
 	capabilities := call(t, s, "get_capabilities", map[string]any{})
 	again, err := s.session.ListTools(ctx, nil)
 	if err != nil {
