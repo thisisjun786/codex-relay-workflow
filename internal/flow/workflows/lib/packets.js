@@ -49,14 +49,30 @@ function notesSection(notes) {
   return section('FINDINGS OF THE EXPLORER (use them; do not ask again)', notes.map((n) => '- ' + n.question + '\n  ' + n.answer))
 }
 
-export function architectPacket(ms) {
+// architectPacket is the architect's first turn of a milestone. background is the answers of the background explorers that ran before
+// it, one for each node (crw.explore of kind background, CRW-1466): given, the packet carries them as BACKGROUND FINDINGS, each by its
+// id, question, answer and the explorer's findings only - never by its route, reason, scope, notation or origin, so the packet's bytes
+// do not move with the routing metadata a binary records; not given (or empty), the packet is the one it was before CRW-1466.
+// head is the design head the run sampled before the phase explore (crw.designHead): the background explorers read it and the
+// architect's directory is a checkout of it, and BACKGROUND FINDINGS names it; without one the packet is as it was.
+export function architectPacket(ms, background, head) {
   const nodes = ms.nodes.map((n) => n.id + ' (' + n.issue + '): ' + n.title + (n.after.length ? ' after ' + n.after.join(', ') : '') + (n.group ? ' [group ' + n.group + ']' : '') +
     '\n  regions: ' + (n.regions.length ? n.regions.join(', ') : 'undeclared') + '\n  criteria: ' + (n.criteria.length ? n.criteria.join(' | ') : 'none'))
-  return [
+  const parts = [
     'ROLE: architect. Plan milestone ' + ms.id + ' of plan ' + ms.plan + ' (' + ms.title + ').',
     'Answer with DESIGN: the decisions, one plan for each issue node below (its size_fit, edit regions, approach, tests first and done condition), the open questions you cannot answer from what you read, and the risks.',
     section('NODES', nodes),
-  ].join('\n\n')
+  ]
+  if (background && background.length) {
+    parts.push(section('BACKGROUND FINDINGS (' + (head ? 'read at ' + head + ', the commit your directory is a checkout of; ' : '') + 'an explorer read the repository for each node before you; build on them, and ask as an open question only what they and your own reading leave open)',
+      background.map((a) => {
+        const lines = [(a.id ? a.id + ': ' : '') + a.question]
+        if (a.answer) lines.push('  answer: ' + a.answer)
+        if (a.findings) lines.push('  findings: ' + canon(a.findings))
+        return '- ' + lines.join('\n')
+      })))
+  }
+  return parts.join('\n\n')
 }
 
 // The executor contract and the authority boundary the design audit holds a DESIGN to (CRW-1321): the architect overlay
@@ -124,29 +140,134 @@ function askLine(reason) {
   }
 }
 
-export function designAuditPacket(ms, cand, round) {
+// auditFindings are the findings of a design audit by their ids: r<round>.<index>, the index 1-based in the audit's findings (a ref
+// alone is not unique). The design-fix packet names them by these ids, and the critic's PRIOR FINDINGS in the later rounds (CRW-1452).
+export function auditFindings(round, findings) {
+  return (findings || []).map((f, i) => ({ id: 'r' + round + '.' + (i + 1), ref: f.ref, severity: f.severity, finding: f.finding }))
+}
+
+function findingLine(f) {
+  return f.id + ' [' + f.severity + '] ' + f.ref + ': ' + f.finding
+}
+
+// dispositionOf renders what the architect's design-fix answer reported of one finding: folded or rebutted with its reason, not
+// reported when the answer named no disposition of it, and null when the answer had no dispositions at all.
+function dispositionOf(f, dispositions) {
+  if (dispositions === null || dispositions === undefined) return 'null (no dispositions reported)'
+  const d = dispositions.find((x) => x.finding === f.id)
+  return d ? d.disposition + ': ' + d.reason : 'not reported'
+}
+
+// priorLines are the findings of the earlier audit rounds, each with the architect's disposition of it, and the dispositions that
+// name no finding of their round. prior is [{round, findings: auditFindings(round, ...), dispositions}], in round order.
+function priorLines(prior) {
+  const out = []
+  for (const p of prior) {
+    for (const f of p.findings) out.push('- ' + findingLine(f) + ' -> ' + dispositionOf(f, p.dispositions))
+    for (const d of p.dispositions || []) {
+      if (!p.findings.some((f) => f.id === d.finding)) out.push('- ' + d.finding + ' (no finding of round ' + p.round + ' has this id) -> ' + d.disposition + ': ' + d.reason)
+    }
+  }
+  return out.length === 0 ? ['- none'] : out
+}
+
+// The critic's packet (CRW-1452): the DESIGN, the answers to its open questions, and from the second round on the findings of the
+// earlier rounds with the architect's disposition of each. prior is the per-round history (priorLines); it is left out in round 1.
+// context is a re-plan's {head, base_tip, landed, unstarted, released} (CRW-1458): the critic's directory is then a read-only checkout of the
+// head the re-plan judges, and the packet names it as the re-plan's architect turn has it (headBlock); the first DESIGN has none.
+// unstarted is the ids of the nodes the re-plan releases (CRW-1462; none at the close): the re-plan answers with the whole DESIGN in
+// every round, its design-fix answers included, since an approved one becomes the next revision on its own, so a node with no issue
+// in it is a P1 finding. An open question of the DESIGN with no entry in the answers is a P1 finding too (CRW-1466): the DESIGN the
+// critic reads is the architect's answer to the round's answers, and a question raised there has not been routed. released is the
+// plans the started nodes were released with (crw.releasedPlans): the critic compares the DESIGN with them (RELEASED PLANS).
+export function designAuditPacket(ms, cand, round, prior, context) {
+  const at = context ? headBlock(context) : null
+  const replanned = context && Array.isArray(context.unstarted)
   return [
-    'ROLE: reviewer. Audit the DESIGN of milestone ' + ms.id + ' (round ' + round + ') before any executor starts. You did not write it and are of another model family than the architect.',
+    'ROLE: critic. Audit the DESIGN of milestone ' + ms.id + ' (round ' + round + ') before any executor starts. You did not write it and are of another model family than the architect.',
     'Answer with DESIGN_AUDIT: approved only when every issue node has a plan an executor can carry out inside its edit regions, every done condition can be met under the executor contract below, the decisions are consistent with the plan, no decision of the DESIGN is outside the architect\'s authority below, and no P0 or P1 finding stands; otherwise needs_changes with the findings the architect must act on. Check every done condition against the executor contract and every decision against the authority boundary: a done condition the contract cannot meet and a decision outside the authority are each a P1 finding that names its node or decision.',
     section('EXECUTOR CONTRACT (every done condition must be met under it)', EXECUTOR_CONTRACT),
     section('OUT-OF-AUTHORITY DECISIONS (the architect raises these as open questions and does not decide them)', AUTHORITY),
+    round > 1 && prior ? section('PRIOR FINDINGS (the findings of the earlier rounds by id, each with the architect\'s disposition: folded, rebutted, or not reported)', priorLines(prior)) +
+      '\nJudge each prior finding: a folded one is resolved only if this DESIGN does fold it; a rebuttal you do not accept is raised again in your findings under the same ref, with the reason you reject it; a finding not reported, or of a round whose dispositions are null, is still open.' : '',
+    at ? 'Your directory is a read-only checkout of the pinned head: the DESIGN re-plans the milestone at it.\n' + at.head : '',
+    at ? at.landed : '',
+    replanned ? unstartedSection(ms, context.unstarted) : '',
+    replanned ? 'The DESIGN is the whole DESIGN of the milestone, not a delta, in every round of this audit, the architect\'s design-fix answers included: every node of the milestone has its issue in it, the started ones as they were released; an unstarted node with no issue in the DESIGN is a P1 finding that names the node, and so is a started node whose issue is missing.' : '',
+    context && Array.isArray(context.released) ? releasedSection(context.released) +
+      '\nCompare the DESIGN with it: a started node whose issue in the DESIGN differs from its plan in RELEASED PLANS in any field is a P1 finding that names the node, and so is a decision a released plan names that the DESIGN drops or changes in any field.' : '',
     section('DESIGN', [canon(cand.design)]),
     section('ANSWERS TO THE OPEN QUESTIONS (each with its route and what it got)', answerLines(cand.answers)),
-  ].join('\n\n')
+    'An open question of the DESIGN with no entry in ANSWERS TO THE OPEN QUESTIONS (one the architect raised when the answers came back to its thread, which no route has taken yet) is a P1 finding that names the question, so the next round routes it.',
+  ].filter(Boolean).join('\n\n')
 }
 
-export function designFixPacket(audit, context) {
+// releasedSection lists the plans the started nodes were released with (crw.releasedPlans): each node with the revision it was
+// released under, its whole issue plan (every field) and the whole decisions its decision_refs name, so the critic sees any drift.
+// An entry with no plan member (the flat form an earlier lane binary recorded) is rendered from its own fields. A node sized for a
+// split or a child (kind) is listed with that: it started, its lane escalated it, and no executor started.
+function releasedSection(released) {
+  return section('RELEASED PLANS (the started nodes, each with the whole issue plan of the revision it was released under and the decisions it names)', released.length === 0 ? ['- none'] : released.map((p) => {
+    const plan = p.plan || p
+    // a node sized for a split or a child started too: its lane escalated it on this plan and no executor started
+    const how = p.kind === 'split' || p.kind === 'child' ? 'sized for a ' + p.kind + ' under ' + p.revision + ' (no executor started; its lane escalated it as size_split)' : 'released under ' + p.revision
+    return '- ' + p.node + ' (' + plan.issue + '), ' + how + '\n  plan: ' + canon(plan) + '\n  decisions: ' + canon(p.decisions || [])
+  }))
+}
+
+// answeredQuestions are the answers of a round's open questions that hold an answer for the architect (CRW-1466): a question an
+// explorer answered (route spawn, with its findings) or that reused an answer the run has (route reuse, with that answer). A question
+// asked of the orchestrator, or one no route answered, is not among them: the critic reads it in its ANSWERS TO THE OPEN QUESTIONS.
+export function answeredQuestions(answers) {
+  return (answers || []).filter((a) => (a.route === 'spawn' && a.findings) || (a.route === 'reuse' && a.answer))
+}
+
+// The design-answers turn of the architect's thread (CRW-1466): the answers its open questions got in this audit round go back to it
+// before the critic audits the DESIGN, and it answers with the DESIGN again. Each answered question is rendered by its id, question,
+// answer and the explorer's findings only - never by its route, reason, scope, notation or origin, so the packet's bytes do not move
+// with the routing metadata a binary records. context is a re-plan's {head, base_tip, landed, unstarted}: the turn is then at the head
+// the re-plan judges (headBlock); the first DESIGN has none.
+export function designAnswersPacket(answers, context) {
+  const at = context ? headBlock(context) : null
   return [
-    'ROLE: architect. The independent audit of your DESIGN found what follows. Answer with the DESIGN again, with every finding addressed.',
-    section('FINDINGS', audit.findings.map((f) => '- [' + f.severity + '] ' + f.ref + ': ' + f.finding)),
+    'ROLE: architect. The open questions of your DESIGN got the answers below. Answer with the DESIGN again, with what they say folded into its decisions and plans, before the critic audits it; keep the ids of the decisions and the issues, and give dispositions null (no audit finding is before you). An open question an answer settles leaves open_questions; a question you raise anew in this answer reaches the critic with no answer, which is a P1 finding, and is routed in the next audit round.',
+    section('ANSWERS', answeredQuestions(answers).map((a) => {
+      const lines = [(a.id ? a.id + ': ' : '') + a.question]
+      if (a.answer) lines.push('  answer: ' + a.answer)
+      if (a.findings) lines.push('  findings: ' + canon(a.findings))
+      return '- ' + lines.join('\n')
+    })),
+    at ? 'Your directory P is a read-only checkout of the pinned head: work only under the absolute path P.\n' + at.head : '',
+    at ? at.landed : '',
+  ].filter(Boolean).join('\n\n')
+}
+
+// The design-fix turn of the architect's thread: the findings of audit round round by id, and the dispositions it answers with, one
+// for each id (CRW-1452).
+export function designFixPacket(audit, context, round) {
+  const findings = auditFindings(round, audit.findings)
+  const at = context ? headBlock(context) : null
+  return [
+    'ROLE: architect. The independent audit of your DESIGN found what follows. Answer with the DESIGN again, with every finding addressed, and with dispositions: one entry for each finding id below (' + findings.map((f) => f.id).join(', ') + '), folded when the DESIGN now folds the finding or rebutted when you keep the DESIGN as it is, each with its reason. The critic reads your dispositions in its next round.',
+    section('FINDINGS', findings.map((f) => '- ' + findingLine(f))),
     audit.summary ? 'AUDIT SUMMARY: ' + audit.summary : '',
-    context ? 'Your directory P is a read-only checkout of the pinned head: work only under the absolute path P.\nHEAD: ' + context.head + '\nDESIGN RAN AT: ' + (context.base_tip || 'unknown') + '\nRANGE: ' + (context.base_tip ? context.base_tip + '..' : '') + context.head : '',
-    context ? section('LANDED HEADS', landedLines(context.landed)) : '',
+    at ? 'Your directory P is a read-only checkout of the pinned head: work only under the absolute path P.\n' + at.head : '',
+    at ? at.landed : '',
   ].filter(Boolean).join('\n\n')
 }
 
 function landedLines(landed) {
   return list((landed || []).map((l) => l.node + ': ' + l.head), 'none landed')
+}
+
+// headBlock is what a packet of a call at a pinned head says of it (CRW-1458): head, the HEAD / DESIGN RAN AT / RANGE lines (the
+// range from the head the DESIGN ran at), and landed, the LANDED HEADS section with the head every node landed with. context is
+// {head, base_tip, landed}. The design-fix, re-plan, reflection and re-plan critic packets share it.
+export function headBlock(context) {
+  return {
+    head: 'HEAD: ' + context.head + '\nDESIGN RAN AT: ' + (context.base_tip || 'unknown') + '\nRANGE: ' + (context.base_tip ? context.base_tip + '..' : '') + context.head,
+    landed: section('LANDED HEADS', landedLines(context.landed)),
+  }
 }
 
 function drivenDecisions(cur) {
@@ -157,35 +278,46 @@ function drivenDecisions(cur) {
 // names the head, the range from the head the DESIGN ran at, and the head every node landed with; the turn's directory is a detached
 // read-only worktree of that head.
 export function reflectionPacket(ms, cur, closed) {
-  const rng = (cur.base_tip ? cur.base_tip + '..' : '') + closed.gate.head
+  const at = headBlock({ head: closed.gate.head, base_tip: cur.base_tip, landed: cur.landed })
   return [
     'ROLE: architect. Reflection at the close of milestone ' + ms.id + ' (' + ms.title + '), on the thread of your DESIGN (revision ' + cur.revision + '). Your directory P is a read-only checkout of the integrated head: work only under the absolute path P.',
-    'HEAD: ' + closed.gate.head + '\nDESIGN RAN AT: ' + (cur.base_tip || 'unknown') + '\nRANGE: ' + rng,
+    at.head,
     section('DECISIONS OF THE DESIGN (map each to the files and criteria of the integrated range)', drivenDecisions(cur)),
-    section('LANDED HEADS', landedLines(cur.landed)),
+    at.landed,
     'REVIEWER-FINAL ALIGNMENT: ' + (closed.final ? closed.final.alignment : 'none'),
     'Answer with REFLECTION: ALIGNED, or MISALIGNED with each decision the range departs from, what you observed, the nodes it affects and the evidence.',
   ].join('\n\n')
 }
 
-// The re-plan turn (SP-ARCH-2): the next turn of the architect's thread, as a DESIGN delta for the nodes that have not started. The
-// packet names the reasons and the numbers behind them, the head the turn judges and the range from the head the DESIGN ran at.
-export function replanPacket(ms, cur, due, head, misaligned) {
-  const rng = (cur.base_tip ? cur.base_tip + '..' : '') + head
+// unstartedSection names the nodes a re-plan releases under its revision (CRW-1462): each by id, issue and title; none at the close.
+function unstartedSection(ms, ids) {
+  return section('UNSTARTED NODES (released under the revision this re-plan makes)', list((ids || []).map((id) => {
+    const n = ms.nodes.find((x) => x.id === id)
+    return n ? id + ' (' + n.issue + '): ' + n.title : id
+  })))
+}
+
+// The re-plan turn (SP-ARCH-2): the next turn of the architect's thread, answered with the whole DESIGN of the milestone (CRW-1462):
+// every decision and every issue of every node, the started ones as they were released, with the ids kept, so the revision it makes
+// stands on its own. The packet names the reasons and the numbers behind them, the head the turn judges, the range from the head the
+// DESIGN ran at, and the nodes that have not started (unstarted, their ids; none at the close).
+export function replanPacket(ms, cur, due, head, misaligned, unstarted) {
+  const at = headBlock({ head, base_tip: cur.base_tip, landed: cur.landed })
   const lines = due.reasons.map((r) => r)
   const parts = [
     'ROLE: architect. Re-plan milestone ' + ms.id + ' (' + ms.title + '), on the thread of your DESIGN (revision ' + cur.revision + '). Your directory P is a read-only checkout of the head below: work only under the absolute path P.',
-    'HEAD: ' + head + '\nDESIGN RAN AT: ' + (cur.base_tip || 'unknown') + '\nRANGE: ' + rng,
+    at.head,
     section('WHY THE MILESTONE RE-PLANS', lines),
     'PLAN MISMATCHES OF THIS REVISION: ' + due.plan_mismatch + ' (calls ' + (due.plan_mismatch_calls.join(', ') || 'none') + ')',
     'SLICES OF THE PLAN CHANGED SINCE THIS REVISION: ' + due.slice_change.changed.length + ' of ' + due.slice_change.total + (due.slice_change.changed.length ? ' (' + due.slice_change.changed.join(', ') + ')' : ''),
     section('DECISIONS OF THE DESIGN', drivenDecisions(cur)),
-    section('LANDED HEADS', landedLines(cur.landed)),
+    at.landed,
+    unstartedSection(ms, unstarted),
   ]
   if (misaligned && misaligned.length) {
     parts.push(section('DECISIONS THE REFLECTION FOUND THE RANGE TO DEPART FROM', misaligned.map((m) => '- ' + m.decision_id + ': ' + m.observed + ' (nodes ' + (m.affected_nodes || []).join(', ') + ')')))
   }
-  parts.push('Answer with DESIGN: the delta of the plan. Keep the ids of the decisions you do not change. Lanes that have started keep the revision they were released under; the issues of nodes that have not started take this one, and the correction issues the orchestrator adds are planned in it.')
+  parts.push('Answer with DESIGN: the whole DESIGN of the milestone, as the next revision of it: every decision and every issue of every node, the nodes that have started with their issues as they were released and the unstarted nodes above with their issues for this revision. Keep the ids of the decisions and of the issues. Lanes that have started keep the revision they were released under; the issues of the unstarted nodes take this one, and the correction issues the orchestrator adds are planned in it.')
   return parts.join('\n\n')
 }
 
@@ -194,10 +326,13 @@ export function replanPacket(ms, cur, due, head, misaligned) {
 export function explorerPacket(kind, route, ctx, ends) {
   const parts = [
     'ROLE: explorer. Answer one question by reading the repository; do not edit anything.',
-    'ASKED BY: ' + (ctx.node ? 'node ' + ctx.node : 'the architect of milestone ' + ctx.milestone) + ' (' + kind + ')',
+    // a background question is the run's, asked for the architect before its first DESIGN (CRW-1466); every other kind is as before
+    'ASKED BY: ' + (kind === 'background' ? 'the run, in the background of the architect of milestone ' + ctx.milestone : ctx.node ? 'node ' + ctx.node : 'the architect of milestone ' + ctx.milestone) + ' (' + kind + ')',
     'QUESTION: ' + route.question,
     section('FILES NEEDED', list(route.files_needed, 'not named')),
   ]
+  // a background explorer reads the design head the run sampled for the milestone's first DESIGN, as the architect does
+  if (kind === 'background' && ctx.head) parts.push('READ AT: ' + ctx.head + ' (your directory is a read-only checkout of this commit, the one the architect plans on)')
   if (ends && ends.length) {
     parts.push(section('END CONDITIONS (run each command once where you are, change nothing, and report each in end_conditions with its exit code, the number of tests it ran and a one-line summary; a failure or a run of no test is reported, never fixed)',
       ends.map((e) => '- ' + e.issue + ': `' + e.command + '`')))

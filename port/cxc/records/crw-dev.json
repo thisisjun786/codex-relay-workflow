@@ -62,7 +62,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "CRW-1344: Linear wording became tracking wording (a tracking issue, the tracking repository, a milestone), and the skill catalog no longer lists a Linear skill",
+      "reason": "CRW-1344: Linear wording became tracking wording (a tracking issue, the tracking repository, a milestone), and the skill catalog no longer lists a Linear skill CRW-1424: the pre-build design audit of the C4 lane is the critic's, of another model family than the architect, not a reviewer's, and the lane opens with the background explorers before the architect DESIGN.",
       "hunks": [
         {
           "line": 3,
@@ -84,7 +84,7 @@
             "| C5 | Research/Ambiguous | Unclear requirements, ambiguous user value, unknown territory after one §0 clarification round | Interview-first via the `pabcd` skill, then reclassify |\n"
           ],
           "new": [
-            "| C4 | High-Risk | Auth, payments, data deletion, migration, release, permission model, security boundary | Full PABCD (mandatory) + full relevant gates + durable risk/evidence record; in a flow-managed run the run's high-risk lane is this process (architect DESIGN, independent pre-build design audit by a reviewer of a different model family before any executor starts, per-issue candidate review, final gate and reviewer-final with full verification and risk record) and the executor starts no FSM |\n",
+            "| C4 | High-Risk | Auth, payments, data deletion, migration, release, permission model, security boundary | Full PABCD (mandatory) + full relevant gates + durable risk/evidence record; in a flow-managed run the run's high-risk lane is this process (one background explorer for each node of the milestone, then the architect DESIGN over their findings, independent pre-build design audit by the critic, of a different model family than the architect, before any executor starts, per-issue candidate review, final gate and reviewer-final with full verification and risk record) and the executor starts no FSM |\n",
             "| C5 | Research/Ambiguous | Unclear requirements, ambiguous user value, unknown territory after one §0 clarification round | No interview: back to its registration ([crw-define](../crw-define/SKILL.md)) or, in a run, a decision request to the session above the project session (relay role `parent`, [the level table](../crw-canon/references/hierarchy.md#the-levels)); then reclassify |\n",
             "\n",
             "**C5 is temporary** — it cannot enter implementation until the registration step or the\n",

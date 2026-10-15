@@ -246,12 +246,12 @@ func (e *Engine) judgeReport(rep DispatchReport) (DispatchReply, bool) {
 	return DispatchReply{}, true
 }
 
-// agentTypeOf is the spawn_agent agent_type of a role.
+// agentTypeOf is the spawn_agent agent_type of a role: the critic has no definition file and spawns as a reviewer.
 func agentTypeOf(role string) string {
 	switch role {
 	case "executor-t1":
 		return "executor"
-	case "reviewer-final":
+	case "reviewer-final", "critic":
 		return "reviewer"
 	}
 	return role

@@ -17,14 +17,15 @@ import (
 //go:embed *.md
 var overlays embed.FS
 
-// Names are the six roles of an engine call.
-var Names = [...]string{"architect", "executor", "executor-t1", "reviewer", "reviewer-final", "explorer"}
+// Names are the seven roles of an engine call, the critic (CRW-1434) last.
+var Names = [...]string{"architect", "executor", "executor-t1", "reviewer", "reviewer-final", "explorer", "critic"}
 
 // definition is the role definition file a role's thread is built on: the second tier of the executor and the final
-// reviewer use the definitions of their families.
+// reviewer use the definitions of their families, and the critic, which has no definition file of its own, the reviewer's.
 var definition = map[string]string{
 	"architect": "architect", "executor": "executor", "executor-t1": "executor",
 	"reviewer": "reviewer", "reviewer-final": "reviewer", "explorer": "explorer",
+	"critic": "reviewer",
 }
 
 // Options select the variant of a call.
@@ -32,6 +33,16 @@ type Options struct {
 	// QA is the QA capture call of a final gate (SP-QA-1): an executor call that drives a surface in a scratch
 	// worktree and starts no helper.
 	QA bool
+}
+
+// NativeHelpers is how many native helpers a call of the role may spawn, as its overlay states: none for an explorer call, a
+// critic call and the QA capture call, one explorer helper for every other call. The flow binding gives a call's line this
+// allowance, so the spawn hook enforces what the overlay tells the thread.
+func NativeHelpers(role string, opts Options) int {
+	if opts.QA || role == "explorer" || role == "critic" {
+		return 0
+	}
+	return 1
 }
 
 // Separator joins the role definition and the overlay.

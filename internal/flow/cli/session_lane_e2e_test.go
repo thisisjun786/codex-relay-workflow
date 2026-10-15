@@ -46,13 +46,15 @@ const sessionLabRoles = `{"roles": {
   "executor-t1": {"mode": "model", "model": "anthropic/claude-sonnet-5-5", "effort": "xhigh"},
   "reviewer": {"mode": "model", "model": "gpt-6.1-sol", "effort": "high"},
   "reviewer-final": {"mode": "model", "model": "gpt-6.1-sol", "effort": "xhigh"},
-  "explorer": {"mode": "model", "model": "anthropic/claude-haiku-5", "effort": "low"}}}`
+  "explorer": {"mode": "model", "model": "anthropic/claude-haiku-5", "effort": "low"},
+  "critic": {"mode": "model", "model": "gpt-6.1-sol", "effort": "xhigh"}}}`
 
 // sessionLabPairs are the pairs of sessionLabRoles (the architect's effort undecided).
 var sessionLabPairs = map[string]engine.Pair{
 	"architect": {Model: "anthropic/claude-opus-5-5"}, "executor": {Model: "anthropic/claude-haiku-5", Effort: "medium"},
 	"executor-t1": {Model: "anthropic/claude-sonnet-5-5", Effort: "xhigh"}, "reviewer": {Model: "gpt-6.1-sol", Effort: "high"},
 	"reviewer-final": {Model: "gpt-6.1-sol", Effort: "xhigh"}, "explorer": {Model: "anthropic/claude-haiku-5", Effort: "low"},
+	"critic": {Model: "gpt-6.1-sol", Effort: "xhigh"},
 }
 
 // ownerEffort is the reasoning effort of the owner thread: a subagent spawned with no effort runs on it.
@@ -89,16 +91,8 @@ type sessionLab struct {
 // openGate lets A-1's first executor finish.
 func (k *sessionLab) openGate() { k.gateOnce.Do(func() { close(k.gateA1) }) }
 
-// agentTypeFor is the spawn_agent agent_type of a role.
-func agentTypeFor(role string) string {
-	switch role {
-	case "executor-t1":
-		return "executor"
-	case "reviewer-final":
-		return "reviewer"
-	}
-	return role
-}
+// agentTypeFor is the spawn_agent agent_type of a role: the hook's own (bound.AgentTypeOf), so the lab and the hook cannot drift.
+func agentTypeFor(role string) string { return bound.AgentTypeOf(role) }
 
 type sessionSpawn struct {
 	step NextStep

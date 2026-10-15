@@ -121,7 +121,8 @@ func TestNightBatchRunsOnlyTheSelectedIssues(t *testing.T) {
 // reason it stopped and carries each issue that did not land with its reason.
 func TestNightBatchBudgetPauses(t *testing.T) {
 	l := NewLab(t, twoNodes()...)
-	l.Budget = 25 // the architect and the audit are 20 (the warning), A's build takes it over
+	// the two background explorers are 2 (CRW-1466), the architect and the audit 20 (the warning): 22, and A's build takes it over
+	l.Budget = 25
 	res := l.NightBatch(nightArgs("CRW-A", "CRW-B"), false)
 	got := Value[nightResult](t, res)
 	if got.State != "incomplete" {

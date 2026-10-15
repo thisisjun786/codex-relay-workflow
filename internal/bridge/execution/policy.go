@@ -47,17 +47,21 @@ func fromMapping(value any, digest string) (Policy, error) {
 	// that does not parse is ignored with a warning; it never refuses the policy the relay and the bridge run on.
 	agentDeclared := has(data, "agent-roles") || has(data, "agent-aliases")
 	var warnings []string
-	agentRoles, err := parseAgentSections(data)
+	agentRoles, criticFilled, err := parseAgentSections(data)
 	if err != nil {
 		warnings = append(warnings, ignoredAgentSections(err))
 		agentRoles = nil
+	}
+	if agentRoles != nil && criticFilled {
+		// A file written before the critic (CRW-1434) loads; its critic runs the compiled default, which the warning names.
+		warnings = append(warnings, criticFilledWarning())
 	}
 	allowed, err := parseAllowed(data.Get("allowed"), len(roles) > 0 || agentDeclared)
 	if err != nil {
 		return Policy{}, err
 	}
 	if agentRoles != nil {
-		warnings = append(warnings, checkAgentRoles(agentRoles.byName(), allowed)...)
+		warnings = append(warnings, checkAgentRoles(agentRoles.byName(), allowed, criticFilled)...)
 	}
 	if allowed != nil {
 		for _, name := range roleNames {

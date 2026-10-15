@@ -330,7 +330,7 @@ func TestVerdictMustCoverEveryCriterionOnce(t *testing.T) {
 			if len(l.Relay.Accepts) != 0 || len(l.Relay.Landed) != 0 {
 				t.Errorf("an incomplete verdict reached the acceptance: %+v", l.Relay.Accepts)
 			}
-			if n := len(l.CallsOf("reviewer")) - 1; n != 2 {
+			if n := len(l.CallsOf("reviewer")); n != 2 {
 				t.Errorf("%d review calls, want the first and the one more on a fresh thread", n)
 			}
 		})

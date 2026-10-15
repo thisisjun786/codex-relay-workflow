@@ -7,7 +7,7 @@ import (
 	"unicode"
 )
 
-// Agent role names: the six roles a flow engine runs a call as. They are not the relay's roles (supervisor,
+// Agent role names: the seven roles a flow engine runs a call as. They are not the relay's roles (supervisor,
 // parent, child); the policy file declares them in their own sections, agent-roles and agent-aliases.
 const (
 	AgentArchitect     = "architect"
@@ -16,18 +16,26 @@ const (
 	AgentReviewer      = "reviewer"
 	AgentReviewerFinal = "reviewer-final"
 	AgentExplorer      = "explorer"
+	// AgentCritic is the design audit's role (CRW-1434): it audits the architect's design. It came after the other six, so a
+	// policy file may leave it out (see DefaultCriticPair).
+	AgentCritic = "critic"
 )
+
+// DefaultCriticPair is the critic's compiled default pair, the one a policy file's agent-roles section that declares no critic
+// gives it (every file written before the critic existed): reviewer-final's pair, on another model family than the architect's
+// usual one. It matches the role store's compiled default of the critic key.
+var DefaultCriticPair = RolePair{Model: "gpt-6.1-sol", Effort: "xhigh"}
 
 // AgentUnitCheck is the role the row of a unit check (the op crw.unitCheck) names in the flow journal. It is a name
 // only: a unit check is a tool run, not an agent call, so it is not one of AgentRoleNames and the policy file
 // declares no section for it.
 const AgentUnitCheck = "unit-check"
 
-// AgentRoleNames is the six agent roles in the order the design lists them; every section that iterates roles
-// follows it.
-var AgentRoleNames = [...]string{AgentArchitect, AgentExecutor, AgentExecutorT1, AgentReviewer, AgentReviewerFinal, AgentExplorer}
+// AgentRoleNames is the seven agent roles in the order the design lists them, the critic last; every section that iterates
+// roles follows it.
+var AgentRoleNames = [...]string{AgentArchitect, AgentExecutor, AgentExecutorT1, AgentReviewer, AgentReviewerFinal, AgentExplorer, AgentCritic}
 
-const supportedAgentRoles = `"architect", "executor", "executor-t1", "explorer", "reviewer", "reviewer-final"`
+const supportedAgentRoles = `"architect", "critic", "executor", "executor-t1", "explorer", "reviewer", "reviewer-final"`
 
 // AgentRole is one role of the agent-roles section: its one pair and the Claude model aliases that name its model
 // (a call whose agentType is the role may state its model option as the pair's model or as one of these).
@@ -70,7 +78,7 @@ func (r AliasRow) within(o AliasRow) bool {
 
 // AgentRoles is the agent-roles and agent-aliases sections of a policy file.
 type AgentRoles struct {
-	// Roles holds the six roles in AgentRoleNames order.
+	// Roles holds the seven roles in AgentRoleNames order (a file without a critic has the filled one, DefaultCriticPair).
 	Roles []AgentRole
 	// Aliases are the rows of the alias table, in the order the file states them; no two overlap unless one is
 	// strictly more specific, so a call matches the most specific row and the order decides nothing.
@@ -114,6 +122,7 @@ func (p Policy) AgentRoles() (AgentRoles, bool) {
 var defaultAliasOf = map[string][]string{
 	AgentArchitect: {"opus"}, AgentExecutor: {"haiku"}, AgentExecutorT1: {"sonnet"},
 	AgentReviewer: {"ocx-gpt-6-1-sol"}, AgentReviewerFinal: {"ocx-gpt-6-1-sol"}, AgentExplorer: {"haiku"},
+	AgentCritic: {"ocx-gpt-6-1-sol"},
 }
 
 // AliasAmbiguous is the cause of the refusal of a haiku call without isolation.
@@ -125,7 +134,8 @@ const AliasAmbiguousHaikuDetail = "alias_ambiguous: model 'haiku' without isolat
 	"Fix 1, a build: add isolation: 'worktree' (role executor). Fix 2, an investigation: use agentType: 'explorer' (role explorer)."
 
 // defaultAliasRows is the design's alias table, used when a file declares agent-roles and no agent-aliases. It
-// holds no model name: its keys are the names Claude scripts give a model.
+// holds no model name: its keys are the names Claude scripts give a model. The explorer and the critic have no row: a
+// call names them by agentType (a critic row for ocx-gpt-6-1-sol at xhigh would overlap reviewer-final's).
 func defaultAliasRows() []AliasRow {
 	return []AliasRow{
 		{Key: "opus", Role: AgentArchitect},
@@ -158,28 +168,38 @@ func CanonicalFamily(family string) (string, bool) {
 }
 
 // parseAgentSections reads agent-roles and agent-aliases from the policy document; nil when the file declares neither.
-func parseAgentSections(data object) (*AgentRoles, error) {
+// filled reports that agent-roles declares no critic, so the critic has its compiled default pair (DefaultCriticPair).
+func parseAgentSections(data object) (declared *AgentRoles, filled bool, err error) {
 	if !has(data, "agent-roles") {
 		if has(data, "agent-aliases") {
-			return nil, &PolicyError{"agent-aliases maps onto the agent roles, and this file declares no agent-roles"}
+			return nil, false, &PolicyError{"agent-aliases maps onto the agent roles, and this file declares no agent-roles"}
 		}
-		return nil, nil
+		return nil, false, nil
 	}
 	byName, err := parseAgentRoles(data.Get("agent-roles"))
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	declared := &AgentRoles{}
+	if _, ok := byName[AgentCritic]; !ok {
+		byName[AgentCritic] = AgentRole{Name: AgentCritic, Pair: RolePair{Model: DefaultCriticPair.Model, Effort: DefaultCriticPair.Effort}, Aliases: DefaultModelAliases(AgentCritic)}
+		filled = true
+	}
+	declared = &AgentRoles{}
 	for _, name := range AgentRoleNames {
 		declared.Roles = append(declared.Roles, byName[name])
 	}
 	declared.Aliases = defaultAliasRows()
 	if has(data, "agent-aliases") {
 		if declared.Aliases, err = parseAgentAliases(data.Get("agent-aliases")); err != nil {
-			return nil, err
+			return nil, false, err
 		}
 	}
-	return declared, nil
+	return declared, filled, nil
+}
+
+// criticFilledWarning is the warning of an agent-roles section that declares no critic: the compiled default applies to it.
+func criticFilledWarning() string {
+	return fmt.Sprintf("agent-roles declares no critic; the compiled default %s/%s applies", DefaultCriticPair.Model, DefaultCriticPair.Effort)
 }
 
 func (a *AgentRoles) byName() map[string]AgentRole {
@@ -190,7 +210,8 @@ func (a *AgentRoles) byName() map[string]AgentRole {
 	return out
 }
 
-// parseAgentRoles reads the agent-roles section: every one of the six roles, each with exactly one pair.
+// parseAgentRoles reads the agent-roles section: every one of the six roles before the critic, each with exactly one pair, and the
+// critic when the file declares it (a file written before the critic leaves it out; parseAgentSections fills it).
 func parseAgentRoles(declared any) (map[string]AgentRole, error) {
 	section, ok := declared.(object)
 	if !ok {
@@ -213,7 +234,7 @@ func parseAgentRoles(declared any) (map[string]AgentRole, error) {
 	}
 	var missing []string
 	for _, name := range AgentRoleNames {
-		if _, declared := roles[name]; !declared {
+		if _, declared := roles[name]; !declared && name != AgentCritic {
 			missing = append(missing, name)
 		}
 	}
@@ -377,17 +398,21 @@ func (r AliasRow) describe() string {
 // ignoredAgentSections is the warning for agent sections that do not parse: the loader's reason, and that the sections are
 // ignored because the flow reads its roles from the helper role store (CRW-1330).
 func ignoredAgentSections(err error) string {
-	return fmt.Sprintf("agent-roles/agent-aliases ignored: %v; the flow reads its six roles from the helper role store, not from this file, so the sections are not used and can be removed", err)
+	return fmt.Sprintf("agent-roles/agent-aliases ignored: %v; the flow reads its roles from the helper role store, not from this file, so the sections are not used and can be removed", err)
 }
 
 // checkAgentRoles applies the cross-role rules and answers what breaks them as warnings: the pairs the allowed list
-// approves, and a reviewer family that is not an author's. A flow run no longer reads agent-roles (CRW-1330: its pairs come
+// approves (of the roles the file declares; a filled critic, criticFilled, is the code's pair, not the file's), and a reviewer
+// family that is not an author's. A flow run no longer reads agent-roles (CRW-1330: its pairs come
 // from the helper role store), so a disagreement in a section nothing runs on is reported, never a refusal of the policy
 // the relay and the bridge run on; the runtime independence gate still judges every review.
-func checkAgentRoles(roles map[string]AgentRole, allowed map[string][]string) []string {
+func checkAgentRoles(roles map[string]AgentRole, allowed map[string][]string, criticFilled bool) []string {
 	var warnings []string
 	for _, name := range AgentRoleNames {
 		role := roles[name]
+		if name == AgentCritic && criticFilled {
+			continue
+		}
 		if allowed != nil && !slices.Contains(allowed[role.Pair.Model], role.Pair.Effort) {
 			warnings = append(warnings, fmt.Sprintf("agent role %s is declared to run %s at %s, which this file's allowed list does not approve; no such task could be created, so the two sections disagree rather than one narrowing the other", repr(name), repr(role.Pair.Model), repr(role.Pair.Effort)))
 		}
@@ -400,21 +425,26 @@ func checkAgentRoles(roles map[string]AgentRole, allowed map[string][]string) []
 }
 
 // FamilyOverlaps describes each reviewer role (reviewer, reviewer-final) whose model is of the family of one of the author
-// roles named, in a table of role -> model; a role with no model is not compared. A review is independent only when it comes
-// from another family than the author's, so each overlap is a warning for whoever decided the pairs.
+// roles named, and the critic when its model is of the architect's family (the critic audits the architect's design, whichever
+// authors are named), in a table of role -> model; a role with no model is not compared. A review is independent only when it
+// comes from another family than the author's, so each overlap is a warning for whoever decided the pairs.
 func FamilyOverlaps(models map[string]string, authors ...string) []string {
 	var out []string
-	for _, reviewer := range [...]string{AgentReviewer, AgentReviewerFinal} {
-		for _, author := range authors {
-			if models[reviewer] == "" || models[author] == "" {
-				continue
-			}
-			family := ModelFamily(models[reviewer])
-			if family == ModelFamily(models[author]) {
-				out = append(out, fmt.Sprintf("agent role %s runs %s, the same model family (%s) as agent role %s on %s; a review is independent only when it comes from another family than the author's", repr(reviewer), repr(models[reviewer]), repr(family), repr(author), repr(models[author])))
-			}
+	overlap := func(reviewer, author string) {
+		if models[reviewer] == "" || models[author] == "" {
+			return
+		}
+		family := ModelFamily(models[reviewer])
+		if family == ModelFamily(models[author]) {
+			out = append(out, fmt.Sprintf("agent role %s runs %s, the same model family (%s) as agent role %s on %s; a review is independent only when it comes from another family than the author's", repr(reviewer), repr(models[reviewer]), repr(family), repr(author), repr(models[author])))
 		}
 	}
+	for _, reviewer := range [...]string{AgentReviewer, AgentReviewerFinal} {
+		for _, author := range authors {
+			overlap(reviewer, author)
+		}
+	}
+	overlap(AgentCritic, AgentArchitect)
 	return out
 }
 

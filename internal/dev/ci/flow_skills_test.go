@@ -99,16 +99,31 @@ func TestFlowControlOwnershipTableWording(t *testing.T) {
 	}
 	// The skill that classifies the work carries the same order for a C4 issue, so the two readers agree.
 	dev := normalized(readRepoText(t, "plugins/crw/skills/crw-dev/SKILL.md"))
-	for _, want := range []string{"independent pre-build design audit by a reviewer of a different model family before any executor starts", "reviewer-final does not replace the pre-build design audit"} {
+	for _, want := range []string{"independent pre-build design audit by the critic, of a different model family than the architect, before any executor starts", "reviewer-final does not replace the pre-build design audit"} {
 		if !strings.Contains(dev, want) {
 			t.Errorf("crw-dev/SKILL.md lacks %q", want)
+		}
+	}
+	// The background explorers come first (CRW-1466): one for each node of the milestone, at the design head, before the first DESIGN.
+	run := normalized(readRepoText(t, "plugins/crw/skills/crw-run/SKILL.md"))
+	if !strings.Contains(run, "The sequence is fixed: one background explorer for each node of the milestone reads the repository at the design head before the first DESIGN, the architect writes the DESIGN over their findings,") {
+		t.Errorf("crw-run/SKILL.md does not start the fixed sequence with the background explorers")
+	}
+	if !strings.Contains(normalized(section), "1. One background explorer for each node of the milestone, at the design head, then the architect DESIGN of the milestone over their findings.") {
+		t.Errorf("%s: the C4 procedure does not start with the background explorers", flowRef)
+	}
+	// The design audit is the critic's call (CRW-1434): no installed guidance gives it to a reviewer.
+	reviewerAudits := regexp.MustCompile(`(?i)design audit,? by a reviewer|design audit by a reviewer|a reviewer of another model family audits it|reviewer of another model family for the design audit`)
+	for _, path := range []string{flowRef, "plugins/crw/skills/crw-dev/SKILL.md", "plugins/crw/skills/crw-run/SKILL.md", "plugins/crw/skills/crw-canon/references/spawn-policy.md"} {
+		if m := reviewerAudits.FindString(normalized(readRepoText(t, path))); m != "" {
+			t.Errorf("%s gives the design audit to a reviewer: %q", path, m)
 		}
 	}
 
 	t.Run("fixture: each missing sentence is reported", func(t *testing.T) {
 		good := "## Who owns control in a flow-managed run\n\n| Control | Owner |\n|---|---|\n| Phases | the run |\n| Audit | the run |\n| Evidence | the run |\n\n" +
 			"The executor and an oversized child start no PABCD state machine. The standalone PABCD rules are unchanged.\n\n" +
-			"1. The architect DESIGN.\n2. The pre-build design audit, by a reviewer of another model family than the architect, before any executor starts; needs_changes returns to the architect and a replan is audited again.\n" +
+			"1. The architect DESIGN.\n2. The pre-build design audit, by the critic, of another model family than the architect, before any executor starts; needs_changes returns to the architect and a replan is audited again.\n" +
 			"3. The candidate review of each issue.\n4. After integration the final gate and reviewer-final. Reviewer-final does not replace the pre-build design audit.\n"
 		if p := flowOwnershipProblems(sectionOf(good, "Who owns control in a flow-managed run")); len(p) > 0 {
 			t.Fatalf("the good text is reported: %v", p)

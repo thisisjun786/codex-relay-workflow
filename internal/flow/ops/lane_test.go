@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -262,6 +263,115 @@ func TestDesignAuditIndependence(t *testing.T) {
 	}
 }
 
+// TestDesignAuditStillRefusesAnArchitectFamilyCritic (CRW-1452): the design audit is the critic's call now, and its independence is
+// still judged by the model families of the two calls' configured pairs, never by the role: a critic on the architect's family is
+// refused (independence_refused), and the same critic on another family is an approval that names the critic as the auditor.
+func TestDesignAuditStillRefusesAnArchitectFamilyCritic(t *testing.T) {
+	w := newWorld(t)
+	design, _ := json.Marshal(designOf("A"))
+	cand := Candidate{Design: design, Answers: json.RawMessage(`[]`)}
+	approved := map[string]any{"verdict": "approved", "findings": []any{}, "summary": "ok"}
+	audit := func(archModel, criticModel string) AuditResult {
+		arch := call("c_arch", "completed", archModel, nil)
+		arch.Meta.Role = "architect"
+		critic := call("c_crit", "completed", criticModel, approved)
+		critic.Meta.Role = "critic"
+		var r AuditResult
+		_ = json.Unmarshal(w.must("designAudit", "M", 1, cand, arch, critic), &r)
+		return r
+	}
+	if r := audit("claude-opus", "claude-sonnet"); r.State != StateRefused || r.Reason != "independence_refused" || r.Reviewer.Role != "critic" {
+		t.Errorf("a critic of the architect's family: %+v", r)
+	}
+	if r := audit("claude-opus", "gpt-6.1-sol"); r.State != AuditApproved || r.Reviewer.Role != "critic" || r.Architect.Role != "architect" {
+		t.Errorf("a critic of another family: %+v", r)
+	}
+}
+
+// A DESIGN an earlier binary journaled has no dispositions member (it came with CRW-1452), in the architect's output and in the
+// design ledger. A run recorded then resumes on this binary and goes on: the replayed audit takes the candidate, the release of a
+// node reads the ledger's DESIGN (its plan and the admission regions of the others), the lane's issuePlan and the final gate's
+// decisions read it too, each with the missing member read as null. A fresh answer of the architect is still held to the strict
+// schema, which requires the member.
+func TestADesignRecordedWithoutDispositionsResumesAndReleases(t *testing.T) {
+	old := func(d Design) json.RawMessage {
+		b, _ := json.Marshal(d)
+		var m map[string]any
+		_ = json.Unmarshal(b, &m)
+		delete(m, "dispositions")
+		b, _ = json.Marshal(m)
+		return b
+	}
+	design := old(designOf("A", "B"))
+	if strings.Contains(string(design), "dispositions") {
+		t.Fatalf("the earlier DESIGN still names dispositions: %s", design)
+	}
+	if err := Validate(SchemaDesign, design); err == nil {
+		t.Fatal("the strict schema a fresh answer is held to accepts a DESIGN without dispositions")
+	}
+	d, err := DecodeDesign(design)
+	if err != nil {
+		t.Fatalf("a DESIGN recorded without dispositions does not decode: %v", err)
+	}
+	if d.Dispositions != nil || len(d.Issues) != 2 {
+		t.Errorf("decoded %+v, want two issues and dispositions null", d)
+	}
+
+	// the first process: the milestone, the audit of the earlier DESIGN and its revision r0 as that binary wrote them, and node A
+	// released; then it stops
+	w := newWorld(t)
+	w.must("milestone", "plan-1", "M")
+	cand := Candidate{Design: design, Answers: json.RawMessage(`[]`)}
+	var audit AuditResult
+	out, err := w.op("designAudit", "M", 1, cand, call("c_arch", "completed", "claude-x", nil),
+		call("c_aud", "completed", "gpt-y", map[string]any{"verdict": "approved", "findings": []any{}, "summary": "ok"}))
+	if err != nil {
+		t.Fatalf("the replayed audit of an earlier DESIGN: %v", err)
+	}
+	_ = json.Unmarshal(out, &audit)
+	if audit.State != AuditApproved {
+		t.Fatalf("audit %+v", audit)
+	}
+	var anyDesign any
+	_ = json.Unmarshal(design, &anyDesign)
+	w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "c_ledger", Op: OpDesignLedger, Event: engine.EvCompleted,
+		Data: map[string]any{"milestone": "M", "revision": FirstRevision, "digest": cand.digest(), "design": anyDesign, "answers": []any{}}})
+	var rel ReleaseOutcome
+	_ = json.Unmarshal(w.must("release", "plan-1", "A", "M"), &rel)
+	if !rel.Released || rel.Revision != FirstRevision {
+		t.Fatalf("release of A before the stop: %+v", rel)
+	}
+
+	// the resumed process: a new lane over the same journal releases B and builds the packets from the earlier DESIGN
+	resumed := &world{t: t, j: w.j, relay: &stubRelay{tip: w.relay.tip}, calls: 100}
+	resumed.lane = NewLane(Deps{RunID: "run-1", Journal: resumed.j, Relay: resumed.relay, Decisions: &MemoryDecisions{}, Actor: "parent", Now: func() time.Time { return time.Date(2026, 10, 12, 10, 0, 0, 0, time.UTC) }})
+	out, err = resumed.op("release", "plan-1", "B", "M")
+	if err != nil {
+		t.Fatalf("release of B after the resume: %v", err)
+	}
+	_ = json.Unmarshal(out, &rel)
+	if !rel.Released || rel.Revision != FirstRevision || rel.DesignDigest != cand.digest() {
+		t.Errorf("release of B after the resume: %+v", rel)
+	}
+	if len(resumed.relay.releases) != 1 || resumed.relay.releases[0].Node != "B" {
+		t.Errorf("the relay was asked %+v", resumed.relay.releases)
+	}
+	for _, node := range []string{"A", "B"} {
+		var plan IssuePlan
+		out, err := resumed.op("issuePlan", node)
+		if err != nil {
+			t.Fatalf("issuePlan %s after the resume: %v", node, err)
+		}
+		_ = json.Unmarshal(out, &plan)
+		if plan.Node != node || plan.Approach != "approach "+node || len(plan.Decisions) != 1 {
+			t.Errorf("issuePlan %s: %+v", node, plan)
+		}
+	}
+	if got := gateDecisions(rows(resumed.j.Events()), "M"); len(got) != 1 || got[0].ID != "D1" || !slices.Equal(got[0].Nodes, []string{"A", "B"}) {
+		t.Errorf("the final gate's decisions of the earlier DESIGN: %+v", got)
+	}
+}
+
 // A lane builds its packet from the revision its node was released under: issuePlan reads the release row and the ledger row of
 // that revision, whatever the ledger has grown since.
 func TestIssuePlanReadsTheReleaseRevision(t *testing.T) {
@@ -293,6 +403,102 @@ func TestIssuePlanReadsTheReleaseRevision(t *testing.T) {
 	}
 	if snap, _ := w.lane.InputSnapshot(context.Background(), engine.SnapshotRequest{Node: ""}); snap != "" {
 		t.Errorf("snapshot of a call with no node: %q", snap)
+	}
+}
+
+// crw.releasedPlans lists the started nodes of the milestone, each with the plan of the revision it was released under, whatever
+// revision the ledger has grown to since; a node that has not started is not listed. crw.designHead samples the integration tip of
+// the run's plan once.
+func TestReleasedPlansAndDesignHead(t *testing.T) {
+	w := newWorld(t)
+	w.relay.plan = planOfNodes(map[string]string{"A": "sa", "B": "sb"}, "A", "B")
+	w.ledgered(true, designOf("A", "B"))
+	w.must("release", "plan-1", "A", "M")
+	later := designOf("A", "B")
+	later.Issues[0].Approach = "approach after the re-plan"
+	var anyLater any
+	b, _ := json.Marshal(later)
+	_ = json.Unmarshal(b, &anyLater)
+	w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "c_later", Op: OpDesignLedger, Event: engine.EvCompleted, Data: map[string]any{"milestone": "M", "revision": "r1", "digest": "later", "design": anyLater}})
+	var got []ReleasedPlan
+	_ = json.Unmarshal(w.must("releasedPlans", "M"), &got)
+	if len(got) != 1 {
+		t.Fatalf("released plans %+v, want A only", got)
+	}
+	want := designOf("A", "B").Issues[0]
+	if p := got[0]; p.Node != "A" || p.Revision != "r0" || !reflect.DeepEqual(p.Plan, want) || len(p.Decisions) != 1 || !reflect.DeepEqual(p.Decisions[0], designOf("A").Decisions[0]) {
+		t.Errorf("the released plan of A: %+v", p)
+	}
+	var head DesignHead
+	_ = json.Unmarshal(w.must("designHead", "M"), &head)
+	if head.Milestone != "M" || head.Head != w.relay.tip {
+		t.Errorf("design head %+v, want the integration tip %s", head, w.relay.tip)
+	}
+	if !IsRecordOp(OpDesignHead) || !IsRecordOp(OpReleasedPlans) {
+		t.Error("the design head and the released plans are recorded once and never read again")
+	}
+}
+
+// A node whose audited issue is sized for a split or a child has started too: its lane recorded a release row under the revision it
+// was sized under (released false, kind split or child) and escalated it. crw.releasedPlans lists it with that plan, as it lists a
+// node released to an executor, so a later re-plan's critic compares the DESIGN with it.
+func TestReleasedPlansListTheNodesSizedForASplitOrAChild(t *testing.T) {
+	w := newWorld(t)
+	w.relay.plan = planOfNodes(map[string]string{"A": "sa", "B": "sb", "C": "sc"}, "A", "B", "C")
+	d := designOf("A", "B", "C")
+	d.Issues[1].SizeFit, d.Issues[1].SizeReason, d.Issues[1].IssueSizeDecision = "split", "two packages", "over_line"
+	w.ledgered(true, d)
+	for _, n := range []string{"A", "B"} {
+		w.must("release", "plan-1", n, "M")
+	}
+	raw := w.must("releasedPlans", "M")
+	var got []ReleasedPlan
+	_ = json.Unmarshal(raw, &got)
+	var kinds []map[string]any
+	_ = json.Unmarshal(raw, &kinds)
+	byNode, kind := map[string]ReleasedPlan{}, map[string]any{}
+	for i, p := range got {
+		byNode[p.Node] = p
+		kind[p.Node] = kinds[i]["kind"]
+	}
+	if len(got) != 2 || !reflect.DeepEqual(byNode["B"].Plan, d.Issues[1]) || byNode["B"].Revision != "r0" {
+		t.Errorf("released plans %+v, want A and B (sized for a split under r0, with its whole plan); C has not started", got)
+	}
+	if kind["A"] != "released" || kind["B"] != "split" {
+		t.Errorf("the kinds of the released plans %v, want A released and B split", kind)
+	}
+}
+
+// A node whose audited issue is sized for a child has started: its lane recorded a release row (released false, kind child,
+// size_fit_child) before it escalated the node. Both readers of the one started predicate count it so: the signal path (lanes, which
+// crw.signalBind records as started) does not leave it unstarted for a due signal to re-plan, and crw.releasedPlans lists it with
+// the plan it was sized under.
+func TestAChildSizedNodeHasStarted(t *testing.T) {
+	w := newWorld(t)
+	w.relay.plan = planOfNodes(map[string]string{"A": "sa", "B": "sb", "C": "sc"}, "A", "B", "C")
+	d := designOf("A", "B", "C")
+	d.Issues[1].SizeFit, d.Issues[1].SizeReason, d.Issues[1].IssueSizeDecision = "child", "a child of its own", "over_line"
+	w.ledgered(true, d)
+	var rel ReleaseOutcome
+	_ = json.Unmarshal(w.must("release", "plan-1", "B", "M"), &rel)
+	if rel.Released || rel.Kind != "child" || rel.Reason != "size_fit_child" {
+		t.Fatalf("release of the child-sized node: %+v, want released false, kind child, size_fit_child", rel)
+	}
+	r := rows(w.j.Events())
+	started, unstarted := lanes(r, []string{"A", "B", "C"})
+	if !reflect.DeepEqual(started, []string{"B"}) || !reflect.DeepEqual(unstarted, []string{"A", "C"}) {
+		t.Errorf("signal path: started %v, unstarted %v, want B started and A, C unstarted", started, unstarted)
+	}
+	if _, kind, ok := startRowOf(r, "B"); !ok || kind != "child" {
+		t.Errorf("startRowOf(B) = %q, %v, want child, true", kind, ok)
+	}
+	raw := w.must("releasedPlans", "M")
+	var got []ReleasedPlan
+	_ = json.Unmarshal(raw, &got)
+	var kinds []map[string]any
+	_ = json.Unmarshal(raw, &kinds)
+	if len(got) != 1 || got[0].Node != "B" || got[0].Revision != "r0" || !reflect.DeepEqual(got[0].Plan, d.Issues[1]) || kinds[0]["kind"] != "child" {
+		t.Errorf("released plans %+v (kinds %v), want B only, sized for a child under r0 with its whole plan", got, kinds)
 	}
 }
 
@@ -510,6 +716,107 @@ func TestExploreRoutingOpenQuestions(t *testing.T) {
 	}
 }
 
+// The background questions of a milestone (CRW-1466): one per node, put to an explorer before the architect. Each spawns an explorer
+// or reuses an answered digest, under SP-EXPL-1 with the reason spawned_background; none takes the inline route whatever its
+// files_needed, none goes to the orchestrator, and none counts against the open questions' cap of the milestone: six open questions
+// spawn and the seventh goes to the orchestrator (explorer_cap) whether background questions were routed before or after them.
+func TestExploreRoutingBackgroundDoesNotUseTheQuestionCap(t *testing.T) {
+	w := newWorld(t)
+	bg := func(node string, files []string) Question {
+		return Question{ID: "bg-" + node, Question: fmt.Sprintf("background of node %s (CRW-%s): the title of %s", node, node, node), FilesNeeded: files}
+	}
+	ctx := ExploreContext{Milestone: "M"}
+	var plan RoutePlan
+	checkBackground := func(when string, want []string) {
+		t.Helper()
+		var got []string
+		for _, rt := range plan.Routes {
+			got = append(got, rt.Route+"/"+rt.Reason)
+			if rt.Rule != RuleExpl1 && rt.Route == RouteSpawn {
+				t.Errorf("%s: background question %s spawned under %s, want %s", when, rt.ID, rt.Rule, RuleExpl1)
+			}
+			if rt.Authority != "" {
+				t.Errorf("%s: background question %s has the scope notation %q", when, rt.ID, rt.Authority)
+			}
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("%s: background routes %v, want %v", when, got, want)
+		}
+	}
+	// three background questions before any open question: all spawn, the one with a single file named too (never inline)
+	_ = json.Unmarshal(w.must("exploreRoute", ExploreBackground, ctx, []Question{bg("A", []string{"a.go"}), bg("B", nil), bg("C", []string{})}), &plan)
+	if plan.Kind != ExploreBackground {
+		t.Errorf("the plan's kind %q, want %q", plan.Kind, ExploreBackground)
+	}
+	checkBackground("before the open questions", []string{"spawn/spawned_background", "spawn/spawned_background", "spawn/spawned_background"})
+
+	// seven open questions: six spawn, the seventh goes to the orchestrator for the cap; the background explorers spent none of it
+	var qs []Question
+	for i := 0; i < 7; i++ {
+		qs = append(qs, Question{ID: fmt.Sprint(i), Question: fmt.Sprintf("open question %d", i), FilesNeeded: []string{}})
+	}
+	_ = json.Unmarshal(w.must("exploreRoute", ExploreOpen, ctx, qs), &plan)
+	var got []string
+	for _, rt := range plan.Routes {
+		got = append(got, rt.Route+"/"+rt.Reason)
+	}
+	want := []string{"spawn/", "spawn/", "spawn/", "spawn/", "spawn/", "spawn/", "orchestrator/explorer_cap"}
+	if !slices.Equal(got, want) {
+		t.Errorf("open routes after background ones %v, want %v", got, want)
+	}
+
+	// three more background questions after the cap is used: all still spawn, the one with files inside no region too
+	_ = json.Unmarshal(w.must("exploreRoute", ExploreBackground, ctx, []Question{bg("D", []string{"d/1"}), bg("E", nil), bg("F", []string{"f.go", "g.go"})}), &plan)
+	checkBackground("after the cap", []string{"spawn/spawned_background", "spawn/spawned_background", "spawn/spawned_background"})
+
+	// and the open-question count is unchanged by them: the next open question of the milestone still goes for the cap, and in
+	// another milestone an open question still spawns
+	_ = json.Unmarshal(w.must("exploreRoute", ExploreOpen, ctx, []Question{{ID: "7", Question: "open question 7", FilesNeeded: []string{}}}), &plan)
+	if rt := plan.Routes[0]; rt.Route != RouteOrchestrator || rt.Reason != "explorer_cap" {
+		t.Errorf("an open question after the background ones: %+v, want orchestrator/explorer_cap", rt)
+	}
+	_ = json.Unmarshal(w.must("exploreRoute", ExploreOpen, ExploreContext{Milestone: "M2"}, []Question{{ID: "x", Question: "open question x", FilesNeeded: []string{}}}), &plan)
+	if rt := plan.Routes[0]; rt.Route != RouteSpawn {
+		t.Errorf("an open question of another milestone: %+v, want spawn", rt)
+	}
+
+	// the decision rows of the background questions: SP-EXPL-1 spawns with the reason and the kind in the inputs; a background route
+	// reads no cap, so its spawned_in_milestone stays 0 before and after the six open explorers
+	mem := w.lane.d.Decisions.(*MemoryDecisions)
+	var counts []int
+	for _, row := range mem.Spawn {
+		inputs, _ := row.Evidence["inputs"].(map[string]any)
+		if inputs["kind"] != ExploreBackground {
+			continue
+		}
+		if row.RuleID != RuleExpl1 || row.Decision != RouteSpawn || row.Reason != "spawned_background" {
+			t.Errorf("a background decision row: %s %s %q, want %s spawn spawned_background", row.RuleID, row.Decision, row.Reason, RuleExpl1)
+		}
+		n, _ := inputs["spawned_in_milestone"].(int)
+		counts = append(counts, n)
+	}
+	if !slices.Equal(counts, []int{0, 0, 0, 0, 0, 0}) {
+		t.Errorf("spawned_in_milestone of the background rows %v, want six zeros", counts)
+	}
+
+	// a background question answered in the run reuses the answer, and a repeat in its round reuses the first
+	w.must("exploreRecord", ExploreBackground, ctx, []Answer{{Digest: QuestionDigest(bg("A", nil).Question), ID: "bg-A", Question: bg("A", nil).Question, Answer: "A reads a.go", Route: RouteSpawn}})
+	_ = json.Unmarshal(w.must("exploreRoute", ExploreBackground, ctx, []Question{bg("A", []string{"a.go"}), bg("G", nil), bg("G", nil)}), &plan)
+	if rt := plan.Routes[0]; rt.Route != RouteReuse || rt.Rule != RuleInl2 || rt.Answer != "A reads a.go" || rt.Reason != "answered_in_run" || rt.Origin != RouteSpawn {
+		t.Errorf("an answered background question: %+v", rt)
+	}
+	if rt := plan.Routes[1]; rt.Route != RouteSpawn || rt.Reason != "spawned_background" {
+		t.Errorf("a new background question: %+v", rt)
+	}
+	if rt := plan.Routes[2]; rt.Route != RouteReuse || rt.SameAs != 1 || rt.Reason != "same_question_in_round" {
+		t.Errorf("a repeated background question: %+v", rt)
+	}
+	// a background route carries nothing to the orchestrator
+	if len(plan.Carried) != 0 {
+		t.Errorf("a background route carried %+v", plan.Carried)
+	}
+}
+
 // CRW-1366: the router remembers the questions the run asked of the orchestrator by their digest, read from the design_question
 // escalation rows (their evidence names the digests), and never rewrites a row: an asked question is not asked again until the
 // orchestrator's applied answer is there, and then that answer is reused. Every reuse names the route its answer came from.
@@ -577,6 +884,91 @@ func TestExploreRoutingRemembersOrchestratorAsks(t *testing.T) {
 	last := mem.Spawn[len(mem.Spawn)-2]
 	if inputs, _ := last.Evidence["inputs"].(map[string]any); last.Decision != RouteReuse || inputs["origin"] != RouteOrchestrator {
 		t.Errorf("the decision row of the reused answer: %+v", last)
+	}
+}
+
+// A re-plan pins a head (CRW-1458), and an explorer's answer reads that head: an open question asked again at a re-plan's head reuses
+// only an answer an explorer gave at that head, so a repeat of a question of the first DESIGN (no head) or of a re-plan at another
+// head spawns an explorer again; two asks of it in one round are one question. What goes to the orchestrator keeps the digest of the
+// text alone, since the owner's answer reads no head: a question the run asked is asked_in_run and, once answered, reuses the answer
+// at any head, and a question beyond the cap is asked under that digest. The explorers a re-plan spawns count against the cap of the
+// milestone. A question with no head keeps the digest and the routes it had.
+func TestExploreRoutingReplanHeadIsPartOfTheAnswer(t *testing.T) {
+	w := newWorld(t)
+	docs := Question{ID: "docs", Question: "where does the flag live?", Scope: "repo", FilesNeeded: []string{"a.go"}}
+	again := docs
+	again.ID = "again"
+	policy := Question{ID: "policy", Question: "does the project ship it in 1.0?", Scope: "authority:policy", FilesNeeded: []string{}}
+	base := QuestionDigest(docs.Question)
+	at := func(head string) ExploreContext { return ExploreContext{Milestone: "M", Head: head} }
+	route := func(ec ExploreContext, qs ...Question) RoutePlan {
+		t.Helper()
+		var plan RoutePlan
+		_ = json.Unmarshal(w.must("exploreRoute", ExploreOpen, ec, qs), &plan)
+		return plan
+	}
+	record := func(ec ExploreContext, rt Route, answer string) {
+		t.Helper()
+		w.must("exploreRecord", ExploreOpen, ec, []Answer{{Digest: rt.Digest, Question: rt.Question, Answer: answer, Route: RouteSpawn}})
+	}
+
+	// the first DESIGN: no head, the digest of the text
+	plan := route(ExploreContext{Milestone: "M"}, docs, policy)
+	if rt := plan.Routes[0]; rt.Route != RouteSpawn || rt.Digest != base {
+		t.Fatalf("the first DESIGN's question: %+v", rt)
+	}
+	record(ExploreContext{Milestone: "M"}, plan.Routes[0], "a.go at the base")
+	esc := w.must("escalate", nil, EscalateInfo{Reason: "design_question", Detail: policy.Question, Ask: "design", Evidence: map[string]any{"questions": []string{QuestionDigest(policy.Question)}}})
+	var asked EscalateOutcome
+	_ = json.Unmarshal(esc, &asked)
+
+	// the re-plan at h1: the question is asked again of an explorer, under a digest of the text and the head; its repeat in the round
+	// is the same question; the asked question keeps its digest and is not asked again, and nothing is carried
+	plan = route(at("h1"), docs, again, policy)
+	h1 := plan.Routes[0].Digest
+	if rt := plan.Routes[0]; rt.Route != RouteSpawn || h1 == base {
+		t.Errorf("the re-plan at h1 reused the answer of the first DESIGN: %+v", rt)
+	}
+	if rt := plan.Routes[1]; rt.Route != RouteReuse || rt.Reason != "same_question_in_round" || rt.SameAs != 0 || rt.Digest != h1 {
+		t.Errorf("the repeat in the round: %+v", rt)
+	}
+	if rt := plan.Routes[2]; rt.Route != RouteOrchestrator || rt.Reason != "asked_in_run" || rt.Digest != QuestionDigest(policy.Question) {
+		t.Errorf("the asked question at h1: %+v", rt)
+	}
+	if len(plan.Carried) != 0 {
+		t.Errorf("carried %+v: the asked question is raised again under its own digest", plan.Carried)
+	}
+	record(at("h1"), plan.Routes[0], "a.go and b.go at h1")
+
+	// the next round at h1 reuses the answer made at h1; a re-plan at h2 asks again; the first DESIGN's head keeps its answer
+	if rt := route(at("h1"), docs).Routes[0]; rt.Route != RouteReuse || rt.Answer != "a.go and b.go at h1" || rt.Digest != h1 {
+		t.Errorf("the next round at h1: %+v", rt)
+	}
+	if rt := route(at("h2"), docs).Routes[0]; rt.Route != RouteSpawn || rt.Digest == h1 || rt.Digest == base {
+		t.Errorf("the re-plan at h2: %+v", rt)
+	}
+	if rt := route(ExploreContext{Milestone: "M"}, docs).Routes[0]; rt.Route != RouteReuse || rt.Answer != "a.go at the base" || rt.Digest != base {
+		t.Errorf("a question with no head: %+v", rt)
+	}
+
+	// the orchestrator's answer reads no head: once applied it is the answer at any head
+	w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindFlow, Event: EvDecisionApplied, Data: map[string]any{"ask": asked.ID, "node": "", "decision": map[string]any{"text": "1.0 ships without it"}}})
+	if rt := route(at("h3"), policy).Routes[0]; rt.Route != RouteReuse || rt.Reason != "answered_by_orchestrator" || rt.Answer != "1.0 ships without it" || rt.Digest != QuestionDigest(policy.Question) {
+		t.Errorf("the answered question at h3: %+v", rt)
+	}
+
+	// three explorers so far (the base, h1, h2): three more fill the cap of six, and the next question goes to the orchestrator
+	// under the digest of its text
+	plan = route(at("h3"), Question{Question: "q4", Scope: "repo"}, Question{Question: "q5", Scope: "repo"}, Question{Question: "q6", Scope: "repo"}, Question{Question: "q7", Scope: "repo"})
+	var got []string
+	for _, rt := range plan.Routes {
+		got = append(got, rt.Route+"/"+rt.Reason)
+	}
+	if !slices.Equal(got, []string{"spawn/", "spawn/", "spawn/", "orchestrator/explorer_cap"}) {
+		t.Errorf("routes at the cap: %v", got)
+	}
+	if rt := plan.Routes[3]; rt.Digest != QuestionDigest("q7") {
+		t.Errorf("a question beyond the cap at a head is asked under %s, want the digest of its text %s", rt.Digest, QuestionDigest("q7"))
 	}
 }
 

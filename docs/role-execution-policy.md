@@ -304,24 +304,27 @@ nor flagged.
 
 ## The agent roles of a flow run
 
-`crw flow run` runs each agent call of a workflow script as one of six roles: `architect`, `executor`,
-`executor-t1`, `reviewer`, `reviewer-final` and `explorer`. They are not the relay's roles above
+`crw flow run` runs each agent call of a workflow script as one of seven roles: `architect`, `executor`,
+`executor-t1`, `reviewer`, `reviewer-final`, `explorer` and `critic` (the design audit's role, which audits the
+architect's design). They are not the relay's roles above
 (`supervisor`, `parent`, `child`), whose pair rules do not change. Their pairs come from one place: the helper
 role store, `CRW_HOME/subagents.json` (`~/.crw/subagents.json` when `CRW_HOME` is unset), the store
 `crw role helper` reads and writes. The execution policy file does not decide them.
 
-- **Six keys in one `roles` object.** `architect`, `executor`, `reviewer` and `explorer` are the helper roles that
-  `crw role helper` and the GUI manage. `executor-t1` and `reviewer-final` are flow-only keys in the same object:
-  `crw role helper get|set|reset executor-t1` (and `reviewer-final`) read and write them, while `crw role helper`
-  (the list), the settings API, the MCP tools and the GUI show the four helper roles only, as before.
+- **Seven keys in one `roles` object.** `architect`, `executor`, `reviewer` and `explorer` are the helper roles that
+  `crw role helper` and the GUI manage. `executor-t1`, `reviewer-final` and `critic` are flow-only keys in the same
+  object: `crw role helper get|set|reset executor-t1` (and `reviewer-final`, `critic`) read and write them, while
+  `crw role helper` (the list), the settings API, the MCP tools and the GUI show the four helper roles only, as before.
 
       crw role helper set executor-t1 --mode model --model <model> --effort <effort>
       crw role helper set reviewer-final --mode model --model <model> --effort <effort>
+      crw role helper set critic --mode model --model <model> --effort <effort>
 
 - **A missing flow-only key has a compiled default.** With no `executor-t1` entry, or one that cannot be used, the
   flow runs `anthropic/claude-sonnet-5-5` at `xhigh`; with no usable `reviewer-final` entry, `gpt-6.1-sol` at
-  `xhigh`. The default is never the executor's or the reviewer's pair, so a tier step or a final review still moves
-  to another pair. Each default in use is a warning, and `crw role helper reset` of the key brings it back.
+  `xhigh`; with no usable `critic` entry (every store written before the critic), `gpt-6.1-sol` at `xhigh` too, the
+  final reviewer's pair. The default is never the executor's or the reviewer's pair, so a tier step or a final review
+  still moves to another pair, and the critic's default is on another family than the architect's usual one. Each default in use is a warning, and `crw role helper reset` of the key brings it back.
 - **A role in mode default is undecided.** A role in `mode: default` (a helper role or a flow-only key), and a
   helper role with no entry or whose entry cannot be used, inherits the session's model: the flow has no pair for
   it, a call of the role names no model and no effort, and the snapshot warns. `crw role helper set executor-t1
@@ -334,7 +337,9 @@ role store, `CRW_HOME/subagents.json` (`~/.crw/subagents.json` when `CRW_HOME` i
   on the agent backend needs the explorer's and the reviewer's pairs (it writes them to the flow binding the spawn
   hook reads). A run that needs neither starts with the gaps recorded in its `policy_warnings`.
 - **A reviewer is not an author's family.** When `reviewer` or `reviewer-final` runs a model of the family of
-  `architect`, `executor` or `executor-t1`, the table warns. The family of a model is its name without the provider
+  `architect`, `executor` or `executor-t1`, the table warns, and so it does when `critic` runs a model of the
+  architect's family (the critic audits the architect's design; the design audit itself judges its independence by
+  the model families of the two calls' pairs). The family of a model is its name without the provider
   prefix, up to the first dash (`anthropic/claude-haiku-5` and `claude-opus-5-5` are `claude`, `gpt-6.1-sol` is
   `gpt`). The run starts and records the warning; the runtime independence gate still judges every review by the
   pair the reviewer thread was created on (`independence_refused`, `independence_unproven`).
@@ -350,9 +355,11 @@ role store, `CRW_HOME/subagents.json` (`~/.crw/subagents.json` when `CRW_HOME` i
   | `ocx-gpt-6-1-sol` (as `model` or as `agentType`) with `effort: 'xhigh'` | `reviewer-final` |
   | `ocx-gpt-6-1-sol` (as `model` or as `agentType`) otherwise | `reviewer` |
 
-  Anything else is `policy_refused`. Of the rows that match a call, the one that names more options wins. Each
-  role's model aliases (`opus` for the architect, `haiku` for the executor and the explorer, `sonnet` for
-  `executor-t1`, `ocx-gpt-6-1-sol` for both reviewers) name the models a call may state beside `agentType` being
+  Anything else is `policy_refused`. Of the rows that match a call, the one that names more options wins. The
+  explorer and the critic have no row: a call names them by `agentType` (`agentType: 'critic'`); a critic row for
+  `ocx-gpt-6-1-sol` at `xhigh` would overlap the `reviewer-final` row. Each role's model aliases (`opus` for the
+  architect, `haiku` for the executor and the explorer, `sonnet` for `executor-t1`, `ocx-gpt-6-1-sol` for both
+  reviewers and the critic) name the models a call may state beside `agentType` being
   that role: `agentType: 'explorer', model: 'haiku'` is the explorer, `agentType: 'reviewer', model: 'haiku'` is
   `pair_refused`.
 - **Why an isolation-less haiku is refused.** In Claude that call edits the shared checkout, but a CRW call has a
@@ -364,7 +371,7 @@ role store, `CRW_HOME/subagents.json` (`~/.crw/subagents.json` when `CRW_HOME` i
   pair, and an `effort` the script states that differs from it is not an error. The call result keeps both,
   `meta.requestedPair` and `meta.configuredPair`, and the journal's intent row both pairs.
 
-`crw flow roles` prints the store's path, the digest, the six pairs (each marked when it is a compiled default or
+`crw flow roles` prints the store's path, the digest, the seven pairs (each marked when it is a compiled default or
 undecided), the alias table and every warning. `crw doctor flow-roles` prints the same snapshot as JSON with the
 warnings of the execution policy file beside it. `get_capabilities` describes the same snapshot under
 `executionPolicy.agentRoles` (its `source`, `digest`, `roles` with each role's `state`, `aliases` and `warnings`)
@@ -377,17 +384,23 @@ The loader accepts `agent-roles` and `agent-aliases` in a policy file without re
 is not used by a flow run, so what is wrong with them is a warning, kept by the loader and shown by `crw flow
 roles` and `crw doctor flow-roles`: a section that does not parse (a role missing, two pairs for one role, an
 unknown key, `agent-aliases` without `agent-roles`, alias rows that overlap) is ignored with the reason, and of a
-section that parses, a pair the file's `allowed` list does not approve and a reviewer on the model family of
-`executor` or `executor-t1` are warned about. The rest of the file (`roles`, `allowed`, `exceptions`) keeps its
+section that parses, a pair the file's `allowed` list does not approve, a reviewer on the model family of
+`executor` or `executor-t1` and a critic on the architect's family are warned about. The `critic` key is the one
+a section may leave out, because every file written before the critic does: such a section loads, its critic takes
+the compiled default `gpt-6.1-sol` at `xhigh` (with the model alias `ocx-gpt-6-1-sol`), and the loader warns
+"agent-roles declares no critic; the compiled default gpt-6.1-sol/xhigh applies"; the `allowed` list is not
+compared with that default, which the file did not declare. A section that leaves out any other role is ignored as
+before. CRW never writes `critic` into a policy file, since a binary older than the critic refuses a section that
+names it. The rest of the file (`roles`, `allowed`, `exceptions`) keeps its
 rules and its refusals. A file that still declares `agent-roles` or `agent-aliases`, parsed or ignored, adds the
 warning "the flow no longer reads it" to the table of every flow command, to `crw flow roles` and to `crw doctor
-flow-roles`. Once `crw flow roles` shows the six pairs the section held, the section is removed from the file (back it up first; restoring it changes nothing for a flow
+flow-roles`. Once `crw flow roles` shows the pairs the section held, the section is removed from the file (back it up first; restoring it changes nothing for a flow
 run, which never reads it).
 
 ### One role snapshot per run
 
 A `crw flow` process reads the store once when it starts and records the store's path and the canonical digest of
-the six pairs in the run record (`flow_runs` and the journal's `started` row, `policy_source` and
+every role's pair in the run record (`flow_runs` and the journal's `started` row, `policy_source` and
 `policy_digest`), with the table's warnings (`policy_warnings`) when there are any. The digest is SHA-256 of the
 compact JSON array of `[role, model, effort]` in the order above, an undecided value empty; prompt overrides,
 fallbacks and every other member of the store are outside it. A run keeps its snapshot: editing the store changes

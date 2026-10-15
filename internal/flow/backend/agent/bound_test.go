@@ -181,14 +181,16 @@ func TestBindingLineCarriesRoleAllowanceAndPolicyPairs(t *testing.T) {
 const b = await agent.call('build it', { agentType: 'executor', node: 'n1', schema: S, label: 'build' })
 const x = await agent.call('look', { agentType: 'explorer', schema: S, label: 'look' })
 const r = await agent.call('review it', { agentType: 'ocx-gpt-6-1-sol', node: 'n1', head: ` + q(e.base) + `, schema: S, label: 'review' })
-return [b.status, x.status, r.status]`)
-	if got := value[[]string](t, res); !slices.Equal(got, []string{"completed", "completed", "completed"}) {
+const c = await agent.call('audit it', { agentType: 'critic', head: ` + q(e.base) + `, schema: S, label: 'audit' })
+return [b.status, x.status, r.status, c.status]`)
+	if got := value[[]string](t, res); !slices.Equal(got, []string{"completed", "completed", "completed", "completed"}) {
 		t.Fatalf("%v", got)
 	}
+	// the critic (CRW-1434) spawns no helper, as its overlay says: its line allows none
 	want := map[string]struct {
 		role  string
 		allow int
-	}{"build": {"executor", 1}, "look": {"explorer", 0}, "review": {"reviewer", 1}}
+	}{"build": {"executor", 1}, "look": {"explorer", 0}, "review": {"reviewer", 1}, "audit": {"critic", 0}}
 	for label, w := range want {
 		call := calls(res)[label]
 		lines := boundLines(t, call.Meta.ThreadID)
@@ -200,7 +202,7 @@ return [b.status, x.status, r.status]`)
 		if l.RunID != e.runID || l.ThreadID != call.Meta.ThreadID || l.Kind != bound.KindEngine || l.CallID != call.CallID || l.Role != w.role ||
 			l.NativeAllowance == nil || *l.NativeAllowance != w.allow || l.PolicyDigest != "sha256:pinned" ||
 			l.HelperPairs[bound.HelperExplorer] != (bound.Pair{Model: pair.Model, Effort: pair.Effort}) || len(l.HelperPairs) != 1 {
-			t.Errorf("%s: %+v", label, l)
+			t.Errorf("%s: %+v (allowance %d, want %d)", label, l, l.Allowance(), w.allow)
 		}
 	}
 	if info, err := os.Stat(boundDir(t)); err != nil || info.Mode().Perm() != 0o700 {

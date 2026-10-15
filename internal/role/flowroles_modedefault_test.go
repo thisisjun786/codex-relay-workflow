@@ -9,16 +9,16 @@ import (
 // role in mode default; only a key the store does not hold (or cannot use) takes the compiled default.
 func TestCRW1330_FlowOnlyKeyInModeDefaultIsUndecided(t *testing.T) {
 	env, dir := home(t)
-	writeStore(t, dir, `{"roles": {"executor-t1": {"mode": "default"}, "reviewer-final": {"mode": "default", "effort": "high"}}}`)
+	writeStore(t, dir, `{"roles": {"executor-t1": {"mode": "default"}, "reviewer-final": {"mode": "default", "effort": "high"}, "critic": {"mode": "default"}}}`)
 	snap := ReadFlowSnapshot(env)
 	got := flowPairs(snap)
-	for _, r := range []RoleName{ExecutorT1, ReviewerFinal} {
+	for _, r := range []RoleName{ExecutorT1, ReviewerFinal, Critic} {
 		if got[r] != [3]string{"", "", "undecided"} {
 			t.Errorf("%s: %v", r, got[r])
 		}
 	}
 	joined := strings.Join(snap.Warnings, "\n")
-	for _, want := range []string{"role executor-t1 is in mode default", "role reviewer-final is in mode default", "undecided"} {
+	for _, want := range []string{"role executor-t1 is in mode default", "role reviewer-final is in mode default", "role critic is in mode default", "undecided"} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("warnings lack %q:\n%s", want, joined)
 		}
