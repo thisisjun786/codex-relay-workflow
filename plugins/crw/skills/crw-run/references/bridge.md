@@ -138,7 +138,7 @@ evidence or report the path as unverified.
 
 **Existing task-owned worktree:** `create_thread` accepts an existing absolute
 cwd, title, model, reasoning_effort, sandbox, expected_sandbox_policy,
-runtime_workspace_roots, optional prompt, and stable request_id. It creates no
+runtime_workspace_roots, the required prompt (its first turn), and stable request_id. It creates no
 worktree. Reuse the coordinator-prepared checkout. Model and reasoning effort are
 required; omitting either refuses the request before any call rather than inheriting
 the App Server configuration. Omitting any other setting uses that configuration and
@@ -220,7 +220,27 @@ values. If none does, report the concrete unsupported capability and settle it b
 creating the task; never launch a task already known to carry the wrong setting, and
 never silently downgrade it. This is not a readiness handshake: once the settings can be
 applied, create with the full work prompt, and reconcile a mismatch observed after
-creation on that same task.
+creation on that same task. `create_thread` requires `prompt`: a call without one is
+refused before anything is reserved or started
+([Observed empty-task failure](#observed-empty-task-failure)). What the ledger holds on the
+`request_id` decides the next call:
+
+- No receipt on the id: the call that brings the prompt may reuse it.
+- A `not_attempted` reservation made without a prompt, before prompts were required: the
+  first call with its arguments, with a prompt or without, retires it (its receipt becomes
+  `failed`, with an error naming this refusal, which every bridge build replays and none
+  re-runs), so no call on that id creates a thread; use a new `request_id` with a prompt.
+- A `not_attempted` reservation made with other arguments: a call that repeats its own
+  arguments under the same `request_id` resumes it when they include a prompt, and retires
+  it, as above, when they do not. A row of another operation on the id is a plain conflict.
+
+Other than by a call with its own arguments resuming a `not_attempted` receipt, the bridge
+never rewrites a stored receipt, with this one exception (CRW-1506): a `not_attempted`
+reservation that was made without a prompt, holds exactly the call's other arguments and
+never reached the host may be retired once, in one ledger transaction, to an existing
+terminal status (`failed`), keeping its `priorAttempts`. Every other receipt is still never
+rewritten: one with a host effect, a `not_attempted` reservation that stored a prompt, and
+one of another operation.
 
 Where the host has configured an execution policy, the stated pair must also be one the
 operator approved, and an unapproved one is refused before anything is created. Read
@@ -357,6 +377,11 @@ creation and dispatch, not successful `crw-loop` execution or universal follow-u
 
 On that version, prefer creation with the full work prompt.
 Do not recommend “empty creation, then resume” as a verified workflow.
+The bridge now enforces this (CRW-1506): `create_thread` refuses a missing `prompt` as an
+invalid argument, saying that a thread with no first turn has no rollout, and never begins
+an attempt without one. On an id with no receipt nothing is reserved or stored; a
+`not_attempted` reservation made without a prompt before this refusal existed is retired
+instead of resumed. `create_worktree_thread` keeps its readiness-only creation.
 
 ## Receipts and safe recovery
 
@@ -375,7 +400,9 @@ whatever was created. Why that marker is recorded at all is in
 - `failed`: inspect the actual rejection and any retained worktree/task/turn IDs.
 - `outcome_unknown` or `in_progress_or_unknown`: reconcile before another mutation.
 - `not_attempted`: nothing was sent and nothing was created, so there is nothing to reconcile.
-  Reuse the same ID to make the attempt; do not mint a new one.
+  Reuse the same ID to make the attempt; do not mint a new one. The one exception is a
+  `create_thread` reservation made without a prompt, before prompts were required: it is
+  retired and the creation goes under a new ID with a prompt (see `create_thread` above).
 
 Use `get_operation`, backend reads/listing, and actual worktree state to identify
 what occurred. If a writer may still be active or the delivery outcome is unknown,

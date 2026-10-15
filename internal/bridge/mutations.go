@@ -248,7 +248,7 @@ func (b *Bridge) SendMessageToThread(ctx context.Context, in SendMessage) (ledge
 			receipt["approvalRequests"] = requests.RequestsSince(mark, in.ThreadID)
 		}
 		return nil
-	}, nil, nil})
+	}, nil, nil, nil})
 	return result, err
 }
 
@@ -355,7 +355,7 @@ func (b *Bridge) SteerThread(ctx context.Context, requestID, threadID, turnID, m
 		receipt["delivery"] = "accepted_not_applied"
 		receipt["deliveryMeaning"] = "The host accepted this input into the guarded turn. It does not say the peer read it, and it does not say the peer acted on it."
 		return nil
-	}, nil, nil})
+	}, nil, nil, nil})
 }
 func (b *Bridge) PauseGoal(ctx context.Context, requestID, threadID string) (ledger.Receipt, error) {
 	if err := nonempty(threadID, "thread_id", 128); err != nil {
@@ -405,5 +405,5 @@ func (b *Bridge) PauseGoal(ctx context.Context, requestID, threadID string) (led
 		receipt["delivery"] = "applied_by_host"
 		receipt["pause"] = "goal_paused_turn_may_still_be_running"
 		return nil
-	}, nil, nil})
+	}, nil, nil, nil})
 }

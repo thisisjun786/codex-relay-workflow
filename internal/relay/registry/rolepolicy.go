@@ -84,7 +84,7 @@ func ResolveRolePolicy(env map[string]string) RolePolicy {
 			PublicDetail: "execution policy environment is not configured in this process"}
 	}
 	const unreadable = "configured execution policy is unreadable or invalid"
-	source := store.PathlibSpelling(configured)
+	source := PolicyFile(configured)
 	raw, err := execution.ReadFile(source)
 	if err == nil && nestedTooDeep(raw) {
 		return RolePolicy{Detail: configured + " is nested deeper than the execution policy parser can read", PublicDetail: unreadable}
@@ -105,6 +105,20 @@ func ResolveRolePolicy(env map[string]string) RolePolicy {
 	return RolePolicy{Declared: true, policy: policy, digest: digest}
 }
 
+// PolicyFile is the file ResolveRolePolicy reads for a configured execution policy value (a
+// CODEX_THREAD_BRIDGE_EXECUTION_POLICY value, or a path the relay service's launch declaration names):
+// the value str.strip()ped and spelled as Path(value) spells it, so "/cfg/policy.json/" and
+// " /cfg/policy.json " are /cfg/policy.json. A value that strips to nothing names no file, "". Every
+// reader that must read the file a role policy was resolved from reads this path, so the two cannot
+// differ (CRW-1506).
+func PolicyFile(configured string) string {
+	configured = pyvalue.Strip(configured)
+	if configured == "" {
+		return ""
+	}
+	return store.PathlibSpelling(configured)
+}
+
 // nestedTooDeep is whether json.loads(raw, object_pairs_hook=_no_duplicates) raises
 // RecursionError before any other refusal: the bytes decoded as json.loads decodes them first.
 func nestedTooDeep(raw []byte) bool {
@@ -123,6 +137,24 @@ func EnvironmentRolePolicy() RolePolicy {
 		snapshot.taken = &policy
 	}
 	return *snapshot.taken
+}
+
+// LaunchRolePolicy is the role policy a daemon launched on the service of state directory state
+// reads (CRW-1486/S2): the file that service's launch declaration names when there is one, this
+// process's EnvironmentRolePolicy when there is none, and an unresolved policy naming why when the
+// declaration cannot be read or the environment names another file. internal/relay/service sets it
+// in an init, since that package imports this one and owns the launch declaration; nil (a binary
+// without the service package) is EnvironmentRolePolicy. The registry CLI asks it, so settings-show,
+// settings-record and linkage-bind answer against the policy deliveries are checked against, not
+// against whatever the asking process inherited.
+var LaunchRolePolicy func(state string) RolePolicy
+
+// launchRolePolicy is LaunchRolePolicy for state, or EnvironmentRolePolicy when no hook is set.
+func launchRolePolicy(state string) RolePolicy {
+	if LaunchRolePolicy == nil {
+		return EnvironmentRolePolicy()
+	}
+	return LaunchRolePolicy(state)
 }
 
 // ResetRolePolicySnapshot is rolepolicy.reset(): drop this process's snapshot (tests only).
