@@ -386,7 +386,7 @@ func (r Reporter) MergeRequest(ctx context.Context, req ops.MergeRequest) (strin
 	if res.Delivery == "" && res.Reason != "" {
 		// the channel refused to stage it (the hierarchy drifted, say): the report row stands, but the operation must not record the request
 		// as made, or the once-per-head rule would never let a replay stage it; the report row is replayed by the retry
-		return "", fmt.Errorf("report: the merge request of %s was not staged for the parent (%s): it is retried", req.PR, res.Reason)
+		return "", fmt.Errorf("report: the merge request of %s was not staged for the 부모 (%s): it is retried", req.PR, res.Reason)
 	}
 	return res.ReportID, nil
 }

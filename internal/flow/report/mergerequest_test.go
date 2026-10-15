@@ -154,8 +154,8 @@ func TestMergeRequestNotStagedIsAnErrorAndIsRetried(t *testing.T) {
 	rep := Reporter{W: w.writer(), Run: testRun}
 	req := ops.MergeRequest{Plan: testPlan, Milestone: "M1", PR: "o/r#7", Head: mergeHeadA, Base: "dev", Checks: "success",
 		Crosscheck: ops.MergeCrosscheck{Verdict: "verified", Head: mergeHeadA, EngineFamily: "gpt", Model: "m", Round: 1}, RequestID: "rep_0123456789abcdef01234567"}
-	if id, err := rep.MergeRequest(ctx, req); err == nil || id != "" || !strings.Contains(err.Error(), "relation_owner_drift") {
-		t.Fatalf("a refused staging answered %q, %v; want an error naming the reason", id, err)
+	if id, err := rep.MergeRequest(ctx, req); err == nil || id != "" || !strings.Contains(err.Error(), "relation_owner_drift") || !strings.Contains(err.Error(), "부모") {
+		t.Fatalf("a refused staging answered %q, %v; want an error naming the reason and the 부모", id, err)
 	}
 	if n := len(w.rows(KindReport)); n != 1 {
 		t.Fatalf("%d report rows, want the one on record", n)
