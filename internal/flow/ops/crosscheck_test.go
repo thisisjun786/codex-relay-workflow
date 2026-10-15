@@ -1114,14 +1114,33 @@ func TestACrosscheckEscalationIsOneRowForEachVerdict(t *testing.T) {
 		}
 		return out
 	}
-	rowsOf := func() map[string]map[string]any {
-		out := map[string]map[string]any{}
+	// rowsOf are the escalation rows the journal holds, in order, every one counted
+	rowsOf := func() []map[string]any {
+		var out []map[string]any
 		for _, ev := range w.j.Events() {
 			if ev.Kind == engine.KindFlow && ev.Event == engine.EvEscalation {
-				out[dataStr(ev, "escalation_id")] = ev.Data
+				out = append(out, ev.Data)
 			}
 		}
 		return out
+	}
+	// wantOneRowEach checks that the journal holds exactly one escalation row for each id of ids, and no other row
+	wantOneRowEach := func(step string, ids ...string) []map[string]any {
+		t.Helper()
+		rows := rowsOf()
+		count := map[string]int{}
+		for _, r := range rows {
+			count[dataStr(engine.Event{Data: r}, "escalation_id")]++
+		}
+		if len(rows) != len(ids) {
+			t.Errorf("%s: %d escalation rows, want %d (one for each V)", step, len(rows), len(ids))
+		}
+		for _, id := range ids {
+			if count[id] != 1 {
+				t.Errorf("%s: %d escalation rows of %s, want 1", step, count[id], id)
+			}
+		}
+		return rows
 	}
 	v1, v2 := map[string]any{"crosscheck": v("the first verdict")}, map[string]any{"crosscheck": v("a new verdict of the same head")}
 	first := escalate("c_close", v1)
@@ -1129,18 +1148,18 @@ func TestACrosscheckEscalationIsOneRowForEachVerdict(t *testing.T) {
 	if first.ID == second.ID {
 		t.Fatalf("a new V of the same head under the same call has the id %s of the first", first.ID)
 	}
-	rows := rowsOf()
-	if len(rows) != 2 {
-		t.Fatalf("%d escalation rows, want one for each V", len(rows))
-	}
-	got, _ := rows[second.ID]["evidence"].(map[string]any)
-	if !jsonEqual(t, got, v2) {
-		t.Errorf("the second row's evidence %v, want V2", got)
+	rows := wantOneRowEach("V1 then V2", first.ID, second.ID)
+	if len(rows) == 2 {
+		got, _ := rows[1]["evidence"].(map[string]any)
+		if rows[1]["escalation_id"] != second.ID || !jsonEqual(t, got, v2) {
+			t.Errorf("the second row %v, want V2 under %s", rows[1], second.ID)
+		}
 	}
 	// the same V again is the same escalation: no new row
-	if again := escalate("c_close", v2); again.ID != second.ID || len(rowsOf()) != 2 {
-		t.Errorf("the replay of V2: id %s (want %s), %d rows", again.ID, second.ID, len(rowsOf()))
+	if again := escalate("c_close", v2); again.ID != second.ID {
+		t.Errorf("the replay of V2 has the id %s, want %s", again.ID, second.ID)
 	}
+	wantOneRowEach("V1, V2, V2", first.ID, second.ID)
 	// an escalation without a crosscheck keeps the id of its run and call
 	if plain := escalate("c_other", nil); plain.ID != "esc_"+hashParts("run-1", "c_other")[:24] {
 		t.Errorf("an escalation with no crosscheck has the id %s", plain.ID)
