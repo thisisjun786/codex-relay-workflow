@@ -171,6 +171,10 @@ type createThreadIn struct {
 	Role            *string         `json:"role"`
 }
 
+// errMissingPrompt refuses a create_thread that brings no prompt: a thread with no first turn has no rollout, and
+// thread/resume and thread/turns/list on it fail with "missing source rollout".
+var errMissingPrompt = &bridge.Invalid{Reason: `prompt is required: a thread created with no first turn has no rollout, so thread/resume and thread/turns/list on it fail with "missing source rollout"`}
+
 func (h handlers) createThread(ctx context.Context, in createThreadIn) (map[string]any, error) {
 	for _, check := range []error{empty(in.Prompt, "prompt", 100000), empty(in.Title, "title", 500), empty(in.ProjectID, "app_server_project_id", 128), empty(in.Exception, "policy_exception", 128), empty(in.Role, "role", 64)} {
 		if check != nil {
@@ -180,6 +184,10 @@ func (h handlers) createThread(ctx context.Context, in createThreadIn) (map[stri
 	policy, err := decodeObject(in.Policy)
 	if err != nil {
 		return h.explained("create_thread", nil, err)
+	}
+	// CRW-1486: refused before anything is reserved, so no receipt holds the id and the call that brings a prompt may reuse it.
+	if in.Prompt == nil {
+		return h.explained("create_thread", nil, errMissingPrompt)
 	}
 	var roots []string
 	if in.Roots != nil {
