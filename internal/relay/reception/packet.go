@@ -134,7 +134,7 @@ func RequiredFor(direction, purpose string) ([]string, error) {
 	}
 	r, ok := required[direction+"/"+purpose]
 	if !ok {
-		return nil, malformed("relay-packet/1 covers the parent-child relation and what a parent owes upward; %s is carried by the envelope alone", direction)
+		return nil, malformed("relay-packet/1 covers the relation of a 자식 and its issue child and what a 자식 owes upward; %s is carried by the envelope alone", direction)
 	}
 	return slices.Clone(r), nil
 }
