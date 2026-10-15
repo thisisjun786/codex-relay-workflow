@@ -82,8 +82,8 @@ func TestOverlayAppendsToEmbeddedPrompt(t *testing.T) {
 	if _, err := Prompt("child", Options{}); err == nil {
 		t.Error("a relay role has no overlay")
 	}
-	// The second tier and the final reviewer are built on the definitions of their families.
-	for role, family := range map[string]string{"executor-t1": "executor", "reviewer-final": "reviewer"} {
+	// The second tier, the final reviewer and the critic are built on the definitions of their families.
+	for role, family := range map[string]string{"executor-t1": "executor", "reviewer-final": "reviewer", "critic": "reviewer"} {
 		a, _ := Base(role)
 		b, _ := Base(family)
 		if a != b {
@@ -121,7 +121,7 @@ func TestOverlayReplacesLeafSentence(t *testing.T) {
 	}{
 		{"executor", Options{}, true}, {"executor-t1", Options{}, true}, {"architect", Options{}, true},
 		{"reviewer", Options{}, true}, {"reviewer-final", Options{}, true},
-		{"explorer", Options{}, false}, {"executor", Options{QA: true}, false},
+		{"explorer", Options{}, false}, {"critic", Options{}, false}, {"executor", Options{QA: true}, false},
 	} {
 		base, _ := Base(row.role)
 		overlay, err := Overlay(row.role, row.opts)
@@ -320,6 +320,47 @@ func TestArchitectOverlayAuthorityBoundary(t *testing.T) {
 	for _, claim := range []string{"since it is a question for the layers above the run", "(none included)"} {
 		if strings.Contains(boundary, claim) {
 			t.Errorf("the authority boundary section says %q, which the route does not do or does not say plainly:\n%s", claim, boundary)
+		}
+	}
+}
+
+// TestCriticRoleHasOverlayAndDefinition (CRW-1434): the critic is a seventh role of an engine call. It has no definition
+// file of its own: its thread is built on the reviewer definition (it spawns as agent_type reviewer), followed by its own
+// overlay, which names the LEAF sentence and allows no helper.
+func TestCriticRoleHasOverlayAndDefinition(t *testing.T) {
+	found := false
+	for _, name := range Names {
+		if name == "critic" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("critic is not a role of an engine call: %v", Names)
+	}
+	if Names[len(Names)-1] != "critic" {
+		t.Errorf("the critic is not the last role, every older table keeps its rows: %v", Names)
+	}
+	overlay, err := Overlay("critic", Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(overlay, "# CRW flow overlay: critic\n") {
+		t.Errorf("the critic overlay does not open with its heading: %q", firstLine(overlay))
+	}
+	if !strings.Contains(overlay, `begins "`+LeafSentence+`"`) || !strings.Contains(overlay, "does not apply to this engine call") {
+		t.Error("the critic overlay does not name the LEAF sentence and say it is replaced")
+	}
+	base, err := Base("critic")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reviewer, _ := Base("reviewer")
+	if base != reviewer {
+		t.Error("the critic is not built on the reviewer definition")
+	}
+	for _, want := range []string{"DESIGN_AUDIT", "PRIOR FINDINGS", "rollback", "same `ref`"} {
+		if !strings.Contains(overlay, want) {
+			t.Errorf("the critic overlay lacks %q", want)
 		}
 	}
 }
