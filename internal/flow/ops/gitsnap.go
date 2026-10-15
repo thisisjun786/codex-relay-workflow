@@ -246,8 +246,11 @@ type ScopeReport struct {
 }
 
 // Scope compares tree with the tree of base (a commit or a tree) and sorts the changed paths by the edit regions. A region
-// is a directory prefix ending in "/", a file path, or a pattern with `*`, `?` or `[` (path.Match, on the whole path). With
-// no region declared nothing is out of scope.
+// is read by its normal form (RegionOf: blanks, `./` and doubled slashes cleaned): a tree ends in "/" and covers the paths
+// under it, not a file of its own name; a symbol `path#key` is its file, since the change set holds files; a file is a path, or a pattern with `*`, `?`
+// or `[` (path.Match, on the whole path). A name with no trailing slash is a file, as the relay reads it. A region's text
+// read as written (a prefix ending in "/", a pattern, or the exact path) also covers what it spells, so a path that holds
+// "#" keeps its place. With no region declared nothing is out of scope.
 func Scope(ctx context.Context, git GitFunc, dir, base, tree string, regions []string) (ScopeReport, error) {
 	// --name-status -z: every record is a status letter and then the path, each ended by a NUL. The output begins with a
 	// letter, so a runner that trims the text cannot take a leading space off the first path.
@@ -272,7 +275,16 @@ func Scope(ctx context.Context, git GitFunc, dir, base, tree string, regions []s
 	return rep, nil
 }
 
+// inRegion is whether the changed path p (git's exact repository-relative path, never cleaned) lies in the region. The region
+// is read two ways and covers p when either reading does: as its text (a prefix ending in "/", a pattern, or the exact path),
+// so a planned file, tree or pattern whose path holds "#" keeps the place its text spells; and by its normal form (RegionOf),
+// so `./a.go`, `src//a.go` and the symbol `a.go#F` name a.go. Text that holds "#" is ambiguous without the plan: `pkg/a#b.go`
+// also names the file pkg/a, the symbol the relay reads it as from DESIGN text.
 func inRegion(region, p string) bool {
+	return inRegionText(region, p) || inRegionForm(RegionOf(region), p)
+}
+
+func inRegionText(region, p string) bool {
 	switch {
 	case strings.HasSuffix(region, "/"):
 		return strings.HasPrefix(p, region)
@@ -281,6 +293,21 @@ func inRegion(region, p string) bool {
 		return ok
 	}
 	return p == region
+}
+
+func inRegionForm(f RegionForm, p string) bool {
+	switch {
+	case f.Path == ".":
+		return false
+	case f.Kind == "tree":
+		// what lies under the tree, not a file of its own name: a node that replaces the directory src with a file src changes a
+		// path outside src/, as the prefix rule of the text reads it
+		return strings.HasPrefix(p, f.Path+"/")
+	case strings.ContainsAny(f.Path, "*?["):
+		ok, _ := path.Match(f.Path, p)
+		return ok
+	}
+	return p == f.Path
 }
 
 // Restore rebuilds a boundary: a detached worktree at the commit base (`git worktree add --detach`), and when the boundary
