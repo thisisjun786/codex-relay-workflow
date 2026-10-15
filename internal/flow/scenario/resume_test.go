@@ -2,6 +2,8 @@ package scenario
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -100,7 +102,7 @@ func TestDecideResumesOnlyOnAppliedRow(t *testing.T) {
 	for _, ts := range turnsSince(l, before) {
 		live = append(live, labelOf(l, ts.call))
 	}
-	if !slices.Equal(live, []string{"rebuild:A:executor:r1", "reviewer-final:M1", "reflection:M1"}) {
+	if !slices.Equal(live, []string{"rebuild:A:executor:r1", "reflection:M1"}) {
 		t.Errorf("live turns %v: want the fresh executor the decision let go on and the close", live)
 	}
 	rows := l.Rows("crw.decide")
@@ -165,8 +167,9 @@ func num(v any) int {
 // A landing the integration target lost is integrated again when the run resumes: the lane that landed it runs only its integrate
 // (everything before it replays: the unit check, the commit, the verification and the acceptance still stand) and lands a new batch,
 // the target is not the head the final gate judged, and the whole close runs live again over the new head - the gate, the
-// verification at the new head, the final review, the close, the audit and the report. The other lane runs nothing, and the only
-// agent called is reviewer-final.
+// verification at the new head, the crosscheck, the close, the audit and the report. The other lane runs nothing, the only agent
+// called is the architect's reflection, and the lab's crosschecker answers both passes of M1 at the new head after the resume, its
+// receipts file under the lab's run directory, the same one as before the resume.
 func TestMilestoneCloseRerunsAfterLaneSuffix(t *testing.T) {
 	nodes := []NodeSpec{
 		{ID: "A", Issue: "CRW-A", Title: "issue A", Regions: []string{"a/"}},
@@ -199,6 +202,7 @@ func TestMilestoneCloseRerunsAfterLaneSuffix(t *testing.T) {
 	}
 	l.Git("update-ref", IntegrationRef, keptBatch)
 
+	crosschecksBefore := len(l.Crosschecker.Calls())
 	before := l.LastSeq()
 	l.NewProcess("proc-2")
 	res := l.Resume()
@@ -217,15 +221,16 @@ func TestMilestoneCloseRerunsAfterLaneSuffix(t *testing.T) {
 			ranLive = append(ranLive, live{ev.Op, ev.Path})
 		}
 	}
-	want := []live{{"crw.integrate", lostPath}, {"crw.finalGate", "root"}, {"crw.verify", "root"}, {"crw.finalGate", "root"}, {"crw.spawnDecision", "root"},
-		{"crw.reviewerFinal", "root"}, {"crw.milestoneClose", "root"}, {"crw.currentDesign", "root"}, {"crw.spawnDecision", "root"}, {"crw.reflection", "root"},
-		{"crw.replanSignals", "root"}, {"crw.spawnDecision", "root"}, {"crw.audit", "root"}, {"crw.archive", "root"}, {"crw.reportUp", "root"}}
+	want := []live{{"crw.integrate", lostPath}, {"crw.finalGate", "root"}, {"crw.verify", "root"}, {"crw.finalGate", "root"}, {"crw.crosscheck", "root"},
+		{"crw.milestoneClose", "root"}, {"crw.currentDesign", "root"}, {"crw.spawnDecision", "root"}, {"crw.reflection", "root"},
+		{"crw.replanSignals", "root"}, {"crw.audit", "root"}, {"crw.archive", "root"}, {"crw.reportUp", "root"}, {"crw.spawnDecision", "root"}}
 	if !slices.Equal(ranLive, want) {
 		t.Errorf("live operations %v, want %v", ranLive, want)
 	}
-	if agents := turnsSince(l, before); len(agents) != 2 || labelOf(l, agents[0].call) != "reviewer-final:M1" || labelOf(l, agents[1].call) != "reflection:M1" {
-		t.Errorf("live agent turns %+v, want the final review of the new head and the reflection on it only", agents)
+	if agents := turnsSince(l, before); len(agents) != 1 || labelOf(l, agents[0].call) != "reflection:M1" {
+		t.Errorf("live agent turns %+v, want the reflection on the new head only", agents)
 	}
+	checkCrosscheckAfterResume(t, l, crosschecksBefore, newTip)
 	closes = l.Rows("crw.milestoneClose")
 	if last := closes[len(closes)-1]; len(closes) != 2 || str(last.Data, "tip") != newTip {
 		t.Errorf("close rows: %d, the last judged %v, the branch is at %s", len(closes), last.Data["tip"], newTip)
@@ -316,14 +321,14 @@ func TestQuotaPauseResumeRunsOnlyHeldCall(t *testing.T) {
 			heldTurn = ts
 		}
 	}
-	if !slices.Equal(sent, []string{"build:B:executor", "reviewer-final:M1", "reflection:M1"}) {
-		t.Fatalf("live turns %v, want B's held call and the final review of the close", sent)
+	if !slices.Equal(sent, []string{"build:B:executor", "reflection:M1"}) {
+		t.Fatalf("live turns %v, want B's held call and the reflection of the close", sent)
 	}
 	if !strings.HasSuffix(heldTurn.op, "/t2") || heldTurn.thread != firstThread || firstThread == "" {
 		t.Errorf("the held call went on with %+v, want turn t2 of its own thread %s", heldTurn, firstThread)
 	}
 	for _, ev := range rowsAfter(l, before) {
-		if ev.Kind == engine.KindCall && ev.Op == "agent" && ev.Event == engine.EvPrepared && ev.Label != "build:B:executor" && ev.Label != "reviewer-final:M1" && ev.Label != "reflection:M1" {
+		if ev.Kind == engine.KindCall && ev.Op == "agent" && ev.Event == engine.EvPrepared && ev.Label != "build:B:executor" && ev.Label != "reflection:M1" {
 			t.Errorf("a call prepared on the resume: %s", ev.Label)
 		}
 	}
@@ -338,7 +343,7 @@ func TestQuotaPauseResumeRunsOnlyHeldCall(t *testing.T) {
 }
 
 // A close that judged a tip is not the close of a target that moved on after it, even when no lane changed: the target gets a commit
-// of another actor, and the resume judges the new head again - the final gate, a verification of it, the final review, the close,
+// of another actor, and the resume judges the new head again - the final gate, a verification of it, the crosscheck, the close,
 // the audit and the report - and runs no lane.
 func TestMilestoneCloseRunsAgainWhenTheTargetMovedOn(t *testing.T) {
 	l := NewLab(t, twoNodes()...)
@@ -349,6 +354,7 @@ func TestMilestoneCloseRunsAgainWhenTheTargetMovedOn(t *testing.T) {
 	moved := l.Git("commit-tree", l.Git("rev-parse", oldTip+"^{tree}"), "-p", oldTip, "-m", "another actor moved the target")
 	l.Git("update-ref", IntegrationRef, moved)
 
+	crosschecksBefore := len(l.Crosschecker.Calls())
 	before := l.LastSeq()
 	l.NewProcess("proc-2")
 	got := Value[laneResult](t, l.Resume())
@@ -361,12 +367,47 @@ func TestMilestoneCloseRunsAgainWhenTheTargetMovedOn(t *testing.T) {
 			live = append(live, ev.Op)
 		}
 	}
-	if !slices.Equal(live, []string{"crw.finalGate", "crw.verify", "crw.finalGate", "crw.spawnDecision", "crw.reviewerFinal", "crw.milestoneClose", "crw.currentDesign", "crw.spawnDecision", "crw.reflection",
-		"crw.replanSignals", "crw.spawnDecision", "crw.audit", "crw.archive", "crw.reportUp"}) {
+	if !slices.Equal(live, []string{"crw.finalGate", "crw.verify", "crw.finalGate", "crw.crosscheck", "crw.milestoneClose", "crw.currentDesign", "crw.spawnDecision", "crw.reflection",
+		"crw.replanSignals", "crw.audit", "crw.archive", "crw.reportUp", "crw.spawnDecision"}) {
 		t.Errorf("live operations %v", live)
 	}
-	if turns := turnsSince(l, before); len(turns) != 2 || labelOf(l, turns[0].call) != "reviewer-final:M1" || labelOf(l, turns[1].call) != "reflection:M1" {
-		t.Errorf("live agent turns %+v, want the final review of the new head and the reflection on it only", turns)
+	if turns := turnsSince(l, before); len(turns) != 1 || labelOf(l, turns[0].call) != "reflection:M1" {
+		t.Errorf("live agent turns %+v, want the reflection on the new head only", turns)
+	}
+	checkCrosscheckAfterResume(t, l, crosschecksBefore, moved)
+}
+
+// checkCrosscheckAfterResume checks the crosscheck a resume ran live: the lab's crosschecker answered both passes of round 1 of M1 after
+// the resume (the passes before it are the first n), at the head the close judged, in checkouts under the lab's run directory; the
+// close's receipts file is under the same run directory as before the resume; and nothing was written under a relative crosscheck
+// directory of the test's working directory.
+func checkCrosscheckAfterResume(t *testing.T, l *Lab, n int, head string) {
+	t.Helper()
+	calls := l.Crosschecker.Calls()
+	if len(calls) < n {
+		t.Fatalf("the crosschecker has %d calls, %d before the resume", len(calls), n)
+	}
+	var keys []string
+	for _, c := range calls[n:] {
+		keys = append(keys, c.Key)
+		if !strings.HasPrefix(c.Request.Worktree, l.LandRoot+string(os.PathSeparator)) || !c.Existed {
+			t.Errorf("the pass %s ran in %s (existed %v), not in a checkout under %s", c.Key, c.Request.Worktree, c.Existed, l.LandRoot)
+		}
+		if !strings.Contains(c.Request.Prompt, "HEAD: "+head) {
+			t.Errorf("the pass %s after the resume does not judge the head %s", c.Key, head)
+		}
+	}
+	slices.Sort(keys)
+	if !slices.Equal(keys, []string{"M1/r1/e0/A1", "M1/r1/e0/B1"}) {
+		t.Errorf("the passes after the resume %v, want both passes of round 1 of M1", keys)
+	}
+	if _, err := os.Stat(filepath.Join(l.LandRoot, "crosscheck", "M1-r1-receipts.md")); err != nil {
+		t.Errorf("the close's receipts file is not under the lab's run directory: %v", err)
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		if _, err := os.Stat(filepath.Join(cwd, "crosscheck")); err == nil {
+			t.Errorf("the crosscheck wrote under the test's working directory %s", cwd)
+		}
 	}
 }
 
@@ -483,7 +524,7 @@ func TestResumeAfterATierStepBeforeTheCommitRunsNoFinishedExecutorAgain(t *testi
 		for _, ts := range turnsSince(l, before) {
 			live = append(live, labelOf(l, ts.call))
 		}
-		if !slices.Equal(live, []string{"build:A:executor-t1", "reviewer-final:M1", "reflection:M1"}) {
+		if !slices.Equal(live, []string{"build:A:executor-t1", "reflection:M1"}) {
 			t.Errorf("live turns %v, want the held executor-t1 and the close", live)
 		}
 		noFinishedExecutor(t, l, before)

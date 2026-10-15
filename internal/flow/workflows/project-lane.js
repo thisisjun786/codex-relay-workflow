@@ -1,5 +1,6 @@
 import { RECEIPT, DESIGN, DESIGN_AUDIT, REFLECTION } from 'crw:lib/schemas'
 import { install } from 'crw:lib/lane'
+import { reportClose } from 'crw:lib/close'
 import { answeredQuestions, architectPacket, auditFindings, designAnswersPacket, designAuditPacket, designFixPacket, reflectionPacket, replanPacket, packet, answerPacket, fixPacket } from 'crw:lib/packets'
 export const meta = { name: 'project-lane', description: 'Run the issues of a milestone: background explorers, architect, design audit by the critic, explorers, one lane per issue node, milestone close and report', phases: ['explore', 'design', 'build', 'milestone'], args: { plan: 'string', milestone: 'string', cap: 'number' } }
 
@@ -421,12 +422,14 @@ try {
 
 async function closeAndReport() {
   phase('milestone')
-  // The close: the final gate over the integrated head (test evidence, and the QA receipt for a driven surface), reviewer-final over
-  // the range with the passed gate as its input, and the close recorded over the tip it judged. A gate that fails or cannot be settled
-  // ends the milestone here, and reviewer-final does not run; a reviewer-final verdict other than verified ends it too, and nothing is
-  // closed, reflected on or reported (crw:lib/close).
+  // The close: the final gate over the integrated head (test evidence, and the QA receipt for a driven surface), the crosscheck over the
+  // range with the passed gate as its input (two passes of a review engine of another model family than every author, run by the host),
+  // and the close recorded over the tip it judged. A gate that fails or cannot be settled ends the milestone here, and the crosscheck does
+  // not run; a crosscheck that does not verify the range ends it too, and nothing is closed, reflected on or reported (crw:lib/close).
+  // The halt carries what the close's stop does: the ask, the crosscheck's V in the escalation's evidence and in the run's value, and the
+  // fix packet the 자식 hands on.
   const closed = await crw.closeMilestone(ms)
-  if (closed.state !== 'closed') return crw.milestoneHalt(ms, closed.source, closed.status, closed.reason, closed.call)
+  if (closed.state !== 'closed') return crw.milestoneHalt(ms, closed.source, closed.status, closed.reason, closed.call, { ask: closed.ask, evidence: closed.evidence, fix: closed.fix, detail: closed.detail })
   // The architect's reflection (SP-ARCH-3): the next turn of its thread, at the integrated head the gate pinned, in a read-only checkout
   // of it. A call that did not complete is not ALIGNED: held and unknown hold the milestone, everything else escalates.
   const current = await crw.currentDesign(ms.id)
@@ -434,20 +437,21 @@ async function closeAndReport() {
   const reflected = await agent.call(reflectionPacket(ms, current, closed), { resume: current.handle, schema: REFLECTION, head: closed.gate.head, label: 'reflection:' + ms.id })
   const reflection = await crw.reflection(ms.id, closed.gate, reflected)
   if (reflection.state !== 'verdict') return crw.milestoneHalt(ms, 'reflection', reflection.state, reflection.reason, reflected.callId)
-  // A reason to re-plan stands whatever the alignment says: the numbers of the signals, and the alignments the close found.
-  const due = await crw.replanSignals(ms.id, { phase: 'close', final: closed.final.alignment, reflection: reflection.alignment })
+  // A reason to re-plan stands whatever the alignment says: the numbers of the signals, and the alignment the reflection found.
+  const due = await crw.replanSignals(ms.id, { phase: 'close', reflection: reflection.alignment })
+  // The closed milestone is audited, archived and reported before any re-plan: the reviews the acceptances rest on are audited against
+  // the reviewer threads on the host before any of them is archived, and the report carries the gate, the crosscheck and the reflection.
+  const reported = await reportClose(ms, closed, reflection.alignment)
   if (due.due) {
     // at the close every node has run: the whole DESIGN names none unstarted
     const out = await replan('close', 0, due, closed.gate.head, reflection.misaligned, [])
     if (out.state !== 'revised') return out.result
     // the correction issues are the orchestrator's: crw-add-issue and a plan revision, planned in the revision the architect just made
     const esc = await crw.escalate(null, { reason: 'replan_correction', detail: 'revision ' + out.revision + ' of milestone ' + ms.id + ' after ' + due.reasons.join(', '), ask: 'correction_issues' })
-    return { state: 'replanned', milestone: ms.id, lanes, tip: closed.tip, revision: out.revision, reasons: due.reasons, escalation: esc.id, final: closed.final.alignment, reflection: reflection.alignment }
+    return { state: 'replanned', milestone: ms.id, lanes, tip: closed.tip, revision: out.revision, reasons: due.reasons, escalation: esc.id, report: reported.report.report_id,
+      crosscheck: closed.crosscheck.verdict, reflection: reflection.alignment }
   }
-  await crw.spawnDecision('ARCH_2', 'skip', { reason: 'no_replan_signal', inputs: { milestone: ms.id, revision: due.revision, plan_mismatch: due.plan_mismatch, slice_change: due.slice_change.changed, final: closed.final.alignment, reflection: reflection.alignment } })
-  // The reviews the acceptances rest on are audited against the reviewer threads on the host before any of them is archived.
-  const settled = await crw.settleReviews(ms)
-  const report = await crw.reportUp(ms.id, Object.assign({}, closed.close, { audit: settled.audit }))
-  return { state: 'closed', milestone: ms.id, lanes, tip: closed.tip, report: report.report_id, gate: closed.gate.state, final: closed.final.alignment, reflection: reflection.alignment,
-    audit: { ok: settled.audit.ok, mismatch: settled.audit.mismatch, unobserved: settled.audit.unobserved }, archived: settled.archive.archived.length }
+  await crw.spawnDecision('ARCH_2', 'skip', { reason: 'no_replan_signal', inputs: { milestone: ms.id, revision: due.revision, plan_mismatch: due.plan_mismatch, slice_change: due.slice_change.changed, reflection: reflection.alignment } })
+  return { state: 'closed', milestone: ms.id, lanes, tip: closed.tip, report: reported.report.report_id, gate: closed.gate.state, crosscheck: closed.crosscheck.verdict, reflection: reflection.alignment,
+    audit: { ok: reported.audit.ok, mismatch: reported.audit.mismatch, unobserved: reported.audit.unobserved }, archived: reported.archive.archived.length }
 }

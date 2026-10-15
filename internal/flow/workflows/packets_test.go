@@ -8,7 +8,10 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/reviewadapter"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
+	"github.com/thisisjun786/codex-relay-workflow/internal/relay/acceptance/premerge"
 )
 
 // packetText runs a script that imports from crw:lib/packets and returns the packet text it returns.
@@ -340,6 +343,55 @@ func TestFixPacketNamesTheFailedTestsOfTheVerification(t *testing.T) {
 		if want := "ROLE: executor. Node A: fix what the run found, in the same worktree, and answer with RECEIPT again.\n\n" +
 			"VERIFICATION FAILED (crw-dev ci local):\n- validate/tests: failed"; old != want {
 			t.Errorf("a verification without failed tests (%q): the fix packet\n%q\nwant\n%q", none, old, want)
+		}
+	}
+}
+
+// TestCrosscheckRuleIsOneTableForPacketOpAndClose (CRW-1473, CRW-1480 item 2): the crosscheck has one close rule, and the packet, the op
+// and the close say the same one. Both passes' packets hold ops.CrosscheckRule word for word (and the lens of their own pass), and for
+// each severity P0-P3 crossed with every impact and none, ops.CrosscheckVerdictOf rules needs_changes exactly when premerge.Blocks and
+// carries the finding otherwise. The close part is TestCloseFollowsTheCrosscheckRule (ops/finalgate_test.go): a close over that one
+// finding closes exactly when V is verified.
+func TestCrosscheckRuleIsOneTableForPacketOpAndClose(t *testing.T) {
+	const g = "{ milestone: 'M1', head: 'h9', base: 'b0', range: 'b0..h9', decisions: [{ id: 'D1', nodes: ['n1'], change: 'split the store' }] }"
+	for pass, lens := range map[string]string{"A": "PASS A (coverage)", "B": "PASS B (bug hunt)"} {
+		packet := packetText(t, "crosscheck-packet-"+pass, "crosscheckPacket", "crosscheckPacket(ms, "+g+", '"+pass+"', {})")
+		for _, want := range []string{ops.CrosscheckRule, lens, "Review the changes between b0 and h9", "HEAD: h9", "D1 (nodes n1): split the store"} {
+			if !strings.Contains(packet, want) {
+				t.Errorf("the crosscheck packet of pass %s lacks %q:\n%s", pass, want, packet)
+			}
+		}
+	}
+	for _, sev := range []string{"P0", "P1", "P2", "P3"} {
+		for _, impact := range append(slices.Clone(premerge.Impacts), "") {
+			f := reviewadapter.Finding{ID: "f1", Severity: sev, Impact: impact, File: "a.go", Line: 1, Text: "t"}
+			verdict, carried := ops.CrosscheckVerdictOf([]reviewadapter.Finding{f})
+			blocks := premerge.Blocks(sev, impact)
+			if (verdict == reviewadapter.VerdictNeedsChanges) != blocks || (len(carried) == 1) == blocks {
+				t.Errorf("%s/%q: CrosscheckVerdictOf %s carried %v, premerge.Blocks %v", sev, impact, verdict, carried, blocks)
+			}
+		}
+	}
+}
+
+// TestCrosscheckFixPacketNamesTheRouteOfTheFix (CRW-1473): the fix packet of a crosscheck that needs changes names the blocking
+// findings by id (not the carried ones), the range as a git diff command over their files, the criteria, and the route of part A: a
+// correction issue of the milestone, a new executor subagent on a branch from the integration tip, the land through land-head, and
+// the report of the verdict up to the 부모.
+func TestCrosscheckFixPacketNamesTheRouteOfTheFix(t *testing.T) {
+	const v = "{ verdict: 'needs_changes', round: 1, head: 'h9', base: 'b0', carried: ['f2'], findings: [" +
+		"{ id: 'f1', severity: 'P1', impact: 'core_function', file: 'a.go', line: 3, text: 'the store loses a row' }, " +
+		"{ id: 'f2', severity: 'P3', impact: 'minor_separable', file: 'b.go', line: 1, text: 'a nit' }] }"
+	packet := packetText(t, "crosscheck-fix-packet", "crosscheckFixPacket", "crosscheckFixPacket(ms, "+v+")")
+	for _, want := range []string{"f1 [P1/core_function] a.go:3 the store loses a row", "git diff b0..h9 -- a.go", "correction issue of milestone M1 naming these finding ids: f1",
+		"a new executor subagent", "crw flow start land-head", "crw flow report-up", "부모"} {
+		if !strings.Contains(packet, want) {
+			t.Errorf("the fix packet lacks %q:\n%s", want, packet)
+		}
+	}
+	for _, gone := range []string{"f2", "b.go", "start crosscheck"} {
+		if strings.Contains(packet, gone) {
+			t.Errorf("the fix packet names %q:\n%s", gone, packet)
 		}
 	}
 }
