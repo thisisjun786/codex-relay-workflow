@@ -1,8 +1,8 @@
 # The shared envelope, and what is owed upward
 
-The sessions in this document are named by [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and an issue child is no layer.
+The sessions in this document are named by [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and a `child` session (a code id, not a layer) is no layer.
 
-Two relations carry messages here. A child and its issue child exchange a completion and a
+Two relations carry messages here. A child and its `child` session exchange a completion and a
 correction, and that pair has a queue, a receipt, an acknowledgement and a verdict. A
 parent and a child exchange instructions and reports, and that pair has less: an
 instruction downward is a linkage record rather than a send, and a report upward is a staged
@@ -59,12 +59,12 @@ moment nothing has recorded a time.
 
 | Direction | transport_accepted | received | agreed | applied | verified |
 |---|---|---|---|---|---|
-| issue child to child, completion | `attempts` | `acks` | `acks` | `verdicts` | `verdicts` |
-| child to issue child, revision request | `attempts` | none | none | `events` | `verdicts` |
+| `child` session to child, completion | `attempts` | `acks` | `acks` | `verdicts` | `verdicts` |
+| child to `child` session, revision request | `attempts` | none | none | `events` | `verdicts` |
 | parent to child, directive | none | `scope_directives` | `scope_directives` | none | none |
 | child to parent | `supervisor_attempts` | `supervisor_readbacks` | none | none | none |
 
-The halves differ because the directions differ. An issue child's completion is acknowledged;
+The halves differ because the directions differ. A `child` session's completion is acknowledged;
 `ack.acknowledge` exists for exactly that message and refuses a revision delivery. What shows a
 correction was applied is the completion receipt of the generation it opened.
 
@@ -101,7 +101,7 @@ and the replacement procedure are in [Where an instruction stands](linkage.md#wh
 ## supervisor-obligation/1
 
 Three things are news for the level above: a completion, a new real block, and a decision only
-the user can make. The kind comes from the issue child's own report status - done and noop are
+the user can make. The kind comes from the `child` session's own report status - done and noop are
 completions, blocked and budget-exhausted are blocks, unsafe and needs-human are decisions -
 and from the outcome only when no report exists. A failed or interrupted turn raises nothing:
 how a turn ended is the child's business and re-dispatching it is ordinary work.
@@ -112,8 +112,8 @@ obligation however many times it is read, across a restart or a service replacem
 ### What this does not claim
 
 That a parent agreed to anything, acted on it, or confirmed it. No row in this store says
-so: `deliveries` holds one recipient per event and serves the registered pair of a child and its issue child, and
-`ack.acknowledge` records a child acknowledging an issue child completion. What CAN now be said is
+so: `deliveries` holds one recipient per event and serves the registered pair of a child and its `child` session, and
+`ack.acknowledge` records a child acknowledging a `child` session completion. What CAN now be said is
 narrower than it sounds - [the supervisor channel](supervisor-channel.md) stages a report, sends
 it and records a readback, which together say this attempt's delivery token is in the recipient's
 thread, in a turn the host names, and the turn the readback names is real there and did not

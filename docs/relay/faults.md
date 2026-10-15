@@ -1,8 +1,8 @@
 # Operational faults
 
-The sessions in this document are named by [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and an issue child is no layer.
+The sessions in this document are named by [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and a `child` session (a code id, not a layer) is no layer.
 
-When the machinery between an issue child, the child above it and the parent above that breaks, somebody has to
+When the machinery between a `child` session, the child above it and the parent above that breaks, somebody has to
 notice. Until now that somebody was the user: they read a stalled project, asked what had
 happened, and then asked for an issue to be filed. This removes both steps. The daemon reads
 the breakages this store can already see, converges every repeated observation of one breakage
@@ -432,7 +432,7 @@ times, outcome and error; `attempts(publication, *, limit)` returns them.
   because it says nothing about the settings that were refused; three refusals for one reason are
   repetition whatever waited between them. A streak that ended is never counted again. Signature
   `{relationship, errorCode}`, occurrence key `refused:<journal seq>`. `managed_start_failed`: the host
-  answered a managed start and the relay attached no issue child (broken; signature `{issueKey,
+  answered a managed start and the relay attached no `child` session (broken; signature `{issueKey,
   receiptStatus}`, so a rejection and a partial start are different faults). The answer is read
   where it actually lives. `managed.ManagedStart` records a receipt only for an ACCEPTED creation,
   so for an armed request with no receipt the answer is the newest creation-stage row it
@@ -440,17 +440,17 @@ times, outcome and error; `attempts(publication, *, limit)` returns them.
   a reason `creation_failed`, `creation_unknown`, `creation_identity_unobserved` or
   `creation_settings_unverified` is an answer after a create was attempted, and its suffix is the
   status. The last two come after the host ACCEPTED the creation - its receipt named an unusable
-  identity, or settings that did not match the request - so the incident says an issue child may exist
+  identity, or settings that did not match the request - so the incident says a `child` session may exist
   that the relay could not attach, never that none was published. The incident states only what
-  the answer establishes: an issue child the journaled answer names (the `retainedChildTaskId` a partial
+  the answer establishes: a `child` session the journaled answer names (the `retainedChildTaskId` a partial
   creation left) is named and said not to be attached; `unknown` - the managed start's own
-  classification of a receipt it could not read as accepted or failed - says whether an issue child was
+  classification of a receipt it could not read as accepted or failed - says whether a `child` session was
   created is not established; only a journaled answer whose receipt named no thread says so. A
   recorded receipt that is not accepted still decides where one exists, and is stated as the
   registry's stored status whatever it names, never as the host's answer or a journaled one: the
-  registry keeps an issue child id only for a receipt it accepts and stores an accepted one missing its
+  registry keeps a `child` session id only for a receipt it accepts and stores an accepted one missing its
   thread or standby id as `partial` with none, so from that row neither what the host answered
-  nor whether it created an issue child is established. The record a fault publishes says it clears on
+  nor whether it created a `child` session is established. The record a fault publishes says it clears on
   exactly what `still_present` reads: an accepted receipt, attaching, or a newer creation-stage
   answer. The newest creation-stage row is found through the partial index
   `journal_managed_creation`, which holds only those rows, so it is one probe however many rows
@@ -493,10 +493,10 @@ times, outcome and error; `attempts(publication, *, limit)` returns them.
   `MANAGED_READINGS_PER_SWEEP` (8) per tick in a rotation over the settlements: each settled
   turn once, of a relationship still on its managed start's generation, never the standby
   (bootstrap) turn. The call is the one `reporting-show` makes - the selection, marker root,
-  workspace, hashed assignment, issue child session and turn - and writes nothing. An observer error is
+  workspace, hashed assignment, `child` session and turn - and writes nothing. An observer error is
   a `managed_reading_failed` gap.
-  In the daemon's `supervisor.OmissionObserver`, an absent issue child claim alone does not make a
-  managed turn unmeasured. An intact intent, issue child binding and relationship marker must match a
+  In the daemon's `supervisor.OmissionObserver`, an absent `child` session claim alone does not make a
+  managed turn unmeasured. An intact intent, `child` session binding and relationship marker must match a
   unique attached start, the selected store, workspace, dispatch hash and current generation;
   the exact business turn must be admitted and independently settled. With no claim or
   disposition, that admission supplies the evidence for the existing omission classifier even
@@ -623,7 +623,7 @@ Tables, all new because this store has no migration path: `fault_target_projects
 
 ## What a fault is
 
-A fault is the machinery failing to do its job. It is not an issue child failing at its task: an issue child
+A fault is the machinery failing to do its job. It is not a `child` session failing at its task: a `child` session
 that reports `blocked` has worked correctly, and
 [supervision](../../internal/relay/supervisor) owns deciding what the level above is
 owed about it. A fault is the layer below that — the turn that settled without reporting at
@@ -704,9 +704,9 @@ call. Three readers, each in its own process, record it, and the evidence of an 
 recorded ([CRW-1301](dag-scheduler.md)); `check` when the one-shot `dag-integration-target-check`,
 which cron, the coordinator or the integrator runs and the daemon never does, reads the remote of a
 recorded target and finds a head outside the heads recorded for its integration ref
-([CRW-1304](dag-scheduler.md)); and `receive` when the acknowledgement of an issue child's event finds the
+([CRW-1304](dag-scheduler.md)); and `receive` when the acknowledgement of a `child` session's event finds the
 head that command or the push stored on a recorded target outside the recorded heads and different
-from the issue child's baseline, without a network call ([CRW-1302](dag-scheduler.md)). The same remote head
+from the `child` session's baseline, without a network call ([CRW-1302](dag-scheduler.md)). The same remote head
 is one occurrence whichever reader sees it, so a second reader adds no second blocking notice. The
 process that records it registers it, as routing registers the product classes, so the ledger itself
 still reads no git ref and makes no network call.

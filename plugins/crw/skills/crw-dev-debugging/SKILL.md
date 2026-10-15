@@ -235,7 +235,7 @@ was likely skipped.
 **Repeated Failure Rule**: After repeated failed fix attempts, pause entirely.
 Each fix revealing a new problem in a different place is a sign of
 **architectural issues**, not simple bugs. Raise it with the level that assigned
-the work before attempting more fixes: an issue child returns it to its project
+the work before attempting more fixes: a `child` session (a code id, not a layer) returns it to its project
 orchestrator, and a task with no parent asks the user.
 
 ---
@@ -344,7 +344,7 @@ counts as closing one — is `dev-testing` `references/ci-pipeline.md` §5
 
 ### Escalate When:
 
-- **Repeated fix attempts failed** — likely architectural; return it to the level that assigned the work (an issue child to [the child](../crw-canon/references/hierarchy.md#the-levels) (project session) that released it, a task with no parent to the user)
+- **Repeated fix attempts failed** — likely architectural; return it to the level that assigned the work (a `child` session to [the child](../crw-canon/references/hierarchy.md#the-levels) (project session) that released it, a task with no parent to the user)
 - **Undocumented library behavior** — document evidence; propose an upstream report or scoped workaround without posting externally unless authorized
 - **Environment-specific** — requires access you don't have (prod DB, cloud IAM)
 - **Security-sensitive** — don't debug auth/crypto/payment alone; flag it to the level that assigned the work for human review

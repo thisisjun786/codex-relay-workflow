@@ -1,6 +1,6 @@
 # Goal mode
 
-The sessions in this document are named by [the level table](../../crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and an issue child is no layer.
+The sessions in this document are named by [the level table](../../crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and a `child` session (a code id, not a layer) is no layer.
 
 Goal mode is the one optional execution mode of [crw-run](../SKILL.md): the fixed project session holds a
 native host goal, and the goal plus the host's automatic continuation carry the run across turns. It is
@@ -30,13 +30,13 @@ Three rules follow, and every section below keeps them.
    native goal tracks verified results and integrations for the agreed scope and needs no source diff in
    the child checkout. The one exception is a user's explicit request to implement a task in the
    current session: for that task the session is its implementer and not acting as project session, runs
-   the loop with its own goalplan, creates no issue child and starts no goal mode, and a session that holds an
+   the loop with its own goalplan, creates no `child` session and starts no goal mode, and a session that holds an
    active child goal cannot take it up under that goal (see task creation in [crw-run](../SKILL.md)).
-3. **An issue child's workflow is named `crw-loop`.** Issue children keep their own implementation workflow, the
-   PABCD loop, and a packet names it `crw-loop`. The child coordinates issue children; it does not adopt a
-   issue child's goal or FSM.
+3. **A `child` session's workflow is named `crw-loop`.** `child` sessions keep their own implementation workflow, the
+   PABCD loop, and a packet names it `crw-loop`. The child coordinates `child` sessions; it does not adopt a
+   `child` session's goal or FSM.
 
-One child coordinates one project; one independent issue child owns one issue and its delivery, one issue per
+One child coordinates one project; one independent `child` session owns one issue and its delivery, one issue per
 delivery today under the repository's work-unit rules (`POLICY.md#work-units-review-and-integration` in the CRW repository),
 under the shared
 [scope of each level](../../crw-canon/references/hierarchy.md#scope-of-each-level).
@@ -73,8 +73,8 @@ binds at that level through [Initiative supervision](initiative-supervision.md),
 stays the project session's: it creates no parent goal, and no goal for any other task.
 
 Read the existing project coordination record and live ownership before acting. Restore project and
-child IDs, agreed issue scope and finish boundary, permissions, issue child and turn IDs, worktrees, PRs and
-revisions, observation mode, pending receipts, blockers and next actions. Reuse compatible issue children and
+child IDs, agreed issue scope and finish boundary, permissions, `child` session and turn IDs, worktrees, PRs and
+revisions, observation mode, pending receipts, blockers and next actions. Reuse compatible `child` sessions and
 reconcile uncertain sends; a missing transcript or elapsed wait does not permit a second writer. Keep
 future backlog outside this run unless the user expands its scope.
 
@@ -103,24 +103,24 @@ or claim goal mode is active.
    dependents; keep unrelated authorized work moving. Existing assignments take precedence.
 2. **Observe.** Before dispatch or registration, select and record the compatible path in
    [OPS-8.1](operations.md#ops-81-parent-continuation-and-waiting). The active-session path uses bounded
-   task and turn transport waits with actual issue child IDs. After a timeout, refresh observations, use
-   available capacity and wait again. A quiet issue child or an empty ready queue while owned work runs is not
+   task and turn transport waits with actual `child` session IDs. After a timeout, refresh observations, use
+   available capacity and wait again. A quiet `child` session or an empty ready queue while owned work runs is not
    a blocker or completion. Do not resend work or create replacements merely to obtain a response.
 3. **Verify and correct.** Inspect the reported revision, criteria, CI and review findings using
-   `crw-run`. Send in-scope corrections to the existing issue child. For a relay-owned assignment, reconcile
+   `crw-run`. Send in-scope corrections to the existing `child` session. For a relay-owned assignment, reconcile
    its actual receipt, ACK and verdict through the relay; observing a transcript is not delivery. Record
-   remaining obligations explicitly. Route a correction by what the issue child is doing rather than waiting
-   for it to go idle: an idle issue child takes the ordinary message path, and an issue child mid-turn is steered into
+   remaining obligations explicitly. Route a correction by what the `child` session is doing rather than waiting
+   for it to go idle: an idle `child` session takes the ordinary message path, and a `child` session mid-turn is steered into
    its verified active turn. Re-read and reclassify when the turn changes underneath. An explicit stop is
    the supported goal pause followed by steering the observed turn to finish safely; ordinary corrections
-   neither interrupt an issue child nor change its goal. Acceptance of an instruction is not a read, an effect,
+   neither interrupt a `child` session nor change its goal. Acceptance of an instruction is not a read, an effect,
    a receipt, an ACK or a verdict.
 4. **Integrate and advance.** Serialize authorized merges into each shared target, recheck candidate and
    base and verify landing. Update the coordination record and issue state within existing authority,
    then release newly ready successors. Each Run pass returns to goal mode; it does not end the child
    objective. Keep one implementation issue per delivery today (a task branch and its head, or a pull
    request where one is named), under the repository's
-   work-unit rules (`POLICY.md#work-units-review-and-integration` in the CRW repository); an issue child report or green
+   work-unit rules (`POLICY.md#work-units-review-and-integration` in the CRW repository); a `child` session report or green
    CI alone is not Done.
 
 Keep the record current after meaningful transitions, with the latest evidence and next action rather
@@ -159,7 +159,7 @@ actionable obligation.
 ## Parent goal lifecycle
 
 This is the lifecycle for the fixed project session's native host goal. It uses no implementation
-goalplan and borrows no issue child's goal. Read the exposed tool schemas and effective hook behavior;
+goalplan and borrows no `child` session's goal. Read the exposed tool schemas and effective hook behavior;
 unsupported actions stay unsupported.
 
 This lifecycle is the project session's. A parent's goal is not defined here, and nothing in this file
@@ -205,7 +205,7 @@ The recorded mode says which of these actually holds, in the words it will be re
 | --- | --- |
 | `goal-free-run` | The project session default. No child goal. Run carries the agreed scope. What brings the child back is recorded separately in `observation_path`, because this field answers only whether a goal exists. |
 | `goal` | A native child goal is active under this lifecycle, because the user explicitly asked for one. |
-| `blocked` | The child can neither hold a goal it needs nor proceed without one. No issue child is created. |
+| `blocked` | The child can neither hold a goal it needs nor proceed without one. No `child` session is created. |
 
 `goal-free-run` is the default rather than a substitute, and it is never reported as goal mode. It does
 carry a claim of unattended continuation, but only the conditional one the readiness facts in
@@ -213,7 +213,7 @@ carry a claim of unattended continuation, but only the conditional one the readi
 child waits idle and a delivered event resumes it, and where they do not it keeps bounded observation
 and claims nothing. Where goal mode was explicitly requested, its goal cannot activate, and the user
 declines the default in its place, the mode is `blocked`, the unresolved blocker is cited against the
-issue that owns it, and no issue child is created first. For the goal and Stop-hook conflict that issue is
+issue that owns it, and no `child` session is created first. For the goal and Stop-hook conflict that issue is
 CRW-29 of the archive; its resolution is what clears the blocker, and until it
 is recorded there the blocker still stands.
 
@@ -258,7 +258,7 @@ Read `get_goal` first, then choose the matching case:
 | Observed state | Action |
 | --- | --- |
 | No goal, or previous goal actually complete | Create the project session's goal with `create_goal`, then read it back. |
-| Matching active goal | Reuse it with the same scope; refresh the coordination record and live issue child ownership. |
+| Matching active goal | Reuse it with the same scope; refresh the coordination record and live `child` session ownership. |
 | Matching blocked/paused goal | Preserve it. Use an exposed, authorized resume action if supported, then verify active status; otherwise report the exact manual resume requirement. |
 | Different unfinished goal | Report the ownership/scope conflict. Never overwrite it, call it complete or create a duplicate to make room. |
 | Unreadable/uncertain goal state or mutation result | Read/reconcile the existing goal before retrying. Do not assume absence or submit a second create. |
@@ -276,7 +276,7 @@ supplies a token budget, with exactly that value, and let the host validate the 
 With no budget requested the goal is unlimited. A host whose `create_goal` does not accept `token_budget`
 is a reported capability conflict, not a reason to create the goal unlimited or to discard the limit. Record the returned identity and status where
 available and verify the objective and active status. Wording in a document is not a created goal. Do not
-call `crw pabcd loop init` or enter PABCD merely to support this child goal. An issue child's loop setup remains
+call `crw pabcd loop init` or enter PABCD merely to support this child goal. A `child` session's loop setup remains
 separate.
 
 ## Retiring a goal a parent already holds
@@ -305,7 +305,7 @@ So the supported routes are these, and no other. A child whose agreed scope is g
 completes its goal honestly and starts goal-free the next time. A child mid-scope keeps its active goal,
 runs as `goal`, and pays the Stop cost until that boundary. A child may record `blocked` where the host's
 actual threshold is met, which both ends its turn and stays deliverable, but that is an interim carrying a
-reason and an ending condition rather than a destination, because a child waiting on a dispatched issue child
+reason and an ending condition rather than a destination, because a child waiting on a dispatched `child` session
 is working as designed and calling that blocked misinforms whoever reads it next.
 
 Where a child is found already paused, nothing here resumes it: that is a human decision under
@@ -315,19 +315,19 @@ relationships waiting on it, and the exact resume the user has to perform.
 
 ## Repeat, complete or recover
 
-The existing goal remains active across Run passes. Refresh scope, issue child ownership, delivery revisions,
+The existing goal remains active across Run passes. Refresh scope, `child` session ownership, delivery revisions,
 receipts and next actions in the same coordination record. Returning from a Run pass does not complete
 the goal. On host continuation or authorized resume, read the goal and record first, then continue the
 next available in-scope action.
 
-Only call `update_goal(status="complete")` after all agreed obligations are verified and no owned issue child
+Only call `update_goal(status="complete")` after all agreed obligations are verified and no owned `child` session
 work, correction, integration or receipt remains pending. Re-read and verify the result; a rejected
 mutation leaves the goal unfinished. Record the actual reason and supported recovery rather than altering
 unrelated state.
 
 Use `update_goal(status="blocked")` only under the host's actual threshold. On the current native tool
 contract this requires the same blocker across at least three consecutive goal turns with no meaningful
-authorized progress possible; a resumed blocked goal starts a fresh three-turn audit. One issue child waiting or
+authorized progress possible; a resumed blocked goal starts a fresh three-turn audit. One `child` session waiting or
 blocked is not a project blocker while independent scoped work remains. Do not manufacture turns or rapid
 retries to reach a count; use real continuations and record concrete evidence.
 

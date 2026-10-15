@@ -1,6 +1,6 @@
 # codex-thread-bridge launch and recovery
 
-The sessions in this document are named by [the level table](../../crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and an issue child is no layer.
+The sessions in this document are named by [the level table](../../crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and a `child` session (a code id, not a layer) is no layer.
 
 Read only when this MCP is the selected transport. Discover current schemas and
 call `get_capabilities`; the tool contract overrides this dated reference.
@@ -49,19 +49,19 @@ build is installed is classified under
 
 ## A relay child that cannot reach the relay daemon
 
-A relay issue child reports (`emit`, `intent-claim`, `intent-disposition`) only through the relay daemon's
+A relay `child` session reports (`emit`, `intent-claim`, `intent-disposition`) only through the relay daemon's
 `control.sock`, and Codex refuses that connect in a readOnly sandbox and in a workspace-write one
-without network access. The bridge runs outside the issue child's sandbox, so `report_child` reports for
-such an issue child: `command` is `emit`, `intent-claim` or `intent-disposition`, and `arguments` are that
-command's options as the issue child would give them to `crw relay` after the command name. The bridge
+without network access. The bridge runs outside the `child` session's sandbox, so `report_child` reports for
+such a `child` session: `command` is `emit`, `intent-claim` or `intent-disposition`, and `arguments` are that
+command's options as the `child` session would give them to `crw relay` after the command name. The bridge
 hands them to the daemon, which records the report in its own store; the call answers `exitCode` 0
 and the daemon's own output, or an error carrying the daemon's refusal. The state the daemon is found
 in is the bridge's own configuration (the App Server socket it was started with and the relay state
 variable of its own environment), never an argument: a `--state`, `--socket` or `--kind-module` is no
-option of an issue child command and is refused, as is a path that is not absolute, and nothing is recorded. With no daemon the call
+option of a `child` session command and is refused, as is a path that is not absolute, and nothing is recorded. With no daemon the call
 fails with an explicit error and records nothing; there is no local store. Create-time refusal
-(`create_thread`, `create_worktree_thread`) and `register --child-settings` still refuse a relay issue child
-in such a sandbox; `report_child` is for the issue child created outside them, and its MCP profile has to leave
+(`create_thread`, `create_worktree_thread`) and `register --child-settings` still refuse a relay `child` session
+in such a sandbox; `report_child` is for the `child` session created outside them, and its MCP profile has to leave
 this bridge enabled.
 
 ## Reach a task that is already working
@@ -94,7 +94,7 @@ Three claims stay separate. The receipt says the host accepted the input into th
 guarded turn. That the peer read it is only visible in the task's own transcript,
 and that the peer acted on it is only visible in its delivered work. A steer never
 substitutes for a completion receipt, an acknowledgement, or a verification result,
-and it changes no ownership: one child still holds one project and one issue child one
+and it changes no ownership: one child still holds one project and one `child` session one
 issue.
 
 What the host attaches to the input is a fourth thing, and the two paths are not
@@ -152,7 +152,7 @@ error, and the creation goes on.
 
 It also accepts `role`. Name the role this task is being created for and state a pair the
 host's declared policy reports for it (for a role that lists several, one entry of its `pairs`; for a
-issue child, the entry of its issue's family under [Child pair by issue type](../../crw-plan/references/integrations.md#child-pair-by-issue-type)), read from `get_capabilities` rather than remembered;
+`child` session, the entry of its issue's family under [Child pair by issue type](../../crw-plan/references/integrations.md#child-pair-by-issue-type)), read from `get_capabilities` rather than remembered;
 the host then checks the answer instead of taking the caller's word. A role the policy does not
 declare is refused before any call, and no pair is supplied in its place. The rule and the
 decision it carries are in
@@ -200,10 +200,10 @@ A `bridge-managed-retained` checkout is not Desktop-managed and is not bound to
 a Desktop project. Nothing deletes or archives it automatically, and retention
 belongs to the child that asked for it.
 
-Creating a worktree does not change what the task inside it may do. An issue child
+Creating a worktree does not change what the task inside it may do. A `child` session
 created with the capability to commit owns its branch, its commits, its push and,
 where the assignment names one, its pull request. Where a running task cannot write git metadata, the coordinator
-prepares the branch before dispatch and makes the commits while that issue child edits
+prepares the branch before dispatch and makes the commits while that `child` session edits
 source and returns a frozen diff. Neither path widens a running task's
 permissions. Capability at creation is OPS-5.5 and delivery ownership is OPS-9 in
 [Operations contract](operations.md).
@@ -310,7 +310,7 @@ a role was named and its pair was not checked against that role's declared pairs
 whose pair is the user's own selection, or a request citing a policy exception — the send is
 refused instead, because transmitting an unchecked pair there could restore a value the user has
 since changed. A send naming no role is not covered by that check; the relay resolves a
-recipient's role from its binding and owns it. Where the role lists several pairs, as the issue child role may, the policy does not say which pair a thread runs on, so a send naming that role to a recipient the host reports `notLoaded` takes the relay delivery's route: the thread is resumed without the pair, and the turn starts only when the model and effort the host reports for it equal the request's (the receipt's `pairCheck` records the report). Another pair, or a report without one, starts no turn and is refused as `unverified_pair_for_unloaded_thread` naming both pairs; send again with a new request id naming the pair the host reported, or deliver through the relay.
+recipient's role from its binding and owns it. Where the role lists several pairs, as the `child` role may, the policy does not say which pair a thread runs on, so a send naming that role to a recipient the host reports `notLoaded` takes the relay delivery's route: the thread is resumed without the pair, and the turn starts only when the model and effort the host reports for it equal the request's (the receipt's `pairCheck` records the report). Another pair, or a report without one, starts no turn and is refused as `unverified_pair_for_unloaded_thread` naming both pairs; send again with a new request id naming the pair the host reported, or deliver through the relay.
 
 A task's PABCD state lives in the cwd the host reports for it (`<cwd>/.crw/sessions/<thread id>.json`), so a resume at another cwd would open an empty IDLE state machine beside the work it left. A send whose `expected_settings.cwd` is not that cwd (a symbolic-link alias of it is the same cwd) while the state there is in a work phase, or cannot be read, is refused as `state_root_conflict` before anything is resumed; the message names the preserved state file. Nothing is moved: resume the task at its own cwd, or hand the work over explicitly to a task started at the new cwd. A bound source worktree is not the task's cwd. The relay's delivery and `crw manage child-resume` refuse the same way when the recorded cwd moved; the relay records that refusal as not attempted and retry-safe, so the same request id is checked again once the task's state is no longer in a work phase. Every such resume first records the task's cwd for its SessionStart under the CRW home (`CRW_HOME`, else `~/.crw`, in `state-roots/`); a resume that cannot record it is refused as `state_root_anchor_unrecorded` with nothing resumed, so make the CRW home writable and retry. A record that exists but cannot be trusted (unreadable, not a regular file, too large, malformed, another version) is refused as `state_root_anchor_unreadable` with nothing resumed and is never overwritten: repair or remove that file by hand. The record follows the task only to the cwd the host reports in its answer to the resume; when it cannot be moved there, the task was resumed but no turn is started (`state_root_anchor_unrecorded`). A prompt of the task at a cwd other than its in-flight root creates no state there and is answered with the root; elsewhere, a prompt that writes state moves the record to its cwd first and writes nothing when it cannot (answered `state_root_anchor_unrecorded`).
 
@@ -332,7 +332,7 @@ what a new one costs, so a send with no stated pair is refused before the task i
 read. The resume carries those settings and is read as an observation, and a difference
 or a setting the host does not report withholds the message instead of dispatching it.
 Name the RECIPIENT's role in `role` where it has one, so the stated pair is checked against
-that role rather than accepted as given. For an issue child the stated pair is the one its record holds, whichever of its role's pairs the task was created on.
+that role rather than accepted as given. For a `child` session the stated pair is the one its record holds, whichever of its role's pairs the task was created on.
 An unrecognised key is refused rather than ignored. Verify the returned settings on each
 mutation and reconcile a mismatch on the same task.
 
@@ -417,9 +417,9 @@ Do not delete receipts, reset shared work, or edit a session database to retry.
 
 Read/list/wait are observational and never resume a task. `wait_thread` requires
 both `thread_id` and `turn_id`; omitting either is a validation error, not a wait.
-Use the exact pair returned by that issue child's dispatch receipt. If the receipt is
+Use the exact pair returned by that `child` session's dispatch receipt. If the receipt is
 missing or the pair is disputed, recover the turn from that same thread's paginated
-history before waiting. A turn copied from the coordinator or another issue child is not
+history before waiting. A turn copied from the coordinator or another `child` session is not
 a substitute, even if it completed. Keep the task/host, turn and dispatch receipt
 associated in the coordination record.
 

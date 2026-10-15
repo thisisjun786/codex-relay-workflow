@@ -420,12 +420,12 @@
     },
     {
       "file": "references/dispatch-surfaces.md",
-      "reason": "CRW-1431: the skill text names the project session and the repository session by layer and carries no relay role id",
+      "reason": "CRW-1553: the relay role `child` is named by its id (\"a `child` session\"), not as an issue child",
       "hunks": [
         {
           "line": 3,
           "new": [
-            "The sessions in this document are named by [the level table](../../crw-canon/references/hierarchy.md#the-levels): the child is the project session, and an issue child is no layer.\n",
+            "The sessions in this document are named by [the level table](../../crw-canon/references/hierarchy.md#the-levels): the child is the project session, and a `child` session (a code id, not a layer) is no layer.\n",
             "\n"
           ]
         },
@@ -457,17 +457,17 @@
             "    subagent (a leaf) as `crw flow next` names it and reports it with `crw flow dispatched`, and the\n",
             "    call, its commits, its review and its acceptance are rows of the run's journal and the DAG records\n",
             "    ([the flow commands](../../crw-canon/references/flow.md), [the spawn policy](../../crw-canon/references/spawn-policy.md)).\n",
-            "  - an issue child, only for a plan with no flow run: started and resumed\n",
+            "  - a `child` session, only for a plan with no flow run: started and resumed\n",
             "    through `crw-run` on the exception path of one oversized issue, with the managed\n",
             "    start, the DAG release and their bridge recovery, pair/profile, capacity and receipt rules. A\n",
-            "    node a flow run's architect sizes for a child starts no issue child: the project lane escalates\n",
+            "    node a flow run's architect sizes for a child starts no `child` session: the project lane escalates\n",
             "    it as `size_split` with detail `child_retired`. It is never a desktop `create_thread` lane.\n",
             "\n",
             "  Either way the relay refuses a second active or paused assignment of the same issue and a release\n",
             "  past capacity; those answers are followed, not routed around by creating a thread by hand. The\n",
             "  child's own thread spawns the run's role subagents for the steps `crw flow next` hands it, and helpers\n",
             "  of its own for its judgment (recorded, SP-NAT-1); it edits no node's directory. The implementation of\n",
-            "  an issue is its run's executor call or its issue child's, and a step's subagent is a leaf that spawns\n",
+            "  an issue is its run's executor call or its `child` session's, and a step's subagent is a leaf that spawns\n",
             "  nothing. The manifest of\n",
             "  managed lanes is a read-only projection of the relay assignments and DAG records (and, for a run,\n",
             "  its journal), not a second file to keep. A goal-free parent is resumed by relay delivery\n",

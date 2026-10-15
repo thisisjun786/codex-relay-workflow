@@ -1,6 +1,6 @@
 # Scenarios
 
-The sessions in this document are named by [the level table](../../../crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and an issue child is no layer.
+The sessions in this document are named by [the level table](../../../crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and a `child` session (a code id, not a layer) is no layer.
 
 The situations the issue requires, each resolved against [the operations contract](../operations.md).
 Every scenario names what was observed, the clause that decides it, the required action, and what
@@ -151,10 +151,10 @@ task instead of creating a second one. Record the ownership columns separately f
 created it, which task edits source in it, who owns its git metadata, who owns retention, and which
 cleanup is authorized.
 
-Then settle the write split before dispatch rather than discovering it mid-task. If the issue child's
+Then settle the write split before dispatch rather than discovering it mid-task. If the `child` session's
 writable roots cover the checkout but not the repository's git metadata, the coordinator creates
-the branch and makes the commits, and the issue child returns a frozen diff with per-file hashes. The
-issue child does not build an alternative commit store to get around the boundary.
+the branch and makes the commits, and the `child` session returns a frozen diff with per-file hashes. The
+`child` session does not build an alternative commit store to get around the boundary.
 
 Preserved: dirty work and local forks in a reused checkout, every other worktree's checked-out
 branch, and the retained checkout itself, since nothing deletes or archives it automatically and
@@ -178,7 +178,7 @@ different state directory, which would split the scope into two stores that cann
 Routing between the two children uses the bound identifiers, never a display name, a branch name or
 a working directory, and both children may legitimately be working in the same repository. Each
 completion goes only to its own assignment's registered child and each correction only to its
-registered issue child, and neither child's permissions are consulted for the other's delivery.
+registered `child` session, and neither child's permissions are consulted for the other's delivery.
 
 What this scenario does not get is a fairness guarantee. OPS-8.3 proposes that delivery be fair per
 child so the child with several assignments does not starve the child with one, and that is
@@ -195,13 +195,13 @@ completion silently ending another child's work.
 Observed: a CRW coordinator has selected event-driven idle handoff for an independent task.
 Its registered assignment, running delivery service and session-resume path are verified.
 Later the delivery arrives while the child is mid-turn, and a second assignment's child
-has meanwhile been paused by the user. Separately, a CRW child in active observation has a running issue child
+has meanwhile been paused by the user. Separately, a CRW child in active observation has a running `child` session
 using recorded non-relay dispatch, and its first bounded transport wait times out. Another
 issue is already relay-registered to an active child on a relay that defers busy recipients.
 
 Clauses: OPS-8.1, OPS-8.2, OPS-8.3, OPS-8.4.
 
-Action: the event-driven coordinator finishes its response and returns to idle. When the issue child's
+Action: the event-driven coordinator finishes its response and returns to idle. When the `child` session's
 turn ends normally, a host-capable observer promotes its staged receipt to a delivery and the
 service delivers it to that assignment's registered child, which is what wakes the child. If the
 child is mid-turn the delivery waits and is retried rather than interrupting it. The paused
@@ -210,20 +210,20 @@ user deliberately stopped is the one thing a retry cannot undo.
 
 A native subagent completes inside its child's own turn and is not this independent-task case.
 The active CRW child keeps its coordination record and continues bounded transport waits
-using actual issue child identifiers. The timeout does not finish the project or justify a resend.
-After verifying and integrating the issue child's delivery, Run or goal mode dispatches the next
+using actual `child` session identifiers. The timeout does not finish the project or justify a resend.
+After verifying and integrating the `child` session's delivery, Run or goal mode dispatches the next
 ready issue within its agreed project scope. An explicit batch-only limit excludes
 successors outside that batch in either mode. A blocked issue holds its dependents, not independent ready work. Without a
 usable observation path it records the blocker and resume step instead of promising automatic
 progress. A service installation or staged receipt alone does not qualify for idle handoff.
 
-The already registered issue has a delivery-mode blocker: reading its issue child's result does not
+The already registered issue has a delivery-mode blocker: reading its `child` session's result does not
 deliver or acknowledge its pending event. Preserve its relationship, owner and artifact, record
 the required supported handoff for recovery, and do not bypass its relay verdict or keep waiting
 as if time alone could resolve it. For new unassigned issues, inspect ownership before choosing
 non-relay dispatch so they never acquire that incompatible registration.
 
-Preserved: the user's decision to pause, the running issue child when a wait times out, and the honest
+Preserved: the user's decision to pause, the running `child` session when a wait times out, and the honest
 distinction between a staged receipt and a delivered one. Any claim about how many children and
 concurrent deliveries this handles states what was actually exercised, and anything else stays
 `unmeasured`.
@@ -278,12 +278,12 @@ journalled with both digests, so a later reader can still see which wording was 
 
 ## S12 The review lands after the push
 
-Observed: the issue child has pushed its branch, opened its pull request and marked it ready for review.
-Checks are running, and a reviewer leaves findings while the issue child is still in its own turn.
+Observed: the `child` session has pushed its branch, opened its pull request and marked it ready for review.
+Checks are running, and a reviewer leaves findings while the `child` session is still in its own turn.
 
 Clauses: OPS-9.1, OPS-9.2, OPS-5.3.
 
-Action: the issue child handles the review itself, on the pull request that produced it. It collects the
+Action: the `child` session handles the review itself, on the pull request that produced it. It collects the
 findings, triages them, fixes what needs fixing with commits on the same branch, replies to a
 finding that does not apply and says why, and rechecks. It does not hand a list of unaddressed
 findings to the child and call that delivery, and it does not open a second pull request to escape
@@ -299,7 +299,7 @@ is for and returning to draft would withdraw the request being answered.
 
 ## S13 A new head outruns the review
 
-Observed: review passed, and then another commit lands on the branch, whether the issue child's own fix or
+Observed: review passed, and then another commit lands on the branch, whether the `child` session's own fix or
 a base update.
 
 Clauses: OPS-9.4, OPS-9.2, OPS-6.4.
@@ -307,7 +307,7 @@ Clauses: OPS-9.4, OPS-9.2, OPS-6.4.
 Action: the review evidence that the new head supersedes is invalid, and only that evidence. Re-run
 what the change actually touched rather than repeating the whole review from the start, and never
 present the earlier green result as covering a head it never saw. Completion is judged against the
-current head, so an issue child that reported completion before this commit reports again.
+current head, so a `child` session that reported completion before this commit reports again.
 
 The same rule reaches the relay: a verdict is bound to the revision it reviewed, so a newer revision
 means the older verdict certifies something that is no longer current.
@@ -327,7 +327,7 @@ independent review is obtained under the repository's policy, and the work conti
 indefinitely for an optional reviewer is not diligence and produces nothing; the one run each of Devin
 and Codex makes on a pull request is the exception, awaited within the [waiting budget](../merge-readiness.md#the-one-run-of-each-reviewer-awaited-before-the-receipt) before the receipt
 ([Devin and Codex reviews are references, not merge gates](../merge-readiness.md#devin-and-codex-reviews-are-references-not-merge-gates)). The missing mandatory
-check is blocked, and the issue child reports blocked rather than reporting completion with a caveat
+check is blocked, and the `child` session reports blocked rather than reporting completion with a caveat
 attached, because the caveat is the part that gets skimmed. The child does not merge on a head
 whose required checks have not passed.
 
@@ -337,7 +337,7 @@ present.
 
 ## S15 The parent merges, and stops before the release
 
-Observed: the issue child has reported completion, the pull request is green on its current head, and
+Observed: the `child` session has reported completion, the pull request is green on its current head, and
 merging this branch is known to trigger a deployment.
 
 Clauses: OPS-9.3, OPS-10, OPS-12.14.
@@ -360,7 +360,7 @@ the child may decide and a deployment that it may not.
 
 ## S16 Creating the next child
 
-Observed: the coordinator is about to create an independent implementation issue child for an issue whose
+Observed: the coordinator is about to create an independent implementation `child` session for an issue whose
 delivery is a pull request.
 
 Clauses: OPS-5.5, OPS-5.2, OPS-5.1.
@@ -388,7 +388,7 @@ them, so it cannot create a branch or commit.
 Clauses: OPS-5.3, OPS-5.5, OPS-9.1.
 
 Action: use the fallback rather than changing anything about the running task. The coordinator
-prepares the git metadata and makes the commits, and the issue child returns a frozen diff against the
+prepares the git metadata and makes the commits, and the `child` session returns a frozen diff against the
 recorded baseline with the SHA-256 of that diff and of each changed file, which is then the reviewed
 artifact. Where the task also cannot reach a network, the pull request cannot be created from it, so
 the title, body and diff references are prepared as private files and reported truthfully as
@@ -522,7 +522,7 @@ and the store. The state is left honest rather than converted into a verdict.
 
 ## S23 Ready for review comes before the review
 
-Observed: an issue child has pushed a complete change and wants a hosted review. The pull request is still
+Observed: a `child` session has pushed a complete change and wants a hosted review. The pull request is still
 a draft, and the plan is to request the review now and mark it ready once the findings are resolved.
 
 Clauses: OPS-9.1, OPS-9.2, OPS-6.1.
@@ -542,7 +542,7 @@ and the separation between entering review, being merge ready, and reporting an 
 ## S24 Parent coordination finishes without a local implementation diff
 
 Observed: a goal-mode child has a verified active coordination goal on a host with
-compatible goal/continuation hooks, and no implementation FSM. Every issue child in its agreed
+compatible goal/continuation hooks, and no implementation FSM. Every `child` session in its agreed
 scope has delivered verified results, required PRs have landed, and no owned work or
 receipt remains pending. Its own checkout is unchanged. Separately, another session bound to the
 project was explicitly asked to implement one task itself, paused its child role for that task
@@ -554,13 +554,13 @@ Clauses: OPS-8.1, OPS-8.4, OPS-10.1; lifecycle decisions belong to
 
 Action: the goal-mode child completes its coordination record and matching host goal
 on the verified scoped deliveries, then reads back completion, without manufacturing
-a session-local code change. Issue child completion alone is
+a session-local code change. A `child` session's completion alone is
 insufficient if any required result, correction, receipt or integration remains unresolved.
 The other session retains its `crw-loop` lifecycle and cannot start goal mode
 while its transition is unsupported. Record the transition blocker and exact supported
 resume requirement; do not reset the FSM, edit phases or report a new loop as armed.
 
-Preserved: issue child identities and delivery evidence, the distinct child completion boundary,
+Preserved: `child` session identities and delivery evidence, the distinct child completion boundary,
 and the other session's binding, goalplan, pending obligations and recovery evidence.
 
 ## S25 Run and goal mode share project scope; the parent holds no goal by default
@@ -587,11 +587,11 @@ run recovers the project scope and continues C rather than asking for a new batc
 restoring the recorded start policy instead of adjudicating it again. The first and third promise
 an unattended wake only where their readiness facts hold and otherwise keep bounded observation;
 the second reaches idle only after its bounded Stop budget releases, at a turn per block.
-Dispatch-only Run may hand off pending issue children; status-only Run reads without waking them.
+Dispatch-only Run may hand off pending `child` sessions; status-only Run reads without waking them.
 
-Preserved: one project session, existing issue children and PRs, requested batch/merge limits, issue child
+Preserved: one project session, existing `child` sessions and PRs, requested batch/merge limits, `child` session
 `crw-loop` defaults, an explicit no-goal limit recorded even where it changed nothing, and the difference
-between child and issue child goal authority.
+between child and `child` session goal authority.
 
 ## S26 Goal conflicts and unsupported continuation do not become new goals
 
@@ -607,14 +607,14 @@ Clauses: OPS-8.1, OPS-8.2, OPS-8.4; goal decisions belong to
 Action: reuse only the matching active goal. Preserve the blocked/different/unreadable
 goal and resolve its specific resume/conflict/read requirement; do not create over it.
 No-goal prevents goal mode's activation and nothing else: the run continues as the ordinary
-goal-free default, which needs no separate authorization, and no issue child is withheld for it.
+goal-free default, which needs no separate authorization, and no `child` session is withheld for it.
 The incompatible Stop hook blocks activation before goal creation or new worker dispatch;
 record the supported host fix, without disabling hooks or faking PABCD. In the compatible
 active run, continue independent ready work; do not mark the whole goal blocked on a
 first failure. Use the real host threshold and observations for any eventual blocked
 transition. A paused goal resumes only through authorized supported controls.
 
-Preserved: existing goal identity/status, all issue child ownership, explicit user limits,
+Preserved: existing goal identity/status, all `child` session ownership, explicit user limits,
 `.crw/` state and guards, and the difference between a created goal and observed auto-resume.
 
 ## S27 Binding-only requests preserve ownership
@@ -628,18 +628,18 @@ Clauses: OPS-7.1, OPS-7.2, OPS-8.1; binding decisions belong to
 
 Action: reuse and verify the same child binding and suitable coordination document.
 Apply supported title/pin changes only within the designation request. Do not create
-issue children or a goal. Inspect another child's ownership without waking it; settle a
+`child` sessions or a goal. Inspect another child's ownership without waking it; settle a
 material conflict before replacement. A temporary question does not switch the binding.
 Run or goal-mode execution requests do the same setup and then continue their requested
 operation.
 
 Preserved: stable project/task IDs, existing specifications and coordination history,
-active issue child ownership, explicit execution limits and runtime state.
+active `child` session ownership, explicit execution limits and runtime state.
 
 ## S28 Three levels run, and each one reads the level below by result
 
 Observed: an initiative has a parent bound to its stable ID, two of its projects each have one
-child, and each child has one issue child per ready issue. An issue child reports its pull request ready: the
+child, and each child has one `child` session per ready issue. A `child` session reports its pull request ready: the
 current head's required checks have PASSED, its required reviews have finished and no blocking
 finding remains, which is the only reading of OPS-9.2 that is not also true of a failed check. Its child
 verifies that head, merges it, verifies the landing, records the issue, and reports the project's
@@ -650,9 +650,9 @@ Clauses: OPS-7.4, OPS-9.3, OPS-10.1; role semantics belong to
 
 Action: the parent verifies the reported project outcome against the initiative's finish
 condition and stops there. It does not re-open the issue investigation its child already did, does
-not re-review the issue child's diff, and does not instruct that issue child. The child performs and verifies
-its own merges, and the issue child's work ends at that reviewed handoff rather than waiting to be woken
-for a landing it does not own. Issue child delivery, child acceptance, the merge, installation, live behaviour, project
+not re-review the `child` session's diff, and does not instruct that `child` session. The child performs and verifies
+its own merges, and the `child` session's work ends at that reviewed handoff rather than waiting to be woken
+for a landing it does not own. A `child` session's delivery, child acceptance, the merge, installation, live behaviour, project
 completion and initiative completion stay seven separate claims, so no level reports the level
 above as finished on the strength of one landing.
 
@@ -662,7 +662,7 @@ of each scope, and the distinction between a verified result and a completed lev
 ## S29 One project, several initiatives, still one execution owner
 
 Observed: a project contributes to two initiatives. The first initiative has an execution
-parent and the project already has its child and its running issue children. The second initiative
+parent and the project already has its child and its running `child` sessions. The second initiative
 now wants the same project's outcome, and its own parent asks that a further issue be added.
 
 Clauses: OPS-7.1, OPS-7.4; ownership selection belongs to
@@ -670,17 +670,17 @@ Clauses: OPS-7.1, OPS-7.4; ownership selection belongs to
 
 Action: the project keeps one execution parent and one child. The second initiative references
 the project's outcome rather than issuing it work: its parent does not instruct that child,
-does not clone its issue children, and does not register a second relationship for the same issues. A
+does not clone its `child` sessions, and does not register a second relationship for the same issues. A
 genuinely new requirement is raised with the owning parent, which decides whether it becomes
 scope for that project, and the decision is recorded once rather than tracked in both initiatives
 as separate output.
 
-Preserved: the project's stable ID, its child and issue children, both initiative relations, and the
+Preserved: the project's stable ID, its child and `child` sessions, both initiative relations, and the
 existing rule that shared progress is never summed twice.
 
 ## S30 No supervisor, no project, and an owner who already exists
 
-Observed: three variants. A project with no initiative runs with its child and issue children as it does
+Observed: three variants. A project with no initiative runs with its child and `child` sessions as it does
 today. A standalone issue with no project runs in an issue-scoped task. A user supplies an
 initiative link for work whose project already has an active child, and in a fourth variant
 another task is already the parent of that initiative.
@@ -697,7 +697,7 @@ without waking it, and settle a material conflict with the user rather than repl
 variant produces a second writer for an issue that already has one.
 
 Preserved: existing bindings and ownership, the projectless and supervisorless paths, active
-issue children and their pull requests, and the user's own decision about any replacement.
+`child` sessions and their pull requests, and the user's own decision about any replacement.
 
 ## S31 Report only, no goal, no create, and work that needs its own authority
 
@@ -722,7 +722,7 @@ goal, and the separation between reporting a needed action and having authority 
 
 Observed: two children' projects both edit one shared surface. A proposes an edit split and a base
 revision; B replies with a conditional acceptance whose condition is that A lands first. Later B's
-issue child reports work that assumed the condition already held, and separately A asks that a third
+`child` session reports work that assumed the condition already held, and separately A asks that a third
 project adopt the same split.
 
 Clauses: OPS-7.3, OPS-7.4, OPS-9.3; the path and its form are
@@ -732,8 +732,8 @@ Clauses: OPS-7.3, OPS-7.4, OPS-9.3; the path and its form are
 Action: the two children settle the split between themselves without the parent relaying it, and
 record the request and reply ids, the agreed area and the base revision. B's conditional acceptance
 is recorded as conditional with its condition, and is never cited as evidence that anything was
-applied: B's child instructing its own issue child, that issue child's change and its verification are three
-further facts, each needing its own evidence. A never instructs B's issue child. The third project is not
+applied: B's child instructing its own `child` session, that `child` session's change and its verification are three
+further facts, each needing its own evidence. A never instructs B's `child` session. The third project is not
 bound by an agreement its owner never accepted, so the proposal is recorded as unassigned until
 that owner accepts explicitly, and where it is a required dependency it is escalated as a blocker
 by actual ownership: to that third project's own parent where it has one, to a parent the
@@ -741,7 +741,7 @@ projects share where there is one, and to the user where a genuinely shared deci
 ownership and shared resources including merge order, and nothing about the edit agreement grants
 either child a merge turn.
 
-Preserved: each child's own issue children and records, the conditional state of an unapplied agreement,
+Preserved: each child's own `child` sessions and records, the conditional state of an unapplied agreement,
 the third owner's freedom to decline, and the separation of edit agreement from merge order.
 
 ## S33 Five registers behind one vocabulary, and a restart that cannot tell them apart
@@ -769,7 +769,7 @@ being translated into idle or stopped, and it is that child's last turn that is 
 unverified. The completed project is C9's. The restart is evidence about this task's own context
 and about nothing in the set.
 
-Preserved: every child and issue child, each register read from its own source, the recorded start
+Preserved: every child and `child` session, each register read from its own source, the recorded start
 policy restored rather than decided again, unknown as a usable answer, and a finished project that
 stays finished.
 
@@ -824,10 +824,10 @@ authorized work continuing without title control.
 ## S36 A goal-free parent waits idle, and four things go wrong with its queue
 
 Observed: a project session holds no goal and has yielded idle with every readiness fact recorded.
-Four things then happen to its assignments. One issue child's completion receipt is delivered twice, the
-second time after the child has already recorded a verdict on it. A second issue child's correction
+Four things then happen to its assignments. One `child` session's completion receipt is delivered twice, the
+second time after the child has already recorded a verdict on it. A second `child` session's correction
 arrives as a later generation while an earlier event on the same relationship was never applied. A
-third issue child's receipt is delivered while the child is mid-turn on an earlier wake. And a fourth
+third `child` session's receipt is delivered while the child is mid-turn on an earlier wake. And a fourth
 delivery is claimed each time the child briefly reads idle, only for the transport to return busy,
 until that delivery exhausts its attempt budget and is held. Separately the service restarts
 mid-flight, and a fifth child on the same store has its goal paused by the user.
@@ -843,7 +843,7 @@ only behind what was durably applied. The receipt arriving mid-turn is not lost:
 picked up by the drain the child runs on its next entry, which reads outstanding work rather than
 the payload that woke it. The held delivery is the terminal case, and it is reported as one: the
 child's drain reads held rows as well as pending ones, names the hold, and recovers it through a
-fresh execution generation from the issue child rather than by reviving the row. Where nothing wakes the
+fresh execution generation from the `child` session rather than by reviving the row. Where nothing wakes the
 child at all, that detection does not happen automatically on the installed runtime, and the
 report says so instead of implying a watcher nobody installed. The restart re-reads unsettled rows
 and in-flight leases before attempting anything new, and re-judges nothing already settled. The

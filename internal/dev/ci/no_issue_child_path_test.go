@@ -121,7 +121,7 @@ func TestSkillsHaveNoIssueChildPath(t *testing.T) {
 	}
 
 	t.Run("fixture: a clean text passes and each retired word is reported", func(t *testing.T) {
-		clean := "An issue child of a plan with no flow run is the exception path.\n" +
+		clean := "A `child` session of a plan with no flow run is the exception path.\n" +
 			"codex-session-relay register --child-task T --child-host H\n" +
 			"The rules of the workflow apply to both formats.\n"
 		if p := skillIssueChildPathProblems(clean); len(p) > 0 {
@@ -149,9 +149,9 @@ var issueChildDispatchPlaces = []struct{ file, heading string }{
 var (
 	// issueChildDispatch is a sentence that sends work to an issue child, or waits for or reads one: a verb before the issue child, or
 	// the issue child before a word of its dispatch, observation, result or correction.
-	issueChildDispatch = regexp.MustCompile(`(?i)\b(reuse|create|dispatch|launch|start|resume|observe)\w*\b[^.]*\bissue child(ren)?\b|\bissue child(ren)?\b[^.]*\b(dispatch|observ|run|event|result|correct|start|resum)\w*`)
+	issueChildDispatch = regexp.MustCompile(`(?i)\b(reuse|create|dispatch|launch|start|resume|observe)\w*\b[^.]*\x60child\x60 sessions?\b|\x60child\x60 sessions?\b[^.]*\b(dispatch|observ|run|event|result|correct|start|resum)\w*`)
 	// issueChildNegated is a sentence that says no issue child is started, or that one does not or never does something.
-	issueChildNegated = regexp.MustCompile(`(?i)\b(do not|does not|never|no issue child(ren)?|starts? no issue child)\b`)
+	issueChildNegated = regexp.MustCompile(`(?i)\b(do not|does not|never|no \x60child\x60 sessions?|starts? no \x60child\x60 sessions?)\b`)
 	// noFlowRunCondition is the condition of the issue child's dispatch.
 	noFlowRunCondition = regexp.MustCompile(`(?i)\bplan with no flow run\b`)
 	// sentenceEnd ends a sentence of normalized text: a period, an exclamation or a question mark followed by a space (a `crw.release`
@@ -187,19 +187,19 @@ func TestIssueChildDispatchIsOnlyForAPlanWithNoFlowRun(t *testing.T) {
 
 	t.Run("fixture: an unqualified dispatch is reported, a qualified or a negated one is not", func(t *testing.T) {
 		for _, bad := range []string{
-			"Reconcile existing work, reuse/create responsible issue children, verify and integrate their results.",
-			"Before any issue child dispatch, record its observation path.",
-			"- an issue child (relay role `child`), started and resumed through `crw-run`: the exception path.",
+			"Reconcile existing work, reuse/create responsible `child` sessions, verify and integrate their results.",
+			"Before any `child` session dispatch, record its observation path.",
+			"- a `child` session (a code id, not a layer), started and resumed through `crw-run`: the exception path.",
 		} {
 			if p := issueChildDispatchProblems("clean line.\n\n" + bad + "\n"); len(p) != 1 {
 				t.Errorf("%q: got %v, want one problem", bad, p)
 			}
 		}
 		for _, good := range []string{
-			"Only for a plan with no flow run, reuse/create responsible issue children and verify their results.",
-			"Bind only; do not dispatch issue children or create a goal.",
-			"A node sized for a child starts no issue child: the lane escalates it.",
-			"Return the outcome from here: an issue child never answers another project's child.",
+			"Only for a plan with no flow run, reuse/create responsible `child` sessions and verify their results.",
+			"Bind only; do not dispatch `child` sessions or create a goal.",
+			"A node sized for a child starts no `child` session: the lane escalates it.",
+			"Return the outcome from here: a `child` session never answers another project's child.",
 		} {
 			if p := issueChildDispatchProblems(good); len(p) != 0 {
 				t.Errorf("%q is reported: %v", good, p)

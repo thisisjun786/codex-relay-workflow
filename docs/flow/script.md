@@ -808,7 +808,7 @@ own `state` is not a non-empty string has no outcome. It is told in place of
 `blocked`, `cancelled`, `failed`) is not a row: it is read from the run lock, the last `started`, `finished` and `run/paused` rows (a
 run no process holds whose last process ended with `run/paused` is `paused`, not `dead`), the calls' rows
 (`internal/flow/callstate`), the questions no `decision_applied` row has answered and, for `blocked`, the lane's own rows. A run meant
-to start the nodes of a plan (a run of `project-lane` or `night-batch`, an old run of an issue child's lane, or a run whose arguments name a `plan`) whose last
+to start the nodes of a plan (a run of `project-lane` or `night-batch`, an old run of a `child` session's lane, or a run whose arguments name a `plan`) whose last
 process finished `completed` with nothing left to go on with is `blocked` when no process of it started a node (no completed
 `crw.release` row released one, no `crw.releaseChild` row an older build recorded released a child, no `crw.integrate` row landed one) and items of its joins threw
 in its last process (`item_error` rows: a lane of `crw.dag` whose `crw.release` failed is one). The engine's status of the run stays

@@ -1,13 +1,13 @@
 # Role execution policy
 
-The sessions in this document are named by [the level table](../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and an issue child is no layer. The policy file keeps the relay's role ids `supervisor`, `parent` and `child` for them in that order, as [Names used only in code](../plugins/crw/skills/crw-canon/references/hierarchy.md#names-used-only-in-code) lists them.
+The sessions in this document are named by [the level table](../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and a `child` session (a code id, not a layer) is no layer. The policy file keeps the relay's role ids `supervisor`, `parent` and `child` for them in that order, as [Names used only in code](../plugins/crw/skills/crw-canon/references/hierarchy.md#names-used-only-in-code) lists them.
 
 CRW runs three roles and each role runs on the model and reasoning effort decided for it.
 Two roles may be decided onto the same pair, as the `parent` and `child` rows were from 2026-09-23
 to 2026-09-29, and the check is per role either way. Until now nothing in the code knew any of that. The bridge
 asked whether a pair was stated and whether this host approved it, and neither question is whether
 the pair belongs to the ROLE the task is being created for. So a child (project session) created on the
-wrong model passed every check that existed, and an issue child verifying a send against a pair frozen at
+wrong model passed every check that existed, and a `child` session verifying a send against a pair frozen at
 the creation of the child that holds it withheld a correct message once the user changed that child.
 
 This document is where the policy lives for a reader. The enforced values live in one place only:
@@ -16,7 +16,7 @@ own environment. Nothing in either package ships a default pair for any role.
 
 ## A role is a binding, not a title
 
-A parent is bound to an initiative, a child to a project, an issue child to an issue, each by stable
+A parent is bound to an initiative, a child to a project, a `child` session to an issue, each by stable
 ID. That binding is what makes a role; a title, a folder, a branch or a chat link is not. The
 relay records it in `scope_bindings` and the role ids here are the same three strings:
 `supervisor`, `parent`, `child`.
@@ -34,9 +34,9 @@ itself is Linear CRW-127, the `child` row's move to Opus 5.5 is CRW-217, the `pa
 to the same pair is CRW-219, and the `child` row's move to Sonnet 5.5 is Jun's 2026-09-29 decision;
 the values that are actually enforced are the ones in the host's policy file. If the two disagree, the file is what runs and the disagreement is the bug.
 
-The `child` row holds two pairs since Jun's 2026-10-03 decision: issue children that ran on Sonnet alone used
+The `child` row holds two pairs since Jun's 2026-10-03 decision: `child` sessions that ran on Sonnet alone used
 up the Claude quota too fast, so `gpt-6.1-sol` at `xhigh` joins `anthropic/claude-sonnet-5-5` at `xhigh`.
-The policy says which pairs an issue child MAY run on and checks that a created issue child is on one of them. It
+The policy says which pairs a `child` session MAY run on and checks that a created `child` session is on one of them. It
 does not say which issue gets which: the crw-plan routing rule assigns a pair to each issue when the
 project is planned, and nothing in the file or in the code ranks one pair above the other.
 
@@ -84,7 +84,7 @@ regression cases take one half of it at a time.
 The `child` row's moves are the other case. Both kept `xhigh`, so each pair it left differs from the
 current one by model alone, and those superseded pairs are the fixtures proving a check cannot pass
 a record by comparing efforts only. Since 2026-09-29 the `child` row's superseded Opus 5.5 pair is also
-the `parent` row's current pair: an issue child request stating it is refused on its role, even though the
+the `parent` row's current pair: a `child` session request stating it is refused on its role, even though the
 allowlist and the `parent` row both carry it
 (`TestTheChildsSupersededPairIsTheParentsPairAndStillRefusedForTheChild` in
 `internal/bridge/execution/roles_test.go`).
@@ -147,8 +147,8 @@ role that lists more than one pair is described differently:
   resume's settings findings (CRW-1398) refuse first too. A parent's or an exception's pair, which no declared pair checks, is still withheld from
   such a thread before anything is resumed, and a role that declares MCP profiles still needs
   `expected_settings.mcp_profile` first.
-- in practice an issue child finishes its turn and the host unloads it about a minute later (`notLoaded`), so
-  put all of an issue child's work in its first work turn: do not start it with a standby turn and dispatch the
+- in practice a `child` session finishes its turn and the host unloads it about a minute later (`notLoaded`), so
+  put all of a `child` session's work in its first work turn: do not start it with a standby turn and dispatch the
   work afterwards, and when something must be fixed after its result, rule `needs_changes`, which opens the
   next generation and carries the correction (the 10-13 F0-2 run, CRW-1311).
 
@@ -157,7 +157,7 @@ role that lists more than one pair is described differently:
 A host can report a context window far larger than what the provider behind a model actually
 accepts. `inferhub/deepseek-v4.1-flash` is the measured case: the host reports 950,000 tokens, and
 the provider cuts every request above roughly 664,000 with `Provider stream error: upstream error`,
-so the issue child stops without a receipt before Codex compacts on its own. A pair may therefore carry
+so the `child` session stops without a receipt before Codex compacts on its own. A pair may therefore carry
 `autoCompactTokenLimit`, a positive integer the bridge sends as `model_auto_compact_token_limit` in
 the `thread/start` and `thread/resume` `config`, which makes the host compact below its own window:
 
@@ -205,8 +205,8 @@ still sees what the send carried.
 resume with the thread's current state, so a resume that transmits the limit to a loaded thread
 leaves that thread's own threshold as it was: the value takes effect at creation, or when the host
 loads the thread again (a `notLoaded` recipient). An accepted resume receipt therefore records that the
-limit was sent, not that it now applies. An operator who adds the value for a running issue child gets it
-on that issue child's next load.
+limit was sent, not that it now applies. An operator who adds the value for a running `child` session gets it
+on that `child` session's next load.
 
 **The recommended value is 550000**, about 110,000 below the highest input observed to pass
 (664,238 tokens, 2026-10-06) and about 114,000 below the first observed failure. The margin is there
@@ -220,7 +220,7 @@ falling from 30,696 to 15,478; the control thread never compacted and grew 30,75
 ## A role may carry MCP profiles
 
 A thread starts every MCP server config.toml defines and every installed plugin provides, whether or
-not it ever calls them, and each sub-thread it spawns does the same. An issue child kept hundreds of
+not it ever calls them, and each sub-thread it spawns does the same. A `child` session kept hundreds of
 megabytes of helper processes this way. A role entry may therefore declare an `mcp` section, and a
 thread is created under one of its profiles:
 
@@ -238,7 +238,7 @@ thread is created under one of its profiles:
   because no override turns it on.
 - `disablePlugins` switches whole plugins off. A plugin's server has no switch of its own on Codex 0.154:
   an override naming it fails the start, and the per-thread control of the plugin takes its skills and
-  hooks with it, so a profile names only plugins an issue child can do without. An id that is not installed
+  hooks with it, so a profile names only plugins a `child` session can do without. An id that is not installed
   is skipped. The plugins a profile does not name keep their servers.
 - `default` is the profile a creation that names none gets. A file is refused when it is read if a name
   is blank or over 128 characters, a list names a server or plugin twice, `default` names no profile,
@@ -260,8 +260,8 @@ stays retry-safe. The receipt records the profile as `mcpProfile` and the raw li
 `create_thread` takes the role's default, since it has no input to name another profile.
 
 Which profile a thread runs under. Managed start takes `child.settings.mcpProfile`. A host whose policy declares
-profiles for the `child` role admits an issue child only when its request states one of them: `mcp_profile_required`
-and `mcp_profile_unknown` refuse at the preflight, before any thread exists, so such an issue child's record always
+profiles for the `child` role admits a `child` session only when its request states one of them: `mcp_profile_required`
+and `mcp_profile_unknown` refuse at the preflight, before any thread exists, so such a `child` session's record always
 states its profile. A request that states a profile for a role that declares none is refused as
 `mcp_profile_unknown`; a request that states none is unchanged. `send_message_to_thread` applies a
 profile only when `expected_settings.mcp_profile` names one. A `notLoaded` send that names none is refused
@@ -272,7 +272,7 @@ guesses the released profile nor applies a default. State the actual recipient r
 applies, including for roles with several pairs. This conservative guard also refuses unnamed threads of any other role
 on a host whose `child` role declares profiles. A declared role without profiles, or an `idle` send naming none, keeps
 the previous behavior. A caller's wrong but declared profile cannot be checked against the relay record.
-Sub-agents inherit the overrides of the thread that spawns them, so one profile covers an issue child and its
+Sub-agents inherit the overrides of the thread that spawns them, so one profile covers a `child` session and its
 sub-threads.
 
 How a resume applies it. The host keeps no overrides with a thread, so every resume of a thread it has not
@@ -284,7 +284,7 @@ resolves the profile against the host on each such send, on a copy of the record
 message as `settings_not_preserved` on the field `mcpServers` (the code a settings-free resume keeps,
 because something was sent) and an unreadable list is `setting_unobservable`. A profile the host cannot
 resolve, or whose reads are lost, is refused before anything is sent, as `not_attempted` and retry-safe. A later
-record of the issue child's settings that states no profile keeps the recorded one. A resume of a thread the host
+record of the `child` session's settings that states no profile keeps the recorded one. A resume of a thread the host
 already has loaded ignores the overrides. An `idle` recipient's `settings_not_preserved` finding on
 `mcpServers` includes recovery under its record, even when another mismatch appears first. Only after a
 completed durable turn and confirmation of a resumable rollout, release all subscriptions and observe
@@ -292,8 +292,8 @@ completed durable turn and confirmation of a resumable rollout, release all subs
 when it unloads. An operator can use `thread/archive` then `thread/unarchive` if it remains loaded. The
 next relay delivery sends the recorded profile again. Never unload a never-run root. This is advice in
 the relay's detail and not automatic recovery, with one narrow exception: a managed start that finds
-its new issue child held loaded under settings other than the request's, with nothing in its history but the
-standby turn, archives that orphan once and creates the issue child again under the same request; the
+its new `child` session held loaded under settings other than the request's, with nothing in its history but the
+standby turn, archives that orphan once and creates the `child` session again under the same request; the
 bridge's own loaded-settings refusal remains generic.
 
 Not covered yet. `create_worktree_thread` sends no overrides, and `create_thread` has no input to name a
@@ -499,7 +499,7 @@ Linear record that carries the decision.
 Be exact about how far that reaches, because the section title overstates it and the mechanism
 does not. The policy file has no task-identity field, so an exception is scoped by role and by
 directory and by nothing else. The `role` key means only a request citing `parent` may cite this
-id, so an issue child or a parent naming it is refused rather than quietly covered. The `cwd` list
+id, so a `child` session or a parent naming it is refused rather than quietly covered. The `cwd` list
 means a child working somewhere else is refused even though it holds the right role. What those
 two together do NOT give you is exclusivity: a second child running in a covered directory could
 cite the same id and be authorized. Where that matters, give the exception a directory only one
@@ -515,8 +515,8 @@ The receipt says so too. A creation or send citing this id records `exception` a
 that receipt can see that an expectation existed and exactly which authorization replaced it, so
 "this child is on a different model" is never something a later reader has to infer.
 
-Two consequences worth stating plainly. An exception is never inherited: issue children created by an
-excepted child are still issue children and still run the `child` pair, because the exception authorizes
+Two consequences worth stating plainly. An exception is never inherited: `child` sessions created by an
+excepted child are still `child` sessions and still run the `child` pair, because the exception authorizes
 a pair and carries no other privilege — it relaxes nothing about sandbox, approvals or scope. And
 the citation is a fact about a task, not about a pair: it is carried forward while it is still
 doing work and is dropped only when the operator says so, never because the two pairs happen to
@@ -537,7 +537,7 @@ That is the habit the incident was made of.
 | Code | What happened | What to do |
 | --- | --- | --- |
 | `execution_setting_missing` / `execution_setting_invalid` | the model or the effort was absent or blank | state both; no host default is ever inherited |
-| `execution_setting_missing` in a failed send receipt | a `notLoaded` recipient has no stated MCP profile and its declared role has profiles, or an unnamed recipient could be a profiled issue child | use a NEW request id with the actual role and released `expected_settings.mcp_profile`, or relay delivery; no resume or turn was sent |
+| `execution_setting_missing` in a failed send receipt | a `notLoaded` recipient has no stated MCP profile and its declared role has profiles, or an unnamed recipient could be a profiled `child` session | use a NEW request id with the actual role and released `expected_settings.mcp_profile`, or relay delivery; no resume or turn was sent |
 | `execution_role_unknown` | a role was cited that this host's policy does not declare | declare it in the host's execution policy; there is no fallback pair |
 | `execution_role_mismatch` | the stated pair is not one of that role's pairs | state a pair the policy declares for the role; a role with several lists them all in the refusal |
 | `execution_exception_out_of_scope` | the exception does not cover this directory, or its role and the cited role disagree | cite an exception written for this role and directory |
@@ -678,8 +678,8 @@ stops. It reads no scope binding, so on a send that names no role it cannot tell
 parent from a task that has no role at all. The relay resolves the recipient's role from
 its binding and owns that pair refusal. A send through the bridge naming no role is therefore not
 covered by this pair guard. The separate missing-MCP-profile guard conservatively refuses that
-unnamed `notLoaded` send when the `child` role declares profiles, since it could load a profiled issue child
-under other servers. Identify the actual declared role of a recipient that is not an issue child; the bridge still verifies no binding.
+unnamed `notLoaded` send when the `child` role declares profiles, since it could load a profiled `child` session
+under other servers. Identify the actual declared role of a recipient that is not a `child` session; the bridge still verifies no binding.
 
 An unsupported transition is recorded as what it is — the host reported the old pair, no turn was
 started, applying it needs the UI action — and no guard is bypassed to make it look applied.

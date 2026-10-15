@@ -1,9 +1,9 @@
 # DAG summary outbox
 
-The sessions in this document are named by [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the child is the project session that writes the summary of its plan, and an issue child, which is no layer, is the session that runs one issue of it.
+The sessions in this document are named by [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the child is the project session that writes the summary of its plan, and a `child` session (a code id, not a layer), which is no layer, is the session that runs one issue of it.
 
 A DAG plan's Linear summary is written by the child (project session) with its own Linear connector. The relay holds no Linear credential, makes no Linear call and has no Linear client; what it holds is the
-durable, ordered queue the child drains: one table in the DAG zone and seven commands. A summary that is lost, refused or overtaken is recovered by writing a summary again. It never re-runs an issue child,
+durable, ordered queue the child drains: one table in the DAG zone and seven commands. A summary that is lost, refused or overtaken is recovered by writing a summary again. It never re-runs a `child` session,
 re-sends a correction or makes a second summary, because every command here writes the summary table and no other. This page is the normative description. It follows the DAG execution contract
 (CRW-182) sections 1.3 and 7.6, the metrics of 8.6 and decision D-17: the relationship outbox (`sync_outbox`, [the relay README](README.md)) cannot hold a project summary, because
 `sync_outbox.relationship_id` is NOT NULL, so a project-level outbox is a new table.
@@ -128,27 +128,27 @@ parks the entry as `failed` and a claim of it is refused until `dag-summary-retr
 
 ## The issue rows
 
-A row is the state of one live node of the plan, for an agent node and for a node a managed issue child runs (an oversized issue) alike. It is read in the transaction that writes the entry, from the progress itself (the stage,
+A row is the state of one live node of the plan, for an agent node and for a node a managed `child` session runs (an oversized issue) alike. It is read in the transaction that writes the entry, from the progress itself (the stage,
 the acceptance of `acceptanceOf`, the executions of both sides) and from the side that ran the node:
 
 | Part of the row | Where it is read |
 | --- | --- |
 | `stage`, `issue_key`, `kind` | the progress document |
 | surface | `agent` or `relationship`: the side of the node's current execution (`executionOf`); the only side that ever held one when none is current; none when neither applies |
-| newest verdict (`verified` or `needs_changes`) | a managed issue child: the newest ruling over the relationships the plan bound to the node (`verdicts`, by `decided_at`). An agent: the newest completed reviewer call of the node whose result document carries a verdict (`flow_calls`) |
-| revision and generation | a managed issue child: the ruled event's revision hash and execution generation. An agent: the commit the reviewer judged and the attempt of the execution it ran in |
-| criteria set, ruling, queued correction, issue child | a managed issue child: the criteria set digest and the findings of the ruling's context, how many times the event was ruled, the generation a `needs_changes` ruling opened, and the issue child's thread. An agent: the criteria digest the reviewer's input carried |
-| findings | a managed issue child: the findings of the ruling, one line each (`id: verdict — note`). An agent: the defects of the verdict document, one line each (`ref: severity kind file:line — finding`) |
+| newest verdict (`verified` or `needs_changes`) | a managed `child` session: the newest ruling over the relationships the plan bound to the node (`verdicts`, by `decided_at`). An agent: the newest completed reviewer call of the node whose result document carries a verdict (`flow_calls`) |
+| revision and generation | a managed `child` session: the ruled event's revision hash and execution generation. An agent: the commit the reviewer judged and the attempt of the execution it ran in |
+| criteria set, ruling, queued correction, `child` session | a managed `child` session: the criteria set digest and the findings of the ruling's context, how many times the event was ruled, the generation a `needs_changes` ruling opened, and the `child` session's thread. An agent: the criteria digest the reviewer's input carried |
+| findings | a managed `child` session: the findings of the ruling, one line each (`id: verdict — note`). An agent: the defects of the verdict document, one line each (`ref: severity kind file:line — finding`) |
 | acceptance | `acceptanceOf` through the progress: the id of the acceptance that stands, whichever side holds it |
 | integration batch | the batch of the newest `marked` row of that acceptance, in the stage table of the relationship side or of the agent side |
 
 An issue nobody ruled on has no verdict; a node nothing ran has no surface. The rows hold what a `sync_outbox` verdict summary held of the issue (the verdict, the generation and revision, the criteria set and ruling,
-the correction it queued, the issue child and the findings) and the acceptance and the integration the verdict summary could not state.
+the correction it queued, the `child` session and the findings) and the acceptance and the integration the verdict summary could not state.
 
 ## The subject digest
 
 `subject_digest` is the sha256 of the version tag `dag-summary-subject/2`, the progress digest and the normalised render of every row: the issue, its stage, the newest verdict with its generation, revision, criteria set,
-ruling, queued correction and issue child, the digest of its findings (taken over every finding whole: the text of the summary clips a finding line for display, the digest does not), the acceptance id and the integration batch. One function (`summarySubject`, `internal/relay/dagsched/outbox.go`) computes it, and both
+ruling, queued correction and `child` session, the digest of its findings (taken over every finding whole: the text of the summary clips a finding line for display, the digest does not), the acceptance id and the integration batch. One function (`summarySubject`, `internal/relay/dagsched/outbox.go`) computes it, and both
 `dag-summary-enqueue` (the replay comparison) and `dag-summary-status` (`up_to_date`) call it. So a verdict or a finding that changes while the node stays in its stage is another subject: `up_to_date` reads false
 until the plan is enqueued again, and the enqueue appends a new entry and supersedes the open one. Nothing changed is one subject, and the entry is answered with `replayed: true`. The progress document is not
 changed by the rows: `dag-summary-status` prints the fields it printed, and `progress_digest` is still the digest of the progress document.
@@ -158,7 +158,7 @@ changed by the rows: `dag-summary-status` prints the fields it printed, and `pro
 The text is a function of the progress document and the issue rows and holds no clock: equal progress and equal rows are equal text. It names the plan, the project and the revision, the counts of accepted and integrated nodes against the
 denominator, the denominator's last change, what the revisions took out of the plan, every stage with its nodes, the blocked nodes with their closed reasons, and every live node with its issue key, kind, stage, reason, the
 plan's lifecycle for it and its pull request. Under that, `Issues` lists the row of every live node: its surface and stage, the newest verdict (`verdict V, generation G, revision R`, the criteria set and the ruling when
-it is not the first), the issue child, the correction queued, the findings (at most twelve lines, with the count and the digest of all of them), the acceptance and the batch that integrated it; an issue without a verdict reads `no verdict`.
+it is not the first), the `child` session, the correction queued, the findings (at most twelve lines, with the count and the digest of all of them), the acceptance and the batch that integrated it; an issue without a verdict reads `no verdict`.
 
 It is written as a block inside a container: HTML comments around a fenced body, the grammar the relationship outbox relies on (JUN-92 measured it for Linear). A connector keeps it as written, with one change that a real Linear save makes ([below](#what-a-linear-save-does-to-a-block)):
 
@@ -249,7 +249,7 @@ Each write runs in one composing transaction of the store; `EnqueueSummary` read
 
 * Contract D-17 leaves the key open: this page keys an entry by the plan, the document, the plan revision, the decision it states (the progress digest) and a sequence number that only goes up in the stream. The contract's
   "decision identity" for a relationship job is its verdict; for a project summary it is the progress the summary states.
-* Contract 7.6 says a Linear write is retried as the summary only and starts no issue child and no judgement. That is the table above: no other table is read or written by any of these commands but the plan's own rows
+* Contract 7.6 says a Linear write is retried as the summary only and starts no `child` session and no judgement. That is the table above: no other table is read or written by any of these commands but the plan's own rows
   (the progress reading) and the project's scope bindings (who the child is).
 * D-19: the contract's citations of the sections this issue consumes (`relay-sqlite.sql` lines 356-386 and 362 for `sync_outbox` and its `relationship_id`, and `operations.md` 1040-1045 for "the queue is the truth, a wake is only a hint") were
   resolved at the contract's commit and at this baseline: all identical.

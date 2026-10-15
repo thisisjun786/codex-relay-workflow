@@ -1,6 +1,6 @@
 # Operations contract
 
-The sessions in this document are named by [the level table](../../crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and an issue child is no layer.
+The sessions in this document are named by [the level table](../../crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and a `child` session (a code id, not a layer) is no layer.
 
 Read when installing, updating, or operating the runtime that `crw-run` depends on, when assigning
 a checkout to an implementation task, and when deciding how a child waits for delegated work. This
@@ -353,7 +353,7 @@ Whether a given creation path honours an additional writable root on the current
 ### OPS-4.1 Ownership is the operating scope, not a parent
 
 The service belongs to its operating scope. Whoever operates that scope starts, stops and restarts
-it, and implementation issue children never start one. A start is refused unless every component the
+it, and implementation `child` sessions never start one. A start is refused unless every component the
 service needs classifies `own` under OPS-2.2, and it is refused again when the re-measurement
 OPS-1.4 requires at that moment turns a combination `unverified`, or when an update failed under
 OPS-2.4. Naming the one permitting class rather than listing failure states is deliberate, because
@@ -496,11 +496,11 @@ belongs to the child that asked for it.
 
 ### OPS-5.3 Who commits, and the fallback when a task cannot
 
-By default the issue child commits its own work. It owns the implementation, the tests, the commits on
+By default the `child` session commits its own work. It owns the implementation, the tests, the commits on
 its branch, the push, and, where one exists, the pull request, because the task that made a change is the one that can
 explain it in a commit message and answer a reviewer about it. Delivery ownership is OPS-9.
 
-That default assumes the issue child was created able to do it, which OPS-5.5 covers. Permission does not
+That default assumes the `child` session was created able to do it, which OPS-5.5 covers. Permission does not
 follow the checkout: a worktree's git metadata lives under the original repository rather than
 inside the checkout, so a task whose writable roots cover only the checkout and its evidence
 directory cannot create a branch or commit there, because the reference and index writes land
@@ -508,10 +508,10 @@ outside those roots. This is measured rather than hypothetical.
 
 Where that restriction is already in force, and only there, the fallback applies. The coordinator
 prepares the git metadata, creating the branch before dispatch without widening the running task's
-permissions, and the coordinator makes the commits. The issue child owns source edits and returns a
+permissions, and the coordinator makes the commits. The `child` session owns source edits and returns a
 frozen diff against the recorded baseline with the SHA-256 of that diff and of each changed file,
 and that frozen diff is the reviewed artifact. A delivery that says "scoped local commit" is read
-this way for such a task. An issue child never builds an alternative commit store to get around the
+this way for such a task. A `child` session never builds an alternative commit store to get around the
 boundary, and the fallback is never a reason to change a running task's permissions.
 
 ### OPS-5.4 Evidence location
@@ -524,12 +524,12 @@ location or unresolved choice in an old receipt does not establish the current p
 
 ### OPS-5.5 Capability a new child is created with
 
-A new independent implementation issue child is created with enough capability to finish the work it is
+A new independent implementation `child` session is created with enough capability to finish the work it is
 being given: file access for its checkout and its evidence, git metadata access for its branch and
 commits, and the network access its push, pull request and checks require. Broad local capability
 is the normal case rather than the exception, and a narrow profile is chosen when something about
 that assignment actually calls for it, not by habit. OPS-12.13 points to this rule; it is not
-a default that drifted into place, and an unnecessarily restricted issue child is a real cost rather than
+a default that drifted into place, and an unnecessarily restricted `child` session is a real cost rather than
 a free safety margin: it cannot finish its delivery and the remainder returns as coordinator work.
 
 What the default covers is worth stating so it is neither over- nor under-applied. It is for a
@@ -567,12 +567,12 @@ back and compared, because a prompt asking for capability is not capability. A s
 path cannot apply is settled before the task exists rather than downgraded silently.
 
 That comparison covers the workspace as well as the profile, and it asks one question rather than
-running a containment test. An issue child is assigned a checkout under OPS-5.2, an evidence root under
+running a containment test. A `child` session is assigned a checkout under OPS-5.2, an evidence root under
 OPS-5.4, the git metadata belonging to that checkout, and where it uses the relay directly a state
-directory under OPS-3.5. For each of those the question is whether this issue child can actually write
+directory under OPS-3.5. For each of those the question is whether this `child` session can actually write
 there, and it is answered from the effective sandbox and permission profile, because those are the
 only things that constrain a task at all. `runtimeWorkspaceRoots` is one input the receipt reports,
-not the boundary: an issue child with unrestricted access needs no containment test, and one whose sandbox
+not the boundary: a `child` session with unrestricted access needs no containment test, and one whose sandbox
 already makes the original repository writable commits normally while the returned roots name only
 its checkout. A path outside those roots is a reason to look, never the verdict.
 
@@ -581,16 +581,16 @@ worktree the common directory, the per-worktree index and the reference files si
 original repository, which `git rev-parse --absolute-git-dir`, `--git-common-dir` and
 `--git-path index` resolve; the writes a branch or a commit performs land there rather than under
 the working tree. Without that check the assignment reads as perfectly satisfiable until the
-issue child's first commit, which is the case OPS-5.3 measures.
+`child` session's first commit, which is the case OPS-5.3 measures.
 
 Settle all of this before the task is created, in the creation arguments, because creation carries
 the full work prompt and the receipt arrives with the turn already started. The receipt is then the
 check on what was asked for rather than the first look: where it contradicts the assignment,
-reconcile on that same task as above, and where the profile genuinely excludes a path the issue child
+reconcile on that same task as above, and where the profile genuinely excludes a path the `child` session
 needs, assign the OPS-5.3 fallback deliberately. Widening a task afterwards is never the answer.
 
 Tasks that are already running keep the settings they were created with. This clause describes how
-the next issue child is created; it is not authority to widen a live task, to alter its profile
+the next `child` session is created; it is not authority to widen a live task, to alter its profile
 mid-assignment, or to work around a sandbox. A running task that cannot commit uses the OPS-5.3
 fallback and says so.
 
@@ -635,9 +635,9 @@ what OPS-2.3 already requires of the install outcomes. Two vocabularies are in p
 are not interchangeable. A turn's disposition says what that turn did, and `in_progress`,
 `ready_for_review`, `blocked_needs_input`, `interrupted` and `failed` are its words, defined
 in [Turn disposition](hook-contract.md#turn-disposition). An assignment's state says where the
-delivery stands, and where a relay holds the assignment its states are that vocabulary. An issue child
+delivery stands, and where a relay holds the assignment its states are that vocabulary. A `child` session
 waiting on a person is `blocked_needs_input` on its turn; that is not a new assignment state, and
-an assignment whose issue child is waiting has not thereby changed what it owes. Report both, in
+an assignment whose `child` session is waiting has not thereby changed what it owes. Report both, in
 separate fields, citing each rather than paraphrasing it, because collapsing them loses exactly
 the distinction between a turn that stopped and a delivery that moved. Only a condition neither
 vocabulary has a word for is reported as a named blocker against the state that does apply.
@@ -658,7 +658,7 @@ chosen for the occasion. Two rounds of review found that every convenient key wa
 | What one transport attempt did | the delivery attempt's `deliveryState` | `dispatched` |
 | What a person is being asked | no contract has a word for it, so prose | free text |
 
-An issue child that stopped to ask someone a question is `blocked_needs_input` on its turn, on an
+A `child` session that stopped to ask someone a question is `blocked_needs_input` on its turn, on an
 assignment whose `state` is still whatever it was, with the question itself written out. Four
 different facts, four fields, and the last one in prose precisely because nothing defines it.
 Putting `needs_changes` in `deliveryState`, or `blocked_needs_input` in either state field, is the
@@ -709,7 +709,7 @@ and something can be merged that this field never covered, so neither is read fr
 Because one service carries assignments belonging to several children, several repositories and
 several milestones, each assignment binds a full identity and routing uses nothing outside it.
 The binding is the stable tracking repository and issue ref (`OWNER/NAME#N`), plus the milestone ref
-when one exists; the host; the native coordinator and issue child task identifiers; the execution
+when one exists; the host; the native coordinator and `child` session task identifiers; the execution
 generation; the repository, worktree and branch for code work; the owner, artifact roots and
 allowed recipients. A standalone issue records no project, but delegated delivery still names
 its actual coordinator. Non-PR work retains its permitted artifact roots and result identity
@@ -717,7 +717,7 @@ without inventing Git metadata.
 
 A displayed issue number (`#12`) is a label, not an identifier. It is unique inside one repository and nowhere
 else, so two repositories can both hold the same number, and a registration or a lookup carrying only
-that key can match the wrong assignment and refuse a legitimate second issue child as a duplicate. Every
+that key can match the wrong assignment and refuse a legitimate second `child` session as a duplicate. Every
 registration therefore uses a globally stable issue identity (`OWNER/NAME#N`) and records its repository and,
 when present, milestone in the canonical scope reference. For a milestone-less issue, use the
 issue's URL as that reference. The bundled relay keeps
@@ -756,19 +756,19 @@ consulted for a decision.
 ### OPS-7.3 Isolation between parents
 
 Results, correction requests and permissions stay within their own assignment. A completion travels
-only to that assignment's registered child, a correction only to its registered issue child, and both
+only to that assignment's registered child, a correction only to its registered `child` session, and both
 only when the recipient is in the allowed recipients recorded at registration. A task's authorized
 execution settings belong to that task; no assignment inherits another's permissions, and no
 delivery widens a recipient's permissions to make itself succeed.
 
-An issue that already has an active or paused assignment cannot acquire a second registered issue child,
+An issue that already has an active or paused assignment cannot acquire a second registered `child` session,
 which is what stops two children from claiming one issue. That guarantee covers the record rather
 than the host, so a lookup by issue happens before anything is created.
 
 ### OPS-7.4 Three levels and their routing identity
 
 Decided, from the project record of 2026-09-19: execution runs at three levels bound to three
-tracking levels, a parent to an initiative (the legacy scope), a child to a milestone and an issue child to an issue. What
+tracking levels, a parent to an initiative (the legacy scope), a child to a milestone and a `child` session to an issue. What
 each role owns is the shared
 [Scope of each level](../../crw-canon/references/hierarchy.md#scope-of-each-level);
 what this clause owns is identity and routing, because a level that cannot be identified cannot be
@@ -780,8 +780,8 @@ children binds its own request id, both children' task identifiers, both milesto
 revision it is about. Neither routes on anything else, for the reason OPS-7.2 gives, and neither is
 an assignment: a parent reads a child's assignments and never adopts one, and a peer message
 carries no receipt, acknowledgement or verdict and never enters another child's registered
-relationship under OPS-7.3. Only the owning child instructs its own issue children, so a correction that
-has to reach an issue child is routed to that issue child's child rather than delivered around it.
+relationship under OPS-7.3. Only the owning child instructs its own `child` sessions, so a correction that
+has to reach a `child` session is routed to that `child` session's child rather than delivered around it.
 
 Source-implemented, not measured on any host: the bundled relay now RECORDS these levels. Its
 `linkage` module holds a parent-to-child relationship, a child-to-child peer link, and
@@ -825,7 +825,7 @@ actually requested. In active observation mode, keep the
 authorized run active, use bounded transport waits, inspect meaningful results and continue
 ready work within that operation. Neither Run nor goal mode stops just because the first
 ready batch finished when scoped successors remain. Explicit batch/dispatch-only limits
-still apply. An issue child assignment or active issue child goal does not arm the child's goal mode.
+still apply. A `child` session assignment or active `child` session goal does not arm the child's goal mode.
 
 Ending the child turn is the default once, and only once, every readiness fact in
 [Before a parent may wait idle](start-policy.md#before-a-parent-may-wait-idle) holds. Short of
@@ -844,19 +844,19 @@ status. For the bridge, use [Observe the assigned turn](bridge.md#observe-the-as
 for native `wait_threads`, inspect each target's poll/error and turn identity,
 not only the batch's `timedOut` or the first target that woke the wait.
 
-Do not end the child turn on an observation failure as though the issue child were
+Do not end the child turn on an observation failure as though the `child` session were
 still running, finished, or guaranteed to wake the child. Preserve the exact
 request, target IDs, error/response and last successful observation; recover the
-dispatch pair, paginate that issue child's history or retry a repaired read within the
+dispatch pair, paginate that `child` session's history or retry a repaired read within the
 transport's bounds. Git changes, PR/CI results and a cached status summary do not
 replace a current turn-state observation. Do not resend the assignment, launch a
-replacement issue child or repeat the same failing read without a recovery reason.
+replacement `child` session or repeat the same failing read without a recovery reason.
 If bounded recovery cannot establish state, report a capability blocker with
 the owner and exact next recovery step, preserve the assignment and continue
 independent authorized work. A necessary blocked handoff or user interruption
 must say observation is unresolved; it is not completion or verified idle handoff.
 
-Before creating or registering an issue child for active child observation, check existing issue
+Before creating or registering a `child` session for active child observation, check existing issue
 ownership and whether the installed relay can deliver, acknowledge and settle a receipt while
 that child remains active. The current relay defers busy recipients, refuses acknowledgement
 before delivery, and refuses verdicts without verified acknowledgement. Transport observation
@@ -886,7 +886,7 @@ observation through the transport's
 own wait during the authorized run, recording which fact was missing rather than the fallback
 alone. A timeout leaves the work running: refresh observations and
 wait again within the requested delivery boundary rather than claiming completion, resending
-the prompt or creating another issue child. A dispatch-only Run may return an explicit pending-work
+the prompt or creating another `child` session. A dispatch-only Run may return an explicit pending-work
 handoff without claiming automatic resumption. If no
 usable wait or resume path exists, record the capability blocker and the exact manual resume step.
 
@@ -894,12 +894,12 @@ Once that readiness holds for this assignment, the handoff is the point of it: t
 polling and returns idle rather than continuing to watch a path it has just confirmed will reach
 it. What the confirmation has to cover is every disposition the child is waiting on and not only
 completion. A finished generation travels as a receipt, and OPS-7.3 routes it to this assignment's
-registered child. An issue child that stops for a person is the case to check rather than assume:
+registered child. A `child` session that stops for a person is the case to check rather than assume:
 recording `blocked_needs_input` on the turn releases the hook, and whether anything then enqueues
 a delivery is a property of the installed runtime and `unmeasured` here. Where it does not, the
 readiness this clause is conditioned on has not been established for that disposition, and the
-child either requires the issue child to emit under it or keeps a bounded observation path for it.
-Returning idle on the unchecked half of that is how a blocked issue child strands its coordinator, and
+child either requires the `child` session to emit under it or keeps a bounded observation path for it.
+Returning idle on the unchecked half of that is how a blocked `child` session strands its coordinator, and
 the strand is silent. Returning idle ends that child's observation and nothing else: it closes no
 assignment, releases no issue, and touches no service another child is using.
 
@@ -914,7 +914,7 @@ the bridge's task/turn wait; subagent handles and subagent waits are not substit
 host wait bounds, prefer compact snapshots, and avoid repeated full transcript reads or rapid
 polling. Give meaningful progress updates under the host's communication rules, not repetitive
 unchanged status. Automatic relay handoff may wait while the child is active; bounded observation
-can read the issue child's result, but does not prove that a relay receipt was delivered or acknowledged.
+can read the `child` session's result, but does not prove that a relay receipt was delivered or acknowledged.
 Reconcile existing receipts through the relay when it holds the assignment; do not create a
 second delivery route. Respect pause/cancellation and resource limits in either waiting mode.
 
@@ -1080,7 +1080,7 @@ items and nobody wakes the child", and it is a real state rather than a hypothet
 **Detecting and recovering it.** The detector is the child's own drain on entry, which reads held
 rows rather than only pending ones, plus any authorized operator reading the same records. The
 owner is the child that owns the assignment. The recovery is a fresh execution generation, because
-the held row itself cannot be revived: the issue child re-emits and a new delivery is created. Where the
+the held row itself cannot be revived: the `child` session re-emits and a new delivery is created. Where the
 child is not woken at all, nothing detects this automatically on the currently installed runtime,
 and that gap is reported as the named limitation it is rather than covered by an assurance nobody
 can keep.
@@ -1174,16 +1174,16 @@ one integrator merges the candidate into a local integration tree over `dev`, ob
 full verification (`verification-record/1` with `result: pass`) for that tree and fast-forwards `dev` to
 it (`POLICY.md#branches-and-authority` in the CRW repository). The pull-request route below is the
 relay's own mechanism, which the installed relay still runs; while it does, these clauses describe
-the relay's path, and the issue child's obligations under them are the ones its packet carries. Where the
+the relay's path, and the `child` session's obligations under them are the ones its packet carries. Where the
 relay refuses the push-only flow, that is missing official support to report.
 
 ### OPS-9.1 The child owns the delivery, and makes it reviewable
 
-A capable issue child carries its work to a reviewable state and then through review. Under the push-only
+A capable `child` session carries its work to a reviewable state and then through review. Under the push-only
 procedure it implements, runs the basic checks, commits on its task branch and pushes it, and its
 evidence is the repository's local full verification of the delivered tree; the integrator merges
 that tree into the integration tree and fast-forwards `dev`. Where the delivery is a pull request,
-the issue child opens it ready for review, or opens a draft and marks it ready before any review is
+the `child` session opens it ready for review, or opens a draft and marks it ready before any review is
 requested: ready for review comes before the review rather than after it, because a reviewer treats
 a draft as not yet asking, and a review that never ran then reads as a pass nobody gave.
 
@@ -1193,19 +1193,19 @@ head, and the relay outcome is a third thing again. So the pull request stays re
 are pending and while ordinary fixes land on it, and returning it to draft during normal review
 traffic withdraws the request the reviewer was answering.
 
-The issue child then owns every applicable review on that same pull request: collecting the findings,
+The `child` session then owns every applicable review on that same pull request: collecting the findings,
 triaging them, fixing what needs fixing, replying where a finding does not apply and saying why,
 and rechecking.
 
 | Step | Owner |
 |---|---|
-| Implement, basic checks, commit, push the task branch | issue child |
-| Deliverable reviewable: the pushed branch with its verification evidence, or a pull request where SCOPE names one | issue child |
-| Review requested where a pull request exists, hosted review runs | issue child |
-| Findings triaged, fixed, replied and rechecked until the applicable gates are met | issue child |
-| Readiness handoff recorded: the head, the verified base, the verification evidence, the review coverage and a judged disposition per thread | issue child |
-| Report to the child | issue child |
-| The issue's criteria checked, and the issue child's handoff restated against the current tree, base and head | child |
+| Implement, basic checks, commit, push the task branch | `child` session |
+| Deliverable reviewable: the pushed branch with its verification evidence, or a pull request where SCOPE names one | `child` session |
+| Review requested where a pull request exists, hosted review runs | `child` session |
+| Findings triaged, fixed, replied and rechecked until the applicable gates are met | `child` session |
+| Readiness handoff recorded: the head, the verified base, the verification evidence, the review coverage and a judged disposition per thread | `child` session |
+| Report to the child | `child` session |
+| The issue's criteria checked, and the `child` session's handoff restated against the current tree, base and head | child |
 | Integrate into `dev` and verify the landing, without asking the user again | child |
 | Release or deployment | user |
 
@@ -1214,7 +1214,7 @@ a review thread loses the history a reviewer needs and starts the review over.
 
 ### OPS-9.2 What normal completion means
 
-An issue child reports normal completion only when the required checks and reviews on the CURRENT head
+A `child` session reports normal completion only when the required checks and reviews on the CURRENT head
 have finished and every blocking finding is resolved, with
 [Judge a finding by its impact](merge-readiness.md#judge-a-finding-by-its-impact) deciding which
 findings those are. Each finding carries its own evidence. For one that was fixed that is the
@@ -1237,7 +1237,7 @@ reported as blocked. It is never reported as completion with a note, because the
 skimmed past.
 
 Saying so is not enough on its own, because the failure this rule exists to prevent is silence
-rather than a false claim. An issue child reported an issue complete with fourteen unresolved review
+rather than a false claim. A `child` session reported an issue complete with fourteen unresolved review
 threads and nothing objected: the completion path established that the turn had ended and that the
 deliverable hashed, and never asked what the review said. So a completion that names a pull request
 carries a handoff record, and recording one is refused when the review coverage is unstated, when
@@ -1260,7 +1260,7 @@ at the other end.
 
 ### OPS-9.3 The parent integrates, and does not release
 
-After the issue child reports, the child checks the issue's criteria and the candidate's latest diff,
+After the `child` session reports, the child checks the issue's criteria and the candidate's latest diff,
 destination tip, head, verification evidence and review resolution. If those hold, the child
 integrates without asking the user again, because that authority was already granted for this
 workflow, and then verifies the landing rather than trusting an accepted integration request.
@@ -1268,15 +1268,15 @@ Under the push-only procedure the integrator merges the candidate into the integ
 verifies it and fast-forwards `dev`; where the relay still runs the PR path, the child's
 step is the merge it describes.
 
-It RESTATES the issue child's handoff rather than rebuilding it. The issue child already read the review to the
+It RESTATES the `child` session's handoff rather than rebuilding it. The `child` session already read the review to the
 end and enumerated the check runs; a child that paginates them again is repeating work the contract
 just assigned to somebody else, and a child that re-triages findings is running a second review
-round the issue child already owns. What the child adds is currency, which only it can add: it re-reads
+round the `child` session already owns. What the child adds is currency, which only it can add: it re-reads
 the head and the base immediately before merging and compares the counts it sees against the record.
 That comparison is mechanical validity, not a review round. Where the re-read disagrees with the
-record, the candidate returns to the same issue child fail-closed; neither the child nor the parent
-reviews on the issue child's behalf. A review thread outside `threadsSeen` is the one thing the coordinator grades
-first: the issue child never judged it, so grading it is not a second review of the issue child's work
+record, the candidate returns to the same `child` session fail-closed; neither the child nor the parent
+reviews on the `child` session's behalf. A review thread outside `threadsSeen` is the one thing the coordinator grades
+first: the `child` session never judged it, so grading it is not a second review of the `child` session's work
 ([Late review threads](merge-readiness.md#late-review-threads)).
 
 One disagreement is the child's own to remove: a base that moved under an otherwise verified head.
@@ -1289,7 +1289,7 @@ is not a disagreement either. Every other disagreement returns as
 above.
 
 Two further things the child does are not a second review round either. Deciding an acceptance
-the issue child PROPOSED is the child's own judgment: the issue child brings the finding with its reading of
+the `child` session PROPOSED is the child's own judgment: the `child` session brings the finding with its reading of
 the effect and the separability, and the child rules only on whether that residue matters for
 what the issue is for, which is a criteria question nobody else holds. And confirming that each
 disposition recorded as accepted names a decision the child actually made is recognition rather
@@ -1302,7 +1302,7 @@ Release and deployment are separate and still require the user. A merge that is 
 release or a deployment needs that approval before the merge, since the branch name alone does not
 carry it.
 
-The issue child does not merge. It delivers and it answers review; the merge decision belongs to the
+The `child` session does not merge. It delivers and it answers review; the merge decision belongs to the
 child that holds the criteria.
 
 Where a parent coordinates several projects into one shared target, it decides the ORDER in
@@ -1322,18 +1322,18 @@ describes the candidate, unless the child has itself judged that thread and reco
 disposition for that head (`merge-evidence --restate <record> --late-dispositions <file>`, in
 [a late thread the parent dispositions itself](merge-readiness.md#a-late-thread-the-parent-dispositions-itself)).
 An invalidated record is not a verdict and is not a merge candidate. It
-returns to the issue child that produced it, through the correction path the assignment already uses, for as long as
+returns to the `child` session that produced it, through the correction path the assignment already uses, for as long as
 that path is open: a node that is not accepted yet takes the ordinary correction, and a node whose result is
 accepted and still current takes the generation opened by hand under a reason that states the correction; once
 the node has landed no correction reaches it, and
 [Late review threads](merge-readiness.md#late-review-threads) says what holds then.
 
-The one head the child makes itself, a base refresh under that rule, is a head the issue child's evidence
+The one head the child makes itself, a base refresh under that rule, is a head the `child` session's evidence
 never saw either, and it is handled the same way: the jobs and the review are read again on it, the
 check that it is the verified head merged with the base tip and nothing else (one update, proved as a
 tree identity, or, for a conflict the child settled by a declared mechanical rule, `crw skill base-refresh
 mechanical`) is run, and no job or review result is carried over from the head it replaced. Only
-the issue child's judged dispositions of threads that both heads show stand.
+the `child` session's judged dispositions of threads that both heads show stand.
 
 ## OPS-10 Which system owns which record
 
@@ -1479,7 +1479,7 @@ They carry no project status; their owning clauses define the rule.
 | OPS-12.10 | Verify implementation and scale evidence before claiming fairness under OPS-8.3 and OPS-8.4 |
 | OPS-12.11 | Determine the installed lock's scope before claiming duplicate-start protection under OPS-4.2 and OPS-4.6 |
 | OPS-12.12 | Reconcile existing stores before scope arbitration or migration under OPS-4.6 |
-| OPS-12.13 | Carry issue child capability and delivery ownership under OPS-5.5 and OPS-9 |
+| OPS-12.13 | Carry `child` session capability and delivery ownership under OPS-5.5 and OPS-9 |
 | OPS-12.14 | Apply current authorized merge scope and separate release authority under OPS-9.3 |
 | OPS-12.15 | Use the task packet and OPS-5.3 for delivery artifacts and restricted-task fallback |
 | OPS-12.16 | Keep review readiness, merge readiness, and relay outcome separate under OPS-9.1 |

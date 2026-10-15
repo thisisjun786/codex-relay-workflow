@@ -1,9 +1,9 @@
 # Start policy and child cap
 
-The sessions in this document are named by [the level table](../../crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and an issue child is no layer.
+The sessions in this document are named by [the level table](../../crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and a `child` session (a code id, not a layer) is no layer.
 
 One adjudication settles how a run starts. It happens after the project baseline and before the
-first issue child is created, and what it decides is recorded where the next session will read it. A
+first `child` session is created, and what it decides is recorded where the next session will read it. A
 value the adjudication can settle is never put to the user as a question; a value it cannot settle
 is asked before anything is created rather than after.
 
@@ -27,12 +27,12 @@ what follows is the goal convention those roles carry.
 | --- | --- | --- | --- |
 | Initiative management task | None, and no automatic loop | None | Development, technical acceptance and merge judgment. It talks with the user, relays requests, reads child state, resumes within the approved scope, and summarises. |
 | Project session | None by default. It waits idle with no goal and a relay event brings it back. A goal exists only where the user explicitly asked for one, in [goal mode](goal-mode.md) | None. It builds no goalplan and no FSM | A fabricated source change to close a goal it does hold |
-| Issue child | Creates or reuses its own for the issue scope | Keeps `crw-loop` and PABCD | The child's merge authority, and a second goal where one already exists |
+| `child` session | Creates or reuses its own for the issue scope | Keeps `crw-loop` and PABCD | The child's merge authority, and a second goal where one already exists |
 
 A project session runs goal-free by default, and that is a decision about what wakes it rather
 than a restriction on what it may do. Waiting is the only thing a goal was carrying, and a
 delivered relay event carries it better: the child ends its turn when nothing but waiting
-remains, and the event that matters is what starts the next one. An issue child that already has
+remains, and the event that matters is what starts the next one. A `child` session that already has
 a goal reuses it, because a second goal opened for the same assignment is a duplicate rather than
 a resume.
 
@@ -43,18 +43,18 @@ needs to recognise it as superseded rather than as a second valid answer. The de
 replaced it is CRW-165's of 2026-09-21.
 
 Recorded here, owned elsewhere, and unchanged by any of this: the initiative task runs the
-user-assigned Astra, a project session runs anthropic/claude-opus-5-5 at xhigh, and an issue child
+user-assigned Astra, a project session runs anthropic/claude-opus-5-5 at xhigh, and a `child` session
 runs one of two pairs, anthropic/claude-sonnet-5-5 or gpt-6.1-sol, each at xhigh, chosen per issue by
-[Child pair by issue type](../../crw-plan/references/integrations.md#child-pair-by-issue-type). The child's and the issue child's rows have a history rather than one value, and this row carries the latest
+[Child pair by issue type](../../crw-plan/references/integrations.md#child-pair-by-issue-type). The child's and the `child` session's rows have a history rather than one value, and this row carries the latest
 recorded decisions rather than an observation of what any task is running. swe-2 at max was the
 recorded child pair until 2026-09-21, when Jun moved every child to xai/grok-4.6 at xhigh; Jun's
 restoration decision later that same day put swe-2 at max back, and on 2026-09-23 Jun moved the
-child to anthropic/claude-opus-5-5 at xhigh. The issue child ran anthropic/claude-opus-5 at xhigh until
+child to anthropic/claude-opus-5-5 at xhigh. The `child` session ran anthropic/claude-opus-5 at xhigh until
 2026-09-23, when Jun moved it to anthropic/claude-opus-5-5 at the same effort, and on 2026-09-29
 Jun moved it to anthropic/claude-sonnet-5-5, again at xhigh. On 2026-10-03 Jun added gpt-6.1-sol at
-xhigh as a second child pair, because issue children on Sonnet alone used up the Claude quota too fast; from
-then the issue child role holds two pairs, and the policy ranks neither. Sharing a pair, as the child and the
-issue child did between those dates, does not merge the roles: each is still checked against its own row. Each superseded step is kept so
+xhigh as a second child pair, because `child` sessions on Sonnet alone used up the Claude quota too fast; from
+then the `child` role holds two pairs, and the policy ranks neither. Sharing a pair, as the child and the
+`child` session did between those dates, does not merge the roles: each is still checked against its own row. Each superseded step is kept so
 the transitions can be reproduced and recognised as superseded rather than as second valid
 answers. Whether a host's policy file already lists the second pair is read from that policy; this record
 is the decision and shows nothing about what a host declares.
@@ -62,18 +62,18 @@ is the decision and shows nothing about what a host declares.
 A single task may be excepted by name. The consolidated CRW-127 coordinator ran
 ollama-cloud/glm-5.3 at xhigh under Jun's 2026-09-21 exception, a bounded trial that has since
 ended. A named exception does not become a default: it is not propagated to other children or down
-to issue children, and it is recorded explicitly rather than inferred from an observed pair. It is also
+to `child` sessions, and it is recorded explicitly rather than inferred from an observed pair. It is also
 less exclusive than its name suggests: the policy file has no task-identity field and scopes an
 exception by role and directory, so exclusivity comes from choosing a directory one task works in.
 The id, that directory and the authorization behind them are read from the host policy and the
 tracking record rather than from here.
 
-This is a readback, not an authority. The issue child default is owned by
+This is a readback, not an authority. The `child` session default is owned by
 [Default independent execution](../../crw-canon/references/delivery.md#default-independent-execution)
 and the role model policy by its own issue, while the value a run actually reads is the roles
 section of the host's own execution policy; where any of them disagrees with this paragraph, they
 win and this paragraph is stale. Nothing in this file changes a model, a permission, a worktree, a
-project's scope or an issue child count.
+project's scope or a `child` session count.
 
 ## What is settled, and what is recorded with it
 
@@ -211,7 +211,7 @@ because one of them passing says nothing about the other two.
    goal tools rather than assumed. A bridge that can read a goal cannot write one; a read-only
    goal API is not remote goal-write support. Under the project session default no goal is opened,
    so this fact is recorded `not_applicable` for that role and becomes load-bearing only where goal
-   mode or an issue child asks the host for a goal.
+   mode or a `child` session asks the host for a goal.
 2. **Delivery path.** Whether the active and idle paths can actually carry a callback to this
    task, under [OPS-8.1](operations.md#ops-81-parent-continuation-and-waiting).
 3. **Approval-policy declaration.** Whether the policy the caller declares matches the one the
@@ -244,7 +244,7 @@ while repairing nothing. A mismatch is observed, declared correctly where that h
 otherwise reported as a closed channel rather than written over.
 
 Also record what the adjudication did not change. A start policy settles a run mode, a cap and the
-compatibility facts; it does not alter worktrees, project scope, permissions or issue child count, and
+compatibility facts; it does not alter worktrees, project scope, permissions or `child` session count, and
 saying so explicitly is what stops a later reader inferring a change nobody made.
 
 ## Which pairings are legal
@@ -258,7 +258,7 @@ product is declared rather than left to judgement.
 | `goal` | legal in goal mode, at the cost recorded below | legal | legal, transitional |
 | `blocked` | illegal | illegal | the only legal pairing |
 
-`blocked` as a run mode means activation and execution are both unavailable and no issue child is
+`blocked` as a run mode means activation and execution are both unavailable and no `child` session is
 created, so pairing it with a return path a running child would use describes a child that does
 not exist. Either operational path beside it is a record to repair, not a state to act on.
 
@@ -293,9 +293,9 @@ one that is usually skipped.
    to deliverability: a child whose goal is paused has revoked its own readiness and must not be
    left waiting on a delivery that will never arrive.
 4. Every disposition this child is waiting on can actually enqueue a delivery — not completion
-   alone, but also an issue child stopping for a person and an issue child asking for a decision. A disposition
+   alone, but also a `child` session stopping for a person and a `child` session asking for a decision. A disposition
    that cannot is not covered by a completion-only observation, and the child either keeps
-   `active-observation` for that one or requires the issue child to emit under it.
+   `active-observation` for that one or requires the `child` session to emit under it.
 5. An unattended idle-to-turn wake has already been observed on this same operating scope, App
    Server instance, store and socket, service instance, approval policy, role-policy identity,
    transport revision and disposition class — by this child on an earlier run, or by a separate
@@ -426,7 +426,7 @@ These are recorded separately and none of them stands in for another:
 2. The goal reads back active, with its objective and its approved scope.
 3. A next turn actually continued, observed rather than assumed, and labelled a bounded nudge
    where that is what it was.
-4. An issue child's result was delivered and acknowledged.
+4. A `child` session's result was delivered and acknowledged.
 5. The project actually completed.
 
 The child activates through its own native tools and confirms the result itself. Another task
@@ -456,7 +456,7 @@ still-valid decision recorded for this same project, or the standing default is 
 an approval already given.
 
 A field the precedence does not settle needs a new decision, and it is asked before the first
-issue-child creation call. Only the action waiting on the answer is held: reading the baseline, preparing
+`child`-session creation call. Only the action waiting on the answer is held: reading the baseline, preparing
 packets, inspecting existing owners and read-only diagnosis continue while it is pending.
 
 A question raised after the action it governs is a defect to record, not an approval obtained.
@@ -466,30 +466,30 @@ explicit limit and the subtractions below are what bound the number.
 
 ## What bounds the number actually dispatched
 
-The issue children started in one pass are the lower of the ready independent issues the baseline found
-and the cap in force minus this child's issue children already live, then reduced by whatever the
+The `child` sessions started in one pass are the lower of the ready independent issues the baseline found
+and the cap in force minus this child's `child` sessions already live, then reduced by whatever the
 child observed in its operating scope. Record each bound and which one decided the result: a pass
 limited by ready work and a pass limited by capacity look identical afterwards and recover
 differently.
 
-This child's own live issue children always count against its cap. Other children' issue children never do;
+This child's own live `child` sessions always count against its cap. Other children' `child` sessions never do;
 they inform the observation instead.
 
-A creation whose outcome is unresolved counts against the cap exactly as a live issue child does, until
+A creation whose outcome is unresolved counts against the cap exactly as a live `child` session does, until
 it is reconciled. An unresolved outcome means a writer may exist, so treating its slot as free is
 how a child quietly exceeds its own ceiling while its arithmetic still looks correct.
 
 That observation is a reduction and only ever lowers the number. Where nothing was observed, no
 reduction applies and the observation is recorded as `unmeasured`, which states what was read
 rather than claiming the host is safe at the cap. Where an observation shows pressure, such as
-another child's live issue children, a resource reading, or a tool or permission constraint, the child
+another child's live `child` sessions, a resource reading, or a tool or permission constraint, the child
 lowers or holds dispatch and records the observation that caused it.
 
-Under a DAG plan the relay takes one such resource reading itself. `dag-ready` and `dag-release` read MemAvailable, the swap in use and the memory pressure of the host once per command and, while one is over its threshold (15 GiB, 85 percent and a `some avg60` of 10 unless the environment says otherwise), defer every new release as `defer:host_memory` and refuse `dag-release` with `capacity_exhausted`. The reading and the thresholds are recorded with each recorded pass (`pass.host_memory`), and a reading nobody could take is `unmeasured`, not a clear host. It holds new releases only and stops no issue child, and it is not a demonstration that any cap is safe.
+Under a DAG plan the relay takes one such resource reading itself. `dag-ready` and `dag-release` read MemAvailable, the swap in use and the memory pressure of the host once per command and, while one is over its threshold (15 GiB, 85 percent and a `some avg60` of 10 unless the environment says otherwise), defer every new release as `defer:host_memory` and refuse `dag-release` with `capacity_exhausted`. The reading and the thresholds are recorded with each recorded pass (`pass.host_memory`), and a reading nobody could take is `unmeasured`, not a clear host. It holds new releases only and stops no `child` session, and it is not a demonstration that any cap is safe.
 
 Three claims this does not support:
 
-- The standing cap is a policy default, not a demonstration that a host runs that many issue children
+- The standing cap is a policy default, not a demonstration that a host runs that many `child` sessions
   safely. [OPS-8.4](operations.md#ops-84-stating-the-scale-that-was-actually-verified) governs
   what may be said about scale.
 - A raised file-descriptor limit is a changed ceiling, not evidence that a higher cap is safe. The
@@ -503,7 +503,7 @@ Three claims this does not support:
 ## Cases this policy is accepted against
 
 These are the cases the policy is judged by. D is the number from the section above, and no case
-creates an issue child before the adjudication: that count is zero in every row. Creation here means issue child
+creates a `child` session before the adjudication: that count is zero in every row. Creation here means `child` session
 creation; `no-create` bars that. Unless a row says otherwise the project session mode is
 `goal-free-run`, holding no goal, and its observation path is whichever of `event-driven-idle` or
 `active-observation` the readiness facts above actually support.
@@ -515,7 +515,7 @@ creation; `no-create` bars that. Unless a row says otherwise the project session
 | 3 | The same project resumed mid-run or after a compaction | none | D | the restored values, including any `this-run` allowance | restored from the record rather than adjudicated again |
 | 4 | A different project on the same host | none for the cap | D | standing cap; case 5 does not reach here | host facts carry, project decisions do not |
 | 5 | The user states a limit of four | none | D with the cap in force at four | source is the explicit limit, scope `this-run` | restored while the run lasts, never promoted |
-| 6a | `no-create` in force | none | 0 | the mode as adjudicated, no issue child created | the limit recorded as the precedence that applied |
+| 6a | `no-create` in force | none | 0 | the mode as adjudicated, no `child` session created | the limit recorded as the precedence that applied |
 | 6b | `no-goal` in force | none | D | `goal-free-run` under the cap in force, which is the default anyway | the limit restored; it bars `goal` and changes nothing else, because the default already holds no goal |
 | 7a | Goal mode was requested, its goal is unsupported, and the user declines goal-free Run in its place | none | 0 | `blocked`, owning issue cited | the blocker preserved, not re-asked as new |
 | 7b | A genuinely new decision is required | asked before any creation | 0 until answered | that action alone held | baseline, packets and read-only diagnosis continue |
@@ -523,7 +523,7 @@ creation; `no-create` bars that. Unless a row says otherwise the project session
 | 7d | Goal mode activates and its Stop-continuation is the bounded PABCD nudge | none | D | `goal`, the directive declined and the nudge recorded as bounded | goal-active and continuation kept as separate facts; a known incompatibility evidenced in CRW-29 and CRW-145, not a promised fix, and not a reason to open a goal the default does not need |
 | 7e | Readiness fact 5 has no evidence on this operating scope | none | D | `goal-free-run` with `active-observation`, fact 5 recorded `unmeasured` | the child keeps bounded waits and claims no automatic resume until a wake is observed here |
 | 8 | An installed version or hook rule changed | only if the re-read forces one | D | the changed field re-adjudicated, the rest restored | the changed identity recorded against the superseded value |
-| 9 | Issue children of this child are already live | none | D, which subtracts them | `goal-free-run`; the standing cap is unchanged and D subtracts the live issue children | the existing owners preserved, never replaced |
+| 9 | `child` sessions of this child are already live | none | D, which subtracts them | `goal-free-run`; the standing cap is unchanged and D subtracts the live `child` sessions | the existing owners preserved, never replaced |
 | 10 | A child from before this decision is still holding its own active goal | none | D | `goal`, recorded as carried over rather than chosen | the goal is preserved and retired only at its scope boundary under [Parent goal lifecycle](goal-mode.md#retiring-a-goal-a-parent-already-holds); it is never paused to reach the default, because a paused goal is undeliverable |
 
 An edit does not alter a turn that has already loaded these instructions. It does not stop there,
