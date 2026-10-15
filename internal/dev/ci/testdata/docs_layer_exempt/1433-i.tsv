@@ -1,0 +1,17 @@
+# CRW-1433 unit 1433-i: uses of the bare word "supervisor" that name a process, not a session layer (decision 11).
+docs/CI.md	the supervisor child	a test binary a test starts again (a process), not a session layer
+docs/runtime-install.md	a supervisor holds	the relay's supervisor process holds the service lock that `service status` reads
+docs/runtime-install.md	nothing to a supervisor	the relay's supervisor process: the promotion lock tells it nothing
+docs/role-execution-policy.md	supervisor send	the name of a send kind the code keeps (sendparent --role supervisor), not a session layer
+docs/role-execution-policy.md	the supervisor that spawned them	the relay's supervised daemon, which spawns its workers (a process)
+docs/live-trial.md	a supervisor that stopped polling	the polling process the trial starts (a process)
+docs/live-trial.md	A supervisor launched with	the polling process the trial starts (a process)
+docs/live-trial.md	requires the supervisor to be	the polling process (processPersistence reading)
+docs/live-trial.md	the supervisor's witness	the witness file of the polling process
+docs/live-trial.md	where the supervisor is the relay's own service	the polling process may be the relay's own service
+docs/live-trial.md	a restarted supervisor	the polling process after a restart
+docs/live-trial.md	The supervisor is read again	the polling process is read again (processPersistence)
+docs/live-trial.md	"supervisor": {"pid"	the key `supervisor` of the start record: the polling process (an identifier)
+docs/live-trial.md	supervisor.jsonl	a file name in the start record example
+docs/live-trial.md	a supervisor that outlived	the polling process that outlived the launching shell
+docs/role-execution-policy.md	"supervisor": {"expectation"	the key `supervisor` of the roles section in the file example: an identifier the policy file keeps, not a session layer
