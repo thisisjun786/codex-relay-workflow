@@ -4,7 +4,7 @@ The skills of the plugin by the job they do and the level that calls them, and h
 
 | Family | Skills | Called by |
 |---|---|---|
-| Define and plan | `crw-define`, `crw-plan`, `crw-add-issue` | `crw-define` by the top session (today Sion) or the parent (repository session, relay role `supervisor`) when a milestone and its issues are registered; `crw-plan` and `crw-add-issue` by the parent or the user; `crw-add-issue` also by the child (project session, relay role `parent`) |
+| Define and plan | `crw-define`, `crw-plan`, `crw-add-issue` | `crw-define` by the top session (today Sion) or the parent (repository session) when a milestone and its issues are registered; `crw-plan` and `crw-add-issue` by the parent or the user; `crw-add-issue` also by the child (project session) |
 | Run | `crw-run` | a child, and the parent in [its section](../../crw-run/SKILL.md#the-parent-the-repository-session), at the layer its session is bound to ([the level table](hierarchy.md#the-levels)) |
 | Report and check | `crw-status`, `crw-check`, `crw-tidy`, `crw-refactor` | any level, read-only unless the skill says what it writes |
 | One task | `crw-loop`, `crw-pabcd` | an issue child, or a task without a parent |
