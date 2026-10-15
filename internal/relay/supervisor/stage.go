@@ -59,6 +59,15 @@ func canonicalPacket(p Packet) (string, error) {
 func pythonJSONSorted(value any) string {
 	return pyjson.Dumps(value, pyjson.Options{SortKeys: true, Unicode: true})
 }
+
+// submissionOf is the submission_no a message staged from report records: none for no report.
+func submissionOf(report workReportFact) sql.NullInt64 {
+	if report.submission == 0 {
+		return sql.NullInt64{}
+	}
+	return sql.NullInt64{Int64: report.submission, Valid: true}
+}
+
 func (c *Channel) Stage(ctx context.Context, o Obligation, expectRecipient, at string) (StageResult, error) {
 	return c.StageWithReading(ctx, o, nil, expectRecipient, at)
 }
@@ -146,6 +155,20 @@ func (c *Channel) StageWithReading(ctx context.Context, o Obligation, reading ma
 		}
 		existing, err := c.Store.SupervisorMessage(tx, id)
 		if err == nil {
+			// A park the recipient's acknowledgement set is not released by staging the same statement
+			// to the same endpoints again (CRW-1486: the daemon's staging visit restages every owed
+			// completion on each pass). A new statement (another event or submission) or other
+			// endpoints still go through the release and restating below.
+			if existing.SenderTaskID == r.Sender && existing.RecipientTaskID == r.Recipient && existing.EventID == nullString(eventID) && existing.SubmissionNo == submissionOf(report) {
+				acknowledged, err := c.acknowledgedPark(tx, existing)
+				if err != nil {
+					return err
+				}
+				if acknowledged {
+					result = StageResult{"schema": channelVersion, "staged": false, "messageId": id, "reason": acknowledgedKeptReason, "message": messageMap(existing)}
+					return nil
+				}
+			}
 			if existing.HoldReason.String == store.SupervisorHoldSuperseded {
 				if err = c.reopenProposal(tx, existing, at); err != nil {
 					return err
@@ -179,10 +202,7 @@ func (c *Channel) StageWithReading(ctx context.Context, o Obligation, reading ma
 					return Refusal{"contradictory_observation", "this omission is already staged as " + strconv.Quote(id) + " from another reading of it, which disagrees with this one about what it is or where it can be read. The staged message keeps the reading it froze; nothing was written"}
 				}
 			}
-			var submission sql.NullInt64
-			if report.submission != 0 {
-				submission = sql.NullInt64{Int64: report.submission, Valid: true}
-			}
+			submission := submissionOf(report)
 			restating := existing.EventID != nullString(eventID) || existing.SubmissionNo != submission
 			if existing.SenderTaskID != r.Sender || existing.RecipientTaskID != r.Recipient {
 				if !existing.Unsent() {

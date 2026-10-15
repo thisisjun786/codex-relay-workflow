@@ -264,9 +264,9 @@ func (h *listedRecipientSends) RecipientFingerprint(context.Context, string) (st
 // block and opens no turn for the three parked reports.
 //
 // The reports are direct messages, which only their sender stages again. An event-path completion
-// that is still owed is staged again by the pass's own staging visit, and staging what is owed
-// releases the superseded hold (the existing rule this command keeps); the store and list tests park
-// event-path rows, and the acknowledgement's answer says how a park is released.
+// that is still owed is staged again by the pass's own staging visit, which leaves an acknowledged
+// park parked (supervisor/acknowledge_restage_test.go); the acknowledgement's answer says what
+// releases a park.
 func TestSupervisorAcknowledgeParksInformationalNotifications(t *testing.T) {
 	s := newListStore(t)
 	t.Setenv("CODEX_THREAD_ID", "")
@@ -466,5 +466,36 @@ func TestSupervisorListAndAcknowledgeStayOutOfDoctorLists(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+// CRW-1486 fix round 2 (P1), the direct path: a lead report parked by the acknowledgement stays
+// parked when its sender stages the same report again, and is released when the sender states it
+// with new content (the message is restated and owed again).
+func TestSupervisorAcknowledgedReportStaysParkedWhenItsSenderRepeatsIt(t *testing.T) {
+	s := newListStore(t)
+	t.Setenv("CODEX_THREAD_ID", "")
+	s.must("linkage-bind", "--role", "supervisor", "--scope-kind", "management", "--scope", "01mgmtA", "--task", "01mgmtA", "--host", "host")
+	s.must("linkage-bind", "--role", "supervisor", "--scope", "INI-1", "--task", "01lead", "--host", "host", "--creator", "01mgmtA")
+	report := func(text string) string {
+		t.Setenv("CODEX_THREAD_ID", "01lead")
+		defer t.Setenv("CODEX_THREAD_ID", "")
+		return s.must("report-up", "--initiative", "INI-1", "--kind", "lead_report", "--id", "lrp-one", "--text", text)["messageId"].(string)
+	}
+	id := report("milestone one is done")
+	if got := stringsOf(t, s.must("supervisor-acknowledge", "--recipient", "01mgmtA", "--actor", "01mgmtA", "--all-informational")["parked"]); !slices.Equal(got, []string{id}) {
+		t.Fatalf("parked %v, want %s", got, id)
+	}
+	if again := report("milestone one is done"); again != id {
+		t.Fatalf("the repeated report is message %s, want %s", again, id)
+	}
+	if row := s.message(id); row.HoldReason.String != store.SupervisorHoldSuperseded || row.State != "queued" {
+		t.Fatalf("the repeated report released the park: %s held %q", row.State, row.HoldReason.String)
+	}
+	if again := report("milestone one is done, and two started"); again != id {
+		t.Fatalf("the restated report is message %s, want %s", again, id)
+	}
+	if row := s.message(id); row.HoldReason.Valid || row.State != "queued" {
+		t.Fatalf("a report stated with new content stayed parked: %s held %q", row.State, row.HoldReason.String)
 	}
 }

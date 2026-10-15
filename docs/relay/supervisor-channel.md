@@ -963,7 +963,13 @@ obligation kind. `supervisor-acknowledge --recipient <task> --actor <task>` with
 report something finished (`completion`, `flow_completion`, `flow_milestone_report`, `lead_report`); a
 message named by id may be any notification. A decision, a fault notice, a held message and one an
 attempt may have sent are never parked, and each message left is answered with its reason. Staging
-what a parked message is for again releases it. Neither is in `doctor`'s command lists. The procedure
+the same statement again (the daemon's staging visit of an owed event completion, or a sender sending
+the same direct report again) leaves a parked message parked. Its content moving while it is still
+owed (another event or submission, other text), re-addressing to another recipient, or a send of it by
+id (`supervisor-send --message`) releases it. The park is told from a superseded hold the channel
+derived by the newest `supervisor_message_superseded` row of the message, which names
+`supervisor-acknowledge`; a derived hold is released by staging what is owed, as before. Neither command
+is in `doctor`'s command lists. The procedure
 is in [operations](operations.md#reading-a-supervisor-recipients-queue).
 
 ## What a readback is not

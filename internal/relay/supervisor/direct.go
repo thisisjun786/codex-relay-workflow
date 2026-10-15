@@ -284,6 +284,17 @@ func (c *Channel) StageDirect(ctx context.Context, m DirectMessage, within func(
 		if same && !moved && existing.Get("hold_reason") == nil {
 			return finish(false, "this message is already staged; one report is one message", nil)
 		}
+		// The sender repeating what it said leaves a park the recipient's acknowledgement set (CRW-1486);
+		// other text or another recipient still releases it below.
+		if same && !moved && existing.Text("hold_reason") == store.SupervisorHoldSuperseded {
+			acknowledged, err := c.acknowledgedPark(ctx, store.SupervisorMessagesRow{MessageID: id, HoldReason: sql.NullString{String: store.SupervisorHoldSuperseded, Valid: true}})
+			if err != nil {
+				return err
+			}
+			if acknowledged {
+				return finish(false, acknowledgedKeptReason, nil)
+			}
+		}
 		result, err := noticeExec(ctx, c.Store, "UPDATE supervisor_messages SET packet=?,sender_task_id=?,recipient_task_id=?,project_key=?,state='queued',next_eligible_at=NULL,"+
 			"hold_reason=CASE WHEN hold_reason IN (?,?) THEN NULL ELSE hold_reason END,updated_at=? WHERE message_id=? AND "+store.SupervisorNeverSentSQL()+
 			" AND packet=? AND sender_task_id=? AND recipient_task_id=?", encoded, live.Sender, live.Recipient, nullString(live.ProjectKey),
