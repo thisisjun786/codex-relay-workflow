@@ -268,7 +268,8 @@ func TestArchitectOverlayExecutorContract(t *testing.T) {
 // TestArchitectOverlayAuthorityBoundary (CRW-1321, CRW-1347): exceptions to repository rules, other issues' records, policy
 // decisions and execution-environment prerequisites are not the architect's to decide. The overlay says they are raised as open
 // questions with the scope notation of their kind, that a question does not stop the run (no hold), and describes the route an
-// open question takes: never back to the architect, to the orchestrator for a notation of the four kinds, to an explorer otherwise.
+// open question takes: never back to the architect, to the orchestrator for a notation of the four kinds, to an explorer otherwise;
+// and that the answers come back to the architect's thread before the design audit, where it answers with the DESIGN again (CRW-1466).
 func TestArchitectOverlayAuthorityBoundary(t *testing.T) {
 	overlay, err := Overlay("architect", Options{})
 	if err != nil {
@@ -298,6 +299,9 @@ func TestArchitectOverlayAuthorityBoundary(t *testing.T) {
 		"What the run does with an open question:",
 		"None is left to you to answer",
 		"whatever `files_needed` lists",
+		// the answers go back to the architect's thread before the critic (CRW-1466)
+		"come back to your thread before the design audit",
+		"you answer with the DESIGN again",
 		"goes to no explorer",
 		"non-blocking ask",
 		"a missing or unknown notation among them",

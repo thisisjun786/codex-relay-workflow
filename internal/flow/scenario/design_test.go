@@ -1015,7 +1015,8 @@ func TestResumeAfterPromptTextChange(t *testing.T) {
 // A run whose open questions were routed by the binary before CRW-1347 (crw.explore handed crw.exploreRecord answers without the
 // reason, the scope and the notation of their routes) and that a binary of CRW-1347 resumes (the header of crw:lib/packets): the
 // crw.exploreRoute rows and the explorer calls replay as recorded, crw.exploreRecord runs again with the answers of the new
-// binary, design-audit:r1 is the one agent call that runs live, and crw.designLedger refuses the first revision again.
+// binary, design-audit:r1 is the one agent call whose input changed (the architect's design-answers turn after the record runs
+// again as part of the suffix, over the input it recorded, CRW-1466), and crw.designLedger refuses the first revision again.
 func TestResumeAfterOpenQuestionRoutingChange(t *testing.T) {
 	l := NewLab(t, oneNode()...)
 	d := l.designFor()
@@ -1039,8 +1040,20 @@ func TestResumeAfterOpenQuestionRoutingChange(t *testing.T) {
 	for _, c := range l.LiveCalls(before) {
 		labels = append(labels, c.Label)
 	}
-	if !slices.Equal(labels, []string{"design-audit:r1"}) {
-		t.Errorf("live calls %v, want the design audit only", labels)
+	// crw.exploreRecord runs live, so every later position of the path is the resume's suffix (engine/opcall.go): the architect's
+	// design-answers turn (CRW-1466) runs again with it, but over the input it recorded - its packet renders no routing metadata - so
+	// design-audit:r1 is the one agent call whose input changed
+	if !slices.Equal(labels, []string{"design-answers:r1", "design-audit:r1"}) {
+		t.Errorf("live calls %v, want the design-answers turn of the suffix and the design audit", labels)
+	}
+	digests := map[bool][]string{}
+	for _, ev := range l.Events() {
+		if ev.Kind == engine.KindCall && ev.Op == "agent" && ev.Event == engine.EvPrepared && (ev.Label == "design-answers:r1" || ev.Label == "design-audit:r1") {
+			digests[ev.Seq > before] = append(digests[ev.Seq > before], ev.Label+" "+str(ev.Data, "input_digest"))
+		}
+	}
+	if len(digests[false]) != 2 || len(digests[true]) != 2 || digests[false][0] != digests[true][0] || digests[false][1] == digests[true][1] {
+		t.Errorf("input digests before the resume %v and after it %v: want design-answers:r1's the same and design-audit:r1's changed", digests[false], digests[true])
 	}
 	ran := map[string]int{}
 	refused := false

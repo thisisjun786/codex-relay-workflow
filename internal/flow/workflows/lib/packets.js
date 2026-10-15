@@ -175,7 +175,8 @@ function priorLines(prior) {
 // head the re-plan judges, and the packet names it as the re-plan's architect turn has it (headBlock); the first DESIGN has none.
 // unstarted is the ids of the nodes the re-plan releases (CRW-1462; none at the close): the re-plan answers with the whole DESIGN in
 // every round, its design-fix answers included, since an approved one becomes the next revision on its own, so a node with no issue
-// in it is a P1 finding.
+// in it is a P1 finding. An open question of the DESIGN with no entry in the answers is a P1 finding too (CRW-1466): the DESIGN the
+// critic reads is the architect's answer to the round's answers, and a question raised there has not been routed.
 export function designAuditPacket(ms, cand, round, prior, context) {
   const at = context ? headBlock(context) : null
   const replanned = context && Array.isArray(context.unstarted)
@@ -192,6 +193,34 @@ export function designAuditPacket(ms, cand, round, prior, context) {
     replanned ? 'The DESIGN is the whole DESIGN of the milestone, not a delta, in every round of this audit, the architect\'s design-fix answers included: every node of the milestone has its issue in it, the started ones as they were released; an unstarted node with no issue in the DESIGN is a P1 finding that names the node, and so is a started node whose issue is missing.' : '',
     section('DESIGN', [canon(cand.design)]),
     section('ANSWERS TO THE OPEN QUESTIONS (each with its route and what it got)', answerLines(cand.answers)),
+    'An open question of the DESIGN with no entry in ANSWERS TO THE OPEN QUESTIONS (one the architect raised when the answers came back to its thread, which no route has taken yet) is a P1 finding that names the question, so the next round routes it.',
+  ].filter(Boolean).join('\n\n')
+}
+
+// answeredQuestions are the answers of a round's open questions that hold an answer for the architect (CRW-1466): a question an
+// explorer answered (route spawn, with its findings) or that reused an answer the run has (route reuse, with that answer). A question
+// asked of the orchestrator, or one no route answered, is not among them: the critic reads it in its ANSWERS TO THE OPEN QUESTIONS.
+export function answeredQuestions(answers) {
+  return (answers || []).filter((a) => (a.route === 'spawn' && a.findings) || (a.route === 'reuse' && a.answer))
+}
+
+// The design-answers turn of the architect's thread (CRW-1466): the answers its open questions got in this audit round go back to it
+// before the critic audits the DESIGN, and it answers with the DESIGN again. Each answered question is rendered by its id, question,
+// answer and the explorer's findings only - never by its route, reason, scope, notation or origin, so the packet's bytes do not move
+// with the routing metadata a binary records. context is a re-plan's {head, base_tip, landed, unstarted}: the turn is then at the head
+// the re-plan judges (headBlock); the first DESIGN has none.
+export function designAnswersPacket(answers, context) {
+  const at = context ? headBlock(context) : null
+  return [
+    'ROLE: architect. The open questions of your DESIGN got the answers below. Answer with the DESIGN again, with what they say folded into its decisions and plans, before the critic audits it; keep the ids of the decisions and the issues, and give dispositions null (no audit finding is before you). An open question an answer settles leaves open_questions; a question you raise anew in this answer reaches the critic with no answer, which is a P1 finding, and is routed in the next audit round.',
+    section('ANSWERS', answeredQuestions(answers).map((a) => {
+      const lines = [(a.id ? a.id + ': ' : '') + a.question]
+      if (a.answer) lines.push('  answer: ' + a.answer)
+      if (a.findings) lines.push('  findings: ' + canon(a.findings))
+      return '- ' + lines.join('\n')
+    })),
+    at ? 'Your directory P is a read-only checkout of the pinned head: work only under the absolute path P.\n' + at.head : '',
+    at ? at.landed : '',
   ].filter(Boolean).join('\n\n')
 }
 

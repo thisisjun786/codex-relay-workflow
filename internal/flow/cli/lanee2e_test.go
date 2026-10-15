@@ -322,3 +322,83 @@ func TestExplorersRunBeforeTheArchitectAndTheirFindingsReachItsPacket(t *testing
 		t.Errorf("the background explorer's packet:\n%s", exp)
 	}
 }
+
+// TestArchitectContinuesOnItsThreadWithExplorerAnswersBeforeTheCritic (CRW-1466): the answers an explorer gave to the open questions
+// of a DESIGN go back to the architect before the design audit. The first DESIGN raises one open question, an explorer answers it,
+// and a design-answers:r1 call resumes the architect's thread (the same thread) with that answer, after the explorer and before
+// design-audit:r1; its packet carries the question and the answer and no routing metadata, and the DESIGN the critic audits is the
+// one that call answered with.
+func TestArchitectContinuesOnItsThreadWithExplorerAnswersBeforeTheCritic(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+	q := ops.OpenQuestion{ID: "q1", Question: "which file holds the base text?", Scope: "repo", FilesNeeded: []string{"README.md"}}
+	l.designEdit = func(d *ops.Design) { d.OpenQuestions = []ops.OpenQuestion{q} }
+	const answer = "README.md holds the base text, on its first line"
+	const revised = "write the file of A-1 after reading the first line of README.md"
+	threads := map[string]string{}
+	l.turn = func(c labCall, r fakehost.TurnRequest) (fakehost.TurnPlan, bool) {
+		l.mu.Lock()
+		if c.Label != "" {
+			threads[c.Label] = r.ThreadID
+		}
+		l.mu.Unlock()
+		switch {
+		case strings.HasPrefix(c.Label, "explore:"):
+			return labSay(map[string]any{"answer": answer, "evidence": []string{"README.md:1"}, "verified": []string{"README.md"}, "inferred": []string{}, "unknown": []string{}}), true
+		case c.Label == "design-answers:r1":
+			d := l.design()
+			d.Issues[0].Approach = revised
+			return labSay(d), true
+		}
+		return fakehost.TurnPlan{}, false
+	}
+	spec := l.start("start", "project-lane", "--args", fmt.Sprintf(`{"plan":%q,"milestone":"M1"}`, l.plan), "--handoff", l.file)
+	l.closed(l.runToEnd(spec.RunID))
+
+	var order []string
+	roles := map[string]string{}
+	for _, e := range l.events() {
+		if e.Kind == engine.KindCall && e.Event == engine.EvPrepared && e.Op == "agent" && e.Label != "" {
+			if _, seen := roles[e.Label]; !seen {
+				order = append(order, e.Label)
+			}
+			roles[e.Label] = str(e.Data, "role")
+		}
+	}
+	at := func(want func(string) bool) int {
+		for i, label := range order {
+			if want(label) {
+				return i
+			}
+		}
+		return -1
+	}
+	explorer := at(func(s string) bool { return strings.HasPrefix(s, "explore:") })
+	answers := at(func(s string) bool { return s == "design-answers:r1" })
+	audit := at(func(s string) bool { return s == "design-audit:r1" })
+	if explorer < 0 || answers < 0 || audit < 0 || !(explorer < answers && answers < audit) {
+		t.Fatalf("the order of the design calls %v: want the open question's explorer, then design-answers:r1, then design-audit:r1", order)
+	}
+	if roles["design-answers:r1"] != "architect" {
+		t.Errorf("design-answers:r1 is the %q's call, want the architect's", roles["design-answers:r1"])
+	}
+	l.mu.Lock()
+	archThread, answersThread := threads["architect"], threads["design-answers:r1"]
+	text, critic := l.texts["design-answers:r1"], l.texts["design-audit:r1"]
+	l.mu.Unlock()
+	if archThread == "" || answersThread != archThread {
+		t.Errorf("design-answers:r1 ran on thread %q, want the architect's thread %q", answersThread, archThread)
+	}
+	for _, want := range []string{"q1: " + q.Question, answer} {
+		if !strings.Contains(text, want) {
+			t.Errorf("the design-answers packet lacks %q:\n%s", want, text)
+		}
+	}
+	for _, leak := range []string{"route:", "origin", "an explorer answered it"} {
+		if strings.Contains(text, leak) {
+			t.Errorf("the design-answers packet renders the routing metadata %q:\n%s", leak, text)
+		}
+	}
+	if !strings.Contains(critic, revised) {
+		t.Errorf("the critic did not audit the DESIGN design-answers:r1 answered with:\n%s", critic)
+	}
+}
