@@ -219,7 +219,8 @@ message as `superseded_by_report`, and the new obligation is staged as its own m
 hold is derived, so it is not terminal. What it was derived from can move back - a report
 corrected away from a block and then back to it, a confirmed Linear record whose target is
 repointed - so the hold is re-derived whenever the message is staged or attempted, and released
-on the same message once the obligation is owed through it again.
+on the same message once the obligation is owed through it again. A park `supervisor-acknowledge`
+set is not derived; when it is kept or released is [the hold rule](#the-hold-rule).
 
 An omission's reading is checked against its obligation before anything is composed: the
 schema is `reporting-observation/1`, the state is `unreported`, the relationship and the turn in
@@ -949,13 +950,93 @@ an assignment and a session too, so a line built from the obligation alone looke
 command and could not be run. With the reading, the reading is frozen on the row and the
 recheck line in `supervisor-show` is rendered whole.
 
+### The hold rule
+
+One rule sets, keeps and releases the hold `superseded_by_report`, and one function applies it
+(`holdDecision`, `internal/relay/supervisor/holdrule.go`). Every path that writes `hold_reason` asks it
+and writes only what it answers, and `TestEveryHoldWriteAsksTheRule` holds the list of those paths.
+Three paths set the hold, each only on a message that carries none: the channel on a message it
+claimed whose obligation moved (the derived hold, journalled `supervisor_message_superseded`),
+`supervisor-acknowledge` (the park, journalled `supervisor_message_superseded` with `by` naming
+`supervisor-acknowledge` and the actor), and the fault deliverer on its notice (journalled
+`supervisor_notice_parked`).
+
+The kind of a hold is read, never stored apart. Another hold word (`hierarchy_unresolved`, a cap
+word) is `other` and keeps its own release path. `superseded_by_report` on a fault notice is
+`notice`. Otherwise the newest `supervisor_message_superseded` row of the message names the
+acknowledgement (`acknowledged`) or does not (`derived`, which is also how every row written before
+the key existed reads). Because the hold is set only from no hold, and each such set journals one
+such row in its own transaction, the newest row is the one that set the hold the message carries now;
+a release journals `supervisor_message_reopened`, never that kind. A re-address that keeps a hold (an
+acknowledged park whose recipient stays) writes its `supervisor_message_readdressed` row with
+`releasedHold` null and the added key `keptHold` naming the word it kept. A row without `keptHold`
+names under `releasedHold` the hold the message carried, as before; that hold was released, except
+for a direct message's cap word, which its re-address keeps (below) while its row still names it under
+`releasedHold`.
+
+A statement is what the message says, not its bytes (`statementKey`): its obligation, event and
+submission and the content fields of its packet. Seat, scope, sender and observation time are routing
+and never make a new statement, so the daemon's pass, a restart, the direct sender repeating its
+report and a rotated sender session all stage the same statement again.
+
+| entry | none | other | derived | acknowledged | notice |
+| --- | --- | --- | --- | --- | --- |
+| acknowledge, notice_park, derive | set | refuse | refuse | refuse | refuse |
+| defer | set (the word asked, or nothing) | refuse (writes nothing) | refuse (writes nothing) | refuse (writes nothing) | refuse (writes nothing) |
+| claim | keep (claimable) | refuse | refuse | refuse | refuse |
+| settle, a hold word asked | set | keep | keep | keep | keep |
+| settle, no hold word asked | keep | keep | keep | keep | keep |
+| readdress, recipient moved | keep | release (a direct message keeps a cap word) | release | release | release |
+| readdress, sender moved only | keep | release (a direct message keeps a cap word) | release | keep | release |
+| restage, recipient moved | keep | keep (re-addressing releases it) | release | release | release |
+| restage, same recipient | keep | keep (its own path) | if owed | same statement: keep, else if owed | release (reserved again) |
+| send_by_id, recipient or sender moved | keep (answers `relation_owner_drift`: stage it again) | keep | keep | keep | keep |
+| send_by_id, same endpoints | keep | keep (its own path) | if owed | if owed | if owed |
+
+Re-addressing an `other` hold differs by path, as it did before the rule: an event's or an
+omission's message re-addressed by `supervisor-stage` is released whatever its word, while a direct
+message re-addressed by its sender's staging is released from `hierarchy_unresolved` only and keeps a
+cap word (`busy_cap`, `attempt_cap`), which moves with it to the new recipient and keeps its own
+release path. `holdDecision` answers release for the cell; `StageDirect`'s update clears only
+`superseded_by_report` and `hierarchy_unresolved`.
+
+*if owed* releases the hold when what the message is for is still owed through it, and keeps it when
+it is not; the channel answers that (it may restate the message, as the release it allows would), and
+an error reading it keeps the hold. `restage` is any staging of the message's obligation again: by
+hand, by the daemon's pass or its attempt, by the direct sender, or a fault notice's reservation.
+A claim refuses a held message under its write lock, whatever the hold, and its update requires
+`hold_reason IS NULL`, so a park committed after the claim's read wins. A settle keeps a hold that
+appeared while the message was being sent, and records the hold the message carries after it (in the
+flow delivery row and the attempt's journal row), not the one it asked for.
+
+A send by id is `supervisor-send --message <id>` or the fault deliverer's send of its notice; the
+daemon's own attempts are not, and take the `restage` rows. A send by id releases a park or a derived
+hold only when what the message is for is still owed, and sends it; otherwise it sends nothing and
+the hold stays. It never re-addresses a message: when the hierarchy names another sender or recipient
+it answers `relation_owner_drift` and writes nothing. Staging the message again where it came from
+re-addresses it (the `readdress` rows) - `supervisor-stage --event <id>` or `--project <key>` for an
+event's or an omission's report, its sender's own report again (`report-up`, the flow's report) for a
+direct message, which `supervisor-stage` does not stage - and the next send goes. No hold word, column, journal kind or index is
+added for the rule. `TestHoldDecisionTable` holds every cell of this table against `holdDecision`,
+`TestSupervisorHoldRuleTable` holds the paths against a real store, and
+`TestHoldRuleDocsTableMatchesDecision` holds this table to the function.
+
 ### A recipient's whole queue
 
-One command reads one recipient's queue through the store API (CRW-1486) and reaches no host.
+Two commands read and clear one recipient's queue through the store API (CRW-1486), and neither
+reaches a host.
 `supervisor-list --recipient <task> [--project <key>] [--state unsent|all] [--hold <word>|none]` only
 reads: the messages in sending order with their state, hold, staging time, next eligible time and
-whether the channel would claim them now, and counts by state, hold, project and obligation kind. It is
-not in `doctor`'s command lists. The procedure is in
+whether the channel would claim them now, and counts by state, hold, project and obligation kind.
+`supervisor-acknowledge --recipient <task> --actor <task>` with `--all-informational` (narrowed by
+`--project` and `--staged-before`) or with `--message <id>` (repeatable) parks unsent notifications
+without a turn each, under the hold `superseded_by_report` with one `supervisor_message_superseded`
+journal row each naming `supervisor-acknowledge` and the actor, in one transaction. The bulk form parks
+only the kinds that report something finished (`completion`, `flow_completion`,
+`flow_milestone_report`, `lead_report`); a message named by id may be any notification. A decision, a
+fault notice, a held message and one an attempt may have sent are never parked, and each message left
+is answered with its reason. When a park is kept or released is [the hold rule](#the-hold-rule).
+Neither command is in `doctor`'s command lists. The procedure is in
 [operations](operations.md#reading-a-supervisor-recipients-queue).
 
 ## What a readback is not
