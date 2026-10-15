@@ -131,6 +131,7 @@ target drops to ES2016 (esbuild then lowers async/await to generators) and this 
 | `crw.tierStep(node, evidence)` | Mints the step decision: it journals the call and resolves with `{id, checkpoint}`; a fresh `executor-t1` call carries `id` as `stepDecision`. It occupies a position of its path. The engine's own call holds the id only (its `checkpoint` is `null` and the evidence is recorded by its digest); the project lane's `crw.tierStep` ([below](#the-project-lane)) wraps it, appends the `flow_step_decisions` row with the evidence and the checkpoint, and resolves with the checkpoint filled in. |
 | `crw.callFacts(result)` | The facts of a call's result that the signal path of `crw.dag` rests on: its `digest` (the canonical digest of its output), its `seq` (the place of its terminal row in the journal) and `live` (false for a result a resume replayed from the journal of an earlier process). It also takes the result of an operation that names the position it ran at (`call_id`, as `crw.planRead` does). A read: it takes no position and writes no row. |
 | `crw.recordedSignal(milestone, k)` | The signal `k` of the milestone as an earlier process recorded it and the journal still stands on it (its triggers, the digest of the signal before it and the `attempt` it was bound with, `"live:<n>"` or empty), or `null`. A read, like the next one. |
+| `crw.deferredAsks(node)` | The number of the node's standing `crw.release` rows that the relay held back `defer:edit_overlap` and that the lane asked again after (a later `crw.release` row of the node's path, completed or refused), or 0 for a run that does not resume: the held-back answers a resume replays, which `crw.dag` asks again after as the record did (CRW-1467). A read: it takes no position and writes no row. |
 | `crw.priorRelease(node)` | The release of the node that an earlier process recorded and the journal still stands on, with the revision it was made under, the number of the signal that made that revision and `refused`, the releases of the lane's path before it that compared another plan (`plan_changed`), or `null`. |
 
 `opts` of a call: `agentType` (`architect`, `executor`, `executor-t1`, `reviewer`, `reviewer-final`, `explorer`, `critic`), `schema`,
@@ -392,6 +393,23 @@ slot and records the design revision and digest the node is released under. The 
 digest and its criteria digest in its input snapshot, so a ledger that later grows a revision changes nothing for a node that
 started under the revision it was released under. The lane function is called with a third argument, `sig`, whose `receipt(result)` reports the RECEIPT of each
 executor call to the signal path.
+
+**A release held back by a node of the same dag (CRW-1467).** The relay judges a release by the same region rule, but against the nodes
+it holds released, and those include nodes `crw.dag` admitted beside this one. A release it holds back `defer:edit_overlap` while another
+node of the dag runs, or after one has ended since the node asked, is the dag's own doing, and the node is re-admitted: it gives up its
+claim, wakes the nodes waiting in theirs, and asks again. It asks at once when another node ended since its ask, because the count it
+compares with is the one of its ask: a node that ended after the answer came, but before the lane read it, counts. Otherwise it goes back
+to pending (it holds no slot of the cap and no regions) and is admitted again when another node has ended. A release held back while no
+other node runs and none has ended since the ask is held back by something outside the dag, such as a node of another milestone, and the
+node stays `unreleased` as before. Each re-ask needs another node to have ended, so a node asks at most once more for each other node.
+The record decides on a resume: the held-back answers that the lane asked again after (`crw.deferredAsks(node)`) replay and are each
+followed by the next ask, in whatever order the other lanes replay. After each of them the node is pending again and is admitted, after
+the other pending nodes, as soon as the cap and the regions let it, without waiting for a node to end; a node that ran in its place, and
+the signal that node made, replay first. The recorded release is the answer of the ask after them, so only
+that ask waits for the signal of the revision it was released under. Such an answer is proven when a later `crw.release` row of the node's
+path, completed or refused, was written after it. The last held-back answer with no ask after it (a kill inside the relay call leaves no
+row) runs again and asks the relay. The positions are the same either way: the held-back release, `crw.planRead` when there is a signal
+path, then the next release.
 
 Before the relay is asked for the slot, `crw.release` declares the node's admission regions to the relay (`dag_node_regions`, as
 `dag-region-declare` does; CRW-1391), because the relay's release judgment reads only declarations and an undeclared node overlaps

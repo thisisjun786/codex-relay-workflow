@@ -78,6 +78,45 @@ type Lab struct {
 	// packet or overlay text would run (CRW-1321).
 	Lib    fs.FS
 	Prompt func(role string, qa bool) (string, error)
+	// ReplayHold is the engine's replay hold (engine.Config.ReplayHold, a test seam) of the processes the lab runs from now on: a
+	// scenario holds the replays of a resume with it and settles them in the order it wants; nil settles every replay at once.
+	ReplayHold func(row engine.Event, settle func()) bool
+
+	settleMu sync.Mutex
+	settled  func(engine.Event)
+}
+
+// OnSettled calls fn for every position of an operation the script went on from, after the script ran on from the answer to its next
+// await, on the engine's loop goroutine (engine.SettleObserver): what a lane did with an answer, not when its row was written (OnRow).
+// fn must not block.
+func (l *Lab) OnSettled(fn func(engine.Event)) {
+	l.settleMu.Lock()
+	l.settled = fn
+	l.settleMu.Unlock()
+}
+
+// observedOp is an operation of the lab's lane that tells the lab of its settled positions (OnSettled).
+type observedOp struct {
+	engine.Op
+	l *Lab
+}
+
+func (o observedOp) Settled(row engine.Event) {
+	o.l.settleMu.Lock()
+	fn := o.l.settled
+	o.l.settleMu.Unlock()
+	if fn != nil {
+		fn(row)
+	}
+}
+
+// ops are the lane's operations, each observed (OnSettled).
+func (l *Lab) ops() map[string]engine.Op {
+	out := map[string]engine.Op{}
+	for name, op := range l.lane.Ops() {
+		out[name] = observedOp{Op: op, l: l}
+	}
+	return out
 }
 
 // hookJournal wraps the run's journal: a process that dies writes no more rows, and a test can look at every row as it is written.
@@ -279,8 +318,8 @@ func (l *Lab) Rewrite(fn func(engine.Event) engine.Event) {
 
 // Config is the engine configuration of the lab's run.
 func (l *Lab) Config(resume bool) engine.Config {
-	cfg := engine.Config{Backend: l.backend, Policy: l.Policy, Journal: l.journal, RunID: l.RunID, TokenBudget: l.Budget, Ops: l.lane.Ops(), InputSnapshot: l.lane.InputSnapshot,
-		Prover: ops.NewProver(), Upward: l.Upward, Now: func() time.Time { return time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC) }}
+	cfg := engine.Config{Backend: l.backend, Policy: l.Policy, Journal: l.journal, RunID: l.RunID, TokenBudget: l.Budget, Ops: l.ops(), InputSnapshot: l.lane.InputSnapshot,
+		Prover: ops.NewProver(), Upward: l.Upward, Now: func() time.Time { return time.Date(2026, 10, 12, 9, 0, 0, 0, time.UTC) }, ReplayHold: l.ReplayHold}
 	if resume {
 		cfg.Resume = &engine.ResumeOptions{Wait: func(context.Context, time.Duration) error { return nil }, Grace: time.Millisecond, Skew: time.Hour, OpenWait: 10 * time.Millisecond, Poll: time.Millisecond}
 	}
