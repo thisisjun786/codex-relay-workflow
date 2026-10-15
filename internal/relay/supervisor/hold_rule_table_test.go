@@ -475,6 +475,27 @@ var holdRuleRows = []holdRuleRow{
 	{"restage/derived/not_owed", "event", "derived", "discharged", "stage", true, false, ""},
 	{"daemon_pass/derived/owed", "event", "derived", "same", "daemon_pass", false, true, ""},
 	{"send_by_id/derived/owed", "event", "derived", "same", "send_by_id", false, true, ""},
+	// direct staging (U6): the direct sender staging an acknowledged message again keeps the park when
+	// it says what it said, whatever seat or sender session the hierarchy now names (the P1-4 twin and
+	// P1-3 for StageDirect); new text is a new statement, owed through the message, so it is released
+	// and sent; a moved recipient re-addresses and releases it, as on dev.
+	{"direct_sender/acknowledged/same", "direct", "acknowledged", "same", "direct_stage", true, false, ""},
+	{"direct_sender/acknowledged/seat_moved", "direct", "acknowledged", "seat_moved", "direct_stage", true, false, ""},
+	{"direct_sender/acknowledged/sender_rotated", "direct", "acknowledged", "other_sender", "direct_stage", true, false, ""},
+	{"direct_sender/acknowledged/other_text", "direct", "acknowledged", "changed", "direct_stage", false, true, ""},
+	{"direct_sender/acknowledged/recipient_moved", "direct", "acknowledged", "other_recipient", "direct_stage", false, true, ""},
+	{"daemon_pass/direct/acknowledged/seat_moved", "direct", "acknowledged", "seat_moved", "daemon_pass", true, false, ""},
+	// characterization (U6, green before and after): a hold the channel derived on a direct message is
+	// released by its sender's staging, which always owes it, as on dev.
+	{"direct_sender/derived/same", "direct", "derived", "same", "direct_stage", false, true, ""},
+	{"direct_sender/derived/seat_moved", "direct", "derived", "seat_moved", "direct_stage", false, true, ""},
+	// characterization (U6): a fault notice's park is released when its notification is reserved again
+	// (StageNotice), and the deliverer's send of it by id releases and sends it while the notification
+	// is reserved and keeps it parked when it is not.
+	{"notice/notice/reservation", "notice", "notice", "same", "notice_stage", false, false, ""},
+	{"notice/notice/reservation_moved", "notice", "notice", "other_recipient", "notice_stage", false, false, ""},
+	{"deliverer_send/notice/owed", "notice", "notice", "reserved", "deliverer_send", false, true, ""},
+	{"deliverer_send/notice/not_owed", "notice", "notice", "same", "deliverer_send", true, false, ""},
 }
 
 func TestSupervisorHoldRuleTable(t *testing.T) {
@@ -494,7 +515,7 @@ func TestSupervisorHoldRuleTable(t *testing.T) {
 			}
 		})
 	}
-	for _, scene := range append(append([]holdRuleScene{}, holdRuleScenes...), holdRuleScenesU5...) {
+	for _, scene := range append(append(append([]holdRuleScene{}, holdRuleScenes...), holdRuleScenesU5...), holdRuleScenesU6...) {
 		t.Run(scene.name, scene.run)
 	}
 }
@@ -838,6 +859,127 @@ var holdRuleScenesU5 = []holdRuleScene{
 	}},
 }
 
+// holdRuleScenesU6 are the U6 scenes: direct and notice staging and the notice park under the rule
+// (plan-r3 section 4).
+var holdRuleScenesU6 = []holdRuleScene{
+	// The P1-4 twin: the recipient's seat moved (management to store, same task). The direct sender's
+	// staging answers that the park stands, rewrites the routing fields of the unsent message, and
+	// keeps the hold word and the acknowledgement's superseded row; staging it again writes nothing.
+	{"direct_sender/acknowledged/seat_moved/routing_rewritten", func(t *testing.T) {
+		w := newHoldWorld(t, "direct")
+		w.setHold(t, "acknowledged")
+		w.apply(t, "seat_moved")
+		w.enter(t, "direct_stage")
+		if w.answer != acknowledgedKeptReason {
+			t.Fatalf("the staging after a seat move answered %q, want %q", w.answer, acknowledgedKeptReason)
+		}
+		w.expectParked(t, holdAcknowledged, "queued", 0)
+		row, err := w.c.Get(w.ctx, w.id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var packet struct {
+			Envelope struct {
+				Recipient struct {
+					ScopeKind string `json:"scopeKind"`
+				} `json:"recipient"`
+			} `json:"envelope"`
+		}
+		if err := json.Unmarshal([]byte(row.Packet), &packet); err != nil || packet.Envelope.Recipient.ScopeKind != "store" {
+			t.Fatalf("the kept park's packet names the seat %q (%v), want the routing rewritten to store", packet.Envelope.Recipient.ScopeKind, err)
+		}
+		if n := w.supersededRows(t); n != 1 {
+			t.Fatalf("the message has %d superseded rows, want only the acknowledgement's", n)
+		}
+		if n := w.journalRows(t, "supervisor_message_reopened"); n != 0 {
+			t.Fatalf("the staging journaled %d reopened rows, want none", n)
+		}
+		journal := w.count(t, "SELECT count(*) FROM journal WHERE subject=?")
+		w.enter(t, "direct_stage")
+		if w.answer != acknowledgedKeptReason {
+			t.Fatalf("the second staging answered %q, want %q", w.answer, acknowledgedKeptReason)
+		}
+		after, err := w.c.Get(w.ctx, w.id)
+		if err != nil || after.UpdatedAt != row.UpdatedAt || after.Packet != row.Packet || w.count(t, "SELECT count(*) FROM journal WHERE subject=?") != journal {
+			t.Fatalf("staging the kept park again wrote it: updated %s -> %s (%v)", row.UpdatedAt, after.UpdatedAt, err)
+		}
+	}},
+	// P1-3 for StageDirect: a new lead session re-addresses the message to it and keeps the park; the
+	// re-address journal row names the hold it kept and releases none.
+	{"direct_sender/acknowledged/sender_rotated/readdressed", func(t *testing.T) {
+		w := newHoldWorld(t, "direct")
+		w.setHold(t, "acknowledged")
+		w.apply(t, "other_sender")
+		w.enter(t, "direct_stage")
+		if w.answer != acknowledgedKeptReason {
+			t.Fatalf("the staging after a sender rotation answered %q, want %q", w.answer, acknowledgedKeptReason)
+		}
+		w.expectParked(t, holdAcknowledged, "queued", 0)
+		row, err := w.c.Get(w.ctx, w.id)
+		if err != nil || row.SenderTaskID != holdRuleLead || row.RecipientTaskID != directManagement {
+			t.Fatalf("the message is %s -> %s (%v), want it re-addressed from %s to %s", row.SenderTaskID, row.RecipientTaskID, err, holdRuleLead, directManagement)
+		}
+		var detail string
+		if err := w.s.DB.QueryRowContext(w.ctx, "SELECT detail FROM journal WHERE kind='supervisor_message_readdressed' AND subject=? ORDER BY seq DESC LIMIT 1", w.id).Scan(&detail); err != nil {
+			t.Fatal(err)
+		}
+		var readdressed map[string]any
+		if err := json.Unmarshal([]byte(detail), &readdressed); err != nil {
+			t.Fatal(err)
+		}
+		if readdressed["keptHold"] != store.SupervisorHoldSuperseded || readdressed["releasedHold"] != nil {
+			t.Fatalf("the re-address journaled %s, want keptHold %q and no released hold", detail, store.SupervisorHoldSuperseded)
+		}
+	}},
+	// A notice already parked is not parked again: the deliverer's second park writes nothing.
+	{"notice_park/notice", func(t *testing.T) {
+		w := newHoldWorld(t, "notice")
+		w.setHold(t, "notice")
+		before, err := w.c.Get(w.ctx, w.id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		w.enter(t, "notice_park")
+		after, err := w.c.Get(w.ctx, w.id)
+		if err != nil || after.HoldReason != before.HoldReason || after.UpdatedAt != before.UpdatedAt || w.journalRows(t, "supervisor_notice_parked") != 1 {
+			t.Fatalf("a second park moved the notice: %+v -> %+v (%v), %d parked rows", before.HoldReason, after.HoldReason, err, w.journalRows(t, "supervisor_notice_parked"))
+		}
+	}},
+	// characterization (U6): another hold word (hierarchy_unresolved, a cap word) is untouched by this
+	// rule on every entry; only its own rule releases it (hierarchy_unresolved once the hierarchy names
+	// the endpoints again, the own-word half of the staging CASE).
+	{"other/every_entry", func(t *testing.T) {
+		for _, tc := range []struct {
+			world, word, entry, want string
+		}{
+			{"direct", store.SupervisorHoldUnaddressed, "direct_stage", ""},
+			{"direct", delivery.BusyCap, "direct_stage", delivery.BusyCap},
+			{"direct", store.SupervisorHoldUnaddressed, "acknowledge", store.SupervisorHoldUnaddressed},
+			{"event", store.SupervisorHoldUnaddressed, "stage", ""},
+			{"event", delivery.BusyCap, "stage", delivery.BusyCap},
+			{"event", delivery.BusyCap, "send_by_id", delivery.BusyCap},
+			{"event", delivery.BusyCap, "acknowledge", delivery.BusyCap},
+			{"notice", store.SupervisorHoldUnaddressed, "notice_stage", ""},
+			{"notice", delivery.BusyCap, "notice_stage", delivery.BusyCap},
+			{"notice", store.SupervisorHoldUnaddressed, "notice_park", store.SupervisorHoldUnaddressed},
+			{"notice", delivery.BusyCap, "notice_park", delivery.BusyCap},
+		} {
+			t.Run(tc.world+"/"+tc.word+"/"+tc.entry, func(t *testing.T) {
+				w := newHoldWorld(t, tc.world)
+				w.setHoldSQL(t, tc.word, "")
+				w.enter(t, tc.entry)
+				row, err := w.c.Get(w.ctx, w.id)
+				if err != nil || row.HoldReason.String != tc.want {
+					t.Fatalf("%s on a message held %q left hold %v (%v), want %q", tc.entry, tc.word, row.HoldReason, err, tc.want)
+				}
+				if n := w.supersededRows(t); n != 0 {
+					t.Fatalf("%s on a message held %q journaled %d superseded rows, want none", tc.entry, tc.word, n)
+				}
+			})
+		}
+	}},
+}
+
 // expectAcknowledgedStatementStands checks a park kept through a newer statement that is not owed:
 // it is still parked from sender, still carries submission 1, and once the tracking record no longer
 // confirms the completion the next daemon pass releases and sends the newer statement.
@@ -1044,6 +1186,7 @@ func (w *holdWorld) stageDirect(t *testing.T) string {
 		t.Fatal(err)
 	}
 	id, _ := answer["messageId"].(string)
+	w.answer, _ = answer["reason"].(string)
 	return id
 }
 
@@ -1209,7 +1352,22 @@ func (w *holdWorld) apply(t *testing.T, change string) {
 	case "seat_moved":
 		// The recipient task stays and the seat it answers from moves (initiative to store): the
 		// sender, the recipient and the project are what they were, only the recipient's scope kind
-		// moves (the TestDifv4SeatMoveKeepsAcknowledgedPark scene).
+		// moves (the TestDifv4SeatMoveKeepsAcknowledgedPark scene). In the direct world the management
+		// seat above the initiative is released and its task answers from the store seat instead.
+		if w.kind == "direct" {
+			w.exec(t, "UPDATE scope_bindings SET status='released' WHERE binding_id=?", "bnd-m-"+directManagement)
+			w.exec(t, "UPDATE scope_links SET status='released' WHERE link_id=?", "lnk-m-"+directManagement+"-"+storeRecipientInitiative)
+			w.direct.seat("bnd-hold-store", directManagement)
+			row, err := w.c.Get(w.ctx, w.id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			r, err := w.c.Resolve(w.ctx, row.RelationshipID)
+			if err != nil || r.Recipient != row.RecipientTaskID || r.Sender != row.SenderTaskID || r.ProjectKey != row.ProjectKey.String || r.RecipientScopeKind != "store" {
+				t.Fatalf("the seat move moved more than the seat: %+v %v (row %s -> %s)", r, err, row.SenderTaskID, row.RecipientTaskID)
+			}
+			return
+		}
 		if err := storeseed.InsertScopeBinding(w.ctx, w.s, store.ScopeBindingsRow{BindingID: "bnd-hold-store", Role: "supervisor", ScopeKind: "store", ScopeKey: "store",
 			TaskID: "supervisor", HostID: "host", Status: "active", Revision: 1, CreatedAt: "t", UpdatedAt: "t"}); err != nil {
 			t.Fatal(err)
@@ -1223,6 +1381,12 @@ func (w *holdWorld) apply(t *testing.T, change string) {
 		if err != nil || r.Recipient != row.RecipientTaskID || r.Sender != row.SenderTaskID || r.ProjectKey != row.ProjectKey.String || r.RecipientScopeKind != "store" {
 			t.Fatalf("the seat move moved more than the seat: %+v %v (row %s -> %s)", r, err, row.SenderTaskID, row.RecipientTaskID)
 		}
+	case "reserved":
+		// The deliverer reserved the notice's notification under a live lease, and the host last saw
+		// the relationship's parent (whom the fault's eligibility asks about) deliverable: the notice
+		// is owed and eligible.
+		w.exec(t, "UPDATE fault_notifications SET state='reserved',lease_until=? WHERE notification_id=?", w.now+3600, nsID)
+		w.exec(t, "INSERT OR REPLACE INTO recipient_lifecycle (task_id, runtime_status, deliverable, observed_at) VALUES ('parent', 'active', 'yes', ?)", delivery.ISOOf(w.now))
 	case "decision":
 		// The message is a decision: an answer is owed to it.
 		w.exec(t, "UPDATE supervisor_messages SET kind='decision' WHERE message_id=?", w.id)
@@ -1305,6 +1469,14 @@ func (w *holdWorld) enter(t *testing.T, entry string) {
 		}
 	case "notice_park":
 		if err := w.notice.channel.Park(w.ctx, w.id, "superseded elsewhere"); err != nil {
+			t.Fatal(err)
+		}
+	case "deliverer_send":
+		// The fault deliverer sends its notice by id (NoticeChannel.Attempt, faults/notice.go).
+		w.now += 60
+		deliverer := w.notice.channel
+		deliverer.Host = w.host
+		if err := deliverer.Attempt(w.ctx, w.id, w.now, "fault-deliverer"); err != nil {
 			t.Fatal(err)
 		}
 	default:
