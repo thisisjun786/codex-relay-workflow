@@ -171,7 +171,7 @@ async function onSignal(sig) {
   const regions = {}
   for (const is of cur.design.issues) {
     const planned = ms.nodes.find((n) => n.id === is.node)
-    regions[is.node] = crw.admissionRegions(planned ? planned.regions : [], is.edit_regions)
+    regions[is.node] = await crw.admissionRegions(planned ? (planned.planned_regions || planned.regions) : [], is.edit_regions)
   }
   return { result: 'refresh', revision: out.revision, reasons: due.reasons, regions }
 }
@@ -344,11 +344,13 @@ async function nodeLane(n, rel, sig) {
 }
 
 phase('build')
-// A node is admitted by the regions of the plan and of the approved DESIGN together (crw.admissionRegions): the executor of a node
-// edits the DESIGN's edit_regions, so the nodes that run at once must not overlap in those either.
+// A node is admitted by the regions of the plan and of the approved DESIGN together (crw.admissionRegions, the Go op): the executor of a
+// node edits the DESIGN's edit_regions, so the nodes that run at once must not overlap in those either. A planned region keeps the plan's
+// change and hold (planned_regions, when the plan states one that is not a plain edit), which crw.regionsOverlap judges by (CRW-1461).
 const designed = {}
 for (const is of arch.output.issues) designed[is.node] = is.edit_regions
-const admitted = ms.nodes.map((n) => Object.assign({}, n, { regions: crw.admissionRegions(n.regions, designed[n.id]) }))
+const admitted = []
+for (const n of ms.nodes) admitted.push(Object.assign({}, n, { regions: await crw.admissionRegions(n.planned_regions || n.regions, designed[n.id]) }))
 const lanes = await crw.dag(args.plan, lane, { nodes: admitted, milestone: ms.id, cap: args.cap, onSignal })
 const lost = lanes.filter((l) => l && l.reason === EPOCH_LOST)
 if (lost.length > 0) return { state: 'stopped', reason: EPOCH_LOST, detail: (lost.find((l) => l.detail) || lost[0]).detail || '', milestone: ms.id, lanes }
