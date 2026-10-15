@@ -372,14 +372,18 @@ func TestSupervisorRegisterRefusesWhenUnconfigured(t *testing.T) {
 	}
 }
 
-// C2: show is refused the same way, before any relay call.
+// C2: show with no thread anywhere (no --task, no CODEX_THREAD_ID, no task_id) is refused the same
+// way, before any relay call. show reads by thread alone, so a missing host is not a refusal
+// (CRW-1486/S1, TestSupervisorShowNeedsOnlyTheTask).
 func TestSupervisorShowRefusesWhenUnconfigured(t *testing.T) {
 	record := supervisorFakeProcess(t, 0)
+	t.Setenv("CODEX_THREAD_ID", "")
 	section := supervisorTestSection()
-	section.HostID = ""
+	section.TaskID, section.HostID = "", ""
 	supervisorUseConfig(t, supervisorTestConfig(&section))
 	code, _, errOut := supervisorRunLine(t, "supervisor", "show")
-	if code != usageExit || !strings.Contains(errOut, supervisorUnconfigured) {
+	if code != usageExit || !strings.Contains(errOut, supervisorUnconfigured) ||
+		!strings.Contains(errOut, "manage.supervisor.task_id") {
 		t.Fatalf("exit %d, stderr %q", code, errOut)
 	}
 	if calls := supervisorRecordedCalls(t, record); len(calls) != 0 {
@@ -971,7 +975,8 @@ func TestSupervisorWriteReportsAnEncodeFailure(t *testing.T) {
 }
 
 // The command line: -h is usage exit 0, an unknown subcommand and an unknown flag are exit 2, and a
-// section that names no settings file is refused before any relay call.
+// section that names no settings file is refused before any relay call. show takes --task with a
+// value and nothing else (show --task T reads T, TestSupervisorShowNeedsOnlyTheTask).
 func TestSupervisorCommandLine(t *testing.T) {
 	section := supervisorTestSection()
 	supervisorUseConfig(t, supervisorTestConfig(&section))
@@ -983,7 +988,10 @@ func TestSupervisorCommandLine(t *testing.T) {
 		{"supervisor", "nope"},
 		{"supervisor", "register", "--nope", "x"},
 		{"supervisor", "register", "--cwd"},
-		{"supervisor", "show", "--task", "t"},
+		{"supervisor", "show", "--task"},
+		{"supervisor", "show", "--task="},
+		{"supervisor", "show", "--host", "h"},
+		{"supervisor", "show", "--nope"},
 	} {
 		if code, _, _ := supervisorRunLine(t, args...); code != usageExit {
 			t.Errorf("%q: exit %d, want %d", args, code, usageExit)
