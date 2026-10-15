@@ -1,16 +1,16 @@
 # Release by region grade
 
-Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../crw-canon/references/hierarchy.md#the-levels).
+The sessions in this document are named by [the level table](../../crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and an issue child is no layer.
 
-A DAG plan releases its nodes in parallel. This page says what a declared edit region means for that release, how to declare one, and what the parent does about an overlap once
-both branches exist. The scheduler's own description is `docs/relay/dag-scheduler.md` ("Edit regions"); this page is the procedure the parent follows around it.
+A DAG plan releases its nodes in parallel. This page says what a declared edit region means for that release, how to declare one, and what the child does about an overlap once
+both branches exist. The scheduler's own description is `docs/relay/dag-scheduler.md` ("Edit regions"); this page is the procedure the child follows around it.
 
 ## The principle
 
-The parent exists to run work in parallel. A region is a signal for the merge order and for the handling of a conflict, not a gate on release. Writing the same file is not a
+The child exists to run work in parallel. A region is a signal for the merge order and for the handling of a conflict, not a gate on release. Writing the same file is not a
 reason to run two nodes one after the other. What holds a release back is a change two branches cannot both make: the same file renamed or deleted, the same function body rewritten in
 two directions, a shared contract surface, or an overlap whose resolution would cost more than the work. Every other overlap is released and settled when the branches meet.
-The parent orders the merges and settles the mechanical conflicts by their rule; the child of the later pull request resolves the rest when it refreshes its base.
+The child orders the merges and settles the mechanical conflicts by their rule; the issue child of the later pull request resolves the rest when it refreshes its base.
 
 ## The four grades
 
@@ -20,7 +20,7 @@ A region carries a grade. The grade says how an overlap on that place is settled
 | --- | --- | --- | --- |
 | `independent` (the default) | nobody else edits this place | not released: an overlap contradicts the claim and is judged `exclusive` | nothing to settle |
 | `mechanical` | the result of the overlap is fixed by a rule: `union` (both sides add rows or lines to one list), `renumber` (a clash of ids or numbers is renumbered) or `regenerate:<command>` (the file is derived; a command rebuilds it) | yes, and left out of the overlap count | the rule is applied to the merged tree and checked by a command |
-| `local` | the same file, but another clause, symbol or a small hunk | yes, as `local-optimistic` | the child of the later pull request resolves it when it refreshes its base |
+| `local` | the same file, but another clause, symbol or a small hunk | yes, as `local-optimistic` | the issue child of the later pull request resolves it when it refreshes its base |
 | `exclusive` | a rename or delete of the place, the same function body rewritten differently, a shared contract, or a registry key both add | not released: `defer:edit_overlap` | serial: the later node waits for the earlier head to land |
 
 A rule belongs to a mechanical region and is required: a mechanical region without one is refused. Two mechanical regions on one place are one mechanical overlap only when they name
@@ -46,7 +46,7 @@ Declare before the release, with the grade of each region:
      {"repository": "owner/name", "path": "docs/port/refactor-backlog.md", "kind": "file", "grade": "mechanical", "rule": "regenerate:go run -tags dev ./cmd/crw-dev ci refactor-backlog --write"},
      {"repository": "owner/name", "path": "internal/relay/dagsched/ready.go", "kind": "symbol", "key": "Ready", "grade": "local"}]
 
-The parent's check runs a `regenerate` command at the root of a fresh checkout of the head, so declare one that works there (the example builds `crw-dev` from the tree, which needs nothing installed), and declare `union` only for a list that both sides add lines to, and for a generated file the command that rebuilds it. A region without a grade is `independent`, which is how every earlier declaration reads. A declaration is made before the release; once a node is released its regions are held until its
+The child's check runs a `regenerate` command at the root of a fresh checkout of the head, so declare one that works there (the example builds `crw-dev` from the tree, which needs nothing installed), and declare `union` only for a list that both sides add lines to, and for a generated file the command that rebuilds it. A region without a grade is `independent`, which is how every earlier declaration reads. A declaration is made before the release; once a node is released its regions are held until its
 head lands, and a node that holds them may declare again only to narrow them ([Keep optimism honest](#keep-optimism-honest)). A node with no declaration is unknown, and an unknown node overlaps every other.
 
 A flow run declares for you: before it releases a node, `crw.release` declares the node's admission regions (the plan's regions and the DESIGN's `edit_regions`), and those of the milestone's other designed nodes, for each node that has no declaration in force, all graded `independent`. A declaration made before the run is kept, so declare here first only to give a region another grade; a declaration the relay refuses is a warning of the release row (`regions_not_declared`) and the node is released as an unknown one.
@@ -65,9 +65,9 @@ and a pair released as `local-optimistic` is the pair to watch when the first of
 
 ## Keep optimism honest
 
-Optimism is a bet that the later child can settle an overlap cheaply. Three things let the relay take the bet back or show what it cost. They are recorded values and recorded statements, and the policy is advice to the release judgement: it stops no child, revokes no release and changes no merge gate.
+Optimism is a bet that the later issue child can settle an overlap cheaply. Three things let the relay take the bet back or show what it cost. They are recorded values and recorded statements, and the policy is advice to the release judgement: it stops no child, revokes no release and changes no merge gate.
 
-**Narrow what a running node holds.** A coarse declaration made before the release keeps its whole place until the head lands. When a child reports that it touches less, declare again with `dag-region-declare`. While the node runs, a declaration is accepted when every new region lies inside a held one and is held at least as strictly: a file for a tree, a symbol for a file, a stricter grade, or a dropped region. The answer says `narrowed`, and the next `dag-ready` frees the rest for other nodes. A widening, a lower grade, or another rule on a mechanical region is refused `disposition_conflict`, which names the region. Once the node's head is accepted its declaration stays, because it describes the pull request. Narrow only to what the child really edits: a conflict outside the declared place is drift.
+**Narrow what a running node holds.** A coarse declaration made before the release keeps its whole place until the head lands. When an issue child reports that it touches less, declare again with `dag-region-declare`. While the node runs, a declaration is accepted when every new region lies inside a held one and is held at least as strictly: a file for a tree, a symbol for a file, a stricter grade, or a dropped region. The answer says `narrowed`, and the next `dag-ready` frees the rest for other nodes. A widening, a lower grade, or another rule on a mechanical region is refused `disposition_conflict`, which names the region. Once the node's head is accepted its declaration stays, because it describes the pull request. Narrow only to what the issue child really edits: a conflict outside the declared place is drift.
 
 **Record a release policy for the plan.** Once, at the start of the run: `dag-release-policy-record --plan <plan> --actor <you> --window K --handling-seconds S --red-merges R --clean-run C`. The window is the last K landings. A landing is slow when its conflict took more than S seconds to settle, counted from the first conflict sweep after its acceptance to its landing. One slow landing, or R red or reverted landings in the window, switch local-optimistic release off; C clean landings in a row switch it on again. The values are yours to choose, and the coordination record names them with the reason: this build has no measured basis for one, and a C of 2 or more keeps the switch from alternating with every landing. While it is off, `dag-ready` defers a candidate whose worst overlap is local as `defer:edit_overlap`, with `held_by_policy` in its `release` object, and prints `release_policy` with the state, the reason and the switches; a node released before the switch stays released. A recorded pass keeps the same.
 
@@ -82,7 +82,7 @@ Optimism is a bet that the later child can settle an overlap cheaply. Three thin
 The queue is first in, first out until it is measured, and a measured conflict is the exception ([Read the merge order](#read-the-merge-order)). A departure needs a reason in the coordination record, and the usual ones are these: a candidate whose change another
 candidate must read first goes ahead of it (a shared interface, a command, a field), and of two candidates that overlap the one with fewer overlapping hunks goes first, since the other
 one's refresh is then the smaller. Read the `release` rule of each. A grade is a declaration and not a forecast: a `mechanical` pair can still conflict as text and a `local` pair can merge cleanly. What the grade says
-is who settles a conflict and how, a rule for a mechanical overlap and the child of the later pull request for a local one.
+is who settles a conflict and how, a rule for a mechanical overlap and the issue child of the later pull request for a local one.
 A landing leaves every other in-flight pull request behind; only the candidate about to merge is refreshed ([Refresh the base yourself when only the base
 moved](merge-readiness.md#refresh-the-base-yourself-when-only-the-base-moved)).
 
@@ -92,10 +92,10 @@ A grade is a declaration and not a forecast, so the relay measures what the bran
 drift. `dag-integration-observe` runs the sweep a landing owes and `dag-accept` the sweep of the receipt it takes in, and `dag-conflict-sweep` runs one by hand. The relay never fetches, so you fetch first, and receipt arrival is approximated by these steps: delivery does not run the scheduler.
 
 1. When a receipt wakes you, run `git fetch` in your checkout, then `dag-conflict-sweep --plan <plan> --actor <you> --trigger receipt --node <node> --target <owner/name>@dev`. A receipt you accept is swept by `dag-accept` as well, but a receipt you do not accept yet (a correction round) is measured only by
-   this command. The relay takes a running child's head from the checkout it works in and an accepted node's from its acceptance; `--head <node>=<sha>` names one yourself.
+   this command. The relay takes a running issue child's head from the checkout it works in and an accepted node's from its acceptance; `--head <node>=<sha>` names one yourself.
 2. After a landing, run `git fetch`, then `dag-integration-observe`: its answer carries `conflict_sweep`. Every member with `status: unmeasured` names what is missing: `commit_missing` (a head the checkout lacks), `tip_unreadable` (the tip is not in the checkout), `head_unknown` (a node whose head the relay cannot know), `checkout_mismatch`
-   (the child's checkout is another repository). Fix what it names and run `dag-conflict-sweep` again; measuring the same heads again is a replay, not a second observation.
-3. A conflict on a path a node did not declare is `drift` for that node: the declaration did not describe the work. Name the path to the child with the base refresh and declare it for the next node.
+   (the issue child's checkout is another repository). Fix what it names and run `dag-conflict-sweep` again; measuring the same heads again is a replay, not a second observation.
+3. A conflict on a path a node did not declare is `drift` for that node: the declaration did not describe the work. Name the path to the issue child with the base refresh and declare it for the next node.
 
 ### Read the merge order
 
@@ -103,23 +103,23 @@ When the latest measurement of two live nodes shows a conflict that no rule both
 carries `merge_order.after` (the nodes that land before it) and the earlier one `merge_order.before`, each row with the observation, the conflicting files, the grade, the nodes that did not declare a file, `heads_current` and the lane of the other node. `merge_order.tip` is a node's own conflict with the tip. `pass.order_constraints` counts the pairs, and the
 recorded pass keeps each node's object. The order is the merge lane's: an open merge turn by `requested_at`, then an accepted result by when it was accepted, then every other node that holds regions by when its work began. A node the plan paused or cancelled (or every node of a paused plan), and an accepted result that is no longer the node's current one (a correction is open), are in the last group: they cannot be merged as they are. An archived node can still land, so it keeps its place.
 
-It is a constraint on the merge and on the base refresh, not on the work. Nothing running is stopped: the children keep their state, disposition and reason, and the relay refuses nothing for it. You act on it when you order the merges:
+It is a constraint on the merge and on the base refresh, not on the work. Nothing running is stopped: the issue children keep their state, disposition and reason, and the relay refuses nothing for it. You act on it when you order the merges:
 
 - Merge the nodes in the order the reading gives, one at a time. Do not merge a node while a node in its `after` has not landed; a different order needs its reason in the coordination record (the order is advisory: first in, first out until measured, and a measured conflict is the exception).
-- When the earlier node has landed, send the later candidate back to its child for a base refresh onto the landed head, naming the files of its `after` row. The child resolves a `local` conflict there; a place a rule settles is handled as in [Settle a mechanical overlap](#settle-a-mechanical-overlap). With several nodes in `after`, the refresh comes after the last of them has landed.
-- The relay does not tell the children: there is no sibling channel in this build, so the base refresh you send is the notice.
-- `heads_current: no` says the measurement was made at other heads than the store holds: measure again before relying on it. `unknown` is every node that is not accepted yet, because the relay does not store a running child's head.
+- When the earlier node has landed, send the later candidate back to its issue child for a base refresh onto the landed head, naming the files of its `after` row. The issue child resolves a `local` conflict there; a place a rule settles is handled as in [Settle a mechanical overlap](#settle-a-mechanical-overlap). With several nodes in `after`, the refresh comes after the last of them has landed.
+- The relay does not tell the issue children: there is no sibling channel in this build, so the base refresh you send is the notice.
+- `heads_current: no` says the measurement was made at other heads than the store holds: measure again before relying on it. `unknown` is every node that is not accepted yet, because the relay does not store a running issue child's head.
 - The constraint goes away by itself when the earlier node has landed, or when a later measurement of the pair is clean. A conflict nobody measured is not seen: without a sweep `dag-ready` shows none.
 
 ### Settle a mechanical overlap
 
 Refresh the base as that section says. A clean merge needs nothing more. When the forge reports a conflict, the update did not happen. If every conflicting file lies in a
-place declared `mechanical`, the parent settles the conflict itself by the rule of the place and proves the result with `crw skill base-refresh mechanical` before it pushes anything
+place declared `mechanical`, the child settles the conflict itself by the rule of the place and proves the result with `crw skill base-refresh mechanical` before it pushes anything
 ([Resolve a mechanical conflict yourself](merge-readiness.md#resolve-a-mechanical-conflict-yourself)). For `union` every line of both sides is kept, each side's lines in their own order,
 a line both sides added stands twice and nothing is added; for `regenerate:<command>` the command is run twice on a checkout of the head (the second time from the dev tip's version of the
-file) and leaves the head's files as they are. For `renumber` there is no check yet, because the rule names no id: such a conflict goes to the child, who renumbers the clashing id
-only and lists the hunks (the `mechanical` kind in the [base refresh kinds](task-packet.md#what-a-handoff-discloses)). The parent passes the declarations of the candidate and of every node
-whose landing the conflict comes from, and the rule counts only where all of them name it; when it cannot name them all, the candidate goes to the child. A hunk no declared rule covers is `manual`.
+file) and leaves the head's files as they are. For `renumber` there is no check yet, because the rule names no id: such a conflict goes to the issue child, who renumbers the clashing id
+only and lists the hunks (the `mechanical` kind in the [base refresh kinds](task-packet.md#what-a-handoff-discloses)). The child passes the declarations of the candidate and of every node
+whose landing the conflict comes from, and the rule counts only where all of them name it; when it cannot name them all, the candidate goes to the issue child. A hunk no declared rule covers is `manual`.
 
 ### Record an accepted node's base refresh
 
@@ -135,7 +135,7 @@ A candidate goes back for a conflict in a `local` or `exclusive` place, a mechan
 every declared region (the declaration did not describe the work), and a refusal of the refresh check. The correction is a base refresh and not new scope, and names the landed head and
 the places that conflict.
 
-Two candidates that changed the same function body in two directions are not a merge problem. Stop the later one, give its child the landed head as the new baseline, and decide with the plan's owner whether
+Two candidates that changed the same function body in two directions are not a merge problem. Stop the later one, give its issue child the landed head as the new baseline, and decide with the plan's owner whether
 the two nodes become one, one node is redefined, or the later work is dropped as a duplicate. Do not merge both.
 
 ### Record what happened

@@ -5,7 +5,7 @@ description: "Diagnose, read-only, which documents and issues fall short of alre
 
 # CRW Tidy
 
-Here the parent (repository session, relay role `supervisor`) and the child (project session, relay role `parent`) are layers of [the level table](../crw-canon/references/hierarchy.md#the-levels).
+Here the parent (repository session) and the child (project session) are layers of [the level table](../crw-canon/references/hierarchy.md#the-levels).
 
 Compare tracking records against the rules already agreed for writing and managing them, and close the gaps whose evidence is unambiguous. Tidy judges a record against a rule that already exists; it never decides what the rule should be. It has two jobs, kept under two headings because they have different actors:
 

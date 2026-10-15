@@ -118,10 +118,13 @@ func TestChildSkillDefaultPathIsTheFlowRun(t *testing.T) {
 	issue := normalized(sectionOf(text, "Independent implementation tasks"))
 	for _, p := range wordingMissing(issue, []string{
 		`(?i)the exception path`,
-		`(?i)SP-CHILD-1`,
 		`(?i)a step the run records`,
+		`(?i)for a plan with no flow run`,
 	}) {
 		t.Errorf("the issue child section lacks %s", p)
+	}
+	if m := regexp.MustCompile(`SP-CHILD-[12]`).FindString(issue); m != "" {
+		t.Errorf("the issue child section names the id %s of the retired path", m)
 	}
 }
 

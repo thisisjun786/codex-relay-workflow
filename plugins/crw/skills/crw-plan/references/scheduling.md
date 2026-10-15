@@ -1,6 +1,6 @@
 # Schedule and dependency roadmap
 
-Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../crw-canon/references/hierarchy.md#the-levels).
+Here the parent and the child are layers of [the level table](../../crw-canon/references/hierarchy.md#the-levels).
 
 How `crw-plan` builds, checks and records a schedule. The field names, their sources, the
 precedence between records, the evidence rules, the wait cause and change reason words and
@@ -142,8 +142,8 @@ causes. Four shapes do exactly that, and none of them is written: placing subjec
 day, holding a whole project until its batch is ready, giving each issue a fixed number of days,
 and adding a buffer again at each stage when the records already carried that wait once.
 
-A preparation step belongs inside the child that needs it. Where a subject is already running and
-part of its work does not depend on what it waits on, that part runs first in the same child. It
+A preparation step belongs inside the issue child that needs it. Where a subject is already running and
+part of its work does not depend on what it waits on, that part runs first in the same issue child. It
 becomes no issue, no relation and no second assignment, because a wish to parallelize never splits
 an issue ([issue boundaries](issue-boundaries.md#decide-the-boundary)).
 
@@ -224,7 +224,7 @@ subject carries now. Either way a later reader can reproduce the current date, a
 credited with a date it did not set.
 
 A checkpoint carrying no schedule-change authority writes none of this. It returns one replan
-request to its parent naming the subjects, the confirmed or missing results, and the moves it
+request to the session that owns the schedule naming the subjects, the confirmed or missing results, and the moves it
 would make, under [Authority](#authority) below.
 
 ## A faster target changes no criterion
@@ -264,7 +264,7 @@ proposal and writes none of them. An issue-only request proposes a parent schedu
 of writing it. Within an already approved full-plan scope, apply the schedule without asking for
 the same approval again. A pull-in and an extension are both schedule changes, so both run under
 that same authority and neither adds an approval step, and a checkpoint without it returns the
-replan request above rather than writing one. A record owned by an active supervisor or parent is
+replan request above rather than writing one. A record owned by an active parent or child is
 returned to that owner under [scope of each level](../../crw-canon/references/hierarchy.md#scope-of-each-level)
 rather than written over. Recording a date assigns nobody, starts no execution, installs nothing
 and restarts nothing; those remain separate authorizations under
@@ -288,8 +288,8 @@ rule here states a period.
 | 1 | Three issues, no edge between them, no shared region, the execution side states room for three, records show hours. | All three carry target D0 and wait cause `none`, all three in the startable batch; 0 serial day placements, 0 buffers added. | Placing independent work. |
 | 2 | The same three where the execution side states room for two and the records show each of them finishing inside that window. | All three carry D0, because the slot the first pair frees opens again inside the window; the first two carry `none` and are the startable batch, and the third carries `host` naming the stated limit until that slot opens; 0 days added, 0 limits invented. | Concurrency is read, not created. |
 | 3 | Prerequisite A is confirmed merged on the morning of D0; successor B's current target is D2 and `provisional`; the checkpoint carries schedule-change authority; records show hours. | B re-evaluated in that same turn to D0, with 1 entry opening `pulled in` naming A, before D2 and after D0, and the schedule baseline still D2 and readable; 0 entries overwritten, 0 waits for D2. | Checkpoint: pull-in. |
-| 4 | The same as 3 with no schedule-change authority. | 0 writes; 1 replan request to the parent naming B and A's confirmed result; B still reads D2 in the data. | Authority. |
-| 5 | Issue C waits on contract G, and C also needs a fixture that G does not affect. | The fixture runs first inside the child already holding C; 0 new issues, 0 new relations, 0 second assignments; C's wait cause stays `prerequisite` naming G. | Preparation inside the child. |
+| 4 | The same as 3 with no schedule-change authority. | 0 writes; 1 replan request to the session that owns the schedule naming B and A's confirmed result; B still reads D2 in the data. | Authority. |
+| 5 | Issue C waits on contract G, and C also needs a fixture that G does not affect. | The fixture runs first inside the issue child already holding C; 0 new issues, 0 new relations, 0 second assignments; C's wait cause stays `prerequisite` naming G. | Preparation inside the issue child. |
 | 6 | Issues D and E change separate regions of one file and need nothing from each other. | 0 ordering relations, both carry D0 and `none`, both in the startable batch. | Separate regions are not an edge. |
 | 7 | The same two where the regions overlap, neither needs the other's result, and the records show both finishing inside one window even when they run in turn. | Exactly 1 ordering relation, in whichever direction the plan records, with the reason for that choice recorded; both carry D0 and the later subject carries `shared surface` naming the region; 0 extra days, 0 unrecorded orderings. | A region two subjects change. |
 | 8 | Contract G lands under an authorized plan write; the three implementations and the verification that waited on it are otherwise independent; each of the four carries a current target of D2 and an earliest day of D0 once G is confirmed. | The 4 relations stay as the record of what they needed; all 4 wait causes leave `prerequisite`; 4 moves to D0, each with 1 entry opening `pulled in` and naming G; 0 relations deleted, 0 subjects held for a second round, 0 baselines overwritten. | Delivery ends the wait, not the edge. |

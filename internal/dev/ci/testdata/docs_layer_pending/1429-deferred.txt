@@ -1,0 +1,5 @@
+# CRW-1433 (bundle CRW-1419): docs/flow/reporting.md is not rewritten in this bundle.
+# Reason: CRW-1419 defers script.md, journal.md and reporting.md until CRW-1429 lands, and the reviewer-final sentences
+# of reporting.md are the text of Z-1 and Z-2 (byte-exact). The marker leaves with the unit that rewrites the file (1433-k).
+# Shrink only: a listed file must still hold a hit.
+docs/flow/reporting.md

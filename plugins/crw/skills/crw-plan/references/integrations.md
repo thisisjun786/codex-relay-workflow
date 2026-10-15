@@ -1,6 +1,6 @@
 # Tracking and implementation workflow integration
 
-Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../crw-canon/references/hierarchy.md#the-levels).
+Here the parent and the child are layers of [the level table](../../crw-canon/references/hierarchy.md#the-levels).
 
 The rules that planning and run setup keep to themselves: how a task resolves its milestone target, how it binds to a project and recovers that binding, and how an issue's child pair is chosen and recorded. What more than one skill reads (the levels, the tracking model, the release gate, the schedule contract, delivery and the execution roles) is in [crw-canon](../../crw-canon/SKILL.md). Apply these rules within the user's assignment and current host permissions.
 
@@ -38,11 +38,11 @@ Run, goal mode included, performs this setup itself. A binding-only request does
 Run, goal mode included, uses this shared setup and recovery procedure before execution.
 
 Make this Codex task the continuing management point for one milestone.
-Preserve that target across follow-up requests and context recovery. This parent
-orchestrates one project; its independent children each orchestrate one issue
+Preserve that target across follow-up requests and context recovery. This child
+orchestrates one project; its independent issue children each orchestrate one issue
 under the shared [scope of each level](../../crw-canon/references/hierarchy.md#scope-of-each-level), and a
-supervisor above it, where an initiative has one, works through this parent rather than through
-its children.
+supervisor above it, where an initiative has one, works through this child rather than through
+its issue children.
 
 ### Establish the link
 
@@ -85,7 +85,7 @@ management titles would be indistinguishable, append a short project-ID suffix. 
 not rename the initiative or project itself, whose own name needs no product
 prefix. This convention names the child's Codex task, its row of the one
 [thread title table](../../crw-canon/references/hierarchy.md#thread-titles), which also holds the titles of the
-repository session (relay role `supervisor`) and an issue child and says who names a thread and when.
+repository session and an issue child and says who names a thread and when.
 
 Take the family from the product-family labels of the milestone's issues, which are
 spelled `family:NAME`. The prefix is the group, so the value carries its own provenance
@@ -161,7 +161,7 @@ explicit one-off targets and changes to the persistent link.
 Keep the recorded milestone ref when its name or product labels change. Existing titles are presentation, whether they carry a
 product-family prefix or an initiative one, and neither is a reason to rebind or
 rename during recovery. A project whose family has changed does not have its prefix
-corrected on sight, and existing parents are not renamed in bulk. Refresh the title
+corrected on sight, and existing children are not renamed in bulk. Refresh the title
 only within an authorized presentation change; do not migrate existing bindings
 implicitly.
 
@@ -174,9 +174,9 @@ Load the existing owner for the requested operation:
 | Plan, roadmap, milestones, or issue scope | [crw-plan](../../crw-plan/SKILL.md) |
 | Turn one short request into one ready issue (a lighter path than a plan) | [crw-add-issue](../../crw-add-issue/SKILL.md) |
 | Execute the project, coordinate progress, or follow up on delivery | [crw-run](../../crw-run/SKILL.md) |
-| Create/restore a project parent's native goal, which exists only where the user explicitly asked for one | [crw-run goal mode](../../crw-run/references/goal-mode.md) |
+| Create/restore a child's native goal, which exists only where the user explicitly asked for one | [crw-run goal mode](../../crw-run/references/goal-mode.md) |
 | Carry one task's authorized objective through a scoped PABCD completion loop | `crw-loop`, with `crw-pabcd` for the phases |
-| Execute an initiative's approved projects through their existing parents, or run its midpoint check | [the section of crw-run for the parent (repository session, relay role `supervisor`)](../../crw-run/SKILL.md#the-parent-the-repository-session), which reads [Initiative supervision](../../crw-run/references/initiative-supervision.md) rather than the project binding above |
+| Execute an initiative's approved projects through their existing children, or run its midpoint check | [the section of crw-run for the parent (repository session)](../../crw-run/SKILL.md#the-parent-the-repository-session), which reads [Initiative supervision](../../crw-run/references/initiative-supervision.md) rather than the project binding above |
 | Compare delivery with accepted requirements | [crw-check](../../crw-check/SKILL.md) |
 | Investigate contradictions or broken invariants | [crw-check](../../crw-check/SKILL.md#find-contradictions) |
 | Diagnose structural debt after a verified cycle, read-only, and recommend bounded repairs; a chosen repair is added as an issue through crw-add-issue | [crw-refactor](../../crw-refactor/SKILL.md) |
@@ -196,14 +196,14 @@ next step or meaningful gap. Distinguish completed binding from work execution.
 
 #### Child pair by issue type
 
-Children run on one of two pairs, and the issue decides which. `Sonnet` and `SOL` are the names the
+Issue children run on one of two pairs, and the issue decides which. `Sonnet` and `SOL` are the names the
 role policy gives its two child pairs, and a name here is only that: which model and effort a pair runs
-is the policy's, read from the declared policy when the child is created. This section carries no model
+is the policy's, read from the declared policy when the issue child is created. This section carries no model
 and no effort, because a document that carries one is a second source of truth beside the host's policy (see
 [Execution settings by role](../../crw-canon/references/execution-roles.md#execution-settings-by-role)).
 
 The axis is where the answer comes from. When a reference implementation, a specification, a golden
-output or an existing pattern decides what the right result is, the child's work is to meet it exactly
+output or an existing pattern decides what the right result is, the issue child's work is to meet it exactly
 and to keep every outside rule that goes with it: that is the Sonnet pair. When nothing outside the
 issue says what is right, because the answer has to be designed or found, it is the SOL pair.
 
@@ -218,8 +218,8 @@ issue says what is right, because the answer has to be designed or found, it is 
 | An implementation that has to decide the structure of a new module | SOL | a new package whose interfaces nobody has drawn |
 
 When choosing, look at four things. Where the answer comes from: something outside the issue that the
-result can be compared with, or the child's own design. How many outside rules the work must keep: the
-more a child has to follow exactly (a golden, a schema, a naming convention, a long procedure), the more
+result can be compared with, or the issue child's own design. How many outside rules the work must keep: the
+more an issue child has to follow exactly (a golden, a schema, a naming convention, a long procedure), the more
 the issue belongs to the Sonnet pair. The shape of the end: "same as the original" ends a Sonnet issue,
 and "a measurement improved, the cause is gone, a new invariant is proven" ends a SOL issue. And the
 failure history: a fix that failed twice is an answer still to be found, whatever the issue first
@@ -232,9 +232,9 @@ Two cases the shape does not settle:
   its shape. A SOL turn on such work was refused by the provider's cyber policy, and the issue should
   not meet that refusal in the middle of its delivery.
 - **Half and half.** A clear case follows the table. An ambiguous case goes to the pair with fewer
-  working children in this parent; a plan written before any child runs counts instead the issues of
+  working issue children under this child; a plan written before any issue child runs counts instead the issues of
   the project that already carry a line, per pair. Once one pair holds more than 60 percent of them,
-  border cases go to the other pair whatever the count of working children says. The line then names
+  border cases go to the other pair whatever the count of working issue children says. The line then names
   the axis half-half.
 
 **Precedence**, highest first: the user's explicit choice of model, effort or pair for this scope; the
@@ -253,10 +253,10 @@ The form is `Child pair: <the policy's pair name, Sonnet or SOL> (<axis>) - <the
 The axis is exactly one of `reference exists`, `answer must be found` and `half-half`. A Korean issue
 body may write the label as `자식 pair`; the pair name and the axis words stay as written here, so a
 reader or a check can match them. The line records the pair's name (its family), never a model or an effort. An issue with
-no line is routed by the table by the parent that dispatches it: the parent writes the answer as the
-line on the issue and reads it back before it prepares the packet or creates the child, so a later
-parent reading the issue finds the selection there. A note in the parent's own coordination record is
-only a pending proposal; where the issue cannot be written, the parent reports that blocker and creates
+no line is routed by the table by the child that dispatches it: the child writes the answer as the
+line on the issue and reads it back before it prepares the packet or creates the issue child, so a later
+child reading the issue finds the selection there. A note in the child's own coordination record is
+only a pending proposal; where the issue cannot be written, the child reports that blocker and creates
 nothing. The Launch packet that [crw-run](../../crw-run/SKILL.md#prepare-and-dispatch) keeps for an
 issue with no recorded pair is the form of an issue this rule has not reached yet, and it is no default
 pair for an issue without a line.
@@ -265,18 +265,18 @@ given under [The extended line](#the-extended-line); a line without them stays v
 
 **The packet.** The first packet of a SOL issue takes the form of the "SOL packet" section of
 [task-packet.md](../../crw-run/references/task-packet.md); a Sonnet issue's takes the Launch packet.
-The parent takes the form from the recorded pair and does not choose it again from the issue text at
+The child takes the form from the recorded pair and does not choose it again from the issue text at
 dispatch.
 
 **Creating the child.** Read `get_capabilities` and state the entry of the child role's `pairs` (or the
 single pair of a role that declares one) that belongs to the line's family, passing `role` so the host
 checks the answer. Where the declared list holds exactly one such entry, create with it. Where it holds
-none, the parent picks no other pair. That is what a SOL line meets while the policy still declares only
+none, the child picks no other pair. That is what a SOL line meets while the policy still declares only
 the Sonnet pair, and what any line meets when a model change leaves its family with no declared pair;
 the family is the test and not the number of pairs, so a policy whose only child pair is the SOL pair
 stops a Sonnet line in the same way. Where the list holds two, nothing in the policy ranks them, so the
-parent does not choose between them. Either way the creation is a reported blocker, and the recovery is
-the host declaring the pair or the user choosing a pair for the issue: the parent states exactly the
+child does not choose between them. Either way the creation is a reported blocker, and the recovery is
+the host declaring the pair or the user choosing a pair for the issue: the child states exactly the
 entry the user names, which must be one the declared list holds, and writes the choice onto the line
 with its reason; the line still records the family. Under a policy that declares only the Sonnet pair, a
 SOL-line issue therefore waits for that choice, because there is no fallback pair.
@@ -285,26 +285,26 @@ The host refuses only a pair outside the role (`execution_role_mismatch`). A ref
 sends nothing, and the same request id is used again with the corrected pair (see
 [Bridge launch and recovery](../../crw-run/references/bridge.md)). Both pairs are valid for the child
 role, so the host cannot see that a pair differs from the line, and that comparison belongs to the
-parent: it issues no creation whose pair is of another family than the line.
+child: it issues no creation whose pair is of another family than the line.
 
 **After creation.** Read the model, reasoning effort and role back from the creation receipt: they are
 the pair that was stated, and they belong to the line's family. The relay records the receipt's pair as
-the child's authorization and accepts any pair of the role
+the issue child's authorization and accepts any pair of the role
 ([codex-session-relay](../../crw-run/references/relay.md)), so this read-back is where a difference is
-caught. A receipt of the other family is a mismatch observed after creation, and the child does not go
+caught. A receipt of the other family is a mismatch observed after creation, and the issue child does not go
 on under a pair its line does not name. It ends in one of three ways: the user changes the pair and the
-authorization is re-recorded from a user-attributed source; or the user accepts the pair the child came
-up on and the parent writes it onto the line with the reason; or, where the recovery rules allow a
-replacement, the child is replaced on the right pair. A resend never changes a running task's model.
+authorization is re-recorded from a user-attributed source; or the user accepts the pair the issue child came
+up on and the child writes it onto the line with the reason; or, where the recovery rules allow a
+replacement, the issue child is replaced on the right pair. A resend never changes a running task's model.
 The receipt shows what was requested and applied; the served model stays unproven where no
 served-model evidence exists.
 
 **When SOL fails.** A SOL creation or turn that fails on a provider limit or a policy refusal is not
-repeated. The parent releases the issue on the Sonnet pair and records why: it rewrites the line as
-`Child pair: Sonnet` with the cause and the date, then creates the child on the declared Sonnet pair. A
+repeated. The child releases the issue on the Sonnet pair and records why: it rewrites the line as
+`Child pair: Sonnet` with the cause and the date, then creates the issue child on the declared Sonnet pair. A
 refusal before any call leaves no task, so that creation is made under the same request id with the
 corrected pair. A failure after the call may have left a task or a ledger row: the earlier task is first
-proven inactive and its work and receipts kept, and the new child is a replacement with a new id under
+proven inactive and its work and receipts kept, and the new issue child is a replacement with a new id under
 the recovery rules of [Bridge launch and recovery](../../crw-run/references/bridge.md). That
 replacement moves the pair, which is the one change of settings
 [Completion follow-up in an existing execution workflow](../../crw-canon/references/delivery.md#completion-follow-up-in-an-existing-execution-workflow)
@@ -315,14 +315,14 @@ allows.
 The shape table names shapes; the classification names the features that make an issue one shape or
 another, so that two planners reading one issue write the same tags and a later review can say which tag
 was wrong. Every tag is a feature visible when the issue is planned: it needs no result, no run and no
-child. The tags and their values are fixed English words, written the same in an issue of any language, so
+issue child. The tags and their values are fixed English words, written the same in an issue of any language, so
 a reader or a check can match them. No rule here names a programming language, a product or a repository;
 examples stand only in the last column.
 
 | Tag | Value | Read as | Example |
 | --- | --- | --- | --- |
 | `answer` | `reference` | something outside the issue decides what is right: an original, a specification, a golden output, a contract, a naming convention, an existing pattern, or a procedure whose order is the point | moving a module to another language and checking it against the original's outputs; an installation runbook |
-| `answer` | `found` | nothing outside the issue decides; the child designs the answer or has to find it | a retry state machine; a failure of unknown cause |
+| `answer` | `found` | nothing outside the issue decides; the issue child designs the answer or has to find it | a retry state machine; a failure of unknown cause |
 | `answer` | `mixed` | one part has an outside reference and another part has none, and the [boundary rules](issue-boundaries.md) do not split them | a port that also replaces its slowest part with a new mechanism |
 | `output` | `code` | a change to code or its tests; documents that only accompany it do not change this | a new subcommand with its tests |
 | `output` | `writing` | documents, skills, prompts, reports | rewriting a skill's procedure |
@@ -371,10 +371,10 @@ each caught by exactly one row.
 **A flexible issue's pair.** The aim is roughly half of a project's issues on each pair, and the flexible
 bundle is the part that can move toward it. The half-and-half rule names the counts; for a flexible issue
 apply them in this order. First, once one pair holds more than 60 percent of the project's lines, the other pair, whatever
-the working children say. Otherwise the pair with fewer working children in this parent. Where those tie,
-or no child is working, the pair that fewer of the project's lines name. Where that ties too, either pair is
-correct: the parent picks one and records the pick. Working children 1:1 with lines 6:5 are a tie on the
-children and go to the pair with five lines. A fixed bundle is never moved to balance the count; only a
+the working issue children say. Otherwise the pair with fewer working issue children under this child. Where those tie,
+or no issue child is working, the pair that fewer of the project's lines name. Where that ties too, either pair is
+correct: the child picks one and records the pick. Working issue children 1:1 with lines 6:5 are a tie on the
+issue children and go to the pair with five lines. A fixed bundle is never moved to balance the count; only a
 flexible issue moves.
 
 **A pair of the other family.** A pair of the other family than a fixed bundle's stands only with its reason
@@ -421,7 +421,7 @@ end of one of its lists, is read as that text and can change the counts.
 
 ##### The record at release
 
-When a child is released, the dispatching parent records the pair choice in its coordination record, one row
+When an issue child is released, the dispatching child records the pair choice in its coordination record, one row
 per release, beside the launch record
 ([Record the pair choice at release](../../crw-run/SKILL.md#record-the-pair-choice-at-release) gives the
 steps).
@@ -429,8 +429,8 @@ steps).
 **Where, and why there.** The relay's release request has fixed fields and refuses one it does not know, and
 its settings record holds a model and an effort and accepts any pair of the role, so it cannot say why a pair
 was chosen; a field there would be a change to the relay, which this rule does not make. The coordination
-record already holds each issue's launch facts (request id, task id, settings), outlasts the child, and is
-read by the parent and by Jun across projects. The issue's line states the choice made when the
+record already holds each issue's launch facts (request id, task id, settings), outlasts the issue child, and is
+read by the child and, across projects, by the parent and by Jun. The issue's line states the choice made when the
 plan was written; the row states what was acted on at release, and the two can differ: an older-form line
 classified only at release, a user's choice made after planning, a move to Sonnet under When SOL fails.
 
@@ -438,8 +438,8 @@ classified only at release, a user's choice made after planning, a move to Sonne
 the issue or the rules change; the seven tags; the bundle; the pair as a family, with its model and effort
 left in the launch record's settings entry, read from the creation receipt; the source at release, one of
 `user choice`, `issue body`, `table` and `quota`, where `issue body` means a line already stated the pair
-and the parent followed it, and `table` also covers a move under When SOL fails applied at this release; the mark `derived at release` when the line carried no tags; for a flexible
-issue whose pair the parent itself chose, the counts it used; for a move under When SOL fails, its cause and
+and the child followed it, and `table` also covers a move under When SOL fails applied at this release; the mark `derived at release` when the line carried no tags; for a flexible
+issue whose pair the child itself chose, the counts it used; for a move under When SOL fails, its cause and
 date; the version of the plugin manifest the rules were read from, which says which revision of these rules
 classified the issue; the request id and the date. The command report adds `pair`, `source`, `rule`,
 `default_pair`, `quota` (values and headroom, or unreadable with its reason), `window` (start, end, counts),
@@ -447,14 +447,14 @@ classified the issue; the request id and the date. The command report adds `pair
 stale decoded values when present; they are evidence of the read, not current capacity. A later change of the pair (a user's choice, a move under
 When SOL fails, a replacement) adds a row and overwrites none.
 
-**A line without tags.** The parent classifies the issue by the tags above, takes the bundle from the Bundles
+**A line without tags.** The child classifies the issue by the tags above, takes the bundle from the Bundles
 rows, and marks the row `derived at release`. Derived tags are not a selection: the pair stays the line's
 (precedence above), the line is not rewritten, and where the family of the derived bundle differs from the
 pair the row says so. That difference is the one exception to the rule that a pair of the other family
 stands only with its reason on the line: a line in the older form was written before bundles existed, so its
 difference is recorded and not corrected. A tag the issue's text does not settle at release is left blank
 in the row with the reason, and where that tag decides the bundle the row reads `undetermined`; a blank tag
-never holds a dispatch, and the issue is amended when its owner next writes it. For an issue with no line at all the rule under "The line" holds: the parent writes the
+never holds a dispatch, and the issue is amended when its owner next writes it. For an issue with no line at all the rule under "The line" holds: the child writes the
 line, in the extended form, and reads it back first.
 
 ##### Review the classification and change the table
@@ -476,7 +476,7 @@ wrong tag: the review records it as not visible at planning, since a change to t
 whether a new tag could have shown it. A user's choice and a move under When SOL fails are not
 classification errors. The output lists the issue, the tag that was wrong, the value that
 held and the evidence, a pull request or a packet line, and says nothing about which model did better. The
-parent runs it for its own project at close, from the release rows; the parent runs it across
+child runs it for its own project at close, from the release rows; the parent runs it across
 projects when a change is considered; Jun can ask for it.
 
 **Changing the table.** A change to a tag, a Bundles row or a shape row is a decision of the management
@@ -499,7 +499,7 @@ issue takes the count rule's default, with `quota.readable: false`, reason `no_s
 nonnegative integers up to 1,000,000), optional `tie` (Sonnet or SOL; omitted picks Sonnet and records it),
 and `releases` (`{at, pair, bundle}` rows). Use one row per flexible issue in the window, excluding the
 release now being decided; replacements update that issue's contribution rather than count it twice.
-Fixed rows are ignored. The parent serializes choosing and recording, so two choices do not share old
+Fixed rows are ignored. The child serializes choosing and recording, so two choices do not share old
 counts. Supply `recorded_pair` and `source` for a line: legacy `issue body` and `user choice` preserve it;
 an extended flexible `table` or `quota` line is eligible for reselection. An `undetermined` legacy bundle
 requires a preserved pair and `classification_reason`; it is never quota-reclassified. A fixed bundle

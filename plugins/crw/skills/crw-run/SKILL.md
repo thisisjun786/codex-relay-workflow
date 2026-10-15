@@ -7,12 +7,12 @@ description: "Coordinate one milestone as its child: bind, dispatch, observe, ve
 
 Use the selected milestone as the planning source and keep this Codex task
 as its coordinator: this task is [the child](../crw-canon/references/hierarchy.md#the-levels)
-(project session, relay role `parent`), one per project, and this skill names every session by
-that table. The parent (repository session, relay role `supervisor`) above this project orders the
+(project session), one per project, and this skill names every session by
+that table. The parent (repository session) above this project orders the
 repository's projects, answers the decisions this child raises and reads its reports; it instructs
 this child, never this child's subagents or issue children, and its own work is
 [the parent's section](#the-parent-the-repository-session) at the end of this skill. An issue child
-(relay role `child`) is a Codex session bound to one oversized issue.
+is a Codex session bound to one oversized issue.
 
 The default path is a flow run with role subagents: the child carries the project one milestone
 at a time as a flow run of the built-in project lane, the run hands the child each step, and the child
@@ -153,7 +153,7 @@ A request from a peer child is answered here, by this task, under
 decide what this project's own issues and issue children do about it, never reach into the other
 project's issue children, and escalate to the parent (repository session) only an unresolved disagreement, a scope
 change, new ownership, or a shared resource including the order into a shared target. Where the
-two projects share no supervisor, or answer to different ones, invent none: record the unsettled
+two projects share no parent (repository session), or answer to different ones, invent none: record the unsettled
 part, hold only that part, keep the independent work moving, and raise that decision to the user.
 Record the agreement and whether it is still conditional; a peer message moves no delivery by itself.
 An accepted condition reaches this project on the correction path this task already uses (through
@@ -204,8 +204,8 @@ A flow run lands each node on its target branch by itself and opens no pull requ
 
 ## Independent implementation tasks
 
-This section and the issue-child rules that follow it are the exception path (SP-CHILD-1) of one
-oversized issue, and the path of a plan with no run. On the default path the implementation of an
+This section and the issue-child rules that follow it are the exception path, for a plan with no
+flow run. On the default path the implementation of an
 issue is its executor's call, a step the run records, which this child spawns as a role subagent; the
 rules about issue children below do not apply to it.
 
@@ -1307,7 +1307,7 @@ instead of inferring two.
 
 ## The parent: the repository session
 
-This section is the work of [the parent](../crw-canon/references/hierarchy.md#the-levels) (repository session, relay role `supervisor`): the one Codex session that represents a repository, above that repository's children. Everywhere else in this skill the task is the child (project session, relay role `parent`), and the parent is always this repository session. The parent binds itself once with `crw manage supervisor register`, which gives it its management seat and lays a store seat down; it answers the top session above it and instructs its children below it, never their issue children or subagents. Its work is four things: it sets the project order, decides which children run together, answers a decision a child raises, and reads the reports the children send up. It never operates a run: a run belongs to its child, and the commands that start, answer, pause or resume one are the child's.
+This section is the work of [the parent](../crw-canon/references/hierarchy.md#the-levels) (repository session): the one Codex session that represents a repository, above that repository's children. Everywhere else in this skill the task is the child (project session), and the parent is always this repository session. The parent binds itself once with `crw manage supervisor register`, which gives it its management seat and lays a store seat down; it answers the top session above it and instructs its children below it, never their issue children or subagents. Its work is four things: it sets the project order, decides which children run together, answers a decision a child raises, and reads the reports the children send up. It never operates a run: a run belongs to its child, and the commands that start, answer, pause or resume one are the child's.
 
 | What the parent does | Commands it runs |
 |---|---|
