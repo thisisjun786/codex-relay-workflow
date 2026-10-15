@@ -22,9 +22,13 @@ const (
 )
 
 // engineQuotaTexts are the texts that mean an engine's quota is spent. They are UNCONFIRMED: no real quota sample of either tool has
-// been captured. "upgrade" is not among them, since codex logs "426 Upgrade Required" on stderr of an ordinary run. They are matched
+// been captured. "upgrade" is not among them, since codex logs "426 Upgrade Required" on stderr of an ordinary run. 429 is read only in
+// an HTTP status form ("HTTP 429", "status 429", "status=429", "status code: 429", a JSON code or status of 429; "429 Too Many
+// Requests" is "too many requests"), never as a bare number, which a token count of a blank answer's usage can be. They are matched
 // only on a failed call or a blank answer, so a finding that quotes one is unaffected.
-var engineQuotaTexts = []string{"usage limit", "rate limit", "resource_exhausted", "too many requests", "429", "quota exceeded"}
+var engineQuotaTexts = []string{"usage limit", "rate limit", "resource_exhausted", "too many requests", "quota exceeded",
+	"http 429", "status 429", "status=429", "status: 429", "status code 429", "status code: 429", `"code":429`, `"code": 429`,
+	`"status":429`, `"status": 429`}
 
 // GrokProfile is grok-4.7 through the grok CLI with schema as its --json-schema: `grok -m grok-4.7 --always-approve
 // --disable-web-search --json-schema <schema> -p <prompt>`, the prompt being the word ExecRun appends after -p. grok prints one JSON

@@ -427,3 +427,41 @@ func TestAstraCountsOnlyTheCommandsThatSucceeded(t *testing.T) {
 		}
 	})
 }
+
+// TestEngineQuotaTextsRead429OnlyAsAnHTTPStatus (CRW-1473): the crosscheck engines read 429 as a spent quota only in an HTTP status
+// form ("HTTP 429", "status 429", "status=429", "429 Too Many Requests"), never as a bare number: a blank-answer envelope whose usage
+// counts 429 tokens is no answer (no_answer), not a quota hold.
+func TestEngineQuotaTextsRead429OnlyAsAnHTTPStatus(t *testing.T) {
+	grok, astra := GrokProfile(AnswerSchema), AstraProfile("/run/answer.strict.json")
+	if slices.Contains(grok.QuotaTexts, "429") || slices.Contains(astra.QuotaTexts, "429") {
+		t.Errorf("an engine reads the bare number 429 as a quota text: %v", grok.QuotaTexts)
+	}
+	t.Run("a blank-answer envelope with a 429 token count", func(t *testing.T) {
+		res := check(t, grok, fakeRun{stdout: `{"text":"","structuredOutput":null,"usage":{"input_tokens":429}}`})
+		wantState(t, res, StateNoAnswer)
+	})
+	t.Run("a blank astra stream with a 429 token count", func(t *testing.T) {
+		stream := `{"type":"turn.completed","usage":{"input_tokens":429,"cached_input_tokens":429,"output_tokens":429}}`
+		wantState(t, check(t, astra, fakeRun{stdout: stream}), StateNoAnswer)
+	})
+	for stderr, state := range map[string]State{
+		"HTTP 429":                             StateQuota,
+		"error: unexpected status 429":         StateQuota,
+		"error: status=429":                    StateQuota,
+		"429 Too Many Requests":                StateQuota,
+		"stream error: status code: 429":       StateQuota,
+		"read 429 files and failed":            StateToolFailed,
+		"panic at offset 429":                  StateToolFailed,
+		`{"error":{"code":429,"message":"x"}}`: StateQuota,
+		`{"error": {"code": 429}}`:             StateQuota,
+		`{"status": 429, "error": "x"}`:        StateQuota,
+	} {
+		t.Run("a failed call: "+stderr, func(t *testing.T) {
+			for _, p := range []Profile{grok, astra} {
+				if res := check(t, p, fakeRun{exit: 1, stderr: stderr}); res.State != state {
+					t.Errorf("%s: stderr %q: state %q, want %q", p.Name, stderr, res.State, state)
+				}
+			}
+		})
+	}
+}
