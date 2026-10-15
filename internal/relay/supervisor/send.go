@@ -30,7 +30,7 @@ func (c *Channel) render(p Packet, requestID, token string) string {
 	region := evidence.Item(map[string]any(p), "envelope")
 	field := func(key string) any { return evidence.Item(region, key) }
 	text := func(key string) string { return pyvalue.Str(field(key)) }
-	header := "[codex-session-relay] supervisor report"
+	header := "[codex-session-relay] 부모 report"
 	layer := ""
 	if envelope, ok := evidence.Object(region); ok {
 		if value, present := envelope.Lookup("layer"); present {
@@ -191,7 +191,7 @@ func (c *Channel) Attempt(ctx context.Context, id string, adapter SendAdapter, n
 	return c.attempt(ctx, id, adapter, now, 0, "relay")
 }
 
-var errQuietNotClaimable = errors.New("supervisor message is not claimable")
+var errQuietNotClaimable = errors.New("부모 message is not claimable")
 
 type claimedMessage struct {
 	requestID, message string
@@ -545,7 +545,7 @@ func (a *attemptRun) resolve(ctx context.Context) error {
 		return err
 	}
 	if r.Sender != row.SenderTaskID || r.Recipient != row.RecipientTaskID || r.ProjectKey != row.ProjectKey.String {
-		refusal := Refusal{"relation_owner_drift", "this message was staged from " + pyvalue.StrRepr(row.SenderTaskID) + " to " + pyvalue.StrRepr(row.RecipientTaskID) + " and the linkage now says " + pyvalue.StrRepr(r.Sender) + " reports to " + pyvalue.StrRepr(r.Recipient) + "; the hierarchy moved under a staged report, so it is held rather than sent to either. It was never attempted, so staging it again re-addresses it to the live supervisor"}
+		refusal := Refusal{"relation_owner_drift", "this message was staged from " + pyvalue.StrRepr(row.SenderTaskID) + " to " + pyvalue.StrRepr(row.RecipientTaskID) + " and the linkage now says " + pyvalue.StrRepr(r.Sender) + " reports to " + pyvalue.StrRepr(r.Recipient) + "; the hierarchy moved under a staged report, so it is held rather than sent to either. It was never attempted, so staging it again re-addresses it to the live 부모"}
 		if err := c.holdUnaddressed(ctx, row, refusal, a.now); err != nil {
 			return err
 		}
@@ -619,7 +619,7 @@ func (a *attemptRun) settingsGate(ctx context.Context) (stop bool, err error) {
 		}
 		detailText := err.Error()
 		if reason == "role_policy_unconfigured" {
-			detailText = pyvalue.StrRepr(a.r.Recipient) + " is bound as 'supervisor' and this process cannot read a role policy to check its authorization against: CODEX_THREAD_BRIDGE_EXECUTION_POLICY is not set in this process, so no role policy can be read. Nothing was sent and no turn was started. Set the policy for this process and the held deliveries resume on the next pass."
+			detailText = pyvalue.StrRepr(a.r.Recipient) + " is bound as 'supervisor' (부모) and this process cannot read a role policy to check its authorization against: CODEX_THREAD_BRIDGE_EXECUTION_POLICY is not set in this process, so no role policy can be read. Nothing was sent and no turn was started. Set the policy for this process and the held deliveries resume on the next pass."
 		}
 		detail := pyjson.Dumps(contract.OrderedObject{{Key: "reason", Value: reason}, {Key: "detail", Value: detailText}}, pyjson.Options{})
 		_, e := c.Store.Q(ctx).ExecContext(ctx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_withheld',?,?)", a.at, a.id, detail)

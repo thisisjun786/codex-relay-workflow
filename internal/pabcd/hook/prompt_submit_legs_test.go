@@ -171,7 +171,7 @@ func TestPromptSubmitLegReadsTheRegistryRole(t *testing.T) {
 			if !strings.HasPrefix(got, c.want) {
 				t.Fatalf("want %q:\n%s", c.want, got)
 			}
-			if c.want == pointer && strings.Contains(got, "registered as a project parent") != c.parentWording {
+			if c.want == pointer && strings.Contains(got, "registered as a 자식 (project session)") != c.parentWording {
 				t.Fatalf("parent wording = %v:\n%s", c.parentWording, got)
 			}
 			// The role's state decision: the recipe arms the loop (loopArmSeen) and the pointer arms nothing; neither starts

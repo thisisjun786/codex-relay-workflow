@@ -244,11 +244,13 @@ func TestCodeReviewerNoParentSessionWording(t *testing.T) {
 			}
 		}
 		debugging := skillText(t, root, devSkillsRoot+"crw-dev-debugging/SKILL.md")
-		// CRW-1396: the child that released the issue child gives its role id at first use.
-		for _, level := range []string{"the child](../crw-canon/references/hierarchy.md#the-levels) (project session, relay role `parent`) that released it", "issue child"} {
-			if !strings.Contains(debugging, level) {
-				errs = append(errs, "crw-dev-debugging: the escalation does not name the level "+level)
-			}
+		// CRW-1396: the child that released the issue child is named by its layer, with no relay role id (CRW-1431).
+		const releasedBy = "the child](../crw-canon/references/hierarchy.md#the-levels) (project session"
+		if !strings.Contains(debugging, releasedBy+") that released it") {
+			errs = append(errs, "crw-dev-debugging: the escalation does not name the level "+releasedBy+")")
+		}
+		if !strings.Contains(debugging, "issue child") {
+			errs = append(errs, "crw-dev-debugging: the escalation does not name the level issue child")
 		}
 		if strings.Contains(debugging, "Logic Analysis") {
 			errs = append(errs, "crw-dev-debugging: Logic Analysis is system behaviour analysis")

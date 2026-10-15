@@ -804,7 +804,8 @@ it opens after that stops it for good: no position, journal row or host request 
 rows `prepared` (written before anything is sent, with the role, pair, node, `stepDecision` and, for a continuation, the
 thread it continues and what it inherited), `thread_requested`, `thread_started`, `turn_requested`, `turn_started` and one
 terminal row (`completed`, `null_model`, `held`, `refused`, `outcome_unknown` or `superseded`); a session call writes `step_published`
-in place of `thread_requested` and `turn_requested`, and `session_attempt_lost` for an attempt it lost ([Session calls](#session-calls)).
+in place of `thread_requested` and `turn_requested`, `session_attempt_lost` for an attempt it lost, and `evidence_placed` before it
+writes a flow evidence record under a directory no row of the call's newest generation names yet ([Session calls](#session-calls)).
 A held row records whether the
 call's packet reached the host (`input_state`: `delivered` or `not_delivered`) and the `codexErrorInfo` verbatim; on a backend
 that places calls an executor's held row also carries `p_held`, the working snapshot of its worktree when the failure was
@@ -825,9 +826,12 @@ A backend that places calls adds to a call's rows: the `allocation` member of `p
 `restore_snapshot_mismatch`, `dispatch_unknown`) with the call and node they stopped.
 
 The run surface (`crw flow`, [flow.md](../../plugins/crw/skills/crw-canon/references/flow.md#the-crw-flow-command-table)) adds the rows it writes
-and reads. A pause asked for from outside the engine (`crw flow pause`, a run deadline) is one `run_paused` flow row (`by`, `reason`)
-and then the calls that would send end held `engine_paused`. A process the operator paused (`by` `operator`) that would end completed
-ends with a `run/paused` row (`status` `paused`, and the `by` and `reason` of the operator's last ask) instead of the `finished` row:
+and reads. A pause asked for from outside the engine (`crw flow pause`, a run deadline, the drain of `crw flow answer`) is one `run_paused` flow row (`by`, `reason`)
+and then the calls that would send end held `engine_paused`. The operator's pause (SIGUSR1) and a deadline interrupt the turns in flight;
+the drain of an answer to a run a process holds (SIGUSR2, `by` `answer`) lets them end and holds each call's next request, and is
+asked once (a second drain, or a drain after a pause, writes no row). A process the operator or an answer paused (`by` `operator` or
+`answer`) that would end completed ends with a `run/paused` row (`status` `paused`, and the `by` and `reason` of the last such ask)
+instead of the `finished` row:
 the engine's status is `paused`, the run process exits 0 and the hook tells no completion; a deadline, a token budget or a quota
 pause ends with the `finished` row as before. A pause asked once the process has decided its end (while it writes its end row or tells
 its completion) is refused and writes no row, so the `run_paused` rows and the end row agree. `crw flow show`, the digest and `crw flow
@@ -844,7 +848,9 @@ lane's result>, lanes}`) carries the outcome of that object, and its own state a
 a script), not a result, and is not read as one. The outcome state is read in this order: the `milestone` object without an `id`
 and with a non-empty string `state` is the wrapped result, and its state wins; a `milestone` member that carries an `id`, or that
 has no non-empty string `state`, is not read as one, and otherwise the top-level string `state` is the outcome state. A value whose
-own `state` is not a non-empty string has no outcome. It is told in place of
+own `state` is not a non-empty string has no outcome. The top-level string `state` of a completed script is its outcome
+whatever that state means to the script: the engine does not restrict its values (the repository's workflows return the
+milestone's state). It is told in place of
 `status=completed` (a script that wants `status=completed` returns no `state`). The completion notice and `crw flow ps` read the outcome from there ([reporting.md](reporting.md)). The state of a run (`running`, `paused`, `dead`, `held`, `completed`,
 `blocked`, `cancelled`, `failed`) is not a row: it is read from the run lock, the last `started`, `finished` and `run/paused` rows (a
 run no process holds whose last process ended with `run/paused` is `paused`, not `dead`), the calls' rows
@@ -989,7 +995,9 @@ any row is written. `crw flow shadow` replays either from the trace and names th
   `send_input`, the `note` about earlier attempts, `previous_answer`, the answer a repair turn repairs (a later attempt of the turn on a new
   subagent names it in its packet, after a restart too), for a `send_input` `tokens_seen` and `call_tokens`, what the turns before it
   counted, and the turn's place in the call's conversation: `conversation_turn`, the conversation turn it is (the call's task turn 1,
-  its repair 2, on whatever subagent, attempt and k it runs), and `replaces_turn`, the turn it replaces when it is a turn run again)
+  its repair 2, on whatever subagent, attempt and k it runs), and `replaces_turn`, the turn it replaces when it is a turn run again;
+  for a spawn step of a gated executor role in a run with an evidence cwd, `evidence_assignment`, the flow evidence record of the
+  step, `evidence_cwds`, the directories it was written under before the row, and `evidence_ignored`)
   is committed before the packet `steps/<call>/packet-t<k>-a<n>.md` and the step
   `steps/<call>/t<k>-a<n>.json` are written under `<state>/flow/<run>/` (`engine.FileStepBus`). A step is `spawn` (a first turn, the
   attempt after a lost one, a continuation, a repair whose subagent is closed) or `send_input` (the repair turn on the open
@@ -1037,12 +1045,15 @@ any row is written. `crw flow shadow` replays either from the trace and names th
   role whose effort is undecided is compared with the effort the call's subagent ran. While a step waits, the run also looks the
   marker up on the host - the subagent that carries it for a spawn, the turn that carries it on the subagent for a `send_input` -
   so a subagent spawned, or a repair sent, and never reported is bound all the same.
-- A bind writes `thread_started` (the subagent's `thread_id`, the host-read `model` and `effort`, `cwd` P, `host_cwd`,
+- A bind writes `thread_started` (the subagent's `thread_id`, the host-read `model` and `effort`, `cwd` P, `host_cwd`, for a step
+  with a flow evidence record `evidence_cwd`, the cwd the stop hook claims its receipt under,
   `parent_thread_id`, `agent_role`, `attempt`, `via: session`, `rollout_path`, `marker`, and `prior_pairs`, the pairs earlier
   attempts of the call were bound with when they differ) and `turn_started` (k, `op`, `turn_id`, `attempt`, `marker`, and the
   `conversation_turn` and `replaces_turn` of its step) in one batch;
   a `send_input` turn writes `turn_started` only. The relay reads the call's pair from its newest `thread_started` row and an
-  author call's earlier pairs from `prior_pairs`.
+  author call's earlier pairs from `prior_pairs`. A bind whose host cwd no row of the call's newest generation names writes
+  `evidence_placed` for it before it writes the step's flow evidence record there and before `thread_started`; a record that cannot
+  be placed there leaves the subagent unbound, and the call is held `evidence_assignment_failed`.
 
 ### The harvest
 
@@ -1130,6 +1141,7 @@ any row is written. `crw flow shadow` replays either from the trace and names th
 | `turn_started` | the turn of a step the subagent took, with the place its step records (`conversation_turn`, `replaces_turn`) |
 | `interrupt_requested` | the engine's interrupt of the turn in flight (`reason`, `op`); a resumed process applies it only to the turn bound to that step and attempt |
 | `session_attempt_lost` | an attempt whose subagent will not finish its turn |
+| `evidence_placed` | the intent to write a step's flow evidence record under a directory no row of the call's newest generation (its rows from the newest `prepared` on) names yet: `evidence_assignment`, `evidence_cwd`, `attempt`, `marker`; committed before the record is written, so the release of a superseded or prepared-again call and the restore of a resumed one find every copy from the rows; it changes no reading of the call's state |
 | terminal rows | as for any call |
 | `session_wake` (flow row) | a wake of the owner thread the run staged: `batch`, `wake_id`, `renotify`, `ops`, `owner`, `owner_status`, `waiting_seconds`, `staged` (and `error`, or `reason` when the relay already held the message and staged nothing) |
 | `session_host_warning` (flow row) | what the session host adapter's marker search could not tie as it should: `op`, `warnings` (`no_ledger_line`, `ledger_op_differs`, `several_spawns`, `window_ended`) |
@@ -1164,7 +1176,8 @@ run's directory `<state>/flow/<run>/` and none writes the journal, which only th
   started row when the process lock it names is held, or a newest row that names no process (one of a process of a crw before the
   process lock, which bound before it recorded its row) when no process lock of the run is held. A run whose holder has not recorded
   its started row yet (the newest row names a process lock that was let go, or names none while a process lock of the run is held:
-  the holder is coming up, or a command such as `crw flow answer` holds the run between two processes), or whose start holds its
+  the holder is coming up, or a command that writes a row holds the run lock for a moment: an answer holds it from the end of the
+  process it drained until its row is stored, and the resume it starts takes the lock after it), or whose start holds its
   start lock, is `starting`: next reads it again, up to 15 seconds whatever `--wait` says, never takes an earlier process's pins for
   the holder's and resumes nothing; still starting then, it answers `starting` with no spawn formats and a hint to ask again (at once
   without `--wait`, else when the state changes or `--wait` runs out). A holder that took its process lock less than 15 seconds ago,

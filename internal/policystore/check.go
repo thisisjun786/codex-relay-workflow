@@ -241,10 +241,10 @@ func apply(document pyjson.Object, change Change) (pyjson.Object, []string, erro
 // all) is carried across, so a pair change cannot silently drop them.
 func applyRolePairs(document pyjson.Object, change Change) (pyjson.Object, []string, error) {
 	if change.Role == execution.Supervisor {
-		return document, nil, errors.New("role 'supervisor' cannot declare a model or a pair: its model and effort are the user's own selection, so its expectation is the recorded authorization")
+		return document, nil, errors.New("role 'supervisor' (부모) cannot declare a model or a pair: its model and effort are the user's own selection, so its expectation is the recorded authorization")
 	}
 	if change.Role != execution.Parent && change.Role != execution.Child {
-		return document, nil, fmt.Errorf("%q is not a role; supported are child, parent and supervisor", change.Role)
+		return document, nil, fmt.Errorf("%q is not a role; supported are %s", change.Role, execution.SupportedRoles)
 	}
 	if len(change.Pairs) == 0 {
 		return document, nil, errors.New("pairs must be a non-empty list of {model, reasoningEffort}")

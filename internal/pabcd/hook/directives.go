@@ -91,7 +91,7 @@ const TriggerAuthorityNote = "[crw: PHASE UNCHANGED — TRIGGER-AUTHORITY-01] A 
 const PAAttestExample = "{\"from\":\"P\",\"to\":\"A\",\"did\":\"...\",\"planUnit\":\"devlog/_plan/YYMMDD_slug\",\"workPhaseId\":\"wp1\"}"
 
 // loopArmProjectBranch is the branch the recipe takes before any of its steps (CRW-1084, port: fixed).
-const loopArmProjectBranch = "Project coordination first (CRW-1084): a request to coordinate a Linear project belongs to $crw:crw-run, goal mode where a parent goal was asked for. The project parent creates no implementation goalplan or FSM and runs none of steps 1-5 for itself. Only a session that is a dispatched task, or an explicit request to implement a task in this session, continues below.\n"
+const loopArmProjectBranch = "Project coordination first (CRW-1084): a request to coordinate a Linear project belongs to $crw:crw-run, goal mode where a native goal for the 자식 was asked for. The 자식 (project session) creates no implementation goalplan or FSM and runs none of steps 1-5 for itself. Only a session that is a dispatched task, or an explicit request to implement a task in this session, continues below.\n"
 
 const loopArmBefore = "[crw: LOOP — orchestrate arming mandate (ORCH-MANDATE-01)]\n" +
 	"Scope first: explicit interview-only, plan-only, HITL, read-only, no-goal, no-FSM, no-tests and no-delegation limits override the bare crw-loop default.\n" +
@@ -135,18 +135,18 @@ const loopArmAfter = "   a phase without its persisted transition + artifact did
 	"HOTL does not grant push, merge, release, deploy or external-message permission. Stop for missing authority.\n" +
 	"Preserve guards and real evidence; do not bypass a gate or fabricate an attestation/receipt to satisfy this advice."
 
-// loopScopeParentLine is added to the scope pointer for a session the verified registry read reports as a project parent.
-const loopScopeParentLine = "This session is registered as a project parent: it coordinates through $crw:crw-run and starts no loop for itself.\n"
+// loopScopeParentLine is added to the scope pointer for a session the verified registry read reports as a 자식 (project session).
+const loopScopeParentLine = "This session is registered as a 자식 (project session): it coordinates through $crw:crw-run and starts no loop for itself.\n"
 
 // loopScopeBefore and loopScopeAfter are the scope pointer (CRW-1084, port: fixed) a loop request that names a project gets in
 // place of the implementation recipe. It names the owners and the one exception and carries none of the recipe's steps, so a
-// project parent that reads it has nothing to run for itself.
+// 자식 (project session) that reads it has nothing to run for itself.
 const loopScopeBefore = "[crw: LOOP — scope choice (ORCH-MANDATE-01)]\n" +
 	"This request names a project or a coordination. Settle the scope before any loop step; this pointer itself starts no goal, goalplan or FSM.\n"
 
-const loopScopeAfter = "- Coordinating a Linear project (independent children, parallel delivery, verification): $crw:crw-run, which creates or reuses a parent native goal only where one was asked for and follows its goal-mode lifecycle. The project parent never follows the crw-loop or crw-pabcd procedure: it creates no implementation goalplan or FSM and enters no PABCD phase for itself, and its children run crw-loop.\n" +
+const loopScopeAfter = "- Coordinating a Linear project (independent children, parallel delivery, verification): $crw:crw-run, which creates or reuses a native goal for the 자식 only where one was asked for and follows its goal-mode lifecycle. The 자식 (project session) never follows the crw-loop or crw-pabcd procedure: it creates no implementation goalplan or FSM and enters no PABCD phase for itself, and its children run crw-loop.\n" +
 	"- Implementing one task in THIS session, when the user says so explicitly (or this session is a dispatched task that owns its goalplan): $crw:crw-loop and $crw:crw-pabcd. Say which task, and the arming steps come with that request.\n" +
-	"- Unclear: ask once, or take the smaller scope. A project link or the word project is not a role and does not make this session a parent.\n" +
+	"- Unclear: ask once, or take the smaller scope. A project link or the word project is not a role and does not make this session a 자식.\n" +
 	"Explicit interview-only, plan-only, HITL, read-only, no-goal, no-FSM, no-tests and no-delegation limits still win. A mention or quoted example alone is not authorization."
 
 const phaseFooterTail = "At the end of your reply, print exactly one status line in the format `IPABCD: <phase> (<LABEL>)`, using the latest verified persisted phase and its matching label for the current SessionStart-bound session and cwd. A later authorized, successful phase transition supersedes this snapshot for reporting. Otherwise retain the latest verified state; a request, lexical hint, narration, or failed transition is not a persisted phase change. This reporting instruction requires no additional tool calls and authorizes no transitions or gate bypasses. D closes to IDLE; a later authorized successful re-entry supersedes that resting state too."

@@ -71,8 +71,8 @@ Two distinct things, do not conflate them:
   command instead takes the existing explicit-command parser path.
 - **Agent judgment (broad):** unclear requirements open no interview. An issue too
   unclear to plan goes back to its registration ([crw-define](../crw-define/SKILL.md),
-  at the top session (today Sion) or the parent (repository session, relay role `supervisor`)). Ambiguity during
-  a run is a decision request to the session above the project session (relay role `parent`), lifted with
+  at the top session (today Sion) or the parent (repository session)). Ambiguity during
+  a run is a decision request to the session above the project session, lifted with
   `crw flow report-up` and the evidence file; the work it does not block continues on
   recorded assumptions. The I phase stays for an explicit
   `crw pabcd orchestrate I --session <id>` or user command; the CRW default flow never
@@ -173,7 +173,7 @@ Choose the surface before dispatching, and start from the binding: before any
 dispatch of an independent lane, apply
 [DISPATCH-MANAGED-01](references/dispatch-surfaces.md#dispatch-managed-01-strict--start-from-the-binding-not-from-the-mechanism).
 A tracking issue or DAG node (also one the relay holds no assignment for yet) is an
-independent relay child started and resumed through `crw-run`, or a flow executor call of the run of the child (project session, relay role `parent`) recorded in the relay, never a
+independent relay child started and resumed through `crw-run`, or a flow executor call of the run of the child (project session) recorded in the relay, never a
 `create_thread` lane, and the relay's duplicate-assignment and capacity refusals are
 followed, not routed around by creating a thread by hand. An unresolved binding is
 not permission to take the unmanaged route. The thread and subagent choice below is

@@ -4,13 +4,15 @@ The skills of the plugin by the job they do and the level that calls them, and h
 
 | Family | Skills | Called by |
 |---|---|---|
-| Define and plan | `crw-define`, `crw-plan`, `crw-add-issue` | `crw-define` by the top session (today Sion) or the parent (repository session, relay role `supervisor`) when a milestone and its issues are registered; `crw-plan` and `crw-add-issue` by the parent or the user; `crw-add-issue` also by the child (project session, relay role `parent`) |
+| Define and plan | `crw-define`, `crw-plan`, `crw-add-issue` | `crw-define` by the top session (today Sion) or the parent (repository session) when a milestone and its issues are registered; `crw-plan` and `crw-add-issue` by the parent or the user; `crw-add-issue` also by the child (project session) |
 | Run | `crw-run` | a child, and the parent in [its section](../../crw-run/SKILL.md#the-parent-the-repository-session), at the layer its session is bound to ([the level table](hierarchy.md#the-levels)) |
 | Report and check | `crw-status`, `crw-check`, `crw-tidy`, `crw-refactor` | any level, read-only unless the skill says what it writes |
 | One task | `crw-loop`, `crw-pabcd` | an issue child, or a task without a parent |
 | Development surfaces | `crw-dev`, the `crw-dev-*` skills, `crw-qa` | the task that edits the code |
 | Tools | `crw-search`, `crw-recall`, `crw-repo-map`, `crw-ast-grep`, `crw-kwrite`, `crw-worktree-guardian` | any task that needs the tool |
 | Shared references | `crw-canon` | never called: it is read through the links of the other skills |
+
+A skill that points at work in a report, a handoff or a commit title names it as [naming.md](naming.md) says.
 
 ## Skill names under each installation
 

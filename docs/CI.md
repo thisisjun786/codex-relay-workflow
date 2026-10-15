@@ -624,7 +624,7 @@ Use `dev` as default. `main` is a release mirror, advanced by the
 owner-authorized [Release workflow](releases.md) to the exact verified dev SHA. There is no
 promotion PR or release-specific CI gate.
 
-[The parent](../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels) (repository session, relay role `supervisor`) changes the branch protection when the push-only procedure is switched on:
+[The parent](../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels) (repository session) changes the branch protection when the push-only procedure is switched on:
 the `dev` ruleset stops requiring a pull request and stops requiring a status check, while
 deletion and force-push stay disallowed. Read back the effective rules before claiming the
 protection is active; never loosen a protection merely to land a change.

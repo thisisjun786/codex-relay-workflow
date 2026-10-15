@@ -1361,7 +1361,7 @@ func PremergeDispose(_ context.Context, e *Env, cfg *Config, opts PremergeDispos
 		by = premergeParentName(cfg)
 	}
 	if by == "" {
-		return PremergeDisposeResult{}, premergeFail(2, "by_unknown", "name who disposes with --by: the configuration names no single manage parent")
+		return PremergeDisposeResult{}, premergeFail(2, "by_unknown", "name who disposes with --by: the configuration names no single manage 자식")
 	}
 	if err := premergeRefuseLink(opts.Record); err != nil {
 		return PremergeDisposeResult{}, premergeFail(3, "record_unreadable", "%v", err)
@@ -1454,7 +1454,7 @@ const premergeUsage = "usage: crw manage premerge eval <PR> [--head SHA] [--node
 	"       crw manage premerge dispose <record> --ref ID --class CLASS --note TEXT [--follow-up KEY] [--by NAME]"
 
 var premergeCommand = Command{
-	Name: "premerge", Summary: "grade a pull request before the merge and record the parent's dispositions", Run: premergeRun,
+	Name: "premerge", Summary: "grade a pull request before the merge and record the 자식's dispositions", Run: premergeRun,
 	HelpRequested: premergeHelpRequested,
 }
 

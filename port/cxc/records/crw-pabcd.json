@@ -50,7 +50,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "CRW-1344: Linear wording became tracking wording (a tracking issue, the tracking repository, a milestone), and the skill catalog no longer lists a Linear skill",
+      "reason": "CRW-1431: the skill text names the project session and the repository session by layer and carries no relay role id",
       "hunks": [
         {
           "line": 3,
@@ -141,8 +141,8 @@
             "  command instead takes the existing explicit-command parser path.\n",
             "- **Agent judgment (broad):** unclear requirements open no interview. An issue too\n",
             "  unclear to plan goes back to its registration ([crw-define](../crw-define/SKILL.md),\n",
-            "  at the top session (today Sion) or the parent (repository session, relay role `supervisor`)). Ambiguity during\n",
-            "  a run is a decision request to the session above the project session (relay role `parent`), lifted with\n",
+            "  at the top session (today Sion) or the parent (repository session)). Ambiguity during\n",
+            "  a run is a decision request to the session above the project session, lifted with\n",
             "  `crw flow report-up` and the evidence file; the work it does not block continues on\n",
             "  recorded assumptions. The I phase stays for an explicit\n",
             "  `crw pabcd orchestrate I --session <id>` or user command; the CRW default flow never\n",
@@ -224,7 +224,7 @@
             "dispatch of an independent lane, apply\n",
             "[DISPATCH-MANAGED-01](references/dispatch-surfaces.md#dispatch-managed-01-strict--start-from-the-binding-not-from-the-mechanism).\n",
             "A tracking issue or DAG node (also one the relay holds no assignment for yet) is an\n",
-            "independent relay child started and resumed through `crw-run`, or a flow executor call of the run of the child (project session, relay role `parent`) recorded in the relay, never a\n",
+            "independent relay child started and resumed through `crw-run`, or a flow executor call of the run of the child (project session) recorded in the relay, never a\n",
             "`create_thread` lane, and the relay's duplicate-assignment and capacity refusals are\n",
             "followed, not routed around by creating a thread by hand. An unresolved binding is\n",
             "not permission to take the unmanaged route. The thread and subagent choice below is\n",
@@ -420,12 +420,12 @@
     },
     {
       "file": "references/dispatch-surfaces.md",
-      "reason": "CRW-1344: Linear wording became tracking wording (a tracking issue, the tracking repository, a milestone), and the skill catalog no longer lists a Linear skill CRW-1418: the managed issue child is only for a plan with no flow run, and a node a flow run's architect sizes for a child starts no issue child (the project lane escalates it as size_split with detail child_retired).",
+      "reason": "CRW-1431: the skill text names the project session and the repository session by layer and carries no relay role id",
       "hunks": [
         {
           "line": 3,
           "new": [
-            "Here the parent (relay role `parent`) is a relay role, read through [the level table](../../crw-canon/references/hierarchy.md#the-levels).\n",
+            "The sessions in this document are named by [the level table](../../crw-canon/references/hierarchy.md#the-levels): the child is the project session, and an issue child is no layer.\n",
             "\n"
           ]
         },
@@ -451,14 +451,14 @@
             "\n",
             "- **Managed** — a tracking issue or a DAG node, whether the relay already holds an assignment for it\n",
             "  or not. An issue with no assignment yet is not unmanaged: its first lane is a managed one. A\n",
-            "  managed issue or node is one of two things, and the choice is the plan of [the child](../../crw-canon/references/hierarchy.md#the-levels) (project session, relay role `parent`), not this file's:\n",
+            "  managed issue or node is one of two things, and the choice is the plan of [the child](../../crw-canon/references/hierarchy.md#the-levels) (project session), not this file's:\n",
             "  - a flow executor call of the child's run, the default path: the run releases the node to the\n",
             "    relay's DAG scheduler and publishes the executor's step, the child spawns that step's role\n",
             "    subagent (a leaf) as `crw flow next` names it and reports it with `crw flow dispatched`, and the\n",
             "    call, its commits, its review and its acceptance are rows of the run's journal and the DAG records\n",
             "    ([the flow commands](../../crw-canon/references/flow.md), [the spawn policy](../../crw-canon/references/spawn-policy.md)).\n",
-            "  - an issue child (relay role `child`), only for a plan with no flow run: started and resumed\n",
-            "    through `crw-run` on the exception path of one oversized issue (SP-CHILD-1), with the managed\n",
+            "  - an issue child, only for a plan with no flow run: started and resumed\n",
+            "    through `crw-run` on the exception path of one oversized issue, with the managed\n",
             "    start, the DAG release and their bridge recovery, pair/profile, capacity and receipt rules. A\n",
             "    node a flow run's architect sizes for a child starts no issue child: the project lane escalates\n",
             "    it as `size_split` with detail `child_retired`. It is never a desktop `create_thread` lane.\n",
@@ -504,12 +504,14 @@
             "own goal or PABCD state. Different workers must use different worktrees.\n"
           ],
           "new": [
-            "own goal or PABCD state. Different workers must use different worktrees. The\n",
-            "SubagentStop gate reads `.crw/evidence` under the coordinator's native cwd, so a receipt\n",
-            "the worker writes under its assigned tree is not accepted there: have the worker write its\n",
-            "receipt under the native cwd's `.crw/evidence` and report that absolute path. Only where the\n",
-            "runtime in use reads the tree the dispatch assigned (the evidence-location change of the 10-10\n",
-            "review) is a receipt in the assigned tree accepted.\n"
+            "own goal or PABCD state. Different workers must use different worktrees. When the\n",
+            "dispatch assigns a tree, the SubagentStop gate reads the receipt under that tree: the\n",
+            "packet carries the line `CRW-WORKTREE: <path>`, the spawn hook records it as an evidence\n",
+            "assignment (CRW-1115), and the worker writes its receipt under `<that tree>/.crw/evidence/`\n",
+            "and reports the absolute path. A dispatch with no assignment still writes its receipt under\n",
+            "the native cwd's `.crw/evidence`. For a flow executor the engine makes the assignment and\n",
+            "the parent does nothing: the spawn message, the packet and the block reason name the one\n",
+            "file `<P>/.crw/evidence/<id>.md` in the call worktree P (CRW-1482).\n"
           ]
         },
         {

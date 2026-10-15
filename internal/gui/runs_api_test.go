@@ -465,3 +465,61 @@ func TestRunsControlGuarded(t *testing.T) {
 		t.Errorf("the commands: %v", calls[:2])
 	}
 }
+
+// TestRunsAnswerRefusalCarriesItsWords (CRW-1492): `crw flow answer --json` writes a refusal (run_draining, run_live, stale_revision,
+// ...) in its reply on stdout and nothing on stderr, so the 409 of a refused answer carries the refusal's words as its error and
+// message, as the command line prints them (`refused (CODE): DETAIL`), not an empty string. Words on stderr (an applied answer whose
+// run is not resumed) stay the error, and an applied answer has no error.
+func TestRunsAnswerRefusalCarriesItsWords(t *testing.T) {
+	f := newFakeRuns()
+	f.add("run-c", "running", 1)
+	useRuns(t, f)
+	var code int
+	var stdout, stderr string
+	old := runsControl
+	runsControl = func(context.Context, []string) (int, string, string) { return code, stdout, stderr }
+	defer func() { runsControl = old }()
+	server, err := New(Options{Port: guardPort, Token: guardToken, Version: "v"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	headers := map[string]string{"Content-Type": "application/json", tokenHeader: guardToken}
+	answer := func(name string) (int, map[string]any) {
+		t.Helper()
+		rec := request(server, http.MethodPost, "/api/runs/run-c/answer", guardHost, `{"decision":"ud-1","node":"n1","question":"esc_one","revision":2}`, headers)
+		var body map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatalf("%s: the body is not JSON: %v %s", name, err, rec.Body.String())
+		}
+		return rec.Code, body
+	}
+	refusals := []flowcli.Refusal{
+		{Code: "run_draining", Detail: "the run's process was asked to drain at its next step boundary; answer again when it has paused"},
+		{Code: "run_live", Detail: "a run process holds it; an answer is applied to the journal of a run no process holds (crw flow pause run-c first)"},
+		{Code: flowcli.RefusedStaleRevison, Detail: "the question was replaced by a later question (revision 3)"},
+	}
+	for _, r := range refusals {
+		code, stdout, stderr = 1, string(flowcli.JSON(flowcli.AnswerReply{Run: "run-c", Refusal: &r})), ""
+		status, body := answer(r.Code)
+		want := "refused (" + r.Code + "): " + r.Detail
+		if status != http.StatusConflict || body["ok"] != false || body["error"] != want || body["message"] != want {
+			t.Errorf("%s: %d error=%q message=%q, want 409 with %q", r.Code, status, body["error"], body["message"], want)
+		}
+		reply, _ := body["reply"].(map[string]any)
+		refusal, _ := reply["refusal"].(map[string]any)
+		if refusal["Code"] != r.Code || refusal["Detail"] != r.Detail {
+			t.Errorf("%s: the reply is not the command's: %v", r.Code, body["reply"])
+		}
+	}
+
+	notResumed := "crw flow answer: the answer is applied and the run is not resumed: run run-c is cancelled"
+	code, stdout, stderr = 1, string(flowcli.JSON(flowcli.AnswerReply{OK: true, Run: "run-c", Applied: true, Seq: 9})), notResumed+"\n"
+	if status, body := answer("not resumed"); status != http.StatusConflict || body["error"] != notResumed || body["message"] != notResumed {
+		t.Errorf("an applied answer whose run is not resumed: %d error=%q message=%q", status, body["error"], body["message"])
+	}
+
+	code, stdout, stderr = 0, string(flowcli.JSON(flowcli.AnswerReply{OK: true, Run: "run-c", Applied: true, Seq: 9, Resumed: 7})), ""
+	if status, body := answer("applied"); status != http.StatusOK || body["ok"] != true || body["error"] != nil {
+		t.Errorf("an applied answer: %d %v", status, body)
+	}
+}

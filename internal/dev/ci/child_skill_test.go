@@ -118,10 +118,13 @@ func TestChildSkillDefaultPathIsTheFlowRun(t *testing.T) {
 	issue := normalized(sectionOf(text, "Independent implementation tasks"))
 	for _, p := range wordingMissing(issue, []string{
 		`(?i)the exception path`,
-		`(?i)SP-CHILD-1`,
 		`(?i)a step the run records`,
+		`(?i)for a plan with no flow run`,
 	}) {
 		t.Errorf("the issue child section lacks %s", p)
+	}
+	if m := regexp.MustCompile(`SP-CHILD-[12]`).FindString(issue); m != "" {
+		t.Errorf("the issue child section names the id %s of the retired path", m)
 	}
 }
 
@@ -188,6 +191,41 @@ func TestDispatchSurfacesNameTheChildsStepSpawns(t *testing.T) {
 	}
 	if !regexp.MustCompile("(?i)spawns? [^.]*role subagents?[^.]*`crw flow next`").MatchString(text) {
 		t.Error("dispatch-surfaces.md does not say the child spawns the run's role subagents for the steps `crw flow next` gives")
+	}
+}
+
+// TestDispatchSurfacesNameTheAssignedReceiptTree: the bounded checkout worker of crw-pabcd writes its receipt under the tree the
+// dispatch assigned (CRW-1115's `CRW-WORKTREE:` assignment, CRW-1482's flow executor file), not under the coordinator's native cwd;
+// only a dispatch with no assignment keeps the native cwd's `.crw/evidence`.
+func TestDispatchSurfacesNameTheAssignedReceiptTree(t *testing.T) {
+	var worker string
+	for _, para := range strings.Split(strings.ReplaceAll(readRepoText(t, "plugins/crw/skills/crw-pabcd/references/dispatch-surfaces.md"), "\r\n", "\n"), "\n\n") {
+		if strings.Contains(para, "**bounded checkout worker**") {
+			worker = normalized(para)
+			break
+		}
+	}
+	if worker == "" {
+		t.Fatal("dispatch-surfaces.md has no bounded checkout worker paragraph")
+	}
+	for _, stale := range []string{"reads `.crw/evidence` under the coordinator's native cwd", "write its receipt under the native cwd's"} {
+		if strings.Contains(worker, stale) {
+			t.Errorf("the bounded checkout worker paragraph still says the gate %q", stale)
+		}
+	}
+	for _, want := range []string{"`CRW-WORKTREE: <path>`", "`<P>/.crw/evidence/<id>.md`"} {
+		if !strings.Contains(worker, want) {
+			t.Errorf("the bounded checkout worker paragraph does not name %s", want)
+		}
+	}
+	fallback := false
+	for _, sentence := range strings.Split(worker, ". ") {
+		if regexp.MustCompile(`(?i)\b(no|without an?) (evidence )?assignment`).MatchString(sentence) && strings.Contains(sentence, "native cwd") && strings.Contains(sentence, "`.crw/evidence`") {
+			fallback = true
+		}
+	}
+	if !fallback {
+		t.Errorf("the bounded checkout worker paragraph does not say a dispatch with no assignment writes under the native cwd's `.crw/evidence`:\n%s", worker)
 	}
 }
 

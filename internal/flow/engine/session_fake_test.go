@@ -548,6 +548,28 @@ func (p *sessPlacer) setHead(path, head string) {
 	p.mu.Unlock()
 }
 
+// dropWorktree removes the call directory at path and forgets its tree and HEAD, so the next sessionEstablish sees no worktree there
+// (WorktreeExists false) and Establish makes it again (makeReal: a new directory, a new git checkout with realGit). It models a
+// worktree that was unregistered (git worktree remove or prune) and then established again at the same path (CRW-1496). The real
+// Allocator refuses a removed but still registered path in its `git worktree add`, which is an establish error, so such a call
+// holds. A descriptor of the removed directory stays open until the test ends, so the filesystem cannot hand its inode to the
+// directory made again: the recreated tree always has another inode, as a tree whose identity changed.
+func (p *sessPlacer) dropWorktree(t *testing.T, path string) {
+	t.Helper()
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	held, err := os.Open(path)
+	if err != nil {
+		t.Fatalf("drop the worktree %s: %v", path, err)
+	}
+	t.Cleanup(func() { _ = held.Close() })
+	delete(p.heads, path)
+	delete(p.trees, path)
+	if err := os.RemoveAll(path); err != nil {
+		t.Fatalf("drop the worktree %s: %v", path, err)
+	}
+}
+
 func (p *sessPlacer) establishedPaths() []string {
 	p.mu.Lock()
 	defer p.mu.Unlock()

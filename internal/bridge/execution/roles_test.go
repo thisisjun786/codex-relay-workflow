@@ -1,8 +1,11 @@
 package execution
 
 import (
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/layername"
 )
 
 // pythonCase is one Python test re-expressed; python is its name in the Python suite.
@@ -157,8 +160,8 @@ func TestRoles_whenExpectationGuardIsTheOnlyRefusal(t *testing.T) {
 		roles doc
 		want  string
 	}{
-		{"supervisor declares pair", doc{"supervisor": doc{"expectation": "pair"}}, "execution_policy_unreadable: role 'supervisor' expectation must be 'record': its model and effort are the user's own selection, not something the policy pins"},
-		{"parent declares record with a full pair", doc{"parent": doc{"expectation": "record", "model": "m", "reasoningEffort": "e"}}, `execution_policy_unreadable: role "parent" expectation must be 'pair': only 'supervisor' defers to the recorded authorization, and letting another role do so would exempt it from the role check`},
+		{"supervisor declares pair", doc{"supervisor": doc{"expectation": "pair"}}, "execution_policy_unreadable: role 'supervisor' (부모) expectation must be 'record': its model and effort are the user's own selection, not something the policy pins"},
+		{"parent declares record with a full pair", doc{"parent": doc{"expectation": "record", "model": "m", "reasoningEffort": "e"}}, `execution_policy_unreadable: role "parent" expectation must be 'pair': only 'supervisor' (부모) defers to the recorded authorization, and letting another role do so would exempt it from the role check`},
 		{"bogus expectation value", doc{"parent": doc{"expectation": "bogus", "model": "m", "reasoningEffort": "e"}}, `execution_policy_unreadable: role "parent" expectation must be 'pair' or 'record'`},
 	}
 	for _, row := range rows {
@@ -200,5 +203,42 @@ func TestTheChildsSupersededPairIsTheParentsPairAndStillRefusedForTheChild(t *te
 	authorize(t, p, Input{Model: sonnet, Effort: "xhigh", Role: "child"})
 	if r = refused(t, second(p.Authorize(Input{Model: sonnet, Effort: "xhigh", Role: "parent"}))); r.Code != RoleMismatch {
 		t.Fatal(r)
+	}
+}
+
+// TestRoleErrorNamesTheLayers is CRW-1478: a role refusal a person reads names the layer of each
+// relay role id it shows. The unknown-role refusal echoes the input and lists the supported ids with
+// their layer names; the supervisor refusals quote the id with its layer name. No refusal carries a
+// bare role word, and every one keeps the execution_policy_unreadable code.
+func TestRoleErrorNamesTheLayers(t *testing.T) {
+	if want := `["child", "parent", "supervisor"]` + layername.ListGloss([]string{Child, Parent, Supervisor}); supportedRoles != want {
+		t.Errorf("supportedRoles = %q, want %q", supportedRoles, want)
+	}
+	// bare is the role id a row's refusal echoes as the input it names; it is the only role word
+	// such a refusal may carry, and only the supervisor refusals are free of any.
+	rows := []struct {
+		name  string
+		roles doc
+		want  string
+		bare  []layername.Hit
+	}{
+		{"unknown role", doc{"bogus": doc{}}, `execution_policy_unreadable: "bogus" is not a role; supported are ["child", "parent", "supervisor"] (issue child, 자식, 부모)`, nil},
+		{"supervisor declares mcp", doc{"supervisor": doc{"expectation": "record", "mcp": mcpSection()}}, `execution_policy_unreadable: role 'supervisor' (부모) cannot declare "mcp": the 부모's thread is the user's own, so no profile switches anything off in it`, nil},
+		{"supervisor declares pair expectation", doc{"supervisor": doc{"expectation": "pair"}}, "execution_policy_unreadable: role 'supervisor' (부모) expectation must be 'record': its model and effort are the user's own selection, not something the policy pins", nil},
+		{"parent declares record", doc{"parent": doc{"expectation": "record", "model": "m", "reasoningEffort": "e"}}, `execution_policy_unreadable: role "parent" expectation must be 'pair': only 'supervisor' (부모) defers to the recorded authorization, and letting another role do so would exempt it from the role check`, []layername.Hit{{Word: "parent", Offset: 35}}},
+		{"supervisor declares a model", doc{"supervisor": doc{"model": "m"}}, `execution_policy_unreadable: role 'supervisor' (부모) cannot declare ["model"]: its model and effort are the user's own selection, so its expectation is the recorded authorization and it carries no pair for a limit to belong to`, nil},
+	}
+	for _, row := range rows {
+		t.Run(row.name, func(t *testing.T) {
+			// Given: a roles-only policy. When: it is loaded. Then: the refusal names the layers.
+			_, err := load(t, doc{"roles": row.roles})
+			got := policyError(t, err).Error()
+			if got != row.want {
+				t.Fatalf("got  %q\nwant %q", got, row.want)
+			}
+			if hits := layername.Find(got); !slices.Equal(hits, row.bare) {
+				t.Fatalf("%q carries bare role words %v, want only the echoed input %v", got, hits, row.bare)
+			}
+		})
 	}
 }

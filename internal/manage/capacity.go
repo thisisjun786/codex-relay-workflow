@@ -720,7 +720,7 @@ var capacityStateIO = struct {
 	},
 }
 
-var capacityCommand = Command{Name: "capacity", Summary: "judge whether a parent can be added, and why not", Run: capacityRun}
+var capacityCommand = Command{Name: "capacity", Summary: "judge whether one more 자식 can be added, and why not", Run: capacityRun}
 
 func init() { Register(capacityCommand) }
 
@@ -793,7 +793,7 @@ func capacityLines(report CapacityReport) []string {
 		if plan.Verdict == capacityExpand {
 			alert += fmt.Sprintf("; alert %t", plan.Alert)
 		}
-		lines = append(lines, fmt.Sprintf("capacity: %s parent %s family %s: %s%s; waiting %d [%s] for %.0f minutes;"+
+		lines = append(lines, fmt.Sprintf("capacity: %s parent (자식) %s family %s: %s%s; waiting %d [%s] for %.0f minutes;"+
 			" slots %d/%d; host %s; receipts %s of %d; merges %s", plan.Plan, plan.Parent, plan.Family, plan.Verdict,
 			alert, len(plan.Waiting), strings.Join(plan.Waiting, ","), plan.WaitingMinutes, plan.Held, plan.Ceiling,
 			plan.HostMemory, median, plan.ReceiptWait.Count, merges))

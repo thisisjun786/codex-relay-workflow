@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/dev/cxccorpus"
+	"github.com/thisisjun786/codex-relay-workflow/internal/layername"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/interview"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/state"
@@ -209,5 +210,40 @@ func TestConstantsRemainUnresolved(t *testing.T) {
 	directiveEqual(t, "immutable phase base", PhaseDirective(state.PhaseI, nil), before)
 	if !strings.Contains(before, "`crw flow report-up`") { // CRW-1340: the I directive's command
 		t.Fatal("constant was resolved or command suffix missing")
+	}
+}
+
+// CRW-1478: the scope pointer and the loop-arm recipe name the session that coordinates a project as the 자식 (project session).
+// layername.Find (the matcher the ci ratchet shares) finds no bare role word in the pointer, and in the recipe only the
+// SESSION-IDENTITY-01 "never a parent/history id" literal, whose sense is a parent thread id.
+func TestProjectSessionDirectiveNamesTheChild(t *testing.T) {
+	for _, parent := range []bool{false, true} {
+		d := LoopScopeDirective(parent)
+		for _, want := range []string{
+			"which creates or reuses a native goal for the 자식 only where one was asked for",
+			"The 자식 (project session) never follows the crw-loop or crw-pabcd procedure",
+			"does not make this session a 자식.",
+		} {
+			if !strings.Contains(d, want) {
+				t.Errorf("parent=%v: the pointer lacks %q:\n%s", parent, want, d)
+			}
+		}
+		if parent != strings.Contains(d, "This session is registered as a 자식 (project session):") {
+			t.Errorf("parent=%v: the registered sentence does not name the 자식 (project session):\n%s", parent, d)
+		}
+		if hits := layername.Find(d); len(hits) != 0 {
+			t.Errorf("parent=%v: the pointer carries bare role words %v", parent, hits)
+		}
+	}
+	for _, platform := range []string{"linux", "darwin", "win32"} {
+		d := LoopArmDirective(platform)
+		if !strings.Contains(d, "goal mode where a native goal for the 자식 was asked for. The 자식 (project session) creates no implementation goalplan or FSM") {
+			t.Errorf("%s: the recipe's project branch does not name the 자식 (project session)", platform)
+		}
+		const identity = "never a parent/history id"
+		hits := layername.Find(d)
+		if len(hits) != 1 || !strings.HasPrefix(d[hits[0].Offset:], "parent/history id") || !strings.Contains(d, identity) {
+			t.Errorf("%s: the recipe carries bare role words %v beyond the %q literal", platform, hits, identity)
+		}
 	}
 }

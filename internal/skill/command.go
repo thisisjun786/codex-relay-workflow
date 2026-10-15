@@ -129,10 +129,10 @@ nothing and starts no session.`, commands: [][2]string{
 	{"replay", "check every fixture against its recorded expectation"},
 }}
 
-var parentTitle = family{name: "parent-title", description: `Compute a project parent's task title from the product family its project actually carries.
+var parentTitle = family{name: "parent-title", description: `Compute a 자식's task title (project session) from the product family its project actually carries.
 
 crw-plan/references/integrations.md#set-the-app-presentation-and-record owns the rule: a
-project parent's Codex task title leads with the linked project's product-family label in
+자식's Codex task title leads with the linked project's product-family label in
 brackets, spelled exactly as the tracking repository spells it: the family:NAME label of the
 milestone's issues. The label is data, so nothing here maps, expands or case-folds it, and there is
 no table of known families to drift.

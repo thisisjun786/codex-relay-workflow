@@ -35,13 +35,13 @@ const (
 var baseRefresh = family{name: "base-refresh", description: `Check that a pull request head is the previously verified head plus the tip of its base, and nothing else.
 
 crw-run/references/merge-readiness.md#refresh-the-base-yourself-when-only-the-base-moved owns the
-rule. A parent that updates a pull request branch itself (the forge's update-branch call, which
+rule. A 자식 that updates a pull request branch itself (the forge's update-branch call, which
 merges the base into the branch with a merge commit) may merge the result only when nothing but
 that update separates the new head from the head that was verified. check answers that from git
-alone, as an identity. It passes only when all three hold: the head has exactly two parents, the
+alone, as an identity. It passes only when all three hold: the head has exactly two parent commits, the
 previous head first and the base tip second, in that order; git merge-tree --write-tree of those two
 commits exits 0; and the tree it writes is the tree of the head. An edit, a hand resolution, a file
-of its own, a second update or a reversed parent order cannot ride along in such a merge.
+of its own, a second update or a reversed order of the parent commits cannot ride along in such a merge.
 
 check reads the checkout and writes nothing to it, and it is evidence about the commits it names:
 it does not say that a job, a review or a merge happened on them. A pass prints the evidence line the

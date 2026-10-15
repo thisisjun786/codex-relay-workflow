@@ -109,7 +109,7 @@ func TestRuleOfNamesTheRuleNeverTheCommand(t *testing.T) {
 		"GitHub post blocked (inline-github-body) at command: check the text":                    "inline-github-body",
 		"GOAL-COMPLETE-GATE-01: cannot complete":                                                 "goal-complete-gate-01",
 		"[crw comment-lint] `debugger` statement (line: debugger;)":                              "comment-lint",
-		"[crw CHILD-PUSH-GUARD] 통합은 부모·통합기 몫: Refused: git push origin HEAD:dev does not push x": "child-push-guard",
+		"[crw CHILD-PUSH-GUARD] 통합은 자식·통합기 몫: Refused: git push origin HEAD:dev does not push x": "child-push-guard",
 		"LEAF-TOPOLOGY-01: a sub-agent cannot spawn":                                             "leaf-topology-01",
 		"rm -rf /": "refusal",
 		"[crw comment-lint] `as any` cast (line: const X-RAY-01 = y as any)": "comment-lint",

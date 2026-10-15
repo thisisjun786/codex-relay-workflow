@@ -7,7 +7,7 @@ description: "Settle a milestone and its issues before they are registered in th
 
 Make a milestone and its issues clear enough to register before anything runs them.
 This is the step that registers a milestone and its issues: the top session (today Sion)
-and [the parent](../crw-canon/references/hierarchy.md#the-levels) (repository session, relay role `supervisor`) use it when they put new work into the tracking repository. It
+and [the parent](../crw-canon/references/hierarchy.md#the-levels) (repository session) use it when they put new work into the tracking repository. It
 organizes purpose, desired change, success evidence, scope and open decisions, finds what
 is still unclear, and decides whether that needs an exchange with a person.
 Read the shared [tracking model](../crw-canon/references/tracking-model.md) for source
@@ -36,7 +36,7 @@ working understanding instead of steering back to a preferred answer. Continue
 independent work while a question is pending.
 
 Ambiguity that appears after registration, during a run, is not this step's: the run
-lifts it as a decision request to the session above the project session (relay role `parent`)
+lifts it as a decision request to the parent (repository session)
 ([crw-run](../crw-run/SKILL.md)).
 
 ## Define the milestone

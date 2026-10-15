@@ -13,8 +13,9 @@ of a `flow_calls` row and the `seq` of a `flow_events` row, so reading a run bac
 saw. A row is never updated.
 
 - A dispatch intent (`prepared`, `thread_requested`, `fork_requested`, `turn_requested`, `interrupt_requested`, and the
-  `step_published` row of a session call) is committed in a transaction of its own before `Append` returns, and so before the
-  request it announces is sent (for a session call, before its step file and packet are written). The rows that wait before it
+  `step_published` and `evidence_placed` rows of a session call) is committed in a transaction of its own before `Append` returns,
+  and so before the request it announces is sent (for a session call, before its step file and packet are written, and before a
+  flow evidence record is written under the directory an `evidence_placed` row names). The rows that wait before it
   are committed first, in their own transaction, so the order on disk is the order of the run.
 - Every other row is written by the one run process in a batch transaction. It waits in memory until the next intent, the end
   of a call (its terminal row), the run's `started` and end rows (`finished`, or `run/paused`), or `Flush`, and is committed then, in order. A crash
@@ -27,10 +28,22 @@ saw. A row is never updated.
   still buffered, so the error is read again after it: a run whose last write failed ends with the journal's error, not as completed
   or paused.
 - A process ends the run with one KindRun end row. It is `finished` (`status`, `error_kind`, and `outcome` when a completed script
-  returned a milestone state, [script.md](script.md)) unless the operator paused the run (`crw flow pause`) and it would have ended
-  completed: then it is a `run/paused` row (`status` `paused`, `by`, `reason`) and no `finished` row, and no completion is told.
+  returned a milestone state, [script.md](script.md)) unless the operator paused the run (`crw flow pause`, `by` `operator`) or
+  an answer drained it (`crw flow answer` to a run a process holds, `by` `answer`) and it would have ended completed: then it is a
+  `run/paused` row (`status` `paused`, and the `by` and `reason` of the last such ask) and no `finished` row, and no completion is
+  told.
   A run no process holds whose last end row after its last `started` row is `run/paused` reads `paused`, not `dead`; its resume
   writes a new `started` row. A deadline, a token budget or a quota pause ends with `finished`.
+- A run no process holds is ended by `crw flow cancel` itself: under the run lock it appends one `finished` row (`status`
+  `script_error`, `error_kind` `cancelled`, `by` `operator`, `executions_closed`, `slots_returned`), and `dead: true` only when
+  the rows it reads under the lock show a `started` row with no end row after it (a run whose last end is `run/paused`, or a held
+  run, had no process because it ended, not because its process died). The member records what the cancel saw; readers derive
+  the state of a run from its rows and do not read the `dead` member. A cancel that finds the run over under the lock appends
+  nothing, so two cancels of one run write one end row, and still gives up the executions the ended run released and did not end
+  (their slots go back), as a cancel of a run it read over from the start does.
+- A binary before CRW-1487 knows no `run/paused` end: it reads a run that ended paused as `dead` (it resumes nothing; its pump
+  raises `run_dead` after `run_dead_seconds`, [reporting.md](reporting.md)). A rollback past CRW-1487 leaves such runs to be
+  resumed (`crw flow resume`) or cancelled by hand; a binary cannot be fixed after the fact.
 - `flow_runs` holds the identity of the run: the workflow, the digests of the script, its helpers and its arguments, and what the
   caller gives the journal (`Identity`: the plan and its revision, the actor task, the epoch nonce, the run it resumes). It is
   written with the first `started` row; a resumed run reuses it: a journal that is opened again (`journal.Open` with no `Identity`,
@@ -63,6 +76,10 @@ saw. A row is never updated.
   before the place was recorded carries neither: its turn takes the place its step recorded, the `repair` member every
   `step_published` row has (the task turn 1, the repair 2), a later turn at that place replacing the earlier one, so an older journal
   is read from recorded members too and never from its held rows or k ([script.md](script.md#attempts-restarts-and-continuations)).
+- A session call's `evidence_placed` row (`detail_json`: `evidence_assignment`, `evidence_cwd`, `attempt`, `marker`) names a
+  directory the engine is about to write the step's flow evidence record under when no other row of the call's newest generation
+  names it (CRW-1496). It has no column of its own and no reader of a call's state counts it; the release and the restore read the
+  directories from it.
 
 - A command that writes into a run which may be alive (`report-up`, `report-ack`, `report-delivered`;
   [reporting.md](reporting.md)) is not the run's process and numbers its `flow_events` rows from `engine.ForeignSeqBase` (`1 << 40`).

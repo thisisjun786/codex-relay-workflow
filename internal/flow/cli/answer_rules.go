@@ -144,6 +144,14 @@ type Refusal struct {
 
 func (r *Refusal) Error() string { return r.Code + ": " + r.Detail }
 
+// recordedReason is the reason a record holds for its end, as a refusal names it.
+func recordedReason(reason string) string {
+	if reason = strings.TrimSpace(reason); reason == "" {
+		return "no reason recorded"
+	}
+	return "reason: " + reason
+}
+
 func refuse(code, format string, a ...any) *Refusal {
 	return &Refusal{Code: code, Detail: fmt.Sprintf(format, a...)}
 }
@@ -164,7 +172,13 @@ var userVias = []string{decisions.ViaDots, decisions.ViaDirectAsk, decisions.Via
 // the run's journal (any rows; the questions are read from the escalation rows among them).
 func Judge(rec decisions.Record, events []engine.Event, run RunRecord, claim Claim) (Application, *Refusal) {
 	var none Application
-	if rec.State != decisions.StateAnswered && rec.State != decisions.StateApplied {
+	switch {
+	case rec.State == decisions.StateWithdrawn:
+		// a record withdrawn after its answer (decision-withdraw, also while an answer waited for the run) is not applied (CRW-1492)
+		return none, refuse(RefusedNotAnswered, "the record %s is withdrawn (%s): a withdrawn decision is not applied", rec.DecisionID, recordedReason(rec.WithdrawnReason))
+	case rec.State == decisions.StateExpired:
+		return none, refuse(RefusedNotAnswered, "the record %s is expired (%s): an expired decision is not applied", rec.DecisionID, recordedReason(rec.ExpiredReason))
+	case rec.State != decisions.StateAnswered && rec.State != decisions.StateApplied:
 		return none, refuse(RefusedNotAnswered, "the record %s is %s; the manager records the answer first", rec.DecisionID, rec.State)
 	}
 	if claim.Decision != rec.DecisionID {
