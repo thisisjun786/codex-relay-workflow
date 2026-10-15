@@ -12,7 +12,7 @@ internal/dev/ci/contracts.go	1
 internal/dev/cxccorpus/command.go	1
 internal/dev/laneparity/command.go	2
 internal/dev/laneparity/realhost.go	1
-internal/flow/cli/childhost.go	2
+internal/flow/cli/childhost.go	1
 internal/flow/cli/preflight.go	1
 internal/flow/cli/start.go	3
 internal/flow/compile/cli.go	2
