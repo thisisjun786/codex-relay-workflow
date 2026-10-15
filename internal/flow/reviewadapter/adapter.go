@@ -411,16 +411,14 @@ func onlyValue(dec *json.Decoder) error {
 	}
 }
 
-// normalize applies the impact rules of the flow (CRW-1438) and collapses findings that share an id into the first of them,
-// keeping the most severe grade and the first blocking impact (else the first non-empty one), so ids are unique inside a record. security[i] is the security
-// flag review.NormalizeGrade read from the severity of findings[i]. In order:
+// normalize applies the impact rules of the flow (CRW-1438) and collapses findings that share an id (MergeFindings), so ids are
+// unique inside a record. security[i] is the security flag review.NormalizeGrade read from the severity of findings[i]. In order:
 //   - an impact that is not empty and not one of premerge.Impacts is an error;
 //   - a security finding without an impact gets safety_or_data;
 //   - after the collapse, a verified verdict over a finding that premerge.Blocks is an error naming the finding (the adapter's
 //     form of verdict_invalid).
 func normalize(verdict string, findings []Finding, security []bool) ([]Finding, error) {
-	out := make([]Finding, 0, len(findings))
-	at := map[string]int{}
+	checked := make([]Finding, 0, len(findings))
 	for k, f := range findings {
 		if f.Impact != "" && !slices.Contains(premerge.Impacts, f.Impact) {
 			return nil, fmt.Errorf("finding %s at %s:%d has an impact outside the closed set: %q", f.ID, f.File, f.Line, f.Impact)
@@ -428,25 +426,41 @@ func normalize(verdict string, findings []Finding, security []bool) ([]Finding, 
 		if f.Impact == "" && k < len(security) && security[k] {
 			f.Impact = impactSafetyOrData
 		}
-		i, seen := at[f.ID]
-		if !seen {
-			at[f.ID] = len(out)
-			out = append(out, f)
-			continue
-		}
-		if f.Severity < out[i].Severity { // "P0" < "P1" < "P2" < "P3"
-			out[i].Severity = f.Severity
-		}
-		if out[i].Impact == "" || (out[i].Impact == premerge.MinorSeparable && f.Impact != "" && f.Impact != premerge.MinorSeparable) {
-			out[i].Impact = f.Impact // a blocking impact of any duplicate is never hidden by a non-blocking one
-		}
+		checked = append(checked, f)
 	}
+	out := MergeFindings(checked)
 	if verdict == VerdictVerified {
 		if f, ok := firstBlocking(out); ok {
 			return nil, fmt.Errorf("the answer is verified over the blocking finding %s at %s:%d (severity %s, impact %q)", f.ID, f.File, f.Line, f.Severity, f.Impact)
 		}
 	}
 	return out, nil
+}
+
+// MergeFindings merges the findings of lists, in order, into one finding per id: the first copy's id, file, line and text, the
+// most severe grade of all copies ("P0" before "P3"), and a blocking impact of any copy over a non-blocking (minor_separable) or
+// empty one (else the first non-empty impact), whichever list holds which copy, so a blocking judgment is never hidden by the copy
+// that came first. Findings keep the order of their first copies. The lists are not changed, and the result is never nil.
+func MergeFindings(lists ...[]Finding) []Finding {
+	out := []Finding{}
+	at := map[string]int{}
+	for _, list := range lists {
+		for _, f := range list {
+			i, seen := at[f.ID]
+			if !seen {
+				at[f.ID] = len(out)
+				out = append(out, f)
+				continue
+			}
+			if f.Severity < out[i].Severity { // "P0" < "P1" < "P2" < "P3"
+				out[i].Severity = f.Severity
+			}
+			if out[i].Impact == "" || (out[i].Impact == premerge.MinorSeparable && f.Impact != "" && f.Impact != premerge.MinorSeparable) {
+				out[i].Impact = f.Impact
+			}
+		}
+	}
+	return out
 }
 
 // firstBlocking returns the first of findings that premerge.Blocks, the finding a verified verdict may not stand over.
