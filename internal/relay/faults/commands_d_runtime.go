@@ -301,7 +301,7 @@ func dReserveRows(ctx context.Context, l *Ledger, a map[string]string, deliverab
 		return nil, fmt.Errorf("fault_observation_malformed: a reservation has an owner")
 	}
 	if owner == "relay-daemon" && deliverable == nil {
-		return nil, fmt.Errorf("fault_observation_malformed: owner \"relay-daemon\" is the relay daemon's notification deliverer's: its reservations are settled from the supervisor channel's records, so a reserver with a transport of its own names itself")
+		return nil, fmt.Errorf("fault_observation_malformed: owner \"relay-daemon\" is the relay daemon's notification deliverer's: its reservations are settled from the 부모 channel's records, so a reserver with a transport of its own names itself")
 	}
 	limit, e := dBound(ctx, a["--limit"], "--limit", 20, 1000)
 	if e != nil {
@@ -417,7 +417,7 @@ func dSettle(ctx context.Context, l *Ledger, name string, a map[string]string) (
 			return nil, e
 		}
 		if went == nil {
-			return nil, fmt.Errorf("fault_state_conflict: notification %s was reserved by the relay daemon's deliverer, whose transport is the supervisor channel, and the channel has not recorded its message as sent; a supervisor-read readback records an arrival, and the deliverer settles it from that", id)
+			return nil, fmt.Errorf("fault_state_conflict: notification %s was reserved by the relay daemon's deliverer, whose transport is the 부모 channel, and the channel has not recorded its message as sent; a readback on the 부모 channel records an arrival, and the deliverer settles it from that", id)
 		}
 	}
 	if !delivered {
@@ -426,7 +426,7 @@ func dSettle(ctx context.Context, l *Ledger, name string, a map[string]string) (
 			return nil, e
 		}
 		if sent != nil {
-			return nil, fmt.Errorf("fault_state_conflict: supervisor channel attempt %s may have sent this notification, so it is not settled as not delivered: that send's answer, or a verified readback, settles it", sent.Text("request_id"))
+			return nil, fmt.Errorf("fault_state_conflict: 부모 channel attempt %s may have sent this notification, so it is not settled as not delivered: that send's answer, or a verified readback, settles it", sent.Text("request_id"))
 		}
 	}
 	if delivered {

@@ -291,7 +291,7 @@ var supervisorStageCommand = dispatch.Command{
 			return nil, &dispatch.UsageError{Detail: "--event and --observation are two different subjects: one obligation comes from an event in this store and the other from a turn that left no event at all. Name one", Code: contract.ExitUsage}
 		}
 		if hasProject && hasRecipient {
-			return nil, &dispatch.UsageError{Detail: "--recipient names the supervisor ONE message is addressed to, and --project stages every standing obligation, each resolved through its own relationship. Ignoring the one you typed is how a caller learns too late that it was never checked", Code: contract.ExitUsage}
+			return nil, &dispatch.UsageError{Detail: "--recipient names the 부모 ONE message is addressed to, and --project stages every standing obligation, each resolved through its own relationship. Ignoring the one you typed is how a caller learns too late that it was never checked", Code: contract.ExitUsage}
 		}
 		if !hasEvent && !hasProject && len(observations) > 1 {
 			return nil, &dispatch.UsageError{Detail: "one obligation is one message, so a single staging takes one observation. Pass --project to stage several, where each reading is placed by the relationship it names", Code: contract.ExitUsage}

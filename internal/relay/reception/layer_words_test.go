@@ -1,6 +1,7 @@
 package reception
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -68,4 +69,40 @@ func TestReceptionNoMechanismNamesTheParent(t *testing.T) {
 	if noMechanism["parent_to_supervisor"] != upwardNoMechanism {
 		t.Errorf("noMechanism[parent_to_supervisor] = %q, want %q", noMechanism["parent_to_supervisor"], upwardNoMechanism)
 	}
+}
+
+// TestReceptionTextNamesTheLayers: what reception tells a reader about a packet it does not cover
+// names the layers. A role that keeps no relationship row (the 부모) is read back through the 부모
+// channel, and a direction whose purpose has no required fields is outside what relay-packet/1
+// covers: the relation of a 자식 and its issue child, and what a 자식 owes upward.
+func TestReceptionTextNamesTheLayers(t *testing.T) {
+	t.Parallel()
+	t.Run("a receiver that keeps no relationship row", func(t *testing.T) {
+		t.Parallel()
+		var notes []string
+		if err := (Reader{}).readStore(context.Background(), nil, "01supervisor", "supervisor", nil, nil, &Obj{}, &Obj{}, &notes); err != nil {
+			t.Fatal(err)
+		}
+		if len(notes) != 1 {
+			t.Fatalf("notes %q, want the one note on where the packet is read back", notes)
+		}
+		want := "the relay store keeps no relationship row for a supervisor (부모), so a packet sent to one is read back through the 부모 channel, not here"
+		if notes[0] != want {
+			t.Errorf("the note %q, want %q", notes[0], want)
+		}
+		requireNoRoleWords(t, "the note", notes[0])
+	})
+	t.Run("a direction relay-packet/1 does not cover", func(t *testing.T) {
+		t.Parallel()
+		_, err := RequiredFor("supervisor_to_parent", "midpoint_check")
+		var refused *store.RefusedError
+		if !errors.As(err, &refused) || refused.Reason != "malformed_receipt" {
+			t.Fatalf("a purpose with no required fields was not refused as malformed: %v", err)
+		}
+		want := "relay-packet/1 covers the relation of a 자식 and its issue child and what a 자식 owes upward; supervisor_to_parent is carried by the envelope alone"
+		if refused.Detail != want {
+			t.Errorf("the refusal %q, want %q", refused.Detail, want)
+		}
+		requireNoRoleWords(t, "the refusal", refused.Detail)
+	})
 }
