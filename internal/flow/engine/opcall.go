@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/dop251/goja"
 )
@@ -93,7 +94,7 @@ func (e *Engine) opRequestID(callID, op, digest string) string {
 }
 
 // builtinOps are the crw members the engine defines itself.
-var builtinOps = map[string]bool{"classify": true, "clock": true, "tierStep": true, "callFacts": true, "recordedSignal": true, "priorRelease": true}
+var builtinOps = map[string]bool{"classify": true, "clock": true, "tierStep": true, "callFacts": true, "recordedSignal": true, "priorRelease": true, "deferredAsks": true}
 
 // opPrefix is the op name of a registered op's rows.
 const opPrefix = "crw."
@@ -134,12 +135,23 @@ func (s *scriptVM) opCall(name string, call goja.FunctionCall) goja.Value {
 	if prior, ok := e.replayableOp(path, id, label, digest); ok {
 		if proven, _, err := op.Proven(e.ctx, e.j.Events(), prior); err == nil && proven {
 			e.noteReplayed(prior)
-			complete(func() {
-				path.settle(position)
-				if err := resolve(s.fromJSON([]byte(rowStr(prior.Data, "result")))); err != nil {
-					e.failResolve(err)
+			settle := func() {
+				complete(func() {
+					path.settle(position)
+					if err := resolve(s.fromJSON([]byte(rowStr(prior.Data, "result")))); err != nil {
+						e.failResolve(err)
+					}
+				})
+			}
+			// a test that orders replays holds this one and settles it later, from any goroutine (Config.ReplayHold); complete is
+			// called at most once (Loop.Begin), and the loop stays alive until then
+			if hold := e.cfg.ReplayHold; hold != nil {
+				var once sync.Once
+				if hold(prior, func() { once.Do(settle) }) {
+					return s.vm.ToValue(promise)
 				}
-			})
+			}
+			settle()
 			return s.vm.ToValue(promise)
 		}
 	}

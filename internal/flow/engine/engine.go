@@ -100,6 +100,10 @@ type Config struct {
 	// the subagents it spawns, instead of starting threads through Backend. The run's started row records the backend
 	// (`backend`), and a resume on the other backend is refused.
 	Session *SessionConfig
+	// ReplayHold is a test seam, nil in production: a resume hands it every op row it replays, after the row was proven and noted as
+	// replayed. When it answers true the engine does not settle the position itself: the hook keeps settle and calls it later, from
+	// any goroutine, to resolve the op with the recorded result (a test orders replays with it). No row, position or digest changes.
+	ReplayHold func(row Event, settle func()) bool
 }
 
 // SnapshotRequest is a call as the input snapshot sees it.
