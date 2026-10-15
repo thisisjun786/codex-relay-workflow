@@ -25,7 +25,8 @@ const Command = "pr"
 
 // Usage is the usage of the command.
 const Usage = `usage: crw flow pr open --repo OWNER/NAME --head BRANCH [--base BRANCH] --title T [--body TEXT | --body-file PATH] --issue REF... [--draft] [--push DIR [--remote NAME]]
-       crw flow pr show --pr OWNER/NAME#N [--checks]`
+       crw flow pr show --pr OWNER/NAME#N [--checks]
+       crw flow pr branch --checkout DIR --milestone M [--base BRANCH] [--name BRANCH]`
 
 const usageHelp = Usage + `
 
@@ -39,6 +40,10 @@ merge is done by the dev queue (crw manage integrate --enqueue-pr REF, then its 
          remote refuses opens nothing.
   show   reads the pull request: state, merged, head commit, head and base branch, the issues it carries; --checks adds the check
          runs and commit statuses of its head and their judgment (none, pending, success, failure).
+  branch makes the bundle's integration branch in the checkout DIR: the local branch --name (default bundle/M) at the tip of the local
+         branch --base (default dev), created once. An existing branch that contains the base's tip is reused as it is (created false);
+         one that does not is refused (exit 2) and never moved, and nothing is fetched or pushed. The answer names the branch, the base
+         and its tip, the branch's tip and whether this call created it.
 
 The answer is one JSON object on stdout. The token is GH_TOKEN, GITHUB_TOKEN or gh auth token. Exit 0 done; 1 GitHub or git failed
 (nothing is retried); 2 an input that cannot be used.
@@ -143,7 +148,7 @@ func RunWith(ctx context.Context, d *Deps, args []string, stdout, stderr io.Writ
 		return 1
 	}
 	if len(args) == 0 {
-		return usage("a command is required: open or show")
+		return usage("a command is required: open, show or branch")
 	}
 	if args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
 		fmt.Fprint(stdout, usageHelp)
@@ -283,8 +288,42 @@ func RunWith(ctx context.Context, d *Deps, args []string, stdout, stderr io.Writ
 			ans.Checks = cv
 		}
 		return emit(ans)
+	case "branch":
+		checkout := fs.String("checkout", "", "the checkout holding the branches")
+		milestone := fs.String("milestone", "", "the milestone the branch carries")
+		base := fs.String("base", "dev", "the local branch the integration branch is cut from")
+		name := fs.String("name", "", "the integration branch (default bundle/<milestone>)")
+		if ok, code := parse(); !ok {
+			return code
+		}
+		if *checkout == "" {
+			return usage("--checkout DIR is required: the checkout the branch is made in")
+		}
+		if *milestone == "" {
+			return usage("--milestone M is required: the milestone the branch carries")
+		}
+		if *name == "" {
+			*name = "bundle/" + *milestone
+		}
+		ans, err := Branch(ctx, d.Env, *checkout, *base, *name)
+		var unusable inputError
+		if errors.As(err, &unusable) {
+			fmt.Fprintf(stderr, "crw flow pr: error: %v\n", unusable)
+			return 2
+		}
+		if err != nil {
+			return failed("%v", err)
+		}
+		data, err := json.Marshal(ans)
+		if err == nil {
+			_, err = fmt.Fprintf(stdout, "%s\n", data)
+		}
+		if err != nil {
+			return failed("write the answer: %v", err)
+		}
+		return 0
 	}
-	return usage("unknown command %q: open or show", sub)
+	return usage("unknown command %q: open, show or branch", sub)
 }
 
 // configuredRemote says whether name is one of the remotes the checkout configures (git remote): any name git lists, team/review
@@ -312,7 +351,7 @@ func gitIn(ctx context.Context, env []string, checkout string, args ...string) (
 	cmd.Env = pushEnv(env)
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	if err := cmd.Run(); err != nil {
-		return "", fmt.Errorf("git %s: %v: %s", strings.Join(args, " "), err, strings.TrimSpace(errb.String()))
+		return "", fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(errb.String()))
 	}
 	return strings.TrimSpace(out.String()), nil
 }
