@@ -272,12 +272,24 @@ func (c *command) runEvents(cm *common, run string) []engine.Event {
 	return events
 }
 
-// nextState is the state next reports.
+// draining is whether the run's process lives and the ask that will end the run paused is an answer's drain (CRW-1492): the run stops
+// at its next boundary and the turns in flight run to their end, so the steps the run published before the drain are still the owner's
+// to take. info.Live is a run process's hold only (a writer's hold, such as the answer's own, is not one); info.Paused is `by: reason`
+// of the last ask that ends the run paused (Summarize), so an operator's pause after the drain names the end.
+func draining(info RunInfo) bool {
+	return info.Live && pausedForAnswer(info)
+}
+
+// pausedForAnswer is whether the last ask that ends the run paused is an answer's drain.
+func pausedForAnswer(info RunInfo) bool { return strings.HasPrefix(info.Paused, "answer: ") }
+
+// nextState is the state next reports. A paused run is paused, except while an answer drains it and its process lives: next answers
+// from its waits and steps as for any live run, until the process ends (an operator's pause interrupts the turns: paused at once).
 func nextState(info RunInfo, live bool, steps []engine.Step) string {
 	switch {
 	case info.State != StateDead && info.State != StateRunning && info.State != StatePaused:
 		return NextEnded // completed, held, cancelled, failed: the process ended with a finished row
-	case info.Paused != "":
+	case info.Paused != "" && !draining(info):
 		return NextPaused
 	case info.Waiting > 0:
 		return NextWaitingDecision
@@ -503,6 +515,11 @@ func nextHint(ans NextAnswer, info RunInfo, closes []string) string {
 	case NextEnded:
 		parts = append(parts, fmt.Sprintf("run %s is over (%s, status %s): crw flow show %s", ans.Run, info.State, cell(info.Status), ans.Run))
 	case NextPaused:
+		if pausedForAnswer(info) {
+			// the run stopped for an answer (its drain): the answer applies and resumes it once no process holds the run
+			parts = append(parts, fmt.Sprintf("run %s ended paused for an answer: run the same crw flow answer again (it applies and resumes the run); crw flow resume %s goes on without it", ans.Run, ans.Run))
+			break
+		}
 		parts = append(parts, fmt.Sprintf("run %s is paused (%s): crw flow resume %s goes on", ans.Run, info.Paused, ans.Run))
 	case NextWaitingDecision:
 		parts = append(parts, fmt.Sprintf("run %s waits for a decision: crw flow show %s lists its questions", ans.Run, ans.Run))
