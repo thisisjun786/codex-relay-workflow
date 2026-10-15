@@ -669,6 +669,73 @@ func TestCrosscheckCarriesTheReceiptsAndRedRecords(t *testing.T) {
 	}
 }
 
+// TestReceiptsFileWriteThatFailsLeavesNoFile (CRW-1473): a write of the receipts that fails half way leaves no file at the path it
+// was writing (the receipts go to a temporary file of the same directory, renamed into place once written), so the same receipts
+// written again land there: at <name>.md when no file is there, and at <name>-<sha12>.md when <name>.md holds an earlier V's receipts.
+func TestReceiptsFileWriteThatFailsLeavesNoFile(t *testing.T) {
+	body := []byte("# receipts of M1 round 1\n\n## node n1 (sha256 abc)\n\nred-first: TestX fails\n")
+	sum := sha256.Sum256(body)
+	digest := hex.EncodeToString(sum[:])
+	for _, c := range []struct {
+		name    string
+		earlier []byte // the bytes <name>.md holds before, nil for none
+		want    string
+	}{
+		{"no earlier file", nil, "M1-r1-receipts.md"},
+		{"an earlier V's receipts", []byte("the receipts of an earlier V\n"), "M1-r1-receipts-" + short(digest) + ".md"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "crosscheck")
+			if c.earlier != nil {
+				if err := os.MkdirAll(dir, 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, "M1-r1-receipts.md"), c.earlier, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			write := receiptsWrite
+			t.Cleanup(func() { receiptsWrite = write })
+			receiptsWrite = func(f *os.File, b []byte) error {
+				if _, err := f.Write(b[:len(b)/2]); err != nil {
+					return err
+				}
+				return fmt.Errorf("write %s: no space left on device", f.Name())
+			}
+			if file, err := writeReceiptsFile(dir, "M1-r1-receipts", body, digest); err == nil {
+				t.Fatalf("a failed write answered %s", file)
+			}
+			entries, err := os.ReadDir(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var names []string
+			for _, e := range entries {
+				names = append(names, e.Name())
+			}
+			if want := map[bool][]string{true: nil, false: {"M1-r1-receipts.md"}}[c.earlier == nil]; !slices.Equal(names, want) {
+				t.Errorf("after the failed write the directory holds %v, want %v", names, want)
+			}
+			receiptsWrite = write
+			file, err := writeReceiptsFile(dir, "M1-r1-receipts", body, digest)
+			if err != nil {
+				t.Fatalf("the write again: %v", err)
+			}
+			if file != filepath.Join(dir, c.want) {
+				t.Errorf("the write again answered %s, want %s", file, filepath.Join(dir, c.want))
+			}
+			if got, err := os.ReadFile(file); err != nil || !bytes.Equal(got, body) {
+				t.Errorf("the receipts file holds %q (%v), want the receipts", got, err)
+			}
+			if c.earlier != nil {
+				if got, _ := os.ReadFile(filepath.Join(dir, "M1-r1-receipts.md")); !bytes.Equal(got, c.earlier) {
+					t.Errorf("the earlier V's receipts became %q", got)
+				}
+			}
+		})
+	}
+}
+
 // TestCrosscheckHoldsWhenAReceiptCannotBeRead: a receipt that is missing, unverified, not copied or does not hash to its digest holds the
 // crosscheck before any checkout or pass; the row names the node, and a held crosscheck is not proven.
 func TestCrosscheckHoldsWhenAReceiptCannotBeRead(t *testing.T) {

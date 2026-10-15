@@ -717,7 +717,8 @@ func milestoneReceipts(r rows, m Milestone) ([]CrosscheckReceipt, []byte, string
 
 // writeReceiptsFile writes the receipts of a round to <dir>/<name>.md and answers its path. A file that is there already with the same
 // bytes (a resume of the same round) is used as it is; one with other bytes is the evidence of an earlier crosscheck's V and is never
-// overwritten: the receipts go to <dir>/<name>-<sha12>.md instead, so every V's receipts_file keeps hashing to its receipts_sha256.
+// overwritten: the receipts go to <dir>/<name>-<sha12>.md instead, so every V's receipts_file keeps hashing to its receipts_sha256. A
+// file is written whole or not at all (writeFileInPlace), so a write that failed is written again on the next call.
 func writeReceiptsFile(dir, name string, body []byte, digest string) (string, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
@@ -732,17 +733,42 @@ func writeReceiptsFile(dir, name string, body []byte, digest string) (string, er
 		case !os.IsNotExist(err):
 			return "", err
 		}
-		f, err := os.OpenFile(file, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-		if err != nil {
+		if err := writeFileInPlace(file, body); err != nil {
 			return "", err
 		}
-		if _, err := f.Write(body); err != nil {
-			f.Close()
-			return "", err
-		}
-		return file, f.Close()
+		return file, nil
 	}
 	return "", fmt.Errorf("the receipts files of %s in %s hold other bytes than the receipts of sha256 %s", name, dir, digest)
+}
+
+// writeFileInPlace writes body to a temporary file of file's directory (mode 0600) and renames it to file once it is written and
+// synced, so a write that fails leaves no file at file, only the temporary one removed. The caller has found no file there; the run
+// lock keeps another writer of the same run directory out.
+func writeFileInPlace(file string, body []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(file), "."+filepath.Base(file)+".tmp-*")
+	if err != nil {
+		return err
+	}
+	err = receiptsWrite(tmp, body)
+	if err == nil {
+		err = tmp.Sync()
+	}
+	if cerr := tmp.Close(); err == nil {
+		err = cerr
+	}
+	if err == nil {
+		err = os.Rename(tmp.Name(), file)
+	}
+	if err != nil {
+		os.Remove(tmp.Name())
+	}
+	return err
+}
+
+// receiptsWrite writes the bytes of a receipts file; a test makes it fail.
+var receiptsWrite = func(f *os.File, body []byte) error {
+	_, err := f.Write(body)
+	return err
 }
 
 // receiptsSection is the EXECUTOR RECEIPTS section of a round-1 pass prompt: the file, its digest, each node's receipt and what to check
