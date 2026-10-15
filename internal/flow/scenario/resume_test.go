@@ -100,8 +100,8 @@ func TestDecideResumesOnlyOnAppliedRow(t *testing.T) {
 	for _, ts := range turnsSince(l, before) {
 		live = append(live, labelOf(l, ts.call))
 	}
-	if !slices.Equal(live, []string{"rebuild:A:executor:r1", "review:A:r2", "reviewer-final:M1", "reflection:M1"}) {
-		t.Errorf("live turns %v: want the fresh executor and the review the decision let go on", live)
+	if !slices.Equal(live, []string{"rebuild:A:executor:r1", "reviewer-final:M1", "reflection:M1"}) {
+		t.Errorf("live turns %v: want the fresh executor the decision let go on and the close", live)
 	}
 	rows := l.Rows("crw.decide")
 	if len(rows) == 0 || !dataBoolOf(rows[len(rows)-1], "applied") {
@@ -110,8 +110,9 @@ func TestDecideResumesOnlyOnAppliedRow(t *testing.T) {
 }
 
 // The host refuses thread/start of the first executor (a configuration fault), the orchestrator retries, and the replacement
-// executor builds the head that is reviewed and accepted: the refused attempt never created a thread and wrote nothing, so the
-// acceptance is audited ok - its pair is the replacement's - and the reviewer thread is archived (CRW-1206 correction, d5).
+// executor builds the head that is unit-checked and accepted: the refused attempt never created a thread and wrote nothing, so the
+// acceptance is audited ok - its pair is the replacement's (CRW-1206 correction, d5). The acceptance rests on a unit check
+// (CRW-1465), which has no thread: nothing is archived.
 func TestAuditOfARecoveredNodeIgnoresTheRefusedExecutorAttempt(t *testing.T) {
 	l := NewLab(t, oneNode()...)
 	var mu sync.Mutex
@@ -151,8 +152,8 @@ func TestAuditOfARecoveredNodeIgnoresTheRefusedExecutorAttempt(t *testing.T) {
 	if num(last.Data["ok"]) != 1 || num(last.Data["mismatch"]) != 0 || num(last.Data["unobserved"]) != 0 {
 		t.Errorf("the audit of the recovered node: ok %v mismatch %v unobserved %v (%v)", last.Data["ok"], last.Data["mismatch"], last.Data["unobserved"], last.Data["results"])
 	}
-	if len(l.Archived()) != 1 {
-		t.Errorf("archived %v: the recovered node's reviewer thread is archived once", l.Archived())
+	if len(l.Archived()) != 0 {
+		t.Errorf("archived %v: a unit-check acceptance has no thread to archive", l.Archived())
 	}
 }
 
@@ -162,7 +163,7 @@ func num(v any) int {
 }
 
 // A landing the integration target lost is integrated again when the run resumes: the lane that landed it runs only its integrate
-// (everything before it replays: the commit, the verification, the review and the acceptance still stand) and lands a new batch,
+// (everything before it replays: the unit check, the commit, the verification and the acceptance still stand) and lands a new batch,
 // the target is not the head the final gate judged, and the whole close runs live again over the new head - the gate, the
 // verification at the new head, the final review, the close, the audit and the report. The other lane runs nothing, and the only
 // agent called is reviewer-final.
@@ -315,14 +316,14 @@ func TestQuotaPauseResumeRunsOnlyHeldCall(t *testing.T) {
 			heldTurn = ts
 		}
 	}
-	if !slices.Equal(sent, []string{"build:B:executor", "review:B:r1", "reviewer-final:M1", "reflection:M1"}) {
-		t.Fatalf("live turns %v, want B's held call, B's review and the final review of the close", sent)
+	if !slices.Equal(sent, []string{"build:B:executor", "reviewer-final:M1", "reflection:M1"}) {
+		t.Fatalf("live turns %v, want B's held call and the final review of the close", sent)
 	}
 	if !strings.HasSuffix(heldTurn.op, "/t2") || heldTurn.thread != firstThread || firstThread == "" {
 		t.Errorf("the held call went on with %+v, want turn t2 of its own thread %s", heldTurn, firstThread)
 	}
 	for _, ev := range rowsAfter(l, before) {
-		if ev.Kind == engine.KindCall && ev.Op == "agent" && ev.Event == engine.EvPrepared && !strings.HasPrefix(ev.Label, "review:B") && ev.Label != "build:B:executor" && ev.Label != "reviewer-final:M1" && ev.Label != "reflection:M1" {
+		if ev.Kind == engine.KindCall && ev.Op == "agent" && ev.Event == engine.EvPrepared && ev.Label != "build:B:executor" && ev.Label != "reviewer-final:M1" && ev.Label != "reflection:M1" {
 			t.Errorf("a call prepared on the resume: %s", ev.Label)
 		}
 	}
