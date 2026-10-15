@@ -124,21 +124,59 @@ function askLine(reason) {
   }
 }
 
-export function designAuditPacket(ms, cand, round) {
+// auditFindings are the findings of a design audit by their ids: r<round>.<index>, the index 1-based in the audit's findings (a ref
+// alone is not unique). The design-fix packet names them by these ids, and the critic's PRIOR FINDINGS in the later rounds (CRW-1452).
+export function auditFindings(round, findings) {
+  return (findings || []).map((f, i) => ({ id: 'r' + round + '.' + (i + 1), ref: f.ref, severity: f.severity, finding: f.finding }))
+}
+
+function findingLine(f) {
+  return f.id + ' [' + f.severity + '] ' + f.ref + ': ' + f.finding
+}
+
+// dispositionOf renders what the architect's design-fix answer reported of one finding: folded or rebutted with its reason, not
+// reported when the answer named no disposition of it, and null when the answer had no dispositions at all.
+function dispositionOf(f, dispositions) {
+  if (dispositions === null || dispositions === undefined) return 'null (no dispositions reported)'
+  const d = dispositions.find((x) => x.finding === f.id)
+  return d ? d.disposition + ': ' + d.reason : 'not reported'
+}
+
+// priorLines are the findings of the earlier audit rounds, each with the architect's disposition of it, and the dispositions that
+// name no finding of their round. prior is [{round, findings: auditFindings(round, ...), dispositions}], in round order.
+function priorLines(prior) {
+  const out = []
+  for (const p of prior) {
+    for (const f of p.findings) out.push('- ' + findingLine(f) + ' -> ' + dispositionOf(f, p.dispositions))
+    for (const d of p.dispositions || []) {
+      if (!p.findings.some((f) => f.id === d.finding)) out.push('- ' + d.finding + ' (no finding of round ' + p.round + ' has this id) -> ' + d.disposition + ': ' + d.reason)
+    }
+  }
+  return out.length === 0 ? ['- none'] : out
+}
+
+// The critic's packet (CRW-1452): the DESIGN, the answers to its open questions, and from the second round on the findings of the
+// earlier rounds with the architect's disposition of each. prior is the per-round history (priorLines); it is left out in round 1.
+export function designAuditPacket(ms, cand, round, prior) {
   return [
-    'ROLE: reviewer. Audit the DESIGN of milestone ' + ms.id + ' (round ' + round + ') before any executor starts. You did not write it and are of another model family than the architect.',
+    'ROLE: critic. Audit the DESIGN of milestone ' + ms.id + ' (round ' + round + ') before any executor starts. You did not write it and are of another model family than the architect.',
     'Answer with DESIGN_AUDIT: approved only when every issue node has a plan an executor can carry out inside its edit regions, every done condition can be met under the executor contract below, the decisions are consistent with the plan, no decision of the DESIGN is outside the architect\'s authority below, and no P0 or P1 finding stands; otherwise needs_changes with the findings the architect must act on. Check every done condition against the executor contract and every decision against the authority boundary: a done condition the contract cannot meet and a decision outside the authority are each a P1 finding that names its node or decision.',
     section('EXECUTOR CONTRACT (every done condition must be met under it)', EXECUTOR_CONTRACT),
     section('OUT-OF-AUTHORITY DECISIONS (the architect raises these as open questions and does not decide them)', AUTHORITY),
+    round > 1 && prior ? section('PRIOR FINDINGS (the findings of the earlier rounds by id, each with the architect\'s disposition: folded, rebutted, or not reported)', priorLines(prior)) +
+      '\nJudge each prior finding: a folded one is resolved only if this DESIGN does fold it; a rebuttal you do not accept is raised again in your findings under the same ref, with the reason you reject it; a finding not reported, or of a round whose dispositions are null, is still open.' : '',
     section('DESIGN', [canon(cand.design)]),
     section('ANSWERS TO THE OPEN QUESTIONS (each with its route and what it got)', answerLines(cand.answers)),
-  ].join('\n\n')
+  ].filter(Boolean).join('\n\n')
 }
 
-export function designFixPacket(audit, context) {
+// The design-fix turn of the architect's thread: the findings of audit round round by id, and the dispositions it answers with, one
+// for each id (CRW-1452).
+export function designFixPacket(audit, context, round) {
+  const findings = auditFindings(round, audit.findings)
   return [
-    'ROLE: architect. The independent audit of your DESIGN found what follows. Answer with the DESIGN again, with every finding addressed.',
-    section('FINDINGS', audit.findings.map((f) => '- [' + f.severity + '] ' + f.ref + ': ' + f.finding)),
+    'ROLE: architect. The independent audit of your DESIGN found what follows. Answer with the DESIGN again, with every finding addressed, and with dispositions: one entry for each finding id below (' + findings.map((f) => f.id).join(', ') + '), folded when the DESIGN now folds the finding or rebutted when you keep the DESIGN as it is, each with its reason. The critic reads your dispositions in its next round.',
+    section('FINDINGS', findings.map((f) => '- ' + findingLine(f))),
     audit.summary ? 'AUDIT SUMMARY: ' + audit.summary : '',
     context ? 'Your directory P is a read-only checkout of the pinned head: work only under the absolute path P.\nHEAD: ' + context.head + '\nDESIGN RAN AT: ' + (context.base_tip || 'unknown') + '\nRANGE: ' + (context.base_tip ? context.base_tip + '..' : '') + context.head : '',
     context ? section('LANDED HEADS', landedLines(context.landed)) : '',

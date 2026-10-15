@@ -4,6 +4,10 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver/fakehost"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
 )
 
 // twoMilestones is the plan of the two-milestone fixture: M1 holds A-1 and A-2 (A-2 after A-1), M2 holds B-1 after A-2.
@@ -75,4 +79,57 @@ func TestProjectLaneTwoMilestonesOnTempStore(t *testing.T) {
 			t.Errorf("the landing of A-2 was never observed")
 		}
 	})
+}
+
+// TestDesignAuditCarriesPriorFindingsAndDispositionsFromRoundTwo (CRW-1452): the design audit is the critic's call, and from its second
+// round on the critic's packet carries the findings of the earlier rounds by id (r<round>.<index>) with the architect's disposition of
+// each. The critic answers needs_changes in round 1 with one P1 finding; the design-fix packet names the finding by its id and asks for
+// one disposition per id; the architect folds it, and the critic approves in round 2 over a packet that shows the finding, its id and
+// the disposition with its reason. The first round's packet has no PRIOR FINDINGS.
+func TestDesignAuditCarriesPriorFindingsAndDispositionsFromRoundTwo(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+	const finding = "the done condition of A-1 names no file a test can read"
+	const reason = "the done condition now names node-A-1.txt"
+	l.turn = func(c labCall, r fakehost.TurnRequest) (fakehost.TurnPlan, bool) {
+		switch c.Label {
+		case "design-audit:r1":
+			return labSay(map[string]any{"verdict": "needs_changes", "findings": []any{map[string]any{"ref": "issue A-1", "severity": "P1", "finding": finding,
+				"evidence": []string{"README.md:1"}}}, "summary": "one P1 finding"}), true
+		case "design-audit:r2":
+			return labSay(map[string]any{"verdict": "approved", "findings": []any{}, "summary": "the finding is folded"}), true
+		case "design-fix:r1":
+			d := l.design()
+			d.Dispositions = []ops.Disposition{{Finding: "r1.1", Disposition: "folded", Reason: reason}}
+			return labSay(d), true
+		}
+		return fakehost.TurnPlan{}, false
+	}
+	spec := l.start("start", "project-lane", "--args", fmt.Sprintf(`{"plan":%q,"milestone":"M1"}`, l.plan), "--handoff", l.file)
+	l.closed(l.runToEnd(spec.RunID))
+
+	roles := map[string]string{}
+	for _, e := range l.events() {
+		if e.Kind == engine.KindCall && e.Event == engine.EvPrepared && strings.HasPrefix(e.Label, "design-") {
+			roles[e.Label] = str(e.Data, "role")
+		}
+	}
+	if roles["design-audit:r1"] != "critic" || roles["design-audit:r2"] != "critic" || roles["design-fix:r1"] != "architect" {
+		t.Errorf("the roles of the design loop's calls: %v (want both audits the critic's, the fix the architect's)", roles)
+	}
+	l.mu.Lock()
+	r1, fix, r2 := l.texts["design-audit:r1"], l.texts["design-fix:r1"], l.texts["design-audit:r2"]
+	l.mu.Unlock()
+	if r1 == "" || fix == "" || r2 == "" {
+		t.Fatalf("the model was not given every call of the design loop: %v", roles)
+	}
+	if !strings.Contains(r1, "ROLE: critic.") || strings.Contains(r1, "PRIOR FINDINGS") {
+		t.Errorf("the first round's critic packet:\n%s", r1)
+	}
+	if !strings.Contains(fix, "r1.1 [P1] issue A-1: "+finding) || !strings.Contains(fix, "dispositions") || !strings.Contains(fix, "r1.1") {
+		t.Errorf("the design-fix packet does not name the finding by its id and ask for its disposition:\n%s", fix)
+	}
+	want := "- r1.1 [P1] issue A-1: " + finding + " -> folded: " + reason
+	if !strings.Contains(r2, "ROLE: critic.") || !strings.Contains(r2, "PRIOR FINDINGS") || !strings.Contains(r2, want) {
+		t.Errorf("the second round's critic packet lacks %q:\n%s", want, r2)
+	}
 }

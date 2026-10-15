@@ -80,6 +80,11 @@ type laneLab struct {
 	releaseAnswer func(req ops.ReleaseRequest, out ops.ReleaseResult) ops.ReleaseResult
 	// designEdit, when a test sets it, edits the DESIGN the lab's architect answers.
 	designEdit func(d *ops.Design)
+	// turn, when a test sets it, is asked first for every turn of the model: a plan it answers with true is the turn's, false leaves
+	// the turn to the happy path below (CRW-1452).
+	turn func(c labCall, r fakehost.TurnRequest) (fakehost.TurnPlan, bool)
+	// texts are the turn texts the model was given, by the label of their call (the latest turn of a label), for a test's asserts.
+	texts map[string]string
 }
 
 const labOwner = "thread-owner"
@@ -650,9 +655,24 @@ func (l *laneLab) design() ops.Design {
 	return d
 }
 
-// onTurn is the model: every role answers what the happy path needs, and an executor writes its issue's file in its worktree.
+// onTurn is the model: every role answers what the happy path needs (the critic approves the DESIGN), and an executor writes its issue's
+// file in its worktree.
 func (l *laneLab) onTurn(r fakehost.TurnRequest) fakehost.TurnPlan {
 	c := l.callOf(r)
+	l.mu.Lock()
+	if l.texts == nil {
+		l.texts = map[string]string{}
+	}
+	if c.Label != "" {
+		l.texts[c.Label] = r.Text
+	}
+	turn := l.turn
+	l.mu.Unlock()
+	if turn != nil {
+		if plan, ok := turn(c, r); ok {
+			return plan
+		}
+	}
 	switch {
 	case c.Role == "architect" && strings.HasPrefix(c.Label, "reflection:"):
 		return labSay(map[string]any{"verdict": "ALIGNED", "misaligned": []any{}})
@@ -661,7 +681,7 @@ func (l *laneLab) onTurn(r fakehost.TurnRequest) fakehost.TurnPlan {
 	case c.Role == "reviewer-final":
 		return labSay(map[string]any{"verdict": "verified", "criteria": []any{map[string]any{"id": "c1", "met": true, "evidence": "read the range"}}, "defects": []any{},
 			"alignment": map[string]any{"verdict": "ALIGNED", "drift": []any{}}, "summary": "reviewed the range"})
-	case c.Role == "reviewer" && strings.HasPrefix(c.Label, "design-audit"):
+	case c.Role == "critic" && strings.HasPrefix(c.Label, "design-audit"):
 		return labSay(map[string]any{"verdict": "approved", "findings": []any{}, "summary": "the DESIGN holds"})
 	case c.Role == "reviewer":
 		return labSay(map[string]any{"verdict": "verified", "criteria": []any{map[string]any{"id": "c1", "met": true, "evidence": "read the head"}}, "defects": []any{}, "summary": "reviewed"})

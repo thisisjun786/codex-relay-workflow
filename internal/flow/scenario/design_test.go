@@ -31,7 +31,7 @@ func seqOf(t *testing.T, l *Lab, what string, keep func(engine.Event) bool) int 
 	return 0
 }
 
-// The first executor starts after an approved audit of the DESIGN, by a reviewer of another model family than the architect: the
+// The first executor starts after an approved audit of the DESIGN, by the critic, of another model family than the architect: the
 // audit is recorded as a design_audit row before the first release, and the release before the first executor call.
 func TestDesignAuditBeforeFirstExecutor(t *testing.T) {
 	l := NewLab(t, twoNodes()...)
@@ -52,7 +52,7 @@ func TestDesignAuditBeforeFirstExecutor(t *testing.T) {
 	if arch == "" || rev == "" || execution.ModelFamily(arch) == execution.ModelFamily(rev) {
 		t.Errorf("the audit was not independent: architect %q, auditor %q", arch, rev)
 	}
-	if l.Labels()[1] != "design-audit:r1" || l.Roles()[1] != "reviewer" {
+	if l.Labels()[1] != "design-audit:r1" || l.Roles()[1] != "critic" {
 		t.Errorf("calls %v", l.Labels())
 	}
 }

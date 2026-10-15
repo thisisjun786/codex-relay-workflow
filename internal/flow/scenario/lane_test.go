@@ -49,7 +49,7 @@ func mustRun(t *testing.T, l *Lab) laneResult {
 
 func index(list []string, want string) int { return slices.Index(list, want) }
 
-// The happy path: the architect plans the milestone, an independent reviewer audits the DESIGN, each node is released, built by
+// The happy path: the architect plans the milestone, the critic (independent) audits the DESIGN, each node is released, built by
 // an executor, committed, verified, reviewed by a reviewer of another family and landed, the milestone closes over the integrated
 // range and the report goes up. No tier step is taken.
 func TestLaneHappyPath(t *testing.T) {
@@ -62,7 +62,7 @@ func TestLaneHappyPath(t *testing.T) {
 	if labels := l.Labels(); !slices.Equal(labels, want) {
 		t.Fatalf("calls %v, want %v", labels, want)
 	}
-	if roles := l.Roles(); !slices.Equal(roles, []string{"architect", "reviewer", "executor", "reviewer", "executor", "reviewer", "reviewer-final", "architect"}) {
+	if roles := l.Roles(); !slices.Equal(roles, []string{"architect", "critic", "executor", "reviewer", "executor", "reviewer", "reviewer-final", "architect"}) {
 		t.Fatalf("roles %v", roles)
 	}
 	if !slices.Equal(l.Relay.Landed, []string{"A", "B"}) {

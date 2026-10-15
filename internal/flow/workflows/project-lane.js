@@ -1,9 +1,9 @@
 import { RECEIPT, DESIGN, DESIGN_AUDIT, REFLECTION } from 'crw:lib/schemas'
 import { install } from 'crw:lib/lane'
-import { architectPacket, designAuditPacket, designFixPacket, reflectionPacket, replanPacket, packet, answerPacket, fixPacket } from 'crw:lib/packets'
-export const meta = { name: 'project-lane', description: 'Run the issues of a milestone: architect, design audit, explorers, one lane per issue node, milestone close and report', phases: ['design', 'build', 'milestone'], args: { plan: 'string', milestone: 'string', cap: 'number' } }
+import { architectPacket, auditFindings, designAuditPacket, designFixPacket, reflectionPacket, replanPacket, packet, answerPacket, fixPacket } from 'crw:lib/packets'
+export const meta = { name: 'project-lane', description: 'Run the issues of a milestone: architect, design audit by the critic, explorers, one lane per issue node, milestone close and report', phases: ['design', 'build', 'milestone'], args: { plan: 'string', milestone: 'string', cap: 'number' } }
 
-// The project lane. A milestone is designed once by its architect, the DESIGN is audited by a reviewer of another model family
+// The project lane. A milestone is designed once by its architect, the DESIGN is audited by the critic, of another model family,
 // before any executor starts, every issue node then runs its own lane (an executor, the run's commit and verification, an
 // independent review, the land), and the milestone is closed over what the lanes integrated. Every fact a lane uses comes from
 // the journal: the plan of its issue from the design revision it was released under (crw.issuePlan), the evidence of its tier
@@ -31,8 +31,10 @@ const END_CONDITIONS = []
 for (const n of ms.nodes) for (const c of n.end_condition || []) END_CONDITIONS.push({ issue: n.issue, command: c })
 
 // The design audit of a DESIGN of the architect: its open questions go to explorers or, when out of the architect's authority or
-// beyond the explorer cap, to the orchestrator (crw.exploreRoute), a reviewer of another model family audits the
-// DESIGN with the answers, and needs_changes sends it back to the architect on its own thread, for AUDIT_ROUNDS rounds. tag names
+// beyond the explorer cap, to the orchestrator (crw.exploreRoute), the critic (a role of its own, of another model family than the
+// architect, CRW-1452) audits the DESIGN with the answers, and needs_changes sends it back to the architect on its own thread, for
+// AUDIT_ROUNDS rounds. From the second round on the critic's packet carries the findings of the earlier rounds by id (r<round>.<index>)
+// and the architect's disposition of each, from the DESIGN its design-fix answered (PRIOR FINDINGS). tag names
 // the labels of a re-plan's rounds. The answer is {ok, arch, answers}, or {ok: false, result} with what the milestone came to when
 // the design could not be approved.
 async function auditedDesign(first, tag, context) {
@@ -44,6 +46,9 @@ async function auditedDesign(first, tag, context) {
     : 'the cap of ' + cap + ' tokens (DESIGN_TOKEN_CAP ' + DESIGN_TOKEN_CAP + ', DESIGN_TOKEN_WARN ' + DESIGN_TOKEN_WARN + ' of the run budget of ' + budget.run + ')'
   let used = 0
   let warned = false
+  // the findings of the rounds so far, by id, each round with the dispositions the architect's design-fix answer gave (null when it
+  // gave none): the critic's PRIOR FINDINGS
+  const prior = []
   async function tokenCap(tokens, round) {
     used += tokens || 0
     if (warned || used < cap) return
@@ -64,20 +69,22 @@ async function auditedDesign(first, tag, context) {
     if (asked.failed) return { ok: false, result: await crw.milestoneHalt(ms, 'explorer', asked.failed.status, asked.failed.reason, asked.failed.callId) }
     const answers = asked.answers
     const cand = { design: arch.output, answers }
-    await crw.spawnDecision('AUDIT', 'spawn', { role: 'reviewer', inputs: { milestone: ms.id, round, tag } })
-    let call = await agent.call(designAuditPacket(ms, cand, round), { agentType: 'reviewer', schema: DESIGN_AUDIT, label: 'design-audit:' + tag + 'r' + round })
+    await crw.spawnDecision('AUDIT', 'spawn', { role: 'critic', inputs: { milestone: ms.id, round, tag } })
+    let call = await agent.call(designAuditPacket(ms, cand, round, prior), { agentType: 'critic', schema: DESIGN_AUDIT, label: 'design-audit:' + tag + 'r' + round })
     let audit = await crw.designAudit(ms.id, round, cand, arch, call)
     if (audit.state === 'null_model') {
       await tokenCap(tokensOf(call), round)
-      call = await agent.call(designAuditPacket(ms, cand, round), { agentType: 'reviewer', schema: DESIGN_AUDIT, label: 'design-audit:' + tag + 'r' + round + ':retry' })
+      call = await agent.call(designAuditPacket(ms, cand, round, prior), { agentType: 'critic', schema: DESIGN_AUDIT, label: 'design-audit:' + tag + 'r' + round + ':retry' })
       audit = await crw.designAudit(ms.id, round, cand, arch, call)
     }
     await tokenCap(tokensOf(call), round)
     if (audit.state === 'approved') return { ok: true, arch, answers, carried: asked.carried }
     if (audit.state !== 'needs_changes') return { ok: false, result: await crw.milestoneHalt(ms, 'design_audit', audit.state, audit.reason, call.callId) }
-    // back to the architect, on its own thread: the DESIGN it revises is the one it wrote
-    arch = await agent.call(designFixPacket(audit, context), { resume: arch, schema: DESIGN, head: context && context.head, label: 'design-fix:' + tag + 'r' + round })
+    // back to the architect, on its own thread: the DESIGN it revises is the one it wrote, and it disposes of each finding by its id
+    arch = await agent.call(designFixPacket(audit, context, round), { resume: arch, schema: DESIGN, head: context && context.head, label: 'design-fix:' + tag + 'r' + round })
     if (arch.status !== 'completed') return { ok: false, result: await crw.milestoneHalt(ms, 'architect', arch.status, arch.reason, arch.callId) }
+    const dispositions = arch.output.dispositions
+    prior.push({ round, findings: auditFindings(round, audit.findings), dispositions: dispositions === undefined ? null : dispositions })
     await tokenCap(tokensOf(arch), round)
   }
   log('warn design_loop_cap rounds: the DESIGN ' + (tag ? tag + ' ' : 'of the milestone ') + 'was not approved in AUDIT_ROUNDS ' + AUDIT_ROUNDS + ' audit rounds')

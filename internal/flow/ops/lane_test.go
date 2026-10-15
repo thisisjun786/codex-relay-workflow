@@ -262,6 +262,31 @@ func TestDesignAuditIndependence(t *testing.T) {
 	}
 }
 
+// TestDesignAuditStillRefusesAnArchitectFamilyCritic (CRW-1452): the design audit is the critic's call now, and its independence is
+// still judged by the model families of the two calls' configured pairs, never by the role: a critic on the architect's family is
+// refused (independence_refused), and the same critic on another family is an approval that names the critic as the auditor.
+func TestDesignAuditStillRefusesAnArchitectFamilyCritic(t *testing.T) {
+	w := newWorld(t)
+	design, _ := json.Marshal(designOf("A"))
+	cand := Candidate{Design: design, Answers: json.RawMessage(`[]`)}
+	approved := map[string]any{"verdict": "approved", "findings": []any{}, "summary": "ok"}
+	audit := func(archModel, criticModel string) AuditResult {
+		arch := call("c_arch", "completed", archModel, nil)
+		arch.Meta.Role = "architect"
+		critic := call("c_crit", "completed", criticModel, approved)
+		critic.Meta.Role = "critic"
+		var r AuditResult
+		_ = json.Unmarshal(w.must("designAudit", "M", 1, cand, arch, critic), &r)
+		return r
+	}
+	if r := audit("claude-opus", "claude-sonnet"); r.State != StateRefused || r.Reason != "independence_refused" || r.Reviewer.Role != "critic" {
+		t.Errorf("a critic of the architect's family: %+v", r)
+	}
+	if r := audit("claude-opus", "gpt-6.1-sol"); r.State != AuditApproved || r.Reviewer.Role != "critic" || r.Architect.Role != "architect" {
+		t.Errorf("a critic of another family: %+v", r)
+	}
+}
+
 // A lane builds its packet from the revision its node was released under: issuePlan reads the release row and the ledger row of
 // that revision, whatever the ledger has grown since.
 func TestIssuePlanReadsTheReleaseRevision(t *testing.T) {
