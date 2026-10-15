@@ -12,11 +12,17 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/tracking"
 )
 
+// resultReportLandedBeforeRecord is the pass result of a recovered landing (the hyphenated form, like the other pass results; the
+// record itself says landed_before_record).
+const resultReportLandedBeforeRecord = "landed-before-record"
+
 // Report is what one pass reports.
 type Report struct {
 	// Result is idle, stopped, locked, nothing-to-integrate, error, or the run's own result
 	// (pushed, nothing-merged, verification-failed(rc=N), dev-moved:<sha>, push-failed; for a pull request also
 	// review-needs-changes, head-moved:<sha> and pull-request-changed).
+	// landed-before-record (status 0) is a pull request whose head was already in the branch with no landing record: the pass wrote the
+	// recovered record (Landing), ran nothing (no Summary) and moved the entry to done/.
 	Result  string   `json:"result"`
 	Exit    int      `json:"exit"`
 	Error   string   `json:"error,omitempty"`
@@ -92,6 +98,13 @@ func (r *Runner) Pass(ctx context.Context) Report {
 			// not a verdict on the pull request: it waits in pending, and the queue goes on without it
 			rep.Held = append(rep.Held, e.Name+": "+held)
 			continue
+		}
+		if rep.Landing != nil {
+			// checkPR found the head in the branch and recorded its landing after the fact: that is what the pass did. It ends the pass
+			// (one pull request per pass); the pull requests and issue heads behind it wait for the next one, and Held of earlier
+			// pull requests stays in the report without turning the result into an error.
+			rep.Result, rep.Exit = resultReportLandedBeforeRecord, ExitPushed
+			return rep
 		}
 		if pr != nil {
 			return r.run(ctx, rep, []Entry{e}, pr)
