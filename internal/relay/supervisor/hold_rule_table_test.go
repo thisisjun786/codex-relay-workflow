@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/delivery"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -349,6 +350,65 @@ func TestHoldKindOfReadsTheNewestSupersededRow(t *testing.T) {
 	}
 }
 
+// TestAcknowledgeFormsAndTheirAnswers pins the request forms of the acknowledgement around the rows
+// of the table: exactly one form, a message named by id that the store does not hold or that another
+// recipient owns is left with its reason, and the bulk form parks the recipient's informational
+// messages staged before its bound and nothing staged after it.
+func TestAcknowledgeFormsAndTheirAnswers(t *testing.T) {
+	w := newHoldWorld(t, "event")
+	for _, req := range []AcknowledgeRequest{
+		{Recipient: w.recipient()},
+		{Recipient: w.recipient(), AllInformational: true, Messages: []string{w.id}},
+	} {
+		var refusal Refusal
+		if _, err := w.c.Acknowledge(w.ctx, req); !errors.As(err, &refusal) || refusal.Reason != "malformed_receipt" {
+			t.Fatalf("%+v answered %v, want a malformed_receipt refusal", req, err)
+		}
+	}
+	answer, err := w.c.Acknowledge(w.ctx, AcknowledgeRequest{Recipient: "someone-else", Actor: "someone-else", Messages: []string{w.id, "no-such-message", w.id}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprint(answer["parked"], answer["skipped"]); got != "[] [map[messageId:"+w.id+" reason:"+AcknowledgeOtherRecipient+"] map[messageId:no-such-message reason:"+AcknowledgeNotFound+"]]" {
+		t.Fatalf("answered %s", got)
+	}
+	row, err := w.c.Get(w.ctx, w.id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staged, err := time.Parse(time.RFC3339Nano, row.StagedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	early := staged.Add(-time.Second)
+	answer, err = w.c.Acknowledge(w.ctx, AcknowledgeRequest{Recipient: w.recipient(), Actor: w.recipient(), AllInformational: true, StagedBefore: &early})
+	if err != nil || len(answer["parked"].([]string)) != 0 || len(answer["skipped"].([]any)) != 0 || w.supersededRows(t) != 0 {
+		t.Fatalf("the bulk form bounded before the staging answered %v %v", answer, err)
+	}
+	late := staged.Add(time.Second)
+	answer, err = w.c.Acknowledge(w.ctx, AcknowledgeRequest{Recipient: w.recipient(), Actor: w.recipient(), AllInformational: true, StagedBefore: &late})
+	if err != nil || fmt.Sprint(answer["parked"]) != "["+w.id+"]" {
+		t.Fatalf("the bulk form answered %v %v, want %s parked", answer, err, w.id)
+	}
+	if row, err = w.c.Get(w.ctx, w.id); err != nil {
+		t.Fatal(err)
+	}
+	if kind, err := holdKindOf(w.ctx, w.s, row); err != nil || kind != holdAcknowledged {
+		t.Fatalf("the bulk park reads as %q (%v), want acknowledged", kind, err)
+	}
+	var detail string
+	if err := w.s.DB.QueryRowContext(w.ctx, "SELECT detail FROM journal WHERE kind='supervisor_message_superseded' AND subject=? ORDER BY seq DESC LIMIT 1", w.id).Scan(&detail); err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"by": "` + AcknowledgeCommand + `", "actor": "` + w.recipient() + `", "reason": "` + acknowledgeReason + `"}`; detail != want {
+		t.Fatalf("the acknowledgement journaled %s, want %s", detail, want)
+	}
+	answer, err = w.c.Acknowledge(w.ctx, AcknowledgeRequest{Recipient: w.recipient(), Actor: w.recipient(), AllInformational: true})
+	if err != nil || fmt.Sprint(answer["parked"], answer["skipped"]) != "[] [map[messageId:"+w.id+" reason:"+AcknowledgeHeld+"]]" || w.supersededRows(t) != 1 {
+		t.Fatalf("a second bulk acknowledgement answered %v %v, want the message left as held", answer, err)
+	}
+}
+
 // TestHoldWorldChangesMoveWhatTheyName pins the world the store-backed table builds on: each world
 // stages one unsent message addressed to its recipient, and each change of the hierarchy moves only
 // what it names.
@@ -368,16 +428,29 @@ func TestHoldWorldChangesMoveWhatTheyName(t *testing.T) {
 	}
 }
 
-// holdRuleRow is one row of the store-backed table.
+// holdRuleRow is one row of the store-backed table. answer, when the row pins it, is what its entry
+// answered: for acknowledge, parked or the reason the message was left.
 type holdRuleRow struct {
 	name                string
 	world, hold, change string
 	entry               string
 	held, turn          bool
+	answer              string
 }
 
+// acknowledgeParked is the answer of an acknowledge entry that parked the message.
+const acknowledgeParked = "parked"
+
 // holdRuleRows are filled by the units that bring their behaviour (plan-r3 section 4).
-var holdRuleRows = []holdRuleRow{}
+var holdRuleRows = []holdRuleRow{
+	// acknowledge (U11): parks only an unsent message with no hold, nothing of which can have gone,
+	// that is not a decision and not a fault notice.
+	{"acknowledge/none", "direct", "none", "same", "acknowledge", true, false, acknowledgeParked},
+	{"acknowledge/held", "event", "derived", "same", "acknowledge", false, true, AcknowledgeHeld},
+	{"acknowledge/sending", "event", "none", "sending", "acknowledge", false, false, AcknowledgeClaimed},
+	{"acknowledge/decision", "event", "none", "decision", "acknowledge", false, true, AcknowledgeAnswerOwed},
+	{"acknowledge/notice", "notice", "none", "same", "acknowledge", false, false, AcknowledgeFaultNotice},
+}
 
 func TestSupervisorHoldRuleTable(t *testing.T) {
 	for _, row := range holdRuleRows {
@@ -386,6 +459,9 @@ func TestSupervisorHoldRuleTable(t *testing.T) {
 			w.setHold(t, row.hold)
 			w.apply(t, row.change)
 			w.enter(t, row.entry)
+			if row.answer != "" && w.answer != row.answer {
+				t.Fatalf("%s/%s/%s/%s answered %q, want %q", row.world, row.hold, row.change, row.entry, w.answer, row.answer)
+			}
 			w.pass(t)
 			held, turn := w.read(t)
 			if held != row.held || turn != row.turn {
@@ -410,6 +486,7 @@ type holdWorld struct {
 	notice *noticeWorld
 	direct *storeRecipientWorld
 	text   string
+	answer string // what the last entry answered, when it answers (acknowledge: parked or why not)
 }
 
 const holdRuleLead = "01leadNext"
@@ -516,12 +593,69 @@ func (w *holdWorld) derive(t *testing.T) {
 	w.setHoldSQL(t, store.SupervisorHoldSuperseded, "")
 }
 
-// setHold gives the message the hold of a row. The acknowledged kind comes with the acknowledge
-// API (U11).
+// acknowledge parks the message by id through the real acknowledgement (Channel.Acknowledge) and
+// keeps its answer: parked, or the reason it was left. It checks what the store holds afterwards: a
+// parked message carries superseded_by_report read as an acknowledged park, with one new
+// supervisor_message_superseded row naming AcknowledgeCommand; a message left keeps the hold it had
+// and gets no such row.
+func (w *holdWorld) acknowledge(t *testing.T) {
+	t.Helper()
+	before, err := w.c.Get(w.ctx, w.id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows := w.supersededRows(t)
+	answer, err := w.c.Acknowledge(w.ctx, AcknowledgeRequest{Recipient: w.recipient(), Actor: w.recipient(), Messages: []string{w.id}, At: "2023-11-14T22:13:30.000000+00:00"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parked, _ := answer["parked"].([]string)
+	skipped, _ := answer["skipped"].([]any)
+	after, err := w.c.Get(w.ctx, w.id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	switch {
+	case len(parked) == 1 && parked[0] == w.id && len(skipped) == 0:
+		w.answer = acknowledgeParked
+		kind, err := holdKindOf(w.ctx, w.s, after)
+		if err != nil || kind != holdAcknowledged || w.supersededRows(t) != rows+1 {
+			t.Fatalf("parked %s reads as %q (%v) with %d superseded rows after %d, want an acknowledged park with one new row", w.id, kind, err, w.supersededRows(t), rows)
+		}
+	case len(parked) == 0 && len(skipped) == 1:
+		left, _ := skipped[0].(map[string]any)
+		if left["messageId"] != w.id {
+			t.Fatalf("the acknowledgement left %v, want %s", left, w.id)
+		}
+		w.answer, _ = left["reason"].(string)
+		if after.HoldReason != before.HoldReason || after.State != before.State || w.supersededRows(t) != rows {
+			t.Fatalf("a message left by the acknowledgement moved: hold %v -> %v, state %s -> %s, superseded rows %d -> %d", before.HoldReason, after.HoldReason, before.State, after.State, rows, w.supersededRows(t))
+		}
+	default:
+		t.Fatalf("the acknowledgement of one message answered parked %v skipped %v", parked, skipped)
+	}
+}
+
+// supersededRows counts the message's supervisor_message_superseded journal rows.
+func (w *holdWorld) supersededRows(t *testing.T) int {
+	t.Helper()
+	var n int
+	if err := w.s.DB.QueryRowContext(w.ctx, "SELECT count(*) FROM journal WHERE kind='supervisor_message_superseded' AND subject=?", w.id).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+// setHold gives the message the hold of a row.
 func (w *holdWorld) setHold(t *testing.T, hold string) {
 	t.Helper()
 	switch hold {
 	case "none":
+	case "acknowledged":
+		w.acknowledge(t)
+		if w.answer != acknowledgeParked {
+			t.Fatalf("the acknowledgement left the message: %s", w.answer)
+		}
 	case "derived":
 		w.derive(t)
 	case "notice":
@@ -555,6 +689,12 @@ func (w *holdWorld) apply(t *testing.T, change string) {
 		w.exec(t, "UPDATE work_reports SET pr_number=11,head_sha='a1b2c3d4e5f60718293a4b5c6d7e8f9012345611' WHERE event_id='event-1' AND submission_no=1")
 	case "changed":
 		w.text = "milestone one is done, and two started"
+	case "sending":
+		// A send claimed the message and its lease still runs past the row's daemon pass.
+		w.exec(t, "UPDATE supervisor_messages SET state='sending',lease_owner='relay-daemon',lease_until=?,attempt_count=attempt_count+1 WHERE message_id=?", w.now+3600, w.id)
+	case "decision":
+		// The message is a decision: an answer is owed to it.
+		w.exec(t, "UPDATE supervisor_messages SET kind='decision' WHERE message_id=?", w.id)
 	case "other_sender":
 		if w.kind == "direct" {
 			w.exec(t, "UPDATE scope_bindings SET task_id=? WHERE binding_id='bnd-supervisor'", holdRuleLead)
@@ -602,10 +742,13 @@ func (w *holdWorld) autoSend(t *testing.T, c *Channel) {
 	}
 }
 
-// enter runs a row's entry path. The acknowledge entry comes with the acknowledge API (U11).
+// enter runs a row's entry path.
 func (w *holdWorld) enter(t *testing.T, entry string) {
 	t.Helper()
+	w.answer = ""
 	switch entry {
+	case "acknowledge":
+		w.acknowledge(t)
 	case "stage":
 		o := w.f.obligation(t)
 		if _, err := w.c.Stage(w.ctx, o, "", "2023-11-14T22:16:20.000000+00:00"); err != nil {

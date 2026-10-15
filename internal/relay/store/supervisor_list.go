@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"fmt"
 )
 
@@ -69,4 +70,40 @@ func (s *Store) ListSupervisorMessages(ctx context.Context, f SupervisorListFilt
 		args = append(args, f.Hold)
 	}
 	return queryRows(ctx, s, scanSupervisorMessages, query+" ORDER BY staged_at, message_id", args...)
+}
+
+// AcknowledgeSupervisorMessages parks each of ids under SupervisorHoldSuperseded while nothing of it
+// can have gone: unsent, carrying no hold, and with no attempt that may have sent it
+// (SupervisorNeverSentSQL; a message that is sending is not unsent, so an acknowledgement and a claim
+// serialize under the write lock and the later one sees the other). A decision-kind message (an
+// answer is owed to it) and a fault notice (whose own channel parks it) are never parked here. Each
+// row parked gets one supervisor_message_superseded journal row with detail, which is stored as
+// given, in the same transaction as its hold. It is one transaction, joining the caller's when ctx
+// carries a composing one, and it returns the ids it parked, in the order given; an id it did not
+// park is left exactly as it was.
+func (s *Store) AcknowledgeSupervisorMessages(ctx context.Context, ids []string, at, detail string) ([]string, error) {
+	parked := []string{}
+	err := s.Transaction(ctx, func(tx context.Context, _ *sql.Conn) error {
+		parked = []string{}
+		for _, id := range ids {
+			moved, err := s.changedOne(tx, "UPDATE supervisor_messages SET hold_reason = ?, updated_at = ? WHERE message_id = ?"+
+				" AND hold_reason IS NULL AND kind <> 'decision' AND obligation_kind <> '"+SupervisorNoticeObligationKind+"' AND "+SupervisorNeverSentSQL(),
+				SupervisorHoldSuperseded, at, id)
+			if err != nil {
+				return err
+			}
+			if !moved {
+				continue
+			}
+			if _, err := s.exec(tx, "INSERT INTO journal (at, kind, subject, detail) VALUES (?, 'supervisor_message_superseded', ?, ?)", at, id, detail); err != nil {
+				return err
+			}
+			parked = append(parked, id)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return parked, nil
 }

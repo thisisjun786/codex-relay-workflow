@@ -3,11 +3,43 @@ package supervisor
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"time"
 
+	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
-// A recipient's queue read whole (CRW-1486/S4, finding 9). List only reads.
+// A recipient's queue read whole, and a backlog of its notifications parked without a turn each
+// (CRW-1486/S4 findings 6 and 9, CRW-1500). List only reads. Acknowledge parks under the hold the
+// channel already parks a superseded message under, with the journal kind it already writes, whose
+// detail names AcknowledgeCommand under "by". Whether such a park may be set, and when it is kept or
+// released, is the hold rule, holdDecision (holdrule.go).
+
+// acknowledgeInformational are the obligation kinds the bulk acknowledgement parks: reports that
+// something finished. A block, an omission, an escalation (a design question or a land review the
+// run asks its parent), a project block, a lead block, a run that started no node and a session step
+// waiting each ask the recipient to act, so the bulk form leaves them; a message named by id may
+// still be parked.
+var acknowledgeInformational = map[string]bool{
+	"completion":            true,
+	KindFlowCompletion:      true,
+	KindFlowMilestoneReport: true,
+	KindLeadReport:          true,
+}
+
+// The reasons the acknowledgement gives for a message it does not park.
+const (
+	AcknowledgeNotFound         = "not_found"         // the store holds no message of that id
+	AcknowledgeOtherRecipient   = "other_recipient"   // the message is addressed to another recipient
+	AcknowledgeFaultNotice      = "fault_notice"      // a fault notice: its own channel parks it (fault-notification commands)
+	AcknowledgeAnswerOwed       = "answer_owed"       // a decision: an answer is owed to it
+	AcknowledgeClaimed          = "claimed"           // a send of it is under way, or an attempt of it may have gone
+	AcknowledgeNotUnsent        = "not_unsent"        // it was sent or settled already
+	AcknowledgeHeld             = "held"              // it already carries a hold
+	AcknowledgeNotInformational = "not_informational" // the bulk form parks only the informational kinds
+)
 
 // ListRequest is which of a recipient's messages List reads (store.SupervisorListFilter's words:
 // Project empty, none or a project key; State unsent, pending or all; Hold empty, none or a hold
@@ -63,6 +95,165 @@ func (c *Channel) List(ctx context.Context, req ListRequest, now float64) (map[s
 		"counts":    map[string]any{"total": len(rows), "byState": byState, "byHold": byHold, "byProject": byProject, "byObligationKind": byKind},
 	}
 	return answer, nil
+}
+
+// AcknowledgeRequest is one acknowledgement: the recipient whose messages are parked, the task that
+// parks them (written into each journal row), and either the bulk form (AllInformational, narrowed
+// to one project and to messages staged before a time) or the messages named by id. At is the
+// time written on the rows, the channel's clock when empty.
+type AcknowledgeRequest struct {
+	Recipient, Actor string
+	AllInformational bool
+	Project          string
+	StagedBefore     *time.Time
+	Messages         []string
+	At               string
+}
+
+// Acknowledge parks the messages the request names under store.SupervisorHoldSuperseded, in one
+// transaction: an unsent message carrying no hold (the hold rule's acknowledge entry sets a hold only
+// there), nothing of which can have gone, that is not a decision and not a fault notice; under the
+// bulk form, also only an informational kind. Each message parked gets one
+// supervisor_message_superseded journal row whose detail is {by: AcknowledgeCommand, actor, reason},
+// which marks its hold as an acknowledged park (holdKindOf). Every other message it considered is
+// reported with the reason it was left. The bulk form considers the recipient's messages no send of
+// which has settled; a message named by id is considered whatever its state.
+func (c *Channel) Acknowledge(ctx context.Context, req AcknowledgeRequest) (map[string]any, error) {
+	if req.AllInformational == (len(req.Messages) > 0) {
+		return nil, Refusal{"malformed_receipt", "an acknowledgement parks either the recipient's informational notifications or the messages it names, one of the two"}
+	}
+	if req.At == "" {
+		req.At = c.nowISO()
+	}
+	parked := []string{}
+	skipped := []any{}
+	err := c.Store.Compose(ctx, func(tx context.Context, _ *sql.Conn) error {
+		parked, skipped = []string{}, []any{}
+		skip := func(id, reason string) {
+			skipped = append(skipped, map[string]any{"messageId": id, "reason": reason})
+		}
+		var candidates []store.SupervisorMessagesRow
+		if req.AllInformational {
+			rows, err := c.Store.ListSupervisorMessages(tx, store.SupervisorListFilter{Recipient: req.Recipient, Project: req.Project, State: store.SupervisorListPending})
+			if err != nil {
+				return err
+			}
+			for _, row := range rows {
+				if req.StagedBefore != nil && !stagedBefore(row.StagedAt, *req.StagedBefore) {
+					continue
+				}
+				candidates = append(candidates, row)
+			}
+		} else {
+			seen := map[string]bool{}
+			for _, id := range req.Messages {
+				if seen[id] {
+					continue
+				}
+				seen[id] = true
+				row, err := c.Store.SupervisorMessage(tx, id)
+				if errors.Is(err, sql.ErrNoRows) {
+					skip(id, AcknowledgeNotFound)
+					continue
+				}
+				if err != nil {
+					return err
+				}
+				if row.RecipientTaskID != req.Recipient {
+					skip(id, AcknowledgeOtherRecipient)
+					continue
+				}
+				candidates = append(candidates, row)
+			}
+		}
+		var ids []string
+		for _, row := range candidates {
+			held, err := holdKindOf(tx, c.Store, row)
+			if err != nil {
+				return err
+			}
+			if reason := acknowledgeSkip(row, held, req.AllInformational); reason != "" {
+				skip(row.MessageID, reason)
+				continue
+			}
+			ids = append(ids, row.MessageID)
+		}
+		if len(ids) == 0 {
+			return nil
+		}
+		detail := pyjson.Dumps(contract.OrderedObject{
+			{Key: "by", Value: AcknowledgeCommand},
+			{Key: "actor", Value: req.Actor},
+			{Key: "reason", Value: acknowledgeReason},
+		}, pyjson.Options{})
+		moved, err := c.Store.AcknowledgeSupervisorMessages(tx, ids, req.At, detail)
+		if err != nil {
+			return err
+		}
+		done := map[string]bool{}
+		for _, id := range moved {
+			done[id] = true
+		}
+		for _, id := range ids {
+			if done[id] {
+				parked = append(parked, id)
+			} else {
+				// Unsent and unheld, but the guarded update found an attempt that may have sent it.
+				skip(id, AcknowledgeClaimed)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{
+		"schema":    "supervisor-acknowledge/1",
+		"recipient": req.Recipient,
+		"actor":     req.Actor,
+		"hold":      store.SupervisorHoldSuperseded,
+		"parked":    parked,
+		"skipped":   skipped,
+		"counts":    map[string]any{"parked": len(parked), "skipped": len(skipped)},
+		"release":   acknowledgeRelease,
+	}, nil
+}
+
+// acknowledgeReason is the reason an acknowledgement's journal row gives for its park.
+const acknowledgeReason = "the recipient's acknowledgement parked this message without a turn"
+
+// acknowledgeRelease is what the acknowledgement's answer says releases a park (the hold rule's
+// acknowledged column, holdDecision).
+const acknowledgeRelease = "staging the same statement again leaves a parked message parked: neither the daemon's staging visit, which stages an event's completion again on every pass while its tracking record is not confirmed, nor its sender repeating a direct report, nor a rotated sender session staging what its predecessor staged releases it. " +
+	"It is released when its content moves while it is still owed (a new statement of the obligation: a work report corrected in place or resubmitted, a direct report sent again with other text), when the hierarchy re-addresses it to another recipient, or when the relay's send command sends it by its message id (--message) while it is still owed"
+
+// acknowledgeSkip is why row is not parked, or "" when it may be. Whether a hold may be set on it is
+// the hold rule's (holdDecision, entryAcknowledge), given the kind of hold it carries.
+func acknowledgeSkip(row store.SupervisorMessagesRow, held holdKind, allInformational bool) string {
+	switch {
+	case row.ObligationKind == store.SupervisorNoticeObligationKind:
+		return AcknowledgeFaultNotice
+	case row.Kind == "decision":
+		return AcknowledgeAnswerOwed
+	case row.State == "sending":
+		return AcknowledgeClaimed
+	case !row.Unsent():
+		return AcknowledgeNotUnsent
+	}
+	if verdict, _, _ := holdDecision(held, holdChange{Entry: entryAcknowledge}, nil); verdict != holdSet {
+		return AcknowledgeHeld
+	}
+	if allInformational && !acknowledgeInformational[row.ObligationKind] {
+		return AcknowledgeNotInformational
+	}
+	return ""
+}
+
+// stagedBefore reports whether a stored staging time is earlier than before. A time the store holds
+// in another form is not read as earlier, so it is never parked by the bulk form's time bound.
+func stagedBefore(stagedAt string, before time.Time) bool {
+	at, err := time.Parse(time.RFC3339Nano, stagedAt)
+	return err == nil && at.Before(before)
 }
 
 func nullText(value sql.NullString) any {
