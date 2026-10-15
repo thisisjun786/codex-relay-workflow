@@ -61,6 +61,9 @@ type ResumeHold struct {
 	Process string
 	Session func(owner string, pool int) (inFlight int, bind func(table *Policy), release func())
 	Budget  func(spent, asked int64) (int64, error)
+	// Tools are the repository tools the caller's configuration names (CRW-1488): the resumed run's calls are given them, as the run
+	// process's are. Nil gives none.
+	Tools *RepositoryTools
 }
 
 type resumeHoldKey struct{}
@@ -229,7 +232,7 @@ func resumeCmd(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	}
 	res, err := Run(ctx, prog, Config{
 		RunID: runID, Backend: setup.Backend, Policy: table, Journal: setup.Journal, Args: argsRaw, Pool: inFlight, TokenBudget: ceiling, SpentBefore: spentBefore,
-		Resume: &ResumeOptions{}, Ops: setup.Ops, OmitSeq: true, Control: controlOf(ctx), Upward: setup.Upward, Session: setup.Session,
+		Resume: &ResumeOptions{}, Ops: setup.Ops, OmitSeq: true, Control: controlOf(ctx), Upward: setup.Upward, Session: setup.Session, Tools: hold.Tools,
 		Workflows: func(name, scriptPath string) (*script.Program, error) {
 			return loadSibling(fs.FS(dir), name, scriptPath)
 		},

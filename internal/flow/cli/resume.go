@@ -330,6 +330,8 @@ func (c *command) resumeHold(state, run string) engine.ResumeHold {
 			}
 		}
 	}}
+	// the resumed run's calls get the go the verifier runs, as the run process's do (CRW-1488)
+	hold.Tools = repositoryTools(c.getenv)
 	if spec, err := ReadSpec(state, run); err == nil {
 		hold.Backend = spec.Backend
 		hold.Budget = func(spent, asked int64) (int64, error) { return runBudget(spec, spent, asked) }
