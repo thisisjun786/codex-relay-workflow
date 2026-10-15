@@ -33,6 +33,13 @@ import (
 // `crw-flow-op: <op>` line of that very op, so the block copied into another step's message is refused, and a child whose transcript
 // shows no packet cannot claim it by citing the id. Its claim records the turn and the digest of the receipt bytes, so the
 // acceptance path reads back exactly what the hook accepted (AcceptedReceipt), and a repair turn of the same child claims again.
+//
+// A record is checked before it is reused (CRW-1496). The engine writes the record of a dispatch again whenever it republishes or
+// recovers the step, and the id is the same each time. An open, unclaimed record is kept only while it is still the contract a claim
+// would accept for the tree now (treeStillMatches, the tree half of the claim's own check): a call worktree that was removed and made
+// again at the same path has a new inode, and one reset to a commit that does not descend from the recorded HEAD has an unrelated
+// history, so the old record would refuse every receipt of the child. Such a record is replaced in place under the record's lock. A
+// claimed record is the claiming child's contract and is kept as it is.
 
 // AssignmentOriginFlow is the Origin of an assignment the flow engine recorded.
 const AssignmentOriginFlow = "flow"
@@ -77,10 +84,13 @@ func NewFlowAssignment(sessionID, id, worktree, op string, now time.Time) (Assig
 		Origin: AssignmentOriginFlow, Op: op}, nil
 }
 
-// EnsureFlowAssignment writes the flow assignment a under cwd, or reuses the record its id already has: a recovered, republished or
-// adopted step derives the same id, and its record, open or already claimed by a child that stopped before the restart, is the
-// contract that child was dispatched with. The recorded value is returned. A record of that id for another session, root or op, or
-// one that cannot be read or is neither open nor claimed, is an error: the caller holds the call.
+// EnsureFlowAssignment writes the flow assignment a under cwd, or keeps the record its id already has when that record is still the
+// contract: a recovered, republished or adopted step derives the same id. A claimed record is the contract of the child that claimed
+// it (it may have stopped before the restart) and is returned as it is, never rewritten. An open, unclaimed record is reused only
+// while its tree still matches (treeStillMatches: the same real path, device and inode as the tree now, and a recorded Head that is
+// an ancestor of HEAD now); one that does not is replaced by a under the record's lock (replaceOpen). The returned value is always
+// the record on disk. A record of that id for another session, root or op, or one that cannot be read or is neither open nor
+// claimed, is an error: the caller holds the call.
 func EnsureFlowAssignment(cwd string, a Assignment) (Assignment, error) {
 	if a.Origin != AssignmentOriginFlow || !recordShapeValid(a) {
 		return Assignment{}, errors.New("not a flow evidence assignment")
@@ -100,6 +110,8 @@ func EnsureFlowAssignment(cwd string, a Assignment) (Assignment, error) {
 		return Assignment{}, fmt.Errorf("the flow evidence assignment %s is recorded for root %s op %s, not root %s op %s", a.ID, rec.Root, rec.Op, a.Root, a.Op)
 	case rec.Status != AssignmentOpen && rec.Status != AssignmentClaimed:
 		return Assignment{}, fmt.Errorf("the flow evidence assignment %s is %s", a.ID, rec.Status)
+	case rec.Status == AssignmentOpen && rec.AgentID == "" && !treeStillMatches(rec):
+		return a.replaceOpen(cwd)
 	}
 	return rec, nil
 }

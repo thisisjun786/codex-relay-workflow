@@ -458,6 +458,205 @@ func TestFlowAssignment(t *testing.T) {
 		}
 	})
 
+	// CRW-1496: an open, unclaimed record is reused only while it is still the contract a claim would accept for the tree now.
+	t.Run("RecreatedWorktreeReplacesOpenRecord", func(t *testing.T) {
+		r := newFlowTestRig(t)
+		old := r.mint(flowTestOp, time.Now().Add(-time.Minute))
+		if got, err := EnsureFlowAssignment(r.cwd, old); err != nil || got != old {
+			t.Fatalf("Ensure of the minted record = %+v, %v", got, err)
+		}
+		flowRecreateTree(t, r.tree)
+		fresh, err := NewFlowAssignment(flowTestOwner, old.ID, r.tree, flowTestOp, time.Now())
+		assignMust(t, err)
+		got, err := EnsureFlowAssignment(r.cwd, fresh)
+		if err != nil {
+			t.Fatalf("Ensure after the recreate: %v", err)
+		}
+		if got.RootIno == old.RootIno || got.RootIno != fresh.RootIno || got.CreatedAt != fresh.CreatedAt {
+			t.Fatalf("Ensure after the recreate returned %+v; want the new tree's record %+v (old %+v)", got, fresh, old)
+		}
+		if rec := r.record(old.ID); rec != got {
+			t.Fatalf("the file holds %+v, Ensure returned %+v", rec, got)
+		}
+		flowAcceptIn(t, r, got, "agent-1")
+	})
+
+	t.Run("RecreatedWorktreeSameClock", func(t *testing.T) {
+		created := time.Now().Add(-time.Minute)
+		for name, now := range map[string]time.Time{"same clock": created, "earlier clock": created.Add(-time.Second)} {
+			t.Run(name, func(t *testing.T) {
+				r := newFlowTestRig(t)
+				old := r.mint(flowTestOp, created)
+				flowRecreateTree(t, r.tree)
+				fresh, err := NewFlowAssignment(flowTestOwner, old.ID, r.tree, flowTestOp, now)
+				assignMust(t, err)
+				got, err := EnsureFlowAssignment(r.cwd, fresh)
+				if err != nil {
+					t.Fatalf("Ensure after the recreate: %v", err)
+				}
+				want := created.UTC().Add(time.Nanosecond).Format(time.RFC3339Nano)
+				if got.RootIno == old.RootIno || got.CreatedAt != want {
+					t.Fatalf("Ensure returned %+v; want the new inode and CreatedAt %s", got, want)
+				}
+				if rec := r.record(old.ID); rec != got {
+					t.Fatalf("the file holds %+v, Ensure returned %+v", rec, got)
+				}
+				flowAcceptIn(t, r, got, "agent-1")
+			})
+		}
+	})
+
+	t.Run("RewoundHeadReplacesOpenRecord", func(t *testing.T) {
+		r := newFlowTestRig(t)
+		flowGitRepo(t, r.tree)
+		first := flowGitCommit(t, r.tree, "first")
+		second := flowGitCommit(t, r.tree, "second")
+		old := r.mint(flowTestOp, time.Now().Add(-time.Minute))
+		if old.Head != second {
+			t.Fatalf("the minted record's head %q, want %q", old.Head, second)
+		}
+		flowGit(t, r.tree, "reset", "-q", "--hard", first)
+		fresh, err := NewFlowAssignment(flowTestOwner, old.ID, r.tree, flowTestOp, time.Now())
+		assignMust(t, err)
+		got, err := EnsureFlowAssignment(r.cwd, fresh)
+		if err != nil {
+			t.Fatalf("Ensure after the rewind: %v", err)
+		}
+		if got.Head != first || got.RootIno != old.RootIno || got.CreatedAt != fresh.CreatedAt {
+			t.Fatalf("Ensure after the rewind returned %+v; want head %s at the same inode", got, first)
+		}
+		if rec := r.record(old.ID); rec != got {
+			t.Fatalf("the file holds %+v, Ensure returned %+v", rec, got)
+		}
+		flowAcceptIn(t, r, got, "agent-1")
+	})
+
+	t.Run("ClaimedRecordKeptAfterRecreate", func(t *testing.T) {
+		r := newFlowTestRig(t)
+		old := r.mint(flowTestOp, time.Now().Add(-time.Minute))
+		flowAcceptIn(t, r, old, "agent-1")
+		claimed := r.record(old.ID)
+		before, err := os.ReadFile(r.recordPath(old.ID))
+		assignMust(t, err)
+		flowRecreateTree(t, r.tree)
+		fresh, err := NewFlowAssignment(flowTestOwner, old.ID, r.tree, flowTestOp, time.Now())
+		assignMust(t, err)
+		got, err := EnsureFlowAssignment(r.cwd, fresh)
+		if err != nil || got != claimed {
+			t.Fatalf("Ensure of the claimed record after the recreate = %+v, %v; want %+v", got, err, claimed)
+		}
+		after, err := os.ReadFile(r.recordPath(old.ID))
+		assignMust(t, err)
+		if string(after) != string(before) {
+			t.Fatalf("the claimed record was rewritten:\n%s\nwant\n%s", after, before)
+		}
+	})
+
+	t.Run("SameTreeReuseUnchanged", func(t *testing.T) {
+		r := newFlowTestRig(t)
+		flowGitRepo(t, r.tree)
+		flowGitCommit(t, r.tree, "first")
+		old := r.mint(flowTestOp, time.Now().Add(-time.Minute))
+		path := r.recordPath(old.ID)
+		past := time.Now().Add(-time.Hour).Truncate(time.Second)
+		assignMust(t, os.Chtimes(path, past, past))
+		before, err := os.ReadFile(path)
+		assignMust(t, err)
+		flowGitCommit(t, r.tree, "second") // HEAD advances to a descendant of the recorded head
+		fresh, err := NewFlowAssignment(flowTestOwner, old.ID, r.tree, flowTestOp, time.Now())
+		assignMust(t, err)
+		got, err := EnsureFlowAssignment(r.cwd, fresh)
+		if err != nil || got != old {
+			t.Fatalf("Ensure of the same tree = %+v, %v; want %+v", got, err, old)
+		}
+		after, err := os.ReadFile(path)
+		assignMust(t, err)
+		info, err := os.Stat(path)
+		assignMust(t, err)
+		if string(after) != string(before) || !info.ModTime().Equal(past) {
+			t.Fatalf("the record was rewritten (mtime %v, want %v):\n%s", info.ModTime(), past, after)
+		}
+	})
+
+	// replaceOpen decides on the record it reads again under the lock, not on the one the caller read before.
+	t.Run("ReplaceOpenRace", func(t *testing.T) {
+		stale := func(t *testing.T) (*flowTestRig, Assignment, Assignment) {
+			r := newFlowTestRig(t)
+			old := r.mint(flowTestOp, time.Now().Add(-time.Minute))
+			flowRecreateTree(t, r.tree)
+			fresh, err := NewFlowAssignment(flowTestOwner, old.ID, r.tree, flowTestOp, time.Now())
+			assignMust(t, err)
+			return r, old, fresh
+		}
+		t.Run("claimed after the caller's read", func(t *testing.T) {
+			r, old, fresh := stale(t)
+			// The child claimed the old contract before the tree went: the claim stands whatever the tree is now.
+			flowWrite(t, FlowReceiptPath(old), "checked", time.Time{})
+			assignMust(t, writeRecord(r.recordPath(old.ID), func() Assignment {
+				c := old
+				c.Status, c.AgentID, c.TurnID, c.ReceiptDigest = AssignmentClaimed, "agent-1", "turn-1", flowDigest("checked")
+				return c
+			}()))
+			claimed := r.record(old.ID)
+			before, err := os.ReadFile(r.recordPath(old.ID))
+			assignMust(t, err)
+			got, err := fresh.replaceOpen(r.cwd)
+			if err != nil || got != claimed {
+				t.Fatalf("replaceOpen over a claimed record = %+v, %v; want %+v", got, err, claimed)
+			}
+			after, err := os.ReadFile(r.recordPath(old.ID))
+			assignMust(t, err)
+			if string(after) != string(before) {
+				t.Fatalf("the claimed record was rewritten:\n%s", after)
+			}
+		})
+		t.Run("open and stale", func(t *testing.T) {
+			r, old, fresh := stale(t)
+			got, err := fresh.replaceOpen(r.cwd)
+			if err != nil || got != fresh || got == old {
+				t.Fatalf("replaceOpen over a stale open record = %+v, %v; want %+v", got, err, fresh)
+			}
+			if rec := r.record(old.ID); rec != fresh {
+				t.Fatalf("the file holds %+v, want %+v", rec, fresh)
+			}
+		})
+		t.Run("refreshed by another writer", func(t *testing.T) {
+			r, old, fresh := stale(t)
+			assignMust(t, writeRecord(r.recordPath(old.ID), fresh))
+			mine, err := NewFlowAssignment(flowTestOwner, old.ID, r.tree, flowTestOp, time.Now().Add(time.Second))
+			assignMust(t, err)
+			got, err := mine.replaceOpen(r.cwd)
+			if err != nil || got != fresh {
+				t.Fatalf("replaceOpen over a record another writer refreshed = %+v, %v; want %+v", got, err, fresh)
+			}
+			if rec := r.record(old.ID); rec != fresh {
+				t.Fatalf("the file holds %+v, want %+v", rec, fresh)
+			}
+		})
+		t.Run("removed", func(t *testing.T) {
+			r, old, fresh := stale(t)
+			assignMust(t, os.Remove(r.recordPath(old.ID)))
+			if got, err := fresh.replaceOpen(r.cwd); err == nil {
+				t.Fatalf("replaceOpen brought a released record back: %+v", got)
+			}
+			if _, err := os.Lstat(r.recordPath(old.ID)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("replaceOpen wrote a removed record: %v", err)
+			}
+		})
+		t.Run("another contract", func(t *testing.T) {
+			r, old, fresh := stale(t)
+			other := old
+			other.Op = "c_5cff7231980e/t1-a2"
+			assignMust(t, writeRecord(r.recordPath(old.ID), other))
+			if got, err := fresh.replaceOpen(r.cwd); err == nil {
+				t.Fatalf("replaceOpen replaced a record of another op: %+v", got)
+			}
+			if rec := r.record(old.ID); rec != other {
+				t.Fatalf("the file holds %+v, want %+v", rec, other)
+			}
+		})
+	})
+
 	t.Run("ReceiptIgnored", func(t *testing.T) {
 		if _, err := exec.LookPath("git"); err != nil {
 			t.Skip("no git")
@@ -570,4 +769,62 @@ func TestFlowAssignment(t *testing.T) {
 			}
 		}
 	})
+}
+
+// flowRecreateTree removes the tree at path and makes it again there with a new inode, as a worktree that was removed and
+// established again: the new directory is made before the old one goes, so the two can never share an inode.
+func flowRecreateTree(t *testing.T, tree string) {
+	t.Helper()
+	_, _, oldIno, err := treeIdentity(tree)
+	assignMust(t, err)
+	fresh := tree + ".recreated"
+	assignMust(t, os.MkdirAll(filepath.Join(fresh, ".crw", "evidence"), 0o755))
+	assignMust(t, os.RemoveAll(tree))
+	assignMust(t, os.Rename(fresh, tree))
+	if _, _, ino, err := treeIdentity(tree); err != nil || ino == oldIno {
+		t.Fatalf("the recreated tree has inode %d (%v), the old one %d", ino, err, oldIno)
+	}
+}
+
+// flowAcceptIn writes a receipt at the fixed file of a, in the tree as it is now, and checks that agent's claim of it is accepted
+// and is the accepted receipt of the record.
+func flowAcceptIn(t *testing.T, r *flowTestRig, a Assignment, agent string) {
+	t.Helper()
+	receipt := FlowReceiptPath(a)
+	body := "$ go test ./x\nok\n"
+	flowWrite(t, receipt, body, time.Time{})
+	tr := r.transcript(flowSpawnText(a.Op, a.ID, receipt))
+	if v := JudgeAssignedReceiptTurn(r.cwd, flowTestOwner, agent, "turn-1", tr, flowTestJSON, ""); v != AssignedAccepted {
+		t.Fatalf("the receipt %s judged %v", receipt, v)
+	}
+	if got, ok := AcceptedReceipt(r.cwd, flowTestOwner, a.ID); !ok || got.Path != receipt || string(got.Bytes) != body {
+		t.Fatalf("AcceptedReceipt = %+v, %v", got, ok)
+	}
+}
+
+func flowGit(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false"}, args...)...)
+	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v %s", args, err, out)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// flowGitRepo makes dir a git checkout, or skips the test when there is no git.
+func flowGitRepo(t *testing.T, dir string) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("no git")
+	}
+	flowGit(t, dir, "init", "-q")
+}
+
+// flowGitCommit records an empty commit in dir and returns its id.
+func flowGitCommit(t *testing.T, dir, msg string) string {
+	t.Helper()
+	flowGit(t, dir, "commit", "-q", "--allow-empty", "-m", msg)
+	return flowGit(t, dir, "rev-parse", "HEAD")
 }
