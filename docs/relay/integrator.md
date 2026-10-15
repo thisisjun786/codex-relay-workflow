@@ -83,8 +83,9 @@ Run files, in `runs_dir`: `<tag>.log`, `<tag>.out` and `<tag>.summary.json` (`ta
 `result`, the shell runner's own shape), `<tag>.verify.log`, and the verification record `<tag>.json` that `verify_command` writes.
 Right before the push the run writes `"result": "pushing"` into its summary, a marker the run's own result overwrites. The marker must be on disk before the push starts: when `runs_dir` refuses the write (full or read-only), nothing is pushed, the pass reports `error` (status 2) and the entry stays in `pending/`; a push that landed with no
 `pushed` summary behind it (the signal ended the call after git exited 0) leaves the marker, and the recovery of that landing accepts it when its head
-is in the branch, so the run's verification record and review verdict are still found. A git that cannot answer whether the marker's head is in the branch
-holds the entry (it stays in `pending/` with the reason in `held`, no record is written, the marker stays) and the next pass asks again. `pushing` is a marker,
+is in the branch, so the run's verification record and review verdict are still found. The runs of the entry are read newest first (by tag) and the first that names a push
+wins, a `pushed` summary or a marker whose head is in the branch; a marker whose head the checkout lacks was never pushed and is passed over for older evidence. A git that cannot answer whether the marker's head
+is in the branch (its commit object is unreadable: the existence check `git cat-file -e <head>` finds the object, but the ancestor check fails) holds the entry (it stays in `pending/` with the reason in `held`, no record is written, the marker stays) and the next pass asks again. Only a marker newer than every other evidence can hold the entry this way: an unreadable older marker behind a newer `pushed` summary or a newer marker in the branch is never asked. `pushing` is a marker,
 never a pass result.
 
 ### Exit status
@@ -117,10 +118,10 @@ the verification-record of the merged tree; the review is a step of the queue th
 - `--enqueue-pr` reads the pull request through the tracking adapter of `pull_request_repo` and writes its head to `pending/pr-<N>`
   (written beside the queue and renamed in, replacing an earlier head of the same pull request). A pull request of another repository,
   one that is closed or merged, one toward another branch than `branch`, one whose head branch is in another repository (a fork), or
-  one that names no head commit is refused and nothing is written. A queue without `pull_request_repo` takes no `pr-<N>` file: it is reported as ignored, as before.
+  one that names no head commit is refused and nothing is written. A queue without `pull_request_repo` takes no `pr-<N>` file: it is reported as ignored, as before. The adapter also lists the comments of a pull request (a GET with the token that already reads the pull request, paginated): a pass uses it to find a landing comment by its header before it posts one again.
 - A pull request entry is keyed by its number and its head. A head that already landed (`done/pr-<N>-<head>`, or a landing record of that
   number and head that moved the branch) is refused by `--enqueue-pr`, and a pass moves such a pending file to `done/` with no run and no
-  new record; the only comment it posts is the one its record still lacks (`comment` is `not written yet`, see the record below).
+  new record; the only comment it posts is the one its record still lacks (`comment` is `not written yet` and no comment with its header is on the pull request, see the record below).
   `--dry-run` reports such a file as `landed` and plans no run for it, and neither it nor `--enqueue-pr` posts anything. After new commits on its branch the project session
   enqueues the same pull request again and the queue lands the new head.
 - A pass lands one pull request alone, the lowest number first, before the issue heads, and runs no `gate_command` for it. It reads the
@@ -137,7 +138,9 @@ the verification-record of the merged tree; the review is a step of the queue th
   the pull requests and issue heads behind it. Status 2 (`error`) is for a pass that did nothing else; a pass that landed work (a run, or a
   recovered landing) keeps that result and its status, with `held` still in the report. A record whose comment says `not written yet` gets
   its comment on the next pass that finds the head landed and the entry moves to `done/`; when that is all the pass did, its result is
-  `comment-reposted` (status 0, no summary, no new record), not `nothing-to-integrate`. A comment the host refuses is recorded as
+  `comment-reposted` (status 0, no summary, no new record), not `nothing-to-integrate`. Before it posts, that pass looks for the comment on the pull request by its header
+  `[dev queue · <tag>]`: a comment that is already there is not posted a second time, the record is written as `written` and the entry moves to `done/`, but that pass is
+  `nothing-to-integrate`, since no comment went up. A lookup the host does not answer holds the entry (it stays in `pending/`, the reason is in `held`, the record is left as it is and nothing is posted). A comment the host refuses is recorded as
   `not written: <error>` and the entry still moves to `done/`, but that pass is `nothing-to-integrate`: no comment went up.
 - The run merges the head with `merge --no-ff -m "Merge pull request OWNER/NAME#N (<branch>) at <head8> into <branch>"` and verifies the
   merged tree as step 4 and 5 above. Only after a verification that passed does `review_command` run, in the worktree, on that tree:
@@ -167,9 +170,9 @@ the verification-record of the merged tree; the review is a step of the queue th
   moved the branch: written by the run that pushed it, or, when that run ended before its record, by the pass that finds the head in the
   branch (`landed_before_record`). The same record is written on the pull request as a comment headed `[dev queue · <tag>]`; `comment` says whether it was:
   `not written yet` (the record is written first, so a pass that ended before the comment call leaves it), `written`, or `not written: <reason>`
-  (GitHub refused; final). The next pass that finds the head landed posts the comment of a `not written yet` record once and writes the file again; a `written`
-  or refused comment is never posted again. One window stays: a pass that ends between the comment call and that second write leaves `not written yet` for a comment
-  that exists, and the next pass posts it a second time. A queue with no tracking adapter cannot post it: the entry stays in `pending/` with the reason in `held`
+  (GitHub refused; final). The next pass that finds the head landed looks for the comment of a `not written yet` record on the pull request by its header and, when it is not there, posts it once; it writes the file again either way
+  (`written`). A `written` or refused comment is never posted again, and a pass that ends between the comment call and the second write of the record leaves a comment that the next pass finds
+  instead of posting it a second time. A lookup that fails holds the entry like a queue with no tracking adapter, which cannot post or look for it: the entry stays in `pending/` with the reason in `held`
   and the record is left as it is.
 - A failed verification is retried as for a head alone: once with the same head, then the file is blocked.
 
