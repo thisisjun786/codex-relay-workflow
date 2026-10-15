@@ -116,6 +116,94 @@ func TestSessionBackendTraceDigests(t *testing.T) {
 	}
 }
 
+// CRW-1482 (C9): the evidence hook writes its assignment records, claims and attempt counters under `<owner cwd>/.crw/` while a
+// subagent works, so the outside digest leaves the owner cwd's .crw out even in an owner checkout that does not ignore it; every
+// other path of the owner's repository, a .crw elsewhere in it and the paths outside the owner's subdirectory included, is still
+// seen.
+func TestSessionTraceIgnoresOwnerCrwState(t *testing.T) {
+	dir := t.TempDir()
+	repo := filepath.Join(dir, "repo")
+	run := func(cwd string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = cwd
+		cmd.Env = append(cmd.Environ(), "GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@example.invalid", "GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@example.invalid")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	run(dir, "init", "-q", "-b", "main", repo)
+	writeFile(t, filepath.Join(repo, "a.txt"), "a\n")
+	writeFile(t, filepath.Join(repo, "owner", "sub", "keep.txt"), "k\n")
+	run(repo, "add", "-A")
+	run(repo, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "first")
+	first := run(repo, "rev-parse", "HEAD")
+	if !gitFails(repo, "check-ignore", "-q", "owner/sub/.crw/x") {
+		t.Fatal("the owner checkout ignores .crw")
+	}
+	wt := filepath.Join(dir, "wt")
+	run(repo, "worktree", "add", "--detach", "-q", wt, first)
+	alloc, err := agent.NewAllocator(agent.AllocatorConfig{Repo: repo, StateDir: filepath.Join(dir, "state"), RunID: "run-s"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	for _, owner := range []string{repo, filepath.Join(repo, "owner", "sub")} {
+		b, err := agent.NewSessionBackend(alloc, owner)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b.BoundDir = filepath.Join(dir, "flow-bound")
+		trace := func() engine.TraceDigests {
+			t.Helper()
+			d, err := b.Trace(ctx, wt)
+			if err != nil || d.Workspace == "" || d.Outside == "" || d.Shared == "" {
+				t.Fatalf("trace %+v %v", d, err)
+			}
+			return d
+		}
+		before := trace()
+		// the hook's records, claims and counters under the owner cwd's .crw are not a change outside P
+		writeFile(t, filepath.Join(owner, ".crw", "evidence-assignments", "owner-s", "a1.json"), "{}\n")
+		writeFile(t, filepath.Join(owner, ".crw", "evidence", "attempts", "n.json"), "{}\n")
+		if now := trace(); now != before {
+			t.Fatalf("owner %s: the hook's .crw state changed the trace: %+v -> %+v", owner, before, now)
+		}
+		// anything else in the owner's repository still is
+		for _, p := range []string{
+			filepath.Join(owner, "edit.txt"),
+			filepath.Join(repo, "top.txt"),
+			filepath.Join(repo, "elsewhere", ".crw", "x.json"),
+			filepath.Join(owner, ".crwx", "y.json"),
+		} {
+			last := trace()
+			writeFile(t, p, "x "+owner+"\n")
+			if now := trace(); now.Outside == last.Outside || now.Workspace != last.Workspace {
+				t.Fatalf("owner %s: writing %s: %+v -> %+v", owner, p, last, now)
+			}
+		}
+		last := trace()
+		writeFile(t, filepath.Join(owner, "sub2", "keep.txt"), "k\n")
+		run(repo, "add", "-A")
+		staged := trace()
+		if staged.Outside == last.Outside {
+			t.Fatalf("owner %s: a staged change did not change the trace", owner)
+		}
+		run(repo, "-c", "commit.gpgsign=false", "commit", "-q", "-m", "more")
+		// a tracked file under the owner cwd's .crw is left out too: the hook rewrites its own files there
+		tracked := trace()
+		if tracked.Outside == staged.Outside {
+			t.Fatalf("owner %s: a commit did not change the trace", owner)
+		}
+		writeFile(t, filepath.Join(owner, ".crw", "evidence-assignments", "owner-s", "a1.json"), "{\"claimed\":true}\n")
+		if now := trace(); now != tracked {
+			t.Fatalf("owner %s: a rewrite of a tracked .crw file changed the trace: %+v -> %+v", owner, tracked, now)
+		}
+	}
+}
+
 // CRW-1327: the session host reads the rollout's token_count with its split (CRW-1332's sessionhost.Usage) and hands the engine all of
 // it: the cached input and the reasoning output are kept, not only the input, the output and the total.
 func TestSessionHostTokensKeepTheCachedSplit(t *testing.T) {
