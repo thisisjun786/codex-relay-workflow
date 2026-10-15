@@ -28,7 +28,9 @@ func lastRunSeq(rows []Event) int {
 // RunStarted is called once the run's started row is written and, for a resumed run, once the reconcile pass is over, before the script
 // runs: a run that died between a committed batch and what that batch owed finds it here. BatchCommitted is called after the journal
 // committed a batch (a transaction of rows) and outside the journal's lock; it is not called again for a batch the hook itself caused.
-// RunFinished is called after the run's finished row is written, with the status the run came to.
+// RunFinished is called after the run's finished row is written, with the status the run came to. A run the operator paused writes a
+// run/paused row instead and gets no RunFinished: BatchCommitted is called once more after that row, and the resume that goes on with
+// the run finishes it.
 //
 // A failing hook never fails a run: the engine journals the failure as a log row of the run and goes on, and the next call reconciles
 // what the failed one left.

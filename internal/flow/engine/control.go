@@ -59,8 +59,18 @@ func (c *Control) bind(e *Engine) {
 	}
 }
 
+// endsPaused are the askers whose pause ends the run paused (a run/paused row, no finished row, no completion notice): the operator's
+// `crw flow pause`. A deadline ask is the run's own limit, as a token budget and a quota are: the run finishes completed with its calls
+// held.
+var endsPaused = map[string]bool{"operator": true}
+
 func (e *Engine) pauseOnAsk(by, reason string) {
 	e.j.Append(Event{RunID: e.runID, Kind: KindFlow, Event: EvRunPaused, Data: map[string]any{"by": by, "reason": reason}})
+	if endsPaused[by] {
+		e.pauseM.Lock()
+		e.endAsk = &pauseAsk{by, reason}
+		e.pauseM.Unlock()
+	}
 	e.pause(ReasonEnginePaused)
 	e.interruptTurns(ReasonEnginePaused)
 }
