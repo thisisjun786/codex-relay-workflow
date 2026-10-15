@@ -2,6 +2,8 @@
 
 The layers of the workflow, who owns what at each, the names used for them, and where the size of each piece of work is set. Every skill and document that names a layer links [the table below](#the-levels) instead of describing the layer again. The sections below are read together with [tracking-model.md](tracking-model.md) (what each layer writes in the tracking repository) and [execution-roles.md](execution-roles.md) (what each layer runs as).
 
+How a layer names the work it points at is in [naming.md](naming.md).
+
 ## The levels
 
 The work runs in two Codex session layers under a top session, and the lower one calls subagents. This table is the one place the names are fixed.

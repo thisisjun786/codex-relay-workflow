@@ -12,6 +12,8 @@ The skills of the plugin by the job they do and the level that calls them, and h
 | Tools | `crw-search`, `crw-recall`, `crw-repo-map`, `crw-ast-grep`, `crw-kwrite`, `crw-worktree-guardian` | any task that needs the tool |
 | Shared references | `crw-canon` | never called: it is read through the links of the other skills |
 
+A skill that points at work in a report, a handoff or a commit title names it as [naming.md](naming.md) says.
+
 ## Skill names under each installation
 
 These documents name the skills without a prefix, which is how a linked
