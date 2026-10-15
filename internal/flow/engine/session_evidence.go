@@ -245,7 +245,8 @@ func (c *callRun) evidenceDrop() {
 // evidenceRelease releases the records the rows of a call name (each spawn step's evidence_assignment) where they are still open and
 // unclaimed, under EvidenceCwd and every cwd a bind of the rows recorded (evidence_cwd): the attempts those rows hold have ended
 // without going on, because the call was superseded or is prepared again. A claimed record stays: it is the receipt the hook
-// accepted.
+// accepted. The record of a step whose process died after writing it and before the step_published row that would name it is
+// released too: its id is derived (evidenceDerivedIDs), since no row names it.
 func (e *Engine) evidenceRelease(rows []Event) {
 	sc := e.cfg.Session
 	if sc == nil || sc.EvidenceCwd == "" {
@@ -265,9 +266,46 @@ func (e *Engine) evidenceRelease(rows []Event) {
 			}
 		}
 	}
+	for _, id := range e.evidenceDerivedIDs(rows) {
+		if !slices.Contains(ids, id) {
+			ids = append(ids, id)
+		}
+	}
 	for _, id := range ids {
 		releaseRecord(sc.Owner, id, cwds)
 	}
+}
+
+// evidenceDerivedIDs are the ids every spawn step of the call's rows could have had a record under (FlowAssignmentID of the owner,
+// the run, a generation's key as evidenceCallKey names it, and the marker of turn k of attempt a), for every k and attempt up to one
+// past the largest the rows record: the step a process was about to publish when it died is one of them. An id that names no record
+// releases nothing.
+func (e *Engine) evidenceDerivedIDs(rows []Event) []string {
+	var keys []string
+	maxK, maxAttempt := 0, 0
+	for _, row := range rows {
+		if row.Event == EvPrepared {
+			if len(keys) == 0 {
+				keys = append(keys, row.CallID)
+			} else {
+				keys = append(keys, fmt.Sprintf("%s@%d", row.CallID, row.Seq))
+			}
+		}
+		maxK, maxAttempt = max(maxK, rowInt(row.Data, "k")), max(maxAttempt, rowInt(row.Data, "attempt"))
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	callID := rows[0].CallID
+	var ids []string
+	for _, key := range keys {
+		for k := 1; k <= maxK+1; k++ {
+			for a := 1; a <= maxAttempt+1; a++ {
+				ids = append(ids, evidence.FlowAssignmentID(e.cfg.Session.Owner, e.runID, key, sessionOp(fmt.Sprintf("%s/t%d", callID, k), a)))
+			}
+		}
+	}
+	return ids
 }
 
 // releaseRecord removes the owner's record id under each of cwds where it is open and unclaimed (Assignment.Remove).

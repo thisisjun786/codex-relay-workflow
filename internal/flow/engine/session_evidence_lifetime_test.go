@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"sync"
@@ -54,6 +55,56 @@ func noOpenRecord(t *testing.T, what, cwd string) {
 	if v := plainChildVerdict(cwd); v != evidence.NoContract {
 		t.Errorf("%s: a child of the owner that shows no packet is judged %v under %s, want NoContract", what, v, cwd)
 	}
+}
+
+// beforeRowJournal kills the process right before it would store the first row stop matches: that row is never stored.
+type beforeRowJournal struct {
+	Journal
+	sw     *deadSwitch
+	before func(Event) bool
+	onDie  func()
+}
+
+func (j *beforeRowJournal) Append(e Event) Event {
+	if j.sw.isDead() {
+		return e
+	}
+	if j.before(e) {
+		j.onDie()
+		j.sw.kill()
+		return e
+	}
+	return j.Journal.Append(e)
+}
+
+func (j *beforeRowJournal) Err() error { return nil }
+
+// dieBefore is die for a process that dies before it stores the row before matches (its record directories frozen then).
+func (k *evidenceKit) dieBefore(t *testing.T, before func(Event) bool, body string) {
+	t.Helper()
+	sw := &deadSwitch{}
+	mem := NewMemoryJournal()
+	k.h.cfg.Journal = &beforeRowJournal{Journal: mem, sw: sw, before: before, onDie: func() { freezeRecords(t, k.evCwd, true) }}
+	k.jr = mem
+	k.cfg.Bus = &dyingBus{FileStepBus: k.bus, sw: sw}
+	k.cfg.Host = &dyingHost{fakeSessionHost: k.host, sw: sw}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	ctx1, cancel1 := context.WithCancel(ctx)
+	sw.mu.Lock()
+	sw.cancel = cancel1
+	sw.mu.Unlock()
+	if _, err := Run(ctx1, k.h.load(body), k.h.cfg); err != nil {
+		t.Fatal(err)
+	}
+	if !sw.isDead() {
+		t.Fatalf("the process never died")
+	}
+	freezeRecords(t, k.evCwd, false)
+	k.h.cfg.Journal = mem
+	k.cfg.Bus, k.cfg.Host = k.bus, k.host
+	k.h.cfg.Resume = &ResumeOptions{}
+	k.h.cfg.SpentBefore = RunSpent(mem.Events(), k.h.cfg.RunID).Total
 }
 
 func TestSessionEvidenceAttemptLifetime(t *testing.T) {
@@ -128,6 +179,58 @@ func TestSessionEvidenceAttemptLifetime(t *testing.T) {
 			t.Fatalf("resumed %v: rows %s", got, eventsOf(k.rowsOf("exe")))
 		}
 		noOpenRecord(t, "after the resumed call completed", k.evCwd)
+	})
+
+	// TerminalReplayedAfterDeath: the same for the other terminal rows a resumed run replays, a null_model (the context window was
+	// exceeded) and a refused call (a bad request): each releases the open record its attempt left.
+	t.Run("TerminalReplayedAfterDeath", func(t *testing.T) {
+		for _, tc := range []struct{ name, fail, row, status string }{
+			{"null_model", "contextWindowExceeded", EvNullModel, "null_model"},
+			{"refused", "badRequest", EvRefused, "refused"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				k := newEvidenceKit(t, true, ".crw/\n")
+				k.setOrch(func(Step, string, int) orchAnswer { return orchAnswer{fail: tc.fail} }, nil)
+				k.die(t, deathAt(tc.row), evidenceExe)
+				if got := evidenceRecords(t, k.evCwd); len(got) != 1 {
+					t.Fatalf("records the dead process left %v (rows %s)", got, eventsOf(k.rowsOf("exe")))
+				}
+				k.setOrch(nil, nil)
+				res := k.h.run(evidenceExe)
+				if got := value[[]any](t, res); got[0] != tc.status {
+					t.Fatalf("resumed %v: rows %s", got, eventsOf(k.rowsOf("exe")))
+				}
+				if n := len(rowsNamed(k.rowsOf("exe"), EvPrepared)); n != 1 {
+					t.Fatalf("%d prepared rows: the %s call was not replayed (rows %s)", n, tc.status, eventsOf(k.rowsOf("exe")))
+				}
+				noOpenRecord(t, "after the "+tc.status+" call was replayed", k.evCwd)
+			})
+		}
+	})
+
+	// OrphanBeforeStepRow: a process that wrote a step's record and died before the step_published row that names it leaves a record
+	// no row names. A resumed run that supersedes the call (its position is an explorer now) or prepares it again (another input)
+	// releases it all the same: the id is derived from the owner, the run, the call and the step's marker.
+	t.Run("OrphanBeforeStepRow", func(t *testing.T) {
+		for _, tc := range []struct{ name, body string }{
+			{"superseded", evidenceExploreOnly},
+			{"prepared again", `const r = await agent.call('build node n1 once more', { agentType: 'executor', label: 'exe', node: 'n1', schema: RECEIPT })
+return [r.status, r.reason]`},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				k := newEvidenceKit(t, true, ".crw/\n")
+				k.dieBefore(t, func(e Event) bool { return e.Kind == KindCall && e.Event == EvStepPublished }, evidenceExe)
+				if got := evidenceRecords(t, k.evCwd); len(got) != 1 {
+					t.Fatalf("records the dead process left %v (rows %s)", got, eventsOf(k.rowsOf("exe")))
+				}
+				k.setOrch(nil, nil)
+				res := k.h.run(tc.body)
+				if got := value[[]any](t, res); got[0] != "completed" {
+					t.Fatalf("resumed %v: rows %s", got, eventsOf(k.rowsOf("exe")))
+				}
+				noOpenRecord(t, "after the call was "+tc.name, k.evCwd)
+			})
+		}
 	})
 
 	// CompletedReplayedAfterDeath: a process that wrote the completed row of an attempt whose subagent never claimed its record (the
