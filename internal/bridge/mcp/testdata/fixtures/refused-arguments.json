@@ -124,14 +124,5 @@
    ],
    "role": {}
   }
- },
- {
-  "tool": "create_thread",
-  "arguments": {
-   "request_id": "no-prompt",
-   "cwd": "${CWD}",
-   "model": "m",
-   "reasoning_effort": "h"
-  }
  }
 ]

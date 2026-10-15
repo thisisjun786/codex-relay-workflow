@@ -79,23 +79,15 @@ func (s *Service) ResolveLaunchPolicy() Object {
 // status, declare, start, restart and run, doctor and the store-backed packet-check all
 // resolve through it.
 func ResolveLaunchPolicyAt(state, environment string) Object {
-	answer, _ := resolveLaunchPolicy(state, environment)
-	return answer
-}
-
-// resolveLaunchPolicy is ResolveLaunchPolicyAt with the role policy it read from the file it
-// resolved to (the zero RolePolicy when it resolved to none), so a caller that needs the policy
-// itself (launchRolePolicy) does not parse the file a second time.
-func resolveLaunchPolicy(state, environment string) (Object, registry.RolePolicy) {
 	stated := pyvalue.Strip(environment)
 	record := launchRecord(stateFile(state, "launch-policy.json"))
 	declared := pyjson.Text(record.Get("path"))
 	answer := obj("variable", execution.EnvPolicy, "path", nil, "source", nil, "record", nullable(declared), "environment", nullable(stated), "declaredAt", record.Get("declaredAt"), "declaredBy", record.Get("declaredBy"), "state", nil, "digest", nil, "persisted", nil, "detail", nil, "hint", nil)
 	if truth(record.Get("unreadable")) {
-		return set(answer, "source", "unreadable_record", "detail", record.Get("unreadable"), "hint", "declare the file again with service declare --execution-policy, or drop the record with service declare --forget-execution-policy. A launch does not fall back to this process's environment to cover an unreadable record"), registry.RolePolicy{}
+		return set(answer, "source", "unreadable_record", "detail", record.Get("unreadable"), "hint", "declare the file again with service declare --execution-policy, or drop the record with service declare --forget-execution-policy. A launch does not fall back to this process's environment to cover an unreadable record")
 	}
 	if declared != "" && stated != "" && canonicalPolicyPath(declared) != canonicalPolicyPath(stated) {
-		return set(answer, "source", "conflict", "detail", fmt.Sprintf("this service declares %q and %s in this process names %q", declared, execution.EnvPolicy, stated), "hint", "two files are not a preference: unset the variable to launch on the declaration, or declare that other file"), registry.RolePolicy{}
+		return set(answer, "source", "conflict", "detail", fmt.Sprintf("this service declares %q and %s in this process names %q", declared, execution.EnvPolicy, stated), "hint", "two files are not a preference: unset the variable to launch on the declaration, or declare that other file")
 	}
 	path := declared
 	if declared != "" {
@@ -104,40 +96,13 @@ func resolveLaunchPolicy(state, environment string) (Object, registry.RolePolicy
 		path = stated
 		answer = set(answer, "path", stated, "source", "environment", "persisted", false, "hint", "this launch takes the policy from this process's environment and nothing records it, so a restart typed anywhere else loses it. Record it with service declare --execution-policy")
 	} else {
-		return set(answer, "detail", "no execution policy is declared for this service and "+execution.EnvPolicy+" is not set in this process, so a daemon launched from here can read none and withholds every role-bound delivery"), registry.RolePolicy{}
+		return set(answer, "detail", "no execution policy is declared for this service and "+execution.EnvPolicy+" is not set in this process, so a daemon launched from here can read none and withholds every role-bound delivery")
 	}
 	p := registry.ResolveRolePolicy(map[string]string{execution.EnvPolicy: path})
 	if p.Declared {
-		return set(answer, "state", "declared", "digest", p.Digest()), p
+		return set(answer, "state", "declared", "digest", p.Digest())
 	}
-	return set(answer, "state", "unreadable", "detail", p.Detail), p
-}
-
-func init() { registry.LaunchRolePolicy = launchRolePolicy }
-
-// launchRolePolicy is registry.LaunchRolePolicy: the role policy a daemon launched on state reads,
-// mapped from ResolveLaunchPolicyAt's source. A declaration is read from the file it names; with no
-// declaration the answer is this process's environment snapshot itself (registry.EnvironmentRolePolicy,
-// its once-per-process reading and its words); a declaration that cannot be read, or that the
-// variable contradicts, is an unresolved policy carrying the resolver's reason and recovery, which
-// the registry answers as it answers any policy it cannot read (role_policy_unconfigured).
-func launchRolePolicy(state string) registry.RolePolicy {
-	resolution, policy := resolveLaunchPolicy(state, os.Getenv(execution.EnvPolicy))
-	detail, hint := pyjson.Text(resolution.Get("detail")), pyjson.Text(resolution.Get("hint"))
-	switch resolution.Get("source") {
-	case "record":
-		// The policy the resolver read from the declared path (state declared or unreadable), not a
-		// second parse of the same file.
-		return policy
-	case "unreadable_record":
-		if record := stateFile(state, "launch-policy.json"); !strings.Contains(detail, record) {
-			detail = record + ": " + detail
-		}
-		return registry.RolePolicy{Detail: detail, PublicDetail: hint}
-	case "conflict":
-		return registry.RolePolicy{Detail: detail, PublicDetail: hint}
-	}
-	return registry.EnvironmentRolePolicy()
+	return set(answer, "state", "unreadable", "detail", p.Detail)
 }
 
 // canonicalPolicyPath is canonical_policy_path: one spelling of a policy file for comparing two

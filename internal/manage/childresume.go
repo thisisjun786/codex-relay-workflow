@@ -13,9 +13,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/host"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/stateroot"
-	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/quote"
-	"github.com/thisisjun786/codex-relay-workflow/internal/relay/service"
 	"github.com/thisisjun786/codex-relay-workflow/internal/sandboxroot"
 )
 
@@ -79,9 +77,6 @@ type resumeSettings struct {
 	CitedRole      string
 	CitedException *string
 	BoundRole      string
-	// RolePolicyDigest is the digest of the policy the gate read (settings-show's rolePolicyDigest), ""
-	// when it read none. The limit is read only from a file with this digest (CRW-1486 A1).
-	RolePolicyDigest string `json:"-"`
 	// RuntimeWorkspaceRoots is a pointer so an empty list is a value: the relay preserves the
 	// recorded [] and the resume must send it as an empty array, while a key that is absent or
 	// null supplied nothing and stays missing.
@@ -213,7 +208,6 @@ func resumeRecorded(ctx context.Context, e *Env, cfg *Config, child string) (*re
 		CitedRole      *string        `json:"citedRole"`
 		BoundRole      *string        `json:"boundRole"`
 		CitedException *string        `json:"citedException"`
-		PolicyDigest   *string        `json:"rolePolicyDigest"`
 		RecordFinding  *struct {
 			Code, Detail string
 		} `json:"recordFinding"`
@@ -264,9 +258,6 @@ func resumeRecorded(ctx context.Context, e *Env, cfg *Config, child string) (*re
 	if answer.CitedException != nil {
 		settings.CitedException = answer.CitedException
 	}
-	if answer.PolicyDigest != nil {
-		settings.RolePolicyDigest = *answer.PolicyDigest
-	}
 	return &settings, nil
 }
 
@@ -283,29 +274,11 @@ func resumeRecorded(ctx context.Context, e *Env, cfg *Config, child string) (*re
 // refusal rather than a silent omission: resuming a capped child without its limit is the failure
 // this command exists to prevent, and an unreadable policy means the limit cannot be established.
 //
-// The policy is meant to be the one the gate read. The gate is the settings-show subprocess, which
-// reads the policy the relay daemon launches with (CRW-1486/S2): the file the store's launch
-// declaration (launch-policy.json) names when there is one, else CODEX_THREAD_BRIDGE_EXECUTION_POLICY
-// from the environment it inherits, and a declaration that environment contradicts fails the gate.
-// This function reads that environment value first and manage.bridge.execution_policy second (for a
-// configuration that carries the policy for other commands but leaves the environment unset); it does
-// not read the launch declaration. A task the gate confirmed bound to a role was checked against a
-// policy it could read, so when neither names a file here the gate passed on the declaration alone and
-// the limit cannot be established: that is a refusal too, and manage.bridge.execution_policy naming
-// the declared file is the recovery. The gate's answer carries the digest of the policy it read
-// (rolePolicyDigest); a file read here with another digest is not that policy (the declaration names
-// another file, or the file changed since), so its limit could be another pair's, and that is a
-// refusal as well, with the same recovery (CRW-1486 A1).
-//
-// A child bound to no role that only cites one gets no role finding and no digest from the gate, so
-// nothing above tells whether the file read here is the one a delivery would read. For that child this
-// function asks the relay service's launch declaration itself (service.ResolveLaunchPolicyAt, the
-// resolver the daemon launches through, over this run's state directory and environment): a
-// declaration that the environment contradicts, or one that cannot be read, is a refusal naming the
-// resolver's reason and recovery. Every other child is unchanged: a bound one is refused by the gate
-// itself, one that cites no role sends no limit, and a declaration that agrees with the environment, or
-// none, leaves the files read as above (CRW-1486/S2 B1).
-func resumeAutoCompactLimit(ctx context.Context, e *Env, cfg *Config, settings resumeSettings) (*int64, error) {
+// The policy is the one the gate read. The gate is the settings-show subprocess, which reads
+// CODEX_THREAD_BRIDGE_EXECUTION_POLICY from the environment it inherits, so that environment value
+// is authoritative here and manage.bridge.execution_policy is the fallback for a configuration that
+// carries the policy for other commands but leaves the environment unset.
+func resumeAutoCompactLimit(e *Env, cfg *Config, settings resumeSettings) (*int64, error) {
 	if settings.CitedException != nil {
 		return nil, nil
 	}
@@ -316,19 +289,9 @@ func resumeAutoCompactLimit(ctx context.Context, e *Env, cfg *Config, settings r
 	if role == "" {
 		return nil, nil
 	}
-	if settings.BoundRole == "" {
-		if err := resumeLaunchDeclarationAgrees(ctx, e, cfg, role); err != nil {
-			return nil, err
-		}
-	}
 	path := strings.TrimSpace(e.Getenv(execution.EnvPolicy))
 	if path == "" {
 		path = strings.TrimSpace(cfg.Bridge.ExecutionPolicy)
-	}
-	if path == "" && (settings.BoundRole != "" || settings.RolePolicyDigest != "") {
-		return nil, &resumeFailure{Reason: resumeSettingsUnavailable, Detail: "the relay checked this task's settings as " + quote.Value(role) +
-			" against the execution policy its service declares, and neither " + execution.EnvPolicy + " nor manage.bridge.execution_policy names a file here to resolve the pair's auto-compaction limit from; " +
-			"set manage.bridge.execution_policy to the declared file; nothing was sent"}
 	}
 	if path == "" {
 		return nil, nil
@@ -341,12 +304,6 @@ func resumeAutoCompactLimit(ctx context.Context, e *Env, cfg *Config, settings r
 	if err != nil {
 		return nil, &resumeFailure{Reason: resumeSettingsUnavailable, Detail: "the execution policy " + quote.Value(path) + " could not be read to resolve the pair's auto-compaction limit: " + err.Error() + "; nothing was sent"}
 	}
-	if settings.RolePolicyDigest != "" && policy.Digest() != settings.RolePolicyDigest {
-		return nil, &resumeFailure{Reason: resumeSettingsUnavailable, Detail: "the relay checked this task's settings as " + quote.Value(role) +
-			" against the execution policy of digest " + quote.Value(settings.RolePolicyDigest) + ", and the execution policy " + quote.Value(path) +
-			" this command would resolve the pair's auto-compaction limit from has digest " + quote.Value(policy.Digest()) + ", so it is not the policy the relay read; " +
-			"set manage.bridge.execution_policy to the file the relay service declares (service status names it); nothing was sent"}
-	}
 	declared, ok := policy.Role(role)
 	if !ok {
 		return nil, nil
@@ -358,29 +315,6 @@ func resumeAutoCompactLimit(ctx context.Context, e *Env, cfg *Config, settings r
 	}
 	return nil, nil
 }
-
-// resumeLaunchDeclarationAgrees refuses a resume of a child that cites role without a binding when the
-// relay service's launch declaration contradicts this run's CODEX_THREAD_BRIDGE_EXECUTION_POLICY or
-// cannot be read. The state directory is the one the run's relay commands use.
-func resumeLaunchDeclarationAgrees(ctx context.Context, e *Env, cfg *Config, role string) error {
-	state, err := e.relayHelperState(ctx, cfg)
-	if err != nil {
-		return &resumeFailure{Reason: resumeSettingsUnavailable, Detail: "the relay state directory whose launch declaration says which execution policy applies could not be resolved: " + err.Error() + "; nothing was sent"}
-	}
-	resolution := service.ResolveLaunchPolicyAt(state, e.Getenv(execution.EnvPolicy))
-	var why string
-	switch resolution.Get("source") {
-	case "conflict":
-		why = "the relay service's launch declaration contradicts " + execution.EnvPolicy
-	case "unreadable_record":
-		why = "the relay service's launch declaration (launch-policy.json in the state directory " + quote.Value(state) + ") cannot be read"
-	default:
-		return nil
-	}
-	return &resumeFailure{Reason: resumeSettingsUnavailable, Detail: "this task's record cites role " + quote.Value(role) + " and is bound to none, so the relay checked no execution policy for it, and " + why +
-		": " + pyjson.Text(resolution.Get("detail")) + "; " + pyjson.Text(resolution.Get("hint")) + "; the pair's auto-compaction limit cannot be told from the file a delivery would read; nothing was sent"}
-}
-
 func resumeSandboxMode(sandbox map[string]any) (string, error) {
 	kind, _ := sandbox["type"].(string)
 	mode := resumeSettingsModes[kind]
@@ -538,7 +472,7 @@ func resumeRun(ctx context.Context, e *Env, cfg *Config, opts resumeOptions) (*r
 	// CRW-1265: the resume runs the child at the recorded cwd with the recorded roots and sandbox; the
 	// rule is asked about them, the dry run included, and its verdict is a warning (CRW-1308).
 	warnResumeRoot(settings, mode)
-	limit, err := resumeAutoCompactLimit(ctx, e, cfg, *settings)
+	limit, err := resumeAutoCompactLimit(e, cfg, *settings)
 	if err != nil {
 		return nil, err
 	}

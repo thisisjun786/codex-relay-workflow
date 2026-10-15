@@ -17,7 +17,6 @@
           "reasoning_effort": "high",
           "request_id": "self-approved",
           "cwd": "${HOME}",
-          "prompt": "READY",
           "approved": true
         }
       },
@@ -28,7 +27,6 @@
           "reasoning_effort": "high",
           "request_id": "self-allowlisted",
           "cwd": "${HOME}",
-          "prompt": "READY",
           "allowed_models": [
             "openai/gpt-6-astra"
           ]
@@ -41,7 +39,6 @@
           "reasoning_effort": "high",
           "request_id": "misspelled-exception",
           "cwd": "${HOME}",
-          "prompt": "READY",
           "policy_exceptions": "one-task"
         }
       },
@@ -52,7 +49,6 @@
           "reasoning_effort": "high",
           "request_id": "cited",
           "cwd": "${HOME}",
-          "prompt": "READY",
           "policy_exception": "one-task"
         }
       }
@@ -135,7 +131,7 @@
         "path": [
           "calls"
         ],
-        "value": 2
+        "value": 1
       },
       {
         "kind": "eq",
@@ -145,15 +141,6 @@
           0
         ],
         "value": "thread/start"
-      },
-      {
-        "kind": "eq",
-        "path": [
-          "calls",
-          1,
-          0
-        ],
-        "value": "turn/start"
       }
     ]
   }

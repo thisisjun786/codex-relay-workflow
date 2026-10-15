@@ -564,15 +564,6 @@ cause when a later pre-send refusal is what holds the delivery now; that refusal
 names it with its recovery. An accepted narrowing settled by reconciliation is journaled
 (`delivery_settings_noted`) as the sender's settlement journals it, once per request.
 
-The registry commands the recovery names read the policy the daemon launches with, not the one the
-shell that runs them happens to carry (CRW-1486): `settings-show`, `settings-record` and
-`linkage-bind` take the file the store's launch declaration names (`service declare
---execution-policy`, kept as `launch-policy.json` in the state directory) when there is one, and the
-process's `CODEX_THREAD_BRIDGE_EXECUTION_POLICY` only when there is none. A declaration that cannot be
-read, or one the variable contradicts by naming another file, answers as a policy the relay cannot read
-(`role_policy_unconfigured`, `rolePolicy` `unresolved`) with the reason in its detail, so the check
-an operator runs and the check a delivery meets agree. With no declaration the answer is unchanged.
-
 The cause is read where each transition wrote it, never from the time-ordered failure rows: the
 settlement row of the latest settled attempt (`settingsRefusal`, written by the sender and by
 reconciliation) or a pre-send withhold that took effect (`delivery_presend_withheld`), whichever

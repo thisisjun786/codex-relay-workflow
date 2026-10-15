@@ -189,11 +189,9 @@ func handle(ctx context.Context, services dispatch.Services, c command, p parsed
 		}
 		defer s.Close()
 	}
-	// Taken before any handler, as cli.main does. It is the policy a daemon launched on this state
-	// directory reads (LaunchRolePolicy): the declared file when the service declares one, else this
-	// PROCESS's snapshot of the environment's, so a later edit to that file is not adopted without a
-	// restart.
-	policy := launchRolePolicy(selection.Path)
+	// Taken before any handler, as cli.main does: the snapshot is this PROCESS's, not this
+	// question's, so a later edit to the file is not adopted without a restart.
+	policy := EnvironmentRolePolicy()
 	if c.precheck != nil {
 		if err := c.precheck(&p); err != nil {
 			return nil, err
