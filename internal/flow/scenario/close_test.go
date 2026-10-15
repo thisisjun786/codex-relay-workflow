@@ -352,6 +352,78 @@ func TestANeedsChangesPassWithNoFindingDoesNotCloseTheMilestone(t *testing.T) {
 	}
 }
 
+// The escalation of a crosscheck that needs changes follows the latest crosscheck (CRW-1473): the run escalates crosscheck_pending
+// over V1 of the head H1, another actor moves the target to H2, and the resume gates H2 again and its crosscheck needs changes with
+// another finding (V2). The escalation the run's value names holds V2 of H2 in its evidence - the same V as the value's crosscheck -
+// and is a new question of the milestone (an escalation of its own, the current one); the escalation of H1 keeps V1.
+func TestACrosscheckEscalationOnAResumeAtANewHeadHoldsTheNewVerdict(t *testing.T) {
+	l := NewLab(t, oneNode()...)
+	l.Crosschecks("M1", 1, 0, "A", 1,
+		Crosscheck{Verdict: "needs_changes", Findings: []reviewadapter.Finding{Finding("P1", "the first head breaks the criterion")}},
+		Crosscheck{Verdict: "needs_changes", Findings: []reviewadapter.Finding{Finding("P1", "the moved head breaks the criterion")}})
+	first := l.Run()
+	v1 := Value[map[string]any](t, first)
+	h1 := l.Tip()
+	if v1["state"] != "escalated" || v1["reason"] != "crosscheck_pending" {
+		t.Fatalf("the first run: %s", first.Value)
+	}
+	moved := l.Git("commit-tree", l.Git("rev-parse", h1+"^{tree}"), "-p", h1, "-m", "another actor moved the target")
+	l.Git("update-ref", IntegrationRef, moved)
+
+	l.NewProcess("proc-2")
+	second := l.Resume()
+	v2 := Value[map[string]any](t, second)
+	cc, _ := v2["crosscheck"].(map[string]any)
+	if v2["state"] != "escalated" || v2["reason"] != "crosscheck_pending" || cc == nil || cc["head"] != moved {
+		t.Fatalf("the resume at the new head %s: %s", moved, second.Value)
+	}
+	if rows := l.Rows("crw.crosscheck"); len(rows) < 2 {
+		t.Fatalf("crosscheck rows %d, want the one of H1 and the one of H2", len(rows))
+	}
+	byID := map[string]map[string]any{}
+	var order []string
+	for _, ev := range l.FlowRows(engine.EvEscalation) {
+		if str(ev.Data, "ask") != "crosscheck_pending" {
+			continue
+		}
+		id := str(ev.Data, "escalation_id")
+		if byID[id] != nil {
+			t.Errorf("two escalation rows of the id %s", id)
+		}
+		byID[id] = ev.Data
+		order = append(order, id)
+	}
+	row := byID[str(v2, "escalation")]
+	if row == nil {
+		t.Fatalf("no escalation row of the value's escalation %v; rows %v", v2["escalation"], order)
+	}
+	evidence, _ := row["evidence"].(map[string]any)
+	if !jsonSame(t, evidence["crosscheck"], cc) {
+		t.Errorf("the escalation's crosscheck is not the value's V2:\n%v\n%v", evidence["crosscheck"], cc)
+	}
+	if len(order) != 2 || order[1] != str(v2, "escalation") || order[0] != str(v1, "escalation") {
+		t.Fatalf("crosscheck_pending escalations %v, want the one of H1 (%v) then the one of H2 (%v)", order, v1["escalation"], v2["escalation"])
+	}
+	old, _ := byID[order[0]]["evidence"].(map[string]any)
+	if oc, _ := old["crosscheck"].(map[string]any); oc == nil || oc["head"] != h1 {
+		t.Errorf("the escalation of H1 holds %v, want V1 of %s", old["crosscheck"], h1)
+	}
+}
+
+// jsonSame says whether a and b are the same JSON value.
+func jsonSame(t *testing.T, a, b any) bool {
+	t.Helper()
+	x, err := json.Marshal(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	y, err := json.Marshal(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(x) == string(y)
+}
+
 // A resume of a run that closed does nothing: the gate, the crosscheck, the close, the audit and the archive are all replayed
 // from the journal, and the host is asked for nothing - no call, no read of a thread, no archive.
 func TestResumeAfterAClosedMilestoneRunsNothing(t *testing.T) {

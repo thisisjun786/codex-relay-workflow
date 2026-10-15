@@ -91,8 +91,9 @@ func (o *escalateOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRe
 		info.Class = escalationClass(info.Reason)
 	}
 	r := rows(req.Journal.Events())
-	out := EscalateOutcome{Escalated: true, ID: "esc_" + hashParts(req.RunID, req.CallID)[:24], Node: node, Reason: info.Reason, Class: info.Class}
-	// The row is written once for the op's call: an op that ran and did not write its own row runs again under the same call id.
+	out := EscalateOutcome{Escalated: true, ID: escalationID(req.RunID, req.CallID, info.Evidence), Node: node, Reason: info.Reason, Class: info.Class}
+	// The row is written once for the op's call (and the head its crosscheck judged): an op that ran and did not write its own row runs
+	// again under the same call id.
 	written := false
 	for _, ev := range r.flow(engine.EvEscalation) {
 		if dataStr(ev, "escalation_id") == out.ID {
@@ -149,6 +150,19 @@ func (o *escalateOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpRe
 		data["close_refused"] = closeRefused
 	}
 	return engine.OpResult{Result: result(out), Data: data}, nil
+}
+
+// escalationID is the id of the escalation of a call: esc_ and 24 hex of the hash of the run and the call, and, when the evidence holds
+// a crosscheck V (evidence.crosscheck, CRW-1473), of the head that V judged. A run resumed on a new head runs the close's escalation
+// again under the same call id with the V of the new head: that is a new escalation row, the current question of the milestone,
+// and the row of the earlier head keeps its own V.
+func escalationID(run, call string, evidence map[string]any) string {
+	if v, ok := evidence["crosscheck"].(map[string]any); ok {
+		if head, _ := v["head"].(string); head != "" {
+			return "esc_" + hashParts(run, call, "crosscheck", head)[:24]
+		}
+	}
+	return "esc_" + hashParts(run, call)[:24]
 }
 
 func (o *escalateOp) Proven(ctx context.Context, ev []engine.Event, row engine.Event) (bool, string, error) {
