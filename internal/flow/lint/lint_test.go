@@ -1173,6 +1173,39 @@ let r = crw.review('n', head, null)
 	}
 }
 
+// TestTraceLintTakesOnlyAUnitCheckThatJudged (CRW-1465, x1436 round 2 item 4): in a trace, a crw.unitCheck row checks the node only when
+// the tool gave a judgment (state ok, with a verdict). A check held for the tool's quota or a blank answer is recorded with role unit-check
+// too (and a hold), and one with no verdict judged nothing: a land after either and a commit and a verification is a land with no review
+// or unit check of the head. A check that judged, needs_changes included, checks the node.
+func TestTraceLintTakesOnlyAUnitCheckThatJudged(t *testing.T) {
+	ev := func(op string, data map[string]any) engine.Event {
+		d := map[string]any{"node": "n"}
+		for k, v := range data {
+			d[k] = v
+		}
+		return engine.Event{Kind: engine.KindCall, Event: engine.EvCompleted, Op: op, Path: "root", Data: d}
+	}
+	built := engine.Event{Kind: engine.KindCall, Event: engine.EvPrepared, Op: "agent", Path: "root", Label: "build", Data: map[string]any{"family": "executor", "role": "executor", "node": "n"}}
+	for name, c := range map[string]struct {
+		check map[string]any
+		want  []string
+	}{
+		"quota":          {map[string]any{"role": "unit-check", "state": "quota", "verdict": "", "hold": "unit_check_quota"}, []string{RuleLandWithoutReview}},
+		"no answer":      {map[string]any{"role": "unit-check", "state": "no_answer", "hold": "unit_check_no_answer"}, []string{RuleLandWithoutReview}},
+		"no verdict":     {map[string]any{"role": "unit-check", "state": "ok", "verdict": ""}, []string{RuleLandWithoutReview}},
+		"verified":       {map[string]any{"role": "unit-check", "state": "ok", "verdict": "verified"}, nil},
+		"needs changes":  {map[string]any{"role": "unit-check", "state": "ok", "verdict": "needs_changes"}, nil},
+		"no role at all": {map[string]any{"state": "tree_moved", "tree_moved": true}, []string{RuleLandWithoutReview}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			events := []engine.Event{built, ev("crw.unitCheck", c.check), ev("crw.commit", nil), ev("crw.verify", nil), ev("crw.land", nil)}
+			if got := rules(Report{Diagnostics: traceDiagnostics(&engine.Result{Status: engine.RunCompleted}, events, nil)}); !slices.Equal(got, c.want) {
+				t.Errorf("trace rules %v, want %v", got, c.want)
+			}
+		})
+	}
+}
+
 // A unit check of the head is the second way to land (CRW-1465): build, unit check, commit, verify, land; and a land release
 // (crw.release with a land key) checks out a committed head. Each case runs through the static walk (callEvent on a script)
 // and through the trace twin (lifecycleEvent on journal rows), so the one predicate is tested on both inputs.
@@ -1189,7 +1222,7 @@ func TestLintLandsAUnitCheckedHead(t *testing.T) {
 		return engine.Event{Kind: engine.KindCall, Event: engine.EvCompleted, Op: op, Path: "root", Data: d}
 	}
 	op := func(name string) engine.Event { return row(name, nil) }
-	check := row("crw.unitCheck", map[string]any{"role": "unit-check"})
+	check := row("crw.unitCheck", map[string]any{"role": "unit-check", "state": "ok", "verdict": "verified"})
 	released := row("crw.release", map[string]any{"kind": "land", "released": true})
 	built := engine.Event{Kind: engine.KindCall, Event: engine.EvPrepared, Op: "agent", Path: "root", Label: "build", Data: map[string]any{"family": "executor", "role": "executor", "node": "n"}}
 	fixed := engine.Event{Kind: engine.KindCall, Event: engine.EvPrepared, Op: "agent", Path: "root", Label: "fix", Data: map[string]any{"family": "executor", "role": "executor", "node": "n", "resume_of": "c_1"}}
@@ -1274,8 +1307,9 @@ return crw.land('b', { head: hb, ci: cb })`
 		}
 		return engine.Event{Kind: engine.KindCall, Event: engine.EvPrepared, Op: "agent", Path: "root", Label: "build:" + node, Data: d}
 	}
-	twoRows := []engine.Event{buildOf("a", false), buildOf("b", false), nodeRow("crw.unitCheck", "a", map[string]any{"role": "unit-check"}),
-		nodeRow("crw.unitCheck", "b", map[string]any{"role": "unit-check"}), buildOf("a", true), nodeRow("crw.commit", "b", nil), nodeRow("crw.verify", "b", nil), nodeRow("crw.land", "b", nil)}
+	judged := map[string]any{"role": "unit-check", "state": "ok", "verdict": "verified"}
+	twoRows := []engine.Event{buildOf("a", false), buildOf("b", false), nodeRow("crw.unitCheck", "a", judged),
+		nodeRow("crw.unitCheck", "b", judged), buildOf("a", true), nodeRow("crw.commit", "b", nil), nodeRow("crw.verify", "b", nil), nodeRow("crw.land", "b", nil)}
 	if d := traceDiagnostics(&engine.Result{Status: engine.RunCompleted}, twoRows, nil); len(d) != 0 {
 		t.Errorf("a fix of a clears only a's check (trace): %v", d)
 	}

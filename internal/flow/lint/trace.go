@@ -97,8 +97,15 @@ func traceDiagnostics(res *engine.Result, events []engine.Event, policy *engine.
 			kind, _ := e.Data["kind"].(string)
 			released, _ := e.Data["released"].(bool)
 			le := lifecycleEvent(op, op == "release" && kind == "land" && released)
-			if role, _ := e.Data["role"].(string); le.check && role != execution.AgentUnitCheck {
-				le = lifeEvent{}
+			// a unit check checks the node only when the tool judged the tree: role unit-check, state ok and a verdict. A check held
+			// for the tool's quota or a blank answer has the role too, and a check that was not run has none
+			if le.check {
+				role, _ := e.Data["role"].(string)
+				state, _ := e.Data["state"].(string)
+				verdict, _ := e.Data["verdict"].(string)
+				if role != execution.AgentUnitCheck || state != "ok" || verdict == "" {
+					le = lifeEvent{}
+				}
 			}
 			if le.from != 0 {
 				key := e.Path + "\x00" + eventNode(e)
