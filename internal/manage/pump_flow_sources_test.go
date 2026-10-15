@@ -241,3 +241,47 @@ func TestPumpRunDeadSeesAResumedRunThatDiedAfterAnEarlierFinish(t *testing.T) {
 		t.Fatalf("messages %q", msgs)
 	}
 }
+
+// A run the operator paused ends paused: its journal holds a run/paused row after its last started row and no finished row, and no process
+// holds it until `crw flow resume`. It is not dead, however long it is quiet. A paused end before a later started row is history: the
+// resumed process that died is dead. A run_paused flow row alone (a deadline pause, the ask before the end) does not end the run.
+func TestPumpRunDeadSkipsAPausedEnd(t *testing.T) {
+	now := time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)
+	e, cfg, st, log := pumpFlowTestSetup(t, &now, pumpFlowRunsSource{})
+	paused := func(run string, end bool, at time.Time) {
+		t.Helper()
+		j, err := journal.Open(context.Background(), st, run, journal.Identity{PlanID: "plan-1", PlanRevision: 1, ActorTaskID: "orch-task", EpochNonce: "n"}, journal.Options{Now: func() time.Time { return at }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		j.Append(engine.Event{RunID: run, Kind: engine.KindFlow, Event: engine.EvRunPaused, Data: map[string]any{"by": "operator", "reason": "crw flow pause"}})
+		if end {
+			j.Append(engine.Event{RunID: run, Kind: engine.KindRun, Event: engine.RunPaused, Data: map[string]any{"status": engine.RunPaused, "by": "operator", "reason": "crw flow pause"}})
+		}
+		if err := j.Flush(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// paused by the operator two hours ago and not resumed
+	flowTestRun(t, st, "run-paused", "orch-task", now.Add(-2*time.Hour), false)
+	paused("run-paused", true, now.Add(-2*time.Hour))
+	// paused at -5h, resumed at -2h, and the resumed process died
+	flowTestRun(t, st, "run-resumed-dead", "orch-task", now.Add(-5*time.Hour), false)
+	paused("run-resumed-dead", true, now.Add(-5*time.Hour))
+	flowTestRun(t, st, "run-resumed-dead", "orch-task", now.Add(-2*time.Hour), false)
+	// a run_paused flow row with no run/paused end: the process died before it ended the run
+	flowTestRun(t, st, "run-ask-only", "orch-task", now.Add(-2*time.Hour), false)
+	paused("run-ask-only", false, now.Add(-2*time.Hour))
+
+	pumpFlowTestRound(t, e, cfg)
+	all := strings.Join(pumpFlowTestMessages(t, log), "\n")
+	if strings.Contains(all, "run=run-paused") {
+		t.Errorf("a paused end was told dead: %q", all)
+	}
+	if strings.Count(all, "run dead run=run-resumed-dead") != 1 {
+		t.Errorf("the resumed run that died after an earlier paused end was not told once: %q", all)
+	}
+	if strings.Count(all, "run dead run=run-ask-only") != 1 {
+		t.Errorf("a run with only a run_paused flow row was not told dead once: %q", all)
+	}
+}
