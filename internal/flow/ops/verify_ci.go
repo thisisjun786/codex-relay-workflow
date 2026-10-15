@@ -146,8 +146,9 @@ func (v CILocalVerifier) Verify(ctx context.Context, req VerifyRequest) (VerifyO
 // ciRecordDir is the default record directory of a worktree, inside its checkout: crw-dev refuses a record that leaves the checkout
 // for the account's protected directories (homeguard), and a linked worktree's git directory lies in the repository's common git
 // directory, which may be such a place (a repository below the account's .codex). So it is crw-verify below <worktree>/.git when
-// .git is a directory, and .crw/verify for a linked worktree (crwdir makes .crw with its ignore file, so git does not see the
-// records). The .git file of a linked worktree must still name a git directory: without one it is an error.
+// .git is a directory, and .crw/verify for a linked worktree. .crw/verify holds its own ignore file ("*", which hides itself too),
+// so git and the working snapshot do not see the records even where .crw already existed without crwdir's ignore file and the
+// repository has no .crw rule. The .git file of a linked worktree must still name a git directory: without one it is an error.
 func ciRecordDir(worktree string) (string, error) {
 	gitDir, err := ciGitDir(worktree)
 	if err != nil {
@@ -156,7 +157,25 @@ func ciRecordDir(worktree string) (string, error) {
 	if gitDir == filepath.Join(worktree, ".git") {
 		return filepath.Join(gitDir, "crw-verify"), nil
 	}
-	return crwdir.EnsureSubdir(worktree, "verify")
+	dir, err := crwdir.EnsureSubdir(worktree, "verify")
+	if err != nil {
+		return "", err
+	}
+	f, err := os.OpenFile(filepath.Join(dir, ".gitignore"), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if errors.Is(err, os.ErrExist) {
+		return dir, nil
+	}
+	if err != nil {
+		return "", err
+	}
+	_, werr := f.WriteString("*\n")
+	if cerr := f.Close(); werr == nil {
+		werr = cerr
+	}
+	if werr != nil {
+		return "", werr
+	}
+	return dir, nil
 }
 
 // ciGitDir answers the worktree's own git directory, read in Go with no subprocess: <worktree>/.git when it is a directory, or

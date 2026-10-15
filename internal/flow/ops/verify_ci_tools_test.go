@@ -189,6 +189,38 @@ func TestCILocalVerifier_a_linked_worktree_records_inside_its_checkout(t *testin
 	}
 }
 
+// CRW-1489 (PR ping-pong): the records of a linked worktree stay out of git even when the checkout's .crw already exists without
+// crwdir's ignore file and the repository has no .crw rule of its own: .crw/verify carries its own ignore file, so neither git
+// status nor the working snapshot (Snapshot, add -A) sees a record.
+func TestCILocalVerifier_linked_worktree_records_stay_out_of_git(t *testing.T) {
+	repo, first := newRepo(t)
+	wt := addWorktree(t, repo, "wt", first)
+	if err := os.Mkdir(filepath.Join(wt, crwdir.DirName), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", t.TempDir())
+	var record string
+	var calls int
+	v := CILocalVerifier{Tools: crwconfig.VerifierTools{CrwDev: "/x/crw-dev"}, Run: recordingRun(&record, &calls)}
+	head := strings.Repeat("f", 40)
+	if out, err := v.Verify(context.Background(), VerifyRequest{Node: "A", Head: head, Worktree: wt}); err != nil || !out.Pass {
+		t.Fatalf("verify: %+v %v", out, err)
+	}
+	if !within(filepath.Join(wt, crwdir.DirName, "verify"), record) {
+		t.Fatalf("the record %s is not in the checkout's .crw/verify", record)
+	}
+	if status := gitIn(t, wt, "status", "--porcelain", "--untracked-files=all"); status != "" {
+		t.Errorf("git sees the verify records: %q", status)
+	}
+	snap, err := Snapshot(ctx, ExecGit("git"), wt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tree := gitIn(t, wt, "rev-parse", "HEAD^{tree}"); snap != tree {
+		t.Errorf("the working snapshot %s holds more than HEAD's tree %s: %q", snap, tree, gitIn(t, wt, "ls-tree", "-r", "--name-only", snap))
+	}
+}
+
 // CRW-1489: a worktree with no git directory has no default record dir; Verify says so before it runs the command.
 func TestCILocalVerifier_no_git_directory_is_an_error_before_the_command(t *testing.T) {
 	var record string
