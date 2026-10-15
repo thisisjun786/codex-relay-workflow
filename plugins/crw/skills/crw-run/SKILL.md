@@ -57,8 +57,9 @@ installation exposes this skill as `crw:crw-run`, designates or restores
 this task as the fixed child using [Project parent binding](../crw-plan/references/integrations.md#project-parent-binding)
 and executes the agreed project scope. Record that scope and delivery boundary,
 including its known blocked successors, rather than equating scope with today's ready
-batch. Reconcile existing work, reuse/create responsible issue children, verify and integrate
-their results, and admit newly ready in-scope issues as capacity opens. The first batch
+batch. Reconcile existing work, carry each milestone as a flow run (and, only for a plan with no
+flow run, reuse/create responsible issue children and verify and integrate their results), and
+admit newly ready in-scope issues as capacity opens. The first batch
 is a scheduling choice, not a finish boundary. The link does not approve undefined work,
 future backlog additions, another project's work or replacing another child.
 
@@ -126,23 +127,24 @@ a quoted example, automatic skill discovery or an unsubmitted UI prompt opens no
 
 Run does not initialize, resume, complete or block a child goal. It keeps progressing
 the agreed project scope during execution: dispatch, wait, verify, correct, integrate
-and start eligible successors. Before any issue child dispatch, record its observation path
-and the requested delivery boundary under
+and start eligible successors. Only for a plan with no flow run, before any issue child dispatch,
+record its observation path and the requested delivery boundary under
 [OPS-8.1](references/operations.md#ops-81-parent-continuation-and-waiting).
 
 A dispatch-only request may return with pending ownership and an exact next step.
 Otherwise continue until the agreed scope is delivered, the user stops, a resource
 limit is reached, or no authorized progress is possible. An empty ready queue while
-issue children run calls for bounded observation; a blocked issue does not stop independent
-work. If the host ends the turn, preserve the unfinished project and exact resume step,
+issue children run (only for a plan with no flow run) calls for bounded observation; a blocked
+issue does not stop independent work. If the host ends the turn, preserve the unfinished project and exact resume step,
 not a claim that the first batch completed the request. Where the recorded `observation_path`
 is `event-driven-idle`, the child yields the turn and the delivery path resumes it on a real
-issue child event; where it is `active-observation` or `blocked`, Run alone promises no automatic
-future wake-up. A checkpoint handed down by the parent (repository session) is not a status read: it reaches
+event (a step of its run, or an issue child's only for a plan with no flow run); where it is
+`active-observation` or `blocked`, Run alone promises no automatic future wake-up. A checkpoint handed down by the parent (repository session) is not a status read: it reaches
 this child and is handled here as a resume of the authorized run, which re-evaluates outstanding
-issue child results, pending decision requests, cleared blockers and empty execution slots, then
-continues the successors that approval already covers. Reuse the same child, issue children and
-assignments; this adds no scheduler and dispatches nothing that already has an owner. That
+results (an issue child's only for a plan with no flow run), pending decision requests, cleared
+blockers and empty execution slots, then continues the successors that approval already covers.
+Reuse the same child, runs and assignments (and the same issue children, only for a plan with no
+flow run); this adds no scheduler and dispatches nothing that already has an owner. That
 handoff is a manual push rather than automatic continuation, and an explicit status-only,
 report-only, read-only or pause limit on it still wins.
 
@@ -154,9 +156,9 @@ change, new ownership, or a shared resource including the order into a shared ta
 two projects share no supervisor, or answer to different ones, invent none: record the unsettled
 part, hold only that part, keep the independent work moving, and raise that decision to the user.
 Record the agreement and whether it is still conditional; a peer message moves no delivery by itself.
-An accepted condition reaches this project through its own issue child, on the correction path this task
-already uses, and the evidence that it landed is that issue child's changed revision rather than its
-acknowledgement. Return the outcome to the peer from here: an issue child never answers another project's
+An accepted condition reaches this project on the correction path this task already uses (through
+its own issue child only for a plan with no flow run), and the evidence that it landed is the
+changed revision of that correction rather than its acknowledgement. Return the outcome to the peer from here: an issue child never answers another project's
 child, and no peer reads this project's issue child for its answer.
 
 [Goal mode](references/goal-mode.md) owns a child host goal and its continuation across turns where
