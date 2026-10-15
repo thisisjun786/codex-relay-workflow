@@ -2,8 +2,12 @@ package ops
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -75,11 +79,30 @@ const StateTreeMoved = "tree_moved"
 // crw.commit commits on that start.
 const StateHeadMoved = "head_moved"
 
+// StateReceiptHeld is the state of an uncommitted unit check that was not run because the executor call it was to judge has no
+// accepted evidence receipt to hand it (CRW-1463, C12): the row and the answer name the hold (receipt_missing, receipt_unverified,
+// receipt_not_copied) the lane writes through crw.hold with source unit_check.
+const StateReceiptHeld = "receipt_held"
+
+// The receipt states a unit-check row records besides the backend's own (accepted): the judged call had no assignment (no backend
+// recorded one), or the check judged a committed range, which no executor wrote.
+const (
+	ReceiptNotAssigned = "not_assigned"
+	ReceiptNoExecutor  = "no_executor"
+)
+
 // unitCheckOp is crw.unitCheck(node, call, opts): one unit check of a node's work by the review tool, run in Go through Deps.UnitCheck
 // (no agent call), recorded as one completed row of role unit-check that crw.accept and the relay take as the judgment of the head
 // (CRW-1463). With no opts.commit it judges the uncommitted changes the executor call `call` left in the node's worktree: the
 // worktree's snapshot must be that call's pending tree and its HEAD the start the call was given, else the tool is not run and the row
 // says tree_moved or head_moved (no role: no reader takes it). With opts.commit and opts.base it judges the committed range base..commit checked out in the node's worktree.
+//
+// An uncommitted check reads the evidence receipt the judged call's completed row records (evidence_receipt, CRW-1463 C12): an accepted
+// receipt's step-bus copy whose bytes hash to its digest goes into the prompt and the row records it (state, sha256, copy, ignored);
+// a call with no evidence_receipt had no assignment and records not_assigned; any other receipt (missing, unverified, accepted but
+// not copied, a copy that cannot be read or does not hash to the digest) is not handed over: the tool is not run, and the row carries
+// the node, the call, the receipt as read and hold receipt_*, with no role, tree or commit, so no reader takes it and a resume reads
+// the receipt again. A committed check judges a range no executor wrote and records no_executor.
 //
 // The op holds nothing itself and never calls the relay. A check whose tool gave no judgment for its quota or no answer is recorded
 // with role unit-check and hold unit_check_<state> on the row and in the answer, and is not proven: the lane holds the node through
@@ -144,6 +167,7 @@ func (o *unitCheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpR
 	g := o.l.d.Git
 	data := map[string]any{"node": node, "mode": mode, "round": opts.Round, "final": opts.Final}
 	snap := ""
+	var receipt checkReceipt
 	if mode == UnitCheckUncommitted {
 		data["call"] = ex.CallID
 		term, ok := r.terminal(ex.CallID)
@@ -178,7 +202,16 @@ func (o *unitCheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpR
 				return engine.OpResult{Result: result(out), Data: data}, nil
 			}
 		}
+		var hold, detail string
+		if receipt, hold, detail = executorReceipt(term); hold != "" {
+			data["state"], data["hold"], data["receipt"], data["detail"] = StateReceiptHeld, hold, term.Data["evidence_receipt"], detail
+			out := UnitCheckOutcome{Result: reviewadapter.Result{State: StateReceiptHeld, Detail: detail + "; the tool was not run", Findings: []reviewadapter.Finding{}},
+				Hold: hold, Call: ex.CallID, CheckID: req.CallID}
+			return engine.OpResult{Result: result(out), Data: data}, nil
+		}
+		data["receipt"] = receipt.row
 	} else {
+		data["receipt"] = map[string]any{"state": ReceiptNoExecutor}
 		// the range is judged in the checkout of its head: a worktree at another commit would be a check of another tree
 		at, err := Head(ctx, g, wt)
 		if err != nil {
@@ -206,7 +239,7 @@ func (o *unitCheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpR
 	if rel, ok := releaseRowOf(r, node); ok {
 		data["execution_id"], data["criteria_digest"] = dataStr(rel, "execution_id"), dataStr(rel, "criteria_digest")
 	}
-	creq := reviewadapter.Request{Profile: profile, Worktree: wt, Prompt: unitCheckPrompt(r, node, mode, opts.Base, head), Schema: reviewadapter.AnswerSchema, Limit: uc.Limit,
+	creq := reviewadapter.Request{Profile: profile, Worktree: wt, Prompt: unitCheckPrompt(r, node, mode, opts.Base, head, receipt), Schema: reviewadapter.AnswerSchema, Limit: uc.Limit,
 		GuideRev: UnitCheckGuideRev}
 	res, err := uc.Checker.Check(ctx, creq)
 	if err != nil {
@@ -249,8 +282,8 @@ func (o *unitCheckOp) Proven(_ context.Context, _ []engine.Event, row engine.Eve
 
 // unitCheckPrompt is the prompt of a unit check (guide UnitCheckGuideRev): the scope sentence first, in the words the tool's reader
 // expects of its scope (the uncommitted changes of the working tree, or the range base..head), then the node and the criteria of its
-// plan the change is judged against.
-func unitCheckPrompt(r rows, node, mode, base, head string) string {
+// plan the change is judged against, and in uncommitted mode the executor's accepted evidence receipt (EXECUTOR RECEIPT) when it has one.
+func unitCheckPrompt(r rows, node, mode, base, head string, receipt checkReceipt) string {
 	var b strings.Builder
 	if mode == UnitCheckCommitted {
 		fmt.Fprintf(&b, "Review the changes between %s and %s (git diff %s..%s).\n", base, head, base, head)
@@ -278,7 +311,80 @@ func unitCheckPrompt(r rows, node, mode, base, head string) string {
 			fmt.Fprintf(&b, "%s: %s\n", id, criteria[i])
 		}
 	}
+	if receipt.body != nil {
+		fmt.Fprintf(&b, "\nEXECUTOR RECEIPT (the evidence receipt the executor wrote, sha256 %s: what it says it ran, such as its red-first and mutation-red lines; "+
+			"it is the executor's report, not a judgment of the change)\n", receipt.digest)
+		body := receipt.body
+		if len(body) > UnitCheckReceiptPromptLimit {
+			body = body[:UnitCheckReceiptPromptLimit]
+			if i := strings.LastIndexByte(string(body), '\n'); i >= 0 {
+				body = body[:i+1]
+			}
+		}
+		b.Write(body)
+		if len(body) == 0 || body[len(body)-1] != '\n' {
+			b.WriteByte('\n')
+		}
+		if len(body) < len(receipt.body) {
+			fmt.Fprintf(&b, "(the receipt is %d bytes; the first %d are above; the whole receipt is the file %s)\n", len(receipt.body), len(body), str(receipt.row, "copy"))
+		}
+	}
 	return b.String()
+}
+
+// UnitCheckReceiptPromptLimit is the most bytes of an executor receipt a unit-check prompt carries: the tool takes the prompt as one
+// command-line argument (reviewadapter.ExecRun), which Linux bounds at 128 KiB, while a receipt may be up to 16 MiB. A longer receipt is
+// cut at a line end within the limit and the prompt names the file of its whole copy.
+const UnitCheckReceiptPromptLimit = 32 << 10
+
+// checkReceipt is the executor receipt an uncommitted unit check hands the tool: the row it records and, for an accepted receipt,
+// the bytes of its step-bus copy and their digest (body nil for none).
+type checkReceipt struct {
+	row    map[string]any
+	body   []byte
+	digest string
+}
+
+// executorReceipt reads the evidence receipt the completed row of an executor call records (engine evidenceReceipt): the receipt to
+// hand the check, or the hold of a receipt that cannot be handed over and why. The copy is the absolute step-bus path the backend
+// wrote; the op reads that path only and never builds one.
+func executorReceipt(term engine.Event) (checkReceipt, string, string) {
+	raw, present := term.Data["evidence_receipt"]
+	if !present || raw == nil {
+		return checkReceipt{row: map[string]any{"state": ReceiptNotAssigned}}, "", ""
+	}
+	er, ok := raw.(map[string]any)
+	if !ok {
+		return checkReceipt{}, "receipt_unverified", fmt.Sprintf("the evidence receipt of the call is not an object (%T)", raw)
+	}
+	switch state := str(er, "state"); state {
+	case "accepted":
+	case "missing", "":
+		return checkReceipt{}, "receipt_missing", "the executor's evidence receipt is missing: " + str(er, "detail")
+	default:
+		return checkReceipt{}, "receipt_unverified", "the executor's evidence receipt is " + state + ": " + str(er, "detail")
+	}
+	cp, digest := str(er, "copy"), str(er, "sha256")
+	switch {
+	case cp == "":
+		return checkReceipt{}, "receipt_not_copied", "the accepted evidence receipt was not copied to the step bus: " + str(er, "copy_error")
+	case !filepath.IsAbs(cp):
+		return checkReceipt{}, "receipt_not_copied", "the copy " + cp + " of the accepted evidence receipt is not an absolute step-bus path"
+	case digest == "":
+		return checkReceipt{}, "receipt_unverified", "the accepted evidence receipt names no sha256"
+	}
+	body, err := os.ReadFile(cp)
+	if err != nil {
+		return checkReceipt{}, "receipt_not_copied", "the copy of the accepted evidence receipt cannot be read: " + err.Error()
+	}
+	if sum := sha256.Sum256(body); hex.EncodeToString(sum[:]) != digest {
+		return checkReceipt{}, "receipt_unverified", "the copy " + cp + " of the accepted evidence receipt does not hash to its sha256 " + digest
+	}
+	row := map[string]any{"state": "accepted", "sha256": digest, "copy": cp}
+	if ig, ok := er["ignored"].(bool); ok {
+		row["ignored"] = ig
+	}
+	return checkReceipt{row: row, body: body, digest: digest}, "", ""
 }
 
 // ---- crw.commit ----
