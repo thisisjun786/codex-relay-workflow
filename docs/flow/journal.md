@@ -163,6 +163,27 @@ digest (`crw.reviewerFinal`). The test evidence of the gate is a `crw.verify` ro
 which names the milestone), and the QA evidence a `crw.qaReceipt` row (it holds the identity of the tree the capture call ended in, which the completed row of a QA call records as `qa_source`); each is judged fresh by the identity of the head it stands on
 (`source.Compare`).
 
+**Unit check.** A row `crw.unitCheck` is one unit check of a node's work, run by the run itself (the op runs the review tool through
+the review adapter; no agent call, no reviewer thread). Its data: `node`; `mode` (`uncommitted`: the changes the judged executor call left in
+the node's worktree, or `committed`: the range `base..commit` checked out in it); `call` (the executor call it judged, uncommitted mode) or
+`commit` and `base` (committed mode); `round` and `final` as the lane passed them; `execution_id` and `criteria_digest` of the node's release
+row; `tree` (the fingerprint the check saw, the snapshot `crw.commit` commits as its `tree`); `role` `unit-check`; `state`, `verdict` and
+`findings` (their count); `retried` and `first_state` `invalid` when an invalid answer was asked once more and the second record kept;
+`hold` (`unit_check_quota`, `unit_check_no_answer`, or `receipt_missing`, `receipt_unverified`, `receipt_not_copied` when the executor's
+evidence receipt could not be read) when the lane is to hold the node; `receipt` (the executor's evidence receipt as the check read it:
+`state` `accepted` with its `sha256`, `copy` and `ignored`, `not_assigned` when the call was given none, or `no_executor` for a committed
+check); and `result`, the `reviewadapter.Result` (state, verdict, findings with their line-free ids, engine family, model, effort, guide
+revision, prompt digest, both fingerprints). `crw.accept` and the relay take a row of role `unit-check` whose result state is `ok` and that is
+on the head (its `commit`, or its `tree` equal to the head's tree) as the judgment of the head. A check that was not run names no role: when
+the worktree is no longer the judged call's pending tree the row has `state` `tree_moved`, `tree_moved` true, `pending_tree` and `tree`
+(the tool is not run, since `crw.commit` commits the pending tree); when the judged call committed its work itself (its row records
+`executor_head_moved` and `HEAD` is not its `start`) the row has `state` `head_moved` and `head_moved` (`start`, `head`), since the
+uncommitted changes are not the change `crw.commit` commits on that start; a committed check whose checkout is not the commit's tree has
+`state` `tree_moved`, `commit_tree` and `tree`; and a receipt that could not be read leaves `receipt` and `hold` with no
+`tree` and no `commit`; neither reader takes such a row. A check is proven unless its row names a `hold`: a resume asks the tool again for
+the check that held the node, and the hold itself is the `crw.hold` row the lane writes after it (`source` `unit_check`), as for a
+verification that could not run. An error of the tool's runner (a bad request, a fingerprint that could not be taken) writes no row.
+
 **The design ledger and the signals.** A row `crw.designLedger` is a revision of the milestone's ledger (`revision`, `digest`, `design`, `answers`,
 `architect_call` and `architect_handle`, the `signal` that made it, `base_tip` - the head the DESIGN ran at: for `r0` the start commit of the architect's call-private checkout as the architect's `prepared` row records it (reached through `resume_of` from a design fix that went on in that directory), never the integration tip read after the audit, and `""` when no placement recorded one; for a later revision the head its re-plan pinned - and `slices`, the slice digest of every node of the plan it was made
 against: for a revision after the first the plan the architect and the auditor evaluated, as the decision read it). Revision ids are used once: the next is named after every ledger row of the milestone, the ones a resume superseded included. The ledger that stands is the newest

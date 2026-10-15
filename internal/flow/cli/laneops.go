@@ -13,11 +13,13 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/crwconfig"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/journal"
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/ops"
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/reviewadapter"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/mergeturn"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -73,6 +75,8 @@ type LaneOptions struct {
 	Relay func(*SchedRelay) ops.Relay
 	// Reporter replaces the request's reporter; nil keeps it.
 	Reporter ops.Reporter
+	// UnitCheck is what crw.unitCheck runs a node's unit check with (CRW-1463); nil is shippedUnitCheck.
+	UnitCheck *ops.UnitCheck
 }
 
 // SchedulerLane is the OpsFor of the shipped binary.
@@ -154,13 +158,41 @@ func BuildLane(ctx context.Context, req LaneRequest, opt LaneOptions) (LaneWorld
 	if opt.Reporter != nil {
 		reporter = opt.Reporter
 	}
+	unitCheck := opt.UnitCheck
+	if unitCheck == nil {
+		unitCheck = shippedUnitCheck()
+	}
 	lane := ops.NewLane(ops.Deps{RunID: spec.RunID, Repo: req.Repo, Journal: journal, Relay: seam, Verifier: verifier, Decisions: ops.StoreDecisions{DB: req.Store.DB},
-		Threads: req.Threads, Reporter: reporter, Actor: spec.Thread, LandRoot: RunDir(req.State, spec.RunID)})
+		Threads: req.Threads, Reporter: reporter, Actor: spec.Thread, LandRoot: RunDir(req.State, spec.RunID), UnitCheck: unitCheck})
 	out := LaneWorld{Ops: lane.Ops(), Prover: ops.NewProver(), InputSnapshot: lane.InputSnapshot, Journal: journal}
 	if plan := planOf(spec.Args); plan != "" && ref.Path != "" {
 		out.Base = func(string) (string, error) { return relay.IntegrationTip(ctx, plan) }
 	}
 	return out, nil
+}
+
+// shippedUnitCheckLimit is the time limit of one call of the shipped unit check's tool.
+const shippedUnitCheckLimit = 10 * time.Minute
+
+// shippedUnitCheck is the unit check of the shipped lane (CRW-1463): the review adapter over the tool runner (reviewadapter.ExecRun) with
+// ops.Snapshot as its fingerprint, the value of an executor call's pending tree and of crw.commit's tree, so the tree an uncommitted check
+// saw is the tree of the head its node commits. The uncommitted mode runs Bugbot (reviewadapter.BugbotProfile); the committed mode
+// (land-head's range) is refused until its profile is wired.
+func shippedUnitCheck() *ops.UnitCheck {
+	git := ops.ExecGit("git")
+	return &ops.UnitCheck{
+		Checker: reviewadapter.Adapter{Run: reviewadapter.ExecRun, Fingerprint: func(ctx context.Context, dir string) (string, error) { return ops.Snapshot(ctx, git, dir) }},
+		Profile: func(mode string) (reviewadapter.Profile, error) {
+			switch mode {
+			case ops.UnitCheckUncommitted:
+				return reviewadapter.BugbotProfile(), nil
+			case ops.UnitCheckCommitted:
+				return reviewadapter.Profile{}, errors.New("the shipped unit check's committed mode is not wired")
+			}
+			return reviewadapter.Profile{}, fmt.Errorf("the shipped unit check has no mode %q", mode)
+		},
+		Limit: shippedUnitCheckLimit,
+	}
 }
 
 // ShippedRunnableCommand says why the shipped lane's verifier cannot run a required command of a milestone ("" when it can): the
