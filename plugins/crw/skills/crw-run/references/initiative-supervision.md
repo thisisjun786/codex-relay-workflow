@@ -23,7 +23,10 @@ refused supervision leaves no state behind: the decision and the write share one
 only its conflict row. A supervisor whose own level is not an initiative can hold the store-scope seat
 (`linkage-bind --role supervisor --scope-kind store --scope store`), which is what a session that manages the store holds
 rather than one tied to a single initiative's execution. `crw manage supervisor register` gives the calling parent (repository session, relay role `supervisor`, [the level table](../../crw-canon/references/hierarchy.md#the-levels))
-its own management seat instead and lays down a store seat it held; the store seat is then read through that management seat.
+its own management seat instead and lays down a store seat it held; the store seat is then read through that management seat,
+and read that way it carries the parent only a decision the user owes (CRW-1486): every other message of a project or an
+initiative no management edge stands above finds nobody above (`unregistered_scope`) and stays standing, so a lead's
+`crw relay report-up` with no edge above its initiative is recorded and its refusal says the report stands.
 A parent that binds a child itself (`linkage-bind --role parent --scope <project> --task <owner> --host ...
 --creator <its own thread>`, the creator by default `CODEX_THREAD_ID`) records the management -> project edge in the same
 transaction, and the project's upward messages and `crw flow report-up` reports then go to that parent; a project a supervisor at
