@@ -535,6 +535,107 @@ func TestExploreRoutingOpenQuestions(t *testing.T) {
 	}
 }
 
+// The background questions of a milestone (CRW-1466): one per node, put to an explorer before the architect. Each spawns an explorer
+// or reuses an answered digest, under SP-EXPL-1 with the reason spawned_background; none takes the inline route whatever its
+// files_needed, none goes to the orchestrator, and none counts against the open questions' cap of the milestone: six open questions
+// spawn and the seventh goes to the orchestrator (explorer_cap) whether background questions were routed before or after them.
+func TestExploreRoutingBackgroundDoesNotUseTheQuestionCap(t *testing.T) {
+	w := newWorld(t)
+	bg := func(node string, files []string) Question {
+		return Question{ID: "bg-" + node, Question: fmt.Sprintf("background of node %s (CRW-%s): the title of %s", node, node, node), FilesNeeded: files}
+	}
+	ctx := ExploreContext{Milestone: "M"}
+	var plan RoutePlan
+	checkBackground := func(when string, want []string) {
+		t.Helper()
+		var got []string
+		for _, rt := range plan.Routes {
+			got = append(got, rt.Route+"/"+rt.Reason)
+			if rt.Rule != RuleExpl1 && rt.Route == RouteSpawn {
+				t.Errorf("%s: background question %s spawned under %s, want %s", when, rt.ID, rt.Rule, RuleExpl1)
+			}
+			if rt.Authority != "" {
+				t.Errorf("%s: background question %s has the scope notation %q", when, rt.ID, rt.Authority)
+			}
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("%s: background routes %v, want %v", when, got, want)
+		}
+	}
+	// three background questions before any open question: all spawn, the one with a single file named too (never inline)
+	_ = json.Unmarshal(w.must("exploreRoute", ExploreBackground, ctx, []Question{bg("A", []string{"a.go"}), bg("B", nil), bg("C", []string{})}), &plan)
+	if plan.Kind != ExploreBackground {
+		t.Errorf("the plan's kind %q, want %q", plan.Kind, ExploreBackground)
+	}
+	checkBackground("before the open questions", []string{"spawn/spawned_background", "spawn/spawned_background", "spawn/spawned_background"})
+
+	// seven open questions: six spawn, the seventh goes to the orchestrator for the cap; the background explorers spent none of it
+	var qs []Question
+	for i := 0; i < 7; i++ {
+		qs = append(qs, Question{ID: fmt.Sprint(i), Question: fmt.Sprintf("open question %d", i), FilesNeeded: []string{}})
+	}
+	_ = json.Unmarshal(w.must("exploreRoute", ExploreOpen, ctx, qs), &plan)
+	var got []string
+	for _, rt := range plan.Routes {
+		got = append(got, rt.Route+"/"+rt.Reason)
+	}
+	want := []string{"spawn/", "spawn/", "spawn/", "spawn/", "spawn/", "spawn/", "orchestrator/explorer_cap"}
+	if !slices.Equal(got, want) {
+		t.Errorf("open routes after background ones %v, want %v", got, want)
+	}
+
+	// three more background questions after the cap is used: all still spawn, the one with files inside no region too
+	_ = json.Unmarshal(w.must("exploreRoute", ExploreBackground, ctx, []Question{bg("D", []string{"d/1"}), bg("E", nil), bg("F", []string{"f.go", "g.go"})}), &plan)
+	checkBackground("after the cap", []string{"spawn/spawned_background", "spawn/spawned_background", "spawn/spawned_background"})
+
+	// and the open-question count is unchanged by them: the next open question of the milestone still goes for the cap, and in
+	// another milestone an open question still spawns
+	_ = json.Unmarshal(w.must("exploreRoute", ExploreOpen, ctx, []Question{{ID: "7", Question: "open question 7", FilesNeeded: []string{}}}), &plan)
+	if rt := plan.Routes[0]; rt.Route != RouteOrchestrator || rt.Reason != "explorer_cap" {
+		t.Errorf("an open question after the background ones: %+v, want orchestrator/explorer_cap", rt)
+	}
+	_ = json.Unmarshal(w.must("exploreRoute", ExploreOpen, ExploreContext{Milestone: "M2"}, []Question{{ID: "x", Question: "open question x", FilesNeeded: []string{}}}), &plan)
+	if rt := plan.Routes[0]; rt.Route != RouteSpawn {
+		t.Errorf("an open question of another milestone: %+v, want spawn", rt)
+	}
+
+	// the decision rows of the background questions: SP-EXPL-1 spawns with the reason and the kind in the inputs; a background route
+	// reads no cap, so its spawned_in_milestone stays 0 before and after the six open explorers
+	mem := w.lane.d.Decisions.(*MemoryDecisions)
+	var counts []int
+	for _, row := range mem.Spawn {
+		inputs, _ := row.Evidence["inputs"].(map[string]any)
+		if inputs["kind"] != ExploreBackground {
+			continue
+		}
+		if row.RuleID != RuleExpl1 || row.Decision != RouteSpawn || row.Reason != "spawned_background" {
+			t.Errorf("a background decision row: %s %s %q, want %s spawn spawned_background", row.RuleID, row.Decision, row.Reason, RuleExpl1)
+		}
+		n, _ := inputs["spawned_in_milestone"].(int)
+		counts = append(counts, n)
+	}
+	if !slices.Equal(counts, []int{0, 0, 0, 0, 0, 0}) {
+		t.Errorf("spawned_in_milestone of the background rows %v, want six zeros", counts)
+	}
+
+	// a background question answered in the run reuses the answer, and a repeat in its round reuses the first
+	w.must("exploreRecord", ExploreBackground, ctx, []Answer{{Digest: QuestionDigest(bg("A", nil).Question), ID: "bg-A", Question: bg("A", nil).Question, Answer: "A reads a.go", Route: RouteSpawn}})
+	_ = json.Unmarshal(w.must("exploreRoute", ExploreBackground, ctx, []Question{bg("A", []string{"a.go"}), bg("G", nil), bg("G", nil)}), &plan)
+	if rt := plan.Routes[0]; rt.Route != RouteReuse || rt.Rule != RuleInl2 || rt.Answer != "A reads a.go" || rt.Reason != "answered_in_run" || rt.Origin != RouteSpawn {
+		t.Errorf("an answered background question: %+v", rt)
+	}
+	if rt := plan.Routes[1]; rt.Route != RouteSpawn || rt.Reason != "spawned_background" {
+		t.Errorf("a new background question: %+v", rt)
+	}
+	if rt := plan.Routes[2]; rt.Route != RouteReuse || rt.SameAs != 1 || rt.Reason != "same_question_in_round" {
+		t.Errorf("a repeated background question: %+v", rt)
+	}
+	// a background route carries nothing to the orchestrator
+	if len(plan.Carried) != 0 {
+		t.Errorf("a background route carried %+v", plan.Carried)
+	}
+}
+
 // CRW-1366: the router remembers the questions the run asked of the orchestrator by their digest, read from the design_question
 // escalation rows (their evidence names the digests), and never rewrites a row: an asked question is not asked again until the
 // orchestrator's applied answer is there, and then that answer is reused. Every reuse names the route its answer came from.
