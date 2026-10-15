@@ -35,7 +35,7 @@ var recordOps = []string{"crw.releaseChild", "crw.escalate", "crw.reportUp", "cr
 	"crw.spawnDecision", "crw.stepRecord", "crw.exploreRoute", "crw.exploreRecord", "crw.designAudit", "crw.designLedger",
 	"crw.qaReceipt", "crw.qaCapture", "crw.reviewerFinal", "crw.audit", "crw.archive",
 	"crw.replanSignals", "crw.currentDesign", "crw.reflection", "crw.signalBind", "crw.signalDone", "crw.signalClose",
-	"crw.designHead", "crw.releasedPlans"}
+	"crw.designHead", "crw.releasedPlans", "crw.mergeRequest"}
 
 // The keys of the rows' Data that the executor calls carry: the pending tree P a completed call recorded, and P_held for a
 // held one.
