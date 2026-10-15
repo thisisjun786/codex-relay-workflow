@@ -26,6 +26,9 @@ type NodeSpec struct {
 	Criteria            []string
 	// EndCondition are the commands of the issue's done condition, as the relay reads them from the body the handoff carries (CRW-1382).
 	EndCondition []string
+	// Planned are the node's regions with their planned change and hold, as the relay passes them when one is not a plain edit
+	// (CRW-1461): the whole list, in the order of Regions.
+	Planned []ops.LaneRegion
 }
 
 func (n NodeSpec) criteria() []string {
@@ -102,7 +105,8 @@ func (r *FakeRelay) Milestone(_ context.Context, plan, milestone string) (ops.Mi
 	ms := ops.Milestone{ID: milestone, Plan: plan, Title: "milestone " + milestone, Criteria: []string{"the milestone is done"}, CriteriaDigest: sha("milestone " + milestone),
 		Surfaces: r.Surfaces, Grade: r.Grade, RequiredCommands: r.Commands}
 	for _, n := range r.nodes {
-		pn := ops.PlanNode{ID: n.ID, Issue: n.Issue, Title: n.Title, After: n.After, Regions: n.Regions, Group: n.Group, Criteria: n.criteria(), EndCondition: n.EndCondition}
+		pn := ops.PlanNode{ID: n.ID, Issue: n.Issue, Title: n.Title, After: n.After, Regions: n.Regions, Group: n.Group, Criteria: n.criteria(), EndCondition: n.EndCondition,
+			PlannedRegions: n.Planned}
 		pn.CriteriaDigest = sha(strings.Join(pn.Criteria, "\n"))
 		pn.SliceDigest = sliceOf(n)
 		ms.Nodes = append(ms.Nodes, pn)
@@ -110,8 +114,12 @@ func (r *FakeRelay) Milestone(_ context.Context, plan, milestone string) (ops.Mi
 	return ms, nil
 }
 
-// sliceOf is a node's slice of the plan.
+// sliceOf is a node's slice of the plan; the planned attributes are part of it only when the node has them, so a node without them
+// keeps the slice it had.
 func sliceOf(n NodeSpec) string {
+	if len(n.Planned) > 0 {
+		return sha(fmt.Sprintf("%s|%s|%v|%v|%v", n.ID, n.Issue, n.After, n.Regions, n.Planned))
+	}
 	return sha(fmt.Sprintf("%s|%s|%v|%v", n.ID, n.Issue, n.After, n.Regions))
 }
 
