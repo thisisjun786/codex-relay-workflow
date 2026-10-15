@@ -293,7 +293,7 @@ func (s *Scheduler) resourceHold(ctx context.Context, q store.Querier, plan stri
 		return "", "", err
 	}
 	if len(parents) != 1 {
-		return DeferOwnershipUnverified, "project " + snap.ProjectKey + " has " + itoa64(int64(len(parents))) + " registered parents; a release needs exactly one to reserve under", nil
+		return DeferOwnershipUnverified, "project " + snap.ProjectKey + " has " + itoa64(int64(len(parents))) + " registered 자식 sessions; a release needs exactly one to reserve under", nil
 	}
 	for _, e := range edges {
 		if e.TargetRepository == "" || e.TargetBaseRef == "" {

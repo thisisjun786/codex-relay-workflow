@@ -16,7 +16,7 @@ const (
 	MergeTurnGrant = "merge_turn_grant"
 	manifestLines  = 10
 	notRecorded    = "not recorded"
-	noNote         = "no note recorded; ask the parent"
+	noNote         = "no note recorded; ask the 자식"
 )
 
 var headings = []string{"VIOLATED CRITERION", "WHAT CHANGED", "FIX SCOPE", "PRESERVE", "REVERIFY AND RETURN", "TASK", "SCOPE", "MUST DO", "MUST NOT", "PROOF", "RETURN FORMAT", "DECISION BOUNDARY", "VERDICT"}
@@ -122,7 +122,7 @@ func unheaded(v any) string {
 	return text
 }
 
-func notRecordedBecause(what string) string { return notRecorded + ": " + what + "; ask the parent" }
+func notRecordedBecause(what string) string { return notRecorded + ": " + what + "; ask the 자식" }
 
 func findingsWord(count int, noun string) string {
 	if count == 1 {
@@ -208,7 +208,7 @@ func fixScopeLines(receipt Obj) []string {
 	case c.owed > 0:
 		heading = unruled + "; change nothing but the evidence REVERIFY AND RETURN asks for"
 	case c.undecided > 0:
-		heading = unruled + "; change nothing until the parent settles the findings below"
+		heading = unruled + "; change nothing until the 자식 settles the findings below"
 	default:
 		heading = "FIX SCOPE: " + notRecordedBecause("what to change, since every finding is marked verified")
 	}
@@ -218,9 +218,9 @@ func fixScopeLines(receipt Obj) []string {
 		if c.undecided == 1 {
 			pronoun = "it"
 		}
-		lines = append(lines, fmt.Sprintf("  %s without a disposition: whether to change %s is not recorded; ask the parent first", findingsWord(c.undecided, "finding"), pronoun))
+		lines = append(lines, fmt.Sprintf("  %s without a disposition: whether to change %s is not recorded; ask the 자식 first", findingsWord(c.undecided, "finding"), pronoun))
 	}
-	return append(lines, "  anything wider, anything that would discard preserved work, or anything needing authority you were not given comes back to the parent")
+	return append(lines, "  anything wider, anything that would discard preserved work, or anything needing authority you were not given comes back to the 자식")
 }
 
 func reverifyLines(receipt Obj) []string {
@@ -237,7 +237,7 @@ func reverifyLines(receipt Obj) []string {
 			clauses = append(clauses, "show evidence for the "+findingsWord(c.owed, "finding")+" marked unverified")
 		}
 		if c.undecided > 0 {
-			clauses = append(clauses, "settle with the parent whether to change the "+findingsWord(c.undecided, "finding")+" without a disposition")
+			clauses = append(clauses, "settle with the 자식 whether to change the "+findingsWord(c.undecided, "finding")+" without a disposition")
 		}
 		if len(clauses) == 0 {
 			clauses = append(clauses, "what to re-check is "+notRecordedBecause("every finding is marked verified"))
@@ -247,7 +247,7 @@ func reverifyLines(receipt Obj) []string {
 }
 
 func returnLines(rid string, generation any) []string {
-	shown := "<not recorded; ask the parent>"
+	shown := "<not recorded; ask the 자식>"
 	if generation != nil && generation != "" {
 		shown = inline(generation)
 	}

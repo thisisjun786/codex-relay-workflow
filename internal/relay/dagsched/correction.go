@@ -345,7 +345,7 @@ func lineSafe(s string) bool {
 // notParentOf is the refusal of an actor that is not the parent of the relationship a correction goes through. Both steps of a correction (preparing the manifest, recording the generation) refuse
 // that situation with it, so the reason and the text cannot differ: it is the reason every other DAG command gives for a task that is not the registered parent of what it acts on.
 func notParentOf(actor string, rel relRow) error {
-	return refuse(contract.RefusalScopeRoleMismatch, "task %s is not the parent of relationship %s", actor, rel.ID)
+	return refuse(contract.RefusalScopeRoleMismatch, "task %s is not the 자식 that holds relationship %s", actor, rel.ID)
 }
 
 // correctionBase is the base a correction records: the commit its target branch reads now, read by the relay as a release reads it. A commit the caller states is a claim to check and not a value to

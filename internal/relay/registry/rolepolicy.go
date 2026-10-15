@@ -9,6 +9,7 @@ import (
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/execution"
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/layername"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -43,7 +44,7 @@ var managementScopeRoles = map[string]bool{"supervisor": true}
 func bindingScopeKind(role, requested, key string) (string, error) {
 	kind, known := roleScope[role]
 	if !known {
-		return "", refuse(contract.RefusalScopeRoleMismatch, "a role is one of child, parent, supervisor, not %s", strconv.Quote(role))
+		return "", refuse(contract.RefusalScopeRoleMismatch, "a role is one of child (issue child), parent (자식), supervisor (부모), not %s", strconv.Quote(role))
 	}
 	if requested == "" {
 		return kind, nil
@@ -58,8 +59,8 @@ func bindingScopeKind(role, requested, key string) (string, error) {
 	if requested == scopeManagement && managementScopeRoles[role] {
 		return scopeManagement, nil
 	}
-	return "", refuse(contract.RefusalScopeRoleMismatch, "--scope-kind %s is not a scope a %s takes; the store seat is the supervisor's and goes with --scope store, and a management seat is the supervisor's and goes with --scope <seat id>",
-		pyvalue.StrRepr(requested), pyvalue.StrRepr(role))
+	return "", refuse(contract.RefusalScopeRoleMismatch, "--scope-kind %s is not a scope a %s takes; the store seat is the 부모's and goes with --scope store, and a management seat is the 부모's and goes with --scope <seat id>",
+		pyvalue.StrRepr(requested), pyvalue.StrRepr(role)+layername.Gloss(role))
 }
 
 // RolePolicy is rolepolicy.Declared or Unresolved: Declared is true when a policy declaring roles
@@ -265,6 +266,15 @@ func citedRole(settings contract.OrderedObject) any {
 	v, _ := settings.Lookup("citedRole")
 	return v
 }
+
+// roleValue is a recorded role shown as a value in refusal text: a string role quoted with its layer
+// name ('parent' (자식)), anything else as the value it is.
+func roleValue(role any) string {
+	if text, ok := role.(string); ok {
+		return pyvalue.StrRepr(text) + layername.Gloss(text)
+	}
+	return pyvalue.Repr(role)
+}
 func citedException(settings contract.OrderedObject) any {
 	v, _ := settings.Lookup("citedException")
 	return v
@@ -301,7 +311,7 @@ func unverifiedCitation(settings contract.OrderedObject, role string, policy Rol
 		{Key: "citedException", Value: name},
 		{Key: "digest", Value: policy.digest},
 		{Key: "detail", Value: "this record cites exception " + pyvalue.Repr(name) + ", and this host's execution policy does not " +
-			"authorize that id for role " + pyvalue.StrRepr(role) + " with this pair and directory. Record what " +
+			"authorize that id for role " + pyvalue.StrRepr(role) + layername.Gloss(role) + " with this pair and directory. Record what " +
 			"actually authorized the creation, or nothing at all"},
 		{Key: "recovery", Value: RoleRecovery},
 	}
@@ -322,7 +332,7 @@ func CheckRecord(settings contract.OrderedObject, role string, policy RolePolicy
 			{Key: "role", Value: role},
 			{Key: "digest", Value: policy.digest},
 			{Key: "undeclared", Value: true},
-			{Key: "recovery", Value: "declare role " + pyvalue.StrRepr(role) + " in this host's execution policy"},
+			{Key: "recovery", Value: "declare role " + pyvalue.StrRepr(role) + layername.Gloss(role) + " in this host's execution policy"},
 		}
 	}
 	if expectation.Expectation != "pair" {
@@ -359,7 +369,7 @@ func CheckBinding(cited any, bound string, settings contract.OrderedObject, poli
 			{Key: "citedRole", Value: cited},
 			{Key: "boundRole", Value: bound},
 			{Key: "digest", Value: policy.digestValue()},
-			{Key: "detail", Value: "this task was created citing role " + pyvalue.Repr(cited) + " and is being bound as " + pyvalue.StrRepr(bound) + "; " +
+			{Key: "detail", Value: "this task was created citing role " + roleValue(cited) + " and is being bound as " + pyvalue.StrRepr(bound) + layername.Gloss(bound) + "; " +
 				"one of the two is wrong, and re-recording its settings would only hide that"},
 		}
 	}
@@ -376,7 +386,7 @@ func CheckBinding(cited any, bound string, settings contract.OrderedObject, poli
 			{Key: "citedRole", Value: cited},
 			{Key: "boundRole", Value: bound},
 			{Key: "digest", Value: policy.digest},
-			{Key: "detail", Value: "this host's execution policy declares no role " + pyvalue.StrRepr(bound) + ", so a task cannot be " +
+			{Key: "detail", Value: "this host's execution policy declares no role " + pyvalue.StrRepr(bound) + layername.Gloss(bound) + ", so a task cannot be " +
 				"bound to it and checked; declare it before binding"},
 		}
 	}
@@ -397,7 +407,7 @@ func CheckBinding(cited any, bound string, settings contract.OrderedObject, poli
 		{Key: "recorded", Value: pairObject(model, effort)},
 		{Key: "expected", Value: expectedPairs(expectation)},
 		{Key: "digest", Value: policy.digest},
-		{Key: "detail", Value: "this task's recorded pair is not the pair role " + pyvalue.StrRepr(bound) + " runs on, and it is being " +
+		{Key: "detail", Value: "this task's recorded pair is not the pair role " + pyvalue.StrRepr(bound) + layername.Gloss(bound) + " runs on, and it is being " +
 			"bound to that role now rather than having drifted afterwards"},
 	}
 }

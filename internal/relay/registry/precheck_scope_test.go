@@ -47,13 +47,13 @@ func TestPrecheckScope_RefusalsAreRegistersRefusals(t *testing.T) {
 	}{
 		{
 			name: "no parent is registered for the project", project: "P1",
-			reason: "unregistered_scope", detail: "project 'P1' has no registered parent, so an issue cannot be attached to it yet",
+			reason: "unregistered_scope", detail: "project 'P1' has no registered 자식, so an issue cannot be attached to it yet",
 			conflictKind: "project", conflictKey: "P1", challenger: parent,
 		},
 		{
 			name: "another task is the project's parent", project: "P1",
 			setup:  func(t *testing.T, r *Registry) { bindProject(t, r, "P1", "other-parent") },
-			reason: "foreign_scope", detail: "issue '" + issue + "' is assigned under parent '" + parent + "', but project 'P1' is executed by 'other-parent'; an issue belongs to its own project",
+			reason: "foreign_scope", detail: "issue '" + issue + "' is assigned under 자식 '" + parent + "', but project 'P1' is executed by 'other-parent'; an issue belongs to its own project",
 			conflictKind: "project", conflictKey: "P1", incumbent: "other-parent", challenger: parent,
 		},
 		{

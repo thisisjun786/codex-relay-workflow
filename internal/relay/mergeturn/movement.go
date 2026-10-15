@@ -159,8 +159,8 @@ func staleLandingDetail(row store.MergeTurnsRow, landing store.Row, base, tip, w
 	recorded := landing.Text("observed_base_sha")
 	holder := landing.Text("holder_task_id")
 	project := landing.Text("project_key")
-	return "the last landing on this target, turn " + pyvalue.StrRepr(landed) + ", recorded base " + pyvalue.StrRepr(recorded) + " and this restates " + pyvalue.StrRepr(base) + "; the base moved under the candidate. If that recorded base is wrong, the landing's holder " + pyvalue.StrRepr(holder) + " or the supervisor above project " + pyvalue.StrRepr(project) + " re-reads it with merge-turn-restate-base --turn " + landed +
+	return "the last landing on this target, turn " + pyvalue.StrRepr(landed) + ", recorded base " + pyvalue.StrRepr(recorded) + " and this restates " + pyvalue.StrRepr(base) + "; the base moved under the candidate. If that recorded base is wrong, the landing's holder " + pyvalue.StrRepr(holder) + " or the 부모 above project " + pyvalue.StrRepr(project) + " re-reads it with merge-turn-restate-base --turn " + landed +
 		". The base branch " + pyvalue.StrRepr(row.BaseRef) + " of " + pyvalue.StrRepr(row.Repository) + " reads " + pyvalue.StrRepr(tip) + ", not the base that landing recorded: a merge made outside the lane (an out-of-lane merge) moved it, or that recorded base is wrong. " +
 		"The relay records the base again itself only when it confirms the move as merge commits that no landing recorded, and it did not: " + why + ". " +
-		"Recovery, run by that holder or the supervisor: merge-turn-restate-base --turn " + quote.Shell(landed) + " --actor " + quote.Shell(holder) + " --evidence '<why the base moved>', then check again"
+		"Recovery, run by that holder or the 부모: merge-turn-restate-base --turn " + quote.Shell(landed) + " --actor " + quote.Shell(holder) + " --evidence '<why the base moved>', then check again"
 }

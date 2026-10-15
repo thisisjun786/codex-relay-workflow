@@ -16,7 +16,7 @@ import (
 // a seat for that initiative, not for the store, and cannot state a store-wide bound (CRW-773).
 
 // storeDeclarerDetail is the phrase the narrowed refusal carries.
-const storeDeclarerDetail = "holds no live store-scope supervisor binding"
+const storeDeclarerDetail = "holds no live store-scope 부모 binding"
 
 // storeDeclarerRefusalDetail is the refusal detail, or a fatal when the call did not refuse.
 func storeDeclarerRefusalDetail(t *testing.T, err error) string {

@@ -259,9 +259,9 @@ func AckCommand(ctx context.Context, ack *Ack, rc *Reconciler, adapter Adapter, 
 		return nil, err
 	}
 	if why, ok := record.Lookup("_deliveryUnconfirmed"); ok && truthy(why) {
-		record = append(record, F{Key: "_note", Value: "kept as the parent's authored acknowledgement: the relay could not yet confirm this delivery for the turn it read (" + pyStr(why) + "). The daemon completes it once the delivery is confirmed, and a verdict completes it first; nothing needs to be acknowledged or sent again."})
+		record = append(record, F{Key: "_note", Value: "kept as the 자식's authored acknowledgement: the relay could not yet confirm this delivery for the turn it read (" + pyStr(why) + "). The daemon completes it once the delivery is confirmed, and a verdict completes it first; nothing needs to be acknowledged or sent again."})
 	} else if pyjson.Text(record.Get("_verified")) != "verified" {
-		record = append(record, F{Key: "_note", Value: "recorded as the parent's authored intent; this turn is not established yet, so it does not close the attempt and cannot yet produce a verdict. Run verify-acks from a process with host access."})
+		record = append(record, F{Key: "_note", Value: "recorded as the 자식's authored intent; this turn is not established yet, so it does not close the attempt and cannot yet produce a verdict. Run verify-acks from a process with host access."})
 	}
 	return withTargetNotice(ctx, ack, event, record), nil
 }
@@ -505,7 +505,7 @@ func (p *PreparedVerdict) checkHead() error {
 		return nil
 	}
 	if head := *p.req.VerifiedHead; !verifiedHeadPattern.MatchString(head) {
-		return &dispatch.UsageError{Detail: "--verified-head takes the 40 lowercase hex digits of the head this verified ruling handled, not " + strconv.Quote(head) + ". The head is recorded with the ruling and a later dag-accept proves a parent-made refresh against it, so it is the commit id itself", Code: contract.ExitUsage}
+		return &dispatch.UsageError{Detail: "--verified-head takes the 40 lowercase hex digits of the head this verified ruling handled, not " + strconv.Quote(head) + ". The head is recorded with the ruling and a later dag-accept proves a refresh the 자식 made against it, so it is the commit id itself", Code: contract.ExitUsage}
 	}
 	return nil
 }

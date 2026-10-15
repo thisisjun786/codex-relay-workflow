@@ -38,7 +38,7 @@ func (e *EditRegions) checkRestater(ctx context.Context, repository, actor strin
 			return err
 		}
 	}
-	return refuse(contract.RefusalScopeRoleMismatch, "task "+strconv.Quote(actor)+" is the registered parent of no project holding an"+
+	return refuse(contract.RefusalScopeRoleMismatch, "task "+strconv.Quote(actor)+" is the registered 자식 of no project holding an"+
 		" agreement in "+strconv.Quote(repository)+", so it cannot restate that repository's revision and reopen everybody's agreements")
 }
 

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/contract"
+	"github.com/thisisjun786/codex-relay-workflow/internal/layername"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/pyvalue"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
@@ -497,7 +498,7 @@ func (l linkage) retireStoreSeat(ctx context.Context, kind, task, successor, at 
 	}
 	return journal(ctx, l.r.Store, "scope_seat_moved", successor, contract.OrderedObject{{Key: "from", Value: held},
 		{Key: "fromScopeKind", Value: scopeStore}, {Key: "to", Value: successor}, {Key: "toScopeKind", Value: scopeManagement},
-		{Key: "taskId", Value: task}, {Key: "reason", Value: "one task holds one supervisor seat, so the store seat is laid down when the thread takes its management seat"}}, at)
+		{Key: "taskId", Value: task}, {Key: "reason", Value: "one task holds one 부모 seat, so the store seat is laid down when the thread takes its management seat"}}, at)
 }
 
 func (l linkage) insertBinding(ctx context.Context, bid, role, kind, key string, endpoint Endpoint, status string, revision int64, at string, supersedes, note sql.NullString) error {
@@ -529,7 +530,7 @@ func (l linkage) insertLink(ctx context.Context, lid, kind string, upper, lower 
 // RegisterSupervision is Linkage.register_supervision.
 func (r *Registry) RegisterSupervision(ctx context.Context, initiative, project string, supervisor, parent Endpoint, kind string) (contract.OrderedObject, error) {
 	if kind != linkExec && kind != linkReference {
-		return nil, refuse(contract.RefusalScopeRoleMismatch, "a supervision is execution or reference, not %s; a peer link is registered with register_peer", strconv.Quote(kind))
+		return nil, refuse(contract.RefusalScopeRoleMismatch, "the link linkage-supervise registers is execution or reference, not %s; a peer link is registered with register_peer", strconv.Quote(kind))
 	}
 	if err := exact(initiative, "an initiative key"); err != nil {
 		return nil, err
@@ -541,10 +542,10 @@ func (r *Registry) RegisterSupervision(ctx context.Context, initiative, project 
 		who      string
 		endpoint Endpoint
 	}{{"supervisor", supervisor}, {"parent", parent}} {
-		if err := exact(side.endpoint.TaskID, "the "+side.who+"'s task id"); err != nil {
+		if err := exact(side.endpoint.TaskID, "the "+layername.Typed(side.who)+"'s task id"); err != nil {
 			return nil, err
 		}
-		if err := exact(side.endpoint.HostID, "the "+side.who+"'s host id"); err != nil {
+		if err := exact(side.endpoint.HostID, "the "+layername.Typed(side.who)+"'s host id"); err != nil {
 			return nil, err
 		}
 	}
@@ -630,7 +631,7 @@ func (r *Registry) RegisterSupervision(ctx context.Context, initiative, project 
 
 func (l linkage) supervisionRefusal(ctx context.Context, lid, initiative, project string, supervisor, parent Endpoint, kind string, replay store.Row) (*linkRefusal, error) {
 	if supervisor.TaskID == parent.TaskID {
-		return &linkRefusal{reason: contract.RefusalScopeCycle, detail: "task " + pyvalue.StrRepr(supervisor.TaskID) + " cannot supervise itself",
+		return &linkRefusal{reason: contract.RefusalScopeCycle, detail: "task " + pyvalue.StrRepr(supervisor.TaskID) + " cannot be both the 부모 and the 자식",
 			scopeKind: scopeProject, scopeKey: project, incumbent: supervisor.TaskID, challenger: parent.TaskID}, nil
 	}
 	if initiative == project {
@@ -643,7 +644,7 @@ func (l linkage) supervisionRefusal(ctx context.Context, lid, initiative, projec
 	}
 	if reaches {
 		return &linkRefusal{reason: contract.RefusalScopeCycle,
-			detail:    "task " + pyvalue.StrRepr(supervisor.TaskID) + " already owns a scope below project " + pyvalue.StrRepr(project) + ", so supervising it would close a loop",
+			detail:    "task " + pyvalue.StrRepr(supervisor.TaskID) + " already owns a scope below project " + pyvalue.StrRepr(project) + ", so making it that project's 부모 would close a loop",
 			scopeKind: scopeProject, scopeKey: project, incumbent: project, challenger: supervisor.TaskID}, nil
 	}
 	if replay != nil {
@@ -665,14 +666,14 @@ func (l linkage) supervisionRefusal(ctx context.Context, lid, initiative, projec
 			ids[i] = colString(row, "link_id")
 		}
 		return &linkRefusal{reason: contract.RefusalDuplicateScopeOwner,
-			detail: "project " + pyvalue.StrRepr(project) + " already has more than one live execution supervision (" + strings.Join(ids, ", ") +
-				"), so there is no single supervision to register beside. The reading paths report this as competing_parents; repair the store rather than adding to it",
+			detail: "project " + pyvalue.StrRepr(project) + " already has more than one live execution edge (" + strings.Join(ids, ", ") +
+				"), so there is no single edge to register beside. The reading paths report this as competing_parents; repair the store rather than adding to it",
 			scopeKind: scopeProject, scopeKey: project, incumbent: colString(owning[0], "upper_key"), challenger: initiative}, nil
 	}
 	if len(owning) == 0 {
 		if kind == linkReference {
 			return &linkRefusal{reason: contract.RefusalUnregisteredScope,
-				detail:    "project " + pyvalue.StrRepr(project) + " has no execution supervisor yet, so there is no outcome to reference. Register its execution supervision first",
+				detail:    "project " + pyvalue.StrRepr(project) + " has no execution 부모 yet, so there is no outcome to reference. Register its execution edge first",
 				scopeKind: scopeProject, scopeKey: project, challenger: initiative}, nil
 		}
 		return nil, nil
@@ -682,27 +683,27 @@ func (l linkage) supervisionRefusal(ctx context.Context, lid, initiative, projec
 	if kind == linkExec && colString(held, "upper_kind") == scopeManagement {
 		// The 1.0 edge (a management session bound the project owner): name the seat, not an initiative of that name.
 		return &linkRefusal{reason: contract.RefusalDuplicateScopeOwner,
-			detail: "project " + pyvalue.StrRepr(project) + " already has its execution supervisor under " + heldID + " from management seat " + pyvalue.StrRepr(upper) +
-				" (a management session bound its owner); a project has one upward execution edge, so an initiative cannot supervise it as well. " +
+			detail: "project " + pyvalue.StrRepr(project) + " already has its execution 부모 under " + heldID + " from management seat " + pyvalue.StrRepr(upper) +
+				" (a management session bound its owner); a project has one upward execution edge, so an initiative cannot take another. " +
 				"A legacy initiative over the project is registered with linkage-supervise before the project owner's binding",
 			scopeKind: scopeProject, scopeKey: project, incumbent: upper, challenger: initiative}, nil
 	}
 	if kind == linkExec {
 		return &linkRefusal{reason: contract.RefusalDuplicateScopeOwner,
-			detail: "project " + pyvalue.StrRepr(project) + " already has its execution supervisor under " + heldID + " from initiative " + pyvalue.StrRepr(upper) +
-				"; another initiative references it instead of supervising it again",
+			detail: "project " + pyvalue.StrRepr(project) + " already has its execution 부모 under " + heldID + " from initiative " + pyvalue.StrRepr(upper) +
+				"; another initiative references it instead of taking a second execution edge",
 			scopeKind: scopeProject, scopeKey: project, incumbent: upper, challenger: initiative}, nil
 	}
 	if upper == initiative {
 		return &linkRefusal{reason: contract.RefusalLinkConflict,
-			detail: "initiative " + pyvalue.StrRepr(initiative) + " already supervises project " + pyvalue.StrRepr(project) + " under " + heldID +
+			detail: "initiative " + pyvalue.StrRepr(initiative) + " already holds the execution edge over project " + pyvalue.StrRepr(project) + " under " + heldID +
 				", so it cannot also reference it; a reference is how a DIFFERENT initiative reads this outcome",
 			scopeKind: scopeProject, scopeKey: project, incumbent: upper, challenger: initiative}, nil
 	}
 	if lower != parent.TaskID {
 		return &linkRefusal{reason: contract.RefusalDuplicateScopeOwner,
-			detail: "project " + pyvalue.StrRepr(project) + " is executed by parent " + pyvalue.StrRepr(lower) + ", so a reference naming " + pyvalue.StrRepr(parent.TaskID) +
-				" would clone its execution parent",
+			detail: "project " + pyvalue.StrRepr(project) + " is executed by 자식 " + pyvalue.StrRepr(lower) + ", so a reference naming " + pyvalue.StrRepr(parent.TaskID) +
+				" would clone its execution 자식",
 			scopeKind: scopeProject, scopeKey: project, incumbent: lower, challenger: parent.TaskID}, nil
 	}
 	return nil, nil
@@ -760,10 +761,10 @@ func (r *Registry) RegisterPeer(ctx context.Context, leftProject string, leftPar
 		name     string
 		endpoint Endpoint
 	}{{"left", leftParent}, {"right", rightParent}} {
-		if err := exact(side.endpoint.TaskID, "the "+side.name+" parent's task id"); err != nil {
+		if err := exact(side.endpoint.TaskID, "the "+side.name+" 자식's task id"); err != nil {
 			return nil, err
 		}
-		if err := exact(side.endpoint.HostID, "the "+side.name+" parent's host id"); err != nil {
+		if err := exact(side.endpoint.HostID, "the "+side.name+" 자식's host id"); err != nil {
 			return nil, err
 		}
 	}
@@ -802,12 +803,12 @@ func (r *Registry) RegisterPeer(ctx context.Context, leftProject string, leftPar
 				break
 			}
 			if len(held) == 0 || held[0] != s.endpoint.TaskID {
-				tail, incumbent := ", which has no registered parent", ""
+				tail, incumbent := ", which has no registered 자식", ""
 				if len(held) == 1 {
 					tail, incumbent = ", which is held by "+pyvalue.StrRepr(held[0]), held[0]
 				}
 				refusal = &linkRefusal{reason: contract.RefusalScopeRoleMismatch,
-					detail:    "task " + pyvalue.StrRepr(s.endpoint.TaskID) + " is not the registered parent of project " + pyvalue.StrRepr(s.project) + tail + "; a peer link joins two project parents",
+					detail:    "task " + pyvalue.StrRepr(s.endpoint.TaskID) + " is not the registered 자식 of project " + pyvalue.StrRepr(s.project) + tail + "; a peer link joins two project 자식 sessions",
 					scopeKind: scopeProject, scopeKey: s.project, incumbent: incumbent, challenger: s.endpoint.TaskID}
 				break
 			}
@@ -984,7 +985,7 @@ func (r *Registry) HandoverScopeKind(ctx context.Context, role, requested, key, 
 	}
 	if role == roleChild {
 		return nil, refuse(contract.RefusalScopeRoleMismatch, "a child is replaced by registering its successor with supersedes, which moves "+
-			"the assignment and its issue scope together; handover covers a supervisor or a parent")
+			"the assignment and its issue scope together; handover covers a 부모 or a 자식")
 	}
 	if strings.TrimSpace(evidence) == "" {
 		return nil, refuse(contract.RefusalHandoverUnconfirmed, "a handover carries its evidence")
@@ -1071,8 +1072,8 @@ func (r *Registry) HandoverScopeKind(ctx context.Context, role, requested, key, 
 				if len(stillHere) > 0 {
 					refusal = &linkRefusal{reason: contract.RefusalHandoverWouldStrand,
 						detail: kind + " " + pyvalue.StrRepr(key) + " still has unfinished work that this handover cannot move: " + pyvalue.Repr(strList(sortedSet(stillHere))) +
-							" (of which " + pyvalue.Repr(strList(unfinished)) + " is unfinished; a settled one still reopens under the parent named on its own row)" +
-							". An assignment's identity and its queued deliveries name its parent, so each one is moved by registering its successor with " +
+							" (of which " + pyvalue.Repr(strList(unfinished)) + " is unfinished; a settled one still reopens under the 자식 named on its own row)" +
+							". An assignment's identity and its queued deliveries name its 자식, so each one is moved by registering its successor with " +
 							"supersedes before the scope changes hands",
 						scopeKind: kind, scopeKey: key, incumbent: expect, challenger: endpoint.TaskID}
 				}
@@ -1314,7 +1315,7 @@ func (l linkage) competitor(ctx context.Context, kind, key, digest string, refer
 		switch why {
 		case "sole":
 			what = kind + " " + pyvalue.StrRepr(key) + " already has a live " + held.purpose + answering + " (" + recorded + "). A scope keeps" +
-				" one live " + held.purpose + ", and a second would leave the parent two versions of it with no recorded order between them"
+				" one live " + held.purpose + ", and a second would leave the 자식 two versions of it with no recorded order between them"
 		case "answer":
 			what = kind + " " + pyvalue.StrRepr(key) + " already has a live " + held.purpose + answering + " (" + recorded +
 				"). One message takes one answer of each purpose"
