@@ -206,3 +206,50 @@ func TestOutcomeDocsStateThePrecedence(t *testing.T) {
 		}
 	}
 }
+
+// TestDocsDescribeTheWriterHoldAndTheCancelDeadMember: the docs state the judgments of CRW-1495 that have no code. journal.md says
+// when a cancel's finished row carries `dead: true` and that readers do not read it, and that a binary before CRW-1487 reads a
+// paused end as dead (a rollback); script.md says the top-level string `state` of a completed script is its outcome whatever it means
+// to the script; flow.md says a writer's short hold of the run lock is not a process of the run (ps), that cancel waits up to 2 s for
+// it (cancel), and that every resume refuses a cancelled run (resume). The pins guard that the sentences exist; the behaviour is
+// pinned by the tests of the code (writer_hold_test.go, resume_refusal_test.go).
+func TestDocsDescribeTheWriterHoldAndTheCancelDeadMember(t *testing.T) {
+	read := func(path string) string {
+		t.Helper()
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(raw)
+	}
+	journal := read("../../../docs/flow/journal.md")
+	for _, want := range []string{"`dead: true`", "do not read the `dead` member", "before CRW-1487"} {
+		if !strings.Contains(journal, want) {
+			t.Errorf("journal.md does not say %q", want)
+		}
+	}
+	script := read("../../../docs/flow/script.md")
+	if !strings.Contains(script, "whatever that state means to the script") {
+		t.Error("script.md does not say the top-level state is the outcome whatever it means to the script")
+	}
+	ref := read(flowRef)
+	sections := map[string][]string{
+		"### crw flow ps":     {"is not a process of the run"},
+		"### crw flow pause":  {"signals nothing"},
+		"### crw flow cancel": {"waits up to 2 s"},
+		"### crw flow resume": {"A cancelled run is over", "refuses it"},
+	}
+	for heading, wants := range sections {
+		text := docSection(t, ref, heading)
+		for _, want := range wants {
+			if !strings.Contains(text, want) {
+				t.Errorf("the section %q of flow.md does not say %q:\n%s", heading, want, text)
+			}
+		}
+	}
+	for _, r := range tableRows(t, ref, "## The crw flow command table") {
+		if strings.HasPrefix(r, "| `crw flow resume RUN [SCRIPT] [--detach]` |") && !strings.Contains(r, "cancelled run") {
+			t.Errorf("the resume row of the command table does not refuse a cancelled run: %s", r)
+		}
+	}
+}
