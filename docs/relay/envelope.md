@@ -1,10 +1,10 @@
 # The shared envelope, and what is owed upward
 
-Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+The sessions in this document are named by [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and an issue child is no layer.
 
-Two relations carry messages here. A parent and its child exchange a completion and a
+Two relations carry messages here. A child and its issue child exchange a completion and a
 correction, and that pair has a queue, a receipt, an acknowledgement and a verdict. A
-supervisor and a parent exchange instructions and reports, and that pair has less: an
+parent and a child exchange instructions and reports, and that pair has less: an
 instruction downward is a linkage record rather than a send, and a report upward is a staged
 message and the recipient's own readback, which [the supervisor channel](supervisor-channel.md)
 owns. Neither has an acknowledgement or a verdict.
@@ -24,14 +24,14 @@ turn at all; whether one is actually produced is `supervision.select`, which als
 the fact is already in the record, whether a report was already produced for it, and whether the
 recipient can be reached.
 
-A **purpose** is why the message was sent, and each direction has its own set. The supervisor
+A **purpose** is why the message was sent, and each direction has its own set. The parent
 sends a project assignment, a midpoint check, a resume, a scope correction, a relayed decision
-or a user stop. The parent sends a completion, a block, a decision request or a status
+or a user stop. The child sends a completion, a block, a decision request or a status
 response, and the relay's fault ledger sends through it a fault notice or a fault decision. A purpose belongs to one direction and carries one kind, so a caller cannot label a
 completion as an instruction: `kind_of` derives it and refuses a pairing that does not exist.
 
 A relayed decision is a request rather than a decision. Jun has already decided; what the
-parent owes is the application, not another opinion.
+child owes is the application, not another opinion.
 
 ### Two identifiers
 
@@ -59,18 +59,18 @@ moment nothing has recorded a time.
 
 | Direction | transport_accepted | received | agreed | applied | verified |
 |---|---|---|---|---|---|
-| child to parent, completion | `attempts` | `acks` | `acks` | `verdicts` | `verdicts` |
-| parent to child, revision request | `attempts` | none | none | `events` | `verdicts` |
-| supervisor to parent, directive | none | `scope_directives` | `scope_directives` | none | none |
-| parent to supervisor | `supervisor_attempts` | `supervisor_readbacks` | none | none | none |
+| issue child to child, completion | `attempts` | `acks` | `acks` | `verdicts` | `verdicts` |
+| child to issue child, revision request | `attempts` | none | none | `events` | `verdicts` |
+| parent to child, directive | none | `scope_directives` | `scope_directives` | none | none |
+| child to parent | `supervisor_attempts` | `supervisor_readbacks` | none | none | none |
 
-The halves differ because the directions differ. A child's completion is acknowledged;
+The halves differ because the directions differ. An issue child's completion is acknowledged;
 `ack.acknowledge` exists for exactly that message and refuses a revision delivery. What shows a
 correction was applied is the completion receipt of the generation it opened.
 
 Where a column says none, the stage answers `not_applicable` and not `unmeasured`. The two are
 different news: unmeasured says go and look, not_applicable says there is nothing to look at.
-`check_reach` enforces the table, so a caller cannot hand the contract a supervisor
+`check_reach` enforces the table, so a caller cannot hand the contract a parent
 acknowledgement sourced from `acks` and have it written down.
 
 A stage answers `yes`, `no`, `conditional`, `unmeasured` or `not_applicable`, and a yes, no or
@@ -95,37 +95,37 @@ one live `project_assignment` and one live `scope_correction`, one answer per me
 purpose, and every other instruction stands beside them; a row with no pointer cannot be placed
 and competes with every live row of another digest, as all rows did before. `record_directive`
 refuses a purposed instruction that would compete for a place already held, and the walks report
-a contest only between instructions that do. The relation table, the priority a parent applies
+a contest only between instructions that do. The relation table, the priority a child applies
 and the replacement procedure are in [Where an instruction stands](linkage.md#where-an-instruction-stands).
 
 ## supervisor-obligation/1
 
 Three things are news for the level above: a completion, a new real block, and a decision only
-the user can make. The kind comes from the child's own report status - done and noop are
+the user can make. The kind comes from the issue child's own report status - done and noop are
 completions, blocked and budget-exhausted are blocks, unsafe and needs-human are decisions -
 and from the outcome only when no report exists. A failed or interrupted turn raises nothing:
-how a turn ended is the parent's business and re-dispatching it is ordinary work.
+how a turn ended is the child's business and re-dispatching it is ordinary work.
 
 An obligation id is derived from the kind, the relation and the subject, so one fact yields one
 obligation however many times it is read, across a restart or a service replacement.
 
 ### What this does not claim
 
-That a supervisor agreed to anything, acted on it, or confirmed it. No row in this store says
-so: `deliveries` holds one recipient per event and serves the registered parent-child pair, and
-`ack.acknowledge` records a parent acknowledging a child completion. What CAN now be said is
+That a parent agreed to anything, acted on it, or confirmed it. No row in this store says
+so: `deliveries` holds one recipient per event and serves the registered pair of a child and its issue child, and
+`ack.acknowledge` records a child acknowledging an issue child completion. What CAN now be said is
 narrower than it sounds - [the supervisor channel](supervisor-channel.md) stages a report, sends
 it and records a readback, which together say this attempt's delivery token is in the recipient's
 thread, in a turn the host names, and the turn the readback names is real there and did not
 begin before the send. That is arrival, not reading, and it is not the whole message either: the
 scan looks for that token alone - the request id and a random part drawn inside the claim - so it does not show the rest of the bytes arrived intact.
-For the turn the send opened it needs nothing from the supervisor at all.
+For the turn the send opened it needs nothing from the parent at all.
 Convergence still means one fact yields one obligation, not that a second wake was prevented
 somewhere else.
 
 ### What discharges one
 
-The Linear record the supervisor reads for itself, and only at `confirmed` - the state reached
+The Linear record the parent reads for itself, and only at `confirmed` - the state reached
 after a readback verified what was written. It has to be a `verdict` row, because a confirmed
 progress note is a real record about the same event and is different news, and it has to be in
 the document currently configured for that relationship, because a confirmation written to a
@@ -170,5 +170,5 @@ Source-implemented and covered by this package's own suite:
 `tests/test_supervisor_envelope.py`, `tests/test_supervisor_reporting.py` and
 `tests/test_supervisor_channel.py`. That is evidence about this source and about this package's
 own fake host, not about an installed runtime, an activated service, or any message reaching any
-supervisor on any machine. The round trip that IS claimed is the one
+parent on any machine. The round trip that IS claimed is the one
 [the channel document](supervisor-channel.md) describes and bounds.
