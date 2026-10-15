@@ -406,7 +406,7 @@ func decisionAnswerProvenance(ctx context.Context, opened *store.Store, record d
 		return answer, decisionBadInvocation(fmt.Sprintf("a %s-class decision takes an answer that names its own class: give --authority %s", grade, grade))
 	}
 	if !containsString(decisionUserAnswerVias(), answer.Via) {
-		return answer, decisionBadInvocation(fmt.Sprintf("a %s-class decision is answered through %s; --via %q reads the 자식's report, not the user's answer", grade, strings.Join(decisionUserAnswerVias(), ", "), answer.Via))
+		return answer, decisionBadInvocation(fmt.Sprintf("a %s-class decision is answered through %s; --via %q reads the 부모's report, not the user's answer", grade, strings.Join(decisionUserAnswerVias(), ", "), answer.Via))
 	}
 	if seat := strings.TrimSpace(record.Authority.Ref); seat != "" {
 		held, known, err := (&registry.Registry{Store: opened}).ManagementSeat(ctx, seat)

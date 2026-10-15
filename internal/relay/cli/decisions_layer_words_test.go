@@ -38,7 +38,7 @@ func TestDecisionRefusalTextNamesLayers(t *testing.T) {
 		detail, _ := value["detail"].(string)
 		decisionTextHasNoRoleWords(t, "the store-scope refusal with no binding", detail, "store-scope 부모 binding")
 	})
-	t.Run("a via that reads the report", func(t *testing.T) {
+	t.Run("a via that reads the 부모's report", func(t *testing.T) {
 		state := crw737Store(t)
 		review818SeedSupervisor(t, state, "task-sup")
 		decision := review818Raise(t, state, "Which window does the host update take?")
@@ -50,7 +50,10 @@ func TestDecisionRefusalTextNamesLayers(t *testing.T) {
 		if !strings.Contains(detail, typed) {
 			t.Fatalf("the via refusal %q does not echo %s", detail, typed)
 		}
-		decisionTextHasNoRoleWords(t, "the via refusal", strings.Replace(detail, typed, "--via", 1), "the 자식's report")
+		decisionTextHasNoRoleWords(t, "the via refusal", strings.Replace(detail, typed, "--via", 1), "the 부모's report")
+		if strings.Contains(detail, "자식") {
+			t.Errorf("the via refusal %q names the 자식; the supervisor readback is the 부모's report", detail)
+		}
 	})
 	t.Run("a parent-class raise without its ref", func(t *testing.T) {
 		state := crw737Store(t)
