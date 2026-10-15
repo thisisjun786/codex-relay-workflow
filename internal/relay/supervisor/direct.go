@@ -207,7 +207,10 @@ func (c *Channel) StageDirect(ctx context.Context, m DirectMessage, within func(
 	if err := checkDirect(m); err != nil {
 		return nil, err
 	}
-	resolution, err := c.Resolve(ctx, m.Relationship)
+	// The kind's grade: a decision the user owes is still heard through a store seat laid down for a
+	// management seat, and nothing else is (ResolveFor). Both resolves read at it.
+	grade := directGrade(directKinds[m.Kind])
+	resolution, err := c.ResolveFor(ctx, m.Relationship, grade)
 	if err != nil {
 		return nil, err
 	}
@@ -219,7 +222,7 @@ func (c *Channel) StageDirect(ctx context.Context, m DirectMessage, within func(
 	id := DirectMessageID(m)
 	var answer map[string]any
 	err = c.Store.Compose(ctx, func(ctx context.Context, _ *sql.Conn) error {
-		live, err := c.Resolve(ctx, m.Relationship)
+		live, err := c.ResolveFor(ctx, m.Relationship, grade)
 		if err != nil {
 			return err
 		}

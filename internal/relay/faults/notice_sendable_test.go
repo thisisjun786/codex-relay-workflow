@@ -15,7 +15,9 @@ type resolveOnly struct {
 	live map[string]any
 }
 
-func (c resolveOnly) Resolve(context.Context, string) (map[string]any, error) { return c.live, nil }
+func (c resolveOnly) Resolve(context.Context, string, bool) (map[string]any, error) {
+	return c.live, nil
+}
 
 func seedNoticeMessage(t *testing.T, ctx context.Context, s *store.Store, id, recipient, state, staged string, assignments ...string) {
 	t.Helper()

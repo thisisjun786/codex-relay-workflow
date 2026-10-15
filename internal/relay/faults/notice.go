@@ -20,9 +20,11 @@ const NoticePage = 20
 // StageNotice and Park are the channel's too: it composes the packet, freezes it
 // as one message per notification, and parks a message nothing of which has gone
 // (the hold and its journal row are the channel's), so this package asks and the
-// supervisor package answers.
+// supervisor package answers. Resolve's userGrade is true for a notice of kind decision: a
+// decision the user owes, which a store seat laid down for a management seat still carries while
+// it carries no other notice (CRW-1486/S4).
 type NoticeChannel interface {
-	Resolve(context.Context, string) (map[string]any, error)
+	Resolve(ctx context.Context, anchor string, userGrade bool) (map[string]any, error)
 	StageNotice(context.Context, map[string]any) (map[string]any, error)
 	Attempt(context.Context, string, float64, string) error
 	Recover(context.Context, string, float64) error
@@ -136,7 +138,7 @@ func (d *NoticeDeliverer) waitingFor(ctx context.Context, one map[string]any, no
 	if unfit := UnfitNotice(notice); unfit != "" {
 		return "the fault's " + unfit + " is not a value the ledger writes, so no notice can carry it; fault-show has the fault", nil
 	}
-	live, err := d.Channel.Resolve(ctx, relation)
+	live, err := d.Channel.Resolve(ctx, relation, notice["kind"] == "decision")
 	if err != nil {
 		if _, ok := err.(*NoticeError); ok {
 			return err.Error(), nil

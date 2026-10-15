@@ -104,7 +104,7 @@ func (w *storeRecipientWorld) resolve() (Resolution, error) {
 func (w *storeRecipientWorld) reading() map[string]any {
 	w.t.Helper()
 	c := &Channel{Store: w.s, Linkage: StoreLinkage{w.s}}
-	reading, err := c.hierarchyReading(w.ctx, w.relationship)
+	reading, err := c.hierarchyReading(w.ctx, w.relationship, GradeNotification)
 	if err != nil {
 		w.t.Fatalf("reading: %v", err)
 	}

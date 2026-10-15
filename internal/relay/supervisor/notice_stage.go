@@ -14,7 +14,12 @@ import (
 // unsent rows. Resolve joins ctx's read; the evidence line names this channel's store.
 func (n NoticeChannel) StageNotice(ctx context.Context, notice map[string]any) (map[string]any, error) {
 	faultID, _ := notice["faultId"].(string)
-	l, resolve, evidence := n.Ledger, n.Resolve, n.Channel.command("fault-show", "--fault", faultID)
+	l, evidence := n.Ledger, n.Channel.command("fault-show", "--fault", faultID)
+	// Both resolves read at the notice's grade: a decision notice is the user's (noticeGrade).
+	userGrade := noticeGrade(notice) == GradeUser
+	resolve := func(ctx context.Context, relation string) (map[string]any, error) {
+		return n.Resolve(ctx, relation, userGrade)
+	}
 	relation := noticeString(notice, "anchor")
 	if relation == "" {
 		return nil, &faults.NoticeError{Kind: "unregistered_scope", Detail: "fault '" + noticeString(notice, "faultId") + "' is about no relationship this store holds and its scope names no project, so nothing places it under a project and there is no level above to tell; the notification waits"}
