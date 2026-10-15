@@ -33,6 +33,10 @@ const (
 	// EvStepUnwritten is a flow warning of a session run: a step (its packet or its file) could not be written, so nothing was sent
 	// for it (input_state not_delivered); the run writes it again.
 	EvStepUnwritten = "step_unwritten"
+	// EvEvidencePlaced is the intent of a session call to write a flow evidence record under a directory no row of the call's newest
+	// generation names yet (CRW-1496): it names the directory (evidence_cwd), the record (evidence_assignment), the attempt and the
+	// marker, and is committed before the record is written, so every release and restore finds the record from the rows.
+	EvEvidencePlaced = "evidence_placed"
 
 	EvCompleted      = "completed"
 	EvNullModel      = "null_model"

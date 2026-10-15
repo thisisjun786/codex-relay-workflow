@@ -13,8 +13,9 @@ of a `flow_calls` row and the `seq` of a `flow_events` row, so reading a run bac
 saw. A row is never updated.
 
 - A dispatch intent (`prepared`, `thread_requested`, `fork_requested`, `turn_requested`, `interrupt_requested`, and the
-  `step_published` row of a session call) is committed in a transaction of its own before `Append` returns, and so before the
-  request it announces is sent (for a session call, before its step file and packet are written). The rows that wait before it
+  `step_published` and `evidence_placed` rows of a session call) is committed in a transaction of its own before `Append` returns,
+  and so before the request it announces is sent (for a session call, before its step file and packet are written, and before a
+  flow evidence record is written under the directory an `evidence_placed` row names). The rows that wait before it
   are committed first, in their own transaction, so the order on disk is the order of the run.
 - Every other row is written by the one run process in a batch transaction. It waits in memory until the next intent, the end
   of a call (its terminal row), the run's `started` and end rows (`finished`, or `run/paused`), or `Flush`, and is committed then, in order. A crash
@@ -63,6 +64,10 @@ saw. A row is never updated.
   before the place was recorded carries neither: its turn takes the place its step recorded, the `repair` member every
   `step_published` row has (the task turn 1, the repair 2), a later turn at that place replacing the earlier one, so an older journal
   is read from recorded members too and never from its held rows or k ([script.md](script.md#attempts-restarts-and-continuations)).
+- A session call's `evidence_placed` row (`detail_json`: `evidence_assignment`, `evidence_cwd`, `attempt`, `marker`) names a
+  directory the engine is about to write the step's flow evidence record under when no other row of the call's newest generation
+  names it (CRW-1496). It has no column of its own and no reader of a call's state counts it; the release and the restore read the
+  directories from it.
 
 - A command that writes into a run which may be alive (`report-up`, `report-ack`, `report-delivered`;
   [reporting.md](reporting.md)) is not the run's process and numbers its `flow_events` rows from `engine.ForeignSeqBase` (`1 << 40`).
