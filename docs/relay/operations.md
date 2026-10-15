@@ -743,8 +743,8 @@ rather than fresh. Process liveness is reported separately and is never counted 
 
 A recipient's supervisor messages (the upward channel, see [the supervisor
 channel](supervisor-channel.md)) go out one head at a time in the order they were staged, so a queue
-that grew while the recipient could not take a turn is read and cleared as a whole, through the store
-API and never with a hand-written query (CRW-1486).
+that grew while the recipient could not take a turn is read as a whole, through the store API and
+never with a hand-written query (CRW-1486).
 
 `supervisor-list --recipient <task> [--project <key>] [--state unsent|all] [--hold <word>|none]` is
 read-only: the recipient's messages in sending order (`messageId`, `relationshipId`, `projectKey`,
@@ -753,21 +753,8 @@ read-only: the recipient's messages in sending order (`messageId`, `relationship
 obligation kind (`supervisor-list/1`). `unsent`, the default, is what still waits: queued, deferred
 busy or withheld before a send. `--hold none` lists the messages that carry no hold.
 
-`supervisor-acknowledge --recipient <task> --actor <task>` parks old notifications without a turn
-each. `--all-informational [--project <key>] [--staged-before <ISO time with offset>]` parks the
-recipient's unsent messages that report something finished (`completion`, `flow_completion`,
-`flow_milestone_report`, `lead_report`); `--message <id>`, repeatable, parks the named messages of any
-notification kind, a `blocked` one included. A parked message is held `superseded_by_report` with one
-`supervisor_message_superseded` journal row naming `supervisor-acknowledge` and the actor, all in one
-store transaction, and the update is guarded so a message an attempt may have sent is never parked.
-What is left is reported per message with its reason: `answer_owed` (a decision), `fault_notice` (its
-own channel parks it), `claimed` (a send is under way or may have gone), `not_unsent`, `held`,
-`not_informational` (a block, an escalation, a design question or a land review under the bulk form),
-`not_found` and `other_recipient`. When a park is kept or released is the channel's [hold rule](supervisor-channel.md#the-hold-rule): the same statement staged again keeps it, whoever stages it; a new statement, another recipient or a send by id (`supervisor-send --message <id>`) releases it. The command's `release` field says the same.
-
 A message that waits on a busy recipient is not a backlog: it is deferred with the busy backoff and
-woken by the recipient's idle edge ([the supervisor channel](supervisor-channel.md#the-surface)), and
-acknowledging older messages does not move it sooner.
+woken by the recipient's idle edge ([the supervisor channel](supervisor-channel.md#the-surface)).
 
 ## When the host loses an accepted turn
 

@@ -284,34 +284,6 @@ func (c *Channel) StageDirect(ctx context.Context, m DirectMessage, within func(
 		if same && !moved && existing.Get("hold_reason") == nil {
 			return finish(false, "this message is already staged; one report is one message", nil)
 		}
-		// A superseded_by_report hold is kept or released by the hold rule (holdDecision) alone. The
-		// statement is the same when the report composed with the stored sender is the stored packet, so
-		// another sender session repeating it states the same thing; a direct report is owed while its
-		// sender stages it. The update below writes a release; a kept hold returns here.
-		if existing.Text("hold_reason") == store.SupervisorHoldSuperseded {
-			sameRecipient := existing.Text("recipient_task_id") == live.Recipient
-			sameStatement := same
-			if !sameStatement {
-				stored := live
-				stored.Sender = existing.Text("sender_task_id")
-				restated := c.composeDirect(m, stored, at)
-				if observed := storedObservedAt(pyvalue.Str(existing.Get("packet"))); observed != "" {
-					restated["envelope"].(map[string]any)["observedAt"] = observed
-				}
-				sameStatement = directDumps(restated) == pyvalue.Str(existing.Get("packet"))
-			}
-			kind, err := holdKindOf(ctx, c.Store, id, existing.Text("hold_reason"), existing.Text("obligation_kind"))
-			if err != nil {
-				return err
-			}
-			verdict, why, err := holdDecision(kind, holdChange{Entry: entryRestage, SameStatement: sameStatement, SameRecipient: sameRecipient}, nil)
-			if err != nil {
-				return err
-			}
-			if verdict != holdRelease {
-				return finish(false, why, nil)
-			}
-		}
 		result, err := noticeExec(ctx, c.Store, "UPDATE supervisor_messages SET packet=?,sender_task_id=?,recipient_task_id=?,project_key=?,state='queued',next_eligible_at=NULL,"+
 			"hold_reason=CASE WHEN hold_reason IN (?,?) THEN NULL ELSE hold_reason END,updated_at=? WHERE message_id=? AND "+store.SupervisorNeverSentSQL()+
 			" AND packet=? AND sender_task_id=? AND recipient_task_id=?", encoded, live.Sender, live.Recipient, nullString(live.ProjectKey),

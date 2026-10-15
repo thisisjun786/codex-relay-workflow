@@ -398,8 +398,7 @@ var supervisorShowCommand = dispatch.Command{Name: "supervisor-show", ReadOnly: 
 	return answerValue(result), nil
 }}
 
-// supervisor-list and supervisor-acknowledge (CRW-1486/S4, findings 6 and 9): a recipient's queue
-// read whole through the store API, and its old notifications parked without a turn each.
+// supervisor-list (CRW-1486/S4, finding 9): a recipient's queue read whole through the store API.
 
 var supervisorListCommand = dispatch.Command{Name: "supervisor-list", ReadOnly: true, Run: func(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
 	recipient, ok := args.TruthyString("recipient")
@@ -420,68 +419,6 @@ var supervisorListCommand = dispatch.Command{Name: "supervisor-list", ReadOnly: 
 	}
 	return answerValue(answer), nil
 }}
-
-// acknowledgeLine is the acknowledgement a supervisor-acknowledge line asks for, or the usage error
-// that refuses it before the store is read.
-func acknowledgeLine(args dispatch.Args) (supervisor.AcknowledgeRequest, error) {
-	usage := func(detail string) (supervisor.AcknowledgeRequest, error) {
-		return supervisor.AcknowledgeRequest{}, &dispatch.UsageError{Detail: detail, Code: contract.ExitUsage}
-	}
-	req := supervisor.AcknowledgeRequest{AllInformational: args.Bool("all-informational")}
-	var ok bool
-	if req.Recipient, ok = args.TruthyString("recipient"); !ok {
-		return usage("an acknowledgement parks one recipient's messages: --recipient names the task they are addressed to")
-	}
-	if req.Actor, ok = args.TruthyString("actor"); !ok {
-		return usage("an acknowledgement records who parked each message: --actor names the task that acknowledges them")
-	}
-	for _, id := range args.Strings("message") {
-		if id == "" {
-			return usage("--message names a message id; an empty one names nothing")
-		}
-		req.Messages = append(req.Messages, id)
-	}
-	if req.AllInformational == (len(req.Messages) > 0) {
-		return usage("an acknowledgement takes --all-informational or one or more --message, one of the two")
-	}
-	project, hasProject := args.TruthyString("project")
-	before, hasBefore := args.TruthyString("staged-before")
-	if !req.AllInformational && (hasProject || hasBefore) {
-		return usage("--project and --staged-before narrow --all-informational; a message named by --message is parked whatever its project and staging time")
-	}
-	req.Project = project
-	if hasBefore {
-		at, err := time.Parse(time.RFC3339Nano, before)
-		if err != nil {
-			return usage("--staged-before is an ISO 8601 time with its offset, such as 2026-10-13T12:50:00Z, not " + pyvalue.StrRepr(before))
-		}
-		req.StagedBefore = &at
-	}
-	return req, nil
-}
-
-var supervisorAcknowledgeCommand = dispatch.Command{Name: "supervisor-acknowledge",
-	Validate: func(_ dispatch.Services, args dispatch.Args) error {
-		_, err := acknowledgeLine(args)
-		return err
-	},
-	Run: func(ctx context.Context, services dispatch.Services, args dispatch.Args) (any, error) {
-		req, err := acknowledgeLine(args)
-		if err != nil {
-			return nil, err
-		}
-		req.At = delivery.ISOOf(clockNow())
-		c, close, err := supervisorChannel(ctx, services)
-		if err != nil {
-			return nil, err
-		}
-		defer close()
-		answer, err := c.Acknowledge(ctx, req)
-		if err != nil {
-			return nil, supervisorResult(err)
-		}
-		return answerValue(answer), nil
-	}}
 
 func requireSupervisorHost(services dispatch.Services, name, why string) error {
 	if services.SocketPath == "" {

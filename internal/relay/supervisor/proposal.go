@@ -112,9 +112,27 @@ func (c *Channel) refreshProposal(ctx context.Context, row store.SupervisorMessa
 	if err != nil {
 		return false, err
 	}
-	comparison, err := c.comparablePacket(ctx, row, *o, r, at)
+	old := evidence.Decode(row.Packet)
+	observed := evidence.Dict(evidence.Item(old, "envelope"), false)["observedAt"]
+	current, err := c.Compose(ctx, *o, r, at)
 	if err != nil {
 		return false, err
+	}
+	if observed != nil {
+		current["envelope"].(map[string]any)["observedAt"] = observed
+	}
+	comparison, err := canonicalPacket(current)
+	if err != nil {
+		return false, err
+	}
+	// A packet stored before recipient.scopeKind existed carries no such field, so the freshly
+	// composed one always differs. Compare without it there: adding the field alone is not a
+	// change to the message, and a restatement made for something else still writes it.
+	if !recipientScopeKindRecorded(row.Packet) {
+		comparison, err = canonicalPacket(packetWithoutRecipientScopeKind(current))
+		if err != nil {
+			return false, err
+		}
 	}
 	if comparison == row.Packet && eventID == row.EventID.String && (!row.SubmissionNo.Valid && report.submission == 0 || row.SubmissionNo.Valid && row.SubmissionNo.Int64 == report.submission) {
 		return false, nil
@@ -151,28 +169,6 @@ func (c *Channel) refreshProposal(ctx context.Context, row store.SupervisorMessa
 	detail := pyjson.Dumps(contract.OrderedObject{{Key: "fromEvent", Value: row.EventID.String}, {Key: "toEvent", Value: eventID}, {Key: "fromSubmission", Value: optionalNumber(row.SubmissionNo)}, {Key: "toSubmission", Value: optionalNumber(submission)}, {Key: "at", Value: instant}, {Key: "reason", Value: "what the obligation says moved after staging and nothing had been sent, so the message now carries what is owed now"}}, pyjson.Options{})
 	_, err = c.Store.Q(ctx).ExecContext(ctx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_restated',?,?)", at, row.MessageID, detail)
 	return true, err
-}
-
-// comparablePacket is the packet obligation o composes for resolution r now, in the form compared
-// with row's stored packet: observed at the instant the stored one was (the observation time is not
-// what the message says), and without recipient.scopeKind when the stored packet predates that field
-// (adding the field alone is not a change to the message, and a restatement made for something else
-// still writes it).
-func (c *Channel) comparablePacket(ctx context.Context, row store.SupervisorMessagesRow, o Obligation, r Resolution, at string) (comparison string, err error) {
-	defer evidence.RecoverPython(&err)
-	old := evidence.Decode(row.Packet)
-	observed := evidence.Dict(evidence.Item(old, "envelope"), false)["observedAt"]
-	current, err := c.Compose(ctx, o, r, at)
-	if err != nil {
-		return "", err
-	}
-	if observed != nil {
-		current["envelope"].(map[string]any)["observedAt"] = observed
-	}
-	if !recipientScopeKindRecorded(row.Packet) {
-		return canonicalPacket(packetWithoutRecipientScopeKind(current))
-	}
-	return canonicalPacket(current)
 }
 
 // refreshEventlessProposal keeps an eventless omission's stored packet naming the seat its recipient
@@ -304,37 +300,15 @@ const (
 	supersededReleasedReason = "what this message is for is owed through it again, so the " + store.SupervisorHoldSuperseded + " hold is released"
 )
 
-// holdSuperseded settles a send whose obligation moved before the transport started and holds its
-// message as the channel's derived superseded_by_report, as the hold rule (holdDecision, entryDerive)
-// allows on a message that carries no hold; a message that already carries one keeps it.
 func (c *Channel) holdSuperseded(ctx context.Context, id, requestID string, attemptNo int64, at, detail, owner string) error {
-	current, err := c.Get(ctx, id)
-	if err != nil {
-		return err
-	}
-	held, err := c.rowHoldKind(ctx, current)
-	if err != nil {
-		return err
-	}
-	verdict, _, err := holdDecision(held, holdChange{Entry: entryDerive}, nil)
-	if err != nil {
-		return err
-	}
-	hold := current.HoldReason
-	if verdict == holdSet {
-		hold = sql.NullString{String: store.SupervisorHoldSuperseded, Valid: true}
-	}
 	record := pyjson.Dumps(map[string]any{"requestId": requestID, "messageId": id, "attemptNo": attemptNo, "deliveryState": "withheld_pre_send", "sendAttempted": "no", "retrySafe": true, "reason": "what is owed moved between the claim and the transport", "proposal": "obsolete", "detail": detail}, pyjson.Options{SortKeys: true})
 	if err := c.Store.SettleSupervisorAttempt(ctx, requestID, "withheld_pre_send", "no", 1, sql.NullString{}, record, at); err != nil {
 		return err
 	}
-	if _, err := c.Store.SettleSupervisorMessage(ctx, id, "queued", sql.NullFloat64{}, hold, at, "sending", attemptNo, sql.NullString{String: owner, Valid: true}); err != nil {
+	if _, err := c.Store.SettleSupervisorMessage(ctx, id, "queued", sql.NullFloat64{}, sql.NullString{String: store.SupervisorHoldSuperseded, Valid: true}, at, "sending", attemptNo, sql.NullString{String: owner, Valid: true}); err != nil {
 		return err
 	}
-	if verdict != holdSet {
-		return nil
-	}
-	_, err = c.Store.Q(ctx).ExecContext(ctx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_superseded',?,?)", at, id, pyjson.Dumps(contract.OrderedObject{{Key: "requestId", Value: requestID}, {Key: "detail", Value: detail}}, pyjson.Options{}))
+	_, err := c.Store.Q(ctx).ExecContext(ctx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_superseded',?,?)", at, id, pyjson.Dumps(contract.OrderedObject{{Key: "requestId", Value: requestID}, {Key: "detail", Value: detail}}, pyjson.Options{}))
 	return err
 }
 
@@ -362,28 +336,24 @@ func (c *Channel) reopenAddressed(ctx context.Context, row store.SupervisorMessa
 	})
 }
 
-// reopenProposal asks the hold rule (holdDecision) whether row's superseded_by_report hold is released
-// by this staging or attempt, and writes the release when it is and the recipient is the one the
-// hierarchy names; another recipient's release is written by the re-address that follows. change
-// carries the entry and, for a staging, whether the statement is the same; the recipient is read here.
-// It answers the kind of hold and the verdict, so a staging that keeps an acknowledgement's park can
-// answer it.
-func (c *Channel) reopenProposal(ctx context.Context, row store.SupervisorMessagesRow, at string, change holdChange) (kind holdKind, verdict holdVerdict, err error) {
-	kind, verdict = holdNone, holdKeep
-	err = c.Store.Compose(ctx, func(tx context.Context, _ *sql.Conn) error {
+func (c *Channel) reopenProposal(ctx context.Context, row store.SupervisorMessagesRow, at string) error {
+	return c.Store.Compose(ctx, func(tx context.Context, _ *sql.Conn) error {
 		live, err := c.Get(tx, row.MessageID)
 		if err != nil || live.HoldReason.String != store.SupervisorHoldSuperseded {
-			return err
-		}
-		if kind, err = c.rowHoldKind(tx, live); err != nil {
 			return err
 		}
 		r, err := c.ResolveFor(tx, live.RelationshipID, rowGrade(live))
 		if err != nil {
 			return err
 		}
-		change.SameRecipient = r.Recipient == live.RecipientTaskID
-		if verdict, _, err = holdDecision(kind, change, c.owedThrough(tx, live, r, at)); err != nil || verdict != holdRelease || !change.SameRecipient {
+		if r.Recipient != live.RecipientTaskID {
+			return nil
+		}
+		_, err = c.refreshProposal(tx, live, r, at, 0)
+		if refusal := new(Refusal); errors.As(err, refusal) && refusal.Reason == "superseded_revision" {
+			return nil
+		}
+		if err != nil {
 			return err
 		}
 		result, err := c.Store.Q(tx).ExecContext(tx, "UPDATE supervisor_messages SET hold_reason=NULL,next_eligible_at=NULL,updated_at=? WHERE message_id=? AND hold_reason='"+store.SupervisorHoldSuperseded+"' AND "+store.SupervisorUnsentSQL(""), at, row.MessageID)
@@ -398,7 +368,6 @@ func (c *Channel) reopenProposal(ctx context.Context, row store.SupervisorMessag
 		_, err = c.Store.Q(tx).ExecContext(tx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_reopened',?,?)", at, row.MessageID, detail)
 		return err
 	})
-	return kind, verdict, err
 }
 
 func (c *Channel) loadSettings(ctx context.Context, task string) (*delivery.TaskSettings, error) {

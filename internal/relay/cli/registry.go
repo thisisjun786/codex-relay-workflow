@@ -24,8 +24,8 @@ func init() {
 		reportingShowCommand, reportingDeriveCommand, supervisorSelectCommand, supervisorStandingCommand,
 		supervisorReportRecordedCommand, supervisorStageCommand, supervisorSendCommand, supervisorReadCommand,
 		supervisorShowCommand, showCommand, statusCommand, daemonCommand)
-	// A recipient's queue read whole and its old notifications parked (CRW-1486/S4).
-	dispatch.Register(nil, supervisorListCommand, supervisorAcknowledgeCommand)
+	// A recipient's queue read whole (CRW-1486/S4).
+	dispatch.Register(nil, supervisorListCommand)
 	dispatch.Register(nil, serviceCommands()...)
 	dispatch.Register(nil, doctorCommand, storeIdentityCommand, storeChallengeCommand, storeHaltClearCommand, mergeEvidenceCommand)
 	// The user-decision commands (CRW-737).

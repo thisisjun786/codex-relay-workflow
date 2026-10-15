@@ -7,10 +7,8 @@ import (
 	"testing"
 )
 
-// CRW-1486/S4 (findings 6 and 9): the store half of supervisor-list and supervisor-acknowledge. The
-// list reads one recipient's messages through the unsent test the channel already writes, and the
-// acknowledgement parks a row under the existing superseded hold with the existing journal kind, in
-// one transaction, only while nothing of the row can have gone.
+// CRW-1486/S4 (finding 9): the store half of supervisor-list. The list reads one recipient's messages
+// through the unsent test the channel already writes.
 
 type listSeed struct {
 	id, obligationKind, kind, project, state, hold, stagedAt string
@@ -79,70 +77,5 @@ func TestListSupervisorMessagesReadsOneRecipientsQueue(t *testing.T) {
 	}
 	if _, err := s.ListSupervisorMessages(ctx, SupervisorListFilter{Recipient: "R", State: "settled"}); err == nil {
 		t.Error("a state the list does not know was accepted")
-	}
-}
-
-// TestAcknowledgeSupervisorMessagesParksOnlyANeverSentRow: the guarded update parks an unsent,
-// unheld row nothing of which can have gone, writes one supervisor_message_superseded row with the
-// detail it was given, and leaves a held row, a sending row, a row with an attempt that may have
-// gone, a decision and a fault notice exactly as they were.
-func TestAcknowledgeSupervisorMessagesParksOnlyANeverSentRow(t *testing.T) {
-	s := recordStore(t)
-	seedListRows(t, s, "R",
-		listSeed{"park", "completion", "notification", "P1", "queued", "", "2026-10-13T12:50:01.000000+00:00"},
-		listSeed{"busy", "completion", "notification", "P1", "deferred_busy", "", "2026-10-13T12:50:02.000000+00:00"},
-		listSeed{"held", "completion", "notification", "P1", "queued", SupervisorHoldUnaddressed, "2026-10-13T12:50:03.000000+00:00"},
-		listSeed{"sending", "completion", "notification", "P1", "sending", "", "2026-10-13T12:50:04.000000+00:00"},
-		listSeed{"gone", "completion", "notification", "P1", "withheld_pre_send", "", "2026-10-13T12:50:05.000000+00:00"},
-		listSeed{"decision", "decision_request", "decision", "P1", "queued", "", "2026-10-13T12:50:06.000000+00:00"},
-		listSeed{"notice", SupervisorNoticeObligationKind, "notification", "P1", "queued", "", "2026-10-13T12:50:07.000000+00:00"},
-	)
-	ctx := context.Background()
-	if _, err := s.DB.ExecContext(ctx, "INSERT INTO supervisor_attempts(request_id,message_id,attempt_no,message,state,send_attempted,retry_safe,record,sent_at,observed_at) VALUES('rq-gone','gone',1,'m','held_uncertain','unknown',0,'{}','t','t')"); err != nil {
-		t.Fatal(err)
-	}
-	before := map[string]SupervisorMessagesRow{}
-	ids := []string{"park", "busy", "held", "sending", "gone", "decision", "notice", "absent"}
-	for _, id := range ids[:7] {
-		row, err := s.SupervisorMessage(ctx, id)
-		if err != nil {
-			t.Fatal(err)
-		}
-		before[id] = row
-	}
-	const detail = `{"detail": "acknowledged", "by": "supervisor-acknowledge", "actor": "R"}`
-	parked, err := s.AcknowledgeSupervisorMessages(ctx, ids, "2026-10-15T00:00:00.000000+00:00", detail)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := []string{"park", "busy"}; !slices.Equal(parked, want) {
-		t.Fatalf("parked %v, want %v", parked, want)
-	}
-	for _, id := range ids[:7] {
-		row, err := s.SupervisorMessage(ctx, id)
-		if err != nil {
-			t.Fatal(err)
-		}
-		entries, err := s.Journal(ctx, "supervisor_message_superseded", id)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if slices.Contains(parked, id) {
-			if row.HoldReason.String != SupervisorHoldSuperseded || row.State != before[id].State || row.UpdatedAt != "2026-10-15T00:00:00.000000+00:00" {
-				t.Errorf("%s after the acknowledgement: %+v", id, row)
-			}
-			if len(entries) != 1 || entries[0].Detail != detail {
-				t.Errorf("%s journaled %+v, want one row with the given detail", id, entries)
-			}
-			continue
-		}
-		if row != before[id] || len(entries) != 0 {
-			t.Errorf("%s moved: %+v (was %+v), journal %+v", id, row, before[id], entries)
-		}
-	}
-	// Again: nothing is unheld any more, so nothing moves and nothing is journaled twice.
-	again, err := s.AcknowledgeSupervisorMessages(ctx, ids, "2026-10-15T00:01:00.000000+00:00", detail)
-	if err != nil || len(again) != 0 {
-		t.Fatalf("a second acknowledgement parked %v (%v)", again, err)
 	}
 }
