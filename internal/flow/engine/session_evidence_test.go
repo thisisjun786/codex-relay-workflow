@@ -561,6 +561,28 @@ return [qa.status]`)
 		}
 	})
 
+	// IgnoredByTheReceiptName: whether git ignores the receipt is asked of the step's own receipt file <id>.md, so a rule that
+	// matches another name in .crw/evidence (here receipt.md) does not make the step's receipt ignored, and one that matches only the
+	// receipt's own name does.
+	t.Run("IgnoredByTheReceiptName", func(t *testing.T) {
+		for _, tc := range []struct {
+			name, ignore string
+			want         bool
+		}{{"another name", ".crw/evidence/receipt.md\n", false}, {"its own name", ".crw/evidence/*.md\n!.crw/evidence/receipt.md\n", true}} {
+			t.Run(tc.name, func(t *testing.T) {
+				k := newEvidenceKit(t, true, tc.ignore)
+				res := k.h.run(evidenceExe)
+				if got := value[[]any](t, res); got[0] != "completed" {
+					t.Fatalf("result %v", got)
+				}
+				rows := k.rowsOf("exe")
+				if v, ok := rows[1].Data["evidence_ignored"]; !ok || v != tc.want {
+					t.Errorf("step_published %v, want evidence_ignored %v", rows[1].Data, tc.want)
+				}
+			})
+		}
+	})
+
 	// NotForReadRoles: the read roles get no record, no directory and today's message.
 	t.Run("NotForReadRoles", func(t *testing.T) {
 		k := newEvidenceKit(t, true, ".crw/\n")

@@ -87,7 +87,7 @@ func (c *callRun) ensureEvidence(marker string) error {
 		}
 	}
 	if ev.ignored == nil {
-		if ignored, err := evidence.ReceiptIgnored(rec.Root); err == nil {
+		if ignored, err := evidence.ReceiptIgnored(rec); err == nil {
 			ev.ignored = &ignored
 		}
 	}

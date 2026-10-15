@@ -217,12 +217,13 @@ func AcceptedReceipt(cwd, sessionID, id string) (FlowReceipt, bool) {
 	return FlowReceipt{Path: FlowReceiptPath(a), Digest: a.ReceiptDigest, AgentID: a.AgentID, TurnID: a.TurnID, Bytes: raw}, true
 }
 
-// ReceiptIgnored reports whether git ignores a receipt under root's .crw/evidence (git check-ignore through the bounded probe):
-// true when it does, false when root is a checkout that does not, and an error when git could not answer (root in no repository,
-// or git failed).
-func ReceiptIgnored(root string) (bool, error) {
-	_, err := source.Probe(root, source.ProbeOptions{Limit: 1 << 16, Timeout: gitprobe.Timeout, Env: []string{"LC_ALL=C"}},
-		"check-ignore", "-q", filepath.ToSlash(filepath.Join(crwdir.DirName, Subdir, "receipt.md")))
+// ReceiptIgnored reports whether git ignores the receipt of a, its own file FlowReceiptPath (git check-ignore through the bounded
+// probe, in a's root): true when it does, false when the root is a checkout that does not, and an error when git could not answer
+// (the root in no repository, or git failed). The receipt's own name is asked, so a rule that matches only another name in
+// .crw/evidence decides nothing for it.
+func ReceiptIgnored(a Assignment) (bool, error) {
+	_, err := source.Probe(a.Root, source.ProbeOptions{Limit: 1 << 16, Timeout: gitprobe.Timeout, Env: []string{"LC_ALL=C"}},
+		"check-ignore", "-q", "--", filepath.ToSlash(filepath.Join(crwdir.DirName, Subdir, a.ID+".md")))
 	if err == nil {
 		return true, nil
 	}
@@ -230,5 +231,5 @@ func ReceiptIgnored(root string) (bool, error) {
 	if errors.As(err, &exit) && exit.Code == 1 {
 		return false, nil
 	}
-	return false, fmt.Errorf("git check-ignore in %s: %w", root, err)
+	return false, fmt.Errorf("git check-ignore in %s: %w", a.Root, err)
 }

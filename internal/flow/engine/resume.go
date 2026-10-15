@@ -124,6 +124,14 @@ func (c *callRun) replayFrom(rows []Event, prep Event) bool {
 	if term.Event == EvCompleted {
 		c.e.noteExecutor(c.plan.node, rowStr(term.Data, "pending_tree"))
 	}
+	switch term.Event {
+	case EvCompleted, EvNullModel, EvRefused:
+		// a session call that ended with this row: the flow evidence records its attempts left open go now, because the process
+		// that wrote the row may have died before its end released them (sessionEnd); a claimed record stays (CRW-1482)
+		if c.sess != nil {
+			c.e.evidenceRelease(rows)
+		}
+	}
 	return true
 }
 

@@ -130,6 +130,26 @@ func TestSessionEvidenceAttemptLifetime(t *testing.T) {
 		noOpenRecord(t, "after the resumed call completed", k.evCwd)
 	})
 
+	// CompletedReplayedAfterDeath: a process that wrote the completed row of an attempt whose subagent never claimed its record (the
+	// row says missing) and died before it ended the call leaves that record open; the resumed run replays the completed call and
+	// releases it, so the owner's later children that show no packet are not refused by it.
+	t.Run("CompletedReplayedAfterDeath", func(t *testing.T) {
+		k := newEvidenceKit(t, true, ".crw/\n")
+		k.die(t, deathAt(EvCompleted), evidenceExe)
+		if got := evidenceRecords(t, k.evCwd); len(got) != 1 {
+			t.Fatalf("records the dead process left %v, want the open record of the completed attempt", got)
+		}
+		k.setOrch(nil, nil)
+		res := k.h.run(evidenceExe)
+		if got := value[[]any](t, res); got[0] != "completed" {
+			t.Fatalf("resumed %v: rows %s", got, eventsOf(k.rowsOf("exe")))
+		}
+		if n := len(rowsNamed(k.rowsOf("exe"), EvPrepared)); n != 1 {
+			t.Fatalf("%d prepared rows: the completed call was not replayed (rows %s)", n, eventsOf(k.rowsOf("exe")))
+		}
+		noOpenRecord(t, "after the completed call was replayed", k.evCwd)
+	})
+
 	// OpenSupersededByResume: a call the previous process left open with its step published is superseded by the resumed call of its
 	// position (an explorer now): its open record goes with it.
 	t.Run("OpenSupersededByResume", func(t *testing.T) {

@@ -474,16 +474,25 @@ func TestFlowAssignment(t *testing.T) {
 			}
 			return dir
 		}
-		if ignored, err := ReceiptIgnored(repo(t, "bin/\n.crw/\n")); err != nil || !ignored {
+		const id = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+		at := func(root string) Assignment { return Assignment{Root: root, ID: id} }
+		// the receipt's own name is asked: a rule for another name in .crw/evidence decides nothing for it
+		if ignored, err := ReceiptIgnored(at(repo(t, ".crw/evidence/receipt.md\n"))); err != nil || ignored {
+			t.Fatalf("a rule that matches only another name: %v, %v", ignored, err)
+		}
+		if ignored, err := ReceiptIgnored(at(repo(t, ".crw/evidence/*.md\n!.crw/evidence/receipt.md\n"))); err != nil || !ignored {
+			t.Fatalf("a rule that matches the receipt's own name: %v, %v", ignored, err)
+		}
+		if ignored, err := ReceiptIgnored(at(repo(t, "bin/\n.crw/\n"))); err != nil || !ignored {
 			t.Fatalf("a repo that ignores .crw/: %v, %v", ignored, err)
 		}
-		if ignored, err := ReceiptIgnored(repo(t, "bin/\n")); err != nil || ignored {
+		if ignored, err := ReceiptIgnored(at(repo(t, "bin/\n"))); err != nil || ignored {
 			t.Fatalf("a repo that does not ignore .crw/: %v, %v", ignored, err)
 		}
-		if ignored, err := ReceiptIgnored(repo(t, "")); err != nil || ignored {
+		if ignored, err := ReceiptIgnored(at(repo(t, ""))); err != nil || ignored {
 			t.Fatalf("a repo without .gitignore: %v, %v", ignored, err)
 		}
-		if ignored, err := ReceiptIgnored(flowTestTree(t)); err == nil {
+		if ignored, err := ReceiptIgnored(at(flowTestTree(t))); err == nil {
 			t.Fatalf("outside git: %v without an error", ignored)
 		}
 	})
