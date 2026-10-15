@@ -148,10 +148,10 @@ func supervisorQueueSafe(cfg *Config, thread, logicalID string) error {
 		return err
 	}
 	root := crwconfig.JoinRoot(cfg.StateDir, supervisorQueueDir)
-	if err := sendParentNoSymlink(root, "supervisor queue directory"); err != nil {
+	if err := sendParentNoSymlink(root, "부모 queue directory"); err != nil {
 		return err
 	}
-	return sendParentNoSymlink(crwconfig.JoinRoot(root, thread), "supervisor queue thread directory")
+	return sendParentNoSymlink(crwconfig.JoinRoot(root, thread), "부모 queue thread directory")
 }
 
 // supervisorQueueWrite writes the notice into the queue of its thread. A notice of the same logical id and the same text is already
@@ -186,7 +186,7 @@ func supervisorQueueFind(cfg *Config, n supervisorNotice) (state string, found b
 		}
 		var existing supervisorNotice
 		if json.Unmarshal(raw, &existing) != nil || existing.Text != n.Text {
-			return "", false, fmt.Errorf("crw manage: the logical id %q already belongs to another supervisor notice", n.LogicalID)
+			return "", false, fmt.Errorf("crw manage: the logical id %q already belongs to another 부모 notice", n.LogicalID)
 		}
 		return probe.state, true, nil
 	}
@@ -237,10 +237,10 @@ func supervisorQueueRead(dir, name string) (supervisorNotice, error) {
 		return n, err
 	}
 	if err := json.Unmarshal(raw, &n); err != nil {
-		return n, fmt.Errorf("the supervisor notice %s is not JSON: %w", name, err)
+		return n, fmt.Errorf("the 부모 notice %s is not JSON: %w", name, err)
 	}
 	if n.LogicalID == "" || n.Text == "" || n.Thread == "" {
-		return n, fmt.Errorf("the supervisor notice %s lacks its logical id, thread or text", name)
+		return n, fmt.Errorf("the 부모 notice %s lacks its logical id, thread or text", name)
 	}
 	return n, nil
 }
@@ -263,7 +263,7 @@ func supervisorUnloaded(out Outcome) bool {
 // makes no durable change.
 func pumpSupervisorFlush(ctx context.Context, e *Env, cfg *Config, st *pumpState, s pumpSettings, now time.Time, dry bool) error {
 	root := crwconfig.JoinRoot(cfg.StateDir, supervisorQueueDir)
-	if err := sendParentNoSymlink(root, "supervisor queue directory"); err != nil {
+	if err := sendParentNoSymlink(root, "부모 queue directory"); err != nil {
 		return err
 	}
 	if !dry {
@@ -284,7 +284,7 @@ func pumpSupervisorFlush(ctx context.Context, e *Env, cfg *Config, st *pumpState
 			return err
 		}
 		if err := pumpSupervisorFlushThread(ctx, e, cfg, st, s, now, thread.Name(), dry); err != nil {
-			pumpLog(cfg, "supervisor queue "+thread.Name()+": "+err.Error())
+			pumpLog(cfg, "부모 queue "+thread.Name()+": "+err.Error())
 		}
 	}
 	return nil
@@ -297,7 +297,7 @@ func pumpSupervisorFlushThread(ctx context.Context, e *Env, cfg *Config, st *pum
 		return err
 	}
 	if dry {
-		fmt.Fprintf(e.Stdout, "supervisor queue %s %d notices\n", thread, len(names))
+		fmt.Fprintf(e.Stdout, "부모 queue %s %d notices\n", thread, len(names))
 		return nil
 	}
 	// the probe goes to the host of the relay the first notice names
@@ -311,13 +311,13 @@ func pumpSupervisorFlushThread(ctx context.Context, e *Env, cfg *Config, st *pum
 	observation, turnID, err := pumpQueueObserve(ctx, e, probeCfg, thread)
 	if err != nil {
 		// the probe failed: the notices stay queued and the thread is unmeasured, as a source whose read failed is
-		pumpLog(cfg, "supervisor queue "+thread+" "+pumpSourceUnmeasured+": "+err.Error())
+		pumpLog(cfg, "부모 queue "+thread+" "+pumpSourceUnmeasured+": "+err.Error())
 		return nil
 	}
 	for _, name := range names {
 		n, err := supervisorQueueRead(dir, name)
 		if err != nil {
-			pumpLog(cfg, "supervisor queue "+thread+": "+err.Error())
+			pumpLog(cfg, "부모 queue "+thread+": "+err.Error())
 			continue
 		}
 		created := supervisorNoticeTime(n, dir, name)
@@ -365,7 +365,7 @@ func pumpSupervisorDeliver(ctx context.Context, e *Env, cfg *Config, st *pumpSta
 	settings, err := supervisorSettingsRead(ctx, e, cfg, task)
 	if err != nil {
 		// no settings, no send: the notice stays queued and says why
-		pumpLog(cfg, fmt.Sprintf("supervisor queue %s: %s: settings_unavailable (binding %s): %v", n.Thread, n.LogicalID, task, err))
+		pumpLog(cfg, fmt.Sprintf("부모 queue %s: %s: settings_unavailable (binding %s): %v", n.Thread, n.LogicalID, task, err))
 		return false, nil
 	}
 	attempt := st.Supervisor.Attempts[n.LogicalID]
@@ -379,7 +379,7 @@ func pumpSupervisorDeliver(ctx context.Context, e *Env, cfg *Config, st *pumpSta
 	if derr != nil && out.Class == "" {
 		return false, nil
 	}
-	pumpLog(cfg, fmt.Sprintf("supervisor queue thread=%s notice=%s request=%s class=%s", n.Thread, n.LogicalID, out.RequestID, out.Class))
+	pumpLog(cfg, fmt.Sprintf("부모 queue thread=%s notice=%s request=%s class=%s", n.Thread, n.LogicalID, out.RequestID, out.Class))
 	switch {
 	case out.Class == deliverClassAccepted:
 		// the obligation to tell the flow rows is durable before the notice leaves the queue: a pump that dies in between restarts with the
@@ -402,7 +402,7 @@ func pumpSupervisorDeliver(ctx context.Context, e *Env, cfg *Config, st *pumpSta
 	case out.Class == deliverClassRefused:
 		attempt.Refused++
 		if attempt.Refused >= pumpQueueRefusalLimit {
-			pumpLog(cfg, fmt.Sprintf("supervisor queue %s: notice %s moves to %s after %d refusals", n.Thread, n.LogicalID, supervisorRefusedDir, attempt.Refused))
+			pumpLog(cfg, fmt.Sprintf("부모 queue %s: notice %s moves to %s after %d refusals", n.Thread, n.LogicalID, supervisorRefusedDir, attempt.Refused))
 			if n.ReportID != "" {
 				st.Supervisor.Delivered[n.ReportID] = "refused:" + out.RequestID
 				noteRelay(st, n)
@@ -460,7 +460,7 @@ func pumpSupervisorUndelivered(cfg *Config, st *pumpState, n supervisorNotice, o
 		observation = "unknown"
 	}
 	st.Supervisor.Undelivered[key] = true
-	text := fmt.Sprintf("[flow] report undelivered report=%s initiative=%s thread=%s observation=%s waiting=%s\nThe supervisor queue holds the notice %s; it is delivered with the supervisor role when the thread is loaded.",
+	text := fmt.Sprintf("[flow] report undelivered report=%s initiative=%s thread=%s observation=%s waiting=%s\nThe 부모 queue holds the notice %s; it is delivered with the role 'supervisor' (부모) when the thread is loaded.",
 		firstNonEmpty(n.ReportID, "-"), firstNonEmpty(n.Initiative, "-"), n.Thread, observation, waited.Round(time.Second), n.LogicalID)
 	st.Pending = append(st.Pending, pumpEvent{ID: "report_undelivered:" + key, Kind: pumpKindReportUndelivered, Text: text})
 	if st.FirstAt == nil {
@@ -468,7 +468,7 @@ func pumpSupervisorUndelivered(cfg *Config, st *pumpState, n supervisorNotice, o
 		st.FirstAt = &first
 	}
 	if err := st.pumpSave(cfg); err != nil {
-		pumpLog(cfg, "supervisor queue: the state could not be saved: "+err.Error())
+		pumpLog(cfg, "부모 queue: the state could not be saved: "+err.Error())
 	}
 }
 
@@ -517,7 +517,7 @@ func pumpSupervisorConfirm(ctx context.Context, e *Env, cfg *Config, st *pumpSta
 		args := []string{"report-delivered", "--report", report, "--result", result, "--request-id", request}
 		relay := st.Supervisor.DeliveredRelay[report]
 		if err := pumpFlowRun(ctx, e, withRelay(cfg, relay.State, relay.Socket), args...); err != nil {
-			pumpLog(cfg, "supervisor queue: report-delivered "+report+": "+err.Error())
+			pumpLog(cfg, "부모 queue: report-delivered "+report+": "+err.Error())
 			continue
 		}
 		delete(st.Supervisor.Delivered, report)
@@ -526,7 +526,7 @@ func pumpSupervisorConfirm(ctx context.Context, e *Env, cfg *Config, st *pumpSta
 	}
 	if changed {
 		if err := st.pumpSave(cfg); err != nil {
-			pumpLog(cfg, "supervisor queue: the state could not be saved: "+err.Error())
+			pumpLog(cfg, "부모 queue: the state could not be saved: "+err.Error())
 		}
 	}
 }
