@@ -98,7 +98,7 @@ const supervisorFakeCallMarker = "CALL"
 // supervisorHostValuesMessage is the note a run that passes a host value on the command line is
 // given: the issue's own wording, pinned here so the test reads the required text rather than the
 // implementation's constant.
-const supervisorHostValuesMessage = "host values come from the supervisor section of the configuration"
+const supervisorHostValuesMessage = "host values come from the supervisor (부모) section of the configuration"
 
 // supervisorScript writes a fake crw that records every argument it is given, one argument per
 // line, and prints the answer for the command it was given, keyed by the command name. Nothing here

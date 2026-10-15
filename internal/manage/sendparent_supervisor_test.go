@@ -253,7 +253,7 @@ func TestSendParentSupervisorWithoutSettingsSendsNothing(t *testing.T) {
 func TestSupervisorSettingsAreReadFromTheBinding(t *testing.T) {
 	state, st := flowTestStore(t)
 	ctx := context.Background()
-	if _, err := supervisorSettingsAt(ctx, state, "lead-thread"); err == nil || !strings.Contains(err.Error(), "no live supervisor binding") {
+	if _, err := supervisorSettingsAt(ctx, state, "lead-thread"); err == nil || !strings.Contains(err.Error(), "no live 부모 binding") {
 		t.Fatalf("a task with no binding: %v", err)
 	}
 	if err := storeseed.InsertScopeBinding(ctx, st, store.ScopeBindingsRow{BindingID: "b1", Role: "supervisor", ScopeKind: "initiative", ScopeKey: "I-23", TaskID: "lead-thread", HostID: "h", Status: "active", Revision: 1,

@@ -184,7 +184,7 @@ func resumeAssignment(ctx context.Context, e *Env, cfg *Config, relationship str
 		return "", "", 0, &resumeFailure{Reason: resumeAssignmentUnavailable, Detail: "the relay answer: " + err.Error()}
 	}
 	if answer.ChildTaskID == "" || answer.ParentTaskID == "" || answer.ExecutionGeneration < 1 {
-		return "", "", 0, &resumeFailure{Reason: resumeAssignmentUnavailable, Detail: "the relay named no child task, no parent task or no generation for this relationship, so the turn it would start could not be admitted"}
+		return "", "", 0, &resumeFailure{Reason: resumeAssignmentUnavailable, Detail: "the relay named no issue-child task, no 자식 task or no generation for this relationship, so the turn it would start could not be admitted"}
 	}
 	return answer.ChildTaskID, answer.ParentTaskID, answer.ExecutionGeneration, nil
 }
