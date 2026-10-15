@@ -692,9 +692,10 @@ type PageRead struct {
 // committed row, and a state summed from Lean is the state at the page's own moment. A reader that holds no transaction between
 // two pages (a wait) reads each page this way again.
 //
-// A page holds the run's own rows only. The rows a command wrote into the run (CRW-1204: crw flow apply, report-up, report-ack,
-// report-delivered) are numbered from engine.ForeignSeqBase while the run, alive, goes on numbering its own below it: a cursor
-// that took one of their numbers would pass every row the run writes after. `crw flow reports` lists them; Lean holds them.
+// A page holds the run's own rows only. The rows a command wrote into the run (CRW-1204: crw flow report-up, report-ack,
+// report-delivered, and crw flow apply before CRW-1416) are numbered from engine.ForeignSeqBase while the run, alive, goes on
+// numbering its own below it: a cursor that took one of their numbers would pass every row the run writes after. `crw flow
+// reports` lists them; Lean holds them.
 func ReadPage(ctx context.Context, st *store.Store, runID string, after, limit int, lean bool) (PageRead, error) {
 	if limit < 1 {
 		return PageRead{}, errors.New("journal: a page holds at least one row")

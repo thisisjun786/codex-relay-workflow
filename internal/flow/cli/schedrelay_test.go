@@ -867,3 +867,69 @@ func TestSchedRelayTargetIsTheShortBranch(t *testing.T) {
 		}
 	}
 }
+
+// pastRelationshipExecution gives a node of the lab's plan an execution of the retired relationship (issue-child) path, as an old run's
+// child left it in the relay: a dag_node_executions row and no agent execution.
+func (l *laneLab) pastRelationshipExecution(node string) {
+	l.t.Helper()
+	if _, err := l.w.st.DB.Exec("INSERT INTO dag_node_executions (plan_id, node_id, relationship_id, execution_generation, manifest_digest, kind, managed_request_id) VALUES (?, ?, ?, 1, ?, 'initial', ?)",
+		l.plan, node, "rel-old-"+node, "sha256:old-manifest-"+node, "req-old-"+node); err != nil {
+		l.t.Fatal(err)
+	}
+}
+
+// TestSchedRelayCloseLeavesARetiredRelationshipExecution (CRW-1415, PR #889 round 2): a node the retired issue-child path once executed
+// (a relationship execution, no agent execution) has no agent execution for Close to close: Close answers nothing closed and no
+// error, writes no agent closure, and does not take the plan's coordinator epoch for it.
+func TestSchedRelayCloseLeavesARetiredRelationshipExecution(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"})
+	r := l.relayFor("run-close00001", l.handoffBytes(nil), 1)
+	node := l.nodeOf["A-1"]
+	l.pastRelationshipExecution(node)
+	res, err := r.Close(ctx, ops.CloseRequest{Plan: l.plan, Node: node, Actor: labOwner, Reason: "size_split"})
+	if err != nil || res.Closed || res.Held || res.SlotReleased {
+		t.Fatalf("the close of a node with a retired relationship execution: %+v %v", res, err)
+	}
+	if n := l.count("SELECT COUNT(*) FROM dag_agent_executions") + l.count("SELECT COUNT(*) FROM dag_coordinator_claims"); n != 0 {
+		t.Errorf("the close wrote %d rows", n)
+	}
+}
+
+// TestChildSizedNodeWithARetiredRelationshipExecutionEscalates (CRW-1415, PR #889 round 2): a run of the current project lane over a plan
+// whose child-sized node the retired issue-child path once executed escalates the node as size_split with detail child_retired, with no
+// item error and no close refusal, and the other node of the milestone lands.
+func TestChildSizedNodeWithARetiredRelationshipExecutionEscalates(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"}, labIssue{Key: "A-2", Milestone: "M1"})
+	l.designEdit = func(d *ops.Design) {
+		for i := range d.Issues {
+			if d.Issues[i].Issue == "A-2" {
+				d.Issues[i].SizeFit, d.Issues[i].SizeReason = "child", "regions_gt3"
+			}
+		}
+	}
+	node := l.nodeOf["A-2"]
+	l.pastRelationshipExecution(node)
+	spec := l.start("start", "project-lane", "--args", `{"plan":"plan-1","milestone":"M1"}`, "--handoff", l.file)
+	res := l.runToEnd(spec.RunID)
+	var v laneValue
+	_ = json.Unmarshal(res.Value, &v)
+	lanes := map[string]string{}
+	for _, ln := range v.Lanes {
+		lanes[ln.Node] = ln.State + "/" + ln.Reason
+	}
+	if lanes[node] != "escalated/size_split" || !strings.HasPrefix(lanes[l.nodeOf["A-1"]], "landed") {
+		t.Fatalf("the lanes %v (run %s %s %s)\n%s", lanes, res.Status, res.ErrorKind, res.Error, res.Value)
+	}
+	var esc []engine.Event
+	for _, ev := range l.events() {
+		if ev.Kind == engine.KindFlow && ev.Event == engine.EvEscalation && str(ev.Data, "node") == node {
+			esc = append(esc, ev)
+		}
+		if ev.Kind == engine.KindCall && ev.Op == ops.OpEscalate && ev.Event != engine.EvCompleted && ev.Event != engine.EvPrepared && str(ev.Data, "node") == node {
+			t.Errorf("the escalation of %s ended %s: %v", node, ev.Event, ev.Data)
+		}
+	}
+	if len(esc) != 1 || str(esc[0].Data, "detail") != "child_retired" {
+		t.Errorf("the escalations of %s: %+v, want one with detail child_retired", node, esc)
+	}
+}

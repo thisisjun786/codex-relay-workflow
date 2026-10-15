@@ -140,7 +140,11 @@ func (c *command) next(args []string) int {
 		if !live && !starting && !resumed && info.State == StateDead && info.Paused == "" {
 			// no process, not paused and not over: next resumes the run as `crw flow resume RUN --detach` does
 			resumed = true
-			if pid, err := c.detachResume(cm, sel.Path, spec); err != nil {
+			var legacy *legacyRunError
+			if pid, err := c.detachResume(cm, sel.Path, spec); errors.As(err, &legacy) {
+				// a legacy issue-child run is not resumed by any later look (CRW-1415): the refusal is next's answer, not a wait
+				return c.fail("%v", err)
+			} else if err != nil {
 				ans.Warnings = append(ans.Warnings, fmt.Sprintf("no process holds run %s and its resume did not start: %v", run, err))
 			} else {
 				ans.Resumed = pid
@@ -287,19 +291,18 @@ func nextState(info RunInfo, live bool, steps []engine.Step) string {
 }
 
 // detachResume starts the run's process as `crw flow resume RUN --detach` does and waits until it holds the run. Like that command and
-// `crw flow answer` it asks budgetLeft first (CRW-1390): a run whose spec's budget is spent is refused with the same words, before a
-// process is started that would take the run lock and end at once with budget_exhausted.
+// `crw flow answer` it asks resumeRefused first (CRW-1390, CRW-1415): a run whose spec's budget is spent, or a legacy issue-child run (a
+// *legacyRunError, which next answers as its error), is refused with the same words, before a process is started that would take the run
+// lock and end at once.
 func (c *command) detachResume(cm *common, state string, spec Spec) (int, error) {
-	if spec.TokenBudget > 0 {
-		r, err := c.reader(cm)
-		if err != nil {
-			return 0, err
-		}
-		err = budgetLeft(c.ctx, r.St, spec)
-		_ = r.Close()
-		if err != nil {
-			return 0, err
-		}
+	r, err := c.reader(cm)
+	if err != nil {
+		return 0, err
+	}
+	err = resumeRefused(c.ctx, r.St, spec)
+	_ = r.Close()
+	if err != nil {
+		return 0, err
 	}
 	dir, _ := os.Getwd()
 	spawned := c.now()
@@ -592,6 +595,10 @@ func (c *command) dispatched(args []string) int {
 	}
 	if _, err := ReadSpec(sel.Path, run); err != nil {
 		return c.fail("%v", err)
+	}
+	// a legacy issue-child run is read only (CRW-1415): no report is put in its inbox, which its resume would journal
+	if code, refused := c.legacyRefused(cm, sel.Path, run); refused {
+		return code
 	}
 	bus := engine.NewFileStepBus(RunDir(sel.Path, run))
 	id, err := reportID(c.now())

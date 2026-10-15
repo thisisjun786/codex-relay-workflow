@@ -915,16 +915,18 @@ func (r *SchedRelay) IntegrationTip(ctx context.Context, plan string) (string, e
 }
 
 // Close is AgentClose (CRW-1277 f): the node's current execution is closed (a node given up or cancelled returns its slot in the same
-// transaction) or held. A node the relay never gave an execution has nothing to close.
+// transaction) or held. A node the relay never gave an agent execution has nothing to close: a node never released, and a node only the
+// retired relationship (issue-child) path executed, whose execution is no agent's and stays as the relay holds it (CRW-1415, PR #889
+// round 2: AgentClose refused such a node disposition_conflict, and the escalation that asked the close ended with an error).
 func (r *SchedRelay) Close(ctx context.Context, req ops.CloseRequest) (ops.CloseResult, error) {
 	if req.Plan == "" {
 		return ops.CloseResult{}, nil
 	}
-	executed, err := dagsched.ExecutedNodes(ctx, r.q(ctx), req.Plan)
+	agent, err := dagsched.AgentExecuted(ctx, r.q(ctx), req.Plan, req.Node)
 	if err != nil {
 		return ops.CloseResult{}, err
 	}
-	if !executed[req.Node] {
+	if !agent {
 		return ops.CloseResult{}, nil
 	}
 	if err := r.claim(ctx, req.Plan); err != nil {

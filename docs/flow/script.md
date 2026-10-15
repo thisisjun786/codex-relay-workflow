@@ -17,7 +17,7 @@ crw flow lint [--args JSON | --args-file FILE] [--no-dry-run] [--json] <script.j
 crw flow audit (--run RUN | --acceptance ID) [--milestone M] [--state DIR] [--socket PATH] [--json] [--no-record]
 ```
 
-The commands that reach up from a run - `apply`, `report-up`, `reports`, `report-ack`, `report-delivered` - and the summary document
+The commands that reach up from a run - `report-up`, `reports`, `report-ack`, `report-delivered` - and the summary document
 `--summary-document` names are in [reporting.md](reporting.md).
 
 `--backend fake` runs the script against the in-process fake backend: every turn answers immediately with a value that
@@ -431,7 +431,7 @@ inline (SP-INL-1), reuse an answer (SP-INL-2), skip, refuse or hand a question t
 | `review(node, head, criteriaDigest, call, opts)` | the `ReviewResult` | always |
 | `accept(node, head)` / `integrate(node, head, acceptanceId)` | the acceptance id / the batch commit and the target tip | the acceptance is active and not stale / the batch commit is on the target |
 | `escalate(node, info)` / `hold(node, info)` | the escalation flow row and, for `tiers_exhausted`, `blocked_scope` and `size_split`, the relay's close of the execution; the hold (the relay is told, nothing is closed) | always |
-| `releaseChild(node, plan)` / `decide(node, ask)` | the issue child that was started / whether a `decision_applied` row answers the ask | always / no applied row has appeared since |
+| `decide(node, ask)` | whether a `decision_applied` row answers the ask | no applied row has appeared since |
 | `spawnDecision`, `stepRecord`, `exploreRoute`, `exploreRecord` | the decision rows and the answers the reuse reads | always |
 | `finalGate(milestone)` | the gate over the pinned head: the state of the gate and of each piece of evidence (row `crw.finalGate`: `head`, `command`, `range`, `ok`) | the integration target is still the head the gate judged |
 | `qaReceipt(milestone, gate, capture, passes, receipt)` | the QA receipt: its state (`PASS`, `REVISE`, `FAIL`, `INCONCLUSIVE`), the head, the calls with their roles and read-back pairs | always |
@@ -576,20 +576,8 @@ worktree before it asks, the run's buffered rows are stored first, and the run's
 node's calls and the reviewer's input criteria digest on the reviewer's completed row, which the acceptance reads. `integrate` names the node's current acceptance and the head it accepted (anything else is refused before the batch, `acceptance_not_current` or `head_not_accepted`) and is one
 `IntegrateBatch` of the node with the wiring of `crw relay dag-integrate` (`dagsched.IntegrationDeps`: `crw-dev ci local` over the
 merged tree, the merged tree's own crw-dev when the configuration names a Go root, git's compare-and-swap of the branch) onto the plan's target branch, followed by the observation of the landing there;
-`close` is `AgentClose`. `releaseChild` (SP-CHILD-1, CRW-1285) is the managed start of `dag-release` with the host settings the run
-holds: `crw flow start --child-host FILE` checks a `crw-flow-child-host/1` document (`marker_root`, `parent {host_id, settings}`, `child
-{host_id, title, settings}`, one host) and pins it into the run's directory like the handoff (`child_host {path, sha256}` in the run's
-arguments). The request carries the parent's and the child's host and settings, the child's title (the managed start prefixes the node's issue key) and the instruction to
-run the issue-lane workflow, and the answer is the child the start admitted and bound to the node; the same release again answers the same
-child. A run with no host settings, or settings missing a field, refuses the node with the reason (`refused:child_host_unset:`,
-`refused:child_host_settings:`, an input error); a start the managed engine refused or left incomplete (`refused:child_not_started:`, its
-intent and slot stay and the same release continues it) and a node the scheduler holds back (`refused:child_held_back:`) are errors, never a
-child that is running (`crw.releaseChild` refuses a relay answer that started nothing, `child_not_started`). The request carries
-`expected_slice_digest`, the node's slice `crw.release` compared when it found the node sized for a child (CRW-1382), and the managed release
-compares it as `ReleaseAgent` does: a plan that gave the node another slice before the start starts no child, the answer is `Started` false
-with `plan_changed`, `crw.releaseChild` records that (`started: false`, the reason, the slice) and the lane ends the node `unreleased` with
-the reason. `crw flow start` warns when the handoff sizes an issue of the run for a child and names no `--child-host` (the warn fact
-`child_host_unset`, recorded in the run's spec; the run starts).
+`close` is `AgentClose`. A node sized `child` is released to no one: it goes up as a `size_split` escalation with detail
+`child_retired` (the evidence carries the plan's `size_reason`), and no child is started.
 
 ## The milestone close
 
@@ -765,9 +753,9 @@ appends under the run lock: `ask` (the question's id), `node`, `run`, `revision`
 of error kind `cancelled` written by `crw flow cancel`. The state of a run (`running`, `paused`, `dead`, `held`, `completed`,
 `blocked`, `cancelled`, `failed`) is not a row: it is read from the run lock, the last `started` and `finished` rows, the calls' rows
 (`internal/flow/callstate`), the questions no `decision_applied` row has answered and, for `blocked`, the lane's own rows. A run meant
-to start the nodes of a plan (a run of `project-lane`, `issue-lane` or `night-batch`, or a run whose arguments name a `plan`) whose last
+to start the nodes of a plan (a run of `project-lane` or `night-batch`, an old run of an issue child's lane, or a run whose arguments name a `plan`) whose last
 process finished `completed` with nothing left to go on with is `blocked` when no process of it started a node (no completed
-`crw.release` row released one, no `crw.releaseChild` row released a child, no `crw.integrate` row landed one) and items of its joins threw
+`crw.release` row released one, no `crw.releaseChild` row an older build recorded released a child, no `crw.integrate` row landed one) and items of its joins threw
 in its last process (`item_error` rows: a lane of `crw.dag` whose `crw.release` failed is one). The engine's status of the run stays
 `completed`. A node the scheduler held back unreleased in the last process (capacity, a region in use: a wait a resume asks again) keeps the
 run `completed`, and so does a node that started. Another script run (a judge panel, a scout) that names no plan never meant to start a

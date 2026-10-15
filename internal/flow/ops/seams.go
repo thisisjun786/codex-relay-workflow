@@ -175,7 +175,8 @@ type CloseResult struct {
 	State        string `json:"state"`
 }
 
-// ChildRequest releases a node as an issue child (managed start of an issue-lane run, SP-CHILD-1) instead of an executor.
+// ChildRequest is the request of a managed child start. The lane no longer releases issue children (CRW-1415); the type is kept for
+// schedrelay.go until bundle S.
 type ChildRequest struct {
 	Plan, Node, RunID string
 	Revision          string
@@ -219,8 +220,6 @@ type Relay interface {
 	// (AgentClose) or released again. The lane does not rest on it for an execution its own journal shows it ended - a node it gave
 	// up or landed - so a relay may answer false for a closed execution without the lane building the node again on a resume.
 	ReleaseStands(ctx context.Context, plan, node, execution string) (bool, error)
-	// ReleaseChild releases a node as an issue child.
-	ReleaseChild(ctx context.Context, req ChildRequest) (ChildResult, error)
 	// Accept is dag-accept on the agent path.
 	Accept(ctx context.Context, req AcceptRequest) (AcceptResult, error)
 	// AcceptState reads an acceptance now.

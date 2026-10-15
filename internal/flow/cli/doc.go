@@ -1,6 +1,6 @@
 // Package cli is the run surface of the flow engine: `crw flow start`, `ps`, `show`, `watch`, `answer`, `pause`, `cancel`,
 // `status-line`, `digest`, the run process they start, `crw flow audit` (CRW-1206), the audit of the reviews behind a run's
-// acceptances, and the commands that reach up from a run (CRW-1204): `apply`, `report-up`, `reports`, `report-ack` and
+// acceptances, and the commands that reach up from a run (CRW-1204): `report-up`, `reports`, `report-ack` and
 // `report-delivered`, with the upward hook the binary installs into a run (UpwardFactory). The engine runs a script; this package
 // is what starts a run as a process of its own, finds it again in the relay store, follows and controls it, and applies an answer
 // to a wait of it.
