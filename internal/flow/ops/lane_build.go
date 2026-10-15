@@ -55,11 +55,13 @@ type UnitChecker interface {
 }
 
 // UnitCheck is what crw.unitCheck reaches outside the journal: the checker, the profile of the tool for a mode ("uncommitted" or
-// "committed") and the time limit of one call.
+// "committed"), the profile a check of that mode falls back to when the first tool's quota is spent (Fallback; nil: no fallback, a
+// quota holds the node) and the time limit of one call.
 type UnitCheck struct {
-	Checker UnitChecker
-	Profile func(mode string) (reviewadapter.Profile, error)
-	Limit   time.Duration
+	Checker  UnitChecker
+	Profile  func(mode string) (reviewadapter.Profile, error)
+	Fallback func(mode string) (reviewadapter.Profile, error)
+	Limit    time.Duration
 }
 
 // The modes of a unit check: the uncommitted changes an executor call left in the node's worktree (the pending tree crw.commit will
@@ -106,11 +108,20 @@ const (
 // the node, the call, the receipt as read and hold receipt_*, with no role, tree or commit, so no reader takes it and a resume reads
 // the receipt again. A committed check judges a range no executor wrote and records no_executor.
 //
-// The op holds nothing itself and never calls the relay. A check whose tool gave no judgment for its quota or no answer is recorded
-// with role unit-check and hold unit_check_<state> on the row and in the answer, and is not proven: the lane holds the node through
-// crw.hold with source unit_check, and a resume asks the tool again. An invalid answer is asked once more with the same request; the
-// second record is kept (retried, first_state invalid). worktree_changed and tool_failed are recorded and proven, for the lane to
-// escalate. A Go error of the checker (a bad request, a fingerprint, the end of the context) is the op's error and writes no row.
+// A committed check gives the request the range (Request.Base and Head), which a profile's Args may pass to the tool (the Codex
+// committed profile's --base).
+//
+// The op holds nothing itself and never calls the relay. An invalid answer is asked once more with the same request; the second record
+// is kept (retried, first_state invalid). When the tool's quota is spent (the final state of the first profile's calls is quota) and
+// UnitCheck.Fallback is wired, the same request is asked once of the fallback profile for the mode (CRW-1517: Bugbot after a Codex
+// review), with its own retry of an invalid answer; no other state falls back, and there is at most one fallback. The row's result is
+// the record of the profile that answered last, which every reader takes; the first profile's quota record is the answer's fallback,
+// and the row names it (fallback_from, the first profile's name; fallback_state quota; fallback_model; fallback_retried when that quota
+// came on the retry of an invalid answer); retried and first_state are about the last profile's calls. A check whose last tool gave no
+// judgment for its quota or no answer is recorded with role unit-check and hold unit_check_<state> on the row and in the answer, and is
+// not proven: the lane holds the node through crw.hold with source unit_check, and a resume asks the tools again. worktree_changed and
+// tool_failed are recorded and proven, for the lane to escalate. A Go error of the checker (a bad request, a fingerprint, the end of the
+// context) or a fallback profile that cannot be had is the op's error and writes no row.
 type unitCheckOp struct{ l *Lane }
 
 // UnitCheckOpts are the options of crw.unitCheck.
@@ -123,14 +134,16 @@ type UnitCheckOpts struct {
 
 // UnitCheckOutcome is the answer of crw.unitCheck: the adapter's record (the row's result, which crw.accept and the relay decode as a
 // reviewadapter.Result), the hold the lane is to write (unit_check_quota, unit_check_no_answer; "" for none), whether the record is
-// that of the retry of an invalid answer, the executor call it judged ("" for a committed check) and the call id of the check itself
-// (the reviewer call an acceptance on it names). State is tree_moved for a check that was not run.
+// that of the retry of an invalid answer, the executor call it judged ("" for a committed check), the call id of the check itself
+// (the reviewer call an acceptance on it names) and, when the check fell back after a quota, the first profile's quota record
+// (Fallback; nil when it did not). State is tree_moved for a check that was not run.
 type UnitCheckOutcome struct {
 	reviewadapter.Result
-	Hold    string `json:"hold"`
-	Retried bool   `json:"retried"`
-	Call    string `json:"call"`
-	CheckID string `json:"check_id"`
+	Hold     string                `json:"hold"`
+	Retried  bool                  `json:"retried"`
+	Call     string                `json:"call"`
+	CheckID  string                `json:"check_id"`
+	Fallback *reviewadapter.Result `json:"fallback,omitempty"`
 }
 
 func (o *unitCheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpResult, error) {
@@ -250,19 +263,51 @@ func (o *unitCheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpR
 	creq := reviewadapter.Request{Profile: profile, Worktree: wt, Prompt: unitCheckPrompt(r, node, mode, opts.Base, head, receipt), Schema: reviewadapter.AnswerSchema, Limit: uc.Limit,
 		GuideRev: UnitCheckGuideRev}
 	if mode == UnitCheckCommitted {
-		// the range the reader of a committed profile takes an answer about (reviewadapter.Profile.Ranged)
+		// the range the reader of a committed profile takes an answer about (reviewadapter.Profile.Ranged), and the base a profile's Args
+		// give the tool (the Codex committed profile's --base); the fallback's request carries the same range
 		creq.Base, creq.Head = opts.Base, head
 	}
-	res, err := uc.Checker.Check(ctx, creq)
+	// check asks the tool of profile p, and once more with the same request on an invalid answer
+	check := func(p reviewadapter.Profile) (reviewadapter.Result, bool, error) {
+		r := creq
+		r.Profile = p
+		res, err := uc.Checker.Check(ctx, r)
+		if err != nil {
+			return res, false, fmt.Errorf("crw.unitCheck: node %s: %w", node, err)
+		}
+		if res.State != reviewadapter.StateInvalid {
+			return res, false, nil
+		}
+		if res, err = uc.Checker.Check(ctx, r); err != nil {
+			return res, true, fmt.Errorf("crw.unitCheck: node %s: the retry of an invalid answer: %w", node, err)
+		}
+		return res, true, nil
+	}
+	res, retried, err := check(profile)
 	if err != nil {
-		return engine.OpResult{}, fmt.Errorf("crw.unitCheck: node %s: %w", node, err)
+		return engine.OpResult{}, err
 	}
 	out := UnitCheckOutcome{Call: ex.CallID, CheckID: req.CallID}
-	if res.State == reviewadapter.StateInvalid {
-		data["first_state"] = string(res.State)
-		if res, err = uc.Checker.Check(ctx, creq); err != nil {
-			return engine.OpResult{}, fmt.Errorf("crw.unitCheck: node %s: the retry of an invalid answer: %w", node, err)
+	if res.State == reviewadapter.StateQuota && uc.Fallback != nil {
+		fallback, err := uc.Fallback(mode)
+		if err != nil {
+			return engine.OpResult{}, fmt.Errorf("crw.unitCheck: node %s: the %s fallback profile: %w", node, mode, err)
 		}
+		first := res
+		if first.Findings == nil {
+			first.Findings = []reviewadapter.Finding{}
+		}
+		out.Fallback = &first
+		data["fallback_from"], data["fallback_state"], data["fallback_model"] = profile.Name, string(first.State), first.Model
+		if retried {
+			data["fallback_retried"] = true
+		}
+		if res, retried, err = check(fallback); err != nil {
+			return engine.OpResult{}, fmt.Errorf("%w (the fallback after a %s quota)", err, profile.Name)
+		}
+	}
+	if retried {
+		data["first_state"] = string(reviewadapter.StateInvalid)
 		out.Retried = true
 	}
 	if res.Findings == nil {
