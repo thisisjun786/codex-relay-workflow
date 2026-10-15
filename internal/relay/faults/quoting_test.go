@@ -84,7 +84,7 @@ func TestFaultRefusalsNameTheirValueWithGoQuotesAndWriteNothing(t *testing.T) {
 		{"fault-notification-reserve", func(ctx context.Context, l *Ledger) error {
 			_, err := executeD(ctx, l, "fault-notification-reserve", map[string]string{"--owner": "relay-daemon"})
 			return err
-		}, `fault_observation_malformed: owner "relay-daemon" is the relay daemon's notification deliverer's: its reservations are settled from the 부모 channel's records, so a reserver with a transport of its own names itself`},
+		}, `fault_observation_malformed: owner "relay-daemon" is reserved for the relay daemon's notification deliverer, whose reservations are settled from the 부모 channel's records, so a reserver with a transport of its own must name itself`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

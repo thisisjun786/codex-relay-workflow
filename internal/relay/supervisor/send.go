@@ -619,7 +619,7 @@ func (a *attemptRun) settingsGate(ctx context.Context) (stop bool, err error) {
 		}
 		detailText := err.Error()
 		if reason == "role_policy_unconfigured" {
-			detailText = pyvalue.StrRepr(a.r.Recipient) + " is bound as 'supervisor' (부모) and this process cannot read a role policy to check its authorization against: CODEX_THREAD_BRIDGE_EXECUTION_POLICY is not set in this process, so no role policy can be read. Nothing was sent and no turn was started. Set the policy for this process and the held deliveries resume on the next pass."
+			detailText = pyvalue.StrRepr(a.r.Recipient) + " is bound as 'supervisor' (부모), and this process cannot read a role policy to check its authorization because CODEX_THREAD_BRIDGE_EXECUTION_POLICY is not set. Nothing was sent and no turn was started. Set the policy for this process and the held deliveries resume on the next pass."
 		}
 		detail := pyjson.Dumps(contract.OrderedObject{{Key: "reason", Value: reason}, {Key: "detail", Value: detailText}}, pyjson.Options{})
 		_, e := c.Store.Q(ctx).ExecContext(ctx, "INSERT INTO journal(at,kind,subject,detail) VALUES(?,'supervisor_message_withheld',?,?)", a.at, a.id, detail)
