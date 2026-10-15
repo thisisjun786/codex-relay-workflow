@@ -25,6 +25,9 @@ import (
 const (
 	RunCompleted   = "completed"
 	RunScriptError = "script_error"
+	// RunPaused is the end of a run the operator paused (endsPaused): the journal holds a run/paused row instead of a finished
+	// row, and `crw flow resume` goes on with it. A pause of the run's own limits (a deadline, a token budget, a quota) ends completed.
+	RunPaused = "paused"
 )
 
 // Error kinds of a script_error run.
@@ -181,6 +184,8 @@ type Engine struct {
 	hookSem chan struct{}
 	pauseM  sync.Mutex
 	paused  string
+	// endAsk is the last ask of this process whose asker ends the run paused (endsPaused); nil ends the run as it comes to.
+	endAsk *pauseAsk
 	// turns are the calls with a turn in flight; quotaEscalated is set once the run's quota escalation was written.
 	turnsM         sync.Mutex
 	turns          map[*callRun]struct{}
@@ -445,7 +450,15 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 	if woken != nil {
 		<-woken
 	}
-	if err := journalErr(e.j); err != nil && res.Status == RunCompleted {
+	// a run the operator paused that would end completed ends paused: it writes a run/paused row instead of the finished one, and
+	// nothing is told finished (endsPaused)
+	e.pauseM.Lock()
+	ask := e.endAsk
+	e.pauseM.Unlock()
+	if ask != nil && res.Status == RunCompleted {
+		res.Status = RunPaused
+	}
+	if err := journalErr(e.j); err != nil && (res.Status == RunCompleted || res.Status == RunPaused) {
 		res.Status, res.ErrorKind, res.Error = RunScriptError, ErrKindEngine, journalError(err).Error()
 	}
 	e.undeliveredM.Lock()
@@ -463,17 +476,26 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 	res.Calls = e.results
 	res.Phases = e.phases
 	res.Logs = e.logs
-	e.j.Append(Event{RunID: e.runID, Kind: KindRun, Event: "finished", Data: map[string]any{"status": res.Status, "error_kind": res.ErrorKind}})
+	if res.Status == RunPaused {
+		e.j.Append(Event{RunID: e.runID, Kind: KindRun, Event: "paused", Data: map[string]any{"status": RunPaused, "by": ask.by, "reason": ask.reason}})
+	} else {
+		e.j.Append(Event{RunID: e.runID, Kind: KindRun, Event: "finished", Data: map[string]any{"status": res.Status, "error_kind": res.ErrorKind}})
+	}
 	if cfg.Upward != nil {
-		// the journal no longer notifies: the finish is the last point, and the hook reads the whole journal
+		// the journal no longer notifies: the end row is the last point, and the hook reads the whole journal
 		if n, ok := e.j.(CommitNotifier); ok {
 			n.SetOnCommit(nil)
 		}
-		e.hookRun("finished", func(h UpwardHook) error { return h.RunFinished(ctx, e.runID, res.Status) })
+		if res.Status == RunPaused {
+			// a paused run did not finish: the hook reconciles the summary and the escalations once more and tells no completion
+			e.hookRun("paused", func(h UpwardHook) error { return h.BatchCommitted(ctx, e.runID) })
+		} else {
+			e.hookRun("finished", func(h UpwardHook) error { return h.RunFinished(ctx, e.runID, res.Status) })
+		}
 	}
-	// the finished row is written with the rows still buffered: when that write fails the run did not end on disk, and the
-	// caller is told so instead of getting a completed run
-	if err := journalErr(e.j); err != nil && res.Status == RunCompleted {
+	// the end row is written with the rows still buffered: when that write fails the run did not end on disk, and the
+	// caller is told so instead of getting a completed or paused run
+	if err := journalErr(e.j); err != nil && (res.Status == RunCompleted || res.Status == RunPaused) {
 		res.Status, res.ErrorKind, res.Error = RunScriptError, ErrKindEngine, journalError(err).Error()
 	}
 	return res, nil

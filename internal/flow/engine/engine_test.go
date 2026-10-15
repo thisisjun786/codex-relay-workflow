@@ -52,10 +52,11 @@ func (h *harness) run(body string) *Result {
 	return res
 }
 
-// value decodes the script's return value.
+// value decodes the script's return value. A run the operator paused (RunPaused) has its value as a completed run has; a script_error
+// fails the test.
 func value[T any](t *testing.T, res *Result) T {
 	t.Helper()
-	if res.Status != RunCompleted {
+	if res.Status != RunCompleted && res.Status != RunPaused {
 		t.Fatalf("run %s: %s: %s", res.Status, res.ErrorKind, res.Error)
 	}
 	var v T
