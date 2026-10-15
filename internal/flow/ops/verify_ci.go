@@ -48,7 +48,11 @@ type CILocalVerifier struct {
 	Tools crwconfig.VerifierTools
 	// ExtraArgs follow `ci local` (a heavy gate, a work root).
 	ExtraArgs []string
-	// RecordDir is where the records are written; empty is a directory under the worktree's git directory's parent.
+	// RecordDir is where the records are written; empty is crw-verify below the worktree's own git directory (CRW-1489): <worktree>/.git
+	// when that is a directory, or the per-worktree directory a linked worktree's .git file names (gitdir:, a relative one against the
+	// worktree), never the caller's TMPDIR, so two lanes never share a record file. A worktree with no git directory is an error
+	// before the command runs. A linked worktree of a repository in the account's .codex has its git directory outside the checkout,
+	// and crw-dev refuses that as a record destination (homeguard); that shows as a verifier error, and RecordDir overrides it.
 	RecordDir string
 	Run       RunCommand
 }
@@ -94,7 +98,11 @@ func (v CILocalVerifier) Verify(ctx context.Context, req VerifyRequest) (VerifyO
 	}
 	dir := v.RecordDir
 	if dir == "" {
-		dir = filepath.Join(os.TempDir(), "crw-verify")
+		gitDir, err := ciGitDir(req.Worktree)
+		if err != nil {
+			return VerifyOutcome{}, fmt.Errorf("ops: ci_record_dir: %w", err)
+		}
+		dir = filepath.Join(gitDir, "crw-verify")
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return VerifyOutcome{}, err
@@ -136,6 +144,40 @@ func (v CILocalVerifier) Verify(ctx context.Context, req VerifyRequest) (VerifyO
 		out.Summary = fmt.Sprintf("%s exited %d with result %q", CILocalCommand, code, rec.Result)
 	}
 	return out, nil
+}
+
+// ciGitDir answers the worktree's own git directory, read in Go with no subprocess: <worktree>/.git when it is a directory, or
+// the target of the `gitdir:` line of a .git file (a linked worktree's per-worktree directory, not the common one); a relative
+// target resolves against the worktree.
+func ciGitDir(worktree string) (string, error) {
+	dotGit := filepath.Join(worktree, ".git")
+	info, err := os.Stat(dotGit)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("%s has no git directory", worktree)
+		}
+		return "", err
+	}
+	if info.IsDir() {
+		return dotGit, nil
+	}
+	raw, err := os.ReadFile(dotGit)
+	if err != nil {
+		return "", err
+	}
+	line, _, _ := strings.Cut(string(raw), "\n")
+	target, ok := strings.CutPrefix(strings.TrimSpace(line), "gitdir:")
+	target = strings.TrimSpace(target)
+	if !ok || target == "" {
+		return "", fmt.Errorf("%s has no git directory: %s names no gitdir", worktree, dotGit)
+	}
+	if !filepath.IsAbs(target) {
+		target = filepath.Join(worktree, target)
+	}
+	if info, err := os.Stat(target); err != nil || !info.IsDir() {
+		return "", fmt.Errorf("%s has no git directory: the gitdir %s of %s is not a directory", worktree, target, dotGit)
+	}
+	return filepath.Clean(target), nil
 }
 
 func tail(b []byte) string {
