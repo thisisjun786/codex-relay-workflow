@@ -3,6 +3,9 @@
 package ci
 
 import (
+	"io/fs"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -59,6 +62,73 @@ func TestFlowDocsHaveNoIssueChildPath(t *testing.T) {
 		}
 		for _, word := range []string{"SP-CHILD-1", "SP-CHILD-2", "issue-lane", "flow apply", "--child-host", "child_host", "child-host"} {
 			p := issueChildPathProblems("clean line\nsee " + word + " here\n")
+			if len(p) != 1 || !strings.Contains(p[0], word) || !strings.HasPrefix(p[0], "line 2 ") {
+				t.Errorf("%q alone: got %v, want one problem on line 2", word, p)
+			}
+		}
+	})
+}
+
+// CRW-1426 (N3-1): the skills carry no id of the retired path either. The SP-CHILD-1 tag of the exception path (an issue child of a plan
+// with no flow run) is gone from the five skill pages that quoted it; the path itself stays and stays pinned
+// (TestIssueChildDispatchIsOnlyForAPlanWithNoFlowRun). `--child-host` alone is the live `codex-session-relay register` flag, so only the
+// `flow start --child-host` form is the retired word; old port records that quote an id are history and are not scanned.
+
+// skillIssueChildPathWord is a word of the retired issue-child path in a skill page.
+var skillIssueChildPathWord = regexp.MustCompile(`SP-CHILD-[12]|issue-lane|\bflow apply|flow start\s+--child-host|child_host`)
+
+// skillIssueChildPathProblems is each line of text that names the retired issue-child path, with its line number.
+func skillIssueChildPathProblems(text string) []string {
+	var problems []string
+	for i, line := range strings.Split(text, "\n") {
+		for _, word := range skillIssueChildPathWord.FindAllString(line, -1) {
+			problems = append(problems, "line "+strconv.Itoa(i+1)+" names "+word)
+		}
+	}
+	return problems
+}
+
+// TestSkillsHaveNoIssueChildPath scans every SKILL.md and every references/*.md under plugins/crw/skills.
+func TestSkillsHaveNoIssueChildPath(t *testing.T) {
+	root := filepath.Join(repoRoot(), "plugins/crw/skills")
+	scanned := 0
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		rel, _ := filepath.Rel(root, path)
+		parts := strings.Split(filepath.ToSlash(rel), "/")
+		isSkill := len(parts) == 2 && parts[1] == "SKILL.md"
+		isRef := len(parts) >= 3 && parts[1] == "references" && strings.HasSuffix(path, ".md")
+		if !isSkill && !isRef {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		scanned++
+		if problems := skillIssueChildPathProblems(string(data)); len(problems) > 0 {
+			t.Errorf("%s still names the retired issue-child path:\n  %s", filepath.ToSlash(rel), strings.Join(problems, "\n  "))
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scanned < 20 {
+		t.Errorf("only %d skill pages scanned; the walk lost the skills tree", scanned)
+	}
+
+	t.Run("fixture: a clean text passes and each retired word is reported", func(t *testing.T) {
+		clean := "An issue child of a plan with no flow run is the exception path.\n" +
+			"codex-session-relay register --child-task T --child-host H\n" +
+			"The rules of the workflow apply to both formats.\n"
+		if p := skillIssueChildPathProblems(clean); len(p) > 0 {
+			t.Errorf("a clean text is reported: %v", p)
+		}
+		for _, word := range []string{"SP-CHILD-1", "SP-CHILD-2", "issue-lane", "flow apply", "flow start --child-host", "child_host"} {
+			p := skillIssueChildPathProblems("clean line\nsee " + word + " here\n")
 			if len(p) != 1 || !strings.Contains(p[0], word) || !strings.HasPrefix(p[0], "line 2 ") {
 				t.Errorf("%q alone: got %v, want one problem on line 2", word, p)
 			}

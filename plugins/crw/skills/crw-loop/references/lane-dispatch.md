@@ -4,7 +4,7 @@ Read when a request fans unmanaged work out across parallel tasks, or when watch
 than one wait can hold. A tracking issue or DAG node is a flow executor call of the run of
 [the child](../../crw-canon/references/hierarchy.md#the-levels) (project session, relay role `parent`),
 recorded in the relay, whose step the child spawns as a role subagent (the default path), or an
-issue child started through `crw-run` (the exception, SP-CHILD-1), and is not handed to a
+issue child started through `crw-run` (the exception), and is not handed to a
 `create_thread` lane by this file; apply
 [DISPATCH-MANAGED-01](../../crw-pabcd/references/dispatch-surfaces.md#dispatch-managed-01-strict--start-from-the-binding-not-from-the-mechanism)
 first. [Dispatch surfaces](../../crw-pabcd/references/dispatch-surfaces.md) owns
