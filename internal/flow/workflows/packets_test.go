@@ -171,3 +171,52 @@ func priorFindingsOf(packet string) ([]string, bool) {
 	}
 	return out, true
 }
+
+// TestCriticReplanPacketListsReleasedPlans: the critic of a re-plan is asked whether the started nodes keep their issues as they were
+// released, so its packet carries them: RELEASED PLANS lists each started node with the revision it was released under, its approach,
+// edit regions and decision refs and the decisions those refs name, and a started node whose issue in the DESIGN differs from it is
+// a P1 finding. The first DESIGN's critic packet has no such section, and a re-plan with no started node says none.
+func TestCriticReplanPacketListsReleasedPlans(t *testing.T) {
+	cand := "{ design: { decisions: [], issues: [] }, answers: [] }"
+	released := "[{ node: 'n1', issue: 'CRW-1', revision: 'r0', approach: 'split the store first', edit_regions: ['a.go', 'a_test.go'], decision_refs: ['D1'], " +
+		"decisions: [{ id: 'D1', change: 'split the store' }] }]"
+	replan := packetText(t, "critic-released-packet", "designAuditPacket",
+		"designAuditPacket(ms, "+cand+", 1, [], { head: 'tip1', base_tip: 'base0', landed: [{ node: 'n1', head: 'h1' }], unstarted: ['n2', 'n3'], released: "+released+" })")
+	for _, want := range []string{
+		"RELEASED PLANS",
+		"- n1 (CRW-1), released under r0\n  approach: split the store first\n  edit_regions: a.go, a_test.go\n  decision_refs: D1\n  decisions: D1: split the store",
+		"a started node whose issue in the DESIGN differs from its entry in RELEASED PLANS in approach, edit_regions or decision_refs is a P1 finding that names the node",
+	} {
+		if !strings.Contains(replan, want) {
+			t.Errorf("the critic packet of a re-plan lacks %q:\n%s", want, replan)
+		}
+	}
+	none := packetText(t, "critic-released-none-packet", "designAuditPacket",
+		"designAuditPacket(ms, "+cand+", 1, [], { head: 'tip1', base_tip: 'base0', landed: [], unstarted: ['n1', 'n2', 'n3'], released: [] })")
+	if _, rest, ok := strings.Cut(none, "RELEASED PLANS"); !ok || !strings.Contains(strings.SplitN(rest, "\n\n", 2)[0], "\n- none") {
+		t.Errorf("the critic packet of a re-plan with no started node does not say none:\n%s", none)
+	}
+	first := packetText(t, "critic-first-released-packet", "designAuditPacket", "designAuditPacket(ms, "+cand+", 1, [], undefined)")
+	if strings.Contains(first, "RELEASED PLANS") {
+		t.Errorf("the first DESIGN's critic packet lists released plans:\n%s", first)
+	}
+}
+
+// TestArchitectPacketNamesTheHeadOfTheBackgroundFindings: the background explorers and the architect read one design head the run
+// sampled before the phase explore, and the architect's packet names it with the findings, so the DESIGN's basis can be checked.
+// A background explorer's packet names it too. Without a head the packets are as they were.
+func TestArchitectPacketNamesTheHeadOfTheBackgroundFindings(t *testing.T) {
+	bg := "[{ id: 'bg-n1', question: 'background of n1', answer: 'a.go holds it', findings: null }]"
+	at := packetText(t, "architect-head-packet", "architectPacket", "architectPacket(ms, "+bg+", 'head0')")
+	if !strings.Contains(at, "BACKGROUND FINDINGS (read at head0, the commit your directory is a checkout of;") {
+		t.Errorf("the architect packet does not name the head of its background findings:\n%s", at)
+	}
+	without := packetText(t, "architect-nohead-packet", "architectPacket", "architectPacket(ms, "+bg+")")
+	if strings.Contains(without, "read at") {
+		t.Errorf("the architect packet without a head names one:\n%s", without)
+	}
+	exp := packetText(t, "explorer-head-packet", "explorerPacket", "explorerPacket('background', { question: 'background of n1', files_needed: ['a.go'] }, { milestone: 'M1', head: 'head0' })")
+	if !strings.Contains(exp, "READ AT: head0") {
+		t.Errorf("the background explorer packet does not name its head:\n%s", exp)
+	}
+}

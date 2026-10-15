@@ -405,6 +405,39 @@ func TestIssuePlanReadsTheReleaseRevision(t *testing.T) {
 	}
 }
 
+// crw.releasedPlans lists the started nodes of the milestone, each with the plan of the revision it was released under, whatever
+// revision the ledger has grown to since; a node that has not started is not listed. crw.designHead samples the integration tip of
+// the run's plan once.
+func TestReleasedPlansAndDesignHead(t *testing.T) {
+	w := newWorld(t)
+	w.relay.plan = planOfNodes(map[string]string{"A": "sa", "B": "sb"}, "A", "B")
+	w.ledgered(true, designOf("A", "B"))
+	w.must("release", "plan-1", "A", "M")
+	later := designOf("A", "B")
+	later.Issues[0].Approach = "approach after the re-plan"
+	var anyLater any
+	b, _ := json.Marshal(later)
+	_ = json.Unmarshal(b, &anyLater)
+	w.j.Append(engine.Event{RunID: "run-1", Kind: engine.KindCall, CallID: "c_later", Op: OpDesignLedger, Event: engine.EvCompleted, Data: map[string]any{"milestone": "M", "revision": "r1", "digest": "later", "design": anyLater}})
+	var got []ReleasedPlan
+	_ = json.Unmarshal(w.must("releasedPlans", "M"), &got)
+	if len(got) != 1 {
+		t.Fatalf("released plans %+v, want A only", got)
+	}
+	if p := got[0]; p.Node != "A" || p.Issue != "CRW-A" || p.Revision != "r0" || p.Approach != "approach A" || !slices.Equal(p.EditRegions, []string{"A/"}) ||
+		!slices.Equal(p.DecisionRefs, []string{"D1"}) || len(p.Decisions) != 1 || p.Decisions[0].Change != "change" {
+		t.Errorf("the released plan of A: %+v", p)
+	}
+	var head DesignHead
+	_ = json.Unmarshal(w.must("designHead", "M"), &head)
+	if head.Milestone != "M" || head.Head != w.relay.tip {
+		t.Errorf("design head %+v, want the integration tip %s", head, w.relay.tip)
+	}
+	if !IsRecordOp(OpDesignHead) || !IsRecordOp(OpReleasedPlans) {
+		t.Error("the design head and the released plans are recorded once and never read again")
+	}
+}
+
 // A wait for a decision is open until the journal has the applied row of its own question and node.
 func TestDecideReadsOnlyTheAppliedRow(t *testing.T) {
 	w := newWorld(t)

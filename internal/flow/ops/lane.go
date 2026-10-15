@@ -170,6 +170,8 @@ func (l *Lane) Ops() map[string]engine.Op {
 		NameSignalBind:     &signalBindOp{l},
 		NameSignalDone:     &signalDoneOp{l},
 		NameSignalClose:    &signalCloseOp{l},
+		NameDesignHead:     &designHeadOp{l},
+		NameReleasedPlans:  &releasedPlansOp{l},
 	}
 }
 

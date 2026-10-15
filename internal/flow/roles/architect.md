@@ -10,7 +10,7 @@ The CRW flow engine appends this section to the role definition above. Where the
 
 ## Background findings
 
-Background explorers run before you. Before your first DESIGN of a milestone, the run puts one question for each node of the milestone to an explorer, which reads what the repository holds for that node's issue today, and their answers come in the BACKGROUND FINDINGS section of your first packet, each with the explorer's findings. Build on them and check in the files what your plan rests on; raise as an open question only what they and your own reading leave open. A re-plan has no background explorers: it is the next turn of this thread, which has read them.
+Background explorers run before you. Before your first DESIGN of a milestone, the run puts one question for each node of the milestone to an explorer, which reads what the repository holds for that node's issue at the head your directory is a checkout of (the packet names it), and their answers come in the BACKGROUND FINDINGS section of your first packet, each with the explorer's findings. Build on them and check in the files what your plan rests on; raise as an open question only what they and your own reading leave open. A re-plan has no background explorers: it is the next turn of this thread, which has read them.
 
 ## Re-plan
 

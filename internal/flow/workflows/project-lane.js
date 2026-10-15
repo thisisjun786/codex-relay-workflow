@@ -133,7 +133,9 @@ async function replan(tag, signal, due, head, misaligned, unstarted) {
     milestone: ms.id, revision: cur.revision, signal, head, reasons: due.reasons, plan_mismatch: due.plan_mismatch, slice_change: due.slice_change.changed } })
   const call = await agent.call(replanPacket(ms, cur, due, head, misaligned, unstarted), { resume: cur.handle, schema: DESIGN, head, label: 'replan:' + tag })
   if (call.status !== 'completed') return { state: 'halted', result: await crw.milestoneHalt(ms, 'replan', call.status, call.reason, call.callId) }
-  const audited = await auditedDesign(call, 'replan-' + tag + ':', { head, base_tip: cur.base_tip, landed: cur.landed, unstarted })
+  // the plans the started nodes were released with: the critic compares the whole DESIGN with them (RELEASED PLANS)
+  const released = await crw.releasedPlans(ms.id)
+  const audited = await auditedDesign(call, 'replan-' + tag + ':', { head, base_tip: cur.base_tip, landed: cur.landed, unstarted, released })
   if (!audited.ok) return { state: 'halted', result: audited.result }
   const led = await crw.designLedger(ms.id, { design: audited.arch.output, answers: audited.answers, architect: audited.arch, signal, head, plan: due.plan })
   await askOrchestrator(audited.answers, 'explorer_cap', audited.carried)
@@ -179,12 +181,15 @@ function backgroundQuestion(n) {
   return 'Background of node ' + n.id + ' (' + n.issue + '): ' + n.title + '. What does the repository hold today that the plan of this issue rests on: the files, types, functions and tests it will change or read, the conventions they follow, and what in them must not change?'
 }
 phase('explore')
-const background = await crw.explore('background', ms.nodes.map((n) => ({ id: 'bg-' + n.id, question: backgroundQuestion(n), scope: '', files_needed: n.regions.length ? n.regions : null })), { milestone: ms.id }, {})
+// one design head for the phase (crw.designHead): every background explorer and the architect's first call read it, whatever lands on
+// the integration target meanwhile, and the architect's checkout, and so the head r0 records the DESIGN ran at, is made at it
+const designAt = await crw.designHead(ms.id)
+const background = await crw.explore('background', ms.nodes.map((n) => ({ id: 'bg-' + n.id, question: backgroundQuestion(n), scope: '', files_needed: n.regions.length ? n.regions : null })), { milestone: ms.id, head: designAt.head }, {})
 if (background.failed) return crw.milestoneHalt(ms, 'explorer', background.failed.status, background.failed.reason, background.failed.callId)
 
 phase('design')
 await crw.spawnDecision('ARCH_1', 'spawn', { role: 'architect', inputs: { milestone: ms.id, nodes: ms.nodes.length } })
-const first = await agent.call(architectPacket(ms, background.answers), { agentType: 'architect', schema: DESIGN, label: 'architect' })
+const first = await agent.call(architectPacket(ms, background.answers, designAt.head), { agentType: 'architect', schema: DESIGN, head: designAt.head, label: 'architect' })
 if (first.status !== 'completed') return crw.milestoneHalt(ms, 'architect', first.status, first.reason, first.callId)
 const designed0 = await auditedDesign(first, '')
 if (!designed0.ok) return designed0.result

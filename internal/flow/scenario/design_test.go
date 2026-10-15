@@ -404,7 +404,8 @@ func TestOpenQuestionRoutesThroughDesignAudit(t *testing.T) {
 	}
 	atHead := 0
 	for _, ev := range l.Events() {
-		if ev.Kind == engine.KindCall && ev.Op == "agent" && ev.Event == engine.EvPrepared && str(ev.Data, "role") == "explorer" && str(ev.Data, "head") != "" {
+		// the background explorers read the design head of the first DESIGN; the open questions' explorers are counted here
+		if ev.Kind == engine.KindCall && ev.Op == "agent" && ev.Event == engine.EvPrepared && str(ev.Data, "role") == "explorer" && !strings.HasPrefix(ev.Label, BackgroundLabel) && str(ev.Data, "head") != "" {
 			atHead++
 		}
 	}

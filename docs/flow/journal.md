@@ -172,7 +172,7 @@ audit results of acceptances: `results`, each with the acceptance id, the node, 
 the checks and the state (`ok`, `mismatch`, `unobserved`). The newest row that audits an acceptance decides whether it passed
 (`audit.Passed`); a reviewer thread is archived only for an acceptance that passed (`crw.archive`).
 
-**Recording calls.** `escalate`, `reportUp`, `hold`, `tierStep`, `spawnDecision`, `stepRecord`, `exploreRoute`, `exploreRecord`, `designAudit`, `designLedger`, `qaReceipt`, `qaCapture`, `reviewerFinal`, `audit`, `archive`, `replanSignals`, `currentDesign`, `reflection`, `signalBind`, `signalDone` and `signalClose` only record a fact. `releaseChild` was the old project lane's start of a node's issue child; no
+**Recording calls.** `escalate`, `reportUp`, `hold`, `tierStep`, `spawnDecision`, `stepRecord`, `exploreRoute`, `exploreRecord`, `designAudit`, `designLedger`, `qaReceipt`, `qaCapture`, `reviewerFinal`, `audit`, `archive`, `replanSignals`, `currentDesign`, `reflection`, `signalBind`, `signalDone`, `signalClose`, `designHead` and `releasedPlans` only record a fact. `releaseChild` was the old project lane's start of a node's issue child; no
 script calls it and no lane installs it now (CRW-1415). A run whose journal holds a `crw.releaseChild` row is a legacy issue-child run, and
 it is not resumed: the current lane sends a node sized for a child up as a `size_split` escalation at the position where the old lane
 decided and started the child, so a resume would not replay that start - it would escalate the node live, leave the child running and run

@@ -225,6 +225,17 @@ func TestReplanCriticAndExplorerCallsCarryTheSignalHead(t *testing.T) {
 			t.Errorf("the re-plan's critic packet lacks %q:\n%s", want, rp)
 		}
 	}
+	// the started nodes (C-1, A-1) reach the critic as they were released, B-1 (unstarted) does not
+	_, released, _ := strings.Cut(rp, "RELEASED PLANS")
+	released, _, _ = strings.Cut(released, "\n\n")
+	for _, n := range []string{nodeC, nodeA} {
+		if !strings.Contains(released, "- "+n+" (") || !strings.Contains(released, "approach: write the file of "+n) {
+			t.Errorf("the re-plan's critic packet lacks the released plan of %s:\n%s", n, rp)
+		}
+	}
+	if strings.Contains(released, "- "+nodeB+" (") {
+		t.Errorf("the re-plan's critic packet lists the unstarted %s as released:\n%s", nodeB, released)
+	}
 	release := -1
 	for i, e := range effects {
 		if e == "release:"+nodeB {
@@ -320,6 +331,74 @@ func TestExplorersRunBeforeTheArchitectAndTheirFindingsReachItsPacket(t *testing
 	}
 	if !strings.Contains(exp, "ASKED BY: the run, in the background of the architect of milestone "+msID+" (background)") {
 		t.Errorf("the background explorer's packet:\n%s", exp)
+	}
+}
+
+// TestDesignPhaseReadsOneHead: the run samples one design head before the phase explore, and every background explorer and the
+// architect's first call read it. A candidate lands on the integration target while the first background explorer runs: the second
+// explorer and the architect still read the sampled head, the architect's checkout is made at it, the ledger's r0 records it as the
+// head the DESIGN ran at, and the architect's packet names it with the background findings.
+func TestDesignPhaseReadsOneHead(t *testing.T) {
+	l := newLaneLab(t, labIssue{Key: "A-1", Milestone: "M1"}, labIssue{Key: "A-2", Milestone: "M1", After: []string{"A-1"}})
+	before := l.git(l.repo, "rev-parse", "integration")
+	landed := ""
+	l.turn = func(c labCall, r fakehost.TurnRequest) (fakehost.TurnPlan, bool) {
+		if !strings.HasPrefix(c.Label, "explore-bg:") {
+			return fakehost.TurnPlan{}, false
+		}
+		l.mu.Lock()
+		first := landed == ""
+		if first {
+			// another candidate lands while the phase runs
+			tree := l.git(l.repo, "rev-parse", "integration^{tree}")
+			landed = l.git(l.repo, "commit-tree", tree, "-p", "integration", "-m", "landed meanwhile")
+			l.git(l.repo, "update-ref", "refs/heads/integration", landed)
+		}
+		l.mu.Unlock()
+		return labSay(map[string]any{"answer": "README.md holds the base text", "evidence": []string{"README.md"}, "verified": []string{}, "inferred": []string{}, "unknown": []string{}}), true
+	}
+	spec := l.start("start", "project-lane", "--args", fmt.Sprintf(`{"plan":%q,"milestone":"M1"}`, l.plan), "--handoff", l.file)
+	l.closed(l.runToEnd(spec.RunID))
+	if landed == "" || landed == before {
+		t.Fatalf("no candidate landed during the phase explore")
+	}
+
+	heads, starts := map[string]string{}, map[string]string{}
+	baseTip := ""
+	for _, e := range l.events() {
+		if e.Kind == engine.KindCall && e.Event == engine.EvPrepared && e.Op == "agent" && e.Label != "" {
+			heads[e.Label] = str(e.Data, "head")
+			if alloc, ok := e.Data["allocation"].(map[string]any); ok {
+				starts[e.Label] = str(alloc, "start_commit")
+			}
+		}
+		if e.Kind == engine.KindCall && e.Op == ops.OpDesignLedger && e.Event == engine.EvCompleted && baseTip == "" {
+			baseTip = str(e.Data, "base_tip")
+		}
+	}
+	bg := 0
+	for label, head := range heads {
+		if strings.HasPrefix(label, "explore-bg:") {
+			bg++
+			if head != before || starts[label] != before {
+				t.Errorf("the background explorer %s reads head %q at %q, want the sampled design head %s (a candidate landed at %s)", label, head, starts[label], before, landed)
+			}
+		}
+	}
+	if bg != 2 {
+		t.Fatalf("%d background explorers, want 2: %v", bg, heads)
+	}
+	if heads["architect"] != before || starts["architect"] != before {
+		t.Errorf("the architect reads head %q at %q, want the sampled design head %s", heads["architect"], starts["architect"], before)
+	}
+	if baseTip != before {
+		t.Errorf("r0 records the DESIGN ran at %q, want %s", baseTip, before)
+	}
+	l.mu.Lock()
+	arch := l.texts["architect"]
+	l.mu.Unlock()
+	if !strings.Contains(arch, "BACKGROUND FINDINGS (read at "+before+",") {
+		t.Errorf("the architect packet does not name the head of the background findings:\n%s", arch)
 	}
 }
 

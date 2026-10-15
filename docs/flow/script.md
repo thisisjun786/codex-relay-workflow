@@ -304,7 +304,10 @@ and a string that is no handle of a result of this run. Like every `crw.*` call,
 
 `internal/flow/workflows/project-lane.js` is the built-in workflow that runs the issues of a milestone (`args`: `plan`, `milestone`,
 and `cap`, the executors at once, default 3). Its steps, in order: `crw.milestone` reads the nodes of the milestone in the order the
-scheduler offers them; in the phase `explore`, before the architect's first DESIGN, one background question for each node goes to an
+scheduler offers them; in the phase `explore`, the run samples one design head, the integration tip of the run's plan (`crw.designHead`, recorded once,
+so a resume reads the same head): every background explorer and the architect's first call name it as their `head`, so they read one commit whatever
+lands on the target meanwhile, the architect's checkout, and so the head `r0` records the DESIGN ran at, is made at it, and the explorer's packet
+(`READ AT:`) and the architect's `BACKGROUND FINDINGS` name it; before the architect's first DESIGN, one background question for each node goes to an
 explorer (`crw.explore('background', ...)`, CRW-1466): the question names the node's id, its issue key and its title, its `files_needed` are the
 node's declared regions (none declared: not named), and `crw.exploreRoute` spawns it (`spawned_background`) or reuses an answer of the same
 digest the run has, never inline, never to the owner thread and outside the open questions' cap of the milestone; the explorer calls are
@@ -537,7 +540,10 @@ DESIGN ran at (for the first revision the commit the architect's checkout was ma
 and the head each node landed with.
 
 **Revisions.** The ledger holds revisions `r0`, `r1`, ...: a revision is recorded only over an approved audit of its own, made after the revision before it
-(the re-plan's DESIGN goes through the same audit rounds as the first DESIGN, `needs_changes` returning it to the architect on the same thread), and the nodes that have not started are
+(the re-plan's DESIGN goes through the same audit rounds as the first DESIGN, `needs_changes` returning it to the architect on the same thread; the critic's packet
+carries `RELEASED PLANS`, the plan each started node was released with as `crw.releasedPlans` reads it from the revision of its release - approach, `edit_regions`,
+`decision_refs` and the decisions they name - and a started node whose issue differs from it, or a decision such a plan names that the DESIGN drops or changes,
+is a P1 finding), and the nodes that have not started are
 released under a revision only after that, because the signal that re-plans keeps every new release back until it is decided. A lane that started keeps the
 revision it was released under; it ends under it and lands or is held as usual. Each revision records the slice digest of every node of the plan it was made
 against - for a revision after the first, the plan the architect and the auditor evaluated (`plan` of `crw.replanSignals`, handed to `crw.designLedger`), so that a plan revision made while
