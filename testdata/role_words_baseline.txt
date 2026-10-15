@@ -4,7 +4,6 @@
 #   CRW_ROLE_WORDS=update CRW_ROLE_WORDS_PATHS=<prefixes> go test -tags dev ./internal/dev/ci/ -run TestRoleWordsBaselineOnlyShrinks
 internal/affordance/render.go	3
 internal/bridge/appserver/fakehost/subagents.go	2
-internal/bridge/execution/roles.go	7
 internal/bridge/ledger/ledger.go	1
 internal/bridge/mcp/descriptions_generated.go	5
 internal/bridge/worktrees/worktrees.go	2
@@ -30,7 +29,6 @@ internal/pabcd/hook/githubpost.go	1
 internal/pabcd/hook/memorygate.go	4
 internal/pabcd/hook/memorygate_analysis.go	1
 internal/pabcd/source/git.go	2
-internal/policystore/check.go	3
 internal/relay/adapter/cli.go	1
 internal/relay/childcleanup/clean.go	1
 internal/relay/childcleanup/gate.go	3
