@@ -811,7 +811,7 @@ func (l *Lab) defaultPlan(c *Call) fakehost.TurnPlan {
 		return Say(QAReceiptOf("PASS"))
 	case c.Role == "explorer" && strings.HasPrefix(c.Label, "qa-pass:"):
 		return Say(QAPassOf(strings.SplitN(c.Label, ":", 3)[1], "PASS"))
-	case c.Role == "reviewer" && strings.HasPrefix(c.Label, "design-audit"):
+	case c.Role == "critic" && strings.HasPrefix(c.Label, "design-audit"):
 		return Say(map[string]any{"verdict": "approved", "findings": []any{}, "summary": "the DESIGN holds"})
 	case c.Role == "reviewer":
 		return Say(Verdict(true))

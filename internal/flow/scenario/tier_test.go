@@ -106,8 +106,8 @@ func TestTierStepOnTwoFailingHeads(t *testing.T) {
 		t.Fatalf("calls %v, want %v", labels, want)
 	}
 	onlyStep(t, l, "A", ops.TierEvidenceVerify)
-	if n := len(l.CallsOf("reviewer")); n != 2 {
-		t.Errorf("%d reviewer calls (the audit and one review)", n)
+	if n := len(l.CallsOf("reviewer")); n != 1 {
+		t.Errorf("%d reviewer calls (one review; the audit is the critic's)", n)
 	}
 }
 
