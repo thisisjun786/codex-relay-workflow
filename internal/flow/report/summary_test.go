@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
+	"github.com/thisisjun786/codex-relay-workflow/internal/layername"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/dagsched"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
@@ -488,5 +489,21 @@ func TestAForeignCommandReconcilesTheSummaryOfTheOrchestratorsRun(t *testing.T) 
 	w.verdict("A", "needs_changes", "the guard is missing", "and the loop")
 	if out, err = ReconcileSummary(ctx, env); err != nil || !out.Enqueued || out.Intents != 1 || len(w.entries()) != 2 {
 		t.Fatalf("second outcome %+v %v", out, err)
+	}
+}
+
+// CRW-1478 split (CRW-1548): the summary notice keeps the words dev 7f21f0069 sends. The flow composes it again on every reconcile
+// and resends it under the fixed logical id summary-<id>, and the manage outbox keys that id to the sha256 of the text it first
+// carried, so a retry in other words of a send an earlier build left undetermined is refused locally. The notice names the 자식
+// (project session) only once CRW-1548 settles such a retry; until then its one bare role word is the summary.go line of
+// testdata/role_words_baseline.txt.
+func TestSummaryNoticeKeepsItsWording(t *testing.T) {
+	text := SummaryNoticeText("sum-1", "plan-1", "doc-1")
+	want := "[crw flow] summary_owed summary=sum-1 plan=plan-1 document=doc-1\nThe plan summary is owed to the document. You are the parent of the project: take the newest entry (`crw relay dag-summary-status --plan plan-1`), claim it (`dag-summary-claim`), write the document with your Linear connector, read it back and complete it (`dag-summary-complete`). The run and the manager do not claim."
+	if text != want {
+		t.Errorf("the summary notice changed its words; a retry under summary-<id> would be refused (CRW-1548):\n got %q\nwant %q", text, want)
+	}
+	if hits := layername.Find(text); len(hits) != 1 || hits[0].Word != "parent" {
+		t.Errorf("the notice carries the bare role words %v, want the one \"parent\" its baseline line counts", hits)
 	}
 }

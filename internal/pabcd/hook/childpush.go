@@ -94,7 +94,7 @@ func ChildPushDecision(raw string, bind func(session, cwd string) ChildPushBindi
 	if own == "" {
 		own = "<its own branch>"
 	}
-	reason := "[crw CHILD-PUSH-GUARD] 통합은 부모·통합기 몫 (integration is the parent's and the integrator's): a relay child pushes only its own branch, " +
+	reason := "[crw CHILD-PUSH-GUARD] 통합은 자식·통합기 몫 (integration is the 자식's and the integrator's): a relay child pushes only its own branch, " +
 		"named as the destination of a direct git push (git push origin HEAD:" + own + "). Refused: " + s.why + "."
 	return editAnswer("deny", reason, reason), rule
 }
@@ -162,7 +162,7 @@ func childPushDestroys(p childPush) string {
 
 // ChildPushInputUnreadAnswer is the deny of a leg whose input could not be read whole: the command it carries is not known.
 func ChildPushInputUnreadAnswer() string {
-	reason := "[crw CHILD-PUSH-GUARD] 통합은 부모·통합기 몫 (integration is the parent's and the integrator's): the hook input cannot be read whole, so whether the command pushes another branch is not known."
+	reason := "[crw CHILD-PUSH-GUARD] 통합은 자식·통합기 몫 (integration is the 자식's and the integrator's): the hook input cannot be read whole, so whether the command pushes another branch is not known."
 	return editAnswer("deny", reason, reason)
 }
 
@@ -326,7 +326,7 @@ var childPushFlags = map[string]bool{"--set-upstream": true, "--force": true, "-
 // childPushJudge is why one push is refused for a child whose own branch is own, or "" when it pushes own only.
 func childPushJudge(p childPush, own string) string {
 	if own == "" {
-		return "this session has no branch of its own (its checkout has none, an integration branch or a name under refs/, heads/, tags/ or remotes/, or the parent's checkout has the same)"
+		return "this session has no branch of its own (its checkout has none, an integration branch or a name under refs/, heads/, tags/ or remotes/, or the 자식's checkout has the same)"
 	}
 	if p.feed {
 		return "find or xargs gives the push its words"

@@ -198,7 +198,7 @@ func TestLoopScopePointerNamesTheOwnersAndNoRecipeStep(t *testing.T) {
 		if strings.Contains(d, "1. Session id") || strings.Contains(d, "`crw pabcd loop init") {
 			t.Errorf("parent=%v: the pointer carries recipe steps", parent)
 		}
-		if parent != strings.Contains(d, "registered as a project parent") {
+		if parent != strings.Contains(d, "registered as a 자식 (project session)") {
 			t.Errorf("parent=%v: the registered-parent sentence is wrong", parent)
 		}
 		if n := strings.Count(d, "\n") + 1; n > 14 {
@@ -220,7 +220,7 @@ func TestLoopScopePointerComposesWithAgbrowse(t *testing.T) {
 func TestLoopScopeWithoutARoleReaderReadsNoRole(t *testing.T) {
 	cwd := t.TempDir()
 	answer := PromptSubmitHandle(PromptSubmitPayload{Cwd: cwd, SessionID: "s1", Prompt: "Start crw-loop for the migration project.", TurnID: "t1", PabcdEnabled: true}, "linux", promptSubmitHost(cwd))
-	if !strings.Contains(answer, loopScopePointerMarker) || strings.Contains(answer, "registered as a project parent") {
+	if !strings.Contains(answer, loopScopePointerMarker) || strings.Contains(answer, "registered as a 자식 (project session)") {
 		t.Fatal(answer)
 	}
 }

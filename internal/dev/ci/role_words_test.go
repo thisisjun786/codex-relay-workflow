@@ -54,6 +54,14 @@ var (
 // name), keyed by roleWordsKey(path, unquoted literal) so a moved line keeps its entry. A role-sense
 // literal never goes here: it is reworded or stays counted in the baseline.
 var nonRoleLiterals = roleWordsAllowed([]struct{ path, literal, reason string }{
+	{"internal/affordance/render.go", "[crw] This session's id is `SESSION`. Every mutating `crw pabcd orchestrate` command (I/P/A/B/C/D/reset) MUST pass `--session SESSION` — the implicit latest-session fallback is disabled for writes, which prevents ACCIDENTAL implicit-fallback collisions between concurrent/forked sessions. IDENTITY RULE: use the MOST RECENT SessionStart binding line, never a parent/history id. With native CODEX_THREAD_ID, verify via `crw relay session current` before mutation. Missing/inherited/conflicting binding: use `crw relay session current`, then `crw relay session bind` in its verified cwd. Never set the environment id. Binding does not verify hooks or arm Stop-continuation.", "SESSION-IDENTITY-01 pinned by the oracle: a parent thread id (oracle-directives.json, contract/fixtures/cxc)"},
+	{"internal/affordance/render.go", "[crw] For PR work or dependent branches, read $crw:crw-dev references/stacked-prs.md (DEV-STACK-06/07/08). Use ordinary PRs/manual chains by default. Do not suggest or create GitHub native stacks unless the user clearly and strongly requests them for this task. Inspect existing membership and CI separately; a parent base or Can Stack banner is not opt-in. Parallel branch/PR lanes: one Codex task each, not subagents (same checkout); the lane request authorizes them. Per-PR CI is expected. This is guidance, not authorization to register, restack, cancel CI, or merge.", "GitHub stacked pull requests: a parent base"},
+	{"internal/manage/audit_grade.go", "bundle %s: its parent is not a directory", "filesystem: the bundle's parent directory"},
+	{"internal/manage/improve_collect.go", "%s: the parent directory of %s could not be examined: %w", "filesystem: the output file's parent directory"},
+	{"internal/manage/improve_collect.go", "%s: the parent directory of %s is not a directory", "filesystem: the output file's parent directory"},
+	{"internal/manage/improve_collect.go", "%s: the parent directory of %s is not the directory the plan named", "filesystem: the output file's parent directory"},
+	{"internal/manage/memlog.go", "the stat of %d has no parent", "process: the parent process id"},
+	{"internal/pabcd/hook/directives.go", "   SESSION-IDENTITY-01: never a parent/history id; binding alone does not verify hook execution or Stop-continuation.\n", "SESSION-IDENTITY-01 pinned by the oracle: a parent thread id (oracle-directives.json, contract/fixtures/cxc)"},
 	{"internal/relay/dagsched/accept_premerge.go", "git could not read the parents of %s in %s: %v", "git: the parent commits of a merge"},
 	{"internal/relay/dagsched/accept_premerge.go", "the merge %s is not the automatic merge of its parents (a hand-resolved merge or a merge outside the base)", "git: the parent commits of a merge"},
 	{"internal/relay/dagsched/baserefresh_git.go", "its parent's manifest cannot be read apart from its version: ", "git: the plugin manifest of the parent commit"},
@@ -72,6 +80,9 @@ var nonRoleLiterals = roleWordsAllowed([]struct{ path, literal, reason string }{
 	{"internal/relay/mergeturn/train.go", "the parents of %s were not read: %v", "git: a merge commit's parents"},
 	{"internal/relay/mergeturn/train.go", "the merge commit %s is not what git merges from its parents: %v", "git: a merge commit's parents"},
 	{"internal/relay/mergeturn/train.go", "the tree of merge commit %s is %s and git merges %s from its parents, so the merge holds a hand resolution", "git: a merge commit's parents"},
+	{"internal/skill/base_refresh.go", "parents: (%s, %s) in that order\n", "git: a merge's parent commits"},
+	{"internal/skill/base_refresh.go", "the parents of %s are (%s, %s): the previous head is the second parent. An update has the parents (previous head, dev tip) in that order, and the reverse merges the branch into the base", "git: a merge's parent commits"},
+	{"internal/skill/base_refresh_mechanical.go", "parents: (%s, %s) in that order\n", "git: a merge's parent commits"},
 })
 
 func roleWordsAllowed(rows []struct{ path, literal, reason string }) map[string]string {

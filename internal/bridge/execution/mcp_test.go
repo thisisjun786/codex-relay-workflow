@@ -85,7 +85,7 @@ func TestMCPProfilesAreRefusedWhenReadWithTheirOwnReason(t *testing.T) {
 		})
 	}
 	roles := doc{"supervisor": doc{"expectation": "record", "mcp": mcpSection()}}
-	if _, err := load(t, rolesPolicy(roles, false)); err == nil || !strings.Contains(err.Error(), "role 'supervisor' cannot declare \"mcp\"") {
+	if _, err := load(t, rolesPolicy(roles, false)); err == nil || !strings.Contains(err.Error(), "role 'supervisor' (부모) cannot declare \"mcp\"") {
 		t.Fatalf("a supervisor with profiles must not load: %v", err)
 	}
 }

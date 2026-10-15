@@ -134,7 +134,7 @@ func RequiredFor(direction, purpose string) ([]string, error) {
 	}
 	r, ok := required[direction+"/"+purpose]
 	if !ok {
-		return nil, malformed("relay-packet/1 covers the parent-child relation and what a parent owes upward; %s is carried by the envelope alone", direction)
+		return nil, malformed("relay-packet/1 covers the relation of a 자식 and its issue child and what a 자식 owes upward; %s is carried by the envelope alone", direction)
 	}
 	return slices.Clone(r), nil
 }
@@ -155,7 +155,7 @@ func MessageID(direction, relation, purpose, subject string) (string, error) {
 
 var reachNames = []string{"transport_accepted", "received", "agreed", "applied", "verified"}
 var reachSources = map[string][]string{"child_to_parent": {"attempts", "acks", "acks", "verdicts", "verdicts"}, "parent_to_child": {"attempts", "", "", "events", "verdicts"}, "parent_to_supervisor": {"supervisor_attempts", "supervisor_readbacks", "", "", ""}, "supervisor_to_parent": {"", "scope_directives", "scope_directives", "", ""}}
-var noMechanism = map[string]string{"parent_to_child": "a revision request carries no acknowledgement; the completion receipt of the generation it opened is what shows it was applied", "parent_to_supervisor": "a report upward is transported and read back, and nothing here records that a supervisor agreed, applied or verified anything; what became of it is read from the tracking record, confirmed", "supervisor_to_parent": "a directive is recorded rather than sent, so nothing transports, applies or verifies this one"}
+var noMechanism = map[string]string{"parent_to_child": "a revision request carries no acknowledgement; the completion receipt of the generation it opened is what shows it was applied", "parent_to_supervisor": "a report upward is transported and read back, and nothing here records that the 부모 agreed, applied or verified anything; what became of it is read from the tracking record, confirmed", "supervisor_to_parent": "a directive is recorded rather than sent, so nothing transports, applies or verifies this one"}
 var states = []string{"yes", "no", "conditional", "unmeasured", "not_applicable"}
 
 func Stage(state string, source any, detail string) Obj {

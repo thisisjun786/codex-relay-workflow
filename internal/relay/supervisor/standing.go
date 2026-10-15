@@ -11,7 +11,7 @@ import (
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/store"
 )
 
-const standingLimits = "derived from this store's rows only. It says what is owed upward, never that a supervisor received anything, and never that the project is complete. A turn that ended without reporting has no row here at all, so it is present only when a reading of it was passed in: one taken through the marker (reporting-show), or one this store derives from the declarations a child's relay recorded here (omitted.derive), which the supervisor channel and supervisor-standing pass in themselves"
+const standingLimits = "derived from this store's rows only. It says what is owed upward, never that the 부모 received anything, and never that the project is complete. A turn that ended without reporting has no row here at all, so it is present only when a reading of it was passed in: one taken through the marker (reporting-show), or one this store derives from the declarations a child's relay recorded here (omitted.derive), which the 부모 channel and the 부모's standing command pass in themselves"
 
 // Standing is the project's whole answer: every relationship attached to it, archived ones
 // included, and every obligation the events of those raise. It is what supervisor-standing prints

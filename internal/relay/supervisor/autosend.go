@@ -33,14 +33,14 @@ func (c *Channel) AutoSend(ctx context.Context, host SendAdapter, now float64, p
 	answer := AutoSendResult{Notes: []string{}, AfterProject: afterProject, AfterStagedAt: afterStagedAt, AfterMessageID: afterMessageID}
 	projects, err := c.autoProjects(ctx, projectLimit, afterProject)
 	if err != nil {
-		answer.Notes = append(answer.Notes, "supervisor pass could not list projects: "+err.Error())
+		answer.Notes = append(answer.Notes, "부모 channel pass could not list projects: "+err.Error())
 		return answer, nil
 	}
 	for _, project := range projects {
 		answer.AfterProject = project
 		staged, err := c.stageUnsent(ctx, project, delivery.ISOOf(now))
 		if err != nil {
-			answer.Notes = append(answer.Notes, fmt.Sprintf("supervisor staging failed for %s: %v", project, err))
+			answer.Notes = append(answer.Notes, fmt.Sprintf("부모 report staging failed for %s: %v", project, err))
 			continue
 		}
 		answer.SupervisorStaged += staged
@@ -72,11 +72,11 @@ func (c *Channel) AutoSend(ctx context.Context, host SendAdapter, now float64, p
 			if errors.As(err, &refusal) {
 				detail = refusal.Reason + ": " + refusal.Detail
 			}
-			answer.Notes = append(answer.Notes, fmt.Sprintf("supervisor report %s not sent: %s", row.MessageID, detail))
+			answer.Notes = append(answer.Notes, fmt.Sprintf("부모 report %s not sent: %s", row.MessageID, detail))
 			answer.Deferred++
 			struggling[row.RecipientTaskID] = true
 			if deferErr := c.deferAutoFault(ctx, row.MessageID, now, err); deferErr != nil {
-				answer.Notes = append(answer.Notes, fmt.Sprintf("supervisor report %s not deferred: %v", row.MessageID, deferErr))
+				answer.Notes = append(answer.Notes, fmt.Sprintf("부모 report %s not deferred: %v", row.MessageID, deferErr))
 			}
 			continue
 		}
