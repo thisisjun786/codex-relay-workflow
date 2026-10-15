@@ -1,6 +1,6 @@
-# Coordination between parents
+# Coordination between children
 
-Here the parent (relay role `parent`) and the child (relay role `child`) are relay roles, read through [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels).
+The sessions in this document are named by [the level table](../../plugins/crw/skills/crw-canon/references/hierarchy.md#the-levels): the parent is the repository session, the child is the project session, and an issue child is no layer.
 
 Relay-owned records, like the linkage tables and for the same reason: the five schemas under
 `contract/schema/` (`src/codex_session_relay/schema/` until todo 44) are byte copies of a frozen contract, none of them
@@ -27,9 +27,9 @@ than by permission, which is what the criterion about independent repositories a
     region_id    = "rgn-" + sha256(repository|base_revision|path|region_kind|region_key)[:32]
     agreement_id = "agr-" + sha256(region_id|low_project|high_project|tenure)[:32]
 
-A **turn** keys WITH its holder, because a claim is one parent's claim, the same reason a scope
+A **turn** keys WITH its holder, because a claim is one child's claim, the same reason a scope
 binding keys with its task. A **tenure** is in every one of these that can recur: the same
-parent taking the turn again, or the same subject being re-reserved after a release, is a
+child taking the turn again, or the same subject being re-reserved after a release, is a
 second fact and not a replay of the first. Without it a re-reservation would either collide
 with the retained released row or overwrite it, and that row is the evidence a duplicate or
 contradictory release is detected against.
@@ -53,14 +53,14 @@ out, because "wait longer" is the one answer that never helps.
 
 The one thing that moves because a holder went quiet is a turn that is still `holding`: a holder that
 follows the protocol has not begun to merge before `merge-turn-check`, so a holding turn silent past
-the holding limit can be passed on (below). That is a recorded act by another parent, not the
+the holding limit can be passed on (below). That is a recorded act by another child, not the
 passing of time, and it is no proof that the pull request is unmerged.
 
 ## The base a landing leaves behind
 
 A landing records the base branch it leaves behind, and the next candidate on that target has to
 restate exactly that value before `merge-turn-check` lets it merge. That value used to be typed by
-the caller. In the CRW-124 G1 trial on an installed relay both parents typed the base their
+the caller. In the CRW-124 G1 trial on an installed relay both children typed the base their
 candidate had been checked against rather than the one the branch pointed at after the merge, so
 their verified successors were refused `merge_currency_stale`, and nothing could correct a landed
 turn: `merge-turn-resolve` admits only an unknown one.
@@ -130,16 +130,16 @@ recorded as landed, with the true base. On a resolved landing `landedSha` is the
 because no landing commit was reported. The comparison with the last recorded landing is kept
 beside the reading on purpose: a move of the branch that no landing recorded is never absorbed
 silently. Where the relay can confirm the move it records the base again itself, with the reason
-in the ledger; where it cannot, the check stops until the landing's holder or supervisor
+in the ledger; where it cannot, the check stops until the landing's holder or the parent
 restates the base, and that restatement is the record of why the base moved.
 
 ## A merge outside the lane
 
-A pull request merged outside the lane (a node the lane cannot serve, a parent using the older
+A pull request merged outside the lane (a node the lane cannot serve, a child using the older
 route) moves the base branch past the base the last landing recorded. Before CRW-403 the next
-parent's `merge-turn-check` was refused `merge_currency_stale` against that record, and only the
-landing's holder or its supervisor could correct it, so one parent's outside merge stopped every
-other parent and the waiting parents could not tell why.
+child's `merge-turn-check` was refused `merge_currency_stale` against that record, and only the
+landing's holder or its parent could correct it, so one child's outside merge stopped every
+other child and the waiting children could not tell why.
 
 Now the check that finds the recorded base differs from the tip it states reads how the branch got
 there, before its transaction like the tip: the first-parent line of the base branch from the tip
@@ -174,7 +174,7 @@ it (the reader cannot read how the branch moved, the read failed, the line does 
 recorded base, a commit on it has one parent, a commit is a recorded landing, a turn is in flight,
 or the landing changed during the call), and gives the command with the landing and the holder
 filled in: `merge-turn-restate-base --turn <landing> --actor <holder> --evidence '<why the base
-moved>'`. The supervisor above the landing's project may run it too.
+moved>'`. The parent above the landing's project may run it too.
 
 What this does not establish. Confirmation is by commit shape, not by pull request identity: a
 hand-made merge commit counts, and branch protection, not the lane, decides who may merge. A
@@ -213,12 +213,12 @@ does not; an acknowledgement of the grant does not answer it. `merge-turn-attest
 changes state. Only the holder's own `merge-turn-release` returns the turn (a silent holding turn can
 also be passed on, below), and
 `merge-turn-show` reports `returnRequestedAt`, `transportAcceptedAt` and `releasedAt` as three
-separate facts. The same rule from the other side is that a parent asserting its turn in
-conversation changes nothing: only a write by the registered project parent does.
+separate facts. The same rule from the other side is that a child asserting its turn in
+conversation changes nothing: only a write by the child registered for the project does.
 
-## One live turn per parent per target
+## One live turn per child per target
 
-A parent holds at most one live turn (waiting, holding, merging or of unknown effect) on a target,
+A child holds at most one live turn (waiting, holding, merging or of unknown effect) on a target,
 and that turn is bound to the pull request it was claimed for: `merge-turn-request --pr <n>
 --relationship <id>` records both. A request for another pull request used to be answered with the
 live turn and nothing said so, and a caller that took it for the turn of the pull request it asked
@@ -359,7 +359,7 @@ into every pass record and return notice, not a store column.
 
 A turn that is still **holding** and stalled can be passed:
 `merge-turn-pass --turn <id> --actor <passer> --evidence <what was observed>`. The passer is the
-supervisor above the holder's project or the parent of a live waiting claim on the same target
+parent above the holder's project or the child of a live waiting claim on the same target
 that still owns its project. Inside one transaction the relay re-reads the ledger, refuses unless
 the holder has been silent for the limit (`merge_turn_not_held`, naming when the turn would
 stall), writes a `turn_passed` entry that keeps the original values (holder, candidate head,
@@ -402,18 +402,18 @@ different answer from `capacity_exhausted` on purpose: one says the bound is unk
 other says it is reached.
 
 A ceiling lowered below current use is accepted, revokes nothing, reports `overBy` and refuses
-the next reservation. This package cannot stop a running child, so reclaiming capacity would be
+the next reservation. This package cannot stop a running issue child, so reclaiming capacity would be
 a claim the record cannot support.
 
 ## Regions, not file names
 
 A region is a repository, a base revision, a path and optionally a symbol or data key. Two
-parents with business in different parts of one file are not in conflict, and a `tree` claim on
+children with business in different parts of one file are not in conflict, and a `tree` claim on
 the repository root is refused outright. Containment is by path component, so `src/a` does not
 contain `src/ab`. Two symbol regions overlap only when the path AND the key match, so one
 function name appearing in two files is two regions.
 
-`region_class=generated` never contests. Two parents both touching a file the integration tree
+`region_class=generated` never contests. Two children both touching a file the integration tree
 re-derives are not disagreeing about it; they are both going to regenerate it, and
 `region-show` lists such regions under `regenerate` with the command they come from. This
 pull request is itself in that situation with `scripts/crw_runtime/components.json`.
@@ -424,9 +424,9 @@ A region carries the revision it was proposed on, so an agreement is about a pla
 Nothing here watches a branch, and `merge-turn-land` records no revision mark: a mark is append-only
 with one successor per revision, while a landing's recorded base can still be corrected with
 `merge-turn-restate-base` (see above), so a mark written from a wrong reading could never be taken
-back. A registered parent of any project with an agreement in the repository, open or closed (the
+back. A child registered for any project with an agreement in the repository, open or closed (the
 check reads that history, not the agreement being moved; a repository with no agreement at all takes
-any registered parent), records the move with `region-restate-revision` once it has read the landed
+any registered child), records the move with `region-restate-revision` once it has read the landed
 base, and before it answers or relies on an agreement standing on the older tree. Until somebody
 does, a late acceptance on the older tree stands; that is the contract, not an oversight.
 
@@ -444,9 +444,9 @@ naming the chain's end, and either side carries it there with `region-reaffirm` 
 successor keeps the original proposer, the constraint and both sides' conditions as written; the
 carrying side may restate only its own condition. Carrying accepts the carrier's side on the new
 tree. The other side's acceptance was given on the older tree and is not carried: the answer's
-`reaffirmation.awaitingAcceptance` names that side's parent, the reason
+`reaffirmation.awaitingAcceptance` names that side's child, the reason
 (`acceptance_on_prior_revision` or `not_yet_accepted`) and the `region-settle` command, and
-`nextOwner` names that parent as it stands when read - or, with no single registered parent on that
+`nextOwner` names that child as it stands when read - or, with no single registered child on that
 side, is left empty while the answer says what has to happen first. `statedOn` names the revision
 each text was written against and `textFromEarlierRevision` lists those from an older tree, because
 a line number inside one points there. A successor carried before carries were recorded has no
@@ -463,13 +463,13 @@ without a word (CRW-124 G3).
 An acceptance takes no condition. One given to `region-settle` used to vanish; it is now refused,
 as `bad_invocation` at the command line.
 
-## A review thread that arrives after the child's record
+## A review thread that arrives after the issue child's record
 
-A child's handoff record lists the review threads it saw in `reviewCoverage.threadsSeen` and judges
+An issue child's handoff record lists the review threads it saw in `reviewCoverage.threadsSeen` and judges
 each one. A review that lands afterwards on the same head is not in that list.
 `merge-evidence --restate <record>` reads the pull request again and reports every such thread as
 a `late_finding`, resolved or not, because the record did not see it and no longer describes the
-candidate. The record then went back to the child, which could only answer with a receipt that
+candidate. The record then went back to the issue child, which could only answer with a receipt that
 named the thread.
 
 When the coordinator can judge a late thread itself it records that judgement in a file and passes
@@ -495,7 +495,7 @@ records it as written and never reads it. Values are kept and matched exactly as
 duplicate key keeps its last value.
 
 These words are the coordinator's. They cover threads outside `threadsSeen` and never stand in for
-the child's own `threadDispositions`, whose vocabulary differs (`backlog` is roughly the child's
+the issue child's own `threadDispositions`, whose vocabulary differs (`backlog` is roughly the issue child's
 `accepted`, `refuted` its `disputed`). Only review threads can be disposed of; a review summary or
 a pull request comment is never exempted.
 
@@ -528,8 +528,8 @@ a pull request comment is never exempted.
 
 ## An independent review beside a restatement
 
-A child that ran the independent code review (`crw review`) states what it did with the result in an
-`independentReview` item. The item is a reference opinion for the parent and never a merge gate, so
+An issue child that ran the independent code review (`crw review`) states what it did with the result in an
+`independentReview` item. The item is a reference opinion for the child and never a merge gate, so
 everything below is a warning: it is read beside the restatement, not in it, and changes neither
 `restatement.current`, its problems, the verdict nor the exit code.
 
@@ -539,7 +539,7 @@ completion-receipt contract): `artifact` (`path`, absolute, and `sha256` of the 
 `headPatchId`, and `dispositions`, one `{finding, disposition, evidence}` per answered finding, where
 `finding` is the zero-based position in the artifact's `findings` and `disposition` is `fixed`,
 `refuted` or `recorded`. Without an artifact (`unavailable`, nothing was written) there is nothing to
-compare. The child states it in two places: `emit --independent-review <file>` puts it on a
+compare. The issue child states it in two places: `emit --independent-review <file>` puts it on a
 `ready_for_review` receipt, which the relay stores as stated and never reads the artifact it names (an
 execution-only receipt carrying it is refused `malformed_receipt`), and the same object is the
 `independentReview` member of the handoff record. The relay's `work_report_handoffs` rows have fixed
@@ -560,20 +560,20 @@ usage error without `--restate`). Otherwise the payload is exactly what it was.
   record is about, not the candidate head, so a candidate head the record does not describe is warned
   about and the stated patch-id is not reused: whether the candidate's code changed after the review is
   told from a base refresh only when the record already covers that candidate. The relay does not compute
-  the patch-id; the parent confirms the stated one with the diff the review bundle builds (command below;
+  the patch-id; the child confirms the stated one with the diff the review bundle builds (command below;
   its options are fixed in `internal/review/bundle/gitdiff.go`, and a plain `git diff` differs on binary
   files).
 - **Warning codes**, all prefixed `independent_review_`: `absent` (flag, no member), `malformed`,
   `unreadable`, `sha256_mismatch`, `artifact_invalid`, `status_differs`, `head_differs`,
   `disposition_missing` and `disposition_unknown`. A file that cannot be read or does not hash to the
   stated sha256 ends the comparison with that one warning, since nothing read from other bytes
-  describes the file the child meant.
+  describes the file the issue child meant.
 - **Reading a path the record names.** The path must be absolute; the file is opened without waiting
   for a writer, must be a regular file and is read to at most 8 MiB. No warning repeats what the file
   holds, a validator's message or an operating-system error: only fixed text, the item's own scalars and
   digests.
 - **What the relay does not decide.** Whether a finding is real, or whether an open one matters, is the
-  parent's judgement from the raw artifact ([the crw-run reading](../../plugins/crw/skills/crw-run/references/merge-readiness.md#the-independent-review-is-a-reference-opinion)).
+  child's judgement from the raw artifact ([the crw-run reading](../../plugins/crw/skills/crw-run/references/merge-readiness.md#the-independent-review-is-a-reference-opinion)).
   The item is unauthenticated, like the rest of the record.
 
 The patch-id of `<head>` against `<base>`, as the review bundle computes it:
@@ -651,7 +651,7 @@ git diff -z --no-abbrev --full-index --find-renames=50% --no-ext-diff --no-textc
   `revision_ambiguous` whichever event was resubmitted more often; one current head that is not
   the candidate is refused as `merge_candidate_moved`.
   The merge-turn grant notice fills that flag in for its recipient, because the command it hands
-  over is one a parent runs as written, and omitting `--required` declares that nothing is
+  over is one a child runs as written, and omitting `--required` declares that nothing is
   required. The names come from the candidate's own recorded handoff: the `requiredDeclared`
   that `merge-evidence` read from the branch's effective rules, taken from the same current
   reports `merge-turn-check` compares the head against (`report.current_reports` is the one
