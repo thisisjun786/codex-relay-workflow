@@ -169,3 +169,32 @@ func TestFlowRefDescribesThePausedEnd(t *testing.T) {
 		t.Error("journal.md does not name the run/paused row")
 	}
 }
+
+// TestOutcomeDocsStateThePrecedence: the three docs that tell which state a finished run reports (reporting.md, script.md and flow.md)
+// state the rule outcomeOf applies: the milestone member that is an object without an id and with a non-empty string state is the
+// wrapped result; a milestone member that carries an id is not read as one; otherwise the top-level string state is the outcome.
+func TestOutcomeDocsStateThePrecedence(t *testing.T) {
+	for _, path := range []string{
+		"../../../docs/flow/reporting.md",
+		"../../../docs/flow/script.md",
+		flowRef,
+	} {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text := string(raw)
+		for _, want := range []string{
+			"without an `id`",
+			"non-empty string `state`",
+			"wrapped result",
+			"carries an `id`",
+			"not read",
+			"otherwise the top-level string `state`",
+		} {
+			if !strings.Contains(text, want) {
+				t.Errorf("%s does not state the outcome precedence: no %q", path, want)
+			}
+		}
+	}
+}

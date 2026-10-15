@@ -89,9 +89,11 @@ run, status and digest of calls, as when a resume changes nothing) is not sent a
 (the milestone state the script returned, [script.md](script.md)), the notice says that state instead of the engine status:
 `[crw flow] run finished run=R workflow=W state=<state>[ reason=<reason>][ escalation=<id>][ lanes=<node>:<state>/<reason>,...] digest=D`,
 with the lanes that did not land, so an escalated, incomplete or held milestone is never told `status=completed`. The state told is
-read in this order: a `milestone` member that is an object without an `id` is the wrapped result (a night batch returns one), and
-its state wins (the value's own state is kept as `run_state`); a `milestone` member that carries an `id` is a milestone, not a
-wrapper, and is not read; otherwise the top-level string `state` of the completed script is the outcome state. The whole outcome
+read in this order: a `milestone` member that is an object without an `id` and with a non-empty string `state` is the wrapped result
+(a night batch returns one), and its state wins (the value's own state is kept as `run_state`); a `milestone` member that
+carries an `id` is a milestone, not a wrapper, and is not read; a `milestone` member without a non-empty string `state` is not read
+either; otherwise the top-level string `state` of the completed script is the outcome state. A value whose own `state` is not a
+non-empty string has no outcome. The whole outcome
 (every member by its name) is part of the digest too, so a resume that ends with an outcome that differs in any member (an escalation
 id, the source, the milestone) is told again. A run with no outcome keeps the
 text `[crw flow] run finished run=R workflow=W status=<status> digest=D` and its digest. A run the operator paused (`crw flow pause`)
