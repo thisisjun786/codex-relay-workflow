@@ -4,6 +4,8 @@ Here the parent (relay role `parent`) is a relay role, read through [the level t
 
 How the tracking repository holds the work: how milestones, issues and labels relate, which document is canonical where, which level writes which record, and when an issue is Done. The levels themselves are in [hierarchy.md](hierarchy.md).
 
+The name a report, a commit or a pull request gives a piece of work is in [naming.md](naming.md).
+
 ## Tracking operating model
 
 Keep the tracking repository, the work unit, and the code repository separate:
