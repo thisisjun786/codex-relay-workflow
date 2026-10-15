@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/bridge/appserver"
+	"github.com/thisisjun786/codex-relay-workflow/internal/tracking"
 )
 
 // PlanNode is a node of the plan as the relay reads it for the lane: the issue it carries, the nodes it waits for (a dependency
@@ -301,6 +302,42 @@ type Report struct {
 // Reporter delivers a milestone report (F11): the report row is the run's, the delivery is the reporter's.
 type Reporter interface {
 	ReportUp(ctx context.Context, r Report) (string, error)
+}
+
+// PullRequests is the part of the tracking repository's pull requests crw.mergeRequest reads: a pull request and the checks of its head
+// (the integrator.PullRequestSource pattern: a local subset interface, which *tracking.GitHub satisfies).
+type PullRequests interface {
+	PullRequest(ctx context.Context, ref tracking.Ref) (tracking.PullRequest, error)
+	Checks(ctx context.Context, ref tracking.Ref) (tracking.Checks, error)
+}
+
+// MergeCrosscheck is the crosscheck verdict at the pull request's head that a merge request states.
+type MergeCrosscheck struct {
+	Verdict, Head, EngineFamily, Model string
+	Round                              int
+}
+
+// MergeRequest is the request to the parent to merge the pull request of a milestone: what the lane judged and may state, and nothing
+// beyond the pull request ref and the SHAs (no path, no host, no id).
+type MergeRequest struct {
+	Plan, Milestone string
+	// PR is the pull request as "OWNER/NAME#N"; Head and Base the commit it carries and the branch it goes to.
+	PR, Head, Base string
+	// Checks is the state of the head's checks (success: the only state that is requested).
+	Checks     string
+	Crosscheck MergeCrosscheck
+	// Unresolved is the count of unresolved review comments the script supplied; BotsNotConnected says the review bots are not connected,
+	// so there was nothing to resolve.
+	Unresolved       int
+	BotsNotConnected bool
+	// RequestID makes the delivery idempotent per head.
+	RequestID string
+}
+
+// MergeRequester delivers a merge request. The Reporter that implements it is the one crw.mergeRequest asks (the Reporter interface
+// itself does not change).
+type MergeRequester interface {
+	MergeRequest(ctx context.Context, r MergeRequest) (string, error)
 }
 
 // StepRow is a row of flow_step_decisions: the tier decision of a node, the rule that made it with the evidence it rested on, and
