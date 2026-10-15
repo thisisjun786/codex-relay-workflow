@@ -530,7 +530,7 @@ func TestProjectKeyIsComparedWithTheOwnersBinding(t *testing.T) {
 	}
 
 	res = build(t, r(), Options{Binding: &Binding{Thread: "thread-owner"}})
-	if len(res.Warnings) != 1 || res.Warnings[0].Rule != "project_key_bound" || !strings.Contains(res.Warnings[0].Detail, "holds no live parent binding") {
+	if len(res.Warnings) != 1 || res.Warnings[0].Rule != "project_key_bound" || !strings.Contains(res.Warnings[0].Detail, "holds no live 자식 binding") {
 		t.Errorf("no binding: %+v", res.Warnings)
 	}
 

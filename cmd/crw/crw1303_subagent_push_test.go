@@ -118,7 +118,7 @@ func TestCRW1303SubagentThreadPushIsJudgedAsItsChild(t *testing.T) {
 	push := "git push origin HEAD:dev"
 	want := f.answer(crw1303Kid, "", f.kid, push)
 	w, warned := guardWarning(want)
-	if !warned || !strings.Contains(w, "통합은 부모·통합기 몫") {
+	if !warned || !strings.Contains(w, "통합은 자식·통합기 몫") {
 		t.Fatalf("the child's own push to dev: %q", want)
 	}
 	if got := f.answer(crw1303Kid, crw1303Spawned, f.kid, push); got != want {
@@ -129,7 +129,7 @@ func TestCRW1303SubagentThreadPushIsJudgedAsItsChild(t *testing.T) {
 	}
 	for _, command := range []string{"git push -f origin HEAD:dev", "git push --delete origin main", "git push --mirror origin"} {
 		out := f.answer(crw1303Kid, crw1303Spawned, f.kid, command)
-		if !strings.Contains(out, `"permissionDecision":"deny"`) || !strings.Contains(out, "통합은 부모·통합기 몫") {
+		if !strings.Contains(out, `"permissionDecision":"deny"`) || !strings.Contains(out, "통합은 자식·통합기 몫") {
 			t.Errorf("a sub-agent thread: %s: %s", command, out)
 		}
 	}
