@@ -11,8 +11,8 @@
 // the store read-only and never create it. The commands that write a run's journal (`answer`, and the run process itself) hold
 // the run lock, so the journal has one writer at a time. An answer to a run a process holds (CRW-1492) asks that process to stop at
 // its next boundary (SIGUSR2: Control.Drain, the turns in flight end and the next requests are held), waits --wait for the run lock
-// and appends under it once the process let the run go; otherwise it answers run_draining, and the same answer run again once the
-// run is paused applies and resumes it.
+// and appends under it once the process let the run go; otherwise it answers run_draining (the stop is asked: a process an older crw
+// runs drops the signal and goes on), and the same answer run again once the run is paused applies and resumes it.
 //
 // A process ends a run with a finished row, or, when the operator paused it (`crw flow pause`, CRW-1487) or an answer drained it
 // (CRW-1492), with a run/paused row and no finished row: the process exits 0, nothing is told finished, `ps` and `show` read the

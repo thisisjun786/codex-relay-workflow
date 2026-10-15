@@ -744,7 +744,7 @@ func TestAnswerDrainsALiveRunAndAppliesOnce(t *testing.T) {
 	if err := json.Unmarshal([]byte(strings.TrimPrefix(out, "<<spawned>>\n")), &reply); err != nil {
 		t.Fatalf("the reply: %v: %q", err, out)
 	}
-	if code != 0 || !reply.OK || !reply.Applied || !reply.Drained || reply.Refusal != nil || reply.Resumed != 4242 {
+	if code != 0 || !reply.OK || !reply.Applied || !reply.DrainAsked || !reply.Drained || reply.Refusal != nil || reply.Resumed != 4242 {
 		t.Fatalf("the answer to a live run: exit %d %+v %s", code, reply, errOut)
 	}
 	if got := fake.calls(); len(got) != 1 || got[0].sig != syscall.SIGUSR2 || got[0].pid != os.Getpid() || got[0].holder.Command != ProcessCommand {
@@ -785,7 +785,7 @@ func TestAnswerRefusesBeforeAnySignal(t *testing.T) {
 	fake := newDrainFake(t, w)
 	td.Signal = fake.signal
 	code, reply, _ := a.answer(td, id, "--wait", "5")
-	if code != 1 || reply.Refusal == nil || reply.Refusal.Code != RefusedStaleRevison || reply.Drained || len(fake.calls()) != 0 || len(a.appliedRows(t)) != 0 || len(td.spawned) != 0 {
+	if code != 1 || reply.Refusal == nil || reply.Refusal.Code != RefusedStaleRevison || reply.Drained || reply.DrainAsked || len(fake.calls()) != 0 || len(a.appliedRows(t)) != 0 || len(td.spawned) != 0 {
 		t.Fatalf("a stale answer to a live run: exit %d %+v, %d signals", code, reply, len(fake.calls()))
 	}
 }
@@ -807,7 +807,7 @@ func TestAnswerDoesNotSignalAnUnknownHolder(t *testing.T) {
 			fake := newDrainFake(t, w)
 			td.Signal = fake.signal
 			code, reply, _ := a.answer(td, id, "--wait", "0")
-			if code != 1 || reply.Refusal == nil || reply.Refusal.Code != "run_live" || reply.Drained || len(fake.calls()) != 0 || len(a.appliedRows(t)) != 0 {
+			if code != 1 || reply.Refusal == nil || reply.Refusal.Code != "run_live" || reply.Drained || reply.DrainAsked || len(fake.calls()) != 0 || len(a.appliedRows(t)) != 0 {
 				t.Fatalf("an answer to a run held by %q: exit %d %+v, %d signals", command, code, reply, len(fake.calls()))
 			}
 		})
@@ -830,7 +830,8 @@ func TestAnswerWaitZeroAsksTheDrainAndReturns(t *testing.T) {
 	began := time.Now()
 	code, reply, _ := a.answer(td, id)
 	took := time.Since(began)
-	if code != 1 || reply.Refusal == nil || reply.Refusal.Code != "run_draining" || !reply.Drained || reply.Applied || took > time.Second {
+	// the stop is asked, not made yet: drain_asked, and not drained (the process still holds the run)
+	if code != 1 || reply.Refusal == nil || reply.Refusal.Code != "run_draining" || !reply.DrainAsked || reply.Drained || reply.Applied || took > time.Second {
 		t.Fatalf("an answer with no wait to a live run: exit %d %+v in %s", code, reply, took)
 	}
 	if !strings.Contains(reply.Refusal.Detail, "next boundary") || !strings.Contains(reply.Refusal.Detail, "the same crw flow answer again") {
@@ -1006,7 +1007,7 @@ func TestARefusedAnswerNeverResumes(t *testing.T) {
 		}
 		td.Signal = fake.signal
 		code, reply, _ := a.answer(td, id, "--wait", "0")
-		if code != 1 || reply.Refusal == nil || reply.Refusal.Code != "run_draining" || !reply.Drained {
+		if code != 1 || reply.Refusal == nil || reply.Refusal.Code != "run_draining" || !reply.DrainAsked || reply.Drained {
 			t.Fatalf("the drain: exit %d %+v", code, reply)
 		}
 		held.Release()
@@ -1103,5 +1104,51 @@ func TestAnswerRefusesADecisionWithdrawnWhileItWaits(t *testing.T) {
 				t.Fatalf("an answer of a withdrawn decision resumed the run: %+v", td.spawned)
 			}
 		})
+	}
+}
+
+// TestAnswerSaysADrainIsAskedOfAHolderThatNeverLetsGo (CRW-1492, x1501 P2): a run process an older crw runs writes the same holder
+// record (pid, since, command `_run`) and takes no SIGUSR2 (the Go runtime drops a signal no channel is notified of): the kill
+// succeeds and nothing drains. The answer does not take the kill for a drain: after --wait it is refused run_draining with `drained`
+// false and `drain_asked` true, its words say the stop was asked and the process still holds the run, and what to do when it does
+// not stop; nothing is appended or resumed. The reply is decoded as JSON members, as a client reads it.
+func TestAnswerSaysADrainIsAskedOfAHolderThatNeverLetsGo(t *testing.T) {
+	w := newWorld(t)
+	a := newLiveAsking(t, w)
+	td := w.deps()
+	id := a.answered(t, "ud-older-holder", nil)
+	held, err := TakeLock(w.state, "run-q", ProcessCommand, td.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer held.Release()
+	// the holder takes the signal and does nothing with it: it never ends paused and never lets the run go
+	fake := newDrainFake(t, w)
+	td.Signal = fake.signal
+	began := time.Now()
+	code, out, errOut := td.do("answer", "--state", w.state, "--decision", id, "--run", "run-q", "--node", "n1", "--question", "esc_one", "--revision", "1", "--thread", "thread-owner", "--wait", "1", "--json")
+	took := time.Since(began)
+	var reply map[string]any
+	if err := json.Unmarshal([]byte(out), &reply); err != nil {
+		t.Fatalf("the reply: %v: %q %s", err, out, errOut)
+	}
+	refusal, _ := reply["refusal"].(map[string]any)
+	if code != 1 || refusal == nil || refusal["Code"] != RefusedRunDraining || reply["applied"] == true || took < time.Second {
+		t.Fatalf("an answer to a holder that never lets go: exit %d in %s, %v %s", code, took, reply, errOut)
+	}
+	if reply["drained"] == true || reply["drain_asked"] != true {
+		t.Errorf("the reply claims a drain the holder never made (drained %v, drain_asked %v): %v", reply["drained"], reply["drain_asked"], reply)
+	}
+	detail, _ := refusal["Detail"].(string)
+	if strings.Contains(detail, "run run-q stops at its next boundary for this answer") {
+		t.Errorf("the refusal says the run stops, from the kill alone: %q", detail)
+	}
+	for _, want := range []string{"asked", "still holds the run", "older crw", "crw flow pause run-q"} {
+		if !strings.Contains(detail, want) {
+			t.Errorf("the refusal does not say %q: %q", want, detail)
+		}
+	}
+	if got := fake.calls(); len(got) != 1 || got[0].sig != syscall.SIGUSR2 || len(a.appliedRows(t)) != 0 || len(td.spawned) != 0 {
+		t.Fatalf("the signals %+v, %d rows, %d processes", got, len(a.appliedRows(t)), len(td.spawned))
 	}
 }

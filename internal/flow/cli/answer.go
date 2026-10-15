@@ -25,12 +25,18 @@ type AnswerReply struct {
 	Row      map[string]any `json:"row,omitempty"`
 	Refusal  *Refusal       `json:"refusal,omitempty"`
 	Resumed  int            `json:"resumed_pid,omitempty"`
-	// Drained says this answer asked a run process that held the run to stop at its next boundary (SIGUSR2, CRW-1492).
+	// DrainAsked says this answer asked a run process that held the run to stop at its next boundary (SIGUSR2 sent, CRW-1492). A sent
+	// signal is an ask, not a stop: a process an older crw runs writes the same holder record and drops the signal.
+	DrainAsked bool `json:"drain_asked,omitempty"`
+	// Drained says every run process this answer asked let the run go within --wait (the answer then held the lock, or found it held
+	// by another holder).
 	Drained bool `json:"drained,omitempty"`
 }
 
 // RefusedRunDraining is the refusal of an answer that asked the run process holding the run to stop at its next boundary and did not
-// get the run lock within --wait (CRW-1492): the same answer, run again once the run is paused, applies once and resumes the run.
+// get the run lock within --wait (CRW-1492). The stop is asked, not known to be made: a run process of this crw ends paused by
+// `answer`, and the same answer, run again once the run is paused, applies once and resumes the run; a process that does not take the
+// ask (an older crw) goes on, and is paused with `crw flow pause RUN` before the answer.
 const RefusedRunDraining = "run_draining"
 
 // answer is `crw flow answer`: it compares the manager's answer record with the run's journal, appends the one `decision_applied`
@@ -276,17 +282,19 @@ type holderID struct {
 
 // drainAndTake is the answer to a run a process holds (CRW-1492). The claim is judged on the journal and on the decision record as
 // they are first (prejudge): a refusal or a replay is the answer, and nothing is signalled. Then, in each round, a run process that
-// holds the run (a `_run` or `resume` record naming a pid) and was not signalled by this answer is judged again, on the record read
-// again (a decision withdrawn while the answer waited is refused and drains nothing more) and on a snapshot read after its holder
-// record - a run process can hold the
-// run after the first judgment only because it started after it, and the resume of another answer starts only after that answer's
-// row is stored, so this judgment refuses (another decision) or replays (the same decision) instead of draining it -, its record is
-// read again (a holder that changed meanwhile waits for the next round), and it is sent SIGUSR2: it stops at its next boundary (the
-// turns in flight end, the next requests are held) and ends paused by `answer`. Any other holder (a writer, a record naming no
-// command or no pid) is never signalled. The lock is taken every drainPoll until wait has passed (with wait 0, once, right after the
-// signal). Taken, the locked path judges and appends as for a run no process holds; the journal is opened there, after the drained
-// process's rows. Not taken: run_draining when this answer signalled, run_live when it asked nothing. It answers done with the reply
-// when the answer ends here, or the lock it holds.
+// holds the run (a `_run` or `resume` record naming a pid) and was not signalled by this answer is judged again, on the decision record
+// read again (a decision withdrawn while the answer waited is refused and drains nothing more) and on a snapshot read after its holder
+// record - a run process can hold the run after the first judgment only because it started after it, and the resume of another
+// answer starts only after that answer's row is stored, so this judgment refuses (another decision) or replays (the same decision)
+// instead of draining it -, its holder record is read again (a holder that changed meanwhile waits for the next round), and it is
+// sent SIGUSR2: a run process of this crw stops at its next boundary (the turns in flight end, the next requests are held) and ends
+// paused by `answer`. A sent signal is an ask (DrainAsked), not a stop: a process an older crw runs writes the same holder record and
+// drops it, so the answer says the run drained (Drained) only once every process it asked let the run go within wait. Any other
+// holder (a writer, a record naming no command or no pid) is never signalled. The lock is taken every drainPoll until wait has passed
+// (with wait 0, once, right after the signal). Taken, the locked path judges and appends as for a run no process holds; the journal
+// is opened there, after the drained process's rows. Not taken: run_draining when this answer asked a stop (its words say whether the
+// process it asked still holds the run), run_live when it asked nothing. It answers done with the reply when the answer ends here, or
+// the lock it holds.
 func (c *command) drainAndTake(st *store.Store, state string, run RunRecord, claim Claim, wait time.Duration) (*Lock, AnswerReply, bool) {
 	if reply, done := c.prejudge(st, run, claim); done {
 		return nil, reply, true
@@ -296,20 +304,22 @@ func (c *command) drainAndTake(st *store.Store, state string, run RunRecord, cla
 		signal = killProcess
 	}
 	signalled := map[holderID]bool{}
-	drained := false
+	// asked is the last run process this answer sent SIGUSR2 (0: none): an ask, which only the process letting the run go answers
+	asked := 0
 	deadline := time.Now().Add(wait)
 	var lastErr error
 	for {
 		if holder, held := lockHolderRecord(state, claim.Run); held && holder.PID > 1 && runProcessCommand(holder.Command) && !signalled[idOf(holder)] {
 			if reply, done := c.prejudge(st, run, claim); done {
-				reply.Drained = drained
+				// a run process this answer did not signal holds the run: every process it asked let the run go
+				reply.DrainAsked, reply.Drained = asked > 0, asked > 0
 				return nil, reply, true
 			}
 			if again, still := lockHolderRecord(state, claim.Run); still && idOf(again) == idOf(holder) {
 				signalled[idOf(holder)] = true
 				switch err := signal(holder.PID, syscall.SIGUSR2); {
 				case err == nil:
-					drained = true
+					asked = holder.PID
 				case !errors.Is(err, syscall.ESRCH):
 					fmt.Fprintf(c.stderr, "crw flow answer: warning: process %d of run %s cannot be asked to stop at its next boundary: %v\n", holder.PID, claim.Run, err)
 				}
@@ -317,10 +327,11 @@ func (c *command) drainAndTake(st *store.Store, state string, run RunRecord, cla
 		}
 		lock, err := takeLockPastWriters(state, claim.Run, "answer", c.now(), 0)
 		if err == nil {
-			return lock, AnswerReply{Run: claim.Run, Drained: drained}, false
+			// the lock is this answer's: every process it asked let the run go within the wait
+			return lock, AnswerReply{Run: claim.Run, DrainAsked: asked > 0, Drained: asked > 0}, false
 		}
 		if !errors.Is(err, ErrRunLive) {
-			return nil, AnswerReply{Run: claim.Run, Drained: drained, Refusal: &Refusal{Code: "run_live", Detail: err.Error()}}, true
+			return nil, AnswerReply{Run: claim.Run, DrainAsked: asked > 0, Refusal: &Refusal{Code: "run_live", Detail: err.Error()}}, true
 		}
 		lastErr = err
 		if !time.Now().Before(deadline) {
@@ -338,9 +349,28 @@ func (c *command) drainAndTake(st *store.Store, state string, run RunRecord, cla
 			break
 		}
 	}
-	reply := AnswerReply{Run: claim.Run, Drained: drained}
-	if drained {
-		reply.Refusal = &Refusal{Code: RefusedRunDraining, Detail: fmt.Sprintf("run %s stops at its next boundary for this answer (the calls in flight end, the next ones are held) and ends paused by `answer`; run the same crw flow answer again once it is paused: it applies once and resumes the run", claim.Run)}
+	reply := AnswerReply{Run: claim.Run, DrainAsked: asked > 0}
+	if asked > 0 {
+		reply.Refusal = &Refusal{Code: RefusedRunDraining}
+		h, held := lockHolderRecord(state, claim.Run)
+		switch {
+		case held && h.PID > 1 && signalled[idOf(h)]:
+			// the kill succeeded and the process still holds the run: a stop asked, not one made (an older crw drops the signal)
+			reply.Refusal.Detail = fmt.Sprintf("this answer asked process %d of run %s to stop at its next boundary (SIGUSR2) and the process still holds the run after --wait %s: the stop is asked, not made. "+
+				"A run process of this crw stops there (the calls in flight end, the next ones are held) and ends paused by `answer`: run the same crw flow answer again once crw flow next reads the run paused; it applies once and resumes the run. "+
+				"A process that does not take the ask (one an older crw runs) goes on as it would have: crw flow pause %s, then the same crw flow answer", h.PID, claim.Run, wait, claim.Run)
+		case held && h.PID <= 1:
+			// the record names no process: whether the asked process let go is not known
+			reply.Refusal.Detail = fmt.Sprintf("this answer asked process %d of run %s to stop at its next boundary (SIGUSR2) and the run lock is still held after --wait %s (holder unknown): the stop is asked, not known to be made; run the same crw flow answer again once crw flow next reads the run paused", asked, claim.Run, wait)
+		default:
+			// every process this answer asked let the run go; another holder took the lock first (or let it go right then)
+			reply.Drained = true
+			holder := "free again"
+			if held {
+				holder = "held by crw flow " + cell(h.Command)
+			}
+			reply.Refusal.Detail = fmt.Sprintf("process %d of run %s, which this answer asked to stop at its next boundary, let the run go within --wait %s, and the run lock was not this answer's when the wait ended (%s): run the same crw flow answer again; it judges the run as it is then", asked, claim.Run, wait, holder)
+		}
 		return nil, reply, true
 	}
 	holder := "holder unknown"

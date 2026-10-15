@@ -251,10 +251,12 @@ func TestDocsDescribeTheWriterHoldAndTheCancelDeadMember(t *testing.T) {
 
 // TestFlowRefDescribesTheAnswerDrain: the docs follow the answer drain of CRW-1492. The answer row of flow.md's command table takes
 // `--wait S`; the answer section says a run a process holds is asked to stop at its next boundary, that `--wait` bounds the wait for
-// its lock, that `run_draining` says to run the same answer again, and that only the answer that appends the row resumes the run; the
-// next section keeps the owner's loop while the run drains; the crw-run skill sends the owner back to that loop on `run_draining`;
-// script.md no longer says an answer holds the run "between two processes". The pins guard that the sentences exist; the behaviour is
-// pinned by the tests of the code (answer_test.go, next_drain_test.go, process_test.go).
+// its lock, that `run_draining` says to run the same answer again, that it is a stop asked (`drain_asked`) which a process an older
+// crw runs drops, that a decision withdrawn (decision-withdraw) while the answer waited is refused, and that only the answer that
+// appends the row resumes the run; the next section keeps the owner's loop while the run drains; the crw-run skill sends the owner
+// back to that loop on `run_draining`, and to a pause when an older crw never stops; script.md no longer says an answer holds the run
+// "between two processes". The pins guard that the sentences exist; the behaviour is pinned by the tests of the code (answer_test.go,
+// next_drain_test.go, process_test.go).
 func TestFlowRefDescribesTheAnswerDrain(t *testing.T) {
 	read := func(path string) string {
 		t.Helper()
@@ -266,7 +268,7 @@ func TestFlowRefDescribesTheAnswerDrain(t *testing.T) {
 	}
 	ref := read(flowRef)
 	answer := docSection(t, ref, "### crw flow answer")
-	for _, want := range []string{"next boundary", "--wait", "run_draining", "only the answer that appends"} {
+	for _, want := range []string{"next boundary", "--wait", "run_draining", "only the answer that appends", "drain_asked", "older crw", "decision-withdraw"} {
 		if !strings.Contains(answer, want) {
 			t.Errorf("the answer section of flow.md does not say %q:\n%s", want, answer)
 		}
@@ -288,7 +290,7 @@ func TestFlowRefDescribesTheAnswerDrain(t *testing.T) {
 		t.Errorf("the next section of flow.md does not keep the owner's loop while a run drains:\n%s", next)
 	}
 	skill := read("../../../plugins/crw/skills/crw-run/SKILL.md")
-	for _, want := range []string{"run_draining", "a step nobody takes holds its call and the run"} {
+	for _, want := range []string{"run_draining", "a step nobody takes holds its call and the run", "older crw"} {
 		if !strings.Contains(skill, want) {
 			t.Errorf("the crw-run skill does not say %q", want)
 		}
