@@ -1,8 +1,11 @@
 package engine
 
 import (
+	"context"
 	"strings"
 	"testing"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
 )
 
 // TestLegacyIssueChildPredicate (CRW-1415, PR #889 round 1): a run is a legacy issue-child run when its journal holds a crw.releaseChild
@@ -44,5 +47,37 @@ func TestLegacyIssueChildPredicate(t *testing.T) {
 		case tc.want != "" && (!strings.Contains(got, "legacy issue-child run") || !strings.Contains(got, tc.want)):
 			t.Errorf("%s: %q, want a legacy refusal naming %q", name, got, tc.want)
 		}
+	}
+}
+
+// TestRunRefusesTheResumeOfAnIssueLaneWorkflow (CRW-1415, PR #889 round 2): the resume of a run whose journal holds no row yet (an old
+// issue-lane process ended before its started row) is refused as a legacy issue-child run by the workflow it is resumed as, the one the
+// config names or the script's meta.name, before a row is written; recover refuses a legacy run before it appends a recovery row.
+func TestRunRefusesTheResumeOfAnIssueLaneWorkflow(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	h.cfg.Resume, h.cfg.Workflow = &ResumeOptions{}, LegacyIssueLaneWorkflow
+	if _, err := Run(ctx, h.load(`return 1`), h.cfg); err == nil || !strings.Contains(err.Error(), "legacy issue-child run") || !strings.Contains(err.Error(), LegacyIssueLaneWorkflow) {
+		t.Errorf("the resume as the issue-lane workflow: %v", err)
+	}
+	prog, err := script.Load(script.Source{Name: "issue-lane.js", Text: []byte("export const meta = { name: '" + LegacyIssueLaneWorkflow + "' }\nreturn 1\n")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.cfg.Workflow = ""
+	if _, err := Run(ctx, prog, h.cfg); err == nil || !strings.Contains(err.Error(), "legacy issue-child run") {
+		t.Errorf("the resume of a script named issue-lane: %v", err)
+	}
+	if n := len(h.journal.Events()); n != 0 {
+		t.Errorf("the refused resumes wrote %d rows", n)
+	}
+
+	j := NewMemoryJournal()
+	j.Append(Event{RunID: "run-test", Kind: KindRun, Event: "started", Data: map[string]any{"workflow": "project-lane"}})
+	j.Append(Event{RunID: "run-test", Kind: KindCall, CallID: "c_child", Op: OpLegacyReleaseChild, Event: EvCompleted, Data: map[string]any{"node": "A"}})
+	before := len(j.Events())
+	_, err = Recover(ctx, j, ReconcileConfig{RunID: "run-test", Host: &stubHost{}}, RecoverRequest{CallID: "c_child", Absent: true})
+	if err == nil || !strings.Contains(err.Error(), "legacy issue-child run") || len(j.Events()) != before {
+		t.Errorf("recover of a legacy run: %v, rows %d -> %d", err, before, len(j.Events()))
 	}
 }

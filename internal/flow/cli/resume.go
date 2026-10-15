@@ -197,15 +197,48 @@ func (e *legacyRunError) Error() string { return e.why }
 
 // legacyRun is why a run is a legacy issue-child run ("" when it is not): its rows (engine.LegacyIssueChild: a crw.releaseChild row, a
 // child release whose spawn the old lane decided, a started row of the retired issue lane), or the workflow its spec or its record names
-// (LegacyIssueLaneWorkflow), CRW-1415. Its records stay read only: nothing is written to it and it is not resumed.
+// (LegacyIssueLaneWorkflow), CRW-1415 (engine.LegacyRun). Its records stay read only: nothing is written to it and it is not resumed.
 func legacyRun(events []engine.Event, runID, workflow string) string {
-	if why := engine.LegacyIssueChild(events, runID); why != "" {
-		return why
+	return engine.LegacyRun(events, runID, workflow)
+}
+
+// legacyOf is why run is a legacy issue-child run ("" when it is not), read from st (its journal, without the large payloads) and from
+// the workflow its spec in state or its record (recorded) names.
+func legacyOf(ctx context.Context, st *store.Store, state, run, recorded string) (string, error) {
+	events, _, err := loadLeanJournal(ctx, st, run)
+	if err != nil {
+		return "", fmt.Errorf("the journal of run %s cannot be read: %w", run, err)
 	}
-	if workflow == LegacyIssueLaneWorkflow {
-		return fmt.Sprintf("run %s is a legacy issue-child run: its spec names the %s workflow of the retired issue-child path (CRW-1415), which no longer exists; the run is not resumed and nothing is written to it; its records stay read only (crw flow show and the summary read them)", runID, LegacyIssueLaneWorkflow)
+	workflow := recorded
+	if spec, err := ReadSpec(state, run); err == nil && spec.Workflow == LegacyIssueLaneWorkflow {
+		workflow = spec.Workflow
 	}
-	return ""
+	return legacyRun(events, run, workflow), nil
+}
+
+// legacyRefused refuses a command that would write to a legacy issue-child run, or make its process write (CRW-1415, PR #889 round 2):
+// `crw flow cancel`, `pause`, `recover` and `dispatched` ask it before they write, signal or append, as `crw flow answer` asks legacyRun
+// under the run lock and the resumes ask resumeRefused. The refusal is the command's answer, exit 1 with legacy_issue_child_run; a
+// store that cannot be read is exit 2. It answers false for a run that is not legacy.
+func (c *command) legacyRefused(cm *common, state, run string) (int, bool) {
+	r, err := c.reader(cm)
+	if err != nil {
+		return c.fail("%v", err), true
+	}
+	defer r.Close()
+	recorded := ""
+	if rec, err := r.Record(c.ctx, run); err == nil {
+		recorded = rec.Workflow
+	}
+	why, err := legacyOf(c.ctx, r.St, state, run, recorded)
+	if err != nil {
+		return c.fail("%v", err), true
+	}
+	if why == "" {
+		return 0, false
+	}
+	fmt.Fprintf(c.stderr, "crw flow %s: refused (%s): %s\n", c.name, RefusedLegacyRun, why)
+	return ExitRefused, true
 }
 
 // resumeRefused is why the run of spec is not resumed, asked before a process is started for it (`crw flow resume RUN --detach`, the
@@ -316,7 +349,7 @@ func withoutDetach(args []string) []string {
 }
 
 // recoverCall is `crw flow recover [--run RUN] CALL (--adopt THREAD|TURN | --absent)`: the engine's command, under the run lock
-// of the run that holds the call. A run a process holds is refused.
+// of the run that holds the call. A run a process holds is refused, and so is a legacy issue-child run (legacyRefused).
 func (c *command) recoverCall(args []string) int {
 	fs, cm := c.flags()
 	runID := fs.String("run", "", "the run the call belongs to (default: the run that holds the call)")
@@ -337,6 +370,10 @@ func (c *command) recoverCall(args []string) int {
 				return c.fail("%v: recover a call of a run no process holds", err)
 			}
 			defer lock.Release()
+			// a legacy issue-child run is read only (CRW-1415): no recovery row is appended to it (engine.Recover refuses it as well)
+			if code, refused := c.legacyRefused(cm, sel.Path, run); refused {
+				return code
+			}
 		}
 	}
 	return engine.RunCLI(c.ctx, append([]string{"recover"}, args...), c.stdout, c.stderr)

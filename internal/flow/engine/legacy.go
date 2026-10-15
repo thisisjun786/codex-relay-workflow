@@ -1,6 +1,10 @@
 package engine
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/script"
+)
 
 // OpLegacyReleaseChild is the operation with which the old project lane started a node's issue child. The issue-child path is retired
 // (CRW-1415): no script calls it and no lane installs it, and the rows an old run wrote with it are read only.
@@ -25,7 +29,8 @@ const legacyChildRole = "child"
 // the child, so its script, run again over that journal, would not replay the start: it would escalate the node live and leave the
 // child the old lane started running, and every later position on the parent's path would run live; an issue lane no longer exists to
 // run. The records stay read only (crw flow show, the summary and the run readers read them); the run is not resumed: engine.Run
-// refuses its resume before anything is written, and the commands that would write to the run or start a process for it ask this first.
+// refuses its resume before anything is written (LegacyRun, with the workflow it is resumed as), Recover appends no recovery row to it,
+// and every command that would write to the run or start a process for it asks this first.
 func LegacyIssueChild(events []Event, runID string) string {
 	// the first child release of each node, in the journal's order, and the nodes whose child's spawn was decided
 	var released []Event
@@ -56,6 +61,27 @@ func LegacyIssueChild(events []Event, runID string) string {
 		}
 	}
 	return ""
+}
+
+// LegacyRun is LegacyIssueChild with the workflow the run is resumed or written to as (its spec's, or its script's meta.name): a run that
+// names LegacyIssueLaneWorkflow is a legacy issue-child run even when its journal holds no row yet, as the run of an old issue-lane process
+// that ended after its spec was written and before its started row (CRW-1415, PR #889 round 2).
+func LegacyRun(events []Event, runID, workflow string) string {
+	if why := LegacyIssueChild(events, runID); why != "" {
+		return why
+	}
+	if workflow == LegacyIssueLaneWorkflow {
+		return fmt.Sprintf("run %s is a legacy issue-child run: its spec or its script names the %s workflow of the retired issue-child path (CRW-1415), which no longer exists; %s", runID, LegacyIssueLaneWorkflow, legacyReadOnly)
+	}
+	return ""
+}
+
+// ProgramWorkflow is the workflow a script names: its meta.name, else the program's name.
+func ProgramWorkflow(prog *script.Program) string {
+	if name, _ := prog.Meta["name"].(string); name != "" {
+		return name
+	}
+	return prog.Name
 }
 
 // opSpawnDecision is the op of a spawn decision's row (internal/flow/ops).

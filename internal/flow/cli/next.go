@@ -596,6 +596,10 @@ func (c *command) dispatched(args []string) int {
 	if _, err := ReadSpec(sel.Path, run); err != nil {
 		return c.fail("%v", err)
 	}
+	// a legacy issue-child run is read only (CRW-1415): no report is put in its inbox, which its resume would journal
+	if code, refused := c.legacyRefused(cm, sel.Path, run); refused {
+		return code
+	}
 	bus := engine.NewFileStepBus(RunDir(sel.Path, run))
 	id, err := reportID(c.now())
 	if err != nil {

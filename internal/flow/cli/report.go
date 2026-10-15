@@ -68,6 +68,13 @@ func reportUpCmd(ctx context.Context, args []string, env Environment) int {
 		return failure(env, "report-up", err)
 	}
 	defer st.Close()
+	// a legacy issue-child run is read only (CRW-1415): no report row is written to it
+	if why, err := legacyOf(ctx, st, statePath, run, ""); err != nil {
+		return failure(env, "report-up", err)
+	} else if why != "" {
+		fmt.Fprintf(env.Stderr, "crw flow report-up: refused (%s): %s\n", RefusedLegacyRun, why)
+		return ExitRefused
+	}
 	w := &report.Writer{Store: st, Rows: report.ForeignAppender{Store: st, Run: run}, Resolver: env.resolver(st), Sender: env.sender(st, statePath, socket), ArtifactDir: filepath.Join(statePath, "flow", run, "reports")}
 	res, err := w.Up(ctx, report.UpRequest{Kind: kind, Run: run, Milestone: milestone, Subject: subject, Body: body})
 	if err != nil {

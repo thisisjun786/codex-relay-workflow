@@ -208,7 +208,7 @@ func (c *command) resumeDetached(st *store.Store, state, run string) (int, error
 // control is `crw flow pause RUN` and `crw flow cancel RUN`. The process that holds the run lock is signalled: SIGUSR1 pauses it
 // (the calls in flight end held, and `crw flow resume` goes on with them), SIGTERM ends it (the calls in flight are cancelled and
 // the run finishes cancelled). A run no process holds is cancelled by a finished row written under the lock; a pause of it is
-// refused, since nothing runs.
+// refused, since nothing runs. A legacy issue-child run is refused before anything (legacyRefused).
 func (c *command) control(args []string, verb string) int {
 	fs, cm := c.flags()
 	wait := fs.Int("wait", 20, "seconds to wait for the process to end after a cancel (0: do not wait)")
@@ -234,6 +234,10 @@ func (c *command) control(args []string, verb string) int {
 	_ = r.Close()
 	if err != nil {
 		return c.fail("%v", err)
+	}
+	// a legacy issue-child run is read only (CRW-1415): no finished row, no execution given up, and no signal that makes its process write
+	if code, refused := c.legacyRefused(cm, state, run); refused {
+		return code
 	}
 	if Over(info.State) {
 		if verb == "cancel" {
