@@ -192,12 +192,16 @@ func reservedBeforePrompt(id string) error {
 		"Create the thread with a prompt under a new request_id"}
 }
 
-// reservedWithOtherArguments refuses a create_thread on a request_id whose receipt is a reservation nothing of which
-// reached the host (not_attempted), made with other arguments than this call's. Only a call that repeats the
-// reservation's stored arguments under this request_id resumes it. Nothing was reserved or rewritten.
+// reservedWithOtherArguments refuses a create_thread without a prompt on a request_id whose receipt is a create_thread
+// reservation nothing of which reached the host (not_attempted), made with other arguments than this call's
+// (bridge.ReservationOther). The ledger keeps only the fingerprint of those arguments, so the text cannot say whether
+// they hold a prompt, and says what each case gets: a call that repeats them exactly under this request_id resumes the
+// reservation when they include a prompt, and retires it when they do not (reservedBeforePrompt). Nothing was reserved
+// or rewritten by this call. A row of another operation is never answered this way; it is the bridge's plain conflict.
 func reservedWithOtherArguments(id string) error {
 	return &bridge.Invalid{Reason: "request_id " + strconv.Quote(id) + " holds a create_thread reservation that never reached the host (status not_attempted), made with other arguments than this call's. " +
-		"It is resumed only by a call that repeats the reservation's stored arguments exactly under this same request_id; nothing was reserved or rewritten"}
+		"A call that repeats its stored arguments exactly under this same request_id resumes it when those arguments include a prompt; " +
+		"a reservation made without a prompt, before a prompt was required, is never resumed, and that call retires it instead. Nothing was reserved or rewritten"}
 }
 
 // reservation tells what the ledger holds on request's request_id, compared with request's arguments without a prompt.
@@ -229,11 +233,11 @@ func (h handlers) createThread(ctx context.Context, in createThreadIn) (map[stri
 	// before the way to a new request_id is given, so no call on it, in any build, creates a thread.
 	// This handler's own lookup (CreateThreadReservation) only words a refusal, and it only ever refuses:
 	// - A call without a prompt on a request_id no receipt holds is refused before anything is reserved, so the call that
-	//   brings a prompt may reuse the id; one on a not_attempted reservation made with other arguments is refused as only
-	//   resumed by a call with its own arguments (reservedWithOtherArguments). Any other call without a prompt goes to the
-	//   bridge: it replays a receipt with a host effect (a creation accepted with no prompt before the refusal existed),
-	//   refuses other arguments as any retry is refused, and retires a reservation made with exactly these arguments
-	//   (reservedBeforePrompt).
+	//   brings a prompt may reuse the id; one on a not_attempted create_thread reservation made with other arguments is
+	//   refused with what a call with its arguments gets (reservedWithOtherArguments). Any other call without a prompt
+	//   goes to the bridge: it replays a receipt with a host effect (a creation accepted with no prompt before the refusal
+	//   existed), refuses other arguments and another operation's row as any retry is refused (the plain conflict), and
+	//   retires a reservation made with exactly these arguments (reservedBeforePrompt).
 	// - A call with a prompt goes to the bridge. A conflict with a reservation that is this call's arguments without the
 	//   prompt retires it and is answered with the way to a new request_id (reservedBeforePrompt); a failure to read the
 	//   request_id then is returned in place of the conflict, and every other conflict is answered as it is.

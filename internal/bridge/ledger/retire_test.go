@@ -202,6 +202,20 @@ func TestLedgerRetire_endsOnlyANotAttemptedReservationOfTheseArguments(t *testin
 		t.Fatalf("prompted: %v %v", retired, err)
 	}
 
+	// A row of another operation with the same params is other arguments: the fingerprint covers the method.
+	if _, r, err := l.Begin(ctx, "operation", "send_message_to_thread", promptless, nil); err != nil {
+		t.Fatal(err)
+	} else {
+		r["status"] = "not_attempted"
+		if _, err = l.Save(ctx, r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	operation := raw(t, l, "operation")
+	if retired, _, err := l.Retire(ctx, "operation", "create_thread", promptless, nil, reason); !errors.Is(err, ErrConflict) || retired || raw(t, l, "operation") != operation {
+		t.Fatalf("another operation: %v %v", retired, err)
+	}
+
 	// A version-1 receipt is compared through the legacy params, as Lookup compares it.
 	seed(t, l, "legacy", promptless, "not_attempted", true)
 	alias := map[string]any{"cwd": "/alias", "prompt": nil}
@@ -211,5 +225,50 @@ func TestLedgerRetire_endsOnlyANotAttemptedReservationOfTheseArguments(t *testin
 	resolved := func() map[string]any { return map[string]any{"cwd": "/resolved", "prompt": nil} }
 	if retired, now, err := l.Retire(ctx, "legacy", "create_thread", alias, resolved, reason); err != nil || !retired || !strings.HasPrefix(now["error"].(string), reason) {
 		t.Fatalf("legacy: %v %v %v", retired, now, err)
+	}
+}
+
+// CRW-1506: Held answers the row's receipt and the fingerprint comparison from one read, a row of other arguments or of
+// another operation with agrees false, never ErrConflict, and no row as nil without an error.
+func TestLedgerHeld_answersTheRowAndTheComparisonFromOneRead(t *testing.T) {
+	l, err := Open(filepath.Join(t.TempDir(), "operations.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	promptless := map[string]any{"cwd": "/resolved", "prompt": nil}
+	seed(t, l, "same", promptless, "not_attempted", false)
+	seed(t, l, "prompted", map[string]any{"cwd": "/resolved", "prompt": "hello"}, "accepted", false)
+	seed(t, l, "legacy", promptless, "not_attempted", true)
+	if _, r, err := l.Begin(ctx, "operation", "send_message_to_thread", promptless, nil); err != nil || r == nil {
+		t.Fatal(err)
+	}
+	resolved := func() map[string]any { return map[string]any{"cwd": "/resolved", "prompt": nil} }
+	alias := map[string]any{"cwd": "/alias", "prompt": nil}
+	for _, c := range []struct {
+		id     string
+		params map[string]any
+		legacy func() map[string]any
+		status any
+		agrees bool
+	}{
+		{"same", promptless, nil, "not_attempted", true},
+		{"prompted", promptless, nil, "accepted", false},
+		{"operation", promptless, nil, "in_progress_or_unknown", false},
+		{"legacy", alias, resolved, "not_attempted", true},
+		{"legacy", alias, nil, "not_attempted", false},
+		{"", promptless, nil, nil, false},
+		{"absent", promptless, nil, nil, false},
+	} {
+		receipt, agrees, err := l.Held(ctx, c.id, "create_thread", c.params, c.legacy)
+		if err != nil || agrees != c.agrees || (c.status == nil) != (receipt == nil) || (receipt != nil && receipt["status"] != c.status) {
+			t.Fatalf("%q: receipt=%v agrees=%v err=%v", c.id, receipt, agrees, err)
+		}
+	}
+	if err = l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if receipt, agrees, err := l.Held(ctx, "same", "create_thread", promptless, nil); err == nil || receipt != nil || agrees {
+		t.Fatalf("a closed ledger answered %v %v %v", receipt, agrees, err)
 	}
 }

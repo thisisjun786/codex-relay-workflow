@@ -3,6 +3,7 @@ package bridge
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,6 +24,19 @@ func seedCreateReservation(t *testing.T, store *ledger.Ledger, id string, params
 	}
 	if versionless {
 		delete(r, "fingerprintVersion")
+	}
+	r["status"] = status
+	if _, err = store.Save(context.Background(), r); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// seedOperation stores a row of method on id with params and status, as seedCreateReservation does for create_thread.
+func seedOperation(t *testing.T, store *ledger.Ledger, id, method string, params map[string]any, status string) {
+	t.Helper()
+	_, r, err := store.Begin(context.Background(), id, method, params, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
 	r["status"] = status
 	if _, err = store.Save(context.Background(), r); err != nil {
@@ -59,6 +73,10 @@ func TestCreateThreadReservationTellsAPromptedReservationFromAPromptlessOne(t *t
 	}
 	seedCreateReservation(t, b.Ledger, "legacy-promptless", legacyRow(nil), "not_attempted", true)
 	seedCreateReservation(t, b.Ledger, "legacy-prompted", legacyRow("hello"), "not_attempted", true)
+	// Rows of another operation on the id, in a status that would otherwise read as a reservation and in one with an
+	// effect: neither is a create_thread reservation.
+	seedOperation(t, b.Ledger, "other-operation", "send_message_to_thread", map[string]any{"threadId": "thread-1", "message": "hi"}, "not_attempted")
+	seedOperation(t, b.Ledger, "other-operation-accepted", "send_message_to_thread", map[string]any{"threadId": "thread-1", "message": "hi"}, "accepted")
 
 	for _, c := range []struct {
 		name, id, cwd, prompt, title string
@@ -74,6 +92,8 @@ func TestCreateThreadReservationTellsAPromptedReservationFromAPromptlessOne(t *t
 		{"a failed receipt", "failed", cwd, "hello", "T1", ReservationEffect},
 		{"a version-less prompt-null reservation asked through the symlink", "legacy-promptless", alias, "", "", ReservationPromptless},
 		{"a version-less prompted reservation asked through the symlink", "legacy-prompted", alias, "", "", ReservationOther},
+		{"another operation's not_attempted row", "other-operation", cwd, "", "T1", ReservationOtherOperation},
+		{"another operation's accepted row", "other-operation-accepted", cwd, "", "T1", ReservationOtherOperation},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			got, err := b.CreateThreadReservation(ctx, CreateThread{RequestID: c.id, CWD: c.cwd, Sandbox: "read-only", Prompt: c.prompt, Title: c.title})
@@ -177,6 +197,31 @@ func TestCreateThreadThatMustBringAPromptNeverBeginsAnAttemptWithoutOne(t *testi
 			t.Fatalf("a later call reached the host: %v", host.Requests())
 		}
 	})
+	t.Run("a version-less reservation asked through a symlink is retired through the legacy fingerprint", func(t *testing.T) {
+		b, host := testBridge(t)
+		root := t.TempDir()
+		target, alias := filepath.Join(root, "target"), filepath.Join(root, "alias")
+		if err := os.Mkdir(target, 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, alias); err != nil {
+			t.Fatal(err)
+		}
+		for i, prompt := range []string{"", "hello"} {
+			id := fmt.Sprintf("legacy-%d", i)
+			// A pre-upgrade receipt, fingerprinted over the resolved cwd.
+			seedCreateReservation(t, b.Ledger, id, createThreadParams(promptRequired(id, target, "", "")), "not_attempted", true)
+			if got, err := b.CreateThread(ctx, promptRequired(id, alias, prompt, "")); !errors.Is(err, ErrRetiredBeforePrompt) || got != nil {
+				t.Fatalf("prompt %q: answered %v %v", prompt, got, err)
+			}
+			if r, err := b.Ledger.Get(ctx, id); err != nil || !retiredBeforePrompt(r) {
+				t.Fatalf("prompt %q: not retired: %v %v", prompt, r, err)
+			}
+		}
+		if host.Count("thread/start") != 0 {
+			t.Fatalf("reached the host: %v", host.Requests())
+		}
+	})
 	t.Run("no row: nothing is reserved", func(t *testing.T) {
 		b, host := testBridge(t)
 		got, err := b.CreateThread(ctx, promptRequired("absent", t.TempDir(), "", ""))
@@ -257,6 +302,14 @@ func TestCreateThreadWithAPromptRetiresItsPromptlessReservationOnTheConflict(t *
 		before := seed(c.id, "", c.title, c.status)
 		if got, err := b.CreateThread(ctx, promptRequired(c.id, cwd, "hello", "")); !errors.Is(err, ledger.ErrConflict) || got != nil || stored(t, b.Ledger, c.id) != before {
 			t.Fatalf("%s: answered %v %v", c.id, got, err)
+		}
+	}
+	// A not_attempted row of another operation is never retired, with a prompt or without.
+	seedOperation(t, b.Ledger, "other-operation", "send_message_to_thread", map[string]any{"threadId": "thread-1", "message": "hi"}, "not_attempted")
+	before := stored(t, b.Ledger, "other-operation")
+	for _, prompt := range []string{"hello", ""} {
+		if got, err := b.CreateThread(ctx, promptRequired("other-operation", cwd, prompt, "")); !errors.Is(err, ledger.ErrConflict) || got != nil || stored(t, b.Ledger, "other-operation") != before {
+			t.Fatalf("another operation's row with prompt %q: answered %v %v", prompt, got, err)
 		}
 	}
 	if host.Count("thread/start") != 0 {

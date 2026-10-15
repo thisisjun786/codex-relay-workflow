@@ -364,3 +364,75 @@ func TestCreateThreadWayToANewRequestIDRetiresThePromptlessReservation(t *testin
 		t.Fatalf("the host saw %d thread/start and %d turn/start, want one creation with its first turn: %v", host.Count("thread/start"), host.Count("turn/start"), host.Requests())
 	}
 }
+
+// CRW-1506 (x1506 #4, DI P3): the refusal of a prompt-less create_thread on a request_id whose not_attempted row is not
+// this call's says only what the row is. A row of another operation is not called a create_thread reservation (it is the
+// plain conflict, and it is left as it is), and the answer for a create_thread reservation of other arguments does not
+// promise that repeating its stored arguments resumes it: one made without a prompt is retired by that call instead.
+func TestCreateThreadOtherArgumentsRefusalSaysOnlyWhatTheRowIs(t *testing.T) {
+	ctx := context.Background()
+	home, env := isolated(t)
+	cwd, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	socket := fakehost.SocketPath(t, "absent.sock")
+	state := filepath.Join(home, "ledger")
+	_, store, err := ledger.Endpoint(socket, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, r, err := store.Begin(ctx, "shared", "send_message_to_thread", map[string]any{"threadId": "thread-1", "message": "hi"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r["status"] = "not_attempted"
+	if _, err = store.Save(ctx, r); err != nil {
+		t.Fatal(err)
+	}
+	if err = store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reserveWithoutHost(t, env, socket, state, bridge.CreateThread{RequestID: "titled", CWD: cwd, Title: "T1", Sandbox: "read-only", Model: "anthropic/claude-opus-5", Effort: "xhigh"})
+
+	s := serve(t, []string{"--socket", socket, "--state-dir", state}, env)
+	operation := func(id string) string {
+		t.Helper()
+		return call(t, s, "get_operation", map[string]any{"request_id": id}).Content[0].(*sdk.TextContent).Text
+	}
+	text := func(arguments map[string]any) string {
+		t.Helper()
+		result := call(t, s, "create_thread", arguments)
+		said := result.Content[0].(*sdk.TextContent).Text
+		if !result.IsError {
+			t.Fatalf("%v was not refused: %s", arguments, said)
+		}
+		return said
+	}
+	base := func(id string, extra map[string]any) map[string]any {
+		arguments := map[string]any{"request_id": id, "cwd": cwd, "sandbox": "read-only", "model": "anthropic/claude-opus-5", "reasoning_effort": "xhigh"}
+		for key, value := range extra {
+			arguments[key] = value
+		}
+		return arguments
+	}
+
+	before := operation("shared")
+	if said := text(base("shared", nil)); strings.Contains(said, "create_thread reservation") || !strings.Contains(said, ledger.ErrConflict.Error()) {
+		t.Fatalf("a prompt-less create_thread on another operation's row answered %q", said)
+	}
+	if after := operation("shared"); after != before {
+		t.Fatalf("another operation's row changed:\n%s\n%s", before, after)
+	}
+
+	said := text(base("titled", map[string]any{"title": "T2"}))
+	if !strings.Contains(said, "create_thread reservation") || !strings.Contains(said, "not_attempted") || strings.Contains(said, "It is resumed only by a call that repeats") || strings.Contains(said, "new request_id") {
+		t.Fatalf("a prompt-less create_thread with another title answered %q", said)
+	}
+	// What the answer says the call that repeats the stored arguments gets: the reservation made without a prompt is
+	// retired, not resumed.
+	if said := text(base("titled", map[string]any{"title": "T1"})); !strings.Contains(said, "retired") || !strings.Contains(said, "new request_id") {
+		t.Fatalf("the call that repeats the stored arguments answered %q", said)
+	}
+	s.finish(t)
+}

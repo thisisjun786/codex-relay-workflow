@@ -177,6 +177,35 @@ func (l *Ledger) Lookup(ctx context.Context, id, method string, params map[strin
 	return receipt, nil
 }
 
+// Held reads the row on id once and answers its receipt, nil with no error when no row holds id, and whether the row
+// belongs to a call of method with these params (same), compared as Lookup compares them (the legacy fingerprint
+// included for a version-1 receipt). Unlike Lookup it answers a row of other arguments, with same false, instead of
+// ErrConflict, and like Get it does not check id: the status, the operation and the comparison all come from one read.
+func (l *Ledger) Held(ctx context.Context, id, method string, params map[string]any, legacy func() map[string]any) (receipt Receipt, same bool, err error) {
+	fingerprint, err := Fingerprint(method, params)
+	if err != nil {
+		return nil, false, err
+	}
+	var stored, raw string
+	err = l.db.QueryRowContext(ctx, `SELECT fingerprint, receipt FROM operations WHERE request_id=?`, id).Scan(&stored, &raw)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("held: %w", err)
+	}
+	if receipt, err = decode(raw); err != nil {
+		return nil, false, err
+	}
+	switch err := agrees(method, stored, fingerprint, receipt, legacy); {
+	case errors.Is(err, ErrConflict):
+		return receipt, false, nil
+	case err != nil:
+		return nil, false, err
+	}
+	return receipt, true, nil
+}
+
 // agrees reports whether the row stored under fingerprint stored, holding receipt, belongs to a call of method whose own
 // fingerprint is fingerprint: the same fingerprint, or, for a version-1 (pre-upgrade) receipt, the fingerprint of the
 // legacy params. A row of other arguments is ErrConflict.
@@ -296,8 +325,10 @@ func (l *Ledger) BeginUnless(ctx context.Context, id, method string, params map[
 // compares): its status becomes failed, a terminal status every build replays and never re-runs, with retrySafe false
 // and reason as its error, followed by the error of the outcome it ends; priorAttempts, attempt and every other member
 // stay as they were. It answers whether it retired the receipt and the receipt as the ledger now holds it: nil when no
-// row holds id, and the stored receipt, untouched, when it is no longer not_attempted. A row of other arguments is
-// ErrConflict and is untouched.
+// row holds id, and the stored receipt, untouched, when it is no longer not_attempted. A row of other arguments, or of
+// another operation (the fingerprint covers the method), is ErrConflict and is untouched. Its one caller is the bridge's
+// retirement of a create_thread reservation made before prompts were required (bridge retireBeforePrompt), the one
+// exception to the rule that a stored receipt is rewritten only by a call with its own arguments.
 func (l *Ledger) Retire(ctx context.Context, id, method string, params map[string]any, legacy func() map[string]any, reason string) (retired bool, now Receipt, err error) {
 	if err := checkRequestID(id); err != nil {
 		return false, nil, err

@@ -230,8 +230,17 @@ refused before anything is reserved or started
   first call with its arguments, with a prompt or without, retires it (its receipt becomes
   `failed`, with an error naming this refusal, which every bridge build replays and none
   re-runs), so no call on that id creates a thread; use a new `request_id` with a prompt.
-- A `not_attempted` reservation made with other arguments: only a call that repeats its own
-  arguments under the same `request_id` resumes it.
+- A `not_attempted` reservation made with other arguments: a call that repeats its own
+  arguments under the same `request_id` resumes it when they include a prompt, and retires
+  it, as above, when they do not. A row of another operation on the id is a plain conflict.
+
+Other than by a call with its own arguments resuming a `not_attempted` receipt, the bridge
+never rewrites a stored receipt, with this one exception (CRW-1506): a `not_attempted`
+reservation that was made without a prompt, holds exactly the call's other arguments and
+never reached the host may be retired once, in one ledger transaction, to an existing
+terminal status (`failed`), keeping its `priorAttempts`. Every other receipt is still never
+rewritten: one with a host effect, a `not_attempted` reservation that stored a prompt, and
+one of another operation.
 
 Where the host has configured an execution policy, the stated pair must also be one the
 operator approved, and an unapproved one is refused before anything is created. Read
@@ -391,7 +400,9 @@ whatever was created. Why that marker is recorded at all is in
 - `failed`: inspect the actual rejection and any retained worktree/task/turn IDs.
 - `outcome_unknown` or `in_progress_or_unknown`: reconcile before another mutation.
 - `not_attempted`: nothing was sent and nothing was created, so there is nothing to reconcile.
-  Reuse the same ID to make the attempt; do not mint a new one.
+  Reuse the same ID to make the attempt; do not mint a new one. The one exception is a
+  `create_thread` reservation made without a prompt, before prompts were required: it is
+  retired and the creation goes under a new ID with a prompt (see `create_thread` above).
 
 Use `get_operation`, backend reads/listing, and actual worktree state to identify
 what occurred. If a writer may still be active or the delivery outcome is unknown,

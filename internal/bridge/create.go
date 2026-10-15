@@ -314,9 +314,15 @@ func (b *Bridge) conflictBeforePrompt(ctx context.Context, in CreateThread, conf
 // retireBeforePrompt retires the not_attempted create_thread reservation on in.RequestID made with in's arguments
 // without a prompt (in's own prompt is ignored), under the mutation lock and in one ledger transaction that writes only
 // while the reservation is still exactly that (ledger.Retire): failed, an existing terminal status every build replays
-// and never re-runs, with RetiredBeforePrompt as its error. A receipt with a host effect, a not_attempted reservation
-// made with a prompt or other arguments, and a request_id no row holds are never written. It answers whether the
-// reservation is retired, by this call or an earlier one, and the receipt the request_id holds (nil for none).
+// and never re-runs, with RetiredBeforePrompt as its error, its priorAttempts kept. It answers whether the reservation
+// is retired, by this call or an earlier one, and the receipt the request_id holds (nil for none).
+//
+// The rule that a stored receipt is never rewritten, other than by a call with its own arguments resuming a
+// not_attempted one, has exactly this exception (CRW-1506): a not_attempted reservation that was made without a prompt,
+// holds exactly this call's other arguments and never reached the host may be retired once, in one ledger transaction,
+// to an existing terminal status, keeping its priorAttempts. Every other receipt is still never rewritten: one with a
+// host effect, a not_attempted reservation that stored a prompt, and one of another operation; a request_id no row
+// holds is not written either.
 func (b *Bridge) retireBeforePrompt(ctx context.Context, in CreateThread) (bool, ledger.Receipt, error) {
 	in.Prompt = ""
 	params := createThreadParams(in)
@@ -392,13 +398,16 @@ type Reservation int
 const (
 	// ReservationNone: no row on the request_id.
 	ReservationNone Reservation = iota
-	// ReservationEffect: a row whose status is not not_attempted (the attempt began, it is a reservation made before
-	// prompts were required and retired (RetiredBeforePrompt), or it is another operation's).
+	// ReservationEffect: a create_thread row whose status is not not_attempted (the attempt began, or it is a
+	// reservation made before prompts were required and retired, RetiredBeforePrompt).
 	ReservationEffect
 	// ReservationPromptless: a not_attempted row stored with exactly this request's arguments and no prompt.
 	ReservationPromptless
-	// ReservationOther: a not_attempted row stored with other arguments than this request's without a prompt.
+	// ReservationOther: a not_attempted create_thread row stored with other arguments than this request's without a
+	// prompt. The stored arguments may hold a prompt or not; only the fingerprint is kept, so it cannot tell which.
 	ReservationOther
+	// ReservationOtherOperation: a row of another operation than create_thread, in any status.
+	ReservationOtherOperation
 )
 
 func (r Reservation) String() string {
@@ -411,42 +420,36 @@ func (r Reservation) String() string {
 		return "promptless"
 	case ReservationOther:
 		return "other"
+	case ReservationOtherOperation:
+		return "other_operation"
 	}
 	return "unknown"
 }
 
 // CreateThreadReservation tells what the ledger holds on in.RequestID, compared with in's arguments without a prompt
-// through the stored fingerprint (the same comparison, legacy fingerprint included, CreateThread's replay makes). in's
-// own prompt is ignored. It only reads, without the mutation lock, so its answer may be out of date by the time a call
-// acts on it: it can word a refusal, never allow anything, and CreateThread (PromptRequired) decides what a call does
-// under the lock. A ledger read error is returned, never dropped.
+// through the stored fingerprint (the same comparison, legacy fingerprint included, CreateThread's replay makes), from
+// one read of the row (ledger.Held), so its status, its operation and the comparison describe the same row. in's own
+// prompt is ignored. It reads without the mutation lock, so its answer may be out of date by the time a call acts on it:
+// it can word a refusal, never allow anything, and CreateThread (PromptRequired) decides what a call does under the
+// lock. A ledger read error is returned, never dropped.
 func (b *Bridge) CreateThreadReservation(ctx context.Context, in CreateThread) (Reservation, error) {
 	if b.Ledger == nil {
 		return ReservationNone, nil
 	}
-	stored, err := b.Ledger.Get(ctx, in.RequestID)
-	if errors.Is(err, ledger.ErrUnknown) {
-		return ReservationNone, nil
-	}
-	if err != nil {
-		return ReservationNone, err
-	}
-	if stored["status"] != "not_attempted" {
-		return ReservationEffect, nil
-	}
 	in.Prompt = ""
 	promptless := createThreadParams(in)
-	receipt, err := b.Ledger.Lookup(ctx, in.RequestID, "create_thread", promptless, createThreadLegacy(promptless, in.CWD))
+	stored, same, err := b.Ledger.Held(ctx, in.RequestID, "create_thread", promptless, createThreadLegacy(promptless, in.CWD))
 	switch {
-	case errors.Is(err, ledger.ErrConflict):
-		return ReservationOther, nil
 	case err != nil:
 		return ReservationNone, err
-	case receipt == nil:
+	case stored == nil:
 		return ReservationNone, nil
-	case receipt["status"] != "not_attempted":
-		// The row moved on between the two reads.
+	case stored["operation"] != "create_thread":
+		return ReservationOtherOperation, nil
+	case stored["status"] != "not_attempted":
 		return ReservationEffect, nil
+	case same:
+		return ReservationPromptless, nil
 	}
-	return ReservationPromptless, nil
+	return ReservationOther, nil
 }
