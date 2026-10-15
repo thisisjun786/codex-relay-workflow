@@ -105,11 +105,16 @@ func (c *callRun) ensureEvidence(ctx context.Context, marker string) error {
 	}
 	ev := &sessionEvidence{id: id, attempt: s.attempt, op: marker, rec: rec, receipt: evidence.FlowReceiptPath(rec), cwds: []string{base}, readCwd: base}
 	if prev != nil {
-		// a recovered step keeps where its record was written and read (the owner's cwd, the bind's host cwd)
+		// a recovered step keeps where its record was written and read (the owner's cwd, the bind's host cwd), and the base's record
+		// is placed there again: a copy of a tree that is gone (a worktree recreated) is replaced, a claimed copy kept (CRW-1496)
 		for _, cwd := range prev.cwds {
-			if !slices.Contains(ev.cwds, cwd) {
-				ev.cwds = append(ev.cwds, cwd)
+			if slices.ContainsFunc(ev.cwds, func(have string) bool { return filepath.Clean(have) == filepath.Clean(cwd) }) {
+				continue
 			}
+			if _, err := c.evidencePlace(cwd, rec); err != nil {
+				return fmt.Errorf("the flow evidence assignment under %s: %w", cwd, err)
+			}
+			ev.cwds = append(ev.cwds, cwd)
 		}
 		if prev.readCwd != "" {
 			ev.readCwd = prev.readCwd
@@ -131,6 +136,45 @@ func (c *callRun) ensureEvidence(ctx context.Context, marker string) error {
 		}
 	}
 	s.evidence = ev
+	return nil
+}
+
+// evidenceRefresh places the record of a call that goes on in place with its attempt again under every directory of that attempt,
+// rooted at the call's directory as it is now (CRW-1496): a call recovered with its subagent bound, or with its repair step
+// (send_input) published, binds no subagent and publishes no spawn step again, so ensureEvidence does not run for it, while its
+// directory may have been recreated at the same path (a new tree) since its record was written. The base's record is placed first
+// (a stale open record is replaced, a claimed one kept, evidence.EnsureFlowAssignment) and the record it returns under every other
+// directory, the one the hook reads included. Those directories are named by the attempt's rows, so no row is written, and an
+// unchanged tree rewrites nothing. A call whose record no process could read back (the zero record) is left as it is. An error
+// holds the call.
+func (c *callRun) evidenceRefresh(_ context.Context) error {
+	s, sc := c.sess, c.e.cfg.Session
+	ev := s.evidence
+	if ev == nil || ev.attempt != s.attempt || ev.rec.ID == "" || len(ev.cwds) == 0 {
+		return nil
+	}
+	if err := realEvidenceDir(c.cwd); err != nil {
+		return fmt.Errorf("the receipt directory in %s: %w", c.cwd, err)
+	}
+	a, err := evidence.NewFlowAssignment(sc.Owner, ev.id, c.cwd, ev.op, c.e.cfg.Now())
+	if err != nil {
+		return err
+	}
+	rec, err := c.evidencePlace(ev.cwds[0], a)
+	if err != nil {
+		return fmt.Errorf("the flow evidence assignment under %s: %w", ev.cwds[0], err)
+	}
+	done := []string{filepath.Clean(ev.cwds[0])}
+	for _, cwd := range append(slices.Clone(ev.cwds[1:]), ev.readCwd) {
+		if cwd == "" || slices.Contains(done, filepath.Clean(cwd)) {
+			continue
+		}
+		if _, err := c.evidencePlace(cwd, rec); err != nil {
+			return fmt.Errorf("the flow evidence assignment under %s: %w", cwd, err)
+		}
+		done = append(done, filepath.Clean(cwd))
+	}
+	ev.rec, ev.receipt = rec, evidence.FlowReceiptPath(rec)
 	return nil
 }
 

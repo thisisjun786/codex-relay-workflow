@@ -448,6 +448,13 @@ func (c *callRun) sessionRecover(ctx context.Context) (res CallResult, stop bool
 		}
 		s.note, s.lastText = st.note, st.prev
 	}
+	if st.kind == stageBound || (st.kind == stagePublished && st.action == StepSendInput) {
+		// the call goes on with its bound subagent or its repair step, so no spawn step places its record again: the record is placed
+		// again here, rooted at the directory as it is now, which may have been recreated since (CRW-1496)
+		if err := c.evidenceRefresh(ctx); err != nil {
+			return c.evidenceHold(err, ""), true, 0, ""
+		}
+	}
 	c.firstK = max(st.k, 1)
 	if st.repair {
 		c.firstK = max(st.k-1, 1)

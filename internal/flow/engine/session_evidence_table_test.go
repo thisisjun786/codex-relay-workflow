@@ -1,13 +1,18 @@
 package engine
 
 import (
+	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/pabcd/evidence"
+	"golang.org/x/sys/unix"
 )
 
 // CRW-1496: one record-lifetime invariant for a flow evidence assignment. The engine writes a record under a directory only once a
@@ -16,7 +21,9 @@ import (
 // publish, bind, held resume, supersede, re-prepare, other-cwd resume) and death points (before and after evidence_placed, after
 // evidence_placed with no file, before and after step_published, thread_started and turn_started): after the recovery no open
 // record is left under EvidenceCwd, the owner's cwd or the host cwd, and on a path that goes on the bound child's receipt is
-// accepted at its host cwd. A row is either a body or a skip reason that names where its scene is run.
+// accepted at its host cwd. The WorktreeRecreated rows recreate the call's directory at the same path before the resume: every copy of
+// the record is placed again rooted at the new tree (ensureEvidence, evidenceRefresh), and WorktreeKept checks that a recovery of a
+// tree that did not change rewrites no record. A row is either a body or a skip reason that names where its scene is run.
 
 // evidenceLifetimeRow is one scene of the table: entry path, death point, and a body that sets the scene up, recovers it and returns
 // the directories besides EvidenceCwd that must hold no open record; or a skip reason.
@@ -97,6 +104,82 @@ func hostApart(t *testing.T, k *evidenceKit) (owner, host string) {
 	k.setOwnerCwd(owner)
 	k.setHostCwd(host)
 	return owner, host
+}
+
+// inoOf is the inode of the directory at path.
+func inoOf(t *testing.T, path string) uint64 {
+	t.Helper()
+	var st unix.Stat_t
+	if err := unix.Stat(path, &st); err != nil {
+		t.Errorf("stat %s: %v", path, err)
+		return 0
+	}
+	return st.Ino
+}
+
+// copiesAt checks that the record id is under each of cwds and roots at the tree whose inode is ino.
+func copiesAt(t *testing.T, id string, ino uint64, cwds ...string) {
+	t.Helper()
+	for _, cwd := range cwds {
+		rec, ok := evidence.RecordedAssignment(cwd, sessionOwner, id)
+		switch {
+		case !ok:
+			t.Errorf("no copy of the record %s under %s", id, cwd)
+		case rec.RootIno != ino:
+			t.Errorf("the copy of the record %s under %s roots at inode %d, want the tree's inode %d now", id, cwd, rec.RootIno, ino)
+		}
+	}
+}
+
+// recordBytes are the bytes and the modification time of the record id under cwd.
+func recordBytes(t *testing.T, cwd, id string) ([]byte, time.Time) {
+	t.Helper()
+	paths := evidenceRecords(t, cwd)
+	for _, path := range paths {
+		if strings.TrimSuffix(filepath.Base(path), ".json") != id {
+			continue
+		}
+		b, err := os.ReadFile(path)
+		fi, serr := os.Stat(path)
+		if err != nil || serr != nil {
+			t.Fatalf("the record %s under %s: %v %v", id, cwd, err, serr)
+		}
+		return b, fi.ModTime()
+	}
+	t.Fatalf("no record %s under %s (%v)", id, cwd, paths)
+	return nil, time.Time{}
+}
+
+// turnsSignal is the host of a resumed process that tells, once, when the process first reads the turns of agent: a call that goes
+// on with its bound subagent reads them only once its recovery (sessionRecover) is done.
+type turnsSignal struct {
+	*fakeSessionHost
+	agent string
+	once  sync.Once
+	read  chan struct{}
+}
+
+func (h *turnsSignal) Turns(ctx context.Context, id string, limit int, full bool) ([]SessionTurn, error) {
+	if id == h.agent {
+		h.once.Do(func() { close(h.read) })
+	}
+	return h.fakeSessionHost.Turns(ctx, id, limit, full)
+}
+
+// afterRecovery runs f once the resumed process has read the turns of its bound subagent agent (its recovery is done), or after a
+// deadline when it never does.
+func (k *evidenceKit) afterRecovery(t *testing.T, agent string, f func()) {
+	h := &turnsSignal{fakeSessionHost: k.host, agent: agent, read: make(chan struct{})}
+	k.cfg.Host = h
+	t.Cleanup(func() { k.cfg.Host = k.host })
+	go func() {
+		select {
+		case <-h.read:
+		case <-time.After(10 * time.Second):
+			t.Errorf("the resumed process never read the turns of %s", agent)
+		}
+		f()
+	}()
 }
 
 // evidenceLifetimeRows are the scenes of the table.
@@ -278,6 +361,118 @@ func evidenceLifetimeRows() []evidenceLifetimeRow {
 			return nil
 		}
 	}
+	// recreated is the C9 scene of a worktree recreated while the call can still go on in place (CRW-1496): the owner's cwd is apart
+	// from EvidenceCwd and is the host cwd, the process dies at stage, and the call's directory P is unregistered and established
+	// again at the same path before the resume (dropWorktree), so every copy of the record names a tree that is gone. The resumed
+	// call places the record again under every directory with the new tree (ensureEvidence for a spawn step published again,
+	// evidenceRefresh for a call that goes on with its bound subagent or its repair step): every copy roots at the new inode, and
+	// the child's receipt in the new P is accepted at the owner's cwd and recorded on the completed row. With keep the tree is not
+	// recreated, and the records are not rewritten at all.
+	recreated := func(stage string, keep bool) func(t *testing.T, k *evidenceKit) []string {
+		return func(t *testing.T, k *evidenceKit) []string {
+			owner := t.TempDir()
+			k.setOwnerCwd(owner)
+			k.setHostCwd(owner)
+			hang := func(Step, string, int) orchAnswer { return orchAnswer{hang: true} }
+			switch stage {
+			case "spawnPublished":
+				k.setOrch(hang, nil)
+				k.dieAt(t, isRow(EvStepPublished), evidenceExe, owner)
+			case "bound":
+				k.setOrch(hang, nil)
+				k.dieAt(t, isRow(EvTurnStarted), evidenceExe, owner)
+			case "sendInputPublished":
+				k.setOrch(func(st Step, _ string, _ int) orchAnswer {
+					if st.K == 1 {
+						return orchAnswer{text: "this is not JSON"}
+					}
+					return orchAnswer{hang: true}
+				}, nil)
+				k.dieAt(t, deathAtK(EvStepPublished, 2), evidenceExe, owner)
+			}
+			rows := k.rowsOf("exe")
+			steps := rowsNamed(rows, EvStepPublished)
+			if len(steps) == 0 {
+				t.Fatalf("no step was published (rows %s)", eventsOf(rows))
+			}
+			id, p := rowStr(steps[0].Data, "evidence_assignment"), rowStr(steps[0].Data, "workspace")
+			if id == "" || p == "" {
+				t.Fatalf("the spawn step names no assignment or workspace: %v", steps[0].Data)
+			}
+			old := inoOf(t, p)
+			copiesAt(t, id, old, k.evCwd, owner)
+			if !keep {
+				k.placer.dropWorktree(t, p)
+			}
+			var accepted atomic.Int32
+			// check is what the child sees once the resumed call has placed its record again: every copy roots at the tree now, and
+			// its receipt is accepted at the owner's cwd
+			check := func(spawn Step, agent, turn string) {
+				now := inoOf(t, p)
+				if !keep && now == old {
+					t.Errorf("the recreated worktree %s kept the inode %d", p, old)
+				}
+				copiesAt(t, id, now, k.evCwd, owner)
+				if v, _ := claim(t, spawn, owner, agent, turn, []byte("red then green\n")); v != evidence.AssignedAccepted {
+					t.Errorf("the claim of %s under the owner's cwd %s: %v", agent, owner, v)
+				} else {
+					accepted.Add(1)
+				}
+			}
+			switch stage {
+			case "spawnPublished":
+				k.setOrch(hang, func(st Step, agent string) {
+					go func() {
+						check(st, agent, agent+"-turn1")
+						k.complete(agent, st)
+					}()
+				})
+			case "bound":
+				agent := rowStr(rowsNamed(rows, EvThreadStarted)[0].Data, "thread_id")
+				spawn := k.orch.spawned()[0]
+				type snap struct {
+					b  []byte
+					at time.Time
+				}
+				before := map[string]snap{}
+				for _, cwd := range []string{k.evCwd, owner} {
+					b, at := recordBytes(t, cwd, id)
+					before[cwd] = snap{b, at}
+				}
+				k.afterRecovery(t, agent, func() {
+					if keep {
+						for cwd, was := range before {
+							if b, at := recordBytes(t, cwd, id); !bytes.Equal(b, was.b) || !at.Equal(was.at) {
+								t.Errorf("the record %s under %s was rewritten by the recovery of a kept tree:\n%s\nwant\n%s", id, cwd, b, was.b)
+							}
+						}
+					}
+					check(spawn, agent, agent+"-turn1")
+					k.complete(agent, spawn)
+				})
+			case "sendInputPublished":
+				spawn := k.orch.spawned()[0]
+				k.setOrch(func(st Step, _ string, _ int) orchAnswer {
+					if st.Action == StepSendInput {
+						check(spawn, st.AgentID, st.AgentID+"-turn2")
+						return orchAnswer{}
+					}
+					return orchAnswer{hang: true}
+				}, nil)
+			}
+			if got := value[[]any](t, k.h.run(evidenceExe)); got[0] != "completed" {
+				t.Fatalf("resumed %v: rows %s", got, eventsOf(k.rowsOf("exe")))
+			}
+			if accepted.Load() != 1 {
+				t.Errorf("%d receipts accepted under the owner's cwd, want 1", accepted.Load())
+			}
+			rows = k.rowsOf("exe")
+			if r := receiptOf(t, rows[len(rows)-1]); r["state"] != "accepted" {
+				t.Errorf("evidence_receipt %v (rows %s)", r, eventsOf(rows))
+			}
+			return []string{owner}
+		}
+	}
 	return []evidenceLifetimeRow{
 		{name: "PreparedOnly", entry: "prepare", death: "after prepared",
 			skip: "no record exists before the step: TestSessionRunDeathAtEachRow/*/prepared resumes it, and every later row of this table starts from it"},
@@ -299,6 +494,10 @@ func evidenceLifetimeRows() []evidenceLifetimeRow {
 		{name: "HeldDeliveredCrashBeforeEnd", entry: "held resume", death: "after held", body: heldDelivered},
 		{name: "TerminalReplayedAfterDeath/null_model", entry: "prepare", death: "after null_model", body: terminal("contextWindowExceeded", EvNullModel, "null_model")},
 		{name: "TerminalReplayedAfterDeath/refused", entry: "prepare", death: "after refused", body: terminal("badRequest", EvRefused, "refused")},
+		{name: "WorktreeRecreated/spawnPublished", entry: "publish", death: "after step_published, worktree recreated", body: recreated("spawnPublished", false)},
+		{name: "WorktreeRecreated/bound", entry: "bind", death: "after turn_started, worktree recreated", body: recreated("bound", false)},
+		{name: "WorktreeRecreated/sendInputPublished", entry: "publish", death: "after the repair's step_published, worktree recreated", body: recreated("sendInputPublished", false)},
+		{name: "WorktreeKept/bound", entry: "bind", death: "after turn_started", body: recreated("bound", true)},
 	}
 }
 
@@ -319,7 +518,8 @@ func TestSessionEvidenceLifetimeTable(t *testing.T) {
 		for _, name := range []string{"HeldDeliveredCrashBeforeEnd", "TerminalReplayedAfterDeath/null_model", "TerminalReplayedAfterDeath/refused",
 			"OrphanBeforeStepRow/superseded", "OrphanBeforeStepRow/preparedAgain", "ResumedFromAnotherCwd/superseded",
 			"ResumedFromAnotherCwd/preparedAgain", "ResumedFromAnotherCwd/sameStep", "HostCopyBeforeThreadStarted/superseded",
-			"HostCopyBeforeThreadStarted/preparedAgain"} {
+			"HostCopyBeforeThreadStarted/preparedAgain", "WorktreeRecreated/spawnPublished", "WorktreeRecreated/bound",
+			"WorktreeRecreated/sendInputPublished"} {
 			if !names[name] {
 				t.Errorf("the C9 row %s is missing", name)
 			}
