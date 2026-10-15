@@ -63,8 +63,9 @@ async function qa(ms, g) {
   return crw.qaReceipt(ms.id, g, cap, passes, syn)
 }
 
-// gate judges the evidence of the integrated head and makes what is missing, until the gate passes, fails, or cannot be settled.
-async function gate(ms) {
+// closeGate judges the evidence of the integrated head and makes what is missing, until the gate passes, fails, or cannot be
+// settled. It is exported so the reviewer-final call can be tested on the gate it reads, apart from the close (CRW-1505).
+export async function closeGate(ms) {
   let g = null
   for (let round = 1; round <= GATE_ROUNDS; round++) {
     g = await crw.finalGate(ms.id)
@@ -87,8 +88,9 @@ function gateStop(g) {
 }
 
 // finalReview is the reviewer-final call over the range of the passed gate. A reviewer whose answer is null_model is asked once
-// more on a fresh thread, as a node's reviewer is.
-async function finalReview(ms, g) {
+// more on a fresh thread, as a node's reviewer is. It is exported so the reviewer-final op and its packet stay testable on a
+// direct harness, whatever the close calls (CRW-1505).
+export async function finalReview(ms, g) {
   await crw.spawnDecision('REVF_1', 'spawn', { role: 'reviewer-final', inputs: { milestone: ms.id, head: g.head, gate: g.state } })
   const packet = finalPacket(ms, g)
   let call = await agent.call(packet, { agentType: 'reviewer-final', head: g.head, schema: VERDICT_FINAL, label: 'reviewer-final:' + ms.id })
@@ -108,7 +110,7 @@ function accepts(x) {
 
 export async function closeMilestone(ms) {
   for (let attempt = 1; attempt <= CLOSE_ATTEMPTS; attempt++) {
-    const g = await gate(ms)
+    const g = await closeGate(ms)
     if (g.state === 'stop') return g
     if (g.state !== 'pass') return gateStop(g)
     const f = await finalReview(ms, g)
