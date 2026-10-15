@@ -479,7 +479,16 @@ func Run(ctx context.Context, prog *script.Program, cfg Config) (*Result, error)
 	if res.Status == RunPaused {
 		e.j.Append(Event{RunID: e.runID, Kind: KindRun, Event: "paused", Data: map[string]any{"status": RunPaused, "by": ask.by, "reason": ask.reason}})
 	} else {
-		e.j.Append(Event{RunID: e.runID, Kind: KindRun, Event: "finished", Data: map[string]any{"status": res.Status, "error_kind": res.ErrorKind}})
+		data := map[string]any{"status": res.Status, "error_kind": res.ErrorKind}
+		// what a completed script came to (a milestone state, CRW-1487): the completion notice and `crw flow ps` read it from this row
+		if res.Status == RunCompleted {
+			if o := outcomeOf(res.Value); o != nil {
+				if row := o.row(); row != nil {
+					data["outcome"] = row
+				}
+			}
+		}
+		e.j.Append(Event{RunID: e.runID, Kind: KindRun, Event: "finished", Data: data})
 	}
 	if cfg.Upward != nil {
 		// the journal no longer notifies: the end row is the last point, and the hook reads the whole journal

@@ -95,6 +95,90 @@ func TestRunFinishedTellsTheCompletionDigest(t *testing.T) {
 	}
 }
 
+// finish appends a finished row to the run's journal, as the engine writes it before RunFinished (CRW-1487: with the outcome of the
+// script when it returned one).
+func (w *world) finish(status string, outcome map[string]any) {
+	w.t.Helper()
+	data := map[string]any{"status": status, "error_kind": ""}
+	if outcome != nil {
+		data["outcome"] = outcome
+	}
+	w.journal.Append(engine.Event{RunID: testRun, Kind: engine.KindRun, Event: "finished", Data: data})
+	if err := w.journal.Flush(); err != nil {
+		w.t.Fatal(err)
+	}
+}
+
+// The completion notice tells the milestone state the script came to (CRW-1487): a run whose lane escalated or did not land all its
+// lanes is never told completed. The completion_notice row carries the state, the reason and the lanes; a later finish with another
+// outcome is told again (a new key). A finish with no outcome keeps the old text and key (TestRunFinishedTellsTheCompletionDigest).
+func TestRunFinishedTellsTheMilestoneState(t *testing.T) {
+	w := newWorld(t)
+	h := w.hook()
+	// the old key of this journal, before any outcome
+	plain := "done:" + testRun + ":" + digestOfRows(w.journal.Events(), "completed", nil)
+	// with no outcome the digest is byte for byte the one before CRW-1487: the completed calls and the status
+	var parts []string
+	for _, ev := range w.journal.Events() {
+		if ev.Kind == engine.KindCall && ev.Event == engine.EvCompleted {
+			parts = append(parts, ev.CallID)
+		}
+	}
+	if old := "done:" + testRun + ":" + shortHash(append(parts, "status=completed")...); plain != old {
+		t.Fatalf("the key with no outcome moved: %s, was %s", plain, old)
+	}
+	w.finish("completed", map[string]any{"state": "escalated", "source": "design_audit", "reason": "design_audit_rounds", "escalation": "esc-1"})
+	if err := h.RunFinished(ctx, testRun, "completed"); err != nil {
+		t.Fatal(err)
+	}
+	sent := w.sender.parentSent()
+	if len(sent) != 1 {
+		t.Fatalf("sent %+v", sent)
+	}
+	for _, want := range []string{"run finished run=" + testRun, "state=escalated reason=design_audit_rounds escalation=esc-1", "digest="} {
+		if !strings.Contains(sent[0].Text, want) {
+			t.Errorf("the notice lacks %q: %s", want, sent[0].Text)
+		}
+	}
+	if strings.Contains(sent[0].Text, "status=completed") {
+		t.Errorf("an escalated run is told completed: %s", sent[0].Text)
+	}
+	rows := w.rows(KindCompletionNotice)
+	if len(rows) != 1 || rows[0].Str("status") != "completed" || rows[0].Str("state") != "escalated" || rows[0].Str("reason") != "design_audit_rounds" {
+		t.Fatalf("rows %+v", rows)
+	}
+	if rows[0].Str("notice_key") == plain {
+		t.Errorf("the outcome kept the old key %s", plain)
+	}
+	// a resume that ends with the lanes incomplete is told again, with the lanes that did not land
+	w.journal.Append(engine.Event{RunID: testRun, Kind: engine.KindRun, Event: "started", Data: map[string]any{}})
+	w.finish("completed", map[string]any{"state": "incomplete", "milestone": "M1", "lanes": []any{
+		map[string]any{"node": "n1", "state": "escalated", "reason": "blocked_scope"},
+		map[string]any{"node": "n2", "state": "escalated", "reason": "land_review_needs_changes"},
+	}})
+	if err := h.RunFinished(ctx, testRun, "completed"); err != nil {
+		t.Fatal(err)
+	}
+	sent = w.sender.parentSent()
+	if len(sent) != 2 {
+		t.Fatalf("the incomplete finish was not told: %+v", sent)
+	}
+	if !strings.Contains(sent[1].Text, "state=incomplete lanes=n1:escalated/blocked_scope,n2:escalated/land_review_needs_changes") || strings.Contains(sent[1].Text, "status=completed") {
+		t.Errorf("the incomplete notice: %s", sent[1].Text)
+	}
+	rows = w.rows(KindCompletionNotice)
+	if len(rows) != 2 || rows[1].Str("state") != "incomplete" || rows[1].Str("notice_key") == rows[0].Str("notice_key") {
+		t.Fatalf("rows %+v", rows)
+	}
+	if lanes, _ := rows[1].Payload["lanes"].([]any); len(lanes) != 2 {
+		t.Errorf("the row's lanes %+v", rows[1].Payload["lanes"])
+	}
+	// told once
+	if err := h.RunFinished(ctx, testRun, "completed"); err != nil || len(w.sender.parentSent()) != 2 {
+		t.Errorf("told again: %v %d", err, len(w.sender.parentSent()))
+	}
+}
+
 // The engine hands the run to the hook: at its start, after the batches its journal committed, and at its end; the summary document the
 // command line named is recorded in the journal first, so the hook reads it from there. A resumed run finds the stream as it left it.
 func TestEngineHandsTheRunToTheHook(t *testing.T) {

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+
+	"github.com/thisisjun786/codex-relay-workflow/internal/flow/engine"
 )
 
 // ps is `crw flow ps`: one line for each run that is not over (all of them with --all).
@@ -50,10 +52,10 @@ func (c *command) ps(args []string) int {
 		return 0
 	}
 	tw := tabwriter.NewWriter(c.stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "RUN\tSTATE\tWORKFLOW\tOWNER\tCALLS\tOPEN\tHOLD\tASKS\tTOKENS\tCACHED\tFRESH\tOUTPUT\tSTARTED")
+	fmt.Fprintln(tw, "RUN\tSTATE\tWORKFLOW\tOWNER\tCALLS\tOPEN\tHOLD\tASKS\tTOKENS\tCACHED\tFRESH\tOUTPUT\tSTARTED\tOUTCOME")
 	for _, i := range shown {
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\n", i.RunID, i.State, i.Workflow, short(i.Owner), i.Calls, i.Unsettled, i.Holds, i.Waiting, i.Tokens,
-			i.TokenSplit.CachedInput, i.TokenSplit.FreshInput, i.TokenSplit.Output, c.since(i.StartedAt))
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%s\n", i.RunID, i.State, i.Workflow, short(i.Owner), i.Calls, i.Unsettled, i.Holds, i.Waiting, i.Tokens,
+			i.TokenSplit.CachedInput, i.TokenSplit.FreshInput, i.TokenSplit.Output, c.since(i.StartedAt), outcomeCell(i.Outcome))
 	}
 	_ = tw.Flush()
 	return 0
@@ -105,6 +107,23 @@ func (c *command) printDetail(d RunDetail) {
 			line += "  repinned from " + d.PolicyRepinnedFrom
 		}
 		fmt.Fprintln(w, line)
+	}
+	if o := d.Outcome; o != nil {
+		// what the script came to (CRW-1487): the milestone state, and the lanes that did not land
+		line := "outcome " + outcomeCell(o)
+		if o.Escalation != "" {
+			line += "  escalation " + o.Escalation
+		}
+		if o.Milestone != "" {
+			line += "  milestone " + o.Milestone
+		}
+		fmt.Fprintln(w, line)
+		for _, l := range o.Lanes {
+			fmt.Fprintf(w, "  lane %s %s\n", cell(l.Node), stateReason(l.State, l.Reason))
+		}
+		if o.LanesMore > 0 {
+			fmt.Fprintf(w, "  %d more lane(s) did not land\n", o.LanesMore)
+		}
 	}
 	var notes []string
 	if d.Live {
@@ -190,6 +209,21 @@ func (c *command) printDetail(d RunDetail) {
 		}
 		fmt.Fprintf(w, "question %s r%d  node %s  %s  %s\n", q.ID, q.Revision, cell(q.Node), q.Reason, state)
 	}
+}
+
+// outcomeCell is the outcome of a run as `crw flow ps` and `show` print it: state/reason, state alone with no reason, - with no outcome.
+func outcomeCell(o *engine.Outcome) string {
+	if o == nil {
+		return "-"
+	}
+	return stateReason(o.State, o.Reason)
+}
+
+func stateReason(state, reason string) string {
+	if reason == "" {
+		return cell(state)
+	}
+	return cell(state) + "/" + reason
 }
 
 func shorten(list []string) []string {
