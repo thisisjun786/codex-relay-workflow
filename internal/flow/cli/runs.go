@@ -65,7 +65,8 @@ type RunInfo struct {
 	TokenSplit TokenSplit `json:"token_split"`
 	Phase      string     `json:"phase,omitempty"`
 	// Status and ErrorKind are those of the last finished row; Paused says who paused the run and why: the by and reason of the
-	// run/paused end row of a run that ended paused, else the last run_paused ask of the current process.
+	// run/paused end row of a run that ended paused, also when a cancel of that paused end follows it, else the last run_paused ask
+	// of the current process.
 	Status    string `json:"status,omitempty"`
 	ErrorKind string `json:"error_kind,omitempty"`
 	Paused    string `json:"paused,omitempty"`
