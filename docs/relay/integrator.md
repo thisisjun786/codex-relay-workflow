@@ -81,7 +81,7 @@ verification or the review stays in `pending/` with the new head (`head-moved:<s
 
 Run files, in `runs_dir`: `<tag>.log`, `<tag>.out` and `<tag>.summary.json` (`tag`, `base`, `head`, `merged`, `left_out`, `record`,
 `result`, the shell runner's own shape), `<tag>.verify.log`, and the verification record `<tag>.json` that `verify_command` writes.
-Right before the push the run writes `"result": "pushing"` into its summary, a marker the run's own result overwrites; a push that landed with no
+Right before the push the run writes `"result": "pushing"` into its summary, a marker the run's own result overwrites. The marker must be on disk before the push starts: when `runs_dir` refuses the write (full or read-only), nothing is pushed, the pass reports `error` (status 2) and the entry stays in `pending/`; a push that landed with no
 `pushed` summary behind it (the signal ended the call after git exited 0) leaves the marker, and the recovery of that landing accepts it when its head
 is in the branch, so the run's verification record and review verdict are still found. A git that cannot answer whether the marker's head is in the branch
 holds the entry (it stays in `pending/` with the reason in `held`, no record is written, the marker stays) and the next pass asks again. `pushing` is a marker,
@@ -91,7 +91,7 @@ never a pass result.
 
 | Status | Result | Meaning |
 |---|---|---|
-| 0 | `pushed`, `landed-before-record`, `idle`, `stopped` | the merged heads were pushed, a pull request whose head was already in the branch got its landing record after the fact, or there was nothing to do |
+| 0 | `pushed`, `landed-before-record`, `comment-reposted`, `idle`, `stopped` | the merged heads were pushed, a pull request whose head was already in the branch got its landing record after the fact, a landing comment an earlier pass did not get to was posted, or there was nothing to do |
 | 2 | `locked`, `error`, `cancelled` | usage, configuration, fetch or lock failure, a gate that could not run, the worktree already exists, a re-derived version line that could not be committed, a worktree not clean before the verification, or a termination signal; no head was judged by it |
 | 3 | `verification-failed(rc=N)` | the merged tree failed verification; nothing was pushed |
 | 4 | `dev-moved:<sha>`, `push-failed`, `head-moved:<sha>`, `pull-request-changed` | the branch moved during the run or the push was refused; for a pull request, its head moved, or it was closed, retargeted or could not be read again, between the merge and the move of the branch; nothing was pushed and the entry stays pending |
@@ -135,7 +135,9 @@ the verification-record of the merged tree; the review is a step of the queue th
   (enqueue it again); toward another branch, from a fork, or from a repository GitHub no longer names, to `blocked/`. A pull request GitHub
   does not answer, or a fetch that fails, is no verdict: it stays in `pending/`, the report lists it under `held`, and the pass goes on with
   the pull requests and issue heads behind it. Status 2 (`error`) is for a pass that did nothing else; a pass that landed work (a run, or a
-  recovered landing) keeps that result and its status, with `held` still in the report.
+  recovered landing) keeps that result and its status, with `held` still in the report. A record whose comment says `not written yet` gets
+  its comment on the next pass that finds the head landed and the entry moves to `done/`; when that is all the pass did, its result is
+  `comment-reposted` (status 0, no summary, no new record), not `nothing-to-integrate`.
 - The run merges the head with `merge --no-ff -m "Merge pull request OWNER/NAME#N (<branch>) at <head8> into <branch>"` and verifies the
   merged tree as step 4 and 5 above. Only after a verification that passed does `review_command` run, in the worktree, on that tree:
   `{pr}`, `{pr_number}`, `{head}` (the pull request's head), `{merged}` (the verified commit), `{base}` (the branch before), `{verdict}`

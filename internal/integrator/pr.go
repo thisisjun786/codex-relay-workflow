@@ -583,34 +583,35 @@ func (r *Runner) postLandingComment(ctx context.Context, l *Landing) {
 // the record and the comment call) and writes the record again. A record whose comment is written or was refused, and an entry with
 // no record (its done/ file alone), are left as they are. It answers why the entry is held, "" when it is not: a queue with no
 // tracking adapter cannot post the comment, so the entry waits in pending with the record as it is; a record that cannot be written
-// after the comment went up holds the entry too, since done/ must not stand over a record that still says "not written yet". It is
+// after the comment went up holds the entry too, since done/ must not stand over a record that still says "not written yet". posted is
+// true when the comment went up and the record says so: that is work the pass did. It is
 // called only by a pass, never by --enqueue-pr or --dry-run. One window stays: a pass that ends between the comment call and the
 // second write, or whose second write fails, leaves "not written yet" for a comment that exists, and the next pass posts it a second
 // time.
-func (r *Runner) repostLandingComment(ctx context.Context, e Entry) string {
+func (r *Runner) repostLandingComment(ctx context.Context, e Entry) (held string, posted bool) {
 	path := r.findLanding(e.PR, e.Head)
 	if path == "" {
-		return ""
+		return "", false
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return ""
+		return "", false
 	}
 	var l Landing
 	if json.Unmarshal(data, &l) != nil || l.Comment != commentNotWrittenYet {
-		return ""
+		return "", false
 	}
 	if r.PullRequests == nil {
-		return "the landing comment of " + l.Tag + " cannot be posted, it stays pending: the queue has no tracking adapter"
+		return "the landing comment of " + l.Tag + " cannot be posted, it stays pending: the queue has no tracking adapter", false
 	}
 	r.postLandingComment(ctx, &l)
 	if err := r.writeLanding(&l); err != nil {
-		held := "the landing comment of " + l.Tag + " was posted (" + l.Comment + ") but its record could not be written, it stays pending: " + err.Error()
+		held = "the landing comment of " + l.Tag + " was posted (" + l.Comment + ") but its record could not be written, it stays pending: " + err.Error()
 		r.logf("%s %s: %s", e.Key, e.Head, held)
-		return held
+		return held, false
 	}
 	r.logf("%s %s: the landing comment of %s was posted (%s)", e.Key, e.Head, l.Tag, l.Comment)
-	return ""
+	return "", true
 }
 
 // writeLanding writes <tag>.pr.json through <tag>.pr.json.new and answers why it could not.

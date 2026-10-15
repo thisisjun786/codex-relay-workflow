@@ -176,7 +176,7 @@ func (r *Runner) integrate(ctx context.Context, tag string, entries []Entry, pr 
 	out.Summary = sum
 	finish := func(result string, exit int) Outcome {
 		sum.Result = result
-		r.writeSummary(sum)
+		_ = r.writeSummary(sum)
 		out.Exit = exit
 		return out
 	}
@@ -254,8 +254,12 @@ func (r *Runner) integrate(ctx context.Context, tag string, entries []Entry, pr 
 		return finish("dev-moved:"+now, ExitMoved)
 	}
 	// The marker first: a push the signal ended after it landed leaves this summary for the recovery to find (finish overwrites it).
+	// Without the marker on disk a push the signal ended after it landed leaves nothing to find, so a marker that cannot be written
+	// (runs_dir full or read-only) is no push: the pass fails and the entries stay pending.
 	sum.Result = resultPushing
-	r.writeSummary(sum)
+	if err := r.writeSummary(sum); err != nil {
+		return fail("the pushing marker could not be written, nothing is pushed: %v", err)
+	}
 	// Never forced: no plus, no --force, so a remote that moved refuses the push.
 	if rc, err := r.git(ctx, wt, logf, "push", c.Remote, head+":refs/heads/"+c.Branch); err != nil || rc != 0 {
 		if ctx.Err() != nil {
@@ -417,15 +421,20 @@ func (r *Runner) verify(ctx context.Context, tag, wt, head, base, record string)
 }
 
 // writeSummary writes <tag>.summary.json and <tag>.out, the files the shell script left.
-func (r *Runner) writeSummary(s *Summary) {
+// It answers the first write that failed; the final summaries of a finished run stay best effort, the pushing marker does not.
+func (r *Runner) writeSummary(s *Summary) error {
 	data, err := json.Marshal(s)
 	if err != nil {
-		return
+		return err
 	}
 	data = append(data, '\n')
+	var first error
 	for _, ext := range []string{".summary.json", ".out"} {
-		_ = os.WriteFile(filepath.Join(r.Cfg.RunsDir, s.Tag+ext), data, 0o664)
+		if err := os.WriteFile(filepath.Join(r.Cfg.RunsDir, s.Tag+ext), data, 0o664); err != nil && first == nil {
+			first = err
+		}
 	}
+	return first
 }
 
 func sortedKeys(m map[string]string) []string {

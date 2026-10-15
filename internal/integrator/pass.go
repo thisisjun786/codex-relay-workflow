@@ -16,6 +16,10 @@ import (
 // record itself says landed_before_record).
 const resultReportLandedBeforeRecord = "landed-before-record"
 
+// resultReportCommentReposted is the pass result of a pass whose only work was posting a landing comment an earlier pass did not
+// get to (status 0).
+const resultReportCommentReposted = "comment-reposted"
+
 // Report is what one pass reports.
 type Report struct {
 	// Result is idle, stopped, locked, nothing-to-integrate, error, or the run's own result
@@ -23,6 +27,8 @@ type Report struct {
 	// review-needs-changes, head-moved:<sha> and pull-request-changed).
 	// landed-before-record (status 0) is a pull request whose head was already in the branch with no landing record: the pass wrote the
 	// recovered record (Landing), ran nothing (no Summary) and moved the entry to done/.
+	// comment-reposted (status 0) is a pass whose only work was posting the landing comment of a record that said "not written yet"
+	// and moving its entry to done/: nothing ran and no record was written.
 	// pushing is the marker a run leaves in its <tag>.summary.json while its push is under way; it is never a pass result.
 	Result  string   `json:"result"`
 	Exit    int      `json:"exit"`
@@ -84,17 +90,20 @@ func (r *Runner) Pass(ctx context.Context) Report {
 			heads = append(heads, e)
 		}
 	}
+	reposted := false
 	for _, e := range prs {
 		// a head of the pull request that already landed (done/ or its landing record) is done again, with no second record
 		if why := r.landedBefore(e); why != "" {
 			r.logf("%s %s: %s", e.Key, e.Head, why)
 			// a record whose comment an earlier pass did not get to is posted now, once
-			if held := r.repostLandingComment(ctx, e); held != "" {
+			held, reposts := r.repostLandingComment(ctx, e)
+			if held != "" {
 				r.logf("%s %s: %s", e.Key, e.Head, held)
 				rep.Held = append(rep.Held, e.Name+": "+held)
 				continue
 			}
 			rep.moved(r, e, dirDone, why)
+			reposted = reposted || reposts
 			continue
 		}
 		pr, held := r.checkPR(ctx, e, &rep)
@@ -118,7 +127,10 @@ func (r *Runner) Pass(ctx context.Context) Report {
 		}
 	}
 	if len(prs) > 0 && len(heads) == 0 {
-		if len(rep.Held) > 0 {
+		if reposted {
+			// a comment posted is work done: the pass succeeded, with held still in the report
+			rep.Result, rep.Exit = resultReportCommentReposted, ExitPushed
+		} else if len(rep.Held) > 0 {
 			rep.Result, rep.Exit, rep.Error = "error", ExitUsage, strings.Join(rep.Held, "; ")
 		} else {
 			rep.Result, rep.Exit = "nothing-to-integrate", ExitNothingMerged
@@ -164,6 +176,10 @@ func (r *Runner) Pass(ctx context.Context) Report {
 		}
 	}
 	if len(batch) == 0 {
+		if reposted {
+			rep.Result, rep.Exit = resultReportCommentReposted, ExitPushed
+			return rep
+		}
 		rep.Result, rep.Exit = "nothing-to-integrate", ExitNothingMerged
 		return rep
 	}
