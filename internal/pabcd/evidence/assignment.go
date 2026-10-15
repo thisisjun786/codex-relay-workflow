@@ -305,6 +305,60 @@ func (a Assignment) Remove(cwd string) {
 	})
 }
 
+// replaceOpen puts the flow record a in place of the open, unclaimed record its id has under cwd whose tree no longer matches
+// (EnsureFlowAssignment, CRW-1496), and returns the record on disk afterwards. Under the lock a claim takes it reads the record
+// again and decides on that read with the rule EnsureFlowAssignment's entry applies, so a writer that read the record before
+// another changed it never acts on the old read:
+//   - a record that is gone is an error: a record released meanwhile is never brought back;
+//   - a record of another session, origin, mode, root or op, or one neither open nor claimed, is an error;
+//   - a claimed record (or one an actor holds) is that child's contract and is returned as it is;
+//   - an open record whose tree still matches (another writer replaced it) is returned as it is;
+//   - an open record whose tree no longer matches is replaced by a, and a is returned. Its CreatedAt is made strictly later than
+//     the replaced record's (that time and one nanosecond when the clock gives no later one), so a receipt the replaced contract
+//     would take never predates the new one.
+//
+// The record lock is the only lock it takes, and nothing it calls takes another (lock order in lock.go). There is no retry.
+func (a Assignment) replaceOpen(cwd string) (Assignment, error) {
+	dir, err := crwdir.EnsureSubdir(cwd, AssignmentsSubdir, sessionRecordDir(a.SessionID))
+	if err != nil {
+		return Assignment{}, err
+	}
+	path := filepath.Join(dir, a.ID+".json")
+	var out Assignment
+	err = withFileLock(path+".lock", func() error {
+		rec, ok := readAssignment(path, a.ID)
+		switch {
+		case !ok:
+			if _, err := os.Lstat(path); errors.Is(err, fs.ErrNotExist) {
+				return fmt.Errorf("the flow evidence assignment %s was released before it could be replaced", a.ID)
+			}
+			return fmt.Errorf("the flow evidence assignment %s is recorded but cannot be read", a.ID)
+		case rec.SessionID != a.SessionID || rec.Origin != a.Origin || rec.Mode != a.Mode || rec.Root != a.Root || rec.Op != a.Op:
+			return fmt.Errorf("the flow evidence assignment %s is recorded for root %s op %s, not root %s op %s", a.ID, rec.Root, rec.Op, a.Root, a.Op)
+		case rec.Status != AssignmentOpen && rec.Status != AssignmentClaimed:
+			return fmt.Errorf("the flow evidence assignment %s is %s", a.ID, rec.Status)
+		case rec.Status != AssignmentOpen || rec.AgentID != "" || treeStillMatches(rec):
+			out = rec
+			return nil
+		}
+		next := a
+		if prev, err := time.Parse(time.RFC3339Nano, rec.CreatedAt); err == nil {
+			if created, err := time.Parse(time.RFC3339Nano, next.CreatedAt); err != nil || !created.After(prev) {
+				next.CreatedAt = prev.Add(time.Nanosecond).UTC().Format(time.RFC3339Nano)
+			}
+		}
+		if _, err := writeRecordStaged(path, next, crwdir.Rename); err != nil {
+			return err
+		}
+		out = next
+		return nil
+	})
+	if err != nil {
+		return Assignment{}, err
+	}
+	return out, nil
+}
+
 // LeadingAssignmentID is the id of the assignment block that text starts with (the place the spawn hook writes it), and whether it
 // does. A marker anywhere later in a packet is the parent's own text and is not looked at.
 func LeadingAssignmentID(text string) (string, bool) {
@@ -684,13 +738,31 @@ func JudgeAssignedReceiptTurn(cwd, sessionID, agentID, turnID, transcriptPath, m
 	return AssignedAccepted
 }
 
-// assignedReceiptValid is the receipt check against one tree assignment.
-func assignedReceiptValid(a Assignment, receipt string) bool {
+// treeStillMatches reports whether the tree of assignment a is still the one it was recorded for: Root is absolute and names the
+// same real path, device and inode now, and a recorded Head is an ancestor of HEAD now (a Head of "" asks nothing). It is the tree
+// half of the claim's check (assignedReceiptValid), and EnsureFlowAssignment asks it before it reuses an open record (CRW-1496), so
+// the reuse check and the claim stay one rule.
+func treeStillMatches(a Assignment) bool {
 	if a.Root == "" || !filepath.IsAbs(a.Root) {
 		return false
 	}
 	real, dev, ino, err := treeIdentity(a.Root)
 	if err != nil || real != a.Root || dev != a.RootDev || ino != a.RootIno {
+		return false
+	}
+	if a.Head != "" {
+		_, err := source.Probe(a.Root, source.ProbeOptions{Limit: 1 << 16, Timeout: gitprobe.Timeout}, "merge-base", "--is-ancestor", a.Head, "HEAD")
+		if err != nil {
+			return false
+		}
+	}
+	return true
+}
+
+// assignedReceiptValid is the receipt check against one tree assignment: the tree still matches (treeStillMatches) and the receipt
+// passes the native checks under its real .crw/evidence.
+func assignedReceiptValid(a Assignment, receipt string) bool {
+	if !treeStillMatches(a) {
 		return false
 	}
 	evidenceDir := filepath.Join(a.Root, crwdir.DirName, Subdir)
@@ -707,12 +779,6 @@ func assignedReceiptValid(a Assignment, receipt string) bool {
 	info, statErr := os.Lstat(resolved)
 	if err != nil || statErr != nil || info.ModTime().Before(created) {
 		return false
-	}
-	if a.Head != "" {
-		_, err := source.Probe(a.Root, source.ProbeOptions{Limit: 1 << 16, Timeout: gitprobe.Timeout}, "merge-base", "--is-ancestor", a.Head, "HEAD")
-		if err != nil {
-			return false
-		}
 	}
 	return true
 }
