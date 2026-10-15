@@ -1,10 +1,14 @@
 package delivery
 
 import (
+	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/thisisjun786/codex-relay-workflow/internal/layername"
+	"github.com/thisisjun786/codex-relay-workflow/internal/pyjson"
 	"github.com/thisisjun786/codex-relay-workflow/internal/relay/evidence"
 )
 
@@ -116,4 +120,105 @@ func TestRenderedTextNamesLayersNotRoleIds(t *testing.T) {
 			t.Errorf("revision to the wrong recipient: %q, want %q", Detail(err), want)
 		}
 	})
+}
+
+// CRW-1443 (PR #890 review): the lost-send detail says the delivery is "held for the 자식" for every
+// kind. The words name the session that owns the decision to recover the held send, not its
+// addressee: a completion is addressed to the 자식 and a revision request to the issue child, and for
+// both the reconciler names the relay parent (the 자식) as the recovery actor
+// (parent_recovers_unknown_send_lost, parent_recovers_held_correction). This pins the detail of both
+// kinds to that actor.
+//
+// sequential: assigns the package variable readUnknownSend.
+func TestLostSendDetailNamesTheLayerThatRecovers(t *testing.T) {
+	const heldFor = "; held for the 자식, never sent again"
+	harness := func(t *testing.T) *hl {
+		f := newFixture(t, parityTree(t))
+		f.rid = ""
+		h := &hl{fixture: f, name: t.Name(), ack: NewAck(f.delivery), rc: NewReconciler(f.delivery), adapter: f.host, policy: defaultTick()}
+		h.checks = &TurnChecks{Reconciler: h.rc, Budget: 4}
+		return h
+	}
+	read := func(t *testing.T, h *hl, request string) (Reading, Obj) {
+		t.Helper()
+		original := readUnknownSend
+		var reading Reading
+		var outcome Obj
+		withReadUnknownSend(func(ctx context.Context, a Adapter, c Clock, attempt, delivery Row, receipt string) Reading {
+			reading = original(ctx, a, c, attempt, delivery, receipt)
+			return reading
+		}, func() { outcome = h.reconcile(request, h.host) })
+		if reading == nil {
+			t.Fatal("the reconciler did not read the unknown send")
+		}
+		return reading, outcome
+	}
+	check := func(t *testing.T, reading Reading, outcome Obj, action string) {
+		t.Helper()
+		if got := pyjson.Text(reading.Get("finding")); got != UnknownSendLost {
+			t.Fatalf("finding = %q, want %s", got, UnknownSendLost)
+		}
+		detail := pyjson.Text(reading.Get("detail"))
+		if !strings.HasSuffix(detail, heldFor) {
+			t.Errorf("detail = %q, want it to end %q", detail, heldFor)
+		}
+		requireNoRoleWords(t, "the lost-send detail", detail)
+		if got := pyjson.Text(field(outcome, "nextExpectedAction")); got != action {
+			t.Errorf("nextExpectedAction = %q, want %q", got, action)
+		}
+		if got := pyjson.Text(field(sub(outcome, "recovery"), "actor")); got != "parent" || layername.Name(got) != "자식" {
+			t.Errorf("recovery actor = %q, want the relay parent, the 자식 the detail names", got)
+		}
+	}
+
+	t.Run("completion, addressed to the 자식", func(t *testing.T) {
+		h := harness(t)
+		// An earlier turn of the 자식, named so that its id carries no role word into the detail.
+		h.host.startTurn(parent, "turn-earlier", "completed", "")
+		h.clock.Advance(300)
+		event := h.queuedEvent(regOpts{})
+		if got := h.row(event).S("recipient_task_id"); got != parent {
+			t.Fatalf("the completion is addressed to %q, want the relay parent %q", got, parent)
+		}
+		h.host.script = []string{"transport_unknown"}
+		record := h.attemptOn(event, h.host, nil)
+		h.host.threads[parent].status = "notLoaded"
+		h.clock.Advance(120)
+		reading, outcome := read(t, h, pyjson.Text(record.Get("requestId")))
+		check(t, reading, outcome, unknownSendHeldAction)
+	})
+
+	t.Run("revision request, addressed to the issue child", func(t *testing.T) {
+		h := harness(t)
+		_, correction := h.correctionAfterNeedsChanges()
+		if got := h.row(correction).S("recipient_task_id"); got != child {
+			t.Fatalf("the revision request is addressed to %q, want the issue child %q", got, child)
+		}
+		h.host.startTurn(child, "turn-earlier", "completed", "")
+		h.clock.Advance(300)
+		h.host.script = []string{"transport_unknown"}
+		record := h.attemptOn(correction, h.host, nil)
+		h.host.threads[child].status = "notLoaded"
+		h.clock.Advance(120)
+		reading, outcome := read(t, h, pyjson.Text(record.Get("requestId")))
+		check(t, reading, outcome, correctionHeld)
+	})
+}
+
+// CRW-1443 (PR #890 review): docs/relay/README.md, "Replying to a blocked receipt", quotes the header
+// line of the decision message; it is the line renderDecision writes.
+func TestDecisionHeaderInTheRelayReadme(t *testing.T) {
+	row := Row{"event_id": "evt-1", "relationship_id": "rel-1", "recipient_task_id": child}
+	record := Obj{{Key: "decision", Value: DecisionAnswer}, {Key: "note", Value: "n"}}
+	header, _, _ := strings.Cut(renderDecision(row, record, "req-1"), "\n")
+	readme, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "relay", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(readme), "`"+header+"`") {
+		t.Errorf("docs/relay/README.md does not quote the decision message header %q", header)
+	}
+	if strings.Contains(string(readme), "`[codex-session-relay] parent decision`") {
+		t.Error("docs/relay/README.md still quotes the old header `[codex-session-relay] parent decision`")
+	}
 }
