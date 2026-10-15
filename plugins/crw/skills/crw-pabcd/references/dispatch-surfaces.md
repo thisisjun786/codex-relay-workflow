@@ -23,7 +23,7 @@ the task packet, the assignment record the relay holds for it, or the DAG node
     call, its commits, its review and its acceptance are rows of the run's journal and the DAG records
     ([the flow commands](../../crw-canon/references/flow.md), [the spawn policy](../../crw-canon/references/spawn-policy.md)).
   - an issue child (relay role `child`), only for a plan with no flow run: started and resumed
-    through `crw-run` on the exception path of one oversized issue (SP-CHILD-1), with the managed
+    through `crw-run` on the exception path of one oversized issue, with the managed
     start, the DAG release and their bridge recovery, pair/profile, capacity and receipt rules. A
     node a flow run's architect sizes for a child starts no issue child: the project lane escalates
     it as `size_split` with detail `child_retired`. It is never a desktop `create_thread` lane.

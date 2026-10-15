@@ -204,8 +204,8 @@ A flow run lands each node on its target branch by itself and opens no pull requ
 
 ## Independent implementation tasks
 
-This section and the issue-child rules that follow it are the exception path (SP-CHILD-1) of one
-oversized issue, and the path of a plan with no run. On the default path the implementation of an
+This section and the issue-child rules that follow it are the exception path, for a plan with no
+flow run. On the default path the implementation of an
 issue is its executor's call, a step the run records, which this child spawns as a role subagent; the
 rules about issue children below do not apply to it.
 

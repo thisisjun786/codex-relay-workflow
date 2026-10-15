@@ -90,7 +90,7 @@ Keep explicit-only skills and leaf-safe delivery restrictions intact.
   tracking issue or DAG node (also one the relay holds no assignment for yet) is a flow
   executor call of the run of the child (project session, relay role `parent`), recorded in the
   relay, whose step the child spawns as a role subagent (the default path), or an issue child
-  started and resumed through `crw-run` (the exception, SP-CHILD-1), never a
+  started and resumed through `crw-run` (the exception), never a
   `create_thread` lane; the relay refuses a second active or paused assignment of
   the same issue and a release past capacity, and those answers are followed, not
   routed around by creating a thread by hand. An unresolved binding is not
