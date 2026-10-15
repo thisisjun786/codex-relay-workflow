@@ -43,6 +43,7 @@ var relayKinds = map[string]string{
 	KindProjectBlocked:         supervisor.KindFlowProjectBlocked,
 	KindProjectDecisionRequest: supervisor.KindFlowProjectDecisionRequest,
 	KindJunDecisionRequest:     supervisor.KindFlowJunDecisionRequest,
+	KindMergeRequest:           supervisor.KindFlowMergeRequest,
 }
 
 // Delivers says which recipients the channel delivers to: every recipient the linkage walk named a thread for, the store seat included
