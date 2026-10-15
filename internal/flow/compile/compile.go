@@ -183,6 +183,11 @@ func compileProject(in Input, at int, owner map[string]string, opts Options) (Pl
 	if t := p.Target; t != nil && (t.Repository == "" || t.Branch() == "") {
 		refuse("input", "target", "target needs both repository and base_ref")
 	}
+	// a bundle integrates its nodes on its own branch and the pull request is opened against pr_base: the same branch for both would
+	// land the nodes straight on the branch the pull request targets (CRW-1440)
+	if t := p.Target; t != nil && t.PRBase != "" && t.Branch() != "" && t.Branch() == strings.TrimPrefix(t.PRBase, branchPrefix) {
+		refuse("input", "target.base_ref", "the base_ref %q is the pr_base %q: a bundle integrates on its own branch and opens its pull request against pr_base (give the bundle branch as base_ref, see crw flow pr branch)", t.BaseRef, t.PRBase)
+	}
 	// the target's form: a run integrates on a local checkout, on the short branch name; another form is read as the run needs it, warned
 	// and not refused (CRW-1317)
 	if t := p.Target; t != nil {
