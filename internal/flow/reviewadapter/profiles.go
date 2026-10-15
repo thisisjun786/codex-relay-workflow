@@ -23,12 +23,16 @@ type Profile struct {
 	Effort     string
 	Family     string
 	QuotaTexts []string
-	Answer     func(stdout []byte) ([]byte, error)
+	// Answer reads the tool's stdout for the request it answers: a reader of a committed range (Ranged) reads the range from the
+	// request (Request.Base, Request.Head) and takes only an answer about it.
+	Answer func(stdout []byte, req Request) ([]byte, error)
+	// Ranged is set for a profile that judges a committed range: Check refuses a request that names no range (Base and Head).
+	Ranged bool
 }
 
 // JSONProfile is a tool that prints the answer document itself.
 func JSONProfile(name string, argv []string, model, effort string) Profile {
-	return Profile{Name: name, Argv: argv, Model: model, Effort: effort, Answer: func(stdout []byte) ([]byte, error) { return stdout, nil }}
+	return Profile{Name: name, Argv: argv, Model: model, Effort: effort, Answer: func(stdout []byte, _ Request) ([]byte, error) { return stdout, nil }}
 }
 
 // The model Bugbot runs and its effort word (the effort is the one the model id carries; an assumption until the tool reports it).
@@ -61,12 +65,17 @@ func BugbotProfile() Profile {
 
 // BugbotCommittedProfile is the committed mode of the unit check (CRW-1468: land-head's check of base..head): the same cursor-agent
 // call as BugbotProfile, whose prompt names the range, with an answer reader that takes the range's scope phrases
-// (bugbotNoBugsScope.committed: "in the changes between <base> and <head>", "in the committed changes", "in <base>..<head>") and
-// refuses a result whose prose outside the findings tables names the uncommitted, staged or unstaged changes or the working tree: the
-// range is checked in a clean checkout of its head, so a review of any of those reviewed nothing of the range. Whether cursor-agent reviews a range
-// is UNCONFIRMED (no real committed-mode sample yet); the reader is tested on synthetic envelopes of the uncommitted mode's shape.
+// (bugbotNoBugsScope.committed: "in the changes between <base> and <head>", "in <base>..<head>") and refuses a result whose prose
+// outside the findings tables names the uncommitted, staged or unstaged changes or the working tree: the range is checked in a clean
+// checkout of its head, so a review of any of those reviewed nothing of the range. The profile is Ranged: its reader is given the
+// range the request asks about and takes an answer only when it names that range by its commit ids (a clean sentence whose scope
+// phrase names it, or findings whose prose names it) and names no other range anywhere outside the tables; a clean answer that names
+// no range, or names another (a narrower B..C of the requested A..C), is no answer. Whether cursor-agent reviews a range, and names
+// it, is UNCONFIRMED (no real committed-mode sample yet): until it does, a real answer fails closed as invalid. The reader is tested on
+// synthetic envelopes of the uncommitted mode's shape.
 func BugbotCommittedProfile() Profile {
 	p := bugbotCall("bugbot-committed")
+	p.Ranged = true
 	p.Answer = bugbotAnswer(bugbotNoBugsScope.committed)
 	return p
 }
@@ -101,12 +110,13 @@ var bugbotPartial = regexp.MustCompile(`\b(` + strings.Join([]string{
 
 // bugbotAnswer is the answer reader of a Bugbot profile whose scope is scope: it reads cursor-agent's envelope and turns its result
 // prose into a document of AnswerSchema. A blank result is a blank answer. Prose outside the findings tables that names a scope the
-// profile refuses (scope.wrong) is not an answer, and a clean sentence takes only the profile's scope phrases (scope.phrase).
-func bugbotAnswer(scope bugbotScope) func(stdout []byte) ([]byte, error) {
-	return func(stdout []byte) ([]byte, error) { return readBugbot(stdout, scope) }
+// profile refuses (scope.wrong) is not an answer, and a clean sentence takes only the profile's scope phrases (scope.phrase). A ranged
+// scope takes only an answer about the request's range (bugbotRangeOf).
+func bugbotAnswer(scope bugbotScope) func(stdout []byte, req Request) ([]byte, error) {
+	return func(stdout []byte, req Request) ([]byte, error) { return readBugbot(stdout, scope, req) }
 }
 
-func readBugbot(stdout []byte, scope bugbotScope) ([]byte, error) {
+func readBugbot(stdout []byte, scope bugbotScope, req Request) ([]byte, error) {
 	var env struct {
 		Result  *string `json:"result"`
 		IsError bool    `json:"is_error"`
@@ -144,6 +154,15 @@ func readBugbot(stdout []byte, scope bugbotScope) ([]byte, error) {
 			return nil, fmt.Errorf("the review names another scope (%q): %s", w, firstLine([]byte(prose)))
 		}
 	}
+	if scope.ranged {
+		named, err := bugbotRangeOf(prose, req.Base, req.Head)
+		if err != nil {
+			return nil, err
+		}
+		if found && !named {
+			return nil, fmt.Errorf("the review does not name the range %s..%s it was asked about: %s", req.Base, req.Head, firstLine([]byte(prose)))
+		}
+	}
 	type finding struct {
 		Severity string `json:"severity"`
 		File     string `json:"file"`
@@ -174,7 +193,7 @@ func readBugbot(stdout []byte, scope bugbotScope) ([]byte, error) {
 				doc.Verdict = VerdictNeedsChanges
 			}
 		}
-	case saysNoBugs(prose, scope.phrase):
+	case saysNoBugs(prose, scope):
 	default:
 		return nil, fmt.Errorf("the result has neither a findings table nor a last sentence %q: %s", "Bugbot found no bugs.", firstLine([]byte(text)))
 	}
@@ -186,16 +205,19 @@ const bugbotNoBugs = "bugbot found no bugs"
 
 // bugbotScope is what a Bugbot profile's reader takes as the scope of its request: phrase is the short scope phrase Bugbot may append
 // to its clean sentence ("Bugbot found no bugs in the uncommitted changes."), matched lower-cased at the end of the sentence without
-// its full stop; wrong, when set, is a scope named anywhere in the prose outside the findings tables that makes the result no answer.
+// its full stop; wrong, when set, is a scope named anywhere in the prose outside the findings tables that makes the result no answer;
+// ranged is set for the committed range, whose answer must name the request's range (bugbotRangeOf): its clean sentence's scope phrase
+// names it.
 type bugbotScope struct {
 	phrase, wrong *regexp.Regexp
+	ranged        bool
 }
 
 // bugbotRev is a revision a committed scope phrase names, lower-cased: a commit id of 7 to 64 hex digits (optionally in backticks),
 // or "the base", "the head"; bugbotRange is a range of two of them: "between <a> and <b>", "from <a> to <b>", or "<a>..<b>" /
 // "<a>...<b>". A symbolic ref (HEAD, HEAD~1, a branch) is not taken: the request names its range by commit ids, and "HEAD~1..HEAD"
-// names a range that may be narrower than the one asked for. The reader does not see the request, so a phrase naming other commit
-// ids than the request's is not caught here.
+// names a range that may be narrower than the one asked for. Which commit ids the phrase names is read against the request by
+// bugbotRangeOf: "the base" and "the head" name no commit of the request, so a range of them ties the answer to none.
 const (
 	bugbotRev   = "(the (base|head)|`?[0-9a-f]{7,64}`?)"
 	bugbotDots  = bugbotRev + `\.\.\.?` + bugbotRev
@@ -219,6 +241,7 @@ var bugbotNoBugsScope = struct {
 }{
 	uncommitted: bugbotScope{phrase: regexp.MustCompile(`[ \t]+(in|on|for|across)(( the)?( (uncommitted|working[- ]tree))? (changes|diff|code|files)| the working tree)$`)},
 	committed: bugbotScope{
+		ranged: true,
 		phrase: regexp.MustCompile(`[ \t]+(in|on|for|across)(( the)?( committed)? (changes|diff|code|files|commits|range|commit range)( ` + bugbotRange + `)?| ` + bugbotDots + `)( \(git diff ` + bugbotDots + `\))?$`),
 		wrong:  regexp.MustCompile(`\b(uncommitted|working[- ]tree|(un)?staged|staging area)\b`),
 	},
@@ -229,16 +252,56 @@ var bugbotNoBugsScope = struct {
 // follows the end of an earlier sentence. cursor-agent glues its sentences without a space ("...launching the reviewer.Bugbot found
 // no bugs."), so the line may carry earlier sentences; "whether Bugbot found no bugs", "Bugbot found no bugs?" or the sentence
 // followed by more prose are not affirmations. The partial-review words are read before this, so they still win.
-func saysNoBugs(prose string, scope *regexp.Regexp) bool {
+func saysNoBugs(prose string, scope bugbotScope) bool {
 	lines := strings.Split(strings.TrimSpace(prose), "\n")
 	last := strings.TrimRight(strings.ToLower(strings.TrimSpace(lines[len(lines)-1])), ".!")
-	last = scope.ReplaceAllString(last, "")
+	phrase := scope.phrase.FindString(last)
+	last = strings.TrimSuffix(last, phrase)
 	before, ok := strings.CutSuffix(last, bugbotNoBugs)
 	if !ok {
 		return false
 	}
+	// a committed clean sentence names the range it judged in its own scope phrase; bugbotRangeOf has refused any other range already
+	if scope.ranged && !bugbotRangeExpr.MatchString(phrase) {
+		return false
+	}
 	before = strings.TrimRight(before, " \t")
 	return before == "" || strings.HasSuffix(before, ".") || strings.HasSuffix(before, "!") || strings.HasSuffix(before, "?")
+}
+
+// bugbotRangeExpr finds the ranges committed prose names, lower-cased: "between <a> and <b>", "from <a> to <b>", "<a>..<b>" or
+// "<a>...<b>", each revision a commit id of 7 to 64 hex digits (optionally in backticks) or "the base" / "the head". The submatches
+// are the two revisions of the first form (1, 2) or of the second (3, 4).
+var bugbotRangeExpr = regexp.MustCompile("(?:between|from) " + bugbotRangeRev + " (?:and|to) " + bugbotRangeRev + "|" + bugbotRangeRev + `\.\.\.?` + bugbotRangeRev)
+
+const bugbotRangeRev = "(the base|the head|`?\\b[0-9a-f]{7,64}\\b`?)"
+
+// bugbotRangeOf reads the ranges the prose of a committed answer names (outside the findings tables) against the request's range
+// base..head: each must be that range, its first revision a commit id that base starts with and its second one that head starts
+// with (case aside); a range of any other commits, of the two the other way round, or of "the base" and "the head" (which name no
+// commit) is an error, since the answer may then be about a narrower or another range. It answers whether the prose names the
+// request's range at all.
+func bugbotRangeOf(prose, base, head string) (bool, error) {
+	base, head = strings.ToLower(base), strings.ToLower(head)
+	named := false
+	for _, m := range bugbotRangeExpr.FindAllStringSubmatch(strings.ToLower(prose), -1) {
+		from, to := m[1], m[2]
+		if from == "" {
+			from, to = m[3], m[4]
+		}
+		if !bugbotRevIs(from, base) || !bugbotRevIs(to, head) {
+			return false, fmt.Errorf("the review names the range %q, not the range %s..%s it was asked about", m[0], base, head)
+		}
+		named = true
+	}
+	return named, nil
+}
+
+// bugbotRevIs reports whether a revision a committed answer names is the commit id want: a commit id of at least 7 hex digits that want
+// starts with. "the base" and "the head" are not.
+func bugbotRevIs(rev, want string) bool {
+	rev = strings.Trim(rev, "`")
+	return len(rev) >= 7 && want != "" && strings.HasPrefix(want, rev)
 }
 
 // findingsTable finds every findings table in text. It returns the prose outside the tables, the rows of all of them in order as

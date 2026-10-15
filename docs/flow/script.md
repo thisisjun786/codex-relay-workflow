@@ -523,7 +523,9 @@ call and fixes nothing. Its steps:
   records the commit, its tree, its base (the merge-base with the integration tip), the paths it changes and the authors with their pairs.
 - The gates are the lane's: `crw.verify` of that head (verification-record/1 of the exact tree), one unit check in the committed mode,
   `crw.unitCheck(node, null, {commit: head, base: head.base})` (CRW-1468): the review tool run in Go over `base..head` of the land
-  checkout, with no reviewer call; a head made outside a run has no executor, so the check's row records the receipt `no_executor`. Then
+  checkout, with no reviewer call; a head made outside a run has no executor, so the check's row records the receipt `no_executor`. The
+  committed profile's reader takes an answer only when it names the requested range `base..head` by its commit ids and no other range,
+  so until that profile is replaced a clean answer that names no range or another one fails closed as `unit_check_invalid`. Then
   `crw.land` (`crw.accept` on that check, the relay's agent acceptance, which judges the check's model family against the pair the
   execution records: `independence_refused` for a check of the authors' family, `independence_unproven` when the pair of any author it
   names was not read back; then `crw.integrate`). They write the rows they write for a node of a project lane.

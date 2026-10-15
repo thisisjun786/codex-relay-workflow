@@ -1875,9 +1875,11 @@ func TestUnitCheckRecordsTheAdapterResult(t *testing.T) {
 	u := newUCWorld(t)
 	finding := reviewadapter.Finding{Severity: "P3", Impact: premerge.MinorSeparable, File: "a.txt", Line: 1, Text: "a nit"}
 	var prompts []string
+	var ranges [][2]string
 	u.lane.d.UnitCheck.Checker = reviewadapter.Adapter{
 		Run: func(_ context.Context, _ reviewadapter.Profile, req reviewadapter.Request) ([]byte, []byte, int, error) {
 			prompts = append(prompts, req.Prompt)
+			ranges = append(ranges, [2]string{req.Base, req.Head})
 			b, _ := json.Marshal(map[string]any{"verdict": "verified", "findings": []any{map[string]any{"severity": finding.Severity, "impact": finding.Impact, "file": finding.File, "line": finding.Line, "text": finding.Text}}})
 			return b, nil, 0, nil
 		},
@@ -1950,6 +1952,10 @@ func TestUnitCheckRecordsTheAdapterResult(t *testing.T) {
 	}
 	if !slices.Equal(u.modes, []string{"uncommitted", "committed"}) {
 		t.Errorf("profile modes %v", u.modes)
+	}
+	// the request names the range a committed profile's reader takes an answer about, and an uncommitted one names none
+	if len(ranges) != 2 || ranges[0] != [2]string{} || ranges[1] != [2]string{u.start, commit.Commit} {
+		t.Errorf("the requests' ranges %v, want none and %s..%s", ranges, u.start, commit.Commit)
 	}
 	// a committed check of a checkout with edits is not run: the row is role-less, so no reader takes it as the judgment of the commit
 	write(t, u.wt, "a.txt", "edited after the commit\n", 0o644)

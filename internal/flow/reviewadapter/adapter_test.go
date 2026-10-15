@@ -56,9 +56,20 @@ func jsonProfile() Profile {
 	return JSONProfile("fake", []string{"fake-tool"}, "grok-4.7-medium", "medium")
 }
 
+// The range a request of a ranged profile (the committed mode) names in the tests: the commits 3f2a91c.. and 8be04d7.. the committed
+// fixtures name.
+const (
+	rangeBase = "3f2a91c0d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9"
+	rangeHead = "8be04d7a1b2c3d4e5f60718293a4b5c6d7e8f901"
+)
+
 func request(t *testing.T, p Profile) Request {
 	t.Helper()
-	return Request{Profile: p, Worktree: t.TempDir(), Prompt: "review the uncommitted changes", Schema: AnswerSchema, Limit: time.Minute, GuideRev: "guide-r1"}
+	req := Request{Profile: p, Worktree: t.TempDir(), Prompt: "review the uncommitted changes", Schema: AnswerSchema, Limit: time.Minute, GuideRev: "guide-r1"}
+	if p.Ranged {
+		req.Base, req.Head = rangeBase, rangeHead
+	}
+	return req
 }
 
 func check(t *testing.T, p Profile, f fakeRun) Result {
@@ -860,33 +871,29 @@ func TestBugbotNoBugsTakesTheScopePhrase(t *testing.T) {
 }
 
 // TestBugbotCommittedProfileReadsTheRangeScope (CRW-1468): the committed-mode profile is the same Bugbot call as BugbotProfile, but
-// its clean-answer reader takes the scope phrases of a committed range ("in the changes between <base> and <head>", "in the
-// committed changes", "in <base>..<head>") and refuses the uncommitted, staged or working-tree scope, in the scope phrase or anywhere
-// in the prose outside the tables (a range check that reviewed the working tree reviewed the clean checkout, not the range); BugbotProfile
-// keeps refusing "committed"; a findings table reads the same in both. A range named by symbolic refs (HEAD~1..HEAD, a branch) is
-// refused: the request names its range by commit ids.
+// its clean-answer reader takes the scope phrases of a committed range that name the requested range ("in the changes between <base>
+// and <head>", "in <base>..<head>") and refuses the uncommitted, staged or working-tree scope, in the scope phrase or anywhere in the
+// prose outside the tables (a range check that reviewed the working tree reviewed the clean checkout, not the range), and a clean
+// sentence that names no range; BugbotProfile keeps refusing "committed"; a findings table reads the same in both. A range named by
+// symbolic refs (HEAD~1..HEAD, a branch) is refused: the request names its range by commit ids.
 func TestBugbotCommittedProfileReadsTheRangeScope(t *testing.T) {
 	committed, uncommitted := BugbotCommittedProfile(), BugbotProfile()
 	if committed.Name == uncommitted.Name || !slices.Equal(committed.Argv, uncommitted.Argv) || committed.Model != uncommitted.Model ||
-		committed.Effort != uncommitted.Effort || committed.Family != uncommitted.Family || !slices.Equal(committed.QuotaTexts, uncommitted.QuotaTexts) || committed.Answer == nil {
+		committed.Effort != uncommitted.Effort || committed.Family != uncommitted.Family || !slices.Equal(committed.QuotaTexts, uncommitted.QuotaTexts) || committed.Answer == nil ||
+		!committed.Ranged || uncommitted.Ranged {
 		t.Fatalf("the committed profile %+v is not the Bugbot call of %+v under its own name", committed, uncommitted)
 	}
 	for _, text := range []string{
-		"Bugbot found no bugs.",
 		"Bugbot found no bugs in the changes between 3f2a91c and 8be04d7.",
 		"Bugbot found no bugs in the changes between 3f2a91c0d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9 and 8be04d7.",
 		"Bugbot found no bugs in the changes from 3f2a91c to 8be04d7!",
 		"Bugbot found no bugs in the diff between `3f2a91c` and `8be04d7`.",
-		"Bugbot found no bugs in the changes between the base and the head.",
-		"Bugbot found no bugs in the committed changes.",
 		"Bugbot found no bugs in the commits between 3f2a91c and 8be04d7.",
 		"Bugbot found no bugs in 3f2a91c..8be04d7.",
 		"Bugbot found no bugs in `3f2a91c..8be04d7`.",
 		"Bugbot found no bugs in the range 3f2a91c..8be04d7.",
 		"Bugbot found no bugs in the diff 3f2a91c..8be04d7.",
 		"Bugbot found no bugs in the changes between 3f2a91c and 8be04d7 (git diff 3f2a91c..8be04d7).",
-		"I'll review the changes between 3f2a91c and 8be04d7.Bugbot found no bugs in the committed changes.",
-		"Bugbot found no bugs on the diff.",
 		"BUGBOT FOUND NO BUGS IN THE CHANGES BETWEEN 3F2A91C AND 8BE04D7.",
 	} {
 		t.Run("committed clean: "+text, func(t *testing.T) {
@@ -898,6 +905,13 @@ func TestBugbotCommittedProfileReadsTheRangeScope(t *testing.T) {
 		})
 	}
 	for _, text := range []string{
+		// a clean sentence that names no range of commits (or "the base" and "the head", which name none) ties the answer to no range:
+		// it may be about any (TestBugbotCommittedReaderTakesOnlyTheRequestedRange)
+		"Bugbot found no bugs.",
+		"Bugbot found no bugs in the changes between the base and the head.",
+		"Bugbot found no bugs in the committed changes.",
+		"I'll review the changes between 3f2a91c and 8be04d7.Bugbot found no bugs in the committed changes.",
+		"Bugbot found no bugs on the diff.",
 		"Bugbot found no bugs in the uncommitted changes.",
 		"Bugbot found no bugs in the working tree.",
 		"Bugbot found no bugs on the working-tree diff.",
@@ -941,12 +955,12 @@ func TestBugbotCommittedProfileReadsTheRangeScope(t *testing.T) {
 		})
 	}
 	t.Run("a findings table reads the same in both", func(t *testing.T) {
-		table := "Bugbot found 2 findings.\n\n" +
-			"| Severity | Location (file:line) | Finding |\n| --- | --- | --- |\n" +
+		// the committed answer names the range it was asked about; the tables are the same
+		table := "\n\n| Severity | Location (file:line) | Finding |\n| --- | --- | --- |\n" +
 			"| medium | internal/quote/quote.go:25 | An empty string panics with an index out of range. |\n" +
 			"| low | internal/quote/quote.go:12 | The helper name does not say what it returns. |"
-		a := check(t, committed, fakeRun{stdout: bugbotEnvelope(t, table)})
-		b := check(t, uncommitted, fakeRun{stdout: bugbotEnvelope(t, table)})
+		a := check(t, committed, fakeRun{stdout: bugbotEnvelope(t, "Bugbot found 2 findings in the changes between 3f2a91c and 8be04d7."+table)})
+		b := check(t, uncommitted, fakeRun{stdout: bugbotEnvelope(t, "Bugbot found 2 findings."+table)})
 		wantState(t, a, StateOK)
 		wantState(t, b, StateOK)
 		if a.Verdict != VerdictNeedsChanges || a.Verdict != b.Verdict || len(a.Findings) != 2 || !slices.Equal(a.Findings, b.Findings) {
@@ -963,5 +977,77 @@ func TestBugbotCommittedProfileReadsTheRangeScope(t *testing.T) {
 			t.Fatal(err)
 		}
 		wantState(t, check(t, committed, fakeRun{stdout: string(b) + "\n"}), StateQuota)
+	})
+}
+
+// checkRange is check of a committed range: the request names base..head, as crw.unitCheck's committed mode does.
+func checkRange(t *testing.T, p Profile, base, head string, f fakeRun) Result {
+	t.Helper()
+	req := request(t, p)
+	req.Base, req.Head = base, head
+	res, err := Adapter{Run: f.run, Fingerprint: hashFiles}.Check(t.Context(), req)
+	if err != nil {
+		t.Fatalf("Check: %v", err)
+	}
+	return res
+}
+
+// TestBugbotCommittedReaderTakesOnlyTheRequestedRange (CRW-1468): the committed reader is given the range the request asks about and
+// reads an answer as the judgment of that range only. A clean answer whose sentence names another range (a narrower B..C of the
+// requested A..C, or another pair of commits), or that names no range at all, is no answer (invalid), and so is an answer whose prose
+// names another range anywhere outside the findings tables; the requested range, by its commit ids or their prefixes, reads clean.
+func TestBugbotCommittedReaderTakesOnlyTheRequestedRange(t *testing.T) {
+	const base, head = "1111111aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "2222222bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	committed := BugbotCommittedProfile()
+	for _, text := range []string{
+		"Bugbot found no bugs in the changes between 3f2a91c and 8be04d7.",
+		"Bugbot found no bugs in 9999999..aaaaaaa.",
+		"Bugbot found no bugs.",
+		"Bugbot found no bugs in the committed changes.",
+		"Bugbot found no bugs in the changes between 1111111 and 3333333.",
+		"Bugbot found no bugs in the changes between 3333333 and 2222222.",
+		"Bugbot found no bugs in the changes between 2222222 and 1111111.",
+		"Bugbot found no bugs in the changes between the base and the head.",
+		"I reviewed 3333333..2222222.Bugbot found no bugs in the changes between 1111111 and 2222222.",
+		"I'll review the changes between 1111111 and 2222222.Bugbot found no bugs in the committed changes.",
+	} {
+		t.Run("not the requested range: "+text, func(t *testing.T) {
+			wantState(t, checkRange(t, committed, base, head, fakeRun{stdout: bugbotEnvelope(t, text)}), StateInvalid)
+		})
+	}
+	for _, text := range []string{
+		"Bugbot found no bugs in the changes between 1111111 and 2222222.",
+		"Bugbot found no bugs in the changes between " + base + " and " + head + ".",
+		"Bugbot found no bugs in 1111111aa..2222222bb.",
+		"Bugbot found no bugs in the changes between `1111111` and `2222222` (git diff 1111111..2222222).",
+	} {
+		t.Run("the requested range: "+text, func(t *testing.T) {
+			res := checkRange(t, committed, base, head, fakeRun{stdout: bugbotEnvelope(t, text)})
+			wantState(t, res, StateOK)
+			if res.Verdict != VerdictVerified || len(res.Findings) != 0 {
+				t.Fatalf("result = %+v", res)
+			}
+		})
+	}
+	table := "\n\n| Severity | Location (file:line) | Finding |\n| --- | --- | --- |\n| low | internal/quote/quote.go:12 | The helper name does not say what it returns. |"
+	t.Run("a findings table of the requested range", func(t *testing.T) {
+		res := checkRange(t, committed, base, head, fakeRun{stdout: bugbotEnvelope(t, "Bugbot found 1 finding in the changes between 1111111 and 2222222."+table)})
+		wantState(t, res, StateOK)
+		if len(res.Findings) != 1 {
+			t.Fatalf("result = %+v", res)
+		}
+	})
+	for _, prose := range []string{"Bugbot found 1 finding.", "Bugbot found 1 finding in the changes between 3333333 and 2222222."} {
+		t.Run("a findings table of no range or another: "+prose, func(t *testing.T) {
+			wantState(t, checkRange(t, committed, base, head, fakeRun{stdout: bugbotEnvelope(t, prose+table)}), StateInvalid)
+		})
+	}
+	t.Run("a request of the committed profile that names no range is refused", func(t *testing.T) {
+		req := request(t, committed)
+		req.Base, req.Head = "", ""
+		if _, err := (Adapter{Run: fakeRun{stdout: bugbotEnvelope(t, "Bugbot found no bugs.")}.run, Fingerprint: hashFiles}).Check(t.Context(), req); err == nil ||
+			!strings.Contains(err.Error(), "names none") {
+			t.Fatalf("Check of a committed profile with no range: %v", err)
+		}
 	})
 }

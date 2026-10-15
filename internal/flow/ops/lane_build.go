@@ -241,6 +241,10 @@ func (o *unitCheckOp) Run(ctx context.Context, req engine.OpRequest) (engine.OpR
 	}
 	creq := reviewadapter.Request{Profile: profile, Worktree: wt, Prompt: unitCheckPrompt(r, node, mode, opts.Base, head, receipt), Schema: reviewadapter.AnswerSchema, Limit: uc.Limit,
 		GuideRev: UnitCheckGuideRev}
+	if mode == UnitCheckCommitted {
+		// the range the reader of a committed profile takes an answer about (reviewadapter.Profile.Ranged)
+		creq.Base, creq.Head = opts.Base, head
+	}
 	res, err := uc.Checker.Check(ctx, creq)
 	if err != nil {
 		return engine.OpResult{}, fmt.Errorf("crw.unitCheck: node %s: %w", node, err)
