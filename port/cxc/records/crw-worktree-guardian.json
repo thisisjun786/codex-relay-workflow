@@ -17,7 +17,7 @@
   "edits": [
     {
       "file": "SKILL.md",
-      "reason": "Remove unsupported frontmatter metadata, resolve the renamed PABCD link, and distinguish Codex-app guard scope from bridge worktrees and hook installation. CRW-1220: the description is scoped to Codex-app managed worktrees; the worktree owner table is added. CRW-1352: the session layers carry the names of the level table (crw-canon/references/hierarchy.md); crw-run-initiative is retired into crw-run",
+      "reason": "CRW-1553: the relay role `child` is named by its id (\"a `child` session\"), not as an issue child",
       "hunks": [
         {
           "line": 3,
@@ -41,7 +41,7 @@
             "|---|---|---|\n",
             "| Codex-app managed worktree: one per thread under `$CODEX_HOME/worktrees` | `crw-worktree-guardian` | this skill |\n",
             "| Branch hygiene: stale branches, removing an attached worktree, local garbage collection | `crw-dev-devops` | [branch lifecycle](../crw-dev-devops/references/branch-lifecycle.md) and [local GC](../crw-dev-devops/references/local-gc.md) |\n",
-            "| The workspace of a run: the checkouts a child assigns to its issue children | `crw-run` | [Check who already owns the workspace](../crw-run/SKILL.md#check-who-already-owns-the-workspace) |\n",
+            "| The workspace of a run: the checkouts a child assigns to its `child` sessions | `crw-run` | [Check who already owns the workspace](../crw-run/SKILL.md#check-who-already-owns-the-workspace) |\n",
             "\n"
           ]
         },

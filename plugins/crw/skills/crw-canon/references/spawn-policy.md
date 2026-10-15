@@ -1,6 +1,6 @@
 # Spawn policy
 
-Here the parent (repository session) and the child (project session) are layers of [the level table](hierarchy.md#the-levels); an issue child is no layer.
+Here the parent (repository session) and the child (project session) are layers of [the level table](hierarchy.md#the-levels); a `child` session (a code id, not a layer) is no layer.
 
 Which agent calls a flow run makes, which signal adds one, which work the run does itself, what is recorded for each decision, and the two kinds of refusal that no option overrides. A child reads it to know why a run spawned or did not spawn; the parent and the status readers use it to read a run's decisions. The commands are in [flow.md](flow.md), the script format is `docs/flow/script.md` in the CRW repository, and the roles are named by policy key in [execution-roles.md](execution-roles.md), never by model.
 

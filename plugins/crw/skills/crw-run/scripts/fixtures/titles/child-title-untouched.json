@@ -17,6 +17,6 @@
     "summary": null,
     "user_title": "none"
   },
-  "note": "An issue child keeps ISSUE-ID · title.",
+  "note": "A `child` session (a code id, not a layer) keeps ISSUE-ID · title.",
   "subcommand": "decide"
 }
